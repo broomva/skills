@@ -24,16 +24,21 @@ invocation.
 
 Test isolation: the queue + entity-graph paths read from env vars
 `PHRONESIS_EXTRACTION_QUEUE_ROOT` and `PHRONESIS_ENTITY_GRAPH_ROOT`, both
-defaulting to the operator's home. Tests set them to `tmp_path` so the
-suite never touches the real knowledge graph.
+defaulting to the operator's home — i.e. to the LIVE knowledge graph and the
+LIVE review queue. An autouse fixture in `tests/conftest.py` redirects both to
+a temp dir for every test, and a second autouse fixture fails the test if
+either live root is touched. Before those existed this sentence was false:
+merely constructing a concluded fixture engagement fired the extraction hook
+and wrote into `~/broomva/research/entities/` (measured: 44 live queue records
+from two test files).
 """
 
 from __future__ import annotations
 
 import json
 import os
-import re
 import sys
+import warnings
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from pathlib import Path
@@ -133,6 +138,20 @@ def _bookkeeping_module() -> Any | None:
 
     bookkeeping_path = next((c for c in candidates if c.exists()), None)
     if bookkeeping_path is None:
+        # Be loud. The docstring above promised a relocation would "degrade
+        # loudly instead of silently re-arming the stub", and measurement said
+        # otherwise: 0 warnings, empty stderr, stub re-armed, and six
+        # candidates reported to the operator as "score <5/9". A silent
+        # fallback to a stub scorer is how 20 entity pages shipped with
+        # scores that were a function of their TYPE rather than their content.
+        warnings.warn(
+            "phronesis: bookkeeping is not importable from any known location "
+            f"({', '.join(str(c) for c in candidates)}). The real Nous gate "
+            "will NOT run; scoring falls back to a deterministic stub and no "
+            "candidate can be promoted. Set PHRONESIS_BOOKKEEPING_PATH.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return None
     if str(bookkeeping_path) not in sys.path:
         sys.path.insert(0, str(bookkeeping_path))
@@ -499,9 +518,21 @@ def _derive_core_claim(candidate: ExtractionCandidate) -> str | None:
         return None
     body = candidate.content or candidate.title or ""
     try:
-        return bk.derive_core_claim(body)
+        claim = bk.derive_core_claim(body)
     except Exception:
+        # A raising deriver is a bookkeeping bug, not a verdict about this
+        # candidate — but promoting on a bug would mint a page with no claim,
+        # so fail closed AND say so rather than recording it silently as
+        # "no self-contained claim".
+        warnings.warn(
+            "phronesis: bookkeeping.derive_core_claim raised; treating the "
+            "candidate as unpromotable. This is a bookkeeping defect, not a "
+            "property of the candidate.",
+            RuntimeWarning,
+            stacklevel=2,
+        )
         return None
+    return claim if isinstance(claim, str) and claim else None
 
 
 def _render_entity_stub(

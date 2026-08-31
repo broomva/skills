@@ -347,3 +347,157 @@ class TestPromotionRefusals:
         for page in result.promotion_paths:
             fm = yaml.safe_load(page.read_text(encoding="utf-8").split("---", 2)[1])
             assert fm["status"] == "candidate"
+
+
+class TestPromotedPageContent:
+    """The edge no unit test in this repo can close: what lands on disk.
+
+    A P20 mutation proved this edge was open — making `extract_and_queue`
+    render a hardcoded `"Placeholder claim."` instead of the derived claim
+    left all 500 tests green. The unit test that claimed to cover it computed
+    the claim, passed it into the renderer, and asserted the output equalled
+    it: a tautology. This reads the promoted file back off disk.
+    """
+
+    def test_promoted_page_carries_the_derived_claim(
+        self, queue_root: Path, entity_root: Path
+    ) -> None:
+        import yaml
+
+        from core.extraction.pipeline import _derive_core_claim, extract_and_queue
+
+        eng = build_nova_construction_engagement()
+        result = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+        assert result.promotion_paths, "fixture unreachable — nothing was promoted"
+
+        checked = 0
+        for page in result.promotion_paths:
+            fm = yaml.safe_load(page.read_text(encoding="utf-8").split("---", 2)[1])
+            claim = fm["core_claim"]
+            # The page's own body is what the claim was derived from.
+            body = page.read_text(encoding="utf-8").split("## Pattern (anonymized)")[1]
+            body = body.split("##")[0].strip()
+
+            class _C:
+                content = body
+                title = fm["title"]
+                slug = page.stem
+
+            expected = _derive_core_claim(_C())
+            if expected is None:
+                continue
+            assert claim == expected, f"{page.name}: page claim is not the derived one"
+            checked += 1
+
+        assert checked > 0, "no promoted page exercised the derivation"
+
+
+class TestOperatorSummary:
+    """The refusals must be legible to the operator, not just to the model.
+
+    Before this, a re-run over a populated graph printed
+        Total candidates: 6 / Promoted: 0 / Queued for review (score <5/9): 0
+    -- six candidates and six queue writes, reported as nothing.
+    """
+
+    def _run_cli(self, slug: str, queue_root: Path, entity_root: Path, *extra: str):
+        from runners.cli.__main__ import cli
+
+        return CliRunner().invoke(
+            cli,
+            ["bookkeep", slug, "--queue-root", str(queue_root),
+             "--entity-graph-root", str(entity_root), *extra],
+        )
+
+    def test_skipped_pages_are_reported_not_swallowed(
+        self, queue_root: Path, entity_root: Path
+    ) -> None:
+        eng = build_nova_construction_engagement()
+        extract_and_queue(eng, queue_root=queue_root, entity_graph_root=entity_root)
+        result = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+        assert result.skipped_existing, "fixture unreachable — nothing was skipped"
+
+        import click.testing
+
+        from runners.cli.commands.bookkeep import _print_summary
+
+        runner = click.testing.CliRunner()
+        with runner.isolation() as (out, _err, _):
+            _print_summary(result, dry_run=False)
+        text = out.getvalue().decode()
+        assert "Already on disk" in text, text
+        assert str(len(result.skipped_existing)) in text
+
+    def test_unpromotable_is_not_labelled_as_a_low_score(
+        self, monkeypatch: pytest.MonkeyPatch, queue_root: Path, entity_root: Path
+    ) -> None:
+        """They scored >=5; printing them under "score <5/9" states a falsehood."""
+        import core.extraction.pipeline as pipeline
+
+        monkeypatch.setattr(pipeline, "_derive_core_claim", lambda c: None)
+        result = extract_and_queue(
+            build_nova_construction_engagement(),
+            queue_root=queue_root,
+            entity_graph_root=entity_root,
+        )
+        assert result.unpromotable, "fixture unreachable — nothing was blocked"
+
+        import click.testing
+
+        from runners.cli.commands.bookkeep import _print_summary
+
+        runner = click.testing.CliRunner()
+        with runner.isolation() as (out, _err, _):
+            _print_summary(result, dry_run=False)
+        text = out.getvalue().decode()
+        low = [ln for ln in text.splitlines() if "score <5/9" in ln][0]
+        assert low.strip().endswith("0"), f"unpromotable leaked into the low-score line: {low}"
+        assert "No self-contained claim" in text, text
+
+    def test_dry_run_predicts_the_real_run_over_a_populated_graph(
+        self, tmp_path: Path
+    ) -> None:
+        """--dry-run must answer the question a real run would answer.
+
+        It redirected the entity root to an EMPTY tmp dir, so
+        `entity_path.exists()` was always false and dry-run reported
+        "Promoted: 6" for exactly the candidates a real run reports as
+        "Already on disk: 6". The command exists to predict the real run and
+        predicted its opposite. The fix mirrors the existing per-type dirs by
+        symlink, so exists() answers truthfully while writes stay in tmp.
+        """
+        entities = tmp_path / "entities"
+        (entities / "industry-pattern").mkdir(parents=True)
+        (entities / "framework-refinement").mkdir(parents=True)
+        queue = tmp_path / "queue"
+
+        eng = build_nova_construction_engagement()
+        first = extract_and_queue(eng, queue_root=queue, entity_graph_root=entities)
+        assert first.promoted_count > 0, "fixture unreachable — nothing promoted"
+
+        # A second REAL run must skip everything.
+        real = extract_and_queue(eng, queue_root=queue, entity_graph_root=entities)
+        assert real.promoted_count == 0
+        assert len(real.skipped_existing) == first.promoted_count
+
+        # The dry-run mirror must reach the same verdict.
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as td:
+            mirror = Path(td) / "entities"
+            mirror.mkdir(parents=True)
+            for sub in entities.iterdir():
+                if sub.is_dir():
+                    (mirror / sub.name).symlink_to(sub)
+            dry = extract_and_queue(
+                eng, queue_root=Path(td) / "queue", entity_graph_root=mirror
+            )
+        assert dry.promoted_count == real.promoted_count, (
+            f"dry-run predicts {dry.promoted_count} promotions, "
+            f"real run does {real.promoted_count}"
+        )
+        assert len(dry.skipped_existing) == len(real.skipped_existing)

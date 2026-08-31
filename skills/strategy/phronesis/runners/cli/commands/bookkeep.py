@@ -77,7 +77,10 @@ def bookkeep(
     """
     # Late import keeps `phronesis --help` fast — extraction depends on
     # the whole engagement model + anonymizer.
-    from core.extraction.pipeline import extract_and_queue
+    from core.extraction.pipeline import (
+    _resolve_entity_graph_root,
+    extract_and_queue,
+)
 
     try:
         engagement = load_engagement(tenant_slug)
@@ -98,16 +101,31 @@ def bookkeep(
             err=True,
         )
 
-    # Dry-run: redirect everything to a tmp dir, never persist.
+    # Dry-run: redirect writes to a tmp dir, never persist.
+    #
+    # The entity root is MIRRORED, not blanked. Redirecting it to an empty tmp
+    # dir made `entity_path.exists()` always false, so dry-run reported
+    # "promoted: 6" for exactly the candidates a real run reports as
+    # "already on disk: 6" -- the command's whole job is to predict the real
+    # run, and it predicted the opposite. Symlinking the existing per-type
+    # directories preserves the exists() answer while keeping every write
+    # inside the temp dir.
     if dry_run:
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
             tmp_root = Path(td)
+            tmp_entities = tmp_root / "entities"
+            tmp_entities.mkdir(parents=True, exist_ok=True)
+            real_entities = entity_graph_root or _resolve_entity_graph_root()
+            if real_entities.exists():
+                for sub in real_entities.iterdir():
+                    if sub.is_dir():
+                        (tmp_entities / sub.name).symlink_to(sub)
             result = extract_and_queue(
                 engagement,
                 queue_root=tmp_root / "queue",
-                entity_graph_root=tmp_root / "entities",
+                entity_graph_root=tmp_entities,
             )
             _print_summary(result, dry_run=True)
             if show_low_score:
@@ -149,9 +167,40 @@ def _print_summary(result, *, dry_run: bool) -> None:  # type: ignore[no-untyped
     click.echo(
         "  Promoted (score ≥5/9):           " + click.style(str(result.promoted_count), fg="green")
     )
+    # `queued_count` also counts candidates that scored >=5 but could not be
+    # promoted, so subtract them: printing those under "score <5/9" states a
+    # falsehood about their score.
+    unpromotable = len(getattr(result, "unpromotable", []))
+    skipped = len(getattr(result, "skipped_existing", []))
     click.echo(
-        "  Queued for review (score <5/9):  " + click.style(str(result.queued_count), fg="yellow")
+        "  Queued for review (score <5/9):  "
+        + click.style(str(result.queued_count - unpromotable), fg="yellow")
     )
+    if unpromotable:
+        click.echo(
+            "  No self-contained claim (queued): "
+            + click.style(str(unpromotable), fg="yellow")
+        )
+    if skipped:
+        click.echo(
+            "  Already on disk (left untouched): "
+            + click.style(str(skipped), fg="cyan")
+        )
+    # Accounting invariant. Without the two lines above a re-run over a
+    # populated graph printed "0 promoted, 0 queued" for six candidates and
+    # six queue writes -- the refusal was invisible.
+    accounted = (
+        result.promoted_count + result.queued_count + skipped + len(result.leaks)
+    )
+    if accounted != result.total_candidates:
+        click.echo(
+            click.style(
+                f"  [accounting] {accounted} accounted vs "
+                f"{result.total_candidates} candidates -- please report this.",
+                fg="red",
+            ),
+            err=True,
+        )
     if result.leaks:
         click.echo(
             "  Leaked candidates:               "
