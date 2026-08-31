@@ -227,10 +227,18 @@ agents in six worktrees silent while the one session you are watching talks. The
 pre-0.3.0 design had a single machine-wide flag, which is why it was never
 turned on: enabling it made every agent on the box audible at once.
 
-The session id is read from `CLAUDE_CODE_SESSION_ID`, falling back to the newest
-transcript for the working directory; `--session <id>` sets it explicitly. On
-the hook side it comes from the payload's `session_id`, falling back to the
-transcript filename stem.
+The session id is read from `CLAUDE_CODE_SESSION_ID` or `CLAUDE_SESSION_ID`;
+`--session <id>` sets it explicitly. When none of them answers, the command
+prints `pass --session <id>` and exits 2 rather than guess — it used to fall
+back to the newest transcript in the working directory, which meant that with
+two sessions open in one directory `--on` enabled whichever session had been
+touched most recently, not the one that asked.
+
+On the hook side the payload's `session_id` is **authoritative**: when it is
+present it is the only key the gate authorizes under. The transcript filename
+stem is used only when that field is absent. Both were once accepted together,
+which let a payload naming session A and session B's transcript resolve B's
+opt-in and speak in A.
 
 ### Detail levels
 

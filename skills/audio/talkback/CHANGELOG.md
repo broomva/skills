@@ -10,6 +10,26 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+### Fixed
+
+- **`session_id` is authoritative on the hook side.** The gate resolved a flag
+  under *either* the payload's `session_id` or the transcript filename stem, so
+  a payload naming session A alongside session B's transcript let A — which
+  never opted in — resolve B's flag and speak. The stem is now consulted only
+  when `session_id` is absent.
+- **The CLI no longer guesses which session it belongs to.** `cli_session_id()`
+  fell back to the newest transcript in the working directory, so with two
+  sessions open in one directory `--on` enabled whichever had been touched most
+  recently rather than the caller. It now returns `None`, and the commands print
+  `pass --session <id>` and exit 2.
+- **The registered hook command is `shlex.quote`d**, so an install under a path
+  containing a space (`/Users/x/skills copy/…`) no longer splits into argv.
+
+### Removed
+
+- `newest_transcript_session()` and `project_slug()`, which existed only to
+  support the removed fallback.
+
 ## [0.3.0] — 2026-08-26
 
 **Talk mode is a property of a session, not of the machine.** The 0.2.0 hook was
