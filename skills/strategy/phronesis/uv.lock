@@ -742,6 +742,7 @@ dependencies = [
     { name = "click" },
     { name = "jinja2" },
     { name = "jsonschema" },
+    { name = "mistune" },
     { name = "pydantic" },
     { name = "pyyaml" },
     { name = "rich" },
@@ -754,7 +755,6 @@ build = [
     { name = "twine" },
 ]
 dev = [
-    { name = "mistune" },
     { name = "mypy" },
     { name = "pytest" },
     { name = "pytest-cov" },
@@ -769,7 +769,7 @@ requires-dist = [
     { name = "click", specifier = ">=8.3.0" },
     { name = "jinja2", specifier = ">=3.1.0" },
     { name = "jsonschema", specifier = ">=4.21.0" },
-    { name = "mistune", marker = "extra == 'dev'", specifier = ">=3.0.0" },
+    { name = "mistune", specifier = ">=3.0.0" },
     { name = "mypy", marker = "extra == 'dev'", specifier = ">=2.0.0" },
     { name = "pydantic", specifier = ">=2.13.0" },
     { name = "pytest", marker = "extra == 'dev'", specifier = ">=9.0.0" },

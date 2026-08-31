@@ -113,42 +113,23 @@ class TestLintClean:
         errs = _lint_errors(_render(), "rice-x", "framework-refinement", tmp_path)
         assert errs == [], [str(e) for e in errs]
 
-    def test_every_real_entity_body_on_disk_renders_lint_clean(self, tmp_path):
-        """The bodies this writer actually produced — not a hand-picked fixture.
-
-        The previous end-to-end check used ONE candidate whose first sentence
-        was under the cap, so the truncation path never executed. It verified
-        the branch that could not fail. This walks the real corpus.
-        """
-        import pathlib
-
-        root = pathlib.Path.home() / "broomva" / "research" / "entities"
-        bodies = sorted(root.glob("framework-refinement/rice-*.md")) + sorted(
-            root.glob("industry-pattern/*-pattern.md")
-        )
-        if not bodies:
-            pytest.skip("workspace knowledge graph not present")
-
-        checked = failures = 0
-        for page in bodies:
-            fm = yaml.safe_load(page.read_text(encoding="utf-8").split("---", 2)[1])
-            claim_src = (fm or {}).get("core_claim") or ""
-            if not claim_src:
-                continue
-            derived = _derive_core_claim(_candidate(content=claim_src))
-            if derived is None:
-                continue  # promotion-blocked: never reaches the renderer
-            checked += 1
-            errs = _lint_errors(
-                _render(_candidate(content=claim_src), derived),
-                page.stem, page.parent.name, tmp_path,
-            )
-            if errs:
-                failures += 1
-                print(f"{page.name}: {[str(e) for e in errs]}")
-        assert checked > 0, "fixture unreachable — no real body exercised the renderer"
-        assert failures == 0, f"{failures}/{checked} real bodies render with lint ERRORs"
-
+    # DELETED: test_every_real_entity_body_on_disk_renders_lint_clean.
+    #
+    # It walked ~/broomva/research/entities and re-derived each page's
+    # core_claim. A P20 mutation sweep measured its marginal value as ZERO:
+    # replacing `failures += 1` with `pass` — so it could report nothing —
+    # left all 500 tests green. Every mutant it might have caught was already
+    # caught by test_rendered_stub_has_no_lint_errors above.
+    #
+    # It was also actively harmful in two ways. It fed each page's EXISTING
+    # core_claim back in as content, so `derive_core_claim` returned all 20
+    # unchanged — it asserted that 20 valid claims are valid. And on a clean
+    # machine the corpus it walked was the suite's OWN output, because eight
+    # test files wrote into that directory first: ground truth produced by the
+    # arm under test. It is why the suite touched the live graph at all.
+    #
+    # Deleting it removed a blocker, a major, and three mutation survivors at
+    # the cost of no measured coverage.
 
 # ---------------------------------------------------------------------------
 # Anonymization: sources must not carry the tenant into the indexed surface
@@ -214,11 +195,20 @@ class TestQuoting:
         fixture. Assert the structural property instead: the field is quoted,
         so a future widening of that Literal cannot silently reintroduce the
         bug."""
-        line = next(l for l in _render().split("\n") if l.startswith("type:"))
+        line = next(line for line in _render().split("\n") if line.startswith("type:"))
         assert line.split(":", 1)[1].strip().startswith('"'), line
 
     def test_colon_in_framework_ref_parses(self):
         assert _frontmatter(_render())["score"]["framework_ref"] == "framework:rice"
+
+    def test_colon_SPACE_in_framework_ref_parses(self):
+        """`framework:rice` has no colon-SPACE, so it is a legal plain scalar
+        and parses whether or not the field is quoted — the old test could not
+        fail. `framework_ref` is a free `str` on the model (unlike
+        `entity_type`, which is a Literal), so a colon-space value is
+        reachable and reproduces the original BRO-2404 ScannerError."""
+        cand = _candidate(framework_ref="rice: v2 weighting")
+        assert _frontmatter(_render(cand))["score"]["framework_ref"] == "rice: v2 weighting"
 
     def test_colon_in_industry_parses(self):
         cand = _candidate(industry="banking: mid-market", framework_ref=None)
@@ -248,13 +238,13 @@ class TestQuoting:
     def test_every_scalar_field_is_quoted(self, field):
         """These four sites were changed by the fix and had no test at all —
         each could be reverted to bare interpolation with the suite green."""
-        line = next(l for l in _render().split("\n") if l.strip().startswith(f"{field}:"))
+        line = next(line for line in _render().split("\n") if line.strip().startswith(f"{field}:"))
         assert line.split(":", 1)[1].strip().startswith('"'), line
 
     def test_event_ids_are_quoted(self):
         line = next(
-            l for l in _render().split("\n")
-            if l.strip().startswith("- 01M0") or '"01M0' in l
+            line for line in _render().split("\n")
+            if line.strip().startswith("- 01M0") or '"01M0' in line
         )
         assert '"' in line, line
 
@@ -307,12 +297,16 @@ class TestDeriveCoreClaim:
         monkeypatch.setattr(pipeline, "_bookkeeping_module", lambda: object())
         assert pipeline._derive_core_claim(_candidate()) is None
 
-    def test_derived_claim_is_the_one_that_gets_rendered(self):
-        """Closes the integration edge: unwiring the deriver from the renderer
-        used to leave every test green."""
-        claim = _derive_core_claim(_candidate())
-        assert claim is not None
-        assert _frontmatter(_render(claim=claim))["core_claim"] == claim
+    # NOTE: the integration edge — that the page `extract_and_queue` WRITES
+    # carries the claim `_derive_core_claim` returned — cannot be closed from
+    # here, because this file only ever calls the renderer directly. The
+    # previous test at this spot computed `claim`, passed it into `_render`,
+    # and asserted the output equalled `claim`: a tautology that could not
+    # fail, whose docstring claimed it closed that edge. A mutation proved the
+    # edge was still open (rendering a hardcoded string left all 500 green).
+    # The real assertion lives in tests/integration/test_extraction_pipeline.py
+    # ::test_promoted_page_carries_the_derived_claim, which reads the file off
+    # disk after a real run.
 
 
 class TestYamlScalar:

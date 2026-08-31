@@ -57,3 +57,10 @@ jobs:
       - name: Unit + property tests
         # Mirrors `make smoke`, which is the skill's own fast gate.
         run: uv run pytest tests/unit/ -m "unit or property" -q
+
+      - name: Integration tests
+        # BRO-2404: this step did not exist, so the entire regression cover for
+        # the promotion refusals (TestPromotionRefusals, TestPromotedPageContent)
+        # never ran on any runner. Guards shipped with tests CI does not execute
+        # are the same defect as guards shipped with no tests.
+        run: uv run pytest tests/integration/ -q

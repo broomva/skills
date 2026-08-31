@@ -98,7 +98,23 @@ def bookkeep(
             err=True,
         )
 
-    # Dry-run: redirect everything to a tmp dir, never persist.
+    # Dry-run: redirect writes to a tmp dir, never persist.
+    #
+    # KNOWN LIMITATION, deliberately left in place. Because this root is empty,
+    # `entity_path.exists()` is always false here, so dry-run reports as
+    # "promoted" candidates a real run against a populated graph would report
+    # as "already on disk". It over-predicts promotions; it never under-predicts.
+    #
+    # An earlier attempt fixed that by symlinking the real per-type directories
+    # into this tmp root so exists() would answer truthfully. A symlinked
+    # directory is writable THROUGH, so `open(entity_path, "x")` resolved to the
+    # real path and --dry-run created 6 entity pages in the operator's live
+    # knowledge graph -- a strictly worse failure than the wrong prediction it
+    # fixed, in the flag whose contract is "never touch disk". Reverted.
+    #
+    # The correct fix is a read-only existence oracle (pass the real root as a
+    # probe consulted ONLY for the refusal decision, never as a write target).
+    # That is an API change to extract_and_queue and belongs in its own PR.
     if dry_run:
         import tempfile
 
@@ -149,9 +165,25 @@ def _print_summary(result, *, dry_run: bool) -> None:  # type: ignore[no-untyped
     click.echo(
         "  Promoted (score ≥5/9):           " + click.style(str(result.promoted_count), fg="green")
     )
+    # `queued_count` also counts candidates that scored >=5 but could not be
+    # promoted, so subtract them: printing those under "score <5/9" states a
+    # falsehood about their score.
+    unpromotable = len(result.unpromotable)
+    skipped = len(result.skipped_existing)
     click.echo(
-        "  Queued for review (score <5/9):  " + click.style(str(result.queued_count), fg="yellow")
+        "  Queued for review (score <5/9):  "
+        + click.style(str(result.queued_count - unpromotable), fg="yellow")
     )
+    if unpromotable:
+        click.echo(
+            "  No self-contained claim (queued): "
+            + click.style(str(unpromotable), fg="yellow")
+        )
+    if skipped:
+        click.echo(
+            "  Already on disk (left untouched): "
+            + click.style(str(skipped), fg="cyan")
+        )
     if result.leaks:
         click.echo(
             "  Leaked candidates:               "
