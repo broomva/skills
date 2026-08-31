@@ -10,6 +10,117 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+### Fixed
+
+- **`session_id` is authoritative on the hook side.** The gate resolved a flag
+  under *either* the payload's `session_id` or the transcript filename stem, so
+  a payload naming session A alongside session B's transcript let A — which
+  never opted in — resolve B's flag and speak. The stem is now consulted only
+  when `session_id` is absent.
+- **The CLI no longer guesses which session it belongs to.** `cli_session_id()`
+  fell back to the newest transcript in the working directory, so with two
+  sessions open in one directory `--on` enabled whichever had been touched most
+  recently rather than the caller. It now returns `None`, and the commands print
+  `pass --session <id>` and exit 2.
+- **The registered hook command is `shlex.quote`d**, so an install under a path
+  containing a space (`/Users/x/skills copy/…`) no longer splits into argv.
+
+### Removed
+
+- `newest_transcript_session()` and `project_slug()`, which existed only to
+  support the removed fallback.
+
+## [0.3.0] — 2026-08-26
+
+**Talk mode is a property of a session, not of the machine.** The 0.2.0 hook was
+gated on one global flag, so turning it on made every Claude Code session on the
+box audible at once — every parallel agent, every worktree. That is why it was
+never turned on.
+
+### Added
+
+- **Talk mode**, scoped to the session that enables it:
+  `talkback-hook.py --on` / `--off` / `--status` / `--sessions`. The flag lives
+  at `~/.talkback/sessions/<session-id>`; a session that never opted in makes no
+  sound, which is what lets the hook be registered globally and permanently
+  while only one session talks. A toggle you cannot flip mid-session is not a
+  toggle, so the hook must already be there — the flag is what scopes it.
+- `--install` / `--uninstall` register the hook in `~/.claude/settings.json`
+  idempotently, backing the file up first, and record **when** they did.
+  `--on` and `--status` compare that against the session transcript's
+  creation time and warn when the session started first: Claude Code
+  snapshots hooks at session start, so talk mode enabled in such a session
+  sits there silent, and that silence is indistinguishable from the feature
+  being broken. Observed on the session that built this.
+- A **`SessionEnd`** handler that drops the session's flag, plus an idle TTL
+  (`TALKBACK_SESSION_TTL_HOURS`, 24) for sessions that die without one. Every
+  spoken turn touches the flag, so the TTL is an idle timeout and not a cap on
+  how long a session may talk.
+- **Barge-in**: a new readback interrupts one still playing instead of speaking
+  over it (`TALKBACK_BARGE_IN=0` to disable). Turns end faster than audio plays.
+- Per-session backend, `--on --backend elevenlabs`.
+- **Per-session audio output.** `--outputs` lists the host's output devices,
+  `--on --output "AirPods Pro"` pins one to a session, and `talkback.py
+  -d <device>` routes a one-off line. Two sessions on one host can come out of
+  two speakers. Routing goes through ffmpeg's `audiotoolbox` muxer, because
+  `afplay` cannot target a device; an unresolvable name warns and plays on the
+  default rather than failing the readback. Audio still sounds on the machine
+  running Claude Code — a session driven from another device does not move it.
+- **The full CLI is documented in two places, and a gate keeps it that way.**
+  `--help` prints a complete usage block (it was the module docstring, which
+  listed four of nine commands); SKILL.md carries the same reference plus a
+  trigger-to-command table for the agent — "stop talking" → `--off`, "use my
+  AirPods" → `--outputs` then `--on --output`. `tests/test_talkback_docs.py`
+  extracts every flag and env var from the real source and fails until each
+  appears in both. An undocumented flag is a flag no agent reaches, and nothing
+  about that failure is visible: the code works and the docs read clean.
+- A test suite (54 cases), including the isolation predicate in **both**
+  polarities: an opted-in session speaks, and a concurrent session under the
+  identical setup stays silent. A one-sided test passes just as happily against
+  a hook that never speaks at all.
+
+### Changed
+
+- **Readbacks speak the whole turn by default.** `full` replaces `always` as the
+  session default (`always` still reads as `full`), joined by `brief` — the old
+  capped excerpt — and the existing `marker`. A capped excerpt is a preview of
+  the answer, not the answer: you would still have to read the screen, which is
+  the thing talk mode exists to avoid. `full` also has no length floor, so a
+  short result still gets spoken. `TALKBACK_FULL_MAX_CHARS` puts a ceiling on
+  it, off by default. In `full`, a marker becomes the headline spoken ahead of
+  the body rather than replacing it.
+- `TALKBACK_ON_OVERLAP=queue` serializes playback so a long full readback is
+  never cut off by the next turn; `interrupt` (the default) keeps the previous
+  barge-in behaviour.
+- **Backends now form a ladder** — `elevenlabs → omnivoice → say` — instead of a
+  single fall-back-to-`say`. A rung that cannot take the job hands off to the
+  next one down, so the voice degrades rather than the audio going missing, and
+  asking for a rung explicitly starts there and only descends (`--fast` never
+  climbs back to a metered backend). `TALKBACK_CHAIN` reorders it.
+- Talk-mode readbacks default to the **top** of that ladder rather than to
+  `say`. The ElevenLabs reserve guard still stands, so a chatty session runs the
+  balance down to the reserve and then keeps talking on the next rung.
+- `--on` now means **this session**, and defaults to `always` (continuous) —
+  that is what talk mode is for. The machine-wide flag moved behind an explicit
+  `--on --global` and keeps `marker` as its default.
+- `--off` writes an `off` flag rather than deleting one when a global flag is
+  set, so "stop talking" stops the talking instead of falling back to the global
+  setting.
+- Session keys are validated before becoming a path, so a `../` in a hook
+  payload cannot point the flag lookup outside `~/.talkback/sessions/`.
+
+### Removed
+
+- `ENABLED_FLAG` in `talkback.py`, dead since 0.1.0 and now actively misleading.
+
+### Compatibility
+
+- A pre-0.3.0 global flag still works and still speaks in every session; it now
+  reports as `global` in `--status`, and `--off --all` clears it.
+- A flag file containing a bare mode word (the 0.2.0 format) still reads as that
+  mode.
+
+
 ## [0.2.0] — 2026-08-23
 
 **talkback is an on-demand tool.** You invoke it — by asking for something out
