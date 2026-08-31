@@ -37,6 +37,7 @@ latest row for the key carries a different ``watcher_id``.
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 from pathlib import Path
 
@@ -62,12 +63,16 @@ def p9(tmp_path, monkeypatch):
     return importlib.import_module("p9")
 
 
-def _event(p9, frm, to, watcher_id, *, pid=0, guarded=False):
+def _event(p9, frm, to, watcher_id, *, pid=0, guarded=False, expect=None):
+    """`guarded=True` expects `expect` (default: this event's own watcher)."""
+    kw = {}
+    if guarded:
+        kw["expect_owner"] = watcher_id if expect is None else expect
     return p9.append_state_event(p9.PRStateEvent(
         ts=p9._utcnow(), pr=PR, repo=REPO,
         from_state=frm, to_state=to,
         watcher_id=watcher_id, session_id=SESSION, extra={"pid": pid},
-    ), only_if_owner=guarded)
+    ), **kw)
 
 
 def _replay_supersede(p9, *, guarded):
@@ -115,10 +120,16 @@ class TestGuardedFold:
         assert _event(p9, W, A, "w1", guarded=True) is True
         assert p9.open_prs(SESSION) == []
 
-    def test_a_first_write_with_no_prior_row_is_not_stale(self, p9):
-        """No row for the key means nothing to be stale against."""
+    def test_a_guarded_write_with_no_prior_row_is_refused(self, p9):
+        """Fail-closed: a writer with no row cannot prove it owns the key.
+
+        An earlier revision failed *open* here ("nothing to be stale
+        against"), which contradicted the contract one line above it: if the
+        log was rotated or truncated while an orphan watcher ran, that watcher
+        would recreate the key with a terminal fold.
+        """
         assert _event(p9, p9.PRState.PUSHED.value,
-                      p9.PRState.WATCHING.value, "w1", guarded=True) is True
+                      p9.PRState.WATCHING.value, "w1", guarded=True) is False
 
 
 class TestUnguardedFoldStillRaces:
@@ -235,11 +246,12 @@ class TestCasKeyIsRepoAndPr:
 
     @staticmethod
     def _ev(p9, repo, frm, to, wid, *, guarded=False, pid=0):
+        kw = {"expect_owner": wid} if guarded else {}
         return p9.append_state_event(p9.PRStateEvent(
             ts=p9._utcnow(), pr=PR, repo=repo,
             from_state=frm, to_state=to, watcher_id=wid,
             session_id=SESSION, extra={"pid": pid},
-        ), only_if_owner=guarded)
+        ), **kw)
 
     def test_another_repos_row_does_not_reject_this_folds(self, p9):
         W = p9.PRState.WATCHING.value
@@ -267,3 +279,145 @@ class TestCasKeyIsRepoAndPr:
         self._ev(p9, REPO, W, A, "watch-supersede")
         self._ev(p9, REPO, P, W, "w2", pid=2222)
         assert self._ev(p9, REPO, W, A, "w1", guarded=True) is False
+
+
+def _cas_contender(scripts, home, wid, q):
+    """Run in a CHILD PROCESS — must re-import p9 with its own env."""
+    import os
+    import sys as _sys
+    _sys.path.insert(0, scripts)
+    os.environ.update(BROOMVA_P9_HOME=home, BROOMVA_P9_REPO=REPO,
+                      BROOMVA_P9_SESSION=SESSION)
+    for m in ("p9",):
+        _sys.modules.pop(m, None)
+    import p9 as mod
+    q.put((wid, mod.append_state_event(mod.PRStateEvent(
+        ts=mod._utcnow(), pr=PR, repo=REPO,
+        from_state=mod.PRState.WATCHING.value,
+        to_state=mod.PRState.ABANDONED.value,
+        watcher_id=wid, session_id=SESSION, extra={}),
+        expect_owner=wid)))   # each claims to own the key itself
+
+
+class TestCasUnderRealConcurrency:
+    """The guard's whole claim is atomicity against *other processes*.
+
+    In-process tests cannot observe that: they never contend for the flock.
+    This spawns real processes so the lock is actually exercised.
+    """
+
+    def test_exactly_one_contender_wins_and_no_row_is_torn(self, p9, tmp_path):
+        import multiprocessing as mp
+
+        p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=PR, repo=REPO,
+            from_state=p9.PRState.PUSHED.value,
+            to_state=p9.PRState.WATCHING.value,
+            watcher_id="w-owner", session_id=SESSION, extra={"pid": 1}))
+
+        scripts = str(_HERE.parent / "scripts")
+        home = str(tmp_path)
+        ctx = mp.get_context("spawn")
+        q = ctx.Queue()
+        # 12 contenders, exactly one of which is the genuine owner.
+        names = ["w-owner"] + [f"w{i}" for i in range(1, 12)]
+        procs = [ctx.Process(target=_cas_contender,
+                             args=(scripts, home, n, q)) for n in names]
+        for pr_ in procs:
+            pr_.start()
+        for pr_ in procs:
+            pr_.join(timeout=60)
+
+        results = [q.get() for _ in names]
+        winners = sorted(w for w, ok in results if ok)
+        assert winners == ["w-owner"], (
+            f"expected only the owner to win the CAS, got {winners}")
+
+        rows, dropped = p9.jsonl_read_all(p9.state_jsonl())
+        assert dropped == 0, "a concurrent write tore a row"
+        assert len(rows) == 2, f"expected arm + one fold, got {len(rows)} rows"
+
+
+class TestEverySnapshotDerivedTransitionIsGuarded:
+    """``cmd_watch`` was not the only read-then-append transition.
+
+    Each of these reads a row (or a state) and appends a result some time
+    later; if the key changed hands in between, the append buries a live
+    owner. The windows differ in width — ``merge-ready`` straddles a network
+    round-trip, which is the widest one in the file.
+    """
+
+    @staticmethod
+    def _arm(p9, wid, *, pid, repo=REPO, pr=PR):
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2020-01-01T00:00:00+00:00", pr=pr, repo=repo,
+            from_state=p9.PRState.PUSHED.value,
+            to_state=p9.PRState.WATCHING.value,
+            watcher_id=wid, session_id=SESSION, extra={"pid": pid}))
+
+    def test_reap_does_not_fold_a_replacement_it_never_saw(self, p9, monkeypatch):
+        """`reap` reads a dead watcher's row, then writes. A `watch --adopt`
+        landing in between must not be folded terminal on the dead pid."""
+        self._arm(p9, "w-dead", pid=999999)          # long-dead pid, aged row
+
+        real = p9.open_prs
+        def racing_open_prs(*a, **kw):
+            rows = real(*a, **kw)
+            # The replacement lands after reap took its snapshot.
+            self._arm(p9, "w-live", pid=os.getpid())
+            monkeypatch.setattr(p9, "open_prs", real)
+            return rows
+        monkeypatch.setattr(p9, "open_prs", racing_open_prs)
+
+        p9.reap_stale_watchers(grace_seconds=0, reconcile=False)
+        assert p9.current_pr_state(PR, REPO) is p9.PRState.WATCHING, (
+            "reap folded the live replacement it never observed")
+        assert p9.latest_row(PR, REPO)["watcher_id"] == "w-live"
+
+    def test_merge_ready_refuses_when_the_key_changed_hands(self, p9,
+                                                            monkeypatch, capsys):
+        """The verdict is a network call; a re-arm during it must not be
+        overwritten with MERGE_READY."""
+        self._arm(p9, "w1", pid=1111)
+        p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=PR, repo=REPO,
+            from_state=p9.PRState.WATCHING.value,
+            to_state=p9.PRState.GREEN.value,
+            watcher_id="w1", session_id=SESSION, extra={}))
+
+        def racing_verdict(pr_, repo_):
+            # A SECOND `merge-ready` lands while we are talking to GitHub and
+            # takes the key. GREEN -> MERGE_READY is the only legal move out
+            # of GREEN, so this is what the race actually looks like.
+            p9.append_state_event(p9.PRStateEvent(
+                ts=p9._utcnow(), pr=PR, repo=REPO,
+                from_state=p9.PRState.GREEN.value,
+                to_state=p9.PRState.MERGE_READY.value,
+                watcher_id="merge-ready-other", session_id=SESSION, extra={}))
+            return {"ready": True, "reason": "ok", "state": "CLEAN",
+                    "unresolved_threads": 0}
+        monkeypatch.setattr(p9, "merge_ready_verdict", racing_verdict)
+
+        rc = p9.main(["merge-ready", str(PR), "--repo", REPO])
+        assert rc == p9.EXIT_DEGRADED
+        assert "changed hands" in capsys.readouterr().err
+        rows = [r for r in p9.jsonl_read_all(p9.state_jsonl())[0]
+                if r["pr"] == PR]
+        assert [r["watcher_id"] for r in rows][-1] == "merge-ready-other", (
+            "a second MERGE_READY was appended on top of the one that won the "
+            "race — two actors would each believe they authorized the merge")
+
+    def test_the_ordinary_paths_still_work(self, p9, monkeypatch):
+        """Negative control: the guards must not break the uncontended case."""
+        self._arm(p9, "w1", pid=1111)
+        p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=PR, repo=REPO,
+            from_state=p9.PRState.WATCHING.value,
+            to_state=p9.PRState.GREEN.value,
+            watcher_id="w1", session_id=SESSION, extra={}))
+        monkeypatch.setattr(p9, "merge_ready_verdict",
+                            lambda *a: {"ready": True, "reason": "ok",
+                                        "state": "CLEAN",
+                                        "unresolved_threads": 0})
+        assert p9.main(["merge-ready", str(PR), "--repo", REPO]) == p9.EXIT_OK
+        assert p9.current_pr_state(PR, REPO) is p9.PRState.MERGE_READY
