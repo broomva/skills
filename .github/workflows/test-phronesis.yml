@@ -1,0 +1,59 @@
+# phronesis had 48 test files and 409 unit/property tests, and NONE of them ran
+# in CI: every other skill with a suite has a `test-<skill>.yml`, and this one
+# was simply missing. That gap is not theoretical — BRO-2404 fixed a writer that
+# emitted unparseable YAML frontmatter (a plain scalar cannot contain ": ", so
+# `title: RICE: business-pain weighting` broke `yaml.safe_load`), and it reached
+# `research/entities/` and corrupted 20 pages because nothing executed the tests
+# that would have caught it.
+name: test-phronesis
+
+on:
+  pull_request:
+    paths:
+      - 'skills/strategy/phronesis/**'
+      - '.github/workflows/test-phronesis.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/strategy/phronesis/**'
+      - '.github/workflows/test-phronesis.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-phronesis-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/strategy/phronesis
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # `requires-python = ">=3.12"`, so 3.11 is excluded by the package itself.
+        # Both entries verified locally against this suite: 409 passed on each.
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install uv
+        uses: astral-sh/setup-uv@v3
+        with:
+          # This skill ships a uv.lock, unlike the health skill next door.
+          enable-cache: true
+          cache-dependency-glob: skills/strategy/phronesis/uv.lock
+      - name: Set up Python ${{ matrix.python }}
+        run: uv python install ${{ matrix.python }}
+      - name: Create venv + install
+        run: |
+          uv venv --python ${{ matrix.python }}
+          uv pip install -e ".[dev]"
+      - name: Unit + property tests
+        # Mirrors `make smoke`, which is the skill's own fast gate.
+        run: uv run pytest tests/unit/ -m "unit or property" -q
