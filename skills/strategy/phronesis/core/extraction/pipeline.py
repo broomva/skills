@@ -98,11 +98,41 @@ def _bookkeeping_module() -> Any | None:
 
     Returns `None` if the module isn't installed (test environments,
     minimal CI runners). When None, `_score_candidate()` falls back to a
-    deterministic stub heuristic — fine for tests, never used in
-    production where the canonical bookkeeping is on PATH.
+    deterministic stub heuristic.
+
+    The old comment here said the stub was "never used in production". It was
+    the ONLY path ever taken: this resolved `~/broomva/skills/bookkeeping/
+    scripts`, which does not exist — the bookkeeping skill lives under
+    `skills/knowledge/`. Every entity phronesis has ever published therefore
+    carries `method: stub-deterministic` and a score that is a function of the
+    candidate's TYPE rather than its content. Probe both layouts, and prefer
+    an explicit override so a relocation degrades loudly instead of silently
+    re-arming the stub.
     """
-    bookkeeping_path = Path.home() / "broomva" / "skills" / "bookkeeping" / "scripts"
-    if not bookkeeping_path.exists():
+    candidates: list[Path] = []
+    override = os.environ.get("PHRONESIS_BOOKKEEPING_PATH")
+    if override:
+        candidates.append(Path(override).expanduser())
+
+    # Repo-relative FIRST. bookkeeping is a sibling skill in this same
+    # repository, so resolving from __file__ works in a CI checkout, in a
+    # worktree, and under any clone path — none of which `Path.home()` does.
+    # Resolving via home is what made the original path dead on every machine
+    # whose checkout is not exactly ~/broomva/skills.
+    #   .../skills/strategy/phronesis/core/extraction/pipeline.py
+    #   parents[4] == .../skills   (the dir holding strategy/ and knowledge/)
+    here = Path(__file__).resolve()
+    if len(here.parents) > 4:
+        candidates.append(here.parents[4] / "knowledge" / "bookkeeping" / "scripts")
+
+    # Installed-skill layouts, for a phronesis vendored outside the monorepo.
+    home = Path.home() / "broomva" / "skills"
+    candidates.append(home / "skills" / "knowledge" / "bookkeeping" / "scripts")
+    candidates.append(home / "bookkeeping" / "scripts")
+    candidates.append(Path.home() / ".claude" / "skills" / "bookkeeping" / "scripts")
+
+    bookkeeping_path = next((c for c in candidates if c.exists()), None)
+    if bookkeeping_path is None:
         return None
     if str(bookkeeping_path) not in sys.path:
         sys.path.insert(0, str(bookkeeping_path))
@@ -230,6 +260,13 @@ class ExtractionResult(BaseModel):
     queue_paths: list[Path] = Field(default_factory=list)
     promotion_paths: list[Path] = Field(default_factory=list)
     leaks: list[tuple[str, list[str]]] = Field(default_factory=list)
+    # Entity pages that already existed and were therefore NOT overwritten.
+    # Surfaced rather than silent so a run that changes nothing is legible.
+    skipped_existing: list[Path] = Field(default_factory=list)
+    # Candidates whose body yielded no self-contained claim within the cap.
+    # They stay in the queue; minting a page with a truncated claim is the
+    # defect BRO-1983 removed.
+    unpromotable: list[str] = Field(default_factory=list)
 
     @property
     def total_candidates(self) -> int:
@@ -306,8 +343,15 @@ def extract_and_queue(
         # didn't strip something). Never queue a candidate that carries a
         # tenant marker — the canary release gate would catch it later
         # but we'd rather fail fast.
-        leaked = anonymizer.carries_marker(candidate.content) + anonymizer.carries_marker(
-            candidate.quote
+        # candidate.slug is checked because it becomes the entity FILENAME and
+        # therefore a catalog-indexed field — the same surface as the
+        # `phronesis:{tenant_slug}` source ref this change removes. Gating
+        # content and quote while letting the slug through moves the leak
+        # rather than closing it: redacted body, tenant name in the path.
+        leaked = (
+            anonymizer.carries_marker(candidate.content)
+            + anonymizer.carries_marker(candidate.quote)
+            + anonymizer.carries_marker(candidate.slug)
         )
         if leaked:
             result.leaks.append((candidate.slug, leaked))
@@ -331,11 +375,45 @@ def extract_and_queue(
         result.queue_paths.append(out_path)
 
         if promoted:
-            result.promoted_count += 1
             entity_dir = entity_graph_root / candidate.entity_type
-            entity_dir.mkdir(parents=True, exist_ok=True)
             entity_path = entity_dir / f"{candidate.slug}.md"
-            entity_path.write_text(_render_entity_stub(candidate, score, engagement))
+
+            # Two refusals, both of which this writer used to ignore.
+            #
+            # (1) An unpromotable claim. `derive_core_claim` returns None when
+            #     it cannot produce a self-contained claim within the cap. The
+            #     old code truncated instead, minting a page the linter rejects.
+            #     Skipping is the documented behaviour (BRO-1983).
+            #
+            # (2) An entity that already exists. This module's own docstring
+            #     says candidates "do NOT go directly to research/entities/ --
+            #     every candidate must clear a human review pass first", yet
+            #     line 338 was an unconditional write_text. It clobbered
+            #     operator-polished pages: observed overwriting a core_claim
+            #     authored by repair commit a1242b227. The queue record is
+            #     still written either way, so nothing is lost -- the operator
+            #     reconciles from `~/.config/phronesis/extraction-queue/`.
+            core_claim = _derive_core_claim(candidate)
+            if core_claim is None:
+                result.unpromotable.append(candidate.slug)
+                result.queued_count += 1
+                continue
+            rendered = _render_entity_stub(candidate, score, engagement, core_claim)
+            # Atomic create. `exists()` then `write_text()` is a TOCTOU gap:
+            # two concurrent extractions producing the same slug can both see
+            # absence and the later clobbers the earlier. The skill is
+            # symlinked live, so concurrent extraction is the normal case.
+            # "x" fails closed on an existing file, which IS the refusal.
+            entity_dir.mkdir(parents=True, exist_ok=True)
+            try:
+                with open(entity_path, "x", encoding="utf-8") as fh:
+                    fh.write(rendered)
+            except FileExistsError:
+                result.skipped_existing.append(entity_path)
+                continue
+            # Counted only after the write succeeds, so the tally cannot claim
+            # a page that was never written.
+            result.promoted_count += 1
             result.promotion_paths.append(entity_path)
         else:
             result.queued_count += 1
@@ -374,15 +452,17 @@ def on_engagement_concluded(
 # ----------------------------------------------------------------------------
 
 
-# Maximum core_claim length accepted by `bookkeeping lint` (longer is an ERROR).
-_CORE_CLAIM_MAX = 140
-
-
 def _yaml_scalar(value: Any) -> str:
     """Serialize a scalar as an explicitly-quoted YAML string.
 
-    JSON's string syntax is a subset of YAML's double-quoted style, so
-    `json.dumps` gives correct escaping for free.
+    `json.dumps` with `ensure_ascii=True` gives correct escaping for free.
+
+    The flag is load-bearing, not cosmetic. JSON is NOT a subset of YAML's
+    double-quoted style for C0/C1 controls: with `ensure_ascii=False`,
+    U+007F and U+0080-U+009F are emitted raw, PyYAML's reader rejects them
+    outright ("unacceptable character #x007f"), and U+0085 (NEL) parses but
+    silently folds to a space. Escaping them as backslash-uXXXX is valid in a
+    YAML double-quoted scalar and round-trips exactly.
 
     This is not cosmetic. Interpolating a value bare leaves it a YAML *plain*
     scalar, and a plain scalar cannot contain ": ". A framework-refinement
@@ -392,38 +472,43 @@ def _yaml_scalar(value: Any) -> str:
     the seven `rice-*` entities this writer produced was unreadable by the
     knowledge graph until repaired by hand.
     """
-    return json.dumps("" if value is None else str(value), ensure_ascii=False)
+    return json.dumps("" if value is None else str(value))
 
 
-def _derive_core_claim(candidate: ExtractionCandidate) -> str:
-    """First sentence of the candidate's own content, capped at the lint limit.
+def _derive_core_claim(candidate: ExtractionCandidate) -> str | None:
+    """Delegate to bookkeeping's canonical deriver; None means DO NOT PROMOTE.
 
-    `bookkeeping lint` treats a missing `core_claim` as an ERROR, so a stub
-    that omits it can never be lint-clean no matter how it is formatted.
+    This used to be a hand-rolled `sentence[:139] + "…"`. That is precisely
+    the producer BRO-1983 removed from bookkeeping itself, whose comment reads:
+    "The original producer was `raw_claim[:137] + '...'` — a hard mid-word
+    truncation sized precisely to clear the linter's `len(core_claim) <= 140`
+    rule. A quality gate the producer satisfies BY CONSTRUCTION is not a gate
+    ... A `...` suffix is never emitted, at any step." The linter enforces it:
+    `_JUNK_CLAIM_PATTERNS` treats a trailing ellipsis as an ERROR. Re-deriving
+    from the 20 bodies already on disk, the truncating version produced a
+    lint-erroring claim for 3 of them.
 
-    The claim is DERIVED, never invented: it is the leading sentence of the
-    candidate's anonymized content, which is the same text the body carries.
-    The operator rewrites it when polishing `status: candidate` → `active`.
+    So there is exactly one implementation, and it lives in bookkeeping.
+    `derive_core_claim` returns None when it cannot produce a self-contained
+    claim within the cap; that is a promotion-blocking signal, not an
+    invitation to truncate. The caller must skip the candidate rather than
+    mint a page.
     """
-    text = " ".join((candidate.content or "").split())
-    if not text:
-        text = " ".join((candidate.title or candidate.slug or "").split())
-    if not text:
-        return "Extraction candidate awaiting operator polish."
-    match = re.search(r"(?<=[.!?])\s", text)
-    sentence = text[: match.start()] if match else text
-    if len(sentence) <= _CORE_CLAIM_MAX:
-        return sentence
-    clipped = sentence[: _CORE_CLAIM_MAX - 1]
-    if " " in clipped:
-        clipped = clipped[: clipped.rindex(" ")]
-    return clipped + "\u2026"
+    bk = _bookkeeping_module()
+    if bk is None or not hasattr(bk, "derive_core_claim"):
+        return None
+    body = candidate.content or candidate.title or ""
+    try:
+        return bk.derive_core_claim(body)
+    except Exception:
+        return None
 
 
 def _render_entity_stub(
     candidate: ExtractionCandidate,
     score: _CandidateScore,
     engagement: Engagement,
+    core_claim: str,
 ) -> str:
     """Render a minimal entity-page stub for a promoted candidate.
 
@@ -448,24 +533,30 @@ def _render_entity_stub(
         else f"  framework_ref: {_yaml_scalar(candidate.framework_ref)}"
     )
     signals_lines = "\n".join(
-        f"  - {k}: {_yaml_scalar(v) if isinstance(v, str) else v}"
+        f"  - {_yaml_scalar(k)}: {_yaml_scalar(v) if isinstance(v, str) else v}"
         for k, v in candidate.signals.items()
     )
     tenant_slug = engagement.tenant.tenant_slug
-    # `sources` must be a non-empty list or lint errors. The extraction's own
-    # provenance events are the only real source, so name them rather than
-    # inventing a document slug that resolves to nothing.
+    # `sources` must be a non-empty list or lint errors. Name the extraction's
+    # own provenance events rather than inventing a document slug that resolves
+    # to nothing.
+    #
+    # The tenant slug is deliberately NOT in here. `sources` is one of the
+    # fields `bookkeeping index` renders into docs/knowledge-index.md and that
+    # `/kg` scores retrieval on, so putting the slug here moves it from a
+    # frontmatter subtree no consumer reads into the workspace-wide index --
+    # a new exposure against `AnonymizationPolicy.strip_tenant_slug = True`.
+    # `provenance.engagement_slug` already carries it for forensic lookup.
     source_lines = "\n".join(
-        f"  - {_yaml_scalar(f'phronesis:{tenant_slug}:{eid}')}"
+        f"  - {_yaml_scalar(f'phronesis:{eid}')}"
         for eid in candidate.provenance_event_ids
-    ) or f"  - {_yaml_scalar(f'phronesis:{tenant_slug}')}"
+    ) or f"  - {_yaml_scalar('phronesis:unattributed')}"
     body = candidate.content
 
     return f"""---
-type: {candidate.entity_type}
-slug: {candidate.slug}
+type: {_yaml_scalar(candidate.entity_type)}
 title: {_yaml_scalar(candidate.title)}
-core_claim: {_yaml_scalar(_derive_core_claim(candidate))}
+core_claim: {_yaml_scalar(core_claim)}
 status: candidate
 sources:
 {source_lines}
