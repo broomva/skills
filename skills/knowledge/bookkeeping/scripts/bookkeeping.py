@@ -3035,6 +3035,33 @@ def lint_entity_page(entity_path: Path) -> list[LintError]:
                     f"related entry {ref!r} is not [[wikilink]] format", "error"
                 ))
 
+    # Resolve wikilinks in `related:` too. The format check above proves the entry
+    # LOOKS like [[a-wikilink]]; nothing proved the target exists, so a `related:`
+    # pointing at a slug that was never created (or was renamed) sat green forever
+    # while the body-link check right below caught the identical mistake one line
+    # lower in the same file.
+    #
+    # WARNING, not error, deliberately — same polarity as the body check under it.
+    # A `related:` legitimately points outside the entity graph: skills
+    # ([[bookkeeping]], [[checkit]]) and auto-memory slugs ([[maestro-build-arc]])
+    # are real referents with no entity page. Measured over the corpus at the time
+    # this landed: 112 unresolved targets across 73 of 1043 files, most of them
+    # that deliberate kind. Erroring would red-line CI on 73 files this change has
+    # nothing to do with, which is how an anti-vacuity fix overshoots into noise.
+    # NOT _parse_wikilink_list: that is the WRITER's strict path and RAISES on a
+    # malformed entry. A linter must report, never abort -- and malformed entries
+    # are already reported as errors by the format check above, so skipping them
+    # here loses nothing and keeps one defect from masking the rest of the file.
+    related_targets = []
+    _related_raw = fm.get("related", [])
+    if isinstance(_related_raw, list):
+        for _entry in _related_raw:
+            if not isinstance(_entry, str):
+                continue
+            _m = _CANONICAL_WIKILINK_RE.match(_entry.strip())
+            if _m:
+                related_targets.append(_m.group(1))
+
     # Resolve wikilinks in body — skip HTML comment lines to avoid false positives
     wikilinks = extract_wikilinks_md(body)
     # Resolved against the tree that CONTAINS this page, not the configured
@@ -3047,6 +3074,16 @@ def lint_entity_page(entity_path: Path) -> list[LintError]:
             errors.append(LintError(
                 path_str, "wikilink",
                 f"Broken wikilink: [[{target}]] (slug {slug!r} not found)", "warning"
+            ))
+    # Distinct field name ("related") so a broken edge is attributable to
+    # frontmatter rather than prose — they are fixed in different places.
+    for target in related_targets:
+        slug = wikilink_slug(target)
+        if slug and slug not in existing:
+            errors.append(LintError(
+                path_str, "related",
+                f"Broken related wikilink: [[{target}]] (slug {slug!r} not found)",
+                "warning"
             ))
 
     # Timeline check (GBrain compiled-truth + timeline pattern): if the page has
