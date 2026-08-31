@@ -19,6 +19,33 @@ _LIVE_ROOTS = (
 )
 
 
+def _live_root_snapshot() -> dict[Path, float]:
+    out: dict[Path, float] = {}
+    for r in _LIVE_ROOTS:
+        if not r.exists():
+            continue
+        for f in r.rglob("*"):
+            if f.is_file():
+                with contextlib.suppress(OSError):
+                    out[f] = f.stat().st_mtime
+    return out
+
+
+def live_root_changes(
+    before: dict[Path, float], after: dict[Path, float]
+) -> list[Path]:
+    """Paths created, modified OR DELETED between two snapshots.
+
+    Public and pure so the watchdog's logic can be pinned by a test. The
+    fixture below asserted a prose claim about being mutation-pinned while
+    nothing in the repo enforced it -- and it only compared `after` against
+    `before`, so a test that DELETED a live entity page passed clean.
+    """
+    changed = [p for p, m in after.items() if before.get(p) != m]
+    changed += [p for p in before if p not in after]
+    return sorted(set(changed))
+
+
 @pytest.fixture(autouse=True)
 def _sandbox_phronesis_roots(
     tmp_path_factory: pytest.TempPathFactory, monkeypatch: pytest.MonkeyPatch
@@ -64,22 +91,11 @@ def _fail_if_a_test_wrote_to_a_live_root():
     unfalsifiable.
     """
 
-    def snapshot() -> dict[Path, float]:
-        out: dict[Path, float] = {}
-        for r in _LIVE_ROOTS:
-            if not r.exists():
-                continue
-            for f in r.rglob("*"):
-                if f.is_file():
-                    with contextlib.suppress(OSError):
-                        out[f] = f.stat().st_mtime
-        return out
-
-    before = snapshot()
+    before = _live_root_snapshot()
     yield
-    touched = [p for p, m in snapshot().items() if before.get(p) != m]
+    touched = live_root_changes(before, _live_root_snapshot())
     assert not touched, (
-        f"test wrote to a LIVE phronesis root ({len(touched)} file(s)): "
+        f"test mutated a LIVE phronesis root ({len(touched)} file(s)): "
         f"{[str(p) for p in touched[:5]]}"
     )
 

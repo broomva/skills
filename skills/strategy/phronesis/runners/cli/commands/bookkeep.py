@@ -77,10 +77,7 @@ def bookkeep(
     """
     # Late import keeps `phronesis --help` fast — extraction depends on
     # the whole engagement model + anonymizer.
-    from core.extraction.pipeline import (
-    _resolve_entity_graph_root,
-    extract_and_queue,
-)
+    from core.extraction.pipeline import extract_and_queue
 
     try:
         engagement = load_engagement(tenant_slug)
@@ -103,29 +100,30 @@ def bookkeep(
 
     # Dry-run: redirect writes to a tmp dir, never persist.
     #
-    # The entity root is MIRRORED, not blanked. Redirecting it to an empty tmp
-    # dir made `entity_path.exists()` always false, so dry-run reported
-    # "promoted: 6" for exactly the candidates a real run reports as
-    # "already on disk: 6" -- the command's whole job is to predict the real
-    # run, and it predicted the opposite. Symlinking the existing per-type
-    # directories preserves the exists() answer while keeping every write
-    # inside the temp dir.
+    # KNOWN LIMITATION, deliberately left in place. Because this root is empty,
+    # `entity_path.exists()` is always false here, so dry-run reports as
+    # "promoted" candidates a real run against a populated graph would report
+    # as "already on disk". It over-predicts promotions; it never under-predicts.
+    #
+    # An earlier attempt fixed that by symlinking the real per-type directories
+    # into this tmp root so exists() would answer truthfully. A symlinked
+    # directory is writable THROUGH, so `open(entity_path, "x")` resolved to the
+    # real path and --dry-run created 6 entity pages in the operator's live
+    # knowledge graph -- a strictly worse failure than the wrong prediction it
+    # fixed, in the flag whose contract is "never touch disk". Reverted.
+    #
+    # The correct fix is a read-only existence oracle (pass the real root as a
+    # probe consulted ONLY for the refusal decision, never as a write target).
+    # That is an API change to extract_and_queue and belongs in its own PR.
     if dry_run:
         import tempfile
 
         with tempfile.TemporaryDirectory() as td:
             tmp_root = Path(td)
-            tmp_entities = tmp_root / "entities"
-            tmp_entities.mkdir(parents=True, exist_ok=True)
-            real_entities = entity_graph_root or _resolve_entity_graph_root()
-            if real_entities.exists():
-                for sub in real_entities.iterdir():
-                    if sub.is_dir():
-                        (tmp_entities / sub.name).symlink_to(sub)
             result = extract_and_queue(
                 engagement,
                 queue_root=tmp_root / "queue",
-                entity_graph_root=tmp_entities,
+                entity_graph_root=tmp_root / "entities",
             )
             _print_summary(result, dry_run=True)
             if show_low_score:
@@ -170,8 +168,8 @@ def _print_summary(result, *, dry_run: bool) -> None:  # type: ignore[no-untyped
     # `queued_count` also counts candidates that scored >=5 but could not be
     # promoted, so subtract them: printing those under "score <5/9" states a
     # falsehood about their score.
-    unpromotable = len(getattr(result, "unpromotable", []))
-    skipped = len(getattr(result, "skipped_existing", []))
+    unpromotable = len(result.unpromotable)
+    skipped = len(result.skipped_existing)
     click.echo(
         "  Queued for review (score <5/9):  "
         + click.style(str(result.queued_count - unpromotable), fg="yellow")
@@ -185,21 +183,6 @@ def _print_summary(result, *, dry_run: bool) -> None:  # type: ignore[no-untyped
         click.echo(
             "  Already on disk (left untouched): "
             + click.style(str(skipped), fg="cyan")
-        )
-    # Accounting invariant. Without the two lines above a re-run over a
-    # populated graph printed "0 promoted, 0 queued" for six candidates and
-    # six queue writes -- the refusal was invisible.
-    accounted = (
-        result.promoted_count + result.queued_count + skipped + len(result.leaks)
-    )
-    if accounted != result.total_candidates:
-        click.echo(
-            click.style(
-                f"  [accounting] {accounted} accounted vs "
-                f"{result.total_candidates} candidates -- please report this.",
-                fg="red",
-            ),
-            err=True,
         )
     if result.leaks:
         click.echo(

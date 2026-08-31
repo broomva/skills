@@ -24,6 +24,11 @@ from tests.fixtures.tropico_renovables import build_tropico_engagement
 pytestmark = [pytest.mark.integration]
 
 
+def _entity_snapshot(root: Path) -> set[str]:
+    """Every entity page under `root`, as repo-relative strings."""
+    return {str(p.relative_to(root)) for p in root.rglob("*.md")}
+
+
 # Pre-emptively force the deterministic stub scorer for these tests.
 # Real bookkeeping scoring depends on the optional `mistune` import +
 # network LLM calls — both unsuitable for CI. The bookkeeping-integration
@@ -212,12 +217,17 @@ class TestBookkeepCli:
     ):
         monkeypatch.chdir(tmp_path)
         queue_dir = tmp_path / "queue"
+        entity_dir = tmp_path / "entities"
+        (entity_dir / "industry-pattern").mkdir(parents=True)
+        (entity_dir / "framework-refinement").mkdir(parents=True)
 
         eng = build_tropico_engagement()
         from runners.cli.io import journal_path, save_tenant
 
         save_tenant(eng.tenant.tenant_slug, eng.tenant)
         eng.journal.save_jsonl(journal_path(eng.tenant.tenant_slug))
+
+        entity_before = _entity_snapshot(entity_dir)
 
         runner = CliRunner()
         result = runner.invoke(
@@ -228,12 +238,21 @@ class TestBookkeepCli:
                 "--dry-run",
                 "--queue-root",
                 str(queue_dir),
+                "--entity-graph-root",
+                str(entity_dir),
             ],
         )
         assert result.exit_code == 0
         assert "[dry-run]" in result.output
         # dry-run uses an in-process tempdir; queue_dir is never written.
         assert not queue_dir.exists()
+        # ...and NEITHER is the entity graph. This half was missing, which is
+        # how a --dry-run that wrote 6 pages into the operator's live knowledge
+        # graph passed CI: the test asserted only about the queue.
+        assert entity_before == _entity_snapshot(entity_dir), (
+            "--dry-run PERSISTED entity page(s): "
+            f"{sorted(_entity_snapshot(entity_dir) - entity_before)}"
+        )
 
 
 class TestEntityStub:
@@ -402,15 +421,6 @@ class TestOperatorSummary:
     -- six candidates and six queue writes, reported as nothing.
     """
 
-    def _run_cli(self, slug: str, queue_root: Path, entity_root: Path, *extra: str):
-        from runners.cli.__main__ import cli
-
-        return CliRunner().invoke(
-            cli,
-            ["bookkeep", slug, "--queue-root", str(queue_root),
-             "--entity-graph-root", str(entity_root), *extra],
-        )
-
     def test_skipped_pages_are_reported_not_swallowed(
         self, queue_root: Path, entity_root: Path
     ) -> None:
@@ -458,46 +468,14 @@ class TestOperatorSummary:
         assert low.strip().endswith("0"), f"unpromotable leaked into the low-score line: {low}"
         assert "No self-contained claim" in text, text
 
-    def test_dry_run_predicts_the_real_run_over_a_populated_graph(
-        self, tmp_path: Path
-    ) -> None:
-        """--dry-run must answer the question a real run would answer.
-
-        It redirected the entity root to an EMPTY tmp dir, so
-        `entity_path.exists()` was always false and dry-run reported
-        "Promoted: 6" for exactly the candidates a real run reports as
-        "Already on disk: 6". The command exists to predict the real run and
-        predicted its opposite. The fix mirrors the existing per-type dirs by
-        symlink, so exists() answers truthfully while writes stay in tmp.
-        """
-        entities = tmp_path / "entities"
-        (entities / "industry-pattern").mkdir(parents=True)
-        (entities / "framework-refinement").mkdir(parents=True)
-        queue = tmp_path / "queue"
-
-        eng = build_nova_construction_engagement()
-        first = extract_and_queue(eng, queue_root=queue, entity_graph_root=entities)
-        assert first.promoted_count > 0, "fixture unreachable — nothing promoted"
-
-        # A second REAL run must skip everything.
-        real = extract_and_queue(eng, queue_root=queue, entity_graph_root=entities)
-        assert real.promoted_count == 0
-        assert len(real.skipped_existing) == first.promoted_count
-
-        # The dry-run mirror must reach the same verdict.
-        import tempfile
-
-        with tempfile.TemporaryDirectory() as td:
-            mirror = Path(td) / "entities"
-            mirror.mkdir(parents=True)
-            for sub in entities.iterdir():
-                if sub.is_dir():
-                    (mirror / sub.name).symlink_to(sub)
-            dry = extract_and_queue(
-                eng, queue_root=Path(td) / "queue", entity_graph_root=mirror
-            )
-        assert dry.promoted_count == real.promoted_count, (
-            f"dry-run predicts {dry.promoted_count} promotions, "
-            f"real run does {real.promoted_count}"
-        )
-        assert len(dry.skipped_existing) == len(real.skipped_existing)
+    # DELETED: test_dry_run_predicts_the_real_run_over_a_populated_graph.
+    #
+    # It built its own symlink mirror inline and called extract_and_queue
+    # directly, never invoking `bookkeep` -- so it tested a re-implementation
+    # of the dry-run block rather than the block itself, and passed while the
+    # real command wrote 6 pages into the live knowledge graph. A gate that
+    # re-implements the code under test is why that shipped.
+    #
+    # The prediction gap it described is real and now documented as a known
+    # limitation in bookkeep.py; the safe fix (a read-only existence oracle)
+    # is an API change and belongs in its own PR.

@@ -244,7 +244,7 @@ class TestQuoting:
     def test_event_ids_are_quoted(self):
         line = next(
             line for line in _render().split("\n")
-            if line.strip().startswith("- 01M0") or '\"01M0' in line
+            if line.strip().startswith("- 01M0") or '"01M0' in line
         )
         assert '"' in line, line
 
