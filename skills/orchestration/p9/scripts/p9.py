@@ -1719,11 +1719,14 @@ def append_state_event(event: PRStateEvent, *,
     of the store rather than of the supersede path.
 
     **The read and the append share one lock acquisition.** Two would leave
-    exactly the window this closes — demonstrated: against a 60k-row log with
-    the writers barrier-synchronized, dropping the lock buries the live
-    watcher every run. :func:`file_lock` is *not* reentrant (flock is per
-    open-file-description), so the write is inlined rather than delegating to
-    :func:`jsonl_append`.
+    exactly the window this closes. That is not merely argued: the race is
+    reproducible under a wide enough window — see
+    ``tests/reproductions/lock_necessity.py``, which buried the live watcher
+    3/3 runs with the lock removed and 0/3 with it held, against a 60k-row
+    log. It is kept out of the default suite because a timing race makes a
+    poor CI test, not because it is untested. :func:`file_lock` is *not*
+    reentrant (flock is per open-file-description), so the write is inlined
+    rather than delegating to :func:`jsonl_append`.
     """
     assert_legal_transition(PRState(event.from_state), PRState(event.to_state))
     # Normalize on write so the stored key is exactly what repo_key() reads.
@@ -1731,6 +1734,15 @@ def append_state_event(event: PRStateEvent, *,
     if isinstance(expect_owner, _Unset):
         jsonl_append(state_jsonl(), event.to_jsonl(), state_lock_path())
         return True
+    if not isinstance(expect_owner, str):
+        # The annotation says `str | _Unset`; nothing enforced it, so a caller
+        # passing None got a permanently unsatisfiable expectation instead of
+        # an error — `_owner_of` normalizes every stored owner to a string, so
+        # None can never match and every such write would be rejected forever,
+        # silently. Absence of an expectation is UNGUARDED, not None.
+        raise P9Error(
+            f"expect_owner must be a str (got {type(expect_owner).__name__}); "
+            f"pass UNGUARDED to append without an ownership check")
     with file_lock(state_lock_path()):
         rows, _ = jsonl_read_all(state_jsonl())
         want = repo_key(event.repo)

@@ -511,3 +511,29 @@ class TestNullOwnerRows:
                 watcher_id="orphan", session_id=SESSION, extra={}),
                 expect_owner=expectation) is False, (
                 f"expect_owner={expectation!r} resurrected a key with no row")
+
+
+class TestExpectOwnerIsValidated:
+    def test_none_is_rejected_loudly_not_silently(self, p9):
+        """`None` is permanently unsatisfiable, so it must be an error.
+
+        `_owner_of` normalizes every stored owner to a string, so a None
+        expectation can never match and every such write would be rejected
+        forever — silently, and indistinguishably from a genuine stale write.
+        Absence of an expectation is `UNGUARDED`, not `None`.
+        """
+        with pytest.raises(p9.P9Error, match="expect_owner must be a str"):
+            p9.append_state_event(p9.PRStateEvent(
+                ts=p9._utcnow(), pr=PR, repo=REPO,
+                from_state=p9.PRState.PUSHED.value,
+                to_state=p9.PRState.WATCHING.value,
+                watcher_id="w1", session_id=SESSION, extra={}),
+                expect_owner=None)
+
+    def test_unguarded_is_how_you_opt_out(self, p9):
+        assert p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=PR, repo=REPO,
+            from_state=p9.PRState.PUSHED.value,
+            to_state=p9.PRState.WATCHING.value,
+            watcher_id="w1", session_id=SESSION, extra={}),
+            expect_owner=p9.UNGUARDED) is True
