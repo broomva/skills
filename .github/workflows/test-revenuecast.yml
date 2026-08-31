@@ -1,0 +1,47 @@
+# skills/publishing/revenuecast shipped 23 tests that nothing executed: 7 of 35 skill dirs with tests/ had
+# no workflow (BRO-2404). phronesis was wired first because it had a live
+# defect; this is the rest of that set.
+name: test-revenuecast
+
+on:
+  pull_request:
+    paths:
+      - 'skills/publishing/revenuecast/**'
+      - '.github/workflows/test-revenuecast.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/publishing/revenuecast/**'
+      - '.github/workflows/test-revenuecast.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-revenuecast-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/publishing/revenuecast
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install deps
+        run: |
+          pip install -r requirements.txt
+          pip install pytest
+      - name: Tests
+        run: python -m pytest tests/ -q
