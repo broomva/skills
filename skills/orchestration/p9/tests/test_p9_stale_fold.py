@@ -219,3 +219,51 @@ class TestCmdWatchWiring:
         monkeypatch.setattr(p9.subprocess, "Popen", lambda *a, **kw: _Proc())
         assert p9.main(["watch", str(PR), "--repo", REPO]) == p9.EXIT_OK
         assert p9.current_pr_state(PR, REPO) is p9.PRState.GREEN
+
+
+OTHER_REPO = "broomva/other"
+
+
+class TestCasKeyIsRepoAndPr:
+    """The CAS owner lookup keys on ``(repo, pr)``, not the bare number.
+
+    BRO-1988 established that identity; a guard that forgets it would let one
+    repo's watcher reject another repo's fold for the same PR number. Every
+    other test here runs in a single repo, so that mutation is unreachable
+    from them — this is the case that reaches it.
+    """
+
+    @staticmethod
+    def _ev(p9, repo, frm, to, wid, *, guarded=False, pid=0):
+        return p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=PR, repo=repo,
+            from_state=frm, to_state=to, watcher_id=wid,
+            session_id=SESSION, extra={"pid": pid},
+        ), only_if_owner=guarded)
+
+    def test_another_repos_row_does_not_reject_this_folds(self, p9):
+        W = p9.PRState.WATCHING.value
+        A = p9.PRState.ABANDONED.value
+        P = p9.PRState.PUSHED.value
+        # Same PR number, two repos, two watchers. Order matters: the OTHER
+        # repo's row is written LAST, so a lookup that ignores repo reads
+        # `w-here` as the owner and wrongly rejects `w-there`'s own fold.
+        # Written the other way round, both implementations agree and the test
+        # proves nothing — which is how the first version of it let the mutant
+        # survive.
+        self._ev(p9, OTHER_REPO, P, W, "w-there", pid=2222)
+        self._ev(p9, REPO, P, W, "w-here", pid=1111)
+        assert self._ev(p9, OTHER_REPO, W, A, "w-there", guarded=True) is True
+        # And the other repo's watcher is untouched.
+        assert p9.current_pr_state(PR, REPO) is p9.PRState.WATCHING
+
+    def test_this_repos_stale_fold_is_still_rejected(self, p9):
+        """Negative control: the repo filter must not make the guard vacuous."""
+        W = p9.PRState.WATCHING.value
+        A = p9.PRState.ABANDONED.value
+        P = p9.PRState.PUSHED.value
+        self._ev(p9, REPO, P, W, "w1", pid=1111)
+        self._ev(p9, OTHER_REPO, P, W, "w-there", pid=3333)
+        self._ev(p9, REPO, W, A, "watch-supersede")
+        self._ev(p9, REPO, P, W, "w2", pid=2222)
+        assert self._ev(p9, REPO, W, A, "w1", guarded=True) is False
