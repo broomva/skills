@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import sys
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -373,6 +374,52 @@ def on_engagement_concluded(
 # ----------------------------------------------------------------------------
 
 
+# Maximum core_claim length accepted by `bookkeeping lint` (longer is an ERROR).
+_CORE_CLAIM_MAX = 140
+
+
+def _yaml_scalar(value: Any) -> str:
+    """Serialize a scalar as an explicitly-quoted YAML string.
+
+    JSON's string syntax is a subset of YAML's double-quoted style, so
+    `json.dumps` gives correct escaping for free.
+
+    This is not cosmetic. Interpolating a value bare leaves it a YAML *plain*
+    scalar, and a plain scalar cannot contain ": ". A framework-refinement
+    title like `RICE: business-pain weighting in construction` therefore
+    rendered as unparseable frontmatter — `yaml.safe_load` raises
+    `ScannerError: mapping values are not allowed here` — and every one of
+    the seven `rice-*` entities this writer produced was unreadable by the
+    knowledge graph until repaired by hand.
+    """
+    return json.dumps("" if value is None else str(value), ensure_ascii=False)
+
+
+def _derive_core_claim(candidate: ExtractionCandidate) -> str:
+    """First sentence of the candidate's own content, capped at the lint limit.
+
+    `bookkeeping lint` treats a missing `core_claim` as an ERROR, so a stub
+    that omits it can never be lint-clean no matter how it is formatted.
+
+    The claim is DERIVED, never invented: it is the leading sentence of the
+    candidate's anonymized content, which is the same text the body carries.
+    The operator rewrites it when polishing `status: candidate` → `active`.
+    """
+    text = " ".join((candidate.content or "").split())
+    if not text:
+        text = " ".join((candidate.title or candidate.slug or "").split())
+    if not text:
+        return "Extraction candidate awaiting operator polish."
+    match = re.search(r"(?<=[.!?])\s", text)
+    sentence = text[: match.start()] if match else text
+    if len(sentence) <= _CORE_CLAIM_MAX:
+        return sentence
+    clipped = sentence[: _CORE_CLAIM_MAX - 1]
+    if " " in clipped:
+        clipped = clipped[: clipped.rindex(" ")]
+    return clipped + "\u2026"
+
+
 def _render_entity_stub(
     candidate: ExtractionCandidate,
     score: _CandidateScore,
@@ -381,41 +428,62 @@ def _render_entity_stub(
     """Render a minimal entity-page stub for a promoted candidate.
 
     Format mirrors `~/broomva/skills/bookkeeping/templates/entity-page.md`
-    minimally — just enough for the file to be lint-clean. Operator
-    polishes before the entity surfaces in queries.
+    minimally. The output carries no `bookkeeping lint` ERRORs — parseable
+    frontmatter, a `core_claim` within the length cap, and a non-empty
+    `sources` list. It still emits lint WARNINGS (notably no `tags`, which
+    must come from the controlled vocabulary in `research/entities/_tags.md`
+    and cannot be guessed from an extraction). Operator polishes before the
+    entity surfaces in queries.
+
+    Every interpolated scalar goes through `_yaml_scalar`; see its docstring
+    for the failure this prevents.
 
     Stays in YAML frontmatter + plain markdown body. Per the workspace
     Format Discernment rule, entity pages are Category A (substrate),
     so this is markdown-only — never HTML.
     """
     industry_or_framework = (
-        f"  industry: {candidate.industry}"
+        f"  industry: {_yaml_scalar(candidate.industry)}"
         if candidate.industry
-        else f"  framework_ref: {candidate.framework_ref}"
+        else f"  framework_ref: {_yaml_scalar(candidate.framework_ref)}"
     )
-    signals_lines = "\n".join(f"  - {k}: {v}" for k, v in candidate.signals.items())
+    signals_lines = "\n".join(
+        f"  - {k}: {_yaml_scalar(v) if isinstance(v, str) else v}"
+        for k, v in candidate.signals.items()
+    )
+    tenant_slug = engagement.tenant.tenant_slug
+    # `sources` must be a non-empty list or lint errors. The extraction's own
+    # provenance events are the only real source, so name them rather than
+    # inventing a document slug that resolves to nothing.
+    source_lines = "\n".join(
+        f"  - {_yaml_scalar(f'phronesis:{tenant_slug}:{eid}')}"
+        for eid in candidate.provenance_event_ids
+    ) or f"  - {_yaml_scalar(f'phronesis:{tenant_slug}')}"
     body = candidate.content
 
     return f"""---
 type: {candidate.entity_type}
 slug: {candidate.slug}
-title: {candidate.title}
+title: {_yaml_scalar(candidate.title)}
+core_claim: {_yaml_scalar(_derive_core_claim(candidate))}
 status: candidate
+sources:
+{source_lines}
 provenance:
   source: phronesis-extraction
-  engagement_slug: {engagement.tenant.tenant_slug}
+  engagement_slug: {_yaml_scalar(tenant_slug)}
   event_ids:
-{chr(10).join(f"    - {eid}" for eid in candidate.provenance_event_ids)}
+{chr(10).join(f"    - {_yaml_scalar(eid)}" for eid in candidate.provenance_event_ids)}
 score:
   total: {score.total}/9
   novelty: {score.novelty}
   specificity: {score.specificity}
   relevance: {score.relevance}
-  method: {score.scoring_method}
+  method: {_yaml_scalar(score.scoring_method)}
 {industry_or_framework}
 signals:
 {signals_lines}
-created_at: {datetime.now(UTC).isoformat()}
+created_at: {_yaml_scalar(datetime.now(UTC).isoformat())}
 ---
 
 # {candidate.title}
