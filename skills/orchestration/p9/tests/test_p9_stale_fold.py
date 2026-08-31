@@ -258,11 +258,15 @@ class TestCasKeyIsRepoAndPr:
         W = p9.PRState.WATCHING.value
         A = p9.PRState.ABANDONED.value
         P = p9.PRState.PUSHED.value
-        # Same PR number, two repos, two watchers. Order matters: the OTHER
-        # repo's row is written LAST, so a lookup that ignores repo reads
-        # `w-here` as the owner and wrongly rejects `w-there`'s own fold.
-        # Written the other way round, both implementations agree and the test
-        # proves nothing — which is how the first version of it let the mutant
+        # Same PR number, two repos, two watchers. Order matters, and it is
+        # the reason this test can reach the mutant at all: `REPO`'s row is
+        # written LAST, so it is the last row for PR 42 overall. A lookup that
+        # ignores repo therefore reads `w-here` as the owner and wrongly
+        # rejects `w-there`'s fold of its own arm in OTHER_REPO.
+        #
+        # Written the other way round — the folder's own row last — both
+        # implementations read `w-there` and agree, and the test proves
+        # nothing. That is exactly how the first version of it let the mutant
         # survive.
         self._ev(p9, OTHER_REPO, P, W, "w-there", pid=2222)
         self._ev(p9, REPO, P, W, "w-here", pid=1111)
