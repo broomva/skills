@@ -45,6 +45,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -178,48 +179,46 @@ def safe_key(key: str | None) -> str | None:
 def payload_keys(payload: dict) -> list[str]:
     """Every identifier this hook payload could be keyed under.
 
-    `session_id` is the identifier. `transcript_path` carries the same id as its
-    filename stem, and is checked too so the gate still resolves if a harness
-    ever omits the field — a missing key would make the session silent, which is
-    a failure that looks exactly like working correctly.
+    `session_id` is the identifier and it is AUTHORITATIVE: when the harness
+    supplies it, it is the only key this hook will authorize under. The
+    transcript stem carries the same id and is used ONLY when `session_id` is
+    absent, so the gate still resolves if a harness ever omits the field.
+
+    Both were once returned together, on the reasoning that a missing key makes
+    a session silent and silence looks exactly like working correctly. But
+    authorizing against either of two identities means the stricter one never
+    binds: a payload of `{session_id: A, transcript_path: ".../B.jsonl"}` let
+    session A — which never opted in — resolve B's flag and speak. Opt-in is
+    per session, so a disagreement between the two fields is not a reason to
+    widen the search; it is a reason to trust the identifier.
     """
-    keys: list[str] = []
-    for candidate in (
-        payload.get("session_id"),
-        Path(str(payload["transcript_path"])).stem if payload.get("transcript_path") else None,
-    ):
-        k = safe_key(candidate if isinstance(candidate, str) else None)
-        if k and k not in keys:
-            keys.append(k)
-    return keys
-
-
-def project_slug(cwd: str) -> str:
-    """Claude Code's transcript directory name for a working directory."""
-    return re.sub(r"[^A-Za-z0-9]", "-", cwd)
-
-
-def newest_transcript_session(cwd: str | None = None) -> str | None:
-    """Last-resort session id: the newest transcript for this directory."""
-    base = Path.home() / ".claude" / "projects" / project_slug(cwd or os.getcwd())
-    try:
-        files = [p for p in base.glob("*.jsonl") if p.is_file()]
-    except OSError:
-        return None
-    if not files:
-        return None
-    return safe_key(max(files, key=lambda p: p.stat().st_mtime).stem)
+    candidate = payload.get("session_id")
+    if not isinstance(candidate, str) or not safe_key(candidate):
+        raw = payload.get("transcript_path")
+        candidate = Path(str(raw)).stem if raw else None
+    k = safe_key(candidate if isinstance(candidate, str) else None)
+    return [k] if k else []
 
 
 def cli_session_id(explicit: str | None = None) -> str | None:
-    """The session id of the Claude Code session running this command."""
+    """The session id of the Claude Code session running this command.
+
+    Only an explicit `--session` or the harness environment can answer this.
+    There was once a last-resort fallback to the newest transcript in the cwd,
+    which is wrong for a per-session flag: with two sessions open in one
+    directory, `--on` from session A landed on session B whenever B's
+    transcript happened to be touched more recently — enabling a session that
+    never asked and leaving the caller silent. Returning None makes the callers
+    print "pass --session <id>" and exit 2, which is a worse UX and a correct
+    one.
+    """
     if explicit:
         return safe_key(explicit)
     for var in ("CLAUDE_CODE_SESSION_ID", "CLAUDE_SESSION_ID"):
         k = safe_key(os.environ.get(var))
         if k:
             return k
-    return newest_transcript_session()
+    return None
 
 
 def session_started_at(session_id: str) -> float | None:
@@ -528,7 +527,9 @@ def install(dry_run: bool = False) -> int:
     flippable during it, so registration is global and the *flag* is what scopes
     it. A session that never opts in pays one no-op process per turn.
     """
-    command = str(HERE / "talkback-hook.py")
+    # Registered as a shell `command` string, so an install path containing a
+    # space ("/Users/x/skills copy/…") would otherwise split into argv.
+    command = shlex.quote(str(HERE / "talkback-hook.py"))
     try:
         settings = json.loads(SETTINGS.read_text()) if SETTINGS.exists() else {}
     except (OSError, json.JSONDecodeError) as e:
@@ -662,7 +663,7 @@ def cmd_on(argv: list[str]) -> int:
     sid = cli_session_id(_opt(argv, "--session"))
     if not sid:
         print("cannot determine the session id — pass --session <id>", file=sys.stderr)
-        print("  (CLAUDE_CODE_SESSION_ID is unset and no transcript matched this cwd)",
+        print("  (CLAUDE_CODE_SESSION_ID and CLAUDE_SESSION_ID are both unset)",
               file=sys.stderr)
         return 2
     config["cwd"] = os.getcwd()

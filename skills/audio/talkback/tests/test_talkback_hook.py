@@ -16,6 +16,7 @@ import importlib.util
 import io
 import json
 import os
+import shlex
 import sys
 import time
 from pathlib import Path
@@ -181,11 +182,27 @@ def test_env_output_overrides_the_stored_one(hook, tmp_path, monkeypatch, spoken
 # session identity
 # --------------------------------------------------------------------------
 
-def test_payload_keys_uses_session_id_and_transcript_stem(hook):
+def test_session_id_is_authoritative_over_a_disagreeing_transcript(hook):
+    """A disagreement is not a reason to widen the search.
+
+    This asserted `[SESSION_A, SESSION_B]` before BRO-2343: authorizing under
+    both identities meant A could resolve B's flag.
+    """
     keys = hook.payload_keys(
         {"session_id": SESSION_A, "transcript_path": f"/p/{SESSION_B}.jsonl"}
     )
-    assert keys == [SESSION_A, SESSION_B]
+    assert keys == [SESSION_A]
+
+
+def test_a_forged_transcript_path_cannot_borrow_another_sessions_optin(
+    hook, tmp_path, monkeypatch, spoken
+):
+    """The BLOCKER, end to end: B opted in, A did not, the payload names both."""
+    hook.write_config(hook.sessions_dir() / SESSION_B, {"mode": "always"})
+    payload = _stop_payload(tmp_path, SESSION_B)
+    payload["session_id"] = SESSION_A          # the session actually running
+    assert _fire(hook, monkeypatch, payload) == 0
+    assert spoken == [], "session A spoke off session B's opt-in"
 
 
 def test_transcript_stem_alone_resolves_the_session(hook, tmp_path, monkeypatch, spoken):
@@ -235,19 +252,31 @@ def test_cli_session_id_prefers_env(hook, monkeypatch):
     assert hook.cli_session_id(SESSION_B) == SESSION_B  # explicit still wins
 
 
-def test_project_slug_matches_claude_code_layout(hook):
-    assert hook.project_slug("/Users/x/broomva") == "-Users-x-broomva"
+def test_cli_refuses_to_guess_which_session_it_belongs_to(hook, monkeypatch):
+    """No env, no --session: return None rather than pick a transcript.
+
+    The removed fallback took the newest transcript in the cwd, so with two
+    sessions open in one directory `--on` from A landed on B.
+    """
+    monkeypatch.delenv("CLAUDE_CODE_SESSION_ID", raising=False)
+    monkeypatch.delenv("CLAUDE_SESSION_ID", raising=False)
+    assert hook.cli_session_id() is None
+    assert not hasattr(hook, "newest_transcript_session")
 
 
-def test_newest_transcript_is_the_fallback_session_id(hook, tmp_path, monkeypatch):
-    project = tmp_path / "home" / ".claude" / "projects" / hook.project_slug("/w/proj")
-    project.mkdir(parents=True)
-    old = project / f"{SESSION_B}.jsonl"
-    old.write_text("{}\n")
-    os.utime(old, (time.time() - 9999, time.time() - 9999))
-    (project / f"{SESSION_A}.jsonl").write_text("{}\n")
-    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
-    assert hook.newest_transcript_session("/w/proj") == SESSION_A
+def test_install_quotes_a_command_path_containing_a_space(hook, tmp_path, monkeypatch):
+    """An install under "/…/skills copy/…" must not split into argv."""
+    spaced = tmp_path / "skills copy" / "scripts"
+    spaced.mkdir(parents=True)
+    monkeypatch.setattr(hook, "HERE", spaced)
+    assert hook.install() == 0
+    settings = json.loads(hook.SETTINGS.read_text())
+    cmds = [h["command"]
+            for matchers in settings["hooks"].values()
+            for m in matchers for h in m["hooks"]]
+    assert cmds, "install registered nothing"
+    for c in cmds:
+        assert shlex.split(c) == [str(spaced / "talkback-hook.py")], c
 
 
 # --------------------------------------------------------------------------
