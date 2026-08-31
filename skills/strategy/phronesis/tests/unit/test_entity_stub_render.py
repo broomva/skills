@@ -149,9 +149,20 @@ class TestDeriveCoreClaim:
         assert claim.endswith("…")
 
     def test_clip_does_not_split_a_word(self):
-        cand = _candidate(content="alpha " * 100)
+        """Assert on the ACTUAL final token, not on a guessed split point.
+
+        The first version of this test used `"alpha "` and asserted
+        `"alph…" not in claim`. With a 6-char repeat the clip lands on
+        `"a…"`, so the assertion held whether or not the word-boundary
+        trim ran — it survived the mutation that deleted the trim. Pin the
+        last token instead: it must be a whole word from the source.
+        """
+        cand = _candidate(content="alphabet " * 40)
         claim = _derive_core_claim(cand)
-        assert "alph…" not in claim
+        assert claim.endswith("\u2026")
+        tail = claim[:-1]
+        assert not tail.endswith(" "), "left a dangling separator before the ellipsis"
+        assert tail.split(" ")[-1] == "alphabet", f"clipped mid-word: {tail[-12:]!r}"
 
     def test_falls_back_to_title_when_content_empty(self):
         cand = _candidate(content="", title="Fallback title")
