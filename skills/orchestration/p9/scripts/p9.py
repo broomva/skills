@@ -624,6 +624,46 @@ def is_terminal(state: PRState) -> bool:
     return state in {PRState.MERGED, PRState.ESCALATED, PRState.ABANDONED}
 
 
+# BRO-2305. What the concurrency ceiling counts over — deliberately NOT
+# `is_terminal`. The ceiling bounds *watcher work in flight*, not *open PRs*.
+#
+# A row parked in GREEN or MERGE_READY has no live watcher process and no
+# transition p9 itself can make: it is waiting on something outside p9 — the
+# merge gate, a reviewer, a policy class that does not match. Counting those
+# meant one PR that went green and did not merge pinned the slot forever, and
+# since `watch` is the only transition into GREEN, the whole lifecycle became
+# unreachable for that repo. That is the identical failure BRO-1988 fixed on
+# the repo axis, reappearing on the state axis, and its rationale applies
+# verbatim: an unreachable lifecycle is a worse failure than one extra
+# concurrent watcher.
+#
+# The red states are deliberately NOT exempt, and the distinction is the whole
+# design. GREEN/MERGE_READY mean *success awaiting an external gate*;
+# RED_CLASSIFIED/RED_UNCLASSIFIED mean *a failure needing attention*. Holding
+# the slot on red is intentional back-pressure — do not start watching new
+# work while something is broken — and `TestRewatchCeiling::
+# test_distinct_pr_still_blocked_at_ceiling` pins exactly that.
+#
+# Kept separate from `is_terminal` on purpose: `open_prs`, `cleanup`, `reap`,
+# `status` and the governor all consume that predicate, and widening it would
+# change all of them together. This one has exactly one caller.
+_CEILING_EXEMPT: frozenset[PRState] = frozenset({
+    PRState.GREEN,
+    PRState.MERGE_READY,
+})
+
+
+def counts_against_ceiling(state: PRState) -> bool:
+    """Does a row in ``state`` occupy a concurrency slot?
+
+    True for states where p9 still has work to do or a failure to answer for
+    — PUSHED, WATCHING, HEALING, RED_CLASSIFIED, RED_UNCLASSIFIED. False for
+    terminals, and for the parked states in ``_CEILING_EXEMPT`` where p9 has
+    concluded *successfully* and an external actor must move first.
+    """
+    return not is_terminal(state) and state not in _CEILING_EXEMPT
+
+
 class WaitState(str, enum.Enum):
     """States for generic (non-PR) waits — `p9 wait-for` (BRO-1701).
 
@@ -1604,11 +1644,134 @@ def _row_repo(row: dict[str, Any]) -> str:
     return row.get("repo") or ""
 
 
-def append_state_event(event: PRStateEvent) -> None:
+def _owner_of(row: dict[str, Any]) -> str:
+    """The ``watcher_id`` a row records, normalized to a string.
+
+    A row may carry ``watcher_id: null`` (or omit it). Readers and writers must
+    agree on what that means, or a caller reading `None` off a row can never
+    match the `"None"` a naive `str()` would produce on the other side —
+    which made such rows permanently unguardable-past. Both sides go through
+    here, so absence and null are the same empty string everywhere.
+    """
+    return str(row.get("watcher_id") or "")
+
+
+class _Unset:
+    """Sentinel: no ownership expectation was expressed."""
+    def __repr__(self) -> str:          # pragma: no cover - debug aid
+        return "<unguarded>"
+
+
+UNGUARDED = _Unset()
+
+
+class StaleWriteRejected(P9Error):
+    """A guarded append lost the key it expected to own."""
+    code = EXIT_DEGRADED
+
+
+def append_state_event(event: PRStateEvent, *,
+                       expect_owner: str | _Unset = UNGUARDED) -> bool:
+    """Append a state event. Returns True if it was written.
+
+    ``expect_owner`` (BRO-2374) makes the append a **compare-and-swap**: it
+    applies only if the latest row for ``(repo, pr)`` carries exactly that
+    ``watcher_id``. Anything else — a different owner, or **no row at all** —
+    rejects the write and returns False.
+
+    Passing the owner *explicitly* rather than reading it off the event is
+    what lets a transition assign a **new** ``watcher_id`` while still proving
+    it owned the old one; ``rearm`` does exactly that. An implicit
+    ``event.watcher_id`` check could not express it.
+
+    **Fail-closed on a missing row.** The contract is "I still own this key",
+    and a writer with no row to point at cannot prove ownership — the log may
+    have been rotated, truncated, or hand-edited while an orphan watcher was
+    still running, and letting it recreate the key would resurrect exactly the
+    state the guard exists to prevent. An earlier revision failed *open* here
+    on the reasoning that there was "nothing to be stale against"; that
+    contradicted the contract the docstring stated one line above it.
+
+    Omitting ``expect_owner`` leaves the append unguarded. Two kinds of write
+    legitimately do so:
+
+    * an **initial arm**, which by definition has no prior row to own — a
+      guarded creation would always fail closed;
+    * an **explicit takeover** — ``--force`` supersede, operator ``abandon`` —
+      whose entire purpose is to seize a key from another watcher.
+
+    Everything else is a transition derived from a row it read earlier, and
+    should name the owner it expects to still find.
+
+    Why this is needed at all: an append-only log with last-row-wins semantics
+    has nowhere to express *"write only if this key is still mine"*, so a
+    superseded watcher's late fold buried a live one:
+
+        w1 arms                 -> (WATCHING, w1)
+        --force supersedes it   -> (ABANDONED, watch-supersede)
+        w2 arms as replacement  -> (WATCHING, w2)
+        w1's orphan folds late  -> (ABANDONED, w1)     <- stale write
+
+    ``open_prs`` keeps only the last row per key, so w1's late ABANDONED
+    removed w2 from the open set while w2 was still running; the ceiling then
+    counted zero and admitted another watcher against a live one. Every row
+    there is valid and every transition legal, which is why this is a property
+    of the store rather than of the supersede path.
+
+    **The read and the append share one lock acquisition.** Two would leave
+    exactly the window this closes. That is not merely argued: the race is
+    reproducible under a wide enough window — see
+    ``tests/reproductions/lock_necessity.py``, which buried the live watcher
+    3/3 runs with the lock removed and 0/3 with it held, against a 60k-row
+    log. It is kept out of the default suite because a timing race makes a
+    poor CI test, not because it is untested. :func:`file_lock` is *not*
+    reentrant (flock is per open-file-description), so the write is inlined
+    rather than delegating to :func:`jsonl_append`.
+    """
     assert_legal_transition(PRState(event.from_state), PRState(event.to_state))
     # Normalize on write so the stored key is exactly what repo_key() reads.
     event.repo = canonical_repo(event.repo)
-    jsonl_append(state_jsonl(), event.to_jsonl(), state_lock_path())
+    if isinstance(expect_owner, _Unset):
+        jsonl_append(state_jsonl(), event.to_jsonl(), state_lock_path())
+        return True
+    if not isinstance(expect_owner, str):
+        # The annotation says `str | _Unset`; nothing enforced it, so a caller
+        # passing None got a permanently unsatisfiable expectation instead of
+        # an error — `_owner_of` normalizes every stored owner to a string, so
+        # None can never match and every such write would be rejected forever,
+        # silently. Absence of an expectation is UNGUARDED, not None.
+        raise P9Error(
+            f"expect_owner must be a str (got {type(expect_owner).__name__}); "
+            f"pass UNGUARDED to append without an ownership check")
+    with file_lock(state_lock_path()):
+        rows, _ = jsonl_read_all(state_jsonl())
+        want = repo_key(event.repo)
+        # `found` is tracked separately from `owner` on purpose. Folding both
+        # into one nullable value collapsed two different facts — "no row for
+        # this key" and "a row whose watcher_id is null" — and got each one
+        # wrong: a vanished key compared equal to a null expectation and failed
+        # OPEN, while a stored null stringified to "None" and could never match
+        # the None the caller read out of it, making such a row permanently
+        # unreapable.
+        found = False
+        owner = ""
+        for r in rows:
+            if r.get("pr") != event.pr:
+                continue
+            if repo_key(r.get("repo", "")) != want:
+                continue
+            found = True
+            owner = _owner_of(r)
+        if not found or owner != expect_owner:
+            return False
+        path = state_jsonl()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        payload = event.to_jsonl()
+        with path.open("a", encoding="utf-8") as f:
+            f.write(payload)
+            if not payload.endswith("\n"):
+                f.write("\n")
+        return True
 
 
 def current_pr_state(pr: int, repo: str | None = None) -> PRState | None:
@@ -2157,7 +2320,12 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
                    **({"log": (row.get("extra") or {}).get("log")}
                       if (row.get("extra") or {}).get("log") else {})},
         )
-        append_state_event(event)
+        # CAS (BRO-2374): `row` is a snapshot. Between reading it and writing
+        # here, a `watch --adopt` or `rearm` may have handed the key to a live
+        # replacement — reaping then folds the *replacement* terminal on the
+        # strength of the dead watcher's pid.
+        if not append_state_event(event, expect_owner=_owner_of(row)):
+            continue
         # Termination invariant (BRO-1701): SIGKILL and machine-death can't be
         # trapped by the watcher itself — the reap path is where those become
         # a report + notification instead of a silent slot leak.
@@ -2207,6 +2375,9 @@ def enforce_concurrency_ceiling(
     non-terminal row — e.g. a RED fold from a transient gh error — would
     block its own re-watch at max_concurrent_prs=1."""
     rows = open_prs(session_id=session_id)
+    # BRO-2305: bound watcher work in flight, not open PRs.
+    rows = [r for r in rows
+            if counts_against_ceiling(PRState(r["to_state"]))]
     if repo is not None:
         want = repo_key(repo)
         rows = [r for r in rows if repo_key(r.get("repo", "")) == want]
@@ -2617,6 +2788,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     foreground = not (args.detach or args.dry_run)
     outcome: tuple[PRState, str, dict[str, Any]] | None = None
     reraise: BaseException | None = None
+    fold_rejected = False
 
     def _on_signal(signum: int, _frame: Any) -> None:
         raise _WaitInterrupted(signum)
@@ -2697,11 +2869,32 @@ def cmd_watch(args: argparse.Namespace) -> int:
             from_state=PRState.WATCHING.value, to_state=next_state.value,
             watcher_id=watcher_id, attempt=0, session_id=sid, extra=extra,
         )
-        append_state_event(event)
-        emit_termination_report(
-            pr_termination_report(dataclasses.asdict(event), cause=cause))
+        # CAS (BRO-2374): if this watcher was superseded while its `gh` child
+        # was still running, the key now belongs to the replacement and this
+        # fold is stale. Dropping it is the point — applying it would bury a
+        # live watcher and hand its slot to a third.
+        if append_state_event(event, expect_owner=watcher_id):
+            emit_termination_report(
+                pr_termination_report(dataclasses.asdict(event), cause=cause))
+        else:
+            # The termination invariant (BRO-1701) says EVERY exit path emits
+            # a report. A dropped fold is still a termination — of *this*
+            # watcher — so it reports as one, with the supersession as its
+            # cause. Printing to stderr instead would leave consumers of
+            # termination reports with no completion for this watcher at all.
+            fold_rejected = True
+            report = pr_termination_report(
+                dataclasses.asdict(event), cause=f"superseded:{cause}")
+            report["state"] = "SUPERSEDED"
+            report["next_action"] = (
+                "none — a live watcher owns this PR; this fold was discarded")
+            emit_termination_report(report)
+    # `reraise` must survive the rejection branch: an early return here would
+    # swallow the very exception that terminated the watcher.
     if reraise is not None:
         raise reraise
+    if fold_rejected:
+        return EXIT_DEGRADED
     if next_state is PRState.ABANDONED:
         return EXIT_DEGRADED
     rc = int(extra.get("gh_exit_code", 0))
@@ -2989,7 +3182,11 @@ def cmd_merge_ready(args: argparse.Namespace) -> int:
     # answered "not GREEN (current=ABANDONED)" for a freshly-green
     # broomva/workspace#256 because GetStimulus/sri#256 owned that key.
     repo = resolve_repo(args.repo)
-    state = current_pr_state(pr, repo)
+    # Read the owner alongside the state: the merge-ready decision straddles a
+    # network call, which is the widest read-then-append window in this file.
+    green_row = latest_row(pr, repo)
+    green_owner = _owner_of(green_row or {})
+    state = PRState(green_row["to_state"]) if green_row else None
     if state != PRState.GREEN:
         print(
             f"PR #{pr} ({repo or 'repo-unknown'}) not GREEN "
@@ -3028,7 +3225,15 @@ def cmd_merge_ready(args: argparse.Namespace) -> int:
         attempt=0,
         extra={"merge_verdict": verdict} if verdict else {"merge_verdict": "skipped (--no-verify)"},
     )
-    append_state_event(event)
+    # CAS (BRO-2374): the verdict above is a network round-trip. A re-arm that
+    # landed during it owns the key now, and writing MERGE_READY over its
+    # WATCHING row would authorize a merge against state nobody is watching.
+    if not append_state_event(event, expect_owner=green_owner):
+        print(f"PR #{pr} ({repo or 'repo-unknown'}) changed hands while the "
+              f"merge verdict was being fetched (was watcher {green_owner!r}); "
+              f"not marking MERGE_READY. Re-run once it settles.",
+              file=sys.stderr)
+        return EXIT_DEGRADED
     print(f"PR #{pr} marked MERGE_READY (control metalayer authorizes merge)")
     return EXIT_OK
 
@@ -3281,7 +3486,17 @@ def cmd_rearm(args: argparse.Namespace) -> int:
                     extra={"reason": "repo-less row superseded by rearm",
                            "dead_pid": pid},
                 )
-                append_state_event(stale)
+                # CAS (BRO-2374): this writes watcher_id="rearm" while
+                # needing to prove it owned the row it read — the case an
+                # implicit event.watcher_id check cannot express, and why
+                # expect_owner is an explicit argument.
+                if not append_state_event(
+                        stale, expect_owner=_owner_of(row)):
+                    action["skipped"] = (
+                        "row changed hands before the fold landed; left to "
+                        "its new owner")
+                    actions.append(action)
+                    continue
                 emit_termination_report(pr_termination_report(
                     dataclasses.asdict(stale), cause="reaped:dead-watcher"))
                 action["skipped"] = (
