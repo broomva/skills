@@ -37,6 +37,7 @@ latest row for the key carries a different ``watcher_id``.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -464,3 +465,49 @@ class TestRejectedFoldDoesNotSwallowTheCrash:
 
         # ...and the live replacement is still intact.
         assert p9.latest_row(PR, REPO)["watcher_id"] == "w-live"
+
+
+class TestNullOwnerRows:
+    """A row may carry ``watcher_id: null``, and both sides must agree.
+
+    Folding "no row" and "row with a null owner" into one nullable value got
+    each one wrong in opposite directions: a vanished key compared equal to a
+    null expectation and failed OPEN, while a stored null stringified to
+    ``"None"`` and could never match the ``None`` a caller read off the row —
+    making such a row permanently unreapable.
+    """
+
+    @staticmethod
+    def _raw_row(p9, watcher_id, state="WATCHING"):
+        """Write a row directly, bypassing the dataclass, so `watcher_id` can
+        be genuinely null the way a hand-edited or older log has it."""
+        row = {"ts": "2020-01-01T00:00:00+00:00", "pr": PR, "repo": REPO,
+               "from_state": "PUSHED", "to_state": state,
+               "watcher_id": watcher_id, "attempt": 0, "evaluator_score": None,
+               "extra": {"pid": 999999}, "session_id": SESSION}
+        p9.jsonl_append(p9.state_jsonl(), json.dumps(row), p9.state_lock_path())
+
+    def test_a_null_owner_row_can_still_be_folded(self, p9):
+        """The reap path must not be permanently blocked by a null owner."""
+        self._raw_row(p9, None)
+        row = p9.latest_row(PR, REPO)
+        assert p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=PR, repo=REPO,
+            from_state=p9.PRState.WATCHING.value,
+            to_state=p9.PRState.ABANDONED.value,
+            watcher_id="reap", session_id=SESSION, extra={}),
+            expect_owner=p9._owner_of(row)) is True
+
+    def test_a_missing_owner_field_normalizes_the_same_as_null(self, p9):
+        assert p9._owner_of({}) == p9._owner_of({"watcher_id": None}) == ""
+
+    def test_a_vanished_key_never_fails_open(self, p9):
+        """Nothing on disk at all: no expectation may be satisfied."""
+        for expectation in ("", "w1", "reap"):
+            assert p9.append_state_event(p9.PRStateEvent(
+                ts=p9._utcnow(), pr=PR, repo=REPO,
+                from_state=p9.PRState.WATCHING.value,
+                to_state=p9.PRState.ABANDONED.value,
+                watcher_id="orphan", session_id=SESSION, extra={}),
+                expect_owner=expectation) is False, (
+                f"expect_owner={expectation!r} resurrected a key with no row")

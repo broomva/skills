@@ -1644,6 +1644,18 @@ def _row_repo(row: dict[str, Any]) -> str:
     return row.get("repo") or ""
 
 
+def _owner_of(row: dict[str, Any]) -> str:
+    """The ``watcher_id`` a row records, normalized to a string.
+
+    A row may carry ``watcher_id: null`` (or omit it). Readers and writers must
+    agree on what that means, or a caller reading `None` off a row can never
+    match the `"None"` a naive `str()` would produce on the other side —
+    which made such rows permanently unguardable-past. Both sides go through
+    here, so absence and null are the same empty string everywhere.
+    """
+    return str(row.get("watcher_id") or "")
+
+
 class _Unset:
     """Sentinel: no ownership expectation was expressed."""
     def __repr__(self) -> str:          # pragma: no cover - debug aid
@@ -1659,7 +1671,7 @@ class StaleWriteRejected(P9Error):
 
 
 def append_state_event(event: PRStateEvent, *,
-                       expect_owner: str | None | _Unset = UNGUARDED) -> bool:
+                       expect_owner: str | _Unset = UNGUARDED) -> bool:
     """Append a state event. Returns True if it was written.
 
     ``expect_owner`` (BRO-2374) makes the append a **compare-and-swap**: it
@@ -1680,10 +1692,16 @@ def append_state_event(event: PRStateEvent, *,
     on the reasoning that there was "nothing to be stale against"; that
     contradicted the contract the docstring stated one line above it.
 
-    Omitting ``expect_owner`` leaves the append unguarded, which is correct
-    for an **explicit takeover** — ``--force`` supersede, operator ``abandon``
-    — whose entire purpose is to seize a key from another watcher. Those are
-    the only writes that should omit it.
+    Omitting ``expect_owner`` leaves the append unguarded. Two kinds of write
+    legitimately do so:
+
+    * an **initial arm**, which by definition has no prior row to own — a
+      guarded creation would always fail closed;
+    * an **explicit takeover** — ``--force`` supersede, operator ``abandon`` —
+      whose entire purpose is to seize a key from another watcher.
+
+    Everything else is a transition derived from a row it read earlier, and
+    should name the owner it expects to still find.
 
     Why this is needed at all: an append-only log with last-row-wins semantics
     has nowhere to express *"write only if this key is still mine"*, so a
@@ -1716,14 +1734,23 @@ def append_state_event(event: PRStateEvent, *,
     with file_lock(state_lock_path()):
         rows, _ = jsonl_read_all(state_jsonl())
         want = repo_key(event.repo)
-        owner: str | None = None
+        # `found` is tracked separately from `owner` on purpose. Folding both
+        # into one nullable value collapsed two different facts — "no row for
+        # this key" and "a row whose watcher_id is null" — and got each one
+        # wrong: a vanished key compared equal to a null expectation and failed
+        # OPEN, while a stored null stringified to "None" and could never match
+        # the None the caller read out of it, making such a row permanently
+        # unreapable.
+        found = False
+        owner = ""
         for r in rows:
             if r.get("pr") != event.pr:
                 continue
             if repo_key(r.get("repo", "")) != want:
                 continue
-            owner = str(r.get("watcher_id", ""))
-        if owner != expect_owner:
+            found = True
+            owner = _owner_of(r)
+        if not found or owner != expect_owner:
             return False
         path = state_jsonl()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -2285,7 +2312,7 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
         # here, a `watch --adopt` or `rearm` may have handed the key to a live
         # replacement — reaping then folds the *replacement* terminal on the
         # strength of the dead watcher's pid.
-        if not append_state_event(event, expect_owner=row.get("watcher_id", "")):
+        if not append_state_event(event, expect_owner=_owner_of(row)):
             continue
         # Termination invariant (BRO-1701): SIGKILL and machine-death can't be
         # trapped by the watcher itself — the reap path is where those become
@@ -3146,7 +3173,7 @@ def cmd_merge_ready(args: argparse.Namespace) -> int:
     # Read the owner alongside the state: the merge-ready decision straddles a
     # network call, which is the widest read-then-append window in this file.
     green_row = latest_row(pr, repo)
-    green_owner = str((green_row or {}).get("watcher_id", ""))
+    green_owner = _owner_of(green_row or {})
     state = PRState(green_row["to_state"]) if green_row else None
     if state != PRState.GREEN:
         print(
@@ -3452,7 +3479,7 @@ def cmd_rearm(args: argparse.Namespace) -> int:
                 # implicit event.watcher_id check cannot express, and why
                 # expect_owner is an explicit argument.
                 if not append_state_event(
-                        stale, expect_owner=row.get("watcher_id", "")):
+                        stale, expect_owner=_owner_of(row)):
                     action["skipped"] = (
                         "row changed hands before the fold landed; left to "
                         "its new owner")
