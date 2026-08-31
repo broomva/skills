@@ -421,3 +421,46 @@ class TestEverySnapshotDerivedTransitionIsGuarded:
                                         "unresolved_threads": 0})
         assert p9.main(["merge-ready", str(PR), "--repo", REPO]) == p9.EXIT_OK
         assert p9.current_pr_state(PR, REPO) is p9.PRState.MERGE_READY
+
+
+class TestRejectedFoldDoesNotSwallowTheCrash:
+    """A dropped fold must not eat the exception that caused it.
+
+    Round 1 of this change returned ``EXIT_DEGRADED`` from the rejection
+    branch, which sits *above* ``if reraise is not None: raise reraise`` — so a
+    watcher that crashed **and** was superseded reported a tidy degraded exit
+    and lost the crash entirely. Reordering alone is invisible to every other
+    test here, so it is pinned directly.
+    """
+
+    def test_a_crash_propagates_even_when_the_fold_is_rejected(self, p9,
+                                                               monkeypatch):
+        boom = RuntimeError("gh died")
+
+        class _Proc:
+            pid = 99999
+
+            def wait(self_inner):
+                # Lose the key first, then crash: both conditions at once.
+                p9.append_state_event(p9.PRStateEvent(
+                    ts=p9._utcnow(), pr=PR, repo=REPO,
+                    from_state=p9.PRState.WATCHING.value,
+                    to_state=p9.PRState.ABANDONED.value,
+                    watcher_id="watch-supersede", session_id=SESSION, extra={}))
+                p9.append_state_event(p9.PRStateEvent(
+                    ts=p9._utcnow(), pr=PR, repo=REPO,
+                    from_state=p9.PRState.PUSHED.value,
+                    to_state=p9.PRState.WATCHING.value,
+                    watcher_id="w-live", session_id=SESSION,
+                    extra={"pid": 2222}))
+                raise boom
+
+            def terminate(self_inner):
+                pass
+
+        monkeypatch.setattr(p9.subprocess, "Popen", lambda *a, **kw: _Proc())
+        with pytest.raises(RuntimeError, match="gh died"):
+            p9.main(["watch", str(PR), "--repo", REPO])
+
+        # ...and the live replacement is still intact.
+        assert p9.latest_row(PR, REPO)["watcher_id"] == "w-live"
