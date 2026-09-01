@@ -1,0 +1,13 @@
+{
+  "name": "@broomva/forkable-shell",
+  "private": true,
+  "type": "module",
+  "description": "Disposable, forkable virtual shell for agent sessions, backed by just-bash",
+  "scripts": {
+    "test": "node --test 'tests/**/*.test.mjs'"
+  },
+  "dependencies": {
+    "just-bash": "^3.4.2",
+    "@modelcontextprotocol/sdk": "^1.30.0"
+  }
+}

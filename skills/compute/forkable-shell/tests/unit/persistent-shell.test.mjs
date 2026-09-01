@@ -1,0 +1,75 @@
+import { test } from "node:test";
+import assert from "node:assert/strict";
+import { Bash, InMemoryFs } from "just-bash";
+import { PersistentShell } from "../../scripts/persistent-shell.mjs";
+
+test("BASELINE: plain Bash loses env and cwd between exec() calls", async () => {
+  const b = new Bash();
+  await b.exec("export TOKEN=abc123");
+  assert.equal((await b.exec('echo "[$TOKEN]"')).stdout.trim(), "[]",
+    "if this ever passes, just-bash changed and PersistentShell may be unnecessary");
+  await b.exec("cd /tmp");
+  assert.equal((await b.exec("pwd")).stdout.trim(), "/home/user");
+});
+
+test("env survives across exec calls", async () => {
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  await sh.exec("export TOKEN=abc123");
+  assert.equal((await sh.exec('echo "[$TOKEN]"')).stdout.trim(), "[abc123]");
+});
+
+test("cwd survives and compounds", async () => {
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  await sh.exec("mkdir -p /work/deep && cd /work/deep");
+  assert.equal((await sh.exec("pwd")).stdout.trim(), "/work/deep");
+  assert.equal((await sh.exec("cd .. && pwd")).stdout.trim(), "/work");
+});
+
+test("exit code is preserved and stdout is not polluted by state capture", async () => {
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  const r = await sh.exec("echo out; exit 42");
+  assert.equal(r.exitCode, 42);
+  assert.equal(r.stdout, "out\n");
+});
+
+test("values containing spaces and quotes round-trip", async () => {
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  await sh.exec(`export A=1; export B='two words'`);
+  assert.equal((await sh.exec('echo "$A|$B"')).stdout.trim(), "1|two words");
+});
+
+test("rc-registered functions replay (declare -f cannot recover them)", async () => {
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  sh.addRc('greet() { echo "hi $1"; }');
+  assert.equal((await sh.exec("greet world")).stdout.trim(), "hi world");
+});
+
+test("declare -f returns a STUB, which is why addRc exists", async () => {
+  const b = new Bash();
+  const out = (await b.exec('f(){ echo secret_body; }\ndeclare -f')).stdout;
+  assert.ok(!out.includes("secret_body"),
+    "if the body is emitted, functions could be captured from the guest and addRc could be dropped");
+});
+
+test("state must be restored PAIRED with its filesystem", async () => {
+  const fs = new InMemoryFs();
+  const sh = new PersistentShell({ fs });
+  await sh.exec("mkdir -p /work/proj && cd /work/proj && export T=tok");
+  const saved = JSON.parse(JSON.stringify(sh.getState()));
+  // unpaired: same shell state, a filesystem that never had /work/proj
+  const orphan = new PersistentShell({ fs: new InMemoryFs() }).loadState(saved);
+  assert.notEqual((await orphan.exec("pwd")).stdout.trim(), "/work/proj");
+  // paired: same filesystem
+  const paired = new PersistentShell({ fs }).loadState(saved);
+  assert.equal((await paired.exec('echo "$T@$(pwd)"')).stdout.trim(), "tok@/work/proj");
+});
+
+test("state file lives outside the snapshot prefix", async () => {
+  const { snapshot } = await import("../../scripts/fs-snapshot.mjs");
+  const fs = new InMemoryFs();
+  const sh = new PersistentShell({ fs });
+  await sh.exec("mkdir -p /work && echo x > /work/a.txt && cd /work");
+  const snap = await snapshot(fs, "/work");
+  assert.ok(!JSON.stringify(snap).includes("forkable-shell-state"),
+    "shell bookkeeping must not leak into the captured world");
+});
