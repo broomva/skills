@@ -90,17 +90,33 @@ test("REGRESSION: fork refuses a destination aliased to the trunk", async () => 
   assert.equal(nfs.readFileSync(trunk, "utf8"), before);
 });
 
-test("REGRESSION: forking over a pre-existing dest lands on a fresh inode", async () => {
-  const d = tmp(), trunk = path.join(d, "t.json"), dst = path.join(d, "b.json");
+test("REGRESSION: forking over a pre-existing dest does not write THROUGH it", async () => {
+  // The dest is hardlinked to an unrelated third file. copyFileSync opens an
+  // existing dest with O_TRUNC and keeps its inode, so without an unlink the copy
+  // lands in `bystander` too. Comparing trunk-vs-dest inodes would NOT catch this:
+  // those are always different, which made the first version of this test vacuous
+  // (mutant M9 survived it).
+  const d = tmp(), trunk = path.join(d, "t.json");
+  const dst = path.join(d, "b.json"), bystander = path.join(d, "unrelated.json");
   const t = await World.open(trunk);
   await t.exec("echo trunk > /work/t.txt");
-  nfs.writeFileSync(dst, "stale content");          // plain pre-existing file
+
+  nfs.writeFileSync(bystander, "UNRELATED");
+  nfs.linkSync(bystander, dst);                     // dest shares bystander's inode
+  const dstInodeBefore = nfs.statSync(dst).ino;
   const beforeTrunk = nfs.readFileSync(trunk, "utf8");
+
   World.fork(trunk, dst);
-  assert.notEqual(nfs.statSync(trunk).ino, nfs.statSync(dst).ino, "branch shares the trunk's inode");
+
+  assert.equal(nfs.readFileSync(bystander, "utf8"), "UNRELATED",
+    "fork wrote through the destination into an unrelated hardlinked file");
+  assert.notEqual(nfs.statSync(dst).ino, dstInodeBefore,
+    "destination kept its old inode instead of being replaced");
+
   const b = await World.open(dst);
   await b.exec("echo branch > /work/branch.txt");
   assert.equal(nfs.readFileSync(trunk, "utf8"), beforeTrunk, "branch mutated the trunk");
+  assert.equal(nfs.readFileSync(bystander, "utf8"), "UNRELATED", "branch mutated the bystander");
 });
 
 test("REGRESSION: save is atomic and leaves no temp file behind", async () => {
