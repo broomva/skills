@@ -140,3 +140,36 @@ test("truncation is announced when output is trimmed", { timeout: 30000 }, async
     assert.match(out, /\[output truncated\]/, "trimming must be visible to the caller");
   } finally { for (const x of [...OPEN]) await shut(x); }
 });
+
+test("REGRESSION: a cap too small for the mandatory envelope is rejected at startup", async () => {
+  // With an unvalidated cap the trim loop runs out of stream to cut and the response
+  // exceeds it anyway, making "never exceeds MAX_OUTPUT" false. Fail closed instead.
+  const { spawnSync } = await import("node:child_process");
+  const r = spawnSync(process.execPath, [SERVER],
+    { env: { ...process.env, JB_WORLD: path.join(tmp(), "w.json"), JB_MAX_OUTPUT: "100" },
+      encoding: "utf8", timeout: 15000 });
+  assert.notEqual(r.status, 0, "server started with a cap it cannot honour");
+  assert.match(`${r.stderr}`, /JB_MAX_OUTPUT must be an integer/);
+
+  for (const bad of ["0", "-5", "abc", "12.5"]) {
+    const x = spawnSync(process.execPath, [SERVER],
+      { env: { ...process.env, JB_WORLD: path.join(tmp(), "w.json"), JB_MAX_OUTPUT: bad },
+        encoding: "utf8", timeout: 15000 });
+    assert.notEqual(x.status, 0, `accepted an invalid cap: ${bad}`);
+  }
+});
+
+test("a valid small cap still holds the response invariants", { timeout: 30000 }, async () => {
+  const c = new Client({ name: "cap", version: "1.0.0" });
+  await c.connect(new StdioClientTransport({
+    command: process.execPath, args: [SERVER],
+    env: { ...process.env, JB_WORLD: path.join(tmp(), "w.json"), JB_MAX_OUTPUT: "512" },
+  }));
+  OPEN.add(c);
+  try {
+    await call(c, "mkdir -p /work/s");
+    const out = await call(c, "cd /work/s; for i in $(seq 1 200); do echo 0123456789; done; set -e; false");
+    assert.ok(out.length <= 512, `response ${out.length} exceeded the configured cap`);
+    assert.match(out, /shell state \(cwd, env\) was NOT captured/, "warning dropped under a small cap");
+  } finally { for (const x of [...OPEN]) await shut(x); }
+});

@@ -148,3 +148,14 @@ test("REGRESSION: an octal escape followed by another octal digit stops at 3 dig
   const out = (await sh.exec('printf "%s" "$OCT" | od -An -c | head -1')).stdout.trim();
   assert.match(out, /A\s+001\s+1\s+B/, `octal escape mis-decoded: ${JSON.stringify(out)}`);
 });
+
+test("REGRESSION: unsetting every export clears the replayed environment", async () => {
+  // Guarding the assignment on a non-empty parse silently kept stale values, so a
+  // variable could not be removed once set.
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  await sh.exec("export SECRET=leak");
+  assert.equal((await sh.exec("echo $SECRET")).stdout.trim(), "leak");
+  const r = await sh.exec("unset SECRET HOME PATH OLDPWD PWD");
+  assert.equal(r.stateCaptured, true);
+  assert.equal((await sh.exec("echo [$SECRET]")).stdout.trim(), "[]", "a cleared variable came back");
+});

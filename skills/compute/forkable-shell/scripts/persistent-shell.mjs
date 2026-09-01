@@ -88,7 +88,10 @@ exit $__fs_rc`;
         const bare = line.match(/^declare -x ([A-Za-z_][A-Za-z0-9_]*)$/);
         if (bare) next[bare[1]] = "";
       }
-      if (Object.keys(next).length) this.env = next;
+      // Assign unconditionally: a command that unsets every export must be able to
+      // empty the environment. Guarding on a non-empty parse silently kept stale
+      // values. A skipped epilogue is already handled above by throwing.
+      this.env = next;
       this.stateCaptured = true;   // only now is the state actually recovered
     } catch { /* capture skipped/invalid; retain prior state rather than corrupting it */ }
     // Surfaced so a caller can tell "state is unchanged because nothing changed it"

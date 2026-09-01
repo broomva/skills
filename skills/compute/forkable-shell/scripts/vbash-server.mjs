@@ -12,7 +12,18 @@ import { World } from "./world.mjs";
 
 const WORLD = process.env.JB_WORLD;
 const LOG = process.env.JB_LOG;
+// The response always carries a mandatory envelope (exit line, state warning). A cap
+// smaller than that envelope cannot be honoured -- the trim loop runs out of stream to
+// cut and the "never exceeds MAX_OUTPUT" invariant becomes false. Reject such caps at
+// startup rather than silently violating the contract at runtime.
+const MIN_OUTPUT = 512;
 const MAX_OUTPUT = Number(process.env.JB_MAX_OUTPUT ?? 20000);
+if (!Number.isInteger(MAX_OUTPUT) || MAX_OUTPUT < MIN_OUTPUT) {
+  console.error(
+    `forkable-shell: JB_MAX_OUTPUT must be an integer >= ${MIN_OUTPUT} ` +
+    `(got ${JSON.stringify(process.env.JB_MAX_OUTPUT)}); the response envelope does not fit below that.`);
+  process.exit(1);
+}
 if (!WORLD) {
   console.error("forkable-shell: JB_WORLD (path to the world JSON) is required");
   process.exit(1);

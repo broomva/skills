@@ -72,6 +72,10 @@ const MUTANTS = [
     "while (build().length > MAX_OUTPUT) {", "while (build().length > MAX_OUTPUT * 10) {"],
   ["M21 stderr exempt from trimming", "scripts/vbash-server.mjs",
     "    else err = err.slice(0, Math.max(0, err.length - over));", "    else break;"],
+  ["M22 cap accepted unvalidated", "scripts/vbash-server.mjs",
+    "if (!Number.isInteger(MAX_OUTPUT) || MAX_OUTPUT < MIN_OUTPUT) {", "if (false) {"],
+  ["M23 env cannot be cleared", "scripts/persistent-shell.mjs",
+    "      this.env = next;", "      if (Object.keys(next).length) this.env = next;"],
 ];
 
 // The MCP suite is included because mutants in the server (M20) are unreachable
