@@ -4,7 +4,7 @@
   "type": "module",
   "description": "Disposable, forkable virtual shell for agent sessions, backed by just-bash",
   "scripts": {
-    "test": "node --test 'tests/**/*.test.mjs'"
+    "test": "node --test tests/unit/*.test.mjs tests/integration/*.test.mjs"
   },
   "dependencies": {
     "just-bash": "^3.4.2",

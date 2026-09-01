@@ -119,7 +119,7 @@ not a bounty-grade jail. For arbitrary binaries or hostile input, use a real VM.
 ## Tests
 
 ```bash
-npm test          # node --test 'tests/**/*.test.mjs'
+npm test          # node --test tests/unit/*.test.mjs tests/integration/*.test.mjs
 ```
 
 Unit tests cover snapshot fidelity (binary, UTF-8, empty dirs, symlinks, hardlink
