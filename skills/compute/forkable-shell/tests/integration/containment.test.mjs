@@ -16,7 +16,7 @@ async function probeWorld() {
   return { world: await World.open(path.join(d, "w.json")), dir: d };
 }
 
-test("no host path is reachable from inside the world", async () => {
+test("no host path is reachable from inside the world", { timeout: 30000 }, async () => {
   const { world, dir } = await probeWorld();
   const probes = [
     `cat ${dir}/host-canary.txt`,
@@ -34,7 +34,7 @@ test("no host path is reachable from inside the world", async () => {
   }
 });
 
-test("POSITIVE CONTROL: the probe detects a canary planted inside the world", async () => {
+test("POSITIVE CONTROL: the probe detects a canary planted inside the world", { timeout: 30000 }, async () => {
   const { world } = await probeWorld();
   await world.exec(`echo '${CANARY}' > /work/planted.txt`);
   const r = await world.exec("cat /work/planted.txt");
@@ -42,7 +42,7 @@ test("POSITIVE CONTROL: the probe detects a canary planted inside the world", as
     "probe cannot detect a leak it should catch -- the containment test above is vacuous");
 });
 
-test("writes inside the world never touch the host filesystem", async () => {
+test("writes inside the world never touch the host filesystem", { timeout: 30000 }, async () => {
   const { world, dir } = await probeWorld();
   const before = nfs.readdirSync(dir).sort();
   await world.exec("mkdir -p /work/deep/nested && echo x > /work/deep/nested/f.txt");
