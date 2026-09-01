@@ -37,28 +37,41 @@ server.registerTool("vbash", {
       exit: res.exitCode, out: res.stdout.slice(0, 400), err: res.stderr.slice(0, 200),
     }) + "\n");
   }
-  // Metadata is assembled FIRST and its space reserved, then stdout is trimmed to
-  // fit. Truncating the joined body instead would drop the trailing warning exactly
-  // when a command produces a lot of output -- silently restoring the failure mode
-  // the warning exists to prevent.
-  const meta = [
-    res.stderr ? `[stderr]\n${res.stderr}` : "",
-    res.exitCode !== 0 ? `[exit ${res.exitCode}]` : "",
-    // Without this the agent cannot tell that its `cd` and `export` were discarded
-    // because the command exited before state capture.
-    res.stateCaptured === false
-      ? "[warning] shell state (cwd, env) was NOT captured: the command exited before the state epilogue ran (exit/set -e). Files persist; cwd and exported variables do not."
-      : "",
-  ].filter(Boolean).join("\n");
-
+  // Response assembly has two invariants that must BOTH hold, for every combination
+  // of large/small stdout, large/small stderr, and warning present/absent:
+  //   (1) the result never exceeds MAX_OUTPUT
+  //   (2) the state warning is never dropped
+  // Truncating the joined body satisfies (1) and breaks (2); protecting metadata
+  // from truncation satisfies (2) and breaks (1). Both were shipped in turn. So:
+  // reserve the small bounded metadata, then spend the remaining room on the two
+  // streams, trimming stdout first and stderr second.
   const NOTE = "[output truncated]";
-  const room = Math.max(0, MAX_OUTPUT - meta.length - NOTE.length - 2);
-  const truncated = res.stdout.length > room;
-  const body = [
-    truncated ? res.stdout.slice(0, room) : res.stdout,
-    truncated ? NOTE : "",
-    meta,
-  ].filter(Boolean).join("\n") || "(no output)";
+  const warn = res.stateCaptured === false
+    ? "[warning] shell state (cwd, env) was NOT captured: the command exited before the state epilogue ran (exit/set -e). Files persist; cwd and exported variables do not."
+    : "";
+  const exitLine = res.exitCode !== 0 ? `[exit ${res.exitCode}]` : "";
+  const reserved = [exitLine, warn].filter(Boolean);
+  // +1 per joined line; NOTE is only added when something is actually trimmed.
+  const reservedLen = reserved.reduce((n, x) => n + x.length + 1, 0) + NOTE.length + 1;
+
+  let room = Math.max(0, MAX_OUTPUT - reservedLen);
+  let truncated = false;
+  let out = res.stdout;
+  let err = res.stderr ? `[stderr]\n${res.stderr}` : "";
+  // stderr is a stream like any other -- treating it as protected metadata is what
+  // broke the cap. Give it at most half the room when both compete.
+  if (out.length + err.length > room) {
+    truncated = true;
+    const errBudget = Math.min(err.length, Math.floor(room / 2));
+    const outBudget = Math.max(0, room - errBudget);
+    out = out.slice(0, outBudget);
+    err = err.slice(0, errBudget);
+  }
+
+  let body = [out, err, truncated ? NOTE : "", ...reserved].filter(Boolean).join("\n") || "(no output)";
+  // Defensive: the arithmetic above should make this unreachable. If it ever is
+  // reachable, drop from the FRONT so the warning survives.
+  if (body.length > MAX_OUTPUT) body = body.slice(body.length - MAX_OUTPUT);
   return { content: [{ type: "text", text: body }] };
 });
 

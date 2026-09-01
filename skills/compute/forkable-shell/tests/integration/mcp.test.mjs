@@ -95,18 +95,43 @@ test("the MCP tool reports when shell state was not captured", { timeout: 30000 
   } finally { for (const x of [...OPEN]) await shut(x); }
 });
 
-test("REGRESSION: a large stdout does not truncate away the state warning", { timeout: 30000 }, async () => {
-  // The warning used to be appended and then the whole body sliced to MAX_OUTPUT,
-  // so a noisy command silently dropped it -- restoring the exact failure the
-  // warning exists to prevent.
+test("REGRESSION: response assembly holds both invariants across the edge space", { timeout: 60000 }, async () => {
+  // Two invariants that must hold TOGETHER for every combination of large/small
+  // stdout, large/small stderr, and warning present/absent:
+  //   (1) the response never exceeds MAX_OUTPUT
+  //   (2) the state warning is never dropped
+  // Each was shipped alone and broke the other: truncating the joined body dropped
+  // the warning; protecting metadata from truncation broke the cap on large stderr.
+  const MAX = 20000;
+  const big = "for i in $(seq 1 2100); do echo 0123456789; done";
+  const cases = [
+    ["small out",          "echo hi",                                      false],
+    ["big out",            big,                                            false],
+    ["big err",            `${big} 1>&2`,                                  false],
+    ["big out and err",    `${big}; ${big} 1>&2`,                          false],
+    ["small out + warn",   "cd /work/s; set -e; false",                    true],
+    ["big out + warn",     `cd /work/s; ${big}; set -e; false`,            true],
+    ["big err + warn",     `cd /work/s; ${big} 1>&2; set -e; false`,       true],
+    ["big both + warn",    `cd /work/s; ${big}; ${big} 1>&2; set -e; false`, true],
+  ];
   const c = await connect(path.join(tmp(), "w.json"));
   try {
     await call(c, "mkdir -p /work/s");
-    const out = await call(c, "mkdir -p /work/s; cd /work/s; " +
-      "for i in $(seq 1 2100); do echo 0123456789; done; set -e; false");
-    assert.match(out, /shell state \(cwd, env\) was NOT captured/,
-      "warning was truncated away by a large stdout");
-    assert.match(out, /\[output truncated\]/, "truncation should be announced");
-    assert.ok(out.length <= 20000, `response exceeded the cap: ${out.length}`);
+    for (const [label, cmd, wantWarn] of cases) {
+      const out = await call(c, cmd);
+      assert.ok(out.length <= MAX, `${label}: response ${out.length} exceeded the ${MAX} cap`);
+      if (wantWarn) {
+        assert.match(out, /shell state \(cwd, env\) was NOT captured/,
+          `${label}: the state warning was dropped`);
+      }
+    }
+  } finally { for (const x of [...OPEN]) await shut(x); }
+});
+
+test("truncation is announced when output is trimmed", { timeout: 30000 }, async () => {
+  const c = await connect(path.join(tmp(), "w.json"));
+  try {
+    const out = await call(c, "for i in $(seq 1 2100); do echo 0123456789; done");
+    assert.match(out, /\[output truncated\]/, "trimming must be visible to the caller");
   } finally { for (const x of [...OPEN]) await shut(x); }
 });
