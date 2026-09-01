@@ -51,7 +51,7 @@ export class World {
 
   /** Run one command and persist the resulting world. */
   async exec(command) {
-    const res = await this.shell.exec(command);
+    const res = await this.shell.exec(command);   // carries stateCaptured
     this.turns += 1;
     await this.save();
     return res;

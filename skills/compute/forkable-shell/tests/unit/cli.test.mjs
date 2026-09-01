@@ -32,3 +32,14 @@ test("fork via the CLI isolates the branch from the trunk", () => {
   assert.match(info, /base\.txt/);
   assert.ok(!info.includes("branch.txt"), "branch file leaked into the trunk");
 });
+
+test("REGRESSION: the CLI warns when shell state was not captured", () => {
+  const d = nfs.mkdtempSync(path.join(os.tmpdir(), "cli-"));
+  const world = path.join(d, "w.json");
+  run("init", world);
+  run("exec", world, "mkdir -p /work/s");
+  let stderr = "";
+  try { run("exec", world, "cd /work/s; set -e; false"); }
+  catch (e) { stderr = String(e.stderr ?? ""); }
+  assert.match(stderr, /NOT captured/, "a discarded cd/export was not reported to the user");
+});

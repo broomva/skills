@@ -119,3 +119,32 @@ test("REGRESSION: ANSI-C octal escapes decode to the right byte", async () => {
   const out = (await sh.exec('printf "%s" "$OCT" | od -An -c | head -1')).stdout.trim();
   assert.match(out, /a\s+001\s+b/, `octal escape mis-decoded: ${JSON.stringify(out)}`);
 });
+
+test("REGRESSION: a cwd containing the state delimiter does not corrupt capture", async () => {
+  // The marker is per-call, so a legal path holding the literal delimiter cannot
+  // split the payload. Previously this reported success while dropping all env.
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  const evil = "/work/x\n__FS_SPLIT__\ny";
+  await sh.exec(`mkdir -p '${evil}'`);
+  const r = await sh.exec(`cd '${evil}'; export Z=zz`);
+  assert.equal(r.stateCaptured, true);
+  assert.equal(sh.cwd, evil, "cwd was truncated at the delimiter");
+  assert.equal((await sh.exec("echo $Z")).stdout.trim(), "zz", "env was lost to a delimiter collision");
+});
+
+test("REGRESSION: a command-local pwd() override cannot forge the captured cwd", async () => {
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  await sh.exec("mkdir -p /work/real");
+  const r = await sh.exec("cd /work/real; pwd(){ echo /bogus; }");
+  assert.equal(r.stateCaptured, true);
+  assert.equal(sh.cwd, "/work/real", "a shadowed pwd forged the recorded cwd");
+});
+
+test("REGRESSION: an octal escape followed by another octal digit stops at 3 digits", async () => {
+  // bash octal escapes are at most 3 digits: $'A\0011B' is A, 0x01, "1", B.
+  // A greedier pattern decoded 0o0011 = 0x09 and swallowed the literal 1.
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  await sh.exec(`export OCT=$'A\\0011B'`);
+  const out = (await sh.exec('printf "%s" "$OCT" | od -An -c | head -1')).stdout.trim();
+  assert.match(out, /A\s+001\s+1\s+B/, `octal escape mis-decoded: ${JSON.stringify(out)}`);
+});

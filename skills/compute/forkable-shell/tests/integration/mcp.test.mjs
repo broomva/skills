@@ -82,3 +82,15 @@ test("nonzero exit codes and stderr are reported to the caller", { timeout: 3000
     await shut(c);
   } finally { for (const c of [...OPEN]) await shut(c); }
 });
+
+test("the MCP tool reports when shell state was not captured", { timeout: 30000 }, async () => {
+  const c = await connect(path.join(tmp(), "w.json"));
+  try {
+    await call(c, "mkdir -p /work/s");
+    const bailed = await call(c, "cd /work/s; set -e; false");
+    assert.match(bailed, /shell state \(cwd, env\) was NOT captured/,
+      "the agent is not told its cd/export was discarded");
+    const fine = await call(c, "cd /work/s");
+    assert.ok(!/NOT captured/.test(fine), "a normal command must not warn");
+  } finally { for (const x of [...OPEN]) await shut(x); }
+});

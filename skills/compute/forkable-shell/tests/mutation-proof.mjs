@@ -60,6 +60,12 @@ const MUTANTS = [
     'if (raw.slice(0, nl) !== token) throw new Error("epilogue did not run");', "void 0;"],
   ["M16 octal escapes mis-decoded", "scripts/persistent-shell.mjs",
     'if (/^[0-7]+$/.test(c)) return String.fromCharCode(parseInt(c, 8) & 0xff);', "void 0;"],
+  ["M17 delimiter not per-call", "scripts/persistent-shell.mjs",
+    "const mark = `${MARK}${token}`;", "const mark = MARK;"],
+  ["M18 cwd read via shadowable pwd", "scripts/persistent-shell.mjs",
+    "builtin pwd; echo ${sq(mark)}", "pwd; echo ${sq(mark)}"],
+  ["M19 octal grammar too greedy", "scripts/persistent-shell.mjs",
+    "|[0-7]{1,3}|", "|0[0-7]{0,3}|[1-7][0-7]{0,2}|"],
 ];
 
 const SUITE = ["tests/unit/fs-snapshot.test.mjs", "tests/unit/persistent-shell.test.mjs",

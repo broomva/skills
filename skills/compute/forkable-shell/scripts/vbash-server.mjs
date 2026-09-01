@@ -41,6 +41,11 @@ server.registerTool("vbash", {
     res.stdout,
     res.stderr ? `[stderr]\n${res.stderr}` : "",
     res.exitCode !== 0 ? `[exit ${res.exitCode}]` : "",
+    // Surfaced to the caller: without it the agent cannot tell that its `cd` and
+    // `export` were discarded because the command exited before state capture.
+    res.stateCaptured === false
+      ? "[warning] shell state (cwd, env) was NOT captured: the command exited before the state epilogue ran (exit/set -e). Files persist; cwd and exported variables do not."
+      : "",
   ].filter(Boolean).join("\n") || "(no output)";
   return { content: [{ type: "text", text: body.slice(0, MAX_OUTPUT) }] };
 });

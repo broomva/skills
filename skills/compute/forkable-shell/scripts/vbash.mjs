@@ -67,6 +67,10 @@ switch (cmd) {
     const r = await w.exec(c.join(" "));
     if (r.stdout) process.stdout.write(r.stdout);
     if (r.stderr) process.stderr.write(r.stderr);
+    if (r.stateCaptured === false) {
+      process.stderr.write("vbash: warning: shell state (cwd, env) was NOT captured — " +
+        "the command exited before the state epilogue ran (exit/set -e).\n");
+    }
     process.exit(r.exitCode);
   }
   case "cat": {

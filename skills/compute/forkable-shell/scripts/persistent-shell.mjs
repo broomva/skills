@@ -16,7 +16,7 @@ const ANSI_C = { n: "\n", t: "\t", r: "\r", "\\": "\\", "'": "'", '"': '"', a: "
 function unescapeAnsiC(str) {
   // Order matters: octal (\nnn, \0nnn) and hex (\xHH) must be matched before the
   // single-character table, or $'a\001b' decodes as NUL followed by the text "01".
-  return str.replace(/\\(x[0-9A-Fa-f]{1,2}|0[0-7]{0,3}|[1-7][0-7]{0,2}|.)/g, (_, c) => {
+  return str.replace(/\\(x[0-9A-Fa-f]{1,2}|[0-7]{1,3}|.)/g, (_, c) => {
     if (c[0] === "x") return String.fromCharCode(parseInt(c.slice(1), 16));
     if (/^[0-7]+$/.test(c)) return String.fromCharCode(parseInt(c, 8) & 0xff);
     return ANSI_C[c] ?? c;
@@ -49,11 +49,15 @@ export class PersistentShell {
     // `trap`, so `exit N` or a `set -e` failure abandons the script before capture.
     // Without the token a stale state file would be read back as if it were fresh.
     const token = `T${Date.now()}${Math.random().toString(36).slice(2, 10)}`;
+    // The delimiter carries the per-call token, so a cwd or value containing the
+    // literal marker cannot split the payload. `builtin pwd` bypasses a
+    // command-local `pwd()` override.
+    const mark = `${MARK}${token}`;
     const script = `${preamble}
 { ${command}
 }
 __fs_rc=$?
-{ echo ${sq(token)}; pwd; echo ${sq(MARK)}; export -p; } > ${STATE} 2>/dev/null
+{ echo ${sq(token)}; builtin pwd; echo ${sq(mark)}; export -p; } > ${STATE} 2>/dev/null
 exit $__fs_rc`;
 
     const result = await this.bash.exec(script);
@@ -62,9 +66,14 @@ exit $__fs_rc`;
       const raw = await this.bash.readFile(STATE);
       const nl = raw.indexOf("\n");
       if (raw.slice(0, nl) !== token) throw new Error("epilogue did not run");
-      this.stateCaptured = true;
-      const [pwd, exports] = raw.slice(nl + 1).split(MARK + "\n");
-      this.cwd = pwd.trim() || this.cwd;
+      const parts = raw.slice(nl + 1).split(mark + "\n");
+      if (parts.length !== 2) throw new Error("state payload is not well formed");
+      const [pwd, exports] = parts;
+      // Structural validation BEFORE claiming capture succeeded: entering the
+      // epilogue is not the same as recovering usable state.
+      const cwd = pwd.replace(/\n$/, "");
+      if (!cwd.startsWith("/")) throw new Error(`implausible cwd: ${JSON.stringify(cwd)}`);
+      this.cwd = cwd;
       const next = {};
       for (const line of (exports ?? "").split("\n")) {
         // bash emits two forms: name="..." and, for values holding control
@@ -78,7 +87,8 @@ exit $__fs_rc`;
         if (bare) next[bare[1]] = "";
       }
       if (Object.keys(next).length) this.env = next;
-    } catch { /* capture skipped; retain prior state rather than corrupting it */ }
+      this.stateCaptured = true;   // only now is the state actually recovered
+    } catch { /* capture skipped/invalid; retain prior state rather than corrupting it */ }
     // Surfaced so a caller can tell "state is unchanged because nothing changed it"
     // from "state is unchanged because the command exited before we could look".
     return Object.assign(result, { stateCaptured: this.stateCaptured });

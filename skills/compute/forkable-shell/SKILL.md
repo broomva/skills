@@ -54,7 +54,7 @@ node scripts/vbash.mjs drive <world> <prompt> [--log <p>] [--model m] [--max-tur
 
 ## Giving a Claude Code session a throwaway shell
 
-`drive` runs one Claude Code turn whose **only** filesystem is the world:
+`drive` runs one Claude Code turn against the world:
 
 ```bash
 node scripts/vbash.mjs init /tmp/w.json --seed ./data.csv:/work/data.csv
@@ -100,7 +100,8 @@ because they will bite you, and are **not** covered by these tests:
   `trap`, so `exit N` or a `set -e` failure abandons the script before state can be
   captured: the filesystem keeps the command's writes, but env and cwd stay at their
   previous values. This cannot be prevented, so it is *reported* — `exec()` returns
-  `stateCaptured: false`. Check it if a turn may run `set -e`.
+  `stateCaptured: false`, the CLI warns on stderr, and the MCP tool appends a
+  `[warning] shell state (cwd, env) was NOT captured` line to its result.
 - **Functions cannot be recovered from the guest.** `declare -f` returns a stub with the
   body elided, so register them host-side via `addRc()`.
 - **Shell state must be restored paired with its filesystem.** Loading state onto a fresh
