@@ -68,10 +68,12 @@ server.registerTool("vbash", {
     err = err.slice(0, errBudget);
   }
 
-  let body = [out, err, truncated ? NOTE : "", ...reserved].filter(Boolean).join("\n") || "(no output)";
-  // Defensive: the arithmetic above should make this unreachable. If it ever is
-  // reachable, drop from the FRONT so the warning survives.
-  if (body.length > MAX_OUTPUT) body = body.slice(body.length - MAX_OUTPUT);
+  // No second clamp here. A trailing slice() would be a weaker duplicate of the
+  // budget above -- it enforces the cap while trimming SILENTLY, which breaks the
+  // "say when you trimmed" invariant, and it made the budget arithmetic
+  // unobservable (mutants M20 and M21 both survived while it was present).
+  const body = [out, err, truncated ? NOTE : "", ...reserved]
+    .filter(Boolean).join("\n") || "(no output)";
   return { content: [{ type: "text", text: body }] };
 });
 

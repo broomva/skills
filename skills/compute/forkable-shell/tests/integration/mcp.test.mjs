@@ -124,6 +124,11 @@ test("REGRESSION: response assembly holds both invariants across the edge space"
         assert.match(out, /shell state \(cwd, env\) was NOT captured/,
           `${label}: the state warning was dropped`);
       }
+      // (3) trimming must be announced. Without this a silent clamp satisfies the
+      // cap by quietly discarding output the caller believes it received.
+      if (label.startsWith("big")) {
+        assert.match(out, /\[output truncated\]/, `${label}: output was trimmed without saying so`);
+      }
     }
   } finally { for (const x of [...OPEN]) await shut(x); }
 });
