@@ -5,7 +5,7 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 98 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 99 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
 Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
@@ -40,7 +40,7 @@ npx skills add broomva/skills --skill '*'
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**98 skills** organized into **23 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**99 skills** organized into **23 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -82,7 +82,7 @@ npx skills add broomva/skills --skill '*'
 | [`prove-the-negative`](skills/tooling/prove-the-negative/) | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | [`attempt-audit`](skills/tooling/attempt-audit/) | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely; zero-config AST tripwire that names what it could not audit |
 | [`skillify`](skills/tooling/skillify/) | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 98 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 99 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ### Knowledge & memory — `skills/knowledge/`
 
@@ -181,6 +181,7 @@ npx skills add broomva/skills --skill '*'
 |---|---|
 | [`agentic-vps`](skills/compute/agentic-vps/) | Provision and harden a fresh Linux VPS into an autonomous-agent dev host using the capability-preserving model — the box IS the sandbox: full agent autonomy inside it… |
 | [`colab-remote`](skills/compute/colab-remote/) | Orchestrate Google Colab Pro/Pro+ GPU instances as remote training backends via SSH |
+| [`forkable-shell`](skills/compute/forkable-shell/) | Give an agent session a disposable sandboxed bash shell whose entire filesystem is one JSON file — snapshot, fork, branch and resume a workspace at ~0.24ms per fork instead of seconds per container |
 | [`remote-gpu`](skills/compute/remote-gpu/) | Orchestrate a headless GPU server (NUC, cloud VM, or any SSH-accessible machine) from a local Mac or workstation |
 
 ### Model runtimes — `skills/models/`
@@ -257,7 +258,7 @@ npx skills add broomva/skills --skill '*'
 
 ## Catalog inventory
 
-The 98 skills bucket into 23 single-noun categories — one row per `skills/<category>/` directory:
+The 99 skills bucket into 23 single-noun categories — one row per `skills/<category>/` directory:
 
 | Category | Bucket | Count |
 |---|---|---|
@@ -273,7 +274,7 @@ The 98 skills bucket into 23 single-noun categories — one row per `skills/<cat
 | Audio & music | `skills/audio/` | 3 |
 | Design & brand | `skills/design/` | 7 |
 | Finance & payments | `skills/finance/` | 4 |
-| Compute infrastructure | `skills/compute/` | 3 |
+| Compute infrastructure | `skills/compute/` | 4 |
 | Model runtimes | `skills/models/` | 2 |
 | Messaging channels | `skills/messaging/` | 2 |
 | Robotics | `skills/robotics/` | 2 |
