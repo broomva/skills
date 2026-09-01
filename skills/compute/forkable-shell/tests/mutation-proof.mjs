@@ -40,6 +40,16 @@ const MUTANTS = [
   ["M7 turns never increment", "scripts/world.mjs", "this.turns += 1;", "this.turns += 0;"],
   ["M8 world saves wrong subtree", "scripts/world.mjs",
     "fs: await snapshot(this.fs, this.prefix),", 'fs: await snapshot(this.fs, "/nowhere"),'],
+  // Mutants for the defects the P20 cross-model review found. Without these the
+  // fixes are asserted only by tests written alongside them.
+  ["M9 fork reuses an existing dest inode", "scripts/world.mjs",
+    "nfs.unlinkSync(destPath);", "void 0;"],
+  ["M10 ANSI-C env values dropped", "scripts/persistent-shell.mjs",
+    "next[ansi[1]] = unescapeAnsiC(ansi[2]); continue;", 'next[ansi[1]] = ""; continue;'],
+  ["M11 env names unvalidated", "scripts/persistent-shell.mjs",
+    ".filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))", ".filter(() => true)"],
+  ["M12 CLI seed decodes as utf8", "scripts/vbash.mjs",
+    "files[guest] = new Uint8Array(nfs.readFileSync(host));", 'files[guest] = nfs.readFileSync(host, "utf8");'],
 ];
 
 let killed = 0;
