@@ -1,0 +1,59 @@
+name: test-forkable-shell
+
+# Test gate for the `forkable-shell` skill (skills/compute/forkable-shell/).
+# Path-filtered so it runs ONLY when that skill changes.
+#
+# The mutation proof runs alongside the suite deliberately: this skill's whole
+# claim is that a forked world cannot mutate its trunk, and a green suite that
+# cannot go red would not establish that.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/compute/forkable-shell/**'
+      - '.github/workflows/test-forkable-shell.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/compute/forkable-shell/**'
+      - '.github/workflows/test-forkable-shell.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-forkable-shell-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/compute/forkable-shell
+
+jobs:
+  test:
+    name: node --test + mutation proof (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["20.18.1", "22", "24"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+      - name: Install
+        run: npm ci || npm install
+      - name: Unit + integration tests
+        run: npm test
+      - name: Mutation proof (the suite must be able to fail)
+        run: node tests/mutation-proof.mjs
+      - name: CLI smoke — fork isolates a branch from its trunk
+        run: |
+          set -euo pipefail
+          node scripts/vbash.mjs init /tmp/t.json
+          node scripts/vbash.mjs exec /tmp/t.json "echo base > /work/base.txt"
+          node scripts/vbash.mjs fork /tmp/t.json /tmp/b.json
+          node scripts/vbash.mjs exec /tmp/b.json "echo only > /work/branch.txt"
+          node scripts/vbash.mjs info /tmp/t.json | grep -q 'base.txt'
+          if node scripts/vbash.mjs info /tmp/t.json | grep -q 'branch.txt'; then
+            echo "FAIL: branch file leaked into the trunk"; exit 1
+          fi
