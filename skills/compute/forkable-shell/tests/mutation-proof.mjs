@@ -36,7 +36,7 @@ const MUTANTS = [
   ["M5 cwd not replayed", "scripts/persistent-shell.mjs",
     "      this.cwd = cwd;", "      this.cwd = this.cwd;"],
   ["M6 env not replayed", "scripts/persistent-shell.mjs",
-    "if (Object.keys(next).length) this.env = next;", "void 0;"],
+    "      this.env = next;", "      void 0;"],
   ["M7 turns never increment", "scripts/world.mjs", "this.turns += 1;", "this.turns += 0;"],
   ["M8 world saves wrong subtree", "scripts/world.mjs",
     "fs: await snapshot(this.fs, this.prefix),", 'fs: await snapshot(this.fs, "/nowhere"),'],
