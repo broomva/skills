@@ -136,12 +136,15 @@ test("REGRESSION: fork onto a DANGLING symlink dest does not write to its target
   const t0 = await World.open(trunk);
   await t0.exec("echo trunk > /work/t.txt");
 
-  nfs.symlinkSync(target, dst);                     // points at a file that does not exist yet
-  assert.equal(nfs.existsSync(dst), false, "precondition: dangling link looks absent");
-  nfs.writeFileSync(target, "VICTIM");              // now the target exists
+  nfs.symlinkSync(target, dst);                     // dangling: target does not exist
+  assert.equal(nfs.existsSync(dst), false, "precondition: a dangling link looks absent");
 
   World.fork(trunk, dst);
-  assert.equal(nfs.readFileSync(target, "utf8"), "VICTIM",
-    "fork followed a symlink destination and overwrote its target");
+
+  // The link must be REPLACED, not followed. If it is followed, the copy lands at
+  // an attacker-chosen path that fork was never asked to write.
+  assert.equal(nfs.existsSync(target), false,
+    "fork followed a dangling symlink and created a file at its target");
   assert.equal(nfs.lstatSync(dst).isSymbolicLink(), false, "dest should be a real file now");
+  assert.doesNotThrow(() => JSON.parse(nfs.readFileSync(dst, "utf8")));
 });
