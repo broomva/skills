@@ -34,7 +34,7 @@ const MUTANTS = [
   ["M4 directories not restored", "scripts/fs-snapshot.mjs",
     "if (!(await fs.exists(d.path))) await fs.mkdir(d.path, { recursive: true });", "void 0;"],
   ["M5 cwd not replayed", "scripts/persistent-shell.mjs",
-    "this.cwd = pwd.trim() || this.cwd;", "this.cwd = this.cwd;"],
+    "      this.cwd = cwd;", "      this.cwd = this.cwd;"],
   ["M6 env not replayed", "scripts/persistent-shell.mjs",
     "if (Object.keys(next).length) this.env = next;", "void 0;"],
   ["M7 turns never increment", "scripts/world.mjs", "this.turns += 1;", "this.turns += 0;"],
@@ -56,8 +56,8 @@ const MUTANTS = [
   ["M14 save writes in place", "scripts/world.mjs",
     "const tmp = `${this.path}.tmp-${process.pid}`;\n    nfs.writeFileSync(tmp, payload);\n    nfs.renameSync(tmp, this.path);",
     "nfs.writeFileSync(this.path, payload);"],
-  ["M15 epilogue-skip undetected", "scripts/persistent-shell.mjs",
-    'if (raw.slice(0, nl) !== token) throw new Error("epilogue did not run");', "void 0;"],
+  // (the former M15 targeted a redundant token check; the per-call mark in M17
+  //  is what actually detects a skipped epilogue, so that mutant was deleted)
   ["M16 octal escapes mis-decoded", "scripts/persistent-shell.mjs",
     'if (/^[0-7]+$/.test(c)) return String.fromCharCode(parseInt(c, 8) & 0xff);', "void 0;"],
   ["M17 delimiter not per-call", "scripts/persistent-shell.mjs",

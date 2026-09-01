@@ -57,16 +57,18 @@ export class PersistentShell {
 { ${command}
 }
 __fs_rc=$?
-{ echo ${sq(token)}; builtin pwd; echo ${sq(mark)}; export -p; } > ${STATE} 2>/dev/null
+{ builtin pwd; echo ${sq(mark)}; export -p; } > ${STATE} 2>/dev/null
 exit $__fs_rc`;
 
     const result = await this.bash.exec(script);
     this.stateCaptured = false;
     try {
       const raw = await this.bash.readFile(STATE);
-      const nl = raw.indexOf("\n");
-      if (raw.slice(0, nl) !== token) throw new Error("epilogue did not run");
-      const parts = raw.slice(nl + 1).split(mark + "\n");
+      // The mark is per-call, so a skipped epilogue fails closed on its own: a stale
+      // file carries a previous call's mark and an absent file throws. A separate
+      // "did the epilogue run" token was redundant -- nothing could observe removing
+      // it, which is exactly why its mutant survived.
+      const parts = raw.split(mark + "\n");
       if (parts.length !== 2) throw new Error("state payload is not well formed");
       const [pwd, exports] = parts;
       // Structural validation BEFORE claiming capture succeeded: entering the
