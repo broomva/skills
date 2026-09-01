@@ -73,3 +73,22 @@ test("state file lives outside the snapshot prefix", async () => {
   assert.ok(!JSON.stringify(snap).includes("forkable-shell-state"),
     "shell bookkeeping must not leak into the captured world");
 });
+
+// --- regressions from the P20 cross-model review -----------------------------
+
+test("REGRESSION: env values containing newlines and tabs survive replay", async () => {
+  // bash emits these as ANSI-C quoted $'...'; a double-quote-only parser drops them.
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  await sh.exec(`export NL=$'a\\nb'; export TAB=$'x\\ty'; export PLAIN=ok`);
+  const r = await sh.exec('printf "[%s][%s][%s]" "$NL" "$TAB" "$PLAIN"');
+  assert.equal(r.stdout, "[a\nb][x\ty][ok]");
+});
+
+test("REGRESSION: a malformed env NAME cannot smuggle commands into the preamble", async () => {
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  sh.env = { "SAFE=x; mkdir -p /work; echo INJECTED > /work/pwned; export T": "1", GOOD: "kept" };
+  await sh.exec("true");
+  assert.match((await sh.exec("cat /work/pwned 2>/dev/null || echo none")).stdout, /none/,
+    "a crafted env name executed during replay");
+  assert.equal((await sh.exec("echo $GOOD")).stdout.trim(), "kept", "valid names must still replay");
+});

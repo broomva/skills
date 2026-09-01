@@ -77,3 +77,37 @@ test("forking a missing world throws rather than creating one", () => {
   const d = tmp();
   assert.throws(() => World.fork(path.join(d, "nope.json"), path.join(d, "x.json")), /no such world/);
 });
+
+// --- regressions from the P20 cross-model review -----------------------------
+
+test("REGRESSION: fork refuses a destination aliased to the trunk", async () => {
+  const d = tmp(), trunk = path.join(d, "t.json"), alias = path.join(d, "alias.json");
+  const t = await World.open(trunk);
+  await t.exec("echo trunk > /work/t.txt");
+  nfs.linkSync(trunk, alias);                       // dest pre-exists, SAME inode
+  const before = nfs.readFileSync(trunk, "utf8");
+  assert.throws(() => World.fork(trunk, alias), /same file as the trunk/);
+  assert.equal(nfs.readFileSync(trunk, "utf8"), before);
+});
+
+test("REGRESSION: forking over a pre-existing dest lands on a fresh inode", async () => {
+  const d = tmp(), trunk = path.join(d, "t.json"), dst = path.join(d, "b.json");
+  const t = await World.open(trunk);
+  await t.exec("echo trunk > /work/t.txt");
+  nfs.writeFileSync(dst, "stale content");          // plain pre-existing file
+  const beforeTrunk = nfs.readFileSync(trunk, "utf8");
+  World.fork(trunk, dst);
+  assert.notEqual(nfs.statSync(trunk).ino, nfs.statSync(dst).ino, "branch shares the trunk's inode");
+  const b = await World.open(dst);
+  await b.exec("echo branch > /work/branch.txt");
+  assert.equal(nfs.readFileSync(trunk, "utf8"), beforeTrunk, "branch mutated the trunk");
+});
+
+test("REGRESSION: save is atomic and leaves no temp file behind", async () => {
+  const d = tmp(), p = path.join(d, "w.json");
+  const w = await World.open(p);
+  await w.exec("echo x > /work/a.txt");
+  const strays = nfs.readdirSync(d).filter((f) => f.includes(".tmp-"));
+  assert.deepEqual(strays, [], `temp files left behind: ${strays}`);
+  assert.doesNotThrow(() => JSON.parse(nfs.readFileSync(p, "utf8")));
+});

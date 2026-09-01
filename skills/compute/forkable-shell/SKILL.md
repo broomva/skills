@@ -79,7 +79,9 @@ turn count, or file list.
 
 ## Constraints worth knowing before you trust it
 
-These are measured, and each has a test:
+Measured. The first five have regression tests in this skill; the Bun, turn-budget
+and custom-backend notes are findings from the session that produced it, recorded here
+because they will bite you, and are **not** covered by these tests:
 
 - **Shell state does not persist by itself.** just-bash resets env, cwd and functions
   between `exec()` calls; only the filesystem is shared. `scripts/persistent-shell.mjs`
@@ -123,5 +125,12 @@ npm test          # node --test tests/unit/*.test.mjs tests/integration/*.test.m
 ```
 
 Unit tests cover snapshot fidelity (binary, UTF-8, empty dirs, symlinks, hardlink
-groups, modes, mtimes, odd filenames), shell-state replay, and fork isolation.
-Integration tests drive the MCP server over real stdio and assert containment.
+groups, file modes and mtimes, odd filenames), shell-state replay, and fork isolation
+— including forking onto a destination that is a hardlink to the trunk.
+
+Integration tests are two separate suites: `mcp.test.mjs` drives the MCP server over
+real stdio (tool listing, restart persistence, fork divergence, error reporting), and
+`containment.test.mjs` asserts host isolation through that same server.
+
+**Symlink modes and mtimes are not restored** — `symlink()` takes neither, and the
+snapshot records them for information only. File modes and mtimes are restored.

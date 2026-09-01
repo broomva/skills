@@ -55,12 +55,28 @@ for (const [name, rel, anchor, repl] of MUTANTS) {
     survivors.push(name);
     continue;
   }
-  nfs.writeFileSync(file, src.replace(anchor, repl));
-  const r = spawnSync(process.execPath, ["--test", "tests/unit/fs-snapshot.test.mjs", "tests/unit/persistent-shell.test.mjs", "tests/unit/world.test.mjs"], { cwd: ROOT, encoding: "utf8", shell: false });
-  const died = r.status !== 0;
-  console.log(`${name.padEnd(34)}${died ? "KILLED" : "*** SURVIVED ***"}`);
-  if (died) killed++; else survivors.push(name);
-  run(`git checkout -- ${rel}`);
+  let verdict;
+  try {
+    nfs.writeFileSync(file, src.replace(anchor, repl));
+    const r = spawnSync(process.execPath,
+      ["--test", "tests/unit/fs-snapshot.test.mjs", "tests/unit/persistent-shell.test.mjs",
+       "tests/unit/world.test.mjs", "tests/unit/cli.test.mjs"],
+      { cwd: ROOT, encoding: "utf8", shell: false });
+    // A nonzero exit alone is not a kill: the runner also exits nonzero when it
+    // crashes or cannot load a file, which would score an infrastructure failure
+    // as a passing mutation proof. Require at least one FAILING ASSERTION.
+    const m = /^\u2139 fail (\d+)$/m.exec(r.stdout ?? "");
+    const failures = m ? Number(m[1]) : 0;
+    verdict = failures > 0 ? `KILLED (${failures} failing)` : (r.status !== 0
+      ? `*** INCONCLUSIVE *** runner exited ${r.status} with no failing assertion`
+      : "*** SURVIVED ***");
+  } finally {
+    // Always restore, even on an exception or Ctrl-C, or production source is
+    // left mutated.
+    run(`git checkout -- ${rel}`);
+  }
+  console.log(`${name.padEnd(34)}${verdict}`);
+  if (verdict.startsWith("KILLED")) killed++; else survivors.push(name);
 }
 console.log("-".repeat(56));
 console.log(`killed ${killed}/${MUTANTS.length}`);

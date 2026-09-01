@@ -36,12 +36,17 @@ export class World {
   }
 
   async save() {
-    nfs.writeFileSync(this.path, JSON.stringify({
+    const payload = JSON.stringify({
       version: 1,
       fs: await snapshot(this.fs, this.prefix),
       shell: this.shell.getState(),
       turns: this.turns,
-    }));
+    });
+    // Write-then-rename: a truncating in-place write that is interrupted destroys
+    // the only copy of the world and leaves invalid JSON behind.
+    const tmp = `${this.path}.tmp-${process.pid}`;
+    nfs.writeFileSync(tmp, payload);
+    nfs.renameSync(tmp, this.path);
   }
 
   /** Run one command and persist the resulting world. */
@@ -55,6 +60,18 @@ export class World {
   /** Fork == copy. The source is never opened, so it cannot be mutated. */
   static fork(srcPath, destPath) {
     if (!nfs.existsSync(srcPath)) throw new Error(`no such world: ${srcPath}`);
+    // copyFileSync opens an EXISTING destination for writing, so a dest that is a
+    // hardlink or symlink to the trunk shares its inode and the branch then mutates
+    // the trunk. Refuse self-aliasing outright, and unlink any other existing dest
+    // so the copy always lands on a fresh inode.
+    if (nfs.existsSync(destPath)) {
+      const sameInode = (a, b) => { try { const x = nfs.statSync(a), y = nfs.statSync(b);
+        return x.dev === y.dev && x.ino === y.ino; } catch { return false; } };
+      if (sameInode(srcPath, destPath)) {
+        throw new Error(`refusing to fork onto the same file as the trunk: ${destPath}`);
+      }
+      nfs.unlinkSync(destPath);
+    }
     nfs.copyFileSync(srcPath, destPath);
     return destPath;
   }

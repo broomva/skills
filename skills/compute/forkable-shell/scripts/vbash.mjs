@@ -47,7 +47,7 @@ switch (cmd) {
       const idx = s.lastIndexOf(":");
       if (idx === -1) die(`--seed needs host:guest, got ${s}`);
       const [host, guest] = [s.slice(0, idx), s.slice(idx + 1)];
-      files[guest] = nfs.readFileSync(host, "utf8");
+      files[guest] = new Uint8Array(nfs.readFileSync(host));   // bytes, not utf8
     }
     await World.open(world, { files });
     console.log(`created ${world} (${nfs.statSync(world).size} bytes, ${Object.keys(files).length} seeded)`);
@@ -73,7 +73,7 @@ switch (cmd) {
     const [world, p] = rest;
     if (!world || !p) die("usage: cat <world> <guestpath>");
     const w = await World.open(world);
-    process.stdout.write(await w.fs.readFile(p));
+    process.stdout.write(Buffer.from(await w.fs.readFileBuffer(p)));  // bytes, not utf8
     break;
   }
   case "info": {
