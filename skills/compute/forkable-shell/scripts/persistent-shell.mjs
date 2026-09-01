@@ -14,8 +14,13 @@ const MARK = "__FS_SPLIT__";
 const ANSI_C = { n: "\n", t: "\t", r: "\r", "\\": "\\", "'": "'", '"': '"', a: "\x07", b: "\b", f: "\f", v: "\v", e: "\x1b", 0: "\0" };
 /** Decode bash ANSI-C quoting ($'...') well enough to round-trip exported values. */
 function unescapeAnsiC(str) {
-  return str.replace(/\\(x[0-9A-Fa-f]{2}|.)/g, (_, c) =>
-    c[0] === "x" ? String.fromCharCode(parseInt(c.slice(1), 16)) : (ANSI_C[c] ?? c));
+  // Order matters: octal (\nnn, \0nnn) and hex (\xHH) must be matched before the
+  // single-character table, or $'a\001b' decodes as NUL followed by the text "01".
+  return str.replace(/\\(x[0-9A-Fa-f]{1,2}|0[0-7]{0,3}|[1-7][0-7]{0,2}|.)/g, (_, c) => {
+    if (c[0] === "x") return String.fromCharCode(parseInt(c.slice(1), 16));
+    if (/^[0-7]+$/.test(c)) return String.fromCharCode(parseInt(c, 8) & 0xff);
+    return ANSI_C[c] ?? c;
+  });
 }
 
 export class PersistentShell {
@@ -40,17 +45,25 @@ export class PersistentShell {
       this.rc,
     ].filter(Boolean).join("\n");
 
+    // A per-call token proves the epilogue actually ran. just-bash implements no
+    // `trap`, so `exit N` or a `set -e` failure abandons the script before capture.
+    // Without the token a stale state file would be read back as if it were fresh.
+    const token = `T${Date.now()}${Math.random().toString(36).slice(2, 10)}`;
     const script = `${preamble}
 { ${command}
 }
 __fs_rc=$?
-{ pwd; echo ${sq(MARK)}; export -p; } > ${STATE} 2>/dev/null
+{ echo ${sq(token)}; pwd; echo ${sq(MARK)}; export -p; } > ${STATE} 2>/dev/null
 exit $__fs_rc`;
 
     const result = await this.bash.exec(script);
+    this.stateCaptured = false;
     try {
       const raw = await this.bash.readFile(STATE);
-      const [pwd, exports] = raw.split(MARK + "\n");
+      const nl = raw.indexOf("\n");
+      if (raw.slice(0, nl) !== token) throw new Error("epilogue did not run");
+      this.stateCaptured = true;
+      const [pwd, exports] = raw.slice(nl + 1).split(MARK + "\n");
       this.cwd = pwd.trim() || this.cwd;
       const next = {};
       for (const line of (exports ?? "").split("\n")) {
@@ -65,8 +78,10 @@ exit $__fs_rc`;
         if (bare) next[bare[1]] = "";
       }
       if (Object.keys(next).length) this.env = next;
-    } catch { /* capture failed; retain prior state rather than corrupting it */ }
-    return result;
+    } catch { /* capture skipped; retain prior state rather than corrupting it */ }
+    // Surfaced so a caller can tell "state is unchanged because nothing changed it"
+    // from "state is unchanged because the command exited before we could look".
+    return Object.assign(result, { stateCaptured: this.stateCaptured });
   }
 
   getState() { return { cwd: this.cwd, env: { ...this.env }, rc: this.rc }; }

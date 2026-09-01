@@ -53,6 +53,13 @@ const MUTANTS = [
   ["M13 dest existence follows links", "scripts/world.mjs",
     "try { destEntry = nfs.lstatSync(destPath); } catch { /* genuinely absent */ }",
     "destEntry = nfs.existsSync(destPath) ? {} : null;"],
+  ["M14 save writes in place", "scripts/world.mjs",
+    "const tmp = `${this.path}.tmp-${process.pid}`;\n    nfs.writeFileSync(tmp, payload);\n    nfs.renameSync(tmp, this.path);",
+    "nfs.writeFileSync(this.path, payload);"],
+  ["M15 epilogue-skip undetected", "scripts/persistent-shell.mjs",
+    'if (raw.slice(0, nl) !== token) throw new Error("epilogue did not run");', "void 0;"],
+  ["M16 octal escapes mis-decoded", "scripts/persistent-shell.mjs",
+    'if (/^[0-7]+$/.test(c)) return String.fromCharCode(parseInt(c, 8) & 0xff);', "void 0;"],
 ];
 
 const SUITE = ["tests/unit/fs-snapshot.test.mjs", "tests/unit/persistent-shell.test.mjs",
@@ -78,6 +85,16 @@ if (!(baseline.tests > 0) || baseline.fail !== 0) {
 }
 console.log(`baseline: ${baseline.tests} tests, 0 failing\n`);
 
+let inFlight = null;   // { file, src } while a mutant is applied
+for (const sig of ["SIGINT", "SIGTERM"]) {
+  process.on(sig, () => {
+    // A `finally` block does not run when the process is signalled, which would
+    // leave production source mutated. Scratch copies would be more robust still.
+    if (inFlight) { try { nfs.writeFileSync(inFlight.file, inFlight.src); } catch {} }
+    process.exit(130);
+  });
+}
+
 let killed = 0;
 const survivors = [];
 console.log("mutant                            verdict");
@@ -93,6 +110,7 @@ for (const [name, rel, anchor, repl] of MUTANTS) {
   }
   let verdict;
   try {
+    inFlight = { file, src };
     nfs.writeFileSync(file, src.replace(anchor, repl));
     const res = runSuite();
     // A nonzero exit alone is not a kill: the runner also exits nonzero when a test
@@ -110,6 +128,7 @@ for (const [name, rel, anchor, repl] of MUTANTS) {
     // Restore the EXACT bytes we captured. `git checkout --` would also revert any
     // unrelated uncommitted edit in this file.
     nfs.writeFileSync(file, src);
+    inFlight = null;
   }
   console.log(`${name.padEnd(34)}${verdict}`);
   if (verdict.startsWith("KILLED")) killed++; else survivors.push(name);

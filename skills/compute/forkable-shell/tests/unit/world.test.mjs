@@ -119,13 +119,26 @@ test("REGRESSION: forking over a pre-existing dest does not write THROUGH it", a
   assert.equal(nfs.readFileSync(bystander, "utf8"), "UNRELATED", "branch mutated the bystander");
 });
 
-test("REGRESSION: save is atomic and leaves no temp file behind", async () => {
+test("REGRESSION: save writes via a temp file and never truncates the world in place", async () => {
+  // Asserting only "valid JSON, no strays" passes under a direct in-place write too,
+  // which is exactly the implementation this test exists to forbid. Instead, block
+  // the temp path: a write-then-rename save MUST fail and leave the world intact,
+  // whereas a direct write would happily clobber it.
   const d = tmp(), p = path.join(d, "w.json");
   const w = await World.open(p);
-  await w.exec("echo x > /work/a.txt");
-  const strays = nfs.readdirSync(d).filter((f) => f.includes(".tmp-"));
-  assert.deepEqual(strays, [], `temp files left behind: ${strays}`);
+  await w.exec("echo original > /work/a.txt");
+  const good = nfs.readFileSync(p, "utf8");
+
+  nfs.mkdirSync(`${p}.tmp-${process.pid}`);        // temp path is now un-writable
+  await assert.rejects(async () => {
+    await w.exec("echo clobbered > /work/a.txt");
+  }, "save must fail rather than write the world in place");
+  assert.equal(nfs.readFileSync(p, "utf8"), good, "the previous world was destroyed");
+
+  nfs.rmdirSync(`${p}.tmp-${process.pid}`);
+  await w.exec("echo after > /work/a.txt");
   assert.doesNotThrow(() => JSON.parse(nfs.readFileSync(p, "utf8")));
+  assert.deepEqual(nfs.readdirSync(d).filter((f) => f.includes(".tmp-")), []);
 });
 
 test("REGRESSION: fork onto a DANGLING symlink dest does not write to its target", async () => {

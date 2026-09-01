@@ -22,6 +22,10 @@ description: >
 A **world** is one JSON file holding an entire agent workspace: the virtual filesystem
 plus shell state. Because a world is a single value, **forking is a file copy**.
 
+Shell continuity is best-effort and self-reporting: state is replayed between calls,
+and when a command exits before it can be captured, `exec()` says so rather than
+pretending nothing changed.
+
 ```
 world.json ──fork──> A.json   (branch A works here)
            └─fork──> B.json   (branch B works here)
@@ -58,10 +62,16 @@ node scripts/vbash.mjs drive /tmp/w.json "Summarise /work/data.csv into /work/ou
 node scripts/vbash.mjs cat /tmp/w.json /work/out.json
 ```
 
-It passes `--allowed-tools mcp__vbash__vbash` and denies `Bash,Read,Write,Edit,Glob,Grep,
-WebFetch,WebSearch,Task,NotebookEdit`, so the agent has no host-touching tool at all.
-To wire it into a session you drive yourself, use `mcp-config` and pass the file to
-`claude --mcp-config`.
+It passes `--allowed-tools mcp__vbash__vbash` and denies `Bash,Read,Write,Edit,Glob,
+Grep,WebFetch,WebSearch,Task,NotebookEdit`. To wire it into a session you drive
+yourself, use `mcp-config` and pass the file to `claude --mcp-config`.
+
+**What that does and does not establish.** Those flags are permission allow/deny rules.
+What is *tested* here is narrower: commands sent through the vbash MCP server cannot
+reach the host filesystem. This skill does not prove that a launched Claude process
+exposes only vbash — inherited settings, other configured MCP servers, and tools not
+named in the deny list are outside what these tests cover. Treat `drive` as a
+convenient default, not a proof of confinement.
 
 ## The fork workflow
 
@@ -86,6 +96,11 @@ because they will bite you, and are **not** covered by these tests:
 - **Shell state does not persist by itself.** just-bash resets env, cwd and functions
   between `exec()` calls; only the filesystem is shared. `scripts/persistent-shell.mjs`
   replays state host-side.
+- **A command that exits early loses its state changes.** just-bash implements no
+  `trap`, so `exit N` or a `set -e` failure abandons the script before state can be
+  captured: the filesystem keeps the command's writes, but env and cwd stay at their
+  previous values. This cannot be prevented, so it is *reported* — `exec()` returns
+  `stateCaptured: false`. Check it if a turn may run `set -e`.
 - **Functions cannot be recovered from the guest.** `declare -f` returns a stub with the
   body elided, so register them host-side via `addRc()`.
 - **Shell state must be restored paired with its filesystem.** Loading state onto a fresh

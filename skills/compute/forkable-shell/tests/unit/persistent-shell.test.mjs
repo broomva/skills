@@ -92,3 +92,30 @@ test("REGRESSION: a malformed env NAME cannot smuggle commands into the preamble
     "a crafted env name executed during replay");
   assert.equal((await sh.exec("echo $GOOD")).stdout.trim(), "kept", "valid names must still replay");
 });
+
+test("REGRESSION: a command that exits early reports stateCaptured=false", async () => {
+  // just-bash implements no `trap`, so `exit N` and `set -e` failures abandon the
+  // script before the state epilogue. That cannot be prevented -- but it MUST be
+  // reported, or the caller cannot tell "nothing changed" from "we never looked".
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  await sh.exec("mkdir -p /work/sub");
+  const ok = await sh.exec("export K=good; cd /work");
+  assert.equal(ok.stateCaptured, true);
+
+  const bailed = await sh.exec("export K=lost; cd /work/sub; exit 7");
+  assert.equal(bailed.exitCode, 7);
+  assert.equal(bailed.stateCaptured, false, "early exit must be reported, not silently ignored");
+
+  const errexit = await sh.exec("export K=lost2; cd /work/sub; set -e; false; echo unreached");
+  assert.equal(errexit.stateCaptured, false, "set -e failure must be reported");
+
+  // prior good state is retained rather than corrupted
+  assert.equal((await sh.exec('echo "$K@$(pwd)"')).stdout.trim(), "good@/work");
+});
+
+test("REGRESSION: ANSI-C octal escapes decode to the right byte", async () => {
+  const sh = new PersistentShell({ fs: new InMemoryFs() });
+  await sh.exec(`export OCT=$'a\\001b'`);
+  const out = (await sh.exec('printf "%s" "$OCT" | od -An -c | head -1')).stdout.trim();
+  assert.match(out, /a\s+001\s+b/, `octal escape mis-decoded: ${JSON.stringify(out)}`);
+});

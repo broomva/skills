@@ -1,10 +1,12 @@
-// The security claim: an agent given only the vbash tool cannot read the host.
+// The tested claim: commands sent through the vbash MCP server cannot read the
+// host filesystem through the virtual shell.
 //
-// Asserted THROUGH THE MCP SERVER -- the same path Claude Code uses -- not against
-// the World class directly, so a containment regression in the server surface is
-// caught too. Probes assert the read produced NOTHING, not merely that it lacked a
-// canary literal: a probe that only rejects one string stays green while the whole
-// of /etc/hosts leaks.
+// This exercises the MCP transport used by `drive`; it does not launch Claude
+// Code and does not prove that Claude exposes only vbash or lacks other host access.
+//
+// Probes assert the read produced NO STDOUT, not merely that it lacked a canary
+// literal: a probe that only rejects one string stays green while the whole of
+// /etc/hosts leaks.
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import * as nfs from "node:fs";
