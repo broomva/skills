@@ -50,7 +50,33 @@ const MUTANTS = [
     ".filter(([k]) => /^[A-Za-z_][A-Za-z0-9_]*$/.test(k))", ".filter(() => true)"],
   ["M12 CLI seed decodes as utf8", "scripts/vbash.mjs",
     "files[guest] = new Uint8Array(nfs.readFileSync(host));", 'files[guest] = nfs.readFileSync(host, "utf8");'],
+  ["M13 dest existence follows links", "scripts/world.mjs",
+    "try { destEntry = nfs.lstatSync(destPath); } catch { /* genuinely absent */ }",
+    "destEntry = nfs.existsSync(destPath) ? {} : null;"],
 ];
+
+const SUITE = ["tests/unit/fs-snapshot.test.mjs", "tests/unit/persistent-shell.test.mjs",
+               "tests/unit/world.test.mjs", "tests/unit/cli.test.mjs"];
+
+/** Run the unit suite with a PINNED reporter. Node <=22 defaults to tap and >=23 to
+ *  spec, so an unpinned parse silently reads every mutant as inconclusive. */
+function runSuite() {
+  const r = spawnSync(process.execPath, ["--test", "--test-reporter=tap", ...SUITE],
+    { cwd: ROOT, encoding: "utf8", shell: false });
+  const out = `${r.stdout ?? ""}${r.stderr ?? ""}`;
+  const num = (re) => { const m = re.exec(out); return m ? Number(m[1]) : NaN; };
+  return { status: r.status, out, tests: num(/^# tests (\d+)$/m), fail: num(/^# fail (\d+)$/m) };
+}
+
+// Green baseline. Without it, a suite that is broken for every mutant would report a
+// perfect kill score.
+const baseline = runSuite();
+if (!(baseline.tests > 0) || baseline.fail !== 0) {
+  console.error(`baseline is not green: ${baseline.tests} tests, ${baseline.fail} failing`);
+  console.error(baseline.out.slice(-1500));
+  process.exit(1);
+}
+console.log(`baseline: ${baseline.tests} tests, 0 failing\n`);
 
 let killed = 0;
 const survivors = [];
@@ -68,22 +94,22 @@ for (const [name, rel, anchor, repl] of MUTANTS) {
   let verdict;
   try {
     nfs.writeFileSync(file, src.replace(anchor, repl));
-    const r = spawnSync(process.execPath,
-      ["--test", "tests/unit/fs-snapshot.test.mjs", "tests/unit/persistent-shell.test.mjs",
-       "tests/unit/world.test.mjs", "tests/unit/cli.test.mjs"],
-      { cwd: ROOT, encoding: "utf8", shell: false });
-    // A nonzero exit alone is not a kill: the runner also exits nonzero when it
-    // crashes or cannot load a file, which would score an infrastructure failure
-    // as a passing mutation proof. Require at least one FAILING ASSERTION.
-    const m = /^\u2139 fail (\d+)$/m.exec(r.stdout ?? "");
-    const failures = m ? Number(m[1]) : 0;
-    verdict = failures > 0 ? `KILLED (${failures} failing)` : (r.status !== 0
-      ? `*** INCONCLUSIVE *** runner exited ${r.status} with no failing assertion`
-      : "*** SURVIVED ***");
+    const res = runSuite();
+    // A nonzero exit alone is not a kill: the runner also exits nonzero when a test
+    // file fails to LOAD (a syntax error reports `fail 1` too), which would score an
+    // infrastructure failure as a passing mutation proof. Require a failing assertion
+    // AND the same number of tests as the green baseline -- a load failure changes it.
+    if (res.tests !== baseline.tests) {
+      verdict = `*** INCONCLUSIVE *** ${res.tests} tests ran, baseline ${baseline.tests} (load failure?)`;
+    } else if (res.fail > 0) {
+      verdict = `KILLED (${res.fail} failing)`;
+    } else {
+      verdict = "*** SURVIVED ***";
+    }
   } finally {
-    // Always restore, even on an exception or Ctrl-C, or production source is
-    // left mutated.
-    run(`git checkout -- ${rel}`);
+    // Restore the EXACT bytes we captured. `git checkout --` would also revert any
+    // unrelated uncommitted edit in this file.
+    nfs.writeFileSync(file, src);
   }
   console.log(`${name.padEnd(34)}${verdict}`);
   if (verdict.startsWith("KILLED")) killed++; else survivors.push(name);

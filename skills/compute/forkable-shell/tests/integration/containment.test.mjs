@@ -36,12 +36,17 @@ function fixture() {
   nfs.writeFileSync(path.join(d, "host-canary.txt"), CANARY + "\n");
   return d;
 }
-/** A contained read yields no content: an error, or nothing at all. */
+/** A contained read yields NO STDOUT. The server formats a result as
+ *  `<stdout>\n[stderr]\n<stderr>\n[exit N]`, so checking only that an error appeared
+ *  would pass a command that leaked a whole file AND then exited nonzero. */
+function stdoutOf(out) {
+  return out.split(/\n?\[stderr\]|\n?\[exit /)[0].trim();
+}
 function assertNoContent(out, label) {
   assert.ok(!out.includes("TOPSECRET"), `${label}: canary leaked`);
-  const failed = /No such file|not a directory|cannot|denied|\[exit [1-9]/i.test(out);
-  const empty = out.trim() === "" || out.trim() === "(no output)";
-  assert.ok(failed || empty, `${label}: produced real content instead of failing -> ${JSON.stringify(out.slice(0, 120))}`);
+  const body = stdoutOf(out);
+  assert.ok(body === "" || body === "(no output)",
+    `${label}: produced stdout instead of failing -> ${JSON.stringify(body.slice(0, 140))}`);
 }
 
 test("no host path is reachable through the MCP server", { timeout: 30000 }, async () => {
@@ -77,6 +82,10 @@ test("POSITIVE CONTROL: the probe detects a canary planted inside the world", { 
     assert.ok(out.includes("TOPSECRET"), "probe cannot see content it should -- containment test is vacuous");
     // and the strict assertion must reject it, proving assertNoContent discriminates
     assert.throws(() => assertNoContent(out, "control"), /canary leaked/);
+    // and content-plus-an-error must still be rejected: the earlier version of this
+    // helper passed anything that merely looked like a failure.
+    assert.throws(() => assertNoContent("root:x:0:0:root:/root:/bin/sh\n[exit 1]", "control2"),
+      /produced stdout/);
   } finally { for (const x of [...OPEN]) await shut(x); }
 });
 

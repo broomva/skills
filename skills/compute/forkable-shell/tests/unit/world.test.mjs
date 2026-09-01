@@ -127,3 +127,21 @@ test("REGRESSION: save is atomic and leaves no temp file behind", async () => {
   assert.deepEqual(strays, [], `temp files left behind: ${strays}`);
   assert.doesNotThrow(() => JSON.parse(nfs.readFileSync(p, "utf8")));
 });
+
+test("REGRESSION: fork onto a DANGLING symlink dest does not write to its target", async () => {
+  // existsSync() follows symlinks and returns false for a dangling one, so an
+  // existence-gated guard is skipped and copyFileSync then follows the link.
+  const d = tmp(), trunk = path.join(d, "t.json");
+  const target = path.join(d, "victim.json"), dst = path.join(d, "dangling.json");
+  const t0 = await World.open(trunk);
+  await t0.exec("echo trunk > /work/t.txt");
+
+  nfs.symlinkSync(target, dst);                     // points at a file that does not exist yet
+  assert.equal(nfs.existsSync(dst), false, "precondition: dangling link looks absent");
+  nfs.writeFileSync(target, "VICTIM");              // now the target exists
+
+  World.fork(trunk, dst);
+  assert.equal(nfs.readFileSync(target, "utf8"), "VICTIM",
+    "fork followed a symlink destination and overwrote its target");
+  assert.equal(nfs.lstatSync(dst).isSymbolicLink(), false, "dest should be a real file now");
+});

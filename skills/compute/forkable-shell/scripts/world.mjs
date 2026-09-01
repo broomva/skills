@@ -64,13 +64,17 @@ export class World {
     // hardlink or symlink to the trunk shares its inode and the branch then mutates
     // the trunk. Refuse self-aliasing outright, and unlink any other existing dest
     // so the copy always lands on a fresh inode.
-    if (nfs.existsSync(destPath)) {
+    // lstat, not existsSync: existsSync FOLLOWS symlinks and returns false for a
+    // DANGLING one, after which copyFileSync would follow it and write to its target.
+    let destEntry = null;
+    try { destEntry = nfs.lstatSync(destPath); } catch { /* genuinely absent */ }
+    if (destEntry) {
       const sameInode = (a, b) => { try { const x = nfs.statSync(a), y = nfs.statSync(b);
         return x.dev === y.dev && x.ino === y.ino; } catch { return false; } };
       if (sameInode(srcPath, destPath)) {
         throw new Error(`refusing to fork onto the same file as the trunk: ${destPath}`);
       }
-      nfs.unlinkSync(destPath);
+      nfs.unlinkSync(destPath);       // removes the link itself, never its target
     }
     nfs.copyFileSync(srcPath, destPath);
     return destPath;
