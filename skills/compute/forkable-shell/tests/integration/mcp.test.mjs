@@ -94,3 +94,19 @@ test("the MCP tool reports when shell state was not captured", { timeout: 30000 
     assert.ok(!/NOT captured/.test(fine), "a normal command must not warn");
   } finally { for (const x of [...OPEN]) await shut(x); }
 });
+
+test("REGRESSION: a large stdout does not truncate away the state warning", { timeout: 30000 }, async () => {
+  // The warning used to be appended and then the whole body sliced to MAX_OUTPUT,
+  // so a noisy command silently dropped it -- restoring the exact failure the
+  // warning exists to prevent.
+  const c = await connect(path.join(tmp(), "w.json"));
+  try {
+    await call(c, "mkdir -p /work/s");
+    const out = await call(c, "mkdir -p /work/s; cd /work/s; " +
+      "for i in $(seq 1 2100); do echo 0123456789; done; set -e; false");
+    assert.match(out, /shell state \(cwd, env\) was NOT captured/,
+      "warning was truncated away by a large stdout");
+    assert.match(out, /\[output truncated\]/, "truncation should be announced");
+    assert.ok(out.length <= 20000, `response exceeded the cap: ${out.length}`);
+  } finally { for (const x of [...OPEN]) await shut(x); }
+});

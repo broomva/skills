@@ -37,17 +37,29 @@ server.registerTool("vbash", {
       exit: res.exitCode, out: res.stdout.slice(0, 400), err: res.stderr.slice(0, 200),
     }) + "\n");
   }
-  const body = [
-    res.stdout,
+  // Metadata is assembled FIRST and its space reserved, then stdout is trimmed to
+  // fit. Truncating the joined body instead would drop the trailing warning exactly
+  // when a command produces a lot of output -- silently restoring the failure mode
+  // the warning exists to prevent.
+  const meta = [
     res.stderr ? `[stderr]\n${res.stderr}` : "",
     res.exitCode !== 0 ? `[exit ${res.exitCode}]` : "",
-    // Surfaced to the caller: without it the agent cannot tell that its `cd` and
-    // `export` were discarded because the command exited before state capture.
+    // Without this the agent cannot tell that its `cd` and `export` were discarded
+    // because the command exited before state capture.
     res.stateCaptured === false
       ? "[warning] shell state (cwd, env) was NOT captured: the command exited before the state epilogue ran (exit/set -e). Files persist; cwd and exported variables do not."
       : "",
+  ].filter(Boolean).join("\n");
+
+  const NOTE = "[output truncated]";
+  const room = Math.max(0, MAX_OUTPUT - meta.length - NOTE.length - 2);
+  const truncated = res.stdout.length > room;
+  const body = [
+    truncated ? res.stdout.slice(0, room) : res.stdout,
+    truncated ? NOTE : "",
+    meta,
   ].filter(Boolean).join("\n") || "(no output)";
-  return { content: [{ type: "text", text: body.slice(0, MAX_OUTPUT) }] };
+  return { content: [{ type: "text", text: body }] };
 });
 
 await server.connect(new StdioServerTransport());

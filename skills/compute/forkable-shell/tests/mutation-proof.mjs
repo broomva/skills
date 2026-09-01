@@ -66,10 +66,16 @@ const MUTANTS = [
     "builtin pwd; echo ${sq(mark)}", "pwd; echo ${sq(mark)}"],
   ["M19 octal grammar too greedy", "scripts/persistent-shell.mjs",
     "|[0-7]{1,3}|", "|0[0-7]{0,3}|[1-7][0-7]{0,2}|"],
+  ["M20 warning truncated by stdout", "scripts/vbash-server.mjs",
+    "const room = Math.max(0, MAX_OUTPUT - meta.length - NOTE.length - 2);",
+    "const room = MAX_OUTPUT;"],
 ];
 
+// The MCP suite is included because mutants in the server (M20) are unreachable
+// from the unit tests; a mutant no suite can observe reports a spurious SURVIVED.
 const SUITE = ["tests/unit/fs-snapshot.test.mjs", "tests/unit/persistent-shell.test.mjs",
-               "tests/unit/world.test.mjs", "tests/unit/cli.test.mjs"];
+               "tests/unit/world.test.mjs", "tests/unit/cli.test.mjs",
+               "tests/integration/mcp.test.mjs"];
 
 /** Run the unit suite with a PINNED reporter. Node <=22 defaults to tap and >=23 to
  *  spec, so an unpinned parse silently reads every mutant as inconclusive. */
