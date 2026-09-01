@@ -51,29 +51,25 @@ server.registerTool("vbash", {
     : "";
   const exitLine = res.exitCode !== 0 ? `[exit ${res.exitCode}]` : "";
   const reserved = [exitLine, warn].filter(Boolean);
-  // +1 per joined line; NOTE is only added when something is actually trimmed.
-  const reservedLen = reserved.reduce((n, x) => n + x.length + 1, 0) + NOTE.length + 1;
 
-  let room = Math.max(0, MAX_OUTPUT - reservedLen);
-  let truncated = false;
   let out = res.stdout;
   let err = res.stderr ? `[stderr]\n${res.stderr}` : "";
-  // stderr is a stream like any other -- treating it as protected metadata is what
-  // broke the cap. Give it at most half the room when both compete.
-  if (out.length + err.length > room) {
-    truncated = true;
-    const errBudget = Math.min(err.length, Math.floor(room / 2));
-    const outBudget = Math.max(0, room - errBudget);
-    out = out.slice(0, outBudget);
-    err = err.slice(0, errBudget);
-  }
+  let truncated = false;
+  const build = () =>
+    [out, err, truncated ? NOTE : "", ...reserved].filter(Boolean).join("\n") || "(no output)";
 
-  // No second clamp here. A trailing slice() would be a weaker duplicate of the
-  // budget above -- it enforces the cap while trimming SILENTLY, which breaks the
-  // "say when you trimmed" invariant, and it made the budget arithmetic
-  // unobservable (mutants M20 and M21 both survived while it was present).
-  const body = [out, err, truncated ? NOTE : "", ...reserved]
-    .filter(Boolean).join("\n") || "(no output)";
+  // Fit by MEASURING rather than by arithmetic over separator counts -- the arithmetic
+  // version was off by one when both streams were present. Trim the longer stream
+  // each pass so neither can starve the other, and stop if only the small reserved
+  // metadata is left (it is bounded and must survive).
+  while (build().length > MAX_OUTPUT) {
+    truncated = true;
+    const over = build().length - MAX_OUTPUT;
+    if (out.length === 0 && err.length === 0) break;
+    if (out.length >= err.length) out = out.slice(0, Math.max(0, out.length - over));
+    else err = err.slice(0, Math.max(0, err.length - over));
+  }
+  const body = build();
   return { content: [{ type: "text", text: body }] };
 });
 

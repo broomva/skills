@@ -66,10 +66,12 @@ const MUTANTS = [
     "builtin pwd; echo ${sq(mark)}", "pwd; echo ${sq(mark)}"],
   ["M19 octal grammar too greedy", "scripts/persistent-shell.mjs",
     "|[0-7]{1,3}|", "|0[0-7]{0,3}|[1-7][0-7]{0,2}|"],
-  ["M20 room ignores reserved metadata", "scripts/vbash-server.mjs",
-    "let room = Math.max(0, MAX_OUTPUT - reservedLen);", "let room = MAX_OUTPUT;"],
-  ["M21 stderr exempt from the budget", "scripts/vbash-server.mjs",
-    "if (out.length + err.length > room) {", "if (out.length > room) {"],
+  // NB: mutate a VALUE here, not the loop's exit path -- a mutant that leaves the
+  // loop unable to make progress hangs the runner instead of failing it.
+  ["M20 output never trimmed to the cap", "scripts/vbash-server.mjs",
+    "while (build().length > MAX_OUTPUT) {", "while (build().length > MAX_OUTPUT * 10) {"],
+  ["M21 stderr exempt from trimming", "scripts/vbash-server.mjs",
+    "    else err = err.slice(0, Math.max(0, err.length - over));", "    else break;"],
 ];
 
 // The MCP suite is included because mutants in the server (M20) are unreachable
