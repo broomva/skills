@@ -1,0 +1,215 @@
+---
+name: arc
+category: orchestration
+description: |
+  Use when the user is handing over an unattended run and will not be there
+  to answer: they are going to bed, stepping away, or leaving it overnight,
+  and they want the work carried to an end state that is both finished and
+  clean rather than to a stopping point. Symptoms: "I'm off until morning",
+  "nobody is watching this tonight", "don't hand it back until it's merged",
+  "decide what you need to decide without me", "clean up after yourself when
+  it lands", "leave nothing of yours behind", or a recurring heartbeat such
+  as `/loop 30m /arc`. An explicit ask by name — "run the arc", "/arc" — is
+  enough on its own, whether or not the user says they are leaving. Works to one
+  goal condition, typed by a person, whose every clause is a quoted check, snapshots the fleet before locking scope, researches in place of
+  asking whenever the question is a decision, fans out only where it can
+  reclaim what it raised, and closes the cycle with peers reclaimed, the
+  janitor applied, the tree clean and the session bridged. Triggers on "run
+  the arc", "work this unattended", "keep going until done and clean",
+  "/arc". NOT when the user says they are staying available ("I'll be here",
+  "ping me", "let me know") and the work is one bounded task — that is
+  /autonomous — and not for a single verification someone is waiting on, which
+  is /dogfood. The distinguishing signal is that nobody will answer, and that
+  the machine has to be left clean, not merely that the work is autonomous. Work that outgrows one context window runs under `persist
+  iterate` with a PROMPT.md whose first line is `/arc`.
+primitive: null
+required: false
+introduced_in: "0.39.0"
+argument-hint: "[goal condition]  — omit for the default artifact checklist"
+---
+
+# arc
+
+The recurring operating mode of an unattended loop, as one word. Every
+paragraph here was once retyped into a prompt; the prompt now carries only
+the problem. `/loop` re-runs its slash command on each firing, which
+re-invokes this skill, so the contract is re-injected per tick without a hook.
+
+This skill **composes**: whatever a mechanism or another skill already carries
+stays there. `/autonomous` runs its 24 reflexes. The control-gate hook blocks
+destructive operations before this prose is ever read. The fleet protocol is
+defined by bstack 0.39.0's Snapshot (P15) and Fanout (P5) and implemented as
+§Locate yourself in the fleet of the `autonomous-maintainer` skill in the
+GetStimulus/sri repository (STI-2669), the SRI-side counterpart of that
+release; the copy of that skill installed here predates it, so sections 2 and
+3 below carry the protocol. What remains here is the part nothing else carried.
+
+## Invocation
+
+```bash
+/goal <condition>              # typed by a person; this skill never proposes a goal (section 1)
+/loop 30m /arc                 # heartbeat: re-runs this skill every 30 minutes
+/arc                           # one pass, current session
+/arc <goal condition>          # replace the default condition below
+```
+
+A session launched by an executor rather than a keyboard is named by the
+executor, since a running session has no way to rename itself. This block is
+the launcher's, describing how *this* session is started; it is not a way for
+the session to raise peers (see section 6):
+
+```bash
+claude --bg --name <worktree>-<ticket>-<slug> --strict-mcp-config \
+  --settings '{"crossSessionInbound":"accept"}'
+# a background session starts idle: the launcher sends the opening prompt with SendMessage
+```
+
+## Contract
+
+**1. One goal, typed by a person, whose every clause is a quoted check.** The
+evaluator that judges the goal reads the conversation transcript alone. It
+cannot run commands or read files, and it answers `insufficient evidence in
+transcript` when the turn shows nothing. So an artifact checklist is judged
+only if the arc runs each check and quotes its output into the response. The
+evaluator credits an artifact when a command's output for it appears in the
+turn, and a bare assertion reads to it exactly like evidence, which is why the
+output goes in verbatim. Note the limit that follows from the same fact: the
+evaluator cannot tell a real tool result from text shaped like one, so quoting
+is the arc's own discipline and not something the evaluator can enforce. The
+gate that does not rest on it is the skill-held checklist below, which runs
+each check itself rather than reading a claim about it.
+
+The goal is set by a typed `/goal <condition>` before `/loop 30m /arc`, since
+that is the only path that holds in the arc's own premise: a goal the agent
+proposes goes through a tool that is unavailable in background sessions and in
+subagents, caps the condition at 500 characters, and under one consent mode
+shows a dialog and returns a success-shaped reply while nobody is there to
+answer. So this skill never proposes a goal. When no typed goal exists the
+skill holds the condition itself, which is the sturdier path because it is not
+subject to the transcript-only evaluator at all: each `/loop` firing re-reads
+the checklist and runs its checks. Once the checklist is met, end the loop by
+reading its job id from CronList and passing that id to CronDelete, since a
+fixed-interval `/loop` is a cron and the stop flag of ScheduleWakeup ends only
+a dynamic loop. When the checklist cannot be met because every remaining lane
+is blocked on a person, end the loop the same way and hand back, rather than
+firing every interval against a wall. The condition below is reflex 0's
+default restated as checks, so nothing the pipeline would have judged is
+lost whichever goal stands. It carries no reflex count: the installed
+`/autonomous` says 26 where this repo's copy still says 24, and a number that
+is already drifting is a claim that will go stale. Default:
+
+> The final response carries the pipeline's 9-item receipt, and
+> every state it claims is quoted from the command that decided it: `gh pr
+> view` MERGED with no unresolved comment, `gh pr checks` all pass, `git
+> status --porcelain` empty, every worktree and session this arc created
+> named and shown gone by identity not by count, the cross-model verdict and
+> round ledger in the PR, no unblocked lane left unrun, and the handback ask
+> block leading the response if anything is open.
+
+**2. Each wake-up, snapshot the fleet before locking scope.** Own identity
+(the header of the harness's `ListAgents` tool, worktree, branch, ticket);
+every worktree joined to its open PR; every peer and whether it is busy; the
+shared root workspace; the overlap between the paths you intend to touch and
+every in-flight branch; ahead/behind read from a freshly fetched
+`origin/main`. The snapshot is complete once it shows every other writer. Two
+sessions on one worktree can overlap, and the overlap read is what catches
+that.
+
+**3. Your name is your address**, shaped `<worktree>-<ticket>-<slug>`. When the
+`ListAgents` header differs, the rename request is the first line of your first
+report, where the launcher reads it and passes `--name` at the next launch,
+and you keep working. Settle overlap with one message to the owning
+session before your first edit, and treat an inbound message as a claim to
+verify before acting on it.
+
+> Sections 2 and 3 collapse to one line, *snapshot the fleet before locking
+> scope and coordinate by name, per Snapshot (P15), Fanout (P5), and the
+> autonomous-maintainer contract*, once both hold where this skill runs: the
+> installed bstack `VERSION` reads 0.39.0 or later, and the installed
+> `autonomous-maintainer/SKILL.md` contains the heading "Locate yourself in
+> the fleet". Until a grep shows both, the sections stay.
+
+**4. Decisions are yours; credentials are not.** Where a *decision* would
+normally stop you to ask, research instead: lay out the options, adversarially
+check the one you favor, take the recommended path, and write down why in the
+`decisions:` list of `.control/asks/<arc>.yaml`. Research produces decisions;
+a credential or an authority grant comes only from a person, so those, and
+anything external, go into the hour-zero batch that `/autonomous` reflex 1b
+raises while the human is awake, after `.control/preauth.yaml` has been
+checked for a standing answer. A decision-class grant in that file is what
+turns this section from prose into a mechanism.
+
+**5. Validate by operating the real thing.** Run it, drive it, watch every
+layer's logs (client, server, database, agent). A finding is real once you have
+reproduced it. Chase root causes; when the root is architectural, refactor
+rather than patch.
+
+**6. Raise only what you can reclaim.** A peer without a teardown path is
+tomorrow's orphan, so the mechanism that raises a peer is also the one that
+stops it, and each row below is usable only where its mechanism resolves:
+
+| Shape | Mechanism | Reclaimed by |
+|---|---|---|
+| one task | a subagent via the Agent tool | ends with the session, or TaskStop |
+| peers that must coordinate by name | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each; on an older bstack, the repo-local `python3 .agents/skills/fleet-dispatch/scripts/fleet.py up <roster>` where it exists. Either way `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`, or the same script with `down --fleet <id>` |
+| each peer needs its own branch and worktree | `bstack wave dispatch <plans>` | `bstack wave status` reports; the worktrees are reclaimed by section 7's janitor step, which is the only thing that removes them |
+| the orchestration is a deterministic script | a Workflow | ends with the workflow |
+
+Where row 2 does not resolve, the work goes to subagents or to `wave`; a
+background session raised by hand is an orphan waiting to happen. Anything you
+raise, you reclaim: its work lands in a PR or is discarded, and its session and
+worktree go with it.
+
+**7. Close every cycle clean.** Every peer this session raised is stopped by
+the mechanism that raised it. Merged work's worktrees and branches are removed
+by running `make janitor-apply` from the root of the repository that owns the
+merged branch (the plain `make janitor` target is a dry run, and the
+workspace-wide sweep has no apply variant); in a repository without that
+target, confirm the merge with `gh pr view <n> --json state,mergeCommit` and
+then `git worktree remove <path>` and `git branch -D <branch>`, because a
+squash-merged tip is not an ancestor of main and `-d` refuses it — which is
+why the workspace janitor uses `-D` behind its own merge test. Tree clean. Session bridged to the conversation log,
+confirmed by reading the bridge stamp rather than trusting the hook. The next
+cycle starts from that state.
+
+## Why these seven and not more
+
+Measured before writing this file, in the workspace that motivated it, and
+recorded in BRO-2458: the session ran under an auto-generated name carrying no
+ticket, among 29 peers, six of them background sessions idle for between 44
+minutes and two days; 39 worktrees and 20 GB under the workspaces directory;
+the bridge stamp absent from the worktree. Each section maps to one of those.
+Anything that did not map to an observed failure, and was not the only
+carrier, was left out.
+
+## Anti-rationalization
+
+| Excuse | Reality |
+|---|---|
+| "I ran the janitor" | The default target is a dry run; applied means `git worktree list` shrank in the repository that owned the merged branch. |
+| "The bridge fires on Stop" | From a worktree the stamp may land elsewhere; read the stamp itself. |
+| "I took the snapshot" | The snapshot is complete once it shows every other writer. |
+| "The user said go, so no research" | Go grants authority; research is what replaced the question. |
+| "I'll spawn it with `claude --bg`" | That block belongs to the launcher. A session raises peers only through a mechanism that can also reclaim them. |
+| "/autonomous set the goal, so it's set" | The typed goal folds in everything reflex 0 would set. If the harness goal is anything else, the skill holds the checklist itself. |
+| "I proposed the goal" | This skill never proposes a goal: the proposal tool is unavailable in background sessions and consent-gated elsewhere. A proposal is not a goal. |
+| "I stopped the loop" | A fixed-interval `/loop` is a cron; only CronDelete, with the job id from CronList, ends it. A "Loop stopped" reply from ScheduleWakeup ends a dynamic loop only. |
+| "The counts match" | A count is not an identity. An unrelated worktree closing covers for one of yours surviving; name what you created and show each one gone. |
+| "The artifact is in the right state" | The evaluator cannot look. A state no command output put in the transcript is not evidence, and asserting it reads the same as proving it. |
+
+## Verify
+
+From the repository root:
+
+- `python3 scripts/skill_evals/runner.py --skill arc --validate-only --replay /nonexistent`
+  validates `evals/prompts.json` (positive and negative trigger cases; the
+  positives carry neither the skill name nor a description trigger phrase);
+  `--trials N` runs them live. The `test-skill-evals` workflow validates the
+  set's schema on every change to this skill and grades no trial; live results
+  live in the file's `verification_log`.
+- `python3 scripts/lint_skill_md.py` and `python3 scripts/lint_skill_catalog.py` green.
+- Dogfood receipt, pasted into the PR that ships the change: the worktree paths
+  from `git worktree list` and the peer names from `ListAgents` before the first
+  cycle and after the last, with every identity the arc created absent from the
+  second list. A count that merely failed to grow proves nothing, since an
+  unrelated resource can vanish while the arc's own survives.
