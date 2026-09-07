@@ -40,7 +40,7 @@ release; the copy of that skill installed here predates it, so sections 2 and
 ## Invocation
 
 ```bash
-/goal <condition>              # typed by a person: set unconditionally (see section 1)
+/goal <condition>              # typed by a person; this skill never proposes a goal (section 1)
 /loop 30m /arc                 # heartbeat: re-runs this skill every 30 minutes
 /arc                           # one pass, current session
 /arc <goal condition>          # replace the default condition below
@@ -59,31 +59,29 @@ claude --bg --name <worktree>-<ticket>-<slug> --strict-mcp-config \
 
 ## Contract
 
-**1. One goal, stated as an artifact checklist.** The evaluator that judges
-the goal reads git, GitHub, and the filesystem, so the condition names
-artifacts rather than narration. How the goal gets set decides whether an
-unattended arc has one at all. A `/goal <condition>` typed by a person is set
-unconditionally. A goal the agent sets goes through the ProposeGoal tool,
-whose `ask_user` parameter asks the person first by default, and whose mode
-can route every proposal through an approval dialog or disable the tool
-outright. So: when a person launches the arc, the condition below is typed as
-`/goal` before `/arc`. When the agent sets it, it proposes with `ask_user`
-false; if the tool answers that the proposal is awaiting a decision, or is
-disabled, the arc has no harness goal, and this skill holds the condition
-itself: each `/loop` firing re-reads the checklist, and the loop is stopped
-only when it is met. `/autonomous` reflex 0 sets a default goal of its own,
-and the last goal set wins, so the condition below folds that default in and
-is asserted after `/autonomous` has started, and again whenever anything
-replaces it. Default:
+**1. One goal, typed by a person, stated as an artifact checklist.** The
+evaluator that judges the goal reads git, GitHub, and the filesystem, so the
+condition names artifacts rather than narration. The goal is set by a typed
+`/goal <condition>` before `/loop 30m /arc`, because that is the only path
+that holds in the arc's own premise: a goal the agent proposes goes through a
+tool that is unavailable in background sessions and in subagents, caps the
+condition at 500 characters, and under one consent mode shows a dialog and
+returns a success-shaped reply while nobody is there to answer. So this skill
+never proposes a goal. When no typed goal exists, the skill holds the
+condition itself: each `/loop` firing re-reads the checklist, and once it is
+met the loop is ended by deleting its cron with CronDelete, since a
+fixed-interval `/loop` is a cron and the stop flag of ScheduleWakeup ends only
+a dynamic loop. The condition below folds in the default that `/autonomous`
+reflex 0 would set, so nothing the pipeline checks is lost whichever goal
+stands. Default, 500 characters or fewer so it fits either path:
 
-> The 24-reflex pipeline is complete and the fleet is clean: the problem in
-> this session's context is fixed, merged to main with CI green and a
-> cross-model verdict in the PR body, proven by operating the real system with
-> evidence on disk; every decision recorded with its reason; git status clean;
-> no unresolved PR comment; no unblocked lane left unrun; the final response
-> carrying the 9-item receipt and, if anything is open, the handback ask
-> block; every peer this session raised reclaimed, and no worktree, branch, or
-> session left behind for merged work.
+> 24-reflex pipeline complete and the fleet clean: the problem in context
+> fixed, merged to main, CI green, cross-model verdict in the PR body, proven
+> on the real system with evidence on disk, every decision recorded with its
+> reason, git status clean, no unresolved PR comment, no unblocked lane left
+> unrun, final response carrying the 9-item receipt and the handback ask block
+> if anything is open, every peer this session raised reclaimed, no worktree,
+> branch, or session left behind for merged work.
 
 **2. Each wake-up, snapshot the fleet before locking scope.** Own identity
 (the header of the harness's `ListAgents` tool, worktree, branch, ticket);
@@ -130,7 +128,7 @@ stops it, and each row below is usable only where its mechanism resolves:
 | Shape | Mechanism | Reclaimed by |
 |---|---|---|
 | one task | a subagent via the Agent tool | ends with the session, or TaskStop |
-| peers that must coordinate by name | `python3 .agents/skills/fleet-dispatch/scripts/fleet.py up <roster>`, then SendMessage each; only where that script exists in the repository (at review time, GetStimulus/sri) | `python3 .agents/skills/fleet-dispatch/scripts/fleet.py down --fleet <id>` |
+| peers that must coordinate by name | `python3 .agents/skills/fleet-dispatch/scripts/fleet.py up <roster>`, then SendMessage each; only where that script exists in the repository (at review time, GetStimulus/sri), and with `crossSessionInbound: accept` in the orchestrating session's own settings, or every peer reply is held for approval | `python3 .agents/skills/fleet-dispatch/scripts/fleet.py down --fleet <id>` |
 | each peer needs its own branch and worktree | `bstack wave dispatch <plans>` | `bstack wave status` and the janitor |
 | the orchestration is a deterministic script | a Workflow | ends with the workflow |
 
@@ -168,8 +166,9 @@ carrier, was left out.
 | "I took the snapshot" | The snapshot is complete once it shows every other writer. |
 | "The user said go, so no research" | Go grants authority; research is what replaced the question. |
 | "I'll spawn it with `claude --bg`" | That block belongs to the launcher. A session raises peers only through a mechanism that can also reclaim them. |
-| "/autonomous set the goal, so it's set" | The last goal set wins; the arc condition is asserted after reflex 0 and whenever anything replaces it. |
-| "I proposed the goal" | A proposal awaiting a decision is not a goal. Until the tool confirms it is set, this skill holds the checklist itself. |
+| "/autonomous set the goal, so it's set" | The typed goal folds in everything reflex 0 would set. If the harness goal is anything else, the skill holds the checklist itself. |
+| "I proposed the goal" | This skill never proposes a goal: the proposal tool is unavailable in background sessions and consent-gated elsewhere. A proposal is not a goal. |
+| "I stopped the loop" | A fixed-interval `/loop` is a cron; only CronDelete ends it. A "Loop stopped" reply from ScheduleWakeup ends a dynamic loop only. |
 
 ## Verify
 
