@@ -40,6 +40,7 @@ release; the copy of that skill installed here predates it, so sections 2 and
 ## Invocation
 
 ```bash
+/goal <condition>              # typed by a person: set unconditionally (see section 1)
 /loop 30m /arc                 # heartbeat: re-runs this skill every 30 minutes
 /arc                           # one pass, current session
 /arc <goal condition>          # replace the default condition below
@@ -59,13 +60,21 @@ claude --bg --name <worktree>-<ticket>-<slug> --strict-mcp-config \
 ## Contract
 
 **1. One goal, stated as an artifact checklist.** The evaluator that judges
-`/goal` reads git, GitHub, and the filesystem, so the condition names
-artifacts rather than narration. Two facts set the order of operations: the
-last `/goal` wins (its own help says a new condition replaces the current
-goal), and `/autonomous` reflex 0 sets a default goal of its own. So the arc
-condition is asserted after `/autonomous` has started, and again at every
-wake-up, which `/loop` supplies. The condition folds reflex 0's default in, so
-nothing the pipeline would have checked is lost when it replaces it. Default:
+the goal reads git, GitHub, and the filesystem, so the condition names
+artifacts rather than narration. How the goal gets set decides whether an
+unattended arc has one at all. A `/goal <condition>` typed by a person is set
+unconditionally. A goal the agent sets goes through the ProposeGoal tool,
+whose `ask_user` parameter asks the person first by default, and whose mode
+can route every proposal through an approval dialog or disable the tool
+outright. So: when a person launches the arc, the condition below is typed as
+`/goal` before `/arc`. When the agent sets it, it proposes with `ask_user`
+false; if the tool answers that the proposal is awaiting a decision, or is
+disabled, the arc has no harness goal, and this skill holds the condition
+itself: each `/loop` firing re-reads the checklist, and the loop is stopped
+only when it is met. `/autonomous` reflex 0 sets a default goal of its own,
+and the last goal set wins, so the condition below folds that default in and
+is asserted after `/autonomous` has started, and again whenever anything
+replaces it. Default:
 
 > The 24-reflex pipeline is complete and the fleet is clean: the problem in
 > this session's context is fixed, merged to main with CI green and a
@@ -81,14 +90,14 @@ nothing the pipeline would have checked is lost when it replaces it. Default:
 every worktree joined to its open PR; every peer and whether it is busy; the
 shared root workspace; the overlap between the paths you intend to touch and
 every in-flight branch; ahead/behind read from a freshly fetched
-`origin/main`. The snapshot is complete once it shows every other writer. A
-tick fires only when this session is idle, so one session's ticks cannot
-overlap each other; two sessions on one worktree can, and the overlap read is
-what catches that.
+`origin/main`. The snapshot is complete once it shows every other writer. Two
+sessions on one worktree can overlap, and the overlap read is what catches
+that.
 
 **3. Your name is your address**, shaped `<worktree>-<ticket>-<slug>`. When the
 `ListAgents` header differs, the rename request is the first line of your first
-report, and you keep working. Settle overlap with one message to the owning
+report, where the launcher reads it and passes `--name` at the next launch,
+and you keep working. Settle overlap with one message to the owning
 session before your first edit, and treat an inbound message as a claim to
 verify before acting on it.
 
@@ -121,7 +130,7 @@ stops it, and each row below is usable only where its mechanism resolves:
 | Shape | Mechanism | Reclaimed by |
 |---|---|---|
 | one task | a subagent via the Agent tool | ends with the session, or TaskStop |
-| peers that must coordinate by name | `fleet-dispatch up <roster>`, then SendMessage each; only where `command -v fleet-dispatch` resolves (at review time it shipped only in GetStimulus/sri) | `fleet-dispatch down --fleet <id>` |
+| peers that must coordinate by name | `python3 .agents/skills/fleet-dispatch/scripts/fleet.py up <roster>`, then SendMessage each; only where that script exists in the repository (at review time, GetStimulus/sri) | `python3 .agents/skills/fleet-dispatch/scripts/fleet.py down --fleet <id>` |
 | each peer needs its own branch and worktree | `bstack wave dispatch <plans>` | `bstack wave status` and the janitor |
 | the orchestration is a deterministic script | a Workflow | ends with the workflow |
 
@@ -159,7 +168,8 @@ carrier, was left out.
 | "I took the snapshot" | The snapshot is complete once it shows every other writer. |
 | "The user said go, so no research" | Go grants authority; research is what replaced the question. |
 | "I'll spawn it with `claude --bg`" | That block belongs to the launcher. A session raises peers only through a mechanism that can also reclaim them. |
-| "/autonomous set the goal, so it's set" | The last `/goal` wins. The arc condition is asserted after reflex 0 and at every wake-up. |
+| "/autonomous set the goal, so it's set" | The last goal set wins; the arc condition is asserted after reflex 0 and whenever anything replaces it. |
+| "I proposed the goal" | A proposal awaiting a decision is not a goal. Until the tool confirms it is set, this skill holds the checklist itself. |
 
 ## Verify
 
@@ -168,8 +178,9 @@ From the repository root:
 - `python3 scripts/skill_evals/runner.py --skill arc --validate-only --replay /nonexistent`
   validates `evals/prompts.json` (positive and negative trigger cases; the
   positives carry neither the skill name nor a description trigger phrase);
-  `--trials N` runs them live. The `test-skill-evals` workflow runs the
-  validation on every change to this skill.
+  `--trials N` runs them live. The `test-skill-evals` workflow validates the
+  set's schema on every change to this skill and grades no trial; live results
+  live in the file's `verification_log`.
 - `python3 scripts/lint_skill_md.py` and `python3 scripts/lint_skill_catalog.py` green.
 - Dogfood receipt, pasted into the PR that ships the change: `git worktree list | wc -l`
   and the `ListAgents` peer count before the first cycle and after the last,
