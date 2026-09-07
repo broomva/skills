@@ -29,7 +29,7 @@ This project follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) an
 - broomva/bstack#14 — bstack SKILL.md / doctor.sh / primitives.md §P20 (merged)
 - broomva/cross-review — new skill repo implementing the gate (published)
 - broomva/bstack#108 (BRO-2453, v0.39.1) — `scripts/peer.py`: the P5 spawn contract as code; the 2.1.258 positional-prompt measurement and the pid-keyed liveness read that 1d cites (open).
-- broomva/bstack#109 (BRO-2454, v0.40.0) — `scripts/fleet.py`, `bstack fleet up/status/list/down`: the mechanism rule 6 routes to; its per-peer brief is where a peer's stopping step, goal condition and report address live (open).
+- broomva/bstack#109 (BRO-2454, v0.40.0) — `scripts/fleet.py`, `bstack fleet up/status/list/down`: the mechanism rule 6 routes to; its per-peer brief is where a peer's stopping step and lane live (open).
 
 ## [0.0.3.1] — 2026-05-13 (unreleased — P19 work)
 
