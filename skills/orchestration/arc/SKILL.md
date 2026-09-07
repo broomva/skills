@@ -36,13 +36,14 @@ the problem. `/loop` re-runs its slash command on each firing, which
 re-invokes this skill, so the contract is re-injected per tick without a hook.
 
 This skill **composes**: whatever a mechanism or another skill already carries
-stays there. `/autonomous` runs its 24 reflexes. The control-gate hook blocks
+stays there. `/autonomous` runs its reflexes. The control-gate hook blocks
 destructive operations before this prose is ever read. The fleet protocol is
-defined by bstack 0.39.0's Snapshot (P15) and Fanout (P5) and implemented as
-§Locate yourself in the fleet of the `autonomous-maintainer` skill in the
-GetStimulus/sri repository (STI-2669), the SRI-side counterpart of that
-release; the copy of that skill installed here predates it, so sections 2 and
-3 below carry the protocol. What remains here is the part nothing else carried.
+defined by bstack's Snapshot (P15) and Fanout (P5), given a mechanism by
+`bstack fleet` in 0.40.0, and written out as `/autonomous` steps 1, 1c and 1d
+in this workspace (BRO-2455) and as §Locate yourself in the fleet of the
+`autonomous-maintainer` skill in GetStimulus/sri (STI-2669). Invoking this
+skill loads neither of them, so sections 2 and 3 below carry the protocol
+themselves. What remains here is the part nothing else carried.
 
 ## Invocation
 
@@ -122,12 +123,14 @@ and you keep working. Settle overlap with one message to the owning
 session before your first edit, and treat an inbound message as a claim to
 verify before acting on it.
 
-> Sections 2 and 3 collapse to one line, *snapshot the fleet before locking
-> scope and coordinate by name, per Snapshot (P15), Fanout (P5), and the
-> autonomous-maintainer contract*, once both hold where this skill runs: the
-> installed bstack `VERSION` reads 0.39.0 or later, and the installed
-> `autonomous-maintainer/SKILL.md` contains the heading "Locate yourself in
-> the fleet". Until a grep shows both, the sections stay.
+> These sections duplicate `/autonomous` steps 1, 1c and 1d deliberately. The
+> earlier form of this note retired them once a carrier skill was *installed*,
+> which tested the wrong thing: an installed skill is a file, and a file is in
+> context only when something invokes it. `/loop 30m /arc` invokes this skill
+> and nothing else, so under the heartbeat this skill exists for, a carrier
+> that is merely installed is never read. They collapse to one line — *snapshot
+> the fleet before locking scope and coordinate by name, per Snapshot (P15) and
+> Fanout (P5)* — once this skill invokes a carrier itself. Until then they stay.
 
 **4. Decisions are yours; credentials are not.** Where a *decision* would
 normally stop you to ask, research instead: lay out the options, adversarially
@@ -151,14 +154,15 @@ stops it, and each row below is usable only where its mechanism resolves:
 | Shape | Mechanism | Reclaimed by |
 |---|---|---|
 | one task | a subagent via the Agent tool | ends with the session, or TaskStop |
-| peers that must coordinate by name | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each; on an older bstack, the repo-local `python3 .agents/skills/fleet-dispatch/scripts/fleet.py up <roster>` where it exists. Either way `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`, or the same script with `down --fleet <id>` |
+| peers that must coordinate by name | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each; `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`; `bstack fleet status --fleet <id>` reports per-peer liveness keyed on pid first |
 | each peer needs its own branch and worktree | `bstack wave dispatch <plans>` | `bstack wave status` reports; the worktrees are reclaimed by section 7's janitor step, which is the only thing that removes them |
 | the orchestration is a deterministic script | a Workflow | ends with the workflow |
 
-Where row 2 does not resolve, the work goes to subagents or to `wave`; a
-background session raised by hand is an orphan waiting to happen. Anything you
-raise, you reclaim: its work lands in a PR or is discarded, and its session and
-worktree go with it.
+Row 2 resolves wherever `bstack fleet --help` exits zero; on an install older
+than 0.40.0 it does not, and only there does the work fall back to subagents
+or to `wave`. A background session raised by hand is an orphan waiting to
+happen. Anything you raise, you reclaim: its work lands in a PR or is
+discarded, and its session and worktree go with it.
 
 **7. Close every cycle clean.** Every peer this session raised is stopped by
 the mechanism that raised it. Merged work's worktrees and branches are removed
