@@ -1,7 +1,7 @@
 {
   "skill": "arc",
-  "version": 2,
-  "notes": "6 cases: 4 positive / 2 negative, all golden (authored 2026-09-07 with the skill, before any production trace exists; re-derive the counts from this file before citing them). NOT ONE POSITIVE CONTAINS THE SUBSTRING 'arc', '/loop', OR A DESCRIPTION TRIGGER PHRASE ('run the arc', 'work this unattended', 'keep going until done and clean'): the set exercises the latent clause — an unattended run to a finished AND clean end state, with the human gone — which is the inference path a description rewrite could break without any lexical echo noticing. Negatives are near-misses that belong to /autonomous (a chosen plan with the human present) and /dogfood (a one-off verification with the human waiting). Version 1 of this file had all four positives as verbatim trigger phrases; P20 round 2 caught it.",
+  "version": 1,
+  "notes": "6 cases: 4 positive / 2 negative, all golden (authored 2026-09-07 with the skill, before any production trace exists; re-derive the counts from this file before citing them). NOT ONE POSITIVE CONTAINS THE SUBSTRING 'arc', '/loop', OR A DESCRIPTION TRIGGER PHRASE ('run the arc', 'work this unattended', 'keep going until done and clean'): the set exercises the latent clause — an unattended run to a finished AND clean end state, with the human gone — which is the inference path a description rewrite could break without any lexical echo noticing. Negatives are near-misses that belong to /autonomous (a chosen plan with the human present) and /dogfood (a one-off verification with the human waiting). An earlier draft of this file had all four positives as verbatim trigger phrases; P20 round 2 caught it. (The runner pins 'version' to 1; the draft history lives in git.)",
   "execution_contract": {
     "advisory": "Documentation only — runner.py does not read this object. Values mirror runner.py's constants at authoring time.",
     "trials_per_case": 3,
