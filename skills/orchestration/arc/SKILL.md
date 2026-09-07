@@ -9,15 +9,19 @@ description: |
   "nobody is watching this tonight", "don't hand it back until it's merged",
   "decide what you need to decide without me", "clean up after yourself when
   it lands", "leave nothing of yours behind", or a recurring heartbeat such
-  as `/loop 30m /arc`. Sets one goal condition whose every clause is a quoted
+  as `/loop 30m /arc`. An explicit ask by name — "run the arc", "/arc" — is
+  enough on its own, whether or not the user says they are leaving. Sets one
+  goal condition whose every clause is a quoted
   check, snapshots the fleet before locking scope, researches in place of
   asking whenever the question is a decision, fans out only where it can
   reclaim what it raised, and closes the cycle with peers reclaimed, the
   janitor applied, the tree clean and the session bridged. Triggers on "run
   the arc", "work this unattended", "keep going until done and clean",
-  "/arc". NOT for a bounded task with the user present and answering (use
-  /autonomous), or a one-off verification someone is waiting on (use
-  /dogfood). Work that outgrows one context window runs under `persist
+  "/arc". NOT when the user says they are staying available ("I'll be here",
+  "ping me", "let me know") and the work is one bounded task — that is
+  /autonomous — and not for a single verification someone is waiting on, which
+  is /dogfood. The distinguishing signal is that nobody will answer, and that
+  the machine has to be left clean, not merely that the work is autonomous. Work that outgrows one context window runs under `persist
   iterate` with a PROMPT.md whose first line is `/arc`.
 primitive: null
 required: false
