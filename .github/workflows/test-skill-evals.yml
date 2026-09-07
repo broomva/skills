@@ -139,6 +139,20 @@ jobs:
               sys.exit("::error::no contract case: nothing proves the skill can fire at all")
           if len(latent) < 2:
               sys.exit("::error::fewer than 2 latent cases: the set measures lexical echo")
+          # A latent case must not quote the description. The 2026-09-07 description
+          # rewrite pulled symptom phrasings into the frontmatter and silently turned
+          # two latent cases into echo tests; this catches that collision next time.
+          import re
+          md = open("skills/orchestration/arc/SKILL.md").read()
+          desc = " ".join(re.search(r"description: \|\n(.*?)\nprimitive:", md, re.S)
+                          .group(1).lower().split())
+          for c in latent:
+              w = c["prompt"].lower().split()
+              for i in range(len(w) - 3):
+                  frag = " ".join(w[i:i + 4]).strip('.,;:"')
+                  if frag in desc:
+                      sys.exit(f"::error::latent case {c['id']} quotes the description: {frag!r}")
+          print("latent arm is lexically disjoint from the description")
           PYCHK
 
       - name: Committed fixtures are bound to the fixture skill on disk
