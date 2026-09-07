@@ -62,7 +62,9 @@ the session to raise peers (see section 6):
 ```bash
 claude --bg --name <worktree>-<ticket>-<slug> --strict-mcp-config \
   --settings '{"crossSessionInbound":"accept"}'
-# a background session starts idle: the launcher sends the opening prompt with SendMessage
+# no positional prompt here, so the launcher sends the opening turn with SendMessage.
+# A prompt passed positionally RAN as the first turn when measured on 2.1.258, so
+# a spawner detects which happened rather than assuming either.
 ```
 
 ## Contract
@@ -159,14 +161,15 @@ stops it, and each row below is usable only where its mechanism resolves:
 | Shape | Mechanism | Reclaimed by |
 |---|---|---|
 | one task | a subagent via the Agent tool | ends with the session, or TaskStop |
-| peers that must coordinate by name | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each; `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`; `bstack fleet status --fleet <id>` reports per-peer liveness, reading a terminal `state` first and the pid after it, so a `failed` peer holding a live pid still reads as gone |
+| peers that must coordinate by name **in one worktree** | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each. Every roster entry must name the SAME worktree: `fleet up` refuses a roster resolving to two, because a worktree per peer is row 3's shape, not this one. `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`, which stops the peers and removes the fleet record but does NOT remove the worktree they shared — that goes with section 7's janitor step, once every peer is out. `bstack fleet status --fleet <id>` reports per-peer liveness, reading a terminal `state` first and the pid after it, so a `failed` peer holding a live pid still reads as gone |
 | each peer needs its own branch and worktree | `bstack wave dispatch <plans>` | `bstack wave status` reports; the worktrees are reclaimed by section 7's janitor step, which is the only thing that removes them |
 | the orchestration is a deterministic script | a Workflow | ends with the workflow |
 
-Row 2 resolves wherever `bstack fleet --help` exits zero, and rows 2 and 3
-fail together where it does not, since `wave` is a bstack subcommand too — on
-an install older than 0.40.0, or with no bstack at all, the work goes to
-subagents. A background session raised by hand is an orphan waiting to
+Row 2 resolves wherever `bstack fleet --help` exits zero, which is bstack
+0.40.0 and later. On an older install row 2 is unavailable but row 3 is not,
+since `bstack wave` has shipped since 0.2.2; only where bstack is absent
+altogether do both fail and leave subagents. A background session raised by
+hand is an orphan waiting to
 happen. Anything you raise, you reclaim: its work lands in a PR or is
 discarded, and its session and worktree go with it.
 
