@@ -74,7 +74,11 @@ transcript` when the turn shows nothing. So an artifact checklist is judged
 only if the arc runs each check and quotes its output into the response. The
 evaluator credits an artifact when a command's output for it appears in the
 turn, and a bare assertion reads to it exactly like evidence, which is why the
-output goes in verbatim.
+output goes in verbatim. Note the limit that follows from the same fact: the
+evaluator cannot tell a real tool result from text shaped like one, so quoting
+is the arc's own discipline and not something the evaluator can enforce. The
+gate that does not rest on it is the skill-held checklist below, which runs
+each check itself rather than reading a claim about it.
 
 The goal is set by a typed `/goal <condition>` before `/loop 30m /arc`, since
 that is the only path that holds in the arc's own premise: a goal the agent
@@ -96,10 +100,10 @@ judged is lost whichever goal stands. Default:
 > The final response carries the 24-reflex pipeline's 9-item receipt, and
 > every state it claims is quoted from the command that decided it: `gh pr
 > view` MERGED with no unresolved comment, `gh pr checks` all pass, `git
-> status --porcelain` empty, `git worktree list` and `ListAgents` no longer
-> than at the arc's start, the cross-model verdict and round ledger in the
-> PR, no unblocked lane left unrun, and the handback ask block leading the
-> response if anything is open.
+> status --porcelain` empty, every worktree and session this arc created
+> named and shown gone by identity not by count, the cross-model verdict and
+> round ledger in the PR, no unblocked lane left unrun, and the handback ask
+> block leading the response if anything is open.
 
 **2. Each wake-up, snapshot the fleet before locking scope.** Own identity
 (the header of the harness's `ListAgents` tool, worktree, branch, ticket);
@@ -189,6 +193,7 @@ carrier, was left out.
 | "/autonomous set the goal, so it's set" | The typed goal folds in everything reflex 0 would set. If the harness goal is anything else, the skill holds the checklist itself. |
 | "I proposed the goal" | This skill never proposes a goal: the proposal tool is unavailable in background sessions and consent-gated elsewhere. A proposal is not a goal. |
 | "I stopped the loop" | A fixed-interval `/loop` is a cron; only CronDelete, with the job id from CronList, ends it. A "Loop stopped" reply from ScheduleWakeup ends a dynamic loop only. |
+| "The counts match" | A count is not an identity. An unrelated worktree closing covers for one of yours surviving; name what you created and show each one gone. |
 | "The artifact is in the right state" | The evaluator cannot look. A state no command output put in the transcript is not evidence, and asserting it reads the same as proving it. |
 
 ## Verify
@@ -202,6 +207,8 @@ From the repository root:
   set's schema on every change to this skill and grades no trial; live results
   live in the file's `verification_log`.
 - `python3 scripts/lint_skill_md.py` and `python3 scripts/lint_skill_catalog.py` green.
-- Dogfood receipt, pasted into the PR that ships the change: `git worktree list | wc -l`
-  and the `ListAgents` peer count before the first cycle and after the last,
-  with the second pair no larger than the first.
+- Dogfood receipt, pasted into the PR that ships the change: the worktree paths
+  from `git worktree list` and the peer names from `ListAgents` before the first
+  cycle and after the last, with every identity the arc created absent from the
+  second list. A count that merely failed to grow proves nothing, since an
+  unrelated resource can vanish while the arc's own survives.
