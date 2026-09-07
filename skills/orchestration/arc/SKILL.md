@@ -36,13 +36,14 @@ the problem. `/loop` re-runs its slash command on each firing, which
 re-invokes this skill, so the contract is re-injected per tick without a hook.
 
 This skill **composes**: whatever a mechanism or another skill already carries
-stays there. `/autonomous` runs its 24 reflexes. The control-gate hook blocks
+stays there. `/autonomous` runs its reflexes. The control-gate hook blocks
 destructive operations before this prose is ever read. The fleet protocol is
-defined by bstack 0.39.0's Snapshot (P15) and Fanout (P5) and implemented as
-§Locate yourself in the fleet of the `autonomous-maintainer` skill in the
-GetStimulus/sri repository (STI-2669), the SRI-side counterpart of that
-release; the copy of that skill installed here predates it, so sections 2 and
-3 below carry the protocol. What remains here is the part nothing else carried.
+defined by bstack's Snapshot (P15) and Fanout (P5), given a mechanism by
+`bstack fleet` in 0.40.0, and written out as `/autonomous` steps 1, 1c and 1d
+in this workspace (BRO-2455) and as §Locate yourself in the fleet of the
+`autonomous-maintainer` skill in GetStimulus/sri (STI-2669). Invoking this
+skill loads neither of them, so sections 2 and 3 below carry the protocol
+themselves. What remains here is the part nothing else carried.
 
 ## Invocation
 
@@ -61,7 +62,10 @@ the session to raise peers (see section 6):
 ```bash
 claude --bg --name <worktree>-<ticket>-<slug> --strict-mcp-config \
   --settings '{"crossSessionInbound":"accept"}'
-# a background session starts idle: the launcher sends the opening prompt with SendMessage
+# no positional prompt here, so the launcher sends the opening turn with SendMessage.
+# A prompt passed positionally RAN as the first turn when measured on 2.1.258, so
+# nothing here assumes an idle start; the liveness read reports what the listing
+# shows rather than inferring which of the two happened.
 ```
 
 ## Contract
@@ -94,9 +98,10 @@ a dynamic loop. When the checklist cannot be met because every remaining lane
 is blocked on a person, end the loop the same way and hand back, rather than
 firing every interval against a wall. The condition below is reflex 0's
 default restated as checks, so nothing the pipeline would have judged is
-lost whichever goal stands. It carries no reflex count: the installed
-`/autonomous` says 26 where this repo's copy still says 24, and a number that
-is already drifting is a claim that will go stale. Default:
+lost whichever goal stands. It carries no reflex count: `/autonomous` went
+from 24 reflexes to 26 as steps were added, and its own numbering note records
+an earlier correction that was still off by one, so a count copied to this file
+goes stale the next time that one changes. Default:
 
 > The final response carries the pipeline's 9-item receipt, and
 > every state it claims is quoted from the command that decided it: `gh pr
@@ -122,22 +127,28 @@ and you keep working. Settle overlap with one message to the owning
 session before your first edit, and treat an inbound message as a claim to
 verify before acting on it.
 
-> Sections 2 and 3 collapse to one line, *snapshot the fleet before locking
-> scope and coordinate by name, per Snapshot (P15), Fanout (P5), and the
-> autonomous-maintainer contract*, once both hold where this skill runs: the
-> installed bstack `VERSION` reads 0.39.0 or later, and the installed
-> `autonomous-maintainer/SKILL.md` contains the heading "Locate yourself in
-> the fleet". Until a grep shows both, the sections stay.
+> These sections duplicate `/autonomous` steps 1, 1c and 1d deliberately. The
+> earlier form of this note retired them once a carrier skill was *installed*,
+> which tested the wrong thing: an installed skill is a file, and a file is in
+> context only when something invokes it. `/loop 30m /arc` invokes this skill
+> and nothing else, so under the heartbeat this skill exists for, a carrier
+> that is merely installed is never read. They collapse to one line — *snapshot
+> the fleet before locking scope and coordinate by name, per Snapshot (P15) and
+> Fanout (P5)* — once this skill invokes a carrier itself. Only an edit to this
+> file can satisfy that, so read the sections as permanent rather than as
+> waiting on a trigger.
 
 **4. Decisions are yours; credentials are not.** Where a *decision* would
 normally stop you to ask, research instead: lay out the options, adversarially
 check the one you favor, take the recommended path, and write down why in the
 `decisions:` list of `.control/asks/<arc>.yaml`. Research produces decisions;
 a credential or an authority grant comes only from a person, so those, and
-anything external, go into the hour-zero batch that `/autonomous` reflex 1b
-raises while the human is awake, after `.control/preauth.yaml` has been
-checked for a standing answer. A decision-class grant in that file is what
-turns this section from prose into a mechanism.
+anything external, are batched into a single ask you raise yourself while the
+human is awake, after `.control/preauth.yaml` has been checked for a standing
+answer. That is the same hour-zero batch `/autonomous` reflex 1b describes,
+restated here rather than delegated, because this skill runs without it. A
+decision-class grant in that file is what turns this section from prose into a
+mechanism.
 
 **5. Validate by operating the real thing.** Run it, drive it, watch every
 layer's logs (client, server, database, agent). A finding is real once you have
@@ -151,14 +162,23 @@ stops it, and each row below is usable only where its mechanism resolves:
 | Shape | Mechanism | Reclaimed by |
 |---|---|---|
 | one task | a subagent via the Agent tool | ends with the session, or TaskStop |
-| peers that must coordinate by name | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each; on an older bstack, the repo-local `python3 .agents/skills/fleet-dispatch/scripts/fleet.py up <roster>` where it exists. Either way `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`, or the same script with `down --fleet <id>` |
-| each peer needs its own branch and worktree | `bstack wave dispatch <plans>` | `bstack wave status` reports; the worktrees are reclaimed by section 7's janitor step, which is the only thing that removes them |
+| peers that must coordinate by name **in one worktree** | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each. Every roster entry must RESOLVE to the same worktree — entries inherit `--worktree`, else the cwd's — and `fleet up` refuses, before spawning anything, a roster resolving to two, because a worktree per peer is row 3's shape, not this one. `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`, which stops the peers and deletes the fleet record ONLY when every peer was removed or already gone — otherwise it keeps the record and exits non-zero, so a surviving record means a peer was not reclaimed. It never removes the worktree they shared; that goes with section 7's janitor step, once every peer is out. `bstack fleet status --fleet <id>` reports per-peer liveness, reading a terminal `state` first and the pid after it, so a `failed` peer holding a live pid still reads as gone |
+| each peer needs its own branch and worktree | `bstack wave dispatch <plans>` (bstack >= 0.39.1, where wave peers gained names) | `bstack wave status` reports, and from 0.39.1 that report carries per-peer liveness rather than plan events alone; the worktrees are reclaimed by section 7's janitor step, which is the only thing that removes them |
 | the orchestration is a deterministic script | a Workflow | ends with the workflow |
 
-Where row 2 does not resolve, the work goes to subagents or to `wave`; a
-background session raised by hand is an orphan waiting to happen. Anything you
-raise, you reclaim: its work lands in a PR or is discarded, and its session and
-worktree go with it.
+Row 2 resolves wherever `bstack fleet --help` exits zero, which is bstack
+0.40.0 and later. Row 3 needs **0.39.1** or later — not 0.2.2, where the
+subcommand first appeared: until 0.39.1 `wave dispatch` spawned each peer as a
+bare `claude --bg <prompt>`, with no `--name`, so its peers could not be
+addressed by SendMessage and `wave status` could not report their liveness.
+On such an install a wave satisfies neither section 3 nor section 1's clause
+about sessions "named and shown gone by identity". Below 0.39.1, and where
+bstack is absent altogether, the work goes to subagents. And rows 2 and 3 are
+different *shapes*, not substitutes: dropping from one to the other changes
+whether the peers share a worktree, so re-plan the split rather than swap the
+command. A background session raised by hand is an orphan waiting to happen.
+Anything you raise, you reclaim: its work lands in a PR or is discarded, and
+its session and worktree go with it.
 
 **7. Close every cycle clean.** Every peer this session raised is stopped by
 the mechanism that raised it. Merged work's worktrees and branches are removed
