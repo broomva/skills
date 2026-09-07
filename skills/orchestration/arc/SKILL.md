@@ -93,13 +93,13 @@ firing every interval against a wall. The condition below is reflex 0's
 default restated as checks, so nothing the 24-reflex pipeline would have
 judged is lost whichever goal stands. Default:
 
-> Every clause of the 9-item receipt in the final response quotes the
-> command output that decided it: `gh pr view` MERGED with no unresolved
-> comment, `gh pr checks` all pass, `git status --porcelain` empty, `git
-> worktree list` and `ListAgents` no longer than at the arc's start, the
-> cross-model verdict and round ledger in the PR, no unblocked lane left
-> unrun, and the handback ask block leading the response if anything is
-> open.
+> The final response carries the 24-reflex pipeline's 9-item receipt, and
+> every state it claims is quoted from the command that decided it: `gh pr
+> view` MERGED with no unresolved comment, `gh pr checks` all pass, `git
+> status --porcelain` empty, `git worktree list` and `ListAgents` no longer
+> than at the arc's start, the cross-model verdict and round ledger in the
+> PR, no unblocked lane left unrun, and the handback ask block leading the
+> response if anything is open.
 
 **2. Each wake-up, snapshot the fleet before locking scope.** Own identity
 (the header of the harness's `ListAgents` tool, worktree, branch, ticket);
@@ -146,8 +146,8 @@ stops it, and each row below is usable only where its mechanism resolves:
 | Shape | Mechanism | Reclaimed by |
 |---|---|---|
 | one task | a subagent via the Agent tool | ends with the session, or TaskStop |
-| peers that must coordinate by name | `python3 .agents/skills/fleet-dispatch/scripts/fleet.py up <roster>`, then SendMessage each; only where that script exists in the repository (at review time, GetStimulus/sri), and with `crossSessionInbound: accept` in the orchestrating session's own settings, or every peer reply is held for approval | `python3 .agents/skills/fleet-dispatch/scripts/fleet.py down --fleet <id>` |
-| each peer needs its own branch and worktree | `bstack wave dispatch <plans>` | `bstack wave status` and the janitor |
+| peers that must coordinate by name | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each; on an older bstack, the repo-local `python3 .agents/skills/fleet-dispatch/scripts/fleet.py up <roster>` where it exists. Either way `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`, or the same script with `down --fleet <id>` |
+| each peer needs its own branch and worktree | `bstack wave dispatch <plans>` | `bstack wave status` reports; the worktrees are reclaimed by section 7's janitor step, which is the only thing that removes them |
 | the orchestration is a deterministic script | a Workflow | ends with the workflow |
 
 Where row 2 does not resolve, the work goes to subagents or to `wave`; a
