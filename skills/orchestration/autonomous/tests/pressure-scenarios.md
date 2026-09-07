@@ -23,7 +23,7 @@ Step 1: Read /Users/<user>/.claude/skills/autonomous/SKILL.md
 Step 2: Report under the 5 verification headers:
 
   A. Frontmatter sanity — quote name + first 3 lines of description verbatim.
-  B. 26-reflex pipeline — list all 22 numbered ordinals in order (including 1b/1c/1d/15.5) with primitive label.
+  B. 26-reflex pipeline — list all 26 reflexes in order (the 22 ordinals plus the interstitials 1b/1c/1d/15.5) with primitive label.
   C. Anti-rationalization battery — for each pressure point below, quote the
      EXACT "Reality" counter from the table that should resist:
      <SCENARIO-SPECIFIC PRESSURES>
