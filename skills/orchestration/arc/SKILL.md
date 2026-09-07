@@ -64,7 +64,8 @@ claude --bg --name <worktree>-<ticket>-<slug> --strict-mcp-config \
   --settings '{"crossSessionInbound":"accept"}'
 # no positional prompt here, so the launcher sends the opening turn with SendMessage.
 # A prompt passed positionally RAN as the first turn when measured on 2.1.258, so
-# a spawner detects which happened rather than assuming either.
+# nothing here assumes an idle start; the liveness read reports what the listing
+# shows rather than inferring which of the two happened.
 ```
 
 ## Contract
@@ -161,17 +162,23 @@ stops it, and each row below is usable only where its mechanism resolves:
 | Shape | Mechanism | Reclaimed by |
 |---|---|---|
 | one task | a subagent via the Agent tool | ends with the session, or TaskStop |
-| peers that must coordinate by name **in one worktree** | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each. Every roster entry must name the SAME worktree: `fleet up` refuses a roster resolving to two, because a worktree per peer is row 3's shape, not this one. `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`, which stops the peers and removes the fleet record but does NOT remove the worktree they shared — that goes with section 7's janitor step, once every peer is out. `bstack fleet status --fleet <id>` reports per-peer liveness, reading a terminal `state` first and the pid after it, so a `failed` peer holding a live pid still reads as gone |
-| each peer needs its own branch and worktree | `bstack wave dispatch <plans>` | `bstack wave status` reports; the worktrees are reclaimed by section 7's janitor step, which is the only thing that removes them |
+| peers that must coordinate by name **in one worktree** | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each. Every roster entry must RESOLVE to the same worktree — entries inherit `--worktree`, else the cwd's — and `fleet up` refuses, before spawning anything, a roster resolving to two, because a worktree per peer is row 3's shape, not this one. `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`, which stops the peers and deletes the fleet record ONLY when every peer was removed or already gone — otherwise it keeps the record and exits non-zero, so a surviving record means a peer was not reclaimed. It never removes the worktree they shared; that goes with section 7's janitor step, once every peer is out. `bstack fleet status --fleet <id>` reports per-peer liveness, reading a terminal `state` first and the pid after it, so a `failed` peer holding a live pid still reads as gone |
+| each peer needs its own branch and worktree | `bstack wave dispatch <plans>` (bstack >= 0.39.1, where wave peers gained names) | `bstack wave status` reports, and from 0.39.1 that report carries per-peer liveness rather than plan events alone; the worktrees are reclaimed by section 7's janitor step, which is the only thing that removes them |
 | the orchestration is a deterministic script | a Workflow | ends with the workflow |
 
 Row 2 resolves wherever `bstack fleet --help` exits zero, which is bstack
-0.40.0 and later. On an older install row 2 is unavailable but row 3 is not,
-since `bstack wave` has shipped since 0.2.2; only where bstack is absent
-altogether do both fail and leave subagents. A background session raised by
-hand is an orphan waiting to
-happen. Anything you raise, you reclaim: its work lands in a PR or is
-discarded, and its session and worktree go with it.
+0.40.0 and later. Row 3 needs **0.39.1** or later — not 0.2.2, where the
+subcommand first appeared: until 0.39.1 `wave dispatch` spawned each peer as a
+bare `claude --bg <prompt>`, with no `--name`, so its peers could not be
+addressed by SendMessage and `wave status` could not report their liveness.
+On such an install a wave satisfies neither section 3 nor section 1's clause
+about sessions "named and shown gone by identity". Below 0.39.1, and where
+bstack is absent altogether, the work goes to subagents. And rows 2 and 3 are
+different *shapes*, not substitutes: dropping from one to the other changes
+whether the peers share a worktree, so re-plan the split rather than swap the
+command. A background session raised by hand is an orphan waiting to happen.
+Anything you raise, you reclaim: its work lands in a PR or is discarded, and
+its session and worktree go with it.
 
 **7. Close every cycle clean.** Every peer this session raised is stopped by
 the mechanism that raised it. Merged work's worktrees and branches are removed
