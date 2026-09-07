@@ -152,8 +152,10 @@ the mechanism that raised it. Merged work's worktrees and branches are removed
 by running `make janitor-apply` from the root of the repository that owns the
 merged branch (the plain `make janitor` target is a dry run, and the
 workspace-wide sweep has no apply variant); in a repository without that
-target, `git worktree remove <path>` and `git branch -d <branch>` per merged
-branch do the same job. Tree clean. Session bridged to the conversation log,
+target, confirm the merge with `gh pr view <n> --json state,mergeCommit` and
+then `git worktree remove <path>` and `git branch -D <branch>`, because a
+squash-merged tip is not an ancestor of main and `-d` refuses it — which is
+why the workspace janitor uses `-D` behind its own merge test. Tree clean. Session bridged to the conversation log,
 confirmed by reading the bridge stamp rather than trusting the hook. The next
 cycle starts from that state.
 
