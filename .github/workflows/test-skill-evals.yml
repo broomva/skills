@@ -111,6 +111,20 @@ jobs:
           python3 scripts/skill_evals/runner.py \
             --skill checkit --replay /nonexistent --validate-only
 
+      - name: arc prompt set validates against CHECK_REGISTRY (BRO-2458)
+        run: |
+          out="$(python3 scripts/skill_evals/runner.py \
+            --skill arc --replay /nonexistent --validate-only 2>&1)"
+          echo "$out"
+          case "$out" in
+            *"prompt set OK"*) : ;;
+            *) echo "::error::arc prompt set did not validate"; exit 1 ;;
+          esac
+          # A positive that carries the skill name measures lexical echo, not routing.
+          case "$out" in
+            *"WARNING"*) echo "::error::arc prompt set emitted a name-matching WARNING"; exit 1 ;;
+          esac
+
       - name: Committed fixtures are bound to the fixture skill on disk
         run: |
           set -e

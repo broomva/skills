@@ -1,12 +1,31 @@
 {
   "skill": "arc",
-  "version": 1,
-  "notes": "6 cases: 4 positive / 2 negative, all golden (authored 2026-09-07 with the skill, before any production trace exists). Positives are the four phrasings the description names as triggers; negatives are near-misses that belong to /autonomous (a bounded task with a human present) and /dogfood (a one-off verification). Re-derive the counts from this file before citing them.",
+  "version": 2,
+  "notes": "6 cases: 4 positive / 2 negative, all golden (authored 2026-09-07 with the skill, before any production trace exists; re-derive the counts from this file before citing them). NOT ONE POSITIVE CONTAINS THE SUBSTRING 'arc', '/loop', OR A DESCRIPTION TRIGGER PHRASE ('run the arc', 'work this unattended', 'keep going until done and clean'): the set exercises the latent clause — an unattended run to a finished AND clean end state, with the human gone — which is the inference path a description rewrite could break without any lexical echo noticing. Negatives are near-misses that belong to /autonomous (a chosen plan with the human present) and /dogfood (a one-off verification with the human waiting). Version 1 of this file had all four positives as verbatim trigger phrases; P20 round 2 caught it.",
+  "execution_contract": {
+    "advisory": "Documentation only — runner.py does not read this object. Values mirror runner.py's constants at authoring time.",
+    "trials_per_case": 3,
+    "suite_threshold_trial_pass_rate": 0.8,
+    "case_threshold_pass_rate": 0.6,
+    "model": "haiku",
+    "visibility": "present",
+    "workspace": "clean temp dir per trial with only this skill installed; --setting-sources project; the skill's own evals/ is excluded from the copy"
+  },
+  "verification_log": {
+    "advisory": "Documentation only. What was literally observed, dated, so a later reviewer can tell a stale claim from a re-checked one.",
+    "date": "2026-09-07",
+    "validate_only": "runner.py --skill arc --validate-only --replay /nonexistent → prompt set OK, 6 cases (4 positive / 2 negative); the name-matching WARNING that version 1 emitted for golden-01/02 is gone by construction (no positive contains 'arc').",
+    "live_trials": "NOT RUN. No trial has been executed against a model; the pass rates in execution_contract are thresholds, not measurements."
+  },
+  "known_gaps": {
+    "routing_contest_untestable_in_isolation": "The runner installs only the skill under test, so no case measures arc against /autonomous head-to-head, and their descriptions genuinely overlap on unattended phrasing. The negatives prove arc stays quiet on a bounded task and on a one-off verification; they cannot prove arc loses a routing contest it should lose. Closing this needs a multi-skill workspace mode in the runner.",
+    "no_production_trace": "Every case is authored. The first real-trace case should replace golden-04 once a production turn exists."
+  },
   "cases": [
-    {"id": "golden-01", "prompt": "/loop 30m /arc", "should_trigger": true, "origin": "golden", "workspace_requires": "none — the literal invocation.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
-    {"id": "golden-02", "prompt": "the latency problem is all in this thread now. run the arc: keep going until it is merged, proven on the running app, and nothing of yours is left on the machine.", "should_trigger": true, "origin": "golden", "workspace_requires": "the problem is already in context, as the prompt says.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
-    {"id": "golden-03", "prompt": "work this unattended. i am going to sleep; decide what you need to decide, research instead of asking, and clean up after yourself when it lands.", "should_trigger": true, "origin": "golden", "workspace_requires": "none — the ask names unattended operation and cleanup explicitly.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
-    {"id": "golden-04", "prompt": "keep going until done and clean, same rules as last time, and check who else is working in these worktrees before you touch anything.", "should_trigger": true, "origin": "golden", "workspace_requires": "none — 'done and clean' plus the fleet-awareness ask.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
+    {"id": "golden-01", "prompt": "the whole problem is in this thread already. i'm off until tomorrow: take it all the way to merged and proven on the running system, decide what needs deciding without me, and whatever you spin up, tear down before you stop.", "should_trigger": true, "origin": "golden", "workspace_requires": "the problem is already in context, as the prompt says.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
+    {"id": "golden-02", "prompt": "nobody is watching this session tonight. make it land: fix, PR, green, merged, and leave the machine the way you found it — no stray worktrees, no idle sessions of yours.", "should_trigger": true, "origin": "golden", "workspace_requires": "none — the ask names the unattended window and the clean end state.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
+    {"id": "golden-03", "prompt": "same as the last few nights: check who else is working in these worktrees before you touch anything, then push the latency fix through to done and clean up after yourself when it lands.", "should_trigger": true, "origin": "golden", "workspace_requires": "none — fleet awareness plus done-and-clean, with a routine already established.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
+    {"id": "golden-04", "prompt": "i can't answer questions for the next several hours. read and reason your way past anything you'd normally ask me, write down why, and don't hand it back until it's merged and the tree is clean.", "should_trigger": true, "origin": "golden", "workspace_requires": "the problem is already in context.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
     {"id": "negative-01", "prompt": "option 2 then. build the retry wrapper with jittered backoff, the test that proves it stops at the cap, and the readme line. i will be here if you need me.", "should_trigger": false, "origin": "negative", "axis": "HUMAN PRESENT + BOUNDED — the plan is chosen and the user is available; this is /autonomous, not an unattended loop.", "workspace_requires": "none.", "expected_checks": ["no_clarifying_question_bounced_back"]},
     {"id": "negative-02", "prompt": "before i merge, click through the settings page on the preview deploy and tell me if the save button actually persists.", "should_trigger": false, "origin": "negative", "axis": "ONE-OFF VERIFICATION — a single dogfood pass with a human waiting on the answer; /dogfood, not /arc.", "workspace_requires": "a preview deploy URL in context.", "expected_checks": ["final_answer_non_empty"]}
   ]
