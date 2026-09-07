@@ -1,0 +1,13 @@
+{
+  "skill": "arc",
+  "version": 1,
+  "notes": "6 cases: 4 positive / 2 negative, all golden (authored 2026-09-07 with the skill, before any production trace exists). Positives are the four phrasings the description names as triggers; negatives are near-misses that belong to /autonomous (a bounded task with a human present) and /dogfood (a one-off verification). Re-derive the counts from this file before citing them.",
+  "cases": [
+    {"id": "golden-01", "prompt": "/loop 30m /arc", "should_trigger": true, "origin": "golden", "workspace_requires": "none — the literal invocation.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
+    {"id": "golden-02", "prompt": "the latency problem is all in this thread now. run the arc: keep going until it is merged, proven on the running app, and nothing of yours is left on the machine.", "should_trigger": true, "origin": "golden", "workspace_requires": "the problem is already in context, as the prompt says.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
+    {"id": "golden-03", "prompt": "work this unattended. i am going to sleep; decide what you need to decide, research instead of asking, and clean up after yourself when it lands.", "should_trigger": true, "origin": "golden", "workspace_requires": "none — the ask names unattended operation and cleanup explicitly.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
+    {"id": "golden-04", "prompt": "keep going until done and clean, same rules as last time, and check who else is working in these worktrees before you touch anything.", "should_trigger": true, "origin": "golden", "workspace_requires": "none — 'done and clean' plus the fleet-awareness ask.", "expected_checks": ["skill_triggered", "no_clarifying_question_bounced_back"]},
+    {"id": "negative-01", "prompt": "option 2 then. build the retry wrapper with jittered backoff, the test that proves it stops at the cap, and the readme line. i will be here if you need me.", "should_trigger": false, "origin": "negative", "axis": "HUMAN PRESENT + BOUNDED — the plan is chosen and the user is available; this is /autonomous, not an unattended loop.", "workspace_requires": "none.", "expected_checks": ["no_clarifying_question_bounced_back"]},
+    {"id": "negative-02", "prompt": "before i merge, click through the settings page on the preview deploy and tell me if the save button actually persists.", "should_trigger": false, "origin": "negative", "axis": "ONE-OFF VERIFICATION — a single dogfood pass with a human waiting on the answer; /dogfood, not /arc.", "workspace_requires": "a preview deploy URL in context.", "expected_checks": ["final_answer_non_empty"]}
+  ]
+}
