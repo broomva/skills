@@ -111,7 +111,7 @@ jobs:
           python3 scripts/skill_evals/runner.py \
             --skill checkit --replay /nonexistent --validate-only
 
-      - name: arc prompt set validates against CHECK_REGISTRY (BRO-2458)
+      - name: arc prompt set validates and carries both trigger arms (BRO-2458)
         run: |
           out="$(python3 scripts/skill_evals/runner.py \
             --skill arc --replay /nonexistent --validate-only 2>&1)"
@@ -120,14 +120,26 @@ jobs:
             *"prompt set OK"*) : ;;
             *) echo "::error::arc prompt set did not validate"; exit 1 ;;
           esac
-          # A positive that carries the skill name measures lexical echo, not routing.
-          # Match the name-matching warning specifically: other WARNING classes
-          # (CLI-version drift, --trials anecdote) are not this step's subject, and
-          # a bare *"WARNING"* pattern would report them under the wrong message.
-          case "$out" in
-            *"contains the literal skill name"*)
-              echo "::error::arc prompt set emitted a name-matching WARNING"; exit 1 ;;
-          esac
+          # The set must keep BOTH arms. Measured 2026-09-07: a latent-only set
+          # scored 0/12 positives live, and schema validation could not see it —
+          # with no contract case, "the inference path is untested" and "the skill
+          # never fires at all" are indistinguishable. With no latent case, the set
+          # only measures lexical echo. Either arm empty is a red build.
+          python3 - <<'PYCHK'
+          import json, sys
+          d = json.load(open("skills/orchestration/arc/evals/prompts.json"))
+          TRIGGERS = ("run the arc", "work this unattended",
+                      "keep going until done and clean", "/arc")
+          pos = [c for c in d["cases"] if c["should_trigger"]]
+          contract = [c for c in pos if any(t in c["prompt"].lower() for t in TRIGGERS)]
+          latent = [c for c in pos if not any(t in c["prompt"].lower() for t in TRIGGERS)
+                    and "arc" not in c["prompt"].lower()]
+          print(f"positives={len(pos)} contract={len(contract)} latent={len(latent)}")
+          if not contract:
+              sys.exit("::error::no contract case: nothing proves the skill can fire at all")
+          if len(latent) < 2:
+              sys.exit("::error::fewer than 2 latent cases: the set measures lexical echo")
+          PYCHK
 
       - name: Committed fixtures are bound to the fixture skill on disk
         run: |

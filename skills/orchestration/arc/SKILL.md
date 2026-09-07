@@ -2,19 +2,23 @@
 name: arc
 category: orchestration
 description: |
-  Run an unattended arc to a finished, clean end state as one invocation:
-  `/loop 30m /arc` for a self-re-entering loop, or `/arc` for one pass in
-  the current session. The prompt carries the problem; this skill carries
-  the operating mode. Composes `/goal` + `/autonomous` with one goal
-  condition stated as an artifact checklist, research-in-place-of-asking
-  for decisions, the fleet snapshot and name-as-address (the fleet-aware
-  Snapshot (P15) and Fanout (P5) of bstack 0.39.0), fan-out gated on the
-  ability to reclaim, and a cleanup end state (peers reclaimed, janitor
-  applied, tree clean, bridge recorded). Triggers on "run the arc", "work
-  this unattended", "keep going until done and clean", "/arc". NOT for a
-  single bounded task with a human present (use /autonomous) or a one-off
-  verification (use /dogfood). Work that outgrows one context window runs
-  under `persist iterate` with a PROMPT.md whose first line is `/arc`.
+  Use when the user is handing over an unattended run and will not be there
+  to answer: they are going to bed, stepping away, or leaving it overnight,
+  and they want the work carried to an end state that is both finished and
+  clean rather than to a stopping point. Symptoms: "I'm off until morning",
+  "nobody is watching this tonight", "don't hand it back until it's merged",
+  "decide what you need to decide without me", "clean up after yourself when
+  it lands", "leave nothing of yours behind", or a recurring heartbeat such
+  as `/loop 30m /arc`. Sets one goal condition whose every clause is a quoted
+  check, snapshots the fleet before locking scope, researches in place of
+  asking whenever the question is a decision, fans out only where it can
+  reclaim what it raised, and closes the cycle with peers reclaimed, the
+  janitor applied, the tree clean and the session bridged. Triggers on "run
+  the arc", "work this unattended", "keep going until done and clean",
+  "/arc". NOT for a bounded task with the user present and answering (use
+  /autonomous), or a one-off verification someone is waiting on (use
+  /dogfood). Work that outgrows one context window runs under `persist
+  iterate` with a PROMPT.md whose first line is `/arc`.
 primitive: null
 required: false
 introduced_in: "0.39.0"
