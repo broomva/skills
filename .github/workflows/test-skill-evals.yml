@@ -121,8 +121,12 @@ jobs:
             *) echo "::error::arc prompt set did not validate"; exit 1 ;;
           esac
           # A positive that carries the skill name measures lexical echo, not routing.
+          # Match the name-matching warning specifically: other WARNING classes
+          # (CLI-version drift, --trials anecdote) are not this step's subject, and
+          # a bare *"WARNING"* pattern would report them under the wrong message.
           case "$out" in
-            *"WARNING"*) echo "::error::arc prompt set emitted a name-matching WARNING"; exit 1 ;;
+            *"contains the literal skill name"*)
+              echo "::error::arc prompt set emitted a name-matching WARNING"; exit 1 ;;
           esac
 
       - name: Committed fixtures are bound to the fixture skill on disk

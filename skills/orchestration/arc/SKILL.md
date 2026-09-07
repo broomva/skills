@@ -59,29 +59,39 @@ claude --bg --name <worktree>-<ticket>-<slug> --strict-mcp-config \
 
 ## Contract
 
-**1. One goal, typed by a person, stated as an artifact checklist.** The
-evaluator that judges the goal reads git, GitHub, and the filesystem, so the
-condition names artifacts rather than narration. The goal is set by a typed
-`/goal <condition>` before `/loop 30m /arc`, because that is the only path
-that holds in the arc's own premise: a goal the agent proposes goes through a
-tool that is unavailable in background sessions and in subagents, caps the
-condition at 500 characters, and under one consent mode shows a dialog and
-returns a success-shaped reply while nobody is there to answer. So this skill
-never proposes a goal. When no typed goal exists, the skill holds the
-condition itself: each `/loop` firing re-reads the checklist, and once it is
-met the loop is ended by deleting its cron with CronDelete, since a
-fixed-interval `/loop` is a cron and the stop flag of ScheduleWakeup ends only
-a dynamic loop. The condition below folds in the default that `/autonomous`
-reflex 0 would set, so nothing the pipeline checks is lost whichever goal
-stands. Default, 500 characters or fewer so it fits either path:
+**1. One goal, typed by a person, whose every clause is a quoted check.** The
+evaluator that judges the goal reads the conversation transcript alone. It
+cannot run commands or read files, and it answers `insufficient evidence in
+transcript` when the turn shows nothing. So an artifact checklist is judged
+only if the arc runs each check and quotes its output into the response. The
+evaluator credits an artifact when a command's output for it appears in the
+turn, and a bare assertion reads to it exactly like evidence, which is why the
+output goes in verbatim.
 
-> 24-reflex pipeline complete and the fleet clean: the problem in context
-> fixed, merged to main, CI green, cross-model verdict in the PR body, proven
-> on the real system with evidence on disk, every decision recorded with its
-> reason, git status clean, no unresolved PR comment, no unblocked lane left
-> unrun, final response carrying the 9-item receipt and the handback ask block
-> if anything is open, every peer this session raised reclaimed, no worktree,
-> branch, or session left behind for merged work.
+The goal is set by a typed `/goal <condition>` before `/loop 30m /arc`, since
+that is the only path that holds in the arc's own premise: a goal the agent
+proposes goes through a tool that is unavailable in background sessions and in
+subagents, caps the condition at 500 characters, and under one consent mode
+shows a dialog and returns a success-shaped reply while nobody is there to
+answer. So this skill never proposes a goal. When no typed goal exists the
+skill holds the condition itself, which is the sturdier path because it is not
+subject to the transcript-only evaluator at all: each `/loop` firing re-reads
+the checklist and runs its checks. Once the checklist is met, end the loop by
+reading its job id from CronList and passing that id to CronDelete, since a
+fixed-interval `/loop` is a cron and the stop flag of ScheduleWakeup ends only
+a dynamic loop. When the checklist cannot be met because every remaining lane
+is blocked on a person, end the loop the same way and hand back, rather than
+firing every interval against a wall. The condition below is reflex 0's
+default restated as checks, so nothing the 24-reflex pipeline would have
+judged is lost whichever goal stands. Default:
+
+> Every clause of the 9-item receipt in the final response quotes the
+> command output that decided it: `gh pr view` MERGED with no unresolved
+> comment, `gh pr checks` all pass, `git status --porcelain` empty, `git
+> worktree list` and `ListAgents` no longer than at the arc's start, the
+> cross-model verdict and round ledger in the PR, no unblocked lane left
+> unrun, and the handback ask block leading the response if anything is
+> open.
 
 **2. Each wake-up, snapshot the fleet before locking scope.** Own identity
 (the header of the harness's `ListAgents` tool, worktree, branch, ticket);
@@ -168,7 +178,8 @@ carrier, was left out.
 | "I'll spawn it with `claude --bg`" | That block belongs to the launcher. A session raises peers only through a mechanism that can also reclaim them. |
 | "/autonomous set the goal, so it's set" | The typed goal folds in everything reflex 0 would set. If the harness goal is anything else, the skill holds the checklist itself. |
 | "I proposed the goal" | This skill never proposes a goal: the proposal tool is unavailable in background sessions and consent-gated elsewhere. A proposal is not a goal. |
-| "I stopped the loop" | A fixed-interval `/loop` is a cron; only CronDelete ends it. A "Loop stopped" reply from ScheduleWakeup ends a dynamic loop only. |
+| "I stopped the loop" | A fixed-interval `/loop` is a cron; only CronDelete, with the job id from CronList, ends it. A "Loop stopped" reply from ScheduleWakeup ends a dynamic loop only. |
+| "The artifact is in the right state" | The evaluator cannot look. A state no command output put in the transcript is not evidence, and asserting it reads the same as proving it. |
 
 ## Verify
 
