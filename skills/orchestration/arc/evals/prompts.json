@@ -17,12 +17,16 @@
     "first_live_run": "runner --trials 3 on the pre-rewrite description: positives 0/12 (0.000), negatives 6/6, threshold 0.80 FAIL. Zero positive passes.",
     "positive_control": "A control set of the four DOCUMENTED trigger phrases also failed, 1/12, on the same description — proving the fault was the trigger surface, not the latency of the prompts.",
     "cause": "The description opened with mechanism ('Run an unattended arc ... composes /goal + /autonomous') instead of the user's situation. The sibling `autonomous`, the workspace's most-invoked skill, opens with 'Use when the user has agreed on a plan...'. Rewritten to use-when framing with symptom phrasings.",
-    "after_rewrite": "see the run recorded in the PR; this field is updated only from an executed run."
+    "after_rewrite": "see the run recorded in the PR; this field is updated only from an executed run.",
+    "harness_ceiling_control": "Ran the identical harness against `autonomous`, the workspace's most-invoked skill (72 measured production invocations): positives 2/30 (0.067), threshold 0.80 FAIL. arc scored 6/25 (0.240) on the same harness — 3.5x the reference. So 0.80 is NOT reachable for this class here, and an absolute arc number read alone is meaningless. The cause is documented in autonomous's own prompts.json under known_gaps.no_conversation_history_seam: the runner passes one prompt into a fresh session with no history, and both skills trigger on a property of the PRECEDING conversation. Compare arc to the reference, never to the threshold.",
+    "third_live_run": "After the use-when rewrite plus the explicit-invocation clause, at 5 trials/case: positives 6/25 (0.240), negatives 9/10. The 7/15 (0.467) seen at 3 trials/case was an anecdote; the runner warns that 3 trials is not a distribution."
   },
   "known_gaps": {
     "routing_contest_untestable_in_isolation": "The runner installs only the skill under test, so no case measures arc against /autonomous head-to-head, and their descriptions overlap on unattended phrasing. Closing this needs a multi-skill workspace mode in the runner.",
     "symptom_overlap_with_description": "contract-01/02 quote documented triggers, so they measure the contract, not inference. They are labelled and paired with the latent arm rather than removed, because the first live run showed that a latent-only set cannot distinguish 'the inference path is untested' from 'the skill never fires at all'.",
-    "no_mutation_proof": "The workflow's mutated-skill proof pattern is not applied to arc: with no recorded fixtures, a description rewrite that breaks routing turns nothing red in CI. The live runner is currently the only thing that would catch it."
+    "no_mutation_proof": "The workflow's mutated-skill proof pattern is not applied to arc: with no recorded fixtures, a description rewrite that breaks routing turns nothing red in CI. The live runner is currently the only thing that would catch it.",
+    "harness_cannot_reach_the_threshold": "Measured 2026-09-07: the reference skill scores 0.067 on this harness. No single-prompt run can express 'the user said this after agreeing a plan' or 'the user is leaving for the night', which is the trigger for both skills. Treat the reference rate as the bar until the runner grows a conversation-history seam; a regression is arc dropping relative to autonomous, not arc missing 0.80.",
+    "latent_arm_lexical_disjointness": "latent-01 and latent-03 were reworded 2026-09-07 after the description rewrite pulled symptom phrasings into the frontmatter: 'i'm off until tomorrow' and 'leave nothing of yours behind' had become near-verbatim description text, which would have made the latent arm measure echo. Any future description edit must re-check this file for the same collision."
   },
   "cases": [
     {
@@ -51,7 +55,7 @@
     },
     {
       "id": "latent-01",
-      "prompt": "the whole problem is in this thread already. i'm off until tomorrow: take it all the way to merged and proven on the running system, decide what needs deciding without me, and whatever you spin up, tear down before you stop.",
+      "prompt": "the whole problem is in this thread already. i'll be asleep in ten minutes: take it all the way to merged and proven on the running system, decide what needs deciding, and whatever you spin up, tear down before you stop.",
       "should_trigger": true,
       "origin": "golden",
       "axis": "LATENT — no trigger phrase; unattended + to-done + reclaim.",
@@ -75,7 +79,7 @@
     },
     {
       "id": "latent-03",
-      "prompt": "same as the last few nights: check who else is working in these worktrees before you touch anything, then push the latency fix all the way through and leave nothing of yours behind when it lands.",
+      "prompt": "same as the last few nights: check who else is working in these worktrees before you touch anything, then push the latency fix all the way through and don't leave stray worktrees or idle sessions lying around when it lands.",
       "should_trigger": true,
       "origin": "golden",
       "axis": "LATENT — fleet awareness plus cleanup, routine established.",
