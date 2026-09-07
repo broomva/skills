@@ -23,7 +23,7 @@ Step 1: Read /Users/<user>/.claude/skills/autonomous/SKILL.md
 Step 2: Report under the 5 verification headers:
 
   A. Frontmatter sanity — quote name + first 3 lines of description verbatim.
-  B. 20-reflex pipeline — list all 20 numbered reflexes in order with primitive label.
+  B. 26-reflex pipeline — list all 26 reflexes in order (the 22 ordinals plus the interstitials 1b/1c/1d/15.5) with primitive label.
   C. Anti-rationalization battery — for each pressure point below, quote the
      EXACT "Reality" counter from the table that should resist:
      <SCENARIO-SPECIFIC PRESSURES>
@@ -164,11 +164,11 @@ If the subagent produces markdown anyway, the test fails — add a row to Sectio
 
 **Concrete tests that should fire** (P19 reflexive trigger rule):
 - *Pre-flight Step 0*: agent invokes `/goal "endpoint shipped per 9-item output contract; PR merged; git status clean; no PR comments open"` BEFORE Step 1 state snapshot
-- *2×2 quadrant cited*: "Mechanism: `/goal` (within-session, internal trigger — verifiable end state, condition <4000 chars)"
+- *2×2×2 cell cited*: "Mechanism: `/goal` (N=1, within-session, internal trigger; verifiable end state, condition <4000 chars)"
 - *Mid-arc handoffs forbidden*: agent does NOT return control between Step 4 (validation plan) and Step 15 (PR push), even if the user's "let me know what's next" suggests otherwise; the goal owns the arc
 - *Goal clears on completion*: the Haiku evaluator confirms the condition met after the merge + janitor + dogfood receipt; goal auto-clears; control returns to user with the full 9-item output contract
 
-**Expected outcome**: Subagent confirms it would set `/goal` as pre-flight Step 0, run the full 20-reflex pipeline as a single arc with the goal active, and only return control after the Haiku evaluator confirms the condition. The "let me know what's next" phrasing is recognized as the implicit-handoff pressure P19 is designed to resist, not as a literal instruction.
+**Expected outcome**: Subagent confirms it would set `/goal` as pre-flight Step 0, run the full 26-reflex pipeline as a single arc with the goal active, and only return control after the Haiku evaluator confirms the condition. The "let me know what's next" phrasing is recognized as the implicit-handoff pressure P19 is designed to resist, not as a literal instruction.
 
 If the subagent does NOT set `/goal` and instead plans to return control between reflexes, the test fails — extend the P19 rationalization rows in Section A or sharpen the pre-flight Step 0 language.
 
