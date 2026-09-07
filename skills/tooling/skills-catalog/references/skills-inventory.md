@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 98 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-23.
+> 99 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-08-23.
 
 ## Governance & control — `skills/governance/` (9)
 
@@ -16,10 +16,11 @@
 | `unhobble` | Audit and rightsize a context surface against machine-enforced mechanisms, duplication, contradiction, and token-budget pressure |
 | `legal-readiness` | Build or adversarially audit an evidence-first legal-readiness system for a software product, SaaS, AI app, API, marketplace, or website. Inventory every public and contractual claim; determine… |
 
-## Orchestration & autonomy — `skills/orchestration/` (9)
+## Orchestration & autonomy — `skills/orchestration/` (10)
 
 | Skill | What it does |
 |---|---|
+| `arc` | Run an unattended arc to a finished, clean end state as one invocation: artifact-checklist goal, fleet snapshot, research-instead-of-ask, fan-out by shape, cleanup end state |
 | `autonomous` | Use when the user has agreed on a plan or selected from suggested options and wants the agent to execute the work autonomously without further instruction |
 | `eve-forge` | Forge a personalized eve agent for a business end-to-end — absorb the business's artifacts, author the `agent/` dir, validate, and deploy |
 | `governed-autonomy-loop` | Turn any work-queue + enforcement pipeline into a self-driving, self-healing, human-minimal autonomy loop with a control-systems safety envelope — a metacognitive governor that drives isolated arcs and never performs the irreversible act itself |
@@ -42,7 +43,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 98 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 99 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
 
@@ -219,8 +220,8 @@
 
 ## Aggregates
 
-- **Total skills**: 98
+- **Total skills**: 99
 - **Total category buckets**: 23
-- **Largest bucket**: Governance & control, Orchestration & autonomy, Skill & prompt tooling (9)
+- **Largest bucket**: Orchestration & autonomy (10)
 - **Smallest buckets** (1): Science
 - Taxonomy = the 23 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
