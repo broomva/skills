@@ -10,9 +10,8 @@ description: |
   "decide what you need to decide without me", "clean up after yourself when
   it lands", "leave nothing of yours behind", or a recurring heartbeat such
   as `/loop 30m /arc`. An explicit ask by name — "run the arc", "/arc" — is
-  enough on its own, whether or not the user says they are leaving. Sets one
-  goal condition whose every clause is a quoted
-  check, snapshots the fleet before locking scope, researches in place of
+  enough on its own, whether or not the user says they are leaving. Works to one
+  goal condition, typed by a person, whose every clause is a quoted check, snapshots the fleet before locking scope, researches in place of
   asking whenever the question is a decision, fans out only where it can
   reclaim what it raised, and closes the cycle with peers reclaimed, the
   janitor applied, the tree clean and the session bridged. Triggers on "run
@@ -94,10 +93,12 @@ fixed-interval `/loop` is a cron and the stop flag of ScheduleWakeup ends only
 a dynamic loop. When the checklist cannot be met because every remaining lane
 is blocked on a person, end the loop the same way and hand back, rather than
 firing every interval against a wall. The condition below is reflex 0's
-default restated as checks, so nothing the 24-reflex pipeline would have
-judged is lost whichever goal stands. Default:
+default restated as checks, so nothing the pipeline would have judged is
+lost whichever goal stands. It carries no reflex count: the installed
+`/autonomous` says 26 where this repo's copy still says 24, and a number that
+is already drifting is a claim that will go stale. Default:
 
-> The final response carries the 24-reflex pipeline's 9-item receipt, and
+> The final response carries the pipeline's 9-item receipt, and
 > every state it claims is quoted from the command that decided it: `gh pr
 > view` MERGED with no unresolved comment, `gh pr checks` all pass, `git
 > status --porcelain` empty, every worktree and session this arc created
