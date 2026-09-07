@@ -95,9 +95,10 @@ a dynamic loop. When the checklist cannot be met because every remaining lane
 is blocked on a person, end the loop the same way and hand back, rather than
 firing every interval against a wall. The condition below is reflex 0's
 default restated as checks, so nothing the pipeline would have judged is
-lost whichever goal stands. It carries no reflex count: the installed
-`/autonomous` says 26 where this repo's copy still says 24, and a number that
-is already drifting is a claim that will go stale. Default:
+lost whichever goal stands. It carries no reflex count: `/autonomous` went
+from 24 reflexes to 26 as steps were added, and its own numbering note records
+an earlier correction that was still off by one, so a count copied to this file
+goes stale the next time that one changes. Default:
 
 > The final response carries the pipeline's 9-item receipt, and
 > every state it claims is quoted from the command that decided it: `gh pr
@@ -130,17 +131,21 @@ verify before acting on it.
 > and nothing else, so under the heartbeat this skill exists for, a carrier
 > that is merely installed is never read. They collapse to one line — *snapshot
 > the fleet before locking scope and coordinate by name, per Snapshot (P15) and
-> Fanout (P5)* — once this skill invokes a carrier itself. Until then they stay.
+> Fanout (P5)* — once this skill invokes a carrier itself. Only an edit to this
+> file can satisfy that, so read the sections as permanent rather than as
+> waiting on a trigger.
 
 **4. Decisions are yours; credentials are not.** Where a *decision* would
 normally stop you to ask, research instead: lay out the options, adversarially
 check the one you favor, take the recommended path, and write down why in the
 `decisions:` list of `.control/asks/<arc>.yaml`. Research produces decisions;
 a credential or an authority grant comes only from a person, so those, and
-anything external, go into the hour-zero batch that `/autonomous` reflex 1b
-raises while the human is awake, after `.control/preauth.yaml` has been
-checked for a standing answer. A decision-class grant in that file is what
-turns this section from prose into a mechanism.
+anything external, are batched into a single ask you raise yourself while the
+human is awake, after `.control/preauth.yaml` has been checked for a standing
+answer. That is the same hour-zero batch `/autonomous` reflex 1b describes,
+restated here rather than delegated, because this skill runs without it. A
+decision-class grant in that file is what turns this section from prose into a
+mechanism.
 
 **5. Validate by operating the real thing.** Run it, drive it, watch every
 layer's logs (client, server, database, agent). A finding is real once you have
@@ -154,13 +159,14 @@ stops it, and each row below is usable only where its mechanism resolves:
 | Shape | Mechanism | Reclaimed by |
 |---|---|---|
 | one task | a subagent via the Agent tool | ends with the session, or TaskStop |
-| peers that must coordinate by name | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each; `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`; `bstack fleet status --fleet <id>` reports per-peer liveness keyed on pid first |
+| peers that must coordinate by name | `bstack fleet up <roster>` (bstack >= 0.40.0), then SendMessage each; `crossSessionInbound: accept` must be set in the orchestrating session's own settings, or every peer reply is held for approval | `bstack fleet down --fleet <id>`; `bstack fleet status --fleet <id>` reports per-peer liveness, reading a terminal `state` first and the pid after it, so a `failed` peer holding a live pid still reads as gone |
 | each peer needs its own branch and worktree | `bstack wave dispatch <plans>` | `bstack wave status` reports; the worktrees are reclaimed by section 7's janitor step, which is the only thing that removes them |
 | the orchestration is a deterministic script | a Workflow | ends with the workflow |
 
-Row 2 resolves wherever `bstack fleet --help` exits zero; on an install older
-than 0.40.0 it does not, and only there does the work fall back to subagents
-or to `wave`. A background session raised by hand is an orphan waiting to
+Row 2 resolves wherever `bstack fleet --help` exits zero, and rows 2 and 3
+fail together where it does not, since `wave` is a bstack subcommand too — on
+an install older than 0.40.0, or with no bstack at all, the work goes to
+subagents. A background session raised by hand is an orphan waiting to
 happen. Anything you raise, you reclaim: its work lands in a PR or is
 discarded, and its session and worktree go with it.
 
