@@ -89,9 +89,51 @@ Two-pass scoring against the Nous gate rubric (full spec in `references/scoring-
 - Score ≤ 2 → discard immediately (clearly low-signal)
 - Score ≥ 7 → promote immediately (clearly high-signal)
 
-**LLM-as-judge** for ambiguous band (score 3–6):
+**LLM-as-judge** for ambiguous band (score 3–6) — **opt-in, off by default**:
 - Pass item + existing entity graph context to judge (see LLM Judge Spec below)
 - Output: per-item score tuple `(novelty, specificity, relevance)` + total + promote flag + candidate entity slugs
+- Enable with `run --judge` or `BOOKKEEPING_JUDGE=1`. With the flag unset the
+  heuristic score stands for in-band items.
+
+> **The judge had never run once before BRO-2506.** Both original transports
+> require a paid API credential absent from this workspace, so `scoring_breakdown`
+> recorded 1,051,042 heuristic / 0 llm_judge across 7,765 runs. Since ~54% of
+> intake lands in the 3–6 band, the heuristic decided nearly the whole corpus
+> while the docs described a two-pass gate. Enabling the judge by default now
+> would re-gate most of a million items in one step, which the L3 stability
+> budget in CLAUDE.md forbids — hence opt-in, and hence `judge-check` below.
+
+**Transports**, tried in this order (by billing, not by age):
+
+| Order | Transport | Billing | Requirement |
+|---|---|---|---|
+| 1 | `claude -p` | **subscription** | `claude` on PATH |
+| 2 | authored agents (Anthropic SDK) | API key | `anthropic` + `ANTHROPIC_API_KEY` |
+| 3 | Gemini (legacy) | API key | `google-generativeai` + `GEMINI_API_KEY` |
+
+`ANTHROPIC_API_KEY` is deliberately *not* the recommended carrier: setting it
+forces API billing instead of the subscription.
+
+When the judge is requested and every transport fails, the fallback is announced
+on stderr unconditionally and counted in the run log (`judge_failures`). It is
+never a silent default — silence is what hid the dead judge.
+
+**Inspect and calibrate — `judge-check`:**
+
+```bash
+bookkeeping judge-check                    # per-transport health + blocker for each dead path
+bookkeeping judge-check --sample 20        # shadow-score 20 in-band items: heuristic vs judge
+bookkeeping judge-check --sample 20 --labels sheet.json   # + human-labeling sheet
+```
+
+`--sample` reports exact agreement, decision flips (items that cross the
+promote boundary), and mean delta. It measures the two scorers against **each
+other** — it does not say which is right. `--labels` emits the sheet a human
+settles that with; label without reading the machine scores first, or the label
+is anchored rather than independent.
+
+Cost note: roughly 2 minutes per item (three dimension calls). Fine for
+sampling and for high-stakes runs; too slow for the always-on ingest loop.
 
 Scoring output is written to the raw extract file as a YAML front-matter annotation per item.
 
