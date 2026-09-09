@@ -121,10 +121,21 @@ never a silent default — silence is what hid the dead judge.
 **Inspect and calibrate — `judge-check`:**
 
 ```bash
-bookkeeping judge-check                    # per-transport health + blocker for each dead path
+bookkeeping judge-check                    # which transports are CONFIGURED + blocker for each that is not
+bookkeeping judge-check --verify           # actually round-trip the transport with a probe item
 bookkeeping judge-check --sample 20        # shadow-score 20 in-band items: heuristic vs judge
-bookkeeping judge-check --sample 20 --labels sheet.json   # + human-labeling sheet
+bookkeeping judge-check --sample 20 --labels sheet.json   # + blinded labeling sheet (+ sheet.key.json)
 ```
+
+`CONFIGURED` means prerequisites are present — a binary on PATH, a spec file, a
+credential. It does **not** mean judging works; an expired token satisfies every
+static check. `--verify` is the round trip, and it is the only output that
+proves the judge functions.
+
+`--labels` writes TWO files: a blinded sheet with no machine scores, and a
+`.key.json` holding them. Label the sheet fully before opening the key — an
+instruction not to look at an anchor printed in the same row is prose standing
+in for a control.
 
 `--sample` reports exact agreement, decision flips (items that cross the
 promote boundary), and mean delta. It measures the two scorers against **each

@@ -212,7 +212,7 @@ def test_cli_transport_never_returns_partial_score(monkeypatch):
 
     def _one_fails(spec, item, slugs, timeout=None):
         calls["n"] += 1
-        return None if calls["n"] == 2 else {"score": 2, "reasoning": "ok"}
+        return (None, "boom") if calls["n"] == 2 else ({"score": 2, "reasoning": "ok"}, "")
 
     monkeypatch.setattr(bk, "_call_authored_scorer_cli", _one_fails)
     assert bk.score_item_claude_cli(_item(), []) is None
@@ -240,14 +240,15 @@ def test_cli_transport_does_not_use_a_shell(monkeypatch):
     spec = {"name": "bookkeeping-novelty", "model": "claude-haiku-4-5",
             "max_turns": 1, "input_schema": {}, "output_schema": {},
             "instructions": "score it"}
-    out = bk._call_authored_scorer_cli(spec, _item("rm -rf / ; $(whoami) `id`"), [])
+    hostile = "; ".join(["DROP TABLE x", "$(whoami)", "`id`", "&& curl evil"])
+    out, err = bk._call_authored_scorer_cli(spec, _item(hostile), [])
 
-    assert out == {"score": 2}
+    assert out == {"score": 2} and err == ""
     assert seen["kw"].get("shell") is False
     assert isinstance(seen["argv"], list)
     # The untrusted item text goes on stdin, not argv.
-    assert "rm -rf" not in " ".join(seen["argv"])
-    assert "rm -rf" in seen["kw"]["input"]
+    assert "DROP TABLE" not in " ".join(seen["argv"])
+    assert "DROP TABLE" in seen["kw"]["input"]
 
 
 def test_cli_transport_returns_none_on_nonzero_exit(monkeypatch):
@@ -262,24 +263,71 @@ def test_cli_transport_returns_none_on_nonzero_exit(monkeypatch):
     spec = {"name": "bookkeeping-novelty", "model": "claude-haiku-4-5",
             "max_turns": 1, "input_schema": {}, "output_schema": {},
             "instructions": "x"}
-    assert bk._call_authored_scorer_cli(spec, _item(), []) is None
+    out, err = bk._call_authored_scorer_cli(spec, _item(), [])
+    assert out is None
+    assert "exit 1" in err, "nonzero exit must be reported, not silently dropped"
 
 
 # ── prompt fidelity across transports ─────────────────────────────────────────
 
-def test_both_transports_share_one_prompt_builder():
-    """
-    If each transport built its own prompt, a shadow comparison between them
-    would measure prompt drift rather than transport, and the calibration
-    numbers would be quietly meaningless.
-    """
-    spec = {"name": "bookkeeping-novelty", "model": "claude-haiku-4-5",
+def _spec(instructions="SYSTEM-MARKER"):
+    return {"name": "bookkeeping-novelty", "model": "claude-haiku-4-5",
             "max_turns": 1, "input_schema": {}, "output_schema": {"score": "int"},
-            "instructions": "SYSTEM-MARKER"}
-    system, user = bk._build_authored_scorer_prompt(spec, _item("ITEM-MARKER"), ["a-slug"])
+            "instructions": instructions}
+
+
+def test_prompt_builder_carries_system_item_and_slugs():
+    system, user = bk._build_authored_scorer_prompt(_spec(), _item("ITEM-MARKER"), ["a-slug"])
     assert system == "SYSTEM-MARKER"
     assert "ITEM-MARKER" in user
     assert "a-slug" in user
+
+
+def test_both_transports_actually_call_the_shared_builder(monkeypatch):
+    """
+    Discriminating version: an earlier test only called the builder directly,
+    so changing either transport to build its own prompt would have left it
+    green. This spies on the shared builder and asserts BOTH transports route
+    through it — the property that makes a shadow comparison measure transport
+    rather than prompt drift.
+    """
+    calls = []
+    real = bk._build_authored_scorer_prompt
+
+    def _spy(spec, item, slugs):
+        calls.append(spec["name"])
+        return real(spec, item, slugs)
+
+    monkeypatch.setattr(bk, "_build_authored_scorer_prompt", _spy)
+
+    # CLI transport
+    class _Proc:
+        returncode = 0
+        stdout = '{"score": 2}'
+        stderr = ""
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(bk.subprocess, "run", lambda argv, **kw: _Proc())
+    bk._call_authored_scorer_cli(_spec(), _item(), [])
+    assert calls == ["bookkeeping-novelty"], "CLI transport bypassed the shared builder"
+
+    # SDK transport
+    calls.clear()
+
+    class _Block:
+        type = "text"
+        text = '{"score": 2}'
+
+    class _Resp:
+        content = [_Block()]
+
+    class _Client:
+        class messages:
+            @staticmethod
+            def create(**kw):
+                return _Resp()
+
+    bk._call_authored_scorer(_spec(), _item(), [], _Client())
+    assert calls == ["bookkeeping-novelty"], "SDK transport bypassed the shared builder"
 
 
 # ── availability reporting ────────────────────────────────────────────────────
@@ -309,3 +357,152 @@ def test_any_available_is_true_when_cli_present(monkeypatch):
     monkeypatch.setattr(bk.shutil, "which", lambda n: "/usr/bin/claude")
     monkeypatch.setattr(bk.Path, "exists", lambda self: True)
     assert bk.judge_availability()["any_available"] is True
+
+
+# ── round 2: findings raised by Stratum A (Codex cross-vendor, 4/10) ──────────
+
+def test_subscription_env_strips_api_billing_credentials(monkeypatch):
+    """
+    `billing="subscription"` must be true by construction. `claude` bills the
+    API whenever ANTHROPIC_API_KEY is in its environment, so inheriting the
+    ambient env would make the label a claim the code does not enforce — and
+    would bill API rates for a path advertised as free.
+    """
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-should-not-propagate")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "tok")
+    monkeypatch.setenv("PATH", "/usr/bin")
+    env = bk._subscription_env()
+    assert "ANTHROPIC_API_KEY" not in env
+    assert "ANTHROPIC_AUTH_TOKEN" not in env
+    assert env["PATH"] == "/usr/bin", "unrelated env must survive"
+
+
+def test_cli_subprocess_receives_the_stripped_env(monkeypatch):
+    """The stripping must reach subprocess.run, not merely exist as a helper."""
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-nope")
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+    seen = {}
+
+    class _Proc:
+        returncode = 0
+        stdout = '{"score": 1}'
+        stderr = ""
+
+    def _run(argv, **kw):
+        seen.update(kw)
+        return _Proc()
+
+    monkeypatch.setattr(bk.subprocess, "run", _run)
+    bk._call_authored_scorer_cli(_spec(), _item(), [])
+    assert "ANTHROPIC_API_KEY" not in seen["env"]
+
+
+def test_cli_disables_tools_and_omits_the_ignored_flag(monkeypatch):
+    """A scorer must not read files or run commands on text it was asked to grade."""
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+    seen = {}
+
+    class _Proc:
+        returncode = 0
+        stdout = '{"score": 1}'
+        stderr = ""
+
+    monkeypatch.setattr(bk.subprocess, "run",
+                        lambda argv, **kw: (seen.update(argv=argv), _Proc())[1])
+    bk._call_authored_scorer_cli(_spec(), _item(), [])
+    argv = seen["argv"]
+    assert "--tools" in argv and argv[argv.index("--tools") + 1] == ""
+    # `claude --help` states this flag is ignored with --system-prompt. A no-op
+    # flag reads to a later maintainer as a guarantee that holds.
+    assert "--exclude-dynamic-system-prompt-sections" not in argv
+
+
+def test_timeout_is_reported_as_a_cause(monkeypatch):
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+
+    def _boom(argv, **kw):
+        raise bk.subprocess.TimeoutExpired(cmd="claude", timeout=7)
+
+    monkeypatch.setattr(bk.subprocess, "run", _boom)
+    out, err = bk._call_authored_scorer_cli(_spec(), _item(), [], timeout=7)
+    assert out is None and "timed out" in err
+
+
+def test_run_state_is_run_local():
+    """
+    A process-global counter makes a second run inherit the first's failures
+    and keeps the first-failure-only warning suppressed for the whole process.
+    """
+    bk._JUDGE_STATE["failures"] = 5
+    bk._JUDGE_STATE["last_error"] = "stale"
+    bk.reset_judge_run_state()
+    assert bk.judge_failure_count() == 0
+    assert bk._JUDGE_STATE["last_error"] == ""
+
+
+def test_runtime_cause_beats_static_blockers(monkeypatch, capsys):
+    """
+    A credential that expires mid-run satisfies every static check, so a
+    warning built only from static blockers would print a misleading cause.
+    """
+    bk.set_judge_enabled(True)
+    monkeypatch.setattr(bk, "score_item_heuristic",
+                        lambda item: bk.ScoredItem(item, 2, 2, 1, 5, True, [], "heuristic"))
+
+    def _fail(item, slugs):
+        bk._JUDGE_STATE["last_error"] = "claude_cli/novelty: exit 1: credentials expired"
+        return None
+
+    monkeypatch.setattr(bk, "score_item_claude_cli", _fail)
+    monkeypatch.setattr(bk, "score_item_authored_agents", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_llm", lambda *a, **k: None)
+    bk.score_item(_item(), [])
+    assert "credentials expired" in capsys.readouterr().err
+
+
+def test_shared_selector_falls_through_in_billing_order(monkeypatch):
+    order = []
+    monkeypatch.setattr(bk, "score_item_claude_cli",
+                        lambda *a, **k: (order.append("cli"), None)[1])
+    monkeypatch.setattr(bk, "score_item_authored_agents",
+                        lambda *a, **k: (order.append("sdk"), None)[1])
+    sentinel = bk.ScoredItem(_item(), 1, 1, 1, 3, False, [], "llm_judge")
+    monkeypatch.setattr(bk, "score_item_llm",
+                        lambda *a, **k: (order.append("gemini"), sentinel)[1])
+    out = bk.score_item_with_judge(_item(), [])
+    assert order == ["cli", "sdk", "gemini"]
+    assert out is sentinel
+
+
+def test_score_item_uses_the_shared_selector(monkeypatch):
+    """
+    Calibration and production must route through ONE selector. Otherwise a
+    working SDK with a broken CLI lets production judge while calibration
+    reports failure, and the disagreement numbers describe a path nobody runs.
+    """
+    bk.set_judge_enabled(True)
+    called = []
+    monkeypatch.setattr(bk, "score_item_heuristic",
+                        lambda item: bk.ScoredItem(item, 2, 2, 1, 5, True, [], "heuristic"))
+    judged = bk.ScoredItem(_item(), 1, 1, 1, 3, False, [], "authored_agents")
+    monkeypatch.setattr(bk, "score_item_with_judge",
+                        lambda *a, **k: (called.append(1), judged)[1])
+    out = bk.score_item(_item(), [])
+    assert called == [1]
+    assert out.scoring_method == "authored_agents"
+
+
+def test_verify_reports_failure_detail(monkeypatch):
+    monkeypatch.setattr(bk, "_load_agent_spec", lambda n: _spec())
+    monkeypatch.setattr(bk, "_call_authored_scorer_cli",
+                        lambda *a, **k: (None, "exit 1: unauthorized"))
+    ok, detail = bk.verify_judge_transport()
+    assert ok is False and "unauthorized" in detail
+
+
+def test_verify_reports_success(monkeypatch):
+    monkeypatch.setattr(bk, "_load_agent_spec", lambda n: _spec())
+    monkeypatch.setattr(bk, "_call_authored_scorer_cli",
+                        lambda *a, **k: ({"score": 2}, ""))
+    ok, detail = bk.verify_judge_transport()
+    assert ok is True and "OK" in detail

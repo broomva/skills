@@ -1533,38 +1533,68 @@ def _claude_cli_path() -> Optional[str]:
     return shutil.which("claude")
 
 
+def _subscription_env() -> dict:
+    """
+    Environment for the `claude -p` subprocess, with API-billing credentials
+    REMOVED.
+
+    `claude` bills the API, not the subscription, whenever ANTHROPIC_API_KEY
+    (or an equivalent auth token) is present in its environment. Labelling this
+    transport `billing="subscription"` while inheriting the ambient environment
+    would be a claim the code does not enforce — the caller could be billed the
+    API rate for a path this module advertises as free. Stripping the variables
+    makes the label true by construction rather than by assertion.
+    """
+    env = os.environ.copy()
+    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
+        env.pop(var, None)
+    return env
+
+
 def _call_authored_scorer_cli(
     spec: dict,
     item: RawItem,
     existing_slugs: list[str],
     timeout: int = CLAUDE_CLI_TIMEOUT,
-) -> Optional[dict]:
+) -> tuple[Optional[dict], str]:
     """
     Invoke one authored bookkeeping-* scorer through `claude -p`.
 
-    Same prompt as the SDK transport (both call
-    `_build_authored_scorer_prompt`), same validation (both call
-    `_parse_scorer_response`) — only the carrier differs.
+    Returns `(parsed_or_None, error_detail)`. The error string is kept because
+    discarding it was the same defect this module exists to fix: a transport
+    that fails on an expired credential and one that fails on a malformed
+    response are different problems, and collapsing both to `None` makes the
+    later diagnostic reconstruct static blockers that will report "no blockers"
+    for a runtime failure.
 
-    The user prompt is passed on STDIN, never as an argv element or
-    through a shell: item content is untrusted external text (moltbook
-    posts, fetched articles), and `shell=False` plus stdin keeps its
-    metacharacters and length away from both the shell and ARG_MAX.
+    Same prompt as the SDK transport (both call `_build_authored_scorer_prompt`)
+    and same validation (both call `_parse_scorer_response`) — only the carrier
+    differs.
+
+    The user prompt is passed on STDIN, never as an argv element or through a
+    shell: item content is untrusted external text (moltbook posts, fetched
+    articles), so `shell=False` plus stdin keeps its metacharacters and length
+    away from both the shell and ARG_MAX. `--tools ""` disables every built-in
+    tool, because this is a scorer and a scorer has no business reading files
+    or running commands on the strength of text it was asked to grade.
     """
     cli = _claude_cli_path()
     if not cli:
-        return None
+        return None, "`claude` CLI not on PATH"
     system, user = _build_authored_scorer_prompt(spec, item, existing_slugs)
     model = _CLI_MODEL_ALIASES.get(spec["model"], spec["model"])
     argv = [
         cli,
         "-p",
         "--model", model,
-        # Replace (not append to) the default system prompt, matching the
-        # SDK path's `system=` argument, and drop Claude Code's dynamic
-        # sections so the scorer sees only its authored instructions.
+        # Replace (not append to) the default system prompt, matching the SDK
+        # path's `system=` argument. NOTE: --exclude-dynamic-system-prompt-
+        # sections is deliberately NOT passed; `claude --help` states it is
+        # ignored with --system-prompt, and a flag that does nothing reads to a
+        # later maintainer as a guarantee that holds.
         "--system-prompt", system,
-        "--exclude-dynamic-system-prompt-sections",
+        # Scorer, not agent: no tool use.
+        "--tools", "",
     ]
     try:
         proc = subprocess.run(
@@ -1574,12 +1604,20 @@ def _call_authored_scorer_cli(
             text=True,
             timeout=timeout,
             shell=False,
+            env=_subscription_env(),
         )
-    except (subprocess.TimeoutExpired, OSError):
-        return None
+    except subprocess.TimeoutExpired:
+        return None, f"timed out after {timeout}s"
+    except OSError as exc:
+        return None, f"could not execute {cli}: {exc}"
     if proc.returncode != 0:
-        return None
-    return _parse_scorer_response(proc.stdout or "")
+        detail = (proc.stderr or "").strip().splitlines()
+        tail = detail[-1][:200] if detail else "no stderr"
+        return None, f"exit {proc.returncode}: {tail}"
+    parsed = _parse_scorer_response(proc.stdout or "")
+    if parsed is None:
+        return None, f"unparseable response: {(proc.stdout or '').strip()[:200]!r}"
+    return parsed, ""
 
 
 def score_item_claude_cli(
@@ -1609,8 +1647,12 @@ def score_item_claude_cli(
     results: dict[str, int] = {}
     reasoning: dict[str, str] = {}
     for dim, spec in specs.items():
-        out = _call_authored_scorer_cli(spec, item, existing_slugs, timeout=timeout)
+        out, err = _call_authored_scorer_cli(spec, item, existing_slugs, timeout=timeout)
         if out is None:
+            # Keep WHY, so the operator-facing warning can name a runtime
+            # cause instead of re-deriving static blockers that will all
+            # look satisfied.
+            _JUDGE_STATE["last_error"] = f"claude_cli/{dim}: {err}"
             return None
         results[dim] = out["score"]
         reasoning[f"{dim}_reasoning"] = out.get("reasoning", "")
@@ -1632,14 +1674,49 @@ def score_item_claude_cli(
     )
 
 
+def verify_judge_transport(timeout: int = CLAUDE_CLI_TIMEOUT) -> tuple[bool, str]:
+    """
+    Actually exercise the subscription transport with a trivial item.
+
+    `judge_availability()` can only report what is CONFIGURED — a binary on
+    PATH, a spec file present, a key set. None of that survives contact with
+    an expired credential or a spec that no longer parses. This does the
+    round trip and returns `(ok, detail)`, which is the only way to say the
+    judge works rather than that it looks like it should.
+    """
+    spec = _load_agent_spec("bookkeeping-novelty")
+    if spec is None:
+        return False, f"could not load bookkeeping-novelty spec from {AUTHORED_AGENTS_DIR}"
+    probe = RawItem(
+        item_id="verify-probe",
+        source_id="verify",
+        source_type="conversation",
+        content="A probe item used to verify the judge transport is reachable.",
+        quote="",
+        author="bookkeeping",
+        timestamp=now_iso(),
+        metadata={},
+    )
+    out, err = _call_authored_scorer_cli(spec, probe, [], timeout=timeout)
+    if out is None:
+        return False, err
+    return True, f"round-trip OK (probe scored {out['score']})"
+
+
 def judge_availability() -> dict:
     """
-    Report which judge transports are live, and why each dead one is dead.
+    Report which judge transports are CONFIGURED, and why each unconfigured
+    one is not.
 
-    This exists because the failure it describes was invisible for 7,765
-    runs: a dead judge and a healthy one printed nearly the same thing.
-    Callers assert on `available` POSITIVELY rather than inferring health
-    from the absence of a warning.
+    `available` means "prerequisites are present", NOT "judging works": it
+    checks PATH, spec files and credentials, none of which detect an expired
+    token or an unparseable spec. Use `verify_judge_transport()` for the
+    round trip. The two are kept distinct on purpose — collapsing them would
+    recreate, one level up, the exact confusion this module exists to fix.
+
+    Callers assert on this POSITIVELY rather than inferring health from the
+    absence of a warning, because absence was indistinguishable from health
+    for 7,765 runs.
     """
     specs_present = all(
         (AUTHORED_AGENTS_DIR / f"bookkeeping-{d}.md").exists()
@@ -1767,7 +1844,39 @@ def score_item_authored_agents(
 
 # Judge enablement + failure accounting. `failures` is read by the run
 # recorder so a degraded run is legible in the log, not only on stderr.
-_JUDGE_STATE = {"enabled": False, "failures": 0}
+# `failures` and `last_error` are RUN-local: `reset_judge_run_state()` is
+# called at pipeline entry, because a counter that survives across runs in
+# one process makes the second run inherit the first's failures and keeps
+# the first-failure-only warning suppressed.
+_JUDGE_STATE = {"enabled": False, "failures": 0, "last_error": ""}
+
+
+def reset_judge_run_state() -> None:
+    """Clear run-local judge accounting. Called at pipeline entry."""
+    _JUDGE_STATE["failures"] = 0
+    _JUDGE_STATE["last_error"] = ""
+
+
+def score_item_with_judge(
+    item: RawItem, existing_slugs: list[str]
+) -> Optional[ScoredItem]:
+    """
+    Run the judge transports in order and return the first success.
+
+    Order is by BILLING, not by age: `claude -p` runs on the subscription,
+    the other two need a paid API credential.
+
+    This is the single transport-selection point. `score_item` and
+    `judge-check` both route through it so calibration measures the same
+    chain production uses — otherwise a working SDK transport with a broken
+    CLI would let production judge while calibration reported failure, and
+    the disagreement numbers would describe a path nobody runs.
+    """
+    for fn in (score_item_claude_cli, score_item_authored_agents, score_item_llm):
+        out = fn(item, existing_slugs)
+        if out is not None:
+            return out
+    return None
 
 
 def judge_enabled() -> bool:
@@ -1822,36 +1931,17 @@ def score_item(item: RawItem, existing_slugs: list[str], verbose: bool = False) 
             )
         return h
 
-    # Transport order is by billing, not by age: `claude -p` runs on the
-    # subscription, the other two need a paid API credential.
+    # One transport-selection point, shared with judge-check.
     if verbose:
-        print(f"  [{item.item_id}] heuristic={h.total}/9 → judge (claude -p first)...")
-    cli_result = score_item_claude_cli(item, existing_slugs)
-    if cli_result is not None:
+        print(f"  [{item.item_id}] heuristic={h.total}/9 -> judge (subscription first)...")
+    judged = score_item_with_judge(item, existing_slugs)
+    if judged is not None:
         if verbose:
             print(
-                f"  [{item.item_id}] claude_cli={cli_result.total}/9 "
-                f"(n={cli_result.novelty} s={cli_result.specificity} r={cli_result.relevance})"
+                f"  [{item.item_id}] {judged.scoring_method}={judged.total}/9 "
+                f"(n={judged.novelty} s={judged.specificity} r={judged.relevance})"
             )
-        return cli_result
-
-    authored = score_item_authored_agents(item, existing_slugs)
-    if authored is not None:
-        if verbose:
-            print(
-                f"  [{item.item_id}] authored_agents={authored.total}/9 "
-                f"(n={authored.novelty} s={authored.specificity} r={authored.relevance})"
-            )
-        return authored
-
-    llm_result = score_item_llm(item, existing_slugs)
-    if llm_result is not None:
-        if verbose:
-            print(
-                f"  [{item.item_id}] llm={llm_result.total}/9 "
-                f"(n={llm_result.novelty} s={llm_result.specificity} r={llm_result.relevance})"
-            )
-        return llm_result
+        return judged
 
     # Every transport failed while the judge was explicitly ENABLED. The
     # operator asked for a judged score on an in-band item and did not get
@@ -1861,14 +1951,20 @@ def score_item(item: RawItem, existing_slugs: list[str], verbose: bool = False) 
     # hid a dead judge for 7,765 runs.
     _JUDGE_STATE["failures"] += 1
     if _JUDGE_STATE["failures"] == 1:
-        avail = judge_availability()
-        blockers = "; ".join(
-            f"{p['name']}: {', '.join(p['blockers'])}"
-            for p in avail["paths"] if p["blockers"]
-        )
+        # Prefer the RUNTIME cause. Static blockers are re-derived only when
+        # no transport got far enough to produce one: a credential that
+        # expired mid-run satisfies every static check, so reporting only
+        # blockers would print "no blockers" for a real failure.
+        cause = _JUDGE_STATE.get("last_error") or ""
+        if not cause:
+            avail = judge_availability()
+            cause = "; ".join(
+                f"{p['name']}: {', '.join(p['blockers'])}"
+                for p in avail["paths"] if p["blockers"]
+            ) or "no cause captured"
         print(
             "[bookkeeping] JUDGE FAILED — --judge was requested but every transport "
-            f"failed; in-band items are falling back to the heuristic. {blockers}",
+            f"failed; in-band items are falling back to the heuristic. {cause}",
             file=sys.stderr,
         )
     if verbose:
@@ -4426,6 +4522,7 @@ def run_pipeline(
     entities_created = 0
     entities_updated = 0
     scoring_breakdown = {"heuristic": 0, "llm_judge": 0}
+    reset_judge_run_state()
 
     all_scored: list[ScoredItem] = []
 
@@ -6772,21 +6869,27 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
     been compared against one.
     """
     avail = judge_availability()
-    print("Judge transports:")
+    print("Judge transports (CONFIGURED = prerequisites present, not proven working):")
     for p in avail["paths"]:
-        mark = "LIVE" if p["available"] else "DEAD"
-        print(f"  [{mark}] {p['name']:16s} billing={p['billing']}")
+        mark = "CONFIGURED" if p["available"] else "UNCONFIGURED"
+        print(f"  [{mark:12s}] {p['name']:16s} billing={p['billing']}")
         for b in p["blockers"]:
-            print(f"           ↳ {b}")
-    print(f"\nany_available: {avail['any_available']}")
-    print(f"judge_enabled: {judge_enabled()}  (--judge / BOOKKEEPING_JUDGE=1)")
+            print(f"                 ↳ {b}")
+    print(f"\nany_configured: {avail['any_available']}")
+    print(f"judge_enabled:  {judge_enabled()}  (--judge / BOOKKEEPING_JUDGE=1)")
+
+    if args.verify:
+        ok, detail = verify_judge_transport()
+        print(f"\nround-trip verify: {'PASS' if ok else 'FAIL'} - {detail}")
+        if not ok:
+            raise SystemExit(1)
 
     if not args.sample:
         print("\nPass --sample N to shadow-score N in-band items and measure disagreement.")
         return
 
     if not avail["any_available"]:
-        print("\nCannot sample: no judge transport is available.", file=sys.stderr)
+        print("\nCannot sample: no judge transport is configured.", file=sys.stderr)
         raise SystemExit(1)
 
     source_files = discover_raw_extracts()
@@ -6816,7 +6919,7 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
     print(f"\nShadow-scoring {len(band)} in-band items (3 model calls each)...\n")
     rows = []
     for idx, (item, h) in enumerate(band, 1):
-        j = score_item_claude_cli(item, existing_slugs)
+        j = score_item_with_judge(item, existing_slugs)
         if j is None:
             print(f"  [{idx}/{len(band)}] {item.item_id}: judge FAILED", file=sys.stderr)
             continue
@@ -6832,7 +6935,12 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
             "judge_promote": j.total >= PROMOTE_THRESHOLD,
             "decision_flipped": flipped,
             "judge_reasoning": j.reasoning,
-            "excerpt": item.content[:300],
+            "scoring_method": j.scoring_method,
+            # Exactly the slice _build_authored_scorer_prompt sends, so the
+            # human and the judge answer about identical evidence. A 300-char
+            # excerpt against the judge's 2000 would make disagreement a
+            # measure of truncation.
+            "content_seen_by_judge": item.content[:2000],
         })
         print(
             f"  [{idx}/{len(band)}] {item.item_id}: heuristic={h.total} judge={j.total} "
@@ -6855,19 +6963,52 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
     print("say which is right. Use --labels to produce a sheet a human can settle.")
 
     if args.labels:
+        # Two files. The sheet a human labels contains NO machine scores and
+        # no judge reasoning — an earlier version put both in the same row
+        # and told the labeller not to look, which is prose standing in for
+        # a control. Anchoring is not resisted by instruction; it is
+        # prevented by not shipping the anchor. The key file carries the
+        # machine scores for the scoring step afterwards, joined on item_id.
         out = Path(args.labels).expanduser()
         out.parent.mkdir(parents=True, exist_ok=True)
+        key = out.with_name(out.stem + ".key" + out.suffix)
+
         out.write_text(json.dumps({
             "generated": now_iso(),
             "promote_threshold": PROMOTE_THRESHOLD,
             "instructions": (
-                "For each row set `human_total` (0-9) and `human_promote` (true/false) "
-                "WITHOUT reading heuristic_total or judge_total first — a label anchored "
-                "on a machine score is not an independent label."
+                "Score each row 0-3 per dimension; set `human_total` (0-9) and "
+                "`human_promote`. This sheet deliberately contains no machine "
+                "scores — do not open the .key file until every row is labelled."
             ),
-            "rows": [{**r, "human_total": None, "human_promote": None} for r in rows],
+            "rows": [
+                {
+                    "item_id": r["item_id"],
+                    # Same slice the judge saw, so the labeller and the judge
+                    # are answering about identical evidence.
+                    "content": r["content_seen_by_judge"],
+                    "human_novelty": None,
+                    "human_specificity": None,
+                    "human_relevance": None,
+                    "human_total": None,
+                    "human_promote": None,
+                }
+                for r in rows
+            ],
         }, indent=2))
-        print(f"\nLabeling sheet: {out}")
+
+        key.write_text(json.dumps({
+            "generated": now_iso(),
+            "promote_threshold": PROMOTE_THRESHOLD,
+            "note": "Machine scores for the labelled sheet. Join on item_id AFTER labelling.",
+            "rows": [
+                {k: v for k, v in r.items() if k != "content_seen_by_judge"}
+                for r in rows
+            ],
+        }, indent=2))
+
+        print(f"\nLabeling sheet (blinded): {out}")
+        print(f"Machine-score key:        {key}")
 
 # ── Layer-2 retention (BRO-1991) ──────────────────────────────────────────────
 #
@@ -7639,6 +7780,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_judge.add_argument(
         "--sample", type=int, default=0, metavar="N",
         help="Shadow-score N ambiguous-band items with both scorers and report disagreement",
+    )
+    p_judge.add_argument(
+        "--verify", action="store_true",
+        help="Actually round-trip the transport with a probe item (proves it works)",
     )
     p_judge.add_argument(
         "--labels", metavar="PATH",
