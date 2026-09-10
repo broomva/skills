@@ -100,10 +100,14 @@ note-taking tools in sequence; it does **not** reimplement them.
        the first run, then re-inspect the window that is still unresolved:
        `python3 scripts/video_ingest.py '<url>' --outdir DIR --from 4:12 --to 4:20
        --fps 8 [--zoom-audio]` → Read `manifest.contact_sheet` (`zoom_sheet.jpg`).
-       Pass 2 reuses `manifest.video_path` instead of re-downloading, keeps every
-       frame (near-identical frames 1/8s apart are the signal a zoom exists to
-       show), and writes to `zoom_frames/` + `zoom_sheet.jpg` so pass 1's overview
-       survives. Use it whenever the question is *what exactly happens here* —
+       Pass 2 reuses the download only when the outdir's OWN manifest names the
+       same target (a bare `video.*` is refused — a filename is not provenance),
+       keeps every frame (near-identical frames 1/8s apart are the signal a zoom
+       exists to show), writes to `zoom_frames/` + `zoom_sheet.jpg`, and copies
+       pass 1's manifest to `manifest.pass1.json` (named in `previous_manifest`)
+       since there is only ever one `manifest.json` per outdir. A window past the
+       end is clamped and says so; failed decodes are counted, never dropped.
+       Use it whenever the question is *what exactly happens here* —
        counting a fast action, reading a fast cut, watching a gesture — which
        one-frame-per-visual-state sampling cannot answer by construction.
        For **login-gated** IG/FB,
@@ -124,9 +128,16 @@ note-taking tools in sequence; it does **not** reimplement them.
        bills the **Antigravity subscription, not an API key** — the `gemini` CLI's free
        tier is gone (`IneligibleTierError … migrate to the Antigravity suite`, measured
        2026-09-10), so this is the only non-API route. It runs read-only (`--mode plan`)
-       and sandboxed by default because the URL is untrusted input, and it refuses to
-       report an answer it cannot attribute: the reply must carry a `MECHANISM:` line,
-       and a `NO_VIDEO_CAPABILITY` sentinel or a non-zero exit is an error, never prose.
+       and sandboxed by default because the URL is untrusted input, and it reports a
+       `NO_VIDEO_CAPABILITY` sentinel or a non-zero exit as an error, never as prose.
+       **It refuses to run while `agy` has MCP servers enabled** (exit 5): those are
+       reachable by an agent running with permissions auto-approved on input a hostile
+       page controls, and neither `--mode plan` (which constrains *edits*) nor
+       `--sandbox` (*terminal* restrictions) is documented to gate an MCP tool call.
+       Run `agy mcp disable <name>`, or pass `--allow-mcp` to accept the exposure.
+       Treat the `MECHANISM:` line as an honesty signal from a cooperative model, not
+       as proof it decoded anything — a model reconstructing from the page title can
+       claim `view_file` too.
        **It is not a second witness on acquisition** — `agy` fetches with yt-dlp exactly
        as we do, so it cross-checks frame *interpretation* only.
      - **Thread / image post** (X/Twitter thread, IG photo post, FB) → text is only
