@@ -95,7 +95,18 @@ note-taking tools in sequence; it does **not** reimplement them.
        (it's null for no-speech `frames-mandatory` clips — skip the Read then), and
        follow `manifest.recommendation.mode`: `transcript-only` (speech-dense, no signal)
        · `escalate-frames` (deixis / high scene-rate / on-screen text → Read the
-       per-window frames) · `frames-mandatory` (no speech). For **login-gated** IG/FB,
+       per-window frames) · `frames-mandatory` (no speech).
+       **Escalation is a SECOND PASS, not a re-read of pass 1.** Add `--keep-video` to
+       the first run, then re-inspect the window that is still unresolved:
+       `python3 scripts/video_ingest.py '<url>' --outdir DIR --from 4:12 --to 4:20
+       --fps 8 [--zoom-audio]` → Read `manifest.contact_sheet` (`zoom_sheet.jpg`).
+       Pass 2 reuses `manifest.video_path` instead of re-downloading, keeps every
+       frame (near-identical frames 1/8s apart are the signal a zoom exists to
+       show), and writes to `zoom_frames/` + `zoom_sheet.jpg` so pass 1's overview
+       survives. Use it whenever the question is *what exactly happens here* —
+       counting a fast action, reading a fast cut, watching a gesture — which
+       one-frame-per-visual-state sampling cannot answer by construction.
+       For **login-gated** IG/FB,
        add `--cookies-from-browser chrome`, or drive Interceptor on real logged-in Chrome
        (`interceptor open '<url>'`) — this reads *your own* local browser session to reach
        *your own* gated content; the cookies stay local (video_ingest writes only the
@@ -106,6 +117,18 @@ note-taking tools in sequence; it does **not** reimplement them.
        one frame per distinct visual state) → montage contact sheet → escalate only
        unresolved windows; never uniform-poll per second (drowns talking heads,
        aliases fast screencasts). Spec: `research/entities/pattern/adaptive-video-ingest.md`.
+       **Long video (>~20 min), or a visual claim you are about to tag `[HIGH]`** →
+       offload to Antigravity instead of pulling a large contact sheet into context:
+       `python3 scripts/video_agy.py '<url>' --question '<the question>'`. It drives
+       the local `agy` CLI, which decodes video natively via its `view_file` tool and
+       bills the **Antigravity subscription, not an API key** — the `gemini` CLI's free
+       tier is gone (`IneligibleTierError … migrate to the Antigravity suite`, measured
+       2026-09-10), so this is the only non-API route. It runs read-only (`--mode plan`)
+       and sandboxed by default because the URL is untrusted input, and it refuses to
+       report an answer it cannot attribute: the reply must carry a `MECHANISM:` line,
+       and a `NO_VIDEO_CAPABILITY` sentinel or a non-zero exit is an error, never prose.
+       **It is not a second witness on acquisition** — `agy` fetches with yt-dlp exactly
+       as we do, so it cross-checks frame *interpretation* only.
      - **Thread / image post** (X/Twitter thread, IG photo post, FB) → text is only
        half the artifact; **pull the pixels too** — a markdown extractor silently drops
        the images (the modality gap). Browser-screenshot→Read + in-browser image fetch
