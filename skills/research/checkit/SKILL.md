@@ -81,11 +81,13 @@ note-taking tools in sequence; it does **not** reimplement them.
    Two shapes, each with a dogfooded route:
      - **Video** (YouTube / Shorts / TikTok / IG Reel / hosted mp4) → run the tested
        tool, not a hand-rolled ffmpeg loop:
-       `python3 scripts/video_ingest.py '<url>' --query '<the question you inferred>'`
+       `python3 scripts/video_ingest.py "$VIDEO_URL" --query "$VIDEO_Q"`
        (from the broomva workspace; from any other cwd use the absolute
-       `~/broomva/scripts/video_ingest.py`). **Single-quote the URL and the query** —
-       both are untrusted external input, so a hostile link's shell metacharacters must
-       never reach the shell unescaped (the script itself takes argv, `shell=False`). It
+       `~/broomva/scripts/video_ingest.py`). **Pass both through exported variables,
+       not inline text** — they are untrusted external input, and single-quoting is
+       necessary but NOT sufficient: one literal apostrophe in the URL closes the
+       quote and the rest becomes shell. The scripts take argv (`shell=False`), so
+       the only exposure is the command string you build to reach them. It
        is BRO-1979 — self-degrading (scenedetect/imagehash optional → falls back to
        ffmpeg + Pillow) and prints a JSON manifest to **stdout** (also written to
        `<outdir>/manifest.json` — pass `--outdir DIR` to pin the location, else it's a
@@ -95,7 +97,29 @@ note-taking tools in sequence; it does **not** reimplement them.
        (it's null for no-speech `frames-mandatory` clips — skip the Read then), and
        follow `manifest.recommendation.mode`: `transcript-only` (speech-dense, no signal)
        · `escalate-frames` (deixis / high scene-rate / on-screen text → Read the
-       per-window frames) · `frames-mandatory` (no speech). For **login-gated** IG/FB,
+       per-window frames) · `frames-mandatory` (no speech).
+       **Escalation is a SECOND PASS, not a re-read of pass 1.** Add `--keep-video` to
+       the first run, then re-inspect the unresolved window by pointing pass 2 at the
+       file pass 1 kept:
+       `python3 scripts/video_ingest.py "$DIR/video.mp4" --outdir "$DIR2" --from 4:12
+       --to 4:20 --fps 8 [--zoom-audio]` → Read `manifest.contact_sheet`
+       (`zoom_sheet.jpg`).
+       A URL is **re-acquired** for pass 2, never adopted from the directory, so
+       re-running the URL costs a second download — and re-running it into the SAME
+       `--outdir` that still holds a kept `video.*` is refused outright, because
+       acquisition cannot tell a pre-existing file from its own download. Pointing at
+       the kept path avoids both: a path names its own bytes, so no provenance
+       question arises. Pass 2 keeps every frame (near-identical frames
+       1/8s apart are the signal a zoom exists to show), writes to `zoom_frames/`
+       + `zoom_sheet.jpg`, and copies pass 1's manifest to `manifest.pass1.json`
+       (named in `previous_manifest`) since there is only one `manifest.json` per
+       outdir. A window into a subject the outdir does not already describe is
+       **refused** — use a fresh `--outdir`. A window past the end is clamped and
+       says so; failed decodes are counted, never dropped.
+       Use it whenever the question is *what exactly happens here* —
+       counting a fast action, reading a fast cut, watching a gesture — which
+       one-frame-per-visual-state sampling cannot answer by construction.
+       For **login-gated** IG/FB,
        add `--cookies-from-browser chrome`, or drive Interceptor on real logged-in Chrome
        (`interceptor open '<url>'`) — this reads *your own* local browser session to reach
        *your own* gated content; the cookies stay local (video_ingest writes only the
@@ -106,6 +130,36 @@ note-taking tools in sequence; it does **not** reimplement them.
        one frame per distinct visual state) → montage contact sheet → escalate only
        unresolved windows; never uniform-poll per second (drowns talking heads,
        aliases fast screencasts). Spec: `research/entities/pattern/adaptive-video-ingest.md`.
+       **Long video (>~20 min), or a visual claim you are about to tag `[HIGH]`** →
+       offload to Antigravity instead of pulling a large contact sheet into context:
+       `python3 scripts/video_agy.py "$VIDEO_URL" --question "$VIDEO_Q"`, with both
+       values exported by the harness rather than pasted into the command line.
+       **Single-quoting an untrusted URL is necessary but NOT sufficient** — one
+       literal apostrophe in it closes the quote and the rest becomes shell. The
+       scripts themselves take argv (`shell=False`), so the only exposure is the
+       command string you build to reach them; do not build one out of the
+       artifact's text. It drives
+       the local `agy` CLI, which decodes video natively via its `view_file` tool and
+       bills the **Antigravity subscription, not an API key** — the `gemini` CLI's free
+       tier is gone (`IneligibleTierError … migrate to the Antigravity suite`, measured
+       2026-09-10 — that tier is **Gemini Code Assist for individuals**; enterprise
+       Code Assist licences and API-key auth are unaffected), so for an individual
+       account this is the only non-API route. It runs under `--mode plan`
+       and `--sandbox` by default because the URL is untrusted input — note the two
+       lines below for what those actually constrain; neither makes it read-only —
+       and it reports a
+       `NO_VIDEO_CAPABILITY` sentinel or a non-zero exit as an error, never as prose.
+       **It warns when `agy` has MCP servers enabled** and records them in
+       `result.json` as `mcp_servers`: those are reachable by an agent running with
+       permissions auto-approved on input a hostile page controls, and neither
+       `--mode plan` (which constrains *edits*) nor `--sandbox` (*terminal*
+       restrictions) is documented to gate an MCP tool call. `agy mcp disable <name>`
+       removes the exposure; `--refuse-mcp` blocks instead of warning.
+       Treat the `MECHANISM:` line as an honesty signal from a cooperative model, not
+       as proof it decoded anything — a model reconstructing from the page title can
+       claim `view_file` too.
+       **It is not a second witness on acquisition** — `agy` fetches with yt-dlp exactly
+       as we do, so it cross-checks frame *interpretation* only.
      - **Thread / image post** (X/Twitter thread, IG photo post, FB) → text is only
        half the artifact; **pull the pixels too** — a markdown extractor silently drops
        the images (the modality gap). Browser-screenshot→Read + in-browser image fetch
