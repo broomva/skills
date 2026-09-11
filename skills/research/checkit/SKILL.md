@@ -81,11 +81,13 @@ note-taking tools in sequence; it does **not** reimplement them.
    Two shapes, each with a dogfooded route:
      - **Video** (YouTube / Shorts / TikTok / IG Reel / hosted mp4) → run the tested
        tool, not a hand-rolled ffmpeg loop:
-       `python3 scripts/video_ingest.py '<url>' --query '<the question you inferred>'`
+       `python3 scripts/video_ingest.py "$VIDEO_URL" --query "$VIDEO_Q"`
        (from the broomva workspace; from any other cwd use the absolute
-       `~/broomva/scripts/video_ingest.py`). **Single-quote the URL and the query** —
-       both are untrusted external input, so a hostile link's shell metacharacters must
-       never reach the shell unescaped (the script itself takes argv, `shell=False`). It
+       `~/broomva/scripts/video_ingest.py`). **Pass both through exported variables,
+       not inline text** — they are untrusted external input, and single-quoting is
+       necessary but NOT sufficient: one literal apostrophe in the URL closes the
+       quote and the rest becomes shell. The scripts take argv (`shell=False`), so
+       the only exposure is the command string you build to reach them. It
        is BRO-1979 — self-degrading (scenedetect/imagehash optional → falls back to
        ffmpeg + Pillow) and prints a JSON manifest to **stdout** (also written to
        `<outdir>/manifest.json` — pass `--outdir DIR` to pin the location, else it's a
@@ -97,13 +99,17 @@ note-taking tools in sequence; it does **not** reimplement them.
        · `escalate-frames` (deixis / high scene-rate / on-screen text → Read the
        per-window frames) · `frames-mandatory` (no speech).
        **Escalation is a SECOND PASS, not a re-read of pass 1.** Add `--keep-video` to
-       the first run, then re-inspect the window that is still unresolved:
-       `python3 scripts/video_ingest.py '<url>' --outdir DIR --from 4:12 --to 4:20
-       --fps 8 [--zoom-audio]` → Read `manifest.contact_sheet` (`zoom_sheet.jpg`).
-       A URL is **re-acquired** for pass 2, never adopted from the directory. To
-       avoid the second download, add `--keep-video` to pass 1 and point pass 2 at
-       **that path** (`DIR/video.mp4`) — a path names its own bytes, so no
-       provenance question arises. Pass 2 keeps every frame (near-identical frames
+       the first run, then re-inspect the unresolved window by pointing pass 2 at the
+       file pass 1 kept:
+       `python3 scripts/video_ingest.py "$DIR/video.mp4" --outdir "$DIR2" --from 4:12
+       --to 4:20 --fps 8 [--zoom-audio]` → Read `manifest.contact_sheet`
+       (`zoom_sheet.jpg`).
+       A URL is **re-acquired** for pass 2, never adopted from the directory, so
+       re-running the URL costs a second download — and re-running it into the SAME
+       `--outdir` that still holds a kept `video.*` is refused outright, because
+       acquisition cannot tell a pre-existing file from its own download. Pointing at
+       the kept path avoids both: a path names its own bytes, so no provenance
+       question arises. Pass 2 keeps every frame (near-identical frames
        1/8s apart are the signal a zoom exists to show), writes to `zoom_frames/`
        + `zoom_sheet.jpg`, and copies pass 1's manifest to `manifest.pass1.json`
        (named in `previous_manifest`) since there is only one `manifest.json` per
