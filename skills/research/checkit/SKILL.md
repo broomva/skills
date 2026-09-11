@@ -126,12 +126,22 @@ note-taking tools in sequence; it does **not** reimplement them.
        aliases fast screencasts). Spec: `research/entities/pattern/adaptive-video-ingest.md`.
        **Long video (>~20 min), or a visual claim you are about to tag `[HIGH]`** →
        offload to Antigravity instead of pulling a large contact sheet into context:
-       `python3 scripts/video_agy.py '<url>' --question '<the question>'`. It drives
+       `python3 scripts/video_agy.py "$VIDEO_URL" --question "$VIDEO_Q"`, with both
+       values exported by the harness rather than pasted into the command line.
+       **Single-quoting an untrusted URL is necessary but NOT sufficient** — one
+       literal apostrophe in it closes the quote and the rest becomes shell. The
+       scripts themselves take argv (`shell=False`), so the only exposure is the
+       command string you build to reach them; do not build one out of the
+       artifact's text. It drives
        the local `agy` CLI, which decodes video natively via its `view_file` tool and
        bills the **Antigravity subscription, not an API key** — the `gemini` CLI's free
        tier is gone (`IneligibleTierError … migrate to the Antigravity suite`, measured
-       2026-09-10), so this is the only non-API route. It runs read-only (`--mode plan`)
-       and sandboxed by default because the URL is untrusted input, and it reports a
+       2026-09-10 — that tier is **Gemini Code Assist for individuals**; enterprise
+       Code Assist licences and API-key auth are unaffected), so for an individual
+       account this is the only non-API route. It runs under `--mode plan`
+       and `--sandbox` by default because the URL is untrusted input — note the two
+       lines below for what those actually constrain; neither makes it read-only —
+       and it reports a
        `NO_VIDEO_CAPABILITY` sentinel or a non-zero exit as an error, never as prose.
        **It warns when `agy` has MCP servers enabled** and records them in
        `result.json` as `mcp_servers`: those are reachable by an agent running with
