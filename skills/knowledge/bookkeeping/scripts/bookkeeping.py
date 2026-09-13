@@ -2923,6 +2923,13 @@ def _lint_contradicts_resolution(path_str: str, fm: dict, body: str) -> list[Lin
 # Single source of truth for the promotion floor used by _lint_scoring_provenance.
 NOUS_GATE_THRESHOLD = 5
 SCORING_DIMENSIONS = ("novelty", "specificity", "relevance")
+# entity-schema.md marks these Required too, but 89-90% of scored pages omit
+# promoted_by/promoted_at/blog_candidate/priority (229/254 measured 2026-09-13).
+# They are reported, not enforced: an error here red-flags 9 of every 10 scored
+# pages. The dimensions above are separate because the arithmetic check cannot
+# run without them, which is why THEY are an error.
+SCORING_PROVENANCE_FIELDS = ("pass", "promoted_by", "promoted_at",
+                             "blog_candidate", "priority")
 
 
 def _lint_scoring_provenance(path_str: str, fm: dict) -> list[LintError]:
@@ -2964,15 +2971,23 @@ def _lint_scoring_provenance(path_str: str, fm: dict) -> list[LintError]:
         ))
         return errors
 
-    try:
-        dims = {k: int(scoring[k]) for k in SCORING_DIMENSIONS}
-        raw = int(scoring["raw_score"])
-    except (TypeError, ValueError):
+    # int() would coerce "3", 3.0 and True, letting a malformed block pass every
+    # numeric check below. bool is a subclass of int, so it needs excluding by name.
+    non_int = [
+        k for k in (*SCORING_DIMENSIONS, "raw_score")
+        if isinstance(scoring[k], bool) or not isinstance(scoring[k], int)
+    ]
+    if non_int:
         errors.append(LintError(
             path_str, "scoring",
-            "scoring values must be integers", "error",
+            "scoring values must be integers, not "
+            + ", ".join(f"{k}={scoring[k]!r}" for k in sorted(non_int)),
+            "error",
         ))
         return errors
+
+    dims = {k: scoring[k] for k in SCORING_DIMENSIONS}
+    raw = scoring["raw_score"]
 
     for name, value in sorted(dims.items()):
         if not 0 <= value <= 3:
@@ -2980,6 +2995,15 @@ def _lint_scoring_provenance(path_str: str, fm: dict) -> list[LintError]:
                 path_str, "scoring",
                 f"scoring.{name} is {value}, outside the 0-3 range", "error",
             ))
+
+    absent_provenance = [k for k in SCORING_PROVENANCE_FIELDS if scoring.get(k) is None]
+    if absent_provenance:
+        errors.append(LintError(
+            path_str, "scoring",
+            "scoring block is missing schema-required provenance field(s): "
+            + ", ".join(absent_provenance),
+            "warning",
+        ))
 
     total = sum(dims[k] for k in SCORING_DIMENSIONS)
     if raw != total:

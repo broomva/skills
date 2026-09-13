@@ -18,10 +18,19 @@ import pytest
 from bookkeeping import _lint_scoring_provenance, NOUS_GATE_THRESHOLD
 
 
+# Provenance defaults so the arithmetic/threshold tests below isolate what they
+# name. Without them every such fixture also trips the provenance warning, and a
+# test asserting `errs == []` would be asserting two rules at once.
+PROVENANCE_DEFAULTS = {
+    "pass": "heuristic", "promoted_by": "test", "promoted_at": "2026-01-01",
+    "blog_candidate": False, "priority": "low",
+}
+
+
 def fm(status="entity", **scoring):
     out = {"status": status}
     if scoring:
-        out["scoring"] = scoring
+        out["scoring"] = {**PROVENANCE_DEFAULTS, **scoring}
     return out
 
 
@@ -118,3 +127,70 @@ def test_dimension_outside_range_is_an_error(bad):
 def test_scoring_not_a_dict_is_treated_as_absent():
     """A scalar `scoring:` is malformed, but it must not crash the linter."""
     assert _lint_scoring_provenance("x.md", {"status": "candidate", "scoring": 7}) == []
+
+
+# ── review round 1: CodeRabbit #221 ───────────────────────────────────────────
+# Thread 2 (accepted in full): int() coerces "3", 3.0 and True, so a malformed
+# block passed every numeric check below it. Zero live pages carry a non-int
+# score, so strict typing costs nothing and closes the hole.
+# Thread 1 (accepted in part): the schema marks pass/promoted_by/promoted_at/
+# blog_candidate/priority Required, and 229 of 254 scored pages omit four of
+# them. They are reported as warnings; erroring would red-flag 90% of the corpus,
+# which is the same measured reason `scoring` itself is not required outright.
+
+from bookkeeping import SCORING_PROVENANCE_FIELDS
+
+
+def scored(**over):
+    base = dict(novelty=2, specificity=2, relevance=1, raw_score=5)
+    base.update({"pass": "heuristic", "promoted_by": "x", "promoted_at": "2026-01-01",
+                 "blog_candidate": False, "priority": "low"})
+    base.update(over)
+    return {"status": "entity", "scoring": base}
+
+
+@pytest.mark.parametrize("value", ["3", 3.0, True, False, None.__class__])
+def test_coercible_non_integers_are_rejected(value):
+    """int() would have accepted "3", 3.0 and True. Each must be an error."""
+    errs = _lint_scoring_provenance("x.md", scored(novelty=value))
+    assert any(e.severity == "error" and "must be integers" in e.message for e in errs), \
+        f"{value!r} slipped through: {[e.message for e in errs]}"
+
+
+def test_bool_is_not_accepted_as_int():
+    """bool subclasses int, so an isinstance(v, int) check alone passes True."""
+    errs = _lint_scoring_provenance("x.md", scored(relevance=True))
+    assert any("must be integers" in e.message for e in errs)
+    assert any("relevance=True" in e.message for e in errs)
+
+
+def test_genuine_ints_still_pass():
+    """Negative control — the strict check must not reject valid blocks."""
+    assert _lint_scoring_provenance("x.md", scored()) == []
+
+
+@pytest.mark.parametrize("field", SCORING_PROVENANCE_FIELDS)
+def test_each_missing_provenance_field_is_reported(field):
+    errs = _lint_scoring_provenance("x.md", scored(**{field: None}))
+    warns = [e for e in errs if e.severity == "warning"]
+    assert len(warns) == 1, f"{field} not reported"
+    assert field in warns[0].message
+
+
+@pytest.mark.parametrize("field", SCORING_PROVENANCE_FIELDS)
+def test_missing_provenance_field_is_never_an_error(field):
+    """The 90%-blast-radius decision, asserted rather than left to prose."""
+    errs = _lint_scoring_provenance("x.md", scored(**{field: None}))
+    assert [e for e in errs if e.severity == "error"] == []
+
+
+def test_blog_candidate_false_is_present_not_absent():
+    """A falsey-but-set value must not read as missing."""
+    errs = _lint_scoring_provenance("x.md", scored(blog_candidate=False))
+    assert errs == []
+
+
+def test_arithmetic_error_still_fires_with_provenance_complete():
+    """The error path must not be shadowed by the new warning path."""
+    errs = _lint_scoring_provenance("x.md", scored(novelty=3, specificity=2, relevance=3, raw_score=7))
+    assert any(e.severity == "error" and "does not add up" in e.message for e in errs)
