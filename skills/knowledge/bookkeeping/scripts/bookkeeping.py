@@ -2919,6 +2919,88 @@ def _lint_contradicts_resolution(path_str: str, fm: dict, body: str) -> list[Lin
         "warning")]
 
 
+# Nous gate threshold: an item must reach this to be promoted to Layer 3.
+# Single source of truth for the promotion floor used by _lint_scoring_provenance.
+NOUS_GATE_THRESHOLD = 5
+SCORING_DIMENSIONS = ("novelty", "specificity", "relevance")
+
+
+def _lint_scoring_provenance(path_str: str, fm: dict) -> list[LintError]:
+    """Validate the Nous-gate scoring block (BRO-2524).
+
+    references/entity-schema.md marks `scoring` (raw_score + the three
+    dimensions + pass) as Required, and nothing enforced it: 972 of 1226 pages
+    carry no scoring block at all, so requiring it outright would red-flag 79%
+    of the corpus. The severities below are chosen against that measured
+    baseline rather than against the doc's aspiration.
+
+    What is an ERROR is the part that cannot be explained by legacy drift:
+    a scoring block that contradicts itself. A fabricated or careless score
+    still has to add up, which is why arithmetic is checked rather than
+    provenance -- "is this citation real?" is undecidable at lint time,
+    "does 3+2+3 equal the raw_score you wrote?" is not.
+    """
+    errors: list[LintError] = []
+    scoring = fm.get("scoring")
+    status = fm.get("status", "")
+
+    if not isinstance(scoring, dict):
+        # Absent entirely. Only meaningful once the page claims to be promoted.
+        if status == "entity":
+            errors.append(LintError(
+                path_str, "scoring",
+                "status 'entity' without a scoring block — entity-schema.md marks "
+                "scoring required; promotion is what should emit it",
+                "warning",
+            ))
+        return errors
+
+    missing = [k for k in (*SCORING_DIMENSIONS, "raw_score") if scoring.get(k) is None]
+    if missing:
+        errors.append(LintError(
+            path_str, "scoring",
+            f"scoring block is missing required field(s): {', '.join(sorted(missing))}",
+            "error",
+        ))
+        return errors
+
+    try:
+        dims = {k: int(scoring[k]) for k in SCORING_DIMENSIONS}
+        raw = int(scoring["raw_score"])
+    except (TypeError, ValueError):
+        errors.append(LintError(
+            path_str, "scoring",
+            "scoring values must be integers", "error",
+        ))
+        return errors
+
+    for name, value in sorted(dims.items()):
+        if not 0 <= value <= 3:
+            errors.append(LintError(
+                path_str, "scoring",
+                f"scoring.{name} is {value}, outside the 0-3 range", "error",
+            ))
+
+    total = sum(dims[k] for k in SCORING_DIMENSIONS)
+    if raw != total:
+        errors.append(LintError(
+            path_str, "scoring",
+            f"raw_score is {raw} but "
+            + " + ".join(f"{k}={dims[k]}" for k in SCORING_DIMENSIONS)
+            + f" = {total} — the score does not add up",
+            "error",
+        ))
+    elif status == "entity" and raw < NOUS_GATE_THRESHOLD:
+        errors.append(LintError(
+            path_str, "scoring",
+            f"status 'entity' with raw_score {raw} is below the Nous gate "
+            f"threshold of {NOUS_GATE_THRESHOLD} — promoted despite failing its own gate",
+            "error",
+        ))
+
+    return errors
+
+
 def lint_entity_page(entity_path: Path) -> list[LintError]:
     """
     Validate a single entity page.
@@ -3007,6 +3089,8 @@ def lint_entity_page(entity_path: Path) -> list[LintError]:
         sources = fm.get("sources", [])
         if not sources or not isinstance(sources, list):
             errors.append(LintError(path_str, "sources", "sources must be a non-empty list", "error"))
+
+    errors.extend(_lint_scoring_provenance(path_str, fm))
 
     # status
     valid_statuses = {"candidate", "entity", "synthesis", "raw", "archived", "merged"}
