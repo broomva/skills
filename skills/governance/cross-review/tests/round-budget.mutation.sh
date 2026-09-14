@@ -182,7 +182,23 @@ mutate "every verdict reads as CONTINUE" "T37" \
     'LG_LAST_VERDICT=$(field "$last" 2)' \
     'LG_LAST_VERDICT=CONTINUE'
 mutate "ROUND arity unchecked" "T38" \
-    'if (NF != 6) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
+    'if (NF != 6 && NF != 7) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
+# NO mutation for the arity FLOOR, and the reason is a finding rather than an
+# omission. `if (NF != 6 && NF != 7 && NF != 5)` -- widening the check to admit
+# a five-field row -- was written, run, and SURVIVED: a short ROUND row leaves
+# $6 empty, the settles arm below reads "" as neither REFUTED, CONFIRMED nor
+# "-", and sets badrow first. Every NF<6 row is caught there, so no input can
+# reach the floor and no test can distinguish it. T57 pins that a short row
+# fails closed -- which is true and worth holding -- but it is the settles arm
+# doing it, and claiming the mutation as a proof of the floor would be citing a
+# kill for a check the input never reaches.
+#
+# There is likewise no mutation for "6 is still accepted". Narrowing to
+# `NF != 7` reddens every fixture in this file, and the harness scores a mutant
+# that breaks the suite globally as UNATTRIBUTED rather than killed -- correctly,
+# because "the suite went red" says nothing about the rule. That claim is carried
+# by the suite's shape instead: every hand-written ROUND fixture here is six
+# fields, and T59 asserts an old six-field ledger AUTHORIZES.
 mutate "corrupt ledger cannot be reset" "T39" \
     'if ! ( load_ledger ) >/dev/null 2>&1; then' 'if false; then'
 # The entry test has exactly TWO arms, so it gets exactly two mutations -- one
@@ -355,6 +371,90 @@ mutate "corrupt refusal archives before refusing" "T39" \
 mutate "reset treats an unusable verdict as finished" "T55" \
     'if [ "$rule" = "passed" ]; then return 0; fi' \
     'if [ "$rule" = "passed" ] || [ "$rule" = "unusable_verdict" ]; then return 0; fi'
+
+# ─── The recorded panel (BRO-2507) ───────────────────────────────────────
+#
+# The field is bookkeeping -- no rule reads it -- so every proof here is about
+# the RECORD being readable, not about the budget changing. Each mutation
+# restores one specific way the record could lie.
+
+# The one that matters most: omitting --strata must write a NAMED absence.
+# Recording a letter instead makes "nobody wrote down which strata ran" and
+# "only Stratum C ran" the same bytes, which is the whole defect.
+mutate "omitted strata recorded as a real panel" "T58" \
+    'ROUND_STRATA="$STRATA_UNRECORDED"' 'ROUND_STRATA="C"'
+
+# Same claim at the RENDERING surface, for the rows that predate the field.
+# `show` takes no gate, so it is the only thing that decides how a six-field
+# row's missing panel reads -- and a blank is what a reader silently supplies
+# a meaning for.
+mutate "old rows render as a blank panel" "T59" \
+    '(NF<7 ? unrec : ($7!="" ? $7 : "MALFORMED"))' '$7'
+
+# ONE ARM PER CLAIM. The renderer's ternary carries two independent claims and
+# the mutant above only exercises the arity half: replacing the whole
+# expression with `$7` is killed by T59's six-field fixtures alone, leaving the
+# blank-field half unpinned. Stratum B reproduced that by hand. This mutant
+# collapses ONLY the blank arm, so it is killed by T64 and by nothing else --
+# the same "one arm per claim" discipline strata_is_valid already follows.
+mutate "blank panel renders as unrecorded again" "T64" \
+    '(NF<7 ? unrec : ($7!="" ? $7 : "MALFORMED"))' '(NF<7 ? unrec : ($7!="" ? $7 : unrec))'
+
+
+# The validator, at each of its two call sites. One definition, so one
+# mutation each -- the same accounting prediction_is_valid gets.
+mutate "strata write check off" "T60" \
+    'if ! strata_is_valid "$STRATA"; then' 'if false; then'
+mutate "strata read-time check off" "T61" \
+    'if ! strata_is_valid "$vstrata"; then' 'if false; then'
+
+# The shape guard, one mutation per arm. Fused into one alternation these
+# would have been ONE anchor with a kill cited three times; split, each arm
+# restores a different real defect and names the assertion that catches it.
+#
+# `: ;;` rather than deleting the arm: the case still MATCHES and the control
+# flow stays intact, so the mutant cannot redden a test by crashing. That is
+# this file's own rule -- values, not branches.
+
+# The alphabet arm is the one a NEWLINE hits, and a newline in this field is a
+# record separator: the row splits in two. So it is named against T60b, which
+# asserts that consequence (one row, seven columns) rather than an exit code.
+mutate "strata alphabet arm dead" "T60b" \
+    "        *[!ABC,]*) return 1 ;;" \
+    "        *[!ABC,]*) : ;;"
+# An EMPTY --strata is a MALFORMED claim, not an absent one. Accepting it
+# writes a blank panel, which is what a reader takes for `unrecorded`.
+mutate "empty strata accepted as a panel" "T60" \
+    "        '') return 1 ;;" \
+    "        '') : ;;"
+# Comma shape: a leading, trailing or doubled separator names a member that
+# does not exist.
+mutate "strata comma shape unchecked" "T60" \
+    "        ,*|*,|*,,*) return 1 ;;" \
+    "        ,*|*,|*,,*) : ;;"
+# The duplicate arm. `A,A` passes every arm above and names no set; nothing
+# else here touches that path.
+mutate "duplicate strata accepted" "T60" \
+    '[ "$n" = "$u" ]' '[ "$n" != "IMPOSSIBLE" ]'
+
+# `--strata=` with an empty value is a MALFORMED claim; the flag omitted is no
+# claim. Keyed on the value alone they collapse into one state, and the empty
+# one would quietly become `unrecorded`.
+mutate "empty --strata reads as omitted" "T60" \
+    '--strata=*)       STRATA="${arg#*=}"; STRATA_SET=1 ;;' \
+    '--strata=*)       STRATA="${arg#*=}"; STRATA_SET=1; [ -n "$STRATA" ] || STRATA_SET=0 ;;'
+
+# The "S:" prefix, same proof T33 gives the "P:" one: without it an EMPTY
+# stored panel vanishes from the validation loop rather than failing it, and a
+# blank field is precisely what a reader would mistake for `unrecorded`.
+mutate "blank stored panels skipped again" "T61" \
+    'vstrata=${srow#S:}' 'vstrata=${srow#S:}; [ -n "$vstrata" ] || continue'
+
+# A flag accepted where it has no meaning reads as a flag that had one, and
+# the thing silently not recorded here is which panel produced the score.
+mutate "--strata accepted on any command" "T62" \
+    'if [ "$STRATA_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then' \
+    'if [ "$STRATA_SET" = "1" ] && [ "$COMMAND" = "IMPOSSIBLE" ]; then'
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
