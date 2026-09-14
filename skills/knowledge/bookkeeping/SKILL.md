@@ -107,12 +107,25 @@ Two-pass scoring against the Nous gate rubric (full spec in `references/scoring-
 
 | Order | Transport | Billing | Requirement |
 |---|---|---|---|
-| 1 | `claude -p` | **subscription** | `claude` on PATH |
+| 1 | `claude -p` | **subscription-preferred** | `claude` on PATH |
 | 2 | authored agents (Anthropic SDK) | API key | `anthropic` + `ANTHROPIC_API_KEY` |
 | 3 | Gemini (legacy) | API key | `google-generativeai` + `GEMINI_API_KEY` |
 
-`ANTHROPIC_API_KEY` is deliberately *not* the recommended carrier: setting it
-forces API billing instead of the subscription.
+**"subscription-preferred", not "subscription"** — and the distinction is
+deliberate, because an earlier version of this table asserted a guarantee the
+code had explicitly withdrawn. What the transport *enforces* is: the
+API-billing environment variables it knows of are stripped, settings files are
+not loaded (`--setting-sources ""`, which is where `apiKeyHelper` would
+redirect auth), and customizations are disabled (`--safe-mode`). What it does
+**not** do is probe the effective auth source at runtime, so it reports a
+preference, not a proof. `ANTHROPIC_API_KEY` is not the recommended carrier:
+setting it routes to API billing.
+
+The scorer is also isolated from ambient context — `--safe-mode` (no CLAUDE.md,
+skills, plugins, hooks, MCP servers), `--tools ""`, `--strict-mcp-config`. A
+scorer grading untrusted text must not be reachable by a hook that edits what
+it sees, and must not be able to read files or run commands on the strength of
+that text.
 
 When the judge is requested and every transport fails, the fallback is announced
 on stderr unconditionally and counted in the run log (`judge_failures`). It is

@@ -1316,11 +1316,29 @@ def score_item_llm(item: RawItem, existing_slugs: list[str]) -> Optional[ScoredI
         raw = re.sub(r"\s*```$", "", raw)
 
         data = json.loads(raw)
-        novelty = int(data.get("novelty", 0))
-        specificity = int(data.get("specificity", 0))
-        relevance = int(data.get("relevance", 0))
+        # Range-validate every dimension. This path used to `int()` whatever
+        # came back and sum it, so a reply of {"novelty":9,"specificity":9,
+        # "relevance":9} produced total=27 and PROMOTED — while every other
+        # transport would have rejected the same response through
+        # `_parse_scorer_response`, whose docstring claimed it was "shared by
+        # every transport so validation cannot drift between them". It was
+        # not shared with this one. Same bound, one helper, asserted by test.
+        dims = {}
+        for dim in ("novelty", "specificity", "relevance"):
+            checked = _parse_scorer_response(json.dumps({"score": data.get(dim)}))
+            if checked is None:
+                _JUDGE_STATE["last_error"] = (
+                    f"llm_judge: dimension '{dim}' out of range or non-integer: "
+                    f"{data.get(dim)!r}"
+                )
+                return None
+            dims[dim] = checked["score"]
+        novelty, specificity, relevance = dims["novelty"], dims["specificity"], dims["relevance"]
         total = novelty + specificity + relevance
-        candidates = [slugify(s) for s in data.get("candidate_entities", [])][:5]
+        raw_candidates = data.get("candidate_entities", [])
+        if not isinstance(raw_candidates, list):
+            raw_candidates = []
+        candidates = [slugify(str(c)) for c in raw_candidates][:5]
 
         return ScoredItem(
             item=item,
@@ -1334,6 +1352,10 @@ def score_item_llm(item: RawItem, existing_slugs: list[str]) -> Optional[ScoredI
             reasoning=data.get("reasoning", {}),
         )
     except Exception as e:
+        # The cause was discarded here, so an expired Gemini key produced a
+        # warning naming the OTHER two transports' static blockers while
+        # omitting the one that actually ran and failed.
+        _JUDGE_STATE["last_error"] = f"llm_judge: {type(e).__name__}: {str(e)[:200]}"
         return None
 
 
@@ -1671,8 +1693,23 @@ def _call_authored_scorer_cli(
         # keep an ambient MCP tool from being reachable while the model grades
         # untrusted text.
         "--tools", "",
-        "--mcp-config", "{}",
+        "--mcp-config", '{"mcpServers":{}}',
         "--strict-mcp-config",
+        # Round 3 asserted that hooks could not be isolated and that no flag
+        # existed. That was wrong, and asserted WITHOUT CHECKING: `claude
+        # --help` on 2.1.258 documents --safe-mode as disabling CLAUDE.md,
+        # skills, plugins, HOOKS, MCP servers, custom commands and agents,
+        # while leaving auth, model selection and built-in tools working. It
+        # closes the context-injection hole (a SessionStart or
+        # UserPromptSubmit hook, or a CLAUDE.md in cwd, silently editing what
+        # a scorer sees while it grades untrusted text) at no cost to the
+        # subscription.
+        "--safe-mode",
+        # And settings files are where `apiKeyHelper` redirects auth without
+        # touching the environment — the specific hole that made the billing
+        # label unenforceable by denylist alone. Loading no setting sources
+        # removes it.
+        "--setting-sources", "",
     ]
     try:
         proc = subprocess.run(
@@ -1945,25 +1982,83 @@ def reset_judge_run_state() -> None:
     _JUDGE_STATE["last_error"] = ""
 
 
+def _run_transport(name: str, fn, item: RawItem, existing_slugs: list[str]):
+    """
+    Call ONE judge transport and guarantee a cause on failure.
+
+    THE HOISTED INVARIANT (P20 STRUCTURAL directive on BRO-2506). Four review
+    rounds each found the same defect at a different site: a transport failed
+    and left no cause, so the operator-facing warning fell back to re-deriving
+    static blockers that all looked satisfied. Sites found so far: judge
+    unavailability, the CLI runtime cause, `--verify`'s scope, the startup
+    check, spec-load failure, and the Gemini path. Patching each site is the
+    swing that kept missing, because the next transport added would reopen it.
+
+    So the invariant lives HERE, at one site, and holds regardless of what any
+    transport does:
+
+        a transport that returns no score ALWAYS leaves a non-empty cause.
+
+    It is established by construction, not by asking each transport to
+    cooperate: the cause is cleared before the call, an escaping exception is
+    caught and recorded, and a bare `None` with nothing recorded is itself
+    turned into a cause that names the offending transport. A silent failure
+    therefore cannot be produced by any present or future transport.
+    """
+    _JUDGE_STATE["last_error"] = ""
+    try:
+        out = fn(item, existing_slugs)
+    except Exception as exc:
+        # An exception escaping a transport used to abort the whole chain, so
+        # the remaining transports were never tried (`model: []` did exactly
+        # this). Contained here, the chain continues and the cause survives.
+        _JUDGE_STATE["last_error"] = f"{name}: {type(exc).__name__}: {str(exc)[:200]}"
+        return None
+    if out is None and not _JUDGE_STATE["last_error"]:
+        _JUDGE_STATE["last_error"] = (
+            f"{name}: returned no score and recorded no cause "
+            f"(transport bug — every failure path must name itself)"
+        )
+    return out
+
+
+# Transport order is by BILLING, not by age: `claude -p` runs on the
+# subscription; the other two need a paid API credential.
+JUDGE_TRANSPORTS = (
+    ("claude_cli", "score_item_claude_cli"),
+    ("authored_agents", "score_item_authored_agents"),
+    ("llm_judge", "score_item_llm"),
+)
+
+
 def score_item_with_judge(
     item: RawItem, existing_slugs: list[str]
 ) -> Optional[ScoredItem]:
     """
     Run the judge transports in order and return the first success.
 
-    Order is by BILLING, not by age: `claude -p` runs on the subscription,
-    the other two need a paid API credential.
+    This is the single transport-selection point. `score_item`, `judge-check`
+    and `verify_judge_transport` all route through it, so calibration and
+    verification measure the same chain production uses — otherwise a working
+    SDK transport with a broken CLI would let production judge while
+    calibration reported failure, and the numbers would describe a path nobody
+    runs.
 
-    This is the single transport-selection point. `score_item` and
-    `judge-check` both route through it so calibration measures the same
-    chain production uses — otherwise a working SDK transport with a broken
-    CLI would let production judge while calibration reported failure, and
-    the disagreement numbers would describe a path nobody runs.
+    On total failure the recorded cause names EVERY transport that was tried,
+    not just the last one: "the CLI is fine, your SDK key is missing" was
+    actively misleading when the CLI was the one that broke.
     """
-    for fn in (score_item_claude_cli, score_item_authored_agents, score_item_llm):
-        out = fn(item, existing_slugs)
+    causes: list[str] = []
+    for name, attr in JUDGE_TRANSPORTS:
+        # Resolved by name so a monkeypatched transport is honoured — tests
+        # that patch `score_item_claude_cli` must exercise the real selector,
+        # not a stale direct reference captured at import time.
+        fn = globals()[attr]
+        out = _run_transport(name, fn, item, existing_slugs)
         if out is not None:
             return out
+        causes.append(_JUDGE_STATE["last_error"])
+    _JUDGE_STATE["last_error"] = " | ".join(c for c in causes if c)
     return None
 
 
@@ -1977,6 +2072,26 @@ def judge_enabled() -> bool:
 def set_judge_enabled(enabled: bool) -> None:
     """Enable/disable the ambiguous-band judge for this process."""
     _JUDGE_STATE["enabled"] = bool(enabled)
+
+
+def warn_if_judge_unavailable() -> bool:
+    """
+    Announce, loudly, that the judge was requested but cannot run.
+
+    Returns True when the warning fired, so a caller (and a test) can assert
+    the contradiction was reported rather than inferring it from silence.
+    """
+    if not judge_enabled():
+        return False
+    if judge_availability()["any_available"]:
+        return False
+    print(
+        "[bookkeeping] ERROR: judge requested but NO transport is configured. "
+        "In-band items will fall back to the heuristic. Run "
+        "`bookkeeping judge-check --verify` for per-transport blockers.",
+        file=sys.stderr,
+    )
+    return True
 
 
 def judge_failure_count() -> int:
@@ -4927,6 +5042,13 @@ def cmd_run(args: argparse.Namespace) -> None:
     # leaks enablement across invocations in one process, so `run --judge`
     # followed by `run` (no flag) silently kept judging.
     set_judge_enabled(bool(getattr(args, "judge", False)))
+    # Checked HERE, not in main(). main() ran before parse_args, so it could
+    # only see BOOKKEEPING_JUDGE=1 — the documented primary path, `run
+    # --judge`, was still unset at that point and produced no warning at all.
+    # A run whose items all landed outside the band then exited 0 silently and
+    # logged `judge_enabled: true, judge_failures: 0`, which reads as "the
+    # judge ran and agreed": this ticket's own defect, on its own enable flag.
+    warn_if_judge_unavailable()
     sources: list[Path] | None = None
     if args.source:
         sources = [Path(args.source)]
@@ -8020,15 +8142,6 @@ def main() -> None:
     # absence is the documented default rather than a fault. What IS reported,
     # loudly, is the actionable contradiction — the judge was requested and
     # cannot run. Use `bookkeeping judge-check` to inspect transports.
-    if judge_enabled():
-        _avail = judge_availability()
-        if not _avail["any_available"]:
-            print(
-                "[bookkeeping] ERROR: judge requested but NO transport is available. "
-                "In-band items will fall back to the heuristic. Run "
-                "`bookkeeping judge-check` for per-transport blockers.",
-                file=sys.stderr,
-            )
     if not _YAML_AVAILABLE:
         print(
             "[bookkeeping] Note: PyYAML not installed. "

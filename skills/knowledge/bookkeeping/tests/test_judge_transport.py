@@ -577,27 +577,15 @@ def test_mcp_servers_are_disabled_not_just_builtin_tools(monkeypatch):
     bk._call_authored_scorer_cli(_spec(), _item(), [])
     argv = seen["argv"]
     assert "--strict-mcp-config" in argv
-    assert argv[argv.index("--mcp-config") + 1] == "{}"
-
-
-def test_judge_enablement_does_not_leak_across_runs():
-    """
-    `cmd_run` assigned enablement only when the flag was true, so `run --judge`
-    followed by `run` (no flag) silently kept judging in the same process.
-    """
-    import argparse
-
-    bk.set_judge_enabled(False)
-    bk.cmd_run.__wrapped__ if hasattr(bk.cmd_run, "__wrapped__") else None
-
-    # Exercise the assignment directly: the flag's value must always be written.
-    args_on = argparse.Namespace(judge=True, source=None, dry_run=True, verbose=False)
-    bk.set_judge_enabled(bool(getattr(args_on, "judge", False)))
-    assert bk.judge_enabled() is True
-
-    args_off = argparse.Namespace(judge=False, source=None, dry_run=True, verbose=False)
-    bk.set_judge_enabled(bool(getattr(args_off, "judge", False)))
-    assert bk.judge_enabled() is False, "enablement leaked from the previous run"
+    # The payload must be a valid mcp config object. `{}` was rejected by the
+    # CLI ("mcpServers: Invalid input"), which made every scoring call fail --
+    # caught on the first real round-trip, not by any test.
+    assert argv[argv.index("--mcp-config") + 1] == '{"mcpServers":{}}'
+    # Round 3 claimed no isolation flag existed. It was asserted without
+    # checking; `claude --help` documents both.
+    assert "--safe-mode" in argv, "hooks/CLAUDE.md/plugins not isolated"
+    assert argv[argv.index("--setting-sources") + 1] == "", \
+        "settings files still loaded — apiKeyHelper can redirect auth"
 
 
 def test_cmd_run_writes_enablement_unconditionally(monkeypatch):
@@ -645,23 +633,36 @@ def test_sheet_content_length_matches_the_scoring_transport(method, expected):
     assert row["evidence_chars"] == expected
 
 
-def test_gemini_prompt_and_sheet_agree_on_length():
+def test_gemini_prompt_length_matches_the_table(monkeypatch):
     """
-    Ties the two ENDS together: whatever the Gemini transport shows its model
-    is what a Gemini-scored row exports. Changing either alone breaks this.
+    BEHAVIOURAL, not a source grep. The earlier version grepped bookkeeping.py
+    for a literal expression, so reformatting broke a correct implementation
+    and dead code kept it green. This drives the real prompt.
     """
-    long_item = _item("y" * 5000)
-    row = bk._calibration_row(
-        long_item,
-        bk.ScoredItem(long_item, 2, 2, 1, 5, True, [], "heuristic"),
-        bk.ScoredItem(long_item, 1, 1, 1, 3, False, [], "llm_judge"),
-        [],
-    )
-    src = pathlib.Path(bk.__file__).read_text()
-    # The Gemini prompt must slice from the table, not from a literal.
-    assert "item.content[:JUDGE_EVIDENCE_CHARS['llm_judge']]" in src, \
-        "Gemini prompt no longer reads its slice from the shared table"
-    assert len(row["content_seen_by_judge"]) == bk.JUDGE_EVIDENCE_CHARS["llm_judge"]
+    sent = {}
+
+    class _Resp:
+        text = '{"novelty":1,"specificity":1,"relevance":1}'
+
+    class _Model:
+        def generate_content(self, prompt, **kw):
+            sent["prompt"] = prompt
+            return _Resp()
+
+    fake = type("G", (), {
+        "configure": staticmethod(lambda **kw: None),
+        "GenerativeModel": staticmethod(lambda *a, **k: _Model()),
+    })
+    monkeypatch.setattr(bk, "genai", fake, raising=False)
+    monkeypatch.setattr(bk, "_GENAI_AVAILABLE", True, raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+
+    long_item = _item("z" * 5000)
+    out = bk.score_item_llm(long_item, [])
+    assert out is not None, "gemini stub did not score"
+    want = bk.JUDGE_EVIDENCE_CHARS["llm_judge"]
+    assert "z" * want in sent["prompt"]
+    assert "z" * (want + 1) not in sent["prompt"]
 
 
 def test_sheet_carries_the_context_the_judge_scored_against():
@@ -799,3 +800,182 @@ def test_absent_model_still_defaults(tmp_path, monkeypatch):
     monkeypatch.setattr(bk, "AUTHORED_AGENTS_DIR", d)
     spec = bk._load_agent_spec("bookkeeping-novelty")
     assert spec is not None and spec["model"] == "claude-haiku-4-5"
+
+
+# ── round 5: the HOISTED invariant (P20 STRUCTURAL directive) ────────────────
+#
+# Four rounds each found "a transport failed and left no cause" at a NEW site.
+# The directive was to stop patching sites and make it impossible. These pin
+# the invariant itself, so a transport added later inherits it.
+
+def test_a_transport_returning_none_without_a_cause_gets_one(monkeypatch):
+    """The invariant, stated directly: no silent failure can reach the caller."""
+    bk.reset_judge_run_state()
+    monkeypatch.setattr(bk, "score_item_claude_cli", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_authored_agents", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_llm", lambda *a, **k: None)
+    out = bk.score_item_with_judge(_item(), [])
+    assert out is None
+    cause = bk._JUDGE_STATE["last_error"]
+    assert cause, "a total failure left NO cause — the hoisted invariant is broken"
+    # and it must name every transport tried, not just the last
+    for name, _attr in bk.JUDGE_TRANSPORTS:
+        assert name in cause, f"cause does not name {name}"
+
+
+def test_an_exception_in_one_transport_does_not_abort_the_chain(monkeypatch):
+    """
+    `model: []` raised inside a transport and the exception escaped the whole
+    selector, so the remaining transports were never tried. Containment is the
+    invariant's job, not each transport's.
+    """
+    bk.reset_judge_run_state()
+    reached = []
+
+    def _boom(item, slugs):
+        raise TypeError("unhashable type: 'list'")
+
+    monkeypatch.setattr(bk, "score_item_claude_cli", _boom)
+    monkeypatch.setattr(bk, "score_item_authored_agents",
+                        lambda *a, **k: (reached.append("sdk"), None)[1])
+    sentinel = bk.ScoredItem(_item(), 1, 1, 1, 3, False, [], "llm_judge")
+    monkeypatch.setattr(bk, "score_item_llm",
+                        lambda *a, **k: (reached.append("gemini"), sentinel)[1])
+
+    out = bk.score_item_with_judge(_item(), [])
+    assert out is sentinel, "an exception aborted the fallback chain"
+    assert reached == ["sdk", "gemini"]
+
+
+def test_the_transport_bug_marker_names_the_offender(monkeypatch):
+    """A transport that fails silently is itself reported as the bug."""
+    bk.reset_judge_run_state()
+    out = bk._run_transport("made_up", lambda i, s: None, _item(), [])
+    assert out is None
+    assert "made_up" in bk._JUDGE_STATE["last_error"]
+    assert "recorded no cause" in bk._JUDGE_STATE["last_error"]
+
+
+def test_cause_is_cleared_between_transports(monkeypatch):
+    """A stale cause from a previous item must not be reported for this one."""
+    bk._JUDGE_STATE["last_error"] = "STALE FROM AN EARLIER ITEM"
+    scored = bk.ScoredItem(_item(), 1, 1, 1, 3, False, [], "claude_cli")
+    monkeypatch.setattr(bk, "score_item_claude_cli", lambda *a, **k: scored)
+    bk.score_item_with_judge(_item(), [])
+    assert "STALE" not in bk._JUDGE_STATE["last_error"]
+
+
+# ── round 5: Gemini parity ───────────────────────────────────────────────────
+
+def _gemini(monkeypatch, payload):
+    class _Resp:
+        text = payload
+
+    class _Model:
+        def generate_content(self, prompt, **kw):
+            return _Resp()
+
+    fake = type("G", (), {
+        "configure": staticmethod(lambda **kw: None),
+        "GenerativeModel": staticmethod(lambda *a, **k: _Model()),
+    })
+    monkeypatch.setattr(bk, "genai", fake, raising=False)
+    monkeypatch.setattr(bk, "_GENAI_AVAILABLE", True, raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+
+
+def test_gemini_out_of_range_dimensions_are_rejected(monkeypatch):
+    """
+    This path used to int() whatever came back and sum it, so 9/9/9 produced
+    total=27 and PROMOTED — while every other transport rejected the same
+    response through the shared validator the docstring claimed was shared.
+    """
+    bk.reset_judge_run_state()
+    _gemini(monkeypatch, '{"novelty":9,"specificity":9,"relevance":9}')
+    assert bk.score_item_llm(_item(), []) is None
+    assert "out of range" in bk._JUDGE_STATE["last_error"]
+
+
+@pytest.mark.parametrize("payload", [
+    '{"novelty":"2","specificity":1,"relevance":1}',
+    '{"novelty":true,"specificity":1,"relevance":1}',
+    '{"specificity":1,"relevance":1}',
+    '{"novelty":-1,"specificity":1,"relevance":1}',
+])
+def test_gemini_malformed_dimensions_are_rejected(monkeypatch, payload):
+    bk.reset_judge_run_state()
+    _gemini(monkeypatch, payload)
+    assert bk.score_item_llm(_item(), []) is None
+
+
+def test_gemini_in_range_still_scores(monkeypatch):
+    """The bound must not reject legitimate scores."""
+    bk.reset_judge_run_state()
+    _gemini(monkeypatch, '{"novelty":3,"specificity":2,"relevance":1}')
+    out = bk.score_item_llm(_item(), [])
+    assert out is not None and out.total == 6 and out.scoring_method == "llm_judge"
+
+
+def test_gemini_exception_records_its_cause(monkeypatch):
+    """An expired Gemini key used to leave the warning naming the other two."""
+    bk.reset_judge_run_state()
+
+    class _Model:
+        def generate_content(self, prompt, **kw):
+            raise RuntimeError("GEMINI_KEY_EXPIRED 401")
+
+    fake = type("G", (), {
+        "configure": staticmethod(lambda **kw: None),
+        "GenerativeModel": staticmethod(lambda *a, **k: _Model()),
+    })
+    monkeypatch.setattr(bk, "genai", fake, raising=False)
+    monkeypatch.setattr(bk, "_GENAI_AVAILABLE", True, raising=False)
+    monkeypatch.setenv("GEMINI_API_KEY", "k")
+    assert bk.score_item_llm(_item(), []) is None
+    assert "GEMINI_KEY_EXPIRED" in bk._JUDGE_STATE["last_error"]
+
+
+# ── round 5: the --judge enable path warns (F3) ──────────────────────────────
+
+def test_run_judge_warns_when_no_transport_is_configured(monkeypatch, capsys):
+    """
+    The check ran in main() BEFORE parse_args, so it could only see the env
+    var. `run --judge` — the documented primary path — was still unset then
+    and produced no warning at all.
+    """
+    import argparse
+    monkeypatch.setattr(bk, "run_pipeline", lambda **kw: None)
+    monkeypatch.setattr(bk, "judge_availability",
+                        lambda: {"any_available": False, "paths": []})
+    bk.cmd_run(argparse.Namespace(judge=True, source=None, dry_run=True, verbose=False))
+    assert "NO transport is configured" in capsys.readouterr().err
+
+
+def test_no_warning_when_the_judge_was_not_requested(monkeypatch, capsys):
+    import argparse
+    monkeypatch.setattr(bk, "run_pipeline", lambda **kw: None)
+    monkeypatch.setattr(bk, "judge_availability",
+                        lambda: {"any_available": False, "paths": []})
+    bk.cmd_run(argparse.Namespace(judge=False, source=None, dry_run=True, verbose=False))
+    assert "NO transport" not in capsys.readouterr().err
+
+
+# ── round 5: the slug axis of "same evidence" (F6) ───────────────────────────
+
+def test_sheet_slug_cap_matches_the_novelty_prompt():
+    """
+    A mutation shrinking the row's slug export survived the whole suite because
+    every test passed fewer slugs than the cap. The graph has >1,100 entities,
+    so this axis is live: a labeller shown 3 slugs cannot reach the same
+    novelty verdict as a judge shown 40.
+    """
+    many = [f"slug-{i}" for i in range(120)]
+    row = _row_for("claude_cli", slugs=many)
+    exported = row["context_seen_by_judge"]["existing_entity_slugs"]
+    spec = _spec()
+    spec["name"] = "bookkeeping-novelty"
+    _system, user = bk._build_authored_scorer_prompt(spec, _item(), many)
+    in_prompt = [s for s in many if f'"{s}"' in user]
+    assert exported == in_prompt, (
+        f"sheet exports {len(exported)} slugs, prompt carries {len(in_prompt)}"
+    )
