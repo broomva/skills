@@ -1302,7 +1302,7 @@ def score_item_llm(item: RawItem, existing_slugs: list[str]) -> Optional[ScoredI
             f"Existing entity slugs (for context): {slug_context}\n\n"
             f"Item source type: {item.source_type}\n"
             f"Item author: {item.author or 'unknown'}\n"
-            f"Item content:\n{item.content[:800]}\n\n"
+            f"Item content:\n{item.content[:JUDGE_EVIDENCE_CHARS['llm_judge']]}\n\n"
             "Score this item and return JSON only."
         )
 
@@ -1415,7 +1415,11 @@ def _build_authored_scorer_prompt(
     # All three scorers accept {item_text, source_type, ...}; relevance
     # additionally accepts active_projects / open_questions.
     agent_input = {
-        "item_text": item.content[:2000],
+        # Both authored transports (SDK + CLI) share this builder, so one
+        # lookup covers them; DEFAULT is the safety net for a transport added
+        # later without a table entry.
+        "item_text": item.content[:JUDGE_EVIDENCE_CHARS.get(
+            "authored_agents", DEFAULT_EVIDENCE_CHARS)],
         "source_type": item.source_type,
         # RawItem has no `source_url` field — the attribute access raised
         # AttributeError on every authored-agents scoring call. The URL, when
@@ -1519,6 +1523,23 @@ def _call_authored_scorer(
 # CLI timeout per dimension call, in seconds. Three calls per item.
 CLAUDE_CLI_TIMEOUT = 120
 
+# How much of an item each transport actually shows its model, keyed by
+# `ScoredItem.scoring_method`.
+#
+# These were three scattered literals: the authored prompt sliced 2000, the
+# legacy Gemini prompt 800, and the calibration sheet recorded 2000 whichever
+# transport had scored. A human labelling from a 2000-char sheet against a
+# judgement made on 800 chars is not disagreeing with the judge — the two were
+# shown different evidence, and the disagreement rate silently measured
+# truncation. One table, read by every site, so the numbers cannot drift apart.
+JUDGE_EVIDENCE_CHARS = {
+    "claude_cli": 2000,
+    "authored_agents": 2000,
+    "llm_judge": 800,
+    "heuristic": 2000,
+}
+DEFAULT_EVIDENCE_CHARS = 2000
+
 # Spec `model:` values → `claude --model` arguments.
 _CLI_MODEL_ALIASES = {
     "claude-haiku-4-5": "haiku",
@@ -1546,7 +1567,19 @@ def _subscription_env() -> dict:
     makes the label true by construction rather than by assertion.
     """
     env = os.environ.copy()
-    for var in ("ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL"):
+    for var in (
+        # Direct API credentials.
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        # Cloud-provider selection. These reroute auth to Bedrock/Vertex
+        # credentials, which take precedence over the subscription — removing
+        # only the direct keys would leave the label true in the common case
+        # and false on a Bedrock-configured machine.
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "AWS_BEARER_TOKEN_BEDROCK",
+    ):
         env.pop(var, None)
     return env
 
@@ -1593,8 +1626,14 @@ def _call_authored_scorer_cli(
         # ignored with --system-prompt, and a flag that does nothing reads to a
         # later maintainer as a guarantee that holds.
         "--system-prompt", system,
-        # Scorer, not agent: no tool use.
+        # Scorer, not agent: no tool use. `--tools ""` disables the built-in
+        # set; MCP servers are configured separately and are NOT covered by
+        # it, so --strict-mcp-config plus an empty --mcp-config is required to
+        # keep an ambient MCP tool from being reachable while the model grades
+        # untrusted text.
         "--tools", "",
+        "--mcp-config", "{}",
+        "--strict-mcp-config",
     ]
     try:
         proc = subprocess.run(
@@ -4835,8 +4874,10 @@ def run_query(slug: str, verbose: bool = False) -> None:
 
 def cmd_run(args: argparse.Namespace) -> None:
     """Execute the full 7-stage pipeline."""
-    if getattr(args, "judge", False):
-        set_judge_enabled(True)
+    # Set unconditionally, never only-on-true: an if-True-only assignment
+    # leaks enablement across invocations in one process, so `run --judge`
+    # followed by `run` (no flag) silently kept judging.
+    set_judge_enabled(bool(getattr(args, "judge", False)))
     sources: list[Path] | None = None
     if args.source:
         sources = [Path(args.source)]
@@ -6936,11 +6977,16 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
             "decision_flipped": flipped,
             "judge_reasoning": j.reasoning,
             "scoring_method": j.scoring_method,
-            # Exactly the slice _build_authored_scorer_prompt sends, so the
-            # human and the judge answer about identical evidence. A 300-char
-            # excerpt against the judge's 2000 would make disagreement a
-            # measure of truncation.
-            "content_seen_by_judge": item.content[:2000],
+            # Exactly the slice the transport that ACTUALLY scored this item
+            # sent, so the human and the judge answer about identical
+            # evidence. Hardcoding 2000 here was wrong whenever the Gemini
+            # transport scored (it sees 800): the labeller would have judged
+            # 1200 characters the judge never read, and the disagreement rate
+            # would have been measuring truncation.
+            "evidence_chars": JUDGE_EVIDENCE_CHARS.get(
+                j.scoring_method, DEFAULT_EVIDENCE_CHARS),
+            "content_seen_by_judge": item.content[:JUDGE_EVIDENCE_CHARS.get(
+                j.scoring_method, DEFAULT_EVIDENCE_CHARS)],
         })
         print(
             f"  [{idx}/{len(band)}] {item.item_id}: heuristic={h.total} judge={j.total} "

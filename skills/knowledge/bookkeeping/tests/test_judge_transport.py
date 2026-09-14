@@ -300,18 +300,31 @@ def test_both_transports_actually_call_the_shared_builder(monkeypatch):
 
     monkeypatch.setattr(bk, "_build_authored_scorer_prompt", _spy)
 
-    # CLI transport
+    # The builder's real output for this input — what BOTH transports must
+    # transmit. Asserting only that the builder was CALLED is not enough:
+    # replacing each transport's payload with a constant while leaving the
+    # call in place left the earlier version of this test green.
+    want_system, want_user = real(_spec(), _item("ITEM-MARKER"), ["a-slug"])
+
+    # CLI transport: system on argv, user on stdin.
     class _Proc:
         returncode = 0
         stdout = '{"score": 2}'
         stderr = ""
-    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
-    monkeypatch.setattr(bk.subprocess, "run", lambda argv, **kw: _Proc())
-    bk._call_authored_scorer_cli(_spec(), _item(), [])
-    assert calls == ["bookkeeping-novelty"], "CLI transport bypassed the shared builder"
 
-    # SDK transport
+    sent = {}
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(bk.subprocess, "run",
+                        lambda argv, **kw: (sent.update(argv=argv, kw=kw), _Proc())[1])
+    bk._call_authored_scorer_cli(_spec(), _item("ITEM-MARKER"), ["a-slug"])
+    assert calls == ["bookkeeping-novelty"], "CLI transport bypassed the shared builder"
+    argv = sent["argv"]
+    assert argv[argv.index("--system-prompt") + 1] == want_system
+    assert sent["kw"]["input"] == want_user
+
+    # SDK transport: system kwarg, user as the single message.
     calls.clear()
+    seen = {}
 
     class _Block:
         type = "text"
@@ -324,10 +337,13 @@ def test_both_transports_actually_call_the_shared_builder(monkeypatch):
         class messages:
             @staticmethod
             def create(**kw):
+                seen.update(kw)
                 return _Resp()
 
-    bk._call_authored_scorer(_spec(), _item(), [], _Client())
+    bk._call_authored_scorer(_spec(), _item("ITEM-MARKER"), ["a-slug"], _Client())
     assert calls == ["bookkeeping-novelty"], "SDK transport bypassed the shared builder"
+    assert seen["system"] == want_system
+    assert seen["messages"][0]["content"] == want_user
 
 
 # ── availability reporting ────────────────────────────────────────────────────
@@ -506,3 +522,99 @@ def test_verify_reports_success(monkeypatch):
                         lambda *a, **k: ({"score": 2}, ""))
     ok, detail = bk.verify_judge_transport()
     assert ok is True and "OK" in detail
+
+
+# ── round 3: findings raised by Stratum A (Codex cross-vendor, 5/10) ──────────
+
+@pytest.mark.parametrize("var", [
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX", "AWS_BEARER_TOKEN_BEDROCK",
+])
+def test_cloud_provider_selection_is_stripped_too(monkeypatch, var):
+    """
+    Removing only the direct API keys left the "subscription" label true in the
+    common case and false on a Bedrock/Vertex-configured machine: those
+    variables reroute auth to cloud credentials that take precedence.
+    """
+    monkeypatch.setenv(var, "1")
+    assert var not in bk._subscription_env()
+
+
+def test_mcp_servers_are_disabled_not_just_builtin_tools(monkeypatch):
+    """
+    `--tools ""` disables the BUILT-IN set only. MCP servers are configured
+    separately, so without --strict-mcp-config an ambient MCP tool stays
+    reachable while the model grades untrusted text.
+    """
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+    seen = {}
+
+    class _Proc:
+        returncode = 0
+        stdout = '{"score": 1}'
+        stderr = ""
+
+    monkeypatch.setattr(bk.subprocess, "run",
+                        lambda argv, **kw: (seen.update(argv=argv), _Proc())[1])
+    bk._call_authored_scorer_cli(_spec(), _item(), [])
+    argv = seen["argv"]
+    assert "--strict-mcp-config" in argv
+    assert argv[argv.index("--mcp-config") + 1] == "{}"
+
+
+def test_judge_enablement_does_not_leak_across_runs():
+    """
+    `cmd_run` assigned enablement only when the flag was true, so `run --judge`
+    followed by `run` (no flag) silently kept judging in the same process.
+    """
+    import argparse
+
+    bk.set_judge_enabled(False)
+    bk.cmd_run.__wrapped__ if hasattr(bk.cmd_run, "__wrapped__") else None
+
+    # Exercise the assignment directly: the flag's value must always be written.
+    args_on = argparse.Namespace(judge=True, source=None, dry_run=True, verbose=False)
+    bk.set_judge_enabled(bool(getattr(args_on, "judge", False)))
+    assert bk.judge_enabled() is True
+
+    args_off = argparse.Namespace(judge=False, source=None, dry_run=True, verbose=False)
+    bk.set_judge_enabled(bool(getattr(args_off, "judge", False)))
+    assert bk.judge_enabled() is False, "enablement leaked from the previous run"
+
+
+def test_cmd_run_writes_enablement_unconditionally(monkeypatch):
+    """The leak fix must live in cmd_run itself, not only in the helper."""
+    import argparse
+
+    monkeypatch.setattr(bk, "run_pipeline", lambda **kw: None)
+    bk.set_judge_enabled(True)
+    bk.cmd_run(argparse.Namespace(judge=False, source=None, dry_run=True, verbose=False))
+    assert bk.judge_enabled() is False
+
+
+def test_every_transport_has_an_evidence_slice():
+    """
+    A transport missing from the table would silently fall back to DEFAULT and
+    reintroduce the mismatch the table exists to remove.
+    """
+    for method in ("claude_cli", "authored_agents", "llm_judge"):
+        assert method in bk.JUDGE_EVIDENCE_CHARS
+
+
+def test_gemini_slice_comes_from_the_table():
+    """
+    The legacy transport shows 800 chars. If the sheet records 2000 for an item
+    Gemini scored, the labeller judges 1200 characters the judge never read and
+    the disagreement rate measures truncation.
+    """
+    assert bk.JUDGE_EVIDENCE_CHARS["llm_judge"] == 800
+    assert bk.JUDGE_EVIDENCE_CHARS["authored_agents"] == 2000
+
+
+def test_authored_prompt_slice_matches_the_table():
+    """Pins the builder to the table rather than to a literal."""
+    long_item = _item("x" * 5000)
+    _system, user = bk._build_authored_scorer_prompt(_spec(), long_item, [])
+    # The prompt embeds the item as JSON; count the run of x's it carried.
+    assert "x" * bk.JUDGE_EVIDENCE_CHARS["authored_agents"] in user
+    assert "x" * (bk.JUDGE_EVIDENCE_CHARS["authored_agents"] + 1) not in user
