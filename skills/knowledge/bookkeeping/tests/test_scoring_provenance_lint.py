@@ -194,3 +194,34 @@ def test_arithmetic_error_still_fires_with_provenance_complete():
     """The error path must not be shadowed by the new warning path."""
     errs = _lint_scoring_provenance("x.md", scored(novelty=3, specificity=2, relevance=3, raw_score=7))
     assert any(e.severity == "error" and "does not add up" in e.message for e in errs)
+
+
+# ── lint_all excludes non-entity reference files (BRO-2526) ───────────────────
+
+def test_lint_all_skips_underscore_prefixed_reference_files(tmp_path, monkeypatch):
+    """_tags.md is the controlled tag vocabulary — reference material that lives in
+    the entity tree by design. Linting it as an entity reported a phantom
+    'Missing or unparseable YAML frontmatter' error that no edit to the file could
+    fix, because the file is not supposed to have frontmatter."""
+    import bookkeeping
+
+    entities = tmp_path / "entities"
+    (entities / "concept").mkdir(parents=True)
+    (entities / "_tags.md").write_text("# Controlled Tag Vocabulary\n\n- `governance` — policy\n")
+    # POSITIVE CONTROL: a genuine entity page with a REAL defect (empty sources),
+    # in the same tree. If the skip were too broad, this would also vanish and the
+    # test would pass while the linter had stopped working.
+    (entities / "concept" / "broken.md").write_text(
+        '---\nslug: broken\ntype: concept\nstatus: candidate\n'
+        'core_claim: "A genuine entity page carrying a genuine defect."\n'
+        'sources: []\nrelated: []\ncreated: "2026-01-01"\nupdated: "2026-01-01"\n'
+        'tags:\n  - governance\n---\n\n# Broken\n'
+    )
+    monkeypatch.setattr(bookkeeping, "ENTITIES_DIR", entities)
+
+    errs = bookkeeping.lint_all()
+
+    assert [e for e in errs if "_tags.md" in e.file_path] == [], \
+        "_tags.md is reference material, not an entity — it must be skipped"
+    assert any("broken.md" in e.file_path and e.field == "sources" for e in errs), \
+        "the skip must not swallow genuine entity pages in the same tree"

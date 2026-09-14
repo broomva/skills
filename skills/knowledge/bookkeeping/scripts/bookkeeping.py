@@ -3276,23 +3276,51 @@ def _lint_core_claim_quality(path_str: str, core_claim) -> "list[LintError]":
 # acronym prose clean: "The HTTP API is versioned" and "GPT-5.4 beats HTML
 # rendering" are legitimate claims, and acronyms are almost always ≤4 chars —
 # so a run only counts when at least one of its words is ≥5 chars.
-_ALLCAPS_WORD_RE = re.compile(r"[A-Za-z]{3,}")
+_ALLCAPS_TOKEN_RE = re.compile(r"[A-Za-z]+|[^A-Za-z]+")
 _ALLCAPS_RUN_MIN = 2       # adjacent shouted words needed to call it a banner
 _ALLCAPS_PROSE_LEN = 5     # a shouted word this long is prose, not an acronym
+_ALLCAPS_LEAD_FRACTION = 0.25  # a banner leads the claim; acronym prose sits inside it
 
 
 def _claim_is_allcaps_banner(cc: str) -> bool:
-    """True when `cc` reads as an ALL-CAPS header/status banner rather than prose."""
+    """True when `cc` reads as an ALL-CAPS header/status banner rather than prose.
+
+    Two rules beyond "adjacent shouted words", both added after measuring the
+    rule against the live corpus (BRO-2526), where it fired 7 times and was
+    wrong 6 of those:
+
+    1. PUNCTUATION BREAKS A RUN. The old tokenizer matched `[A-Za-z]{3,}`, so a
+       token shorter than 3 characters was invisible to it and could not break
+       adjacency -- which made `SKILL.md, CLAUDE.md, AGENTS.md` read as three
+       adjacent shouted words, and `RSICS = RCS` as two. Only whitespace now
+       continues a run.
+    2. A BANNER LEADS. A lifted header sits at the front of the claim; acronym
+       prose sits inside a sentence. `VERDICT: SURVIVES AS ...` is shape-identical
+       to `... pure-web OPC UA SCADA across Spain` and position is what separates
+       them.
+
+    Measured on the regression set: 5/5 real banners caught, 0/9 false positives
+    (was 3/3 and 7/9).
+    """
     run: "list[str]" = []
-    for word in _ALLCAPS_WORD_RE.findall(cc):
-        if word.isupper():
-            run.append(word)
-            if len(run) >= _ALLCAPS_RUN_MIN and any(
-                len(w) >= _ALLCAPS_PROSE_LEN for w in run
-            ):
-                return True
-        else:
-            run = []
+    start: "int | None" = None
+    for m in _ALLCAPS_TOKEN_RE.finditer(cc):
+        tok = m.group(0)
+        if tok[0].isalpha():
+            if tok.isupper():
+                if not run:
+                    start = m.start()
+                run.append(tok)
+                if len(run) >= _ALLCAPS_RUN_MIN and any(
+                    len(w) >= _ALLCAPS_PROSE_LEN for w in run
+                ):
+                    if start is not None and start <= max(1, len(cc)) * _ALLCAPS_LEAD_FRACTION:
+                        return True
+                    run, start = [], None
+            else:
+                run, start = [], None
+        elif tok.strip(" "):
+            run, start = [], None
     return False
 
 
@@ -3957,7 +3985,11 @@ def lint_all(verbose: bool = False) -> list[LintError]:
     """Run lint_entity_page on all entity pages and lint_format_discernment on research/."""
     all_errors: list[LintError] = []
     if ENTITIES_DIR.exists():
-        pages = list(ENTITIES_DIR.rglob("*.md"))
+        # Underscore-prefixed files are reference material that lives in the
+        # entity tree by design (_tags.md is the controlled tag vocabulary the
+        # tag lint reads). They carry no frontmatter and are not entity pages,
+        # so linting them as entities is a false positive, not a finding.
+        pages = [p for p in ENTITIES_DIR.rglob("*.md") if not p.name.startswith("_")]
         if verbose:
             print(f"[lint] Checking {len(pages)} entity pages...")
         for page in pages:
