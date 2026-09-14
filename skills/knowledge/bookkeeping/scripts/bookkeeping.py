@@ -1839,7 +1839,21 @@ def judge_availability() -> dict:
     `available` means "prerequisites are present", NOT "judging works": it
     checks PATH, spec files and credentials, none of which detect an expired
     token or an unparseable spec. Use `verify_judge_transport()` for the
-    round trip. The two are kept distinct on purpose — collapsing them would
+    round trip.
+
+    KNOWN GAP (BRO-2506, open — not fixed here). `specs_present` tests
+    `.exists()`, but `_load_agent_spec` also returns None for a file that
+    EXISTS and is unparseable: bad frontmatter, a non-str `model`, an empty
+    body, a YAML error. In that state this reports the CLI transport as
+    available with NO blockers, while `score_item_claude_cli` returns a
+    causeless None — so the operator is told to install an SDK and set a key
+    for two transports they never intended to use, and the transport that
+    actually failed is not named. The fix belongs HERE, at the availability
+    boundary: call `_load_agent_spec` rather than `.exists()`, so
+    "present but unparseable" becomes a blocker instead of a silent runtime
+    failure. It is left open deliberately — the review ledger STOPped on a
+    score regression, and taking another swing mid-stop is the pattern that
+    produced this backlog. The two are kept distinct on purpose — collapsing them would
     recreate, one level up, the exact confusion this module exists to fix.
 
     Callers assert on this POSITIVELY rather than inferring health from the
@@ -2006,26 +2020,31 @@ def _scored_item_is_sane(out: ScoredItem) -> bool:
 
 def _run_transport(name: str, fn, item: RawItem, existing_slugs: list[str]):
     """
-    Call ONE judge transport and guarantee a cause on failure.
+    Call ONE judge transport, contain its exceptions, and clear stale causes.
 
-    THE HOISTED INVARIANT (P20 STRUCTURAL directive on BRO-2506). Four review
-    rounds each found the same defect at a different site: a transport failed
-    and left no cause, so the operator-facing warning fell back to re-deriving
-    static blockers that all looked satisfied. Sites found so far: judge
-    unavailability, the CLI runtime cause, `--verify`'s scope, the startup
-    check, spec-load failure, and the Gemini path. Patching each site is the
-    swing that kept missing, because the next transport added would reopen it.
+    WHAT THIS GUARANTEES — and the wording matters, because an earlier version
+    of this docstring claimed an invariant whose code had been deleted out from
+    under it, which is the exact defect this module exists to fix, committed in
+    the docstring of the function named after fixing it:
 
-    So the invariant lives HERE, at one site, and holds regardless of what any
-    transport does:
+      * `last_error` is cleared before the call, so a cause from an earlier
+        item or an earlier transport is never reported for this one.
+      * an exception escaping the transport is caught and recorded, so it
+        cannot abort the remaining transports (a `model: []` spec used to do
+        exactly that).
 
-        a transport that returns no score ALWAYS leaves a non-empty cause.
+    WHAT THIS DOES **NOT** GUARANTEE: that a failure always carries a cause.
+    It deliberately does not. Synthesizing one for a bare `None` was tried and
+    removed: the ORDINARY unconfigured case is a bare `None`, so the synthetic
+    string told operators who had simply installed nothing that this module
+    was buggy, and it made the static-blocker fallback in `score_item`
+    unreachable by never leaving the cause empty.
 
-    It is established by construction, not by asking each transport to
-    cooperate: the cause is cleared before the call, an escaping exception is
-    caught and recorded, and a bare `None` with nothing recorded is itself
-    turned into a cause that names the offending transport. A silent failure
-    therefore cannot be produced by any present or future transport.
+    So a transport that returns `None` without recording anything leaves
+    `last_error` EMPTY, and the caller falls back to the static blockers. That
+    is the right answer for a transport that was never configured. It is NOT
+    yet the right answer for a transport that is configured but broken —
+    see the known-gap note on `judge_availability`.
     """
     _JUDGE_STATE["last_error"] = ""
     try:
@@ -4912,12 +4931,15 @@ def run_pipeline(
         # that fell back despite the judge being requested.
         "judge_enabled": judge_enabled(),
         "judge_failures": judge_failure_count(),
-        # The COUNT without the CAUSE is not a diagnosis. A cron `run --judge`
-        # whose stderr goes nowhere left `judge_failures: 837` and no way to
-        # know why -- and the stderr warning fires only on the FIRST failure,
-        # so even on a live terminal the cause of failures 2..N was never
-        # shown anywhere.
-        "judge_last_error": _JUDGE_STATE.get("last_error", ""),
+        # NOTE: there is deliberately no `judge_last_error` field. One was
+        # added to carry the cause into the log and then REMOVED, because it
+        # was empty in both scenarios its own commit message cited:
+        # `_run_transport` clears `last_error` before every call, so any later
+        # success wipes it, and it carried a cause only when the run's FINAL
+        # in-band item failed. A field that is empty exactly when it is needed
+        # is worse than no field -- a reader takes the blank for "no cause".
+        # Carrying causes into the log needs a run-level accumulator, which is
+        # tracked separately rather than guessed at here.
         "duration_seconds": duration,
     }
 
