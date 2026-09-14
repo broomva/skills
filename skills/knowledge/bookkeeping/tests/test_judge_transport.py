@@ -1129,3 +1129,23 @@ def test_relevance_prompt_actually_carries_a_known_project():
     spec["name"] = "bookkeeping-relevance"
     _system, user = bk._build_authored_scorer_prompt(spec, _item(), [])
     assert "life-agent-os" in user, "the relevance scorer was sent no project list"
+
+
+def test_labels_without_sample_refuses_instead_of_silently_writing_nothing():
+    """
+    `--labels PATH` without `--sample` exited 0 having written nothing, with
+    only a generic hint — a silent no-op on an explicit request for a file,
+    which is this ticket's defect class on its own CLI.
+    """
+    import argparse
+    args = argparse.Namespace(sample=0, labels="/tmp/should-not-appear.json", verify=False)
+    with pytest.raises(SystemExit) as exc:
+        bk.cmd_judge_check(args)
+    assert exc.value.code == 2
+    assert not pathlib.Path("/tmp/should-not-appear.json").exists()
+
+
+def test_no_labels_and_no_sample_is_still_a_clean_exit():
+    """The plain diagnostic form must not start failing."""
+    import argparse
+    bk.cmd_judge_check(argparse.Namespace(sample=0, labels=None, verify=False))

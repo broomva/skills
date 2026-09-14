@@ -7241,6 +7241,19 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
             raise SystemExit(1)
 
     if not args.sample:
+        if args.labels:
+            # `--labels` without `--sample` used to exit 0 having written
+            # nothing, with only the generic "pass --sample" hint -- a silent
+            # no-op on an explicit request for a file, which is this ticket's
+            # own defect class on its own CLI. Refuse loudly instead.
+            print(
+                f"\n--labels {args.labels} was ignored: the labelling sheet is built "
+                "from sampled rows, so it needs --sample N. Nothing was written.",
+                file=sys.stderr,
+            )
+            print("Re-run as: bookkeeping judge-check --sample N --labels "
+                  f"{args.labels}", file=sys.stderr)
+            raise SystemExit(2)
         print("\nPass --sample N to shadow-score N in-band items and measure disagreement.")
         return
 
