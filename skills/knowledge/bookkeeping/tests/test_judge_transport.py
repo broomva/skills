@@ -13,6 +13,7 @@ state, and a resting state cannot be an error signal.
 """
 import json
 import os
+import pathlib
 
 import pytest
 
@@ -601,14 +602,72 @@ def test_every_transport_has_an_evidence_slice():
         assert method in bk.JUDGE_EVIDENCE_CHARS
 
 
-def test_gemini_slice_comes_from_the_table():
+def _row_for(method, content_len=5000, slugs=None):
+    """Build a real calibration row scored by `method`."""
+    item = _item("y" * content_len)
+    h = bk.ScoredItem(item, 2, 2, 1, 5, True, [], "heuristic")
+    j = bk.ScoredItem(item, 1, 1, 1, 3, False, [], method)
+    return bk._calibration_row(item, h, j, slugs or ["slug-a", "slug-b"])
+
+
+@pytest.mark.parametrize("method,expected", [
+    ("llm_judge", 800),
+    ("authored_agents", 2000),
+    ("claude_cli", 2000),
+])
+def test_sheet_content_length_matches_the_scoring_transport(method, expected):
     """
-    The legacy transport shows 800 chars. If the sheet records 2000 for an item
-    Gemini scored, the labeller judges 1200 characters the judge never read and
-    the disagreement rate measures truncation.
+    DISCRIMINATING version. The previous test asserted the table against
+    itself, so two mutations left the whole suite green: putting the sheet
+    back to 2000 while Gemini sees 800 (the original defect), and moving
+    Gemini to 2000 while the sheet stayed 800. This measures the row the
+    sheet is actually built from.
     """
-    assert bk.JUDGE_EVIDENCE_CHARS["llm_judge"] == 800
-    assert bk.JUDGE_EVIDENCE_CHARS["authored_agents"] == 2000
+    row = _row_for(method)
+    assert len(row["content_seen_by_judge"]) == expected
+    assert row["evidence_chars"] == expected
+
+
+def test_gemini_prompt_and_sheet_agree_on_length():
+    """
+    Ties the two ENDS together: whatever the Gemini transport shows its model
+    is what a Gemini-scored row exports. Changing either alone breaks this.
+    """
+    long_item = _item("y" * 5000)
+    row = bk._calibration_row(
+        long_item,
+        bk.ScoredItem(long_item, 2, 2, 1, 5, True, [], "heuristic"),
+        bk.ScoredItem(long_item, 1, 1, 1, 3, False, [], "llm_judge"),
+        [],
+    )
+    src = pathlib.Path(bk.__file__).read_text()
+    # The Gemini prompt must slice from the table, not from a literal.
+    assert "item.content[:JUDGE_EVIDENCE_CHARS['llm_judge']]" in src, \
+        "Gemini prompt no longer reads its slice from the shared table"
+    assert len(row["content_seen_by_judge"]) == bk.JUDGE_EVIDENCE_CHARS["llm_judge"]
+
+
+def test_sheet_carries_the_context_the_judge_scored_against():
+    """
+    Novelty is judged against the existing graph and relevance against the
+    active projects. A labeller given only the text cannot reach the same
+    novelty verdict even in principle, and the gap would be charged to the
+    judge.
+    """
+    row = _row_for("claude_cli", slugs=["existing-one", "existing-two"])
+    ctx = row["context_seen_by_judge"]
+    assert ctx["existing_entity_slugs"] == ["existing-one", "existing-two"]
+    assert ctx["active_projects"] == bk.AUTHORED_RELEVANCE_PROJECTS
+    assert "source_type" in ctx
+
+
+def test_relevance_prompt_and_sheet_share_one_project_list():
+    """Two copies of the project list would drift invisibly."""
+    spec = _spec()
+    spec["name"] = "bookkeeping-relevance"
+    _system, user = bk._build_authored_scorer_prompt(spec, _item(), [])
+    for proj in bk.AUTHORED_RELEVANCE_PROJECTS:
+        assert proj in user
 
 
 def test_authored_prompt_slice_matches_the_table():
@@ -618,3 +677,108 @@ def test_authored_prompt_slice_matches_the_table():
     # The prompt embeds the item as JSON; count the run of x's it carried.
     assert "x" * bk.JUDGE_EVIDENCE_CHARS["authored_agents"] in user
     assert "x" * (bk.JUDGE_EVIDENCE_CHARS["authored_agents"] + 1) not in user
+
+
+# ── round 4 ───────────────────────────────────────────────────────────────────
+
+@pytest.mark.parametrize("bad_model", [[], {}, 42, "", "   "])
+def test_spec_with_a_non_string_model_is_refused_at_load(tmp_path, monkeypatch, bad_model):
+    """
+    `model: []` parsed fine, then raised `TypeError: unhashable type` inside
+    the transport OUTSIDE its try/except — the exception escaped and NEITHER
+    fallback transport was attempted. Data is validated where it enters.
+    """
+    import yaml as _yaml
+    d = tmp_path / "agents"
+    d.mkdir()
+    body = {"name": "bookkeeping-novelty", "model": bad_model}
+    (d / "bookkeeping-novelty.md").write_text(
+        "---\n" + _yaml.safe_dump(body) + "---\nscore it\n"
+    )
+    monkeypatch.setattr(bk, "AUTHORED_AGENTS_DIR", d)
+    assert bk._load_agent_spec("bookkeeping-novelty") is None
+
+
+def test_a_bad_spec_does_not_escape_past_the_fallback_chain(monkeypatch):
+    """The selector must still reach the later transports, not crash."""
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(bk, "_load_agent_spec", lambda n: None)
+    reached = []
+    monkeypatch.setattr(bk, "score_item_authored_agents",
+                        lambda *a, **k: (reached.append("sdk"), None)[1])
+    monkeypatch.setattr(bk, "score_item_llm",
+                        lambda *a, **k: (reached.append("gemini"), None)[1])
+    assert bk.score_item_with_judge(_item(), []) is None
+    assert reached == ["sdk", "gemini"], "a bad spec short-circuited the fallback"
+
+
+def test_verify_exercises_all_three_dimensions(monkeypatch):
+    """
+    Probing only bookkeeping-novelty let --verify PASS while production
+    returned None. A verification narrower than the thing it verifies is this
+    ticket's own defect, one level up.
+    """
+    def _spec_for(name):
+        return None if name != "bookkeeping-novelty" else _spec()
+
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(bk, "_load_agent_spec", _spec_for)
+    monkeypatch.setattr(bk, "score_item_authored_agents", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_llm", lambda *a, **k: None)
+    ok, _detail = bk.verify_judge_transport()
+    assert ok is False, "verify passed while two of three specs were missing"
+
+
+def test_verify_routes_through_the_production_selector(monkeypatch):
+    used = []
+    scored = bk.ScoredItem(_item(), 1, 1, 1, 3, False, [], "authored_agents")
+    monkeypatch.setattr(bk, "score_item_with_judge",
+                        lambda *a, **k: (used.append(1), scored)[1])
+    ok, detail = bk.verify_judge_transport()
+    assert ok is True and used == [1]
+    assert "authored_agents" in detail
+
+
+def test_sdk_exception_cause_is_preserved(monkeypatch):
+    """An expired SDK token used to vanish, leaving the warning to re-derive
+    static blockers that all looked satisfied."""
+    bk._JUDGE_STATE["last_error"] = ""
+
+    class _Client:
+        class messages:
+            @staticmethod
+            def create(**kw):
+                raise RuntimeError("SDK_TOKEN_EXPIRED")
+
+    out = bk._call_authored_scorer(_spec(), _item(), [], _Client())
+    assert out is None
+    assert "SDK_TOKEN_EXPIRED" in bk._JUDGE_STATE["last_error"]
+
+
+def test_billing_label_does_not_overclaim():
+    """
+    Two rounds were spent extending a denylist; a third found FOUNDRY still
+    standing. A denylist over an open set cannot promise a billing source, and
+    apiKeyHelper bypasses the environment entirely, so the CLAIM is withdrawn
+    rather than chased a fourth time.
+    """
+    cli = [p for p in bk.judge_availability()["paths"] if p["name"] == "claude_cli"][0]
+    assert cli["billing"] == "subscription-preferred"
+
+
+def test_foundry_is_stripped_too(monkeypatch):
+    monkeypatch.setenv("CLAUDE_CODE_USE_FOUNDRY", "1")
+    assert "CLAUDE_CODE_USE_FOUNDRY" not in bk._subscription_env()
+
+
+def test_absent_model_still_defaults(tmp_path, monkeypatch):
+    """An OMITTED model is not an invalid one — it legitimately defaults."""
+    import yaml as _yaml
+    d = tmp_path / "agents"
+    d.mkdir()
+    (d / "bookkeeping-novelty.md").write_text(
+        "---\n" + _yaml.safe_dump({"name": "bookkeeping-novelty"}) + "---\nscore it\n"
+    )
+    monkeypatch.setattr(bk, "AUTHORED_AGENTS_DIR", d)
+    spec = bk._load_agent_spec("bookkeeping-novelty")
+    assert spec is not None and spec["model"] == "claude-haiku-4-5"

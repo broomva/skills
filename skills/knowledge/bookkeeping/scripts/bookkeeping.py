@@ -1384,9 +1384,22 @@ def _load_agent_spec(name: str) -> Optional[dict]:
         body = text[end + 5 :].strip()
         if not isinstance(frontmatter, dict) or not body:
             return None
+        # Validate the fields the callers index or interpolate, HERE at the
+        # loading boundary. `model` reaches a dict lookup and an argv slot; a
+        # YAML list (`model: []`) parses fine, then raises `TypeError:
+        # unhashable type` deep inside the transport, outside its try/except —
+        # so the exception escaped and NEITHER fallback transport was
+        # attempted. A spec file is data, and data is validated where it
+        # enters, not where it is used.
+        model = frontmatter.get("model", "claude-haiku-4-5")
+        if not isinstance(model, str) or not model.strip():
+            return None
+        agent_name = frontmatter.get("name", name)
+        if not isinstance(agent_name, str) or not agent_name.strip():
+            return None
         return {
-            "name": frontmatter.get("name", name),
-            "model": frontmatter.get("model", "claude-haiku-4-5"),
+            "name": agent_name,
+            "model": model,
             "max_turns": frontmatter.get("max_turns", 1),
             "input_schema": frontmatter.get("input_schema", {}),
             "output_schema": frontmatter.get("output_schema", {}),
@@ -1432,9 +1445,7 @@ def _build_authored_scorer_prompt(
         # Best-effort population. Concrete active projects / open
         # questions could be threaded through from upstream; this is
         # the minimum that lets the agent score above 0.
-        agent_input["active_projects"] = [
-            "life-agent-os", "ergon", "lago", "arcan", "haima", "anima", "nous", "praxis",
-        ]
+        agent_input["active_projects"] = AUTHORED_RELEVANCE_PROJECTS
         agent_input["open_questions"] = []
 
     system = spec["instructions"]
@@ -1502,8 +1513,19 @@ def _call_authored_scorer(
         raw = "".join(
             block.text for block in response.content if getattr(block, "type", "") == "text"
         )
-        return _parse_scorer_response(raw)
-    except Exception:
+        parsed = _parse_scorer_response(raw)
+        if parsed is None:
+            _JUDGE_STATE["last_error"] = (
+                f"authored_agents/{spec['name']}: unparseable response"
+            )
+        return parsed
+    except Exception as exc:
+        # Preserve the cause. An expired SDK token used to vanish here, and
+        # the operator-facing warning then re-derived STATIC blockers that all
+        # looked satisfied — reporting "no blockers" for a live auth failure.
+        _JUDGE_STATE["last_error"] = (
+            f"authored_agents/{spec['name']}: {type(exc).__name__}: {str(exc)[:200]}"
+        )
         return None
 
 
@@ -1540,6 +1562,13 @@ JUDGE_EVIDENCE_CHARS = {
 }
 DEFAULT_EVIDENCE_CHARS = 2000
 
+# The active-project list the relevance scorer is given. Hoisted from an
+# inline literal so the calibration sheet exports the SAME context the judge
+# scored against; two copies would drift and the drift would be invisible.
+AUTHORED_RELEVANCE_PROJECTS = [
+    "life-agent-os", "ergon", "lago", "arcan", "haima", "anima", "nous", "praxis",
+]
+
 # Spec `model:` values → `claude --model` arguments.
 _CLI_MODEL_ALIASES = {
     "claude-haiku-4-5": "haiku",
@@ -1556,15 +1585,24 @@ def _claude_cli_path() -> Optional[str]:
 
 def _subscription_env() -> dict:
     """
-    Environment for the `claude -p` subprocess, with API-billing credentials
-    REMOVED.
+    Environment for the `claude -p` subprocess with the API-billing variables
+    this module knows about removed.
 
-    `claude` bills the API, not the subscription, whenever ANTHROPIC_API_KEY
-    (or an equivalent auth token) is present in its environment. Labelling this
-    transport `billing="subscription"` while inheriting the ambient environment
-    would be a claim the code does not enforce — the caller could be billed the
-    API rate for a path this module advertises as free. Stripping the variables
-    makes the label true by construction rather than by assertion.
+    WHAT THIS DOES NOT DO: it does not guarantee subscription billing, and the
+    transport is labelled `billing="subscription-preferred"` for that reason.
+
+    Two review rounds were spent extending this list — first the direct keys,
+    then Bedrock/Vertex — and a third round found `CLAUDE_CODE_USE_FOUNDRY`
+    still standing. That is the shape of the mistake, not a gap in the list: a
+    denylist over an open set of provider variables cannot establish a
+    guarantee, and `apiKeyHelper` in a settings file redirects authentication
+    without using the environment at all. Chasing it a fourth time would buy
+    the same false confidence more expensively.
+
+    So the list is a best-effort reduction of the common cases, and the CLAIM
+    has been withdrawn to match what the code can actually enforce. If billing
+    certainty is ever required, it has to come from verifying the effective
+    auth source at runtime, not from pruning an environment.
     """
     env = os.environ.copy()
     for var in (
@@ -1578,6 +1616,7 @@ def _subscription_env() -> dict:
         # and false on a Bedrock-configured machine.
         "CLAUDE_CODE_USE_BEDROCK",
         "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
         "AWS_BEARER_TOKEN_BEDROCK",
     ):
         env.pop(var, None)
@@ -1723,9 +1762,6 @@ def verify_judge_transport(timeout: int = CLAUDE_CLI_TIMEOUT) -> tuple[bool, str
     round trip and returns `(ok, detail)`, which is the only way to say the
     judge works rather than that it looks like it should.
     """
-    spec = _load_agent_spec("bookkeeping-novelty")
-    if spec is None:
-        return False, f"could not load bookkeeping-novelty spec from {AUTHORED_AGENTS_DIR}"
     probe = RawItem(
         item_id="verify-probe",
         source_id="verify",
@@ -1736,10 +1772,20 @@ def verify_judge_transport(timeout: int = CLAUDE_CLI_TIMEOUT) -> tuple[bool, str
         timestamp=now_iso(),
         metadata={},
     )
-    out, err = _call_authored_scorer_cli(spec, probe, [], timeout=timeout)
-    if out is None:
-        return False, err
-    return True, f"round-trip OK (probe scored {out['score']})"
+    # Exercise the PRODUCTION selector, not one dimension of one transport.
+    # Probing only bookkeeping-novelty let --verify report PASS while
+    # production returned None: novelty loads, specificity/relevance are
+    # missing, and scoring an item needs all three. A verification narrower
+    # than the thing it verifies is the failure mode this whole ticket is
+    # about, one level up.
+    scored = score_item_with_judge(probe, [])
+    if scored is None:
+        cause = _JUDGE_STATE.get("last_error") or "no transport produced a score"
+        return False, cause
+    return True, (
+        f"round-trip OK via {scored.scoring_method} "
+        f"(probe scored {scored.total}/9 across all three dimensions)"
+    )
 
 
 def judge_availability() -> dict:
@@ -1765,7 +1811,10 @@ def judge_availability() -> dict:
     paths = [
         {
             "name": "claude_cli",
-            "billing": "subscription",
+            # Not "subscription": see _subscription_env. A denylist over an
+            # open set of provider variables cannot promise a billing source,
+            # and apiKeyHelper bypasses the environment entirely.
+            "billing": "subscription-preferred",
             "available": bool(cli) and specs_present and _YAML_AVAILABLE,
             "blockers": [
                 b for b in [
@@ -6889,6 +6938,50 @@ def cmd_status(_args: argparse.Namespace) -> None:
     run_status()
 
 
+def _calibration_row(
+    item: RawItem, h: ScoredItem, j: ScoredItem, existing_slugs: list[str]
+) -> dict:
+    """
+    Build one calibration row: what each scorer said, and the evidence the
+    judge actually saw.
+
+    Extracted from `cmd_judge_check` so the SHEET CONTENT is unit-testable.
+    While this was inline, the regression tests could only assert the
+    JUDGE_EVIDENCE_CHARS table against itself — a constant compared to a
+    constant — and two independent mutations (sheet back to 2000 while Gemini
+    sees 800; Gemini to 2000 while the sheet stays 800) each left the whole
+    suite green. The first of those resurrects the original defect exactly.
+    """
+    chars = JUDGE_EVIDENCE_CHARS.get(j.scoring_method, DEFAULT_EVIDENCE_CHARS)
+    return {
+        "item_id": item.item_id,
+        "heuristic_total": h.total,
+        "judge_total": j.total,
+        "delta": j.total - h.total,
+        "heuristic_promote": h.total >= PROMOTE_THRESHOLD,
+        "judge_promote": j.total >= PROMOTE_THRESHOLD,
+        # The DECISION, not just the score: two totals can differ while
+        # landing the same side of the promotion boundary.
+        "decision_flipped": (h.total >= PROMOTE_THRESHOLD) != (j.total >= PROMOTE_THRESHOLD),
+        "judge_reasoning": j.reasoning,
+        "scoring_method": j.scoring_method,
+        # Exactly the slice the transport that ACTUALLY scored this item sent.
+        # Hardcoding 2000 was wrong whenever Gemini scored (it sees 800): the
+        # labeller would have judged 1200 characters the judge never read, and
+        # the disagreement rate would have measured truncation.
+        "evidence_chars": chars,
+        "content_seen_by_judge": item.content[:chars],
+        # Novelty is scored AGAINST the existing graph and relevance against
+        # the active projects, so content alone is not the judge's evidence.
+        "context_seen_by_judge": {
+            "source_type": item.source_type,
+            "source_url": (item.metadata or {}).get("source_url", "") or "",
+            "existing_entity_slugs": existing_slugs[:40],
+            "active_projects": AUTHORED_RELEVANCE_PROJECTS,
+        },
+    }
+
+
 def cmd_judge_check(args: argparse.Namespace) -> None:
     """
     Report judge-transport health, and optionally shadow-score a sample.
@@ -6967,27 +7060,7 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
         # The decision, not just the score, is what matters: two scores can
         # differ while landing on the same side of the promotion boundary.
         flipped = (h.total >= PROMOTE_THRESHOLD) != (j.total >= PROMOTE_THRESHOLD)
-        rows.append({
-            "item_id": item.item_id,
-            "heuristic_total": h.total,
-            "judge_total": j.total,
-            "delta": j.total - h.total,
-            "heuristic_promote": h.total >= PROMOTE_THRESHOLD,
-            "judge_promote": j.total >= PROMOTE_THRESHOLD,
-            "decision_flipped": flipped,
-            "judge_reasoning": j.reasoning,
-            "scoring_method": j.scoring_method,
-            # Exactly the slice the transport that ACTUALLY scored this item
-            # sent, so the human and the judge answer about identical
-            # evidence. Hardcoding 2000 here was wrong whenever the Gemini
-            # transport scored (it sees 800): the labeller would have judged
-            # 1200 characters the judge never read, and the disagreement rate
-            # would have been measuring truncation.
-            "evidence_chars": JUDGE_EVIDENCE_CHARS.get(
-                j.scoring_method, DEFAULT_EVIDENCE_CHARS),
-            "content_seen_by_judge": item.content[:JUDGE_EVIDENCE_CHARS.get(
-                j.scoring_method, DEFAULT_EVIDENCE_CHARS)],
-        })
+        rows.append(_calibration_row(item, h, j, existing_slugs))
         print(
             f"  [{idx}/{len(band)}] {item.item_id}: heuristic={h.total} judge={j.total} "
             f"{'FLIP' if flipped else ''}"
@@ -7033,6 +7106,7 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
                     # Same slice the judge saw, so the labeller and the judge
                     # are answering about identical evidence.
                     "content": r["content_seen_by_judge"],
+                    "context": r["context_seen_by_judge"],
                     "human_novelty": None,
                     "human_specificity": None,
                     "human_relevance": None,
@@ -7048,7 +7122,8 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
             "promote_threshold": PROMOTE_THRESHOLD,
             "note": "Machine scores for the labelled sheet. Join on item_id AFTER labelling.",
             "rows": [
-                {k: v for k, v in r.items() if k != "content_seen_by_judge"}
+                {k: v for k, v in r.items()
+                 if k not in ("content_seen_by_judge", "context_seen_by_judge")}
                 for r in rows
             ],
         }, indent=2))
