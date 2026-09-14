@@ -38,10 +38,14 @@ def _reset_judge_state(monkeypatch):
     """Judge state is process-global; no test may leak it into the next."""
     monkeypatch.delenv("BOOKKEEPING_JUDGE", raising=False)
     bk.set_judge_enabled(False)
-    bk._JUDGE_STATE["failures"] = 0
+    # `last_error` must be reset too. While it was not, a test asserting on a
+    # cause could read one LEFT BY AN EARLIER TEST and pass for the wrong
+    # reason — which is exactly how two verify tests stayed green locally and
+    # went red in CI, where the real agent-spec directory does not exist.
+    bk.reset_judge_run_state()
     yield
     bk.set_judge_enabled(False)
-    bk._JUDGE_STATE["failures"] = 0
+    bk.reset_judge_run_state()
 
 
 # ── _parse_scorer_response ────────────────────────────────────────────────────
@@ -510,17 +514,30 @@ def test_score_item_uses_the_shared_selector(monkeypatch):
 
 
 def test_verify_reports_failure_detail(monkeypatch):
-    monkeypatch.setattr(bk, "_load_agent_spec", lambda n: _spec())
-    monkeypatch.setattr(bk, "_call_authored_scorer_cli",
-                        lambda *a, **k: (None, "exit 1: unauthorized"))
+    """
+    Stubs the PRODUCTION seam (`score_item_with_judge`), which is what
+    verify_judge_transport calls since round 4. The earlier version patched
+    `_call_authored_scorer_cli` and depended on the real agent-spec directory
+    existing — true on a dev box, false in CI, where the spec load failed
+    early and the assertion read a stale cause instead.
+    """
+    monkeypatch.setattr(bk, "score_item_with_judge", lambda *a, **k: None)
+    bk._JUDGE_STATE["last_error"] = "claude_cli/novelty: exit 1: unauthorized"
     ok, detail = bk.verify_judge_transport()
     assert ok is False and "unauthorized" in detail
 
 
+def test_verify_failure_without_a_cause_still_says_something(monkeypatch):
+    """A failure with no captured cause must not report an empty reason."""
+    monkeypatch.setattr(bk, "score_item_with_judge", lambda *a, **k: None)
+    bk._JUDGE_STATE["last_error"] = ""
+    ok, detail = bk.verify_judge_transport()
+    assert ok is False and detail.strip()
+
+
 def test_verify_reports_success(monkeypatch):
-    monkeypatch.setattr(bk, "_load_agent_spec", lambda n: _spec())
-    monkeypatch.setattr(bk, "_call_authored_scorer_cli",
-                        lambda *a, **k: ({"score": 2}, ""))
+    scored = bk.ScoredItem(_item(), 1, 1, 1, 3, False, [], "claude_cli")
+    monkeypatch.setattr(bk, "score_item_with_judge", lambda *a, **k: scored)
     ok, detail = bk.verify_judge_transport()
     assert ok is True and "OK" in detail
 
