@@ -389,7 +389,17 @@ mutate "omitted strata recorded as a real panel" "T58" \
 # row's missing panel reads -- and a blank is what a reader silently supplies
 # a meaning for.
 mutate "old rows render as a blank panel" "T59" \
-    '(NF>=7 && $7!="" ? $7 : unrec)' '$7'
+    '(NF<7 ? unrec : ($7!="" ? $7 : "MALFORMED"))' '$7'
+
+# ONE ARM PER CLAIM. The renderer's ternary carries two independent claims and
+# the mutant above only exercises the arity half: replacing the whole
+# expression with `$7` is killed by T59's six-field fixtures alone, leaving the
+# blank-field half unpinned. Stratum B reproduced that by hand. This mutant
+# collapses ONLY the blank arm, so it is killed by T64 and by nothing else --
+# the same "one arm per claim" discipline strata_is_valid already follows.
+mutate "blank panel renders as unrecorded again" "T64" \
+    '(NF<7 ? unrec : ($7!="" ? $7 : "MALFORMED"))' '(NF<7 ? unrec : ($7!="" ? $7 : unrec))'
+
 
 # The validator, at each of its two call sites. One definition, so one
 # mutation each -- the same accounting prediction_is_valid gets.

@@ -918,13 +918,24 @@ show)
     echo ""
     # `unrec` is passed in rather than spelled here: one producer for the token,
     # or `show` and the recorder could disagree about what absence is called.
-    # Both shapes of absence -- a pre-strata six-field row, and a seven-field row
-    # whose field is blank -- render as that one token. `show` takes no gate, so
-    # it is the one surface that must name absence rather than print nothing and
-    # let the reader supply a meaning.
+    #
+    # THREE states, not two. An earlier version rendered a six-field row and a
+    # seven-field row with a BLANK field as the same `unrecorded`, which
+    # contradicted `load_ledger` forty lines up: a blank panel is the one value
+    # that must not slip through, and the gate exits 6 on it. `show` takes no
+    # gate, so it was the surface where a refused ledger rendered as a clean row
+    # naming no defect -- the operator whose `budget` just said "does not parse"
+    # ran `show` to find out why and was told the panel was merely unrecorded.
+    # That laundered a fail-closed condition into a legitimate value, which is
+    # the same absence-as-value defect this whole field exists to remove.
+    #
+    #   NF<7            -> pre-strata row, a real and legitimate absence
+    #   NF>=7, non-blank-> the recorded panel (validity is the gate's job)
+    #   NF>=7, blank    -> MALFORMED: nothing wrote it, and it must not read
+    #                      like something that did
     awk -F'\t' -v unrec="$STRATA_UNRECORDED" '
         $1=="ROUND"   { printf "  round %-3s score %-3s defect=%-4s settles=%-10s strata=%-12s %s\n", \
-                               $2,$3,$4,$6,(NF>=7 && $7!="" ? $7 : unrec),$5 }
+                               $2,$3,$4,$6,(NF<7 ? unrec : ($7!="" ? $7 : "MALFORMED")),$5 }
         $1=="VERDICT" { printf "  verdict %-11s %s%s\n", $2, $3, ($4!="" ? "  [directive: " $4 "]" : "") }
     ' "$LEDGER"
     ;;

@@ -1052,6 +1052,44 @@ else
         "reg=$RC_REG ref=$RC_REF nodefect=$RC_NOD terminal=$RC_TERM ceiling=$RC_CEIL (want 6 6 6 6 7)"
 fi
 
+echo "T64. a BLANK panel on a 7-field row renders as MALFORMED, never as unrecorded"
+# Stratum B finding: `load_ledger` exits 6 on a blank field 7 -- "the value that
+# must not slip through" -- while `show` rendered that same byte as
+# `unrecorded`. The operator whose `budget` just said "does not parse" ran
+# `show` to find out why and was told the panel was merely unrecorded: a
+# fail-closed condition laundered into a legitimate value.
+LED=$(newledger t64a)
+printf 'ROUND\t1\t5\tyes\t\t-\t\n' > "$LED"
+OUT_BLANK=$(rbout show --run-id=t64a --ledger="$LED")
+RC_BLANK64=$(rb budget --run-id=t64a --ledger="$LED")
+# a six-field row is a REAL absence and must still read as unrecorded
+LED=$(newledger t64b)
+printf 'ROUND\t1\t5\tyes\t\t-\n' > "$LED"
+OUT_OLD=$(rbout show --run-id=t64b --ledger="$LED")
+# and a real panel still renders verbatim
+LED=$(newledger t64c)
+printf 'ROUND\t1\t5\tyes\t\t-\tA,C\n' > "$LED"
+OUT_REAL=$(rbout show --run-id=t64c --ledger="$LED")
+if printf '%s\n' "$OUT_BLANK" | grep -q "MALFORMED" && \
+   ! printf '%s\n' "$OUT_BLANK" | grep -q "strata=unrecorded" && \
+   [ "$RC_BLANK64" = "6" ] && \
+   printf '%s\n' "$OUT_OLD" | grep -q "strata=unrecorded" && \
+   printf '%s\n' "$OUT_REAL" | grep -q "strata=A,C"; then
+    ok "T64: blank panel reads MALFORMED and still STOPs; six-field still unrecorded; real panel verbatim"
+else
+    fail "T64: show must not launder a refused blank into unrecorded" \
+        "blank=$OUT_BLANK rc=$RC_BLANK64 old=$OUT_OLD real=$OUT_REAL"
+fi
+
+# T65 (the pre-push strata hint) is DELIBERATELY NOT TESTED HERE, and that is a
+# recorded gap rather than an oversight. The assertion needs `cross-review.sh
+# pre-push` to run, which needs real repo context; the mutation harness copies
+# this skill to a NON-GIT scratch dir on purpose, so such a test makes the whole
+# sweep refuse to run on a red baseline. A test that costs the mutation proof
+# is a bad trade. Tracked as a follow-up; the behaviour it would pin is the
+# hint derivation at cross-review.sh (STRATA_HINT), and cross-review.test.sh --
+# which runs in a real tree -- is where it belongs.
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

@@ -17,10 +17,10 @@
 #
 # Usage:
 #   cross-review pre-push                 # default: gate before push
-#   cross-review pre-push --strata auto   # explicit auto-detect
-#   cross-review pre-push --strata A      # force Codex cross-vendor
-#   cross-review pre-push --strata B      # force subagent
-#   cross-review pre-push --strata C      # composed skills only
+#   cross-review pre-push --strata=auto   # explicit auto-detect
+#   cross-review pre-push --strata=A      # force Codex cross-vendor
+#   cross-review pre-push --strata=B      # force subagent
+#   cross-review pre-push --strata=C      # composed skills only
 #   cross-review plan --spec PATH         # plan-stage gate
 #   cross-review audit --target PATH      # audit-on-demand
 #   cross-review reviewer-guard capture   # fingerprint the tree before review
@@ -426,11 +426,33 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo ""
     echo "  Arc id: $CR_ARC_ID   (stable across pre-push runs; the guard id is not)"
     echo ""
-    # Strata C always runs in parallel, so the suggested panel is the selected
-    # stratum plus C -- except when C IS the selection, where `C,C` would be
-    # refused as a duplicate rather than read as a set. A printed command the
-    # recorder rejects teaches the flag is optional noise.
-    if [ "$SELECTED_STRATA" = "C" ]; then STRATA_HINT="C"; else STRATA_HINT="$SELECTED_STRATA,C"; fi
+    # The hint is built from what CAN RUN, never from what was requested.
+    #
+    # It used to be `$SELECTED_STRATA,C`, which printed `--strata=A,C` whenever A
+    # was selected or auto-detected -- including on a machine with no Codex,
+    # where the Strata A block below is skipped and A demonstrably does not run.
+    # A field whose entire purpose is to stop a reader assuming the strongest
+    # panel was shipping a copy-paste default that RECORDS the strongest panel
+    # when it did not run. That is the failure the field exists to prevent,
+    # reintroduced by its own affordance.
+    #
+    # The condition is kept identical to the one gating the Strata A block, so
+    # the hint cannot drift from the behaviour it describes.
+    STRATA_HINT="C"
+    if { [ "$SELECTED_STRATA" = "A" ] || [ "$SELECTED_STRATA" = "auto" ]; } \
+       && command -v codex >/dev/null 2>&1; then
+        STRATA_HINT="A,C"
+    elif [ "$SELECTED_STRATA" = "B" ]; then
+        STRATA_HINT="B,C"
+    fi
+    # An explicitly requested stratum that cannot run is stated, not silently
+    # downgraded: "the signal did not run" and "the signal passed" must never
+    # look alike, and that applies to the panel too.
+    if [ "$SELECTED_STRATA" = "A" ] && ! command -v codex >/dev/null 2>&1; then
+        echo "  NOTE: Strata A was requested but \`codex\` is not on PATH, so it"
+        echo "        will NOT run. The suggested panel below omits A deliberately."
+        echo ""
+    fi
     echo "  After each scored round:"
     echo "    cross-review round record-round --run-id=$CR_ARC_ID \\"
     echo "      --score=N --defect=yes|no [--settles=CONFIRMED|REFUTED] \\"

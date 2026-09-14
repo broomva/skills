@@ -209,9 +209,17 @@ appended to it.
   the same class as `--defect` below: the record is checkable for *shape*, not
   for *truth*. What it removes is the case where the panel was never written
   down at all and a reader assumed the strongest one — which is why omission
-  gets a name rather than a blank, and why the field feeds **no rule**. It does
-  not weight the score, does not change the threshold, and is read by no
-  predicate in `round-budget.sh`.
+  gets a name rather than a blank. The field does **not weight the score and
+  does not change the threshold**: no panel buys a round, and no panel loses
+  one on its *contents*.
+  It is **not** inert, though, and an earlier draft of this bullet wrongly said
+  it "feeds no rule" and "is read by no predicate". `strata_is_valid` is read
+  at load (`round-budget.sh`, `load_ledger`), and a stored panel that would not
+  pass the recorder turns an otherwise-authorizing ledger into a STOP. That is
+  deliberate — a hand-edited ledger must fail closed like every other malformed
+  field — but it is a way to lose a round, so it is documented as one here
+  rather than left for someone to discover by hand-editing on the strength of a
+  sentence that said the field was read by nothing.
 - **`--defect=yes` is the agent's own assertion.** The controller enforces that
   two consecutive `no` rounds stop the arc; it cannot verify that a `yes` was
   actually earned. That judgement belongs to the reviewer's findings.
@@ -470,7 +478,7 @@ weakened P20.
 # Substantive PR ready, about to push
 cross-review pre-push \
   --diff-base origin/main \
-  --strata auto \
+  --strata=auto \
   --rubric anti-slop
 ```
 
@@ -507,7 +515,7 @@ Same rubric, applied to the spec instead of the diff. Use when the work shape is
 cross-review audit \
   --target apps/api/src/auth/ \
   --concerns security,owasp-top-10 \
-  --strata A
+  --strata=A
 ```
 
 Used outside the PR flow — e.g., when investigating a class of issues across an existing codebase. Strata A (cross-vendor) is the default here because audit lacks the pre-merge time pressure that makes Strata B useful.
