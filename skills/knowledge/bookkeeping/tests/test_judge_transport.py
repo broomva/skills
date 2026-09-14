@@ -1060,39 +1060,60 @@ def test_valid_scored_items_are_accepted():
 
 # ── the cause must be REPORTED, not merely recorded ──────────────────────────
 
-def test_run_log_does_not_carry_a_field_that_is_empty_when_needed():
+def test_run_log_shape_carries_causes_and_not_the_removed_field(monkeypatch, tmp_path):
     """
-    A `judge_last_error` field was added and then removed. It was empty in
-    both scenarios its commit cited, because `_run_transport` clears the cause
-    before every call: any later success wiped it, so it carried a cause only
-    when the run's FINAL in-band item failed.
+    END TO END: the pipeline itself must put the causes in the log entry.
 
-    This asserts the REMOVAL behaviourally rather than by grepping source —
-    the guard it replaces used `inspect.getsource` and stayed green when the
-    field was made dead, which is why the broken field shipped at all.
+    Two traps this had to survive, both real:
+      * `run_pipeline` calls `reset_judge_run_state()` at entry, so a cause
+        recorded by the TEST beforehand is wiped — the cause has to be
+        produced by the run.
+      * `BROOMVA_ROOT`/`ENTITIES_DIR` resolve at IMPORT, so setting KG_ROOT in
+        the environment does not redirect anything. The module attributes are
+        patched instead, or this ingests and promotes against the operator's
+        live 1,100-entity graph.
+
+    The version this replaces called `run_pipeline(dry_run=True)`, which
+    short-circuits before `log_run`, and then asserted `"x" not in {}`.
     """
-    import json as _json
-    import tempfile
-
     captured = {}
-    real_log = bk.log_run
+    notes = tmp_path / "notes"
+    notes.mkdir(parents=True)
+    entities = tmp_path / "entities"
+    entities.mkdir(parents=True)
+    monkeypatch.setattr(bk, "BROOMVA_ROOT", tmp_path, raising=False)
+    monkeypatch.setattr(bk, "ENTITIES_DIR", entities, raising=False)
+    monkeypatch.setattr(bk, "NOTES_DIR", notes, raising=False)
+    monkeypatch.setattr(bk, "log_run", lambda e: captured.update(e))
+    monkeypatch.setattr(bk, "_refresh_status_cache", lambda: None)
 
-    with tempfile.TemporaryDirectory() as td:
-        def _spy(entry):
-            captured.update(entry)
+    src = notes / "2026-01-01-test-raw.md"
+    src.write_text(
+        "---\nlayer: 2\nsource: test\ndate: 2026-01-01\n---\n\n"
+        "# Test extract\n\n- A single short claim used only to give the pipeline one item.\n"
+    )
 
-        bk.log_run = _spy
-        try:
-            bk.run_pipeline(source_files=[], dry_run=True, verbose=False)
-        except Exception:
-            pass
-        finally:
-            bk.log_run = real_log
+    # Judge ON, nothing configured: the run's own items generate the cause.
+    monkeypatch.setattr(bk, "score_item_heuristic",
+                        lambda item: bk.ScoredItem(item, 2, 2, 1, 5, True, [], "heuristic"))
+    monkeypatch.setattr(bk, "score_item_claude_cli", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_authored_agents", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_llm", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "judge_availability", lambda: {
+        "any_available": False,
+        "paths": [{"name": "claude_cli", "billing": "subscription-preferred",
+                   "available": False, "blockers": ["`claude` CLI not on PATH"]}],
+    })
+    bk.set_judge_enabled(True)
+    try:
+        bk.run_pipeline(source_files=[src], dry_run=False, verbose=False)
+    except SystemExit:
+        pass
 
-    # dry_run short-circuits before log_run, so assert on the shape the
-    # pipeline builds rather than on a write that never happens.
-    assert "judge_last_error" not in captured, (
-        "a field that is empty exactly when it is needed is worse than none"
+    assert captured, "run_pipeline never reached log_run — every assertion below would be vacuous"
+    assert "judge_last_error" not in captured
+    assert any("not on PATH" in c for c in captured.get("judge_causes", [])), (
+        f"the run log carried no cause: {captured.get('judge_causes')!r}"
     )
 
 
@@ -1231,8 +1252,11 @@ def test_causes_survive_a_later_success(monkeypatch):
     bk.reset_judge_run_state()
 
     def _fail(item, slugs):
+        # Sets only the PER-CALL cause, exactly as a real transport does.
+        # Calling _record_judge_cause here would test the helper instead of
+        # the wiring — which is how this feature was fully unwirable with a
+        # green suite.
         bk._JUDGE_STATE["last_error"] = "claude_cli/novelty: exit 1: credentials expired"
-        bk._record_judge_cause(bk._JUDGE_STATE["last_error"])
         return None
 
     monkeypatch.setattr(bk, "score_item_claude_cli", _fail)
@@ -1251,13 +1275,30 @@ def test_causes_survive_a_later_success(monkeypatch):
 
 
 def test_causes_are_deduplicated_and_capped():
+    """
+    Cap asserted against a LITERAL, not against the module's own constant —
+    the previous version compared an output to `JUDGE_CAUSE_LOG_CAP`, so
+    raising the constant to 100000 left it green and the documented cap was
+    unenforced.
+    """
     bk.reset_judge_run_state()
     for _ in range(5):
         bk._record_judge_cause("same cause")
     assert bk.judge_causes() == ["same cause"]
+
+    bk.reset_judge_run_state()
     for i in range(100):
         bk._record_judge_cause(f"cause {i}")
-    assert len(bk.judge_causes()) <= bk.JUDGE_CAUSE_LOG_CAP
+    causes = bk.judge_causes()
+    # 20 real causes + one truncation marker.
+    assert len(causes) == 21, f"cap is not 20 (got {len(causes) - 1} real causes)"
+    assert "truncated" in causes[-1], "truncation is silent — a short list reads as complete"
+
+
+def test_an_uncapped_run_carries_no_truncation_marker():
+    bk.reset_judge_run_state()
+    bk._record_judge_cause("only one")
+    assert bk.judge_causes() == ["only one"]
 
 
 def test_causes_are_cleared_between_runs():
@@ -1266,22 +1307,39 @@ def test_causes_are_cleared_between_runs():
     assert bk.judge_causes() == []
 
 
-def test_run_log_entry_carries_the_causes_list():
-    """Behavioural: build the entry and look at it, not at the source text."""
-    captured = {}
-    real = bk.log_run
-    bk.log_run = lambda e: captured.update(e)
-    try:
-        bk.reset_judge_run_state()
-        bk._record_judge_cause("claude_cli: something broke")
-        bk.run_pipeline(source_files=[], dry_run=False, verbose=False)
-    except Exception:
-        pass
-    finally:
-        bk.log_run = real
-    if captured:
-        assert "judge_causes" in captured
-        assert "judge_last_error" not in captured
+def test_the_unconfigured_case_reaches_the_run_log(monkeypatch, tmp_path):
+    """
+    THE HEADLINE CASE, end to end. Every transport returns a bare `None` — the
+    ordinary unconfigured state — so `_run_transport` leaves the per-call
+    cause empty by design and `score_item` falls back to static blockers.
+    Those blockers must reach the LOG, not only stderr.
+
+    Without the accumulator call in that fallback, a cron run wrote
+    `judge_failures: 119, judge_causes: []` and threw the only diagnosis at a
+    stderr nobody reads — which is the 7,765-run scenario this change exists
+    for, relocated into the run log.
+    """
+    monkeypatch.setenv("KG_NO_POLICY", "1")
+    monkeypatch.setenv("KG_ROOT", str(tmp_path))
+    monkeypatch.setattr(bk, "_refresh_status_cache", lambda: None)
+    monkeypatch.setattr(bk, "score_item_heuristic",
+                        lambda item: bk.ScoredItem(item, 2, 2, 1, 5, True, [], "heuristic"))
+    monkeypatch.setattr(bk, "score_item_claude_cli", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_authored_agents", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_llm", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "judge_availability", lambda: {
+        "any_available": False,
+        "paths": [{"name": "claude_cli", "billing": "subscription-preferred",
+                   "available": False, "blockers": ["`claude` CLI not on PATH"]}],
+    })
+
+    bk.reset_judge_run_state()
+    bk.set_judge_enabled(True)
+    bk.score_item(_item(), [])
+
+    causes = bk.judge_causes()
+    assert causes, "the unconfigured case recorded NO cause — the headline bug"
+    assert any("not on PATH" in c for c in causes)
 
 
 # ── --verify must not over-describe a one-call transport ────────────────────

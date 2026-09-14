@@ -164,13 +164,21 @@ Cost note: **highly variable, and the two figures below do not divide into each
 other** — say so rather than pick one. Single dimension calls were measured at
 5.5s and at 31.6s on the same machine, which puts an authored-transport item
 (three calls) somewhere between ~16s and ~95s. Separately, a 6-item
-`judge-check --sample` took 11m41s wall = 117s/item, *above* that range. The
-difference is not accounted for: sampling also ingests and heuristically scores
-every discovered extract before it judges anything, and per-call latency varied
-by ~6x across the runs. Until someone instruments the two phases separately,
-treat this as seconds-to-minutes per item, re-measure before relying on it, and
-do not budget with either number. The spread alone is enough to rule the judge
-out of the always-on ingest loop.
+`judge-check --sample` took 11m41s wall = 117s/item, *above* that range.
+
+Per-call latency alone accounts for most of the gap, and the arithmetic is the
+whole explanation: 6 items x 3 dimension calls = 18 calls, which at the 31.6s
+end is 569s — 81% of the 701s observed. Ingest is **not** the explanation. An
+earlier version of this note asserted that sampling "ingests and heuristically
+scores every discovered extract before it judges anything"; that is false
+(`cmd_judge_check` stops at the first files that fill the band) and full ingest
+was measured at 3.67s for the entire corpus regardless. It was a mechanism
+invented to explain a number instead of dividing it.
+
+So the figure to distrust is the 5.5s call, not the 117s item. Treat this as
+tens of seconds to ~2 minutes per item, dominated by per-call latency, and
+re-measure before relying on it. The spread alone rules the judge out of the
+always-on ingest loop.
 
 Scoring output is written to the raw extract file as a YAML front-matter annotation per item.
 

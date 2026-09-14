@@ -1843,15 +1843,15 @@ def judge_availability() -> dict:
     Report which judge transports are CONFIGURED, and why each unconfigured
     one is not.
 
-    `available` means "prerequisites are present", NOT "judging works": it
-    checks PATH, spec files and credentials, none of which detect an expired
-    token or an unparseable spec. Use `verify_judge_transport()` for the
-    round trip.
+    `available` means "prerequisites are present", NOT "judging works". It
+    checks PATH, credentials, and whether each scorer spec PARSES — so a
+    present-but-unparseable spec IS caught here. What it still cannot detect
+    is a credential that is present and rejected: an expired token satisfies
+    every check above. Use `verify_judge_transport()` for the round trip.
 
-CLOSED (was a known gap): `specs_present` now PARSES each spec
-    rather than stat'ing it, so a file that exists but does not load is a
-    blocker here instead of a causeless None at scoring time. The two are kept distinct on purpose — collapsing them would
-    recreate, one level up, the exact confusion this module exists to fix.
+    `judge_availability` and `verify_judge_transport` are kept distinct on
+    purpose — collapsing them would recreate, one level up, the exact
+    confusion this module exists to fix: "configured" is not "working".
 
     Callers assert on this POSITIVELY rather than inferring health from the
     absence of a warning, because absence was indistinguishable from health
@@ -1865,10 +1865,20 @@ CLOSED (was a known gap): `specs_present` now PARSES each spec
     # they never intended to use. Validating at the availability boundary is
     # what makes "present but unparseable" a blocker instead of a silent
     # runtime failure.
-    _bad_specs = [
-        d for d in ("novelty", "specificity", "relevance")
-        if _load_agent_spec(f"bookkeeping-{d}") is None
-    ]
+    # With PyYAML absent, `_load_agent_spec` returns None BEFORE touching disk,
+    # so attributing that to the spec files told an operator whose three specs
+    # are perfectly healthy that all three were missing or unparseable. The
+    # PyYAML blocker already reports that cause on its own line.
+    if _YAML_AVAILABLE:
+        _bad_specs = [
+            d for d in ("novelty", "specificity", "relevance")
+            if _load_agent_spec(f"bookkeeping-{d}") is None
+        ]
+    else:
+        _bad_specs = [
+            d for d in ("novelty", "specificity", "relevance")
+            if not (AUTHORED_AGENTS_DIR / f"bookkeeping-{d}.md").exists()
+        ]
     specs_present = not _bad_specs
     cli = _claude_cli_path()
     paths = [
@@ -2012,7 +2022,8 @@ def score_item_authored_agents(
 # carried a cause only when the run's FINAL in-band item failed. Distinct
 # causes are accumulated here instead, deduplicated and capped, so a run whose
 # stderr goes nowhere still leaves its reasons in the log.
-_JUDGE_STATE = {"enabled": False, "failures": 0, "last_error": "", "causes": []}
+_JUDGE_STATE = {"enabled": False, "failures": 0, "last_error": "",
+                "causes": [], "causes_truncated": False}
 
 # Enough to see the pattern, bounded so one pathological run cannot bloat the
 # append-only log.
@@ -2024,13 +2035,33 @@ def _record_judge_cause(cause: str) -> None:
     if not cause:
         return
     causes = _JUDGE_STATE["causes"]
-    if cause not in causes and len(causes) < JUDGE_CAUSE_LOG_CAP:
+    if cause in causes:
+        return
+    if len(causes) < JUDGE_CAUSE_LOG_CAP:
         causes.append(cause)
+    else:
+        # Truncation must be VISIBLE. A silently shortened list of causes
+        # reads as "these were all of them" -- absence-as-value, in this
+        # module's own reporting.
+        _JUDGE_STATE["causes_truncated"] = True
 
 
 def judge_causes() -> list:
-    """Distinct judge-failure causes seen this run, in first-seen order."""
-    return list(_JUDGE_STATE["causes"])
+    """
+    Distinct judge-failure causes seen this run, in first-seen order.
+
+    A non-empty list does NOT mean the run failed: a cause is recorded when a
+    transport fails even if a later transport then scored the item.
+
+    At the cap a truncation marker is appended rather than the list simply
+    ending, so a shortened list cannot read as a complete one.
+    """
+    causes = list(_JUDGE_STATE["causes"])
+    if _JUDGE_STATE.get("causes_truncated"):
+        causes.append(
+            f"[truncated: more than {JUDGE_CAUSE_LOG_CAP} distinct causes this run]"
+        )
+    return causes
 
 
 def reset_judge_run_state() -> None:
@@ -2038,6 +2069,7 @@ def reset_judge_run_state() -> None:
     _JUDGE_STATE["failures"] = 0
     _JUDGE_STATE["last_error"] = ""
     _JUDGE_STATE["causes"] = []
+    _JUDGE_STATE["causes_truncated"] = False
 
 
 def _scored_item_is_sane(out: ScoredItem) -> bool:
@@ -2080,9 +2112,13 @@ def _run_transport(name: str, fn, item: RawItem, existing_slugs: list[str]):
 
     So a transport that returns `None` without recording anything leaves
     `last_error` EMPTY, and the caller falls back to the static blockers. That
-    is the right answer for a transport that was never configured. It is NOT
-    yet the right answer for a transport that is configured but broken —
-    see the known-gap note on `judge_availability`.
+    is the right answer for a transport that was never configured, and the
+    CALLER is responsible for recording that static-blocker diagnosis into the
+    run-level accumulator — `score_item` does.
+
+    For a transport that is CONFIGURED but broken the cause comes from the
+    transport itself; `judge_availability` parses the scorer specs, so
+    "present but unparseable" is a blocker there rather than a silence here.
     """
     _JUDGE_STATE["last_error"] = ""
     try:
@@ -2284,6 +2320,15 @@ def score_item(item: RawItem, existing_slugs: list[str], verbose: bool = False) 
                 f"{p['name']}: {', '.join(p['blockers'])}"
                 for p in avail["paths"] if p["blockers"]
             ) or "no cause captured"
+        # Feed the run-level accumulator HERE too. `_run_transport` leaves the
+        # per-call cause empty for a bare `None` (deliberately -- see its
+        # docstring), which is the ORDINARY unconfigured case. Without this
+        # line `judge_causes` was empty in exactly the 7,765-run scenario this
+        # change exists for: a cron run wrote judge_failures=119 with
+        # judge_causes=[] and discarded the only diagnosis to a stderr nobody
+        # reads. The subtraction and the accumulator interact; that
+        # interaction was the bug.
+        _record_judge_cause(cause)
         print(
             "[bookkeeping] JUDGE FAILED — --judge was requested but every transport "
             f"failed; in-band items are falling back to the heuristic. {cause}",
