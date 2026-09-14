@@ -83,7 +83,10 @@ bump, not reviewer opinion, and never a finding about the *justification* for th
 change. Track it with `cross-review round`:
 
 ```bash
-cross-review round record-round   --run-id=$ID --score=5 --defect=yes
+cross-review round record-round   --run-id=$ID --score=5 --defect=yes --strata=A,B,C
+                                                  # --strata names the panel that scored
+                                                  # it; omitted, the round records
+                                                  # `unrecorded` (a value, not a blank)
 cross-review round budget         --run-id=$ID    # exit 0 authorized, 5 review-required,
                                                   # 6 stop, 7 human, 3 passed
 cross-review round record-verdict --run-id=$ID --verdict=CONTINUE \
@@ -188,6 +191,7 @@ appended to it.
 | An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |
 | A `CONTINUE` cannot be empty of content | the prediction must name a location the next round can check |
 | The arithmetic is not from recall | the round count and score series come from a file, which is the thing agents do worst from memory |
+| The panel that produced a score is part of the record | a round records the strata that scored it (`record-round --strata=A,B,C`). The strata are **not equal** — A is the only cross-vendor verdict and the only one where *cannot write* is literally true — so a 7/10 from A+B+C and a 7/10 from C alone are different evidence carrying the same integer, and the score alone cannot tell them apart. Validated at write **and** against the stored row, same as the prediction. Omitting the flag records the literal `unrecorded`, never a blank: *"nobody wrote down which strata ran"* and *"only Stratum C ran"* must not serialize to the same bytes. Ledgers written before the field parse unchanged — field 7 is optional **on read**, and `show` renders their missing panel as that same `unrecorded` token |
 | One guard site, not one per caller | every command that reads or mutates the history passes through `load_ledger` (`show` only renders), and the budget's stop/pass ordering is one `PRECEDENCE` list. Three review rounds each found a guard living at one caller and not its sibling, or an ordering wrong in one of six branches — so the continuation review returned `STRUCTURAL` and the shape changed instead of a sixth guard being added |
 
 **NOT enforced — the bypasses, stated rather than implied:**
@@ -200,6 +204,14 @@ appended to it.
 - **The ledger is not a security boundary.** It is a plain file under `.git/`.
   An agent determined to evade it can edit or delete it. It is bookkeeping that
   makes drift *visible*, not a control that makes drift impossible.
+- **`--strata=A,B,C` is the agent's own assertion.** Nothing verifies that
+  Stratum A actually ran, or that its verdict is the one being scored. It is
+  the same class as `--defect` below: the record is checkable for *shape*, not
+  for *truth*. What it removes is the case where the panel was never written
+  down at all and a reader assumed the strongest one — which is why omission
+  gets a name rather than a blank, and why the field feeds **no rule**. It does
+  not weight the score, does not change the threshold, and is read by no
+  predicate in `round-budget.sh`.
 - **`--defect=yes` is the agent's own assertion.** The controller enforces that
   two consecutive `no` rounds stop the arc; it cannot verify that a `yes` was
   actually earned. That judgement belongs to the reviewer's findings.
@@ -375,6 +387,38 @@ The asymmetry has a practical consequence: **prefer Strata A when Codex is
 available**, not only because a different vendor has different blind spots, but
 because it is the only stratum where "cannot write" is literally true.
 
+It has a bookkeeping consequence too. When Codex is unavailable the panel
+degrades to B+C — both the same model as the writer, same vendor — and
+*agreement among correlated judges is not evidence*. A bare integer hides that
+completely, so the round ledger records the panel alongside the score:
+
+```bash
+cross-review round record-round --run-id=$ARC --score=5 --defect=yes --strata=A,B,C
+cross-review round record-round --run-id=$ARC --score=6 --defect=yes           # panel not stated
+cross-review round record-round --run-id=$ARC --score=7 --defect=no  --strata=C
+
+cross-review round show --run-id=$ARC
+#   round 1   score 5   defect=yes  settles=-          strata=A,B,C
+#   round 2   score 6   defect=yes  settles=-          strata=unrecorded
+#   round 3   score 7   defect=no   settles=-          strata=C
+```
+
+The arc passes on round 3, and the record now says the passing 7 came from
+Stratum C alone — the writer's own model, scoring the writer's own change —
+while the 5 that opened the arc came from the full panel. Before, those three
+rows differed only in an integer.
+
+The field is **recording only**: no rule reads it, the threshold is unchanged,
+and a weak panel is not auto-escalated. Reading round 3 as if it carried round
+1's evidence is a judgement a reader can now decline to make; previously the
+ledger gave them nothing to decline with.
+
+`unrecorded` is a value, not a blank. Omitting `--strata` writes it explicitly,
+because *"the strata were not recorded"* and *"only Stratum C ran"* are
+different facts and must not look alike — the failure class this workspace calls
+`failures-that-present-as-absence`. Passing `--strata=` with an empty value is a
+malformed claim rather than an absent one, and is refused.
+
 ```bash
 cross-review reviewer-guard capture     # fingerprint before dispatch
 # ...run the review...
@@ -485,7 +529,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 
 1. **Before pushing any substantive PR** — fire `cross-review pre-push`. State the strata + score in the response.
 1b. **When the PR claims test coverage for a fix** — mutation-prove it. "I added a test" is a claim; `verdict=PROVEN` is evidence. Report the verdict either way; UNPROVEN does not block, it obliges an answer.
-2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore, and record the round: `cross-review round record-round --run-id=$ID --score=N --defect=yes|no`. Ask `cross-review round budget` before starting another; past round 3 it will require a continuation verdict.
+2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore, and record the round: `cross-review round record-round --run-id=$ID --score=N --defect=yes|no --strata=A,B,C`. Ask `cross-review round budget` before starting another; past round 3 it will require a continuation verdict.
 2b. **When the budget returns REVIEW-REQUIRED (exit 5)** — run the continuation review on *the decision to continue*, against a STOP default. `CONTINUE` obliges a falsifiable prediction that the next round settles; two refuted in a row end the loop regardless of score.
 3. **When the writer is the only model in the loop** — STOP. Strata B at minimum is mandatory.
 4. **When tempted to skip "this PR is small enough"** — apply the substantive-threshold test (>200 LOC OR public API OR multi-file OR governance-class).

@@ -426,9 +426,22 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo ""
     echo "  Arc id: $CR_ARC_ID   (stable across pre-push runs; the guard id is not)"
     echo ""
+    # Strata C always runs in parallel, so the suggested panel is the selected
+    # stratum plus C -- except when C IS the selection, where `C,C` would be
+    # refused as a duplicate rather than read as a set. A printed command the
+    # recorder rejects teaches the flag is optional noise.
+    if [ "$SELECTED_STRATA" = "C" ]; then STRATA_HINT="C"; else STRATA_HINT="$SELECTED_STRATA,C"; fi
     echo "  After each scored round:"
     echo "    cross-review round record-round --run-id=$CR_ARC_ID \\"
-    echo "      --score=N --defect=yes|no [--settles=CONFIRMED|REFUTED]"
+    echo "      --score=N --defect=yes|no [--settles=CONFIRMED|REFUTED] \\"
+    echo "      --strata=$STRATA_HINT"
+    echo ""
+    echo "  --strata names the panel that produced the score. The strata are not"
+    echo "  equal -- A is the only cross-vendor verdict -- so a 7 from A+B+C and a"
+    echo "  7 from C alone are different evidence carrying the same number. Omit it"
+    echo "  and the round records 'unrecorded', which is a value, not a blank: it"
+    echo "  must not read as 'only C ran'."
+    echo ""
     echo "    cross-review round budget --run-id=$CR_ARC_ID"
     echo ""
     echo "  budget exits: 0 authorized · 3 passed · 5 continuation review required"

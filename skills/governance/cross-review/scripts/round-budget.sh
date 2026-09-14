@@ -32,6 +32,19 @@
 # rounds on an equally flat score and closed unmerged. Same slope, opposite
 # correct answer.
 #
+# WHICH PANEL SCORED IT. A round records the strata that produced its score,
+# because the strata are not equal and a bare integer hides which ones ran.
+# Stratum A is the only cross-vendor verdict and the only one where "cannot
+# write" is literally true; B and C are the same model as the writer, so a 7
+# from A+B+C and a 7 from C alone are different evidence carrying the same
+# number. The field makes the two distinguishable in the record; it does not
+# score them differently, and this file does not read it in any rule.
+#
+# Omitting --strata writes the literal `unrecorded` rather than an empty field.
+# "Nobody wrote down which strata ran" and "only Stratum C ran" must not
+# serialize to the same bytes -- absence read as an answer is the failure this
+# field exists to remove, so absence is given a name instead of a blank.
+#
 # BOUNDS
 #   rounds 1-3   free
 #   rounds 4-7   each earned by a CONTINUE verdict carrying a located prediction
@@ -70,7 +83,8 @@
 #
 # Usage:
 #   round-budget.sh record-round   --run-id=ID --score=N --defect=yes|no \
-#                                  [--fingerprints=a,b] [--settles=CONFIRMED|REFUTED]
+#                                  [--fingerprints=a,b] [--settles=CONFIRMED|REFUTED] \
+#                                  [--strata=A,B,C|unrecorded]
 #   round-budget.sh record-verdict --run-id=ID --verdict=CONTINUE|STOP|STRUCTURAL \
 #                                  [--prediction=TEXT] [--directive=TEXT]
 #   round-budget.sh budget         --run-id=ID     # may another round run?
@@ -97,6 +111,10 @@ export LC_ALL=C
 FREE_ROUNDS=3
 HUMAN_CEILING=8
 PASS_SCORE=7
+# One producer for the "no panel was written down" token. It is written by the
+# recorder, accepted by the validator, and rendered by `show`; spelling it at
+# three sites is three places for them to disagree about what absence looks like.
+STRATA_UNRECORDED=unrecorded
 
 COMMAND="${1:-}"
 [ -n "$COMMAND" ] || { echo "round-budget: no command. Try --help" >&2; exit 2; }
@@ -116,6 +134,11 @@ esac
 
 RUN_ID=""; SCORE=""; DEFECT=""; FINGERPRINTS=""; SETTLES=""
 VERDICT=""; PREDICTION=""; DIRECTIVE=""; LEDGER_PATH=""; RESET_FORCE=0
+# STRATA_SET, not `-n "$STRATA"`. `--strata=` given with an empty value is a
+# MALFORMED claim and must fail closed; the flag omitted entirely is no claim at
+# all and records `unrecorded`. Keyed on the value alone the two are the same
+# state, which is the distinction this whole field exists to keep.
+STRATA=""; STRATA_SET=0
 
 for arg in "$@"; do
     case "$arg" in
@@ -124,6 +147,7 @@ for arg in "$@"; do
         --defect=*)       DEFECT="${arg#*=}" ;;
         --fingerprints=*) FINGERPRINTS="${arg#*=}" ;;
         --settles=*)      SETTLES="${arg#*=}" ;;
+        --strata=*)       STRATA="${arg#*=}"; STRATA_SET=1 ;;
         --verdict=*)      VERDICT="${arg#*=}" ;;
         --prediction=*)   PREDICTION="${arg#*=}" ;;
         --directive=*)    DIRECTIVE="${arg#*=}" ;;
@@ -146,6 +170,17 @@ done
 # meaning reads as a flag that had one.
 if [ "$RESET_FORCE" = "1" ] && [ "$COMMAND" != "reset" ]; then
     echo "round-budget: --force applies to 'reset' only, not '$COMMAND'." >&2
+    exit 2
+fi
+
+# Same reason, for the same class of mistake: `budget --strata=A,C` would
+# otherwise report success having recorded nothing, and "I recorded the panel"
+# vs "the panel went unrecorded" is exactly the pair this field must keep apart.
+# The older value flags (--score, --defect, --settles) are NOT scoped this way;
+# that is a pre-existing gap this does not close, not a convention being
+# followed.
+if [ "$STRATA_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then
+    echo "round-budget: --strata applies to 'record-round' only, not '$COMMAND'." >&2
     exit 2
 fi
 
@@ -235,6 +270,44 @@ prediction_is_valid() {
     printf '%s' "$pred" | grep -qE '[A-Za-z0-9_-]+\.[A-Za-z]+|/|:[0-9]+'
 }
 
+# The panel that produced a round's score. Same contract as the predicate above,
+# and for the same reason: one definition, called at write AND at read, because
+# a rule enforced only at the entry point is one a hand-edited row walks past.
+#
+# Accepted: a comma-separated set drawn from A, B, C -- or the literal
+# `unrecorded`, which is the ONLY way to say the panel is unknown. Rejected:
+# an empty value, an unknown letter, and a repeated one. `A,A` has the right
+# shape and names no set, and a description that cannot be read back as a panel
+# is garbage the ledger should refuse rather than store.
+strata_is_valid() {
+    local s="$1" n u
+    if [ "$s" = "$STRATA_UNRECORDED" ]; then return 0; fi
+    # Glob `case`, deliberately NOT `grep -qE`. grep matches LINE BY LINE, so
+    # a value carrying a newline is checked one line at a time, the line reading
+    # `A` would match, and the whole value would pass -- writing a RECORD
+    # SEPARATOR into the field and splitting the row in two, which is the
+    # injection `sanitize` exists to stop everywhere else. A glob matches the
+    # whole string, newline included. The arms, in order: empty; a character
+    # outside the alphabet (this is the one a newline hits); a leading, trailing
+    # or doubled comma.
+    # One arm per claim, on its own line, so each carries its own mutation
+    # proof. Fused into a single alternation they were one anchor, and a
+    # kill on any of them read as a kill on all three.
+    case "$s" in
+        '') return 1 ;;
+        *[!ABC,]*) return 1 ;;
+        ,*|*,|*,,*) return 1 ;;
+    esac
+    # `A,A` has the right shape and names no set. Fail closed rather than store
+    # a panel description that cannot be read back as one.
+    # printf '%s\n', not '%s': `wc -l` counts newlines, so an unterminated last
+    # field would be counted by neither side and every set would look
+    # duplicate-free.
+    n=$(printf '%s\n' "$s" | tr ',' '\n' | wc -l | tr -d ' ')
+    u=$(printf '%s\n' "$s" | tr ',' '\n' | sort -u | wc -l | tr -d ' ')
+    [ "$n" = "$u" ]
+}
+
 # mkdir is the portable atomic test-and-set. LOCK_DIR is global so the EXIT trap
 # can still resolve it; as a `local` the trap died under `set -u` and never
 # released.
@@ -273,8 +346,8 @@ field() { printf '%s' "$1" | cut -f"$2"; }
 # history, so none can be cleared by appending. Malformed input FAILS CLOSED: a
 # corrupt ledger must not read as "no reason to stop".
 #
-# ROUND   n score defect fingerprints settles     (6 fields)
-# VERDICT verdict prediction directive            (4 fields)
+# ROUND   n score defect fingerprints settles [strata]  (6 or 7 fields)
+# VERDICT verdict prediction directive                   (4 fields)
 analyze() {
     read_rows | awk -F'\t' '
         BEGIN { rounds=0; prev=-1; last=-1; regressed=0
@@ -282,7 +355,20 @@ analyze() {
                 terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0
                 badhistory="" }
         $1=="ROUND" {
-            if (NF != 6) { badrow=1 }
+            # 6 OR 7. Field 7 (strata) is optional ON READ: every ledger
+            # written before the field existed has six-field ROUND rows, and
+            # refusing those would fail closed on arcs that are perfectly
+            # valid -- a refusal that blocks real work is a regression, not
+            # caution. Its VALUE is checked in load_ledger, against the same
+            # predicate the recorder uses.
+            #
+            # The `!= 6` half is the honest statement of the shape and NOT an
+            # independently reachable check: any NF<6 row leaves $6 empty, and
+            # the settles arm below sets badrow on it first. The mutation that
+            # would have proved a floor here survives for that reason, and
+            # round-budget.mutation.sh records that rather than citing a kill
+            # the input never reaches.
+            if (NF != 6 && NF != 7) { badrow=1 }
             rounds++
             if ($3 !~ /^[0-9]+$/ || $3+0 > 10) { badscore=1 }
             else {
@@ -385,7 +471,7 @@ load_ledger() {
     # Every CONTINUE row must satisfy the rule the recorder applies. Rows carry a
     # "P:" prefix so an EMPTY prediction survives as a line rather than vanishing
     # — the emptiest vacuous continuation is the one that must not slip through.
-    local preds row vpred old_ifs
+    local preds row vpred old_ifs stratarows srow vstrata
     if ! preds=$(read_rows | awk -F'\t' '$1=="VERDICT" && $2=="CONTINUE" {print "P:" $3}'); then
         echo "STOP — could not read the CONTINUE rows of $LEDGER to validate them."
         exit 6
@@ -402,6 +488,37 @@ load_ledger() {
             echo "  not pass the recorder: '$vpred'"
             echo "  It names nowhere the next round could check, so it cannot be"
             echo "  settled, so it cannot have earned a round."
+            exit 6
+        fi
+    done
+    set +f
+    IFS=$old_ifs
+
+    # Field 7, against the SAME predicate the recorder applies -- the rule above
+    # is enforced at read for exactly this reason. Rows carry an "S:" prefix so
+    # an EMPTY field survives as a line rather than vanishing; a blank panel is
+    # the value that must not slip through, because a reader would take it for
+    # `unrecorded` while nothing wrote it.
+    #
+    # Only NF==7 rows are collected. A six-field row predates the field, carries
+    # no claim about the panel, and has nothing here to validate.
+    if ! stratarows=$(read_rows | awk -F'\t' '$1=="ROUND" && NF==7 {print "S:" $7}'); then
+        echo "STOP — could not read the ROUND rows of $LEDGER to validate them."
+        exit 6
+    fi
+    old_ifs=$IFS
+    IFS='
+'
+    set -f
+    for srow in $stratarows; do
+        vstrata=${srow#S:}
+        if ! strata_is_valid "$vstrata"; then
+            set +f; IFS=$old_ifs
+            echo "STOP — a ROUND row in $LEDGER records a panel that would not pass"
+            echo "  the recorder: '$vstrata'"
+            echo "  Strata are a set drawn from A, B, C, or the literal"
+            echo "  '$STRATA_UNRECORDED'. Anything else names no panel, and a panel"
+            echo "  that cannot be read back cannot be told apart from none."
             exit 6
         fi
     done
@@ -638,10 +755,27 @@ record-round)
             echo "round-budget: --settles given but no CONTINUE prediction is live" >&2; exit 2; }
     fi
 
+    # Which panel produced this score. Validated only when CLAIMED; omitted, it
+    # records `unrecorded` EXPLICITLY. Writing an empty field instead would put
+    # "nobody said" and "C alone" one indistinguishable blank apart, which is
+    # the read this field is here to prevent -- and `-` is already spoken for by
+    # `settles`, so absence would be spelled two ways in one row.
+    if [ "$STRATA_SET" = "1" ]; then
+        if ! strata_is_valid "$STRATA"; then
+            echo "round-budget: --strata must be a comma-separated set drawn from" >&2
+            echo "  A, B, C -- the strata that actually produced this score -- with no" >&2
+            echo "  repeats, or the literal '$STRATA_UNRECORDED'. Got: '$STRATA'" >&2
+            exit 2
+        fi
+        ROUND_STRATA="$STRATA"
+    else
+        ROUND_STRATA="$STRATA_UNRECORDED"
+    fi
+
     N=$(( LG_N + 1 ))
-    printf 'ROUND\t%s\t%s\t%s\t%s\t%s\n' \
-        "$N" "$SCORE" "$DEFECT" "$(sanitize "$FINGERPRINTS")" "${SETTLES:--}" >> "$LEDGER"
-    echo "round-budget: recorded round $N (score $SCORE, defect=$DEFECT, settles=${SETTLES:--}) -> $LEDGER"
+    printf 'ROUND\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$N" "$SCORE" "$DEFECT" "$(sanitize "$FINGERPRINTS")" "${SETTLES:--}" "$ROUND_STRATA" >> "$LEDGER"
+    echo "round-budget: recorded round $N (score $SCORE, defect=$DEFECT, settles=${SETTLES:--}, strata=$ROUND_STRATA) -> $LEDGER"
     ;;
 
 record-verdict)
@@ -782,8 +916,15 @@ show)
     if [ ! -f "$LEDGER" ]; then echo "round-budget: no ledger at $LEDGER"; exit 0; fi
     echo "  Ledger: $LEDGER"
     echo ""
-    awk -F'\t' '
-        $1=="ROUND"   { printf "  round %-3s score %-3s defect=%-4s settles=%-10s %s\n", $2,$3,$4,$6,$5 }
+    # `unrec` is passed in rather than spelled here: one producer for the token,
+    # or `show` and the recorder could disagree about what absence is called.
+    # Both shapes of absence -- a pre-strata six-field row, and a seven-field row
+    # whose field is blank -- render as that one token. `show` takes no gate, so
+    # it is the one surface that must name absence rather than print nothing and
+    # let the reader supply a meaning.
+    awk -F'\t' -v unrec="$STRATA_UNRECORDED" '
+        $1=="ROUND"   { printf "  round %-3s score %-3s defect=%-4s settles=%-10s strata=%-12s %s\n", \
+                               $2,$3,$4,$6,(NF>=7 && $7!="" ? $7 : unrec),$5 }
         $1=="VERDICT" { printf "  verdict %-11s %s%s\n", $2, $3, ($4!="" ? "  [directive: " $4 "]" : "") }
     ' "$LEDGER"
     ;;
