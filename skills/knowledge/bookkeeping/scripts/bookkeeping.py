@@ -3957,7 +3957,11 @@ def lint_all(verbose: bool = False) -> list[LintError]:
     """Run lint_entity_page on all entity pages and lint_format_discernment on research/."""
     all_errors: list[LintError] = []
     if ENTITIES_DIR.exists():
-        pages = list(ENTITIES_DIR.rglob("*.md"))
+        # Underscore-prefixed files are reference material that lives in the
+        # entity tree by design (_tags.md is the controlled tag vocabulary the
+        # tag lint reads). They carry no frontmatter and are not entity pages,
+        # so linting them as entities is a false positive, not a finding.
+        pages = [p for p in ENTITIES_DIR.rglob("*.md") if not p.name.startswith("_")]
         if verbose:
             print(f"[lint] Checking {len(pages)} entity pages...")
         for page in pages:
