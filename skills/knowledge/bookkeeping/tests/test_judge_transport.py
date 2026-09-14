@@ -808,19 +808,64 @@ def test_absent_model_still_defaults(tmp_path, monkeypatch):
 # The directive was to stop patching sites and make it impossible. These pin
 # the invariant itself, so a transport added later inherits it.
 
-def test_a_transport_returning_none_without_a_cause_gets_one(monkeypatch):
-    """The invariant, stated directly: no silent failure can reach the caller."""
+def test_an_unconfigured_transport_leaves_the_static_blockers_reachable(monkeypatch):
+    """
+    THE CORRECTED INVARIANT. An earlier version synthesized "returned no score
+    and recorded no cause (transport bug)" for a bare None — which is the
+    ORDINARY unconfigured case. That told an operator who had simply not
+    installed anything that the module was buggy, and it made the
+    static-blocker fallback in `score_item` unreachable by never leaving the
+    cause empty.
+
+    A failure must be DIAGNOSABLE, which is not the same as "carries a
+    non-empty string": an unconfigured transport must leave the cause empty so
+    the caller falls back to blockers that name the real problem.
+    """
     bk.reset_judge_run_state()
     monkeypatch.setattr(bk, "score_item_claude_cli", lambda *a, **k: None)
     monkeypatch.setattr(bk, "score_item_authored_agents", lambda *a, **k: None)
     monkeypatch.setattr(bk, "score_item_llm", lambda *a, **k: None)
-    out = bk.score_item_with_judge(_item(), [])
-    assert out is None
-    cause = bk._JUDGE_STATE["last_error"]
-    assert cause, "a total failure left NO cause — the hoisted invariant is broken"
-    # and it must name every transport tried, not just the last
-    for name, _attr in bk.JUDGE_TRANSPORTS:
-        assert name in cause, f"cause does not name {name}"
+    assert bk.score_item_with_judge(_item(), []) is None
+    assert bk._JUDGE_STATE["last_error"] == "", (
+        "a synthesized cause makes the static blockers unreachable"
+    )
+
+
+def test_the_static_blocker_fallback_is_not_dead_code(monkeypatch, capsys):
+    """The path the synthesized cause had made unreachable must actually run."""
+    bk.reset_judge_run_state()
+    bk.set_judge_enabled(True)
+    monkeypatch.setattr(bk, "score_item_heuristic",
+                        lambda item: bk.ScoredItem(item, 2, 2, 1, 5, True, [], "heuristic"))
+    monkeypatch.setattr(bk, "score_item_claude_cli", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_authored_agents", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_llm", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "judge_availability", lambda: {
+        "any_available": False,
+        "paths": [{"name": "claude_cli", "billing": "subscription-preferred",
+                   "available": False, "blockers": ["`claude` CLI not on PATH"]}],
+    })
+    bk.score_item(_item(), [])
+    err = capsys.readouterr().err
+    assert "not on PATH" in err, "the useful diagnosis never reached the operator"
+
+
+def test_a_recorded_runtime_cause_still_wins(monkeypatch, capsys):
+    """A real runtime cause must still be preferred over the static blockers."""
+    bk.reset_judge_run_state()
+    bk.set_judge_enabled(True)
+    monkeypatch.setattr(bk, "score_item_heuristic",
+                        lambda item: bk.ScoredItem(item, 2, 2, 1, 5, True, [], "heuristic"))
+
+    def _fail(item, slugs):
+        bk._JUDGE_STATE["last_error"] = "claude_cli/novelty: exit 1: credentials expired"
+        return None
+
+    monkeypatch.setattr(bk, "score_item_claude_cli", _fail)
+    monkeypatch.setattr(bk, "score_item_authored_agents", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_llm", lambda *a, **k: None)
+    bk.score_item(_item(), [])
+    assert "credentials expired" in capsys.readouterr().err
 
 
 def test_an_exception_in_one_transport_does_not_abort_the_chain(monkeypatch):
@@ -845,15 +890,6 @@ def test_an_exception_in_one_transport_does_not_abort_the_chain(monkeypatch):
     out = bk.score_item_with_judge(_item(), [])
     assert out is sentinel, "an exception aborted the fallback chain"
     assert reached == ["sdk", "gemini"]
-
-
-def test_the_transport_bug_marker_names_the_offender(monkeypatch):
-    """A transport that fails silently is itself reported as the bug."""
-    bk.reset_judge_run_state()
-    out = bk._run_transport("made_up", lambda i, s: None, _item(), [])
-    assert out is None
-    assert "made_up" in bk._JUDGE_STATE["last_error"]
-    assert "recorded no cause" in bk._JUDGE_STATE["last_error"]
 
 
 def test_cause_is_cleared_between_transports(monkeypatch):
@@ -979,3 +1015,92 @@ def test_sheet_slug_cap_matches_the_novelty_prompt():
     assert exported == in_prompt, (
         f"sheet exports {len(exported)} slugs, prompt carries {len(in_prompt)}"
     )
+
+
+# ── the OTHER half of the invariant: a score returned must be a VALID score ──
+
+def test_a_transport_cannot_promote_an_out_of_range_score(monkeypatch):
+    """
+    Gemini returning 9/9/9 gave total=27 and PROMOTED. That was fixed inside
+    the transport, in the round whose directive was "stop patching sites", so
+    a transport added later reopens it. Checked at the selector now.
+    """
+    bk.reset_judge_run_state()
+    bogus = bk.ScoredItem(_item(), 9, 9, 9, 27, True, [], "future_transport")
+    monkeypatch.setattr(bk, "score_item_claude_cli", lambda *a, **k: bogus)
+    monkeypatch.setattr(bk, "score_item_authored_agents", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_llm", lambda *a, **k: None)
+    assert bk.score_item_with_judge(_item(), []) is None
+    assert "invalid score" in bk._JUDGE_STATE["last_error"]
+
+
+@pytest.mark.parametrize("n,sp,r,total,promote,why", [
+    (9, 9, 9, 27, True, "dimensions out of range"),
+    (1, 1, 1, 9, True, "total disagrees with the sum"),
+    (1, 1, 1, 3, True, "promote disagrees with the threshold"),
+    (3, 3, 3, 9, False, "promote disagrees with the threshold"),
+    (-1, 1, 1, 1, False, "negative dimension"),
+])
+def test_invalid_scored_items_are_refused(n, sp, r, total, promote, why):
+    assert not bk._scored_item_is_sane(
+        bk.ScoredItem(_item(), n, sp, r, total, promote, [], "x")
+    ), why
+
+
+def test_valid_scored_items_are_accepted():
+    assert bk._scored_item_is_sane(bk.ScoredItem(_item(), 2, 2, 1, 5, True, [], "x"))
+    assert bk._scored_item_is_sane(bk.ScoredItem(_item(), 1, 1, 1, 3, False, [], "x"))
+
+
+# ── the cause must be REPORTED, not merely recorded ──────────────────────────
+
+def test_run_log_carries_the_cause_not_just_the_count():
+    """
+    A cron `run --judge` whose stderr goes nowhere left `judge_failures: 837`
+    and no way to know why; the stderr warning fires only on the FIRST
+    failure, so causes 2..N appeared nowhere at all.
+    """
+    import inspect
+    src = inspect.getsource(bk.run_pipeline)
+    assert '"judge_last_error"' in src, "the run log records a count with no cause"
+
+
+def test_judge_context_is_transport_aware():
+    """
+    A Gemini row used to claim the judge saw eight active projects and a
+    source URL that appear nowhere in the Gemini prompt.
+    """
+    item = _item()
+    gem = bk._judge_context("llm_judge", item, ["a", "b"])
+    cli = bk._judge_context("claude_cli", item, ["a", "b"])
+    assert gem["active_projects"] == [] and gem["existing_entity_slugs"] == []
+    assert cli["active_projects"] == bk.AUTHORED_RELEVANCE_PROJECTS
+    assert cli["existing_entity_slugs"] == ["a", "b"]
+
+
+def test_gemini_row_does_not_claim_unseen_context():
+    row = _row_for("llm_judge")
+    assert row["context_seen_by_judge"]["active_projects"] == []
+
+
+# ── F6: the project-list tests were a constant against itself ────────────────
+
+def test_the_relevance_project_list_is_non_empty_and_concrete():
+    """
+    Both project tests passed with AUTHORED_RELEVANCE_PROJECTS = [] — one
+    looped over an empty list, the other compared a constant to itself. An
+    emptied list tells the relevance scorer there are NO active projects,
+    pushing every relevance score toward 0 and flipping promotions, with the
+    suite fully green. Asserted against literals now.
+    """
+    projects = bk.AUTHORED_RELEVANCE_PROJECTS
+    assert len(projects) >= 5
+    for known in ("life-agent-os", "lago", "arcan"):
+        assert known in projects, f"{known} missing from the relevance project list"
+
+
+def test_relevance_prompt_actually_carries_a_known_project():
+    spec = _spec()
+    spec["name"] = "bookkeeping-relevance"
+    _system, user = bk._build_authored_scorer_prompt(spec, _item(), [])
+    assert "life-agent-os" in user, "the relevance scorer was sent no project list"

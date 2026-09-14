@@ -1705,10 +1705,16 @@ def _call_authored_scorer_cli(
         # a scorer sees while it grades untrusted text) at no cost to the
         # subscription.
         "--safe-mode",
-        # And settings files are where `apiKeyHelper` redirects auth without
-        # touching the environment — the specific hole that made the billing
-        # label unenforceable by denylist alone. Loading no setting sources
-        # removes it.
+        # Settings files are where `apiKeyHelper` can redirect auth without
+        # touching the environment. Loading no setting sources removes the
+        # user/project/local ones -- which is ALL `--setting-sources` accepts.
+        # It does NOT remove admin-managed policy settings: `--safe-mode`'s own
+        # help says verbatim "Admin-managed (policy) settings still apply", so
+        # a managed apiKeyHelper survives both flags. Round 3 under-claimed
+        # this ("no isolation flag exists"); saying these flags close it
+        # entirely would be over-claiming in the other direction, and the
+        # billing label stays "subscription-preferred" precisely because
+        # neither statement is the whole truth.
         "--setting-sources", "",
     ]
     try:
@@ -1982,6 +1988,22 @@ def reset_judge_run_state() -> None:
     _JUDGE_STATE["last_error"] = ""
 
 
+def _scored_item_is_sane(out: ScoredItem) -> bool:
+    """
+    Every dimension in 0..3, the total equal to their sum, and `promote`
+    consistent with the threshold.
+
+    A transport is free to compute a score however it likes; it is not free to
+    return one that the gate's own arithmetic disagrees with.
+    """
+    dims = (out.novelty, out.specificity, out.relevance)
+    if any(isinstance(d, bool) or not isinstance(d, int) or not (0 <= d <= 3) for d in dims):
+        return False
+    if out.total != sum(dims):
+        return False
+    return out.promote == (out.total >= PROMOTE_THRESHOLD)
+
+
 def _run_transport(name: str, fn, item: RawItem, existing_slugs: list[str]):
     """
     Call ONE judge transport and guarantee a cause on failure.
@@ -2008,17 +2030,41 @@ def _run_transport(name: str, fn, item: RawItem, existing_slugs: list[str]):
     _JUDGE_STATE["last_error"] = ""
     try:
         out = fn(item, existing_slugs)
+        if out is not None and not _scored_item_is_sane(out):
+            # The half that actually moves a promotion decision. Gemini
+            # returning {"novelty":9,...} produced total=27 and PROMOTED; that
+            # was fixed INSIDE the transport, in the round whose directive was
+            # "stop patching sites", so the next transport reopens it. Checked
+            # here, no transport can promote an out-of-range score.
+            _JUDGE_STATE["last_error"] = (
+                f"{name}: returned an invalid score "
+                f"(n={out.novelty} s={out.specificity} r={out.relevance} "
+                f"total={out.total} promote={out.promote})"
+            )
+            return None
     except Exception as exc:
         # An exception escaping a transport used to abort the whole chain, so
         # the remaining transports were never tried (`model: []` did exactly
         # this). Contained here, the chain continues and the cause survives.
         _JUDGE_STATE["last_error"] = f"{name}: {type(exc).__name__}: {str(exc)[:200]}"
         return None
-    if out is None and not _JUDGE_STATE["last_error"]:
-        _JUDGE_STATE["last_error"] = (
-            f"{name}: returned no score and recorded no cause "
-            f"(transport bug — every failure path must name itself)"
-        )
+    # NOTE (round 2 of the reshaped arc): there is deliberately NO synthesized
+    # cause here, and that is a SUBTRACTION of machinery this function used to
+    # carry. It turned a bare `None` into "returned no score and recorded no
+    # cause (transport bug)", which satisfied the invariant's letter and
+    # destroyed its purpose: the ORDINARY unconfigured case -- no `claude` on
+    # PATH, no API key, specs absent -- is a bare `None`, so an operator who
+    # simply had not installed anything was told three times that this module
+    # has a bug. Worse, it made the STATIC-BLOCKER fallback in `score_item`
+    # unreachable, because the joined cause was never empty. The genuinely
+    # useful diagnosis was deleted by making a useless one unconditional.
+    #
+    # So the invariant is stated as what it can actually deliver: a failure is
+    # ALWAYS diagnosable -- either a transport recorded a runtime cause, or
+    # `last_error` stays empty and the caller falls back to the static
+    # blockers, which is the right answer for a transport that was never
+    # configured. Machinery added to answer a reviewer became the next
+    # round's defect; the fix is to remove it, not to harden it.
     return out
 
 
@@ -4866,6 +4912,12 @@ def run_pipeline(
         # that fell back despite the judge being requested.
         "judge_enabled": judge_enabled(),
         "judge_failures": judge_failure_count(),
+        # The COUNT without the CAUSE is not a diagnosis. A cron `run --judge`
+        # whose stderr goes nowhere left `judge_failures: 837` and no way to
+        # know why -- and the stderr warning fires only on the FIRST failure,
+        # so even on a live terminal the cause of failures 2..N was never
+        # shown anywhere.
+        "judge_last_error": _JUDGE_STATE.get("last_error", ""),
         "duration_seconds": duration,
     }
 
@@ -7060,6 +7112,30 @@ def cmd_status(_args: argparse.Namespace) -> None:
     run_status()
 
 
+def _judge_context(scoring_method: str, item: RawItem, existing_slugs: list[str]) -> dict:
+    """
+    The non-content evidence the NAMED transport actually sends its model.
+
+    The authored transports (`claude_cli`, `authored_agents`) send slugs to the
+    novelty scorer and the project list to the relevance scorer. The legacy
+    Gemini prompt sends neither: it sends source_type and author. Reporting a
+    union no single call saw is what made the sheet lie.
+    """
+    if scoring_method == "llm_judge":
+        return {
+            "source_type": item.source_type,
+            "author": item.author or "unknown",
+            "existing_entity_slugs": [],
+            "active_projects": [],
+        }
+    return {
+        "source_type": item.source_type,
+        "source_url": (item.metadata or {}).get("source_url", "") or "",
+        "existing_entity_slugs": existing_slugs[:40],
+        "active_projects": AUTHORED_RELEVANCE_PROJECTS,
+    }
+
+
 def _calibration_row(
     item: RawItem, h: ScoredItem, j: ScoredItem, existing_slugs: list[str]
 ) -> dict:
@@ -7095,12 +7171,14 @@ def _calibration_row(
         "content_seen_by_judge": item.content[:chars],
         # Novelty is scored AGAINST the existing graph and relevance against
         # the active projects, so content alone is not the judge's evidence.
-        "context_seen_by_judge": {
-            "source_type": item.source_type,
-            "source_url": (item.metadata or {}).get("source_url", "") or "",
-            "existing_entity_slugs": existing_slugs[:40],
-            "active_projects": AUTHORED_RELEVANCE_PROJECTS,
-        },
+        # Transport-aware, like `content_seen_by_judge` above. It used to be
+        # the SAME dict for every transport, so a Gemini-scored row told the
+        # labeller the judge had seen eight active projects and a source URL
+        # that appear nowhere in the Gemini prompt -- the identical
+        # mis-measurement JUDGE_EVIDENCE_CHARS was built to remove, one field
+        # over. The labeller would score relevance against projects the judge
+        # never read and the divergence would be charged to the judge.
+        "context_seen_by_judge": _judge_context(j.scoring_method, item, existing_slugs),
     }
 
 
@@ -7177,7 +7255,9 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
     for idx, (item, h) in enumerate(band, 1):
         j = score_item_with_judge(item, existing_slugs)
         if j is None:
-            print(f"  [{idx}/{len(band)}] {item.item_id}: judge FAILED", file=sys.stderr)
+            cause = _JUDGE_STATE.get("last_error") or "no cause recorded"
+            print(f"  [{idx}/{len(band)}] {item.item_id}: judge FAILED — {cause}",
+                  file=sys.stderr)
             continue
         # The decision, not just the score, is what matters: two scores can
         # differ while landing on the same side of the promotion boundary.
@@ -7189,7 +7269,8 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
         )
 
     if not rows:
-        print("\nNo items were successfully judged.", file=sys.stderr)
+        cause = _JUDGE_STATE.get("last_error") or "no cause recorded"
+        print(f"\nNo items were successfully judged. Last cause: {cause}", file=sys.stderr)
         raise SystemExit(1)
 
     flips = sum(1 for r in rows if r["decision_flipped"])

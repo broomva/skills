@@ -107,18 +107,20 @@ Two-pass scoring against the Nous gate rubric (full spec in `references/scoring-
 
 | Order | Transport | Billing | Requirement |
 |---|---|---|---|
-| 1 | `claude -p` | **subscription-preferred** | `claude` on PATH |
+| 1 | `claude -p` | **subscription-preferred** | `claude` on PATH **+** all three scorer specs **+** PyYAML |
 | 2 | authored agents (Anthropic SDK) | API key | `anthropic` + `ANTHROPIC_API_KEY` |
 | 3 | Gemini (legacy) | API key | `google-generativeai` + `GEMINI_API_KEY` |
 
 **"subscription-preferred", not "subscription"** — and the distinction is
 deliberate, because an earlier version of this table asserted a guarantee the
 code had explicitly withdrawn. What the transport *enforces* is: the
-API-billing environment variables it knows of are stripped, settings files are
-not loaded (`--setting-sources ""`, which is where `apiKeyHelper` would
+API-billing environment variables it knows of are stripped, user/project/local
+settings are not loaded (`--setting-sources ""`, where `apiKeyHelper` would
 redirect auth), and customizations are disabled (`--safe-mode`). What it does
-**not** do is probe the effective auth source at runtime, so it reports a
-preference, not a proof. `ANTHROPIC_API_KEY` is not the recommended carrier:
+**not** do is probe the effective auth source at runtime — and note that
+`--safe-mode`'s own help states "Admin-managed (policy) settings still apply",
+so a managed `apiKeyHelper` survives both flags. It reports a preference, not
+a proof, and that is why the label is hedged rather than hardened. `ANTHROPIC_API_KEY` is not the recommended carrier:
 setting it routes to API billing.
 
 The scorer is also isolated from ambient context — `--safe-mode` (no CLAUDE.md,
@@ -156,8 +158,12 @@ other** — it does not say which is right. `--labels` emits the sheet a human
 settles that with; label without reading the machine scores first, or the label
 is anchored rather than independent.
 
-Cost note: roughly 2 minutes per item (three dimension calls). Fine for
-sampling and for high-stakes runs; too slow for the always-on ingest loop.
+Cost note: **highly variable** — single dimension calls measured between 5.5s
+and 31.6s on the same machine, so an item (three calls) has ranged from ~16s to
+~95s, and a 6-item `judge-check --sample` took 11m41s wall. Treat it as
+seconds-to-minutes per item rather than a fixed figure, and re-measure before
+relying on it. That spread is already enough to rule the judge out of the
+always-on ingest loop; it is not precise enough to budget with.
 
 Scoring output is written to the raw extract file as a YAML front-matter annotation per item.
 
