@@ -1774,6 +1774,7 @@ def score_item_claude_cli(
             # cause instead of re-deriving static blockers that will all
             # look satisfied.
             _JUDGE_STATE["last_error"] = f"claude_cli/{dim}: {err}"
+            _record_judge_cause(_JUDGE_STATE["last_error"])
             return None
         results[dim] = out["score"]
         reasoning[f"{dim}_reasoning"] = out.get("reasoning", "")
@@ -1825,9 +1826,15 @@ def verify_judge_transport(timeout: int = CLAUDE_CLI_TIMEOUT) -> tuple[bool, str
     if scored is None:
         cause = _JUDGE_STATE.get("last_error") or "no transport produced a score"
         return False, cause
+    # The authored transports make one call PER DIMENSION; the legacy Gemini
+    # path scores all three in a single call. Saying "across all three
+    # dimension calls" for Gemini would be false on the one surface the docs
+    # call the proof that the judge works.
+    shape = ("one call per dimension" if scored.scoring_method != "llm_judge"
+             else "a single combined call")
     return True, (
         f"round-trip OK via {scored.scoring_method} "
-        f"(probe scored {scored.total}/9 across all three dimensions)"
+        f"(probe scored {scored.total}/9, {shape})"
     )
 
 
@@ -1841,29 +1848,28 @@ def judge_availability() -> dict:
     token or an unparseable spec. Use `verify_judge_transport()` for the
     round trip.
 
-    KNOWN GAP (BRO-2506, open — not fixed here). `specs_present` tests
-    `.exists()`, but `_load_agent_spec` also returns None for a file that
-    EXISTS and is unparseable: bad frontmatter, a non-str `model`, an empty
-    body, a YAML error. In that state this reports the CLI transport as
-    available with NO blockers, while `score_item_claude_cli` returns a
-    causeless None — so the operator is told to install an SDK and set a key
-    for two transports they never intended to use, and the transport that
-    actually failed is not named. The fix belongs HERE, at the availability
-    boundary: call `_load_agent_spec` rather than `.exists()`, so
-    "present but unparseable" becomes a blocker instead of a silent runtime
-    failure. It is left open deliberately — the review ledger STOPped on a
-    score regression, and taking another swing mid-stop is the pattern that
-    produced this backlog. The two are kept distinct on purpose — collapsing them would
+CLOSED (was a known gap): `specs_present` now PARSES each spec
+    rather than stat'ing it, so a file that exists but does not load is a
+    blocker here instead of a causeless None at scoring time. The two are kept distinct on purpose — collapsing them would
     recreate, one level up, the exact confusion this module exists to fix.
 
     Callers assert on this POSITIVELY rather than inferring health from the
     absence of a warning, because absence was indistinguishable from health
     for 7,765 runs.
     """
-    specs_present = all(
-        (AUTHORED_AGENTS_DIR / f"bookkeeping-{d}.md").exists()
-        for d in ("novelty", "specificity", "relevance")
-    )
+    # PARSED, not stat'd. `.exists()` reported a corrupt spec as available:
+    # `_load_agent_spec` also returns None for a file that EXISTS and is
+    # unparseable (bad frontmatter, non-str `model`, empty body, YAML error),
+    # so the CLI transport advertised itself with no blockers and then
+    # returned a causeless None -- misdirecting the operator to two transports
+    # they never intended to use. Validating at the availability boundary is
+    # what makes "present but unparseable" a blocker instead of a silent
+    # runtime failure.
+    _bad_specs = [
+        d for d in ("novelty", "specificity", "relevance")
+        if _load_agent_spec(f"bookkeeping-{d}") is None
+    ]
+    specs_present = not _bad_specs
     cli = _claude_cli_path()
     paths = [
         {
@@ -1876,7 +1882,9 @@ def judge_availability() -> dict:
             "blockers": [
                 b for b in [
                     None if cli else "`claude` CLI not on PATH",
-                    None if specs_present else f"scorer specs missing in {AUTHORED_AGENTS_DIR}",
+                    None if specs_present else
+                    f"scorer spec(s) missing or unparseable in {AUTHORED_AGENTS_DIR}: "
+                    f"{', '.join(_bad_specs)}",
                     None if _YAML_AVAILABLE else "PyYAML not installed (specs unparseable)",
                 ] if b
             ],
@@ -1894,7 +1902,9 @@ def judge_availability() -> dict:
                 b for b in [
                     None if _ANTHROPIC_AVAILABLE else "`anthropic` SDK not installed",
                     None if os.environ.get("ANTHROPIC_API_KEY", "") else "ANTHROPIC_API_KEY unset",
-                    None if specs_present else f"scorer specs missing in {AUTHORED_AGENTS_DIR}",
+                    None if specs_present else
+                    f"scorer spec(s) missing or unparseable in {AUTHORED_AGENTS_DIR}: "
+                    f"{', '.join(_bad_specs)}",
                     None if _YAML_AVAILABLE else "PyYAML not installed (specs unparseable)",
                 ] if b
             ],
@@ -1993,13 +2003,41 @@ def score_item_authored_agents(
 # called at pipeline entry, because a counter that survives across runs in
 # one process makes the second run inherit the first's failures and keeps
 # the first-failure-only warning suppressed.
-_JUDGE_STATE = {"enabled": False, "failures": 0, "last_error": ""}
+# `last_error` is PER-CALL (cleared before every transport call, so a stale
+# cause is never reported for the current item). `causes` is PER-RUN and is
+# NOT cleared per call -- that distinction is the whole point:
+#
+# A single `judge_last_error` field was tried and removed because it was empty
+# in exactly the cases it was added for. Any later success wiped it, so it
+# carried a cause only when the run's FINAL in-band item failed. Distinct
+# causes are accumulated here instead, deduplicated and capped, so a run whose
+# stderr goes nowhere still leaves its reasons in the log.
+_JUDGE_STATE = {"enabled": False, "failures": 0, "last_error": "", "causes": []}
+
+# Enough to see the pattern, bounded so one pathological run cannot bloat the
+# append-only log.
+JUDGE_CAUSE_LOG_CAP = 20
+
+
+def _record_judge_cause(cause: str) -> None:
+    """Accumulate a distinct failure cause for the whole run."""
+    if not cause:
+        return
+    causes = _JUDGE_STATE["causes"]
+    if cause not in causes and len(causes) < JUDGE_CAUSE_LOG_CAP:
+        causes.append(cause)
+
+
+def judge_causes() -> list:
+    """Distinct judge-failure causes seen this run, in first-seen order."""
+    return list(_JUDGE_STATE["causes"])
 
 
 def reset_judge_run_state() -> None:
     """Clear run-local judge accounting. Called at pipeline entry."""
     _JUDGE_STATE["failures"] = 0
     _JUDGE_STATE["last_error"] = ""
+    _JUDGE_STATE["causes"] = []
 
 
 def _scored_item_is_sane(out: ScoredItem) -> bool:
@@ -2060,12 +2098,26 @@ def _run_transport(name: str, fn, item: RawItem, existing_slugs: list[str]):
                 f"(n={out.novelty} s={out.specificity} r={out.relevance} "
                 f"total={out.total} promote={out.promote})"
             )
+            _record_judge_cause(_JUDGE_STATE["last_error"])
+            return None
+        if out is not None and out.scoring_method != name:
+            # `scoring_method` keys JUDGE_EVIDENCE_CHARS and dispatches
+            # `_judge_context`, so a transport mislabelling itself makes the
+            # calibration sheet claim the judge saw evidence it never saw --
+            # the defect the evidence table exists to remove. The selector
+            # knows the truth (`name`) and now compares it.
+            _JUDGE_STATE["last_error"] = (
+                f"{name}: returned scoring_method={out.scoring_method!r}, "
+                f"which is not the transport that produced it"
+            )
+            _record_judge_cause(_JUDGE_STATE["last_error"])
             return None
     except Exception as exc:
         # An exception escaping a transport used to abort the whole chain, so
         # the remaining transports were never tried (`model: []` did exactly
         # this). Contained here, the chain continues and the cause survives.
         _JUDGE_STATE["last_error"] = f"{name}: {type(exc).__name__}: {str(exc)[:200]}"
+        _record_judge_cause(_JUDGE_STATE["last_error"])
         return None
     # NOTE (round 2 of the reshaped arc): there is deliberately NO synthesized
     # cause here, and that is a SUBTRACTION of machinery this function used to
@@ -2124,6 +2176,8 @@ def score_item_with_judge(
             return out
         causes.append(_JUDGE_STATE["last_error"])
     _JUDGE_STATE["last_error"] = " | ".join(c for c in causes if c)
+    for c in causes:
+        _record_judge_cause(c)
     return None
 
 
@@ -4931,7 +4985,10 @@ def run_pipeline(
         # that fell back despite the judge being requested.
         "judge_enabled": judge_enabled(),
         "judge_failures": judge_failure_count(),
-        # NOTE: there is deliberately no `judge_last_error` field. One was
+        # Distinct causes for the WHOLE run, not a single field. The earlier
+        # single-field attempt is described below and is why this is a list.
+        "judge_causes": judge_causes(),
+        # NOTE: there is deliberately no single `judge_last_error` field. One was
         # added to carry the cause into the log and then REMOVED, because it
         # was empty in both scenarios its own commit message cited:
         # `_run_transport` clears `last_error` before every call, so any later
@@ -7285,7 +7342,11 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
         print("\nNo ambiguous-band items found in the available sources.")
         return
 
-    print(f"\nShadow-scoring {len(band)} in-band items (3 model calls each)...\n")
+    print(f"\nShadow-scoring {len(band)} in-band items...\n")
+    print("  NOTE: this is a HEAD sample, not a random one — the first in-band")
+    print("  items of the earliest source file, so typically one source and one")
+    print("  day. Treat the disagreement rate as indicative, not as an estimate")
+    print("  of the corpus.\n")
     rows = []
     for idx, (item, h) in enumerate(band, 1):
         j = score_item_with_judge(item, existing_slugs)

@@ -108,7 +108,7 @@ Two-pass scoring against the Nous gate rubric (full spec in `references/scoring-
 | Order | Transport | Billing | Requirement |
 |---|---|---|---|
 | 1 | `claude -p` | **subscription-preferred** | `claude` on PATH **+** all three scorer specs **+** PyYAML |
-| 2 | authored agents (Anthropic SDK) | API key | `anthropic` + `ANTHROPIC_API_KEY` |
+| 2 | authored agents (Anthropic SDK) | API key | `anthropic` + `ANTHROPIC_API_KEY` **+** all three scorer specs **+** PyYAML |
 | 3 | Gemini (legacy) | API key | `google-generativeai` + `GEMINI_API_KEY` |
 
 **"subscription-preferred", not "subscription"** — and the distinction is
@@ -153,17 +153,24 @@ instruction not to look at an anchor printed in the same row is prose standing
 in for a control.
 
 `--sample` reports exact agreement, decision flips (items that cross the
-promote boundary), and mean delta. It measures the two scorers against **each
+promote boundary), and mean delta. It is a **head sample** — the first in-band
+items of the earliest source file, so typically one source and one day, not a
+random draw from the corpus. It measures the two scorers against **each
 other** — it does not say which is right. `--labels` emits the sheet a human
 settles that with; label without reading the machine scores first, or the label
 is anchored rather than independent.
 
-Cost note: **highly variable** — single dimension calls measured between 5.5s
-and 31.6s on the same machine, so an item (three calls) has ranged from ~16s to
-~95s, and a 6-item `judge-check --sample` took 11m41s wall. Treat it as
-seconds-to-minutes per item rather than a fixed figure, and re-measure before
-relying on it. That spread is already enough to rule the judge out of the
-always-on ingest loop; it is not precise enough to budget with.
+Cost note: **highly variable, and the two figures below do not divide into each
+other** — say so rather than pick one. Single dimension calls were measured at
+5.5s and at 31.6s on the same machine, which puts an authored-transport item
+(three calls) somewhere between ~16s and ~95s. Separately, a 6-item
+`judge-check --sample` took 11m41s wall = 117s/item, *above* that range. The
+difference is not accounted for: sampling also ingests and heuristically scores
+every discovered extract before it judges anything, and per-call latency varied
+by ~6x across the runs. Until someone instruments the two phases separately,
+treat this as seconds-to-minutes per item, re-measure before relying on it, and
+do not budget with either number. The spread alone is enough to rule the judge
+out of the always-on ingest loop.
 
 Scoring output is written to the raw extract file as a YAML front-matter annotation per item.
 

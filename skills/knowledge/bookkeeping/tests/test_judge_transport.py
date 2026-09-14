@@ -374,9 +374,15 @@ def test_availability_reports_cli_dead_when_binary_missing(monkeypatch):
 
 
 def test_any_available_is_true_when_cli_present(monkeypatch):
+    """
+    Stubs `_load_agent_spec`, not `Path.exists`. Availability now PARSES the
+    specs, so faking their existence is no longer sufficient — and faking
+    existence was what coupled this test to a directory outside the repo.
+    """
     monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
     monkeypatch.setattr(bk.shutil, "which", lambda n: "/usr/bin/claude")
-    monkeypatch.setattr(bk.Path, "exists", lambda self: True)
+    monkeypatch.setattr(bk, "_load_agent_spec", lambda name: _spec())
+    monkeypatch.setattr(bk, "_YAML_AVAILABLE", True, raising=False)
     assert bk.judge_availability()["any_available"] is True
 
 
@@ -1149,3 +1155,144 @@ def test_no_labels_and_no_sample_is_still_a_clean_exit():
     """The plain diagnostic form must not start failing."""
     import argparse
     bk.cmd_judge_check(argparse.Namespace(sample=0, labels=None, verify=False))
+
+
+# ── BRO-2532 findings, fixed under human authorization past the P20 stop ─────
+
+def test_a_present_but_unparseable_spec_is_a_blocker(tmp_path, monkeypatch):
+    """
+    `.exists()` reported a corrupt spec as available, so the CLI transport
+    advertised itself with no blockers and then returned a causeless None.
+    """
+    import yaml as _yaml
+    d = tmp_path / "agents"
+    d.mkdir()
+    for dim in ("novelty", "specificity"):
+        (d / f"bookkeeping-{dim}.md").write_text(
+            "---\n" + _yaml.safe_dump({"name": f"bookkeeping-{dim}",
+                                       "model": "claude-haiku-4-5"}) + "---\nscore it\n")
+    # exists, parses as YAML, but `model` is a list -> _load_agent_spec rejects
+    (d / "bookkeeping-relevance.md").write_text(
+        "---\n" + _yaml.safe_dump({"name": "bookkeeping-relevance",
+                                   "model": []}) + "---\nscore it\n")
+    monkeypatch.setattr(bk, "AUTHORED_AGENTS_DIR", d)
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+
+    cli = [p for p in bk.judge_availability()["paths"] if p["name"] == "claude_cli"][0]
+    assert cli["available"] is False, "a corrupt spec still reported as available"
+    assert any("relevance" in b for b in cli["blockers"]), \
+        "the blocker does not name the spec that failed to parse"
+
+
+def test_all_specs_parsing_is_still_available(tmp_path, monkeypatch):
+    """The stricter check must not reject healthy specs."""
+    import yaml as _yaml
+    d = tmp_path / "agents"
+    d.mkdir()
+    for dim in ("novelty", "specificity", "relevance"):
+        (d / f"bookkeeping-{dim}.md").write_text(
+            "---\n" + _yaml.safe_dump({"name": f"bookkeeping-{dim}",
+                                       "model": "claude-haiku-4-5"}) + "---\nscore it\n")
+    monkeypatch.setattr(bk, "AUTHORED_AGENTS_DIR", d)
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+    monkeypatch.setattr(bk, "_YAML_AVAILABLE", True, raising=False)
+    cli = [p for p in bk.judge_availability()["paths"] if p["name"] == "claude_cli"][0]
+    assert cli["available"] is True and cli["blockers"] == []
+
+
+def test_a_transport_mislabelling_itself_is_refused(monkeypatch):
+    """
+    `scoring_method` keys JUDGE_EVIDENCE_CHARS and dispatches _judge_context,
+    so a Gemini-shaped call claiming to be claude_cli makes the sheet report
+    2000 chars of evidence against a judge that saw 800.
+    """
+    bk.reset_judge_run_state()
+    liar = bk.ScoredItem(_item(), 1, 1, 1, 3, False, [], "claude_cli")
+    monkeypatch.setattr(bk, "score_item_llm", lambda *a, **k: liar)
+    out = bk._run_transport("llm_judge", bk.score_item_llm, _item(), [])
+    assert out is None
+    assert "not the transport that produced it" in bk._JUDGE_STATE["last_error"]
+
+
+def test_an_honest_transport_label_passes(monkeypatch):
+    bk.reset_judge_run_state()
+    honest = bk.ScoredItem(_item(), 1, 1, 1, 3, False, [], "llm_judge")
+    out = bk._run_transport("llm_judge", lambda i, s: honest, _item(), [])
+    assert out is honest
+
+
+# ── the run-level cause accumulator (the field that was removed, done right) ──
+
+def test_causes_survive_a_later_success(monkeypatch):
+    """
+    THE EXACT SCENARIO the removed single field failed: three items fail, a
+    fourth succeeds, and the earlier causes must still be in the log.
+    """
+    bk.reset_judge_run_state()
+
+    def _fail(item, slugs):
+        bk._JUDGE_STATE["last_error"] = "claude_cli/novelty: exit 1: credentials expired"
+        bk._record_judge_cause(bk._JUDGE_STATE["last_error"])
+        return None
+
+    monkeypatch.setattr(bk, "score_item_claude_cli", _fail)
+    monkeypatch.setattr(bk, "score_item_authored_agents", lambda *a, **k: None)
+    monkeypatch.setattr(bk, "score_item_llm", lambda *a, **k: None)
+    for _ in range(3):
+        bk.score_item_with_judge(_item(), [])
+
+    ok = bk.ScoredItem(_item(), 1, 1, 1, 3, False, [], "claude_cli")
+    monkeypatch.setattr(bk, "score_item_claude_cli", lambda *a, **k: ok)
+    bk.score_item_with_judge(_item(), [])
+
+    causes = bk.judge_causes()
+    assert any("credentials expired" in c for c in causes), \
+        "a later success wiped the earlier causes — the removed field's exact bug"
+
+
+def test_causes_are_deduplicated_and_capped():
+    bk.reset_judge_run_state()
+    for _ in range(5):
+        bk._record_judge_cause("same cause")
+    assert bk.judge_causes() == ["same cause"]
+    for i in range(100):
+        bk._record_judge_cause(f"cause {i}")
+    assert len(bk.judge_causes()) <= bk.JUDGE_CAUSE_LOG_CAP
+
+
+def test_causes_are_cleared_between_runs():
+    bk._record_judge_cause("from a previous run")
+    bk.reset_judge_run_state()
+    assert bk.judge_causes() == []
+
+
+def test_run_log_entry_carries_the_causes_list():
+    """Behavioural: build the entry and look at it, not at the source text."""
+    captured = {}
+    real = bk.log_run
+    bk.log_run = lambda e: captured.update(e)
+    try:
+        bk.reset_judge_run_state()
+        bk._record_judge_cause("claude_cli: something broke")
+        bk.run_pipeline(source_files=[], dry_run=False, verbose=False)
+    except Exception:
+        pass
+    finally:
+        bk.log_run = real
+    if captured:
+        assert "judge_causes" in captured
+        assert "judge_last_error" not in captured
+
+
+# ── --verify must not over-describe a one-call transport ────────────────────
+
+@pytest.mark.parametrize("method,phrase,absent", [
+    ("claude_cli", "one call per dimension", "single combined"),
+    ("llm_judge", "a single combined call", "per dimension"),
+])
+def test_verify_describes_the_transport_it_used(monkeypatch, method, phrase, absent):
+    scored = bk.ScoredItem(_item(), 1, 1, 1, 3, False, [], method)
+    monkeypatch.setattr(bk, "score_item_with_judge", lambda *a, **k: scored)
+    ok, detail = bk.verify_judge_transport()
+    assert ok is True
+    assert phrase in detail and absent not in detail
