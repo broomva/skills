@@ -1354,3 +1354,58 @@ def test_verify_describes_the_transport_it_used(monkeypatch, method, phrase, abs
     ok, detail = bk.verify_judge_transport()
     assert ok is True
     assert phrase in detail and absent not in detail
+
+
+def test_absent_pyyaml_does_not_accuse_healthy_spec_files(tmp_path, monkeypatch):
+    """
+    With PyYAML absent, `_load_agent_spec` returns None BEFORE touching disk.
+    Attributing that to the spec files told an operator whose three specs are
+    perfectly healthy that all three were missing or unparseable.
+
+    Found by a mutation that SURVIVED: reverting the `_YAML_AVAILABLE` branch
+    left the whole suite green, so the fix shipped unguarded.
+    """
+    d = tmp_path / "agents"
+    d.mkdir()
+    for dim in ("novelty", "specificity", "relevance"):
+        (d / f"bookkeeping-{dim}.md").write_text("---\nname: x\n---\nbody\n")
+    monkeypatch.setattr(bk, "AUTHORED_AGENTS_DIR", d)
+    monkeypatch.setattr(bk, "_YAML_AVAILABLE", False, raising=False)
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+
+    cli = [p for p in bk.judge_availability()["paths"] if p["name"] == "claude_cli"][0]
+    blockers = " ".join(cli["blockers"])
+    assert "PyYAML" in blockers, "the real cause is not reported"
+    assert "missing or unparseable" not in blockers, (
+        "three healthy spec files were accused because PyYAML is absent"
+    )
+
+
+def test_absent_pyyaml_still_reports_genuinely_missing_specs(tmp_path, monkeypatch):
+    """The lenient branch must not stop reporting files that really are absent."""
+    d = tmp_path / "agents"
+    d.mkdir()  # no spec files at all
+    monkeypatch.setattr(bk, "AUTHORED_AGENTS_DIR", d)
+    monkeypatch.setattr(bk, "_YAML_AVAILABLE", False, raising=False)
+    monkeypatch.setattr(bk, "_claude_cli_path", lambda: "/usr/bin/claude")
+    cli = [p for p in bk.judge_availability()["paths"] if p["name"] == "claude_cli"][0]
+    assert any("missing or unparseable" in b for b in cli["blockers"])
+
+
+def test_every_test_is_isolated_from_the_live_knowledge_graph():
+    """
+    Proves the CONFTEST FIXTURE is active, not this test's own setup.
+
+    The version this replaces applied its own monkeypatches and then asserted
+    on them — tautological, and it let the real mutation (deleting another
+    test's patch) survive. This takes NO setup: if the autouse fixture in
+    conftest is removed or broken, the module attributes point at the
+    operator's real graph and this fails.
+    """
+    real_root = pathlib.Path("/Users/broomva/broomva").resolve()
+    for attr in ("BROOMVA_ROOT", "ENTITIES_DIR", "NOTES_DIR"):
+        resolved = pathlib.Path(getattr(bk, attr)).resolve()
+        assert resolved != real_root and real_root not in resolved.parents, (
+            f"bk.{attr} = {resolved} points into the live knowledge graph — "
+            "the conftest isolation fixture is not active"
+        )
