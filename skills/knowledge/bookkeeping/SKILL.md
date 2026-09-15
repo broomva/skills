@@ -89,9 +89,96 @@ Two-pass scoring against the Nous gate rubric (full spec in `references/scoring-
 - Score ≤ 2 → discard immediately (clearly low-signal)
 - Score ≥ 7 → promote immediately (clearly high-signal)
 
-**LLM-as-judge** for ambiguous band (score 3–6):
+**LLM-as-judge** for ambiguous band (score 3–6) — **opt-in, off by default**:
 - Pass item + existing entity graph context to judge (see LLM Judge Spec below)
 - Output: per-item score tuple `(novelty, specificity, relevance)` + total + promote flag + candidate entity slugs
+- Enable with `run --judge` or `BOOKKEEPING_JUDGE=1`. With the flag unset the
+  heuristic score stands for in-band items.
+
+> **The judge had never run once before BRO-2506.** Both original transports
+> require a paid API credential absent from this workspace, so `scoring_breakdown`
+> recorded 1,051,042 heuristic / 0 llm_judge across 7,765 runs. Since ~54% of
+> intake lands in the 3–6 band, the heuristic decided nearly the whole corpus
+> while the docs described a two-pass gate. Enabling the judge by default now
+> would re-gate most of a million items in one step, which the L3 stability
+> budget in CLAUDE.md forbids — hence opt-in, and hence `judge-check` below.
+
+**Transports**, tried in this order (by billing, not by age):
+
+| Order | Transport | Billing | Requirement |
+|---|---|---|---|
+| 1 | `claude -p` | **subscription-preferred** | `claude` on PATH **+** all three scorer specs **+** PyYAML |
+| 2 | authored agents (Anthropic SDK) | API key | `anthropic` + `ANTHROPIC_API_KEY` **+** all three scorer specs **+** PyYAML |
+| 3 | Gemini (legacy) | API key | `google-generativeai` + `GEMINI_API_KEY` |
+
+**"subscription-preferred", not "subscription"** — and the distinction is
+deliberate, because an earlier version of this table asserted a guarantee the
+code had explicitly withdrawn. What the transport *enforces* is: the
+API-billing environment variables it knows of are stripped, user/project/local
+settings are not loaded (`--setting-sources ""`, where `apiKeyHelper` would
+redirect auth), and customizations are disabled (`--safe-mode`). What it does
+**not** do is probe the effective auth source at runtime — and note that
+`--safe-mode`'s own help states "Admin-managed (policy) settings still apply",
+so a managed `apiKeyHelper` survives both flags. It reports a preference, not
+a proof, and that is why the label is hedged rather than hardened. `ANTHROPIC_API_KEY` is not the recommended carrier:
+setting it routes to API billing.
+
+The scorer is also isolated from ambient context — `--safe-mode` (no CLAUDE.md,
+skills, plugins, hooks, MCP servers), `--tools ""`, `--strict-mcp-config`. A
+scorer grading untrusted text must not be reachable by a hook that edits what
+it sees, and must not be able to read files or run commands on the strength of
+that text.
+
+When the judge is requested and every transport fails, the fallback is announced
+on stderr unconditionally and counted in the run log (`judge_failures`). It is
+never a silent default — silence is what hid the dead judge.
+
+**Inspect and calibrate — `judge-check`:**
+
+```bash
+bookkeeping judge-check                    # which transports are CONFIGURED + blocker for each that is not
+bookkeeping judge-check --verify           # actually round-trip the transport with a probe item
+bookkeeping judge-check --sample 20        # shadow-score 20 in-band items: heuristic vs judge
+bookkeeping judge-check --sample 20 --labels sheet.json   # + blinded labeling sheet (+ sheet.key.json)
+```
+
+`CONFIGURED` means prerequisites are present — a binary on PATH, a spec file, a
+credential. It does **not** mean judging works; an expired token satisfies every
+static check. `--verify` is the round trip, and it is the only output that
+proves the judge functions.
+
+`--labels` writes TWO files: a blinded sheet with no machine scores, and a
+`.key.json` holding them. Label the sheet fully before opening the key — an
+instruction not to look at an anchor printed in the same row is prose standing
+in for a control.
+
+`--sample` reports exact agreement, decision flips (items that cross the
+promote boundary), and mean delta. It is a **head sample** — the first in-band
+items of the earliest source file, so typically one source and one day, not a
+random draw from the corpus. It measures the two scorers against **each
+other** — it does not say which is right. `--labels` emits the sheet a human
+settles that with; label without reading the machine scores first, or the label
+is anchored rather than independent.
+
+Cost note: **highly variable, and the two figures below do not divide into each
+other** — say so rather than pick one. Single dimension calls were measured at
+5.5s and at 31.6s on the same machine, which puts an authored-transport item
+(three calls) somewhere between ~16s and ~95s. Separately, a 6-item
+`judge-check --sample` took 11m41s wall = 117s/item, *above* that range.
+
+Per-call latency alone accounts for most of the gap, and the arithmetic is the
+whole explanation: 6 items x 3 dimension calls = 18 calls, which at the 31.6s
+end is 569s — 81% of the 701s observed. Ingest is **not** the explanation. An
+earlier version of this note asserted that sampling "ingests and heuristically
+scores every discovered extract before it judges anything"; that is false
+(`cmd_judge_check` stops at the first files that fill the band) and full ingest
+was measured at 3.67s for the entire corpus regardless. It was a mechanism
+invented to explain a number instead of dividing it.
+
+So the figure to distrust is the 5.5s call, not the 117s item. Treat this as
+tens of seconds to ~2 minutes per item, dominated by per-call latency, and
+re-measure before relying on it. The spread alone rules the judge out of the
+always-on ingest loop.
 
 Scoring output is written to the raw extract file as a YAML front-matter annotation per item.
 
