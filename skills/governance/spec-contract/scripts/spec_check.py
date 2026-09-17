@@ -245,9 +245,8 @@ MIN_TRADEOFF_HITS = 2
 # Characters of prose an alternative must carry beyond its own name.
 MIN_JUSTIFICATION = 12
 
-# A heading answers at most this many questions, one per conjunction-separated
-# segment of its title.
-MAX_CLASSES_PER_HEADING = 2
+# A heading answers one question per conjunction-separated segment of its title;
+# the bound is len(segments), not a constant.
 
 WORDS_PER_PAGE = 500
 MAX_PAGES = 20
@@ -362,6 +361,23 @@ def fold_quotes(s: str) -> str:
 FRONT_MATTER_COMMENT = re.compile(r"(?s)\A\s*(?:<!DOCTYPE[^>]*>\s*)?<!--(.*?)-->")
 
 
+def strip_comments(raw: str) -> str:
+    """Remove HTML comments, terminated or not.
+
+    `(?s)<!--.*?-->` alone requires a terminator, and HTML5 does not: an
+    unterminated `<!--` comments out the rest of the document, which a browser
+    honours and which therefore hid every remaining section from a reader while
+    leaving them visible to the checker.
+    """
+    raw = re.sub(r"(?s)<!--.*?-->", " ", raw)
+    return re.sub(r"(?s)<!--.*\Z", " ", raw)
+
+
+def _status_head(val: str) -> str:
+    """The bare state word from a status value, emphasis and punctuation removed."""
+    return re.split(r"[\s,(]", val.strip().lower().strip("*_`~ "))[0].strip(" .*_`~")
+
+
 def hoist_front_matter(raw: str) -> str:
     """YAML front matter carried in a leading HTML comment, as plain text.
 
@@ -388,7 +404,10 @@ def _strip_html(raw: str) -> str:
                r"\2 (\1)", s)
     s = re.sub(r"(?is)<br\s*/?>", "\n", s)
     s = re.sub(r"(?is)</(p|div|li|h[1-6]|tr|blockquote|td)>", "\n", s)
-    s = re.sub(r"(?is)<li[^>]*>", "- ", s)
+    # Leading newline is load-bearing: without it the first <li> of a list is
+    # glued to whatever preceded it and parses one indent deeper than its
+    # siblings, which silently discarded it as a continuation line.
+    s = re.sub(r"(?is)<li[^>]*>", "\n- ", s)
     s = re.sub(r"(?s)<[^>]+>", " ", s)
     for a, b in (("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'),
                  ("&#39;", "'"), ("&nbsp;", " "), ("&mdash;", "—"),
@@ -407,14 +426,17 @@ def parse(raw: str, is_html: bool) -> tuple[list[Section], str]:
         raw = FENCE_RE.sub("", raw)
     front = ""
     if is_html:
-        # Order matters. The front-matter hoist must run BEFORE comments are
-        # stripped, or it rescues nothing; comments must be stripped before
-        # headings are scanned, or an <h2> inside one becomes a section of a
-        # document it was commented out of.
+        # The hoist must run BEFORE comments are stripped, or it rescues nothing.
         front = hoist_front_matter(raw)
+    # Comments are stripped on BOTH surfaces, and BEFORE any tag matching.
+    # Only-in-HTML meant a markdown doc could hide its non-goals and alternatives
+    # in <!-- --> and exit 0; after-the-tag-strip meant the word "<pre>" appearing
+    # inside a comment matched the tag stripper and erased every section up to
+    # the next real </pre>.
+    raw = strip_comments(raw)
+    if is_html:
         raw = re.sub(r"(?is)<(script|style|svg|head|pre|template)[^>]*>.*?</\1>",
                      " ", raw)
-        raw = re.sub(r"(?s)<!--.*?-->", " ", raw)
     if is_html:
         heading_re = re.compile(r"(?is)<h([1-6])[^>]*>(.*?)</h\1>")
         marks: list[tuple[int, int, int, str]] = []
@@ -499,7 +521,12 @@ def classify(sections: Iterable[Section]) -> None:
     for sec in sections:
         t = re.sub(r"^[\d.\s]+", "", sec.title).strip().lower().rstrip(":")
         t = re.sub(r"[🔗#]", "", t).strip()
-        segments = [x.strip() for x in re.split(r"\s+(?:and|&|/|\+|,)\s+", t)
+        # A comma needs no leading space — "Objective, goals and acceptance
+        # criteria" did not split at the comma and lost `objective`, turning the
+        # round-2 false negative into a false positive on a doc that has the
+        # section.
+        segments = [x.strip()
+                    for x in re.split(r"\s*[,;]\s*|\s+(?:and|&|/|\+)\s+", t)
                     if x.strip()] or [t]
         picked: dict[str, int] = {}
         for seg in segments:
@@ -510,8 +537,11 @@ def classify(sections: Iterable[Section]) -> None:
             picked[top] = max(picked.get(top, 0), best[top])
         if not picked:  # no segment resolved; fall back to the whole title
             picked = _score_segment(t)
+        # Bounded by the number of conjunction-separated segments, not a
+        # constant: "Objective, goals and acceptance criteria" asks three
+        # questions, and a cap of two made the doc fail for a section it has.
         sec.classes = tuple(sorted(picked, key=lambda c: -picked[c])
-                            )[:MAX_CLASSES_PER_HEADING]
+                            )[:max(1, len(segments))]
         sec.cls = sec.classes[0] if sec.classes else None
 
 
@@ -683,23 +713,29 @@ def check(path: Path, profile: str | None, strict: bool,
             ))
 
     # --- C2 status (NYGARD supersession, OXIDE state machine) ----------------
-    m = STATUS_LINE.search(text)
+    # Every candidate, not just the first: a doc may mention "status" in prose
+    # before it states its own. A candidate only counts if its value names a
+    # known state — "200 on success" is not a state a document can be superseded
+    # from, which is what the field is for.
+    candidates = list(STATUS_LINE.finditer(text))
+    m = next((c for c in candidates
+              if _status_head(c.group(1)) in VALID_STATUSES), None)
+    if m is None and candidates:
+        near = _status_head(candidates[0].group(1))
+        add(Finding("C2-bad-status", "warn",
+                    f"status {near!r} is outside the known state set",
+                    evidence=candidates[0].group(0).strip()[:100]))
     if not m:
         add(Finding("C2-no-status", "fail",
                     "no 'Status:' field; a doc with no state cannot be "
                     "superseded, and a doc that cannot be superseded silently "
                     "becomes a false description of what shipped"))
     else:
-        val = m.group(1).strip().lower()
-        # Strip markdown emphasis before the lookup. `Status: **superseded**`
-        # otherwise fell out of the known set into a mere warning, which skipped
-        # the successor requirement entirely — a one-asterisk bypass.
-        head = re.split(r"[\s,(]", val.strip("*_`~ "))[0].strip(" .*_`~")
-        if head not in VALID_STATUSES:
-            add(Finding("C2-bad-status", "warn",
-                        f"status {head!r} is outside the known state set",
-                        evidence=m.group(0).strip()))
-        elif head in STATUS_NEEDS_POINTER:
+        # `m` is already the first candidate whose value names a known state —
+        # emphasis stripped by _status_head, so `Status: **superseded**` cannot
+        # fall out of the set into a mere warning and skip the pointer check.
+        head = _status_head(m.group(1))
+        if head in STATUS_NEEDS_POINTER:
             # The successor must be ON the status line. Scanning 400 characters
             # ahead let an unrelated link — an author's homepage two lines down —
             # satisfy the requirement.

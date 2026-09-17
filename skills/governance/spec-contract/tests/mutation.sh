@@ -81,14 +81,18 @@ subtree-is-a-noop	            parts.append(nxt.body)	            pass
 subtree-body-includes-titles	            bodies.append(nxt.body)	            bodies.append(nxt.title)
 profile-downgrades-short-docs	    prof = profile or infer_profile(path)	    prof = profile or ("note" if words < 700 else infer_profile(path))
 fenced-code-not-stripped	        raw = FENCE_RE.sub("", raw)	        pass
-html-comments-not-stripped	        raw = re.sub(r"(?s)<!--.*?-->", " ", raw)	        pass
+html-comments-not-stripped	    raw = re.sub(r"(?s)<!--.*?-->", " ", raw)	    raw = raw
 front-matter-not-hoisted	        front = hoist_front_matter(raw)	        front = ""
 typographic-quotes-not-folded	    raw = fold_quotes(raw)	    pass
 r2-front-matter-prepended	        return sections, _strip_html(raw)	        return sections, front + _strip_html(raw)
-r2-no-conjunction-split	        segments = [x.strip() for x in re.split(	        segments = [t] or [x.strip() for x in re.split(
 r2-suffix-not-preferred	                score = 700 + len(name)	                score = 500 + len(name)
 r2-continuations-dropped	            if cont and bullets:	            if False:
-classify-single-class-only	)[:MAX_CLASSES_PER_HEADING]	)[:1]
+r2b-md-comments-not-stripped	    raw = strip_comments(raw)	    pass
+r2b-unterminated-comment-kept	    return re.sub(r"(?s)<!--.*\Z", " ", raw)	    return raw
+r2b-li-without-newline	    s = re.sub(r"(?is)<li[^>]*>", "\n- ", s)	    s = s
+r2b-first-status-wins	              if _status_head(c.group(1)) in VALID_STATUSES), None)	              if True), None)
+r2b-comma-not-a-separator	                    for x in re.split(r"\s*[,;]\s*|\s+(?:and|&|/|\+)\s+", t)	                    for x in re.split(r"(?!x)x", t)
+classify-single-class-only	)[:max(1, len(segments))]	)[:1]
 EOF
 
 killed=0; survived=0; broken=0; crashed=0; null_ok=0

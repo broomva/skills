@@ -67,9 +67,14 @@ Exit `0` clean · `1` a required check failed · `2` bad invocation.
 ### Profiles
 
 A profile is a claim about which reversal-cost axes a document type exists to
-pin down. Inferred from the path (`docs/adrs/` → `adr`, `docs/plans/` → `plan`,
-`/rfd`|`/rfcs/` → `rfd`, short docs → `note`, else `spec`); override with
-`--profile`.
+pin down. Inferred from the **path only** (`docs/adrs/` → `adr`, `docs/plans/` →
+`plan`, `/rfd`|`/rfcs/` → `rfd`, else `spec`); override with `--profile`.
+
+`note` is never inferred. An earlier cut downgraded any document under 700 words
+to it, and cross-review found the consequence: a thirteen-word implementation
+manual committing a one-way door exited 0, and the cheapest way to pass was to
+delete words. `note` is right for a short design-bearing doc — as a choice
+someone makes and a reviewer can see, not a silent property of length.
 
 | Profile | Required | Recommended |
 |---|---|---|
@@ -198,7 +203,7 @@ was the error.
 ## Tests
 
 ```bash
-python3 -m pytest tests/test_spec_check.py -q   # 118 tests
+python3 -m pytest tests/test_spec_check.py -q   # 128 tests
 bash tests/mutation.sh                          # incl. a NULL control that must SURVIVE
 ```
 
@@ -207,7 +212,7 @@ across all 105 real documents; that is a measured zero with a known cause — on
 8 of them have a non-goals section for it to read — not an unfalsified silence,
 and the four positive controls prove the rule fires.
 
-The mutation sweep reports **killed 31/31**, and three properties of it are load-bearing
+The mutation sweep reports **killed 35/35**, and three properties of it are load-bearing
 because the first version had none of them and still printed a clean score:
 
 - **A NULL mutant must SURVIVE.** A no-op edit that fails the suite means the

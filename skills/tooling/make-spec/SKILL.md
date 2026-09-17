@@ -66,6 +66,12 @@ saves ~5 minutes per doc.
 The four variants (generated, not shipped — apply to the
 `template-spec.html` base + the canonical skeleton below):
 
+> **The base template has no Non-goals or Alternatives-considered slot**, and
+> `spec-contract` requires both on the `spec` profile — so the shipped scaffold
+> fails the content gate it now composes with. Add both sections when generating
+> from it; they are the two classes the workspace corpus is weakest on (7.6%
+> each), which is exactly why a scaffold that omits them perpetuates the gap.
+
 3. **Plan variant** — base + sub-phase table + acceptance-criteria
    sections.
 4. **ADR variant** — base + Status / Context / Decision /

@@ -908,7 +908,7 @@ def test_r2_one_heading_cannot_discharge_three_required_classes():
     sc.classify(sections)
     cls = sections[1].classes
     assert "design" not in cls, f"incidental word match leaked in: {cls}"
-    assert len(cls) <= sc.MAX_CLASSES_PER_HEADING
+    assert len(cls) <= 2, "two conjunction segments, at most two classes"
 
 
 def test_r2_a_genuine_conjunction_still_answers_both():
@@ -949,3 +949,110 @@ def test_r2_tab_indented_detail_is_not_a_separate_option(tmp_path):
     alts = [s for s in sections if "alternatives" in s.classes]
     assert [lbl for lbl, _ in sc.alternative_entries(sections, alts)] == [
         "Redis", "Firestore"]
+
+
+# ==========================================================================
+# Regression: P20 round 2, Strata B (5/10). Five blockers, each an attack on a
+# round-1 fix. Inputs are the reviewer's, verbatim.
+# ==========================================================================
+
+def test_r2b_markdown_comments_are_stripped_too(tmp_path):
+    """The comment strip lived only in the HTML branch, so a markdown doc could
+    hide its non-goals and alternatives inside <!-- --> and exit 0 while a
+    reader saw an unargued one-way door."""
+    body = GOOD.replace("## Non-goals", "<!--\n## Non-goals").replace(
+        "- Location-aware caching. Useful later, out of scope for v1.",
+        "- Location-aware caching. Useful later, out of scope for v1.\n-->")
+    assert fails(run(tmp_path, body))
+
+
+@pytest.mark.parametrize("raw,is_html", [
+    ('<h1>D</h1><!-- <h2>Design</h2><p>x</p>', True),
+    ("# D\n\n<!--\n## Design\nx\n", False),
+])
+def test_r2b_an_unterminated_comment_hides_the_rest(raw, is_html):
+    """`(?s)<!--.*?-->` needs a terminator; HTML5 does not. An unterminated
+    `<!--` comments out the rest of the document — a browser honours it, so the
+    checker must too, or it reads sections no reader can see."""
+    sections, _ = sc.parse(raw, is_html)
+    assert [s.title for s in sections] == ["D"]
+
+
+def test_r2b_a_pre_token_inside_a_comment_erases_nothing(tmp_path):
+    """The tag strip ran BEFORE the comment strip, so the word "<pre>" inside an
+    editor note matched the tag stripper and erased every section up to the next
+    real </pre>. A document that renders perfectly took four C1 failures."""
+    body = ('<h1>Widget Cache</h1>'
+            '<!-- editor note: leave the <pre> blocks unstyled -->'
+            '<h2>Objective</h2><p>x</p>'
+            '<h2>Design</h2><p>we chose A instead of B</p>'
+            '<h2>Non-goals</h2><ul><li>No albums</li></ul>'
+            '<h2>Alternatives considered</h2>'
+            '<ul><li>B: too slow here</li><li>C: painful lock-in issues</li></ul>'
+            '<pre>store.Get(k)</pre>')
+    sections, _ = sc.parse(body, True)
+    assert [s.title for s in sections] == [
+        "Widget Cache", "Objective", "Design", "Non-goals",
+        "Alternatives considered"]
+
+
+def test_r2b_html_lists_do_not_lose_their_first_item():
+    """`<li>` lowered without a leading newline glued the first item of every
+    list to the preceding text, so it parsed one indent deeper than its siblings
+    and was discarded as a continuation line.
+
+    This suite's OWN `HTML_DOC` fixture had exactly one alternative reaching the
+    checker — the HTML tests were passing for the wrong reason."""
+    sections, _ = sc.parse(HTML_DOC, True)
+    sc.attach_subtrees(sections)
+    sc.classify(sections)
+    alts = [s for s in sections if "alternatives" in s.classes]
+    assert [lbl for lbl, _ in sc.alternative_entries(sections, alts)] == ["B", "C"]
+
+
+def test_r2b_both_surfaces_find_the_same_alternatives(tmp_path):
+    """The markdown twin of HTML_DOC must reach the same verdict."""
+    md = ("# D\n\nStatus: accepted\n\n## Objective\nx\n\n"
+          "## Design\nwe chose A instead of B rather than C\n\n"
+          "## Non-goals\n- No albums\n\n"
+          "## Alternatives considered\n- B: it is too slow for this\n"
+          "- C: painful lock-in here\n\n"
+          "## Acceptance\n`make check` passes\n")
+    assert fails(run(tmp_path, md, profile="note")) == fails(
+        run(tmp_path, HTML_DOC, name="d.html", profile="note"))
+
+
+def test_r2b_a_status_that_names_no_state_does_not_discharge_c2(tmp_path):
+    """`- Status: 200 on success` in body prose satisfied C2's only blocking
+    arm. A status a document cannot be superseded FROM is not a status."""
+    body = GOOD.replace("Status: accepted\n", "").replace(
+        "## Design", "## Design\n- Status: 200 on success\n")
+    assert "C2-no-status" in fails(run(tmp_path, body))
+
+
+def test_r2b_a_real_status_later_in_the_doc_still_counts(tmp_path):
+    """Scanning every candidate must not mean the first mention wins."""
+    body = GOOD.replace(
+        "Status: accepted",
+        "The endpoint returns HTTP status: 200 on success.\nStatus: accepted")
+    assert "C2-no-status" not in checks(run(tmp_path, body))
+
+
+def test_r2b_front_matter_needs_a_recognisable_status(tmp_path):
+    """A deploy snippet in a leading comment ("status: enabled") suppressed
+    C2-no-status on a doc with no visible status at all."""
+    body = ('<!--\n  deploy snippet:\n    service: widget\n    status: enabled\n-->\n'
+            '<h1>D</h1><h2>Design</h2><p>we chose A instead of B</p>')
+    assert "C2-no-status" in fails(run(tmp_path, body, name="d.html",
+                                       profile="note"))
+
+
+def test_r2b_a_three_question_heading_keeps_all_three():
+    """A hard cap of two truncated a genuine three-segment title, so a plan with
+    "Objective, goals and acceptance criteria" hard-failed for an objective it
+    plainly has — a false negative traded for a false positive."""
+    sections, _ = sc.parse(
+        "# T\n\n## Objective, goals and acceptance criteria\nx\n", False)
+    sc.attach_subtrees(sections)
+    sc.classify(sections)
+    assert set(sections[1].classes) == {"objective", "goals", "acceptance"}
