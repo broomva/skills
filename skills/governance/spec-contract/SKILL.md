@@ -172,6 +172,18 @@ alternatives 7.6%** · acceptance 6.7% · goals 1.9%. The corpus documents what
 was chosen and not what was ruled out — the inverse of reversal cost, and the
 reason this skill exists.
 
+**Supersession runs the wrong way, measured.** Dogfooding the checker against
+the workspace's own HTML docs turned up the sharpest number in this file. Of 98
+documents in `docs/specs|plans|adrs`, **38 mention superseding or replacing
+another document, and 2 carry a status marking themselves as superseded.**
+
+The relation is recorded in the forward direction, in the new doc, where it
+helps nobody: a reader who lands on the *old* document gets no signal that it
+has been replaced. NYGARD's rule is the other direction — *"we will keep the old
+one around, but mark it as superseded"* — and it is the only mechanism in any of
+the five sources by which a design doc can stop being a false description of
+what shipped. `C2` exists for those 36 documents.
+
 **What the corpus number is not evidence for.** An earlier draft of this section
 reported 1/105 and attributed the improvement to the required/recommended split.
 Cross-model review challenged that attribution and re-measurement refuted it:
