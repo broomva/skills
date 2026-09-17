@@ -178,3 +178,49 @@ and the ordering is counterintuitive enough to state:
    thread fixes nothing; the next reader hits the same wall. Escalate a thread to
    an appendix open issue after two or three round trips, then resolve the thread
    with a link to it.
+
+---
+
+## A worked score
+
+Grading the rubric's own reference document — Lynch's *Little Moments* design
+doc, which the deterministic layer passes with zero failures. A rubric with no
+scored example is not usable; this is what a 14/15 looks like and, more
+usefully, what docks the missing point.
+
+```
+R1 reversal-cost fit      2/3  — language, storage, hosting and email vendor are all
+                                 present and argued, but reversal cost is never NAMED.
+                                 fly.io is chosen on familiarity ("I have the most
+                                 hosting experience"), not on what switching would cost.
+R2 alternative realism    3/3  — Google Photos, Momatu, PhotoCircle as products; three
+                                 media-delivery designs; four licences; seven SMTP
+                                 vendors with dated first-hand testing. Every one is a
+                                 contender a competent engineer would defend.
+R3 non-goal load-bearing  3/3  — "no albums", "no calendar view", "no per-item privacy",
+                                 "can't reply by email". Each is something a TinyBeans
+                                 user assumes in scope, and most cite observed behaviour
+                                 for declining it.
+R4 trade-off substance    3/3  — "SQLite … doesn't support strong types … but we only
+                                 need to scale to tens of users" ties the choice to the
+                                 stated goal. Delete the alternatives and closed issues
+                                 and the document's meaning changes.
+R5 legibility             3/3  — Objective is one jargon-free sentence; Background is the
+                                 ad-injection grievance. Motivation precedes mechanism.
+                         ----
+                          14/15   VERDICT: pass
+```
+
+**What the score is worth knowing for.** The axis that docked a point, `R1`, is
+the same one the deterministic layer flags (`C3-no-reversal-cost`, a warning on
+this document). The two layers disagreed about *severity* and agreed about
+*where the weakness is* — which is the property that makes running both worth
+the cost. If they routinely disagreed about location, one of them would be
+measuring noise.
+
+**Known gap.** This is one worked example graded once. `skillify`'s TIER-J bar
+asks for held-out cases and a *measured* inter-rater floor — two models scoring
+the same document and agreeing within a stated tolerance. That has not been
+done, so the rubric ships with a demonstrated instrument and an unmeasured
+agreement rate. Treat a single grader's score as one opinion with a structure,
+not as a number.
