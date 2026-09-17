@@ -22,7 +22,8 @@ description: >-
   "rewrite this ticket", "sharpen this AC", "review this requirement",
   "simplified technical english", "STE", "controlled language". NOT FOR:
   prose style or tone editing (this makes text precise, not pleasant),
-  formatting a design doc (use make-spec), or deciding *what* to build (this
+  formatting a design doc (use make-spec), deciding what belongs IN one
+  (use spec-contract), or deciding *what* to build (this
   sharpens a decision already made, it does not make it).
 ---
 
