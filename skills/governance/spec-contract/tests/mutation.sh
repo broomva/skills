@@ -84,7 +84,11 @@ fenced-code-not-stripped	        raw = FENCE_RE.sub("", raw)	        pass
 html-comments-not-stripped	        raw = re.sub(r"(?s)<!--.*?-->", " ", raw)	        pass
 front-matter-not-hoisted	        front = hoist_front_matter(raw)	        front = ""
 typographic-quotes-not-folded	    raw = fold_quotes(raw)	    pass
-classify-single-class-only	        sec.classes = tuple(sorted(scored, key=lambda c: -scored[c]))	        sec.classes = tuple(sorted(scored, key=lambda c: -scored[c]))[:1]
+r2-front-matter-prepended	        return sections, _strip_html(raw)	        return sections, front + _strip_html(raw)
+r2-no-conjunction-split	        segments = [x.strip() for x in re.split(	        segments = [t] or [x.strip() for x in re.split(
+r2-suffix-not-preferred	                score = 700 + len(name)	                score = 500 + len(name)
+r2-continuations-dropped	            if cont and bullets:	            if False:
+classify-single-class-only	)[:MAX_CLASSES_PER_HEADING]	)[:1]
 EOF
 
 killed=0; survived=0; broken=0; crashed=0; null_ok=0

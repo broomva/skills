@@ -245,6 +245,10 @@ MIN_TRADEOFF_HITS = 2
 # Characters of prose an alternative must carry beyond its own name.
 MIN_JUSTIFICATION = 12
 
+# A heading answers at most this many questions, one per conjunction-separated
+# segment of its title.
+MAX_CLASSES_PER_HEADING = 2
+
 WORDS_PER_PAGE = 500
 MAX_PAGES = 20
 MIN_WORDS = 250
@@ -422,7 +426,11 @@ def parse(raw: str, is_html: bool) -> tuple[list[Section], str]:
         for i, (_s, e, lvl, title) in enumerate(marks):
             end = marks[i + 1][0] if i + 1 < len(marks) else len(raw)
             sections.append(Section(lvl, title, _strip_html(raw[e:end])))
-        return sections, front + _strip_html(raw)
+        # Appended, never prepended: a status hidden in an HTML comment must
+        # not shadow the one a reader can actually see. A doc whose only status
+        # lives in front matter still resolves, because STATUS_LINE searches the
+        # whole text; a doc with both now answers with the visible value.
+        return sections, _strip_html(raw) + "\n" + front
 
     lines = raw.splitlines()
     sections, cur, buf = [], None, []
@@ -456,23 +464,54 @@ def attach_subtrees(sections: list[Section]) -> None:
         sec.subtree_body = "\n".join(bodies)
 
 
+def _score_segment(t: str) -> dict[str, int]:
+    scored: dict[str, int] = {}
+    for cls, names in SECTION_CLASSES.items():
+        for name in names:
+            if t == name:
+                score = 1000
+            elif t.endswith(name):
+                # The head of an English noun phrase is its LAST word: "design
+                # goals" is a goals section, not a design section. Ranking
+                # suffix above prefix is what separates them.
+                score = 700 + len(name)
+            elif t.startswith(name):
+                score = 500 + len(name)
+            elif re.search(rf"\b{re.escape(name)}\b", t):
+                score = len(name)
+            else:
+                continue
+            scored[cls] = max(scored.get(cls, 0), score)
+    return scored
+
+
 def classify(sections: Iterable[Section]) -> None:
+    """Assign each heading the class(es) it answers.
+
+    A heading may answer two questions — "Goals and non-goals", "Alternatives
+    and drawbacks" — so the title is split on an explicit conjunction and each
+    SEGMENT is classified on its own. A score floor was tried first and does not
+    work: "Design goals and non-goals" starts with "design", so `design` scored
+    506 and one heading discharged three required classes. Segmenting gives
+    ["design goals", "non-goals"] → goals + non_goals, which is what the heading
+    actually says.
+    """
     for sec in sections:
         t = re.sub(r"^[\d.\s]+", "", sec.title).strip().lower().rstrip(":")
         t = re.sub(r"[🔗#]", "", t).strip()
-        scored: dict[str, int] = {}
-        for cls, names in SECTION_CLASSES.items():
-            for name in names:
-                if t == name:
-                    score = 1000
-                elif t.startswith(name) or t.endswith(name):
-                    score = 500 + len(name)
-                elif re.search(rf"\b{re.escape(name)}\b", t):
-                    score = len(name)
-                else:
-                    continue
-                scored[cls] = max(scored.get(cls, 0), score)
-        sec.classes = tuple(sorted(scored, key=lambda c: -scored[c]))
+        segments = [x.strip() for x in re.split(r"\s+(?:and|&|/|\+|,)\s+", t)
+                    if x.strip()] or [t]
+        picked: dict[str, int] = {}
+        for seg in segments:
+            best = _score_segment(seg)
+            if not best:
+                continue
+            top = max(best, key=lambda c: best[c])
+            picked[top] = max(picked.get(top, 0), best[top])
+        if not picked:  # no segment resolved; fall back to the whole title
+            picked = _score_segment(t)
+        sec.classes = tuple(sorted(picked, key=lambda c: -picked[c])
+                            )[:MAX_CLASSES_PER_HEADING]
         sec.cls = sec.classes[0] if sec.classes else None
 
 
@@ -510,11 +549,21 @@ def alternative_entries(sections: list[Section],
         # Indentation carries the structure: a top-level bullet names an
         # option, and everything indented under it is that option's blurb.
         src = sec.subtree_body or sec.body
-        bullets = [(len(m.group(1)), m.group(2).strip())
-                   for ln in src.splitlines()
-                   if (m := re.match(r"^([ \t]*)(?:[-*+]|\d+\.)\s+(\S.*)$", ln))]
+        bullets: list[tuple[int, str]] = []
+        for ln in src.splitlines():
+            m = re.match(r"^([ \t]*)(?:[-*+]|\d+\.)\s+(\S.*)$", ln)
+            if m:
+                bullets.append((len(m.group(1).expandtabs(4)), m.group(2).strip()))
+                continue
+            # An indented line that is NOT a bullet continues the bullet above
+            # it. Dropping these read "- Redis\n  an extra process to operate"
+            # as an option with no justification.
+            cont = re.match(r"^([ \t]+)(\S.*)$", ln)
+            if cont and bullets:
+                bullets.append((len(cont.group(1).expandtabs(4)) + 1000,
+                                cont.group(2).strip()))
         if bullets:
-            base = min(d for d, _ in bullets)
+            base = min(d for d, _ in bullets)  # continuations carry +1000, never the base
             cur: list[str] | None = None
             for depth, txt in bullets:
                 if depth <= base:

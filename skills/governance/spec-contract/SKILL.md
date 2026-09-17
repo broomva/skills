@@ -166,9 +166,9 @@ Measured 2026-09-16.
 | **Lynch's own worked example** (`little-moments-design-doc`, 2,667 lines), `--profile spec` | **zero failures** |
 | This workspace's 105 existing `docs/specs\|plans\|adrs` | **0 pass** |
 
-Section coverage across those 105, by class: design 46.7% · open questions 25.7%
-· acceptance 13.3% · drawbacks 13.3% · objective 12.4% · context 9.5% ·
-**non-goals 7.6% · alternatives 7.6%** · goals 1.9%. The corpus documents what
+Section coverage across those 105, by class: design 55.2% · open questions 25.7%
+· drawbacks 18.1% · objective 12.4% · context 10.5% · **non-goals 7.6% ·
+alternatives 7.6%** · acceptance 6.7% · goals 1.9%. The corpus documents what
 was chosen and not what was ruled out — the inverse of reversal cost, and the
 reason this skill exists.
 
@@ -186,7 +186,7 @@ was the error.
 ## Tests
 
 ```bash
-python3 -m pytest tests/test_spec_check.py -q   # 111 tests
+python3 -m pytest tests/test_spec_check.py -q   # 118 tests
 bash tests/mutation.sh                          # incl. a NULL control that must SURVIVE
 ```
 
@@ -195,7 +195,7 @@ across all 105 real documents; that is a measured zero with a known cause — on
 8 of them have a non-goals section for it to read — not an unfalsified silence,
 and the four positive controls prove the rule fires.
 
-The mutation sweep reports **killed 27/27**, and three properties of it are load-bearing
+The mutation sweep reports **killed 31/31**, and three properties of it are load-bearing
 because the first version had none of them and still printed a clean score:
 
 - **A NULL mutant must SURVIVE.** A no-op edit that fails the suite means the

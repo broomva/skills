@@ -875,3 +875,77 @@ def test_markdown_and_html_agree_on_commented_out_headings():
     html, _ = sc.parse('<h1>D</h1><h2>Design</h2><p>x</p>'
                        '<!-- <h2>Alternatives considered</h2> -->', True)
     assert [s.title for s in md] == [s.title for s in html] == ["D", "Design"]
+
+
+# ==========================================================================
+# Regression: P20 round 2. Each of these is a defect the round-1 FIXES
+# introduced or left, found by attacking the fixes themselves.
+# ==========================================================================
+
+def test_r2_hidden_front_matter_cannot_shadow_a_visible_status(tmp_path):
+    """The front-matter hoist prepended, so `status: accepted` in an HTML
+    comment overrode a visible `Status: superseded` — the invisible value won
+    and the supersession pointer was never demanded."""
+    body = ('<!--\n---\nstatus: accepted\n---\n-->\n'
+            '<h1>D</h1><p>Status: superseded</p>'
+            '<h2>Design</h2><p>we chose A instead of B</p>')
+    assert "C2-dangling-supersede" in fails(
+        run(tmp_path, body, name="d.html", profile="note"))
+
+
+def test_r2_front_matter_still_resolves_when_it_is_the_only_status(tmp_path):
+    body = ('<!--\n---\nstatus: draft\n---\n-->\n'
+            '<h1>D</h1><h2>Design</h2><p>we chose A instead of B</p>')
+    assert "C2-no-status" not in checks(
+        run(tmp_path, body, name="d.html", profile="note"))
+
+
+def test_r2_one_heading_cannot_discharge_three_required_classes():
+    """'Design goals and non-goals' matched design + goals + non_goals, so a
+    single heading satisfied three required classes at once."""
+    sections, _ = sc.parse("# T\n\n## Design goals and non-goals\nx\n", False)
+    sc.attach_subtrees(sections)
+    sc.classify(sections)
+    cls = sections[1].classes
+    assert "design" not in cls, f"incidental word match leaked in: {cls}"
+    assert len(cls) <= sc.MAX_CLASSES_PER_HEADING
+
+
+def test_r2_a_genuine_conjunction_still_answers_both():
+    for title, expected in [
+        ("Goals and non-goals", {"goals", "non_goals"}),
+        ("Alternatives and drawbacks", {"alternatives", "drawbacks"}),
+    ]:
+        sections, _ = sc.parse(f"# T\n\n## {title}\nx\n", False)
+        sc.attach_subtrees(sections)
+        sc.classify(sections)
+        assert set(sections[1].classes) == expected, title
+
+
+@pytest.mark.parametrize("block,why", [
+    ("- Redis\n  it is an extra process to operate and the hop eats the win\n"
+     "- Firestore\n  durable, but the platform lock-in was not worth it\n",
+     "space-indented continuation"),
+    ("- Redis\n\tit is an extra process to operate and the hop eats the win\n"
+     "- Firestore\n\tdurable, but the platform lock-in was not worth it\n",
+     "tab-indented continuation"),
+])
+def test_r2_indented_continuation_is_the_option_s_justification(tmp_path, block, why):
+    """A reason written on a continuation line rather than after a colon was
+    dropped entirely, so an ordinary authoring form read as an unargued option."""
+    body = GOOD.replace(ALT_BLOCK, block)
+    assert "C5-unjustified-alternative" not in checks(run(tmp_path, body)), why
+
+
+def test_r2_tab_indented_detail_is_not_a_separate_option(tmp_path):
+    body = GOOD.replace(
+        ALT_BLOCK,
+        "- Redis: an extra process to operate, and the hop eats the win\n"
+        "\t- benchmarked at 3ms\n"
+        "- Firestore: durable, but the lock-in was not worth it\n")
+    sections, _ = sc.parse(body, False)
+    sc.attach_subtrees(sections)
+    sc.classify(sections)
+    alts = [s for s in sections if "alternatives" in s.classes]
+    assert [lbl for lbl, _ in sc.alternative_entries(sections, alts)] == [
+        "Redis", "Firestore"]
