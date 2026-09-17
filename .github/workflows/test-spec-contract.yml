@@ -1,0 +1,103 @@
+name: test-spec-contract
+
+# Test gate for the `spec-contract` skill (skills/governance/spec-contract/).
+# Path-filtered so it runs ONLY when that skill changes. This is the skillify
+# step-3 gate made enforceable in CI: a TIER-D layer whose script is not
+# mutation-proven in CI is proven only when an agent remembers to ask.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/governance/spec-contract/**'
+      - '.github/workflows/test-spec-contract.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/governance/spec-contract/**'
+      - '.github/workflows/test-spec-contract.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-spec-contract-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/governance/spec-contract
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install pytest
+      - name: Tests
+        run: python -m pytest tests/test_spec_check.py -v
+
+      # The calibration claim in SKILL.md is that a design doc written to
+      # published best practice passes. The fixture below is that doc reduced to
+      # its load-bearing parts; if a future check makes a well-formed doc fail,
+      # this catches it before the gate reaches anyone's PR.
+      - name: Smoke — a well-formed doc passes, a bare one does not
+        run: |
+          cat > /tmp/good.md <<'DOC'
+          # Cache Layer
+
+          Status: accepted
+          Reversal cost: one-way door — the storage engine is not swappable.
+
+          ## Objective
+          Cut median page load by caching the hot rows.
+
+          ## Design
+          An in-process LRU behind a Store interface. We chose in-process rather
+          than a separate service, at the cost of a cold cache on every deploy,
+          because the operational surface of another daemon is not worth the
+          shared-cache win at this scale.
+
+          ## Non-goals
+          - A general-purpose reusable cache.
+          - Location-aware caching.
+
+          ## Alternatives considered
+          - Redis: another process to operate, and the network hop eats the win.
+          - Firestore: durable, but the platform lock-in was not worth it.
+
+          ## Acceptance criteria
+          - p50 latency <= 200ms.
+          DOC
+          printf '# Thing\n\n## Design\nWe will build it.\n' > /tmp/bare.md
+
+          python3 scripts/spec_check.py /tmp/good.md --profile spec
+          if ! python3 scripts/spec_check.py /tmp/bare.md --profile spec; then
+            echo "bare doc correctly rejected"
+          else
+            echo "FAIL: a doc with no objective, non-goals or alternatives passed"
+            exit 1
+          fi
+
+  mutation:
+    name: mutation proof (every check must be killable)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: skills/governance/spec-contract
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pytest
+      # SKILL.md claims every check is killed by its own mutant. Until this runs
+      # in CI that proof fires only when an agent chooses to run it, and a
+      # decorative check added tomorrow keeps the build green.
+      - name: Mutate
+        run: bash tests/mutation.sh python3
