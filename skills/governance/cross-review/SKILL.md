@@ -24,12 +24,29 @@ When the artifact is a spec, plan, ADR or RFD — the `--spec` flag below — th
 anti-slop rubric is the wrong instrument: it scores code. Use **`spec-contract`**
 instead, which is this gate applied to a design:
 
-1. **`spec_check.py <doc>` must exit 0 first.** Deterministic failures are not
-   worth a reviewer's pass, and clearing them changes what is being judged.
+1. **`spec_check.py --profile <resolved> <doc>` must exit 0 first.** Deterministic
+   failures are not worth a reviewer's pass, and clearing them changes what is
+   being judged. Resolve the profile from the artifact — `docs/adrs/` → `adr`,
+   `/rfd`|`/rfcs/` → `rfd`, `docs/plans/` → `plan`, else `spec` — and pass it
+   explicitly rather than relying on path inference through a symlink or a
+   temporary copy.
+
+   **This is the agent's step, not the script's.** `cross-review plan --spec PATH`
+   verifies the file exists and hands off; it does not invoke the checker and
+   does not forward a profile. Treating the script as the gate would mean an
+   invalid plan or RFD passes untouched.
 2. **Then score `spec-contract`'s five-axis rubric** — reversal-cost fit,
    alternative realism, non-goal load-bearing-ness, trade-off substance,
    legibility — pass ≥11/15 with no axis at 0, graded by a different model than
    the writer. That is P20's own rule, unchanged; only the rubric differs.
+
+   **Stratum B is a documented exception, not a substitute.** When Codex is
+   unavailable the fallback is a fresh-context subagent on the *same* model,
+   which satisfies "different context" but not "different weights" — and the
+   rubric's independence requirement is about weights. A Stratum-B-only score on
+   a design doc is provisional: record it as such in the ledger, and do not let
+   it discharge an `R1 = 0` or an `R2`/`R4` ≤ 1, which are exactly the judgements
+   a shared blind spot would hide.
 
 `R1 = 0` (a one-way door committed to silently) stops the doc outright rather
 than costing a round. `R2`/`R4` ≤1 means the design is unargued, which escalates

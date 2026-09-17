@@ -2,7 +2,7 @@
 name: spec-contract
 tier: D+J
 category: governance
-description: "The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked example, Design Docs at Google, the Rust RFC template, Nygard's original ADR post, Oxide RFD 1). The load-bearing rule is the cost of reversing a decision, not its importance: a choice fixable in an afternoon is review noise, a one-way door left unargued is the failure a design doc exists to prevent. Two layers. DETERMINISTIC — `scripts/spec_check.py` reads a markdown or HTML doc and decides 17 findings: required sections by class not by name, status resolvable and supersession pointed, >=2 alternatives each with a rejection reason, non-goals that are declined goals rather than negated requirements, drawbacks that state a cost, acceptance that carries a number or a runnable command, and an implementation-manual detector for a doc with no trade-off language anywhere. JUDGMENT — `references/rubric.md` grades the five things a script cannot: whether the documented decisions are the expensive ones, whether the alternatives are real or strawmen, whether the non-goals are load-bearing, whether trade-offs are argued or merely mentioned, and whether the first screen is legible to the widest expected reader. Use when: (1) writing or reviewing a spec, plan, ADR, RFD or design doc, (2) deciding whether something warrants a design doc at all, (3) gating a doc before it goes out for review, (4) asked what belongs in a spec or why a spec is weak. Triggers on 'spec contract', 'design doc', 'write a spec', 'review this spec', 'is this spec any good', 'what belongs in a design doc', 'ADR', 'RFD', 'non-goals', 'alternatives considered', 'spec review', 'spec gate', 'design review', 'one-way door', 'reversal cost'."
+description: "The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked example, Design Docs at Google, the Rust RFC template, Nygard's original ADR post, Oxide RFD 1). The load-bearing rule is the cost of reversing a decision, not its importance: a choice fixable in an afternoon is review noise, a one-way door left unargued is the failure a design doc exists to prevent. Two layers. DETERMINISTIC — `scripts/spec_check.py` reads a markdown or HTML doc and decides 18 findings: required sections by class not by name, status resolvable and supersession pointed, >=2 alternatives with a stated reason for rejection somewhere in the section, non-goals that are declined goals rather than negated requirements, drawbacks that state a cost, acceptance that carries a number or a runnable command, and an implementation-manual detector for a doc with no trade-off language anywhere. JUDGMENT — `references/rubric.md` grades the five things a script cannot: whether the documented decisions are the expensive ones, whether the alternatives are real or strawmen, whether the non-goals are load-bearing, whether trade-offs are argued or merely mentioned, and whether the first screen is legible to the widest expected reader. Use when: (1) writing or reviewing a spec, plan, ADR, RFD or design doc, (2) deciding whether something warrants a design doc at all, (3) gating a doc before it goes out for review, (4) asked what belongs in a spec or why a spec is weak. Triggers on 'spec contract', 'design doc', 'write a spec', 'review this spec', 'is this spec any good', 'what belongs in a design doc', 'ADR', 'RFD', 'non-goals', 'alternatives considered', 'spec review', 'spec gate', 'design review', 'one-way door', 'reversal cost'."
 ---
 
 # spec-contract — what must be in a design doc
@@ -62,6 +62,7 @@ Exit `0` clean · `1` a required check failed · `2` bad invocation.
 | `C10-oversized` | *(warn)* beyond ~20 pages — GOOGLE's signal to split the problem | GOOGLE |
 | `C10-stub` | *(warn)* under 250 words | NYGARD |
 | `C11-dead-link` | *(opt-in `--check-links`)* a cited URL does not resolve | — |
+| `C11-unsafe-link` | *(opt-in `--check-links`)* a cited URL resolves to a private, loopback or link-local address | — |
 
 ### Profiles
 
@@ -98,7 +99,7 @@ the checker. Renaming to pass a gate is gaming it.
 
 ## Layer 2 — judgment (`references/rubric.md`)
 
-A doc can pass all 17 findings and be worthless: two strawman alternatives, a
+A doc can pass all 18 findings and be worthless: two strawman alternatives, a
 non-goal nobody would have assumed, an SLO chosen because it was easy to measure.
 That is not a gap in the script — it is the half that is irreducibly a judgment.
 
@@ -232,7 +233,9 @@ them with:
 python3 - <<'PY'
 import sys, pathlib, collections
 sys.path.insert(0, "scripts"); import spec_check as sc
-root = pathlib.Path.home() / "broomva"          # the workspace checkout
+import os
+root = pathlib.Path(os.environ.get("BROOMVA_ROOT",
+                    pathlib.Path.home() / "broomva"))   # override for another checkout
 docs = [p for d in ("specs", "plans", "adrs")
         for p in (root / "docs" / d).glob("*.*") if p.suffix in (".md", ".html")]
 have, fire, npass = collections.Counter(), collections.Counter(), 0
@@ -305,7 +308,7 @@ on a non-English doc as unmeasured.
 ## Tests
 
 ```bash
-python3 -m pytest tests/test_spec_check.py -q   # 150 tests
+python3 -m pytest tests/test_spec_check.py -q   # 162 tests
 bash tests/mutation.sh                          # incl. a NULL control that must SURVIVE
 ```
 
@@ -314,7 +317,7 @@ across all 105 real documents; that is a measured zero with a known cause — on
 8 of them have a non-goals section for it to read — not an unfalsified silence,
 and the four positive controls prove the rule fires.
 
-The mutation sweep reports **killed 44/44**, and three properties of it are load-bearing
+The mutation sweep reports **killed 47/47**, and three properties of it are load-bearing
 because the first version had none of them and still printed a clean score:
 
 - **A NULL mutant must SURVIVE.** A no-op edit that fails the suite means the

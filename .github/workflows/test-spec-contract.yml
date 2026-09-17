@@ -21,6 +21,12 @@ concurrency:
   group: test-spec-contract-${{ github.ref }}
   cancel-in-progress: true
 
+# Least privilege. Both jobs execute repository-controlled test code on
+# pull_request, so inheriting a write-capable default token would let modified
+# workflow code use it.
+permissions:
+  contents: read
+
 defaults:
   run:
     working-directory: skills/governance/spec-contract
@@ -39,6 +45,8 @@ jobs:
         python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python }}
@@ -96,6 +104,8 @@ jobs:
         working-directory: skills/governance/spec-contract
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"

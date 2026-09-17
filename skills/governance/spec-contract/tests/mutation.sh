@@ -101,6 +101,9 @@ r4-offset-not-recorded	            sec.offset = base + len(_strip_html(raw[:_s])
 r4-only-first-comment	    for cand in ONE_COMMENT.findall(block.group(1)):	    for cand in ONE_COMMENT.findall(block.group(1))[:1]:
 r4-status-heading-unread	    if m is None and heading_status:	    if False:
 r4-span-not-lowered	    s = re.sub(r"(?is)</(p|div|li|h[1-6]|blockquote|span|strong|em|b|i)>", "\n", s)	    s = re.sub(r"(?is)</(p|div|li|h[1-6]|blockquote)>", "\\n", s)
+cr-ssrf-guard-disabled	            blocked = _unsafe_target(url)	            blocked = ""
+cr-directory-accepted	        if not doc.is_file():	        if not doc.exists():
+cr-th-not-marked	    s = re.sub(r"(?is)</th>", " |\u241f ", s)	    s = re.sub(r"(?is)</th>", " | ", s)
 classify-single-class-only	)[:max(1, len(segments))]	)[:1]
 EOF
 

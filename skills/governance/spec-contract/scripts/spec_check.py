@@ -411,6 +411,40 @@ def strip_comments(raw: str) -> str:
     return re.sub(r"(?s)<!--.*\Z", " ", raw)
 
 
+def _unsafe_target(url: str) -> str:
+    """Name the reason a URL must not be resolved, or "" when it is safe.
+
+    `--check-links` resolves URLs written in the document under review, so it is
+    a request forgery primitive unless the destination is constrained: a spec
+    could name `http://169.254.169.254/…` and have CI fetch cloud credentials
+    for it (CWE-918). Refuses by resolved address, not by hostname text, so
+    `localtest.me` and friends cannot spell their way past it.
+    """
+    import ipaddress
+    import socket
+    from urllib.parse import urlsplit
+
+    parts = urlsplit(url)
+    if parts.scheme not in ("http", "https"):
+        return f"non-http scheme ({parts.scheme or 'none'})"
+    host = parts.hostname
+    if not host:
+        return "hostless URL"
+    try:
+        infos = socket.getaddrinfo(host, None)
+    except OSError:
+        return ""  # unresolvable: the request below will fail honestly
+    for info in infos:
+        try:
+            ip = ipaddress.ip_address(info[4][0])
+        except ValueError:
+            continue
+        if (ip.is_private or ip.is_loopback or ip.is_link_local
+                or ip.is_reserved or ip.is_multicast or ip.is_unspecified):
+            return f"private/loopback address ({ip})"
+    return ""
+
+
 def _status_head(val: str) -> str:
     """The bare state word from a status value, emphasis and punctuation removed."""
     return re.split(r"[\s,(]", val.strip().lower().strip("*_`~ "))[0].strip(" .*_`~")
@@ -513,7 +547,11 @@ def _strip_html(raw: str) -> str:
     s = re.sub(r"""(?is)<a[^>]*\shref\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>""",
                r"\2 (\1)", s)
     s = re.sub(r"(?is)<br\s*/?>", "\n", s)
-    s = re.sub(r"(?is)</(t[dh])>", " | ", s)
+    # <th> is marked so table_rows can tell a real header from a first data
+    # row. Lowering both to "|" made a headerless HTML table lose its first
+    # option, which is a C5-thin-alternatives failure on a valid document.
+    s = re.sub(r"(?is)</th>", " |\u241f ", s)
+    s = re.sub(r"(?is)</td>", " | ", s)
     s = re.sub(r"(?is)</tr>", "\n", s)
     s = re.sub(r"(?is)</(p|div|li|h[1-6]|blockquote|span|strong|em|b|i)>", "\n", s)
     # Leading newline is load-bearing: without it the first <li> of a list is
@@ -696,7 +734,21 @@ def table_rows(src: str) -> list[tuple[str, str]]:
     lines = [ln for ln in src.splitlines() if ln.count("|") >= 2]
     if len(lines) < 2:
         return []
+    # A header is a markdown separator rule, or an HTML row that carried <th>.
+    header_at = next((i for i, ln in enumerate(lines) if "\u241f" in ln), None)
+    lines = [ln.replace("\u241f", "") for ln in lines]
     rule_at = next((i for i, ln in enumerate(lines) if TABLE_SEP.match(ln)), None)
+    if rule_at is None and header_at is None:
+        # Headerless: every row is data.
+        out0: list[tuple[str, str]] = []
+        for ln in lines:
+            cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+            cells = [c for c in cells if c]
+            if len(cells) >= 2:
+                out0.append((cells[0], " ".join(cells[1:])))
+        return out0
+    if rule_at is None and header_at is not None:
+        lines = lines[header_at:]
     if rule_at is not None:
         # The table begins at its header, one line above the separator rule.
         # Everything before that is prose that happens to contain pipes.
@@ -1090,6 +1142,14 @@ def check(path: Path, profile: str | None, strict: bool,
             if url in seen:
                 continue
             seen.add(url)
+            blocked = _unsafe_target(url)
+            if blocked:
+                add(Finding("C11-unsafe-link", "fail",
+                            f"refusing to resolve a {blocked} target; "
+                            "--check-links fetches URLs written in the document "
+                            "under review, so it must not be usable to probe "
+                            "internal networks", evidence=url))
+                continue
             try:
                 req = urllib.request.Request(
                     url, method="HEAD",
@@ -1141,8 +1201,9 @@ def main(argv: list[str] | None = None) -> int:
 
     reports = []
     for doc in ns.docs:
-        if not doc.exists():
-            print(f"spec_check: no such file: {doc}", file=sys.stderr)
+        if not doc.is_file():
+            what = "is a directory" if doc.is_dir() else "no such file"
+            print(f"spec_check: {what}: {doc}", file=sys.stderr)
             return 2
         reports.append(check(doc, ns.profile, ns.strict, ns.check_links))
 

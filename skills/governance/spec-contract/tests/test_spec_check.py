@@ -1334,3 +1334,69 @@ def test_r4_span_wrapped_status_reaches_the_anchor(tmp_path):
             '<h2>Design</h2><p>we chose A instead of B</p>')
     assert "C2-no-status" not in checks(run(tmp_path, body, name="d.html",
                                             profile="note"))
+
+
+# ==========================================================================
+# Regression: CodeRabbit review on PR #225.
+# ==========================================================================
+
+@pytest.mark.parametrize("url,why", [
+    ("http://127.0.0.1/x", "loopback"),
+    ("http://localhost/x", "loopback by name"),
+    ("http://169.254.169.254/latest/meta-data/", "cloud metadata"),
+    ("http://10.0.0.5/x", "private range"),
+    ("http://192.168.1.1/x", "private range"),
+    ("file:///etc/passwd", "non-http scheme"),
+])
+def test_cr_check_links_refuses_internal_targets(url, why):
+    """CWE-918. `--check-links` resolves URLs written in the document UNDER
+    REVIEW, so without a destination constraint a spec can name
+    `http://169.254.169.254/…` and have CI fetch cloud credentials for it.
+
+    Refusal is by RESOLVED ADDRESS, not by hostname text, so a name that
+    resolves to loopback cannot spell its way past it."""
+    assert sc._unsafe_target(url), why
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.com/spec", "http://refactoringenglish.com/x",
+])
+def test_cr_check_links_allows_public_targets(url):
+    assert sc._unsafe_target(url) == "", url
+
+
+def test_cr_unsafe_link_is_reported_not_fetched(tmp_path, monkeypatch):
+    import urllib.request
+
+    def fail(req, timeout=0):
+        raise AssertionError("an internal target was fetched")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail)
+    body = GOOD + "\n\nSee http://169.254.169.254/latest/meta-data/ for detail.\n"
+    assert "C11-unsafe-link" in fails(run(tmp_path, body, check_links=True))
+
+
+def test_cr_a_directory_argument_exits_two(tmp_path):
+    """A directory passes `exists()`, so `read_text()` raised IsADirectoryError
+    — an uncaught traceback instead of the documented bad-invocation code."""
+    d = tmp_path / "adir"
+    d.mkdir()
+    assert sc.main([str(d)]) == 2
+
+
+def test_cr_a_headerless_html_table_keeps_its_first_row():
+    """`</th>` and `</td>` lowered identically, so `table_rows` could not tell a
+    header from a first data row and dropped it — a two-option headerless table
+    became one and tripped C5-thin-alternatives."""
+    html = ("<table><tr><td>Redis</td><td>another process to operate</td></tr>"
+            "<tr><td>Firestore</td><td>platform lock-in</td></tr></table>")
+    rows = sc.table_rows(sc._strip_html(html))
+    assert [lbl for lbl, _ in rows] == ["Redis", "Firestore"]
+
+
+def test_cr_an_html_table_with_th_still_drops_its_header():
+    html = ("<table><tr><th>Alternative</th><th>Why rejected</th></tr>"
+            "<tr><td>Redis</td><td>another process to operate</td></tr>"
+            "<tr><td>Firestore</td><td>platform lock-in</td></tr></table>")
+    rows = sc.table_rows(sc._strip_html(html))
+    assert [lbl for lbl, _ in rows] == ["Redis", "Firestore"]
