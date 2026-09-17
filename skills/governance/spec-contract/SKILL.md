@@ -2,7 +2,7 @@
 name: spec-contract
 tier: D+J
 category: governance
-description: "The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked example, Design Docs at Google, the Rust RFC template, Nygard's original ADR post, Oxide RFD 1). The load-bearing rule is the cost of reversing a decision, not its importance: a choice fixable in an afternoon is review noise, a one-way door left unargued is the failure a design doc exists to prevent. Two layers. DETERMINISTIC — `scripts/spec_check.py` reads a markdown or HTML doc and decides fourteen checks: required sections by class not by name, status resolvable and supersession pointed, >=2 alternatives each with a rejection reason, non-goals that are declined goals rather than negated requirements, drawbacks that state a cost, acceptance that carries a number or a runnable command, and an implementation-manual detector for a doc with no trade-off language anywhere. JUDGMENT — `references/rubric.md` grades the five things a script cannot: whether the documented decisions are the expensive ones, whether the alternatives are real or strawmen, whether the non-goals are load-bearing, whether trade-offs are argued or merely mentioned, and whether the first screen is legible to the widest expected reader. Use when: (1) writing or reviewing a spec, plan, ADR, RFD or design doc, (2) deciding whether something warrants a design doc at all, (3) gating a doc before it goes out for review, (4) asked what belongs in a spec or why a spec is weak. Triggers on 'spec contract', 'design doc', 'write a spec', 'review this spec', 'is this spec any good', 'what belongs in a design doc', 'ADR', 'RFD', 'non-goals', 'alternatives considered', 'spec review', 'spec gate', 'design review', 'one-way door', 'reversal cost'."
+description: "The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked example, Design Docs at Google, the Rust RFC template, Nygard's original ADR post, Oxide RFD 1). The load-bearing rule is the cost of reversing a decision, not its importance: a choice fixable in an afternoon is review noise, a one-way door left unargued is the failure a design doc exists to prevent. Two layers. DETERMINISTIC — `scripts/spec_check.py` reads a markdown or HTML doc and decides 18 findings: required sections by class not by name, status resolvable and supersession pointed, >=2 alternatives each with a rejection reason, non-goals that are declined goals rather than negated requirements, drawbacks that state a cost, acceptance that carries a number or a runnable command, and an implementation-manual detector for a doc with no trade-off language anywhere. JUDGMENT — `references/rubric.md` grades the five things a script cannot: whether the documented decisions are the expensive ones, whether the alternatives are real or strawmen, whether the non-goals are load-bearing, whether trade-offs are argued or merely mentioned, and whether the first screen is legible to the widest expected reader. Use when: (1) writing or reviewing a spec, plan, ADR, RFD or design doc, (2) deciding whether something warrants a design doc at all, (3) gating a doc before it goes out for review, (4) asked what belongs in a spec or why a spec is weak. Triggers on 'spec contract', 'design doc', 'write a spec', 'review this spec', 'is this spec any good', 'what belongs in a design doc', 'ADR', 'RFD', 'non-goals', 'alternatives considered', 'spec review', 'spec gate', 'design review', 'one-way door', 'reversal cost'."
 ---
 
 # spec-contract — what must be in a design doc
@@ -54,12 +54,15 @@ Exit `0` clean · `1` a required check failed · `2` bad invocation.
 | `C3-vague-reversal-cost` | *(warn)* reversal cost named but not graded | LYNCH |
 | `C4-negated-goal` | *(warn)* a non-goal reads as a negated requirement | GOOGLE |
 | `C5-thin-alternatives` | fewer than two alternatives named | RUST, GOOGLE |
-| `C5-no-rejection-reason` | alternatives listed with no stated reason for rejection | RUST |
-| `C6-drawbacks-without-cost` | a drawbacks section that states no cost | NYGARD, RUST |
+| `C5-unjustified-alternative` | an option is named with no prose beyond its own name | RUST |
+| `C5-no-rejection-reason` | no option states why it was *not* chosen | RUST |
+| `C6-drawbacks-without-cost` | a drawbacks section that states no cost — blocking where the class is *required*, advisory where it is only recommended | NYGARD, RUST |
 | `C7-open-question-without-next-step` | *(warn)* an open question with no resolution path | LYNCH |
-| `C8-unmeasurable-acceptance` | acceptance with no number, unit or runnable command | LYNCH |
+| `C8-unmeasurable-acceptance` | acceptance with no number, unit or runnable command — blocking on `plan`, advisory elsewhere | LYNCH |
 | `C9-implementation-manual` | **no trade-off language anywhere in the document** | GOOGLE |
-| `C10-oversized` / `C10-stub` | *(warn)* beyond ~20 pages, or under 250 words | GOOGLE, NYGARD |
+| `C10-oversized` | *(warn)* beyond ~20 pages — GOOGLE's signal to split the problem | GOOGLE |
+| `C10-stub` | *(warn)* under 250 words | NYGARD |
+| `C11-dead-link` | *(opt-in `--check-links`)* a cited URL does not resolve | — |
 
 ### Profiles
 
@@ -76,9 +79,13 @@ pin down. Inferred from the path (`docs/adrs/` → `adr`, `docs/plans/` → `pla
 | `rfd` | objective · design · alternatives · drawbacks | context · open questions · acceptance |
 | `note` | design | objective · alternatives |
 
-`alternatives` is required in every profile but `note` because all five sources
-say so in the same words. `acceptance` is required on `plan` alone: a plan with
-no definition of done is a wish list.
+`alternatives` is required on `adr`, `spec` and `rfd` because all five sources
+say so in the same words. It is **not** required on `plan` — a rollout plan
+sequences work whose design decision was already taken elsewhere — nor on
+`note`. `acceptance` is required on `plan` alone: a plan with no definition of
+done is a wish list. `test_r1_nb1_skill_md_alternatives_claim_matches_the_table`
+asserts this paragraph against `PROFILES`, because the first version of it
+claimed "every profile but `note`" and the table disagreed.
 
 **Sections resolve by class, not by name.** "Missing features", "Out of scope"
 and "What this is not" are all `non_goals`. Widen a class by adding a synonym to
@@ -87,7 +94,7 @@ the checker. Renaming to pass a gate is gaming it.
 
 ## Layer 2 — judgment (`references/rubric.md`)
 
-A doc can pass all fourteen checks and be worthless: two strawman alternatives, a
+A doc can pass all 18 findings and be worthless: two strawman alternatives, a
 non-goal nobody would have assumed, an SLO chosen because it was easy to measure.
 That is not a gap in the script — it is the half that is irreducibly a judgment.
 
@@ -152,25 +159,50 @@ reviewer's confusion resolved in a thread fixes nothing for the next reader.
 
 ## Calibration
 
-Measured 2026-09-16. Against **Lynch's own worked example** (`little-moments-design-doc`,
-2,667 lines) at `--profile spec`: **zero failures**, two warnings. Against this
-workspace's 105 existing `docs/specs|plans|adrs` documents: **1 passes**.
+Measured 2026-09-16.
+
+| Corpus | Result |
+|---|---|
+| **Lynch's own worked example** (`little-moments-design-doc`, 2,667 lines), `--profile spec` | **zero failures** |
+| This workspace's 105 existing `docs/specs\|plans\|adrs` | **0 pass** |
 
 Section coverage across those 105, by class: design 46.7% · open questions 25.7%
 · acceptance 13.3% · drawbacks 13.3% · objective 12.4% · context 9.5% ·
-**non-goals 7.6% · alternatives 7.6%** · goals 1.9%.
+**non-goals 7.6% · alternatives 7.6%** · goals 1.9%. The corpus documents what
+was chosen and not what was ruled out — the inverse of reversal cost, and the
+reason this skill exists.
 
-The corpus documents what was chosen and not what was ruled out — which is the
-inverse of reversal cost, and the reason this skill exists.
+**What the corpus number is not evidence for.** An earlier draft of this section
+reported 1/105 and attributed the improvement to the required/recommended split.
+Cross-model review challenged that attribution and re-measurement refuted it:
+both the all-nine-required arm and the shipped split pass **0/105**. The split
+buys zero existing documents. It is derived from the five sources — `required`
+is the intersection of what all five independently call load-bearing — and the
+evidence that it is not merely strict runs the other way: **a design doc written
+to published best practice clears it.** A corpus pass rate says what the corpus
+is like, not where the bar belongs, and reporting it as if it justified the bar
+was the error.
 
 ## Tests
 
 ```bash
-python3 -m pytest tests/test_spec_check.py -q   # 59 tests
-bash tests/mutation.sh                          # 14 mutants, 14 killed
+python3 -m pytest tests/test_spec_check.py -q   # 111 tests
+bash tests/mutation.sh                          # incl. a NULL control that must SURVIVE
 ```
 
 Every check carries a **positive and a negative control**. `C4` found nothing
 across all 105 real documents; that is a measured zero with a known cause — only
 8 of them have a non-goals section for it to read — not an unfalsified silence,
 and the four positive controls prove the rule fires.
+
+The mutation sweep reports **killed 27/27**, and three properties of it are load-bearing
+because the first version had none of them and still printed a clean score:
+
+- **A NULL mutant must SURVIVE.** A no-op edit that fails the suite means the
+  harness is broken and every other verdict it printed is void.
+- **A nonzero exit is not a kill.** `PYTEST_ADDOPTS=--bogus` made the first
+  version report "killed 14/14" while pytest collected nothing. A kill now
+  requires the same test count as the clean baseline plus a `FAILED` line.
+- **A crash is not a kill.** A mutant that dereferences `None` proves the code
+  path runs, not that any assertion is sensitive to it. Those are reported
+  `CRASH` and fail the run.

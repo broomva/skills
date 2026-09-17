@@ -53,8 +53,9 @@ SECTION_CLASSES: dict[str, tuple[str, ...]] = {
         "what this is not", "missing features", "explicitly excluded",
         "deliberately omitted", "exclusions",
     ),
-    "design": ("design", "architecture", "approach", "proposal", "solution",
-               "implementation", "mechanism", "how it works"),
+    "design": ("design", "decision", "architecture", "approach", "proposal",
+               "solution", "implementation", "mechanism", "how it works",
+               "the actual design", "reference-level explanation"),
     "alternatives": (
         "alternatives", "alternatives considered", "rationale and alternatives",
         "options considered", "rejected", "why not", "other approaches",
@@ -72,7 +73,11 @@ SECTION_CLASSES: dict[str, tuple[str, ...]] = {
     "acceptance": (
         "acceptance", "acceptance criteria", "service level objectives", "slo",
         "slos", "success criteria", "definition of done", "how we will know",
-        "measurement", "validation", "test plan",
+        "test plan", "rollout criteria",
+        # "validation" and "measurement" are deliberately absent: in a spec they
+        # name INPUT validation and instrumentation far more often than an
+        # acceptance bar, and classifying them here produced a hard C8 failure
+        # on sections that were never making a claim about done-ness.
     ),
 }
 
@@ -86,10 +91,20 @@ SECTION_CLASSES: dict[str, tuple[str, ...]] = {
 # each make the comparison the point of the document. A missing recommended
 # section warns; the doc still passes.
 #
-# Measured against this workspace's 105 existing specs/plans/ADRs on 2026-09-16:
-# requiring all nine classes passed 1/105. That is a gate nobody adopts, and a
-# gate nobody adopts enforces nothing. The split below is what made the contract
-# a bar a new doc can clear on purpose rather than a verdict on the back catalog.
+# The split is derived from the five sources, NOT from a measurement. An earlier
+# version of this comment claimed the opposite — that requiring all nine classes
+# passed 1/105 and the split was "what made the contract a bar a new doc can
+# clear." Cross-model review challenged the attribution and the re-measurement
+# refuted it: on this workspace's 105 existing specs/plans/ADRs (2026-09-16),
+# BOTH arms pass 0/105. The split buys exactly zero existing documents.
+#
+# What the split is actually for: `required` is the intersection of what all
+# five sources independently call load-bearing, so failing it means failing a
+# published consensus rather than a local preference. The calibration evidence
+# is the other direction — LYNCH's own worked example passes at `--profile spec`
+# with zero failures, which is what distinguishes a demanding gate from a
+# miscalibrated one. The corpus number says only that this corpus does not meet
+# the bar; it is not evidence about where the bar belongs.
 PROFILES: dict[str, dict[str, tuple[str, ...]]] = {
     "adr": {
         "required": ("context", "design", "alternatives", "drawbacks"),
@@ -152,11 +167,14 @@ NEGATION_HEAD = re.compile(
 # added a noun-phrase exemption on top and it suppressed a true positive ("Must
 # not lose data": "not lose" read as a noun phrase), so the exemption is gone.
 
+# Every alternation branch needs BOTH boundaries. The first cut lost the closing
+# \b when the Pro/Con idiom was added, and "but" then matched "Butterfly" — so a
+# bare list of product names read as a list of reasoned rejections.
 REJECTION_MARKERS = re.compile(
-    r"\b(?:but|however|rejected|reject|too\s+\w+|lock-?in|expensive|costly|"
-    r"complexity|overkill|doesn'?t|don'?t|can'?t|cannot|wouldn'?t|lacks?|"
-    r"missing|instead|downside|drawback|risk|slower|unsupported|not\s+worth|"
-    r"ruled\s+out|discarded|dismissed|cons?\s*:|\bcons\b)",
+    r"\b(?:but|however|rejected?|lock-?in|expensive|costly|complexity|overkill|"
+    r"doesn'?t|don'?t|can'?t|cannot|wouldn'?t|lacks?|missing|instead|downside|"
+    r"drawback|risk|slower|unsupported|discarded|dismissed|cons?)\b"
+    r"|\btoo\s+\w+|\bnot\s+worth\b|\bruled\s+out\b",
     re.I,
 )
 
@@ -175,11 +193,20 @@ TRADEOFF_LANGUAGE = re.compile(
 # LYNCH's SLO section: "A well-defined SLO prevents ambiguity by expressing goals
 # in concrete, objective terms." A number with a unit, a percentage, or a
 # runnable command all count as concrete; adjectives do not.
+# Every unit needs a closing boundary: without one, "3 ministers" measured as
+# "3 min". And a percentile NAME is not a target — "p50 latency should feel
+# fast" names the metric and states no threshold — so p50 only counts when a
+# comparator and a number follow it.
 MEASURABLE = re.compile(
-    r"(?:\b\d+(?:\.\d+)?\s?(?:%|ms|s\b|sec|seconds?|min|minutes?|h\b|hours?|"
-    r"days?|weeks?|GB|MB|KB|TB|req/s|rps|qps|LOC|lines|px|USD|\$)|"
-    r"\bp\d{2}\b|\b\d+/\d+\b|\$\d|`[^`]*(?:test|check|pytest|cargo|make|npm|"
-    r"bun|curl|gh)\b[^`]*`)",
+    r"\b\d+(?:\.\d+)?\s?%"
+    r"|\b\d+(?:\.\d+)?\s?"
+    r"(?:ms|s|sec|secs|seconds?|min|mins|minutes?|h|hrs?|hours?|days?|weeks?|"
+    r"[KMGT]B|rps|qps|LOC|lines|px|USD)\b"
+    r"|\b\d+(?:\.\d+)?\s?req/s"
+    r"|\bp\d{2}\b[^.\n]{0,40}?(?:<=?|>=?|=|≤|≥|under|below|within|at\s+most)"
+    r"\s*\d"
+    r"|\b\d+\s*/\s*\d+(?!\s*/)\b(?<!\d{4}/\d\d/\d\d)|\$\s?\d"
+    r"|`[^`\n]*(?:test|check|pytest|cargo|make|npm|bun|curl|gh)\b[^`\n]*`",
     re.I,
 )
 
@@ -210,14 +237,37 @@ NEXT_STEP = re.compile(
 # GOOGLE: "The sweet spot for a larger project seems to be around 10-20ish pages.
 # If you get way beyond that, it might make sense to split up the problem."
 # ~500 words/page.
+# GOOGLE's detector needs more than one token to clear. One was enough for the
+# metadata line this skill RECOMMENDS ("Reversal cost: two-way door") to switch
+# the check off — a gate defeated by its own house style.
+MIN_TRADEOFF_HITS = 2
+
+# Characters of prose an alternative must carry beyond its own name.
+MIN_JUSTIFICATION = 12
+
 WORDS_PER_PAGE = 500
 MAX_PAGES = 20
 MIN_WORDS = 250
 
-STATUS_LINE = re.compile(r"\bstatus\b\s*[:\-–—]\s*([^\n<·|]{1,80})", re.I)
+PLACEHOLDER = re.compile(
+    r"^\W*(?:tbd|tba|todo|t\.b\.d\.?|\?+|n/?a|none|unknown|unclear|"
+    r"to\s+be\s+(?:decided|determined)|pending|later|\.{3}|—|-)\W*$", re.I)
+
+# Anchored to the start of a line (after optional list/emphasis punctuation).
+# Unanchored, "HTTP status: 200 is returned on success." satisfied C2 — the
+# check's only blocking arm, discharged by an HTTP code in body prose.
+STATUS_LINE = re.compile(
+    r"(?:^|[·|])[ \t]{0,8}(?:[-*+]\s*)?[*_`]{0,2}status[*_`]{0,2}\s*[:\-–—]\s*"
+    r"([^\n<·|]{1,80})",
+    re.I | re.M,
+)
+# Either a labelled field, or an explicit one-way/two-way door phrase. The bare
+# word "door" used to qualify, so a sentence about a literal door satisfied the
+# one check `--strict` promotes to blocking.
 REVERSAL_LINE = re.compile(
-    r"\b(?:reversal[\s-]cost|reversibility|decision[\s-]class|door)\b"
-    r"\s*[:\-–—]?\s*([^\n<·|]{0,60})",
+    r"\b(?:reversal[\s-]cost|reversibility|decision[\s-]class)\b"
+    r"\s*[:\-–—]?\s*([^\n<·|]{0,60})"
+    r"|\b((?:one|two)-?way\s+door[^\n<·|]{0,60})",
     re.I,
 )
 ONE_WAY = re.compile(r"\bone-?way\b", re.I)
@@ -231,12 +281,21 @@ class Section:
     title: str
     body: str
     cls: str | None = None
+    # Every class this heading satisfies. A combined heading — "Goals and
+    # non-goals", "Alternatives and drawbacks" — is one section answering two
+    # questions, and scoring only the first made the doc fail for a section it
+    # actually had. `cls` stays as the primary for reporting.
+    classes: tuple[str, ...] = ()
     # Body PLUS every nested subsection, down to the next heading at or above
     # this one's level. Every content check reads `subtree`, never `body`:
     # a doc that puts its SLO numbers under `### Latency` beneath
     # `## Service level objectives` has a section whose own body is empty, and
     # a check that reads `body` would score it as having said nothing.
     subtree: str = ""
+    # The subtree with every nested HEADING removed. C6 and C8 read this: an
+    # empty `## Trade-offs` heading must not answer the question it poses, but
+    # the SLO numbers nested under `### Latency` must still be seen.
+    subtree_body: str = ""
 
     @property
     def items(self) -> list[str]:
@@ -278,21 +337,80 @@ class Report:
 # the same Section list, so neither surface can drift into being unchecked.
 # --------------------------------------------------------------------------
 
+# A markdown fence and an HTML <pre> are EXAMPLES, not document structure. Left
+# in, a file that is nothing but a fenced sample of a good doc parsed as that
+# good doc and passed every check.
+FENCE_RE = re.compile(r"(?ms)^[ \t]{0,3}(`{3,}|~{3,})[^\n]*\n.*?^[ \t]{0,3}\1[ \t]*$")
+
+# Typographic quotes are what a word processor, a CMS and most humans actually
+# emit. Matching only the ASCII form let "The system shouldn't crash" through
+# C4 on the strength of one character.
+_QUOTES = (("\u2019", "'"), ("\u2018", "'"), ("\u201c", '"'), ("\u201d", '"'),
+           ("\u2032", "'"))
+
+
+def fold_quotes(s: str) -> str:
+    for a, b in _QUOTES:
+        s = s.replace(a, b)
+    return s
+
+
+FRONT_MATTER_COMMENT = re.compile(r"(?s)\A\s*(?:<!DOCTYPE[^>]*>\s*)?<!--(.*?)-->")
+
+
+def hoist_front_matter(raw: str) -> str:
+    """YAML front matter carried in a leading HTML comment, as plain text.
+
+    This is the carrier P18 names for `.html` artifacts, and the catch-all tag
+    strip erases it wholesale. Measured before this existed: 41 of 67 real HTML
+    documents in this workspace carried a `status:` field that the checker could
+    not see, so much of the corpus calibration was the gate being unable to read
+    the format `make-spec` emits rather than the documents being deficient.
+    """
+    fm = FRONT_MATTER_COMMENT.search(raw)
+    if fm and re.search(r"^\s*[-\w]+\s*:", fm.group(1), re.M):
+        return fm.group(1).strip("- \n\t") + "\n"
+    return ""
+
+
 def _strip_html(raw: str) -> str:
-    s = re.sub(r"(?is)<(script|style|svg|head)[^>]*>.*?</\1>", " ", raw)
+    s = re.sub(r"(?is)<(script|style|svg|head|pre)[^>]*>.*?</\1>", " ", raw)
+    # Preserve what later checks read OUT of the markup rather than through it.
+    # <code>make check</code> is the HTML spelling of `make check`, and a
+    # successor link lives in an href, not in the link text. Dropping both made
+    # the two entry surfaces disagree on identical documents.
+    s = re.sub(r"(?is)<code[^>]*>(.*?)</code>", r"`\1`", s)
+    s = re.sub(r"""(?is)<a[^>]*\shref\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>""",
+               r"\2 (\1)", s)
     s = re.sub(r"(?is)<br\s*/?>", "\n", s)
-    s = re.sub(r"(?is)</(p|div|li|h[1-6]|tr|pre|blockquote|td)>", "\n", s)
+    s = re.sub(r"(?is)</(p|div|li|h[1-6]|tr|blockquote|td)>", "\n", s)
     s = re.sub(r"(?is)<li[^>]*>", "- ", s)
     s = re.sub(r"(?s)<[^>]+>", " ", s)
     for a, b in (("&amp;", "&"), ("&lt;", "<"), ("&gt;", ">"), ("&quot;", '"'),
                  ("&#39;", "'"), ("&nbsp;", " "), ("&mdash;", "—"),
                  ("&ndash;", "–"), ("&hellip;", "…")):
         s = s.replace(a, b)
+    # Numeric entities, which hid `Obj&#101;ctive` from the classifier.
+    s = re.sub(r"&#(\d{1,5});", lambda m: chr(int(m.group(1))), s)
+    s = re.sub(r"&#x([0-9a-fA-F]{1,5});", lambda m: chr(int(m.group(1), 16)), s)
     return s
 
 
 def parse(raw: str, is_html: bool) -> tuple[list[Section], str]:
     """Return (sections, plain_text). Plain text keeps the front matter."""
+    raw = fold_quotes(raw)
+    if not is_html:
+        raw = FENCE_RE.sub("", raw)
+    front = ""
+    if is_html:
+        # Order matters. The front-matter hoist must run BEFORE comments are
+        # stripped, or it rescues nothing; comments must be stripped before
+        # headings are scanned, or an <h2> inside one becomes a section of a
+        # document it was commented out of.
+        front = hoist_front_matter(raw)
+        raw = re.sub(r"(?is)<(script|style|svg|head|pre|template)[^>]*>.*?</\1>",
+                     " ", raw)
+        raw = re.sub(r"(?s)<!--.*?-->", " ", raw)
     if is_html:
         heading_re = re.compile(r"(?is)<h([1-6])[^>]*>(.*?)</h\1>")
         marks: list[tuple[int, int, int, str]] = []
@@ -304,7 +422,7 @@ def parse(raw: str, is_html: bool) -> tuple[list[Section], str]:
         for i, (_s, e, lvl, title) in enumerate(marks):
             end = marks[i + 1][0] if i + 1 < len(marks) else len(raw)
             sections.append(Section(lvl, title, _strip_html(raw[e:end])))
-        return sections, _strip_html(raw)
+        return sections, front + _strip_html(raw)
 
     lines = raw.splitlines()
     sections, cur, buf = [], None, []
@@ -327,19 +445,22 @@ def attach_subtrees(sections: list[Section]) -> None:
     """Fill `subtree` for every section: its own body plus all nested ones."""
     for i, sec in enumerate(sections):
         parts = [sec.body]
+        bodies = [sec.body]
         for nxt in sections[i + 1:]:
             if nxt.level <= sec.level:
                 break
             parts.append(nxt.title)
             parts.append(nxt.body)
+            bodies.append(nxt.body)
         sec.subtree = "\n".join(parts)
+        sec.subtree_body = "\n".join(bodies)
 
 
 def classify(sections: Iterable[Section]) -> None:
     for sec in sections:
         t = re.sub(r"^[\d.\s]+", "", sec.title).strip().lower().rstrip(":")
         t = re.sub(r"[🔗#]", "", t).strip()
-        best: tuple[int, str] | None = None
+        scored: dict[str, int] = {}
         for cls, names in SECTION_CLASSES.items():
             for name in names:
                 if t == name:
@@ -350,17 +471,117 @@ def classify(sections: Iterable[Section]) -> None:
                     score = len(name)
                 else:
                     continue
-                if best is None or score > best[0]:
-                    best = (score, cls)
-        sec.cls = best[1] if best else None
+                scored[cls] = max(scored.get(cls, 0), score)
+        sec.classes = tuple(sorted(scored, key=lambda c: -scored[c]))
+        sec.cls = sec.classes[0] if sec.classes else None
 
 
-def infer_profile(path: Path, words: int | None = None) -> str:
-    """Profile from the path, falling back to `note` for genuinely short docs.
+def alternative_entries(sections: list[Section],
+                        alts: list[Section]) -> list[tuple[str, str]]:
+    """Discrete (label, blurb) pairs for each option the doc considered.
 
-    The word threshold matters: GOOGLE explicitly blesses the "1-3 page mini
-    design doc", so a 400-word note judged against the full spec profile would
-    fail for being what it was meant to be.
+    Two idioms, both real. A bullet list — ``- Redis: another process`` — and
+    nested sub-headings, which is what the Little Moments doc uses. Returning
+    PAIRS rather than a bag of strings is what lets C5 demand a reason from each
+    option instead of from the section as a whole.
+    """
+    entries: list[tuple[str, str]] = []
+    for sec in alts:
+        start = next(i for i, x in enumerate(sections) if x is sec)
+        subs = []
+        for nxt in sections[start + 1:]:
+            if nxt.level <= sec.level:
+                break
+            subs.append(nxt)
+        if subs:
+            # Only the shallowest nested level names options; anything deeper is
+            # detail belonging to the option above it.
+            top = min(x.level for x in subs)
+            for i, x in enumerate(subs):
+                if x.level != top:
+                    continue
+                blurb = [x.body]
+                for y in subs[i + 1:]:
+                    if y.level <= top:
+                        break
+                    blurb += [y.title, y.body]
+                entries.append((x.title, "\n".join(blurb)))
+            continue
+        # Indentation carries the structure: a top-level bullet names an
+        # option, and everything indented under it is that option's blurb.
+        src = sec.subtree_body or sec.body
+        bullets = [(len(m.group(1)), m.group(2).strip())
+                   for ln in src.splitlines()
+                   if (m := re.match(r"^([ \t]*)(?:[-*+]|\d+\.)\s+(\S.*)$", ln))]
+        if bullets:
+            base = min(d for d, _ in bullets)
+            cur: list[str] | None = None
+            for depth, txt in bullets:
+                if depth <= base:
+                    if cur:
+                        entries.append((cur[0], "\n".join(cur[1:]) or cur[0]))
+                    label, _, rest = txt.partition(":")
+                    cur = [label.strip() or txt[:40]]
+                    if rest.strip():
+                        cur.append(rest.strip())
+                elif cur:
+                    cur.append(txt)
+            if cur:
+                entries.append((cur[0], "\n".join(cur[1:]) or cur[0]))
+            continue
+        for para in (x.strip() for x in re.split(r"\n\s*\n", src)):
+            if len(para) < 4:
+                continue
+            label, _, rest = para.partition(":")
+            entries.append((label.strip()[:60] or para[:40], rest.strip() or para))
+    return entries
+
+
+def prose(secs: list[Section]) -> str:
+    """Subtree text with every heading excluded — what the author actually wrote.
+
+    C6 and C8 read this rather than `subtree` so a heading cannot answer the
+    question its own section poses (an empty `## Trade-offs` is not a
+    trade-off), while nested content — the SLO numbers under `### Latency` —
+    still counts.
+    """
+    return "\n".join(x.subtree_body or x.body for x in secs)
+
+
+METADATA_LINE = re.compile(
+    r"^\s*(?:status|reversal[\s-]cost|reversibility|decision[\s-]class|author|"
+    r"created|updated|url|owner|reviewers?|date)\b\s*[:\-–—]", re.I)
+
+
+def body_prose(sections: list[Section]) -> str:
+    """The document's prose: no headings, no metadata lines.
+
+    C9 reads this. Reading the raw text let the `Reversal cost: two-way door`
+    line this skill RECOMMENDS satisfy the trade-off detector on its own — a
+    gate switched off by its own house style.
+    """
+    out = []
+    for sec in sections:
+        for line in sec.body.splitlines():
+            if not METADATA_LINE.match(line):
+                out.append(line)
+    return "\n".join(out)
+
+
+def infer_profile(path: Path) -> str:
+    """Profile from the PATH only.
+
+    An earlier cut downgraded any document under 700 words to `note`, reasoning
+    that GOOGLE blesses the "1-3 page mini design doc". That was an automatic
+    exemption, and cross-model review found the consequence: a thirteen-word
+    implementation manual committing a one-way door exited 0, and the cheapest
+    way to pass the gate was to delete words until you crossed the threshold.
+    SKILL.md's own anti-rationalization table says "Small is a size, not an
+    exemption"; this function used to contradict it.
+
+    `note` is still available and still right for a short design-bearing doc —
+    it is now opt-in via `--profile note`, which is a choice someone makes and
+    a reviewer can see, rather than a silent property of word count.
     """
     p = str(path).lower()
     if "/adrs/" in p or "-adr-" in p or p.endswith("adr.md"):
@@ -369,8 +590,6 @@ def infer_profile(path: Path, words: int | None = None) -> str:
         return "plan"
     if "/rfd" in p or "/rfcs/" in p:
         return "rfd"
-    if words is not None and words < 700:
-        return "note"
     return "spec"
 
 
@@ -386,14 +605,14 @@ def check(path: Path, profile: str | None, strict: bool,
     attach_subtrees(sections)
     classify(sections)
     words = len(re.findall(r"\b[\w'-]+\b", text))
-    prof = profile or infer_profile(path, words)
+    prof = profile or infer_profile(path)
     if prof not in PROFILES:
         raise SystemExit(f"unknown profile {prof!r}; pick from {sorted(PROFILES)}")
 
     by_cls: dict[str, list[Section]] = {}
     for s in sections:
-        if s.cls:
-            by_cls.setdefault(s.cls, []).append(s)
+        for c in (s.classes or ((s.cls,) if s.cls else ())):
+            by_cls.setdefault(c, []).append(s)
 
     rep = Report(str(path), prof, words,
                  {c: "; ".join(s.title for s in v) for c, v in by_cls.items()})
@@ -423,23 +642,34 @@ def check(path: Path, profile: str | None, strict: bool,
                     "becomes a false description of what shipped"))
     else:
         val = m.group(1).strip().lower()
-        head = re.split(r"[\s,(]", val)[0].strip(" .")
+        # Strip markdown emphasis before the lookup. `Status: **superseded**`
+        # otherwise fell out of the known set into a mere warning, which skipped
+        # the successor requirement entirely — a one-asterisk bypass.
+        head = re.split(r"[\s,(]", val.strip("*_`~ "))[0].strip(" .*_`~")
         if head not in VALID_STATUSES:
             add(Finding("C2-bad-status", "warn",
                         f"status {head!r} is outside the known state set",
                         evidence=m.group(0).strip()))
         elif head in STATUS_NEEDS_POINTER:
-            tail = text[m.end():m.end() + 400]
-            if not (URL_RE.search(m.group(0) + tail)
-                    or re.search(r"\b(?:by|→|->)\s*\S+", val)
-                    or re.search(r"\.(?:md|html)\b", m.group(0) + tail)):
+            # The successor must be ON the status line. Scanning 400 characters
+            # ahead let an unrelated link — an author's homepage two lines down —
+            # satisfy the requirement.
+            line_end = text.find("\n", m.start())
+            line = text[m.start(): line_end if line_end != -1 else len(text)]
+            if not (URL_RE.search(line)
+                    or re.search(r"\b(?:by|→|->|supersedes?|replaced\s+by)\b"
+                                 r"\s*\S{3,}", line, re.I)
+                    or re.search(r"[\w/.-]+\.(?:md|html)\b", line)):
                 add(Finding("C2-dangling-supersede", "fail",
-                            f"status {head!r} names no successor; NYGARD "
-                            "requires a reference to the replacement",
-                            evidence=m.group(0).strip()))
+                            f"status {head!r} names no successor on the status "
+                            "line; NYGARD requires a reference to the replacement",
+                            evidence=line.strip()[:120]))
 
     # --- C3 reversal cost declared (LYNCH's inclusion rule, made explicit) ---
     rm = REVERSAL_LINE.search(text)
+    rm_val = ((rm.group(1) or rm.group(2) or "") if rm else "")
+    if rm is not None and PLACEHOLDER.match(rm_val.strip()):
+        rm = None  # "Reversal cost: TBD" answers nothing; treat it as unanswered
     if not rm:
         sev = "fail" if strict else "warn"
         add(Finding("C3-no-reversal-cost", sev,
@@ -448,7 +678,7 @@ def check(path: Path, profile: str | None, strict: bool,
                     "wrong?') is the reason this document exists"))
     elif not (ONE_WAY.search(rm.group(0)) or TWO_WAY.search(rm.group(0))
               or re.search(r"\b(?:high|low|medium|irreversible|cheap|expensive)\b",
-                           rm.group(1), re.I)):
+                           rm_val, re.I)):
         add(Finding("C3-vague-reversal-cost", "warn",
                     "reversal cost is named but not graded",
                     evidence=rm.group(0).strip()))
@@ -470,36 +700,43 @@ def check(path: Path, profile: str | None, strict: bool,
     # --- C5 alternatives: >=2, each with a reason (RUST, GOOGLE, LYNCH) ------
     alts = by_cls.get("alternatives", [])
     if alts:
-        named: list[str] = []
-        for sec in alts:
-            named += [i for i in sec.items if len(i.strip()) > 3]
-            # Sub-headings nested under the alternatives heading are the other
-            # idiom for naming an option (the Little Moments doc uses exactly
-            # this: "### Alternative frontend stacks" → "#### FontAwesome").
-            start = next(i for i, s in enumerate(sections) if s is sec)
-            for s in sections[start + 1:]:
-                if s.level <= sec.level:
-                    break
-                named.append(s.title)
-        distinct = {re.sub(r"\W+", " ", n).strip().lower()[:60] for n in named if n}
-        distinct = {d for d in distinct if len(d) > 3}
-        if len(distinct) < 2:
+        entries = alternative_entries(sections, alts)
+        if len(entries) < 2:
             add(Finding("C5-thin-alternatives", "fail",
-                        f"alternatives section names {len(distinct)} option(s); "
+                        f"alternatives section names {len(entries)} option(s); "
                         "RUST asks 'what other designs have been considered and "
                         "what is the rationale for not choosing them?' — one "
                         "option is not a comparison"))
-        body = " ".join(s.subtree for s in alts)
-        if not REJECTION_MARKERS.search(body):
+        # Two checks, at the two levels a script can actually decide.
+        #
+        # Per ENTRY: is this option justified at all, or is it a bare name? A
+        # keyword list cannot enumerate the ways English states a reason — "the
+        # network hop eats the win" is one — so the per-entry test is
+        # structural: an option with no prose beyond its own name was not
+        # argued. Judging whether the prose is a GOOD reason is rubric R2.
+        for label, blurb in entries:
+            justification = blurb.strip()
+            if justification.lower().startswith(label.strip().lower()):
+                justification = justification[len(label.strip()):]
+            if len(justification.strip(" .:—-\n\t")) < MIN_JUSTIFICATION:
+                add(Finding("C5-unjustified-alternative", "fail",
+                            f"alternative {label[:48]!r} is named with no "
+                            "justification; RUST asks for 'the rationale for not "
+                            "choosing them', which a bare name does not give",
+                            evidence=blurb.strip()[:120]))
+        # Per SECTION: does any rejection language appear at all? A section of
+        # neutral descriptions is a survey, not a comparison.
+        if not REJECTION_MARKERS.search(" ".join(b for _, b in entries)):
             add(Finding("C5-no-rejection-reason", "fail",
-                        "alternatives are listed with no stated reason for "
-                        "rejection; a list of options is not a rationale"))
+                        "no alternative states why it was NOT chosen; a list of "
+                        "options with descriptions is a survey, not a rationale"))
 
     # --- C6 drawbacks of the CHOSEN design (RUST 'Drawbacks', NYGARD) --------
     if "drawbacks" in required(prof) + recommended(prof):
         dsec = by_cls.get("drawbacks", [])
-        if dsec and not COST_LANGUAGE.search(" ".join(s.subtree for s in dsec)):
-            add(Finding("C6-drawbacks-without-cost", "fail",
+        sev_d = "fail" if "drawbacks" in required(prof) else "warn"
+        if dsec and not COST_LANGUAGE.search(prose(dsec)):
+            add(Finding("C6-drawbacks-without-cost", sev_d,
                         "drawbacks/consequences section states no cost; NYGARD: "
                         "'All consequences should be listed here, not just the "
                         "positive ones'"))
@@ -518,18 +755,20 @@ def check(path: Path, profile: str | None, strict: bool,
     # --- C8 acceptance is measurable (LYNCH SLOs) ---------------------------
     if "acceptance" in required(prof) + recommended(prof):
         asec = by_cls.get("acceptance", [])
-        if asec and not MEASURABLE.search(" ".join(s.subtree for s in asec)):
-            add(Finding("C8-unmeasurable-acceptance", "fail",
+        sev_a = "fail" if "acceptance" in required(prof) else "warn"
+        if asec and not MEASURABLE.search(prose(asec)):
+            add(Finding("C8-unmeasurable-acceptance", sev_a,
                         "acceptance/SLO section contains no number, unit or "
                         "runnable command; LYNCH: a well-defined SLO 'prevents "
                         "ambiguity by expressing goals in concrete, objective "
                         "terms'"))
 
     # --- C9 implementation-manual detector (GOOGLE) -------------------------
-    hits = len(TRADEOFF_LANGUAGE.findall(text))
-    if hits == 0 and words > MIN_WORDS:
+    hits = len(TRADEOFF_LANGUAGE.findall(body_prose(sections)))
+    if hits < MIN_TRADEOFF_HITS and words > MIN_WORDS:
         add(Finding("C9-implementation-manual", "fail",
-                    "no trade-off language anywhere in the document; GOOGLE: a "
+                    f"only {hits} trade-off expression(s) in the document's "
+                    f"prose, below the floor of {MIN_TRADEOFF_HITS}; GOOGLE: a "
                     "doc that says 'this is how we are going to implement it' "
                     "without trade-offs 'would probably have been a better idea "
                     "to write the actual program right away'"))

@@ -154,7 +154,17 @@ the artifact outrank the section list:
 ## Calibration
 
 Run against **LYNCH's own worked example** at `--profile spec`, the contract
-returns zero failures (two warnings: no drawbacks section, no reversal-cost
-declaration). Run against this workspace's 105 existing `docs/specs|plans|adrs`
-documents, **1 passes**. The gate is calibrated so that a design doc written to
-published best practice clears it, and this corpus does not.
+returns **zero failures**. Run against this workspace's 105 existing
+`docs/specs|plans|adrs` documents, **zero pass**.
+
+Read that second number carefully. It says what this corpus is like; it says
+nothing about where the bar belongs. An earlier draft reported it as evidence
+that the required/recommended split was well-chosen — the re-measurement that
+cross-model review forced shows both the all-nine-required arm and the shipped
+split pass 0/105, so the split buys no existing document and the claim was
+unsupported. The split is derived from the table above: `required` is the
+intersection of what all five sources independently call load-bearing.
+
+The evidence that the gate is demanding rather than miscalibrated runs the other
+way, and it is the first line: a design doc written to published best practice
+clears it.

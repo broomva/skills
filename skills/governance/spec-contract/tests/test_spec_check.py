@@ -315,7 +315,85 @@ def test_c6_positive_drawbacks_section_states_no_cost(tmp_path):
     body = GOOD.replace(
         "The cache doubles resident memory and we give up cross-process sharing.",
         "This design is clean and the team likes it.")
-    assert "C6-drawbacks-without-cost" in fails(run(tmp_path, body))
+    assert "C6-drawbacks-without-cost" in checks(run(tmp_path, body))
+    # required on adr -> blocking; merely recommended on spec -> advisory
+    assert "C6-drawbacks-without-cost" in fails(run(tmp_path, body, profile="adr"))
+    assert "C6-drawbacks-without-cost" not in fails(run(tmp_path, body))
+
+
+def test_r1_b4_gate_is_monotone_in_honesty(tmp_path):
+    """Adding a real section must never flip a passing doc to failing. When a
+    vacuous section hard-failed and an ABSENT one only warned, the gate rewarded
+    deleting drawbacks and acceptance — the opposite of what it exists to do."""
+    without = GOOD.replace(
+        "\n## Acceptance criteria\n- p50 latency <= 200ms.\n- `make check` passes.\n",
+        "\n")
+    with_vacuous = without.replace(
+        "\n## Open issues",
+        "\n## Acceptance criteria\n- Billing should feel responsive.\n\n## Open issues")
+    assert not fails(run(tmp_path, without))
+    assert not fails(run(tmp_path, with_vacuous)), (
+        "adding an honest-but-unmeasurable section must not be worse than "
+        "omitting it entirely")
+    assert "C8-unmeasurable-acceptance" in checks(run(tmp_path, with_vacuous))
+
+
+def test_r1_nb2_a_combined_heading_satisfies_both_classes(tmp_path):
+    """'Alternatives and drawbacks' scored as one class, dropping the other and
+    leaving renaming as the only remedy — which SKILL.md calls gaming."""
+    body = GOOD.replace("## Drawbacks", "## Alternatives and drawbacks")
+    rep = run(tmp_path, body, profile="adr")
+    assert "drawbacks" in rep.sections and "alternatives" in rep.sections
+
+
+def test_r1_nb3_validation_is_not_an_acceptance_section(tmp_path):
+    """A spec section about INPUT validation used to trigger a hard C8."""
+    body = GOOD.replace("## Acceptance criteria", "## Validation")
+    assert "acceptance" not in run(tmp_path, body).sections
+
+
+def test_r1_b5_status_must_be_a_field_not_prose(tmp_path):
+    """'HTTP status: 200 is returned on success.' discharged C2's only blocking
+    arm."""
+    body = GOOD.replace(
+        "Status: accepted", "HTTP status: 200 is returned on success.")
+    assert "C2-no-status" in fails(run(tmp_path, body))
+
+
+def test_r1_b5_make_spec_meta_line_is_still_readable(tmp_path):
+    """make-spec emits one meta LINE with middot separators. Pure line-anchoring
+    would have made this checker unable to read its own composition partner."""
+    body = GOOD.replace(
+        "Status: accepted",
+        "Author: agent · Generated: 2026-09-16 · Status: accepted")
+    assert "C2-no-status" not in checks(run(tmp_path, body))
+
+
+def test_r1_b6_a_literal_door_is_not_a_reversal_declaration(tmp_path):
+    """REVERSAL_LINE matched the bare word 'door', so a sentence about a door
+    satisfied the one check --strict promotes to blocking."""
+    body = GOOD.replace(
+        "Reversal cost: one-way door — the storage engine is not swappable "
+        "after launch.", "The door was left open.")
+    assert "C3-no-reversal-cost" in fails(run(tmp_path, body, strict=True))
+
+
+def test_r1_b6_an_inline_door_phrase_still_counts(tmp_path):
+    body = GOOD.replace(
+        "Reversal cost: one-way door — the storage engine is not swappable "
+        "after launch.",
+        "Picking the storage engine is a one-way door for this service.")
+    assert "C3-no-reversal-cost" not in checks(run(tmp_path, body))
+
+
+def test_r1_b10_html_comment_front_matter_survives(tmp_path):
+    """The workspace's HTML docs carry YAML front matter in a leading HTML
+    comment; the catch-all tag strip erased it, and 41 of 67 real documents were
+    reported status-less as a result."""
+    body = ('<!DOCTYPE html>\n<!--\n---\ntitle: T\nstatus: draft\n---\n-->\n'
+            '<h1>T</h1><h2>Design</h2><p>we chose A instead of B</p>')
+    assert "C2-no-status" not in checks(run(tmp_path, body, name="d.html",
+                                            profile="note"))
 
 
 def test_c6_negative_drawbacks_state_a_cost(tmp_path):
@@ -352,7 +430,9 @@ def test_c8_positive_adjectives_only(tmp_path):
     body = GOOD.replace(
         "- p50 latency <= 200ms.\n- `make check` passes.",
         "- The system should feel fast.\n- Users should be happy.")
-    assert "C8-unmeasurable-acceptance" in fails(run(tmp_path, body))
+    assert "C8-unmeasurable-acceptance" in checks(run(tmp_path, body))
+    # required on plan (a plan with no definition of done is a wish list)
+    assert "C8-unmeasurable-acceptance" in fails(run(tmp_path, body, profile="plan"))
 
 
 @pytest.mark.parametrize("criterion", [
@@ -415,15 +495,35 @@ def test_c10_negative_right_sized(tmp_path):
 # profile inference
 # --------------------------------------------------------------------------
 
-@pytest.mark.parametrize("path,words,expected", [
-    ("docs/adrs/2026-01-01-adr-cache.md", 5000, "adr"),
-    ("docs/plans/2026-01-01-rollout.html", 5000, "plan"),
-    ("docs/rfd/0001-process.md", 5000, "rfd"),
-    ("docs/specs/2026-01-01-cache.html", 5000, "spec"),
-    ("docs/specs/2026-01-01-cache.html", 300, "note"),
+@pytest.mark.parametrize("path,expected", [
+    ("docs/adrs/2026-01-01-adr-cache.md", "adr"),
+    ("docs/plans/2026-01-01-rollout.html", "plan"),
+    ("docs/rfd/0001-process.md", "rfd"),
+    ("docs/specs/2026-01-01-cache.html", "spec"),
+    ("docs/specs/tiny.md", "spec"),
 ])
-def test_profile_inference(path, words, expected):
-    assert sc.infer_profile(Path(path), words) == expected
+def test_profile_inference(path, expected):
+    assert sc.infer_profile(Path(path)) == expected
+
+
+def test_r1_b2_short_docs_get_no_automatic_exemption(tmp_path):
+    """A word-count downgrade to `note` meant the cheapest way to pass the gate
+    was to delete words. A thirteen-word implementation manual committing a
+    one-way door exited 0."""
+    tiny = ("# Rewrite Billing In Erlang\n\nStatus: accepted\n\n"
+            "## Design\nWe will rewrite billing in Erlang.\n")
+    d = tmp_path / "2026-09-16-billing.md"
+    d.write_text(tiny, encoding="utf-8")
+    rep = sc.check(d, None, False, False)
+    assert rep.profile == "spec", "short docs must not self-downgrade"
+    assert fails(rep), "a 13-word implementation manual must not pass"
+
+
+def test_r1_b2_note_profile_is_still_available_explicitly(tmp_path):
+    """`note` is right for a short design-bearing doc — but as a choice someone
+    makes and a reviewer can see, not a silent property of word count."""
+    tiny = "# T\n\nStatus: accepted\n\n## Design\nAdd a flag behind a config key.\n"
+    assert not fails(run(tmp_path, tiny, profile="note"))
 
 
 def test_every_profile_names_only_known_classes():
@@ -466,3 +566,312 @@ def test_cli_json_is_parseable(tmp_path, capsys):
     payload = json.loads(capsys.readouterr().out)
     assert payload[0]["profile"] == "spec"
     assert "findings" in payload[0]
+
+
+# ==========================================================================
+# Regression: every blocker from the P20 cross-model review (round 1, 3/10).
+#
+# Each test below is the reviewer's own reproduction input, verbatim. These are
+# not paraphrases of the findings — they are the failing cases, so a future
+# refactor that reintroduces any of them turns this suite red rather than
+# quietly restoring a bypass.
+# ==========================================================================
+
+ALT_BLOCK = ("- Redis: an extra process to operate, and the network hop eats "
+             "the win.\n"
+             "- Firestore: durable, but the platform lock-in was not worth it.\n")
+
+
+def alts(new: str) -> str:
+    return GOOD.replace(ALT_BLOCK, new)
+
+
+def acceptance(new: str) -> str:
+    return GOOD.replace("- p50 latency <= 200ms.\n- `make check` passes.", new)
+
+
+def test_r1_b2_subheading_and_its_prose_are_one_alternative(tmp_path):
+    """'### Redis / Too expensive.' counted as TWO options — the heading and the
+    paragraph were both scored as names."""
+    assert "C5-thin-alternatives" in fails(
+        run(tmp_path, alts("### Redis\nToo expensive.\n")))
+
+
+def test_r1_b2b_each_alternative_needs_its_own_justification(tmp_path):
+    """One reason on the first option used to cover every option after it."""
+    assert "C5-unjustified-alternative" in fails(
+        run(tmp_path, alts("- Redis: too expensive\n- Firestore\n")))
+
+
+def test_r1_b3_butterfly_is_not_a_rejection_reason(tmp_path):
+    """`\\b(?:but|...)` with no closing boundary matched 'Butterfly'."""
+    assert fails(run(tmp_path, alts("- Butterfly\n- Redis\n")))
+
+
+def test_r1_b3_negative_but_still_matches_as_a_word(tmp_path):
+    """Fixing the boundary must not stop 'but' matching when it IS the word."""
+    assert "C5-no-rejection-reason" not in checks(run(tmp_path, GOOD))
+
+
+@pytest.mark.parametrize("criterion,why", [
+    ("- 3 ministers should like it.", "'min' matched the prefix of 'ministers'"),
+    ("- p50 latency should feel fast.", "a percentile NAME is not a target"),
+    ("- 5 stakeholders signed off.", "a count of people is not a threshold"),
+    ("- Signed off by 2026/09/16.", "a date is not a measurement"),
+])
+def test_r1_b4_unit_lookalikes_are_not_measurements(tmp_path, criterion, why):
+    assert "C8-unmeasurable-acceptance" in checks(
+        run(tmp_path, acceptance(criterion))), why
+
+
+@pytest.mark.parametrize("criterion", [
+    "- 99.9% uptime.",            # '%' is not a word char: no trailing \b
+    "- p50 latency <= 200ms.",
+    "- Cold start under 3 s.",
+    "- 500 req/s sustained.",
+    "- `pytest tests/` is green.",
+])
+def test_r1_b4_real_measurements_still_pass(tmp_path, criterion):
+    assert "C8-unmeasurable-acceptance" not in checks(
+        run(tmp_path, acceptance(criterion)))
+
+
+def test_r1_b6_a_fenced_example_is_not_the_document(tmp_path):
+    """A file that is nothing but a fenced sample of a good doc parsed as that
+    good doc and returned zero findings."""
+    assert fails(run(tmp_path, "```markdown\n" + GOOD + "\n```"))
+
+
+def test_r1_b6_fence_stripping_does_not_eat_real_sections(tmp_path):
+    body = GOOD.replace("## Design\n", "## Design\n\n```go\ntype Store interface{}\n```\n\n")
+    assert fails(run(tmp_path, body)) == set()
+
+
+def test_r1_b7a_successor_must_be_on_the_status_line(tmp_path):
+    """An unrelated URL two lines down used to satisfy the pointer."""
+    assert "C2-dangling-supersede" in fails(run(tmp_path, GOOD.replace(
+        "Status: accepted", "Status: superseded\nAuthor: https://example.com/alice")))
+
+
+def test_r1_b7b_emphasis_does_not_bypass_the_pointer(tmp_path):
+    """`Status: **superseded**` fell out of the known set into a warning, which
+    skipped successor enforcement entirely."""
+    assert "C2-dangling-supersede" in fails(
+        run(tmp_path, GOOD.replace("Status: accepted", "Status: **superseded**")))
+
+
+def test_r1_b8_a_placeholder_is_not_an_answer(tmp_path):
+    """--strict promoted only ABSENCE, so 'TBD' converted a blocking omission
+    into a pass without supplying anything."""
+    body = GOOD.replace(
+        "Reversal cost: one-way door — the storage engine is not swappable "
+        "after launch.", "Reversal cost: TBD")
+    assert "C3-no-reversal-cost" in fails(run(tmp_path, body, strict=True))
+
+
+@pytest.mark.parametrize("filler", ["TBD", "TODO", "?", "n/a", "unknown"])
+def test_r1_b8_placeholder_variants(tmp_path, filler):
+    body = GOOD.replace(
+        "Reversal cost: one-way door — the storage engine is not swappable "
+        "after launch.", f"Reversal cost: {filler}")
+    assert "C3-no-reversal-cost" in checks(run(tmp_path, body))
+
+
+MANUAL = "# X\n\nStatus: accepted\n\n## Design\n" + ("We will add a handler. " * 60)
+
+
+def test_r1_b9_the_recommended_door_line_does_not_disable_c9(tmp_path):
+    """C3's own recommended boilerplate contains trade-off vocabulary. One hit
+    used to be enough, so the house style switched off the best check."""
+    assert "C9-implementation-manual" in fails(run(
+        tmp_path,
+        MANUAL.replace("Status: accepted",
+                       "Status: accepted\nReversal cost: two-way door"),
+        profile="note"))
+
+
+def test_r1_b9_an_empty_tradeoffs_heading_is_not_a_tradeoff(tmp_path):
+    assert "C9-implementation-manual" in fails(
+        run(tmp_path, MANUAL + "\n\n## Trade-offs\n", profile="note"))
+
+
+def test_r1_b9_real_tradeoff_prose_still_clears_c9(tmp_path):
+    assert "C9-implementation-manual" not in checks(run(tmp_path, GOOD))
+
+
+def test_r1_b10_make_spec_scaffolds_Decision_so_adr_must_know_it(tmp_path):
+    """make-spec's ADR variant emits '## Decision'. The design class did not
+    list it, so the advertised composition rejected its own scaffold."""
+    assert "C1-missing-section" not in fails(
+        run(tmp_path, GOOD.replace("## Design", "## Decision"), profile="adr"))
+
+
+def test_r1_nb4_typographic_apostrophe_does_not_evade_c4(tmp_path):
+    body = GOOD.replace(
+        "- A general-purpose reusable cache. This one makes app-specific "
+        "assumptions.", "- The system shouldn’t crash")
+    assert "C4-negated-goal" in checks(run(tmp_path, body))
+
+
+def test_r1_nb4_numeric_entity_heading_still_classifies():
+    sections, _ = sc.parse("<h2>Obj&#101;ctive</h2><p>x</p>", True)
+    sc.attach_subtrees(sections)
+    sc.classify(sections)
+    assert sections[0].cls == "objective"
+
+
+# --- B5: the two entry surfaces must agree on identical documents -------------
+
+HTML_DOC = (
+    '<h1>D</h1><p>Status: accepted</p>'
+    '<h2>Objective</h2><p>x</p>'
+    '<h2>Design</h2><p>we chose A instead of B rather than C</p>'
+    '<h2>Non-goals</h2><ul><li>No albums</li></ul>'
+    '<h2>Alternatives considered</h2>'
+    '<ul><li>B: it is too slow for this</li><li>C: painful lock-in here</li></ul>'
+    '<h2>Acceptance</h2><p><code>make check</code> passes</p>'
+)
+
+
+def test_r1_b5_html_code_element_is_a_runnable_command(tmp_path):
+    """<code>make check</code> is the HTML spelling of `make check`; stripping
+    the tag before C8 ran made the surfaces disagree."""
+    assert "C8-unmeasurable-acceptance" not in checks(
+        run(tmp_path, HTML_DOC, name="d.html"))
+
+
+def test_r1_b5_html_href_is_a_successor(tmp_path):
+    body = HTML_DOC.replace(
+        "Status: accepted",
+        'Status: superseded (<a href="next.md">replacement</a>)')
+    assert "C2-dangling-supersede" not in checks(
+        run(tmp_path, body, name="s.html"))
+
+
+def test_r1_b5_href_urls_survive_stripping_for_link_checking():
+    """--check-links issued zero requests on HTML because href was dropped."""
+    assert sc.URL_RE.search(
+        sc._strip_html('<a href="https://example.invalid/y">r</a>'))
+
+
+def test_r1_b5_pre_blocks_are_not_document_structure():
+    sections, _ = sc.parse(
+        "<h1>T</h1><pre><h2>Fake</h2></pre><h2>Design</h2><p>x</p>", True)
+    assert [s.title for s in sections] == ["T", "Design"]
+
+
+# --- NB3: C11 had no controls at all -----------------------------------------
+
+def test_r1_nb3_check_links_reports_a_dead_link(tmp_path, monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    def boom(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 404, "gone", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", boom)
+    body = GOOD + "\n\nSee https://example.invalid/missing for detail.\n"
+    assert "C11-dead-link" in fails(run(tmp_path, body, check_links=True))
+
+
+def test_r1_nb3_check_links_tolerates_bot_blocking(tmp_path, monkeypatch):
+    """403/405/429 mean 'blocked to bots', not 'dead'."""
+    import urllib.error
+    import urllib.request
+
+    def blocked(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 403, "forbidden", {}, None)
+
+    monkeypatch.setattr(urllib.request, "urlopen", blocked)
+    body = GOOD + "\n\nSee https://example.invalid/blocked for detail.\n"
+    assert "C11-dead-link" not in checks(run(tmp_path, body, check_links=True))
+
+
+def test_r1_nb3_links_are_not_checked_by_default(tmp_path, monkeypatch):
+    """The default gate must stay hermetic — CI has no network contract."""
+    import urllib.request
+
+    def fail(req, timeout=0):
+        raise AssertionError("network touched without --check-links")
+
+    monkeypatch.setattr(urllib.request, "urlopen", fail)
+    run(tmp_path, GOOD + "\n\nhttps://example.invalid/x\n")
+
+
+# --- NB1: a prose claim in SKILL.md that the table contradicted ---------------
+
+def test_r1_nb1_skill_md_alternatives_claim_matches_the_table():
+    """SKILL.md claimed alternatives is required in every profile but `note`.
+    The `plan` profile did not require it. A claim no test enforces is the
+    defect; this test is what makes the corrected wording true."""
+    skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
+    for prof in ("adr", "spec", "rfd"):
+        assert "alternatives" in sc.PROFILES[prof]["required"], prof
+    assert "alternatives" not in sc.PROFILES["plan"]["required"]
+    assert "alternatives" not in sc.PROFILES["note"]["required"]
+    assert "required in every profile but `note`" not in skill, (
+        "SKILL.md still carries the claim the table contradicts")
+
+
+def test_r1_b8_documented_check_ids_match_the_code():
+    """Three different numbers shipped in the first cut: the code emitted 18
+    finding ids, the SKILL.md table documented 16, and its prose said fourteen.
+    CLAUDE.md's self-documenting standards make count coherence a rule; this is
+    the rule made executable."""
+    import re
+    src = (Path(__file__).resolve().parents[1] / "scripts" / "spec_check.py").read_text()
+    skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
+    emitted = set(re.findall(r'"(C\d+-[a-z-]+)"', src))
+    documented = set(re.findall(r"`(C\d+-[a-z-]+)`", skill))
+    assert emitted - documented == set(), f"undocumented: {emitted - documented}"
+    assert documented - emitted == set(), f"documented but dead: {documented - emitted}"
+    rows = len(re.findall(r"^\| `C\d+-", skill, re.M))
+    claimed = set(re.findall(r"(\d+) findings", skill))
+    assert claimed, "SKILL.md states no finding count"
+    assert claimed == {str(rows)}, (
+        f"prose claims {claimed} findings, the table has {rows} rows")
+
+
+# --- gaps the mutation sweep exposed (mutants that survived round 1) ---------
+
+def test_c9_a_single_tradeoff_expression_is_below_the_floor(tmp_path):
+    """MIN_TRADEOFF_HITS exists because ONE token was enough for the metadata
+    line this skill recommends to switch the detector off. Nothing tested the
+    floor itself, so lowering it back to 1 survived the suite."""
+    one = ("# X\n\nStatus: accepted\n\n## Design\n"
+           + ("We will add a handler and wire the route. " * 50)
+           + "\nWe chose it.\n")
+    assert "C9-implementation-manual" in fails(run(tmp_path, one, profile="note"))
+    two = one + "\nWe considered a queue instead of a handler.\n"
+    assert "C9-implementation-manual" not in checks(run(tmp_path, two, profile="note"))
+
+
+def test_c9_ignores_the_metadata_block(tmp_path):
+    """C9 must read PROSE. Reading the raw text let `Reversal cost: two-way
+    door` — a line this skill tells authors to write — satisfy the detector."""
+    meta_only = ("# X\n\nStatus: accepted\nReversal cost: two-way door\n"
+                 "Decision-class: trade-off\n\n## Design\n"
+                 + ("We will add a handler and wire the route. " * 50))
+    assert "C9-implementation-manual" in fails(
+        run(tmp_path, meta_only, profile="note"))
+
+
+def test_html_commented_out_headings_are_not_sections(tmp_path):
+    """A section deleted by commenting it out still satisfied C1, so the HTML
+    path and the markdown path disagreed about which sections a document has."""
+    body = ('<h1>D</h1><h2>Design</h2><p>we chose A instead of B rather than C</p>'
+            '<!-- <h2>Alternatives considered</h2><ul><li>B: too slow</li></ul> -->')
+    sections, _ = sc.parse(body, True)
+    assert [s.title for s in sections] == ["D", "Design"], (
+        "a commented-out heading must not count as a section")
+    rep = run(tmp_path, body, name="d.html")
+    assert "C1-missing-section" in fails(rep)
+
+
+def test_markdown_and_html_agree_on_commented_out_headings():
+    """Both surfaces must reach the same answer on the same deletion."""
+    md, _ = sc.parse("# D\n\n## Design\nx\n\n<!-- ## Alternatives considered -->\n",
+                     False)
+    html, _ = sc.parse('<h1>D</h1><h2>Design</h2><p>x</p>'
+                       '<!-- <h2>Alternatives considered</h2> -->', True)
+    assert [s.title for s in md] == [s.title for s in html] == ["D", "Design"]
