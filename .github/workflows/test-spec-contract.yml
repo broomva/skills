@@ -31,8 +31,11 @@ jobs:
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
-      matrix:
-        python: ["3.11", "3.12"]
+        # 3.14 is what the broomva/workspace self-hosted macOS runners actually
+        # have, and that is where the gate consuming this checker executes.
+        # Testing only 3.11/3.12 would prove the checkout works and say nothing
+        # about the environment the artifact runs in.
+        python: ["3.11", "3.12", "3.13", "3.14"]
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
