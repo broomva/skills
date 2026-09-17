@@ -188,6 +188,14 @@ When invoked, the agent runs this pipeline by default. Steps may be skipped only
 
     See workspace AGENTS.md §P18 for the full reflexive trigger rule. Step 12 was previously "every `.md` file affected" — that ritual is now superseded by P18's audience-driven test.
 
+13b. **Spec contract (content, not format)** — P18 decides *how the doc looks*; it says nothing about *what is in it*, and a doc can satisfy every P18 trigger while arguing nothing. When step 13 produced a spec, plan, ADR or RFD, gate its contents before push:
+
+    ```bash
+    python3 skills/governance/spec-contract/scripts/spec_check.py <doc>   # exit 0 required
+    ```
+
+    Fourteen checks over markdown or HTML, the load-bearing ones being ≥2 alternatives each with a rejection reason, non-goals that are declined goals rather than negated requirements, acceptance carrying a number or a runnable command, and an implementation-manual detector that fails a document containing no trade-off language anywhere. Then score `spec-contract`'s five-axis rubric (≥11/15, no axis at 0) — with a **different model than the one that wrote the doc**, which is step 15.5's rule applied to a design instead of a diff. An `R1 = 0` (a one-way door committed to silently) stops the doc; `R2`/`R4` ≤1 escalate to the full P20 gate, because the design is unargued and rewriting prose will not fix it.
+
 ### Pre-push validation
 
 14. **Smoke tests pass (P11 sub-reflex)** — `make check` / project-specific smoke / `cargo check` / `bun typecheck`. Don't push red.
@@ -243,6 +251,7 @@ Section A is the original generic anti-rationalization battery. Section B is *du
 | "User just said 'fix it' — they don't want all this overhead" | Bare directives in execution mode expand to full discipline. That IS what they want — they created this skill explicitly to stop repeating the discipline. |
 | "Skipping validation will be faster" | P11 exists because compile-time success ≠ deploy correctness. Skip = silent corruption. |
 | "I'll add docs after merge" | Docs-after-merge = docs-never. Update BEFORE push, in the same PR. |
+| "The spec has all the sections, so it's done" | Sections are shape. `spec_check.py` decides shape; the rubric decides whether the documented decisions are the expensive ones and whether the alternatives are real. A doc passing all fourteen checks can still be an implementation manual. |
 | "Just sleep until CI finishes" | P7 explicit ban. `p9 watch --background` + pull from wait-queue. |
 | "User can address PR comments themselves" | No — the agent owns the comment loop in the same session. |
 | "Worktrees are overkill for this little change" | Apply the P10 decision rule honestly. Default *yes* for substantive work. State the exception explicitly if no. |
@@ -317,6 +326,7 @@ Section A is the original generic anti-rationalization battery. Section B is *du
 | 8 | P5 Parallel Agents | plan |
 | 10 | P11 Watchers | execution |
 | 12 | P1 Bridge | execution (passive, Stop hook) |
+| 13b | `spec-contract` (content gate) | execution — after any spec/plan/ADR/RFD is written |
 | 15 | P6 Bookkeeping | pre-push |
 | 15.5 | P20 Cross-Model Adversarial Review Gate | pre-push (substantive PRs only) |
 | 16 | P4 PR Pipeline | PR phase |

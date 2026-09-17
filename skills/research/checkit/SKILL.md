@@ -195,6 +195,11 @@ note-taking tools in sequence; it does **not** reimplement them.
 
 8. **Format for the reader** (bstack: P18) — markdown for knowledge substrate; a
    richer human-read brief only when the finding is a decision artifact.
+   If the finding becomes a spec, plan or ADR rather than an entity page, its
+   *contents* are gated by `spec-contract` — P18 chooses the format and says
+   nothing about what is in it. checkit is also that skill's `R2` input: you
+   cannot judge whether an alternative is real without having read what else
+   exists, which is the traversal step 3 just did.
 
 ## Composition map
 
@@ -208,6 +213,7 @@ note-taking tools in sequence; it does **not** reimplement them.
 | Document the finding | P6 proactive bookkeeping (file first, report after) |
 | Next steps | goal-formation (turn gaps into ranked next actions) |
 | Format | P18 format-follows-audience |
+| Gate a spec's contents | `spec-contract` (deterministic checker + judgment rubric) |
 
 ## Anti-rationalization
 
