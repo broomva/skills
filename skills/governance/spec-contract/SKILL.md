@@ -165,10 +165,18 @@ reviewer's confusion resolved in a thread fixes nothing for the next reader.
 
 Measured 2026-09-16.
 
+**The corpus, defined once.** `find docs/specs docs/plans docs/adrs -maxdepth 1
+-type f \( -name '*.md' -o -name '*.html' \)` → **105 documents**. Recursive
+would give 110; the 5 extra live in `kinetic-orb-cinema/`, `kinetic-workspace/`
+and `motor-ontologia/`, which are project subdirectories rather than design
+docs. Every percentage below has 105 as its denominator. The supersession
+measurement further down uses **98** — the HTML subset — and says so, because
+its subject is an HTML front-matter convention.
+
 | Corpus | Result |
 |---|---|
 | **Lynch's own worked example** (`little-moments-design-doc`, 2,667 lines), `--profile spec` | **zero failures** |
-| This workspace's 105 existing `docs/specs\|plans\|adrs` | **0 pass** |
+| This workspace's 105 `docs/specs\|plans\|adrs` documents | **0 pass** |
 
 Section coverage across those 105, by class: design 52.4% · open questions 25.7%
 · drawbacks 18.1% · objective 12.4% · context 10.5% · **non-goals 7.6% ·
@@ -184,16 +192,24 @@ and the corrected figure is 52.4%. `alternatives` fell 7.6% → 5.7% when bare
 any parser change** — it is the one number no repair has touched.
 
 **Supersession runs the wrong way, measured.** Dogfooding the checker against
-the workspace's own HTML docs turned up the sharpest number in this file. Of 98
-documents in `docs/specs|plans|adrs`, **38 mention superseding or replacing
-another document, and 2 carry a status marking themselves as superseded.**
+the workspace's own HTML docs turned up the sharpest number in this file. Of the
+**98 HTML documents** in `docs/specs|plans|adrs` (the subset, not the 105 above —
+the convention under test is an HTML front-matter one), **38 mention superseding
+or replacing another document, and 2 carry a status marking themselves as
+superseded.**
 
 The relation is recorded in the forward direction, in the new doc, where it
 helps nobody: a reader who lands on the *old* document gets no signal that it
 has been replaced. NYGARD's rule is the other direction — *"we will keep the old
 one around, but mark it as superseded"* — and it is the only mechanism in any of
 the five sources by which a design doc can stop being a false description of
-what shipped. `C2` exists for those 36 documents.
+what shipped. `C2` exists because of that asymmetry.
+
+A caveat on the arithmetic: 38 − 2 = 36 is a subtraction, not a count of
+documents needing a marker. The 38 forward-mentions live in the *new* documents;
+the ones that need a `superseded` status are the *old* ones they point at, and
+this measurement never resolves those references. The asymmetry is the finding;
+36 is not a population.
 
 **What the corpus number is not evidence for.** An earlier draft of this section
 reported 1/105 and attributed the improvement to the required/recommended split.

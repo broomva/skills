@@ -870,14 +870,20 @@ def test_r1_b8_documented_check_ids_match_the_code():
     src = (Path(__file__).resolve().parents[1] / "scripts" / "spec_check.py").read_text()
     skill = (Path(__file__).resolve().parents[1] / "SKILL.md").read_text()
     emitted = set(re.findall(r'"(C\d+-[a-z-]+)"', src))
-    documented = set(re.findall(r"`(C\d+-[a-z-]+)`", skill))
+    # TABLE ROWS only. Counting every backticked mention meant that explaining
+    # why a check was DELETED — which the precision section must do — read as
+    # documenting a check the code no longer emits.
+    documented = set(re.findall(r"^\| `(C\d+-[a-z-]+)`", skill, re.M))
+    documented |= set(re.findall(r"^\| `C\d+-\w+` / `(C\d+-[a-z-]+)`", skill, re.M))
     assert emitted - documented == set(), f"undocumented: {emitted - documented}"
     assert documented - emitted == set(), f"documented but dead: {documented - emitted}"
-    rows = len(re.findall(r"^\| `C\d+-", skill, re.M))
+    # DISTINCT ids, not table rows: SKILL.md now has a second table (the
+    # per-check precision audit) whose rows repeat ids from the first.
     claimed = set(re.findall(r"(\d+) findings", skill))
     assert claimed, "SKILL.md states no finding count"
-    assert claimed == {str(rows)}, (
-        f"prose claims {claimed} findings, the table has {rows} rows")
+    assert claimed == {str(len(documented))}, (
+        f"prose claims {claimed} findings, {len(documented)} distinct ids are "
+        f"documented")
 
 
 # --- gaps the mutation sweep exposed (mutants that survived round 1) ---------
