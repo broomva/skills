@@ -1056,3 +1056,24 @@ def test_r2b_a_three_question_heading_keeps_all_three():
     sc.attach_subtrees(sections)
     sc.classify(sections)
     assert set(sections[1].classes) == {"objective", "goals", "acceptance"}
+
+
+@pytest.mark.parametrize("body,name", [
+    ('<h1>D</h1><h2>Objective</h2><p>x</p><h2>Design</h2><p>we chose A '
+     'instead of B</p><!-- <h2>Non-goals</h2><ul><li>No albums</li></ul>'
+     '<h2>Alternatives considered</h2><ul><li>B: too slow</li>'
+     '<li>C: lock-in</li></ul>', "u.html"),
+    ("# D\n\nStatus: accepted\n\n## Objective\nx\n\n## Design\n"
+     "we chose A instead of B\n\n<!--\n## Non-goals\n- No albums\n\n"
+     "## Alternatives considered\n- B: too slow\n- C: lock-in\n", "u.md"),
+])
+def test_r3_unterminated_comment_produces_missing_section(tmp_path, body, name):
+    """The exact falsifier Strata B named for its round-2 prediction.
+
+    Its prediction was that round 3 would strip terminated comments on the
+    markdown branch and stop there, leaving an unterminated `<!--` parsing every
+    heading and exiting 0 on both surfaces. `strip_comments` handles the
+    unterminated form on both, and this asserts the consequence the prediction
+    said would not hold: the hidden sections are MISSING, not present.
+    """
+    assert "C1-missing-section" in fails(run(tmp_path, body, name=name))
