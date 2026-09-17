@@ -222,6 +222,38 @@ to published best practice clears it.** A corpus pass rate says what the corpus
 is like, not where the bar belongs, and reporting it as if it justified the bar
 was the error.
 
+### Re-measuring
+
+The corpus figures live in another repository, so no test in this one can hold
+them honest — and they drifted twice under review before anyone noticed. Re-run
+them with:
+
+```bash
+python3 - <<'PY'
+import sys, pathlib, collections
+sys.path.insert(0, "scripts"); import spec_check as sc
+root = pathlib.Path.home() / "broomva"          # the workspace checkout
+docs = [p for d in ("specs", "plans", "adrs")
+        for p in (root / "docs" / d).glob("*.*") if p.suffix in (".md", ".html")]
+have, fire, npass = collections.Counter(), collections.Counter(), 0
+for d in docs:
+    r = sc.check(d, None, False, False)
+    npass += not r.failed
+    for c in r.sections: have[c] += 1
+    for f in r.findings:
+        if f.severity == "fail": fire[f.check] += 1
+print(f"{npass}/{len(docs)} pass")
+print({k: f"{100*v/len(docs):.1f}%" for k, v in have.most_common()})
+print(dict(fire.most_common()))
+PY
+```
+
+The self-contained numbers — test count, mutant count, finding-id count — ARE
+enforced: `tests/mutation.sh` reads its own baseline, and
+`test_r1_b8_documented_check_ids_match_the_code` asserts the id set and the
+prose count against the source. Those three cannot drift silently. The corpus
+percentages can, and this is the command that catches it.
+
 ## Precision, per check, on live firings
 
 A check is only worth what it is right about. Measured across the 105-document
