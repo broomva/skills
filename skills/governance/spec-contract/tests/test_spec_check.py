@@ -1077,3 +1077,32 @@ def test_r3_unterminated_comment_produces_missing_section(tmp_path, body, name):
     said would not hold: the hidden sections are MISSING, not present.
     """
     assert "C1-missing-section" in fails(run(tmp_path, body, name=name))
+
+
+# --- the invariant behind the comment handling ------------------------------
+
+def test_the_checker_sees_what_a_browser_would_render():
+    """A raw `<!--` inside `<pre>` hides the rest of the document — in the
+    checker AND in a browser.
+
+    `<pre>` is a normal element in HTML5, not a raw-text element like `<script>`
+    or `<style>`, so its contents are parsed and `<!--` opens a comment there
+    exactly as it does anywhere else. The checker agreeing with the renderer is
+    the property worth having; disagreeing in either direction is how a section
+    gets counted that no reader can see, which was round-2 blocker 1.
+
+    An author who means a literal marker writes `&lt;!--`, and that case is
+    below — it must NOT hide anything.
+    """
+    tail = ('<h2>Non-goals</h2><ul><li>No albums</li></ul>'
+            '<h2>Alternatives considered</h2>'
+            '<ul><li>B: too slow</li><li>C: lock-in</li></ul>')
+    raw_marker = '<h1>D</h1><h2>Design</h2><pre><!-- sample</pre>' + tail
+    escaped = '<h1>D</h1><h2>Design</h2><pre>&lt;!-- sample</pre>' + tail
+    in_code = ('<h1>D</h1><h2>Design</h2><p>write <code>&lt;!--</code></p>' + tail)
+
+    assert [s.title for s in sc.parse(raw_marker, True)[0]] == ["D", "Design"], (
+        "a raw <!-- in <pre> opens a comment for the browser too")
+    for body, why in [(escaped, "escaped marker"), (in_code, "marker in <code>")]:
+        assert [s.title for s in sc.parse(body, True)[0]] == [
+            "D", "Design", "Non-goals", "Alternatives considered"], why
