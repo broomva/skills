@@ -597,10 +597,58 @@ def test_r1_b2_subheading_and_its_prose_are_one_alternative(tmp_path):
         run(tmp_path, alts("### Redis\nToo expensive.\n")))
 
 
-def test_r1_b2b_each_alternative_needs_its_own_justification(tmp_path):
-    """One reason on the first option used to cover every option after it."""
-    assert "C5-unjustified-alternative" in fails(
-        run(tmp_path, alts("- Redis: too expensive\n- Firestore\n")))
+def test_r1_b2b_a_bare_option_is_no_longer_a_deterministic_failure(tmp_path):
+    """The per-entry justification check is GONE, and this records why.
+
+    Round 1 added it because one reason on the first option covered every option
+    after it. Round 3 measured its precision on live firings across 105 real
+    documents: **0 of 2**, both the header row of a comparison table, which is
+    the commonest real idiom for this section. A rule wrong on every firing it
+    produces is deleted, not tuned — tuning it would have meant editing the
+    corpus to fit the rule.
+
+    So `- Redis: too expensive` / `- Firestore` now passes the deterministic
+    layer. Whether "Firestore" was actually argued is rubric **R2** (alternative
+    realism), which is where a judgement about the quality of a reason belongs.
+    The section-level check still fires when NO option says why it lost."""
+    rep = run(tmp_path, alts("- Redis: too expensive\n- Firestore\n"))
+    assert "C5-unjustified-alternative" not in checks(rep)
+    assert "C5-no-rejection-reason" not in checks(rep)   # "too expensive" is one
+    # …but a section where nothing states a rejection still fails:
+    bare = run(tmp_path, alts("- Redis\n- Firestore\n- Memcached\n"))
+    assert "C5-no-rejection-reason" in fails(bare)
+
+
+def test_r3_a_comparison_table_is_not_a_pile_of_unjustified_options(tmp_path):
+    """The two live firings that got the per-entry check deleted. Both are real
+    documents in this workspace; neither is defective."""
+    table = (
+        "## Alternatives considered\n\n"
+        "| Alternative | Why rejected |\n|---|---|\n"
+        "| Redis | another process to operate, and the hop eats the win |\n"
+        "| Firestore | durable, but the platform lock-in was not worth it |\n")
+    body = GOOD.replace("## Alternatives considered\n" + ALT_BLOCK, table)
+    assert not fails(run(tmp_path, body))
+
+
+def test_r3_a_colonless_bullet_keeps_its_own_justification(tmp_path):
+    """A bullet with no colon made the WHOLE sentence the label, so the entry's
+    justification was stripped off as its own name — and the evidence line
+    printed the reason the message said was missing."""
+    body = alts(
+        "- Redis was rejected because it adds an extra process to operate.\n"
+        "- Memcached has the same operational cost without the data structures.\n")
+    entries = None
+    sections, _ = sc.parse(body, False)
+    sc.attach_subtrees(sections)
+    sc.classify(sections)
+    alt_secs = [x for x in sections if "alternatives" in x.classes]
+    entries = sc.alternative_entries(sections, alt_secs)
+    assert len(entries) == 2
+    for label, blurb in entries:
+        assert len(blurb) > len(label), (
+            f"{label!r} lost its justification to the label split")
+    assert not fails(run(tmp_path, body))
 
 
 def test_r1_b3_butterfly_is_not_a_rejection_reason(tmp_path):
@@ -1106,3 +1154,80 @@ def test_the_checker_sees_what_a_browser_would_render():
     for body, why in [(escaped, "escaped marker"), (in_code, "marker in <code>")]:
         assert [s.title for s in sc.parse(body, True)[0]] == [
             "D", "Design", "Non-goals", "Alternatives considered"], why
+
+
+def test_r3_a_word_boundary_separates_solution_from_resolution():
+    """`endswith`/`startswith` with no boundary made "Conflict resolution" a
+    design section (on "solution"), "Oslo" an acceptance section (on "slo") and
+    "…why the generic clone was rejected" an alternatives section.
+
+    It also falsified this skill's own published coverage figure: SKILL.md said
+    design 55.2%; the boundary-free code measured 57.1%, and the corrected
+    number is 52.4%."""
+    for title, forbidden in [
+        ("Conflict resolution", "design"),
+        ("Incident resolution", "design"),
+        ("Oslo", "acceptance"),
+        ("06 Unit economics — and why the generic clone was rejected",
+         "alternatives"),
+    ]:
+        sections, _ = sc.parse(f"# T\n\n## {title}\nx\n", False)
+        sc.attach_subtrees(sections)
+        sc.classify(sections)
+        assert forbidden not in sections[1].classes, (
+            f"{title!r} matched {forbidden} on a substring, not a word")
+    # …and the real thing still classifies
+    for title, expected in [("Design", "design"), ("SLOs", "acceptance"),
+                            ("Alternatives considered", "alternatives")]:
+        sections, _ = sc.parse(f"# T\n\n## {title}\nx\n", False)
+        sc.attach_subtrees(sections)
+        sc.classify(sections)
+        assert expected in sections[1].classes, title
+
+
+def test_r3_continuation_lines_reach_the_rejection_check(tmp_path):
+    """The continuation branch must still carry prose into the blurb after the
+    colon-less label fix — a mutant disabling it survived until this existed."""
+    body = alts("- Redis\n  another process to operate, so it was rejected\n"
+                "- Firestore\n  durable, but the lock-in was not worth it\n")
+    sections, _ = sc.parse(body, False)
+    sc.attach_subtrees(sections)
+    sc.classify(sections)
+    alt_secs = [s for s in sections if "alternatives" in s.classes]
+    entries = sc.alternative_entries(sections, alt_secs)
+    assert len(entries) == 2
+    joined = " ".join(b for _, b in entries)
+    assert "another process to operate" in joined, "continuation was dropped"
+    assert "C5-no-rejection-reason" not in checks(run(tmp_path, body))
+
+
+def test_r3_status_must_live_in_the_metadata_region(tmp_path):
+    """A status FIELD is metadata. `- Status: 200 on success` inside a Design
+    section is an HTTP code, and the vocabulary test that used to catch it
+    rejected 5 of 8 sampled real documents whose statuses it did not recognise
+    — printing "no 'Status:' field" about documents that visibly had one."""
+    body = GOOD.replace("Status: accepted\n", "").replace(
+        "## Design", "## Design\n- Status: 200 on success\n")
+    assert "C2-no-status" in fails(run(tmp_path, body))
+
+
+def test_r3_an_explicit_metadata_section_is_still_the_header(tmp_path):
+    """Lynch's own worked example carries its status inside `## Metadata`.
+    Treating the first level-2 heading as the body boundary reported the
+    calibration reference as having no status at all."""
+    body = ("# T\n\n## Metadata\n- Status: accepted\n- Author: x\n\n"
+            "## Design\nwe chose A instead of B rather than C\n")
+    assert "C2-no-status" not in checks(run(tmp_path, body, profile="note"))
+
+
+@pytest.mark.parametrize("value", [
+    "MEASURED.", "FILED. The skill exists and is tested", "blueprint",
+    "plan draft, awaiting user approval", "approved", "dormant",
+])
+def test_r3_an_unrecognised_status_value_warns_but_does_not_fail(tmp_path, value):
+    """Status VALUES are open vocabulary — this corpus alone carries all of
+    these. Gating the blocking arm on a closed list produced false failures;
+    position answers "is there a status", vocabulary only warns."""
+    body = GOOD.replace("Status: accepted", f"Status: {value}")
+    rep = run(tmp_path, body)
+    assert "C2-no-status" not in fails(rep), value

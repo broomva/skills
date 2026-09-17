@@ -2,7 +2,7 @@
 name: spec-contract
 tier: D+J
 category: governance
-description: "The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked example, Design Docs at Google, the Rust RFC template, Nygard's original ADR post, Oxide RFD 1). The load-bearing rule is the cost of reversing a decision, not its importance: a choice fixable in an afternoon is review noise, a one-way door left unargued is the failure a design doc exists to prevent. Two layers. DETERMINISTIC — `scripts/spec_check.py` reads a markdown or HTML doc and decides 18 findings: required sections by class not by name, status resolvable and supersession pointed, >=2 alternatives each with a rejection reason, non-goals that are declined goals rather than negated requirements, drawbacks that state a cost, acceptance that carries a number or a runnable command, and an implementation-manual detector for a doc with no trade-off language anywhere. JUDGMENT — `references/rubric.md` grades the five things a script cannot: whether the documented decisions are the expensive ones, whether the alternatives are real or strawmen, whether the non-goals are load-bearing, whether trade-offs are argued or merely mentioned, and whether the first screen is legible to the widest expected reader. Use when: (1) writing or reviewing a spec, plan, ADR, RFD or design doc, (2) deciding whether something warrants a design doc at all, (3) gating a doc before it goes out for review, (4) asked what belongs in a spec or why a spec is weak. Triggers on 'spec contract', 'design doc', 'write a spec', 'review this spec', 'is this spec any good', 'what belongs in a design doc', 'ADR', 'RFD', 'non-goals', 'alternatives considered', 'spec review', 'spec gate', 'design review', 'one-way door', 'reversal cost'."
+description: "The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked example, Design Docs at Google, the Rust RFC template, Nygard's original ADR post, Oxide RFD 1). The load-bearing rule is the cost of reversing a decision, not its importance: a choice fixable in an afternoon is review noise, a one-way door left unargued is the failure a design doc exists to prevent. Two layers. DETERMINISTIC — `scripts/spec_check.py` reads a markdown or HTML doc and decides 17 findings: required sections by class not by name, status resolvable and supersession pointed, >=2 alternatives each with a rejection reason, non-goals that are declined goals rather than negated requirements, drawbacks that state a cost, acceptance that carries a number or a runnable command, and an implementation-manual detector for a doc with no trade-off language anywhere. JUDGMENT — `references/rubric.md` grades the five things a script cannot: whether the documented decisions are the expensive ones, whether the alternatives are real or strawmen, whether the non-goals are load-bearing, whether trade-offs are argued or merely mentioned, and whether the first screen is legible to the widest expected reader. Use when: (1) writing or reviewing a spec, plan, ADR, RFD or design doc, (2) deciding whether something warrants a design doc at all, (3) gating a doc before it goes out for review, (4) asked what belongs in a spec or why a spec is weak. Triggers on 'spec contract', 'design doc', 'write a spec', 'review this spec', 'is this spec any good', 'what belongs in a design doc', 'ADR', 'RFD', 'non-goals', 'alternatives considered', 'spec review', 'spec gate', 'design review', 'one-way door', 'reversal cost'."
 ---
 
 # spec-contract — what must be in a design doc
@@ -54,7 +54,6 @@ Exit `0` clean · `1` a required check failed · `2` bad invocation.
 | `C3-vague-reversal-cost` | *(warn)* reversal cost named but not graded | LYNCH |
 | `C4-negated-goal` | *(warn)* a non-goal reads as a negated requirement | GOOGLE |
 | `C5-thin-alternatives` | fewer than two alternatives named | RUST, GOOGLE |
-| `C5-unjustified-alternative` | an option is named with no prose beyond its own name | RUST |
 | `C5-no-rejection-reason` | no option states why it was *not* chosen | RUST |
 | `C6-drawbacks-without-cost` | a drawbacks section that states no cost — blocking where the class is *required*, advisory where it is only recommended | NYGARD, RUST |
 | `C7-open-question-without-next-step` | *(warn)* an open question with no resolution path | LYNCH |
@@ -99,7 +98,7 @@ the checker. Renaming to pass a gate is gaming it.
 
 ## Layer 2 — judgment (`references/rubric.md`)
 
-A doc can pass all 18 findings and be worthless: two strawman alternatives, a
+A doc can pass all 17 findings and be worthless: two strawman alternatives, a
 non-goal nobody would have assumed, an SLO chosen because it was easy to measure.
 That is not a gap in the script — it is the half that is irreducibly a judgment.
 
@@ -171,11 +170,18 @@ Measured 2026-09-16.
 | **Lynch's own worked example** (`little-moments-design-doc`, 2,667 lines), `--profile spec` | **zero failures** |
 | This workspace's 105 existing `docs/specs\|plans\|adrs` | **0 pass** |
 
-Section coverage across those 105, by class: design 55.2% · open questions 25.7%
+Section coverage across those 105, by class: design 52.4% · open questions 25.7%
 · drawbacks 18.1% · objective 12.4% · context 10.5% · **non-goals 7.6% ·
-alternatives 7.6%** · acceptance 6.7% · goals 1.9%. The corpus documents what
+alternatives 5.7%** · acceptance 5.7% · goals 1.9%. The corpus documents what
 was chosen and not what was ruled out — the inverse of reversal cost, and the
 reason this skill exists.
+
+Those figures moved twice under review and the movements are the point. An
+earlier version of this paragraph published `design 55.2%`; substring matching
+without word boundaries was counting "Conflict resolution" as a design section,
+and the corrected figure is 52.4%. `alternatives` fell 7.6% → 5.7% when bare
+"rejected" stopped being a section synonym. **`non-goals` has not moved through
+any parser change** — it is the one number no repair has touched.
 
 **Supersession runs the wrong way, measured.** Dogfooding the checker against
 the workspace's own HTML docs turned up the sharpest number in this file. Of 98
@@ -200,10 +206,34 @@ to published best practice clears it.** A corpus pass rate says what the corpus
 is like, not where the bar belongs, and reporting it as if it justified the bar
 was the error.
 
+## Precision, per check, on live firings
+
+A check is only worth what it is right about. Measured across the 105-document
+corpus:
+
+| Check | Firings | Precision |
+|---|---|---|
+| `C2-no-status` | 36 | **10/10** on a random sample |
+| `C9-implementation-manual` | 28 | 5/6 sampled have *zero* trade-off expressions in 669–6210 words |
+| `C1-missing-section` | 331 | structural — a heading class is present or it is not |
+| `C5-thin-alternatives` · `C6` · `C2-dangling-supersede` | 2 · 1 · 1 | hand-audited individually |
+
+**A check was deleted on this evidence.** `C5-unjustified-alternative` asked
+whether each option carried prose beyond its own name. Its precision on live
+firings was **0 of 2** — both were the header row of a comparison table, which
+is the commonest real idiom for the section. A rule wrong on every firing it
+produces is not a rule with a bug, and tuning it further would have meant
+editing the corpus to fit the rule. Whether an option is argued *well* is rubric
+**R2**, which is where that judgement belongs.
+
+**Known limitation:** `C9` reads English trade-off vocabulary. Two of its live
+firings are Spanish-language documents, where it cannot see the argument even if
+one is there. Treat a `C9` failure on a non-English doc as unmeasured.
+
 ## Tests
 
 ```bash
-python3 -m pytest tests/test_spec_check.py -q   # 128 tests
+python3 -m pytest tests/test_spec_check.py -q   # 143 tests
 bash tests/mutation.sh                          # incl. a NULL control that must SURVIVE
 ```
 
@@ -212,7 +242,7 @@ across all 105 real documents; that is a measured zero with a known cause — on
 8 of them have a non-goals section for it to read — not an unfalsified silence,
 and the four positive controls prove the rule fires.
 
-The mutation sweep reports **killed 35/35**, and three properties of it are load-bearing
+The mutation sweep reports **killed 39/39**, and three properties of it are load-bearing
 because the first version had none of them and still printed a clean score:
 
 - **A NULL mutant must SURVIVE.** A no-op edit that fails the suite means the

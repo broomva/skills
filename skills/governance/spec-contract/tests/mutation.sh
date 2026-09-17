@@ -67,7 +67,6 @@ C3-reversal-finding-suppressed	        add(Finding("C3-no-reversal-cost", sev,	 
 C3-placeholder-accepted	    if rm is not None and PLACEHOLDER.match(rm_val.strip()):	    if False:
 C4-negation-never-matches	            if NEGATION_HEAD.match(head):	            if False:
 C5-one-alternative-is-enough	        if len(entries) < 2:	        if len(entries) < 1:
-C5-justification-never-required	        for label, blurb in entries:	        for label, blurb in []:
 C5-rejection-never-required	        if not REJECTION_MARKERS.search(" ".join(b for _, b in entries)):	        if False:
 C6-cost-always-found	        if dsec and not COST_LANGUAGE.search(prose(dsec)):	        if False:
 C7-next-step-always-found	        if not NEXT_STEP.search(body):	        if False:
@@ -84,14 +83,19 @@ fenced-code-not-stripped	        raw = FENCE_RE.sub("", raw)	        pass
 html-comments-not-stripped	    raw = re.sub(r"(?s)<!--.*?-->", " ", raw)	    raw = raw
 front-matter-not-hoisted	        front = hoist_front_matter(raw)	        front = ""
 typographic-quotes-not-folded	    raw = fold_quotes(raw)	    pass
-r2-front-matter-prepended	        return sections, _strip_html(raw)	        return sections, front + _strip_html(raw)
+r2-front-matter-appended	        return sections, front + _strip_html(raw)	        return sections, _strip_html(raw) + front
 r2-suffix-not-preferred	                score = 700 + len(name)	                score = 500 + len(name)
 r2-continuations-dropped	            if cont and bullets:	            if False:
 r2b-md-comments-not-stripped	    raw = strip_comments(raw)	    pass
 r2b-unterminated-comment-kept	    return re.sub(r"(?s)<!--.*\Z", " ", raw)	    return raw
 r2b-li-without-newline	    s = re.sub(r"(?is)<li[^>]*>", "\n- ", s)	    s = s
-r2b-first-status-wins	              if _status_head(c.group(1)) in VALID_STATUSES), None)	              if True), None)
+r2b-first-status-wins	    m = candidates[-1] if candidates else None	    m = candidates[0] if candidates else None
 r2b-comma-not-a-separator	                    for x in re.split(r"\s*[,;]\s*|\s+(?:and|&|/|\+)\s+", t)	                    for x in re.split(r"(?!x)x", t)
+r3-no-word-boundary-suffix	            elif t.endswith(name) and _boundary_before(t, len(t) - len(name)):	            elif t.endswith(name):
+r3-tables-unreadable	        rows = table_rows(src)	        rows = []
+r3-status-region-ignored	    head_end = _metadata_region_end(sections, text)	    head_end = len(text)
+r3-front-matter-any-comment	    if not keys & FRONT_MATTER_KEYS:	    if False:
+r3-metadata-headings-ignored	        if t in METADATA_HEADINGS:	        if False:
 classify-single-class-only	)[:max(1, len(segments))]	)[:1]
 EOF
 

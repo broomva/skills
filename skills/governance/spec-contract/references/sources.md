@@ -157,6 +157,12 @@ Run against **LYNCH's own worked example** at `--profile spec`, the contract
 returns **zero failures**. Run against this workspace's 105 existing
 `docs/specs|plans|adrs` documents, **zero pass**.
 
+Both halves have been load-bearing in review. The gold standard broke once —
+a positional rule for the status field treated Lynch's `## Metadata` block as
+body and reported the calibration reference as having no status — and that is
+exactly what a calibration artifact is for: it fails loudly when a rule is
+wrong, where the corpus figure would have moved by one and said nothing.
+
 Read that second number carefully. It says what this corpus is like; it says
 nothing about where the bar belongs. An earlier draft reported it as evidence
 that the required/recommended split was well-chosen — the re-measurement that

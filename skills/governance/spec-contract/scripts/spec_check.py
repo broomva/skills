@@ -58,8 +58,12 @@ SECTION_CLASSES: dict[str, tuple[str, ...]] = {
                "the actual design", "reference-level explanation"),
     "alternatives": (
         "alternatives", "alternatives considered", "rationale and alternatives",
-        "options considered", "rejected", "why not", "other approaches",
-        "prior art", "considered and rejected",
+        "options considered", "why not", "other approaches", "prior art",
+        "considered and rejected", "options rejected", "rejected options",
+        # Bare "rejected" is deliberately absent: it is an ordinary past
+        # participle, and as a suffix it made "06 Unit economics — and why the
+        # generic clone was rejected" (a pricing table) an alternatives section.
+        # A section class needs a noun phrase, not a verb that ends a sentence.
     ),
     "drawbacks": (
         "drawbacks", "consequences", "costs", "downsides", "risks",
@@ -145,10 +149,22 @@ def recommended(profile: str) -> tuple[str, ...]:
 # OXIDE: prediscussion/ideation/discussion/published/committed/abandoned.
 # The union below is deliberately permissive; the constraint that bites is that
 # a terminal state must name its successor.
+# NYGARD's four, OXIDE's six, and the states this workspace's own documents
+# actually carry. The last group is not a concession: a checker whose vocabulary
+# is narrower than its corpus reports "no status field" about documents that
+# visibly have one, which is a false statement, not a strict standard. Measured:
+# requiring only the first two groups produced 34 such failures across 105 docs.
 VALID_STATUSES = {
-    "draft", "prediscussion", "ideation", "proposed", "in-review", "discussion",
-    "accepted", "published", "implemented", "committed", "deprecated",
-    "superseded", "abandoned", "rejected", "design-complete",
+    # NYGARD
+    "proposed", "accepted", "deprecated", "superseded",
+    # OXIDE
+    "prediscussion", "ideation", "discussion", "published", "committed",
+    "abandoned",
+    # in use in this corpus
+    "draft", "in-review", "review", "implemented", "rejected", "approved",
+    "final", "current", "active", "living", "archived", "historical",
+    "wip", "complete", "shipped", "done", "planned", "exploratory",
+    "design-complete", "proposal",
 }
 STATUS_NEEDS_POINTER = {"superseded", "deprecated"}
 
@@ -244,6 +260,14 @@ MIN_TRADEOFF_HITS = 2
 
 # Characters of prose an alternative must carry beyond its own name.
 MIN_JUSTIFICATION = 12
+
+# A leading comment is front matter when it carries at least one of these at
+# column zero. An editorial note has no keys; a deploy snippet nests its keys
+# under another, so neither qualifies.
+FRONT_MATTER_KEYS = {
+    "status", "title", "type", "date", "slug", "author", "created", "updated",
+    "tickets", "ticket", "owner", "version", "layer", "id",
+}
 
 # A heading answers one question per conjunction-separated segment of its title;
 # the bound is len(segments), not a constant.
@@ -378,6 +402,46 @@ def _status_head(val: str) -> str:
     return re.split(r"[\s,(]", val.strip().lower().strip("*_`~ "))[0].strip(" .*_`~")
 
 
+# Level-2 headings that are still part of the header rather than the body. A doc
+# may carry its status inside an explicit `## Metadata` block — Lynch's own
+# worked example does — and treating the first level-2 heading as the body
+# boundary reported that document as having no status at all.
+METADATA_HEADINGS = {
+    "metadata", "meta", "front matter", "frontmatter", "contents",
+    "table of contents", "toc", "about", "document control", "header",
+}
+
+
+def _metadata_region_end(sections: list[Section], text: str) -> int:
+    """Offset where the document's header block ends.
+
+    The body starts at the first level-2-or-deeper heading that is not itself a
+    metadata block. A document with no such heading is all header.
+    """
+    for sec in sections:
+        if sec.level < 2 or not sec.title:
+            continue
+        t = re.sub(r"^[\d.\s]+", "", sec.title).strip().lower().rstrip(":")
+        t = re.sub(r"[🔗#]", "", t).strip()
+        if t in METADATA_HEADINGS:
+            continue
+        i = text.find(sec.title)
+        if i > 0:
+            return i
+    return len(text)
+
+
+def _is_status(val: str) -> bool:
+    """Does this value name a state a document could be superseded FROM?
+
+    Matched on the leading hyphen-separated token as well as the whole head, so
+    a compound like `draft-for-decision` resolves to `draft` rather than being
+    reported as no status at all.
+    """
+    head = _status_head(val)
+    return head in VALID_STATUSES or head.split("-")[0] in VALID_STATUSES
+
+
 def hoist_front_matter(raw: str) -> str:
     """YAML front matter carried in a leading HTML comment, as plain text.
 
@@ -388,9 +452,23 @@ def hoist_front_matter(raw: str) -> str:
     the format `make-spec` emits rather than the documents being deficient.
     """
     fm = FRONT_MATTER_COMMENT.search(raw)
-    if fm and re.search(r"^\s*[-\w]+\s*:", fm.group(1), re.M):
-        return fm.group(1).strip("- \n\t") + "\n"
-    return ""
+    if not fm:
+        return ""
+    inner = fm.group(1).strip("- \n\t")
+    # The discriminator is COLUMN-ZERO keys, not `---` delimiters. This corpus
+    # writes undelimited YAML in the comment (`title:` / `date:` / `type:` /
+    # `status: approved`), so requiring a fence rejected 12 real documents. It
+    # is also the right rule: a deploy snippet nests `status: enabled` UNDER
+    # `deploy snippet:`, and an editorial note has no keys at all — accepting
+    # any `word:` line anywhere made both of them document metadata.
+    keys = {k.rstrip(": ").lower()
+            for k in re.findall(r"^[A-Za-z][\w-]*\s*:", inner, re.M)}
+    # Key NAMES are conventional; status VALUES are not. That asymmetry is the
+    # whole cut: gating on a recognised key name is a closed set that holds,
+    # while gating on the value was an open set that produced false failures.
+    if not keys & FRONT_MATTER_KEYS:
+        return ""
+    return inner + "\n"
 
 
 def _strip_html(raw: str) -> str:
@@ -403,7 +481,9 @@ def _strip_html(raw: str) -> str:
     s = re.sub(r"""(?is)<a[^>]*\shref\s*=\s*["']([^"']+)["'][^>]*>(.*?)</a>""",
                r"\2 (\1)", s)
     s = re.sub(r"(?is)<br\s*/?>", "\n", s)
-    s = re.sub(r"(?is)</(p|div|li|h[1-6]|tr|blockquote|td)>", "\n", s)
+    s = re.sub(r"(?is)</(t[dh])>", " | ", s)
+    s = re.sub(r"(?is)</tr>", "\n", s)
+    s = re.sub(r"(?is)</(p|div|li|h[1-6]|blockquote)>", "\n", s)
     # Leading newline is load-bearing: without it the first <li> of a list is
     # glued to whatever preceded it and parses one indent deeper than its
     # siblings, which silently discarded it as a continuation line.
@@ -448,11 +528,11 @@ def parse(raw: str, is_html: bool) -> tuple[list[Section], str]:
         for i, (_s, e, lvl, title) in enumerate(marks):
             end = marks[i + 1][0] if i + 1 < len(marks) else len(raw)
             sections.append(Section(lvl, title, _strip_html(raw[e:end])))
-        # Appended, never prepended: a status hidden in an HTML comment must
-        # not shadow the one a reader can actually see. A doc whose only status
-        # lives in front matter still resolves, because STATUS_LINE searches the
-        # whole text; a doc with both now answers with the visible value.
-        return sections, _strip_html(raw) + "\n" + front
+        # Front matter goes FIRST so it falls inside the metadata region, and
+        # the "visible status wins" rule is carried by taking the LAST in-region
+        # candidate rather than by text order. Appending it instead put it past
+        # the region boundary, where it could not be seen at all.
+        return sections, front + _strip_html(raw)
 
     lines = raw.splitlines()
     sections, cur, buf = [], None, []
@@ -486,18 +566,33 @@ def attach_subtrees(sections: list[Section]) -> None:
         sec.subtree_body = "\n".join(bodies)
 
 
+def _boundary_before(t: str, i: int) -> bool:
+    """True when position `i` starts a word (or the string)."""
+    return i == 0 or not (t[i - 1].isalnum() or t[i - 1] == "-")
+
+
+def _boundary_after(t: str, i: int) -> bool:
+    """True when position `i` ends a word (or the string)."""
+    return i >= len(t) or not (t[i].isalnum() or t[i] == "-")
+
+
 def _score_segment(t: str) -> dict[str, int]:
     scored: dict[str, int] = {}
     for cls, names in SECTION_CLASSES.items():
         for name in names:
             if t == name:
                 score = 1000
-            elif t.endswith(name):
+            elif t.endswith(name) and _boundary_before(t, len(t) - len(name)):
                 # The head of an English noun phrase is its LAST word: "design
                 # goals" is a goals section, not a design section. Ranking
                 # suffix above prefix is what separates them.
+                #
+                # The boundary check is what stops "conflict resolution" being a
+                # design section on the strength of "solution", "Oslo" being an
+                # acceptance section on "slo", and "…the generic clone was
+                # rejected" being an alternatives section.
                 score = 700 + len(name)
-            elif t.startswith(name):
+            elif t.startswith(name) and _boundary_after(t, len(name)):
                 score = 500 + len(name)
             elif re.search(rf"\b{re.escape(name)}\b", t):
                 score = len(name)
@@ -545,6 +640,38 @@ def classify(sections: Iterable[Section]) -> None:
         sec.cls = sec.classes[0] if sec.classes else None
 
 
+TABLE_SEP = re.compile(r"^\s*\|?[\s:|-]*-[\s:|-]*\|?\s*$")
+
+
+def table_rows(src: str) -> list[tuple[str, str]]:
+    """Data rows of a pipe table as (label, blurb), header and rule excluded.
+
+    Both surfaces reach this: `_strip_html` lowers `</td>` to ` | ` and `</tr>`
+    to a newline, so an HTML comparison table arrives in the same shape as a
+    markdown one. Before that, an HTML table exploded into one line per cell and
+    its header row was read as an option — which is how the deleted per-entry
+    check earned a precision of 0/2.
+    """
+    lines = [ln for ln in src.splitlines() if ln.count("|") >= 2]
+    if len(lines) < 2:
+        return []
+    out: list[tuple[str, str]] = []
+    seen_rule = any(TABLE_SEP.match(ln) for ln in lines)
+    for i, ln in enumerate(lines):
+        if TABLE_SEP.match(ln):
+            continue
+        cells = [c.strip() for c in ln.strip().strip("|").split("|")]
+        cells = [c for c in cells if c]
+        if len(cells) < 2:
+            continue
+        # The first row is a header when a separator rule follows it, or — for
+        # the HTML surface, which has no rule — when it is the first row.
+        if i == 0 and (seen_rule or True):
+            continue
+        out.append((cells[0], " ".join(cells[1:])))
+    return out
+
+
 def alternative_entries(sections: list[Section],
                         alts: list[Section]) -> list[tuple[str, str]]:
     """Discrete (label, blurb) pairs for each option the doc considered.
@@ -576,9 +703,15 @@ def alternative_entries(sections: list[Section],
                     blurb += [y.title, y.body]
                 entries.append((x.title, "\n".join(blurb)))
             continue
+        src = sec.subtree_body or sec.body
+
+        rows = table_rows(src)
+        if rows:
+            entries += rows
+            continue
+
         # Indentation carries the structure: a top-level bullet names an
         # option, and everything indented under it is that option's blurb.
-        src = sec.subtree_body or sec.body
         bullets: list[tuple[int, str]] = []
         for ln in src.splitlines():
             m = re.match(r"^([ \t]*)(?:[-*+]|\d+\.)\s+(\S.*)$", ln)
@@ -599,10 +732,17 @@ def alternative_entries(sections: list[Section],
                 if depth <= base:
                     if cur:
                         entries.append((cur[0], "\n".join(cur[1:]) or cur[0]))
-                    label, _, rest = txt.partition(":")
-                    cur = [label.strip() or txt[:40]]
-                    if rest.strip():
-                        cur.append(rest.strip())
+                    label, sep, rest = txt.partition(":")
+                    if sep and len(label) <= 60:
+                        cur = [label.strip(), rest.strip()] if rest.strip() \
+                            else [label.strip()]
+                    else:
+                        # No colon (or a colon so late it is punctuation, not a
+                        # label): the option is named by its opening words and
+                        # the WHOLE bullet is its blurb. Treating the sentence as
+                        # a label stripped the justification off the entry that
+                        # contained it.
+                        cur = [" ".join(txt.split()[:4]), txt]
                 elif cur:
                     cur.append(txt)
             if cur:
@@ -713,18 +853,25 @@ def check(path: Path, profile: str | None, strict: bool,
             ))
 
     # --- C2 status (NYGARD supersession, OXIDE state machine) ----------------
-    # Every candidate, not just the first: a doc may mention "status" in prose
-    # before it states its own. A candidate only counts if its value names a
-    # known state — "200 on success" is not a state a document can be superseded
-    # from, which is what the field is for.
-    candidates = list(STATUS_LINE.finditer(text))
-    m = next((c for c in candidates
-              if _status_head(c.group(1)) in VALID_STATUSES), None)
-    if m is None and candidates:
-        near = _status_head(candidates[0].group(1))
+    # A status FIELD is metadata, so it must appear in the metadata region —
+    # front matter, or the header block before the first section. Anything
+    # deeper is prose that happens to contain the word: "- Status: 200 on
+    # success" inside a Design section is an HTTP code, not a document state.
+    head_end = _metadata_region_end(sections, text)
+    candidates = [c for c in STATUS_LINE.finditer(text) if c.start() < head_end
+                  and not PLACEHOLDER.match(c.group(1).strip())]
+    # LAST, not first: front matter leads the text, so a visible `Status:` in
+    # the header block comes after it and wins — which is the point. A status
+    # hidden in an HTML comment must not shadow one a reader can see.
+    m = candidates[-1] if candidates else None
+    if m is not None and not _is_status(m.group(1)):
+        # Recognised vs unrecognised is a WARN, never the blocking arm. The
+        # status vocabulary of a real workspace is open; enumerating it and
+        # failing the remainder produced 5 false failures in a sample of 8.
         add(Finding("C2-bad-status", "warn",
-                    f"status {near!r} is outside the known state set",
-                    evidence=candidates[0].group(0).strip()[:100]))
+                    f"status {_status_head(m.group(1))!r} is outside the known "
+                    "state set; supersession checks only run on known states",
+                    evidence=m.group(0).strip()[:100]))
     if not m:
         add(Finding("C2-no-status", "fail",
                     "no 'Status:' field; a doc with no state cannot be "
@@ -735,6 +882,8 @@ def check(path: Path, profile: str | None, strict: bool,
         # emphasis stripped by _status_head, so `Status: **superseded**` cannot
         # fall out of the set into a mere warning and skip the pointer check.
         head = _status_head(m.group(1))
+        # Supersession enforcement only applies to states we recognise; an
+        # unrecognised value already warned above.
         if head in STATUS_NEEDS_POINTER:
             # The successor must be ON the status line. Scanning 400 characters
             # ahead let an unrelated link — an author's homepage two lines down —
@@ -792,25 +941,18 @@ def check(path: Path, profile: str | None, strict: bool,
                         "RUST asks 'what other designs have been considered and "
                         "what is the rationale for not choosing them?' — one "
                         "option is not a comparison"))
-        # Two checks, at the two levels a script can actually decide.
+        # ONE check, at the only level a script can decide: does the section
+        # state, anywhere, why something was NOT chosen?
         #
-        # Per ENTRY: is this option justified at all, or is it a bare name? A
-        # keyword list cannot enumerate the ways English states a reason — "the
-        # network hop eats the win" is one — so the per-entry test is
-        # structural: an option with no prose beyond its own name was not
-        # argued. Judging whether the prose is a GOOD reason is rubric R2.
-        for label, blurb in entries:
-            justification = blurb.strip()
-            if justification.lower().startswith(label.strip().lower()):
-                justification = justification[len(label.strip()):]
-            if len(justification.strip(" .:—-\n\t")) < MIN_JUSTIFICATION:
-                add(Finding("C5-unjustified-alternative", "fail",
-                            f"alternative {label[:48]!r} is named with no "
-                            "justification; RUST asks for 'the rationale for not "
-                            "choosing them', which a bare name does not give",
-                            evidence=blurb.strip()[:120]))
-        # Per SECTION: does any rejection language appear at all? A section of
-        # neutral descriptions is a survey, not a comparison.
+        # There was a second, per-entry check here — "is this option justified
+        # at all, or is it a bare name?" — and it is deleted rather than fixed.
+        # Measured precision on its live firings across 105 real documents was
+        # 0/2: both were the HEADER ROW of a comparison table ("Alternative |
+        # Why rejected"), which is the commonest real idiom for this section and
+        # which a structural heuristic cannot distinguish from an option. A rule
+        # wrong on every firing it produces is not a rule with a bug. Whether an
+        # individual option is argued WELL is rubric R2, which is where a
+        # judgement belongs.
         if not REJECTION_MARKERS.search(" ".join(b for _, b in entries)):
             add(Finding("C5-no-rejection-reason", "fail",
                         "no alternative states why it was NOT chosen; a list of "
