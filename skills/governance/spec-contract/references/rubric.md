@@ -5,7 +5,7 @@ sections present, alternatives plural, acceptance numeric, status resolvable.
 Every one of those is decidable from the text alone.
 
 None of them answer the question the document exists for: **is this the right
-set of decisions, argued honestly?** A document can pass all fourteen
+set of decisions, argued honestly?** A document can pass every
 deterministic checks and still be worthless — two strawman alternatives, a
 non-goal nobody would have assumed, an SLO picked because it was easy to
 measure. That failure mode is not a gap in the script. It is the half of the
