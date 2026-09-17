@@ -155,7 +155,7 @@ the artifact outrank the section list:
 
 Run against **LYNCH's own worked example** at `--profile spec`, the contract
 returns **zero failures**. Run against this workspace's 105 existing
-`docs/specs|plans|adrs` documents, **zero pass**.
+`docs/specs|plans|adrs` documents, **one passes** — an ADR carrying its state under NYGARD's own `## Status` heading, a form the checker could not read until round 4.
 
 Both halves have been load-bearing in review. The gold standard broke once —
 a positional rule for the status field treated Lynch's `## Metadata` block as

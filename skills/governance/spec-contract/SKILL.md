@@ -176,7 +176,7 @@ its subject is an HTML front-matter convention.
 | Corpus | Result |
 |---|---|
 | **Lynch's own worked example** (`little-moments-design-doc`, 2,667 lines), `--profile spec` | **zero failures** |
-| This workspace's 105 `docs/specs\|plans\|adrs` documents | **0 pass** |
+| This workspace's 105 `docs/specs\|plans\|adrs` documents | **1 passes** |
 
 Section coverage across those 105, by class: design 52.4% · open questions 25.7%
 · drawbacks 18.1% · objective 12.4% · context 10.5% · **non-goals 7.6% ·
@@ -261,10 +261,21 @@ corpus:
 
 | Check | Firings | Precision |
 |---|---|---|
-| `C2-no-status` | 36 | **10/10** on a random sample |
-| `C9-implementation-manual` | 28 | 5/6 sampled have *zero* trade-off expressions in 669–6210 words |
 | `C1-missing-section` | 331 | structural — a heading class is present or it is not |
-| `C5-thin-alternatives` · `C6` · `C2-dangling-supersede` | 2 · 1 · 1 | hand-audited individually |
+| `C2-no-status` | 23 | **22/23**, every firing inspected |
+| `C9-implementation-manual` | 13 | all 13 have **zero** trade-off expressions in prose |
+| `C2-dangling-supersede` | 2 | both inspected; both name no successor |
+| `C5-thin-alternatives` · `C6` | 0 · 0 blocking | `C6` demoted to advisory, below |
+
+**Sample size is not a precision measurement.** An earlier version of this table
+claimed `C2-no-status` at "10/10 on a random sample" of 36 firings. Reviewing all
+36 found **14 false positives** the sample had missed — five distinct mechanisms,
+four of them introduced by the fixes of the two preceding rounds. The numbers
+above come from inspecting *every* firing, and the four that a crude grep
+flagged as suspect turned out on reading to be true positives: `status:
+FlagStatus;` is TypeScript in a code block, two more are per-item statuses in
+body prose. Auditing with a proxy for the thing is how the first number was
+wrong; the second was produced by looking.
 
 **A check was deleted on this evidence.** `C5-unjustified-alternative` asked
 whether each option carried prose beyond its own name. Its precision on live
@@ -274,14 +285,27 @@ produces is not a rule with a bug, and tuning it further would have meant
 editing the corpus to fit the rule. Whether an option is argued *well* is rubric
 **R2**, which is where that judgement belongs.
 
-**Known limitation:** `C9` reads English trade-off vocabulary. Two of its live
-firings are Spanish-language documents, where it cannot see the argument even if
-one is there. Treat a `C9` failure on a non-English doc as unmeasured.
+**Two checks are advisory because their precision could not be demonstrated.**
+
+- `C6-drawbacks-without-cost` fired 4 times; at best 2 were true. One fires on a
+  section headed *"Two structural prohibitions, not compliance costs"* — pulled
+  into the class by the word "costs" in a heading that says it is not a costs
+  section — and one on *"Negative / accepted trade-offs"* whose real costs
+  ("far less to build than OpenRaft", "no consensus machinery to operate") are
+  not in `COST_LANGUAGE`. Enumerating cost vocabulary is the same losing game as
+  enumerating status vocabulary. Whether stated consequences are honest is **R4**.
+- `C9`'s floor was 2 expressions and is now 1. The floor of 2 was a *second*
+  defence against a hazard `body_prose` already closed, and it cost 15 false
+  failures (28 → 13). All 13 remaining have literally zero trade-off vocabulary.
+
+**Known limitation:** `C9` reads English. Two of its firings are Spanish-language
+documents where it cannot see an argument that may be there. Treat a `C9` failure
+on a non-English doc as unmeasured.
 
 ## Tests
 
 ```bash
-python3 -m pytest tests/test_spec_check.py -q   # 143 tests
+python3 -m pytest tests/test_spec_check.py -q   # 150 tests
 bash tests/mutation.sh                          # incl. a NULL control that must SURVIVE
 ```
 
@@ -290,7 +314,7 @@ across all 105 real documents; that is a measured zero with a known cause — on
 8 of them have a non-goals section for it to read — not an unfalsified silence,
 and the four positive controls prove the rule fires.
 
-The mutation sweep reports **killed 39/39**, and three properties of it are load-bearing
+The mutation sweep reports **killed 44/44**, and three properties of it are load-bearing
 because the first version had none of them and still printed a clean score:
 
 - **A NULL mutant must SURVIVE.** A no-op edit that fails the suite means the

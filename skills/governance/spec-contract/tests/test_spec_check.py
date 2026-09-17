@@ -316,9 +316,16 @@ def test_c6_positive_drawbacks_section_states_no_cost(tmp_path):
         "The cache doubles resident memory and we give up cross-process sharing.",
         "This design is clean and the team likes it.")
     assert "C6-drawbacks-without-cost" in checks(run(tmp_path, body))
-    # required on adr -> blocking; merely recommended on spec -> advisory
-    assert "C6-drawbacks-without-cost" in fails(run(tmp_path, body, profile="adr"))
-    assert "C6-drawbacks-without-cost" not in fails(run(tmp_path, body))
+    # Advisory on EVERY profile, including adr. Audited on all 4 live firings in
+    # the 105-doc corpus: at best 2 are true positives. One fires on a section
+    # headed "Two structural prohibitions, not compliance costs" — classified
+    # into the class by the word "costs" in a heading that says it is not a
+    # costs section — and one on "Negative / accepted trade-offs" whose real
+    # costs ("far less to build than OpenRaft") are not in COST_LANGUAGE.
+    # Enumerating cost vocabulary is the mistake the status vocabulary made.
+    for prof in ("adr", "spec", "rfd"):
+        assert "C6-drawbacks-without-cost" not in fails(
+            run(tmp_path, body, profile=prof)), prof
 
 
 def test_r1_b4_gate_is_monotone_in_honesty(tmp_path):
@@ -888,16 +895,22 @@ def test_r1_b8_documented_check_ids_match_the_code():
 
 # --- gaps the mutation sweep exposed (mutants that survived round 1) ---------
 
-def test_c9_a_single_tradeoff_expression_is_below_the_floor(tmp_path):
-    """MIN_TRADEOFF_HITS exists because ONE token was enough for the metadata
-    line this skill recommends to switch the detector off. Nothing tested the
-    floor itself, so lowering it back to 1 survived the suite."""
-    one = ("# X\n\nStatus: accepted\n\n## Design\n"
-           + ("We will add a handler and wire the route. " * 50)
-           + "\nWe chose it.\n")
-    assert "C9-implementation-manual" in fails(run(tmp_path, one, profile="note"))
-    two = one + "\nWe considered a queue instead of a handler.\n"
-    assert "C9-implementation-manual" not in checks(run(tmp_path, two, profile="note"))
+def test_c9_one_tradeoff_expression_clears_the_floor(tmp_path):
+    """The floor is 1, and the reason it is not 2 is measured.
+
+    A floor of 2 was a SECOND defence against the metadata line this skill
+    recommends ("Reversal cost: two-way door") satisfying the check on its own —
+    but `body_prose` already strips metadata lines, so the hazard was closed and
+    the floor only did harm: 28 failures at floor 2 against 13 at floor 1, and
+    review found most of the 15 difference visibly arguing a trade-off.
+
+    All 13 remaining failures have literally zero trade-off vocabulary in prose,
+    which is the degenerate case GOOGLE names."""
+    none = ("# X\n\nStatus: accepted\n\n## Design\n"
+            + ("We will add a handler and wire the route. " * 50))
+    assert "C9-implementation-manual" in fails(run(tmp_path, none, profile="note"))
+    one = none + "\nWe chose it instead of a queue.\n"
+    assert "C9-implementation-manual" not in checks(run(tmp_path, one, profile="note"))
 
 
 def test_c9_ignores_the_metadata_block(tmp_path):
@@ -1092,13 +1105,86 @@ def test_r2b_a_real_status_later_in_the_doc_still_counts(tmp_path):
     assert "C2-no-status" not in checks(run(tmp_path, body))
 
 
-def test_r2b_front_matter_needs_a_recognisable_status(tmp_path):
-    """A deploy snippet in a leading comment ("status: enabled") suppressed
-    C2-no-status on a doc with no visible status at all."""
+def test_r2b_an_indented_status_key_counts_as_front_matter(tmp_path):
+    """A DELIBERATE trade-off, recorded so it is not mistaken for an oversight.
+
+    Round 2 required front-matter keys at column zero, which kept a deploy
+    snippet (`deploy snippet:` / `status: enabled`) from being read as document
+    metadata. Round 4 measured the cost: **9 real documents** in this workspace
+    indent their header keys, and the column-zero rule reported every one of
+    them as having no `Status:` field — a statement that is false about the
+    document in front of it. `STATUS_LINE` already tolerated 8 columns of
+    indent, so the two halves of one feature disagreed.
+
+    No discriminator exists in the text: `status: enabled` inside a note is
+    shape-identical to `Status: PROPOSED` inside front matter. So the choice is
+    which error to prefer, and nine false FAILURES that each assert something
+    untrue are worse than one false pass. The indent is now tolerated, and this
+    test pins the consequence rather than the absence of one."""
     body = ('<!--\n  deploy snippet:\n    service: widget\n    status: enabled\n-->\n'
             '<h1>D</h1><h2>Design</h2><p>we chose A instead of B</p>')
-    assert "C2-no-status" in fails(run(tmp_path, body, name="d.html",
-                                       profile="note"))
+    assert "C2-no-status" not in fails(run(tmp_path, body, name="d.html",
+                                           profile="note"))
+
+
+def test_r4_indented_header_keys_are_front_matter(tmp_path):
+    """The nine-document shape the column-zero rule rejected."""
+    body = ('<!DOCTYPE html>\n<!--\n spec · sourcer · 2026-08-24\n'
+            '     Status: PROPOSED.\n-->\n'
+            '<h1>D</h1><h2>Design</h2><p>we chose A instead of B</p>')
+    assert "C2-no-status" not in checks(run(tmp_path, body, name="d.html",
+                                            profile="note"))
+
+
+def test_r4_lowercase_doctype_does_not_hide_front_matter(tmp_path):
+    """`<!DOCTYPE` was matched case-sensitively; this corpus writes it lower."""
+    body = ('<!doctype html>\n<!--\nstatus: planned\n-->\n'
+            '<h1>D</h1><h2>Design</h2><p>we chose A instead of B</p>')
+    assert "C2-no-status" not in checks(run(tmp_path, body, name="d.html",
+                                            profile="note"))
+
+
+def test_r4_a_provenance_note_before_the_metadata_block(tmp_path):
+    """Only the FIRST leading comment was considered, so a doc opening with a
+    provenance note hid its own metadata."""
+    body = ('<!-- Broomva workspace · docs/specs · human-read artifact · P18 -->\n'
+            '<!--\nstatus: synthesis\ntitle: T\n-->\n'
+            '<h1>D</h1><h2>Design</h2><p>we chose A instead of B</p>')
+    assert "C2-no-status" not in checks(run(tmp_path, body, name="d.html",
+                                            profile="note"))
+
+
+def test_r4_nygards_own_adr_status_heading_is_readable(tmp_path):
+    """C2 cites NYGARD as its source and could not parse NYGARD's format, which
+    puts the state under a `## Status` heading rather than after a colon."""
+    body = ("# ADR 1: Cache layer\n\n## Status\n\nAccepted and implemented "
+            "locally\n\n## Context\nx\n\n## Decision\n"
+            "we chose A instead of B rather than C\n\n## Consequences\n"
+            "The cache doubles resident memory and we give up sharing.\n\n"
+            "## Alternatives considered\n- B: too slow here\n- C: lock-in\n")
+    assert "C2-no-status" not in fails(run(tmp_path, body, profile="adr"))
+
+
+def test_r4_a_superseded_status_heading_still_needs_a_successor(tmp_path):
+    """The heading form must not be a way around the supersession rule."""
+    body = ("# ADR 1\n\n## Status\n\nSuperseded\n\n## Context\nx\n\n"
+            "## Decision\nwe chose A instead of B\n\n## Consequences\n"
+            "we give up sharing\n\n## Alternatives considered\n"
+            "- B: too slow\n- C: lock-in\n")
+    assert "C2-dangling-supersede" in fails(run(tmp_path, body, profile="adr"))
+
+
+def test_r4_a_prose_pipe_before_a_table_does_not_promote_the_header(tmp_path):
+    """`(seen_rule or True)` made rule-detection dead code, so a prose line with
+    two pipes shifted index 0 and the real header row became an option."""
+    rows = sc.table_rows(
+        "Prose with a | pipe | in it.\n\n"
+        "| Option | Why rejected |\n|---|---|\n"
+        "| Redis | another process to operate |\n"
+        "| Firestore | platform lock-in |\n")
+    labels = [lbl for lbl, _ in rows]
+    assert "Option" not in labels, f"header row became an option: {labels}"
+    assert labels == ["Redis", "Firestore"], labels
 
 
 def test_r2b_a_three_question_heading_keeps_all_three():
@@ -1237,3 +1323,14 @@ def test_r3_an_unrecognised_status_value_warns_but_does_not_fail(tmp_path, value
     body = GOOD.replace("Status: accepted", f"Status: {value}")
     rep = run(tmp_path, body)
     assert "C2-no-status" not in fails(rep), value
+
+
+def test_r4_span_wrapped_status_reaches_the_anchor(tmp_path):
+    """`</span>` was not lowered to a newline, so the eyebrow idiom
+    `<span>date</span><span>Status: proposed</span>` never reached a line start
+    the status anchor could see. A mutant reverting it survived until this."""
+    body = ('<h1>D</h1><p><span>18 August 2026</span>'
+            '<span>Status: proposed</span></p>'
+            '<h2>Design</h2><p>we chose A instead of B</p>')
+    assert "C2-no-status" not in checks(run(tmp_path, body, name="d.html",
+                                            profile="note"))

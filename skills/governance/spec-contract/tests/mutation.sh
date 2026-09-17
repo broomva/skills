@@ -72,7 +72,7 @@ C6-cost-always-found	        if dsec and not COST_LANGUAGE.search(prose(dsec)):	
 C7-next-step-always-found	        if not NEXT_STEP.search(body):	        if False:
 C8-acceptance-always-measurable	        if asec and not MEASURABLE.search(prose(asec)):	        if False:
 C9-manual-never-detected	    if hits < MIN_TRADEOFF_HITS and words > MIN_WORDS:	    if False:
-C9-one-hit-is-enough	MIN_TRADEOFF_HITS = 2	MIN_TRADEOFF_HITS = 1
+C9-zero-hits-is-enough	MIN_TRADEOFF_HITS = 1	MIN_TRADEOFF_HITS = 0
 C9-reads-metadata-too	    hits = len(TRADEOFF_LANGUAGE.findall(body_prose(sections)))	    hits = len(TRADEOFF_LANGUAGE.findall(text))
 C10-size-never-warns	    if pages > MAX_PAGES:	    if False:
 C11-links-never-checked	        for url in URL_RE.findall(text):	        for url in []:
@@ -96,6 +96,11 @@ r3-tables-unreadable	        rows = table_rows(src)	        rows = []
 r3-status-region-ignored	    head_end = _metadata_region_end(sections, text)	    head_end = len(text)
 r3-front-matter-any-comment	    if not keys & FRONT_MATTER_KEYS:	    if False:
 r3-metadata-headings-ignored	        if t in METADATA_HEADINGS:	        if False:
+r4-region-fails-open	        if sec.offset >= 0:	        if False:
+r4-offset-not-recorded	            sec.offset = base + len(_strip_html(raw[:_s]))	            sec.offset = -1
+r4-only-first-comment	    for cand in ONE_COMMENT.findall(block.group(1)):	    for cand in ONE_COMMENT.findall(block.group(1))[:1]:
+r4-status-heading-unread	    if m is None and heading_status:	    if False:
+r4-span-not-lowered	    s = re.sub(r"(?is)</(p|div|li|h[1-6]|blockquote|span|strong|em|b|i)>", "\n", s)	    s = re.sub(r"(?is)</(p|div|li|h[1-6]|blockquote)>", "\\n", s)
 classify-single-class-only	)[:max(1, len(segments))]	)[:1]
 EOF
 

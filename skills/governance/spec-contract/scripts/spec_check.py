@@ -253,10 +253,14 @@ NEXT_STEP = re.compile(
 # GOOGLE: "The sweet spot for a larger project seems to be around 10-20ish pages.
 # If you get way beyond that, it might make sense to split up the problem."
 # ~500 words/page.
-# GOOGLE's detector needs more than one token to clear. One was enough for the
-# metadata line this skill RECOMMENDS ("Reversal cost: two-way door") to switch
-# the check off — a gate defeated by its own house style.
-MIN_TRADEOFF_HITS = 2
+# One expression clears it. A floor of 2 was added to stop the metadata line
+# this skill RECOMMENDS ("Reversal cost: two-way door") switching the check off
+# by itself — but `body_prose` already strips metadata lines, so the floor was
+# a second defence against a hazard already closed, and it was doing real harm:
+# it turned 15 one-expression documents into failures, and review found most of
+# them visibly arguing a trade-off. Measured on the 105: floor 2 → 28 failures,
+# floor 1 → 13, and all 13 have literally zero trade-off vocabulary in prose.
+MIN_TRADEOFF_HITS = 1
 
 # Characters of prose an alternative must carry beyond its own name.
 MIN_JUSTIFICATION = 12
@@ -308,6 +312,11 @@ class Section:
     title: str
     body: str
     cls: str | None = None
+    # Byte offset of this heading in the parsed text. Recorded at parse time
+    # because the title is whitespace-collapsed and the text is not, so
+    # searching for one inside the other silently fails on any heading
+    # containing an inline tag.
+    offset: int = -1
     # Every class this heading satisfies. A combined heading — "Goals and
     # non-goals", "Alternatives and drawbacks" — is one section answering two
     # questions, and scoring only the first made the doc fail for a section it
@@ -382,7 +391,12 @@ def fold_quotes(s: str) -> str:
     return s
 
 
-FRONT_MATTER_COMMENT = re.compile(r"(?s)\A\s*(?:<!DOCTYPE[^>]*>\s*)?<!--(.*?)-->")
+# Case-insensitive (`<!doctype html>` is what this corpus writes) and willing to
+# look past a leading provenance note: a document may open with
+# `<!-- Broomva workspace · P18 -->` before its metadata block.
+LEADING_COMMENTS = re.compile(
+    r"(?is)\A\s*(?:<!DOCTYPE[^>]*>\s*)?((?:<!--.*?-->\s*)+)")
+ONE_COMMENT = re.compile(r"(?s)<!--(.*?)-->")
 
 
 def strip_comments(raw: str) -> str:
@@ -425,9 +439,12 @@ def _metadata_region_end(sections: list[Section], text: str) -> int:
         t = re.sub(r"[🔗#]", "", t).strip()
         if t in METADATA_HEADINGS:
             continue
-        i = text.find(sec.title)
-        if i > 0:
-            return i
+        if sec.offset >= 0:
+            return sec.offset
+        # No recorded offset: fail CLOSED. A region that cannot be located must
+        # not silently become the whole document, which is how this check
+        # switched itself off on 5 of 105 real files.
+        return 0
     return len(text)
 
 
@@ -451,18 +468,33 @@ def hoist_front_matter(raw: str) -> str:
     not see, so much of the corpus calibration was the gate being unable to read
     the format `make-spec` emits rather than the documents being deficient.
     """
-    fm = FRONT_MATTER_COMMENT.search(raw)
-    if not fm:
+    block = LEADING_COMMENTS.search(raw)
+    if not block:
         return ""
-    inner = fm.group(1).strip("- \n\t")
+    # Each leading comment in turn, not just the first: a document may open with
+    # a provenance note before its metadata block, and a lazy single-regex
+    # "skip up to N" prefers skipping none, so it never looked past comment one.
+    for cand in ONE_COMMENT.findall(block.group(1)):
+        got = _front_matter_from(cand)
+        if got:
+            return got
+    return ""
+
+
+def _front_matter_from(comment: str) -> str:
+    inner = comment.strip("- \n\t")
     # The discriminator is COLUMN-ZERO keys, not `---` delimiters. This corpus
     # writes undelimited YAML in the comment (`title:` / `date:` / `type:` /
     # `status: approved`), so requiring a fence rejected 12 real documents. It
     # is also the right rule: a deploy snippet nests `status: enabled` UNDER
     # `deploy snippet:`, and an editorial note has no keys at all — accepting
     # any `word:` line anywhere made both of them document metadata.
-    keys = {k.rstrip(": ").lower()
-            for k in re.findall(r"^[A-Za-z][\w-]*\s*:", inner, re.M)}
+    # Up to eight columns of indent, matching STATUS_LINE's own tolerance. A
+    # column-zero rule rejected 9 real documents whose header comment indents
+    # its keys, while the status reader would happily have parsed them — two
+    # halves of one feature disagreeing about whether indentation is legal.
+    keys = {k.strip().rstrip(": ").lower()
+            for k in re.findall(r"^[ \t]{0,8}([A-Za-z][\w-]*)\s*:", inner, re.M)}
     # Key NAMES are conventional; status VALUES are not. That asymmetry is the
     # whole cut: gating on a recognised key name is a closed set that holds,
     # while gating on the value was an open set that produced false failures.
@@ -483,7 +515,7 @@ def _strip_html(raw: str) -> str:
     s = re.sub(r"(?is)<br\s*/?>", "\n", s)
     s = re.sub(r"(?is)</(t[dh])>", " | ", s)
     s = re.sub(r"(?is)</tr>", "\n", s)
-    s = re.sub(r"(?is)</(p|div|li|h[1-6]|blockquote)>", "\n", s)
+    s = re.sub(r"(?is)</(p|div|li|h[1-6]|blockquote|span|strong|em|b|i)>", "\n", s)
     # Leading newline is load-bearing: without it the first <li> of a list is
     # glued to whatever preceded it and parses one indent deeper than its
     # siblings, which silently discarded it as a continuation line.
@@ -525,9 +557,15 @@ def parse(raw: str, is_html: bool) -> tuple[list[Section], str]:
             marks.append((m.start(), m.end(), int(m.group(1)),
                           re.sub(r"\s+", " ", title).strip()))
         sections = []
+        base = len(front)
         for i, (_s, e, lvl, title) in enumerate(marks):
             end = marks[i + 1][0] if i + 1 < len(marks) else len(raw)
-            sections.append(Section(lvl, title, _strip_html(raw[e:end])))
+            sec = Section(lvl, title, _strip_html(raw[e:end]))
+            # Offset in TEXT space, not raw space: the two differ by everything
+            # the stripper removes, and searching a collapsed title inside
+            # uncollapsed text silently failed on any heading with an inline tag.
+            sec.offset = base + len(_strip_html(raw[:_s]))
+            sections.append(sec)
         # Front matter goes FIRST so it falls inside the metadata region, and
         # the "visible status wins" rule is carried by taking the LAST in-region
         # candidate rather than by text order. Appending it instead put it past
@@ -536,6 +574,7 @@ def parse(raw: str, is_html: bool) -> tuple[list[Section], str]:
 
     lines = raw.splitlines()
     sections, cur, buf = [], None, []
+    pos = 0
     for ln in lines:
         m = re.match(r"^(#{1,6})\s+(.*\S)\s*$", ln)
         if m:
@@ -543,8 +582,10 @@ def parse(raw: str, is_html: bool) -> tuple[list[Section], str]:
                 cur.body = "\n".join(buf)
                 sections.append(cur)
             cur, buf = Section(len(m.group(1)), m.group(2).strip(), ""), []
+            cur.offset = pos
         elif cur is not None:
             buf.append(ln)
+        pos += len(ln) + 1
     if cur:
         cur.body = "\n".join(buf)
         sections.append(cur)
@@ -655,8 +696,13 @@ def table_rows(src: str) -> list[tuple[str, str]]:
     lines = [ln for ln in src.splitlines() if ln.count("|") >= 2]
     if len(lines) < 2:
         return []
+    rule_at = next((i for i, ln in enumerate(lines) if TABLE_SEP.match(ln)), None)
+    if rule_at is not None:
+        # The table begins at its header, one line above the separator rule.
+        # Everything before that is prose that happens to contain pipes.
+        lines = lines[rule_at - 1:] if rule_at >= 1 else lines
+        rule_at = 1 if rule_at >= 1 else rule_at
     out: list[tuple[str, str]] = []
-    seen_rule = any(TABLE_SEP.match(ln) for ln in lines)
     for i, ln in enumerate(lines):
         if TABLE_SEP.match(ln):
             continue
@@ -664,9 +710,12 @@ def table_rows(src: str) -> list[tuple[str, str]]:
         cells = [c for c in cells if c]
         if len(cells) < 2:
             continue
-        # The first row is a header when a separator rule follows it, or — for
-        # the HTML surface, which has no rule — when it is the first row.
-        if i == 0 and (seen_rule or True):
+        # The header is row 0 — of the TABLE, which is why the slice above
+        # matters. The previous version tested `i == 0` against the section's
+        # whole pipe-bearing line list, so a prose line containing two pipes
+        # shifted the index and the real header became an option: the exact
+        # shape that got the per-entry check deleted for 0/2 precision.
+        if i == 0:
             continue
         out.append((cells[0], " ".join(cells[1:])))
     return out
@@ -858,12 +907,19 @@ def check(path: Path, profile: str | None, strict: bool,
     # deeper is prose that happens to contain the word: "- Status: 200 on
     # success" inside a Design section is an HTTP code, not a document state.
     head_end = _metadata_region_end(sections, text)
+    # NYGARD's ADR template — the source C2 cites — puts the state under a
+    # `## Status` heading, not after a colon. Read that shape too.
+    status_sections = [x for x in sections
+                       if re.fullmatch(r"\s*status\s*:?\s*", x.title, re.I)
+                       and x.body.strip()]
     candidates = [c for c in STATUS_LINE.finditer(text) if c.start() < head_end
                   and not PLACEHOLDER.match(c.group(1).strip())]
     # LAST, not first: front matter leads the text, so a visible `Status:` in
     # the header block comes after it and wins — which is the point. A status
     # hidden in an HTML comment must not shadow one a reader can see.
     m = candidates[-1] if candidates else None
+    heading_status = (status_sections[0].body.strip().splitlines()[0]
+                      if status_sections else None)
     if m is not None and not _is_status(m.group(1)):
         # Recognised vs unrecognised is a WARN, never the blocking arm. The
         # status vocabulary of a real workspace is open; enumerating it and
@@ -872,7 +928,15 @@ def check(path: Path, profile: str | None, strict: bool,
                     f"status {_status_head(m.group(1))!r} is outside the known "
                     "state set; supersession checks only run on known states",
                     evidence=m.group(0).strip()[:100]))
-    if not m:
+    if m is None and heading_status:
+        head = _status_head(heading_status)
+        if head in STATUS_NEEDS_POINTER and not URL_RE.search(heading_status) \
+                and not re.search(r"[\w/.-]+\.(?:md|html)\b", heading_status):
+            add(Finding("C2-dangling-supersede", "fail",
+                        f"status {head!r} names no successor; NYGARD requires a "
+                        "reference to the replacement",
+                        evidence=heading_status[:120]))
+    elif not m:
         add(Finding("C2-no-status", "fail",
                     "no 'Status:' field; a doc with no state cannot be "
                     "superseded, and a doc that cannot be superseded silently "
@@ -961,7 +1025,12 @@ def check(path: Path, profile: str | None, strict: bool,
     # --- C6 drawbacks of the CHOSEN design (RUST 'Drawbacks', NYGARD) --------
     if "drawbacks" in required(prof) + recommended(prof):
         dsec = by_cls.get("drawbacks", [])
-        sev_d = "fail" if "drawbacks" in required(prof) else "warn"
+        # Advisory everywhere, not just where the class is recommended. Audited
+        # on all 4 live firings: at best 2 are true. Costs are stated in open
+        # vocabulary ("far less to build than OpenRaft") and enumerating it is
+        # the mistake the status vocabulary already made. Whether the stated
+        # consequences are honest is rubric R4.
+        sev_d = "warn"
         if dsec and not COST_LANGUAGE.search(prose(dsec)):
             add(Finding("C6-drawbacks-without-cost", sev_d,
                         "drawbacks/consequences section states no cost; NYGARD: "
