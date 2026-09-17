@@ -18,6 +18,27 @@ When the same AI model plans, implements, and reviews, it will not challenge its
 
 Inspired by [Dallionking/cross-model-agents](https://github.com/Dallionking/cross-model-agents) (May 2026) — 31-agent bidirectional Claude↔Codex review system. That project ships specific agents and hooks. `broomva/cross-review` absorbs the *discipline* while composing with the existing bstack adversarial-review skill toolkit.
 
+## Reviewing a design rather than a diff
+
+When the artifact is a spec, plan, ADR or RFD — the `--spec` flag below — the
+anti-slop rubric is the wrong instrument: it scores code. Use **`spec-contract`**
+instead, which is this gate applied to a design:
+
+1. **`spec_check.py <doc>` must exit 0 first.** Deterministic failures are not
+   worth a reviewer's pass, and clearing them changes what is being judged.
+2. **Then score `spec-contract`'s five-axis rubric** — reversal-cost fit,
+   alternative realism, non-goal load-bearing-ness, trade-off substance,
+   legibility — pass ≥11/15 with no axis at 0, graded by a different model than
+   the writer. That is P20's own rule, unchanged; only the rubric differs.
+
+`R1 = 0` (a one-way door committed to silently) stops the doc outright rather
+than costing a round. `R2`/`R4` ≤1 means the design is unargued, which escalates
+to the full strata below — rewriting prose will not fix it.
+
+This is the cheaper half of the gate. P20 fires on a diff at >200 LOC; by then
+the expensive decisions — language, storage engine, trust boundary — are already
+made, which is the class design review exists to catch.
+
 ## The 3 strata
 
 Different mechanisms for different environments. The *substance* is the gate — what mechanism implements it is secondary.
