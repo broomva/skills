@@ -2508,11 +2508,13 @@ def _frontmatter_value(text: str, key: str) -> object:
 # third-party API. Opt out with BOOKKEEPING_COHERENCE_GATE=0. `--dry-run`
 # still asks (the verdict IS the preview); it writes nothing.
 #
-# A rejection is remembered: while `<type>_<slug>.md` sits in ANY dated
-# quarantine dir the item is skipped without a call, so a permanently junk
-# item is charged once, not once per run, and the quarantined copy is never
-# overwritten. Moving the file out (recovery) or deleting it (re-judge) both
-# re-open the question on the next run.
+# A rejection is remembered through two doors: within a run, the (type, slug)
+# set below (dry-run writes no file, so this is the only door a dry run has);
+# across runs, `<type>_<slug>.md` sitting in ANY dated quarantine dir. Either
+# skips the item without a call, so a permanently junk item is charged once,
+# not once per run, and the quarantined copy is never overwritten. Moving the
+# file out (recovery) or deleting it (re-judge) re-opens the question on the
+# next run.
 
 COHERENCE_THRESHOLD = 0.5
 COHERENCE_GATE_ENV = "BOOKKEEPING_COHERENCE_GATE"
@@ -2633,12 +2635,20 @@ def coherence_stats() -> dict:
     }
 
 
-def coherence_rejected_slug(slug: str) -> bool:
-    """True if the gate refused `slug` (under any type) during this run.
+def coherence_rejected_slug(slug: str, item: "RawItem | None" = None) -> bool:
+    """True if the gate refused `slug` during this run.
 
-    Callers use it ONLY to disambiguate a dry-run None; a page that was
-    actually written (`path is not None`) is counted regardless.
+    With `item`, the check is type-scoped through the SAME inference
+    promote_item applies when no entity_type is passed, so a caller asking
+    about the page it just promoted gets the (type, slug) the gate recorded —
+    a same-slug page of another type (an update, or a legitimate create) is
+    not mis-read as refused. Without `item`, any type matches.
+
+    Callers use it ONLY to disambiguate a None from promote_item; a page that
+    was actually written (`path is not None`) is counted regardless.
     """
+    if item is not None:
+        return (_infer_entity_type(slug, item), slug) in _coherence_rejected_keys
     return any(s == slug for _t, s in _coherence_rejected_keys)
 
 
@@ -2754,7 +2764,8 @@ def _note_coherence_unavailable(cause: str) -> None:
     global coherence_unavailable
     coherence_unavailable += 1
     key = _typesafe_api_key()  # never raises (see its docstring)
-    # Length floor: a 3-char test token would otherwise mangle unrelated text.
+    # Length floor: a very short "key" is a substring of ordinary words and
+    # would mangle unrelated cause text; real API keys are tens of chars.
     if key and len(key) >= 8 and key in cause:
         cause = cause.replace(key, "***")
     if cause not in _coherence_causes_seen:
@@ -4657,8 +4668,11 @@ def run_pipeline(
         # the pipeline path fanned out, so the two entry points disagreed about
         # the same invariant. Relationships between entities belong in `related:`
         # edges, never in a duplicated claim on a second page.
+        refused = False
         for slug, is_existing in resolved[:1]:
             path = promote_item(scored, slug, dry_run=dry_run, verbose=verbose)
+            # Type-scoped through the inference promote_item itself applied.
+            refused = path is None and coherence_rejected_slug(slug, scored.item)
             if is_existing:
                 # promote_item returns the path only when a substantive
                 # update was written (or, in dry-run, would be written);
@@ -4674,7 +4688,7 @@ def run_pipeline(
                 # alone, so ask the gate: a quarantined page was not created
                 # and its slug must not be registered as existing. A page
                 # that WAS written (path is not None) is counted regardless.
-                if path is not None or (dry_run and not coherence_rejected_slug(slug)):
+                if path is not None or (dry_run and not refused):
                     entities_created += 1
                     existing_slugs.append(slug)
                     # Keep slug_types in step with existing_slugs. It is
@@ -4688,7 +4702,8 @@ def run_pipeline(
                         _infer_entity_type(slug, scored.item)
                     )
 
-        items_promoted += 1
+        if not refused:  # a quarantined item was not promoted (same rule as cmd_promote)
+            items_promoted += 1
 
     # ── Stage 6: Synthesize ──
     synthesis_candidates = find_synthesis_candidates(verbose=verbose)
@@ -4981,13 +4996,11 @@ def cmd_promote(args: argparse.Namespace) -> None:
         for slug, is_existing in resolved[:1]:
             # NOT `path`: that name is the source file, used in the summary.
             written = promote_item(scored, slug, dry_run=args.dry_run, verbose=True)
-            refused = written is None and coherence_rejected_slug(slug)
+            refused = written is None and coherence_rejected_slug(slug, scored.item)
             # Register the slug only if a page now exists (or would, in
             # dry-run): a skipped or gate-refused slug registered here would
             # make a later candidate resolve to a page that is not on disk.
-            if not is_existing and (
-                    written is not None
-                    or (args.dry_run and not coherence_rejected_slug(slug))):
+            if not is_existing and (written is not None or (args.dry_run and not refused)):
                 existing.append(slug)
                 # Same snapshot-vs-growing-list hazard as the run_pipeline
                 # create branch: slug_types is built once before the loop, so a

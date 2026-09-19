@@ -82,6 +82,10 @@ def gate(tmp_path, monkeypatch):
     monkeypatch.setattr(bookkeeping, "BROOMVA_ROOT", tmp_path)
     monkeypatch.setattr(bookkeeping, "ENTITIES_DIR", entities)
     monkeypatch.setattr(bookkeeping, "QUARANTINE_DIR", quarantine)
+    # Never read the operator's real key file: the unavailable path re-reads
+    # the key for redaction, so without this a test would touch ~/.config.
+    monkeypatch.setattr(bookkeeping, "TYPESAFE_API_KEY_FILE", tmp_path / "no-key-file")
+    monkeypatch.delenv(bookkeeping.TYPESAFE_API_KEY_ENV, raising=False)
     monkeypatch.setenv(bookkeeping.COHERENCE_GATE_ENV, "1")
     bookkeeping.reset_coherence_run_state()
     yield {"entities": entities, "quarantine": quarantine, "calls": []}
@@ -313,17 +317,38 @@ class TestRejectionMemory:
         assert ret is not None and ret.exists()
         assert len(gate["calls"]) == 1
 
-    def test_same_run_second_attempt_is_remembered_not_overwritten(self, gate, monkeypatch):
+    def test_same_run_second_attempt_is_remembered_not_overwritten(
+            self, gate, monkeypatch, capsys):
         _stub_transport(monkeypatch, gate, _response(0.1))
         promote_item(_scored(), "event-sourcing", entity_type="concept")
         q = _quarantine_files(gate)[0]
         before, mtime = q.read_text(), q.stat().st_mtime_ns
         _stub_transport(monkeypatch, gate, _response(0.9))
         gate["calls"].clear()
+        capsys.readouterr()
         assert promote_item(_scored(), "event-sourcing", entity_type="concept") is None
         assert gate["calls"] == []
         assert q.read_text() == before and q.stat().st_mtime_ns == mtime
         assert bookkeeping.coherence_rejected == 1 and bookkeeping.coherence_remembered == 1
+        # Both doors are open here; the in-run (cheap, no glob) door must be
+        # the one that answers — pins the door ORDER, not just their presence.
+        out = capsys.readouterr().out
+        assert "refused earlier in this run" in out
+        assert "quarantined by an earlier run" not in out
+
+    def test_caller_predicate_is_type_scoped_through_the_same_inference(self, gate, monkeypatch):
+        """A slug refused under one type must not read as refused for a page
+        of another type — the caller asks with the item, and the answer uses
+        the inference promote_item itself applies."""
+        _stub_transport(monkeypatch, gate, _response(0.1))
+        scored = _scored()
+        inferred = bookkeeping._infer_entity_type("event-sourcing", scored.item)
+        other = "tool" if inferred != "tool" else "concept"
+        promote_item(scored, "event-sourcing", entity_type=other)  # refused as `other`
+        assert bookkeeping.coherence_rejected_slug("event-sourcing") is True
+        assert bookkeeping.coherence_rejected_slug("event-sourcing", scored.item) is False
+        promote_item(scored, "event-sourcing")  # inferred type: refused too
+        assert bookkeeping.coherence_rejected_slug("event-sourcing", scored.item) is True
 
     def test_dry_run_recurrence_in_one_run_is_not_charged_twice(self, gate, monkeypatch, capsys):
         """Dry-run writes no quarantine file, so the on-disk memory cannot
@@ -686,6 +711,7 @@ class TestRunState:
         assert entry["coherence"]["rejected"] == n
         assert entry["coherence"]["checked"] == n
         assert entry["entities_created"] == 0, "a quarantined page is not a created page"
+        assert entry["items_promoted"] == 0, "a quarantined item is not a promoted item"
         assert list(gate["entities"].rglob("*.md")) == [], "every candidate was rejected"
         assert len(_quarantine_files(gate)) == n
         logged = json.loads((config / "run-log.jsonl").read_text().splitlines()[-1])
@@ -741,6 +767,7 @@ class TestRunState:
         n = len(gate["calls"])
         assert n >= 1
         assert entry["entities_created"] == 0
+        assert entry["items_promoted"] == 0
         assert entry["coherence"]["rejected"] == n
         assert list(gate["entities"].rglob("*.md")) == []
         assert _quarantine_files(gate) == [], "dry-run writes no quarantine file"
@@ -753,3 +780,4 @@ class TestRunState:
         _stub_transport(monkeypatch, gate, _response(0.9))
         entry = bookkeeping.run_pipeline(dry_run=True, verbose=False)
         assert entry["entities_created"] == len(gate["calls"]) >= 1
+        assert entry["items_promoted"] >= 1
