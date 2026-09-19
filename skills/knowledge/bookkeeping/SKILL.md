@@ -2,7 +2,7 @@
 name: bookkeeping
 tier: D
 category: knowledge
-version: 1.3.0
+version: 1.4.0
 primitive: P6
 description: Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph
 author: broomva
@@ -121,6 +121,17 @@ Apply promotion decision based on total score:
 | ≤ 2   | Discard | Dropped, not written |
 
 Entity page type is inferred from the candidate context: `tool`, `person`, `concept`, `project`, `paper`, `pattern`, `dataset`. Use the template at `templates/entity-page.md` when creating new pages.
+
+### Entity coherence gate (promotion stage)
+
+The sum gate's false positives are **identity** failures, not score failures: a section heading, a person's name, or a phrase lifted from a source document, filed as a `concept` with a claim that is not about its own title. Measured 2026-09-18 (jev-1.13.0) on the 9 human-quarantined junk pages (`~/.config/bookkeeping/quarantine/2026-09-16-nous-sum-gate/`) vs 30 accepted pages: specificity AUC **0.60**, relevance AUC **0.81**, and a Noul question — *is the title a coherent knowledge-graph node that the core_claim is genuinely about, vs a heading / name / lifted phrase?* — AUC **0.98**. The three Nous axes do not measure entity identity; this gate does, once, at the single door every new page passes through (`promote_item`, new-page path only — the existing-page update branch is never gated).
+
+- **Transport:** one stdlib POST to `https://api.typesafe.ai/v1/systemone` (`model: jev-latest`, one `noul` question), 10 s timeout, no SDK. Key from `TYPESAFE_API_KEY`, else `~/.config/typesafe/api_key`.
+- **Type-aware criteria** (`COHERENCE_CRITERIA` in `scripts/bookkeeping.py`): for `tool` / `person` / `project` / `org` a product or personal NAME as the title is legitimate — the question is whether the claim is about that named thing; for `concept` / `pattern` / `question` / `discovery` (and any unlisted type) the title must name the concept the claim asserts, and a heading, a name, or a lifted phrase is `false`.
+- **Verdict:** `p < COHERENCE_THRESHOLD` (0.5) ⇒ the page is **not** written to `research/entities/`; it goes to `~/.config/bookkeeping/quarantine/<YYYY-MM-DD>-coherence/<type>_<slug>.md` with `coherence: <p>` and `coherence_gate: rejected` added to its frontmatter, and one line is printed. Quarantine, never delete — recovery is `mv` + deleting those two lines.
+- **Unavailable** (no key, HTTP error, timeout, malformed response) ⇒ pass-through (the page is written, status quo) but LOUD: one stderr line per distinct cause per run, and counted.
+- **Counters:** `coherence.{enabled,checked,rejected,unavailable}` in every run-log entry and in the `run` summary line `Coherence gate: on | checked: N | rejected: N | unavailable: N`.
+- **Knobs:** `BOOKKEEPING_COHERENCE_GATE=0` disables explicitly (transport never called). Default ON when a key is present. That default was *not* acceptable for the scoring judge, which runs on every in-band item, costs seconds per call and changes scores; this gate runs only on new promotions (a handful per run), takes ~300 ms and ~$0.00005 per call, and quarantines rather than deletes.
 
 ### Stage 6 — SYNTHESIZE
 

@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.4.0] — 2026-09-18
+- Added the **entity coherence gate** at the promotion stage. The sum gate's false positives were identity failures — a heading, a person's name, or a lifted phrase filed as a `concept` — not score failures: on 9 human-quarantined junk pages vs 30 accepted, specificity AUC 0.60, relevance AUC 0.81, a Noul "is the title a coherent node the core_claim is about?" AUC 0.98 (jev-1.13.0, 2026-09-18). `promote_item` now asks that one question (stdlib POST to TypeSafe systemone, 10 s timeout, no SDK) before a NEW page reaches disk; `p < 0.5` sends the would-be page to `~/.config/bookkeeping/quarantine/<date>-coherence/` with the score in its frontmatter instead of `research/entities/`. Never deletes.
+- Criteria are type-aware: a product or personal name is a legitimate title for `tool`/`person`/`project`/`org`; for concept-like types it is the failure mode. Two accepted `tool` pages named after products had scored 0.42/0.43 under type-blind criteria.
+- Unavailable transport (no key, HTTP error, timeout, malformed response) passes through — status quo — but prints one stderr line per distinct cause per run and is counted. Run-log entries carry `coherence: {enabled, checked, rejected, unavailable}`; `run` prints a `Coherence gate:` summary line.
+- `BOOKKEEPING_COHERENCE_GATE=0` disables the gate. Default ON when a key is present — acceptable here, unlike for the scoring judge, because the gate runs only on new promotions, costs ~300 ms / ~$0.00005 per call, and quarantines rather than deletes.
+- Suite hermeticity: a root-level `conftest.py` forces the gate off for every test; `tests/test_coherence_gate.py` re-enables it with a stubbed transport.
+
 ## [1.3.0] — 2026-08-10
 - Added `backfill-revisions`: replays supersessions the graph already recorded (merge tombstones) into the typed envelope, stamping `recorded_at` with the HISTORICAL `merged_at` rather than the migration date. Idempotent; refuses to invent a date; never derives supersessions from `aliases:` (those are `aka` search synonyms) or from prose.
 - `_apply_revision_envelope` accepts an explicit `recorded_at`; the unchanged predicate distinguishes a SUPPLIED stamp from a defaulted one, so ordinary replay stays byte-identical across days.
