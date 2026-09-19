@@ -20,6 +20,7 @@ from __future__ import annotations  # PEP 563: lazy annotation evaluation (Py3.9
 
 import argparse
 import difflib
+import http.client
 import json
 import os
 import re
@@ -27,6 +28,8 @@ import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 import uuid
 from dataclasses import asdict, dataclass, field
 from datetime import date, datetime, timedelta, timezone
@@ -2474,6 +2477,441 @@ def _frontmatter_value(text: str, key: str) -> object:
     return fm.get(key) if isinstance(fm, dict) else None
 
 
+# ── Entity coherence gate (promotion stage) ───────────────────────────────────
+#
+# The Nous sum gate's false positives are IDENTITY failures, not score
+# failures: a section heading, a person's name, or a phrase lifted from a source
+# document filed as a `concept`, carrying a claim that is not about its own
+# title. Measured 2026-09-18 (jev-1.13.0) on the 9 human-quarantined junk pages
+# in ~/.config/bookkeeping/quarantine/2026-09-16-nous-sum-gate/ vs 30 accepted
+# pages: specificity AUC 0.60, relevance AUC 0.81 — and a Noul question "is the
+# title a coherent knowledge-graph node that the core_claim is genuinely
+# about?" AUC 0.98. So the axes the sum gate adds up do not measure the thing
+# that separates junk from knowledge here; this gate measures it, once, at the
+# single door new pages pass through (`promote_item`, new-page path only).
+#
+# Transport: one stdlib POST to TypeSafe's systemone endpoint. No SDK. When the
+# transport is unavailable (no key, HTTP error, timeout, malformed response)
+# the gate PASSES THROUGH — status quo, the page is written — but says so on
+# stderr and counts it, so a run that silently stopped gating is visible in
+# the run log. A rejection never deletes: the would-be page goes to
+# ~/.config/bookkeeping/quarantine/<date>-coherence/ with the score in its
+# frontmatter, so a false rejection is a `mv` away from recovery.
+#
+# Default ON when a key is present. That was NOT acceptable for the scoring
+# judge (BRO-2506): the judge runs on every in-band item, costs seconds per
+# call, and changes scores. This gate runs only on NEW promotions (a handful
+# per run), takes ~300 ms and ~$0.00005 per call, and quarantines rather than
+# deletes — the worst case of a wrong verdict is a recoverable file, not a
+# lost one. What default-on DOES change: the slug, title, derived core_claim
+# and the first 1500 chars of every NEW page leave the machine to a
+# third-party API. Opt out with BOOKKEEPING_COHERENCE_GATE=0. `--dry-run`
+# still asks (the verdict IS the preview); it writes nothing.
+#
+# A rejection is remembered through two doors: within a run, the (type, slug)
+# set below (dry-run writes no file, so this is the only door a dry run has);
+# across runs, `<type>_<slug>.md` sitting in ANY dated quarantine dir. Either
+# skips the item without a call, so a permanently junk item is charged once,
+# not once per run, and the quarantined copy is never overwritten. Moving the
+# file out (recovery) or deleting it (re-judge) re-opens the question on the
+# next run.
+
+COHERENCE_THRESHOLD = 0.5
+COHERENCE_GATE_ENV = "BOOKKEEPING_COHERENCE_GATE"
+TYPESAFE_API_KEY_ENV = "TYPESAFE_API_KEY"
+TYPESAFE_API_KEY_FILE = Path.home() / ".config" / "typesafe" / "api_key"
+TYPESAFE_SYSTEMONE_URL = "https://api.typesafe.ai/v1/systemone"
+COHERENCE_MODEL = "jev-latest"
+COHERENCE_TIMEOUT_S = 10
+COHERENCE_BODY_EXCERPT_CHARS = 1500
+QUARANTINE_DIR = CONFIG_DIR / "quarantine"
+
+# Entity types whose title is legitimately a NAME (a product, a person, a
+# project, an organisation). Every other type is judged against the concept
+# criteria, where a bare name or a heading as the title is exactly the
+# failure mode. Both sets are spelled out and a test asserts they partition
+# ENTITY_TYPES, so adding a type forces a criteria decision rather than
+# silently inheriting the punitive default. `persona` is concept-like on the
+# evidence: persona pages are preference claims ("Default deploy target is
+# Railway"), not identity names. A type absent from both sets (a caller
+# passing something outside ENTITY_TYPES) falls to the concept criteria.
+_COHERENCE_NAMED_TYPES = frozenset({"tool", "person", "project", "org"})
+_COHERENCE_CONCEPT_TYPES = frozenset({
+    "concept", "pattern", "discovery", "question",
+    "framework-refinement", "industry-pattern", "persona",
+})
+
+# The criteria, in one place. `{entity_type}` is filled per call.
+COHERENCE_CRITERIA: dict[str, dict[str, str]] = {
+    "named": {
+        "instructions": (
+            "The state is a candidate knowledge-graph entity page of type "
+            "'{entity_type}'. For this type the title is expected to be the NAME "
+            "of a specific product, tool, person, project or organisation. Judge "
+            "whether the title names the thing the core_claim is genuinely about "
+            "— a coherent node a reader would look up by that name and find the "
+            "claim on-topic."
+        ),
+        "true": (
+            "The title is the name of a specific tool, person, project or "
+            "organisation, and the core_claim states something about that named "
+            "thing (what it does, decides, abstracts, costs, or is). A product "
+            "name or a personal name is legitimate as the title for this type."
+        ),
+        "false": (
+            "The title is not the subject of the core_claim: it is a section "
+            "heading, a generic phrase, a fragment lifted from a source document, "
+            "or it names a different thing than the one the claim is about."
+        ),
+    },
+    "concept": {
+        "instructions": (
+            "The state is a candidate knowledge-graph entity page of type "
+            "'{entity_type}'. For this type the title must name the concept, "
+            "pattern, question or finding that the core_claim asserts. Judge "
+            "whether the title is a coherent knowledge-graph node that the "
+            "core_claim is genuinely about, as opposed to a heading, a name, or "
+            "a phrase lifted from a source."
+        ),
+        "true": (
+            "The title names an idea, mechanism, pattern, question or empirical "
+            "finding, and the core_claim is a statement about that exact idea; a "
+            "reader who looked up the title would find the claim on-topic."
+        ),
+        "false": (
+            "The title is a section heading from a document (such as 'Results' "
+            "or 'Background'), a person's name or a product's name filed as a "
+            "concept, a phrase lifted from a source that is not itself a concept "
+            "(such as 'the second approach'), or a topic the claim is not "
+            "actually about."
+        ),
+    },
+}
+
+# Per-run counters. Reset at the start of each pipeline run; surfaced in the
+# run-log entry under "coherence" so a run that stopped gating is visible.
+# `remembered` = skipped without a call because an earlier run quarantined
+# the same type/slug and the file is still there.
+coherence_checked = 0
+coherence_rejected = 0
+coherence_unavailable = 0
+coherence_remembered = 0
+_coherence_causes_seen: set[str] = set()
+# (type, slug) pairs this run refused (fresh rejection or remembered). Two
+# jobs: the in-run half of the rejection memory (dry-run writes no quarantine
+# file, so without this a recurring slug would be charged twice in one dry
+# run), and letting callers that cannot tell a dry-run "would create" from a
+# rejection (both return None from promote_item) keep their counts honest.
+_coherence_rejected_keys: set[tuple[str, str]] = set()
+
+# A key is a single token of printable ASCII. Anything else (a soft-wrapped
+# paste with an embedded newline, a control character) would make http.client
+# raise ValueError with the FULL header value in its message — so it is
+# refused before a request is built, and the message never carries the key.
+_TYPESAFE_KEY_RE = re.compile(r"[\x21-\x7e]+")
+
+
+class CoherenceUnavailable(Exception):
+    """The transport could not even attempt the call (no key, bad key)."""
+
+
+def reset_coherence_run_state() -> None:
+    global coherence_checked, coherence_rejected, coherence_unavailable, coherence_remembered
+    coherence_checked = 0
+    coherence_rejected = 0
+    coherence_unavailable = 0
+    coherence_remembered = 0
+    _coherence_causes_seen.clear()
+    _coherence_rejected_keys.clear()
+
+
+def coherence_stats() -> dict:
+    return {
+        "enabled": coherence_gate_enabled(),
+        "checked": coherence_checked,
+        "rejected": coherence_rejected,
+        "unavailable": coherence_unavailable,
+        "remembered": coherence_remembered,
+    }
+
+
+def coherence_rejected_slug(slug: str, item: "RawItem | None" = None) -> bool:
+    """True if the gate refused `slug` during this run.
+
+    With `item`, the check is type-scoped through the SAME inference
+    promote_item applies when no entity_type is passed, so a caller asking
+    about the page it just promoted gets the (type, slug) the gate recorded —
+    a same-slug page of another type (an update, or a legitimate create) is
+    not mis-read as refused. Without `item`, any type matches.
+
+    Callers use it ONLY to disambiguate a None from promote_item; a page that
+    was actually written (`path is not None`) is counted regardless.
+    """
+    if item is not None:
+        return (_infer_entity_type(slug, item), slug) in _coherence_rejected_keys
+    return any(s == slug for _t, s in _coherence_rejected_keys)
+
+
+def coherence_gate_enabled() -> bool:
+    """ON unless BOOKKEEPING_COHERENCE_GATE is an explicit off value."""
+    return os.environ.get(COHERENCE_GATE_ENV, "1").strip().lower() \
+        not in {"0", "false", "off", "no"}
+
+
+def _typesafe_api_key() -> Optional[str]:
+    """TYPESAFE_API_KEY from the environment, else the contents of the key file.
+
+    Returns the raw stripped value; validation (single printable token) happens
+    in `_coherence_transport`, so a malformed key is reported without being
+    echoed. An unreadable OR undecodable file is simply "no key" — this is
+    also called from the unavailable-path redactor, so it must never raise.
+    """
+    key = os.environ.get(TYPESAFE_API_KEY_ENV, "").strip()
+    if key:
+        return key
+    try:
+        key = TYPESAFE_API_KEY_FILE.read_text().strip()
+    except (OSError, ValueError):  # ValueError covers UnicodeDecodeError
+        return None
+    return key or None
+
+
+def _coherence_criteria_for(entity_type: str) -> dict[str, str]:
+    return COHERENCE_CRITERIA["named" if entity_type in _COHERENCE_NAMED_TYPES
+                              else "concept"]
+
+
+def coherence_request_payload(
+    slug: str, title: str, entity_type: str, core_claim: str, body_excerpt: str,
+) -> dict:
+    """The exact JSON body sent to the systemone endpoint."""
+    criteria = _coherence_criteria_for(entity_type)
+    return {
+        "state": {
+            "slug": slug,
+            "title": title,
+            "entity_type": entity_type,
+            "core_claim": core_claim,
+            "body_excerpt": body_excerpt[:COHERENCE_BODY_EXCERPT_CHARS],
+        },
+        "model": COHERENCE_MODEL,
+        "questions": {
+            "coherent": {
+                "type": "noul",
+                "instructions": criteria["instructions"].format(entity_type=entity_type),
+                "criteria": {"true": criteria["true"], "false": criteria["false"]},
+            },
+        },
+    }
+
+
+def _coherence_transport(payload: dict) -> Optional[dict]:
+    """POST `payload`; return the parsed JSON response.
+
+    This is the network seam tests replace. Raises CoherenceUnavailable when
+    there is no key; lets urllib/json errors propagate — the caller names them.
+    """
+    key = _typesafe_api_key()
+    if not key:
+        raise CoherenceUnavailable(
+            f"no API key ({TYPESAFE_API_KEY_ENV} unset and "
+            f"{TYPESAFE_API_KEY_FILE} unreadable)"
+        )
+    if not _TYPESAFE_KEY_RE.fullmatch(key):
+        raise CoherenceUnavailable(
+            "API key malformed (contains whitespace or control characters) — not sent"
+        )
+    req = urllib.request.Request(
+        TYPESAFE_SYSTEMONE_URL,
+        data=json.dumps(payload).encode("utf-8"),
+        headers={"Authorization": f"Bearer {key}", "Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=COHERENCE_TIMEOUT_S) as resp:
+        return json.loads(resp.read().decode("utf-8"))
+
+
+def _extract_noul(raw: object) -> Optional[float]:
+    """answers.coherent.noul as a float in [0, 1], else None."""
+    if not isinstance(raw, dict):
+        return None
+    answers = raw.get("answers")
+    if not isinstance(answers, dict):
+        return None
+    coherent = answers.get("coherent")
+    if not isinstance(coherent, dict):
+        return None
+    p = coherent.get("noul")
+    if isinstance(p, bool) or not isinstance(p, (int, float)):
+        return None
+    if not 0.0 <= p <= 1.0:
+        return None
+    return float(p)
+
+
+def _note_coherence_unavailable(cause: str) -> None:
+    """Count every pass-through; print each distinct cause once per run.
+
+    Always on stderr, never gated on --verbose: a gate that stopped gating
+    must be visible in the transcript. One line per distinct cause keeps a
+    keyless CI run to a single line rather than one per promoted item — so
+    causes must be CONSTANT per condition (no per-item payload in them).
+
+    The key is redacted if it somehow reached the message: the transport
+    refuses malformed keys before http.client can echo one, but a future
+    exception path must not be one grep away from the credential.
+    """
+    global coherence_unavailable
+    coherence_unavailable += 1
+    key = _typesafe_api_key()  # never raises (see its docstring)
+    # Length floor: a very short "key" is a substring of ordinary words and
+    # would mangle unrelated cause text; real API keys are tens of chars.
+    if key and len(key) >= 8 and key in cause:
+        cause = cause.replace(key, "***")
+    if cause not in _coherence_causes_seen:
+        _coherence_causes_seen.add(cause)
+        print(f"[coherence] gate unavailable — passing through: {cause}",
+              file=sys.stderr)
+
+
+def entity_coherence(
+    slug: str, title: str, entity_type: str, core_claim: str, body_excerpt: str,
+) -> Optional[float]:
+    """P(the title is a coherent node the core_claim is about), or None.
+
+    None means the transport was unavailable — the caller must treat that as
+    pass-through, never as a rejection. Increments `coherence_checked` on a
+    successful verdict, `coherence_unavailable` otherwise.
+    """
+    global coherence_checked
+    payload = coherence_request_payload(slug, title, entity_type, core_claim, body_excerpt)
+    try:
+        raw = _coherence_transport(payload)
+    except CoherenceUnavailable as e:
+        _note_coherence_unavailable(str(e))
+        return None
+    except urllib.error.HTTPError as e:
+        _note_coherence_unavailable(f"HTTP {e.code} from {TYPESAFE_SYSTEMONE_URL}")
+        return None
+    except (OSError, ValueError, http.client.HTTPException) as e:
+        # URLError (incl. timeout) and socket errors are OSError; JSON and
+        # unicode decode errors are ValueError; BadStatusLine/IncompleteRead
+        # are HTTPException. Deliberately NOT `except Exception`: a TypeError
+        # or AttributeError here is a bug in this module, and reporting it as
+        # "gate unavailable" would turn the gate into a permanent, silent
+        # no-op announced as a network condition.
+        _note_coherence_unavailable(f"{type(e).__name__}: {e}")
+        return None
+    if raw is None:
+        _note_coherence_unavailable("transport returned no response")
+        return None
+    p = _extract_noul(raw)
+    if p is None:
+        # Constant cause on purpose: the per-item response body would defeat
+        # the once-per-cause dedupe and echo third-party output into logs.
+        _note_coherence_unavailable("malformed response (no answers.coherent.noul in [0,1])")
+        return None
+    coherence_checked += 1
+    return p
+
+
+def _yaml_float(p: float) -> str:
+    """Render p so PyYAML reads it back as a float: never exponent form, at
+    least one digit after the point (0.1, 0.49, 0.0, 0.00001)."""
+    s = f"{p:.6f}".rstrip("0")
+    return s + "0" if s.endswith(".") else s
+
+
+def _prior_quarantine(entity_type: str, slug: str) -> Optional[Path]:
+    """The quarantined copy of this type/slug from ANY earlier gate run, if
+    it is still on disk — the rejection's memory."""
+    if not QUARANTINE_DIR.is_dir():
+        return None
+    name = _quarantine_filename(entity_type, slug)
+    hits = sorted(QUARANTINE_DIR.glob(f"*-coherence/{name}"))
+    return hits[-1] if hits else None
+
+
+def _quarantine_filename(entity_type: str, slug: str) -> str:
+    # `slug` is already kebab-case (is_entity_shaped_slug ran before this);
+    # `entity_type` is caller-supplied through a public entry point, so it is
+    # reduced to the same alphabet — a separator in it must not escape the
+    # dated directory.
+    safe_type = re.sub(r"[^a-z0-9-]+", "-", entity_type.lower()).strip("-") or "unknown"
+    return f"{safe_type}_{slug}.md"
+
+
+def _quarantine_incoherent_page(
+    entity_type: str, slug: str, page: str, p: float, dry_run: bool = False,
+) -> Optional[Path]:
+    """Write the would-be page under QUARANTINE_DIR with the verdict recorded.
+
+    The page is byte-for-byte what promote_item would have written plus two
+    frontmatter fields, so recovery is `mv` + deleting those two lines.
+    Returns the path, or None when the write itself failed (reported on
+    stderr; the entity page is still NOT written — the item stays in its
+    raw note and is re-judged on the next run).
+    """
+    qdir = QUARANTINE_DIR / f"{today_str()}-coherence"
+    qpath = qdir / _quarantine_filename(entity_type, slug)
+    if dry_run:
+        return qpath
+    text = _set_frontmatter_scalar(page, "coherence", _yaml_float(p), after="core_claim")
+    text = _set_frontmatter_scalar(text, "coherence_gate", "rejected", after="coherence")
+    try:
+        qdir.mkdir(parents=True, exist_ok=True)
+        qpath.write_text(text)
+    except OSError as e:
+        print(f"[coherence] quarantine write FAILED ({type(e).__name__}: {e}); "
+              f"{entity_type}/{slug} was rejected and is NOT written anywhere — "
+              f"it stays in its raw note", file=sys.stderr)
+        return None
+    return qpath
+
+
+def _coherence_gate_admits(
+    entity_slug: str, title: str, entity_type: str, core_claim: str,
+    content: str, page: str, dry_run: bool = False, verbose: bool = False,
+) -> bool:
+    """True if the page may be written; False after quarantining it (or after
+    finding it already quarantined by an earlier run)."""
+    global coherence_rejected, coherence_remembered
+    if not coherence_gate_enabled():
+        if verbose:
+            print(f"  [promote] coherence gate disabled ({COHERENCE_GATE_ENV}): {entity_slug}")
+        return True
+    # The memory has two doors: this run (nothing is on disk yet in dry-run,
+    # and a same-run recurrence must not be charged twice) and earlier runs
+    # (the quarantined copy on disk).
+    if (entity_type, entity_slug) in _coherence_rejected_keys:
+        coherence_remembered += 1
+        print(f"  [promote] SKIP (refused earlier in this run, no call made): "
+              f"{entity_type}/{entity_slug}")
+        return False
+    prior = _prior_quarantine(entity_type, entity_slug)
+    if prior is not None:
+        coherence_remembered += 1
+        _coherence_rejected_keys.add((entity_type, entity_slug))
+        print(f"  [promote] SKIP (quarantined by an earlier run, no call made): "
+              f"{entity_type}/{entity_slug} — {prior}")
+        return False
+    p = entity_coherence(entity_slug, title, entity_type, core_claim,
+                         content[:COHERENCE_BODY_EXCERPT_CHARS])
+    # None ⇒ unavailable ⇒ pass-through (already counted and reported).
+    rejected = p is not None and p < COHERENCE_THRESHOLD
+    if not rejected:
+        if verbose and p is not None:
+            print(f"  [promote] coherence {p:.2f} ≥ {COHERENCE_THRESHOLD}: {entity_slug}")
+        return True
+    coherence_rejected += 1
+    _coherence_rejected_keys.add((entity_type, entity_slug))
+    qpath = _quarantine_incoherent_page(entity_type, entity_slug, page, p, dry_run=dry_run)
+    verb = "dry-run: would QUARANTINE" if dry_run else "QUARANTINE"
+    print(f"  [promote] {verb} (coherence {p:.2f} < {COHERENCE_THRESHOLD}): "
+          f"{entity_type}/{entity_slug} → {qpath if qpath else '(quarantine write failed)'}")
+    return False
+
+
 def promote_item(
     scored: ScoredItem,
     entity_slug: str,
@@ -2485,7 +2923,12 @@ def promote_item(
     Write an entity page for a scored item.
 
     Creates research/entities/{entity_type}/{entity_slug}.md using the template.
-    Returns the path written, or None in dry_run mode or on error.
+    Returns the path written. Returns None when nothing was written to
+    research/entities/: dry_run; a merge tombstone; a slug that is not
+    entity-shaped; no derivable core_claim; an existing page that needed no
+    substantive update; or the coherence gate quarantined the page (fresh
+    verdict, or remembered from an earlier run). A caller that must tell a
+    dry-run "would create" from a gate refusal asks `coherence_rejected_slug`.
     """
     if entity_type is None:
         entity_type = _infer_entity_type(entity_slug, scored.item)
@@ -2586,6 +3029,13 @@ def promote_item(
         # so silently hides a broken upstream emitter.
         print(f"  [promote] ignoring unparseable metadata.valid_from "
               f"{scored.item.metadata[_VALID_FROM_METADATA_KEY]!r}: {entity_slug}")
+
+    # ── Entity coherence gate ── the last check before a NEW page reaches
+    # disk; the update branch above returned earlier and is never gated.
+    if not _coherence_gate_admits(entity_slug, title, entity_type, core_claim,
+                                  scored.item.content, page,
+                                  dry_run=dry_run, verbose=verbose):
+        return None
 
     if not dry_run:
         entity_dir.mkdir(parents=True, exist_ok=True)
@@ -4116,6 +4566,7 @@ def run_pipeline(
     run_id = int(time.time())
 
     ensure_dirs()
+    reset_coherence_run_state()
 
     # ── Auto-discover sources if none given ──
     if not source_files:
@@ -4217,8 +4668,11 @@ def run_pipeline(
         # the pipeline path fanned out, so the two entry points disagreed about
         # the same invariant. Relationships between entities belong in `related:`
         # edges, never in a duplicated claim on a second page.
+        refused = False
         for slug, is_existing in resolved[:1]:
             path = promote_item(scored, slug, dry_run=dry_run, verbose=verbose)
+            # Type-scoped through the inference promote_item itself applied.
+            refused = path is None and coherence_rejected_slug(slug, scored.item)
             if is_existing:
                 # promote_item returns the path only when a substantive
                 # update was written (or, in dry-run, would be written);
@@ -4229,7 +4683,12 @@ def run_pipeline(
                 # Create case: a brand-new entity is always a write. In
                 # dry-run, promote_item returns None for creates by design,
                 # so fall back to dry_run to keep the preview count accurate.
-                if path is not None or dry_run:
+                # A gate refusal also returns None — in dry-run that is
+                # indistinguishable from "would create" by the return value
+                # alone, so ask the gate: a quarantined page was not created
+                # and its slug must not be registered as existing. A page
+                # that WAS written (path is not None) is counted regardless.
+                if path is not None or (dry_run and not refused):
                     entities_created += 1
                     existing_slugs.append(slug)
                     # Keep slug_types in step with existing_slugs. It is
@@ -4243,7 +4702,8 @@ def run_pipeline(
                         _infer_entity_type(slug, scored.item)
                     )
 
-        items_promoted += 1
+        if not refused:  # a quarantined item was not promoted (same rule as cmd_promote)
+            items_promoted += 1
 
     # ── Stage 6: Synthesize ──
     synthesis_candidates = find_synthesis_candidates(verbose=verbose)
@@ -4261,6 +4721,7 @@ def run_pipeline(
     entry = {
         "run_id": run_id,
         "timestamp": now_iso(),
+        "coherence": coherence_stats(),
         "source_files": [str(s) for s in source_files],
         "items_ingested": items_ingested,
         "items_scored": items_scored,
@@ -4285,6 +4746,10 @@ def run_pipeline(
     print(f"  Discarded: {items_discarded} | Raw-only: {items_raw_only}")
     print(f"  Entities created: {entities_created} | Updated: {entities_updated}")
     print(f"  Synthesis candidates: {len(synthesis_candidates)} | Lint errors: {lint_error_count}")
+    _cs = entry["coherence"]
+    print(f"  Coherence gate: {'on' if _cs['enabled'] else 'off'} | checked: {_cs['checked']} "
+          f"| rejected: {_cs['rejected']} | remembered: {_cs['remembered']} "
+          f"| unavailable: {_cs['unavailable']}")
     if dry_run:
         print("  [DRY RUN] No files written.")
 
@@ -4504,6 +4969,7 @@ def cmd_promote(args: argparse.Namespace) -> None:
     existing = existing_entity_slugs()
     slug_types = existing_entity_slug_types()
     ensure_dirs()
+    reset_coherence_run_state()
 
     promoted = 0
     for item in items:
@@ -4526,9 +4992,15 @@ def cmd_promote(args: argparse.Namespace) -> None:
             print(f"  [{item.item_id}] no complete core_claim derivable, skipping")
             continue
 
+        refused = False
         for slug, is_existing in resolved[:1]:
-            promote_item(scored, slug, dry_run=args.dry_run, verbose=True)
-            if not is_existing:
+            # NOT `path`: that name is the source file, used in the summary.
+            written = promote_item(scored, slug, dry_run=args.dry_run, verbose=True)
+            refused = written is None and coherence_rejected_slug(slug, scored.item)
+            # Register the slug only if a page now exists (or would, in
+            # dry-run): a skipped or gate-refused slug registered here would
+            # make a later candidate resolve to a page that is not on disk.
+            if not is_existing and (written is not None or (args.dry_run and not refused)):
                 existing.append(slug)
                 # Same snapshot-vs-growing-list hazard as the run_pipeline
                 # create branch: slug_types is built once before the loop, so a
@@ -4537,7 +5009,8 @@ def cmd_promote(args: argparse.Namespace) -> None:
                 slug_types.setdefault(slug, set()).add(
                     _infer_entity_type(slug, scored.item)
                 )
-        promoted += 1
+        if not refused:  # a quarantined item was not promoted
+            promoted += 1
 
     print(f"\n[promote] Done: {promoted} items promoted from {path.name}")
     if args.dry_run:
