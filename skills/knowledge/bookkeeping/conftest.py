@@ -22,4 +22,7 @@ import pytest
 @pytest.fixture(autouse=True)
 def _coherence_gate_off_by_default(monkeypatch):
     monkeypatch.setenv("BOOKKEEPING_COHERENCE_GATE", "0")
+    # Sentinel only this fixture sets: lets tests/test_coherence_hermeticity.py
+    # tell "the conftest loaded" from "the developer happens to export =0".
+    monkeypatch.setenv("_BOOKKEEPING_COHERENCE_CONFTEST", "loaded")
     yield

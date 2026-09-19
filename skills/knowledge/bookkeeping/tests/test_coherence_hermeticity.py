@@ -16,7 +16,11 @@ import bookkeeping
 
 
 def test_root_conftest_forces_the_coherence_gate_off():
-    assert os.environ.get(bookkeeping.COHERENCE_GATE_ENV) == "0", (
+    # The sentinel is set by the conftest fixture and nothing else, so a
+    # developer shell that happens to export BOOKKEEPING_COHERENCE_GATE=0
+    # cannot make this pass while the conftest is unloaded.
+    assert os.environ.get("_BOOKKEEPING_COHERENCE_CONFTEST") == "loaded", (
         "skills/knowledge/bookkeeping/conftest.py did not load — the suite is "
         "no longer hermetic with respect to the coherence transport")
+    assert os.environ.get(bookkeeping.COHERENCE_GATE_ENV) == "0"
     assert bookkeeping.coherence_gate_enabled() is False

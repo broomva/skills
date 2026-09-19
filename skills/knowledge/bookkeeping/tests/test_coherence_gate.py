@@ -325,6 +325,22 @@ class TestRejectionMemory:
         assert q.read_text() == before and q.stat().st_mtime_ns == mtime
         assert bookkeeping.coherence_rejected == 1 and bookkeeping.coherence_remembered == 1
 
+    def test_dry_run_recurrence_in_one_run_is_not_charged_twice(self, gate, monkeypatch, capsys):
+        """Dry-run writes no quarantine file, so the on-disk memory cannot
+        see a same-run recurrence — the in-run memory must."""
+        _stub_transport(monkeypatch, gate, _response(0.1))
+        promote_item(_scored(), "event-sourcing", entity_type="concept", dry_run=True)
+        assert len(gate["calls"]) == 1
+        promote_item(_scored(), "event-sourcing", entity_type="concept", dry_run=True)
+        assert len(gate["calls"]) == 1, "second attempt must not be charged"
+        assert bookkeeping.coherence_stats() == {
+            "enabled": True, "checked": 1, "rejected": 1, "unavailable": 0, "remembered": 1}
+        assert "refused earlier in this run" in capsys.readouterr().out
+        # A different TYPE for the same slug is a different page: charged.
+        promote_item(_scored(), "event-sourcing", entity_type="tool", dry_run=True)
+        assert len(gate["calls"]) == 2
+        assert bookkeeping.coherence_rejected_slug("event-sourcing")
+
     def test_memory_is_per_type(self, gate, monkeypatch):
         (gate["quarantine"] / "2026-09-01-coherence").mkdir(parents=True)
         (gate["quarantine"] / "2026-09-01-coherence" / "pattern_event-sourcing.md").write_text("x")
@@ -532,6 +548,25 @@ class TestRealTransport:
         assert "malformed" in err, err
         assert "sk-live" not in err
 
+    def test_undecodable_key_file_is_no_key_not_a_crash(
+            self, gate, monkeypatch, tmp_path, capsys):
+        """The redactor re-reads the key on the unavailable path; a non-UTF-8
+        key file must not turn that into a second exception inside the
+        handler that escapes promote_item and aborts the run."""
+        monkeypatch.delenv(bookkeeping.TYPESAFE_API_KEY_ENV, raising=False)
+        keyfile = tmp_path / "api_key"
+        keyfile.write_bytes(b"\xff\xfe\x00 not utf-8 \x80")
+        monkeypatch.setattr(bookkeeping, "TYPESAFE_API_KEY_FILE", keyfile)
+
+        def boom(*a, **k):
+            raise AssertionError("urlopen must not be called without a key")
+        monkeypatch.setattr(urllib.request, "urlopen", boom)
+
+        path = promote_item(_scored(), "event-sourcing", entity_type="concept")
+        assert path is not None and path.exists()
+        assert bookkeeping.coherence_unavailable == 1
+        assert "no API key" in capsys.readouterr().err
+
     def test_key_in_an_exception_message_is_redacted(self, gate, monkeypatch, capsys):
         monkeypatch.setenv(bookkeeping.TYPESAFE_API_KEY_ENV, "sk-secret-777")
         _stub_transport(monkeypatch, gate,
@@ -658,6 +693,43 @@ class TestRunState:
         out = capsys.readouterr().out
         assert (f"Coherence gate: on | checked: {n} | rejected: {n} "
                 f"| remembered: 0 | unavailable: 0") in out, out
+
+    def test_cmd_promote_survives_and_counts_honestly(
+            self, gate, monkeypatch, tmp_path, capsys):
+        """cmd_promote had no test at all; a `path` shadowing crash on its
+        most common invocation shipped green. Pin: it runs to its summary
+        line on every outcome, and a quarantined item is not 'promoted'."""
+        import argparse
+        config = _pipeline_fixture(tmp_path, monkeypatch)
+        src = bookkeeping.NOTES_DIR / "2026-09-18-fresh-raw.md"
+        args = lambda dry: argparse.Namespace(file=str(src), dry_run=dry, verbose=False)
+
+        _stub_transport(monkeypatch, gate, _response(0.1))
+        bookkeeping.cmd_promote(args(True))
+        out = capsys.readouterr().out
+        assert "[promote] Done: 0 items promoted from 2026-09-18-fresh-raw.md" in out, out
+        assert "DRY RUN" in out
+        assert len(gate["calls"]) >= 1
+        assert list(gate["entities"].rglob("*.md")) == []
+
+        gate["calls"].clear()
+        bookkeeping.cmd_promote(args(False))
+        out = capsys.readouterr().out
+        assert "Done: 0 items promoted" in out and "QUARANTINE" in out, out
+        assert list(gate["entities"].rglob("*.md")) == []
+        assert len(_quarantine_files(gate)) == len(gate["calls"]) >= 1
+
+        # Control: an admitting verdict promotes and counts (memory cleared:
+        # cmd_promote resets run state, and the quarantined copy is removed).
+        for q in _quarantine_files(gate):
+            q.unlink()
+        gate["calls"].clear()
+        _stub_transport(monkeypatch, gate, _response(0.9))
+        bookkeeping.cmd_promote(args(False))
+        out = capsys.readouterr().out
+        assert "Done: 1 items promoted from 2026-09-18-fresh-raw.md" in out, out
+        assert len(list(gate["entities"].rglob("*.md"))) == 1
+        assert not (config / "run-log.jsonl").exists(), "cmd_promote does not write the run log"
 
     def test_dry_run_pipeline_does_not_count_a_rejection_as_created(
             self, gate, monkeypatch, tmp_path, capsys):
