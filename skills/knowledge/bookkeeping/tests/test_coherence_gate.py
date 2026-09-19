@@ -17,6 +17,7 @@ Mutation proofs (run by hand and recorded in the PR body):
   * comment out the gate call inside promote_item → the quarantine and
     checked-counter tests fail.
 """
+import http.client
 import io
 import json
 import urllib.error
@@ -119,8 +120,13 @@ class TestUnavailablePassesThrough:
 
     # 7. transport raises / malformed → unavailable, page written, cause named
     @pytest.mark.parametrize("result, cause_fragment", [
-        (RuntimeError("socket exploded"), "RuntimeError"),
+        (OSError("socket exploded"), "OSError"),
+        (ConnectionResetError("peer reset"), "ConnectionResetError"),
+        (TimeoutError("timed out"), "TimeoutError"),
         (urllib.error.URLError("timed out"), "URLError"),
+        (http.client.BadStatusLine("HTTP/9.9"), "BadStatusLine"),
+        (json.JSONDecodeError("Expecting value", "x", 0), "JSONDecodeError"),
+        (UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid"), "UnicodeDecodeError"),
         ({"answers": {}}, "malformed"),
         ({"answers": {"coherent": {"noul": "high"}}}, "malformed"),
         ({"answers": {"coherent": {"noul": 1.5}}}, "malformed"),
@@ -138,6 +144,30 @@ class TestUnavailablePassesThrough:
         err = capsys.readouterr().err
         assert cause_fragment in err, err
         assert _quarantine_files(gate) == []
+
+    def test_programming_errors_are_not_reported_as_unavailable(self, gate, monkeypatch):
+        """A bug in this module must surface, not degrade the gate into a
+        permanent no-op announced as a network condition."""
+        _stub_transport(monkeypatch, gate, TypeError("Object of type set is not JSON serializable"))
+        with pytest.raises(TypeError):
+            promote_item(_scored(), "event-sourcing", entity_type="concept")
+        assert bookkeeping.coherence_unavailable == 0
+        assert not (gate["entities"] / "concept" / "event-sourcing.md").exists()
+
+    def test_varying_malformed_bodies_share_one_cause_line(self, gate, monkeypatch, capsys):
+        """The cause must be constant per condition or the once-per-run dedupe
+        is defeated by a backend returning per-item garbage — which would also
+        echo third-party response bodies into the transcript."""
+        bodies = iter([{"answers": {"x": 1}},
+                       {"answers": {"coherent": {"noul": "a"}}},
+                       "zzz-third-party-body-zzz"])
+        monkeypatch.setattr(bookkeeping, "_coherence_transport", lambda payload: next(bodies))
+        for slug in ("event-sourcing", "promotion-gate", "knowledge-graph"):
+            promote_item(_scored(), slug, entity_type="concept")
+        err = capsys.readouterr().err
+        assert err.count("[coherence]") == 1, err
+        assert bookkeeping.coherence_unavailable == 3
+        assert "zzz-third-party-body-zzz" not in err
 
     def test_http_error_names_the_status(self, gate, monkeypatch, capsys):
         exc = urllib.error.HTTPError(
@@ -220,9 +250,99 @@ class TestVerdicts:
         assert ret is None
         assert len(gate["calls"]) == 1
         assert bookkeeping.coherence_rejected == 1
+        assert bookkeeping.coherence_rejected_slug("event-sourcing")
         assert _quarantine_files(gate) == []
         assert not (gate["entities"] / "concept" / "event-sourcing.md").exists()
         assert "dry-run" in capsys.readouterr().out
+
+    def test_quarantine_write_failure_is_loud_and_still_refuses(
+            self, gate, monkeypatch, tmp_path, capsys):
+        """The SAFE verdict must never abort the run, and a failed quarantine
+        write must not fall through to writing the entity page."""
+        blocker = tmp_path / "blocker"
+        blocker.write_text("i am a file, not a directory")
+        monkeypatch.setattr(bookkeeping, "QUARANTINE_DIR", blocker / "quarantine")
+        _stub_transport(monkeypatch, gate, _response(0.1))
+        ret = promote_item(_scored(), "event-sourcing", entity_type="concept")
+        assert ret is None
+        assert not (gate["entities"] / "concept" / "event-sourcing.md").exists()
+        assert bookkeeping.coherence_rejected == 1
+        captured = capsys.readouterr()
+        assert "quarantine write FAILED" in captured.err
+        assert "QUARANTINE" in captured.out
+
+    def test_quarantine_filename_cannot_escape_the_dated_dir(self):
+        name = bookkeeping._quarantine_filename("tool/../../etc", "event-sourcing")
+        assert "/" not in name and ".." not in name
+        assert name.endswith("_event-sourcing.md")
+        assert bookkeeping._quarantine_filename("concept", "x") == "concept_x.md"
+
+    @pytest.mark.parametrize("p, rendered", [
+        (0.1, "0.1"), (0.49, "0.49"), (0.93, "0.93"), (0.0, "0.0"), (1.0, "1.0"),
+        (0.00001, "0.00001"),  # NOT "1e-05": PyYAML would read that back as a string
+    ])
+    def test_coherence_is_rendered_as_a_yaml_float(self, p, rendered):
+        assert bookkeeping._yaml_float(p) == rendered
+        assert "e" not in rendered and "." in rendered
+
+
+# ── the rejection has memory ───────────────────────────────────────────────────
+
+class TestRejectionMemory:
+
+    def test_prior_quarantine_is_remembered_without_a_call(self, gate, monkeypatch, capsys):
+        prior_dir = gate["quarantine"] / "2026-09-01-coherence"
+        prior_dir.mkdir(parents=True)
+        prior = prior_dir / "concept_event-sourcing.md"
+        prior_text = "---\nslug: event-sourcing\ncoherence: 0.1\ncoherence_gate: rejected\n---\n"
+        prior.write_text(prior_text)
+        _stub_transport(monkeypatch, gate, _response(0.9))  # would ADMIT if asked
+        ret = promote_item(_scored(), "event-sourcing", entity_type="concept")
+        assert ret is None
+        assert gate["calls"] == [], "no call may be paid for a remembered rejection"
+        assert not (gate["entities"] / "concept" / "event-sourcing.md").exists()
+        assert bookkeeping.coherence_stats() == {
+            "enabled": True, "checked": 0, "rejected": 0, "unavailable": 0, "remembered": 1}
+        assert bookkeeping.coherence_rejected_slug("event-sourcing")
+        assert prior.read_text() == prior_text, "the prior copy is never overwritten"
+        assert "quarantined by an earlier run" in capsys.readouterr().out
+        # Moving the file out (recovery) or deleting it re-opens the question.
+        prior.unlink()
+        bookkeeping.reset_coherence_run_state()
+        ret = promote_item(_scored(), "event-sourcing", entity_type="concept")
+        assert ret is not None and ret.exists()
+        assert len(gate["calls"]) == 1
+
+    def test_same_run_second_attempt_is_remembered_not_overwritten(self, gate, monkeypatch):
+        _stub_transport(monkeypatch, gate, _response(0.1))
+        promote_item(_scored(), "event-sourcing", entity_type="concept")
+        q = _quarantine_files(gate)[0]
+        before, mtime = q.read_text(), q.stat().st_mtime_ns
+        _stub_transport(monkeypatch, gate, _response(0.9))
+        gate["calls"].clear()
+        assert promote_item(_scored(), "event-sourcing", entity_type="concept") is None
+        assert gate["calls"] == []
+        assert q.read_text() == before and q.stat().st_mtime_ns == mtime
+        assert bookkeeping.coherence_rejected == 1 and bookkeeping.coherence_remembered == 1
+
+    def test_memory_is_per_type(self, gate, monkeypatch):
+        (gate["quarantine"] / "2026-09-01-coherence").mkdir(parents=True)
+        (gate["quarantine"] / "2026-09-01-coherence" / "pattern_event-sourcing.md").write_text("x")
+        _stub_transport(monkeypatch, gate, _response(0.9))
+        ret = promote_item(_scored(), "event-sourcing", entity_type="concept")
+        assert ret is not None and len(gate["calls"]) == 1
+        assert bookkeeping.coherence_remembered == 0
+
+    def test_disabled_gate_ignores_the_memory(self, gate, monkeypatch):
+        """Explicitly switching the gate off is the operator's decision to
+        write pages ungated — including ones an earlier run refused."""
+        (gate["quarantine"] / "2026-09-01-coherence").mkdir(parents=True)
+        (gate["quarantine"] / "2026-09-01-coherence" / "concept_event-sourcing.md").write_text("x")
+        monkeypatch.setenv(bookkeeping.COHERENCE_GATE_ENV, "0")
+        _stub_transport(monkeypatch, gate, _response(0.0))
+        ret = promote_item(_scored(), "event-sourcing", entity_type="concept")
+        assert ret is not None and ret.exists()
+        assert gate["calls"] == [] and bookkeeping.coherence_remembered == 0
 
 
 # ── 4. the threshold boundary (mutation proof for `<`) ─────────────────────────
@@ -293,10 +413,19 @@ class TestTypeAwareCriteria:
             is bookkeeping.COHERENCE_CRITERIA["named"]
 
     @pytest.mark.parametrize("entity_type", [
-        "concept", "pattern", "question", "discovery", "framework-refinement", "unknown-type"])
+        "concept", "pattern", "question", "discovery", "framework-refinement",
+        "industry-pattern", "persona", "unknown-type"])
     def test_concept_like_and_unknown_types_get_the_concept_criteria(self, entity_type):
         assert bookkeeping._coherence_criteria_for(entity_type) \
             is bookkeeping.COHERENCE_CRITERIA["concept"]
+
+    def test_every_entity_type_has_a_deliberate_bucket(self):
+        """Adding a type to ENTITY_TYPES must force a criteria decision, not
+        silently inherit the punitive default."""
+        named, concept = bookkeeping._COHERENCE_NAMED_TYPES, bookkeeping._COHERENCE_CONCEPT_TYPES
+        assert named & concept == set()
+        assert named | concept == set(bookkeeping.ENTITY_TYPES), (
+            sorted(set(bookkeeping.ENTITY_TYPES) ^ (named | concept)))
 
     def test_state_carries_the_identity_fields_and_caps_the_excerpt(self, gate, monkeypatch):
         long_body = BODY + " " + ("x" * 5000)
@@ -323,7 +452,7 @@ class TestDisable:
         assert path is not None and path.exists()
         assert gate["calls"] == []
         assert bookkeeping.coherence_stats() == {
-            "enabled": False, "checked": 0, "rejected": 0, "unavailable": 0}
+            "enabled": False, "checked": 0, "rejected": 0, "unavailable": 0, "remembered": 0}
 
     def test_unset_env_means_enabled(self, monkeypatch):
         monkeypatch.delenv(bookkeeping.COHERENCE_GATE_ENV, raising=False)
@@ -381,6 +510,37 @@ class TestRealTransport:
         assert bookkeeping.coherence_unavailable == 1
         err = capsys.readouterr().err
         assert "no API key" in err and bookkeeping.TYPESAFE_API_KEY_ENV in err, err
+
+    def test_malformed_key_is_never_sent_and_never_echoed(
+            self, gate, monkeypatch, tmp_path, capsys):
+        """A soft-wrapped paste leaves a newline INSIDE the key. http.client
+        would raise ValueError carrying the full header value — so the key is
+        refused before a request exists, and the cause names no bytes of it."""
+        monkeypatch.delenv(bookkeeping.TYPESAFE_API_KEY_ENV, raising=False)
+        keyfile = tmp_path / "api_key"
+        keyfile.write_text("sk-live-part-one\nsk-live-part-two\n")
+        monkeypatch.setattr(bookkeeping, "TYPESAFE_API_KEY_FILE", keyfile)
+
+        def boom(*a, **k):
+            raise AssertionError("urlopen must not be called with a malformed key")
+        monkeypatch.setattr(urllib.request, "urlopen", boom)
+
+        path = promote_item(_scored(), "event-sourcing", entity_type="concept")
+        assert path is not None and path.exists()
+        assert bookkeeping.coherence_unavailable == 1
+        err = capsys.readouterr().err
+        assert "malformed" in err, err
+        assert "sk-live" not in err
+
+    def test_key_in_an_exception_message_is_redacted(self, gate, monkeypatch, capsys):
+        monkeypatch.setenv(bookkeeping.TYPESAFE_API_KEY_ENV, "sk-secret-777")
+        _stub_transport(monkeypatch, gate,
+                        OSError("Invalid header value 'Bearer sk-secret-777\\n'"))
+        path = promote_item(_scored(), "event-sourcing", entity_type="concept")
+        assert path is not None
+        err = capsys.readouterr().err
+        assert "sk-secret-777" not in err, err
+        assert "***" in err
 
     def test_key_file_is_read_when_env_is_unset(self, monkeypatch, tmp_path):
         monkeypatch.delenv(bookkeeping.TYPESAFE_API_KEY_ENV, raising=False)
@@ -441,46 +601,83 @@ class TestRealTransport:
 
 # ── counters, stats, and the run-log entry ─────────────────────────────────────
 
+def _pipeline_fixture(tmp_path, monkeypatch):
+    """A one-item raw note under tmp roots; returns the config dir."""
+    notes = tmp_path / "research" / "notes"
+    notes.mkdir(parents=True)
+    config = tmp_path / "config"
+    monkeypatch.setattr(bookkeeping, "NOTES_DIR", notes)
+    monkeypatch.setattr(bookkeeping, "CONFIG_DIR", config)
+    monkeypatch.setattr(bookkeeping, "RUN_LOG", config / "run-log.jsonl")
+    monkeypatch.setattr(bookkeeping, "STATUS_CACHE", config / "status.json")
+    # Same fixture item test_layer2_retention uses: it is known to resolve
+    # to at least one entity-shaped candidate through scatter/resolve.
+    (notes / "2026-09-18-fresh-raw.md").write_text(
+        "---\nsource: test\n---\n\n"
+        "## Item 1 — @someone (web)\n\n"
+        "**Score**: 7/9 — novelty:3 specificity:2 relevance:2\n\n"
+        "**Our angle**: The arcan agent loop uses bi-temporal event sourcing "
+        "because the soul file must replay deterministically; this means the "
+        "promotion gate and memory provenance stay consistent across 1000 runs.\n"
+    )
+    return config
+
+
 class TestRunState:
 
     def test_stats_shape_and_reset(self, gate, monkeypatch):
         _stub_transport(monkeypatch, gate, _response(0.1))
         promote_item(_scored(), "event-sourcing", entity_type="concept")
         assert bookkeeping.coherence_stats() == {
-            "enabled": True, "checked": 1, "rejected": 1, "unavailable": 0}
+            "enabled": True, "checked": 1, "rejected": 1, "unavailable": 0, "remembered": 0}
+        assert bookkeeping.coherence_rejected_slug("event-sourcing")
         bookkeeping.reset_coherence_run_state()
         assert bookkeeping.coherence_stats() == {
-            "enabled": True, "checked": 0, "rejected": 0, "unavailable": 0}
+            "enabled": True, "checked": 0, "rejected": 0, "unavailable": 0, "remembered": 0}
+        assert not bookkeeping.coherence_rejected_slug("event-sourcing")
 
-    def test_run_pipeline_entry_carries_coherence_stats(self, gate, monkeypatch, tmp_path):
-        notes = tmp_path / "research" / "notes"
-        notes.mkdir(parents=True)
-        config = tmp_path / "config"
-        monkeypatch.setattr(bookkeeping, "NOTES_DIR", notes)
-        monkeypatch.setattr(bookkeeping, "CONFIG_DIR", config)
-        monkeypatch.setattr(bookkeeping, "RUN_LOG", config / "run-log.jsonl")
-        monkeypatch.setattr(bookkeeping, "STATUS_CACHE", config / "status.json")
-        # Same fixture item test_layer2_retention uses: it is known to resolve
-        # to at least one entity-shaped candidate through scatter/resolve.
-        (notes / "2026-09-18-fresh-raw.md").write_text(
-            "---\nsource: test\n---\n\n"
-            "## Item 1 — @someone (web)\n\n"
-            "**Score**: 7/9 — novelty:3 specificity:2 relevance:2\n\n"
-            "**Our angle**: The arcan agent loop uses bi-temporal event sourcing "
-            "because the soul file must replay deterministically; this means the "
-            "promotion gate and memory provenance stay consistent across 1000 runs.\n"
-        )
+    def test_run_pipeline_entry_carries_coherence_stats(
+            self, gate, monkeypatch, tmp_path, capsys):
+        config = _pipeline_fixture(tmp_path, monkeypatch)
         _stub_transport(monkeypatch, gate, _response(0.1))
         # Poison the counters: run_pipeline must reset them at its start.
         bookkeeping.coherence_unavailable = 99
         entry = bookkeeping.run_pipeline(verbose=False)
         assert entry, "fixture must produce a pipeline run"
-        assert len(gate["calls"]) >= 1, "the pipeline must have consulted the gate"
+        n = len(gate["calls"])
+        assert n >= 1, "the pipeline must have consulted the gate"
         assert entry["coherence"] == bookkeeping.coherence_stats()
         assert entry["coherence"]["unavailable"] == 0, "counters were not reset"
-        assert entry["coherence"]["rejected"] == len(gate["calls"])
-        assert entry["coherence"]["checked"] == len(gate["calls"])
+        assert entry["coherence"]["rejected"] == n
+        assert entry["coherence"]["checked"] == n
+        assert entry["entities_created"] == 0, "a quarantined page is not a created page"
         assert list(gate["entities"].rglob("*.md")) == [], "every candidate was rejected"
-        assert len(_quarantine_files(gate)) == len(gate["calls"])
+        assert len(_quarantine_files(gate)) == n
         logged = json.loads((config / "run-log.jsonl").read_text().splitlines()[-1])
         assert logged["coherence"] == entry["coherence"]
+        out = capsys.readouterr().out
+        assert (f"Coherence gate: on | checked: {n} | rejected: {n} "
+                f"| remembered: 0 | unavailable: 0") in out, out
+
+    def test_dry_run_pipeline_does_not_count_a_rejection_as_created(
+            self, gate, monkeypatch, tmp_path, capsys):
+        """In dry-run promote_item returns None for BOTH 'would create' and
+        'gate refused'; the pipeline must not report a refused page as created."""
+        config = _pipeline_fixture(tmp_path, monkeypatch)
+        _stub_transport(monkeypatch, gate, _response(0.1))
+        entry = bookkeeping.run_pipeline(dry_run=True, verbose=False)
+        n = len(gate["calls"])
+        assert n >= 1
+        assert entry["entities_created"] == 0
+        assert entry["coherence"]["rejected"] == n
+        assert list(gate["entities"].rglob("*.md")) == []
+        assert _quarantine_files(gate) == [], "dry-run writes no quarantine file"
+        assert not (config / "run-log.jsonl").exists(), "dry-run writes no run log"
+        out = capsys.readouterr().out
+        assert "dry-run: would QUARANTINE" in out
+        assert "Entities created: 0" in out
+        # Control: an admitting verdict IS counted as a would-be create.
+        gate["calls"].clear()
+        _stub_transport(monkeypatch, gate, _response(0.9))
+        entry = bookkeeping.run_pipeline(dry_run=True, verbose=False)
+        assert entry["entities_created"] == len(gate["calls"]) >= 1
