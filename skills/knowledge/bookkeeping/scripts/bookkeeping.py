@@ -224,6 +224,66 @@ PROMOTE_THRESHOLD = 5
 DISCARD_THRESHOLD = 2
 IMMEDIATE_PROMOTE_THRESHOLD = 7
 
+# Per-axis floor on the Nous gate (2026-09-19).
+#
+# THE FLOOR IS PRESENT BUT DISABLED. Enabling it is blocked on fixing
+# heuristic_score, for a reason found only by measuring:
+#
+#   known_hits = sum(1 for term in LIFE_OS_TERMS if term in text)
+#   if known_hits >= 4: novelty = 0      # more jargon -> LESS novel
+#   relevance  = min(3, known_hits)      # more jargon -> MORE relevant
+#
+# novelty and relevance are THE SAME VARIABLE read in opposite directions.
+# Neither measures what it is named. Consequences, both reproduced:
+#   - relevance=0 means "contains no internal vocabulary", not "unrelated":
+#     entities/discovery/jeff-dean.md scores n=3 s=3 r=0.
+#   - novelty=0 means "mentions >=4 internal terms", not "already known":
+#     appending one true sentence can push known_hits 3->4 and flip an item
+#     from accepted to rejected. Adding information causes rejection.
+#
+# So a floor on EITHER axis penalises the corpus for its own vocabulary.
+# Measured blast radius on research/ (n=283 promotions), for the record:
+#   min(all three) >= 1               blocks 140 (49.5%)
+#   novelty >= 1 and specificity >= 1 blocks   7 ( 2.5%)
+# The 7 are anima.md / praxis.md — blocked for being deeply internal, which
+# is not what a novelty floor is for. Hence AXIS_FLOOR = 0.
+#
+# What this change DOES fix is structural: promotion was decided at three
+# separate `scored.total < PROMOTE_THRESHOLD` sites that never consulted the
+# gate, so a policy change had to be made in three places and a ScoredItem's
+# own .promote field was ignored. Admission now routes through one predicate.
+# Enabling the floor later is a one-constant change with tests already written.
+#
+# Follow-up: make novelty and relevance independent measurements, then set
+# AXIS_FLOOR = 1.
+AXIS_FLOOR = 0
+RELEVANCE_EXEMPT_FROM_FLOOR = True
+
+
+def passes_nous_gate(novelty: int, specificity: int, relevance: int) -> bool:
+    """Single admission predicate for the Nous gate.
+
+    Every promotion decision routes through here. A guard on one of three
+    doors is not a guard.
+    """
+    if novelty + specificity + relevance < PROMOTE_THRESHOLD:
+        return False
+    if AXIS_FLOOR:
+        if novelty < AXIS_FLOOR or specificity < AXIS_FLOOR:
+            return False
+        if not RELEVANCE_EXEMPT_FROM_FLOOR and relevance < AXIS_FLOOR:
+            return False
+    return True
+
+
+def scored_item_admitted(scored: "ScoredItem") -> bool:
+    """Admission decision for an already-scored item.
+
+    Call sites previously compared `scored.total` to PROMOTE_THRESHOLD
+    directly, which silently ignored the gate.
+    """
+    return passes_nous_gate(scored.novelty, scored.specificity, scored.relevance)
+
 # Max H1/H2 sections a markdown file may carry before it is treated as a
 # long-form document rather than a per-section raw extract (BRO-1983).
 _MAX_MARKDOWN_SECTION_ITEMS = 8
@@ -254,7 +314,7 @@ LIFE_OS_TERMS = [
     "arcan", "lago", "autonomic", "haima", "anima", "nous", "praxis",
     "vigil", "spaces", "bstack", "egri", "symphony", "autoany",
     "life os", "agent os", "aios", "broomva", "noesis", "opsis",
-    "relay", "hive", "haima", "mission-control", "control-metalayer",
+    "relay", "hive", "mission-control", "control-metalayer",
     "x402", "spacetimedb", "soul file", "memory", "promotion gate",
     "hysteresis", "bi-temporal", "bitemporal", "event sourcing",
     "knowledge graph", "entity page", "wikilink",
@@ -1265,7 +1325,7 @@ def score_item_heuristic(item: RawItem) -> ScoredItem:
         specificity=specificity,
         relevance=relevance,
         total=total,
-        promote=total >= PROMOTE_THRESHOLD,
+        promote=passes_nous_gate(novelty, specificity, relevance),
         candidate_entities=candidates,
         scoring_method="heuristic",
         reasoning={
@@ -1331,7 +1391,7 @@ def score_item_llm(item: RawItem, existing_slugs: list[str]) -> Optional[ScoredI
             specificity=specificity,
             relevance=relevance,
             total=total,
-            promote=total >= PROMOTE_THRESHOLD,
+            promote=passes_nous_gate(novelty, specificity, relevance),
             candidate_entities=candidates,
             scoring_method="llm_judge",
             reasoning=data.get("reasoning", {}),
@@ -1536,7 +1596,7 @@ def score_item_authored_agents(
         specificity=specificity,
         relevance=relevance,
         total=total,
-        promote=total >= PROMOTE_THRESHOLD,
+        promote=passes_nous_gate(novelty, specificity, relevance),
         candidate_entities=candidates,
         scoring_method="authored_agents",
         reasoning=reasoning,
@@ -3464,11 +3524,30 @@ def _lint_scoring_provenance(path_str: str, fm: dict) -> list[LintError]:
             + f" = {total} — the score does not add up",
             "error",
         ))
-    elif status == "entity" and raw < NOUS_GATE_THRESHOLD:
+    elif status == "entity" and not passes_nous_gate(
+        dims["novelty"], dims["specificity"], dims["relevance"]
+    ):
+        # Routed through the gate itself, not a parallel constant. A lint that
+        # re-implements the policy it audits will disagree with it the moment
+        # the policy changes — e.g. when AXIS_FLOOR is turned on.
+        #
+        # Two distinct failure modes, worded distinctly: a sum failure really is
+        # "below" the threshold, an axis-floor failure is not (its total can
+        # clear PROMOTE_THRESHOLD), and calling that "below" would be false.
+        if raw < PROMOTE_THRESHOLD:
+            reason = (
+                f"is below the Nous gate threshold of {PROMOTE_THRESHOLD}"
+            )
+        else:
+            reason = (
+                f"clears the sum threshold but fails the per-axis floor "
+                f"(AXIS_FLOOR={AXIS_FLOOR}; novelty={dims['novelty']} "
+                f"specificity={dims['specificity']} relevance={dims['relevance']})"
+            )
         errors.append(LintError(
             path_str, "scoring",
-            f"status 'entity' with raw_score {raw} is below the Nous gate "
-            f"threshold of {NOUS_GATE_THRESHOLD} — promoted despite failing its own gate",
+            f"status 'entity' with raw_score {raw} {reason} "
+            f"— promoted despite failing its own gate",
             "error",
         ))
 
@@ -4640,7 +4719,7 @@ def run_pipeline(
     # ── Stage 5: Promote ──
     print(f"\n[run] Promoting {len(all_scored)} items (threshold ≥{PROMOTE_THRESHOLD})...")
     for scored in all_scored:
-        if scored.total < PROMOTE_THRESHOLD:
+        if not scored_item_admitted(scored):
             items_raw_only += 1
             continue
 
@@ -4974,9 +5053,10 @@ def cmd_promote(args: argparse.Namespace) -> None:
     promoted = 0
     for item in items:
         scored = score_item(item, existing, verbose=args.verbose)
-        if scored.total < PROMOTE_THRESHOLD:
+        if not scored_item_admitted(scored):
             if args.verbose:
-                print(f"  SKIP [{item.item_id}] score={scored.total}/9 < {PROMOTE_THRESHOLD}")
+                print(f"  SKIP [{item.item_id}] score={scored.total}/9 "
+                      f"(n={scored.novelty} s={scored.specificity} r={scored.relevance}) failed the Nous gate")
             continue
 
         candidates = scatter(scored, verbose=args.verbose)
@@ -5099,7 +5179,7 @@ def cmd_replay(args: argparse.Namespace) -> None:
                     print(f"  ! score failed for {item.item_id}: {e}", file=sys.stderr)
                     continue
                 scores.append(scored.total)
-                if scored.total < PROMOTE_THRESHOLD:
+                if not scored_item_admitted(scored):
                     skipped += 1
                     continue
                 # Would-promote: simulate without writing
