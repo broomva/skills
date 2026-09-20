@@ -224,45 +224,65 @@ PROMOTE_THRESHOLD = 5
 DISCARD_THRESHOLD = 2
 IMMEDIATE_PROMOTE_THRESHOLD = 7
 
-# Per-axis floor (BRO-openclaw-loop, 2026-09-19).
+# Per-axis floor on the Nous gate (2026-09-19).
 #
-# The sum gate alone promotes an item that scores 0 on an axis, because 3+2+0
-# still clears 5. Measured on the live corpus: 140 of 283 scored items (49.5%)
-# promoted with a zero axis.
+# THE FLOOR IS PRESENT BUT DISABLED. Enabling it is blocked on fixing
+# heuristic_score, for a reason found only by measuring:
 #
-# The floor deliberately covers novelty and specificity but NOT relevance,
-# because relevance is not currently a measurement of relevance. See
-# heuristic_score(): relevance = min(3, <count of LIFE_OS_TERMS substrings>) —
-# a jargon-conformance counter. 133 of the 140 zero-axis promotions were
-# relevance=0, and they include pages like entities/discovery/jeff-dean.md at
-# n=3 s=3 r=0 — plainly relevant material that merely fails to name-drop
-# internal vocabulary. Gating on that proxy would reject externally-sourced
-# knowledge, which is the opposite of the gate's purpose.
+#   known_hits = sum(1 for term in LIFE_OS_TERMS if term in text)
+#   if known_hits >= 4: novelty = 0      # more jargon -> LESS novel
+#   relevance  = min(3, known_hits)      # more jargon -> MORE relevant
 #
-# Blast radius, measured before landing (research/ corpus, n=283 promotions):
-#   min(novelty, specificity, relevance) >= 1 -> blocks 140 (49.5%)  REJECTED
-#   novelty >= 1 and specificity >= 1         -> blocks   7 ( 2.5%)  ADOPTED
-# The 7 blocked are n=0 items (anima.md, praxis.md): zero novelty is "we
-# already know this", which is precisely what a floor should stop.
+# novelty and relevance are THE SAME VARIABLE read in opposite directions.
+# Neither measures what it is named. Consequences, both reproduced:
+#   - relevance=0 means "contains no internal vocabulary", not "unrelated":
+#     entities/discovery/jeff-dean.md scores n=3 s=3 r=0.
+#   - novelty=0 means "mentions >=4 internal terms", not "already known":
+#     appending one true sentence can push known_hits 3->4 and flip an item
+#     from accepted to rejected. Adding information causes rejection.
 #
-# Fix the relevance scorer, then revisit extending the floor to it.
-AXIS_FLOOR = 1
+# So a floor on EITHER axis penalises the corpus for its own vocabulary.
+# Measured blast radius on research/ (n=283 promotions), for the record:
+#   min(all three) >= 1               blocks 140 (49.5%)
+#   novelty >= 1 and specificity >= 1 blocks   7 ( 2.5%)
+# The 7 are anima.md / praxis.md — blocked for being deeply internal, which
+# is not what a novelty floor is for. Hence AXIS_FLOOR = 0.
+#
+# What this change DOES fix is structural: promotion was decided at three
+# separate `scored.total < PROMOTE_THRESHOLD` sites that never consulted the
+# gate, so a policy change had to be made in three places and a ScoredItem's
+# own .promote field was ignored. Admission now routes through one predicate.
+# Enabling the floor later is a one-constant change with tests already written.
+#
+# Follow-up: make novelty and relevance independent measurements, then set
+# AXIS_FLOOR = 1.
+AXIS_FLOOR = 0
 RELEVANCE_EXEMPT_FROM_FLOOR = True
 
 
 def passes_nous_gate(novelty: int, specificity: int, relevance: int) -> bool:
     """Single admission predicate for the Nous gate.
 
-    Sum threshold AND a per-axis floor. Every promote decision routes through
-    here so a future change lands at one door rather than three.
+    Every promotion decision routes through here. A guard on one of three
+    doors is not a guard.
     """
     if novelty + specificity + relevance < PROMOTE_THRESHOLD:
         return False
-    if novelty < AXIS_FLOOR or specificity < AXIS_FLOOR:
-        return False
-    if not RELEVANCE_EXEMPT_FROM_FLOOR and relevance < AXIS_FLOOR:
-        return False
+    if AXIS_FLOOR:
+        if novelty < AXIS_FLOOR or specificity < AXIS_FLOOR:
+            return False
+        if not RELEVANCE_EXEMPT_FROM_FLOOR and relevance < AXIS_FLOOR:
+            return False
     return True
+
+
+def scored_item_admitted(scored: "ScoredItem") -> bool:
+    """Admission decision for an already-scored item.
+
+    Call sites previously compared `scored.total` to PROMOTE_THRESHOLD
+    directly, which silently ignored the gate.
+    """
+    return passes_nous_gate(scored.novelty, scored.specificity, scored.relevance)
 
 # Max H1/H2 sections a markdown file may carry before it is treated as a
 # long-form document rather than a per-section raw extract (BRO-1983).
@@ -4680,7 +4700,7 @@ def run_pipeline(
     # ── Stage 5: Promote ──
     print(f"\n[run] Promoting {len(all_scored)} items (threshold ≥{PROMOTE_THRESHOLD})...")
     for scored in all_scored:
-        if scored.total < PROMOTE_THRESHOLD:
+        if not scored_item_admitted(scored):
             items_raw_only += 1
             continue
 
@@ -5014,7 +5034,7 @@ def cmd_promote(args: argparse.Namespace) -> None:
     promoted = 0
     for item in items:
         scored = score_item(item, existing, verbose=args.verbose)
-        if scored.total < PROMOTE_THRESHOLD:
+        if not scored_item_admitted(scored):
             if args.verbose:
                 print(f"  SKIP [{item.item_id}] score={scored.total}/9 < {PROMOTE_THRESHOLD}")
             continue
@@ -5139,7 +5159,7 @@ def cmd_replay(args: argparse.Namespace) -> None:
                     print(f"  ! score failed for {item.item_id}: {e}", file=sys.stderr)
                     continue
                 scores.append(scored.total)
-                if scored.total < PROMOTE_THRESHOLD:
+                if not scored_item_admitted(scored):
                     skipped += 1
                     continue
                 # Would-promote: simulate without writing
