@@ -149,3 +149,92 @@ class TestThePremiseThatKeepsTheFloorOff:
 )
 def test_gate_truth_table(n, s, r, expected):
     assert bk.passes_nous_gate(n, s, r) is expected
+
+
+class TestGateActuallyControlsWrites:
+    """Integration, not grep.
+
+    Every earlier guard in this file reads source text, and a source-text guard
+    cannot constrain a decision: adversarial review showed a 4th admission door
+    written as the literal `if scored.total < 5:` passes all of them. These
+    tests drive the real pipeline and assert on FILES WRITTEN, which is the only
+    thing a bypass cannot fake.
+    """
+
+    # >=4 distinct LIFE_OS_TERMS -> heuristic novelty 0, relevance 3;
+    # digits + causal marker + length -> specificity 3. Total 6, clears the sum
+    # gate, so only the axis floor can stop it.
+    _ZERO_NOVELTY_BODY = (
+        "The arcan agent loop hands work to lago, praxis and vigil because the "
+        "replay path must stay deterministic across 1000 runs; in practice this "
+        "means the promotion gate and memory provenance agree on every pass, "
+        "which is what keeps the 3 tiers from drifting apart under load. "
+        + "Detail follows. " * 30
+    )
+
+    @pytest.fixture
+    def graph(self, tmp_path, monkeypatch):
+        entities = tmp_path / "research" / "entities"
+        for et in bk.ENTITY_TYPES:
+            (entities / et).mkdir(parents=True, exist_ok=True)
+        notes = tmp_path / "research" / "notes"
+        notes.mkdir(parents=True)
+        monkeypatch.setattr(bk, "BROOMVA_ROOT", tmp_path)
+        monkeypatch.setattr(bk, "ENTITIES_DIR", entities)
+        monkeypatch.setattr(bk, "NOTES_DIR", notes)
+        monkeypatch.setattr(bk, "CONFIG_DIR", tmp_path / ".config")
+        monkeypatch.setattr(bk, "RUN_LOG", tmp_path / ".config" / "run-log.jsonl")
+        monkeypatch.setattr(bk, "STATUS_CACHE", tmp_path / ".config" / "status.json")
+        (notes / "2026-09-19-gatetest-raw.md").write_text(
+            "---\nsource: test\n---\n\n"
+            "## Item 1 — @someone (web)\n\n"
+            f"**Our angle**: {self._ZERO_NOVELTY_BODY}\n"
+        )
+        return entities
+
+    def test_the_fixture_item_really_is_zero_novelty_and_clears_the_sum(self):
+        item = bk.RawItem(
+            item_id="t", source_id="s", source_type="research",
+            content=self._ZERO_NOVELTY_BODY, quote="", author="",
+            timestamp="2026-09-19",
+        )
+        n, s, r = bk.heuristic_score(item)
+        assert n == 0, f"fixture must score novelty 0, got {n}"
+        assert n + s + r >= bk.PROMOTE_THRESHOLD, "fixture must clear the sum gate"
+
+    def test_floor_off_the_item_is_written(self, graph):
+        """Sensitivity: proves the assertion below is about the floor."""
+        assert bk.AXIS_FLOOR == 0
+        bk.run_pipeline(verbose=False)
+        assert list(graph.rglob("*.md")), "zero-novelty item should promote while floor is off"
+
+    def test_floor_on_no_page_is_written(self, graph, monkeypatch):
+        """The real constraint: a rejected item must produce NO entity file.
+
+        A 4th admission door comparing .total directly would write a page here
+        and fail this test, which string-matching guards cannot do.
+        """
+        monkeypatch.setattr(bk, "AXIS_FLOOR", 1)
+        bk.run_pipeline(verbose=False)
+        written = list(graph.rglob("*.md"))
+        assert written == [], (
+            f"gate rejected the item but the pipeline wrote {[p.name for p in written]} "
+            "— an admission path is bypassing passes_nous_gate"
+        )
+
+
+class TestLintAndGateCannotDiverge:
+    def test_lint_uses_the_gate_not_a_parallel_constant(self):
+        assert "raw < NOUS_GATE_THRESHOLD" not in _SRC, (
+            "the scoring-provenance lint re-implements the gate policy; it will "
+            "disagree with passes_nous_gate the moment AXIS_FLOOR changes"
+        )
+        assert "not passes_nous_gate(" in _SRC
+
+
+class TestVocabularyList:
+    def test_no_duplicate_terms(self):
+        """A duplicated term counts twice in known_hits and skews both axes."""
+        terms = bk.LIFE_OS_TERMS
+        dupes = {t for t in terms if terms.count(t) > 1}
+        assert not dupes, f"duplicate LIFE_OS_TERMS inflate known_hits: {dupes}"

@@ -314,7 +314,7 @@ LIFE_OS_TERMS = [
     "arcan", "lago", "autonomic", "haima", "anima", "nous", "praxis",
     "vigil", "spaces", "bstack", "egri", "symphony", "autoany",
     "life os", "agent os", "aios", "broomva", "noesis", "opsis",
-    "relay", "hive", "haima", "mission-control", "control-metalayer",
+    "relay", "hive", "mission-control", "control-metalayer",
     "x402", "spacetimedb", "soul file", "memory", "promotion gate",
     "hysteresis", "bi-temporal", "bitemporal", "event sourcing",
     "knowledge graph", "entity page", "wikilink",
@@ -3524,11 +3524,30 @@ def _lint_scoring_provenance(path_str: str, fm: dict) -> list[LintError]:
             + f" = {total} — the score does not add up",
             "error",
         ))
-    elif status == "entity" and raw < NOUS_GATE_THRESHOLD:
+    elif status == "entity" and not passes_nous_gate(
+        dims["novelty"], dims["specificity"], dims["relevance"]
+    ):
+        # Routed through the gate itself, not a parallel constant. A lint that
+        # re-implements the policy it audits will disagree with it the moment
+        # the policy changes — e.g. when AXIS_FLOOR is turned on.
+        #
+        # Two distinct failure modes, worded distinctly: a sum failure really is
+        # "below" the threshold, an axis-floor failure is not (its total can
+        # clear PROMOTE_THRESHOLD), and calling that "below" would be false.
+        if raw < PROMOTE_THRESHOLD:
+            reason = (
+                f"is below the Nous gate threshold of {PROMOTE_THRESHOLD}"
+            )
+        else:
+            reason = (
+                f"clears the sum threshold but fails the per-axis floor "
+                f"(AXIS_FLOOR={AXIS_FLOOR}; novelty={dims['novelty']} "
+                f"specificity={dims['specificity']} relevance={dims['relevance']})"
+            )
         errors.append(LintError(
             path_str, "scoring",
-            f"status 'entity' with raw_score {raw} is below the Nous gate "
-            f"threshold of {NOUS_GATE_THRESHOLD} — promoted despite failing its own gate",
+            f"status 'entity' with raw_score {raw} {reason} "
+            f"— promoted despite failing its own gate",
             "error",
         ))
 
@@ -5036,7 +5055,8 @@ def cmd_promote(args: argparse.Namespace) -> None:
         scored = score_item(item, existing, verbose=args.verbose)
         if not scored_item_admitted(scored):
             if args.verbose:
-                print(f"  SKIP [{item.item_id}] score={scored.total}/9 < {PROMOTE_THRESHOLD}")
+                print(f"  SKIP [{item.item_id}] score={scored.total}/9 "
+                      f"(n={scored.novelty} s={scored.specificity} r={scored.relevance}) failed the Nous gate")
             continue
 
         candidates = scatter(scored, verbose=args.verbose)
