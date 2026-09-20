@@ -224,11 +224,45 @@ class TestGateActuallyControlsWrites:
 
 
 class TestLintAndGateCannotDiverge:
-    def test_lint_uses_the_gate_not_a_parallel_constant(self):
-        assert "raw < NOUS_GATE_THRESHOLD" not in _SRC, (
-            "the scoring-provenance lint re-implements the gate policy; it will "
-            "disagree with passes_nous_gate the moment AXIS_FLOOR changes"
+    """Behavioural, not grep.
+
+    The source assertion below is kept as a cheap tripwire, but it is the two
+    behavioural tests that constrain anything: a lint re-implementing the policy
+    it audits passes any string check while disagreeing with the gate.
+    """
+
+    @staticmethod
+    def _fm(**kw):
+        base = dict(
+            status="entity", novelty=0, specificity=3, relevance=3, raw_score=6,
+            scorer="heuristic", scored_at="2026-09-19", source_note="x-raw",
         )
+        base.update(kw)
+        return {"scoring": {k: v for k, v in base.items() if k != "status"},
+                "status": base["status"]}
+
+    def test_axis_failure_is_clean_while_the_floor_is_off(self):
+        """n=0 s=3 r=3 clears the sum; with the floor off the gate admits it,
+        so the lint must not flag it."""
+        assert bk.AXIS_FLOOR == 0
+        assert bk.passes_nous_gate(0, 3, 3) is True
+        errs = bk._lint_scoring_provenance("x.md", self._fm())
+        axis_errs = [e for e in errs if "gate" in e.message]
+        assert axis_errs == [], f"lint flagged a page the gate admits: {axis_errs}"
+
+    def test_axis_failure_becomes_an_error_when_the_floor_is_on(self, monkeypatch):
+        """Flip the SAME constant the gate reads. If the lint kept a parallel
+        constant it would stay silent here while the gate rejects."""
+        monkeypatch.setattr(bk, "AXIS_FLOOR", 1)
+        assert bk.passes_nous_gate(0, 3, 3) is False
+        errs = bk._lint_scoring_provenance("x.md", self._fm())
+        assert [e for e in errs if "gate" in e.message], (
+            "gate rejects (0,3,3) at AXIS_FLOOR=1 but the lint stayed silent "
+            "— lint and gate have diverged"
+        )
+
+    def test_source_tripwire(self):
+        assert "raw < NOUS_GATE_THRESHOLD" not in _SRC
         assert "not passes_nous_gate(" in _SRC
 
 
