@@ -224,6 +224,46 @@ PROMOTE_THRESHOLD = 5
 DISCARD_THRESHOLD = 2
 IMMEDIATE_PROMOTE_THRESHOLD = 7
 
+# Per-axis floor (BRO-openclaw-loop, 2026-09-19).
+#
+# The sum gate alone promotes an item that scores 0 on an axis, because 3+2+0
+# still clears 5. Measured on the live corpus: 140 of 283 scored items (49.5%)
+# promoted with a zero axis.
+#
+# The floor deliberately covers novelty and specificity but NOT relevance,
+# because relevance is not currently a measurement of relevance. See
+# heuristic_score(): relevance = min(3, <count of LIFE_OS_TERMS substrings>) —
+# a jargon-conformance counter. 133 of the 140 zero-axis promotions were
+# relevance=0, and they include pages like entities/discovery/jeff-dean.md at
+# n=3 s=3 r=0 — plainly relevant material that merely fails to name-drop
+# internal vocabulary. Gating on that proxy would reject externally-sourced
+# knowledge, which is the opposite of the gate's purpose.
+#
+# Blast radius, measured before landing (research/ corpus, n=283 promotions):
+#   min(novelty, specificity, relevance) >= 1 -> blocks 140 (49.5%)  REJECTED
+#   novelty >= 1 and specificity >= 1         -> blocks   7 ( 2.5%)  ADOPTED
+# The 7 blocked are n=0 items (anima.md, praxis.md): zero novelty is "we
+# already know this", which is precisely what a floor should stop.
+#
+# Fix the relevance scorer, then revisit extending the floor to it.
+AXIS_FLOOR = 1
+RELEVANCE_EXEMPT_FROM_FLOOR = True
+
+
+def passes_nous_gate(novelty: int, specificity: int, relevance: int) -> bool:
+    """Single admission predicate for the Nous gate.
+
+    Sum threshold AND a per-axis floor. Every promote decision routes through
+    here so a future change lands at one door rather than three.
+    """
+    if novelty + specificity + relevance < PROMOTE_THRESHOLD:
+        return False
+    if novelty < AXIS_FLOOR or specificity < AXIS_FLOOR:
+        return False
+    if not RELEVANCE_EXEMPT_FROM_FLOOR and relevance < AXIS_FLOOR:
+        return False
+    return True
+
 # Max H1/H2 sections a markdown file may carry before it is treated as a
 # long-form document rather than a per-section raw extract (BRO-1983).
 _MAX_MARKDOWN_SECTION_ITEMS = 8
@@ -1265,7 +1305,7 @@ def score_item_heuristic(item: RawItem) -> ScoredItem:
         specificity=specificity,
         relevance=relevance,
         total=total,
-        promote=total >= PROMOTE_THRESHOLD,
+        promote=passes_nous_gate(novelty, specificity, relevance),
         candidate_entities=candidates,
         scoring_method="heuristic",
         reasoning={
@@ -1331,7 +1371,7 @@ def score_item_llm(item: RawItem, existing_slugs: list[str]) -> Optional[ScoredI
             specificity=specificity,
             relevance=relevance,
             total=total,
-            promote=total >= PROMOTE_THRESHOLD,
+            promote=passes_nous_gate(novelty, specificity, relevance),
             candidate_entities=candidates,
             scoring_method="llm_judge",
             reasoning=data.get("reasoning", {}),
@@ -1536,7 +1576,7 @@ def score_item_authored_agents(
         specificity=specificity,
         relevance=relevance,
         total=total,
-        promote=total >= PROMOTE_THRESHOLD,
+        promote=passes_nous_gate(novelty, specificity, relevance),
         candidate_entities=candidates,
         scoring_method="authored_agents",
         reasoning=reasoning,
