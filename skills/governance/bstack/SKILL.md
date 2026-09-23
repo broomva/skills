@@ -54,7 +54,7 @@ Cross-Review (P20).
 | **P9** | **Wait** — Productive Wait | Sleeping on CI. `gh pr checks --watch` via background; drain a work-queue while blocked. Never `sleep`. |
 | **P10** | **Hygiene** — Worktree Hygiene | Dirty trees. Decide worktree-or-not before the first file; a clean `git status` is the only reliable reset point. |
 | **P11** | **Empirical** — Empirical Feedback | Reasoning mistaken for validation. Validate by *interacting* — log-tails, E2E, screenshots, deploy verification. |
-| **P12** | **Persist** — Persistent Loop | In-context decay on long work (>1h). State lives in the filesystem; each iteration spawns a fresh context. |
+| **P12** | **Persist** — Persistent Loop | Work that must outlive one session losing its state. State lives in the filesystem; each iteration spawns a fresh context. |
 | **P13** | **Dream** — Dream Cycle | Dense low-tier signal corrupting sparse high-tier rules. Cross-tier consolidation replays against a frozen substrate (stop-gradient). |
 | **P14** | **Dep-Chain** — Dependency-Chain Reasoning | "Think deeply" as ritual. Enumerate upstream + downstream (concrete file paths, function names) in the response — not in your head. |
 | **P15** | **Snapshot** — State-Snapshot Before Action | Plans built on stale state. Surface `git status` + branch + ahead/behind + open PRs + CI/deploy state *before* planning. |

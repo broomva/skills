@@ -1421,19 +1421,11 @@ def _format_intake_context(
             text = sug.get("suggestion", "")
             if sig and text:
                 lines.append(f"  - if {sig!r}: {text}")
-    directives: list[str] = []
-    if quality_bar:
-        directives.append(
-            "Agents: the quality_bar applies to change work (code, config, PRs); answer "
-            "questions and read-only requests directly."
-        )
-    if mode != "augment":
-        directives.append(
-            "Surface the rewrite/decompose proposal to the user before proceeding."
-        )
-    if directives:
-        lines.append("")
-        lines.append(" ".join(directives))
+    lines.append("")
+    lines.append(
+        "Agents: apply the quality_bar entries as the P14 enumeration template for this response. "
+        "If mode != augment, surface the rewrite/decompose proposal to the user before proceeding."
+    )
     # v0.4.1: when no domain lens fired AND the prompt is domain-rich enough
     # to plausibly merit one, surface a one-line "consider authoring a lens"
     # nudge. Pure suggestion — agent decides whether to act on it.

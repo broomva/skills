@@ -2,9 +2,8 @@
 """persist.py — bstack P12 Persistent Loop Discipline.
 
 Cross-context restart loop: state persists in the filesystem, the agent's
-context window is restarted fresh each iteration. Closes the failure mode
-where long-horizon agentic work degrades silently as the conversation
-context window rots past 100K tokens (the "Dumb Zone").
+context window is restarted fresh each iteration. For work that must outlive
+one session, or a fix that keeps failing in-context and needs a clean start.
 
 The defining moves are:
 

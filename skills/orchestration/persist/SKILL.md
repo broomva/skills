@@ -3,7 +3,7 @@ name: persist
 tier: D
 primitive: P12
 category: orchestration
-description: "bstack P12 — Persistent Loop Discipline. Cross-context restart loop where state lives in the filesystem (PROMPT.md + git tree + state.jsonl), not in the conversation. Each iteration spawns a fresh agent context. Solves the failure mode where work that must outlive one session loses its state when the session ends, and where a loop that keeps re-trying one fix never gets a clean start. Validation backpressure comes from compilers/tests/linters, not model self-grading. Use persist when: (1) starting work that must outlive the session (overnight, unattended), (2) detecting drift mid-session (the session re-asks settled questions, or the same fix fails repeatedly), (3) coordinating long-horizon work that needs to survive crashes / context exhaustion, (4) running parallel work streams (one persist loop per worktree, composed with bstack P5). Triggers on 'persist', 'long-horizon loop', 'context restart', 'fresh-context iteration', 'P12', 'Ralph loop', 'filesystem-state loop'."
+description: "bstack P12 — Persistent Loop Discipline. Cross-context restart loop where state lives in the filesystem (PROMPT.md + git tree + state.jsonl), not in the conversation. Each iteration spawns a fresh agent context. Solves the failure mode where work that must outlive one session loses its state when the session ends, and where a loop that keeps re-trying one fix never gets a clean start. Validation backpressure comes from compilers/tests/linters, not model self-grading. Use persist when: (1) starting work that must outlive the session (overnight, unattended), (2) the same fix failing repeatedly in one session, (3) coordinating long-horizon work that needs to survive crashes / context exhaustion, (4) running parallel work streams (one persist loop per worktree, composed with bstack P5). Triggers on 'persist', 'long-horizon loop', 'context restart', 'fresh-context iteration', 'P12', 'Ralph loop', 'filesystem-state loop'."
 ---
 
 # persist — bstack P12 Persistent Loop Discipline
@@ -19,16 +19,15 @@ The defining moves:
 
 ## Why this exists
 
-Work that must outlive one session, or that iterates against an external success check, needs state that survives the conversation. **Persist restarts the context every iteration** while keeping state in the filesystem, so the loop survives session ends, crashes and repeated failed attempts. METR's [Time Horizon 1.1](https://metr.org/blog/2026-1-29-time-horizon-1-1/) put the 80%-reliability horizon at ~1 hour on Opus 4.6; that figure was not re-measured on the models this workspace runs now (1M context, with automatic compaction in Claude Code), so it is context for the design, not a trigger.
+Work that must outlive one session needs state that survives the conversation. **Persist restarts the context every iteration** while keeping state in the filesystem, so the loop survives session ends, crashes and repeated failed attempts. METR's [Time Horizon 1.1](https://metr.org/blog/2026-1-29-time-horizon-1-1/) put the 80%-reliability horizon at ~1 hour on Opus 4.6; that figure was not re-measured on the models this workspace runs now (1M context, with automatic compaction in Claude Code), so it is context for the design, not a trigger.
 
 ## When to invoke
 
 The reflexive trigger rule (full text in workspace AGENTS.md §P12):
 
 1. **Before starting work that must outlive this session** (an overnight run, work nobody will resume by hand) — write `PROMPT.md`, decide budget, pick success condition, call `persist iterate`.
-2. **When the session is losing track of its own earlier decisions** (re-asking settled questions, contradicting its own earlier findings) — write the state to `PROMPT.md` and restart instead of continuing.
-3. **When the same fix has been attempted ≥3 times without convergence** — stop the in-context loop; write the diff history to `PROMPT.md` and start fresh.
-4. **When orchestrating long-horizon work** — default to persist with periodic checkpoints; compose with P5 worktrees for parallel persist loops.
+2. **When the same fix has been attempted ≥3 times without convergence** — stop the in-context loop; write the diff history to `PROMPT.md` and start fresh.
+3. **When orchestrating long-horizon work** — default to persist with periodic checkpoints; compose with P5 worktrees for parallel persist loops.
 
 ## CLI
 

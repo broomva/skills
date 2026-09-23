@@ -914,8 +914,9 @@ def test_intake_multi_domain_decomposes(tmp_path):
     """Prompts hitting ≥2 lenses (rust + ts) escalate to decompose mode.
 
     The seed workspace has no ts lens, so it is written here. Without it only
-    rust fires, and the old assertions still passed: "decompose" appeared in a
-    directive printed on every intake, and "ts" matched inside other words.
+    rust fired in augment mode, and the old assertions still passed: "decompose"
+    appears in the directive printed on every intake, and "ts" matched inside
+    other words. Assert on the Mode and Lens(es) lines instead.
     """
     workspace = _seed_workspace(tmp_path)
     (workspace / "roles" / "ts.md").write_text(_FIXTURE_TS, encoding="utf-8")
@@ -931,43 +932,6 @@ def test_intake_multi_domain_decomposes(tmp_path):
     assert rc == 0
     assert "Mode: decompose" in out
     assert _lens_names(out) == {"rust", "ts"}
-    assert "Surface the rewrite/decompose proposal" in out
-
-
-def test_intake_directive_absent_without_bar_or_escalation(tmp_path):
-    """No quality bar and augment mode leave nothing to apply, so no directive line."""
-    workspace = _seed_workspace(tmp_path)
-    env = {"HOME": str(tmp_path)}
-
-    rc, out, _ = run_cli(
-        "intake",
-        "--prompt", "please summarize the release notes for me",
-        "--workspace", str(workspace),
-        "--session", "no-directive",
-        env=env,
-    )
-    assert rc == 0
-    assert "Mode: augment" in out
-    assert "Agents:" not in out
-    assert "rewrite/decompose" not in out
-
-
-def test_intake_directive_scopes_bar_to_change_work(tmp_path):
-    """A selected bar carries the scope line: it applies to change work, not questions."""
-    workspace = _seed_workspace(tmp_path)
-    env = {"HOME": str(tmp_path)}
-
-    rc, out, _ = run_cli(
-        "intake",
-        "--prompt", "why does this rust cargo build fail",
-        "--workspace", str(workspace),
-        "--session", "bar-directive",
-        env=env,
-    )
-    assert rc == 0
-    assert _lens_names(out) == {"rust"}
-    assert "the quality_bar applies to change work" in out
-    assert "rewrite/decompose" not in out
 
 
 def test_intake_no_match_applies_meta_only(tmp_path):
