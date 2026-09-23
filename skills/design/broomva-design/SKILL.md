@@ -152,7 +152,7 @@ Also audit for:
 - `transition: all`, hover transforms that move layout, or motion without reduced-motion handling;
 - icon-only controls without accessible names;
 - agentic work language appearing in a product that does not model agentic work;
-- defaults faded to look disabled, or a changed setting marked by color alone, by blue value text, or without a label naming the default;
+- settings defaults shown in a lighter text role or the disabled treatment, or a changed setting marked by color alone (`DESIGN.md` §4 "Settings defaults");
 - nested cards.
 
 ## Voice

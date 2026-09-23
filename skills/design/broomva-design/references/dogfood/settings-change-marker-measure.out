@@ -1,3 +1,4 @@
+harness_sha256=380c5ced52704168
 w=375&theme=light&control=overflow -> w=375 overflow=1625 overlaps=0
 w=375&theme=light&control=overlap -> w=375 overflow=0 overlaps=35
 w=375&theme=light -> w=375 overflow=0 overlaps=0

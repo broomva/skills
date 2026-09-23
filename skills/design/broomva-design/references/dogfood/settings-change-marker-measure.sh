@@ -9,6 +9,7 @@
 # label's rendered text). The two control rows must read non-zero.
 BASE="${1:?base URL of the served settings/ directory}"
 CHROME="${CHROME:-/Applications/Google Chrome.app/Contents/MacOS/Google Chrome}"
+echo "harness_sha256=$(curl -s "${BASE}settings-change-marker.html" | shasum -a 256 | cut -c1-16)"
 for q in "w=375&theme=light&control=overflow" "w=375&theme=light&control=overlap" \
          "w=375&theme=light" "w=375&theme=dark" "w=768&theme=light" "w=768&theme=dark" \
          "w=1440&theme=light&h=1300" "w=1440&theme=dark&h=1300"; do

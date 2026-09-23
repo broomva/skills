@@ -28,7 +28,7 @@ Core characteristics:
 
 ### Accent and interaction
 
-- **Resonant AI Blue** (`oklch(0.60 0.12 260)`) — Focus rings, links, selection, information, the changed-setting marker, and the primary brand accent. Keep it scarce enough to retain meaning.
+- **Resonant AI Blue** (`oklch(0.60 0.12 260)`) — Focus rings, links, selection, information, and the primary brand accent. Keep it scarce enough to retain meaning.
 - **Tidepool Cyan** (`oklch(0.65 0.14 235)`) — Optional secondary accent only when two distinct interactive or informational accents must coexist.
 - **Frosted selection** (`oklch(0.60 0.12 260 / 0.09)`) — Selected rows and hover states when a blue relationship helps orientation.
 - **Visible focus** (`var(--bv-blue)`) — A `2px` focus ring with at least `2px` separation. Never remove it without an equivalent.
@@ -38,7 +38,7 @@ Core characteristics:
 - **Primary ink** (`oklch(0.175 0.022 265)`) — Titles, body text, and primary actions on light surfaces.
 - **Slate body** (`oklch(0.38 0.020 265)`) — Long-form secondary copy with comfortable contrast.
 - **Muted current** (`oklch(0.50 0.015 265)`) — Metadata and supporting labels, not essential instructions.
-- **Placeholder mist** (`oklch(0.68 0.010 265)`) — Placeholder text only. Readable content uses Muted current or stronger.
+- **Placeholder mist** (`oklch(0.68 0.010 265)`) — Placeholder text and deliberately low-emphasis content.
 
 ### Functional states
 
@@ -102,7 +102,7 @@ Use the fixed scale `12 / 14 / 16 / 18 / 22 / 24 / 28px`. Use sentence case ever
 - **Surface:** Inputs are matte. A floating command surface may use heavy glass because it occupies a separate elevation layer.
 - **States:** Placeholder Mist is subordinate; focus uses Resonant AI Blue; errors pair Intervention red with specific text. Mobile inputs remain at least `16px`.
 - **Accessibility:** Every field has a persistent accessible label, errors are programmatically associated, and controls are operable by keyboard or the platform's equivalent input method.
-- **Changed settings:** Mark a configured value that differs from its default with a `2px` Resonant AI Blue line on its row's leading edge and a label naming the default (`Default: 30 days`) that assistive technology announces with the value. Defaults stay unmarked and are never faded. Controls keep their own state styling and take the same marker when changed. The marker shows difference, not risk.
+- **Settings defaults:** Where settings show their current values, a value at its default keeps its normal text style. Never fade it to a lighter text role or give it the disabled treatment to make changed values stand out; mark the changed value instead, with a cue that is not color alone. Controls keep their own on, off, and selected styling.
 
 ### Overlays and feedback
 
@@ -120,8 +120,6 @@ Compose the foundation around the product's actual objects: products and carts, 
 - Use a `4px` base ladder: `4 / 8 / 12 / 16 / 20 / 24 / 32 / 40 / 48px`. New spacing values require a system-level reason.
 - Choose content width by task: approximately `640–768px` for sustained reading, wider canvases for comparison and data, and edge-to-edge media only when the content benefits.
 - Establish hierarchy with whitespace and alignment before borders, shadows, or color.
-- Treat emphasis as relative: to make one element stand out, quiet its neighbours by removing accent, fill, or weight, never by lowering readable text below `4.5:1` or using the disabled treatment.
-- Do not rescue an unclear surface with added explanation. Helper copy, comparisons, and tooltips make a screen slower to read; fix the structure or the visual first. Field labels, accessible names, format instructions, error text, status labels, and labels naming a default are not explanation and always stay.
 - Design from the smallest relevant viewport, then verify at representative mobile, tablet, and desktop sizes. No horizontal overflow is acceptable.
 - Keep primary actions near the content they affect. Persistent controls must not obscure content or keyboard focus.
 - Use motion tiers of fast (`150ms`), common (`200ms`), slow (`350ms`), and morph (`500ms`). Motion explains state or spatial change; it does not decorate inactivity.
@@ -131,6 +129,6 @@ Compose the foundation around the product's actual objects: products and carts, 
 
 ## 6. Design System Notes for Stitch Generation
 
-Generate a calm Broomva interface for the named product and platform. Start from a light or deep-blue canvas, system typography for application UI, Blue-black ink (`oklch(0.175 0.022 265)`), cool hue-265 neutrals, and Resonant AI Blue (`oklch(0.60 0.12 260)`) only for focus, selection, information, changed-setting markers, and rare brand emphasis. Keep cards and chrome matte. Reserve frosted glass for surfaces that actually float. Use `0.75rem` cards, `1rem` dialogs, compact controls, and the 4px spacing ladder. Mark a setting that differs from its default with a leading-edge line and a label naming the default; never fade defaults, and never nest cards.
+Generate a calm Broomva interface for the named product and platform. Start from a light or deep-blue canvas, system typography for application UI, Blue-black ink (`oklch(0.175 0.022 265)`), cool hue-265 neutrals, and Resonant AI Blue (`oklch(0.60 0.12 260)`) only for focus, selection, information, and rare brand emphasis. Keep cards and chrome matte. Reserve frosted glass for surfaces that actually float. Use `0.75rem` cards, `1rem` dialogs, compact controls, and the 4px spacing ladder.
 
 Infer the information architecture and component composition from the product domain. Preserve the blackhole mark, blue-axis palette, sparse depth, semantic color roles, and accessible interaction states. Reject generic gradient heroes, ambient glass dashboards, arbitrary radii, decorative status color without text, faded defaults, nested cards, and any domain-specific extension that leaks into unrelated products.

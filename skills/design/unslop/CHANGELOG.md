@@ -11,9 +11,9 @@ The crafted floor is extended with Kole Jain's scannability argument (BRO-2537).
 
 - **New [J] rows:**
   - §2: shared and created edges; differentiate before spacing.
-  - §3: relative emphasis with a `4.5:1` floor; a setting that differs from its default is marked additively, and defaults are never faded.
+  - §3: relative emphasis with a `4.5:1` floor and no disabled treatment; settings defaults are never faded, and a changed setting gets a cue that is not color alone.
   - §6: fix unclarity with structure, not added explanation.
-- **Three stated contradictions (7–9):** show-don't-tell vs labels; white space vs differentiation; and gray-the-defaults vs contrast, state, and consequence.
+- **Three stated contradictions (7–9):** show-don't-tell vs labels; white space vs differentiation; and gray-the-defaults vs control state and consequence.
 
 ## [0.2.3] — 2026-08-21
 

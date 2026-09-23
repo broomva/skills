@@ -67,26 +67,28 @@ Interceptor's native screenshot command timed out after the real-browser interac
 
 **Time-to-receipt:** approximately 3 minutes from first test-harness write to captured portability evidence.
 
-## Settings change marker specimen (BRO-2537)
+## Settings defaults specimen (BRO-2537)
 
-Date: 2026-09-23. This is evidence for the `DESIGN.md` §4 "Changed settings" rule. It shows a 20-row settings list, rendered with the shipped foundation tokens only, before and after the rule. Three values differ from their defaults, one of them a switch turned off whose default is on.
+Date: 2026-09-23. This is evidence for `DESIGN.md` §4 "Settings defaults": a 20-row settings list rendered with the shipped foundation tokens, before and after the rule. Three values differ from their defaults; one of them is a switch that is off by choice but on by default.
+
+The cue used here is **one exploratory encoding, not the contract**: a `2px` Resonant AI Blue line on the row's leading edge, plus a `Default:` label. That line collides with the active-section indicator in the archived Maestro settings (`assets/system/apps/maestro/settings.css`). Choosing a non-colliding encoding, and adding a `Field` slot for the default label, is follow-up work.
 
 **Files**
 
 - Harness: [`dogfood/settings-change-marker.html`](dogfood/settings-change-marker.html).
 - Measuring frame: [`dogfood/settings-change-marker-frame.html`](dogfood/settings-change-marker-frame.html).
-- Driver: [`dogfood/settings-change-marker-measure.sh`](dogfood/settings-change-marker-measure.sh). Its output on 2026-09-23 is [`dogfood/settings-change-marker-measure.out`](dogfood/settings-change-marker-measure.out).
-- Setup: copy the harness and the frame into `<target>/settings/` of a `foundation`-profile target (materialize, verify: 8 files), and serve the target over local HTTP.
-- The harness uses only foundation CSS variables. No new token was needed.
+- Driver: [`dogfood/settings-change-marker-measure.sh`](dogfood/settings-change-marker-measure.sh). Its output, which begins with the harness hash it measured, is [`dogfood/settings-change-marker-measure.out`](dogfood/settings-change-marker-measure.out).
+- Setup: copy the harness and the frame into `<target>/settings/` of a `foundation`-profile target, and serve the target over local HTTP.
+- Colors, type, spacing and radii come from foundation variables. Row height, switch geometry and chip padding are fixed values.
 
 **What was measured**
 
-- **Viewports:** 1440px, 768px and 375px, in light and dark themes. Headless Chrome has a 500px minimum window, so the frame renders the harness in an iframe of exactly the requested width. An earlier measurement labelled 375px had actually read a 500px window; a positive control exposed it.
-- **Overflow:** `scrollWidth - clientWidth` is 0px at every width and theme. The positive control (a 2000px element) reads 1625px.
-- **Overlap:** the number of value elements that intersect the rendered text of their row label is 0 at every width and theme. The positive control (labels shifted 160px) reads 35. An earlier version compared element boxes rather than text extents and missed a real overlap, which is why the check now measures the label's text range.
-- **Contrast:** [`dogfood/settings-change-marker-contrast.py`](dogfood/settings-change-marker-contrast.py) applies WCAG 2.x to the OKLCH token values. Text needs 4.5:1; the marker line is non-text and needs 3:1.
+- **Viewports:** 1440px, 768px and 375px, in light and dark themes. Headless Chrome has a 500px minimum window, so the frame renders the harness in an iframe of exactly the requested width.
+- **Overflow:** `scrollWidth - clientWidth` is 0px at every width and theme. The positive control reads 1625px.
+- **Overlap:** the number of value elements that intersect their row label's rendered text is 0 at every width and theme. The positive control reads 35. Overlap is measured against the label's text range, not its element box, because a squeezed label paints its text outside its box.
+- **Contrast:** [`dogfood/settings-change-marker-contrast.py`](dogfood/settings-change-marker-contrast.py) applies WCAG 2.x to the OKLCH token values. Text pairs need 4.5:1; non-text pairs need 3:1.
 
-![Settings list before and after the change marker, 1440px light and dark, 375px light and dark](dogfood/settings-change-marker-contact-sheet.png)
+![Settings list before and after, 1440px light and dark, 375px light and dark](dogfood/settings-change-marker-contact-sheet.png)
 
 **Contrast results**
 
@@ -94,10 +96,13 @@ Date: 2026-09-23. This is evidence for the `DESIGN.md` §4 "Changed settings" ru
 |---|---:|---:|---:|---|
 | Value: foreground on card | 18.98 | 17.16 | 4.5 | Pass |
 | `Default:` label: muted-foreground on card | 6.00 | 5.21 | 4.5 | Pass |
-| Marker line: Resonant AI Blue vs card | 3.98 | 4.78 | 3.0 | Pass |
-| Faded value: Placeholder mist on card | 2.88 | not measured | 4.5 | **Fail** |
+| Leading line: Resonant AI Blue vs card | 3.98 | 4.78 | 3.0 | Pass |
+| Default in a lighter role: Muted current on card | 6.00 | — | 4.5 | Pass |
+| Default in a lighter role: Placeholder mist on card | 2.88 | — | 4.5 | **Fail** |
 | Blue value text on card | 3.98 | 4.78 | 4.5 | **Fail** light, pass dark |
+| Off switch track vs card | 1.63 | 1.49 | 3.0 | **Fail** |
 
-The last two rows are the treatments that a literal reading of "gray defaults, blue changes" produces. They are why the rule marks change additively and never fades a default.
+**Reading the rows**
 
-Light-theme links use the same blue on white at 3.98:1, below 4.5:1 for body-size text. That predates this change and is tracked separately as BRO-2538.
+- A lighter text role is not always a contrast failure: Muted current passes. The rule forbids faded defaults because a faded value reads as disabled and an on-by-default switch drawn neutral reads as off. Placeholder mist would also fail contrast.
+- Two rows predate this change and are tracked as foundation contrast gaps: light-theme links, which use the same blue on white at 3.98:1, and the off switch track.

@@ -48,23 +48,16 @@ Profile changes are closed-world for owned paths. Verification rejects artifacts
 
 ## Authored principles
 
-These parts of `DESIGN.md` were authored on 2026-09-23 (BRO-2537) and are not archive-derived:
-- §2: the Resonant AI Blue changed-setting marker, and Placeholder mist limited to placeholders;
-- §4: "Never nest cards" and "Changed settings";
-- §5: relative emphasis with a `4.5:1` floor, and explanation;
-- §6: the matching generation notes.
+On 2026-09-23 (BRO-2537) two rules were added to `DESIGN.md` that do not come from the archive: §4 "Never nest cards", and §4 "Settings defaults" together with its §6 reject-list entries.
 
-Their source is Kole Jain, *The secret behind weirdly perfect UI designs* (https://www.youtube.com/watch?v=neE6wOuBIP8), read from a timestamped transcript and its frames.
+The source for both is Kole Jain, *The secret behind weirdly perfect UI designs* (https://www.youtube.com/watch?v=neE6wOuBIP8), read from a timestamped transcript and its frames.
 
-What the source shows is a settings panel of five value chips and a switch. The narration says "Every one of these is on the default state" and likens them to "six checkboxes that are blue when they're off". The fix grays four chips so the fifth, itself a default, stands out, and the grayed chips lose text contrast.
+- **What the source shows.** A settings panel has five value chips and a switch. The narration says "Every one of these is on the default state". The fix grays four chips so that the first, `Suggest only`, which is itself a default, stands out. The grayed text is lighter.
+- **What the source only asserts.** At 07:49, over values it never identifies as defaults, it says "default values are gray".
+- **Where "Settings defaults" departs from the source.** It forbids fading defaults because a faded value reads as disabled and an on-by-default switch drawn neutral reads as off. Contrast is a further risk only when the lighter role is Placeholder mist (see `dogfood-receipt.md`). The rule marks the change instead.
+- **Prior art.** VS Code marks a modified setting with a line: its theme color `settings.modifiedItemIndicator` is "The line that indicates a modified setting" (https://code.visualstudio.com/api/references/theme-color, read 2026-09-23).
 
-It asserts at 07:49, over values it never identifies as defaults, that "default values are gray". "Changed settings" departs from that assertion:
-
-- **Change is marked additively** (a leading-edge line and a label naming the default) and defaults are never faded. That follows the foundation's contrast and color-alone rules, and a measurement: the faded and blue-text treatments fail `4.5:1` (see `dogfood-receipt.md`).
-- **Controls keep their state styling.**
-- **The marker states difference, not risk.**
-
-Prior art for a line that marks a modified setting: VS Code's theme color `settings.modifiedItemIndicator`, "The line that indicates a modified setting" (https://code.visualstudio.com/api/references/theme-color, read 2026-09-23).
+The visual encoding of the cue, and a `Field` slot for naming the default, are left to a follow-up. The 2px leading line tried in `dogfood-receipt.md` collides with the active-section line in the archived Maestro settings.
 
 ## Deliberately excluded
 

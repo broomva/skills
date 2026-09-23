@@ -1,8 +1,8 @@
 """WCAG 2.x contrast for the settings change marker specimen (BRO-2537).
 
 OKLCH values are the foundation tokens (DESIGN.md §2, broomva-foundation.css light and
-[data-theme="dark"] blocks), converted to linear sRGB (clipped); translucent fills would be
-composited in gamma-encoded sRGB, as browsers do. Text pairs need 4.5:1, non-text 3:1.
+[data-theme="dark"] blocks), converted to linear sRGB (clipped). Text pairs need 4.5:1,
+non-text 3:1.
 Run: python3 settings-change-marker-contrast.py
 """
 import math
@@ -22,20 +22,23 @@ def ratio(fg, bg):
     return (hi + 0.05) / (lo + 0.05)
 
 light = dict(card=oklch(1, 0, 0), foreground=oklch(0.175, 0.022, 265), muted=oklch(0.50, 0.015, 265),
-             placeholder=oklch(0.68, 0.010, 265), blue=oklch(0.60, 0.12, 260))
+             placeholder=oklch(0.68, 0.010, 265), blue=oklch(0.60, 0.12, 260), switch_off=oklch(0.84, 0.006, 265))
 dark = dict(card=oklch(0.175, 0.025, 272), foreground=oklch(0.965, 0.004, 265), muted=oklch(0.62, 0.020, 270),
-            blue=oklch(0.60, 0.12, 260))
+            blue=oklch(0.60, 0.12, 260), switch_off=oklch(0.32, 0.02, 272))
 
 PAIRS = [  # (label, fg, bg, kind) kind: text needs 4.5, non-text needs 3.0
     ("light value: foreground on card", light["foreground"], light["card"], "text"),
     ("light default label: muted-foreground on card", light["muted"], light["card"], "text"),
     ("light marker line: blue vs card", light["blue"], light["card"], "non-text"),
-    ("light faded value: placeholder mist on card", light["placeholder"], light["card"], "text"),
+    ("light lighter-role value: muted current on card", light["muted"], light["card"], "text"),
+    ("light lighter-role value: placeholder mist on card", light["placeholder"], light["card"], "text"),
     ("light blue value text on card", light["blue"], light["card"], "text"),
+    ("light switch-off track vs card", light["switch_off"], light["card"], "non-text"),
     ("dark value: foreground on card", dark["foreground"], dark["card"], "text"),
     ("dark default label: muted-foreground on card", dark["muted"], dark["card"], "text"),
     ("dark marker line: blue vs card", dark["blue"], dark["card"], "non-text"),
     ("dark blue value text on card", dark["blue"], dark["card"], "text"),
+    ("dark switch-off track vs card", dark["switch_off"], dark["card"], "non-text"),
 ]
 for label, fg, bg, kind in PAIRS:
     need = 4.5 if kind == "text" else 3.0
