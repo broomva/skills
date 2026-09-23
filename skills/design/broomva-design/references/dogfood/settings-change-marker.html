@@ -23,10 +23,10 @@
   .default { font-size: var(--bv-text-xs); color: var(--muted-foreground); }
   .chip { font-size: var(--bv-text-sm); padding: 2px var(--bv-space-2); border-radius: var(--bv-radius-chip); }
   .chip-accent-text { background: var(--accent); color: var(--bv-blue); }
-  .switch { width: 36px; height: 20px; border-radius: var(--bv-radius-full); background: var(--bv-switch-off); position: relative; border: 0; align-self: center; }
+  .switch { width: 36px; height: 20px; border-radius: var(--bv-radius-full); background: var(--bv-switch-off); position: relative; display: inline-block; align-self: center; }
   .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: var(--bv-radius-full); background: var(--bv-white); }
-  .switch[aria-checked="true"] { background: var(--bv-blue); }
-  .switch[aria-checked="true"]::after { left: 18px; }
+  .switch.on { background: var(--bv-blue); }
+  .switch.on::after { left: 18px; }
 </style>
 </head>
 <body>
@@ -41,7 +41,7 @@
         <div class="row"><dt>Run when</dt><dd><span class="chip chip-accent-text">Stale over 7 days</span></dd></div>
         <div class="row"><dt>Evidence shown</dt><dd><span class="chip chip-accent-text">Sources only</span></dd></div>
         <div class="row"><dt>On failure</dt><dd><span class="chip chip-accent-text">Save as suggestion</span></dd></div>
-        <div class="row"><dt>Keep human edits</dt><dd><button class="switch" role="switch" aria-checked="false" aria-label="Keep human edits"></button></dd></div>
+        <div class="row"><dt>Keep human edits</dt><dd><span class="switch" role="img" aria-label="Keep human edits: off"></span></dd></div>
         <div class="row"><dt>Review cadence</dt><dd><span class="chip chip-accent-text">Weekly</span></dd></div>
         <div class="row"><dt>Summary language</dt><dd><span class="chip chip-accent-text">English</span></dd></div>
         <div class="row"><dt>Max concurrent runs</dt><dd><span class="chip chip-accent-text">3</span></dd></div>
@@ -69,7 +69,7 @@
         <div class="row changed"><dt>Run when</dt><dd><span class="val" aria-describedby="d2">Stale over 7 days</span><span class="default" id="d2">Default: 30 days</span></dd></div>
         <div class="row"><dt>Evidence shown</dt><dd><span class="val" >Sources only</span></dd></div>
         <div class="row"><dt>On failure</dt><dd><span class="val" >Save as suggestion</span></dd></div>
-        <div class="row changed"><dt>Keep human edits</dt><dd><button class="switch" role="switch" aria-checked="false" aria-label="Keep human edits" aria-describedby="d5"></button><span class="default" id="d5">Default: on</span></dd></div>
+        <div class="row changed"><dt>Keep human edits</dt><dd><span class="switch" role="img" aria-label="Keep human edits: off" aria-describedby="d5"></span><span class="default" id="d5">Default: on</span></dd></div>
         <div class="row"><dt>Review cadence</dt><dd><span class="val" >Weekly</span></dd></div>
         <div class="row"><dt>Summary language</dt><dd><span class="val" >English</span></dd></div>
         <div class="row"><dt>Max concurrent runs</dt><dd><span class="val" >3</span></dd></div>
