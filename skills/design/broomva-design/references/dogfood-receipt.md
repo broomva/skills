@@ -67,25 +67,37 @@ Interceptor's native screenshot command timed out after the real-browser interac
 
 **Time-to-receipt:** approximately 3 minutes from first test-harness write to captured portability evidence.
 
-## Settings defaults specimen (BRO-2537)
+## Settings change marker specimen (BRO-2537)
 
-Date: 2026-09-23. Evidence for the `DESIGN.md` §4 "Displayed values" rule: an autonomy preset summary rendered with the shipped foundation tokens only, before and after the rule.
+Date: 2026-09-23. This is evidence for the `DESIGN.md` §4 "Changed settings" rule. It shows a 20-row settings list, rendered with the shipped foundation tokens only, before and after the rule. Three values differ from their defaults, one of them a switch turned off whose default is on.
 
-- **Harness:** [`dogfood/settings-defaults-recede.html`](dogfood/settings-defaults-recede.html) and its measuring frame [`dogfood/settings-defaults-recede-frame.html`](dogfood/settings-defaults-recede-frame.html). Copy both into `<target>/settings/` of a `foundation`-profile target (materialize, verify: 8 files) and serve the target over local HTTP. The harness uses only foundation CSS variables; no new token was needed.
-- **Viewports:** 1440px, 768px, and 375px, in light and dark themes. Headless Chrome enforces a minimum window width of 500px, so the frame renders the harness in an iframe of exactly the requested width (`?w=375`). A first attempt measured a 500px window while labelling it 375px; a positive control exposed it.
-- **Overflow:** `scrollWidth - clientWidth` is 0px at every width and theme. Positive control (`?control=overflow`, a 2000px element) reads 1625px at 375px.
-- **Overlap:** the number of value elements whose box intersects the rendered text of their row label is 0 at every width and theme. Positive controls: `?control=overlap` reads 11; the harness's own earlier grid layout (`?src=` pointed at it) reads 1 at 375px in both themes, the row that visibly overlapped. A first version compared element boxes instead of text extents and read 0 on that layout, which is why it measures the label's text range.
-- **Contrast:** [`dogfood/settings-defaults-recede-contrast.py`](dogfood/settings-defaults-recede-contrast.py), WCAG 2.x from the OKLCH token values, with translucent fills composited in gamma-encoded sRGB.
+**Files**
 
-![Settings preset summary before and after, 1440px light and dark, 375px light and dark](dogfood/settings-defaults-recede-contact-sheet.png)
+- Harness: [`dogfood/settings-change-marker.html`](dogfood/settings-change-marker.html).
+- Measuring frame: [`dogfood/settings-change-marker-frame.html`](dogfood/settings-change-marker-frame.html).
+- Driver: [`dogfood/settings-change-marker-measure.sh`](dogfood/settings-change-marker-measure.sh). Its output on 2026-09-23 is [`dogfood/settings-change-marker-measure.out`](dogfood/settings-change-marker-measure.out).
+- Setup: copy the harness and the frame into `<target>/settings/` of a `foundation`-profile target (materialize, verify: 8 files), and serve the target over local HTTP.
+- The harness uses only foundation CSS variables. No new token was needed.
 
-| Pair | Light | Dark | Result |
-|---|---:|---:|---|
-| Default value: foreground on secondary chip | 17.20 | 17.43 | Pass |
-| Changed value: foreground on Frosted selection fill | 17.13 | 14.95 | Pass |
-| `Default:` label: Muted current on card | 6.00 | 5.21 | Pass |
-| Changed chip edge: Resonant AI Blue on card (non-text, 3:1) | 3.98 | 4.78 | Pass |
-| Faded default: Placeholder mist on secondary chip | 2.61 | not measured | **Fail** |
-| Blue value text on Frosted selection fill | 3.59 | 4.16 | **Fail** below 4.5:1 |
+**What was measured**
 
-The two failing rows are the treatments a literal reading of "gray defaults, blue changes" produces. They are why the rule removes the accent from defaults without fading them, and marks a changed value with fill, edge, and a label rather than blue text.
+- **Viewports:** 1440px, 768px and 375px, in light and dark themes. Headless Chrome has a 500px minimum window, so the frame renders the harness in an iframe of exactly the requested width. An earlier measurement labelled 375px had actually read a 500px window; a positive control exposed it.
+- **Overflow:** `scrollWidth - clientWidth` is 0px at every width and theme. The positive control (a 2000px element) reads 1625px.
+- **Overlap:** the number of value elements that intersect the rendered text of their row label is 0 at every width and theme. The positive control (labels shifted 160px) reads 35. An earlier version compared element boxes rather than text extents and missed a real overlap, which is why the check now measures the label's text range.
+- **Contrast:** [`dogfood/settings-change-marker-contrast.py`](dogfood/settings-change-marker-contrast.py) applies WCAG 2.x to the OKLCH token values. Text needs 4.5:1; the marker line is non-text and needs 3:1.
+
+![Settings list before and after the change marker, 1440px light and dark, 375px light and dark](dogfood/settings-change-marker-contact-sheet.png)
+
+**Contrast results**
+
+| Pair | Light | Dark | Needs | Result |
+|---|---:|---:|---:|---|
+| Value: foreground on card | 18.98 | 17.16 | 4.5 | Pass |
+| `Default:` label: muted-foreground on card | 6.00 | 5.21 | 4.5 | Pass |
+| Marker line: Resonant AI Blue vs card | 3.98 | 4.78 | 3.0 | Pass |
+| Faded value: Placeholder mist on card | 2.88 | not measured | 4.5 | **Fail** |
+| Blue value text on card | 3.98 | 4.78 | 4.5 | **Fail** light, pass dark |
+
+The last two rows are the treatments that a literal reading of "gray defaults, blue changes" produces. They are why the rule marks change additively and never fades a default.
+
+Light-theme links use the same blue on white at 3.98:1, below 4.5:1 for body-size text. That predates this change and is tracked separately as BRO-2538.

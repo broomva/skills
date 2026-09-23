@@ -7,12 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [0.2.4] — 2026-09-23
 
-Crafted floor extended with Kole Jain's scannability argument (BRO-2537). Reference-only; no gate or detector changes:
+The crafted floor is extended with Kole Jain's scannability argument (BRO-2537). This is a reference-only change; no gate or detector changes:
 
-- **New [J] rows**: shared and created edges, differentiate before spacing (§2); relative emphasis with a contrast floor, and
-  change marking in value summaries by fill, edge, and label (§3); fix unclarity with structure, not added explanation (§6).
-- **Three stated contradictions** (7–9): show-don't-tell vs labels, white space vs differentiation, and defaults-recede vs
-  control state and consequence. "Recede" removes the accent, never the contrast, and change is not risk.
+- **New [J] rows:**
+  - §2: shared and created edges; differentiate before spacing.
+  - §3: relative emphasis with a `4.5:1` floor; a setting that differs from its default is marked additively, and defaults are never faded.
+  - §6: fix unclarity with structure, not added explanation.
+- **Three stated contradictions (7–9):** show-don't-tell vs labels; white space vs differentiation; and gray-the-defaults vs contrast, state, and consequence.
 
 ## [0.2.3] — 2026-08-21
 

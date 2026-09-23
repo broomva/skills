@@ -39,7 +39,7 @@ world) is what makes it good, and no checklist supplies that — see `arc.md` §
 | No horizontal overflow at 390px; primary content visible without horizontal scroll | M | Apple; impeccable `first-viewport-column-overflow` |
 | No nested cards; borders don't repair weak hierarchy; surfaces earned by selection/interaction/warning/grouping | M | Vercel; impeccable `nested-cards`; RUI "fewer borders" |
 | Density is a choice per surface, not a template ("start with too much white space, then remove") | J | RUI |
-| Compact surfaces sit on shared edges, most elements touching at least two; a missing edge is created (header band, divider, column line), not filled with content or hidden in an overflow menu | J | Jain 2026 |
+| Compact surfaces sit on shared edges; where an edge is missing, create one (header band, divider, column line) rather than filling the space | J | Jain 2026 |
 | A dense list is differentiated before it is spaced out: group by the key people search by; people, categories, and states get a visual form next to their text | J | Jain 2026 |
 
 ## 3. Color
@@ -51,8 +51,8 @@ world) is what makes it good, and no checklist supplies that — see `arc.md` §
 | Contrast 4.5:1 body, 3:1 large (≥24px or ≥18.5px bold) and non-text/focus | M | WCAG 2.2; Soueidan |
 | Never rely on color alone; no grey text on colored surfaces (tint from the hue) | M partial | RUI; NN/g; impeccable `gray-on-color` |
 | Monochrome first; color only where it adds meaning; one accent | M (hue count) | Vercel; Linear |
-| Emphasis is relative: when every item in a group carries the accent, none is emphasized; quiet the neighbours (remove accent, fill, or weight, never text contrast below the muted role) before boosting the element | J (M proxy: share of accent-filled siblings in a group) | Jain 2026; impeccable `critique` visual noise floor |
-| In read-only value summaries (settings rows, presets), defaults keep full-contrast text; a changed value is marked by fill, edge, and a label naming the default, never by accent-colored text; controls keep their state styling; change marking never replaces consequence marking | J (M proxy: accent-colored text on a value chip) | Jain 2026 (asserted, not shown on screen); VS Code `settings.modifiedItemIndicator`; WCAG 1.4.1, 1.4.3 |
+| Emphasis is relative: when every item in a group carries the accent, none is emphasized; quiet the neighbours by removing accent, fill, or weight, never by lowering readable text below 4.5:1 | J (M proxy: share of accent-filled siblings in a group) | Jain 2026; impeccable `critique` visual noise floor |
+| A setting that differs from its default is marked additively (an indicator plus a label naming the default, announced with the value); defaults are never faded; controls keep their state styling; the marker states difference, not risk | J (M proxy: faded text or accent-colored text on setting values) | Jain 2026 (asserted, not shown on screen); VS Code `settings.modifiedItemIndicator`; WCAG 1.4.1, 1.4.3 |
 | No decorative gradients / glows / mesh / glass; shadows carry offset + soft blur, one light source, tinted | M | Vercel; Freiberg "no swanky mesh gradients"; Comeau; impeccable `radial-halo`/`dark-glow` |
 | ≤5 elevation levels, one vocabulary (border *or* shadow per level) | M | RUI; Comeau; impeccable floor |
 
@@ -90,7 +90,7 @@ world) is what makes it good, and no checklist supplies that — see `arc.md` §
 | Buttons: verb + noun; no "click here"; no "you can" | M | Polaris; GOV.UK |
 | No all-caps eyebrows/kickers, no em dashes, no "it's not X, it's Y", no ✓-bullets, no emoji-as-icons, no authoring narration | M | Vercel reject list; impeccable `hero-eyebrow-chip`/`kicker-above-heading`/`em-dash-overuse`/`aphoristic-cadence`; the reel |
 | Copy is the product's own language; controls name their action | J | impeccable floor |
-| An unclear surface is fixed by structure or a recognizable visual, not by added helper copy, comparisons, or tooltips; persistent labels and accessible names are not explanation | J | Jain 2026 |
+| An unclear surface is fixed by structure or a recognizable visual, not by added helper copy, comparisons, or tooltips; field labels, accessible names, format instructions, error text, status labels, and labels naming a default are not explanation | J | Jain 2026 |
 
 ## 7. Accessibility
 
@@ -136,7 +136,7 @@ world) is what makes it good, and no checklist supplies that — see `arc.md` §
 6. **Line length** — 45–90 / 45–75 / ~65. Gate ≤75, target 65.
 7. **Show, don't tell vs labels** — Jain swaps text for icons, diagrams, and chips so a screen registers without reading; WCAG and broomva-design require text labels and accessible names. Resolve: visuals are added next to text for scan speed, never instead of a control's label. Jain's own icon-only action bar is the counter-example ("you're kind of just guessing … while you wait for the tooltip").
 8. **White space vs differentiation** — RUI starts with too much white space; Jain shows extra space making a dense list longer without making it faster to scan. Reconcile: space separates groups, differentiation separates items within a group.
-9. **Defaults recede vs state and consequence** — an on-by-default switch drawn neutral reads as off; a faded default looks disabled; and in a permissive preset every value is a default, so change marking alone shows nothing to worry about. Resolve: "recede" removes the accent, never the contrast; it never applies to a control's own state; and consequence is marked separately from change.
+9. **Defaults recede vs contrast, state, and consequence** — read literally, "gray the defaults" fades readable text, makes an on-by-default switch look off, and in a permissive preset marks nothing worth a look. Resolve: mark the change additively instead of fading the defaults; controls keep their state styling; and the marker states difference, not risk.
 
 ## Machine-checkable subset unslop's gate implements today
 

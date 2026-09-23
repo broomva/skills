@@ -51,7 +51,7 @@ Typical objects: metrics, dimensions, events, alerts, cohorts, reports, resource
 - Separate reversible preferences from security, billing, permissions, and destructive actions.
 - Use progress only when a real bounded sequence exists. Name steps instead of inventing percentages.
 - Make saved, unsaved, failed, and permission-limited states explicit.
-- In read-only summaries of current settings, let a reviewer find what differs from the default at a glance: defaults keep full-contrast text with no fill, and a changed value gets the Frosted selection fill, a blue edge, and a label naming the default. Controls keep their own on, off, and selected styling. For permissions, billing, and privacy, mark consequence (a warning with a text label) independently of whether a value is the default; a default is what will run, not necessarily what is safe.
+- Mark settings that differ from their defaults as `DESIGN.md` §4 "Changed settings" specifies. A value set back to its default is unmarked. When many values differ, add a count and a changed-only filter and keep every marker. The marker shows difference, not risk: state what permission, billing, and privacy settings allow, whatever their value.
 
 Typical objects: profiles, organizations, memberships, permissions, integrations, preferences, plans.
 

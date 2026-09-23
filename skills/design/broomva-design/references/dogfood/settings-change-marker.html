@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Settings change marker specimen</title>
+<link rel="stylesheet" href="../design-system/broomva/broomva-foundation.css">
+<style>
+  body { margin: 0; background: var(--background); color: var(--foreground); font-family: var(--bv-font-sans); }
+  main { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 320px), 1fr)); gap: var(--bv-space-6); padding: var(--bv-space-4); max-width: 1120px; margin: 0 auto; }
+  @media (min-width: 640px) { main { padding: var(--bv-space-8); } }
+  h1 { font-size: var(--bv-text-2xl); font-weight: 500; letter-spacing: -0.01em; margin: 0 0 var(--bv-space-1); }
+  .caption { font-size: var(--bv-text-xs); color: var(--muted-foreground); margin: 0 0 var(--bv-space-4); }
+  section { background: var(--card); border: 1px solid var(--border); border-radius: var(--bv-radius-xl); padding: var(--bv-space-2) var(--bv-space-5); }
+  dl { margin: 0; }
+  .row { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 0 var(--bv-space-3); min-height: 40px; border-top: 1px solid var(--border); padding-left: var(--bv-space-3); margin-left: calc(-1 * var(--bv-space-3)); }
+  .row:first-child { border-top: 0; }
+  .row { position: relative; }
+  .row.changed::before { content: ""; position: absolute; left: 0; top: var(--bv-space-1); bottom: var(--bv-space-1); width: 2px; background: var(--bv-blue); }
+  dt { font-size: var(--bv-text-sm); font-weight: 500; }
+  dd { margin: 0 0 0 auto; display: flex; flex-wrap: wrap; justify-content: flex-end; align-items: baseline; gap: 0 var(--bv-space-2); padding: var(--bv-space-2) 0; font-size: var(--bv-text-sm); }
+  .val { color: var(--foreground); }
+  .default { font-size: var(--bv-text-xs); color: var(--muted-foreground); }
+  .chip { font-size: var(--bv-text-sm); padding: 2px var(--bv-space-2); border-radius: var(--bv-radius-chip); }
+  .chip-accent-text { background: var(--accent); color: var(--bv-blue); }
+  .switch { width: 36px; height: 20px; border-radius: var(--bv-radius-full); background: var(--bv-switch-off); position: relative; border: 0; align-self: center; }
+  .switch::after { content: ""; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: var(--bv-radius-full); background: var(--bv-white); }
+  .switch[aria-checked="true"] { background: var(--bv-blue); }
+  .switch[aria-checked="true"]::after { left: 18px; }
+</style>
+</head>
+<body>
+<main>
+  <div>
+    <h1>Before</h1>
+    <p class="caption">Every value carries the accent. Three differ from the default; nothing shows which.</p>
+    <section aria-label="Agent settings, before">
+      <dl>
+        <div class="row"><dt>Write behavior</dt><dd><span class="chip chip-accent-text">Suggest only</span></dd></div>
+        <div class="row"><dt>Target cells</dt><dd><span class="chip chip-accent-text">Blank only</span></dd></div>
+        <div class="row"><dt>Run when</dt><dd><span class="chip chip-accent-text">Stale over 7 days</span></dd></div>
+        <div class="row"><dt>Evidence shown</dt><dd><span class="chip chip-accent-text">Sources only</span></dd></div>
+        <div class="row"><dt>On failure</dt><dd><span class="chip chip-accent-text">Save as suggestion</span></dd></div>
+        <div class="row"><dt>Keep human edits</dt><dd><button class="switch" role="switch" aria-checked="false" aria-label="Keep human edits"></button></dd></div>
+        <div class="row"><dt>Review cadence</dt><dd><span class="chip chip-accent-text">Weekly</span></dd></div>
+        <div class="row"><dt>Summary language</dt><dd><span class="chip chip-accent-text">English</span></dd></div>
+        <div class="row"><dt>Max concurrent runs</dt><dd><span class="chip chip-accent-text">3</span></dd></div>
+        <div class="row"><dt>Retry limit</dt><dd><span class="chip chip-accent-text">5</span></dd></div>
+        <div class="row"><dt>Notify on</dt><dd><span class="chip chip-accent-text">Failures only</span></dd></div>
+        <div class="row"><dt>Time zone</dt><dd><span class="chip chip-accent-text">America/Bogota</span></dd></div>
+        <div class="row"><dt>Token budget</dt><dd><span class="chip chip-accent-text">200k per run</span></dd></div>
+        <div class="row"><dt>Allowed tools</dt><dd><span class="chip chip-accent-text">Read and search</span></dd></div>
+        <div class="row"><dt>Branch prefix</dt><dd><span class="chip chip-accent-text">agent/</span></dd></div>
+        <div class="row"><dt>Log retention</dt><dd><span class="chip chip-accent-text">30 days</span></dd></div>
+        <div class="row"><dt>Merge policy</dt><dd><span class="chip chip-accent-text">Gates only</span></dd></div>
+        <div class="row"><dt>Draft PRs</dt><dd><span class="chip chip-accent-text">Yes</span></dd></div>
+        <div class="row"><dt>Commit style</dt><dd><span class="chip chip-accent-text">Conventional</span></dd></div>
+        <div class="row"><dt>Quiet hours</dt><dd><span class="chip chip-accent-text">22:00 to 07:00</span></dd></div>
+      </dl>
+    </section>
+  </div>
+  <div>
+    <h1>After</h1>
+    <p class="caption">Values keep the primary text role. The three that differ from the default carry a leading-edge line and a label naming the default.</p>
+    <section aria-label="Agent settings, after">
+      <dl>
+        <div class="row"><dt>Write behavior</dt><dd><span class="val" >Suggest only</span></dd></div>
+        <div class="row"><dt>Target cells</dt><dd><span class="val" >Blank only</span></dd></div>
+        <div class="row changed"><dt>Run when</dt><dd><span class="val" aria-describedby="d2">Stale over 7 days</span><span class="default" id="d2">Default: 30 days</span></dd></div>
+        <div class="row"><dt>Evidence shown</dt><dd><span class="val" >Sources only</span></dd></div>
+        <div class="row"><dt>On failure</dt><dd><span class="val" >Save as suggestion</span></dd></div>
+        <div class="row changed"><dt>Keep human edits</dt><dd><button class="switch" role="switch" aria-checked="false" aria-label="Keep human edits" aria-describedby="d5"></button><span class="default" id="d5">Default: on</span></dd></div>
+        <div class="row"><dt>Review cadence</dt><dd><span class="val" >Weekly</span></dd></div>
+        <div class="row"><dt>Summary language</dt><dd><span class="val" >English</span></dd></div>
+        <div class="row"><dt>Max concurrent runs</dt><dd><span class="val" >3</span></dd></div>
+        <div class="row changed"><dt>Retry limit</dt><dd><span class="val" aria-describedby="d9">5</span><span class="default" id="d9">Default: 2</span></dd></div>
+        <div class="row"><dt>Notify on</dt><dd><span class="val" >Failures only</span></dd></div>
+        <div class="row"><dt>Time zone</dt><dd><span class="val" >America/Bogota</span></dd></div>
+        <div class="row"><dt>Token budget</dt><dd><span class="val" >200k per run</span></dd></div>
+        <div class="row"><dt>Allowed tools</dt><dd><span class="val" >Read and search</span></dd></div>
+        <div class="row"><dt>Branch prefix</dt><dd><span class="val" >agent/</span></dd></div>
+        <div class="row"><dt>Log retention</dt><dd><span class="val" >30 days</span></dd></div>
+        <div class="row"><dt>Merge policy</dt><dd><span class="val" >Gates only</span></dd></div>
+        <div class="row"><dt>Draft PRs</dt><dd><span class="val" >Yes</span></dd></div>
+        <div class="row"><dt>Commit style</dt><dd><span class="val" >Conventional</span></dd></div>
+        <div class="row"><dt>Quiet hours</dt><dd><span class="val" >22:00 to 07:00</span></dd></div>
+      </dl>
+    </section>
+  </div>
+</main>
+<script>
+  const p = new URLSearchParams(location.search);
+  if (p.get("theme") === "dark") document.documentElement.setAttribute("data-theme", "dark");
+  if (p.get("control") === "overlap") document.head.insertAdjacentHTML("beforeend", "<style>.row dt{position:relative;left:160px}</style>");
+  if (p.get("control") === "overflow") document.body.insertAdjacentHTML("beforeend", '<div style="width:2000px;height:1px"></div>');
+  addEventListener("load", () => { const d = document.documentElement; document.title = "overflow=" + (d.scrollWidth - d.clientWidth); });
+</script>
+</body>
+</html>
