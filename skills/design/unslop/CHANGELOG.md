@@ -5,6 +5,15 @@ All notable changes to `unslop` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.2.4] — 2026-09-23
+
+Crafted floor extended with Kole Jain's scannability argument (BRO-2537). Reference-only; no gate or detector changes:
+
+- **New [J] rows**: shared and created edges, differentiate before spacing (§2); relative emphasis with a contrast floor, and
+  change marking in value summaries by fill, edge, and label (§3); fix unclarity with structure, not added explanation (§6).
+- **Three stated contradictions** (7–9): show-don't-tell vs labels, white space vs differentiation, and defaults-recede vs
+  control state and consequence. "Recede" removes the accent, never the contrast, and change is not risk.
+
 ## [0.2.3] — 2026-08-21
 
 broomva-design dogfood (BRO-2197, the house exemplar audits itself):

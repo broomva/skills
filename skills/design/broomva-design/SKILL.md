@@ -151,7 +151,9 @@ Also audit for:
 - title case, emoji, em dashes, vague labels, or ornamental eyebrow copy;
 - `transition: all`, hover transforms that move layout, or motion without reduced-motion handling;
 - icon-only controls without accessible names;
-- agentic work language appearing in a product that does not model agentic work.
+- agentic work language appearing in a product that does not model agentic work;
+- accent color on every value in a group or on values still at their defaults; changed values marked by blue text or by color alone; defaults faded to look disabled; change marking standing in for consequence marking;
+- nested cards, or controls moved into an overflow menu to hide an unresolved edge.
 
 ## Voice
 

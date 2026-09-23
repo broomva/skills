@@ -46,6 +46,7 @@ A receipt must describe something observable. It is not a celebratory activity m
 - Use `LifecycleRail` for ordered stages, not a fake numeric completion model.
 - Use `AutonomyScoreboard` only when the underlying receipts justify the summary.
 - Use `Composer` for the next instruction or intervention when a persistent control surface is central to the product.
+- In autonomy and permission presets, show every rule's value. Values that match the active preset keep full-contrast text with no fill; a value a person changed gets the Frosted selection fill, a blue edge, and a label naming the preset's value. Change marking does not replace consequence marking: a rule that widens what an agent may do is marked as a warning with a text label, including when it is the preset's own value, as in a permissive preset.
 
 ## Human attention
 

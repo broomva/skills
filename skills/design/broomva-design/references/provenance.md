@@ -46,6 +46,19 @@ The materializer owns the boundary: `foundation` is platform-neutral guidance pl
 
 Profile changes are closed-world for owned paths. Verification rejects artifacts left by another Broomva profile, and the explicit `--prune` flag removes only known managed paths. Modified managed files require the separate `--force` authorization.
 
+## Authored principles
+
+The scannability rules in `DESIGN.md` (§4 nested cards and displayed values, §5 relative emphasis, shared edges, differentiation, and explanation, §6 generation notes) were authored on 2026-09-23 (BRO-2537). They are not archive-derived. Their source is Kole Jain, *The secret behind weirdly perfect UI designs* (https://www.youtube.com/watch?v=neE6wOuBIP8, 2026-09-20), read from a timestamped transcript and its frames.
+
+The source demonstrates relative emphasis on a settings panel: four of five values are grayed so the remaining one stands out, and the narration says all five were at their defaults. It asserts, but does not demonstrate on screen, that default values should be gray. Its grayed values also lose text contrast. The displayed-values rule departs from the source where the foundation or a measurement requires it:
+
+- the change is carried by fill, edge, and a label naming the default, never by blue text (measured below `4.5:1`, see `dogfood-receipt.md`) or by color alone;
+- a default keeps full-contrast text (fading it makes it look disabled);
+- controls keep their state styling (that is state, not emphasis);
+- change marking does not replace consequence marking (a changed value is not necessarily a risky one).
+
+Prior art for marking a changed setting with an indicator rather than fading defaults: VS Code's theme color `settings.modifiedItemIndicator`, "The line that indicates a modified setting" (https://code.visualstudio.com/api/references/theme-color, read 2026-09-23).
+
 ## Deliberately excluded
 
 - `design_handoff_maestro/` because it duplicates the canonical tokens, components, font, and logo

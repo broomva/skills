@@ -66,3 +66,26 @@ Interceptor's native screenshot command timed out after the real-browser interac
 **Surfaces driven:** Interceptor in real Chrome, Playwright Chromium, local HTTP, and the materializer CLI.
 
 **Time-to-receipt:** approximately 3 minutes from first test-harness write to captured portability evidence.
+
+## Settings defaults specimen (BRO-2537)
+
+Date: 2026-09-23. Evidence for the `DESIGN.md` §4 "Displayed values" rule: an autonomy preset summary rendered with the shipped foundation tokens only, before and after the rule.
+
+- **Harness:** [`dogfood/settings-defaults-recede.html`](dogfood/settings-defaults-recede.html) and its measuring frame [`dogfood/settings-defaults-recede-frame.html`](dogfood/settings-defaults-recede-frame.html). Copy both into `<target>/settings/` of a `foundation`-profile target (materialize, verify: 8 files) and serve the target over local HTTP. The harness uses only foundation CSS variables; no new token was needed.
+- **Viewports:** 1440px, 768px, and 375px, in light and dark themes. Headless Chrome enforces a minimum window width of 500px, so the frame renders the harness in an iframe of exactly the requested width (`?w=375`). A first attempt measured a 500px window while labelling it 375px; a positive control exposed it.
+- **Overflow:** `scrollWidth - clientWidth` is 0px at every width and theme. Positive control (`?control=overflow`, a 2000px element) reads 1625px at 375px.
+- **Overlap:** the number of value elements whose box intersects the rendered text of their row label is 0 at every width and theme. Positive controls: `?control=overlap` reads 11; the harness's own earlier grid layout (`?src=` pointed at it) reads 1 at 375px in both themes, the row that visibly overlapped. A first version compared element boxes instead of text extents and read 0 on that layout, which is why it measures the label's text range.
+- **Contrast:** [`dogfood/settings-defaults-recede-contrast.py`](dogfood/settings-defaults-recede-contrast.py), WCAG 2.x from the OKLCH token values, with translucent fills composited in gamma-encoded sRGB.
+
+![Settings preset summary before and after, 1440px light and dark, 375px light and dark](dogfood/settings-defaults-recede-contact-sheet.png)
+
+| Pair | Light | Dark | Result |
+|---|---:|---:|---|
+| Default value: foreground on secondary chip | 17.20 | 17.43 | Pass |
+| Changed value: foreground on Frosted selection fill | 17.13 | 14.95 | Pass |
+| `Default:` label: Muted current on card | 6.00 | 5.21 | Pass |
+| Changed chip edge: Resonant AI Blue on card (non-text, 3:1) | 3.98 | 4.78 | Pass |
+| Faded default: Placeholder mist on secondary chip | 2.61 | not measured | **Fail** |
+| Blue value text on Frosted selection fill | 3.59 | 4.16 | **Fail** below 4.5:1 |
+
+The two failing rows are the treatments a literal reading of "gray defaults, blue changes" produces. They are why the rule removes the accent from defaults without fading them, and marks a changed value with fill, edge, and a label rather than blue text.
