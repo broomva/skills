@@ -25,7 +25,7 @@ Work that must outlive one session needs state that survives the conversation. *
 
 The reflexive trigger rule (full text in workspace AGENTS.md §P12):
 
-1. **Before starting work that must outlive this session** (an overnight run, work nobody will resume by hand) — write `PROMPT.md`, decide budget, pick success condition, call `persist iterate`.
+1. **Before starting work that must outlive this session** (an overnight run, or work paused now and resumed in a later session) — write `PROMPT.md`, decide budget, pick success condition, call `persist iterate`.
 2. **When the same fix has been attempted ≥3 times without convergence** — stop the in-context loop; write the diff history to `PROMPT.md` and start fresh.
 3. **When orchestrating long-horizon work** — default to persist with periodic checkpoints; compose with P5 worktrees for parallel persist loops.
 
