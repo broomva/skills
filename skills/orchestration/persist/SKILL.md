@@ -85,7 +85,7 @@ State events append to `~/.config/broomva/persist/state.jsonl` (JSONL append-onl
 
 - **State lives in the filesystem.** Each iteration starts from PROMPT.md content, not conversation history.
 - **Validation backpressure is external.** Don't ask the agent "are you done?" — check exit codes, file presence, or status pattern.
-- **Budget bounds must be honored.** Default 50 iterations / 4h wall-clock. The 4h default matches METR's 80%-horizon ceiling.
+- **Budget bounds must be honored.** Default 50 iterations / 4h wall-clock.
 - **State.jsonl is append-only.** Loop terminations are terminal — no resurrection. To restart, spawn a new loop with a new ID.
 - **Each iteration is a fresh process.** `persist` calls the agent CLI in a subprocess; agent context never persists between iterations except via filesystem state.
 
