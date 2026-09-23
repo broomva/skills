@@ -52,7 +52,7 @@ world) is what makes it good, and no checklist supplies that — see `arc.md` §
 | Never rely on color alone; no grey text on colored surfaces (tint from the hue) | M partial | RUI; NN/g; impeccable `gray-on-color` |
 | Monochrome first; color only where it adds meaning; one accent | M (hue count) | Vercel; Linear |
 | Emphasis is relative: when every item in a group carries the accent, none is emphasized; quiet the neighbours by removing accent, fill, or weight, never by lowering readable text below 4.5:1 or using the disabled treatment | J (M proxy: share of accent-filled siblings in a group) | Jain 2026; impeccable `critique` visual noise floor |
-| Settings at their default keep their normal text style, never a lighter role or the disabled treatment; a changed setting is marked with a cue that is not color alone, ideally naming the default; controls keep their state styling | J (M proxy: settings values in a lighter text role) | Jain 2026 (asserted, not shown on screen); VS Code `settings.modifiedItemIndicator`; WCAG 1.4.1 |
+| Settings at their default keep their normal text style, never a lighter role or the disabled treatment; a changed setting is marked with a cue that is not color alone, ideally naming the default; controls keep their state styling | J (M proxy: settings values in a lighter text role than changed values) | Departs from Jain 2026 (grays defaults, 07:49); VS Code `settings.modifiedItemIndicator`; WCAG 1.4.1 |
 | No decorative gradients / glows / mesh / glass; shadows carry offset + soft blur, one light source, tinted | M | Vercel; Freiberg "no swanky mesh gradients"; Comeau; impeccable `radial-halo`/`dark-glow` |
 | ≤5 elevation levels, one vocabulary (border *or* shadow per level) | M | RUI; Comeau; impeccable floor |
 
@@ -90,7 +90,7 @@ world) is what makes it good, and no checklist supplies that — see `arc.md` §
 | Buttons: verb + noun; no "click here"; no "you can" | M | Polaris; GOV.UK |
 | No all-caps eyebrows/kickers, no em dashes, no "it's not X, it's Y", no ✓-bullets, no emoji-as-icons, no authoring narration | M | Vercel reject list; impeccable `hero-eyebrow-chip`/`kicker-above-heading`/`em-dash-overuse`/`aphoristic-cadence`; the reel |
 | Copy is the product's own language; controls name their action | J | impeccable floor |
-| An unclear surface is fixed by structure or a recognizable visual, not by added helper copy, comparisons, or tooltips; field labels, hints, accessible names, format instructions, error text, status labels, labels naming a default, and statements of what a setting allows or costs are not explanation | J | Jain 2026 |
+| An unclear surface is fixed by structure or a recognizable visual, not by added helper copy, comparisons, or tooltips; field labels, hints, accessible names, format instructions, error text, status labels, labels naming a default, statements of what a setting or action allows, costs, or cannot undo, and data definitions are not explanation | J | Jain 2026 |
 
 ## 7. Accessibility
 

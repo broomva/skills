@@ -86,7 +86,7 @@ Use the fixed scale `12 / 14 / 16 / 18 / 22 / 24 / 28px`. Use sentence case ever
 
 - **Shape:** Use `0.75rem` for ordinary cards and `1rem` for large cards or dialogs. Never make every container pill-shaped.
 - **Surface:** Use matte Paper white or the dark card surface with a Whisper edge. Cards do not use glass.
-- **Hierarchy:** Prefer whitespace, type, and alignment before nested borders. Never nest cards; a column edge or a single divider can do a card's grouping work. Dense tables may reduce vertical spacing, but must preserve readable row focus and selection.
+- **Hierarchy:** Prefer whitespace, type, and alignment before nested borders. Dense tables may reduce vertical spacing, but must preserve readable row focus and selection.
 - **Interaction:** Hover may add a soft blue-tinted shadow without moving the card. Entire-card links require a visible title and a predictable focus target.
 
 ### Navigation
@@ -102,7 +102,6 @@ Use the fixed scale `12 / 14 / 16 / 18 / 22 / 24 / 28px`. Use sentence case ever
 - **Surface:** Inputs are matte. A floating command surface may use heavy glass because it occupies a separate elevation layer.
 - **States:** Placeholder Mist is subordinate; focus uses Resonant AI Blue; errors pair Intervention red with specific text. Mobile inputs remain at least `16px`.
 - **Accessibility:** Every field has a persistent accessible label, errors are programmatically associated, and controls are operable by keyboard or the platform's equivalent input method.
-- **Settings defaults:** Where settings show their current values, a value at its default keeps its normal text style. Never fade it to a lighter text role or give it the disabled treatment to make changed values stand out; mark the changed value instead, with a cue that is not color alone. Controls keep their own on, off, and selected styling.
 
 ### Overlays and feedback
 
@@ -131,4 +130,4 @@ Compose the foundation around the product's actual objects: products and carts, 
 
 Generate a calm Broomva interface for the named product and platform. Start from a light or deep-blue canvas, system typography for application UI, Blue-black ink (`oklch(0.175 0.022 265)`), cool hue-265 neutrals, and Resonant AI Blue (`oklch(0.60 0.12 260)`) only for focus, selection, information, and rare brand emphasis. Keep cards and chrome matte. Reserve frosted glass for surfaces that actually float. Use `0.75rem` cards, `1rem` dialogs, compact controls, and the 4px spacing ladder.
 
-Infer the information architecture and component composition from the product domain. Preserve the blackhole mark, blue-axis palette, sparse depth, semantic color roles, and accessible interaction states. Reject generic gradient heroes, ambient glass dashboards, arbitrary radii, decorative status color without text, faded defaults, nested cards, and any domain-specific extension that leaks into unrelated products.
+Infer the information architecture and component composition from the product domain. Preserve the blackhole mark, blue-axis palette, sparse depth, semantic color roles, and accessible interaction states. Reject generic gradient heroes, ambient glass dashboards, arbitrary radii, decorative status color without text, and any domain-specific extension that leaks into unrelated products.

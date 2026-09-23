@@ -46,7 +46,6 @@ A receipt must describe something observable. It is not a celebratory activity m
 - Use `LifecycleRail` for ordered stages, not a fake numeric completion model.
 - Use `AutonomyScoreboard` only when the underlying receipts justify the summary.
 - Use `Composer` for the next instruction or intervention when a persistent control surface is central to the product.
-- In autonomy and permission presets, the default for the settings guidance in `product-patterns.md` is the active preset's value, and each rule states what it allows an agent to do.
 
 ## Human attention
 

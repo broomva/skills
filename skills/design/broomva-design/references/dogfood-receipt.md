@@ -67,11 +67,13 @@ Interceptor's native screenshot command timed out after the real-browser interac
 
 **Time-to-receipt:** approximately 3 minutes from first test-harness write to captured portability evidence.
 
-## Settings defaults specimen (BRO-2537)
+## Exploratory specimen: settings defaults (BRO-2537, not adopted)
 
-Date: 2026-09-23. This is evidence for `DESIGN.md` §4 "Settings defaults": a 20-row settings list rendered with the shipped foundation tokens, before and after the rule. Three values differ from their defaults; one of them is a switch that is off by choice but on by default.
+Date: 2026-09-23. This specimen explored a proposed rule: never fade a setting's default to make changed values stand out, and mark the change instead with a cue that is not color alone. The rule came from a `/checkit` of Kole Jain, *The secret behind weirdly perfect UI designs* (https://www.youtube.com/watch?v=neE6wOuBIP8), which grays defaults (07:49). The proposal departed from that.
 
-The cue used here is **one exploratory encoding, not the contract**: a `2px` Resonant AI Blue line on the row's leading edge, plus a `Default:` label. That line collides with the active-section indicator in the archived Maestro settings (`assets/system/apps/maestro/settings.css`). Choosing a non-colliding encoding, and adding a `Field` slot for the default label, is follow-up work.
+**The rule was not adopted into `DESIGN.md`.** P20 review stopped at round 3 (score 6/10). Its encoding and a `Field` slot for the default label are open work (BRO-2539); see broomva/skills#228 for the review record. The specimen is a 20-row settings list rendered with the shipped foundation tokens. Three values differ from their defaults; one of them is a switch that is off by choice but on by default.
+
+The cue tried here is a `2px` Resonant AI Blue line on the row's leading edge plus a `Default:` label. That line collides with the active-section indicator in the archived Maestro settings (`assets/system/apps/maestro/settings.css`).
 
 **Files**
 
@@ -104,5 +106,5 @@ The cue used here is **one exploratory encoding, not the contract**: a `2px` Res
 
 **Reading the rows**
 
-- A lighter text role is not always a contrast failure: Muted current passes. The rule forbids faded defaults because a faded value reads as disabled and an on-by-default switch drawn neutral reads as off. Placeholder mist would also fail contrast.
-- Two rows predate this change and are tracked as foundation contrast gaps: light-theme links, which use the same blue on white at 3.98:1, and the off switch track.
+- A lighter text role is not always a contrast failure: in light theme, Muted current passes and Placeholder mist fails. The proposal's case against fading rested on state, not contrast: a faded value can read as unavailable, and an on-by-default switch drawn neutral reads as off.
+- Two rows predate this change and are tracked as foundation contrast gaps (BRO-2538): light-theme links, which use the same blue on white at 3.98:1, and the off switch track.

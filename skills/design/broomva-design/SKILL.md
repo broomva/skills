@@ -151,9 +151,7 @@ Also audit for:
 - title case, emoji, em dashes, vague labels, or ornamental eyebrow copy;
 - `transition: all`, hover transforms that move layout, or motion without reduced-motion handling;
 - icon-only controls without accessible names;
-- agentic work language appearing in a product that does not model agentic work;
-- settings defaults shown in a lighter text role or the disabled treatment, or a changed setting marked by color alone (`DESIGN.md` §4 "Settings defaults");
-- nested cards.
+- agentic work language appearing in a product that does not model agentic work.
 
 ## Voice
 

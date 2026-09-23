@@ -51,7 +51,6 @@ Typical objects: metrics, dimensions, events, alerts, cohorts, reports, resource
 - Separate reversible preferences from security, billing, permissions, and destructive actions.
 - Use progress only when a real bounded sequence exists. Name steps instead of inventing percentages.
 - Make saved, unsaved, failed, and permission-limited states explicit.
-- Mark settings whose saved value differs from the default as `DESIGN.md` §4 "Settings defaults" describes, and name the default beside the value where the layout allows. The default is the value that applies if the setting is cleared: the active preset's value, else an inherited policy's, else the product default. With no knowable default, mark nothing. For security, billing, permissions, privacy, and destructive actions, state what the current value allows whatever it is; a default is not necessarily safe.
 
 Typical objects: profiles, organizations, memberships, permissions, integrations, preferences, plans.
 
