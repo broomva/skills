@@ -19,13 +19,13 @@ The defining moves:
 
 ## Why this exists
 
-Work that must outlive one session needs state that survives the conversation. **Persist restarts the context every iteration** while keeping state in the filesystem, so the loop survives session ends, crashes and repeated failed attempts. METR's [Time Horizon 1.1](https://metr.org/blog/2026-1-29-time-horizon-1-1/) put the 80%-reliability horizon at ~1 hour on Opus 4.6; that figure was not re-measured on the models this workspace runs now (1M context, with automatic compaction in Claude Code), so it is context for the design, not a trigger.
+Work that must outlive one session needs state that survives the conversation. **Persist restarts the context every iteration** while keeping state in the filesystem, so the loop survives session ends, crashes and repeated failed attempts. METR's [Time Horizon 1.1](https://metr.org/blog/2026-1-29-time-horizon-1-1/) put Opus 4.6's 80%-reliability horizon at about an hour; that is a measurement of an older model, and current models run a 1M context with automatic compaction in Claude Code, so it is context for the design, not a trigger.
 
 ## When to invoke
 
 The reflexive trigger rule (full text in workspace AGENTS.md §P12):
 
-1. **Before starting work that must outlive this session** (an overnight run, or work paused now and resumed in a later session) — write `PROMPT.md`, decide budget, pick success condition, call `persist iterate`.
+1. **Before starting work that must outlive this session** — write `PROMPT.md`, decide budget, pick success condition. Call `persist iterate` when it should run unattended (an overnight run); when it is paused for a later session, leave `PROMPT.md` for the session that resumes it.
 2. **When the same fix has been attempted ≥3 times without convergence** — stop the in-context loop; write the diff history to `PROMPT.md` and start fresh.
 3. **When orchestrating long-horizon work** — default to persist with periodic checkpoints; compose with P5 worktrees for parallel persist loops.
 
