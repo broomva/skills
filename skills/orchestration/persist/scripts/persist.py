@@ -2,9 +2,8 @@
 """persist.py — bstack P12 Persistent Loop Discipline.
 
 Cross-context restart loop: state persists in the filesystem, the agent's
-context window is restarted fresh each iteration. Closes the failure mode
-where long-horizon agentic work degrades silently as the conversation
-context window rots past 100K tokens (the "Dumb Zone").
+context window is restarted fresh each iteration. For work that must outlive
+one session, or a fix that keeps failing in-context and needs a clean start.
 
 The defining moves are:
 
@@ -141,7 +140,7 @@ class LoopEvent:
 @dataclass(frozen=True)
 class LoopBudget:
     max_iterations: int = 50
-    max_wall_clock_s: int = 14400  # 4h default — matches METR's 80%-horizon ceiling
+    max_wall_clock_s: int = 14400  # 4h default wall-clock budget
 
 
 # ── File helpers ────────────────────────────────────────────────────────────
@@ -487,7 +486,7 @@ def build_parser() -> argparse.ArgumentParser:
     pi.add_argument("--max-iterations", type=int, default=50,
                     help="Hard ceiling on iterations (default: 50)")
     pi.add_argument("--max-wall-clock", type=int, default=14400,
-                    help="Wall-clock budget in seconds (default: 14400 = 4h, METR 80%%-horizon)")
+                    help="Wall-clock budget in seconds (default: 14400 = 4h)")
     pi.add_argument("--success-condition", default=None,
                     help="exit-code-0 | file-exists:PATH | grep:PATTERN:FILE")
     pi.add_argument("--agent-cmd", default="claude -p '{}'",

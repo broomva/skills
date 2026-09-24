@@ -905,9 +905,21 @@ def test_intake_writes_event(tmp_path):
     assert event["signals_matched"]["prompt_keywords"] >= 2
 
 
+def _lens_names(out: str) -> set[str]:
+    line = next(ln for ln in out.splitlines() if ln.startswith("Lens(es):"))
+    return {n.strip() for n in line.split(":", 1)[1].split("(")[0].split(",")}
+
+
 def test_intake_multi_domain_decomposes(tmp_path):
-    """Prompts hitting ≥2 lenses (rust + ts) escalate to decompose mode."""
+    """Prompts hitting ≥2 lenses (rust + ts) escalate to decompose mode.
+
+    The seed workspace has no ts lens, so it is written here. Without it only
+    rust fired in augment mode, and the old assertions still passed: "decompose"
+    appears in the directive printed on every intake, and "ts" matched inside
+    other words. Assert on the Mode and Lens(es) lines instead.
+    """
     workspace = _seed_workspace(tmp_path)
+    (workspace / "roles" / "ts.md").write_text(_FIXTURE_TS, encoding="utf-8")
     env = {"HOME": str(tmp_path)}
 
     rc, out, _ = run_cli(
@@ -918,10 +930,8 @@ def test_intake_multi_domain_decomposes(tmp_path):
         env=env,
     )
     assert rc == 0
-    assert "decompose" in out.lower()
-    # Both lens names should appear
-    assert "rust" in out
-    assert "ts" in out
+    assert "Mode: decompose" in out
+    assert _lens_names(out) == {"rust", "ts"}
 
 
 def test_intake_no_match_applies_meta_only(tmp_path):
