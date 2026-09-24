@@ -89,6 +89,13 @@ Apply the rubric manually (or via lightweight heuristic prompt) to each item. Th
 
 For items in the 3–6 range, invoke the LLM judge using the prompt template below. The judge re-scores independently and provides reasoning. Final decision: use judge score if it differs from Pass 1 by ≥ 2 points; otherwise average and round up.
 
+> **Status (BRO-2506): Pass 2 is opt-in and off by default** — `run --judge` or
+> `BOOKKEEPING_JUDGE=1`. It had never executed once before that ticket (0 judge
+> calls in 7,765 recorded runs), so every claim in this section describes the
+> *designed* behaviour, not the behaviour the corpus was built under. The
+> boundary above has never been validated against human labels; measure with
+> `bookkeeping judge-check --sample N --labels sheet.json` before trusting it.
+
 ---
 
 ## 4. LLM Judge Prompt Template
@@ -206,7 +213,8 @@ Agents applying this rubric must actively guard against the following failure mo
 | **Novelty inflation for respected sources** | Giving Novelty: 3 to a Karpathy tweet that restates well-known backprop intuitions, because the author is respected. | Novelty is about graph state, not source prestige. Ask: "Does a `[[concept]]` already exist?" |
 | **Relevance tunnel vision** | Scoring Relevance: 3 only for items relating to the project currently being worked on, ignoring other active threads. | Check all active projects and open questions listed in the graph context, not just today's focus. |
 | **Session-topicality bias** | Promoting items because they're on your mind right now, not because they're strategically valuable. | Apply the rubric 24 hours later or ask: "Would this be worth reading in 3 months?" |
-| **Ambiguous band lazy discard** | Skipping the LLM judge for 3–4 scores and discarding by default to save time. | Always invoke Pass 2 for scores 3–6. The judge exists precisely for this band. |
+| **Ambiguous band lazy discard** | Skipping the LLM judge for 3–4 scores and discarding by default to save time. | Invoke Pass 2 for scores 3–6 whenever the judge is enabled — it exists precisely for this band. When it is disabled the heuristic stands, and the score is a *one-pass* score; do not describe it as judged. |
+| **Reading an unavailable judge as a passed judge** | Treating a run that produced no judge calls as a run the judge approved. For 7,765 runs the two were indistinguishable. | Assert availability positively with `bookkeeping judge-check --verify` — the bare form reports what is CONFIGURED, which an expired credential or an unparseable spec still satisfies; only `--verify` round-trips. `judge_enabled: false` in the run log means the band was never arbitrated, not that it was arbitrated and agreed. |
 | **Compound claim splitting** | Treating a multi-claim item as a single entity and averaging scores across claims. | Split multi-claim items into separate scored items. Each claim gets its own score. |
 
 ---

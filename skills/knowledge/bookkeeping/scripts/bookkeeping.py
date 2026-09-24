@@ -1365,7 +1365,7 @@ def score_item_llm(item: RawItem, existing_slugs: list[str]) -> Optional[ScoredI
             f"Existing entity slugs (for context): {slug_context}\n\n"
             f"Item source type: {item.source_type}\n"
             f"Item author: {item.author or 'unknown'}\n"
-            f"Item content:\n{item.content[:800]}\n\n"
+            f"Item content:\n{item.content[:JUDGE_EVIDENCE_CHARS['llm_judge']]}\n\n"
             "Score this item and return JSON only."
         )
 
@@ -1379,11 +1379,29 @@ def score_item_llm(item: RawItem, existing_slugs: list[str]) -> Optional[ScoredI
         raw = re.sub(r"\s*```$", "", raw)
 
         data = json.loads(raw)
-        novelty = int(data.get("novelty", 0))
-        specificity = int(data.get("specificity", 0))
-        relevance = int(data.get("relevance", 0))
+        # Range-validate every dimension. This path used to `int()` whatever
+        # came back and sum it, so a reply of {"novelty":9,"specificity":9,
+        # "relevance":9} produced total=27 and PROMOTED — while every other
+        # transport would have rejected the same response through
+        # `_parse_scorer_response`, whose docstring claimed it was "shared by
+        # every transport so validation cannot drift between them". It was
+        # not shared with this one. Same bound, one helper, asserted by test.
+        dims = {}
+        for dim in ("novelty", "specificity", "relevance"):
+            checked = _parse_scorer_response(json.dumps({"score": data.get(dim)}))
+            if checked is None:
+                _JUDGE_STATE["last_error"] = (
+                    f"llm_judge: dimension '{dim}' out of range or non-integer: "
+                    f"{data.get(dim)!r}"
+                )
+                return None
+            dims[dim] = checked["score"]
+        novelty, specificity, relevance = dims["novelty"], dims["specificity"], dims["relevance"]
         total = novelty + specificity + relevance
-        candidates = [slugify(s) for s in data.get("candidate_entities", [])][:5]
+        raw_candidates = data.get("candidate_entities", [])
+        if not isinstance(raw_candidates, list):
+            raw_candidates = []
+        candidates = [slugify(str(c)) for c in raw_candidates][:5]
 
         return ScoredItem(
             item=item,
@@ -1397,6 +1415,10 @@ def score_item_llm(item: RawItem, existing_slugs: list[str]) -> Optional[ScoredI
             reasoning=data.get("reasoning", {}),
         )
     except Exception as e:
+        # The cause was discarded here, so an expired Gemini key produced a
+        # warning naming the OTHER two transports' static blockers while
+        # omitting the one that actually ran and failed.
+        _JUDGE_STATE["last_error"] = f"llm_judge: {type(e).__name__}: {str(e)[:200]}"
         return None
 
 
@@ -1447,14 +1469,106 @@ def _load_agent_spec(name: str) -> Optional[dict]:
         body = text[end + 5 :].strip()
         if not isinstance(frontmatter, dict) or not body:
             return None
+        # Validate the fields the callers index or interpolate, HERE at the
+        # loading boundary. `model` reaches a dict lookup and an argv slot; a
+        # YAML list (`model: []`) parses fine, then raises `TypeError:
+        # unhashable type` deep inside the transport, outside its try/except —
+        # so the exception escaped and NEITHER fallback transport was
+        # attempted. A spec file is data, and data is validated where it
+        # enters, not where it is used.
+        model = frontmatter.get("model", "claude-haiku-4-5")
+        if not isinstance(model, str) or not model.strip():
+            return None
+        agent_name = frontmatter.get("name", name)
+        if not isinstance(agent_name, str) or not agent_name.strip():
+            return None
         return {
-            "name": frontmatter.get("name", name),
-            "model": frontmatter.get("model", "claude-haiku-4-5"),
+            "name": agent_name,
+            "model": model,
             "max_turns": frontmatter.get("max_turns", 1),
             "input_schema": frontmatter.get("input_schema", {}),
             "output_schema": frontmatter.get("output_schema", {}),
             "instructions": body,
         }
+    except Exception:
+        return None
+
+
+def _build_authored_scorer_prompt(
+    spec: dict,
+    item: RawItem,
+    existing_slugs: list[str],
+) -> tuple[str, str]:
+    """
+    Build the (system, user) prompt pair for one authored bookkeeping-*
+    scorer.
+
+    Extracted so every transport — the Anthropic SDK path and the
+    `claude -p` subscription path — sends the SAME prompt. If the two
+    transports built their prompts separately, a shadow comparison
+    between them would be measuring prompt drift rather than transport,
+    and the calibration numbers would be silently meaningless.
+    """
+    # The input shape follows each agent's declared input_schema.
+    # All three scorers accept {item_text, source_type, ...}; relevance
+    # additionally accepts active_projects / open_questions.
+    agent_input = {
+        # Both authored transports (SDK + CLI) share this builder, so one
+        # lookup covers them; DEFAULT is the safety net for a transport added
+        # later without a table entry.
+        "item_text": item.content[:JUDGE_EVIDENCE_CHARS.get(
+            "authored_agents", DEFAULT_EVIDENCE_CHARS)],
+        "source_type": item.source_type,
+        # RawItem has no `source_url` field — the attribute access raised
+        # AttributeError on every authored-agents scoring call. The URL, when
+        # known, lives in `metadata`.
+        "source_url": (item.metadata or {}).get("source_url", "") or "",
+    }
+    if spec["name"] == "bookkeeping-novelty":
+        agent_input["existing_entity_slugs"] = existing_slugs[:40]
+    if spec["name"] == "bookkeeping-relevance":
+        # Best-effort population. Concrete active projects / open
+        # questions could be threaded through from upstream; this is
+        # the minimum that lets the agent score above 0.
+        agent_input["active_projects"] = AUTHORED_RELEVANCE_PROJECTS
+        agent_input["open_questions"] = []
+
+    system = spec["instructions"]
+    user = (
+        "Score the following item. Reply with ONLY a JSON object matching the agent's "
+        "output_schema. No prose outside the JSON.\n\n"
+        f"Input (matches `{spec['name']}` input_schema):\n"
+        f"```json\n{json.dumps(agent_input, indent=2)}\n```\n\n"
+        "Required output shape (the agent's `output_schema` — populate every required field):\n"
+        f"```json\n{json.dumps(spec['output_schema'], indent=2)}\n```"
+    )
+    return system, user
+
+
+def _parse_scorer_response(raw: str) -> Optional[dict]:
+    """
+    Parse and validate one scorer's raw text response.
+
+    Returns the parsed dict, or None if the response is not JSON, is not
+    an object, lacks `score`, or carries a `score` outside 0..3. Shared
+    by every transport so validation cannot drift between them.
+    """
+    try:
+        raw = raw.strip()
+        # Strip markdown code fences if the model added them anyway.
+        raw = re.sub(r"^```json?\s*", "", raw)
+        raw = re.sub(r"\s*```$", "", raw)
+        data = json.loads(raw)
+        # Minimum required fields per agent's output_schema.
+        if not isinstance(data, dict) or "score" not in data:
+            return None
+        score = data.get("score")
+        # bool is a subclass of int; True would otherwise pass as score 1.
+        if isinstance(score, bool) or not isinstance(score, int):
+            return None
+        if not (0 <= score <= 3):
+            return None
+        return data
     except Exception:
         return None
 
@@ -1468,45 +1582,11 @@ def _call_authored_scorer(
     """
     Invoke one authored bookkeeping-* scorer against the Anthropic API.
 
-    Builds the prompt from the agent's `instructions` (loaded verbatim
-    from the .md body), passes the item's text as the input matching
-    the agent's `input_schema`, asks the model to return JSON matching
-    `output_schema`. Validates the structure and returns the parsed
-    response dict, or None on any failure (so the caller can fall back
-    to the next path).
+    Requires ANTHROPIC_API_KEY, which bills the API rather than the
+    subscription — see `_call_authored_scorer_cli` for the transport
+    this workspace actually uses.
     """
-    # The input shape follows each agent's declared input_schema.
-    # All three scorers accept {item_text, source_type, ...}; relevance
-    # additionally accepts active_projects / open_questions.
-    agent_input = {
-        "item_text": item.content[:2000],
-        "source_type": item.source_type,
-        # RawItem has no `source_url` field — the attribute access raised
-        # AttributeError on every authored-agents scoring call. The URL, when
-        # known, lives in `metadata`.
-        "source_url": (item.metadata or {}).get("source_url", "") or "",
-    }
-    if spec["name"] == "bookkeeping-novelty":
-        agent_input["existing_entity_slugs"] = existing_slugs[:40]
-    if spec["name"] == "bookkeeping-relevance":
-        # Best-effort population. Concrete active projects / open
-        # questions could be threaded through from upstream; this is
-        # the minimum that lets the agent score above 0.
-        agent_input["active_projects"] = [
-            "life-agent-os", "ergon", "lago", "arcan", "haima", "anima", "nous", "praxis",
-        ]
-        agent_input["open_questions"] = []
-
-    system = spec["instructions"]
-    user = (
-        "Score the following item. Reply with ONLY a JSON object matching the agent's "
-        "output_schema. No prose outside the JSON.\n\n"
-        f"Input (matches `{spec['name']}` input_schema):\n"
-        f"```json\n{json.dumps(agent_input, indent=2)}\n```\n\n"
-        "Required output shape (the agent's `output_schema` — populate every required field):\n"
-        f"```json\n{json.dumps(spec['output_schema'], indent=2)}\n```"
-    )
-
+    system, user = _build_authored_scorer_prompt(spec, item, existing_slugs)
     try:
         response = client.messages.create(
             model=spec["model"],
@@ -1517,20 +1597,407 @@ def _call_authored_scorer(
         # Concatenate text blocks (Anthropic returns a list of content blocks)
         raw = "".join(
             block.text for block in response.content if getattr(block, "type", "") == "text"
-        ).strip()
-        # Strip markdown code fences if the model added them anyway.
-        raw = re.sub(r"^```json?\s*", "", raw)
-        raw = re.sub(r"\s*```$", "", raw)
-        data = json.loads(raw)
-        # Minimum required fields per agent's output_schema.
-        if not isinstance(data, dict) or "score" not in data:
-            return None
-        score = data.get("score")
-        if not isinstance(score, int) or not (0 <= score <= 3):
-            return None
-        return data
-    except Exception:
+        )
+        parsed = _parse_scorer_response(raw)
+        if parsed is None:
+            _JUDGE_STATE["last_error"] = (
+                f"authored_agents/{spec['name']}: unparseable response"
+            )
+        return parsed
+    except Exception as exc:
+        # Preserve the cause. An expired SDK token used to vanish here, and
+        # the operator-facing warning then re-derived STATIC blockers that all
+        # looked satisfied — reporting "no blockers" for a live auth failure.
+        _JUDGE_STATE["last_error"] = (
+            f"authored_agents/{spec['name']}: {type(exc).__name__}: {str(exc)[:200]}"
+        )
         return None
+
+
+# ── Subscription-path judge (`claude -p`) ─────────────────────────────────────
+#
+# BRO-2506. The two pre-existing judge transports both require a paid API
+# credential: the authored-agents path needs ANTHROPIC_API_KEY (which forces
+# API billing rather than the subscription), and the legacy Gemini path needs
+# google-generativeai plus a Google key. Neither has ever been present on this
+# workspace, so `score_item`'s ambiguous-band judge never ran once in 7,765
+# recorded runs — 1,051,042 items were scored by the heuristic the band exists
+# to bypass.
+#
+# `claude -p` runs on the SUBSCRIPTION. It is the transport that actually works
+# here, so it is tried FIRST — before the two credential-gated paths.
+
+# CLI timeout per dimension call, in seconds. Three calls per item.
+CLAUDE_CLI_TIMEOUT = 120
+
+# How much of an item each transport actually shows its model, keyed by
+# `ScoredItem.scoring_method`.
+#
+# These were three scattered literals: the authored prompt sliced 2000, the
+# legacy Gemini prompt 800, and the calibration sheet recorded 2000 whichever
+# transport had scored. A human labelling from a 2000-char sheet against a
+# judgement made on 800 chars is not disagreeing with the judge — the two were
+# shown different evidence, and the disagreement rate silently measured
+# truncation. One table, read by every site, so the numbers cannot drift apart.
+JUDGE_EVIDENCE_CHARS = {
+    "claude_cli": 2000,
+    "authored_agents": 2000,
+    "llm_judge": 800,
+    "heuristic": 2000,
+}
+DEFAULT_EVIDENCE_CHARS = 2000
+
+# The active-project list the relevance scorer is given. Hoisted from an
+# inline literal so the calibration sheet exports the SAME context the judge
+# scored against; two copies would drift and the drift would be invisible.
+AUTHORED_RELEVANCE_PROJECTS = [
+    "life-agent-os", "ergon", "lago", "arcan", "haima", "anima", "nous", "praxis",
+]
+
+# Spec `model:` values → `claude --model` arguments.
+_CLI_MODEL_ALIASES = {
+    "claude-haiku-4-5": "haiku",
+    "claude-sonnet-4-5": "sonnet",
+    "claude-sonnet-5": "sonnet",
+    "claude-opus-5": "opus",
+}
+
+
+def _claude_cli_path() -> Optional[str]:
+    """Absolute path to the `claude` CLI, or None if it is not installed."""
+    return shutil.which("claude")
+
+
+def _subscription_env() -> dict:
+    """
+    Environment for the `claude -p` subprocess with the API-billing variables
+    this module knows about removed.
+
+    WHAT THIS DOES NOT DO: it does not guarantee subscription billing, and the
+    transport is labelled `billing="subscription-preferred"` for that reason.
+
+    Two review rounds were spent extending this list — first the direct keys,
+    then Bedrock/Vertex — and a third round found `CLAUDE_CODE_USE_FOUNDRY`
+    still standing. That is the shape of the mistake, not a gap in the list: a
+    denylist over an open set of provider variables cannot establish a
+    guarantee, and `apiKeyHelper` in a settings file redirects authentication
+    without using the environment at all. Chasing it a fourth time would buy
+    the same false confidence more expensively.
+
+    So the list is a best-effort reduction of the common cases, and the CLAIM
+    has been withdrawn to match what the code can actually enforce. If billing
+    certainty is ever required, it has to come from verifying the effective
+    auth source at runtime, not from pruning an environment.
+    """
+    env = os.environ.copy()
+    for var in (
+        # Direct API credentials.
+        "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
+        "ANTHROPIC_BASE_URL",
+        # Cloud-provider selection. These reroute auth to Bedrock/Vertex
+        # credentials, which take precedence over the subscription — removing
+        # only the direct keys would leave the label true in the common case
+        # and false on a Bedrock-configured machine.
+        "CLAUDE_CODE_USE_BEDROCK",
+        "CLAUDE_CODE_USE_VERTEX",
+        "CLAUDE_CODE_USE_FOUNDRY",
+        "AWS_BEARER_TOKEN_BEDROCK",
+    ):
+        env.pop(var, None)
+    return env
+
+
+def _call_authored_scorer_cli(
+    spec: dict,
+    item: RawItem,
+    existing_slugs: list[str],
+    timeout: int = CLAUDE_CLI_TIMEOUT,
+) -> tuple[Optional[dict], str]:
+    """
+    Invoke one authored bookkeeping-* scorer through `claude -p`.
+
+    Returns `(parsed_or_None, error_detail)`. The error string is kept because
+    discarding it was the same defect this module exists to fix: a transport
+    that fails on an expired credential and one that fails on a malformed
+    response are different problems, and collapsing both to `None` makes the
+    later diagnostic reconstruct static blockers that will report "no blockers"
+    for a runtime failure.
+
+    Same prompt as the SDK transport (both call `_build_authored_scorer_prompt`)
+    and same validation (both call `_parse_scorer_response`) — only the carrier
+    differs.
+
+    The user prompt is passed on STDIN, never as an argv element or through a
+    shell: item content is untrusted external text (moltbook posts, fetched
+    articles), so `shell=False` plus stdin keeps its metacharacters and length
+    away from both the shell and ARG_MAX. `--tools ""` disables every built-in
+    tool, because this is a scorer and a scorer has no business reading files
+    or running commands on the strength of text it was asked to grade.
+    """
+    cli = _claude_cli_path()
+    if not cli:
+        return None, "`claude` CLI not on PATH"
+    system, user = _build_authored_scorer_prompt(spec, item, existing_slugs)
+    model = _CLI_MODEL_ALIASES.get(spec["model"], spec["model"])
+    argv = [
+        cli,
+        "-p",
+        "--model", model,
+        # Replace (not append to) the default system prompt, matching the SDK
+        # path's `system=` argument. NOTE: --exclude-dynamic-system-prompt-
+        # sections is deliberately NOT passed; `claude --help` states it is
+        # ignored with --system-prompt, and a flag that does nothing reads to a
+        # later maintainer as a guarantee that holds.
+        "--system-prompt", system,
+        # Scorer, not agent: no tool use. `--tools ""` disables the built-in
+        # set; MCP servers are configured separately and are NOT covered by
+        # it, so --strict-mcp-config plus an empty --mcp-config is required to
+        # keep an ambient MCP tool from being reachable while the model grades
+        # untrusted text.
+        "--tools", "",
+        "--mcp-config", '{"mcpServers":{}}',
+        "--strict-mcp-config",
+        # Round 3 asserted that hooks could not be isolated and that no flag
+        # existed. That was wrong, and asserted WITHOUT CHECKING: `claude
+        # --help` on 2.1.258 documents --safe-mode as disabling CLAUDE.md,
+        # skills, plugins, HOOKS, MCP servers, custom commands and agents,
+        # while leaving auth, model selection and built-in tools working. It
+        # closes the context-injection hole (a SessionStart or
+        # UserPromptSubmit hook, or a CLAUDE.md in cwd, silently editing what
+        # a scorer sees while it grades untrusted text) at no cost to the
+        # subscription.
+        "--safe-mode",
+        # Settings files are where `apiKeyHelper` can redirect auth without
+        # touching the environment. Loading no setting sources removes the
+        # user/project/local ones -- which is ALL `--setting-sources` accepts.
+        # It does NOT remove admin-managed policy settings: `--safe-mode`'s own
+        # help says verbatim "Admin-managed (policy) settings still apply", so
+        # a managed apiKeyHelper survives both flags. Round 3 under-claimed
+        # this ("no isolation flag exists"); saying these flags close it
+        # entirely would be over-claiming in the other direction, and the
+        # billing label stays "subscription-preferred" precisely because
+        # neither statement is the whole truth.
+        "--setting-sources", "",
+    ]
+    try:
+        proc = subprocess.run(
+            argv,
+            input=user,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+            shell=False,
+            env=_subscription_env(),
+        )
+    except subprocess.TimeoutExpired:
+        return None, f"timed out after {timeout}s"
+    except OSError as exc:
+        return None, f"could not execute {cli}: {exc}"
+    if proc.returncode != 0:
+        detail = (proc.stderr or "").strip().splitlines()
+        tail = detail[-1][:200] if detail else "no stderr"
+        return None, f"exit {proc.returncode}: {tail}"
+    parsed = _parse_scorer_response(proc.stdout or "")
+    if parsed is None:
+        return None, f"unparseable response: {(proc.stdout or '').strip()[:200]!r}"
+    return parsed, ""
+
+
+def score_item_claude_cli(
+    item: RawItem,
+    existing_slugs: list[str],
+    timeout: int = CLAUDE_CLI_TIMEOUT,
+) -> Optional[ScoredItem]:
+    """
+    Score a RawItem with the three blessed scorer agents over `claude -p`.
+
+    Returns None if the CLI is missing, a spec cannot be loaded, or any
+    dimension call fails — so the caller falls back exactly as it does
+    for the other transports. A partial result is never returned: a
+    total assembled from two live dimensions and one silent zero would
+    be a score, not an error, and would be indistinguishable from a
+    genuine low judgement.
+    """
+    if not _claude_cli_path():
+        return None
+    specs = {
+        dim: _load_agent_spec(f"bookkeeping-{dim}")
+        for dim in ("novelty", "specificity", "relevance")
+    }
+    if not all(specs.values()):
+        return None
+
+    results: dict[str, int] = {}
+    reasoning: dict[str, str] = {}
+    for dim, spec in specs.items():
+        out, err = _call_authored_scorer_cli(spec, item, existing_slugs, timeout=timeout)
+        if out is None:
+            # Keep WHY, so the operator-facing warning can name a runtime
+            # cause instead of re-deriving static blockers that will all
+            # look satisfied.
+            _JUDGE_STATE["last_error"] = f"claude_cli/{dim}: {err}"
+            _record_judge_cause(_JUDGE_STATE["last_error"])
+            return None
+        results[dim] = out["score"]
+        reasoning[f"{dim}_reasoning"] = out.get("reasoning", "")
+        warnings = out.get("anti_pattern_warnings") or []
+        if warnings:
+            reasoning[f"{dim}_anti_patterns"] = warnings
+
+    total = results["novelty"] + results["specificity"] + results["relevance"]
+    return ScoredItem(
+        item=item,
+        novelty=results["novelty"],
+        specificity=results["specificity"],
+        relevance=results["relevance"],
+        total=total,
+        promote=total >= PROMOTE_THRESHOLD,
+        candidate_entities=_build_entity_slug_candidates(item),
+        scoring_method="claude_cli",
+        reasoning=reasoning,
+    )
+
+
+def verify_judge_transport(timeout: int = CLAUDE_CLI_TIMEOUT) -> tuple[bool, str]:
+    """
+    Actually exercise the subscription transport with a trivial item.
+
+    `judge_availability()` can only report what is CONFIGURED — a binary on
+    PATH, a spec file present, a key set. None of that survives contact with
+    an expired credential or a spec that no longer parses. This does the
+    round trip and returns `(ok, detail)`, which is the only way to say the
+    judge works rather than that it looks like it should.
+    """
+    probe = RawItem(
+        item_id="verify-probe",
+        source_id="verify",
+        source_type="conversation",
+        content="A probe item used to verify the judge transport is reachable.",
+        quote="",
+        author="bookkeeping",
+        timestamp=now_iso(),
+        metadata={},
+    )
+    # Exercise the PRODUCTION selector, not one dimension of one transport.
+    # Probing only bookkeeping-novelty let --verify report PASS while
+    # production returned None: novelty loads, specificity/relevance are
+    # missing, and scoring an item needs all three. A verification narrower
+    # than the thing it verifies is the failure mode this whole ticket is
+    # about, one level up.
+    scored = score_item_with_judge(probe, [])
+    if scored is None:
+        cause = _JUDGE_STATE.get("last_error") or "no transport produced a score"
+        return False, cause
+    # The authored transports make one call PER DIMENSION; the legacy Gemini
+    # path scores all three in a single call. Saying "across all three
+    # dimension calls" for Gemini would be false on the one surface the docs
+    # call the proof that the judge works.
+    shape = ("one call per dimension" if scored.scoring_method != "llm_judge"
+             else "a single combined call")
+    return True, (
+        f"round-trip OK via {scored.scoring_method} "
+        f"(probe scored {scored.total}/9, {shape})"
+    )
+
+
+def judge_availability() -> dict:
+    """
+    Report which judge transports are CONFIGURED, and why each unconfigured
+    one is not.
+
+    `available` means "prerequisites are present", NOT "judging works". It
+    checks PATH, credentials, and whether each scorer spec PARSES — so a
+    present-but-unparseable spec IS caught here. What it still cannot detect
+    is a credential that is present and rejected: an expired token satisfies
+    every check above. Use `verify_judge_transport()` for the round trip.
+
+    `judge_availability` and `verify_judge_transport` are kept distinct on
+    purpose — collapsing them would recreate, one level up, the exact
+    confusion this module exists to fix: "configured" is not "working".
+
+    Callers assert on this POSITIVELY rather than inferring health from the
+    absence of a warning, because absence was indistinguishable from health
+    for 7,765 runs.
+    """
+    # PARSED, not stat'd. `.exists()` reported a corrupt spec as available:
+    # `_load_agent_spec` also returns None for a file that EXISTS and is
+    # unparseable (bad frontmatter, non-str `model`, empty body, YAML error),
+    # so the CLI transport advertised itself with no blockers and then
+    # returned a causeless None -- misdirecting the operator to two transports
+    # they never intended to use. Validating at the availability boundary is
+    # what makes "present but unparseable" a blocker instead of a silent
+    # runtime failure.
+    # With PyYAML absent, `_load_agent_spec` returns None BEFORE touching disk,
+    # so attributing that to the spec files told an operator whose three specs
+    # are perfectly healthy that all three were missing or unparseable. The
+    # PyYAML blocker already reports that cause on its own line.
+    if _YAML_AVAILABLE:
+        _bad_specs = [
+            d for d in ("novelty", "specificity", "relevance")
+            if _load_agent_spec(f"bookkeeping-{d}") is None
+        ]
+    else:
+        _bad_specs = [
+            d for d in ("novelty", "specificity", "relevance")
+            if not (AUTHORED_AGENTS_DIR / f"bookkeeping-{d}.md").exists()
+        ]
+    specs_present = not _bad_specs
+    cli = _claude_cli_path()
+    paths = [
+        {
+            "name": "claude_cli",
+            # Not "subscription": see _subscription_env. A denylist over an
+            # open set of provider variables cannot promise a billing source,
+            # and apiKeyHelper bypasses the environment entirely.
+            "billing": "subscription-preferred",
+            "available": bool(cli) and specs_present and _YAML_AVAILABLE,
+            "blockers": [
+                b for b in [
+                    None if cli else "`claude` CLI not on PATH",
+                    None if specs_present else
+                    f"scorer spec(s) missing or unparseable in {AUTHORED_AGENTS_DIR}: "
+                    f"{', '.join(_bad_specs)}",
+                    None if _YAML_AVAILABLE else "PyYAML not installed (specs unparseable)",
+                ] if b
+            ],
+        },
+        {
+            "name": "authored_agents",
+            "billing": "api-key",
+            "available": (
+                _ANTHROPIC_AVAILABLE
+                and bool(os.environ.get("ANTHROPIC_API_KEY", ""))
+                and specs_present
+                and _YAML_AVAILABLE
+            ),
+            "blockers": [
+                b for b in [
+                    None if _ANTHROPIC_AVAILABLE else "`anthropic` SDK not installed",
+                    None if os.environ.get("ANTHROPIC_API_KEY", "") else "ANTHROPIC_API_KEY unset",
+                    None if specs_present else
+                    f"scorer spec(s) missing or unparseable in {AUTHORED_AGENTS_DIR}: "
+                    f"{', '.join(_bad_specs)}",
+                    None if _YAML_AVAILABLE else "PyYAML not installed (specs unparseable)",
+                ] if b
+            ],
+        },
+        {
+            "name": "gemini",
+            "billing": "api-key",
+            "available": _GENAI_AVAILABLE and bool(os.environ.get("GEMINI_API_KEY", "")),
+            "blockers": [
+                b for b in [
+                    None if _GENAI_AVAILABLE else "google-generativeai not installed",
+                    None if os.environ.get("GEMINI_API_KEY", "") else "GEMINI_API_KEY unset",
+                ] if b
+            ],
+        },
+    ]
+    return {
+        "any_available": any(p["available"] for p in paths),
+        "paths": paths,
+    }
 
 
 def score_item_authored_agents(
@@ -1603,14 +2070,263 @@ def score_item_authored_agents(
     )
 
 
+# Judge enablement + failure accounting. `failures` is read by the run
+# recorder so a degraded run is legible in the log, not only on stderr.
+# `failures` and `last_error` are RUN-local: `reset_judge_run_state()` is
+# called at pipeline entry, because a counter that survives across runs in
+# one process makes the second run inherit the first's failures and keeps
+# the first-failure-only warning suppressed.
+# `last_error` is PER-CALL (cleared before every transport call, so a stale
+# cause is never reported for the current item). `causes` is PER-RUN and is
+# NOT cleared per call -- that distinction is the whole point:
+#
+# A single `judge_last_error` field was tried and removed because it was empty
+# in exactly the cases it was added for. Any later success wiped it, so it
+# carried a cause only when the run's FINAL in-band item failed. Distinct
+# causes are accumulated here instead, deduplicated and capped, so a run whose
+# stderr goes nowhere still leaves its reasons in the log.
+_JUDGE_STATE = {"enabled": False, "failures": 0, "last_error": "",
+                "causes": [], "causes_truncated": False}
+
+# Enough to see the pattern, bounded so one pathological run cannot bloat the
+# append-only log.
+JUDGE_CAUSE_LOG_CAP = 20
+
+
+def _record_judge_cause(cause: str) -> None:
+    """Accumulate a distinct failure cause for the whole run."""
+    if not cause:
+        return
+    causes = _JUDGE_STATE["causes"]
+    if cause in causes:
+        return
+    if len(causes) < JUDGE_CAUSE_LOG_CAP:
+        causes.append(cause)
+    else:
+        # Truncation must be VISIBLE. A silently shortened list of causes
+        # reads as "these were all of them" -- absence-as-value, in this
+        # module's own reporting.
+        _JUDGE_STATE["causes_truncated"] = True
+
+
+def judge_causes() -> list:
+    """
+    Distinct judge-failure causes seen this run, in first-seen order.
+
+    A non-empty list does NOT mean the run failed: a cause is recorded when a
+    transport fails even if a later transport then scored the item.
+
+    At the cap a truncation marker is appended rather than the list simply
+    ending, so a shortened list cannot read as a complete one.
+    """
+    causes = list(_JUDGE_STATE["causes"])
+    if _JUDGE_STATE.get("causes_truncated"):
+        causes.append(
+            f"[truncated: more than {JUDGE_CAUSE_LOG_CAP} distinct causes this run]"
+        )
+    return causes
+
+
+def reset_judge_run_state() -> None:
+    """Clear run-local judge accounting. Called at pipeline entry."""
+    _JUDGE_STATE["failures"] = 0
+    _JUDGE_STATE["last_error"] = ""
+    _JUDGE_STATE["causes"] = []
+    _JUDGE_STATE["causes_truncated"] = False
+
+
+def _scored_item_is_sane(out: ScoredItem) -> bool:
+    """
+    Every dimension in 0..3, the total equal to their sum, and `promote`
+    consistent with the threshold.
+
+    A transport is free to compute a score however it likes; it is not free to
+    return one that the gate's own arithmetic disagrees with.
+    """
+    dims = (out.novelty, out.specificity, out.relevance)
+    if any(isinstance(d, bool) or not isinstance(d, int) or not (0 <= d <= 3) for d in dims):
+        return False
+    if out.total != sum(dims):
+        return False
+    return out.promote == (out.total >= PROMOTE_THRESHOLD)
+
+
+def _run_transport(name: str, fn, item: RawItem, existing_slugs: list[str]):
+    """
+    Call ONE judge transport, contain its exceptions, and clear stale causes.
+
+    WHAT THIS GUARANTEES — and the wording matters, because an earlier version
+    of this docstring claimed an invariant whose code had been deleted out from
+    under it, which is the exact defect this module exists to fix, committed in
+    the docstring of the function named after fixing it:
+
+      * `last_error` is cleared before the call, so a cause from an earlier
+        item or an earlier transport is never reported for this one.
+      * an exception escaping the transport is caught and recorded, so it
+        cannot abort the remaining transports (a `model: []` spec used to do
+        exactly that).
+
+    WHAT THIS DOES **NOT** GUARANTEE: that a failure always carries a cause.
+    It deliberately does not. Synthesizing one for a bare `None` was tried and
+    removed: the ORDINARY unconfigured case is a bare `None`, so the synthetic
+    string told operators who had simply installed nothing that this module
+    was buggy, and it made the static-blocker fallback in `score_item`
+    unreachable by never leaving the cause empty.
+
+    So a transport that returns `None` without recording anything leaves
+    `last_error` EMPTY, and the caller falls back to the static blockers. That
+    is the right answer for a transport that was never configured, and the
+    CALLER is responsible for recording that static-blocker diagnosis into the
+    run-level accumulator — `score_item` does.
+
+    For a transport that is CONFIGURED but broken the cause comes from the
+    transport itself; `judge_availability` parses the scorer specs, so
+    "present but unparseable" is a blocker there rather than a silence here.
+    """
+    _JUDGE_STATE["last_error"] = ""
+    try:
+        out = fn(item, existing_slugs)
+        if out is not None and not _scored_item_is_sane(out):
+            # The half that actually moves a promotion decision. Gemini
+            # returning {"novelty":9,...} produced total=27 and PROMOTED; that
+            # was fixed INSIDE the transport, in the round whose directive was
+            # "stop patching sites", so the next transport reopens it. Checked
+            # here, no transport can promote an out-of-range score.
+            _JUDGE_STATE["last_error"] = (
+                f"{name}: returned an invalid score "
+                f"(n={out.novelty} s={out.specificity} r={out.relevance} "
+                f"total={out.total} promote={out.promote})"
+            )
+            _record_judge_cause(_JUDGE_STATE["last_error"])
+            return None
+        if out is not None and out.scoring_method != name:
+            # `scoring_method` keys JUDGE_EVIDENCE_CHARS and dispatches
+            # `_judge_context`, so a transport mislabelling itself makes the
+            # calibration sheet claim the judge saw evidence it never saw --
+            # the defect the evidence table exists to remove. The selector
+            # knows the truth (`name`) and now compares it.
+            _JUDGE_STATE["last_error"] = (
+                f"{name}: returned scoring_method={out.scoring_method!r}, "
+                f"which is not the transport that produced it"
+            )
+            _record_judge_cause(_JUDGE_STATE["last_error"])
+            return None
+    except Exception as exc:
+        # An exception escaping a transport used to abort the whole chain, so
+        # the remaining transports were never tried (`model: []` did exactly
+        # this). Contained here, the chain continues and the cause survives.
+        _JUDGE_STATE["last_error"] = f"{name}: {type(exc).__name__}: {str(exc)[:200]}"
+        _record_judge_cause(_JUDGE_STATE["last_error"])
+        return None
+    # NOTE (round 2 of the reshaped arc): there is deliberately NO synthesized
+    # cause here, and that is a SUBTRACTION of machinery this function used to
+    # carry. It turned a bare `None` into "returned no score and recorded no
+    # cause (transport bug)", which satisfied the invariant's letter and
+    # destroyed its purpose: the ORDINARY unconfigured case -- no `claude` on
+    # PATH, no API key, specs absent -- is a bare `None`, so an operator who
+    # simply had not installed anything was told three times that this module
+    # has a bug. Worse, it made the STATIC-BLOCKER fallback in `score_item`
+    # unreachable, because the joined cause was never empty. The genuinely
+    # useful diagnosis was deleted by making a useless one unconditional.
+    #
+    # So the invariant is stated as what it can actually deliver: a failure is
+    # ALWAYS diagnosable -- either a transport recorded a runtime cause, or
+    # `last_error` stays empty and the caller falls back to the static
+    # blockers, which is the right answer for a transport that was never
+    # configured. Machinery added to answer a reviewer became the next
+    # round's defect; the fix is to remove it, not to harden it.
+    return out
+
+
+# Transport order is by BILLING, not by age: `claude -p` runs on the
+# subscription; the other two need a paid API credential.
+JUDGE_TRANSPORTS = (
+    ("claude_cli", "score_item_claude_cli"),
+    ("authored_agents", "score_item_authored_agents"),
+    ("llm_judge", "score_item_llm"),
+)
+
+
+def score_item_with_judge(
+    item: RawItem, existing_slugs: list[str]
+) -> Optional[ScoredItem]:
+    """
+    Run the judge transports in order and return the first success.
+
+    This is the single transport-selection point. `score_item`, `judge-check`
+    and `verify_judge_transport` all route through it, so calibration and
+    verification measure the same chain production uses — otherwise a working
+    SDK transport with a broken CLI would let production judge while
+    calibration reported failure, and the numbers would describe a path nobody
+    runs.
+
+    On total failure the recorded cause names EVERY transport that was tried,
+    not just the last one: "the CLI is fine, your SDK key is missing" was
+    actively misleading when the CLI was the one that broke.
+    """
+    causes: list[str] = []
+    for name, attr in JUDGE_TRANSPORTS:
+        # Resolved by name so a monkeypatched transport is honoured — tests
+        # that patch `score_item_claude_cli` must exercise the real selector,
+        # not a stale direct reference captured at import time.
+        fn = globals()[attr]
+        out = _run_transport(name, fn, item, existing_slugs)
+        if out is not None:
+            return out
+        causes.append(_JUDGE_STATE["last_error"])
+    _JUDGE_STATE["last_error"] = " | ".join(c for c in causes if c)
+    for c in causes:
+        _record_judge_cause(c)
+    return None
+
+
+def judge_enabled() -> bool:
+    """True when the ambiguous-band judge should run (--judge / BOOKKEEPING_JUDGE=1)."""
+    if _JUDGE_STATE["enabled"]:
+        return True
+    return os.environ.get("BOOKKEEPING_JUDGE", "").strip().lower() in {"1", "true", "yes"}
+
+
+def set_judge_enabled(enabled: bool) -> None:
+    """Enable/disable the ambiguous-band judge for this process."""
+    _JUDGE_STATE["enabled"] = bool(enabled)
+
+
+def warn_if_judge_unavailable() -> bool:
+    """
+    Announce, loudly, that the judge was requested but cannot run.
+
+    Returns True when the warning fired, so a caller (and a test) can assert
+    the contradiction was reported rather than inferring it from silence.
+    """
+    if not judge_enabled():
+        return False
+    if judge_availability()["any_available"]:
+        return False
+    print(
+        "[bookkeeping] ERROR: judge requested but NO transport is configured. "
+        "In-band items will fall back to the heuristic. Run "
+        "`bookkeeping judge-check --verify` for per-transport blockers.",
+        file=sys.stderr,
+    )
+    return True
+
+
+def judge_failure_count() -> int:
+    """How many in-band items fell back to the heuristic despite --judge."""
+    return _JUDGE_STATE["failures"]
+
+
 def score_item(item: RawItem, existing_slugs: list[str], verbose: bool = False) -> ScoredItem:
     """
-    Two-pass scorer: heuristic fast-path, then LLM for ambiguous band.
+    Two-pass scorer: heuristic fast-path, then LLM judge for the ambiguous band.
 
     - Score ≤ DISCARD_THRESHOLD (2): discard immediately, no LLM call.
     - Score ≥ IMMEDIATE_PROMOTE_THRESHOLD (7): promote immediately, no LLM call.
-    - Score 3-6: call LLM judge (authored agents preferred, Gemini fallback,
-      heuristic-only last resort).
+    - Score 3-6: call the LLM judge IF ENABLED (`claude -p` subscription path
+      first, then authored-agents, then Gemini). When the judge is disabled the
+      heuristic score stands; when it is enabled and every transport fails, the
+      fallback is announced on stderr and counted.
     """
     h = score_item_heuristic(item)
 
@@ -1622,33 +2338,67 @@ def score_item(item: RawItem, existing_slugs: list[str], verbose: bool = False) 
             )
         return h
 
-    # Ambiguous band: try the authored-agents path first (BRO-1015 —
-    # version-controlled .md prompts at core/life/agents/), fall back to
-    # the legacy single-call Gemini judge, then to heuristic-only.
+    # Ambiguous band. The judge is OPT-IN (BRO-2506): it has never run on
+    # this corpus, and ~54% of intake lands in this band, so enabling it by
+    # default would re-gate most of a million-item corpus in one step —
+    # against the L3 stability budget in CLAUDE.md, which requires
+    # governance changes be rare and deliberate. Measure the disagreement
+    # with `bookkeeping judge-check --sample N` first, then opt in.
+    if not judge_enabled():
+        if verbose:
+            print(
+                f"  [{item.item_id}] heuristic={h.total}/9 → in-band, judge disabled "
+                f"(enable with --judge or BOOKKEEPING_JUDGE=1)"
+            )
+        return h
+
+    # One transport-selection point, shared with judge-check.
     if verbose:
+        print(f"  [{item.item_id}] heuristic={h.total}/9 -> judge (subscription first)...")
+    judged = score_item_with_judge(item, existing_slugs)
+    if judged is not None:
+        if verbose:
+            print(
+                f"  [{item.item_id}] {judged.scoring_method}={judged.total}/9 "
+                f"(n={judged.novelty} s={judged.specificity} r={judged.relevance})"
+            )
+        return judged
+
+    # Every transport failed while the judge was explicitly ENABLED. The
+    # operator asked for a judged score on an in-band item and did not get
+    # one. That is a failure, not a quiet default: it is announced on
+    # stderr unconditionally (never gated on --verbose) and counted, so a
+    # degraded run cannot look like a healthy one. Silence here is what
+    # hid a dead judge for 7,765 runs.
+    _JUDGE_STATE["failures"] += 1
+    if _JUDGE_STATE["failures"] == 1:
+        # Prefer the RUNTIME cause. Static blockers are re-derived only when
+        # no transport got far enough to produce one: a credential that
+        # expired mid-run satisfies every static check, so reporting only
+        # blockers would print "no blockers" for a real failure.
+        cause = _JUDGE_STATE.get("last_error") or ""
+        if not cause:
+            avail = judge_availability()
+            cause = "; ".join(
+                f"{p['name']}: {', '.join(p['blockers'])}"
+                for p in avail["paths"] if p["blockers"]
+            ) or "no cause captured"
+        # Feed the run-level accumulator HERE too. `_run_transport` leaves the
+        # per-call cause empty for a bare `None` (deliberately -- see its
+        # docstring), which is the ORDINARY unconfigured case. Without this
+        # line `judge_causes` was empty in exactly the 7,765-run scenario this
+        # change exists for: a cron run wrote judge_failures=119 with
+        # judge_causes=[] and discarded the only diagnosis to a stderr nobody
+        # reads. The subtraction and the accumulator interact; that
+        # interaction was the bug.
+        _record_judge_cause(cause)
         print(
-            f"  [{item.item_id}] heuristic={h.total}/9 → judge (authored agents first)..."
+            "[bookkeeping] JUDGE FAILED — --judge was requested but every transport "
+            f"failed; in-band items are falling back to the heuristic. {cause}",
+            file=sys.stderr,
         )
-    authored = score_item_authored_agents(item, existing_slugs)
-    if authored is not None:
-        if verbose:
-            print(
-                f"  [{item.item_id}] authored_agents={authored.total}/9 "
-                f"(n={authored.novelty} s={authored.specificity} r={authored.relevance})"
-            )
-        return authored
-
-    llm_result = score_item_llm(item, existing_slugs)
-    if llm_result is not None:
-        if verbose:
-            print(
-                f"  [{item.item_id}] llm={llm_result.total}/9 "
-                f"(n={llm_result.novelty} s={llm_result.specificity} r={llm_result.relevance})"
-            )
-        return llm_result
-
     if verbose:
-        print(f"  [{item.item_id}] LLM unavailable, keeping heuristic={h.total}/9")
+        print(f"  [{item.item_id}] judge unavailable, keeping heuristic={h.total}/9")
     return h
 
 
@@ -4669,6 +5419,7 @@ def run_pipeline(
     entities_created = 0
     entities_updated = 0
     scoring_breakdown = {"heuristic": 0, "llm_judge": 0}
+    reset_judge_run_state()
 
     all_scored: list[ScoredItem] = []
 
@@ -4812,6 +5563,25 @@ def run_pipeline(
         "synthesis_candidates": len(synthesis_candidates),
         "lint_errors": lint_error_count,
         "scoring_breakdown": scoring_breakdown,
+        # BRO-2506: `judge_enabled` distinguishes "the judge declined to run"
+        # from "the judge ran and agreed with the heuristic" — a distinction
+        # the log could not previously express, which is why 7,765 runs of
+        # llm_judge=0 read as normal. `judge_failures` counts in-band items
+        # that fell back despite the judge being requested.
+        "judge_enabled": judge_enabled(),
+        "judge_failures": judge_failure_count(),
+        # Distinct causes for the WHOLE run, not a single field. The earlier
+        # single-field attempt is described below and is why this is a list.
+        "judge_causes": judge_causes(),
+        # NOTE: there is deliberately no single `judge_last_error` field. One was
+        # added to carry the cause into the log and then REMOVED, because it
+        # was empty in both scenarios its own commit message cited:
+        # `_run_transport` clears `last_error` before every call, so any later
+        # success wipes it, and it carried a cause only when the run's FINAL
+        # in-band item failed. A field that is empty exactly when it is needed
+        # is worse than no field -- a reader takes the blank for "no cause".
+        # Carrying causes into the log needs a run-level accumulator, which is
+        # tracked separately rather than guessed at here.
         "duration_seconds": duration,
     }
 
@@ -4988,6 +5758,17 @@ def run_query(slug: str, verbose: bool = False) -> None:
 
 def cmd_run(args: argparse.Namespace) -> None:
     """Execute the full 7-stage pipeline."""
+    # Set unconditionally, never only-on-true: an if-True-only assignment
+    # leaks enablement across invocations in one process, so `run --judge`
+    # followed by `run` (no flag) silently kept judging.
+    set_judge_enabled(bool(getattr(args, "judge", False)))
+    # Checked HERE, not in main(). main() ran before parse_args, so it could
+    # only see BOOKKEEPING_JUDGE=1 — the documented primary path, `run
+    # --judge`, was still unset at that point and produced no warning at all.
+    # A run whose items all landed outside the band then exited 0 silently and
+    # logged `judge_enabled: true, judge_failures: 0`, which reads as "the
+    # judge ran and agreed": this ticket's own defect, on its own enable flag.
+    warn_if_judge_unavailable()
     sources: list[Path] | None = None
     if args.source:
         sources = [Path(args.source)]
@@ -7007,6 +7788,246 @@ def cmd_status(_args: argparse.Namespace) -> None:
     """Print knowledge graph statistics."""
     run_status()
 
+
+def _judge_context(scoring_method: str, item: RawItem, existing_slugs: list[str]) -> dict:
+    """
+    The non-content evidence the NAMED transport actually sends its model.
+
+    The authored transports (`claude_cli`, `authored_agents`) send slugs to the
+    novelty scorer and the project list to the relevance scorer. The legacy
+    Gemini prompt sends neither: it sends source_type and author. Reporting a
+    union no single call saw is what made the sheet lie.
+    """
+    if scoring_method == "llm_judge":
+        return {
+            "source_type": item.source_type,
+            "author": item.author or "unknown",
+            "existing_entity_slugs": [],
+            "active_projects": [],
+        }
+    return {
+        "source_type": item.source_type,
+        "source_url": (item.metadata or {}).get("source_url", "") or "",
+        "existing_entity_slugs": existing_slugs[:40],
+        "active_projects": AUTHORED_RELEVANCE_PROJECTS,
+    }
+
+
+def _calibration_row(
+    item: RawItem, h: ScoredItem, j: ScoredItem, existing_slugs: list[str]
+) -> dict:
+    """
+    Build one calibration row: what each scorer said, and the evidence the
+    judge actually saw.
+
+    Extracted from `cmd_judge_check` so the SHEET CONTENT is unit-testable.
+    While this was inline, the regression tests could only assert the
+    JUDGE_EVIDENCE_CHARS table against itself — a constant compared to a
+    constant — and two independent mutations (sheet back to 2000 while Gemini
+    sees 800; Gemini to 2000 while the sheet stays 800) each left the whole
+    suite green. The first of those resurrects the original defect exactly.
+    """
+    chars = JUDGE_EVIDENCE_CHARS.get(j.scoring_method, DEFAULT_EVIDENCE_CHARS)
+    return {
+        "item_id": item.item_id,
+        "heuristic_total": h.total,
+        "judge_total": j.total,
+        "delta": j.total - h.total,
+        "heuristic_promote": h.total >= PROMOTE_THRESHOLD,
+        "judge_promote": j.total >= PROMOTE_THRESHOLD,
+        # The DECISION, not just the score: two totals can differ while
+        # landing the same side of the promotion boundary.
+        "decision_flipped": (h.total >= PROMOTE_THRESHOLD) != (j.total >= PROMOTE_THRESHOLD),
+        "judge_reasoning": j.reasoning,
+        "scoring_method": j.scoring_method,
+        # Exactly the slice the transport that ACTUALLY scored this item sent.
+        # Hardcoding 2000 was wrong whenever Gemini scored (it sees 800): the
+        # labeller would have judged 1200 characters the judge never read, and
+        # the disagreement rate would have measured truncation.
+        "evidence_chars": chars,
+        "content_seen_by_judge": item.content[:chars],
+        # Novelty is scored AGAINST the existing graph and relevance against
+        # the active projects, so content alone is not the judge's evidence.
+        # Transport-aware, like `content_seen_by_judge` above. It used to be
+        # the SAME dict for every transport, so a Gemini-scored row told the
+        # labeller the judge had seen eight active projects and a source URL
+        # that appear nowhere in the Gemini prompt -- the identical
+        # mis-measurement JUDGE_EVIDENCE_CHARS was built to remove, one field
+        # over. The labeller would score relevance against projects the judge
+        # never read and the divergence would be charged to the judge.
+        "context_seen_by_judge": _judge_context(j.scoring_method, item, existing_slugs),
+    }
+
+
+def cmd_judge_check(args: argparse.Namespace) -> None:
+    """
+    Report judge-transport health, and optionally shadow-score a sample.
+
+    Two jobs, deliberately in one command (BRO-2506):
+
+    1. Diagnosis — which transports are live, and the blocker for each dead
+       one. Positive assertion, so "the judge works" is something a reader
+       can SEE rather than infer from an absent warning.
+    2. Calibration — with `--sample N`, score N ambiguous-band items with
+       BOTH the heuristic and the judge and report where they disagree.
+       This is the measurement that has to exist before the promotion
+       boundary moves: the judge has never run on this corpus, and ~54% of
+       intake sits in the band it arbitrates.
+
+    `--labels PATH` additionally writes a human-labeling sheet — the
+    Bloom-style calibration input. An LLM judge that steers a gate needs
+    periodic comparison against human labels, and nothing here has ever
+    been compared against one.
+    """
+    avail = judge_availability()
+    print("Judge transports (CONFIGURED = prerequisites present, not proven working):")
+    for p in avail["paths"]:
+        mark = "CONFIGURED" if p["available"] else "UNCONFIGURED"
+        print(f"  [{mark:12s}] {p['name']:16s} billing={p['billing']}")
+        for b in p["blockers"]:
+            print(f"                 ↳ {b}")
+    print(f"\nany_configured: {avail['any_available']}")
+    print(f"judge_enabled:  {judge_enabled()}  (--judge / BOOKKEEPING_JUDGE=1)")
+
+    if args.verify:
+        ok, detail = verify_judge_transport()
+        print(f"\nround-trip verify: {'PASS' if ok else 'FAIL'} - {detail}")
+        if not ok:
+            raise SystemExit(1)
+
+    if not args.sample:
+        if args.labels:
+            # `--labels` without `--sample` used to exit 0 having written
+            # nothing, with only the generic "pass --sample" hint -- a silent
+            # no-op on an explicit request for a file, which is this ticket's
+            # own defect class on its own CLI. Refuse loudly instead.
+            print(
+                f"\n--labels {args.labels} was ignored: the labelling sheet is built "
+                "from sampled rows, so it needs --sample N. Nothing was written.",
+                file=sys.stderr,
+            )
+            print("Re-run as: bookkeeping judge-check --sample N --labels "
+                  f"{args.labels}", file=sys.stderr)
+            raise SystemExit(2)
+        print("\nPass --sample N to shadow-score N in-band items and measure disagreement.")
+        return
+
+    if not avail["any_available"]:
+        print("\nCannot sample: no judge transport is configured.", file=sys.stderr)
+        raise SystemExit(1)
+
+    source_files = discover_raw_extracts()
+    if not source_files:
+        print("\nNo Layer-2 source files found to sample.", file=sys.stderr)
+        raise SystemExit(1)
+
+    existing_slugs = existing_entity_slugs()
+    # Collect ambiguous-band items only — the fast-path bands never reach a
+    # judge, so including them would dilute the disagreement rate with items
+    # whose handling this change cannot affect.
+    band: list[tuple[RawItem, ScoredItem]] = []
+    for src in source_files:
+        for item in ingest_file(src, verbose=False):
+            h = score_item_heuristic(item)
+            if DISCARD_THRESHOLD < h.total < IMMEDIATE_PROMOTE_THRESHOLD:
+                band.append((item, h))
+            if len(band) >= args.sample:
+                break
+        if len(band) >= args.sample:
+            break
+
+    if not band:
+        print("\nNo ambiguous-band items found in the available sources.")
+        return
+
+    print(f"\nShadow-scoring {len(band)} in-band items...\n")
+    print("  NOTE: this is a HEAD sample, not a random one — the first in-band")
+    print("  items of the earliest source file, so typically one source and one")
+    print("  day. Treat the disagreement rate as indicative, not as an estimate")
+    print("  of the corpus.\n")
+    rows = []
+    for idx, (item, h) in enumerate(band, 1):
+        j = score_item_with_judge(item, existing_slugs)
+        if j is None:
+            cause = _JUDGE_STATE.get("last_error") or "no cause recorded"
+            print(f"  [{idx}/{len(band)}] {item.item_id}: judge FAILED — {cause}",
+                  file=sys.stderr)
+            continue
+        # The decision, not just the score, is what matters: two scores can
+        # differ while landing on the same side of the promotion boundary.
+        flipped = (h.total >= PROMOTE_THRESHOLD) != (j.total >= PROMOTE_THRESHOLD)
+        rows.append(_calibration_row(item, h, j, existing_slugs))
+        print(
+            f"  [{idx}/{len(band)}] {item.item_id}: heuristic={h.total} judge={j.total} "
+            f"{'FLIP' if flipped else ''}"
+        )
+
+    if not rows:
+        cause = _JUDGE_STATE.get("last_error") or "no cause recorded"
+        print(f"\nNo items were successfully judged. Last cause: {cause}", file=sys.stderr)
+        raise SystemExit(1)
+
+    flips = sum(1 for r in rows if r["decision_flipped"])
+    mean_delta = sum(r["delta"] for r in rows) / len(rows)
+    exact = sum(1 for r in rows if r["delta"] == 0)
+    print("\n── Disagreement ──")
+    print(f"  judged:            {len(rows)}")
+    print(f"  exact agreement:   {exact} ({exact / len(rows):.1%})")
+    print(f"  decision flips:    {flips} ({flips / len(rows):.1%})")
+    print(f"  mean delta:        {mean_delta:+.2f} (judge − heuristic)")
+    print("\nDisagreement measures the two scorers against EACH OTHER; it does not")
+    print("say which is right. Use --labels to produce a sheet a human can settle.")
+
+    if args.labels:
+        # Two files. The sheet a human labels contains NO machine scores and
+        # no judge reasoning — an earlier version put both in the same row
+        # and told the labeller not to look, which is prose standing in for
+        # a control. Anchoring is not resisted by instruction; it is
+        # prevented by not shipping the anchor. The key file carries the
+        # machine scores for the scoring step afterwards, joined on item_id.
+        out = Path(args.labels).expanduser()
+        out.parent.mkdir(parents=True, exist_ok=True)
+        key = out.with_name(out.stem + ".key" + out.suffix)
+
+        out.write_text(json.dumps({
+            "generated": now_iso(),
+            "promote_threshold": PROMOTE_THRESHOLD,
+            "instructions": (
+                "Score each row 0-3 per dimension; set `human_total` (0-9) and "
+                "`human_promote`. This sheet deliberately contains no machine "
+                "scores — do not open the .key file until every row is labelled."
+            ),
+            "rows": [
+                {
+                    "item_id": r["item_id"],
+                    # Same slice the judge saw, so the labeller and the judge
+                    # are answering about identical evidence.
+                    "content": r["content_seen_by_judge"],
+                    "context": r["context_seen_by_judge"],
+                    "human_novelty": None,
+                    "human_specificity": None,
+                    "human_relevance": None,
+                    "human_total": None,
+                    "human_promote": None,
+                }
+                for r in rows
+            ],
+        }, indent=2))
+
+        key.write_text(json.dumps({
+            "generated": now_iso(),
+            "promote_threshold": PROMOTE_THRESHOLD,
+            "note": "Machine scores for the labelled sheet. Join on item_id AFTER labelling.",
+            "rows": [
+                {k: v for k, v in r.items()
+                 if k not in ("content_seen_by_judge", "context_seen_by_judge")}
+                for r in rows
+            ],
+        }, indent=2))
+
+        print(f"\nLabeling sheet (blinded): {out}")
+        print(f"Machine-score key:        {key}")
+
 # ── Layer-2 retention (BRO-1991) ──────────────────────────────────────────────
 #
 # CLAUDE.md has always specified "Layer 2 — Raw Extracts ... Retained 30 days,
@@ -7664,6 +8685,14 @@ def build_parser() -> argparse.ArgumentParser:
     p_run.add_argument("--source", metavar="FILE", help="Source file (auto-discovers if omitted)")
     p_run.add_argument("--dry-run", action="store_true", help="Preview without writing files")
     p_run.add_argument("--verbose", "-v", action="store_true", help="Verbose output")
+    p_run.add_argument(
+        "--judge", action="store_true",
+        help=(
+            "Enable the LLM judge on ambiguous-band (3-6) items. Off by default: "
+            "the judge has never run on this corpus and ~54%% of intake is in-band, "
+            "so measure with `judge-check --sample N` before enabling."
+        ),
+    )
     p_run.set_defaults(func=cmd_run)
 
     # ingest
@@ -7761,6 +8790,24 @@ def build_parser() -> argparse.ArgumentParser:
     # status
     p_status = sub.add_parser("status", help="Print knowledge graph stats")
     p_status.set_defaults(func=cmd_status)
+
+    p_judge = sub.add_parser(
+        "judge-check",
+        help="Report judge-transport health; --sample N to measure heuristic/judge disagreement",
+    )
+    p_judge.add_argument(
+        "--sample", type=int, default=0, metavar="N",
+        help="Shadow-score N ambiguous-band items with both scorers and report disagreement",
+    )
+    p_judge.add_argument(
+        "--verify", action="store_true",
+        help="Actually round-trip the transport with a probe item (proves it works)",
+    )
+    p_judge.add_argument(
+        "--labels", metavar="PATH",
+        help="Write a human-labeling sheet (calibration input) to PATH",
+    )
+    p_judge.set_defaults(func=cmd_judge_check)
 
     # archive — Layer-2 retention window (BRO-1991)
     p_archive = sub.add_parser(
@@ -7861,13 +8908,15 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main() -> None:
     """Main entry point for the bookkeeping CLI."""
-    # Dependency warnings (non-fatal)
-    if not _GENAI_AVAILABLE:
-        print(
-            "[bookkeeping] Note: google-generativeai not installed. "
-            "LLM judge disabled (heuristic-only scoring).",
-            file=sys.stderr,
-        )
+    # Dependency warnings (non-fatal).
+    #
+    # The old banner here named google-generativeai only — one of three judge
+    # transports — and read as an optional-dependency courtesy. It was the sole
+    # symptom of a judge that had never run in 7,765 recorded runs (BRO-2506).
+    # A missing optional dep is NOT reported: the judge is opt-in, so its
+    # absence is the documented default rather than a fault. What IS reported,
+    # loudly, is the actionable contradiction — the judge was requested and
+    # cannot run. Use `bookkeeping judge-check` to inspect transports.
     if not _YAML_AVAILABLE:
         print(
             "[bookkeeping] Note: PyYAML not installed. "
