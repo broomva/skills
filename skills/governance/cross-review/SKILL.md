@@ -62,7 +62,7 @@ Different mechanisms for different environments. The *substance* is the gate —
 
 | Strata | Mechanism | When | Strength |
 |---|---|---|---|
-| **A — True cross-vendor** | `codex exec -m gpt-5.4` (or similar) reads the diff and scores | Codex CLI installed | Strongest — different weights, different training, genuinely different blind spots |
+| **A — True cross-vendor** | `codex exec -c sandbox_mode=read-only` takes the rubric's Strata-A preamble followed by `references/rubric.md` as its prompt and the diff on stdin, and scores. Model: codex's configured default, or `CROSS_REVIEW_CODEX_MODEL` to pin one | Codex CLI installed | Strongest — different weights, different training, genuinely different blind spots |
 | **B — Cross-context same-model** | Fresh `Agent` subagent under devil's-advocate brief reads diff and scores | Always available | Weaker than (A) but still strong — fresh context + adversarial framing breaks within-conversation echo |
 | **C — Composed existing skills** | Dispatch `superpowers:constructive-dissent`, `devils-advocate`, `pr-review-toolkit:*`, `critique`, `premortem`, `plan-design-review`, `plan-ceo-review`, `plan-eng-review` — each fires a domain-specific lens | Always | Toolkit P20 makes mandatory — adversarial-review-by-composition |
 
