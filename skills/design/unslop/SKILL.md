@@ -2,7 +2,7 @@
 name: unslop
 tier: D
 category: design
-version: 0.2.3
+version: 0.2.4
 description: >-
   Remove the "vibecoded" / AI-slop look from an arbitrary frontend codebase at
   the ROOT, autonomously, and prove the result clears a crafted floor. Full-repo

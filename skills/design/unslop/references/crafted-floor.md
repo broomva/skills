@@ -2,7 +2,7 @@
 
 Distilled 2026-08-18 from the practitioners who set the bar (Kowalski, Freiberg, Linear/Saarinen,
 Coursey, Comeau, Wathan & Schoger, Butterick, Rams, Apple HIG, Material, GOV.UK, Vercel, Stripe/Dill,
-NN/g, Fogg, WCAG, web.dev). Every rule is tagged **[M]** machine-checkable (grep / lint / axe /
+NN/g, Fogg, WCAG, web.dev), extended 2026-09-23 with Kole Jain's scannability argument (BRO-2537). Every rule is tagged **[M]** machine-checkable (grep / lint / axe /
 Lighthouse / screenshot / E2E) or **[J]** judgment (needs a reviewer with a rubric). unslop's gate
 implements the [M] subset it can reach statically; the [J] rows are the reviewer's checklist in the arc.
 
@@ -39,6 +39,8 @@ world) is what makes it good, and no checklist supplies that — see `arc.md` §
 | No horizontal overflow at 390px; primary content visible without horizontal scroll | M | Apple; impeccable `first-viewport-column-overflow` |
 | No nested cards; borders don't repair weak hierarchy; surfaces earned by selection/interaction/warning/grouping | M | Vercel; impeccable `nested-cards`; RUI "fewer borders" |
 | Density is a choice per surface, not a template ("start with too much white space, then remove") | J | RUI |
+| Compact surfaces sit on shared edges; where an edge is missing, create one (header band, divider, column line) rather than filling the space | J | Jain 2026 |
+| A dense list is differentiated before it is spaced out: group by the key people search by; people, categories, and states get a visual form next to their text | J | Jain 2026 |
 
 ## 3. Color
 
@@ -49,6 +51,8 @@ world) is what makes it good, and no checklist supplies that — see `arc.md` §
 | Contrast 4.5:1 body, 3:1 large (≥24px or ≥18.5px bold) and non-text/focus | M | WCAG 2.2; Soueidan |
 | Never rely on color alone; no grey text on colored surfaces (tint from the hue) | M partial | RUI; NN/g; impeccable `gray-on-color` |
 | Monochrome first; color only where it adds meaning; one accent | M (hue count) | Vercel; Linear |
+| Emphasis is relative: when every item in a group carries the accent, none is emphasized; quiet the neighbours by removing accent, fill, or weight, never by lowering readable text below 4.5:1 or using the disabled treatment | J (M proxy: share of accent-filled siblings in a group) | Jain 2026; impeccable `critique` visual noise floor |
+| Settings at their default keep their normal text style, never a lighter role or the disabled treatment; a changed setting is marked with a cue that is not color alone, ideally naming the default; controls keep their state styling | J (M proxy: settings values in a lighter text role than changed values) | Departs from Jain 2026 (grays defaults, 07:49); VS Code `settings.modifiedItemIndicator`; WCAG 1.4.1 |
 | No decorative gradients / glows / mesh / glass; shadows carry offset + soft blur, one light source, tinted | M | Vercel; Freiberg "no swanky mesh gradients"; Comeau; impeccable `radial-halo`/`dark-glow` |
 | ≤5 elevation levels, one vocabulary (border *or* shadow per level) | M | RUI; Comeau; impeccable floor |
 
@@ -86,6 +90,7 @@ world) is what makes it good, and no checklist supplies that — see `arc.md` §
 | Buttons: verb + noun; no "click here"; no "you can" | M | Polaris; GOV.UK |
 | No all-caps eyebrows/kickers, no em dashes, no "it's not X, it's Y", no ✓-bullets, no emoji-as-icons, no authoring narration | M | Vercel reject list; impeccable `hero-eyebrow-chip`/`kicker-above-heading`/`em-dash-overuse`/`aphoristic-cadence`; the reel |
 | Copy is the product's own language; controls name their action | J | impeccable floor |
+| An unclear surface is fixed by structure or a recognizable visual, not by added helper copy, comparisons, or tooltips; field labels, hints, accessible names, format instructions, error text, status labels, labels naming a default, statements of what a setting or action allows, costs, or cannot undo, and data definitions are not explanation | J | Jain 2026 |
 
 ## 7. Accessibility
 
@@ -129,6 +134,9 @@ world) is what makes it good, and no checklist supplies that — see `arc.md` §
 4. **Dark + purple glow as "premium"** — every Linear-clone teardown says copying that surface is what makes clones hollow. Dark/glow is never a check in either direction.
 5. **Expressiveness** — Material 3 Expressive measures faster recognition with more shape/motion/color; Vercel defaults to stillness. Reconcile: expressiveness scales inversely with use frequency and task seriousness (Kowalski's frequency table).
 6. **Line length** — 45–90 / 45–75 / ~65. Gate ≤75, target 65.
+7. **Show, don't tell vs labels** — Jain swaps text for icons, diagrams, and chips so a screen registers without reading; WCAG and broomva-design require text labels and accessible names. Resolve: visuals are added next to text for scan speed, never instead of a control's label. Jain's own icon-only action bar is the counter-example ("you're kind of just guessing … while you wait for the tooltip").
+8. **White space vs differentiation** — RUI starts with too much white space; Jain shows extra space making a dense list longer without making it faster to scan. Reconcile: space separates groups, differentiation separates items within a group.
+9. **Gray defaults vs state and consequence** — read literally, "gray the defaults" makes a current value look disabled, makes an on-by-default switch look off, and in a permissive preset leaves nothing flagged. Resolve: mark the change instead of fading the defaults, leave control state alone, and state in text what consequential settings allow.
 
 ## Machine-checkable subset unslop's gate implements today
 

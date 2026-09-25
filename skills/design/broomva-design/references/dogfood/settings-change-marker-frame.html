@@ -1,0 +1,19 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><title>Settings change marker measurement frame</title>
+<style>body{margin:0}iframe{border:0;display:block}</style></head>
+<body>
+<script>
+  const q = new URLSearchParams(location.search);
+  const w = Number(q.get("w") || 375), h = Number(q.get("h") || 1180);
+  const inner = new URLSearchParams(q); inner.delete("w"); inner.delete("h");
+  const f = document.createElement("iframe");
+  f.width = w; f.height = h; const src = inner.get("src") || "settings-change-marker.html"; inner.delete("src"); f.src = src + "?" + inner.toString();
+  f.addEventListener("load", () => {
+    const d = f.contentDocument.documentElement;
+    let overlaps = 0; const hit = (a, b) => a.left < b.right && b.left < a.right && a.top < b.bottom && b.top < a.bottom;
+    f.contentDocument.querySelectorAll(".row").forEach(r => { const rg = f.contentDocument.createRange(); rg.selectNodeContents(r.querySelector("dt")); const dt = rg.getBoundingClientRect(); r.querySelectorAll("dd > *").forEach(c => { if (hit(dt, c.getBoundingClientRect())) overlaps++; }); });
+    document.title = "w=" + d.clientWidth + " overflow=" + (d.scrollWidth - d.clientWidth) + " overlaps=" + overlaps;
+  });
+  document.body.appendChild(f);
+</script>
+</body></html>
