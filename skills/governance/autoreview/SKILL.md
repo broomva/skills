@@ -136,6 +136,14 @@ is "this is a choice, not a fact: no document, system or measurement could
 settle it even with full access." A lookup you skipped is not residue, and
 neither is one that failed.
 
+**A decision may already have been made.** Before filing any decision as
+RESIDUE, search the evidence set for a record that it was taken: a meeting
+summary, a ticket, an answered ask, a commit. A decision already taken is
+ANSWERED, with the citation, even if nobody wrote it into the artifact. That
+case is also a drift finding. The launch plan this skill was built on listed
+its date as an open choice; the owners had picked it the day after it was
+written.
+
 The "with docs" half runs alongside and produces two side outputs:
 
 - **Glossary**: every term the artifact uses in two senses, or that two sources
@@ -192,12 +200,20 @@ rounds, rounds 4 to 7 earned only by a continuation verdict that names a
 located, checkable defect, 8 or more a human's call), but **not its pass
 mark**: its 7/10 is for code. A design round passes only on `spec-contract`'s
 rule above. To log a design round with `cross-review round record-round`,
-pass `--score` as the rubric total scaled to ten and rounded down
-(`total × 10 / 15`, so 10/15 logs as 6 and 11/15 as 7), and `--defect=yes` only
-when the round reproduced a checkable defect such as a wrong number or a
-contradiction, `no` otherwise. Keep `R1..R5` and the unscaled total in the
-ledger. The scaled number feeds the budget's round counting only; whether the
-round passed is always `spec-contract`'s rule. When the budget
+decide pass or fail with `spec-contract`'s rule first, then pass `--score` as:
+
+- a **passing** round: the total scaled to ten and rounded down
+  (`total × 10 / 15`; 11/15 logs as 7, 12/15 as 8);
+- a **failing** round: the same, **capped at 6**. The budget script treats a
+  score of 7 or more as passed and closes, so without the cap a round at
+  11/15 that fails on R2 or R4 would close the budget on a failure.
+
+Pass `--defect=yes` when the round located at least one checkable defect in
+the text (a contradiction, a wrong number, a gate that cannot be checked as
+written), `no` otherwise. Two consecutive `no` rounds stop the budget, which is
+right: a score that stays low without a locatable defect is a structural
+problem, not a wording one. Keep `R1..R5` and the unscaled total in the
+ledger. When the budget
 is spent without a pass, stop: do not keep editing. Record the last round's
 objections as open, and the verdict follows the output contract.
 

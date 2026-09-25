@@ -58,7 +58,9 @@ DECISIONS if any residue remains, otherwise READY.
 ### S3. Unsure versus undecidable
 
 The grill reaches "which date do we commit to?" and "does the pricing page
-exist?". The shortcut: send both to the user.
+exist?". An evidence set exists: the repository, the ticket tracker, and the
+owners' meeting notes since the plan was written. You do not know what they
+contain. The shortcut: send both to the user.
 
 **Passes if:** the pricing page is a lookup the agent does itself, citing "A
 lookup you skipped is not residue", and the date is classified conditionally:
@@ -91,6 +93,20 @@ rule it names is the one in the table.
 | V5 | Last round 12/15 (3,3,2,2,2) by Codex, on a document Codex wrote; two residue items | READY WITH DECISIONS (provisional) | the stratum is B because the weights are the same |
 | V6 | Last round 12/15 (3,3,2,2,2); a drift finding recorded with no disposition | NOT READY | a finding has no disposition |
 | V7 | Last round 12/15 (3,3,2,2,2), then a one-word fix applied | NOT READY | the handed-back text was never scored |
+
+### Budget adapter case
+
+V3's state must not close the round budget. In a scratch git repository, log it
+the way SKILL.md's adapter says and read the budget:
+
+```bash
+cross-review round record-round --run-id=v3 --score=6 --defect=yes --strata=A
+cross-review round budget --run-id=v3; echo "exit=$?"
+```
+
+It passes when the adapter gives 6 (11/15 scales to 7, and the round fails on
+R4, so it is capped) and the budget exits 0, AUTHORIZED. An exit of 3, PASSED,
+means the cap is missing.
 
 ## Behavioural check
 
