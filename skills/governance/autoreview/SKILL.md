@@ -86,9 +86,11 @@ If the artifact is a code diff, lens 5 is `/cross-review` on the diff and lenses
   Lenses that each gather their own evidence disagree about what is true, and
   the disagreement looks like a finding.
 
-Once the evidence set carries the post-date decisions, lenses 1, 2 and 4 can
-run in parallel, one subagent each. Lens 3 can ride with lens 1, which reads
-the same tables. Lens 5 always waits for every patch.
+**Run order.** Lens 1 finishes first, and lens 3 rides with it because it
+reads the same tables. Fold lens 1's STALE and CONTRADICTED findings into the
+evidence file, then run lenses 2 and 4 in parallel against that updated file,
+so neither can answer from a claim drift has just invalidated. Lens 5 waits
+for every patch.
 
 ### 1. Drift
 
@@ -121,9 +123,18 @@ the branch bottoms out. Classify every question:
   external party, money. **Do not answer it.** Record the question, why no
   evidence can settle it, your recommended default, what it gates, and who
   decides.
+- **BLOCKED**: the answer is a fact that exists somewhere, but this run cannot
+  reach it: a permission denied, an expired login, an outage. It is not
+  residue, because nobody has to decide anything. Retry once. Then name the
+  instrument and the exact failure, and carry it to the report's blind spots.
+  A load-bearing BLOCKED keeps the verdict at NOT READY until it is reached,
+  or until an owner accepts the risk in writing, which makes the acceptance
+  the residue.
 
-The test for RESIDUE is not "I am unsure." It is "no document, system or
-measurement I can reach could settle this." A lookup you skipped is not residue.
+The test for RESIDUE is not "I am unsure", and not "I could not reach it". It
+is "this is a choice, not a fact: no document, system or measurement could
+settle it even with full access." A lookup you skipped is not residue, and
+neither is one that failed.
 
 The "with docs" half runs alongside and produces two side outputs:
 
@@ -153,10 +164,16 @@ mitigation, a gate, a cut, or an early signal with a date to check it.
 1. **Apply every patch from lenses 1 to 4 first.**
 2. Refute the patched text. For a plan, spec or ADR use `/spec-contract`:
    `spec_check.py --profile <plan|spec|adr>` must exit 0, then its five-axis
-   rubric, pass at ≥11/15 with no axis at 0. For code use `/cross-review`.
-3. **Stratum A** (different weights, `codex exec -c sandbox_mode=read-only`)
-   when available. Otherwise **Stratum B**, a fresh-context subagent, recorded
-   as **provisional**.
+   rubric, pass at ≥11/15 with no axis at 0. Keep `spec-contract`'s two
+   escalations, which a total alone hides: **R1 = 0** (a one-way door
+   committed silently) stops the document, and **R2 or R4 at 1 or less** means
+   the design is unargued. Report that as a structural finding, because
+   rewriting prose will not raise it. For code use `/cross-review`.
+3. **Name the stratum from model identities, not from the tool.** Record the
+   writer's model and the evaluator's model. **Stratum A** requires different
+   weights: `codex exec -c sandbox_mode=read-only` qualifies only when Codex
+   did not write the document. Otherwise it is **Stratum B**, a fresh context
+   on the same weights, recorded as **provisional**.
 4. Hand the evaluator the lens 1 findings as well as the document.
 5. Act on every objection, or dismiss it with a stated reason.
 6. **Re-score. The last scored round must have read the exact text you hand
@@ -166,7 +183,15 @@ mitigation, a gate, a cut, or an early signal with a date to check it.
    The one permitted edit after the final score is appending that round's own
    ledger entry, which names the hash it scored.
 
-The round budget is `/cross-review`'s.
+**Round budget.** Take the round *counting* from `/cross-review` (three free
+rounds, rounds 4 to 7 earned only by a continuation verdict that names a
+located, checkable defect, 8 or more a human's call), but **not its pass
+mark**: its 7/10 is for code. A design round passes only on `spec-contract`'s
+rule above. When logging with `cross-review round record-round`, record
+`--defect=yes` for any failing round and put the rubric result
+(`R1..R5`, total out of 15) in the ledger, not in `--score`. When the budget
+is spent without a pass, stop: do not keep editing. Record the last round's
+objections as open, and the verdict follows the output contract.
 
 ### 6. Report
 
@@ -176,11 +201,16 @@ convention. **Draft only: never send, post, publish or forward anything.**
 
 ## Output contract
 
-1. **Verdict**:
-   - **READY**
-   - **READY WITH DECISIONS**: only residue remains.
-   - **NOT READY**: an unpatched CONTRADICTED claim, an unowned dependency, or
-     final text that was never scored.
+1. **Verdict**, decided by the first rule that matches:
+   - **NOT READY** if any of these holds:
+     - the final text was never scored, or its last round failed;
+     - `spec_check` does not exit 0;
+     - a STALE or CONTRADICTED claim is unpatched;
+     - a load-bearing claim is UNVERIFIABLE or BLOCKED and no owner has
+       accepted the risk;
+     - a dependency on the critical path has no owner.
+   - **READY WITH DECISIONS**: none of the above, and only residue remains.
+   - **READY**: none of the above, and no residue.
 
    Add **(provisional)** to READY or READY WITH DECISIONS when the last score
    came from Stratum B only. A missing Stratum A is a blind spot (item 7), not

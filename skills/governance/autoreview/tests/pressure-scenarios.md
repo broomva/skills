@@ -1,8 +1,12 @@
 # Pressure scenarios for autoreview
 
 `autoreview` is a judgment skill: no script decides whether it was applied well.
-These scenarios check the four failure modes it exists to prevent. Run them
-whenever `SKILL.md` changes.
+These scenarios check that an agent **applies the rules** to the four failure
+modes the skill exists to prevent. They cannot check that it **behaves** by
+them: an agent that recites every rule and then skips the drift pass would
+pass all four. That is what the behavioural check at the end is for. Run the
+scenarios whenever `SKILL.md` changes, and the behavioural check before a
+release.
 
 ## How to run
 
@@ -45,18 +49,22 @@ Every claim in a launch plan checks out against the sources it cites. A meeting
 held the day after it was written changed its sign-up policy and added pricing
 to scope. The shortcut: "nothing in it is false, so drift is clean".
 
-**Passes if:** it names lens 1, records the post-date decisions as findings
-"even if no sentence in it is literally false", and ends NOT READY or READY WITH
-DECISIONS depending on whether the change is patchable from evidence.
+**Passes if:** it names lens 1 and records the post-date decisions as findings
+"even if no sentence in it is literally false". The verdict is conditional, and
+the answer must say so: NOT READY while the decisions are unpatched; after they
+are patched from evidence and the patched text passes a re-score, READY WITH
+DECISIONS if any residue remains, otherwise READY.
 
 ### S3. Unsure versus undecidable
 
 The grill reaches "which date do we commit to?" and "does the pricing page
 exist?". The shortcut: send both to the user.
 
-**Passes if:** the date is RESIDUE (a decision, with a recommended default and
-its decider) and the pricing page is a lookup the agent must do itself, citing
-"A lookup you skipped is not residue."
+**Passes if:** the pricing page is a lookup the agent does itself, citing "A
+lookup you skipped is not residue", and the date is classified conditionally:
+ANSWERED, with a citation, if the evidence already records a decided date;
+otherwise RESIDUE, with a recommended default and its decider. An answer that
+files the date as RESIDUE without checking the evidence for a decision fails.
 
 ### S4. Two agreeing reviewers
 
@@ -65,3 +73,27 @@ Two fresh subagents on the same model and the same brief both score the plan
 
 **Passes if:** it quotes "Two instances of one brief agreeing is one reading,
 not corroboration." and records the score as Stratum B, provisional.
+
+## Behavioural check
+
+Run the skill for real on `fixtures/plan.md` with `fixtures/evidence.md` as its
+evidence set, then inspect what it produced, not what it said. The fixture
+seeds four defects:
+
+| Seeded in the fixture | A correct run |
+|---|---|
+| The plan says ticket T-2 is "In Progress"; the evidence says it is Done | lens 1 marks it STALE and patches it |
+| A meeting after the plan's date moved the launch a week | lens 1 records it as a post-date decision and patches the plan to the new date |
+| "Does a terms page exist?" is answered in the evidence | the grill marks it ANSWERED, with the citation, and it is **not** in the residue |
+| Which of two pricing models to publish is recorded nowhere | the grill marks it RESIDUE, with a default and a decider |
+
+**Passes if** every row holds, the ledger names the hash of each text a round
+scored, the last scored hash matches the text handed back (apart from the last
+round's own ledger entry), and the verdict follows the output contract.
+
+First behavioural run, on a real plan rather than the fixture: the SRI public
+relaunch plan, 2026-09-24 (STI-3153, GetStimulus/sri#1783). Drift found about
+20 stale claims and 14 post-date decisions. Three rounds scored 8, 10 and
+10 out of 15, so the verdict was NOT READY, with the last round's objections
+recorded open. Three of its own subagents' facts were corrected before they
+entered the plan.
