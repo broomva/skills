@@ -1,8 +1,8 @@
 # Skills Inventory
 
-> 100 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-07.
+> 101 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-07.
 
-## Governance & control — `skills/governance/` (10)
+## Governance & control — `skills/governance/` (11)
 
 | Skill | What it does |
 |---|---|
@@ -16,6 +16,7 @@
 | `unhobble` | Audit and rightsize a context surface against machine-enforced mechanisms, duplication, contradiction, and token-budget pressure |
 | `legal-readiness` | Build or adversarially audit an evidence-first legal-readiness system for a software product, SaaS, AI app, API, marketplace, or website. Inventory every public and contractual claim; determine… |
 | `spec-contract` | The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked… |
+| `autoreview` | Unattended multi-lens review of a plan, launch plan, spec, strategy doc, ADR or proposal. The autonomous counterpart to grill-with-docs: instead of interviewing the human, the agent asks the grilling… |
 
 ## Orchestration & autonomy — `skills/orchestration/` (10)
 
@@ -44,7 +45,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 100 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 101 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
 
@@ -221,8 +222,8 @@
 
 ## Aggregates
 
-- **Total skills**: 100
+- **Total skills**: 101
 - **Total category buckets**: 23
-- **Largest bucket**: Governance & control, Orchestration & autonomy (10)
+- **Largest bucket**: Governance & control (11)
 - **Smallest buckets** (1): Science
 - Taxonomy = the 23 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.

@@ -1,0 +1,240 @@
+---
+name: autoreview
+category: governance
+description: |
+  Unattended multi-lens review of a plan, launch plan, spec, strategy doc,
+  ADR or proposal. The autonomous counterpart to grill-with-docs: instead of
+  interviewing the human, the agent asks the grilling questions itself and
+  answers each one from evidence (repo docs, code, tickets, meeting notes,
+  chat, live systems). Five review types run in a fixed order: drift (is every
+  stateful claim still true, and was anything decided after the doc was
+  written), grill (walk the decision tree, answer from evidence, keep a
+  glossary and ADR candidates), ownership (every workstream and dependency has
+  an owner, ticket and date), premortem, and a cross-model adversarial round
+  scored on the FINAL text. Only the residue, decisions no reachable evidence
+  can settle, goes back to the human, batched once, each with a recommended
+  default. Use when the user asks whether a plan is "ready", "fully
+  developed", "reviewed", "grilled", "adversarially verified", or says
+  "review this autonomously", "grill it yourself", "run all the reviews",
+  "autoreview", "/autoreview". NOT for a code diff alone (use code-review or
+  cross-review) and NOT when the user wants to be interviewed live (use
+  grill-with-docs).
+---
+
+# autoreview: every review type, run unattended
+
+`grill-with-docs` asks the human every question. `autoreview` asks the
+evidence first and brings the human only what the evidence cannot decide.
+
+## Why this exists
+
+Origin, 2026-09-24. The question was *"is the launch plan fully developed,
+grilled with docs, and adversarially verified?"* Assembling the answer by hand
+took an hour, and it was **no** on all three counts, each for a reason the
+other reviews could not have caught:
+
+- **Adversarially verified, but not the text that shipped.** The plan had
+  passed three refutation rounds (4/10, 4/10, 7/10). The four fixes made after
+  round 3 were never scored. A score binds to the text it read.
+- **Correct on its date, stale a day later.** It was written the day before a
+  founder check-in that changed its sign-up policy, its pricing scope and its
+  launch checklist. No refutation round could see that: a reviewer shown only
+  the document cannot see what was decided after it. Drift is its own review.
+- **Never grilled, and it could not have been.** `grill-with-docs` delegates to
+  `/grilling` and `/domain-modeling`, neither of which was installed, and it
+  needs a person answering in real time.
+
+The first run of this skill on that plan found about 20 stale or wrong claims,
+14 later decisions it did not reflect, and 20 launch workstreams with no owner.
+It also caught three of its own subagents overstating a fact: a mislabelled
+ticket, a 301 reported as a 200, and a production failure attributed to the
+wrong region. That is why the spot-check rule below exists.
+
+Each review type is blind to a class the others catch. That is why this runs
+five of them instead of the strongest one.
+
+## The five review types
+
+| # | Lens | The question | Catches | Blind to |
+|---|---|---|---|---|
+| 1 | **Drift** | Is each stateful claim still true, and was anything decided after the doc's date that it does not reflect? | stale statuses, answered questions still listed as open, superseded decisions | whether the plan is any good |
+| 2 | **Grill** | For each decision branch: what is the answer, and where is it written? | vague commitments, undefined terms, decisions assumed but never made | facts that changed after the evidence was written |
+| 3 | **Ownership** | Does every workstream and dependency have an owner, a ticket and a date? | unowned dependencies, dates with no path to them | whether it is the right work |
+| 4 | **Premortem** | Six months on, this failed. Why? | risks the plan never names | risks it names but mis-sizes |
+| 5 | **Refutation** | Can a fresh evaluator, ideally different weights, break it? | argument gaps, wrong numbers, unsupported claims | anything outside the text it is shown |
+
+**Order is load-bearing.** Drift before grill, so you do not grill against stale
+facts. Refutation last, so it scores the text that ships, and it is shown the
+drift findings so it can see past the document's date.
+
+If the artifact is a code diff, lens 5 is `/cross-review` on the diff and lenses
+2 to 4 apply only to the design question behind it.
+
+## Procedure
+
+### 0. Frame, before any lens
+
+- Pin the artifact: path, and the commit or content hash of the exact text.
+  **Every finding and every score in the run binds to a hash.**
+- Name its date, its decision owner(s), its audience, and what "ready" means
+  for it: who acts on it, and by when.
+- Build the evidence set: the artifact's own citations, the canon it claims to
+  follow, and **everything dated after the artifact that touches its subject**
+  (meeting notes, tickets, commits, chat, answered asks). For each source, note
+  what it can and cannot see.
+- **Write the evidence set to one file and hand every lens the same file.**
+  Lenses that each gather their own evidence disagree about what is true, and
+  the disagreement looks like a finding.
+
+Once the evidence set carries the post-date decisions, lenses 1, 2 and 4 can
+run in parallel, one subagent each. Lens 3 can ride with lens 1, which reads
+the same tables. Lens 5 always waits for every patch.
+
+### 1. Drift
+
+For every claim that carries state (a status, owner, number, date, "open",
+"done", "no ticket", "we can", "we cannot"), re-read it from the system of
+record and mark it:
+
+- **CURRENT**
+- **STALE**: was true, no longer is
+- **CONTRADICTED**: the evidence says otherwise, now or at the time
+- **UNVERIFIABLE**: name the instrument you would need
+
+Then sweep the post-date evidence for decisions on the artifact's subject. Each
+one the artifact does not reflect is a finding **even if no sentence in it is
+literally false.** An AI meeting summary is a summary: cite it as "the <date>
+summary says", never as words a person said.
+
+### 2. Grill: the autonomous grill-with-docs
+
+Walk the decision tree the way a relentless interviewer would: goal, success
+criteria, scope and non-goals, sequence, dependencies, risks, cost, who
+decides. One branch at a time; follow each answer to its next question until
+the branch bottoms out. Classify every question:
+
+- **ANSWERED**: the evidence settles it. Cite it (`path:line`, ticket id,
+  message permalink, query).
+- **GAP**: the plan should say it, does not, and the evidence does. Patch the
+  plan and cite the evidence.
+- **RESIDUE**: only a person can settle it: a value judgment, an authority, an
+  external party, money. **Do not answer it.** Record the question, why no
+  evidence can settle it, your recommended default, what it gates, and who
+  decides.
+
+The test for RESIDUE is not "I am unsure." It is "no document, system or
+measurement I can reach could settle this." A lookup you skipped is not residue.
+
+The "with docs" half runs alongside and produces two side outputs:
+
+- **Glossary**: every term the artifact uses in two senses, or that two sources
+  define differently. One line each, with the sense the artifact should use.
+- **Decision records**: each decision the grill found already made but written
+  nowhere durable, drafted as an ADR candidate. Write it into a repository only
+  where that repository's conventions let an agent do so; otherwise hand it back
+  as a file.
+
+### 3. Ownership and dependencies
+
+Table every workstream and external dependency: owner (a person, not a team),
+ticket, date, and what it blocks. A missing column is a finding. An unowned
+dependency inside a dated plan is how the date slips without anyone deciding to
+slip it.
+
+### 4. Premortem
+
+Run `/premortem` in autonomous mode: fill its context-gathering step from the
+evidence set instead of asking, generate failure reasons, and deep-dive the
+strongest in parallel subagents. Keep only the reasons that change the plan: a
+mitigation, a gate, a cut, or an early signal with a date to check it.
+
+### 5. Refutation, last
+
+1. **Apply every patch from lenses 1 to 4 first.**
+2. Refute the patched text. For a plan, spec or ADR use `/spec-contract`:
+   `spec_check.py --profile <plan|spec|adr>` must exit 0, then its five-axis
+   rubric, pass at ≥11/15 with no axis at 0. For code use `/cross-review`.
+3. **Stratum A** (different weights, `codex exec -c sandbox_mode=read-only`)
+   when available. Otherwise **Stratum B**, a fresh-context subagent, recorded
+   as **provisional**.
+4. Hand the evaluator the lens 1 findings as well as the document.
+5. Act on every objection, or dismiss it with a stated reason.
+6. **Re-score. The last scored round must have read the exact text you hand
+   back.** A fix made after the last score is unreviewed, however small.
+   Record each round in the ledger **before** the next round runs, so the
+   reviewer also sees the claimed fixes and can check them against the body.
+   The one permitted edit after the final score is appending that round's own
+   ledger entry, which names the hash it scored.
+
+The round budget is `/cross-review`'s.
+
+### 6. Report
+
+Deliver the output contract below. Append the review ledger to the artifact
+(an "Appendix: review ledger") or a sibling file, per the repository's
+convention. **Draft only: never send, post, publish or forward anything.**
+
+## Output contract
+
+1. **Verdict**:
+   - **READY**
+   - **READY WITH DECISIONS**: only residue remains.
+   - **NOT READY**: an unpatched CONTRADICTED claim, an unowned dependency, or
+     final text that was never scored.
+
+   Add **(provisional)** to READY or READY WITH DECISIONS when the last score
+   came from Stratum B only. A missing Stratum A is a blind spot (item 7), not
+   residue: nobody has to decide anything about it.
+2. **Text reviewed**: path and hash in, hash of the final text out.
+3. **Findings per lens**, each with its disposition: patched, residue, or
+   dismissed with a reason.
+4. **Scores**: every round, the hash it read, and its stratum.
+5. **Residue**, numbered. Each one names the question, why evidence cannot
+   settle it, a recommended default, what it gates, and who decides. This is
+   the only part the human has to act on.
+6. **Glossary and ADR candidates.**
+7. **Blind spots**: what this run could not see, and the instrument that would
+   have seen it.
+
+## Rules
+
+- Evidence over recall. Every ANSWERED carries a citation.
+- Do not ask what you can look up. Do ask what you cannot decide.
+- Never answer a residue on its owner's behalf, even when the answer looks
+  obvious. Make it the recommended default; the owner decides.
+- Two instances of one brief agreeing is one reading, not corroboration.
+- **A lens subagent's fact is a claim until you check it.** Before a fact from
+  a subagent goes into the artifact, re-run its instrument yourself for every
+  load-bearing one. Relaying it is asserting it.
+- A score binds to a hash.
+- Nothing leaves the workspace.
+
+## Rationalizations to refuse
+
+| Excuse | Reality |
+|---|---|
+| "It was already adversarially reviewed." | Which text? Anything changed after the last scored round is unreviewed. |
+| "Nothing in it is false." | Drift includes what was decided after it was written. A true, stale plan still misleads the people acting on it. |
+| "I'm not sure, so it's a question for the user." | Uncertainty is not residue. Look it up; only what no reachable evidence can settle goes back. |
+| "The fixes were small." | Small unscored fixes are exactly how a 7/10 document ships text no reviewer read. |
+| "The reviewer agreed with me." | Same weights share blind spots. A Stratum B score is provisional. |
+| "I'll ask each question as it comes up." | That is grill-with-docs. Batch the residue once, at the end, with defaults. |
+| "The owner will obviously pick X." | Then X is your recommended default. It is still their call. |
+| "The premortem found nothing new." | Then say which named risks it confirmed and which signal you would watch. "Nothing" is a finding only with its search stated. |
+
+## When not to use
+
+- The user wants to be interviewed live: `/grill-with-docs`.
+- A code diff with no design question: `/code-review` or `/cross-review`.
+- An idea with no plan yet: help plan first, then review.
+
+## Composition
+
+| Skill | Role here |
+|---|---|
+| `premortem` | lens 4 |
+| `spec-contract` | lens 5 for plans, specs and ADRs |
+| `cross-review` | lens 5 for code, and the round budget everywhere |
+| `kg` | building the evidence set where a knowledge graph exists |
+| `handback` | delivering the residue when the owner is away |
+| `grill-with-docs` | the interactive alternative; run it on the residue if the owner wants to talk it through |
