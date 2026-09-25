@@ -163,7 +163,8 @@ mitigation, a gate, a cut, or an early signal with a date to check it.
 
 1. **Apply every patch from lenses 1 to 4 first.**
 2. Refute the patched text. For a plan, spec or ADR use `/spec-contract`:
-   `spec_check.py --profile <plan|spec|adr>` must exit 0, then its five-axis
+   `spec_check.py <path to the patched text> --profile <plan|spec|adr>` must
+   exit 0 on that exact file, then its five-axis
    rubric, pass at ≥11/15 with no axis at 0. Keep `spec-contract`'s two
    escalations, which a total alone hides: **R1 = 0** (a one-way door
    committed silently) stops the document, and **R2 or R4 at 1 or less** means
@@ -180,35 +181,45 @@ mitigation, a gate, a cut, or an early signal with a date to check it.
    back.** A fix made after the last score is unreviewed, however small.
    Record each round in the ledger **before** the next round runs, so the
    reviewer also sees the claimed fixes and can check them against the body.
-   The one permitted edit after the final score is appending that round's own
-   ledger entry, which names the hash it scored.
+   Keep the ledger in a **sibling file** (for example `<artifact>.review.md`)
+   by default, so the bytes scored and the bytes handed back are the same. If
+   the repository's convention puts it in an appendix instead, the only edit
+   allowed after the final score is that round's own ledger entry, and the
+   report names both hashes: the text scored, and the text with its ledger.
 
 **Round budget.** Take the round *counting* from `/cross-review` (three free
 rounds, rounds 4 to 7 earned only by a continuation verdict that names a
 located, checkable defect, 8 or more a human's call), but **not its pass
 mark**: its 7/10 is for code. A design round passes only on `spec-contract`'s
-rule above. When logging with `cross-review round record-round`, record
-`--defect=yes` for any failing round and put the rubric result
-(`R1..R5`, total out of 15) in the ledger, not in `--score`. When the budget
+rule above. To log a design round with `cross-review round record-round`,
+pass `--score` as the rubric total scaled to ten and rounded down
+(`total × 10 / 15`, so 10/15 logs as 6 and 11/15 as 7), and `--defect=yes` only
+when the round reproduced a checkable defect such as a wrong number or a
+contradiction, `no` otherwise. Keep `R1..R5` and the unscaled total in the
+ledger. The scaled number feeds the budget's round counting only; whether the
+round passed is always `spec-contract`'s rule. When the budget
 is spent without a pass, stop: do not keep editing. Record the last round's
 objections as open, and the verdict follows the output contract.
 
 ### 6. Report
 
-Deliver the output contract below. Append the review ledger to the artifact
-(an "Appendix: review ledger") or a sibling file, per the repository's
-convention. **Draft only: never send, post, publish or forward anything.**
+Deliver the output contract below. Write the review ledger to the sibling file
+from step 5.6, or to an appendix where the repository requires one. **Draft only: never send, post, publish or forward anything.**
 
 ## Output contract
 
 1. **Verdict**, decided by the first rule that matches:
    - **NOT READY** if any of these holds:
      - the final text was never scored, or its last round failed;
+     - the last round scored R1 = 0, or R2 or R4 at 1 or less;
      - `spec_check` does not exit 0;
      - a STALE or CONTRADICTED claim is unpatched;
      - a load-bearing claim is UNVERIFIABLE or BLOCKED and no owner has
        accepted the risk;
-     - a dependency on the critical path has no owner.
+     - a dependency on the critical path has no owner;
+     - any finding from any lens has no disposition. Every finding ends as
+       patched, residue, BLOCKED, dismissed with a stated reason, or a named
+       blind spot.
    - **READY WITH DECISIONS**: none of the above, and only residue remains.
    - **READY**: none of the above, and no residue.
 

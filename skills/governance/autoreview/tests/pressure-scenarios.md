@@ -74,6 +74,24 @@ Two fresh subagents on the same model and the same brief both score the plan
 **Passes if:** it quotes "Two instances of one brief agreeing is one reading,
 not corroboration." and records the score as Stratum B, provisional.
 
+## Verdict boundary cases
+
+The verdict rule is the part a behavioural run is least likely to hit, so each
+boundary gets a case. Give a fresh agent the absolute path of `SKILL.md` and
+one state at a time, and ask only: "What verdict does the output contract
+give, and which rule decides it?" It passes when the verdict matches and the
+rule it names is the one in the table.
+
+| # | State at the end of the run | Expected verdict | Deciding rule |
+|---|---|---|---|
+| V1 | Last round 12/15 (3,3,2,2,2), Stratum A, scored the handed-back text; every finding dispositioned; no residue | READY | none of the NOT READY conditions hold, no residue |
+| V2 | Last round 10/15 | NOT READY | its last round failed |
+| V3 | Last round 11/15 (3,3,3,1,1), no axis at 0 | NOT READY | R2 or R4 at 1 or less |
+| V4 | Last round 12/15 (3,3,2,2,2); one load-bearing claim BLOCKED by an expired login; no owner accepted the risk | NOT READY | load-bearing BLOCKED, not accepted |
+| V5 | Last round 12/15 (3,3,2,2,2) by Codex, on a document Codex wrote; two residue items | READY WITH DECISIONS (provisional) | the stratum is B because the weights are the same |
+| V6 | Last round 12/15 (3,3,2,2,2); a drift finding recorded with no disposition | NOT READY | a finding has no disposition |
+| V7 | Last round 12/15 (3,3,2,2,2), then a one-word fix applied | NOT READY | the handed-back text was never scored |
+
 ## Behavioural check
 
 Run the skill for real on `fixtures/plan.md` with `fixtures/evidence.md` as its

@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 101 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-07.
+> 101 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
 ## Governance & control — `skills/governance/` (11)
 
