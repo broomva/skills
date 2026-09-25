@@ -245,8 +245,9 @@ from step 5.6, or to an appendix where the repository requires one. **Draft only
    came from Stratum B only. A missing Stratum A is a blind spot (item 7), not
    residue: nobody has to decide anything about it.
 2. **Text reviewed**: path and hash in, hash of the final text out.
-3. **Findings per lens**, each with its disposition: patched, residue, or
-   dismissed with a reason.
+3. **Findings per lens**, each with one disposition from the same list the
+   verdict rule uses: patched, residue, BLOCKED, dismissed with a reason, or a
+   named blind spot.
 4. **Scores**: every round, the hash it read, and its stratum.
 5. **Residue**, numbered. Each one names the question, why evidence cannot
    settle it, a recommended default, what it gates, and who decides. This is

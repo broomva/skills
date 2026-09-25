@@ -94,6 +94,7 @@ rule it names is the one in the table.
 | V5 | Last round 12/15 (3,3,2,2,2) by Codex, on a document Codex wrote; two residue items | READY WITH DECISIONS (provisional) | the stratum is B because the weights are the same |
 | V6 | Last round 12/15 (3,3,2,2,2); a drift finding recorded with no disposition | NOT READY | a finding has no disposition |
 | V7 | Last round 12/15 (3,3,2,2,2), then a one-word fix applied | NOT READY | the handed-back text was never scored |
+| V8 | Last round 12/15 (3,3,2,2,2), Stratum A; one load-bearing claim BLOCKED by an expired login; the evidence set holds the owner's written acceptance of that risk; no other residue | READY | the acceptance is already on record, so it is ANSWERED and cited, not residue; the BLOCKED claim stays listed as a blind spot |
 
 ### Budget adapter case
 
