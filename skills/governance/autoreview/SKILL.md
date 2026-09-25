@@ -128,8 +128,8 @@ the branch bottoms out. Classify every question:
   residue, because nobody has to decide anything. Retry once. Then name the
   instrument and the exact failure, and carry it to the report's blind spots.
   A load-bearing BLOCKED keeps the verdict at NOT READY until it is reached,
-  or until an owner accepts the risk in writing, which makes the acceptance
-  the residue.
+  or until an owner accepts the risk in writing. An acceptance already on
+  record is ANSWERED, with its citation; one not yet given is RESIDUE.
 
 The test for RESIDUE is not "I am unsure", and not "I could not reach it". It
 is "this is a choice, not a fact: no document, system or measurement could
@@ -170,8 +170,10 @@ mitigation, a gate, a cut, or an early signal with a date to check it.
 ### 5. Refutation, last
 
 1. **Apply every patch from lenses 1 to 4 first.**
-2. Refute the patched text. For a plan, spec or ADR use `/spec-contract`:
-   `spec_check.py <path to the patched text> --profile <plan|spec|adr>` must
+2. Refute the patched text with `/spec-contract` for every document type this
+   skill takes: `--profile plan` for a plan or strategy document, `spec` for
+   a spec or proposal (`rfd` where the repository keeps RFDs), `adr` for an
+   ADR. `spec_check.py <path to the patched text> --profile <profile>` must
    exit 0 on that exact file, then its five-axis
    rubric, pass at ≥11/15 with no axis at 0. Keep `spec-contract`'s two
    escalations, which a total alone hides: **R1 = 0** (a one-way door
@@ -290,7 +292,7 @@ from step 5.6, or to an appendix where the repository requires one. **Draft only
 | Skill | Role here |
 |---|---|
 | `premortem` | lens 4 |
-| `spec-contract` | lens 5 for plans, specs and ADRs |
+| `spec-contract` | lens 5 for plans, strategy documents, specs, proposals and ADRs |
 | `cross-review` | lens 5 for code, and the round budget everywhere |
 | `kg` | building the evidence set where a knowledge graph exists |
 | `handback` | delivering the residue when the owner is away |
