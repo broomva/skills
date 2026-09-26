@@ -440,7 +440,7 @@ def main():
                 print("-" * 85)
                 for a in accounts:
                     active_marker = " * " if a["isActive"] else "   "
-                    sub_tier = a.get("subscriptionType") or "max" if a["isActive"] else "-"
+                    sub_tier = (a.get("subscriptionType") or "unknown") if a["isActive"] else "-"
                     creds_status = "Yes (Fresh)" if a.get("isTokenFresh") else ("Yes" if a.get("hasStoredCredentials") else "No")
                     print(f"{active_marker:<8} {a['email']:<28} {sub_tier:<14} {creds_status:<14} {a['id']}")
 
