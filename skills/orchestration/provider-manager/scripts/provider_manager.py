@@ -13,6 +13,7 @@ import json
 import os
 import re
 import select
+import shlex
 import subprocess
 import sys
 import time
@@ -29,13 +30,14 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 AUTH_HELPER_PATH = SCRIPT_DIR / "auth_helper.js"
 
 
-def run_cmd(cmd: List[str], input_str: Optional[str] = None, check: bool = True) -> subprocess.CompletedProcess:
+def run_cmd(cmd: List[str], input_str: Optional[str] = None, check: bool = True, timeout: Optional[float] = 30.0) -> subprocess.CompletedProcess:
     return subprocess.run(
         cmd,
         input=input_str,
         text=True,
         capture_output=True,
-        check=check
+        check=check,
+        timeout=timeout
     )
 
 
@@ -68,14 +70,14 @@ def read_keychain_generic_password(service: str, account: Optional[str] = None) 
 
 def write_keychain_generic_password(service: str, account: str, data: Dict[str, Any]) -> bool:
     payload = json.dumps(data)
-    cmd = [
-        "security", "add-generic-password",
-        "-U",
-        "-s", service,
-        "-a", account,
-        "-w", payload
-    ]
-    res = run_cmd(cmd, check=False)
+    payload_hex = payload.encode("utf-8").hex()
+    command = " ".join([
+        "add-generic-password", "-U",
+        "-s", shlex.quote(service),
+        "-a", shlex.quote(account),
+        "-X", payload_hex,
+    ])
+    res = run_cmd(["security", "-i"], input_str=command + "\n", check=False)
     return res.returncode == 0
 
 
@@ -371,20 +373,27 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
     managed = orca.get("settings", {}).get("claudeManagedAccounts", [])
     matching_acc = next((a for a in managed if a.get("email", "").lower() == target_email.lower()), None)
 
-    target_uuid = matching_acc.get("id") if matching_acc else session_info.get("accountUuid")
+    if not fresh_creds:
+        raise RuntimeError("Login succeeded in CLI, but no credentials found in Claude Keychain.")
 
-    if fresh_creds and target_uuid:
-        write_keychain_generic_password(KEYCHAIN_ORCA_SERVICE, target_uuid, fresh_creds)
-        orca.setdefault("settings", {})["activeClaudeManagedAccountId"] = target_uuid
-        if matching_acc:
-            matching_acc["lastAuthenticatedAt"] = int(time.time() * 1000)
-            matching_acc["updatedAt"] = int(time.time() * 1000)
-        save_orca_data(orca)
-        sys.stdout.write(f"[*] Synced updated credentials to Orca Keychain (id: {target_uuid}).\n")
+    target_uuid = matching_acc.get("id") if matching_acc else session_info.get("accountUuid")
+    if not target_uuid:
+        raise RuntimeError(f"Could not resolve target account ID for {target_email}.")
+
+    ok = write_keychain_generic_password(KEYCHAIN_ORCA_SERVICE, target_uuid, fresh_creds)
+    if not ok:
+        raise RuntimeError(f"Failed to sync credentials to Orca Keychain for {target_uuid}.")
+
+    orca.setdefault("settings", {})["activeClaudeManagedAccountId"] = target_uuid
+    if matching_acc:
+        matching_acc["lastAuthenticatedAt"] = int(time.time() * 1000)
+        matching_acc["updatedAt"] = int(time.time() * 1000)
+    save_orca_data(orca)
+    sys.stdout.write(f"[*] Synced updated credentials to Orca Keychain (id: {target_uuid}).\n")
 
     status = get_claude_auth_status()
     return {
-        "success": True,
+        "success": bool(status.get("loggedIn") is True),
         "email": target_email,
         "organizationUuid": org_uuid,
         "authStatus": status
@@ -400,11 +409,17 @@ def rotate_account(reason: str = "rate_limit", dry_run: bool = False) -> Dict[st
             "error": "Cannot rotate: only 1 account configured in managed accounts roster."
         }
 
-    active = next((a for a in accounts if a["isActive"]), None)
-    candidates = [a for a in accounts if not a["isActive"]]
+    active_idx = next((i for i, a in enumerate(accounts) if a["isActive"]), 0)
+    active = accounts[active_idx] if accounts else None
 
-    # Pick candidate with fresh credentials or stored credentials
-    chosen = next((c for c in candidates if c["hasStoredCredentials"]), candidates[0])
+    # Cyclic round-robin order of remaining candidates
+    ordered_candidates = [accounts[(active_idx + i) % len(accounts)] for i in range(1, len(accounts))]
+
+    # 1. Prefer candidate with fresh token
+    chosen = next((c for c in ordered_candidates if c.get("isTokenFresh")), None)
+    # 2. Otherwise candidate with stored credentials
+    if not chosen:
+        chosen = next((c for c in ordered_candidates if c.get("hasStoredCredentials")), ordered_candidates[0])
 
     if dry_run:
         return {

@@ -93,7 +93,7 @@ function findClaudeCookies(preferredBrowser = "arc", preferredProfile = null) {
         fs.copyFileSync(cookiePath, tmpDb);
         const rows = execFileSync(
           "sqlite3",
-          [tmpDb, 'SELECT host_key, name, hex(encrypted_value) FROM cookies WHERE host_key LIKE "%claude.ai%";'],
+          [tmpDb, "SELECT host_key, name, hex(encrypted_value) FROM cookies WHERE host_key LIKE '%claude.ai%';"],
           { encoding: "utf8" }
         );
 

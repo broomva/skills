@@ -197,3 +197,28 @@ def test_rotate_account_no_alternative(mock_orca_data, mock_claude_json):
         result = pm.rotate_account()
         assert result["success"] is False
         assert "only 1 account configured" in result["error"]
+
+
+def test_write_keychain_generic_password_token_not_in_argv():
+    secret_token = "super_secret_oauth_access_token_12345"
+    data = {
+        "claudeAiOauth": {
+            "accessToken": secret_token
+        }
+    }
+    with patch.object(pm, "run_cmd", return_value=MagicMock(returncode=0)) as mock_run:
+        ok = pm.write_keychain_generic_password("TestService", "testuser", data)
+        assert ok is True
+        mock_run.assert_called_once()
+        cmd_args, kwargs = mock_run.call_args
+        command_list = cmd_args[0]
+        # Command should only be ["security", "-i"]
+        assert command_list == ["security", "-i"]
+        # Secret token must NOT appear anywhere in the argv list
+        for arg in command_list:
+            assert secret_token not in arg
+        # Secret token payload is passed via input_str on stdin (hex-encoded)
+        input_str = kwargs.get("input_str", "")
+        assert secret_token not in input_str
+        assert secret_token.encode("utf-8").hex() in input_str
+
