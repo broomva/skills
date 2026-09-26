@@ -12,6 +12,7 @@ import getpass
 import json
 import os
 import re
+import select
 import subprocess
 import sys
 import time
@@ -92,12 +93,18 @@ def get_orca_data() -> Dict[str, Any]:
 def save_orca_data(data: Dict[str, Any]) -> bool:
     if not ORCA_DATA_PATH.parent.exists():
         ORCA_DATA_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = ORCA_DATA_PATH.with_suffix(f".tmp.{os.getpid()}")
     try:
-        with open(ORCA_DATA_PATH, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, ORCA_DATA_PATH)
         return True
     except Exception as e:
         sys.stderr.write(f"Error saving {ORCA_DATA_PATH}: {e}\n")
+        if tmp_path.exists():
+            tmp_path.unlink()
         return False
 
 
@@ -112,12 +119,20 @@ def get_claude_json() -> Dict[str, Any]:
 
 
 def save_claude_json(data: Dict[str, Any]) -> bool:
+    if not CLAUDE_CONFIG_PATH.parent.exists():
+        CLAUDE_CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = CLAUDE_CONFIG_PATH.with_suffix(f".tmp.{os.getpid()}")
     try:
-        with open(CLAUDE_CONFIG_PATH, "w", encoding="utf-8") as f:
+        with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, CLAUDE_CONFIG_PATH)
         return True
     except Exception as e:
         sys.stderr.write(f"Error saving {CLAUDE_CONFIG_PATH}: {e}\n")
+        if tmp_path.exists():
+            tmp_path.unlink()
         return False
 
 
@@ -205,8 +220,12 @@ def switch_account(identifier: str) -> Dict[str, Any]:
 
     # 2. Write credentials to Claude Code Keychains
     username = os.environ.get("USER") or os.environ.get("LOGNAME") or getpass.getuser()
-    write_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED, username, creds)
-    write_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED, username, creds)
+    ok_scoped = write_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED, username, creds)
+    ok_unscoped = write_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED, username, creds)
+    if not (ok_scoped or ok_unscoped):
+        raise RuntimeError(
+            f"Failed to write credentials to macOS Keychain for account {target_email} ({username})."
+        )
 
     # 3. Update ~/.claude.json oauthAccount
     claude_cfg = get_claude_json()
@@ -253,6 +272,12 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
     session_info = json.loads(res.stdout).get("session", {})
     detected_email = session_info.get("email")
     org_uuid = session_info.get("organizationUuid")
+
+    if email and detected_email and email.strip().lower() != detected_email.strip().lower():
+        raise ValueError(
+            f"Active browser session is for '{detected_email}', but requested login for '{email}'. "
+            f"Please switch the browser profile or specify the correct --profile."
+        )
     target_email = email or detected_email
 
     if not org_uuid:
@@ -277,23 +302,24 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
     output_lines = []
 
     # Read output until the authorize URL is emitted
-    start_time = time.time()
-    while time.time() - start_time < 20:
-        line = proc.stdout.readline()
-        if not line:
-            if proc.poll() is not None:
-                break
-            time.sleep(0.1)
-            continue
-
-        output_lines.append(line)
-        match = re.search(r"https://claude\.com/cai/oauth/authorize\S+", line)
-        if match:
-            auth_url = match.group(0).rstrip(".")
+    deadline = time.time() + 20
+    while time.time() < deadline:
+        if proc.poll() is not None:
             break
+        rlist, _, _ = select.select([proc.stdout], [], [], 0.5)
+        if proc.stdout in rlist:
+            line = proc.stdout.readline()
+            if not line:
+                break
+            output_lines.append(line)
+            match = re.search(r"https://claude\.com/cai/oauth/authorize\S+", line)
+            if match:
+                auth_url = match.group(0).rstrip(".")
+                break
 
     if not auth_url:
         proc.kill()
+        proc.communicate()
         raise RuntimeError("Failed to capture OAuth authorization URL from claude auth login output.")
 
     sys.stdout.write(f"[*] Authorization URL generated. Requesting autonomous approval...\n")
@@ -306,12 +332,14 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
     appr_res = run_cmd(approve_cmd)
     if appr_res.returncode != 0:
         proc.kill()
+        proc.communicate()
         raise RuntimeError(f"Autonomous OAuth approval failed: {appr_res.stderr}")
 
     appr_data = json.loads(appr_res.stdout)
     formatted_code = appr_data.get("formattedInput")
     if not formatted_code:
         proc.kill()
+        proc.communicate()
         raise RuntimeError("No formatted authorization code returned.")
 
     sys.stdout.write(f"[*] Authorization code obtained. Injecting into login process...\n")
@@ -320,11 +348,17 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
     proc.stdin.write(f"{formatted_code}\n")
     proc.stdin.flush()
 
-    stdout_rem, stderr_rem = proc.communicate(timeout=15)
+    try:
+        stdout_rem, stderr_rem = proc.communicate(timeout=15)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+        proc.communicate()
+        raise TimeoutError("claude auth login timed out waiting to complete authentication.")
+
     full_output = "".join(output_lines) + stdout_rem + stderr_rem
 
-    if "Login successful" not in full_output and proc.returncode != 0:
-        raise RuntimeError(f"claude auth login did not report success: {full_output}")
+    if proc.returncode != 0 or "Login successful" not in full_output:
+        raise RuntimeError(f"claude auth login did not report success (exit code {proc.returncode}): {full_output}")
 
     sys.stdout.write("[*] Login confirmed by Claude Code.\n")
 
@@ -385,7 +419,7 @@ def rotate_account(reason: str = "rate_limit", dry_run: bool = False) -> Dict[st
     try:
         switch_res = switch_account(chosen["id"])
         return {
-            "success": True,
+            "success": bool(switch_res.get("success", False)),
             "rotatedFrom": active["email"] if active else None,
             "rotatedTo": chosen["email"],
             "reason": reason,

@@ -255,10 +255,13 @@ async function approveOAuth(authUrl, cookieHeader, targetOrgUuid) {
 
   const resultUrl = new URL(approveData.redirect_uri);
   const code = resultUrl.searchParams.get("code");
-  const returnedState = resultUrl.searchParams.get("state") || state;
+  const returnedState = resultUrl.searchParams.get("state");
 
   if (!code) {
     throw new Error("No authorization code found in redirect URL.");
+  }
+  if (!returnedState || returnedState !== state) {
+    throw new Error(`OAuth state mismatch: expected '${state}', got '${returnedState}'`);
   }
 
   return {
