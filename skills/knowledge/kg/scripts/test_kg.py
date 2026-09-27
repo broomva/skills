@@ -430,6 +430,9 @@ def test_resolve_enclosing_checkout_is_worktree_aware():
         (fake / ".git").write_text("not git\n")
         root4, _, _ = kg._resolve_knowledge_paths(start_dir=fake, env={})
         assert root4 == Path.home() / "broomva", "a text file named .git is not a checkout"
+        (fake / ".git").write_text(f"gitdir! {main}/.git/worktrees/wt\n")  # malformed pointer, real target
+        root5, _, _ = kg._resolve_knowledge_paths(start_dir=fake, env={})
+        assert root5 == Path.home() / "broomva", "only a `gitdir:` line points at a git dir"
         check(True, "enclosing checkout: worktree resolves to itself, env overrides")
 
 

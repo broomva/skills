@@ -294,6 +294,17 @@ class TestEnclosingCheckout:
         root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
         assert root == DEFAULT_ROOT
 
+    def test_a_malformed_pointer_naming_a_real_gitdir_is_not_a_checkout(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        target = main / ".git" / "worktrees" / "x"
+        target.mkdir(parents=True)
+        (target / "HEAD").write_text("x\n")
+        d = tmp_path / "fake"
+        (d / "research" / "entities").mkdir(parents=True)
+        (d / ".git").write_text(f"gitdir! {target}\n")   # not a `gitdir:` line
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
+        assert root == DEFAULT_ROOT
+
     def test_relative_gitdir_resolves_against_the_checkout(self, tmp_path):
         main = _checkout(tmp_path / "main")
         wt = tmp_path / "wt"

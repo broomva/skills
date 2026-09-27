@@ -247,7 +247,12 @@ REFUSED_NOTE = (
     "Verified against the paper. The case report by Beata Halassy gives tumour "
     "volumes of 2.47 and 0.91 cm3 (63%), measured on 2026-09-15 before and after "
     "the neoadjuvant course, per https://doi.org/10.3390/vaccines12091007.\n"
-    "Second line of the section.\nThird line of the section.\n"
+    "Second line of the section.\nThird line of the section.\n\n"
+    # A second section: Format-2 ingest (the one that glues the heading onto
+    # the item) only applies to a note with more than one section.
+    "# Tooling observation\n\n"
+    "the ingest missed a burned-in caption again, third time on this kind of video.\n"
+    "a second line here.\na third line here.\n"
 )
 GROUNDED_NOTE = REFUSED_NOTE.replace(
     "Verified against the paper. The case report by Beata Halassy",
@@ -269,10 +274,23 @@ def _pipeline(door, tmp_path, monkeypatch, text):
     return note
 
 
-def test_title_case_run_never_crosses_a_line_break():
-    items = bookkeeping._ingest_markdown(REFUSED_NOTE.split("---\n", 2)[2],
+def _first_item(note):
+    items = bookkeeping._ingest_markdown(note.split("---\n", 2)[2],
                                          "2026-09-27-t-raw", "research")
-    cands = bookkeeping._build_entity_slug_candidates(items[0])
+    # Precondition, asserted so this suite cannot silently fall back to the
+    # paragraph format (no heading in the item) and test nothing.
+    assert items[0].metadata.get(bookkeeping._SECTION_HEADING_METADATA_KEY) == "Items"
+    assert items[0].content.startswith("Items\n\n")
+    return items[0]
+
+
+def test_fixture_notes_go_through_format2():
+    _first_item(REFUSED_NOTE)
+    _first_item(GROUNDED_NOTE)
+
+
+def test_title_case_run_never_crosses_a_line_break():
+    cands = bookkeeping._build_entity_slug_candidates(_first_item(REFUSED_NOTE))
     assert "items-verified" not in cands     # heading + next line's first word
     assert "beata-halassy" in cands
 
