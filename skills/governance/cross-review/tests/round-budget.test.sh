@@ -1309,10 +1309,12 @@ RC_NUL=$(rb budget --run-id=t76 --ledger="$LED")
 LED2=$(newledger t76b)
 printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\n' > "$LED2"
 RC_CTRL=$(rb budget --run-id=t76b --ledger="$LED2")
-if [ "$RC_NUL" = "6" ] && [ "$RC_CTRL" = "3" ]; then
-    ok "T76: NUL-bearing ledger STOPs; the same row without it PASSES"
+SHOW_NUL=$(rbout show --run-id=t76 --ledger="$LED" | grep -c "MALFORMED: this ledger contains a NUL" || true)
+SHOW_CTRL=$(rbout show --run-id=t76b --ledger="$LED2" | grep -c "MALFORMED" || true)
+if [ "$RC_NUL" = "6" ] && [ "$RC_CTRL" = "3" ] && [ "$SHOW_NUL" = "1" ] && [ "$SHOW_CTRL" = "0" ]; then
+    ok "T76: NUL-bearing ledger STOPs and show flags it; the same row without it PASSES and shows clean"
 else
-    fail "T76: NUL byte" "nul=$RC_NUL (want 6) control=$RC_CTRL (want 3)"
+    fail "T76: NUL byte" "nul=$RC_NUL (want 6) control=$RC_CTRL (want 3) show-flag=$SHOW_NUL (want 1) show-ctrl=$SHOW_CTRL (want 0)"
 fi
 
 # ── T77: an empty verdict entry is refused wherever it sits ───────────────
@@ -1369,6 +1371,41 @@ if printf '%s' "$OUT_BLANK" | grep -q "verdicts: MALFORMED" && [ "$RC_BLANK" = "
     ok "T79: blank field 8 renders MALFORMED (and STOPs); '-' renders none"
 else
     fail "T79: show field 8" "blank='$OUT_BLANK' rc=$RC_BLANK none='$OUT_NONE'"
+fi
+
+# ── T80: the legacy Note speaks only where another round can be recorded ──
+# Review round 3: it printed "record a round" under a STOP and at the ceiling,
+# where the recorder refuses, and it never had a test for being ABSENT.
+echo "T80. the unverified-pass note prints at 0/5 with a passing bare score, and nowhere else"
+t80() { local l; l=$(newledger "t80$1"); printf '%b' "$2" > "$l"; rbout budget --run-id="t80$1" --ledger="$l" | grep -c "not read as a pass" || true; }
+N_FREE=$(t80 a 'ROUND\t1\t9\tyes\t\t-\n')
+N_STOP=$(t80 b 'ROUND\t1\t9\tyes\t\t-\nVERDICT\tSTOP\t\t\n')
+N_LOW=$(t80 c 'ROUND\t1\t5\tyes\t\t-\n')
+N_CEIL=$(t80 d 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\nROUND\t3\t5\tyes\t\t-\nROUND\t4\t5\tyes\t\t-\nROUND\t5\t5\tyes\t\t-\nROUND\t6\t5\tyes\t\t-\nROUND\t7\t5\tyes\t\t-\nROUND\t8\t9\tyes\t\t-\n')
+if [ "$N_FREE" = "1" ] && [ "$N_STOP" = "0" ] && [ "$N_LOW" = "0" ] && [ "$N_CEIL" = "0" ]; then
+    ok "T80: note on an authorized bare 9; silent under STOP, on a bare 5, at the ceiling"
+else
+    fail "T80: note scope" "free=$N_FREE (want 1) stop=$N_STOP low=$N_LOW ceiling=$N_CEIL (want 0 0 0)"
+fi
+
+# ── T81: a bare row after a scaled one is a history no recorder writes ────
+# Review round 3 (MAJOR, introduced by the round-2 boundary rule): appending a
+# hand-written bare row reset the regression comparison, and a 6 -> 4 fall then
+# ended PASSED. The boundary is crossed once, bare -> scaled.
+echo "T81. a bare-integer round after a scaled round STOPs; bare -> scaled still does not"
+LED=$(newledger t81)
+bash "$RB" record-round --run-id=t81 --ledger="$LED" --score=6/10 --defect=yes --stratum=A:6/10:FAIL >/dev/null 2>&1
+printf 'ROUND\t2\t6\tyes\t\t-\n' >> "$LED"
+RC_LAUNDER=$(rb budget --run-id=t81 --ledger="$LED")
+RC_REC=$(rb record-round --run-id=t81 --ledger="$LED" --score=7/10 --defect=yes --stratum=A:7/10:PASS)
+LED2=$(newledger t81b)
+printf 'ROUND\t1\t6\tyes\t\t-\n' > "$LED2"
+bash "$RB" record-round --run-id=t81b --ledger="$LED2" --score=7/10 --defect=yes --stratum=A:7/10:PASS >/dev/null 2>&1
+RC_FWD=$(rb budget --run-id=t81b --ledger="$LED2")
+if [ "$RC_LAUNDER" = "6" ] && [ "$RC_REC" = "6" ] && [ "$RC_FWD" = "3" ]; then
+    ok "T81: scaled -> bare STOPs and refuses appends; bare -> scaled still PASSES"
+else
+    fail "T81: bare after scaled" "budget=$RC_LAUNDER record=$RC_REC (want 6 6) bare-then-scaled=$RC_FWD (want 3)"
 fi
 
 echo ""

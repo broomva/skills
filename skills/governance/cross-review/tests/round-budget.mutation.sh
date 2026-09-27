@@ -536,16 +536,27 @@ mutate "NUL byte read through" "T76" \
     'refusing to read it."
         exit 6' \
     'refusing to read it." >/dev/null'
-mutate "empty verdict entry dropped" "T77" \
-    ',*|*,|*,,*) echo "the verdict list' 'IMPOSSIBLE) echo "the verdict list'
+mutate "trailing empty verdict entry dropped" "T77" \
+    '*,) echo "the verdict list' 'IMPOSSIBLE) echo "the verdict list'
 mutate "leading empty --stratum vanishes" "T77" \
     'if [ "$STRATUM_SET" = "1" ]; then STRATUM_VERDICTS="$STRATUM_VERDICTS,${arg#*=}"' \
     'if [ -n "$STRATUM_VERDICTS" ]; then STRATUM_VERDICTS="$STRATUM_VERDICTS,${arg#*=}"'
 mutate "bare compared with scaled" "T78" \
     'if (kind != prevkind) prev=-1' 'if (0) prev=-1'
 mutate "unverified pass unexplained" "T78" \
-    'if [ "$rule" != "passed" ] && [ "$LG_LAST_VERIFIED" != "1" ]' \
-    'if false && [ "$LG_LAST_VERIFIED" != "1" ]'
+    'echo "  Note: the last round scored' 'return 0; echo "  Note: the last round scored'
+mutate "note printed under any exit code" "T80" \
+    '        0|5)
+            if [ -n "$LG_SCORE" ]' \
+    '        *)
+            if [ -n "$LG_SCORE" ]'
+mutate "note printed below the bar" "T80" \
+    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ]; then' \
+    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge 0 ]; then'
+mutate "bare row after scaled accepted" "T81" \
+    'if (kind == "bare" && sawscaled) badhistory=' 'if (0) badhistory='
+mutate "show renders through a NUL" "T76" \
+    'echo "  MALFORMED: this ledger contains a NUL byte' ': "  MALFORMED: this ledger contains a NUL byte'
 mutate "blank verdicts render as a value" "T79" \
     '($8=="" ? "MALFORMED" : $8)' '$8'
 

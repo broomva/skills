@@ -397,11 +397,13 @@ round_is_admissible() (
         fi
         exit 0
     fi
-    # Reachable, unlike the shape arms deleted above: word splitting on IFS=,
-    # DROPS a trailing empty field, so a stored `A:8/10:PASS,` would validate as
-    # `A:8/10:PASS` while the recorder refuses the same text.
+    # A TRAILING comma only. Word splitting on IFS=, drops a trailing empty
+    # field, so a stored `A:8/10:PASS,` validated as `A:8/10:PASS` while the
+    # recorder refused the same text. A leading or doubled comma leaves an empty
+    # entry INSIDE the list, which score_is_valid refuses, so those arms could
+    # never decide and are not written.
     case "$verdicts" in
-        ,*|*,|*,,*) echo "the verdict list '$verdicts' has an empty entry"; exit 1 ;;
+        *,) echo "the verdict list '$verdicts' ends in an empty entry"; exit 1 ;;
     esac
     letters=""; min=""; failed=0
     IFS=,; set -f
@@ -481,7 +483,7 @@ analyze() {
         BEGIN { rounds=0; prev=-1; last=-1; regressed=0
                 ref=0; maxref=0; nod=0; maxnod=0
                 terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0
-                badhistory=""; lastverified=0; prevkind="" }
+                badhistory=""; lastverified=0; prevkind=""; sawscaled=0 }
         $1=="ROUND" {
             # 6 OR 7. Field 7 (strata) is optional ON READ: every ledger
             # written before the field existed has six-field ROUND rows, and
@@ -517,6 +519,12 @@ analyze() {
             kind=(NF==8) ? "scaled" : "bare"
             if (kind != prevkind) prev=-1
             prevkind=kind
+            # ...and the boundary is crossed ONCE, bare -> scaled. The recorder
+            # writes only scaled rows, so a bare row AFTER a scaled one is a
+            # hand edit -- and without this it reset the comparison above and
+            # turned a regression STOP into a PASS (review round 3).
+            if (kind == "bare" && sawscaled) badhistory="a bare-integer round follows a scaled one; the recorder writes only N/10 rows"
+            if (kind == "scaled") sawscaled=1
             if (sc !~ /^[0-9]+$/ || sc+0 > 10) { badscore=1 }
             else {
                 if (prev >= 0 && sc+0 < prev) regressed=1
@@ -908,12 +916,18 @@ decide_and_exit() {
     "rule_$rule"          # re-run for its message
     # Say WHY a passing-looking score did not pass, rather than leave a pre-
     # BRO-2615 ledger reading "REVIEW-REQUIRED" or "AUTHORIZED" with no reason.
-    if [ "$rule" != "passed" ] && [ "$LG_LAST_VERIFIED" != "1" ] && \
-       [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ]; then
-        echo "  Note: the last round scored $LG_SCORE with no per-stratum verdicts on"
-        echo "  an unstated scale, so it is not read as a pass. Record a round with"
-        echo "  --score=N/$LEDGER_SCALE and one --stratum=L:N/$LEDGER_SCALE:PASS|FAIL per stratum."
-    fi
+    # Only where another round CAN be recorded (0 authorized, 5 review first);
+    # under a stop or the ceiling "record a round" is advice the recorder
+    # refuses. No verified-row test: a passing score on a verified row IS
+    # rule_passed (exit 3), so at 0/5 a score >= the bar is always unverified.
+    case "$code" in
+        0|5)
+            if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ]; then
+                echo "  Note: the last round scored $LG_SCORE with no per-stratum verdicts on"
+                echo "  an unstated scale, so it is not read as a pass. The next round is"
+                echo "  recorded as --score=N/$LEDGER_SCALE with one --stratum=L:N/$LEDGER_SCALE:PASS|FAIL per stratum."
+            fi ;;
+    esac
     exit "$code"
 }
 
@@ -1133,6 +1147,14 @@ show)
     if [ ! -f "$LEDGER" ]; then echo "round-budget: no ledger at $LEDGER"; exit 0; fi
     echo "  Ledger: $LEDGER"
     echo ""
+    # awk ends a record at a NUL, so the rows below would render whatever came
+    # before it -- a lone PASS where the stored row also held a FAIL. `budget`
+    # refuses such a ledger; `show` says so before rendering anything.
+    if [ "$(tr -d '\000' < "$LEDGER" | wc -c | tr -d ' ')" != "$(wc -c < "$LEDGER" | tr -d ' ')" ]; then
+        echo "  MALFORMED: this ledger contains a NUL byte; rows below may be truncated"
+        echo "  and budget refuses it."
+        echo ""
+    fi
     # `unrec` is passed in rather than spelled here: one producer for the token,
     # or `show` and the recorder could disagree about what absence is called.
     #
