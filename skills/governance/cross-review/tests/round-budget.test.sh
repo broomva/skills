@@ -1306,15 +1306,23 @@ echo "T76. a ledger holding a NUL byte STOPs"
 LED=$(newledger t76)
 printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\0,B:3/10:FAIL\n' > "$LED"
 RC_NUL=$(rb budget --run-id=t76 --ledger="$LED")
+# The row above is platform-dependent: BSD awk ends the record at the NUL, but
+# gawk keeps it and bash's $(...) then drops the byte, merging the hidden FAIL
+# back in -- so on Linux pass-over-FAIL refused it and the NUL check was never
+# the one deciding (the CI sweep found that; macOS could not). A NUL that hides
+# NOTHING reads as the same valid pass on both, so only the NUL check refuses.
+LED3=$(newledger t76c)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\0\n' > "$LED3"
+RC_NUL_PLAIN=$(rb budget --run-id=t76c --ledger="$LED3")
 LED2=$(newledger t76b)
 printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\n' > "$LED2"
 RC_CTRL=$(rb budget --run-id=t76b --ledger="$LED2")
 SHOW_NUL=$(rbout show --run-id=t76 --ledger="$LED" | grep -c "MALFORMED: this ledger contains a NUL" || true)
 SHOW_CTRL=$(rbout show --run-id=t76b --ledger="$LED2" | grep -c "MALFORMED" || true)
-if [ "$RC_NUL" = "6" ] && [ "$RC_CTRL" = "3" ] && [ "$SHOW_NUL" = "1" ] && [ "$SHOW_CTRL" = "0" ]; then
+if [ "$RC_NUL" = "6" ] && [ "$RC_NUL_PLAIN" = "6" ] && [ "$RC_CTRL" = "3" ] && [ "$SHOW_NUL" = "1" ] && [ "$SHOW_CTRL" = "0" ]; then
     ok "T76: NUL-bearing ledger STOPs and show flags it; the same row without it PASSES and shows clean"
 else
-    fail "T76: NUL byte" "nul=$RC_NUL (want 6) control=$RC_CTRL (want 3) show-flag=$SHOW_NUL (want 1) show-ctrl=$SHOW_CTRL (want 0)"
+    fail "T76: NUL byte" "nul=$RC_NUL plain-nul=$RC_NUL_PLAIN (want 6 6) control=$RC_CTRL (want 3) show-flag=$SHOW_NUL (want 1) show-ctrl=$SHOW_CTRL (want 0)"
 fi
 
 # ── T77: an empty verdict entry is refused wherever it sits ───────────────
