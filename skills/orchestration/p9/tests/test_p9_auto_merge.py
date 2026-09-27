@@ -161,15 +161,34 @@ class _FakeRun:
         self.returncode = returncode
 
 
-def _pr_view(cmd, *, branch, files, merge_state="CLEAN"):
-    """`gh pr view` answers two questions: branch+files (the `-q` form) and,
-    since BRO-2591, the merge predicate re-read at merge time."""
-    if "-q" in cmd:
+HEAD = "d" * 40
+
+
+def _gh_pr(cmd, *, branch, files, merge_state="CLEAN", head=HEAD, verdict_head=HEAD,
+           renamed=None):
+    """Answer the reads `p9 auto-merge` makes about one PR, or None.
+
+    - `gh pr view -q`: branch, head and changedFiles (the listing header);
+    - `gh api --paginate .../files`: the complete TSV listing, with pre-rename
+      paths (BRO-2591), which gh pr view caps at 100 and cannot show;
+    - `gh pr view --json mergeable,...`: the merge predicate, re-read at merge
+      time since BRO-2591."""
+    renamed = renamed or {}
+    if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
         return _FakeRun(stdout=json.dumps(
-            {"branch": branch, "files": files, "changed": len(files)}))
-    return _FakeRun(stdout=json.dumps(
-        {"mergeable": "MERGEABLE", "mergeStateStatus": merge_state,
-         "reviewDecision": "", "headRefOid": "d" * 40}))
+            {"branch": branch, "head": head, "changed": len(files)}))
+    if cmd[:3] == ["gh", "api", "--paginate"]:
+        return _FakeRun(stdout="".join(
+            f"{f}\t{renamed.get(f, '')}\tmodified\t5\n" for f in files))
+    if cmd[:3] == ["gh", "pr", "view"]:
+        v = {"mergeable": "MERGEABLE", "mergeStateStatus": merge_state,
+             "reviewDecision": ""}
+        if verdict_head:
+            v["headRefOid"] = verdict_head
+        return _FakeRun(stdout=json.dumps(v))
+    if cmd[:3] == ["gh", "api", "graphql"]:
+        return _FakeRun(returncode=1)
+    return None
 
 
 def _seed_merge_ready(p9, pr: int):
@@ -195,10 +214,9 @@ class TestCommand:
         _seed_merge_ready(p9_am, 100)
 
         def fake_view(cmd, *args, **kwargs):
-            if cmd[:3] == ["gh", "api", "graphql"]:
-                return _FakeRun(returncode=1)
-            assert cmd[:3] == ["gh", "pr", "view"]
-            return _pr_view(cmd, branch="docs/typo", files=["README.md"])
+            r = _gh_pr(cmd, branch="docs/typo", files=["README.md"])
+            assert r is not None, f"unexpected call {cmd[:4]}"
+            return r
 
         monkeypatch.setattr(p9_am.subprocess, "run", fake_view)
 
@@ -213,7 +231,8 @@ class TestCommand:
         _seed_merge_ready(p9_am, 200)
 
         def fake_view(cmd, *args, **kwargs):
-            return _pr_view(cmd, branch="docs/cleanup", files=["docs/x.md", "CLAUDE.md"])
+            return _gh_pr(cmd, branch="docs/cleanup",
+                          files=["docs/x.md", "CLAUDE.md"]) or _FakeRun(returncode=1)
 
         monkeypatch.setattr(p9_am.subprocess, "run", fake_view)
         rc = p9_am.main(["auto-merge", "200", "--repo", "broomva/test"])
@@ -230,8 +249,9 @@ class TestCommand:
 
         def fake_run(cmd, *args, **kwargs):
             calls.append(cmd)
-            if cmd[:3] == ["gh", "pr", "view"]:
-                return _pr_view(cmd, branch="docs/something", files=["docs/y.md"])
+            r = _gh_pr(cmd, branch="docs/something", files=["docs/y.md"])
+            if r is not None:
+                return r
             if cmd[:3] == ["gh", "pr", "merge"]:
                 return _FakeRun(returncode=0)
             return _FakeRun(returncode=1)
@@ -244,7 +264,7 @@ class TestCommand:
         assert len(merge_calls) == 1
         assert "--squash" in merge_calls[0]
         assert "--delete-branch" in merge_calls[0]
-        assert merge_calls[0][merge_calls[0].index("--match-head-commit") + 1] == "d" * 40
+        assert merge_calls[0][merge_calls[0].index("--match-head-commit") + 1] == HEAD
         # State transitioned to MERGED
         assert p9_am.current_pr_state(300) == p9_am.PRState.MERGED
 
@@ -267,8 +287,9 @@ class TestCommand:
         _seed_merge_ready(p9_am, 500)
 
         def fake_run(cmd, *args, **kwargs):
-            if cmd[:3] == ["gh", "pr", "view"]:
-                return _pr_view(cmd, branch="docs/whatever", files=["docs/z.md"])
+            r = _gh_pr(cmd, branch="docs/whatever", files=["docs/z.md"])
+            if r is not None:
+                return r
             if cmd[:3] == ["gh", "pr", "merge"]:
                 return _FakeRun(returncode=1)
             return _FakeRun(returncode=1)
@@ -285,102 +306,84 @@ class TestLegacyReverifiesAtMergeTime:
     predicate at merge time. A MERGE_READY row is history, and
     `merge-ready --no-verify` can write one for a PR that is not mergeable."""
 
-    @pytest.mark.parametrize("merge_state", ["BLOCKED", "BEHIND", "DRAFT", "UNKNOWN"])
-    def test_stale_merge_ready_row_does_not_merge(self, p9_am, monkeypatch, merge_state):
-        _seed_merge_ready(p9_am, 600)
-        calls = []
-
-        def fake_run(cmd, *args, **kwargs):
-            calls.append(cmd)
-            if cmd[:3] == ["gh", "pr", "view"]:
-                return _pr_view(cmd, branch="docs/ok", files=["docs/a.md"],
-                                merge_state=merge_state)
-            return _FakeRun(returncode=1)
-
-        monkeypatch.setattr(p9_am.subprocess, "run", fake_run)
-        rc = p9_am.main(["auto-merge", "600", "--repo", "broomva/test"])
-        assert rc == p9_am.EXIT_AUTO_MERGE_BLOCKED
-        assert not [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
-
-
-class TestCompleteFileList:
-    """gh pr view caps `files` at 100. A path rule beyond the first page must
-    not be invisible: the list is re-read paginated, or the call refuses."""
-
-    def test_truncated_list_is_completed_and_rule_fires(self, p9_am, monkeypatch):
-        _seed_merge_ready(p9_am, 610)
-        first_page = [f"docs/f{i}.md" for i in range(100)]
-
-        def fake_run(cmd, *args, **kwargs):
-            if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
-                return _FakeRun(stdout=json.dumps(
-                    {"branch": "docs/big", "files": first_page, "changed": 101}))
-            if cmd[:3] == ["gh", "api", "--paginate"]:
-                return _FakeRun(stdout="\n".join(first_page + ["CLAUDE.md"]) + "\n")
-            return _FakeRun(returncode=1)
-
-        monkeypatch.setattr(p9_am.subprocess, "run", fake_run)
-        rc = p9_am.main(["auto-merge", "610", "--repo", "broomva/test"])
-        assert rc == p9_am.EXIT_AUTO_MERGE_BLOCKED   # CLAUDE.md, found on page 2
-
-    def test_unlistable_diff_refuses(self, p9_am, monkeypatch):
-        _seed_merge_ready(p9_am, 611)
-
-        def fake_run(cmd, *args, **kwargs):
-            if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
-                return _FakeRun(stdout=json.dumps(
-                    {"branch": "docs/big", "files": ["docs/a.md"], "changed": 300}))
-            return _FakeRun(returncode=1)
-
-        monkeypatch.setattr(p9_am.subprocess, "run", fake_run)
-        rc = p9_am.main(["auto-merge", "611", "--repo", "broomva/test"])
-        assert rc != p9_am.EXIT_OK
-        assert p9_am.current_pr_state(611) == p9_am.PRState.MERGE_READY
-
-
-    def test_short_paginated_list_refuses(self, p9_am, monkeypatch):
-        # The REST listing came back shorter than changedFiles: judging the
-        # 150 files it did return would leave 150 unseen.
-        _seed_merge_ready(p9_am, 612)
+    def _run(self, p9_am, monkeypatch, pr, **kw):
+        _seed_merge_ready(p9_am, pr)
         calls = []
 
         def fake_run(cmd, *args, **kwargs):
             calls.append(cmd)
             if cmd[:3] == ["gh", "pr", "merge"]:
                 return _FakeRun(returncode=0)
-            if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
-                return _FakeRun(stdout=json.dumps(
-                    {"branch": "docs/big", "files": ["docs/a.md"] * 100, "changed": 300}))
-            if cmd[:3] == ["gh", "api", "--paginate"]:
-                return _FakeRun(stdout="\n".join(f"docs/f{i}.md" for i in range(150)))
-            if cmd[:3] == ["gh", "pr", "view"]:
-                return _pr_view(cmd, branch="docs/big", files=["docs/a.md"])
-            return _FakeRun(returncode=1)
+            return _gh_pr(cmd, branch="docs/ok", files=["docs/a.md"], **kw) \
+                or _FakeRun(returncode=1)
 
         monkeypatch.setattr(p9_am.subprocess, "run", fake_run)
-        rc = p9_am.main(["auto-merge", "612", "--repo", "broomva/test"])
-        assert rc != p9_am.EXIT_OK
-        assert not [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
-        assert p9_am.current_pr_state(612) == p9_am.PRState.MERGE_READY
+        rc = p9_am.main(["auto-merge", str(pr), "--repo", "broomva/test"])
+        return rc, [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
 
+    @pytest.mark.parametrize("merge_state", ["BLOCKED", "BEHIND", "DRAFT", "UNKNOWN"])
+    def test_stale_merge_ready_row_does_not_merge(self, p9_am, monkeypatch, merge_state):
+        rc, merges = self._run(p9_am, monkeypatch, 600, merge_state=merge_state)
+        assert rc == p9_am.EXIT_AUTO_MERGE_BLOCKED and not merges
 
-class TestLegacyPinsTheHead:
+    def test_clean_pr_merges_pinned(self, p9_am, monkeypatch):
+        rc, merges = self._run(p9_am, monkeypatch, 601)
+        assert rc == p9_am.EXIT_OK
+        assert merges[0][merges[0].index("--match-head-commit") + 1] == HEAD
+
     def test_unreadable_head_sha_does_not_merge_unpinned(self, p9_am, monkeypatch):
-        _seed_merge_ready(p9_am, 620)
+        rc, merges = self._run(p9_am, monkeypatch, 602, verdict_head=None)
+        assert rc == p9_am.EXIT_AUTO_MERGE_BLOCKED and not merges
+
+    def test_head_moved_between_reads_does_not_merge(self, p9_am, monkeypatch):
+        # The rules judged the files at HEAD; the verdict saw another head.
+        rc, merges = self._run(p9_am, monkeypatch, 603, verdict_head="e" * 40)
+        assert rc == p9_am.EXIT_AUTO_MERGE_BLOCKED and not merges
+
+
+class TestCompleteFileList:
+    """The listing is the paginated REST one, with pre-rename paths; a short or
+    failed listing refuses rather than judging part of the diff."""
+
+    def _run(self, p9_am, monkeypatch, pr, *, files, changed=None, rows=None, renamed=None):
+        _seed_merge_ready(p9_am, pr)
         calls = []
 
         def fake_run(cmd, *args, **kwargs):
             calls.append(cmd)
-            if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
+            if cmd[:3] == ["gh", "pr", "merge"]:
+                return _FakeRun(returncode=0)
+            if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd and changed is not None:
                 return _FakeRun(stdout=json.dumps(
-                    {"branch": "docs/ok", "files": ["docs/a.md"], "changed": 1}))
-            if cmd[:3] == ["gh", "pr", "view"]:
-                return _FakeRun(stdout=json.dumps(
-                    {"mergeable": "MERGEABLE", "mergeStateStatus": "CLEAN",
-                     "reviewDecision": ""}))          # no headRefOid
-            return _FakeRun(returncode=1)
+                    {"branch": "docs/big", "head": HEAD, "changed": changed}))
+            if cmd[:3] == ["gh", "api", "--paginate"] and rows is not None:
+                return rows
+            return _gh_pr(cmd, branch="docs/big", files=files, renamed=renamed) \
+                or _FakeRun(returncode=1)
 
         monkeypatch.setattr(p9_am.subprocess, "run", fake_run)
-        rc = p9_am.main(["auto-merge", "620", "--repo", "broomva/test"])
-        assert rc == p9_am.EXIT_AUTO_MERGE_BLOCKED
-        assert not [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+        rc = p9_am.main(["auto-merge", str(pr), "--repo", "broomva/test"])
+        return rc, [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+
+    def test_governance_file_past_the_first_100_is_seen(self, p9_am, monkeypatch):
+        files = [f"docs/f{i}.md" for i in range(100)] + ["CLAUDE.md"]
+        rc, merges = self._run(p9_am, monkeypatch, 610, files=files)
+        assert rc == p9_am.EXIT_AUTO_MERGE_BLOCKED and not merges
+
+    def test_renaming_a_governance_file_away_is_seen(self, p9_am, monkeypatch):
+        rc, merges = self._run(p9_am, monkeypatch, 613, files=["docs/AGENTS.md"],
+                               renamed={"docs/AGENTS.md": "AGENTS.md"})
+        assert rc == p9_am.EXIT_AUTO_MERGE_BLOCKED and not merges
+
+    def test_failed_listing_refuses(self, p9_am, monkeypatch):
+        rc, merges = self._run(p9_am, monkeypatch, 611, files=["docs/a.md"],
+                               rows=_FakeRun(returncode=1))
+        assert rc != p9_am.EXIT_OK and not merges
+        assert p9_am.current_pr_state(611) == p9_am.PRState.MERGE_READY
+
+    def test_short_listing_refuses(self, p9_am, monkeypatch):
+        # 150 rows for a 300-file PR: judging them would leave 150 unseen.
+        files = [f"docs/f{i}.md" for i in range(150)]
+        rc, merges = self._run(p9_am, monkeypatch, 612, files=files, changed=300)
+        assert rc != p9_am.EXIT_OK and not merges
+        assert p9_am.current_pr_state(612) == p9_am.PRState.MERGE_READY

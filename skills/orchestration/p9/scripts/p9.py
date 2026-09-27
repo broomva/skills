@@ -783,6 +783,14 @@ _DEFAULT_REVIEW_BOTS = ("coderabbitai", "CodeRabbit",
 _DEFAULT_GOVERNANCE_PATHS = ("CLAUDE.md", "AGENTS.md", "METALAYER.md",
                              ".control/policy.yaml",
                              ".control/rcs-parameters.toml")
+# Paths whose change always needs P20, whatever its size: the definitions a PR
+# could otherwise rewrite for itself. A `pull_request` run executes the PR's OWN
+# workflow files, so a one-line edit to the aggregate check passes itself.
+_ALWAYS_REVIEW_PATHS = (".github/workflows/**", ".githooks/**",
+                        ".claude/settings.json", ".control/preauth.yaml")
+# Checks that aggregate other checks. An aggregate passes vacuously when no
+# other check ran, so it cannot be the only thing that vouches for a PR.
+_DEFAULT_AGGREGATE_CHECKS = ("Merge Gate",)
 
 
 @dataclass(frozen=True)
@@ -791,7 +799,7 @@ class P20Requirement:
     pass_score: int = _P20_PASS_FLOOR
     max_loc: int = _P20_MAX_LOC_CEILING      # additions+deletions ABOVE this need P20
     max_files: int = _P20_MAX_FILES_CEILING  # changed files ABOVE this need P20
-    public_api_paths: tuple[str, ...] = ()   # any match needs P20
+    public_api_paths: tuple[str, ...] = _ALWAYS_REVIEW_PATHS  # any match needs P20
 
 
 @dataclass(frozen=True)
@@ -807,6 +815,7 @@ class GovernanceTier:
 @dataclass(frozen=True)
 class MergeGates:
     review_bots: tuple[str, ...] = _DEFAULT_REVIEW_BOTS
+    aggregate_checks: tuple[str, ...] = _DEFAULT_AGGREGATE_CHECKS
     p20: P20Requirement = field(default_factory=P20Requirement)
     governance: GovernanceTier = field(default_factory=GovernanceTier)
 
@@ -1209,6 +1218,9 @@ def _parse_auto_merge(raw: Any) -> AutoMergePolicy:
         return AutoMergePolicy()
     if not isinstance(raw, dict):
         raise PolicyError("auto_merge must be a mapping if present")
+    _only_keys(raw, {"enabled", "require_no_requested_changes",
+                     "require_branch_up_to_date", "merge_method", "delete_branch",
+                     "rules", "default_action", "gates"}, "auto_merge")
     rules_raw = raw.get("rules") or []
     if not isinstance(rules_raw, list):
         raise PolicyError("auto_merge.rules must be a list")
@@ -1248,7 +1260,16 @@ def _parse_auto_merge(raw: Any) -> AutoMergePolicy:
         raise PolicyError(
             f"auto_merge.merge_method must be squash|merge|rebase, got {method!r}"
         )
-    gates = _parse_gates(raw.get("gates"))
+    # `gates:` with no value is gated mode with the defaults. PyYAML reads it as
+    # null and the minimal loader as {}, and both must mean the strict thing.
+    gates = _parse_gates({} if "gates" in raw and raw["gates"] is None
+                         else raw.get("gates"))
+    if gates is not None and default != "notify" and default != "require_human":
+        raise PolicyError(
+            "auto_merge.default_action must be notify or require_human when gates "
+            "are set: a p9 that predates gates reads only default_action, and "
+            "`auto` would merge every PR ungated"
+        )
     if gates is not None:
         for i, rule in enumerate(rules):
             if rule.action == "auto":
@@ -1297,13 +1318,17 @@ def _parse_gates(raw: Any) -> MergeGates | None:
         return None
     if not isinstance(raw, dict):
         raise PolicyError("auto_merge.gates must be a mapping")
-    _only_keys(raw, {"review_bots", "p20", "governance"}, "auto_merge.gates")
+    _only_keys(raw, {"review_bots", "aggregate_checks", "p20", "governance"},
+               "auto_merge.gates")
 
     # Configured bots EXTEND the built-in list: no YAML can make a CodeRabbit
     # status or review count as a human-grade signal again.
     extra_bots = (_str_tuple(raw["review_bots"], "auto_merge.gates.review_bots")
                   if "review_bots" in raw else ())
     bots = tuple(dict.fromkeys(_DEFAULT_REVIEW_BOTS + extra_bots))
+    extra_agg = (_str_tuple(raw["aggregate_checks"], "auto_merge.gates.aggregate_checks")
+                 if "aggregate_checks" in raw else ())
+    aggregates = tuple(dict.fromkeys(_DEFAULT_AGGREGATE_CHECKS + extra_agg))
 
     p20_raw = raw.get("p20") or {}
     if not isinstance(p20_raw, dict):
@@ -1317,9 +1342,10 @@ def _parse_gates(raw: Any) -> MergeGates | None:
                         "auto_merge.gates.p20.max_loc", 0, _P20_MAX_LOC_CEILING),
         max_files=_int_in(p20_raw.get("max_files", _P20_MAX_FILES_CEILING),
                           "auto_merge.gates.p20.max_files", 0, _P20_MAX_FILES_CEILING),
-        public_api_paths=(_str_tuple(p20_raw["public_api_paths"],
-                                     "auto_merge.gates.p20.public_api_paths")
-                          if "public_api_paths" in p20_raw else ()),
+        # Configured paths EXTEND the always-review floor, never replace it.
+        public_api_paths=tuple(dict.fromkeys(_ALWAYS_REVIEW_PATHS + (
+            _str_tuple(p20_raw["public_api_paths"], "auto_merge.gates.p20.public_api_paths")
+            if "public_api_paths" in p20_raw else ()))),
     )
 
     gov_raw = raw.get("governance") or {}
@@ -1366,7 +1392,8 @@ def _parse_gates(raw: Any) -> MergeGates | None:
                                   "auto_merge.gates.governance.l3_window_seconds",
                                   86400, 30 * 86400),
     )
-    return MergeGates(review_bots=bots, p20=p20, governance=gov)
+    return MergeGates(review_bots=bots, aggregate_checks=aggregates, p20=p20,
+                      governance=gov)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1416,10 +1443,11 @@ def match_auto_merge_action(
 # ─────────────────────────────────────────────────────────────────────────────
 # The marker a P20 run records on the PR (`p9 p20-record` writes it):
 #   P20-VERDICT: PASS score=8 strata=B,C sha=<40-hex head sha>
+# Only the FIRST line of a comment is a marker, so a note or a quoted ledger
+# below it can never be read as the verdict.
 _P20_MARKER_RE = re.compile(
-    r"^P20-VERDICT:[ \t]*(PASS|FAIL|STOP)[ \t]+score=(10|\d)(?:/10)?"
-    r"[ \t]+strata=([ABC](?:,[ABC])*)[ \t]+sha=([0-9a-f]{40})[ \t]*$",
-    re.MULTILINE,
+    r"P20-VERDICT:[ \t]*(PASS|FAIL|STOP)[ \t]+score=(10|\d)(?:/10)?"
+    r"[ \t]+strata=([ABC](?:,[ABC])*)[ \t]+sha=([0-9a-f]{40})"
 )
 # Only people with write access can record a verdict. Anyone can comment on a
 # public PR, and a marker from a drive-by account is not a review.
@@ -1457,8 +1485,11 @@ class P20Marker:
 
 
 def latest_p20_marker(comments: Iterable[dict], bots: Iterable[str]) -> P20Marker | None:
-    """The LAST marker from a trusted, non-bot comment. Latest wins, so a later
-    FAIL cancels an earlier PASS and an old pass cannot be cherry-picked."""
+    """The verdict of the LAST trusted, non-bot comment that names one. Latest
+    wins, so a later FAIL cancels an earlier PASS. A comment that names
+    P20-VERDICT but whose first line does not parse (CRLF, bold, a typo) is a
+    MALFORMED verdict: it blocks, it does not leave the earlier PASS standing.
+    (A CRLF line ending is stripped with the rest of the first line's edges.)"""
     found: P20Marker | None = None
     for c in sorted(comments, key=lambda c: c.get("createdAt") or ""):
         login = (c.get("author") or {}).get("login") or ""
@@ -1466,10 +1497,15 @@ def latest_p20_marker(comments: Iterable[dict], bots: Iterable[str]) -> P20Marke
             continue
         if (c.get("authorAssociation") or "").upper() not in _TRUSTED_ASSOCIATIONS:
             continue
-        for m in _P20_MARKER_RE.finditer(c.get("body") or ""):
-            found = P20Marker(verdict=m.group(1), score=int(m.group(2)),
-                              strata=tuple(m.group(3).split(",")),
-                              sha=m.group(4), author=login)
+        body = c.get("body") or ""
+        if "p20-verdict" not in body.lower():
+            continue
+        m = _P20_MARKER_RE.fullmatch(body.strip().split("\n", 1)[0].strip())
+        found = (P20Marker(verdict=m.group(1), score=int(m.group(2)),
+                           strata=tuple(m.group(3).split(",")),
+                           sha=m.group(4), author=login) if m
+                 else P20Marker(verdict="MALFORMED", score=0, strata=(), sha="",
+                                author=login))
     return found
 
 
@@ -1499,6 +1535,7 @@ class PRGateFacts:
     marker_is_ancestor: bool | None = None
     reviewed_files: list | None = None                 # the PR's files at the marker
     base_sha: str = ""                                 # base tip the gates saw
+    unmeasured: list = field(default_factory=list)     # changed files with 0 lines
     l3_recent_commits: int | None = None
 
 
@@ -1524,8 +1561,11 @@ def p20_triggers(g: MergeGates, f: PRGateFacts) -> list[str]:
     for p in f.files:
         pat = _path_matches(p, g.p20.public_api_paths)
         if pat:
-            why.append(f"public API path {p}")
+            why.append(f"always-review path {p}")
             break
+    if f.unmeasured:
+        # A binary change reports 0 lines, so LOC cannot bound its risk.
+        why.append(f"unmeasured (binary) change {f.unmeasured[0]}")
     if governance_paths_touched(g, f):
         why.append("governance-class")
     return why
@@ -1600,13 +1640,22 @@ def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
          "unknown whether behind base" if f.behind_by is None or not f.base_sha
          else f"{f.behind_by} commit(s) behind {f.base} at {f.base_sha[:12]}")
 
-    asked = sorted({(r.get("author") or {}).get("login") or "?" for r in f.reviews
-                    if (r.get("state") or "").upper() == "CHANGES_REQUESTED"})
+    # Per reviewer, the latest OPINIONATED review stands: a later COMMENTED
+    # review does not withdraw a change request (GitHub's own rule); a later
+    # APPROVED or DISMISSED one does.
+    stance: dict[str, str] = {}
+    for r in sorted(f.reviews, key=lambda r: r.get("submittedAt") or ""):
+        st = (r.get("state") or "").upper()
+        if st in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
+            stance[(r.get("author") or {}).get("login") or "?"] = st
+    asked = sorted(a for a, st in stance.items() if st == "CHANGES_REQUESTED")
+    capped = len(f.reviews) >= 100
     gate("no_changes_requested",
-         not asked and f.review_decision != "CHANGES_REQUESTED",
+         not asked and not capped and f.review_decision != "CHANGES_REQUESTED",
          ("changes requested by " + ", ".join(asked)) if asked
-         else ("reviewDecision=CHANGES_REQUESTED"
-               if f.review_decision == "CHANGES_REQUESTED" else "none requested"))
+         else ("100+ reviews: the list may be truncated" if capped
+               else ("reviewDecision=CHANGES_REQUESTED"
+                     if f.review_decision == "CHANGES_REQUESTED" else "none requested")))
 
     gate("threads_resolved", f.unresolved_threads == 0,
          "unresolved threads could not be counted" if f.unresolved_threads < 0
@@ -1619,6 +1668,23 @@ def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
         gate("p20", ok, f"required ({'; '.join(why)}): {reason}")
     else:
         gate("p20", True, "under the P20 threshold")
+
+    # Something independent must have looked at this PR: a check that actually
+    # ran (not a bot, not an aggregate that passes vacuously when nothing else
+    # ran), or a P20 pass that covers the head.
+    if f.all_checks is None:
+        gate("independent_check", False, "checks could not be read")
+    else:
+        ran = sorted({c.get("name") or "?" for c in f.all_checks
+                      if c.get("bucket") == "pass"
+                      and not _is_bot(c.get("name") or "", g.review_bots)
+                      and (c.get("name") or "") not in g.aggregate_checks})
+        reviewed = _p20_verdict(g, f, marker)[0]
+        gate("independent_check", bool(ran) or reviewed,
+             ("ran and passed: " + ", ".join(ran[:5])) if ran
+             else ("no check ran besides aggregates and bots; a P20 pass covers it"
+                   if reviewed else "no check ran besides aggregates and bots, and "
+                   "no P20 pass covers the PR: nothing independent vouches for it"))
 
     gov = governance_paths_touched(g, f)
     if gov:
@@ -1671,16 +1737,19 @@ def _compare_files(repo: str, basehead: str) -> tuple[str | None, list | None]:
     data = _gh_json(["gh", "api", f"repos/{repo}/compare/{basehead}"])
     if not isinstance(data, dict):
         return None, None
-    return data.get("status"), [x.get("filename") for x in data.get("files") or []]
+    if not isinstance(data.get("files"), list):
+        return data.get("status"), None
+    return data.get("status"), [x.get("filename") for x in data["files"]]
 
 
 def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
-                         files: list[str] | None = None) -> PRGateFacts:
-    """`files` is the caller's COMPLETE list (gh pr view caps its own at 100);
-    without it, a longer PR fails the `classifiable` gate."""
+                         listing: "PRListing | None" = None) -> PRGateFacts:
+    """`listing` is the caller's COMPLETE file listing, pre-rename paths
+    included (gh pr view caps its own at 100 and drops renames); without it, a
+    longer PR fails the `classifiable` gate."""
     f = PRGateFacts(pr=pr)
     fields = ("state,isDraft,baseRefName,headRefOid,mergeStateStatus,mergeable,"
-              "reviewDecision,latestReviews,comments,additions,deletions,"
+              "reviewDecision,reviews,comments,additions,deletions,"
               "changedFiles,files")
     view = None
     for attempt in range(3):
@@ -1697,14 +1766,15 @@ def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
     f.merge_state = (view.get("mergeStateStatus") or "UNKNOWN").upper()
     f.mergeable = (view.get("mergeable") or "UNKNOWN").upper()
     f.review_decision = (view.get("reviewDecision") or "").upper()
-    f.reviews = list(view.get("latestReviews") or [])
+    f.reviews = list(view.get("reviews") or [])
     f.comments = list(view.get("comments") or [])
     f.additions = int(view.get("additions") or 0)
     f.deletions = int(view.get("deletions") or 0)
     f.files = [x.get("path") for x in view.get("files") or [] if x.get("path")]
     f.changed_files = int(view.get("changedFiles") or len(f.files))
-    if files is not None and len(files) == f.changed_files:
-        f.files = list(files)
+    if listing is not None:
+        f.files = list(listing.paths)
+        f.unmeasured = list(listing.unmeasured)
 
     req = _gh_json(["gh", "pr", "checks", str(pr), "--repo", repo, "--required",
                     "--json", "name,bucket"], any_rc=True)
@@ -1725,10 +1795,10 @@ def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
         if f.base:
             _, f.reviewed_files = _compare_files(repo, f"{f.base}...{marker.sha}")
 
+    allc = _gh_json(["gh", "pr", "checks", str(pr), "--repo", repo,
+                     "--json", "name,bucket"], any_rc=True)
+    f.all_checks = allc if isinstance(allc, list) else None
     if governance_paths_touched(g, f):
-        allc = _gh_json(["gh", "pr", "checks", str(pr), "--repo", repo,
-                         "--json", "name,bucket"], any_rc=True)
-        f.all_checks = allc if isinstance(allc, list) else None
         f.l3_recent_commits = _count_governance_commits(repo, f.base, g.governance)
     return f
 
@@ -1766,10 +1836,14 @@ def authoritative_auto_merge_policy(
     """
     if os.environ.get("BROOMVA_P9_POLICY"):
         return local, "BROOMVA_P9_POLICY pin"
+    if not repo or "/" not in repo or not base:
+        return None, "no repo/base to read the governing policy from"
+    import urllib.parse
     try:
         out = subprocess.run(
             ["gh", "api", "-H", "Accept: application/vnd.github.raw",
-             f"repos/{repo}/contents/.control/policy.yaml?ref={base}"],
+             f"repos/{repo}/contents/.control/policy.yaml"
+             f"?ref={urllib.parse.quote(base, safe='')}"],
             capture_output=True, text=True, timeout=30, check=False)
     except (FileNotFoundError, subprocess.TimeoutExpired) as e:
         return None, f"base policy unreadable: {e}"
@@ -1778,7 +1852,9 @@ def authoritative_auto_merge_policy(
             return load_policy_text(out.stdout).auto_merge, f"{repo}@{base}"
         except PolicyError as e:
             return None, f"base policy on {repo}@{base} is malformed: {e}"
-    if "404" in out.stderr or "Not Found" in out.stderr:
+    # "No commit found for the ref" is also a 404, but it means the base is
+    # unreadable, not that the repo has no policy.
+    if "Not Found" in out.stderr and "No commit found" not in out.stderr:
         if any(p.lower().endswith(".control/policy.yaml") for p in touched):
             return None, ("the PR adds a policy file its base does not have; "
                           "a policy cannot authorize its own introduction")
@@ -3137,9 +3213,9 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
         )
         return EXIT_DEGRADED
 
-    branch, paths = _gh_pr_branch_and_paths(pr, repo)
-    decision = decide_auto_merge(policy.auto_merge, pr=pr, repo=repo,
-                                 branch=branch, paths=paths)
+    listing = _gh_pr_listing(pr, repo)
+    branch, paths = listing.branch, list(listing.paths)
+    decision = decide_auto_merge(policy.auto_merge, pr=pr, repo=repo, listing=listing)
     action, reason = decision["action"], decision["reason"]
     am = decision["policy"] or policy.auto_merge
 
@@ -3208,12 +3284,13 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
 
 
 def decide_auto_merge(local: AutoMergePolicy, *, pr: int, repo: str,
-                      branch: str, paths: list[str]) -> dict:
+                      listing: PRListing) -> dict:
     """One decision for both `auto-merge` and `gate-check`.
 
     Returns {action, reason, source, policy, gates, head_sha}; `gates` is a
     list of {gate, ok, reason} dicts in gated mode and [] in legacy mode.
     """
+    branch, paths = listing.branch, list(listing.paths)
     source = "local policy"
     am: AutoMergePolicy | None = local
     if not os.environ.get("BROOMVA_P9_POLICY"):
@@ -3243,6 +3320,10 @@ def decide_auto_merge(local: AutoMergePolicy, *, pr: int, repo: str,
                 action, reason = "notify", f"{reason}, but not merge-ready now: {v['reason']}"
             elif not head_sha:
                 action, reason = "notify", f"{reason}, but the head SHA could not be read"
+            elif head_sha != listing.head_sha:
+                action, reason = "notify", (f"{reason}, but the head moved while it was "
+                                            f"judged ({listing.head_sha[:12]} -> "
+                                            f"{head_sha[:12]}); re-run")
         return {"action": action, "reason": reason, "source": source, "policy": am,
                 "gates": [], "head_sha": head_sha, "base": None, "base_sha": None}
 
@@ -3251,12 +3332,18 @@ def decide_auto_merge(local: AutoMergePolicy, *, pr: int, repo: str,
     overlay_action, overlay_reason = match_auto_merge_action(
         dataclasses.replace(am, default_action="auto"),
         branch=branch, paths_touched=paths)
-    facts = gather_pr_gate_facts(pr, repo, am.gates, files=paths)
+    facts = gather_pr_gate_facts(pr, repo, am.gates, listing=listing)
     results = evaluate_merge_gates(am.gates, facts)
     gates = [dataclasses.asdict(r) for r in results]
     failed = [r for r in results if not r.ok]
     if overlay_action != "auto":
         action, reason = overlay_action, f"blocking rule: {overlay_reason}"
+    elif not facts.head_sha or facts.head_sha != listing.head_sha:
+        # The rules and the policy-introduction check read the listing; the
+        # gates read the facts. Both must describe the head that gets merged.
+        action, reason = "notify", (f"the head moved while the PR was judged "
+                                    f"({listing.head_sha[:12] or '?'} -> "
+                                    f"{facts.head_sha[:12] or '?'}); re-run")
     elif failed:
         action = "notify"
         reason = "; ".join(f"{r.gate}: {r.reason}" for r in failed)
@@ -3274,13 +3361,14 @@ def _format_gate_results(gates: list[dict]) -> str:
 
 def cmd_gate_check(args: argparse.Namespace) -> int:
     """Read-only: judge a PR against the governing policy's merge gates, without
-    touching state. Exit 0 iff auto-merge would merge it now."""
+    touching state. Exit 0 iff the gates pass now; `auto-merge` additionally
+    needs the PR in MERGE_READY (watch -> merge-ready)."""
     pr = int(args.pr)
     repo = resolve_repo(args.repo)
     policy = load_policy()
-    branch, paths = _gh_pr_branch_and_paths(pr, repo)
-    d = decide_auto_merge(policy.auto_merge, pr=pr, repo=repo,
-                          branch=branch, paths=paths)
+    listing = _gh_pr_listing(pr, repo)
+    branch = listing.branch
+    d = decide_auto_merge(policy.auto_merge, pr=pr, repo=repo, listing=listing)
     if args.json:
         print(json.dumps({k: v for k, v in d.items() if k != "policy"}))
     else:
@@ -3292,8 +3380,12 @@ def cmd_gate_check(args: argparse.Namespace) -> int:
 
 
 def cmd_p20_record(args: argparse.Namespace) -> int:
-    """Record a P20 verdict on a PR as the marker the merge gate reads, pinned
-    to the PR's CURRENT head SHA (so nobody hand-types a SHA)."""
+    """Record a P20 verdict on a PR as the marker the merge gate reads.
+
+    `--sha` is the commit the reviewers READ, not whatever the head is now: a
+    fix pushed after the review is unreviewed code. If the head has moved past
+    it, the gate's carry-forward rule decides whether the verdict still covers
+    the head (only commits that touch no reviewed or PR file carry)."""
     pr = int(args.pr)
     repo = resolve_repo(args.repo)
     verdict = args.verdict.upper()
@@ -3308,11 +3400,15 @@ def cmd_p20_record(args: argparse.Namespace) -> int:
         print(f"a PASS needs score >= {_P20_PASS_FLOOR}; record FAIL instead",
               file=sys.stderr)
         return EXIT_USAGE
-    view = _gh_json(["gh", "pr", "view", str(pr), "--repo", repo, "--json", "headRefOid"])
-    head = (view or {}).get("headRefOid") if isinstance(view, dict) else None
-    if not head or not re.fullmatch(r"[0-9a-f]{40}", head):
-        print(f"could not read PR #{pr} head SHA", file=sys.stderr)
-        return EXIT_EXTERNAL_ERROR
+    head = (args.sha or "").strip().lower()
+    if not re.fullmatch(r"[0-9a-f]{40}", head):
+        print("--sha must be the full 40-hex commit the reviewers read", file=sys.stderr)
+        return EXIT_USAGE
+    if args.note and "p20-verdict" in args.note.lower():
+        print("--note must not contain P20-VERDICT: the gate reads only the "
+              "first line, and a quoted verdict below it invites misreading",
+              file=sys.stderr)
+        return EXIT_USAGE
     ordered = ",".join(s for s in _P20_STRATA if s in strata)
     body = f"P20-VERDICT: {verdict} score={args.score} strata={ordered} sha={head}"
     if args.note:
@@ -3343,18 +3439,28 @@ def _gh_branch_sha(repo: str, branch: str) -> str | None:
     return sha or None
 
 
-def _gh_pr_branch_and_paths(pr: int, repo: str) -> tuple[str, list[str]]:
-    """Return (head_branch, [files_touched]) for a PR via `gh pr view`.
+@dataclass(frozen=True)
+class PRListing:
+    """One read of what a PR changes. `paths` holds every current path AND
+    every pre-rename path, because renaming AGENTS.md away must not carry it
+    out of the governance tier. `unmeasured` holds added or modified files
+    that report 0 changed lines, which in practice means binary."""
+    branch: str
+    head_sha: str
+    paths: tuple[str, ...]
+    unmeasured: tuple[str, ...]
 
-    The list is COMPLETE or this raises: `gh pr view` caps `files` at 100, so a
-    longer PR is re-listed through the paginated REST endpoint and the count is
+
+def _gh_pr_listing(pr: int, repo: str) -> PRListing:
+    """The COMPLETE listing or a P9Error. `gh pr view` caps files at 100 and
+    has no pre-rename path, so the REST endpoint is paginated and its row count
     checked against changedFiles. A path rule, a governance path or a policy
-    file beyond the first page must not be invisible (BRO-2591)."""
-    cmd = ["gh", "pr", "view", str(pr),
-           "--json", "headRefName,files,changedFiles",
-           "-q", '{branch: .headRefName, files: [.files[].path], changed: .changedFiles}']
-    if repo:
-        cmd += ["--repo", repo]
+    file on page two, or behind a rename, must not be invisible (BRO-2591)."""
+    if not repo or "/" not in repo:
+        raise P9Error(f"PR #{pr}: a repo is required to list its changed files")
+    cmd = ["gh", "pr", "view", str(pr), "--repo", repo,
+           "--json", "headRefName,headRefOid,changedFiles",
+           "-q", "{branch: .headRefName, head: .headRefOid, changed: .changedFiles}"]
     out = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
     if out.returncode != 0:
         raise P9Error(f"gh pr view failed: {out.stderr.strip()[:200]}")
@@ -3362,18 +3468,30 @@ def _gh_pr_branch_and_paths(pr: int, repo: str) -> tuple[str, list[str]]:
         data = json.loads(out.stdout)
     except json.JSONDecodeError as e:
         raise P9Error(f"gh pr view returned non-JSON: {e}") from e
-    files = list(data.get("files") or [])
     changed = data.get("changed")
-    if not isinstance(changed, int) or changed != len(files):
-        full = _gh_paginated_list(["gh", "api", "--paginate",
-                                   f"repos/{repo}/pulls/{pr}/files",
-                                   "--jq", ".[].filename"]) if repo else None
-        if not isinstance(full, list) or (isinstance(changed, int) and len(full) != changed):
-            raise P9Error(f"PR #{pr}: could not list all changed files "
-                          f"(got {len(full) if isinstance(full, list) else 'none'} of "
-                          f"{changed}); refusing to judge an incomplete diff")
-        files = full
-    return str(data.get("branch", "")), files
+    rows = _gh_paginated_list([
+        "gh", "api", "--paginate", f"repos/{repo}/pulls/{pr}/files", "--jq",
+        '.[] | [.filename, (.previous_filename // ""), .status, (.changes|tostring)] | @tsv'])
+    if rows is None or not isinstance(changed, int) or len(rows) != changed:
+        raise P9Error(f"PR #{pr}: could not list all changed files "
+                      f"(got {len(rows) if rows is not None else 'none'} of {changed}); "
+                      f"refusing to judge an incomplete diff")
+    paths: list[str] = []
+    unmeasured: list[str] = []
+    for row in rows:
+        cols = row.split("\t")
+        if len(cols) != 4:
+            raise P9Error(f"PR #{pr}: unparseable file row {row[:120]!r}")
+        name, prev, status, changes = cols
+        paths.append(name)
+        if prev:
+            paths.append(prev)
+        if status in ("added", "modified", "changed") and changes == "0":
+            unmeasured.append(name)
+    return PRListing(branch=str(data.get("branch") or ""),
+                     head_sha=str(data.get("head") or ""),
+                     paths=tuple(dict.fromkeys(paths)),
+                     unmeasured=tuple(unmeasured))
 
 
 def _gh_paginated_list(cmd: list[str]) -> list[str] | None:
@@ -3877,15 +3995,18 @@ def _unresolved_review_threads(pr: int, repo: str | None) -> int:
         return -1
     owner, name = repo.split("/", 1)
     q = ("query($o:String!,$n:String!,$p:Int!){repository(owner:$o,name:$n)"
-         "{pullRequest(number:$p){reviewThreads(first:100){nodes{isResolved}}}}}")
+         "{pullRequest(number:$p){reviewThreads(first:100){totalCount nodes{isResolved}}}}}")
     cmd = ["gh", "api", "graphql", "-f", f"query={q}",
            "-F", f"o={owner}", "-F", f"n={name}", "-F", f"p={pr}"]
     try:
         out = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
         if out.returncode != 0:
             return -1
-        nodes = (json.loads(out.stdout)["data"]["repository"]["pullRequest"]
-                 ["reviewThreads"]["nodes"])
+        threads = (json.loads(out.stdout)["data"]["repository"]["pullRequest"]
+                   ["reviewThreads"])
+        nodes = threads["nodes"]
+        if threads["totalCount"] > len(nodes):
+            return -1  # >100 threads: the unseen ones are unknown
         return sum(1 for t in nodes if not t.get("isResolved", False))
     except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, TypeError):
         return -1
@@ -4663,7 +4784,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pgc = sub.add_parser("gate-check",
                          help="Read-only: judge a PR against the governing "
-                              "policy's merge gates (exit 0 iff it would merge)")
+                              "policy's merge gates (exit 0 iff they pass now)")
     pgc.add_argument("pr")
     pgc.add_argument("--repo", default=None)
     pgc.add_argument("--json", action="store_true")
@@ -4671,12 +4792,14 @@ def build_parser() -> argparse.ArgumentParser:
 
     ppr = sub.add_parser("p20-record",
                          help="Record a P20 verdict on a PR as the marker the "
-                              "merge gate reads, pinned to the current head SHA")
+                              "merge gate reads, pinned to the reviewed commit")
     ppr.add_argument("pr")
     ppr.add_argument("--repo", default=None)
     ppr.add_argument("--verdict", default="PASS", choices=["PASS", "FAIL", "STOP"])
     ppr.add_argument("--score", type=int, required=True)
     ppr.add_argument("--strata", required=True, help="Comma list from A,B,C")
+    ppr.add_argument("--sha", required=True,
+                     help="The full commit SHA the reviewers read (not the current head)")
     ppr.add_argument("--note", default=None, help="Free text appended below the marker")
     ppr.add_argument("--dry-run", action="store_true")
     ppr.set_defaults(func=cmd_p20_record)

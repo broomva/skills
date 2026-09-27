@@ -469,8 +469,10 @@ class TestCrossRepoLifecycle:
         def fake(cmd, *a, **k):
             calls.append(cmd)
             if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
-                return _R(json.dumps({"branch": "docs/x", "files": ["docs/y.md"],
+                return _R(json.dumps({"branch": "docs/x", "head": "e" * 40,
                                       "changed": 1}))
+            if cmd[:3] == ["gh", "api", "--paginate"]:
+                return _R("docs/y.md\t\tmodified\t3\n")
             if cmd[:3] == ["gh", "pr", "view"]:   # BRO-2591 merge-time verdict
                 return _R(json.dumps({"mergeable": "MERGEABLE",
                                       "mergeStateStatus": "CLEAN",

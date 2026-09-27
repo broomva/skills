@@ -55,7 +55,9 @@ def _good(p9, **over):
                 reviews=[], comments=[], additions=8, deletions=2, changed_files=1,
                 files=["src/x.py"],
                 required_checks=[{"name": "Merge Gate", "bucket": "pass"}],
-                all_checks=None, behind_by=0, unresolved_threads=0, base_sha=BASE)
+                all_checks=[{"name": "Merge Gate", "bucket": "pass"},
+                            {"name": "pytest", "bucket": "pass"}],
+                behind_by=0, unresolved_threads=0, base_sha=BASE)
     base.update(over)
     return p9.PRGateFacts(**base)
 
@@ -320,8 +322,12 @@ def _seed_merge_ready(p9, pr):
             from_state=prev.value, to_state=curr.value, watcher_id="seed"))
 
 
-def _fake_gh(view, *, required=None, calls, base_policy=None, base_now=BASE):
+def _fake_gh(view, *, required=None, all_checks=None, calls, base_policy=None,
+             base_now=BASE, renamed=None, binary=(), compare_files=None):
     required = required if required is not None else [{"name": "Merge Gate", "bucket": "pass"}]
+    all_checks = all_checks if all_checks is not None else (
+        required + [{"name": "pytest", "bucket": "pass"}])
+    renamed = renamed or {}
     every = [x["path"] for x in view["files"]]
     capped = dict(view, files=view["files"][:100], changedFiles=len(every))
 
@@ -329,35 +335,49 @@ def _fake_gh(view, *, required=None, calls, base_policy=None, base_now=BASE):
         calls.append(cmd)
         if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
             return _Run(json.dumps({"branch": view["headRefName"],
-                                    "files": every[:100], "changed": len(every)}))
+                                    "head": view["headRefOid"], "changed": len(every)}))
+        if cmd[:3] == ["gh", "pr", "view"] and "baseRefName" in cmd[-1] and "," not in cmd[-1]:
+            return _Run(json.dumps({"baseRefName": view["baseRefName"]}))
         if cmd[:3] == ["gh", "pr", "view"]:
             return _Run(json.dumps(capped))
         if cmd[:3] == ["gh", "api", "--paginate"]:
-            return _Run("\n".join(every) + "\n")
-        if cmd[:2] == ["gh", "api"] and any("/branches/" in c for c in cmd):
-            return _Run(json.dumps({"commit": {"sha": base_now}}))
+            return _Run("".join(
+                f"{p}\t{renamed.get(p, '')}\tmodified\t{0 if p in binary else 5}\n"
+                for p in every))
         if cmd[:3] == ["gh", "pr", "checks"]:
-            return _Run(json.dumps(required), returncode=0)
+            return _Run(json.dumps(required if "--required" in cmd else all_checks))
         if cmd[:2] == ["gh", "api"] and "graphql" in cmd:
             return _Run(json.dumps({"data": {"repository": {"pullRequest": {
-                "reviewThreads": {"nodes": [{"isResolved": True}]}}}}}))
+                "reviewThreads": {"totalCount": 1, "nodes": [{"isResolved": True}]}}}}}))
+        if cmd[:2] == ["gh", "api"] and any("/branches/" in c for c in cmd):
+            return _Run(json.dumps({"commit": {"sha": base_now}}))
         if cmd[:2] == ["gh", "api"] and any("/contents/.control/policy.yaml" in c for c in cmd):
             if base_policy is None:
                 return _Run(stderr="gh: Not Found (HTTP 404)", returncode=1)
             return _Run(base_policy)
         if cmd[:2] == ["gh", "api"] and any("/compare/" in c for c in cmd):
-            return _Run(json.dumps({"status": "ahead", "behind_by": 0, "files": [],
+            return _Run(json.dumps({"status": "ahead", "behind_by": 0,
+                                    "files": [{"filename": f} for f in (compare_files or [])],
                                     "base_commit": {"sha": BASE}}))
+        if cmd[:2] == ["gh", "api"] and any("/commits" in c for c in cmd):
+            return _Run(json.dumps([]))
         if cmd[:3] == ["gh", "pr", "merge"]:
             return _Run(returncode=0)
         return _Run(returncode=1, stderr=f"unmocked {cmd[:4]}")
     return run
 
 
+def _listing(p9, view, renamed=None):
+    every = [x["path"] for x in view["files"]]
+    return p9.PRListing(branch=view["headRefName"], head_sha=view["headRefOid"],
+                        paths=tuple(every + [v for v in (renamed or {}).values()]),
+                        unmeasured=())
+
+
 def _view(**over):
     v = {"state": "OPEN", "isDraft": False, "baseRefName": "main", "headRefName": "fix/anything",
          "headRefOid": HEAD, "mergeStateStatus": "CLEAN", "mergeable": "MERGEABLE",
-         "reviewDecision": "", "latestReviews": [], "additions": 20, "deletions": 5,
+         "reviewDecision": "", "reviews": [], "additions": 20, "deletions": 5,
          "changedFiles": 2, "files": [{"path": "src/a.py"}, {"path": "src/b.py"}],
          "comments": [_comment(_marker())]}
     v.update(over)
@@ -450,7 +470,7 @@ class TestBasePolicyIsAuthoritative:
         monkeypatch.setattr(p9.subprocess, "run",
                             _fake_gh(view, calls=calls, base_policy=base_text))
         d = p9.decide_auto_merge(local, pr=703, repo="broomva/test",
-                                 branch="fix/loosen", paths=[".control/policy.yaml"])
+                                 listing=_listing(p9, view))
         assert d["source"] == "broomva/test@main"
         assert d["action"] == "require_human"   # main's rules, not the PR's
 
@@ -460,8 +480,11 @@ class TestBasePolicyIsAuthoritative:
         calls = []
         monkeypatch.setattr(p9.subprocess, "run",
                             _fake_gh(_view(), calls=calls, base_policy=None))
-        d = p9.decide_auto_merge(local, pr=704, repo="broomva/test", branch="x",
-                                 paths=[".control/policy.yaml"])
+        view = _view(files=[{"path": ".control/policy.yaml"}])
+        monkeypatch.setattr(p9.subprocess, "run",
+                            _fake_gh(view, calls=calls, base_policy=None))
+        d = p9.decide_auto_merge(local, pr=704, repo="broomva/test",
+                                 listing=_listing(p9, view))
         assert d["action"] == "require_human"
         assert "own introduction" in d["reason"]
 
@@ -471,8 +494,8 @@ class TestBasePolicyIsAuthoritative:
         calls = []
         monkeypatch.setattr(p9.subprocess, "run",
                             _fake_gh(_view(), calls=calls, base_policy=None))
-        d = p9.decide_auto_merge(local, pr=705, repo="broomva/test", branch="x",
-                                 paths=["src/a.py", "src/b.py"])
+        d = p9.decide_auto_merge(local, pr=705, repo="broomva/test",
+                                 listing=_listing(p9, _view()))
         assert d["source"].startswith("local policy")
         assert d["action"] == "auto"
 
@@ -485,16 +508,15 @@ class TestBasePolicyIsAuthoritative:
                 return _Run(stderr="HTTP 502", returncode=1)
             return _fake_gh(_view(), calls=[])(cmd)
         monkeypatch.setattr(p9.subprocess, "run", run)
-        d = p9.decide_auto_merge(local, pr=706, repo="broomva/test", branch="x",
-                                 paths=["src/a.py"])
+        d = p9.decide_auto_merge(local, pr=706, repo="broomva/test",
+                                 listing=_listing(p9, _view()))
         assert d["action"] == "require_human"
 
 
 class TestRecordAndCheck:
-    def test_p20_record_pins_the_current_head(self, p9, monkeypatch, capsys):
-        monkeypatch.setattr(p9.subprocess, "run",
-                            lambda cmd, *a, **k: _Run(json.dumps({"headRefOid": HEAD})))
-        rc = p9.main(["p20-record", "9", "--score", "8", "--strata", "C,B", "--dry-run"])
+    def test_p20_record_pins_the_reviewed_commit(self, p9, monkeypatch, capsys):
+        rc = p9.main(["p20-record", "9", "--score", "8", "--strata", "C,B",
+                      "--sha", HEAD, "--dry-run"])
         assert rc == p9.EXIT_OK
         out = capsys.readouterr().out.strip()
         assert out == f"P20-VERDICT: PASS score=8 strata=B,C sha={HEAD}"
@@ -504,7 +526,7 @@ class TestRecordAndCheck:
 
     def test_p20_record_refuses_a_pass_below_seven(self, p9):
         assert p9.main(["p20-record", "9", "--score", "6", "--strata", "B",
-                        "--dry-run"]) == p9.EXIT_USAGE
+                        "--sha", HEAD, "--dry-run"]) == p9.EXIT_USAGE
 
     def test_gate_check_exit_codes(self, p9, monkeypatch):
         monkeypatch.setattr(p9.subprocess, "run", _fake_gh(_view(), calls=[]))
@@ -517,3 +539,329 @@ class TestRecordAndCheck:
     def test_gate_results_are_json_serializable(self, p9, gates):
         results = p9.evaluate_merge_gates(gates, _good(p9))
         json.dumps([dataclasses.asdict(r) for r in results])
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# P20 round-1 findings (BRO-2591): each with both arms
+# ─────────────────────────────────────────────────────────────────────────────
+class TestMarkerIsTheFirstLineOnly:
+    def test_a_note_quoting_a_pass_cannot_flip_a_fail(self, p9, gates):
+        body = _marker(verdict="FAIL", score=3, strata="B") + \
+            "\n\nledger: " + _marker(score=9, strata="A,B,C")
+        assert "p20" in _failed(p9, gates, _big(p9, comments=[_comment(body)]))
+
+    def test_marker_on_line_one_with_a_note_below_counts(self, p9, gates):
+        body = _marker() + "\n\nround ledger: 6 -> 8"
+        assert _failed(p9, gates, _big(p9, comments=[_comment(body)])) == set()
+
+    def test_crlf_fail_after_pass_is_read_as_fail(self, p9, gates):
+        f = _big(p9, comments=[
+            _comment(_marker(), at="2026-09-26T10:00:00Z"),
+            _comment(_marker(verdict="FAIL", score=4) + "\r\n", at="2026-09-26T11:00:00Z")])
+        assert "p20" in _failed(p9, gates, f)
+
+    @pytest.mark.parametrize("later", [
+        "**" + _marker(verdict="FAIL", score=4) + "**",      # bold
+        "P20-VERDICT: FAIL score=4",                          # truncated
+        "re-ran P20-VERDICT, now failing",                   # prose naming it
+    ])
+    def test_a_later_unparseable_verdict_blocks(self, p9, gates, later):
+        f = _big(p9, comments=[_comment(_marker(), at="2026-09-26T10:00:00Z"),
+                               _comment(later, at="2026-09-26T11:00:00Z")])
+        assert "p20" in _failed(p9, gates, f)
+
+    def test_a_later_comment_not_naming_a_verdict_leaves_the_pass(self, p9, gates):
+        f = _big(p9, comments=[_comment(_marker(), at="2026-09-26T10:00:00Z"),
+                               _comment("thanks, merging soon", at="2026-09-26T11:00:00Z")])
+        assert _failed(p9, gates, f) == set()
+
+
+class TestPolicyShape:
+    def test_unknown_auto_merge_key_is_rejected(self, p9, tmp_path):
+        with pytest.raises(p9.PolicyError) as e:
+            _policy(p9, tmp_path, "  gate:\n    p20:\n      pass_score: 7\n")
+        assert "unknown key" in str(e.value)
+
+    def test_auto_default_with_gates_is_rejected(self, p9, tmp_path):
+        with pytest.raises(p9.PolicyError) as e:
+            _policy(p9, tmp_path, "  default_action: auto\n  gates:\n    p20:\n"
+                                  "      pass_score: 7\n")
+        assert "default_action" in str(e.value)
+
+    def test_empty_gates_is_gated_in_both_loaders(self, p9, tmp_path):
+        text = _HEADER + "auto_merge:\n  enabled: true\n  gates:\n"
+        pyyaml = p9.load_policy_text(text).auto_merge.gates
+        minimal = p9._parse_policy(p9._minimal_yaml_load(text)).auto_merge.gates
+        assert pyyaml is not None and pyyaml == minimal
+
+    def test_always_review_floor_survives_a_configured_list(self, gates):
+        assert ".github/workflows/**" in gates.p20.public_api_paths
+        assert "schemas/**" in gates.p20.public_api_paths
+
+
+class TestAlwaysReview:
+    @pytest.mark.parametrize("path", [".github/workflows/merge-gate.yml",
+                                      ".claude/settings.json", ".control/preauth.yaml"])
+    def test_one_line_control_surface_edit_needs_p20(self, p9, gates, path):
+        f = _good(p9, files=[path], additions=1, deletions=1)
+        assert "p20" in _failed(p9, gates, f)
+        assert _failed(p9, gates, _good(p9, files=[path], comments=[_comment(_marker())])) \
+            == set()
+
+    def test_binary_change_needs_p20(self, p9, gates):
+        f = _good(p9, files=["assets/x.bin"], additions=0, deletions=0,
+                  unmeasured=["assets/x.bin"])
+        assert "p20" in _failed(p9, gates, f)
+
+
+class TestChangeRequestsStand:
+    def _r(self, login, state, at):
+        return {"author": {"login": login}, "state": state, "submittedAt": at}
+
+    def test_a_later_comment_does_not_withdraw_a_change_request(self, p9, gates):
+        f = _good(p9, reviews=[self._r("ana", "CHANGES_REQUESTED", "2026-09-26T10:00:00Z"),
+                               self._r("ana", "COMMENTED", "2026-09-26T11:00:00Z")])
+        assert "no_changes_requested" in _failed(p9, gates, f)
+
+    @pytest.mark.parametrize("later", ["APPROVED", "DISMISSED"])
+    def test_approval_or_dismissal_clears_it(self, p9, gates, later):
+        f = _good(p9, reviews=[self._r("ana", "CHANGES_REQUESTED", "2026-09-26T10:00:00Z"),
+                               self._r("ana", later, "2026-09-26T11:00:00Z")])
+        assert _failed(p9, gates, f) == set()
+
+    def test_another_reviewers_approval_does_not_clear_it(self, p9, gates):
+        f = _good(p9, reviews=[self._r("ana", "CHANGES_REQUESTED", "2026-09-26T10:00:00Z"),
+                               self._r("bo", "APPROVED", "2026-09-26T11:00:00Z")])
+        assert "no_changes_requested" in _failed(p9, gates, f)
+
+    def test_a_possibly_truncated_review_list_blocks(self, p9, gates):
+        f = _good(p9, reviews=[self._r(f"u{i}", "COMMENTED", "2026-09-26T10:00:00Z")
+                               for i in range(100)])
+        assert "no_changes_requested" in _failed(p9, gates, f)
+
+
+class TestIndependentCheck:
+    def test_only_an_aggregate_and_a_bot_vouch_blocks(self, p9, gates):
+        f = _good(p9, all_checks=[{"name": "Merge Gate", "bucket": "pass"},
+                                  {"name": "CodeRabbit", "bucket": "pass"}])
+        assert "independent_check" in _failed(p9, gates, f)
+
+    def test_a_p20_pass_covers_a_pr_no_ci_ran_on(self, p9, gates):
+        f = _good(p9, all_checks=[{"name": "Merge Gate", "bucket": "pass"}],
+                  comments=[_comment(_marker())])
+        assert _failed(p9, gates, f) == set()
+
+    def test_unreadable_checks_block(self, p9, gates):
+        assert "independent_check" in _failed(p9, gates, _good(p9, all_checks=None))
+
+
+class TestRenames:
+    def test_renaming_agents_md_away_stays_governance(self, p9, monkeypatch):
+        _seed_merge_ready(p9, 730)
+        view = _view(files=[{"path": "docs/AGENTS.md"}, {"path": "src/b.py"}])
+        calls = []
+        monkeypatch.setattr(p9.subprocess, "run", _fake_gh(
+            view, calls=calls, renamed={"docs/AGENTS.md": "AGENTS.md"}))
+        rc = p9.main(["auto-merge", "730", "--repo", "broomva/test"])
+        assert rc == p9.EXIT_AUTO_MERGE_BLOCKED
+        rows, _ = p9.jsonl_read_all(p9.state_jsonl())
+        failed = {g["gate"] for g in [r for r in rows if r["pr"] == 730][-1]
+                  ["extra"]["auto_merge"]["gates"] if not g["ok"]}
+        assert "governance_strata" in failed
+
+    def test_same_pr_without_the_rename_merges(self, p9, monkeypatch):
+        _seed_merge_ready(p9, 731)
+        view = _view(files=[{"path": "docs/AGENTS.md"}, {"path": "src/b.py"}])
+        monkeypatch.setattr(p9.subprocess, "run", _fake_gh(view, calls=[]))
+        assert p9.main(["auto-merge", "731", "--repo", "broomva/test"]) == p9.EXIT_OK
+
+
+class TestHeadConsistency:
+    def test_head_moving_between_listing_and_facts_blocks(self, p9, monkeypatch):
+        _seed_merge_ready(p9, 732)
+        view = _view()
+        calls = []
+        inner = _fake_gh(view, calls=calls)
+
+        def run(cmd, *a, **k):
+            if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
+                calls.append(cmd)
+                return _Run(json.dumps({"branch": "fix/anything", "head": OLD, "changed": 2}))
+            return inner(cmd, *a, **k)
+        monkeypatch.setattr(p9.subprocess, "run", run)
+        assert p9.main(["auto-merge", "732", "--repo", "broomva/test"]) == \
+            p9.EXIT_AUTO_MERGE_BLOCKED
+        assert not [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+
+
+class TestGathering:
+    """The half of the gate that talks to GitHub, run against the fake."""
+
+    def test_l3_counter_counts_distinct_governance_commits(self, p9, monkeypatch):
+        seen = []
+
+        def run(cmd, *a, **k):
+            seen.append(cmd)
+            path = next(c.split("=", 1)[1] for c in cmd if c.startswith("path="))
+            shas = {"CLAUDE.md": ["s1"], "AGENTS.md": ["s1", "s2"]}.get(path, [])
+            return _Run(json.dumps([{"sha": x} for x in shas]))
+        monkeypatch.setattr(p9.subprocess, "run", run)
+        tier = p9.GovernanceTier()
+        assert p9._count_governance_commits("broomva/test", "main", tier) == 2
+        assert all("sha=main" in c for c in seen)
+
+    def test_l3_counter_unreadable_is_none(self, p9, monkeypatch):
+        monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: _Run(returncode=1))
+        assert p9._count_governance_commits("broomva/test", "main", p9.GovernanceTier()) is None
+
+    def test_governance_pr_merges_end_to_end_only_with_every_strict_condition(
+            self, p9, monkeypatch):
+        _seed_merge_ready(p9, 733)
+        view = _view(files=[{"path": "CLAUDE.md"}, {"path": "src/b.py"}],
+                     comments=[_comment(_marker(strata="A,B,C"))])
+        checks = [{"name": "Merge Gate", "bucket": "pass"},
+                  {"name": "stability-check", "bucket": "pass"}]
+        monkeypatch.setattr(p9.subprocess, "run",
+                            _fake_gh(view, calls=[], all_checks=checks))
+        assert p9.main(["auto-merge", "733", "--repo", "broomva/test"]) == p9.EXIT_OK
+
+    def test_carry_forward_is_gathered_from_compare(self, p9, monkeypatch):
+        view = _view(comments=[_comment(_marker(sha=OLD))])
+        monkeypatch.setattr(p9.subprocess, "run",
+                            _fake_gh(view, calls=[], compare_files=["docs/other.md"]))
+        f = p9.gather_pr_gate_facts(740, "broomva/test",
+                                    p9.load_policy(_GATED).auto_merge.gates,
+                                    listing=_listing(p9, view))
+        assert f.marker_is_ancestor is True and f.marker_delta_files == ["docs/other.md"]
+
+    def test_compare_without_a_files_key_is_unknown(self, p9, monkeypatch):
+        monkeypatch.setattr(p9.subprocess, "run",
+                            lambda *a, **k: _Run(json.dumps({"status": "ahead"})))
+        assert p9._compare_files("broomva/test", f"{OLD}...{HEAD}") == ("ahead", None)
+
+    def test_unknown_merge_state_is_retried(self, p9, monkeypatch):
+        view = _view()
+        inner = _fake_gh(view, calls=[])
+        n = {"views": 0}
+
+        def run(cmd, *a, **k):
+            if cmd[:3] == ["gh", "pr", "view"] and "-q" not in cmd:
+                n["views"] += 1
+                if n["views"] == 1:
+                    return _Run(json.dumps(dict(view, mergeStateStatus="UNKNOWN")))
+            return inner(cmd, *a, **k)
+        monkeypatch.setattr(p9.subprocess, "run", run)
+        f = p9.gather_pr_gate_facts(741, "broomva/test",
+                                    p9.load_policy(_GATED).auto_merge.gates)
+        assert n["views"] == 2 and f.merge_state == "CLEAN"
+
+    def test_more_than_100_threads_is_unknown(self, p9, monkeypatch):
+        payload = {"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "totalCount": 150, "nodes": [{"isResolved": True}] * 100}}}}}
+        monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: _Run(json.dumps(payload)))
+        assert p9._unresolved_review_threads(1, "broomva/test") == -1
+
+
+class TestBasePolicyResolution:
+    @pytest.fixture()
+    def unpinned(self, p9, monkeypatch, tmp_path):
+        monkeypatch.delenv("BROOMVA_P9_POLICY", raising=False)
+        monkeypatch.chdir(tmp_path)
+        return p9
+
+    def test_missing_base_ref_is_not_a_missing_policy(self, unpinned, monkeypatch):
+        p9 = unpinned
+        local = p9.load_policy(_GATED).auto_merge
+        monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: _Run(
+            stderr="gh: No commit found for the ref gone (HTTP 404)", returncode=1))
+        am, why = p9.authoritative_auto_merge_policy(local, "broomva/test", "gone", [])
+        assert am is None and "unreadable" in why
+
+    def test_ref_is_url_encoded(self, unpinned, monkeypatch):
+        p9 = unpinned
+        seen = []
+        monkeypatch.setattr(p9.subprocess, "run", lambda cmd, *a, **k: (
+            seen.append(cmd), _Run(stderr="gh: Not Found (HTTP 404)", returncode=1))[1])
+        p9.authoritative_auto_merge_policy(p9.load_policy(_GATED).auto_merge,
+                                           "broomva/test", "rel/x#y&z", [])
+        assert any("ref=rel%2Fx%23y%26z" in c for c in seen[0])
+
+    def test_unpinned_auto_merge_is_judged_by_the_base_policy(self, unpinned, monkeypatch):
+        # The checkout has no policy at all; the base branch's gated one rules.
+        p9 = unpinned
+        policy_file = Path("policy.yaml")
+        policy_file.write_text(_GATED.read_text())
+        monkeypatch.setattr(p9, "load_policy", lambda *a, **k: p9.load_policy_text(
+            policy_file.read_text()))
+        _seed_merge_ready(p9, 742)
+        calls = []
+        monkeypatch.setattr(p9.subprocess, "run", _fake_gh(
+            _view(), calls=calls, base_policy=_GATED.read_text()))
+        assert p9.main(["auto-merge", "742", "--repo", "broomva/test"]) == p9.EXIT_OK
+        assert any(any("/contents/.control/policy.yaml" in c for c in cmd) for cmd in calls)
+
+    def test_unpinned_legacy_base_blocks_what_the_gated_checkout_would_merge(
+            self, unpinned, monkeypatch):
+        p9 = unpinned
+        monkeypatch.setattr(p9, "load_policy", lambda *a, **k: p9.load_policy_text(
+            _GATED.read_text()))
+        _seed_merge_ready(p9, 743)
+        calls = []
+        legacy = (_FIXTURES / "policy-with-auto-merge.yaml").read_text()
+        monkeypatch.setattr(p9.subprocess, "run",
+                            _fake_gh(_view(), calls=calls, base_policy=legacy))
+        rc = p9.main(["auto-merge", "743", "--repo", "broomva/test"])
+        assert rc == p9.EXIT_AUTO_MERGE_BLOCKED   # fix/* is not on main's allowlist
+        assert not [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+
+
+class TestRecorder:
+    def test_p20_record_posts_the_marker_as_the_first_line(self, p9, monkeypatch, capsys):
+        seen = {}
+
+        def run(cmd, *a, **k):
+            seen["cmd"], seen["input"] = cmd, k.get("input")
+            return _Run()
+        monkeypatch.setattr(p9.subprocess, "run", run)
+        rc = p9.main(["p20-record", "9", "--repo", "broomva/test", "--score", "8",
+                      "--strata", "B,C", "--sha", OLD, "--note", "rounds 5 -> 8"])
+        assert rc == p9.EXIT_OK
+        assert seen["cmd"][:3] == ["gh", "pr", "comment"]
+        first, _, rest = seen["input"].partition("\n")
+        assert first == f"P20-VERDICT: PASS score=8 strata=B,C sha={OLD}"
+        assert "rounds 5 -> 8" in rest
+
+    @pytest.mark.parametrize("argv", [
+        ["--sha", "abc"],                                       # not a full sha
+        ["--sha", HEAD, "--note", "see P20-VERDICT: PASS score=9 strata=A,B,C sha=x"],
+    ])
+    def test_p20_record_refuses(self, p9, argv):
+        assert p9.main(["p20-record", "9", "--score", "8", "--strata", "B",
+                        "--dry-run"] + argv) == p9.EXIT_USAGE
+
+    def test_p20_record_requires_the_reviewed_sha(self, p9):
+        with pytest.raises(SystemExit):
+            p9.main(["p20-record", "9", "--score", "8", "--strata", "B", "--dry-run"])
+
+
+class TestBinaryDetectionEndToEnd:
+    """The listing marks a 0-line added/modified file as unmeasured; LOC cannot
+    bound a binary change, so it needs P20 even as a one-file PR."""
+
+    def _run(self, p9, monkeypatch, pr, binary):
+        _seed_merge_ready(p9, pr)
+        view = _view(files=[{"path": "assets/model.bin"}], additions=0, deletions=0,
+                     changedFiles=1, comments=[])
+        calls = []
+        monkeypatch.setattr(p9.subprocess, "run",
+                            _fake_gh(view, calls=calls, binary=binary))
+        rc = p9.main(["auto-merge", str(pr), "--repo", "broomva/test"])
+        return rc, [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+
+    def test_binary_one_file_pr_without_p20_does_not_merge(self, p9, monkeypatch):
+        rc, merges = self._run(p9, monkeypatch, 750, binary=("assets/model.bin",))
+        assert rc == p9.EXIT_AUTO_MERGE_BLOCKED and not merges
+
+    def test_same_pr_with_a_measured_change_merges(self, p9, monkeypatch):
+        rc, merges = self._run(p9, monkeypatch, 751, binary=())
+        assert rc == p9.EXIT_OK and merges
