@@ -26,7 +26,7 @@ Shell continuity is best-effort and self-reporting: state is replayed between ca
 and when a command exits before it can be captured, `exec()` says so rather than
 pretending nothing changed.
 
-```
+```text
 world.json ──fork──> A.json   (branch A works here)
            └─fork──> B.json   (branch B works here)
            trunk is never opened, so it cannot be mutated
@@ -83,8 +83,9 @@ convenient default, not a proof of confinement.
 5. Promote the winner (`cp` it over your working world). The trunk is untouched, so you
    can re-fork and try again.
 
-**Always fork before branching.** Opening a world mutates it; `fork` never opens the
-source. `tests/unit/world.test.mjs` asserts a branch cannot change its trunk's bytes,
+**Always fork before branching.** Opening a world only reads it, but every `exec` on the
+opened world saves back to its file, so a world you run commands in is mutated; `fork`
+never opens the source. `tests/unit/world.test.mjs` asserts a branch cannot change its trunk's bytes,
 turn count, or file list.
 
 ## Constraints worth knowing before you trust it

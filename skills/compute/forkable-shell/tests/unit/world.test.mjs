@@ -27,6 +27,26 @@ test("only /work persists across a reopen -- writes elsewhere do not", async () 
   await assert.rejects(again.fs.readFile("/tmp/gone.txt"));
 });
 
+test("overlapping exec calls are serialized, not interleaved", async () => {
+  const d = tmp(), p = path.join(d, "w.json");
+  const w = await World.open(p);
+  // Shell state is replayed per call; two unserialized calls both start from
+  // the same state and the later one's captured env overwrites the other's.
+  await Promise.all([w.exec("export A=1"), w.exec("export B=2"), w.exec("export C=3")]);
+  const out = await w.exec('echo "$A$B$C"');
+  assert.equal(out.stdout, "123\n", "every export survives overlapping calls");
+  assert.equal(w.turns, 4);
+  assert.deepEqual(nfs.readdirSync(d).filter((f) => f.includes(".tmp-")), [], "no temp files left");
+});
+
+test("info reports decoded byte lengths, not base64 estimates", async () => {
+  const d = tmp(), p = path.join(d, "w.json");
+  await World.open(p, { files: { "/work/one": "a", "/work/two": "ab" } });
+  const bytes = Object.fromEntries(World.info(p).files.map((f) => [f.path, f.bytes]));
+  assert.equal(bytes["/work/one"], 1);
+  assert.equal(bytes["/work/two"], 2);
+});
+
 test("seeded files land in the world", async () => {
   const d = tmp(), p = path.join(d, "w.json");
   const w = await World.open(p, { files: { "/work/data/x.csv": "a,b\n1,2\n" } });
@@ -133,21 +153,26 @@ test("REGRESSION: forking over a pre-existing dest does not write THROUGH it", a
 
 test("REGRESSION: save writes via a temp file and never truncates the world in place", async () => {
   // Asserting only "valid JSON, no strays" passes under a direct in-place write too,
-  // which is exactly the implementation this test exists to forbid. Instead, block
-  // the temp path: a write-then-rename save MUST fail and leave the world intact,
-  // whereas a direct write would happily clobber it.
+  // which is exactly the implementation this test exists to forbid. Instead, make
+  // the DIRECTORY read-only while the world file itself stays writable: a
+  // write-then-rename save cannot create its temp file and MUST fail, leaving the
+  // world intact, whereas a direct in-place write would happily clobber it.
+  // (The temp name is random, so blocking one predictable path no longer works.)
   const d = tmp(), p = path.join(d, "w.json");
   const w = await World.open(p);
   await w.exec("echo original > /work/a.txt");
   const good = nfs.readFileSync(p, "utf8");
 
-  nfs.mkdirSync(`${p}.tmp-${process.pid}`);        // temp path is now un-writable
-  await assert.rejects(async () => {
-    await w.exec("echo clobbered > /work/a.txt");
-  }, "save must fail rather than write the world in place");
+  nfs.chmodSync(d, 0o555);                          // no new entries in the dir
+  try {
+    await assert.rejects(async () => {
+      await w.exec("echo clobbered > /work/a.txt");
+    }, "save must fail rather than write the world in place");
+  } finally {
+    nfs.chmodSync(d, 0o755);
+  }
   assert.equal(nfs.readFileSync(p, "utf8"), good, "the previous world was destroyed");
 
-  nfs.rmdirSync(`${p}.tmp-${process.pid}`);
   await w.exec("echo after > /work/a.txt");
   assert.doesNotThrow(() => JSON.parse(nfs.readFileSync(p, "utf8")));
   assert.deepEqual(nfs.readdirSync(d).filter((f) => f.includes(".tmp-")), []);

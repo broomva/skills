@@ -1,6 +1,7 @@
 // A "world" is one JSON file holding an entire agent workspace: the filesystem
 // plus the shell state. Because it is a single value, forking a world is a file
 // copy -- measured at ~0.24ms for an 11KB world, versus seconds for a container.
+import { randomUUID } from "node:crypto";
 import * as nfs from "node:fs";
 import { InMemoryFs } from "just-bash";
 import { snapshot, restore } from "./fs-snapshot.mjs";
@@ -12,6 +13,10 @@ export class World {
   constructor(path, { fs, shell, turns = 0, prefix = DEFAULT_PREFIX }) {
     this.path = path; this.fs = fs; this.shell = shell;
     this.turns = turns; this.prefix = prefix;
+    // Serializes exec() on this world. An MCP client may issue overlapping tool
+    // calls; interleaved commands would corrupt the replayed shell state and
+    // race two saves of the same file.
+    this._chain = Promise.resolve();
   }
 
   /** Open an existing world, or create a fresh one at `path`. */
@@ -44,17 +49,28 @@ export class World {
     });
     // Write-then-rename: a truncating in-place write that is interrupted destroys
     // the only copy of the world and leaves invalid JSON behind.
-    const tmp = `${this.path}.tmp-${process.pid}`;
-    nfs.writeFileSync(tmp, payload);
-    nfs.renameSync(tmp, this.path);
+    // A fresh, exclusively created temp name: a predictable name could be a
+    // pre-placed symlink whose target the write would follow and truncate.
+    const tmp = `${this.path}.tmp-${process.pid}-${randomUUID()}`;
+    try {
+      nfs.writeFileSync(tmp, payload, { flag: "wx" });
+      nfs.renameSync(tmp, this.path);
+    } catch (err) {
+      try { nfs.unlinkSync(tmp); } catch { /* never created */ }
+      throw err;
+    }
   }
 
-  /** Run one command and persist the resulting world. */
-  async exec(command) {
-    const res = await this.shell.exec(command);   // carries stateCaptured
-    this.turns += 1;
-    await this.save();
-    return res;
+  /** Run one command and persist the resulting world. Calls are serialized. */
+  exec(command) {
+    const run = this._chain.then(async () => {
+      const res = await this.shell.exec(command);   // carries stateCaptured
+      this.turns += 1;
+      await this.save();
+      return res;
+    });
+    this._chain = run.catch(() => {});
+    return run;
   }
 
   /** Fork == copy. The source is never opened, so it cannot be mutated. */
@@ -88,7 +104,7 @@ export class World {
       cwd: raw.shell?.cwd ?? null,
       files: (raw.fs?.files ?? []).map((f) => ({
         path: f.path,
-        bytes: f.hardlinkTo ? 0 : Math.round((f.b64?.length ?? 0) * 0.75),
+        bytes: f.hardlinkTo ? 0 : Buffer.from(f.b64 ?? "", "base64").length,
         hardlinkTo: f.hardlinkTo ?? null,
       })),
       dirs: (raw.fs?.dirs ?? []).map((d) => d.path),
