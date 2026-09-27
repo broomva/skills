@@ -42,8 +42,9 @@ from pathlib import Path
 # first): a TOP-LEVEL `knowledge:` block in the nearest .control/policy.yaml
 # (found by walking up from CWD; keys root/entities_dir/catalog_path,
 # root-relative unless absolute) > KG_ROOT/KG_ENTITIES_DIR/KG_CATALOG (legacy
-# BROOMVA_ROOT still honored for root) > ~/broomva + research/entities +
-# docs/knowledge-index.md. Only the top-level `knowledge:` key is read — a
+# BROOMVA_ROOT still honored for root) > the nearest enclosing git toplevel
+# (worktree-aware) that holds research/entities (BRO-2614) > ~/broomva +
+# research/entities + docs/knowledge-index.md. Only the top-level `knowledge:` key is read — a
 # nested `plants.knowledge` control-plant block is deliberately ignored.
 
 
@@ -78,6 +79,17 @@ def _read_knowledge_block(policy):
     return kn if isinstance(kn, dict) else {}
 
 
+def _enclosing_knowledge_checkout(start):
+    """Nearest ancestor of `start` (inclusive) that is a git toplevel holding
+    research/entities, else None. A filesystem walk, not `git rev-parse`: no
+    subprocess at import time, and a worktree's `.git` is a file."""
+    start = Path(start).resolve()
+    for d in (start, *start.parents):
+        if (d / ".git").exists() and (d / "research" / "entities").is_dir():
+            return d
+    return None
+
+
 def _abs_or_rel(value, base):
     """Expand `value`; return as-is if absolute, else joined under `base`."""
     p = Path(value).expanduser()
@@ -92,8 +104,12 @@ def _resolve_knowledge_paths(start_dir=None, env=None):
     env = os.environ if env is None else env
     start_dir = Path.cwd() if start_dir is None else Path(start_dir)
 
-    # (3) default root, honoring legacy BROOMVA_ROOT
-    root = Path(env.get("BROOMVA_ROOT") or (Path.home() / "broomva")).expanduser()
+    # (4) default root < (3) enclosing checkout < legacy BROOMVA_ROOT (an
+    #     explicit override, like KG_ROOT below — it must beat the CWD guess)
+    if env.get("BROOMVA_ROOT"):
+        root = Path(env["BROOMVA_ROOT"]).expanduser()
+    else:
+        root = _enclosing_knowledge_checkout(start_dir) or (Path.home() / "broomva")
     entities_dir = None
     catalog_path = None
 

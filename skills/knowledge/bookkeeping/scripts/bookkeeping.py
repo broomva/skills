@@ -59,9 +59,17 @@ from render import render_markdown_to_html  # noqa: E402
 #   2. Env override — KG_ROOT / KG_ENTITIES_DIR / KG_CATALOG. Legacy
 #      BROOMVA_ROOT is still honored for root (haystack benchmark harness with
 #      fixtures under /tmp/kg-bench-N{scale}/, and CI runners with other paths).
-#   3. Default — ~/broomva + research/entities + docs/knowledge-index.md.
-# Backward-compat invariant: with no top-level `knowledge:` block AND no KG_*
-# env, the result is exactly the pre-config paths.
+#   3. Enclosing checkout — the nearest ancestor of CWD that is a git toplevel
+#      (`.git` dir, or the `.git` FILE of a worktree) AND holds research/entities.
+#      Worktree-aware by construction: from a worktree it resolves to that
+#      worktree, never to the main checkout (BRO-2614 — `index` run from a
+#      worktree used to overwrite ~/broomva/docs/knowledge-index.md). A nested
+#      repo without a graph (~/broomva/skills) is walked past, not adopted.
+#   4. Default — ~/broomva + research/entities + docs/knowledge-index.md, only
+#      when CWD is inside no such checkout.
+# Backward-compat invariant: from ~/broomva (or anywhere outside a checkout
+# holding a graph) with no top-level `knowledge:` block AND no KG_* env, the
+# result is exactly the pre-config paths.
 
 
 def _find_policy_file(start):
@@ -96,6 +104,17 @@ def _read_knowledge_block(policy):
     return kn if isinstance(kn, dict) else {}
 
 
+def _enclosing_knowledge_checkout(start):
+    """Nearest ancestor of `start` (inclusive) that is a git toplevel holding
+    research/entities, else None. A filesystem walk, not `git rev-parse`: no
+    subprocess at import time, and a worktree's `.git` is a file."""
+    start = Path(start).resolve()
+    for d in (start, *start.parents):
+        if (d / ".git").exists() and (d / "research" / "entities").is_dir():
+            return d
+    return None
+
+
 def _abs_or_rel(value, base):
     """Expand `value`; return as-is if absolute, else joined under `base`."""
     p = Path(value).expanduser()
@@ -110,8 +129,12 @@ def _resolve_knowledge_paths(start_dir=None, env=None):
     env = os.environ if env is None else env
     start_dir = Path.cwd() if start_dir is None else Path(start_dir)
 
-    # (3) default root, honoring legacy BROOMVA_ROOT
-    root = Path(env.get("BROOMVA_ROOT") or (Path.home() / "broomva")).expanduser()
+    # (4) default root < (3) enclosing checkout < legacy BROOMVA_ROOT (an
+    #     explicit override, like KG_ROOT below — it must beat the CWD guess)
+    if env.get("BROOMVA_ROOT"):
+        root = Path(env["BROOMVA_ROOT"]).expanduser()
+    else:
+        root = _enclosing_knowledge_checkout(start_dir) or (Path.home() / "broomva")
     entities_dir = None
     catalog_path = None
 

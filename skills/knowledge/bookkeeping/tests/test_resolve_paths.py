@@ -226,3 +226,90 @@ class TestDisplayPathNeverCrashes:
         import argparse
         bookkeeping.cmd_index(argparse.Namespace(dry_run=False))  # must NOT raise
         assert catalog.is_file()
+
+
+# ── Enclosing checkout, worktree-aware (BRO-2614) ─────────────────────────────
+
+def _checkout(path: Path, *, worktree_of: Path | None = None, graph: bool = True) -> Path:
+    """A git toplevel: a `.git` dir, or a worktree's `.git` FILE."""
+    path.mkdir(parents=True, exist_ok=True)
+    if worktree_of is None:
+        (path / ".git").mkdir()
+    else:
+        (path / ".git").write_text(f"gitdir: {worktree_of}/.git/worktrees/{path.name}\n")
+    if graph:
+        (path / "research" / "entities").mkdir(parents=True)
+    return path
+
+
+class TestEnclosingCheckout:
+    def test_worktree_resolves_to_itself_not_the_main_checkout(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        wt = _checkout(tmp_path / "wt", worktree_of=main)
+        root, ent, cat = bookkeeping._resolve_knowledge_paths(
+            start_dir=wt / "research" / "entities", env={})
+        assert root == wt
+        assert ent == wt / "research" / "entities"
+        assert cat == wt / "docs" / "knowledge-index.md"
+
+    def test_worktree_nested_inside_the_main_checkout(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        wt = _checkout(main / ".worktrees" / "x", worktree_of=main)
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=wt, env={})
+        assert root == wt
+
+    def test_main_checkout_resolves_to_itself(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=main / "docs", env={})
+        assert root == main
+
+    def test_nested_repo_without_a_graph_is_walked_past(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        skills = _checkout(main / "skills", graph=False)
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=skills / "x", env={})
+        assert root == main
+
+    def test_graph_dir_without_git_is_not_a_checkout(self, tmp_path):
+        (tmp_path / "loose" / "research" / "entities").mkdir(parents=True)
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=tmp_path / "loose", env={})
+        assert root == DEFAULT_ROOT
+
+    @pytest.mark.parametrize("key", ["BROOMVA_ROOT", "KG_ROOT"])
+    def test_explicit_override_beats_the_cwd_checkout(self, tmp_path, key):
+        wt = _checkout(tmp_path / "wt", worktree_of=tmp_path / "main")
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=wt, env={key: "/env/root"})
+        assert root == Path("/env/root")
+
+
+def test_index_from_a_worktree_never_writes_the_main_checkout(tmp_path):
+    """End to end, as the #789 drain ran it: `bookkeeping index` from a worktree,
+    no KG_* env. HOME is faked so the legacy default ~/broomva IS the main
+    checkout — the pre-fix resolver writes there."""
+    import os
+    import subprocess
+    import sys
+
+    home = tmp_path / "home"
+    main = _checkout(home / "broomva")
+    wt = _checkout(tmp_path / "wt", worktree_of=main)
+    for repo, slug in ((main, "main-only"), (wt, "wt-only")):
+        d = repo / "research" / "entities" / "concept"
+        d.mkdir(parents=True)
+        (d / f"{slug}.md").write_text(
+            f"---\ntype: concept\nstatus: entity\ncore_claim: The {slug} claim.\n---\nBody.\n")
+    main_catalog = main / "docs" / "knowledge-index.md"
+    main_catalog.parent.mkdir()
+    main_catalog.write_text("SENTINEL — the main checkout's own catalog\n")
+    before = main_catalog.read_bytes()
+
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("BROOMVA_ROOT", "KG_ROOT", "KG_ENTITIES_DIR", "KG_CATALOG")}
+    env.update(HOME=str(home), KG_NO_POLICY="1")
+    script = Path(bookkeeping.__file__).resolve()
+    res = subprocess.run([sys.executable, str(script), "index"], cwd=wt, env=env,
+                         capture_output=True, text=True, timeout=120)
+    assert res.returncode == 0, res.stderr
+
+    assert main_catalog.read_bytes() == before
+    wt_catalog = (wt / "docs" / "knowledge-index.md").read_text()
+    assert "wt-only" in wt_catalog and "main-only" not in wt_catalog
