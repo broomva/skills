@@ -29,6 +29,15 @@ from bookkeeping import (
 
 # ── Shared fixtures ────────────────────────────────────────────────────────────
 
+@pytest.fixture(autouse=True)
+def _grounding_floor_off(monkeypatch):
+    """This suite's fixture items are not written to name their slugs; what it
+    tests is downstream of the grounding floor (BRO-2614), which has its own
+    suite in test_grounding_floor.py. Off here so these tests keep testing
+    what they are about."""
+    monkeypatch.setattr(bookkeeping, "GROUNDING_FLOOR", 0)
+
+
 @pytest.fixture
 def temp_entities(tmp_path, monkeypatch):
     """research/entities/ under tmp_path, with the module globals patched."""

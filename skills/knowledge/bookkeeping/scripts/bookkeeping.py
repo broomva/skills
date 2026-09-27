@@ -905,12 +905,15 @@ def _ingest_markdown(text: str, source_id: str, source_type: str) -> list[RawIte
             # Skip table-of-contents-only sections
             if section_body.count("\n") < 2 and not re.search(r"[.!?]", section_body):
                 continue
-            content = f"{header.lstrip('#').strip()}\n\n{section_body}"
+            heading = header.lstrip('#').strip()
+            content = f"{heading}\n\n{section_body}"
             items.append(_make_item(
                 source_id=source_id,
                 source_type=source_type,
                 content=content.strip(),
-                metadata=dict(fm),
+                # Recorded, not re-inferred: the grounding floor must know
+                # which leading text is a heading and which is a claim.
+                metadata={**dict(fm), _SECTION_HEADING_METADATA_KEY: heading},
             ))
         if items:
             return items
@@ -2122,6 +2125,8 @@ def _merged_tombstone_path(slug: str, entity_type: str | None = None) -> "Path |
 # canonical key, no fuzzy aliasing: guessing which of several near-miss keys the
 # author "meant" is the prose inference this envelope refuses to do.
 _VALID_FROM_METADATA_KEY = "valid_from"
+# Set by Format-2 ingest: the section heading prepended to the item content.
+_SECTION_HEADING_METADATA_KEY = "section_heading"
 
 _FM_CLOSING_FENCE_RE = re.compile(r"^---[ \t]*\r?$", re.MULTILINE)
 
@@ -2535,6 +2540,121 @@ def _frontmatter_value(text: str, key: str) -> object:
     """Return one parsed frontmatter value from raw page text, or None."""
     fm, _ = parse_frontmatter(text)
     return fm.get(key) if isinstance(fm, dict) else None
+
+
+# ── Grounding floor (promotion stage, BRO-2614) ───────────────────────────────
+#
+# The per-axis floor that the Nous (n, s, r) axes cannot provide. Measured on
+# workspace#789 (2026-09-27), where 12 of 14 new entities were junk:
+#
+#   - The (n, s, r) scores are NOTE-level. Every item of a note inherits the
+#     note's density, so the kept person/beata-halassy and the junk
+#     pattern/insane-method carry the identical `6/9 (n=3 s=3 r=0)`. No floor
+#     over those three numbers can admit one and refuse the other: r >= 1
+#     refuses the kept page AND admits current-lago, via-vercel and
+#     webber-wentzel (n=1 s=3 r>=1). AXIS_FLOOR above stays 0 for that reason.
+#   - The junk is an ATTRIBUTION failure. `promote_item` derives core_claim per
+#     ITEM (its first sentence) but the slug per CANDIDATE (a Title-Case run
+#     anywhere in the item), so one item mints pages whose claim never names
+#     them: jacob-coxon -> "[MED] — read through search-result aggregators".
+#     Or the "claim" is the item's own section heading that Format-2 ingest
+#     glued on, and the slug was lifted from that same heading: insane-method
+#     from 'Layer-2 extract — Kurzgesagt "... an Insane Method"'.
+#
+# Grounding is a per-item axis measured on the page that would be written:
+#   2  the section heading IS the entity (the slug covers at least half of the
+#      heading's content tokens) — a "## Beata Halassy" section is about her;
+#   1  the claim, with the item's heading stripped, names the entity's HEAD
+#      noun (the slug's last content token: the surname of a person, the head
+#      of a noun phrase — "jev-judge" is grounded by "judge", not by "jev");
+#   0  otherwise.
+# GROUNDING_FLOOR = 1. Deterministic, local, no transport — so unlike the
+# coherence gate below it cannot fail open. It runs first, so a refused page
+# never costs a coherence call.
+#
+# Measured on the promote door's real input (60 raw notes, 135 would-be new
+# pages, 2026-09-27): refuses 106 of the 115 the coherence gate rejects, and
+# 17 of its 20 accepts — of which a hand read finds ~2 legitimate
+# (system-initiative, freepik-company); the rest are junk the coherence gate
+# let through ("Verified against the paper." as recurrent-breast-cancer).
+# NOT a page-quality rule: hand-written claims legitimately omit the title
+# (a person page reads "Managing Director of ..."), and 22.6% of hand-authored
+# pages would fail it. It applies only where the claim is DERIVED from an
+# item, i.e. the new-page path of promote_item.
+
+GROUNDING_FLOOR = 1
+
+# Number words match too much prose to ground anything ("system-one" must not
+# be grounded by "one of the ...").
+_GROUNDING_NONCONTENT = _SLUG_LEAD_STOPWORDS | _SLUG_TRAIL_STOPWORDS | frozenset({
+    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
+    "via", "vs", "versus", "towards", "toward",
+})
+
+grounding_refused = 0
+
+
+def reset_grounding_run_state() -> None:
+    global grounding_refused
+    grounding_refused = 0
+
+
+def grounding_stats() -> dict:
+    return {"floor": GROUNDING_FLOOR, "refused": grounding_refused}
+
+
+def _grounding_words(text: str) -> list[str]:
+    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).split()
+
+
+def _grounding_stem(token: str) -> str:
+    """Plural-folded 5-char prefix: keys~key, programmers~programming."""
+    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
+        token = token[:-1]
+    return token[:5]
+
+
+def _grounding_tokens(words: "list[str]") -> list[str]:
+    return [w for w in words
+            if len(w) >= 3 and not w.isdigit() and w not in _GROUNDING_NONCONTENT]
+
+
+def entity_grounding(slug: str, core_claim: str, heading: str = "") -> int:
+    """Grounding of `slug` in its derived claim: 2 / 1 / 0 (see comment above).
+
+    `heading` is the item's section heading, or "" when the item has none —
+    with no heading nothing is stripped, so a paragraph item whose first
+    sentence names the entity stays grounded.
+    """
+    slug_words = [w for w in slug.split("-") if w]
+    content = _grounding_tokens(slug_words) or slug_words
+    if not content:
+        return 0
+    slug_stems = [_grounding_stem(w) for w in content]
+
+    heading_words = _grounding_words(heading)
+    heading_stems = {_grounding_stem(w) for w in _grounding_tokens(heading_words)}
+    if heading_stems and set(slug_stems) <= heading_stems \
+            and 2 * len(set(slug_stems)) >= len(heading_stems):
+        return 2
+
+    claim_words = _grounding_words(core_claim)
+    # Strip the heading only when the claim actually begins with it — Format-2
+    # ingest prepends it and derive_core_claim keeps it as prose.
+    if heading_words and claim_words[:len(heading_words)] == heading_words:
+        claim_words = claim_words[len(heading_words):]
+    claim_stems = {_grounding_stem(w) for w in claim_words}
+    return 1 if slug_stems[-1] in claim_stems else 0
+
+
+def passes_grounding_floor(slug: str, core_claim: str, heading: str = "") -> bool:
+    return entity_grounding(slug, core_claim, heading) >= GROUNDING_FLOOR
+
+
+def _item_section_heading(item: "RawItem") -> str:
+    meta = getattr(item, "metadata", None)
+    heading = meta.get(_SECTION_HEADING_METADATA_KEY) if isinstance(meta, dict) else None
+    return heading if isinstance(heading, str) else ""
 
 
 # ── Entity coherence gate (promotion stage) ───────────────────────────────────
@@ -2990,6 +3110,7 @@ def promote_item(
     verdict, or remembered from an earlier run). A caller that must tell a
     dry-run "would create" from a gate refusal asks `coherence_rejected_slug`.
     """
+    global grounding_refused
     if entity_type is None:
         entity_type = _infer_entity_type(entity_slug, scored.item)
 
@@ -3089,6 +3210,15 @@ def promote_item(
         # so silently hides a broken upstream emitter.
         print(f"  [promote] ignoring unparseable metadata.valid_from "
               f"{scored.item.metadata[_VALID_FROM_METADATA_KEY]!r}: {entity_slug}")
+
+    # ── Grounding floor ── deterministic, so it runs before the coherence
+    # call and holds when that transport is down (see GROUNDING_FLOOR).
+    heading = _item_section_heading(scored.item)
+    if not passes_grounding_floor(entity_slug, core_claim, heading):
+        grounding_refused += 1
+        print(f"  [promote] SKIP (grounding < {GROUNDING_FLOOR}: the derived claim "
+              f"does not name it): {entity_type}/{entity_slug} — {core_claim[:80]!r}")
+        return None
 
     # ── Entity coherence gate ── the last check before a NEW page reaches
     # disk; the update branch above returned earlier and is never gated.
@@ -4646,6 +4776,7 @@ def run_pipeline(
 
     ensure_dirs()
     reset_coherence_run_state()
+    reset_grounding_run_state()
 
     # ── Auto-discover sources if none given ──
     if not source_files:
@@ -4801,6 +4932,7 @@ def run_pipeline(
         "run_id": run_id,
         "timestamp": now_iso(),
         "coherence": coherence_stats(),
+        "grounding": grounding_stats(),
         "source_files": [str(s) for s in source_files],
         "items_ingested": items_ingested,
         "items_scored": items_scored,
@@ -5049,6 +5181,7 @@ def cmd_promote(args: argparse.Namespace) -> None:
     slug_types = existing_entity_slug_types()
     ensure_dirs()
     reset_coherence_run_state()
+    reset_grounding_run_state()
 
     promoted = 0
     for item in items:

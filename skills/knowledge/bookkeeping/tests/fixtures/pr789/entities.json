@@ -1,0 +1,211 @@
+{
+ "source": "broomva/workspace#789 — c051914e1e (scheduled synthesis as opened) and 0cc2d0a91 (as merged)",
+ "entities": [
+  {
+   "type": "concept",
+   "slug": "computer-programmers",
+   "core_claim": "The 2026-01/03/06 releases ship raw facet-level conversation data, no per-task A/U column.",
+   "section_heading": "Measurements (all computed locally against the downloaded files)",
+   "source_note": "2026-09-15-checkit-aei-job-audit-reel-raw",
+   "nous": {
+    "n": 3,
+    "s": 3,
+    "r": 0
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "concept",
+   "slug": "current-lago",
+   "core_claim": "Dependency-driven choices Immutable procedure and ontology versions coexist with a mutable graph frontier.",
+   "section_heading": "Dependency-driven choices",
+   "source_note": "2026-09-13-holon-system-spec-raw",
+   "nous": {
+    "n": 1,
+    "s": 3,
+    "r": 1
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "concept",
+   "slug": "jacob-coxon",
+   "core_claim": "[MED] — read through search-result aggregators, not bbc.com.",
+   "section_heading": "The BBC framing device",
+   "source_note": "2026-09-15-checkit-aei-job-audit-reel-raw",
+   "nous": {
+    "n": 3,
+    "s": 3,
+    "r": 0
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "concept",
+   "slug": "path-towards-autonomous-machine-intelligence",
+   "core_claim": "Read verbatim: So the advertised 'three research papers' are LeCun's JEPA position paper, Attention Is All You Need, and Era of Experience.",
+   "section_heading": "What the insets actually show [HIGH — read off upscaled frames]",
+   "source_note": "2026-09-14-checkit-environments-verification-raw",
+   "nous": {
+    "n": 3,
+    "s": 3,
+    "r": 0
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "pattern",
+   "slug": "beata-halassy",
+   "core_claim": "Verified against the paper.",
+   "section_heading": "Items",
+   "source_note": "2026-09-15-checkit-oncolytic-virotherapy-raw",
+   "nous": {
+    "n": 3,
+    "s": 3,
+    "r": 0
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "pattern",
+   "slug": "insane-method",
+   "core_claim": "Layer-2 extract — Kurzgesagt 'This Woman Cured Her Cancer with an Insane Method' Ingested 2026-09-15 via /checkit.",
+   "section_heading": "Layer-2 extract — Kurzgesagt \"This Woman Cured Her Cancer with an Insane Method\"",
+   "source_note": "2026-09-15-checkit-oncolytic-virotherapy-raw",
+   "nous": {
+    "n": 3,
+    "s": 3,
+    "r": 0
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "pattern",
+   "slug": "instagram-reel",
+   "core_claim": "Caption verbatim: The next trillion-dollar company WILL NOT HAVE the smartest AI.",
+   "section_heading": "Artifact provenance [HIGH]",
+   "source_note": "2026-09-14-checkit-environments-verification-raw",
+   "nous": {
+    "n": 3,
+    "s": 3,
+    "r": 0
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "pattern",
+   "slug": "nested-watchdog-inherits-the-skip",
+   "core_claim": "A forced-failure arm nested in the control it validates inherits its skip; an append-only ledger's silence reads as a pass.",
+   "section_heading": "",
+   "source_note": null,
+   "nous": null,
+   "verdict": "kept",
+   "provenance": "merged as-is in 0cc2d0a91"
+  },
+  {
+   "type": "pattern",
+   "slug": "statisticsmaxxing-knowledge",
+   "core_claim": "They are not scene frames.",
+   "section_heading": "Layer 2 raw extract — \"Statisticsmaxxing Knowledge (Luck edition)\"",
+   "source_note": "2026-09-14-checkit-statisticsmaxxing-luck-raw",
+   "nous": {
+    "n": 3,
+    "s": 3,
+    "r": 0
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "pattern",
+   "slug": "webber-wentzel",
+   "core_claim": "Items (novelty / specificity / relevance) SFT data is the lever, RL the amplifier — TB2: 3.1 → 13.5 (SFT) → 17.0 (RLVR); their own sentence.",
+   "section_heading": "Items (novelty / specificity / relevance)",
+   "source_note": "2026-09-19-afterquery-checkit-raw",
+   "nous": {
+    "n": 1,
+    "s": 3,
+    "r": 3
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "person",
+   "slug": "beata-halassy",
+   "core_claim": "Halassy tumour shrank 63% (2.47->0.91cm3) via oncolytic virotherapy; HER2 3+ w/ adjuvant trastuzumab after -- a confound the video omits.",
+   "section_heading": "",
+   "source_note": null,
+   "nous": {
+    "n": 3,
+    "s": 3,
+    "r": 0
+   },
+   "verdict": "kept",
+   "provenance": "reviewer rewrite merged in 0cc2d0a91 (type+core_claim fixed)"
+  },
+  {
+   "type": "project",
+   "slug": "multimodal-system-one",
+   "core_claim": "Grades: HIGH = downloaded/parsed/grepped raw; MED = WebFetch summary of the page (quotes as returned by the summariser, not verbatim).",
+   "section_heading": "",
+   "source_note": "2026-09-22-multimodal-system-one-raw",
+   "nous": {
+    "n": 3,
+    "s": 2,
+    "r": 0
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "project",
+   "slug": "system-one",
+   "core_claim": "Author: 'Jev doesn't compete with Sonnet on accuracy here' but 'still found enough shape in the coordinates to beat chance'.",
+   "section_heading": "",
+   "source_note": "2026-09-22-multimodal-system-one-raw",
+   "nous": {
+    "n": 3,
+    "s": 3,
+    "r": 0
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "project",
+   "slug": "via-vercel",
+   "core_claim": "Jev mode added in PR #342 (535f414eb4, 2026-09-18), UNRELEASED.",
+   "section_heading": "Comparison: vercel-labs/json-render (read 2026-09-23 at c2600d7390; 18,176 stars; Apache-2.0)",
+   "source_note": "2026-09-23-shapeshift-jev-raw",
+   "nous": {
+    "n": 1,
+    "s": 3,
+    "r": 1
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  },
+  {
+   "type": "tool",
+   "slug": "jev-judge",
+   "core_claim": "/checkit — 'Build a Jev Judge' (Jev-as-judge + Opik tutorial), run live Eighth X-article ingest on the TypeSafe Jev arc.",
+   "section_heading": "/checkit — \"Build a Jev Judge\" (Jev-as-judge + Opik tutorial), run live",
+   "source_note": "2026-09-25-jev-as-judge-raw",
+   "nous": {
+    "n": 3,
+    "s": 3,
+    "r": 0
+   },
+   "verdict": "junk",
+   "provenance": "auto-promoted in c051914e1e; dropped by review"
+  }
+ ]
+}
