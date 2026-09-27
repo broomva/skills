@@ -79,13 +79,23 @@ def _read_knowledge_block(policy):
     return kn if isinstance(kn, dict) else {}
 
 
+def _is_git_head(head):
+    """HEAD as git writes it: a symbolic ref, or a detached SHA-1/SHA-256."""
+    try:
+        first = head.read_text(errors="replace").split("\n", 1)[0].strip()
+    except OSError:
+        return False
+    return first.startswith("ref: refs/") \
+        or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", first) is not None
+
+
 def _is_git_toplevel(d):
-    """`d/.git` is a git dir (has HEAD), or a worktree/submodule `.git` FILE
-    whose `gitdir:` target has HEAD. Any other `.git` is not a checkout."""
+    """`d/.git` is a git dir with a real HEAD, or a worktree/submodule `.git`
+    FILE whose `gitdir:` target has one. Any other `.git` is not a checkout."""
     g = d / ".git"
     try:
         if g.is_dir():
-            return (g / "HEAD").is_file()
+            return _is_git_head(g / "HEAD")
         if not g.is_file():
             return False
         first = g.read_text(errors="replace").split("\n", 1)[0].strip()
@@ -96,7 +106,7 @@ def _is_git_toplevel(d):
     target = Path(first[len("gitdir:"):].strip()).expanduser()
     if not target.is_absolute():
         target = d / target
-    return (target / "HEAD").is_file()
+    return _is_git_head(target / "HEAD")
 
 
 def _enclosing_knowledge_checkout(start):

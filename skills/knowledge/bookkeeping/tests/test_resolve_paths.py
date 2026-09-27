@@ -283,6 +283,8 @@ class TestEnclosingCheckout:
         "file:not git",                       # a text file named .git
         "file:gitdir: /nonexistent/wt",       # gitdir target missing
         "dir-without-HEAD",                   # an empty .git directory
+        "dir-with-HEAD:not-a-git-head",       # HEAD is not git's HEAD (round 2)
+        "dir-with-HEAD:",                     # empty HEAD
     ])
     def test_a_dotgit_that_is_not_a_checkout_is_not_adopted(self, tmp_path, dotgit):
         d = tmp_path / "fake"
@@ -291,6 +293,8 @@ class TestEnclosingCheckout:
             (d / ".git").write_text(dotgit[len("file:"):] + "\n")
         else:
             (d / ".git").mkdir()
+            if dotgit.startswith("dir-with-HEAD:"):
+                (d / ".git" / "HEAD").write_text(dotgit[len("dir-with-HEAD:"):] + "\n")
         root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
         assert root == DEFAULT_ROOT
 
@@ -298,10 +302,27 @@ class TestEnclosingCheckout:
         main = _checkout(tmp_path / "main")
         target = main / ".git" / "worktrees" / "x"
         target.mkdir(parents=True)
-        (target / "HEAD").write_text("x\n")
+        (target / "HEAD").write_text("ref: refs/heads/x\n")
         d = tmp_path / "fake"
         (d / "research" / "entities").mkdir(parents=True)
         (d / ".git").write_text(f"gitdir! {target}\n")   # not a `gitdir:` line
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
+        assert root == DEFAULT_ROOT
+
+    @pytest.mark.parametrize("head", ["a" * 40, "b" * 64])
+    def test_a_detached_head_is_a_checkout(self, tmp_path, head):
+        d = _checkout(tmp_path / "det")
+        (d / ".git" / "HEAD").write_text(head + "\n")
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
+        assert root == d
+
+    def test_a_gitdir_target_with_a_bogus_head_is_not_a_checkout(self, tmp_path):
+        target = tmp_path / "gd"
+        target.mkdir()
+        (target / "HEAD").write_text("not-a-git-head\n")
+        d = tmp_path / "wt"
+        (d / "research" / "entities").mkdir(parents=True)
+        (d / ".git").write_text(f"gitdir: {target}\n")
         root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
         assert root == DEFAULT_ROOT
 
@@ -310,7 +331,7 @@ class TestEnclosingCheckout:
         wt = tmp_path / "wt"
         (wt / "research" / "entities").mkdir(parents=True)
         (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
-        (main / ".git" / "worktrees" / "wt" / "HEAD").write_text("x\n")
+        (main / ".git" / "worktrees" / "wt" / "HEAD").write_text("ref: refs/heads/wt\n")
         (wt / ".git").write_text("gitdir: ../main/.git/worktrees/wt\n")
         root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=wt, env={})
         assert root == wt

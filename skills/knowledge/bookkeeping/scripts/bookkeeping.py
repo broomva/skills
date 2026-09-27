@@ -105,13 +105,23 @@ def _read_knowledge_block(policy):
     return kn if isinstance(kn, dict) else {}
 
 
+def _is_git_head(head):
+    """HEAD as git writes it: a symbolic ref, or a detached SHA-1/SHA-256."""
+    try:
+        first = head.read_text(errors="replace").split("\n", 1)[0].strip()
+    except OSError:
+        return False
+    return first.startswith("ref: refs/") \
+        or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", first) is not None
+
+
 def _is_git_toplevel(d):
-    """`d/.git` is a git dir (has HEAD), or a worktree/submodule `.git` FILE
-    whose `gitdir:` target has HEAD. Any other `.git` is not a checkout."""
+    """`d/.git` is a git dir with a real HEAD, or a worktree/submodule `.git`
+    FILE whose `gitdir:` target has one. Any other `.git` is not a checkout."""
     g = d / ".git"
     try:
         if g.is_dir():
-            return (g / "HEAD").is_file()
+            return _is_git_head(g / "HEAD")
         if not g.is_file():
             return False
         first = g.read_text(errors="replace").split("\n", 1)[0].strip()
@@ -122,7 +132,7 @@ def _is_git_toplevel(d):
     target = Path(first[len("gitdir:"):].strip()).expanduser()
     if not target.is_absolute():
         target = d / target
-    return (target / "HEAD").is_file()
+    return _is_git_head(target / "HEAD")
 
 
 def _enclosing_knowledge_checkout(start):
@@ -724,7 +734,15 @@ def _make_item(
     author: str = "",
     timestamp: str = "",
     metadata: dict | None = None,
+    section_heading: str | None = None,
 ) -> RawItem:
+    # `section_heading` is RESERVED: it decides what the grounding floor strips
+    # and can grant grounding 2, so a source must not be able to supply it —
+    # frontmatter or a JSONL object carrying the key would forge it. Only
+    # Format-2 ingest sets it, through the parameter (BRO-2614, P20 round 2).
+    meta = {k: v for k, v in (metadata or {}).items() if k != _SECTION_HEADING_METADATA_KEY}
+    if section_heading is not None:
+        meta[_SECTION_HEADING_METADATA_KEY] = section_heading
     return RawItem(
         item_id=str(uuid.uuid4())[:8],
         source_id=source_id,
@@ -733,7 +751,7 @@ def _make_item(
         quote=quote.strip(),
         author=author,
         timestamp=timestamp or now_iso(),
-        metadata=metadata or {},
+        metadata=meta,
     )
 
 
@@ -957,7 +975,8 @@ def _ingest_markdown(text: str, source_id: str, source_type: str) -> list[RawIte
                 content=content.strip(),
                 # Recorded, not re-inferred: the grounding floor must know
                 # which leading text is a heading and which is a claim.
-                metadata={**dict(fm), _SECTION_HEADING_METADATA_KEY: heading},
+                metadata=dict(fm),
+                section_heading=heading,
             ))
         if items:
             return items
@@ -2612,28 +2631,32 @@ def _frontmatter_value(text: str, key: str) -> object:
 #
 # Grounding is a per-item axis measured on the page that would be written:
 #   2  the section heading IS the entity (the slug covers at least half of the
-#      heading's content tokens) — a "## Beata Halassy" section is about her;
-#   1  the claim, with the item's heading stripped, names the entity's HEAD
-#      noun (the slug's last content token: the surname of a person, the head
-#      of a noun phrase — "jev-judge" is grounded by "judge", not by "jev");
+#      heading's content tokens, or the heading begins with the entity's name)
+#      — a "## Beata Halassy: case report" section is about her;
+#   1  the claim, with the item's heading stripped, NAMES the entity: a
+#      person by surname (the slug's last content token); a one- or two-word
+#      name by every word ("jev-judge" needs "jev" AND "judge"; "design-review"
+#      is not named by "we review ..."); a longer, claim-shaped slug by its
+#      head noun and at least half its content words;
 #   0  otherwise.
-# The floor is NECESSARY, not sufficient: a head noun can recur by accident
-# ("design-review" / "we review the choices"), so a grounded page still goes on
-# to the coherence gate. It only removes pages whose claim cannot be about them.
+# The floor is NECESSARY, not sufficient: naming is lexical, so a claim can
+# name an entity it is not about ("Microsoft Office" in a list of plugins), and
+# a grounded page still goes on to the coherence gate. It only removes pages
+# whose claim cannot be about them.
 #
 # GROUNDING_FLOOR = 1. Deterministic, local, no transport — so unlike the
 # coherence gate below it cannot fail open. It runs first, so a refused page
 # never costs a coherence call.
 #
 # Measured with this code on the promote door's real input (60 raw notes,
-# 134 would-be new pages, 2026-09-27): refuses 122 — 105 of the 114 the
+# 134 would-be new pages, 2026-09-27): refuses 124 — 107 of the 114 the
 # coherence gate rejects, and 17 of its 20 accepts, of which a hand read finds
 # ~3 arguably legitimate (system-initiative, freepik-company, long-proof); the
 # rest are junk the coherence gate let through ("Verified against the paper."
 # as recurrent-breast-cancer).
 # NOT a page-quality rule: hand-written claims legitimately omit the title
-# (a person page reads "Managing Director of ..."), and 595 of 1074
-# hand-authored pages (55.4%) would fail it. It applies only where the claim is DERIVED from an
+# (a person page reads "Managing Director of ..."), and 662 of 1074
+# hand-authored pages (61.6%) would fail it. It applies only where the claim is DERIVED from an
 # item, i.e. the new-page path of promote_item.
 
 GROUNDING_FLOOR = 1
@@ -2685,7 +2708,8 @@ def _grounding_tokens(words: "list[str]") -> list[str]:
             if len(w) >= 3 and not w.isdigit() and w not in _GROUNDING_NONCONTENT]
 
 
-def entity_grounding(slug: str, core_claim: str, heading: str = "") -> int:
+def entity_grounding(slug: str, core_claim: str, heading: str = "",
+                     entity_type: str | None = None) -> int:
     """Grounding of `slug` in its derived claim: 2 / 1 / 0 (see comment above).
 
     `heading` is the item's section heading, or "" when the item has none —
@@ -2699,9 +2723,14 @@ def entity_grounding(slug: str, core_claim: str, heading: str = "") -> int:
     slug_stems = [_grounding_stem(w) for w in content]
 
     heading_words = _grounding_words(heading)
-    heading_stems = {_grounding_stem(w) for w in _grounding_tokens(heading_words)}
+    heading_seq = [_grounding_stem(w) for w in _grounding_tokens(heading_words)]
+    heading_stems = set(heading_seq)
     if heading_stems and set(slug_stems) <= heading_stems \
             and 2 * len(set(slug_stems)) >= len(heading_stems):
+        return 2
+    # "Beata Halassy: a Croatian virologist's case report" — a heading that
+    # BEGINS with the entity's name is about it, whatever descriptor follows.
+    if heading_seq[:len(slug_stems)] == slug_stems:
         return 2
 
     claim_words = _grounding_words(core_claim)
@@ -2710,11 +2739,19 @@ def entity_grounding(slug: str, core_claim: str, heading: str = "") -> int:
     if heading_words and claim_words[:len(heading_words)] == heading_words:
         claim_words = claim_words[len(heading_words):]
     claim_stems = {_grounding_stem(w) for w in claim_words}
-    return 1 if slug_stems[-1] in claim_stems else 0
+    named = [s in claim_stems for s in slug_stems]
+    if entity_type == "person":
+        return 1 if named[-1] else 0          # a person is named by surname
+    if len(slug_stems) <= 2:
+        return 1 if all(named) else 0         # a short name is the whole name
+    # a long, claim-shaped slug is paraphrased: its head noun and at least half
+    # of its content words ("nested-watchdog-inherits-the-skip")
+    return 1 if named[-1] and 2 * sum(named) >= len(named) else 0
 
 
-def passes_grounding_floor(slug: str, core_claim: str, heading: str = "") -> bool:
-    return entity_grounding(slug, core_claim, heading) >= GROUNDING_FLOOR
+def passes_grounding_floor(slug: str, core_claim: str, heading: str = "",
+                           entity_type: str | None = None) -> bool:
+    return entity_grounding(slug, core_claim, heading, entity_type) >= GROUNDING_FLOOR
 
 
 def _item_section_heading(item: "RawItem") -> str:
@@ -3290,7 +3327,7 @@ def promote_item(
     # ── Grounding floor ── deterministic, so it runs before the coherence
     # call and holds when that transport is down (see GROUNDING_FLOOR).
     heading = _item_section_heading(scored.item)
-    if not passes_grounding_floor(entity_slug, core_claim, heading):
+    if not passes_grounding_floor(entity_slug, core_claim, heading, entity_type):
         grounding_refused += 1
         _grounding_refused_keys.add((entity_type, entity_slug))
         print(f"  [promote] SKIP (grounding < {GROUNDING_FLOOR}: the derived claim "

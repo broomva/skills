@@ -51,7 +51,7 @@ def _key(e):
 
 
 def _grounded(e):
-    return passes_grounding_floor(e["slug"], e["core_claim"], e["section_heading"])
+    return passes_grounding_floor(e["slug"], e["core_claim"], e["section_heading"], e["type"])
 
 
 # ── The fixture is what it claims to be ──────────────────────────────────────
@@ -71,7 +71,7 @@ def test_floor_is_on_by_default():
 
 @pytest.mark.parametrize("e", JUNK, ids=_key)
 def test_every_789_junk_page_is_refused(e):
-    assert entity_grounding(e["slug"], e["core_claim"], e["section_heading"]) == 0
+    assert entity_grounding(e["slug"], e["core_claim"], e["section_heading"], e["type"]) == 0
     assert not _grounded(e)
 
 
@@ -110,6 +110,14 @@ def test_heading_that_is_the_entity_grounds_it():
     assert entity_grounding("beata-halassy", "Items shrank 63%.", "Beata Halassy") == 2
 
 
+def test_heading_that_begins_with_the_entity_grounds_it():
+    h = "Beata Halassy: a Croatian virologist's oncolytic-virotherapy case report"
+    assert entity_grounding("beata-halassy", h + " Her tumour shrank.", h, "person") == 2
+    # the name must LEAD: a title merely containing it does not
+    assert entity_grounding("insane-method", "x",
+                            "Kurzgesagt on an Insane Method for curing cancer") == 0
+
+
 def test_slug_lifted_from_a_larger_title_is_not_grounded_by_it():
     # insane-method's heading contains the slug but is a video title, not the entity
     h = 'Layer-2 extract — Kurzgesagt "This Woman Cured Her Cancer with an Insane Method"'
@@ -125,27 +133,45 @@ def test_heading_prefix_is_stripped_only_when_the_claim_starts_with_it():
     assert entity_grounding("jev-judge", claim, "") == 1
 
 
-def test_head_noun_not_modifier_grounds():
+def test_a_short_name_is_named_by_every_word():
+    # P20 round 2 (Codex): a head noun alone is a generic collision
     assert entity_grounding("jev-judge", "The TypeSafe Jev arc.", "") == 0
+    assert entity_grounding("jev-judge", "A judge that runs nowhere.", "") == 0
     assert entity_grounding("jev-judge", "A judge built on Jev.", "") == 1
+    assert entity_grounding("design-review", "We review deployment choices.", "") == 0
+    assert entity_grounding("design-review", "Design review caught it twice.", "") == 1
+
+
+def test_a_person_is_named_by_surname():
+    assert entity_grounding("beata-halassy", "Halassy's tumour shrank.", "", "person") == 1
+    assert entity_grounding("beata-halassy", "Halassy's tumour shrank.", "", "pattern") == 0
+    assert entity_grounding("beata-halassy", "Beata published it.", "", "person") == 0
+
+
+def test_a_long_claim_shaped_slug_is_named_by_head_and_half():
+    slug = "nested-watchdog-inherits-the-skip"
+    assert entity_grounding(slug, "A nested arm inherits its skip.", "") == 1
+    assert entity_grounding(slug, "A watchdog's skip is silent.", "") == 1    # 2 of 4 + head
+    assert entity_grounding(slug, "The skip was silent.", "") == 0            # 1 of 4
+    assert entity_grounding(slug, "A nested watchdog inherits it.", "") == 0  # no head
 
 
 def test_plural_and_possessive_fold():
     assert entity_grounding("agent-key", "Three classes of Agent Keys.", "") == 1
-    assert entity_grounding("beata-halassy", "Halassy's tumour shrank.", "") == 1
-    assert entity_grounding("data-policy", "Two policies changed.", "") == 1
+    assert entity_grounding("data-policy", "Data policies changed.", "") == 1
 
 
 def test_identity_needs_the_whole_word_not_a_prefix():
-    # a 5-char prefix stem made corporal ~ corporate (P20 round 1, Codex)
+    # a 5-char prefix stem made corporal ~ corporate (P20 rounds 1-2, Codex)
     assert entity_grounding("corporal-punishment", "The policy changed.",
                             "Corporate Punishment") == 0
-    assert entity_grounding("corporal-punishment", "Corporate punishment rose.", "") == 1
-    assert entity_grounding("programming-language", "Programmers use it.", "") == 0
+    assert entity_grounding("corporal-punishment", "Corporate punishment rose.", "") == 0
+    assert entity_grounding("corporal-punishment", "Corporal punishment rose.", "") == 1
+    assert entity_grounding("programming-language", "Programmers use a language.", "") == 0
 
 
 def test_accents_fold():
-    assert entity_grounding("maria-nunez", "Núñez published the result.", "") == 1
+    assert entity_grounding("maria-nunez", "Núñez published the result.", "", "person") == 1
 
 
 def test_number_words_do_not_ground():
@@ -210,6 +236,12 @@ def test_door_admits_a_section_about_the_entity(door):
     assert bookkeeping.grounding_stats()["refused"] == 0
 
 
+def test_door_admits_a_heading_that_begins_with_the_entity(door):
+    h = "Beata Halassy: a Croatian virologist's case report"
+    item = _section(h, "Her tumour shrank from 2.47 to 0.91 cm3." + BODY_TAIL)
+    assert promote_item(item, "beata-halassy", "person") == door / "person" / "beata-halassy.md"
+
+
 def test_door_admits_a_paragraph_item_naming_the_entity(door):
     """Positive control through the door: grounding 1, no heading recorded."""
     item = _scored("Halassy treated her own recurrent breast cancer with a virus." + BODY_TAIL)
@@ -228,6 +260,28 @@ def test_floor_runs_before_the_coherence_call(door, monkeypatch):
 
 
 # ── Ingest records the heading the floor strips ──────────────────────────────
+
+@pytest.mark.parametrize("text", [
+    # Format-3 (paragraph) note whose frontmatter tries to supply the key
+    "---\nsection_heading: Beata Halassy\n---\n\nThe deployment status changed today "
+    "and nothing else happened; Beata Halassy appears only in the citations.\n",
+    # Format-2 note: frontmatter must not override the real heading either
+    "---\nsection_heading: Beata Halassy\n---\n\n# Items\n\nThe deployment status "
+    "changed today, measured twice.\nline two.\nline three.\n\n# Other\n\n"
+    "another section of text that is long enough to count.\nline two.\nline three.\n",
+])
+def test_a_source_cannot_forge_the_section_heading(tmp_path, text):
+    """P20 round 2 (Codex): the heading can grant grounding 2, so it is reserved."""
+    note = tmp_path / "2026-09-27-forged-raw.md"
+    note.write_text(text)
+    items = bookkeeping.ingest_file(note)
+    assert items
+    headings = {i.metadata.get(bookkeeping._SECTION_HEADING_METADATA_KEY) for i in items}
+    assert "Beata Halassy" not in headings
+    item = bookkeeping._make_item("s", "research", "x",
+                                  metadata={bookkeeping._SECTION_HEADING_METADATA_KEY: "Forged"})
+    assert bookkeeping._SECTION_HEADING_METADATA_KEY not in item.metadata
+
 
 def test_format2_ingest_records_section_heading():
     text = ("## Beata Halassy\n\nA virologist who treated her own cancer with a virus,"

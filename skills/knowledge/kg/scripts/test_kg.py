@@ -413,14 +413,14 @@ def test_resolve_enclosing_checkout_is_worktree_aware():
         (main / "research" / "entities").mkdir(parents=True)
         (wt / "research" / "entities" / "concept").mkdir(parents=True)
         (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
-        (main / ".git" / "worktrees" / "wt" / "HEAD").write_text("x\n")
+        (main / ".git" / "worktrees" / "wt" / "HEAD").write_text("ref: refs/heads/x\n")
         (wt / ".git").write_text(f"gitdir: {main}/.git/worktrees/wt\n")
         root, ent, cat = kg._resolve_knowledge_paths(start_dir=wt / "research" / "entities", env={})
         assert root == wt and ent == wt / "research" / "entities"
         assert cat == wt / "docs" / "knowledge-index.md"
         nested = main / "skills"
         (nested / ".git").mkdir(parents=True)
-        (nested / ".git" / "HEAD").write_text("x\n")
+        (nested / ".git" / "HEAD").write_text("ref: refs/heads/x\n")
         root2, _, _ = kg._resolve_knowledge_paths(start_dir=nested, env={})
         assert root2 == main, "a nested repo without a graph must not be adopted"
         root3, _, _ = kg._resolve_knowledge_paths(start_dir=wt, env={"BROOMVA_ROOT": "/env/root"})
@@ -433,6 +433,12 @@ def test_resolve_enclosing_checkout_is_worktree_aware():
         (fake / ".git").write_text(f"gitdir! {main}/.git/worktrees/wt\n")  # malformed pointer, real target
         root5, _, _ = kg._resolve_knowledge_paths(start_dir=fake, env={})
         assert root5 == Path.home() / "broomva", "only a `gitdir:` line points at a git dir"
+        decoy = base / "decoy"
+        (decoy / "research" / "entities").mkdir(parents=True)
+        (decoy / ".git").mkdir()
+        (decoy / ".git" / "HEAD").write_text("not-a-git-head\n")
+        root6, _, _ = kg._resolve_knowledge_paths(start_dir=decoy, env={})
+        assert root6 == Path.home() / "broomva", "a HEAD that is not git's is not a checkout"
         check(True, "enclosing checkout: worktree resolves to itself, env overrides")
 
 
