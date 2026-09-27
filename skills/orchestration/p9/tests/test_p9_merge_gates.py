@@ -19,6 +19,7 @@ _FIXTURES = _HERE / "fixtures"
 _GATED = _FIXTURES / "policy-gated.yaml"
 HEAD = "a" * 40
 OLD = "b" * 40
+BASE = "c" * 40
 
 
 @pytest.fixture()
@@ -54,7 +55,7 @@ def _good(p9, **over):
                 reviews=[], comments=[], additions=8, deletions=2, changed_files=1,
                 files=["src/x.py"],
                 required_checks=[{"name": "Merge Gate", "bucket": "pass"}],
-                all_checks=None, behind_by=0, unresolved_threads=0)
+                all_checks=None, behind_by=0, unresolved_threads=0, base_sha=BASE)
     base.update(over)
     return p9.PRGateFacts(**base)
 
@@ -112,6 +113,13 @@ class TestParse:
         ("  gates:\n    p20:\n      max_loc: 500\n", "max_loc"),
         ("  gates:\n    p20:\n      max_files: 5\n", "max_files"),
         ("  gates:\n    governance:\n      required_strata: [D]\n", "required_strata"),
+        ("  gates:\n    governance:\n      required_strata: [A]\n", "required_strata"),
+        ("  gates:\n    governance:\n      required_strata: [B, C]\n", "required_strata"),
+        ("  gates:\n    governance:\n      paths: [docs/**]\n", "may add paths"),
+        ("  gates:\n    governance:\n      paths: [CLAUDE.md, AGENTS.md]\n", "may add paths"),
+        ("  gates:\n    governance:\n      required_checks: [Merge Gate]\n", "stability-check"),
+        ("  gates:\n    governance:\n      l3_max_per_window: 2\n", "l3_max_per_window"),
+        ("  gates:\n    governance:\n      l3_window_seconds: 3600\n", "l3_window_seconds"),
         ("  gates:\n    governance:\n      required_checks: []\n", "required_checks"),
         ("  gates:\n    governance:\n      paths: []\n", "paths"),
         ("  gates:\n    governance:\n      l3_max_per_window: 0\n", "l3_max_per_window"),
@@ -124,6 +132,16 @@ class TestParse:
         with pytest.raises(p9.PolicyError) as e:
             _policy(p9, tmp_path, block)
         assert needle in str(e.value)
+
+    def test_governance_may_add_paths_and_checks(self, p9, tmp_path):
+        cfg = _policy(p9, tmp_path,
+                      "  gates:\n    governance:\n      paths: [CLAUDE.md, AGENTS.md, "
+                      "METALAYER.md, .control/policy.yaml, .control/rcs-parameters.toml, "
+                      "SECURITY.md]\n      required_checks: [stability-check, extra]\n"
+                      "      l3_window_seconds: 172800\n")
+        gov = cfg.auto_merge.gates.governance
+        assert "SECURITY.md" in gov.paths and "extra" in gov.required_checks
+        assert gov.l3_window_seconds == 172800
 
     def test_stricter_values_accepted(self, p9, tmp_path):
         cfg = _policy(p9, tmp_path, "  gates:\n    p20:\n      pass_score: 9\n"
@@ -157,6 +175,7 @@ class TestEvaluatorBothArms:
         ({"required_checks": []}, "required_checks"),
         ({"behind_by": 1}, "up_to_date"),
         ({"behind_by": None}, "up_to_date"),
+        ({"base_sha": ""}, "up_to_date"),
         ({"reviews": [{"author": {"login": "someone"}, "state": "CHANGES_REQUESTED"}]},
          "no_changes_requested"),
         ({"review_decision": "CHANGES_REQUESTED"}, "no_changes_requested"),
@@ -201,6 +220,8 @@ class TestP20:
         _comment(_marker(), assoc="NONE"),                   # drive-by account
         _comment(_marker(), assoc="CONTRIBUTOR"),
         _comment(_marker(score=6)),                          # below 7
+        _comment(_marker(score=99)),                         # not a /10 score
+        _comment(_marker(score=100)),
         _comment(_marker(verdict="STOP")),
         _comment("P20 verdict PASS 9/10, looks great"),      # prose is not a marker
     ])
@@ -254,6 +275,11 @@ class TestGovernanceTier:
         [{"name": "Merge Gate", "bucket": "pass"}],                       # absent
         [{"name": "stability-check", "bucket": "skipping"}],
         [{"name": "stability-check", "bucket": "fail"}],
+        # a duplicate name must not let a later green run mask a red one
+        [{"name": "stability-check", "bucket": "fail"},
+         {"name": "stability-check", "bucket": "pass"}],
+        [{"name": "stability-check", "bucket": "pass"},
+         {"name": "stability-check", "bucket": "fail"}],
         None,
     ])
     def test_stability_check_must_run_and_pass(self, p9, gates, checks):
@@ -294,16 +320,22 @@ def _seed_merge_ready(p9, pr):
             from_state=prev.value, to_state=curr.value, watcher_id="seed"))
 
 
-def _fake_gh(view, *, required=None, calls, base_policy=None):
+def _fake_gh(view, *, required=None, calls, base_policy=None, base_now=BASE):
     required = required if required is not None else [{"name": "Merge Gate", "bucket": "pass"}]
+    every = [x["path"] for x in view["files"]]
+    capped = dict(view, files=view["files"][:100], changedFiles=len(every))
 
     def run(cmd, *a, **k):
         calls.append(cmd)
         if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
             return _Run(json.dumps({"branch": view["headRefName"],
-                                    "files": [x["path"] for x in view["files"]]}))
+                                    "files": every[:100], "changed": len(every)}))
         if cmd[:3] == ["gh", "pr", "view"]:
-            return _Run(json.dumps(view))
+            return _Run(json.dumps(capped))
+        if cmd[:3] == ["gh", "api", "--paginate"]:
+            return _Run("\n".join(every) + "\n")
+        if cmd[:2] == ["gh", "api"] and any("/branches/" in c for c in cmd):
+            return _Run(json.dumps({"commit": {"sha": base_now}}))
         if cmd[:3] == ["gh", "pr", "checks"]:
             return _Run(json.dumps(required), returncode=0)
         if cmd[:2] == ["gh", "api"] and "graphql" in cmd:
@@ -314,7 +346,8 @@ def _fake_gh(view, *, required=None, calls, base_policy=None):
                 return _Run(stderr="gh: Not Found (HTTP 404)", returncode=1)
             return _Run(base_policy)
         if cmd[:2] == ["gh", "api"] and any("/compare/" in c for c in cmd):
-            return _Run(json.dumps({"status": "ahead", "behind_by": 0, "files": []}))
+            return _Run(json.dumps({"status": "ahead", "behind_by": 0, "files": [],
+                                    "base_commit": {"sha": BASE}}))
         if cmd[:3] == ["gh", "pr", "merge"]:
             return _Run(returncode=0)
         return _Run(returncode=1, stderr=f"unmocked {cmd[:4]}")
@@ -365,6 +398,36 @@ class TestAutoMergeCommand:
         view = _view(files=[{"path": "secrets/key.txt"}, {"path": "src/b.py"}])
         monkeypatch.setattr(p9.subprocess, "run", _fake_gh(view, calls=calls))
         rc = p9.main(["auto-merge", "702", "--repo", "broomva/test"])
+        assert rc == p9.EXIT_AUTO_MERGE_BLOCKED
+        assert not [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+
+
+class TestMergeTimeRaces:
+    def test_base_moving_during_evaluation_blocks_the_merge(self, p9, monkeypatch):
+        # --match-head-commit pins the head; the gates also saw one base tip.
+        _seed_merge_ready(p9, 720)
+        calls = []
+        monkeypatch.setattr(p9.subprocess, "run",
+                            _fake_gh(_view(), calls=calls, base_now="f" * 40))
+        rc = p9.main(["auto-merge", "720", "--repo", "broomva/test"])
+        assert rc == p9.EXIT_AUTO_MERGE_BLOCKED
+        assert not [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+
+    def test_pr_over_100_files_is_judged_on_the_complete_list(self, p9, monkeypatch):
+        _seed_merge_ready(p9, 721)
+        files = [{"path": f"src/m{i}.py"} for i in range(150)]
+        calls = []
+        monkeypatch.setattr(p9.subprocess, "run",
+                            _fake_gh(_view(files=files, changedFiles=150), calls=calls))
+        assert p9.main(["auto-merge", "721", "--repo", "broomva/test"]) == p9.EXIT_OK
+
+    def test_governance_file_on_page_two_is_found(self, p9, monkeypatch):
+        _seed_merge_ready(p9, 722)
+        files = [{"path": f"src/m{i}.py"} for i in range(120)] + [{"path": "AGENTS.md"}]
+        calls = []
+        monkeypatch.setattr(p9.subprocess, "run",
+                            _fake_gh(_view(files=files, changedFiles=121), calls=calls))
+        rc = p9.main(["auto-merge", "722", "--repo", "broomva/test"])
         assert rc == p9.EXIT_AUTO_MERGE_BLOCKED
         assert not [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
 

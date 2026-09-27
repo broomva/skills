@@ -468,8 +468,14 @@ class TestCrossRepoLifecycle:
 
         def fake(cmd, *a, **k):
             calls.append(cmd)
-            if cmd[:3] == ["gh", "pr", "view"]:
-                return _R(json.dumps({"branch": "docs/x", "files": ["docs/y.md"]}))
+            if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
+                return _R(json.dumps({"branch": "docs/x", "files": ["docs/y.md"],
+                                      "changed": 1}))
+            if cmd[:3] == ["gh", "pr", "view"]:   # BRO-2591 merge-time verdict
+                return _R(json.dumps({"mergeable": "MERGEABLE",
+                                      "mergeStateStatus": "CLEAN",
+                                      "reviewDecision": "",
+                                      "headRefOid": "e" * 40}))
             return _R()
 
         monkeypatch.setattr(p9.subprocess, "run", fake)

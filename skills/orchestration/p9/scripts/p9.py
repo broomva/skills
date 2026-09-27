@@ -1336,24 +1336,35 @@ def _parse_gates(raw: Any) -> MergeGates | None:
     checks = (_str_tuple(gov_raw["required_checks"],
                          "auto_merge.gates.governance.required_checks")
               if "required_checks" in gov_raw else ("stability-check",))
-    if not paths:
-        raise PolicyError("auto_merge.gates.governance.paths must not be empty")
-    if not checks:
-        raise PolicyError("auto_merge.gates.governance.required_checks must not be empty")
-    if not strata or not set(strata) <= set(_P20_STRATA):
+    # Floors, not defaults: a policy may ADD governance paths and checks, never
+    # drop one, and may not ask for fewer strata than all three.
+    missing_paths = sorted({d.lower() for d in _DEFAULT_GOVERNANCE_PATHS}
+                           - {x.lower() for x in paths})
+    if missing_paths:
         raise PolicyError(
-            f"auto_merge.gates.governance.required_strata must be a non-empty "
-            f"subset of {list(_P20_STRATA)}, got {list(strata)}"
+            f"auto_merge.gates.governance.paths may add paths but not drop the "
+            f"L3 set; missing {missing_paths}"
+        )
+    if "stability-check" not in checks:
+        raise PolicyError(
+            "auto_merge.gates.governance.required_checks must include stability-check"
+        )
+    if set(strata) != set(_P20_STRATA):
+        raise PolicyError(
+            f"auto_merge.gates.governance.required_strata must be all of "
+            f"{list(_P20_STRATA)}, got {list(strata)}"
         )
     gov = GovernanceTier(
         paths=paths,
         required_strata=strata,
         required_checks=checks,
+        # One governance commit per tau_a3 (>= 1 day) is the L3 budget the RCS
+        # stability argument assumes; the policy may lengthen the window only.
         l3_max_per_window=_int_in(gov_raw.get("l3_max_per_window", 1),
-                                  "auto_merge.gates.governance.l3_max_per_window", 1, 10),
+                                  "auto_merge.gates.governance.l3_max_per_window", 1, 1),
         l3_window_seconds=_int_in(gov_raw.get("l3_window_seconds", 86400),
                                   "auto_merge.gates.governance.l3_window_seconds",
-                                  3600, 30 * 86400),
+                                  86400, 30 * 86400),
     )
     return MergeGates(review_bots=bots, p20=p20, governance=gov)
 
@@ -1406,7 +1417,7 @@ def match_auto_merge_action(
 # The marker a P20 run records on the PR (`p9 p20-record` writes it):
 #   P20-VERDICT: PASS score=8 strata=B,C sha=<40-hex head sha>
 _P20_MARKER_RE = re.compile(
-    r"^P20-VERDICT:[ \t]*(PASS|FAIL|STOP)[ \t]+score=(\d{1,2})(?:/10)?"
+    r"^P20-VERDICT:[ \t]*(PASS|FAIL|STOP)[ \t]+score=(10|\d)(?:/10)?"
     r"[ \t]+strata=([ABC](?:,[ABC])*)[ \t]+sha=([0-9a-f]{40})[ \t]*$",
     re.MULTILINE,
 )
@@ -1487,6 +1498,7 @@ class PRGateFacts:
     marker_delta_files: list | None = None             # files changed marker..head
     marker_is_ancestor: bool | None = None
     reviewed_files: list | None = None                 # the PR's files at the marker
+    base_sha: str = ""                                 # base tip the gates saw
     l3_recent_commits: int | None = None
 
 
@@ -1584,9 +1596,9 @@ def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
                  ("not green: " + ", ".join(red)) if red
                  else "green: " + ", ".join(c.get("name") or "?" for c in real))
 
-    gate("up_to_date", f.behind_by == 0,
-         "unknown whether behind base" if f.behind_by is None
-         else f"{f.behind_by} commit(s) behind {f.base}")
+    gate("up_to_date", f.behind_by == 0 and bool(f.base_sha),
+         "unknown whether behind base" if f.behind_by is None or not f.base_sha
+         else f"{f.behind_by} commit(s) behind {f.base} at {f.base_sha[:12]}")
 
     asked = sorted({(r.get("author") or {}).get("login") or "?" for r in f.reviews
                     if (r.get("state") or "").upper() == "CHANGES_REQUESTED"})
@@ -1619,9 +1631,13 @@ def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
         if f.all_checks is None:
             gate("governance_checks", False, "checks could not be read")
         else:
-            buckets = {c.get("name"): c.get("bucket") for c in f.all_checks}
-            bad = [f"{n}={buckets.get(n, 'absent')}" for n in g.governance.required_checks
-                   if buckets.get(n) != "pass"]
+            # Every run carrying the name must pass: with a duplicate name, a
+            # later green run must not mask a red one.
+            bad = []
+            for n in g.governance.required_checks:
+                runs = [c.get("bucket") for c in f.all_checks if c.get("name") == n]
+                if not runs or any(b != "pass" for b in runs):
+                    bad.append(f"{n}={','.join(runs) or 'absent'}")
             gate("governance_checks", not bad,
                  ("not passing: " + ", ".join(bad)) if bad
                  else "passing: " + ", ".join(g.governance.required_checks))
@@ -1658,7 +1674,10 @@ def _compare_files(repo: str, basehead: str) -> tuple[str | None, list | None]:
     return data.get("status"), [x.get("filename") for x in data.get("files") or []]
 
 
-def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates) -> PRGateFacts:
+def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
+                         files: list[str] | None = None) -> PRGateFacts:
+    """`files` is the caller's COMPLETE list (gh pr view caps its own at 100);
+    without it, a longer PR fails the `classifiable` gate."""
     f = PRGateFacts(pr=pr)
     fields = ("state,isDraft,baseRefName,headRefOid,mergeStateStatus,mergeable,"
               "reviewDecision,latestReviews,comments,additions,deletions,"
@@ -1684,6 +1703,8 @@ def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates) -> PRGateFacts:
     f.deletions = int(view.get("deletions") or 0)
     f.files = [x.get("path") for x in view.get("files") or [] if x.get("path")]
     f.changed_files = int(view.get("changedFiles") or len(f.files))
+    if files is not None and len(files) == f.changed_files:
+        f.files = list(files)
 
     req = _gh_json(["gh", "pr", "checks", str(pr), "--repo", repo, "--required",
                     "--json", "name,bucket"], any_rc=True)
@@ -1693,6 +1714,7 @@ def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates) -> PRGateFacts:
         cmp = _gh_json(["gh", "api", f"repos/{repo}/compare/{f.base}...{f.head_sha}"])
         if isinstance(cmp, dict) and isinstance(cmp.get("behind_by"), int):
             f.behind_by = cmp["behind_by"]
+            f.base_sha = ((cmp.get("base_commit") or {}).get("sha")) or ""
     f.unresolved_threads = _unresolved_review_threads(pr, repo)
 
     marker = latest_p20_marker(f.comments, g.review_bots)
@@ -3148,6 +3170,17 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
               f"`gh pr merge --{am.merge_method}`")
         return EXIT_OK
 
+    if decision["base_sha"]:
+        # --match-head-commit pins the head; nothing pins the base. If the base
+        # moved while the gates ran, the verdict is about a combination GitHub
+        # would not be merging, so refuse and let the next pass re-judge it.
+        now = _gh_branch_sha(repo, decision["base"])
+        if now != decision["base_sha"]:
+            print(f"auto-merge blocked: {decision['base']} moved during evaluation "
+                  f"({decision['base_sha'][:12]} -> {(now or 'unreadable')[:12]}); "
+                  f"re-run", file=sys.stderr)
+            return EXIT_AUTO_MERGE_BLOCKED
+
     rc = _gh_pr_merge(
         pr, repo,
         method=am.merge_method,
@@ -3188,11 +3221,11 @@ def decide_auto_merge(local: AutoMergePolicy, *, pr: int, repo: str,
         if not base:
             return {"action": "require_human", "source": "unresolved", "policy": None,
                     "reason": "could not read the PR's base branch to load its policy",
-                    "gates": [], "head_sha": None}
+                    "gates": [], "head_sha": None, "base": None, "base_sha": None}
         am, source = authoritative_auto_merge_policy(local, repo, base, paths)
     if am is None:
         return {"action": "require_human", "reason": source, "source": source,
-                "policy": None, "gates": [], "head_sha": None}
+                "policy": None, "gates": [], "head_sha": None, "base": None, "base_sha": None}
     if not am.enabled:
         return {"action": "notify", "source": source, "policy": am, "gates": [],
                 "head_sha": None,
@@ -3200,15 +3233,25 @@ def decide_auto_merge(local: AutoMergePolicy, *, pr: int, repo: str,
 
     if am.gates is None:
         action, reason = match_auto_merge_action(am, branch=branch, paths_touched=paths)
+        head_sha = None
+        if action == "auto":
+            # The MERGE_READY row is history, and `merge-ready --no-verify` can
+            # write it. Re-read the merge predicate now, as the gated path does.
+            v = merge_ready_verdict(pr, repo)
+            head_sha = v.get("head_sha") or None
+            if not v["ready"]:
+                action, reason = "notify", f"{reason}, but not merge-ready now: {v['reason']}"
+            elif not head_sha:
+                action, reason = "notify", f"{reason}, but the head SHA could not be read"
         return {"action": action, "reason": reason, "source": source, "policy": am,
-                "gates": [], "head_sha": None}
+                "gates": [], "head_sha": head_sha, "base": None, "base_sha": None}
 
     # Gated: rules can only block. Probe them with an "auto" default, so a
     # non-auto answer can only have come from a rule match.
     overlay_action, overlay_reason = match_auto_merge_action(
         dataclasses.replace(am, default_action="auto"),
         branch=branch, paths_touched=paths)
-    facts = gather_pr_gate_facts(pr, repo, am.gates)
+    facts = gather_pr_gate_facts(pr, repo, am.gates, files=paths)
     results = evaluate_merge_gates(am.gates, facts)
     gates = [dataclasses.asdict(r) for r in results]
     failed = [r for r in results if not r.ok]
@@ -3220,7 +3263,8 @@ def decide_auto_merge(local: AutoMergePolicy, *, pr: int, repo: str,
     else:
         action, reason = "auto", "every merge gate passes"
     return {"action": action, "reason": reason, "source": source, "policy": am,
-            "gates": gates, "head_sha": facts.head_sha or None}
+            "gates": gates, "head_sha": facts.head_sha or None,
+            "base": facts.base, "base_sha": facts.base_sha or None}
 
 
 def _format_gate_results(gates: list[dict]) -> str:
@@ -3293,11 +3337,22 @@ def _gh_pr_base(pr: int, repo: str) -> str:
     return (view.get("baseRefName") or "") if isinstance(view, dict) else ""
 
 
+def _gh_branch_sha(repo: str, branch: str) -> str | None:
+    data = _gh_json(["gh", "api", f"repos/{repo}/branches/{branch}"])
+    sha = ((data or {}).get("commit") or {}).get("sha") if isinstance(data, dict) else None
+    return sha or None
+
+
 def _gh_pr_branch_and_paths(pr: int, repo: str) -> tuple[str, list[str]]:
-    """Return (head_branch, [files_touched]) for a PR via `gh pr view`."""
+    """Return (head_branch, [files_touched]) for a PR via `gh pr view`.
+
+    The list is COMPLETE or this raises: `gh pr view` caps `files` at 100, so a
+    longer PR is re-listed through the paginated REST endpoint and the count is
+    checked against changedFiles. A path rule, a governance path or a policy
+    file beyond the first page must not be invisible (BRO-2591)."""
     cmd = ["gh", "pr", "view", str(pr),
-           "--json", "headRefName,files",
-           "-q", '{branch: .headRefName, files: [.files[].path]}']
+           "--json", "headRefName,files,changedFiles",
+           "-q", '{branch: .headRefName, files: [.files[].path], changed: .changedFiles}']
     if repo:
         cmd += ["--repo", repo]
     out = subprocess.run(cmd, capture_output=True, text=True, timeout=30, check=False)
@@ -3307,7 +3362,29 @@ def _gh_pr_branch_and_paths(pr: int, repo: str) -> tuple[str, list[str]]:
         data = json.loads(out.stdout)
     except json.JSONDecodeError as e:
         raise P9Error(f"gh pr view returned non-JSON: {e}") from e
-    return str(data.get("branch", "")), list(data.get("files") or [])
+    files = list(data.get("files") or [])
+    changed = data.get("changed")
+    if not isinstance(changed, int) or changed != len(files):
+        full = _gh_paginated_list(["gh", "api", "--paginate",
+                                   f"repos/{repo}/pulls/{pr}/files",
+                                   "--jq", ".[].filename"]) if repo else None
+        if not isinstance(full, list) or (isinstance(changed, int) and len(full) != changed):
+            raise P9Error(f"PR #{pr}: could not list all changed files "
+                          f"(got {len(full) if isinstance(full, list) else 'none'} of "
+                          f"{changed}); refusing to judge an incomplete diff")
+        files = full
+    return str(data.get("branch", "")), files
+
+
+def _gh_paginated_list(cmd: list[str]) -> list[str] | None:
+    """One value per stdout line (gh api --paginate --jq '.[].x')."""
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if out.returncode != 0:
+        return None
+    return [line for line in out.stdout.splitlines() if line.strip()]
 
 
 def _gh_pr_merge(pr: int, repo: str, *, method: str, delete_branch: bool,
@@ -3744,7 +3821,7 @@ def merge_ready_verdict(pr: int, repo: str | None) -> dict:
     # --json` fields. (reviewThreads is NOT a pr-view field — it needs graphql;
     # see _unresolved_review_threads below. This was caught by dogfooding.)
     cmd = ["gh", "pr", "view", str(pr), "--json",
-           "mergeable,mergeStateStatus,reviewDecision"]
+           "mergeable,mergeStateStatus,reviewDecision,headRefOid"]
     if repo:
         cmd += ["--repo", repo]
     try:
@@ -3785,7 +3862,7 @@ def merge_ready_verdict(pr: int, repo: str | None) -> dict:
 
     return {"ready": ready, "state": state, "mergeable": mergeable,
             "review_decision": decision, "unresolved_threads": unresolved,
-            "reason": reason}
+            "reason": reason, "head_sha": data.get("headRefOid") or ""}
 
 
 def _unresolved_review_threads(pr: int, repo: str | None) -> int:
