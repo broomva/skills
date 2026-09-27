@@ -61,6 +61,11 @@ GUARD_STATE=""
 GUARD_MODE=""
 RUN_ID=""
 GUARD_FORCE=0
+# Strata A model. Empty means codex's own configured default (`model` in
+# ~/.codex/config.toml), so no model name here ages with a release. Set
+# CROSS_REVIEW_CODEX_MODEL to pin one, e.g. when the account behind codex
+# does not serve that configured default.
+CODEX_MODEL="${CROSS_REVIEW_CODEX_MODEL:-}"
 
 # ─── Arg parsing ──────────────────────────────────────────────────────────
 if [ $# -eq 0 ]; then
@@ -478,14 +483,28 @@ if [ "$COMMAND" = "pre-push" ]; then
 
     # Strata A — true cross-vendor via Codex
     if [ "$SELECTED_STRATA" = "A" ] || [ "$SELECTED_STRATA" = "auto" ] && command -v codex >/dev/null 2>&1; then
+        # Both values below land in a command the agent copies and runs, so both
+        # are shell-quoted: a model name or install path carrying a space, `;`
+        # or `$` must stay one argument rather than become a second command.
+        CODEX_MODEL_FLAG=""
+        if [ -n "$CODEX_MODEL" ]; then
+            printf -v CODEX_MODEL_Q '%q' "$CODEX_MODEL"
+            CODEX_MODEL_FLAG=" -m $CODEX_MODEL_Q"
+        fi
+        printf -v RUBRIC_Q '%q' "$RUBRIC_FILE"
         echo "  ─── Strata A: cross-vendor (Codex CLI) ──────────────────"
         echo ""
         echo "  [TODO-AGENT] The agent runs the following pattern:"
         echo "    1. Capture the diff: git diff $DIFF_BASE...HEAD > /tmp/cross-review-diff.patch"
-        echo "    2. Invoke Codex with the adversarial brief from references/rubric.md"
-        echo "       codex exec -m gpt-5.4 -c sandbox_mode=read-only \\"
-        echo "         --prompt-file references/codex-prompt.md \\"
-        echo "         --attach /tmp/cross-review-diff.patch"
+        echo "    2. Invoke Codex with the adversarial brief from references/rubric.md,"
+        echo "       composed as the rubric specifies: its Strata-A preamble first, then"
+        echo "       the rubric. That is the prompt argument; the diff goes on stdin,"
+        echo "       which codex exec appends to the prompt as a <stdin> block:"
+        echo "       codex exec -c sandbox_mode=read-only${CODEX_MODEL_FLAG} \\"
+        echo "         \"\$(sed -n '/^## Strata-A specific/,/^## /s/^> //p' $RUBRIC_Q; echo; cat $RUBRIC_Q)\" \\"
+        echo "         < /tmp/cross-review-diff.patch"
+        echo "       (model: CROSS_REVIEW_CODEX_MODEL if set, else the one configured"
+        echo "        in ~/.codex/config.toml)"
         echo "       (read-only is not optional: an unsandboxed reviewer that can"
         echo "        patch the tree stops reporting and starts fixing — the same"
         echo "        defect as dispatching Strata B as 'general-purpose')"
