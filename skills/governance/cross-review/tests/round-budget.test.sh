@@ -1426,6 +1426,34 @@ else
     fail "T82: letter must be A|B|C" "write=$RC_W (want 2) rows=$N_BAD (want 0) read=$RC_R (want 6) valid=$RC_OK (want 0)"
 fi
 
+# ── T83: one spelling per score — no leading zero ─────────────────────────
+echo "T83. a leading-zero score is refused at the round and the stratum; 0/10 still records"
+LED=$(newledger t83)
+RC_R=$(rb record-round --run-id=t83 --ledger="$LED" --score=07/10 --defect=yes --stratum=A:7/10:PASS)
+RC_S=$(rb record-round --run-id=t83 --ledger="$LED" --score=7/10 --defect=yes --stratum=A:07/10:PASS)
+N_BAD=$(rows_in "$LED")
+RC_ZERO=$(rb record-round --run-id=t83 --ledger="$LED" --score=0/10 --defect=yes --stratum=A:0/10:FAIL)
+if [ "$RC_R" = "2" ] && [ "$RC_S" = "2" ] && [ "$N_BAD" = "0" ] && [ "$RC_ZERO" = "0" ]; then
+    ok "T83: 07/10 refused (round and stratum), nothing written; 0/10 records"
+else
+    fail "T83: leading zero" "round=$RC_R stratum=$RC_S (want 2 2) rows=$N_BAD (want 0) zero=$RC_ZERO (want 0)"
+fi
+
+# ── T84: a --stratum value is never glob-expanded ─────────────────────────
+# Review round 4: `set -f` in round_is_admissible had no test. At write it is
+# the only thing stopping `A:9/10:PAS?` from matching a path in the cwd and
+# being validated as the path's name.
+echo "T84. a glob in --stratum is refused even when it matches a path"
+T84DIR="$TMP/t84cwd"; mkdir -p "$T84DIR/A:9/10:PASS"
+LED=$(newledger t84)
+RC_GLOB=$( cd "$T84DIR" && rb record-round --run-id=t84 --ledger="$LED" --score=9/10 --defect=yes '--stratum=A:9/10:PAS?' )
+RC_OK=$( cd "$T84DIR" && rb record-round --run-id=t84 --ledger="$LED" --score=9/10 --defect=yes --stratum=A:9/10:PASS )
+if [ "$RC_GLOB" = "2" ] && [ "$RC_OK" = "0" ] && [ -d "$T84DIR/A:9/10:PASS" ]; then
+    ok "T84: A:9/10:PAS? refused beside a matching path; A:9/10:PASS records"
+else
+    fail "T84: glob in --stratum" "glob=$RC_GLOB (want 2) plain=$RC_OK (want 0)"
+fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

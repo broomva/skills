@@ -565,6 +565,16 @@ mutate "show renders through a NUL" "T76" \
 mutate "blank verdicts render as a value" "T79" \
     '($8=="" ? "MALFORMED" : $8)' '$8'
 
+
+# ── BRO-2615 round 4 (post-verdict tightenings) ──
+mutate "leading-zero score accepted" "T83" \
+    'case "$num" in 0?*) echo' 'case "$num" in IMPOSSIBLE) echo'
+mutate "stratum text glob-expanded" "T84" \
+    '    IFS=,; set -f
+    for entry in $verdicts; do' \
+    '    IFS=,
+    for entry in $verdicts; do'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ "$SURVIVED" -gt 0 ]; then

@@ -351,6 +351,10 @@ score_is_valid() {
     esac
     num=${v%%/*}; den=${v#*/}
     case "$num" in ''|*[!0-9]*) echo "'$v' has a non-integer score"; return 1 ;; esac
+    # One spelling per value. `07` means 7 to `10#` and to awk, so it decided
+    # nothing -- but a stored `A:07/10` is text no canonical reader expects,
+    # and the recorder normalized --score while storing --stratum verbatim.
+    case "$num" in 0?*) echo "'$v' has a leading zero; write it as ${num#"${num%%[!0]*}"}/$LEDGER_SCALE"; return 1 ;; esac
     # String equality, not arithmetic: it refuses a non-integer scale too, so a
     # separate integer check on the denominator could never be the one refusing.
     if [ "$den" != "$LEDGER_SCALE" ]; then
