@@ -279,6 +279,151 @@ Query it directly without transitioning state:
 p9 merge-status <n> [--json]   # exit 0 iff merge-ready; prints the verdict + reason
 ```
 
+### Gated auto-merge: the gates decide, not the branch name (BRO-2591)
+
+`p9 auto-merge <n>` merges a `MERGE_READY` PR under `.control/policy.yaml`
+`auto_merge`. With a `gates:` block, **any branch** merges iff every gate passes.
+Without one, the legacy prefix rules apply. Every gate is re-read from GitHub at
+merge time, because the `MERGE_READY` row is history and `merge-ready
+--no-verify` can write it. In legacy mode the merge predicate is re-read too.
+
+**What the gates read.** The file listing is the paginated REST one. It
+includes pre-rename paths: renaming `AGENTS.md` away keeps the PR governance-class.
+Its row count must equal `changedFiles`, or the command refuses rather than judge
+part of a diff. The listing, the gates and the merge must all describe one head,
+or the run blocks. The merge is pinned with `--match-head-commit` to that head.
+The base is pinned to one commit: the policy is read AT that commit, the
+`up_to_date` gate compares against it, and it is re-read just before merging. A
+moved base blocks, and so does a PR retargeted to another base in between.
+
+| Gate | Passes iff | Unknown |
+|---|---|---|
+| `classifiable` | head/base read; file list not truncated | FAIL |
+| `open` | `OPEN` and not draft | FAIL |
+| `mergeable` | `MERGEABLE`, `mergeStateStatus ∈ {CLEAN, UNSTABLE, HAS_HOOKS}` | FAIL |
+| `required_checks` | every required check `pass` (every run with that name), and at least one that is not a review bot | FAIL |
+| `up_to_date` | 0 commits behind base, at a recorded base tip | FAIL |
+| `no_changes_requested` | no reviewer's latest *opinionated* review is `CHANGES_REQUESTED`. A later COMMENTED review does not withdraw it; a later APPROVED or DISMISSED one does. (gh preloads every page of reviews and comments.) | FAIL |
+| `threads_resolved` | 0 unresolved review threads (more than 100 threads block) | FAIL |
+| `p20` | if over the P20 threshold, the latest verdict is a PASS ≥ `pass_score`, bound to the reviewed commit. The threshold: >200 LOC, >1 file, an always-review path, a binary change (any row with 0 changed lines, including a rename: a pure rename cannot be told from a renamed binary without fetching both blobs), or governance-class. | FAIL |
+| `independent_check` | a check that is neither a bot nor an aggregate (`Merge Gate`, which passes vacuously when nothing else ran) ran and passed, **or** a P20 pass covers the PR | FAIL |
+| `governance_strata` | governance-class: the verdict lists strata A, B and C | FAIL |
+| `governance_checks` | governance-class: every run of each required check (default `stability-check`) passed; skipped or absent fails | FAIL |
+| `l3_rate` | governance-class: no governance change LANDED on base inside the τ_a₃ window (≥ 1 day). Each commit that reached base in the window (a merge, squash or rebase is dated when it landed) is diffed against its first parent, so an old-dated governance commit merged by a human still counts. | FAIL |
+
+**Always-review paths.** These always need a P20 pass, whatever the change's
+size: `.github/workflows/**`, `.githooks/**`, `.claude/**` (settings, local
+settings, agents, commands, hooks), `.mcp.json` and `.control/preauth.yaml`. A `pull_request` run executes the PR's own workflow
+files, so a one-line edit to the aggregate check would otherwise pass itself. A
+policy's `p20.public_api_paths` adds to this list and cannot remove from it.
+
+**Review bots never vouch.** A rate-limited CodeRabbit reports SUCCESS without
+reviewing anything. A check or review from a `review_bots` login (or any
+`*[bot]`) never counts as a required check and cannot record a verdict.
+Configured bots, like configured aggregates, *extend* the built-in list.
+
+**The P20 marker.** Record it with the helper, passing the commit the reviewers
+**read**, not the head at record time. A nit fix pushed after the review is
+unreviewed code:
+
+```text
+p9 p20-record <n> --sha <reviewed commit> --score 8 --strata B,C \
+    [--verdict PASS|FAIL|STOP] [--note "..."]
+# comment line 1:  P20-VERDICT: PASS score=8 strata=B,C sha=<reviewed commit>
+```
+
+Rules for reading markers:
+
+- **First line only.** Only the first line of a comment is a marker, and `--note`
+  may not contain `P20-VERDICT`, so a quoted ledger can never be read as the
+  verdict.
+- **Trusted authors only.** Only comments from `OWNER`/`MEMBER`/`COLLABORATOR`
+  accounts that are not bots count.
+- **The latest verdict wins.** A later FAIL cancels an earlier PASS. A trusted
+  comment that names `P20-VERDICT` but whose first line does not parse (bold, a
+  typo, prose) is a MALFORMED verdict and blocks. It does not leave the earlier
+  PASS standing.
+- **Carry-forward.** A verdict on an older commit still covers the head only
+  when that commit is an ancestor of head and nothing since has touched a
+  reviewed file or a current PR file. That is the case after updating the branch
+  from base.
+
+**Governance-class paths get a stricter gate, not a human click.** The
+governance paths are `CLAUDE.md`, `AGENTS.md`, `METALAYER.md`,
+`.control/policy.yaml` and `.control/rcs-parameters.toml`, repo-root and
+case-folded. They carry L3, the level with the narrowest stability margin, so
+the tier requires all three strata including a cross-vendor review, a
+`stability-check` that actually ran, and the L3 rate budget, which CI only
+reports. A governance change that cannot get a cross-vendor verdict (Codex
+down) waits for one.
+
+**The base branch's policy judges the PR.** p9 reads `.control/policy.yaml`
+from the PR's base ref (URL-encoded), not from the checkout. Reading the
+checkout let a PR be judged by its own policy edit. The fallbacks:
+
+- **No policy file on base:** the local one applies, unless the PR is the one
+  introducing it.
+- **Base ref missing** (`No commit found for the ref`) or **an unreadable
+  policy:** blocks.
+
+The checkout's own `auto_merge.enabled` is a fail-closed pre-check. A checkout
+that disables auto-merge, or cannot parse, refuses before the base is read, so
+it can stop a merge but never enable one.
+
+**No YAML can weaken a gate.** The parser rejects:
+
+- an unknown key in the `auto_merge`, `gates`, `p20` or `governance` blocks, since a
+  typo would otherwise run on the default;
+- a flag that is not a real boolean, here and in `ci_watch`/`ci_heal`
+  (`enabled: "false"` would otherwise read as true). A quoted value is a string
+  in both YAML loaders, so both reject it. Unquoted spellings differ (PyYAML
+  reads `yes`/`on` as true, the minimal loader reads `tRUE` as true), but each
+  loader rejects what it does not read as a boolean, so neither weakens a gate.
+  CI runs the minimal one;
+- `pass_score < 7`, `max_loc > 200` or `max_files > 1`;
+- governance `paths` or `required_checks` that drop an L3 path or
+  `stability-check`;
+- `required_strata` other than A, B and C;
+- an L3 budget looser than one commit per day;
+- `default_action: auto` alongside `gates`, because a p9 that predates gates
+  reads only `default_action` and would merge everything ungated;
+- `action: auto` rules alongside `gates`, where rules may only block. A path rule
+  is a SUBSTRING match, not a glob (a `*` in it matches only a literal `*`);
+  blocking path rules match case-folded, `auto` ones exactly.
+
+`gates:` with no value means gated with the defaults, under both YAML loaders.
+
+**What the gates do not do (named, not hidden).**
+
+- **The marker is self-attested.** It records that a review passed and cannot
+  prove the review ran. Replacing a human click with recorded reviews, a real
+  stability check and the L3 budget was a deliberate decision (BRO-2591). The
+  gate still fails on a PR with no pass, a low pass, or a pass on different code.
+- **p9 binds the autonomous flow, not an adversarial caller.** Whoever controls
+  the environment can set `BROOMVA_P9_POLICY` (an operator/test pin, honored
+  as-is) or run `gh pr merge` directly. The server-side ruleset is the boundary
+  against that. Pinning its aggregate check to the GitHub Actions app is the
+  repo-side hardening for check-name spoofing.
+- **A repo with no policy on base** (e.g. broomva/skills) is judged by the
+  local walk-up policy, meaning the operator's workspace checkout.
+- **Merge skew.** Between the base re-check and GitHub's merge there is a
+  sub-second window. A base that moves inside it merges an untested
+  combination, the same as a human click on a ruleset without "require up to
+  date".
+- **The L3 counter is check-then-merge.** Two governance merges in the same
+  second could both see zero. It counts landings made through GitHub (merge,
+  squash, rebase); a commit pushed straight to base with an old committer date
+  is not listed (the workspace ruleset rejects direct pushes to main).
+- **Check identity is by name**, as in GitHub's own required-check model. A
+  different app posting a check under a real check's name counts as that
+  check. Pinning required checks to an app in the ruleset is the repo-side fix.
+
+```text
+p9 gate-check <n> [--json]   # read-only: every gate PASS/FAIL + reason; exit 0 iff the decision is
+                             # auto now (all gates pass AND no blocking rule matches);
+                             # auto-merge also needs the PR in MERGE_READY
+```
+
 ## Termination conditions
 
 The agent exits the heal loop when **any** of:
@@ -312,7 +457,8 @@ $ p9 status --pr 42 --json
 $ p9 merge-ready 42
 PR #42 marked MERGE_READY (control metalayer authorizes merge)
 
-# control-gate-hook authorizes; agent runs `gh pr merge`
+# the policy's gates authorize; p9 re-verifies them and merges
+$ p9 auto-merge 42
 ```
 
 ### Example 2 — Lint-failure self-heal
