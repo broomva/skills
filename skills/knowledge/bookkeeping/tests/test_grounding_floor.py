@@ -170,6 +170,15 @@ def test_identity_needs_the_whole_word_not_a_prefix():
     assert entity_grounding("programming-language", "Programmers use a language.", "") == 0
 
 
+def test_the_slug_word_is_never_shortened():
+    # P20 round 3 (Codex): stripping the slug's trailing s made news ~ new
+    assert entity_grounding("news-analysis", "New analysis changed deployment choices.",
+                            "", "concept") == 0
+    assert entity_grounding("news-analysis", "News analysis changed it.", "", "concept") == 1
+    assert entity_grounding("box-plot", "Two boxes plotted.", "") == 0
+    assert entity_grounding("box-plot", "Box plots help.", "") == 1
+
+
 def test_accents_fold():
     assert entity_grounding("maria-nunez", "Núñez published the result.", "", "person") == 1
 
@@ -196,9 +205,9 @@ def door(tmp_path, monkeypatch):
     return entities
 
 
-def _scored(content, heading=None):
+def _scored(content, heading=None, item_id="g0000001"):
     meta = {} if heading is None else {bookkeeping._SECTION_HEADING_METADATA_KEY: heading}
-    item = RawItem(item_id="g0000001", source_id="2026-09-27-grounding-raw",
+    item = RawItem(item_id=item_id, source_id="2026-09-27-grounding-raw",
                    source_type="research", content=content, quote="", author="",
                    timestamp="2026-09-27T00:00:00+00:00", metadata=meta)
     return ScoredItem(item=item, novelty=3, specificity=3, relevance=0, total=6,
@@ -247,6 +256,16 @@ def test_door_admits_a_paragraph_item_naming_the_entity(door):
     """Positive control through the door: grounding 1, no heading recorded."""
     item = _scored("Halassy treated her own recurrent breast cancer with a virus." + BODY_TAIL)
     assert promote_item(item, "beata-halassy", "person") == door / "person" / "beata-halassy.md"
+
+
+def test_a_refusal_does_not_poison_a_later_item_naming_the_slug(door):
+    """P20 round 3 (Codex): refusal state is per item, not per slug."""
+    bad = _scored("Other facts were recorded in the experiment." + BODY_TAIL, item_id="i1")
+    good = _scored("Alpha Beta improved the experiment." + BODY_TAIL, item_id="i2")
+    assert promote_item(bad, "alpha-beta", dry_run=True) is None
+    assert bookkeeping.promotion_refused_slug("alpha-beta", bad.item)
+    assert promote_item(good, "alpha-beta", dry_run=True) is None     # would create
+    assert not bookkeeping.promotion_refused_slug("alpha-beta", good.item)
 
 
 def test_floor_runs_before_the_coherence_call(door, monkeypatch):

@@ -111,8 +111,16 @@ def _is_git_head(head):
         first = head.read_text(errors="replace").split("\n", 1)[0].strip()
     except OSError:
         return False
-    return first.startswith("ref: refs/") \
-        or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", first) is not None
+    if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", first):
+        return True
+    # A symbolic ref: `ref: refs/<name>`, with git check-ref-format's rules
+    # that a bare prefix or trailing junk would break (P20 round 3).
+    m = re.fullmatch(r"ref: (refs/[^\x00-\x20\x7f~^:?*\[\\]+)", first)
+    if not m:
+        return False
+    name = m.group(1)
+    return not (name.endswith(("/", ".", ".lock")) or ".." in name or "//" in name
+                or "@{" in name or any(c.startswith(".") for c in name.split("/")))
 
 
 def _is_git_toplevel(d):
@@ -2655,8 +2663,8 @@ def _frontmatter_value(text: str, key: str) -> object:
 # rest are junk the coherence gate let through ("Verified against the paper."
 # as recurrent-breast-cancer).
 # NOT a page-quality rule: hand-written claims legitimately omit the title
-# (a person page reads "Managing Director of ..."), and 663 of 1074
-# hand-authored pages (61.7%) would fail it. It applies only where the claim is DERIVED from an
+# (a person page reads "Managing Director of ..."), and 668 of 1074
+# hand-authored pages (62.2%) would fail it. It applies only where the claim is DERIVED from an
 # item, i.e. the new-page path of promote_item.
 
 GROUNDING_FLOOR = 1
@@ -2668,10 +2676,12 @@ _GROUNDING_NONCONTENT = _SLUG_LEAD_STOPWORDS | _SLUG_TRAIL_STOPWORDS | frozenset
 })
 
 grounding_refused = 0
-# (type, slug) refused this run — the caller-side twin of
+# (type, slug, item_id) refused this run — the caller-side twin of
 # _coherence_rejected_keys: in dry-run promote_item returns None for a refusal
-# AND for a would-be create, so callers must ask which it was.
-_grounding_refused_keys: set[tuple[str, str]] = set()
+# AND for a would-be create, so callers must ask which it was. Keyed by ITEM
+# too: grounding judges the item's claim, so a refusal of one item says
+# nothing about a later item naming the same slug (P20 round 3).
+_grounding_refused_keys: set[tuple[str, str, str]] = set()
 
 
 def reset_grounding_run_state() -> None:
@@ -2691,15 +2701,20 @@ def _grounding_words(text: str) -> list[str]:
     return re.sub(r"[^a-z0-9]+", " ", folded).split()
 
 
-def _grounding_stem(token: str) -> str:
-    """Exact token, plural-folded only: keys~key, policies~policy. A prefix
-    stem would make corporal~corporate — identity needs the whole word.
+def _grounding_forms(word: str) -> frozenset:
+    """The text forms that name the slug word `word`: itself and its plurals
+    (key -> keys, box -> boxes, policy -> policies). One-directional on
+    purpose — the SLUG's word is never shortened, so "news" is not named by
+    "new" (P20 round 3), and no prefix stem makes corporal ~ corporate.
     (A possessive needs no rule: "Halassy's" tokenizes to halassy + s.)"""
-    if len(token) > 4 and token.endswith("ies"):
-        return token[:-3] + "y"
-    if len(token) > 3 and token.endswith("s") and not token.endswith(("ss", "us", "is")):
-        return token[:-1]
-    return token
+    forms = {word, word + "s", word + "es"}
+    if len(word) > 2 and word.endswith("y"):
+        forms.add(word[:-1] + "ies")
+    return frozenset(forms)
+
+
+def _grounding_names(word: str, text_words) -> bool:
+    return not _grounding_forms(word).isdisjoint(text_words)
 
 
 def _grounding_tokens(words: "list[str]") -> list[str]:
@@ -2719,17 +2734,17 @@ def entity_grounding(slug: str, core_claim: str, heading: str = "",
     content = _grounding_tokens(slug_words) or slug_words
     if not content:
         return 0
-    slug_stems = [_grounding_stem(w) for w in content]
 
     heading_words = _grounding_words(heading)
-    heading_seq = [_grounding_stem(w) for w in _grounding_tokens(heading_words)]
-    heading_stems = set(heading_seq)
-    if heading_stems and set(slug_stems) <= heading_stems \
-            and 2 * len(set(slug_stems)) >= len(heading_stems):
+    heading_seq = _grounding_tokens(heading_words)
+    heading_set = set(heading_seq)
+    if heading_set and all(_grounding_names(w, heading_set) for w in content) \
+            and 2 * len(set(content)) >= len(heading_set):
         return 2
     # "Beata Halassy: a Croatian virologist's case report" — a heading that
     # BEGINS with the entity's name is about it, whatever descriptor follows.
-    if heading_seq[:len(slug_stems)] == slug_stems:
+    if len(heading_seq) >= len(content) and all(
+            _grounding_names(w, {h}) for w, h in zip(content, heading_seq)):
         return 2
 
     claim_words = _grounding_words(core_claim)
@@ -2737,11 +2752,11 @@ def entity_grounding(slug: str, core_claim: str, heading: str = "",
     # ingest prepends it and derive_core_claim keeps it as prose.
     if heading_words and claim_words[:len(heading_words)] == heading_words:
         claim_words = claim_words[len(heading_words):]
-    claim_stems = {_grounding_stem(w) for w in claim_words}
-    named = [s in claim_stems for s in slug_stems]
+    claim_set = set(claim_words)
+    named = [_grounding_names(w, claim_set) for w in content]
     if entity_type == "person":
         return 1 if named[-1] else 0          # a person is named by surname
-    if len(slug_stems) <= 2:
+    if len(content) <= 2:
         return 1 if all(named) else 0         # a short name is the whole name
     # a long, claim-shaped slug is paraphrased: its head noun and at least half
     # of its content words ("nested-watchdog-inherits-the-skip")
@@ -2940,8 +2955,8 @@ def promotion_refused_slug(slug: str, item: "RawItem | None" = None) -> bool:
     if coherence_rejected_slug(slug, item):
         return True
     if item is not None:
-        return (_infer_entity_type(slug, item), slug) in _grounding_refused_keys
-    return any(s == slug for _t, s in _grounding_refused_keys)
+        return (_infer_entity_type(slug, item), slug, item.item_id) in _grounding_refused_keys
+    return any(s == slug for _t, s, _i in _grounding_refused_keys)
 
 
 def coherence_gate_enabled() -> bool:
@@ -3328,7 +3343,7 @@ def promote_item(
     heading = _item_section_heading(scored.item)
     if not passes_grounding_floor(entity_slug, core_claim, heading, entity_type):
         grounding_refused += 1
-        _grounding_refused_keys.add((entity_type, entity_slug))
+        _grounding_refused_keys.add((entity_type, entity_slug, scored.item.item_id))
         print(f"  [promote] SKIP (grounding < {GROUNDING_FLOOR}: the derived claim "
               f"does not name it): {entity_type}/{entity_slug} — {core_claim[:80]!r}")
         return None

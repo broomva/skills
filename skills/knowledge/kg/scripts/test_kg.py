@@ -439,6 +439,9 @@ def test_resolve_enclosing_checkout_is_worktree_aware():
         (decoy / ".git" / "HEAD").write_text("not-a-git-head\n")
         root6, _, _ = kg._resolve_knowledge_paths(start_dir=decoy, env={})
         assert root6 == Path.home() / "broomva", "a HEAD that is not git's is not a checkout"
+        (decoy / ".git" / "HEAD").write_text("ref: refs/\n")
+        root7, _, _ = kg._resolve_knowledge_paths(start_dir=decoy, env={})
+        assert root7 == Path.home() / "broomva", "a bare ref prefix is not a refname"
         check(True, "enclosing checkout: worktree resolves to itself, env overrides")
 
 

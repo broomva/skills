@@ -285,6 +285,10 @@ class TestEnclosingCheckout:
         "dir-without-HEAD",                   # an empty .git directory
         "dir-with-HEAD:not-a-git-head",       # HEAD is not git's HEAD (round 2)
         "dir-with-HEAD:",                     # empty HEAD
+        "dir-with-HEAD:ref: refs/",           # bare prefix (round 3)
+        "dir-with-HEAD:ref: refs/heads/main junk",
+        "dir-with-HEAD:ref: refs/heads/a..b",
+        "dir-with-HEAD:ref: refs/heads/x.lock",
     ])
     def test_a_dotgit_that_is_not_a_checkout_is_not_adopted(self, tmp_path, dotgit):
         d = tmp_path / "fake"
@@ -309,7 +313,7 @@ class TestEnclosingCheckout:
         root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
         assert root == DEFAULT_ROOT
 
-    @pytest.mark.parametrize("head", ["a" * 40, "b" * 64])
+    @pytest.mark.parametrize("head", ["a" * 40, "b" * 64, "ref: refs/heads/feat/bro-2614-x"])
     def test_a_detached_head_is_a_checkout(self, tmp_path, head):
         d = _checkout(tmp_path / "det")
         (d / ".git" / "HEAD").write_text(head + "\n")

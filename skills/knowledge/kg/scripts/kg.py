@@ -85,8 +85,16 @@ def _is_git_head(head):
         first = head.read_text(errors="replace").split("\n", 1)[0].strip()
     except OSError:
         return False
-    return first.startswith("ref: refs/") \
-        or re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", first) is not None
+    if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", first):
+        return True
+    # A symbolic ref: `ref: refs/<name>`, with git check-ref-format's rules
+    # that a bare prefix or trailing junk would break (P20 round 3).
+    m = re.fullmatch(r"ref: (refs/[^\x00-\x20\x7f~^:?*\[\\]+)", first)
+    if not m:
+        return False
+    name = m.group(1)
+    return not (name.endswith(("/", ".", ".lock")) or ".." in name or "//" in name
+                or "@{" in name or any(c.startswith(".") for c in name.split("/")))
 
 
 def _is_git_toplevel(d):
