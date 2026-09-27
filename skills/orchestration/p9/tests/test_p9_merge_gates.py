@@ -591,6 +591,13 @@ class TestPolicyShape:
                                   "      pass_score: 7\n")
         assert "default_action" in str(e.value)
 
+    @pytest.mark.parametrize("value", ["null", "~"])
+    def test_explicit_null_gates_is_gated(self, p9, value):
+        # The minimal loader (CI has no PyYAML) returns None for `null`, as PyYAML
+        # does for a bare `gates:`. Null must mean gated-with-defaults, not legacy.
+        text = _HEADER + f"auto_merge:\n  enabled: true\n  gates: {value}\n"
+        assert p9._parse_policy(p9._minimal_yaml_load(text)).auto_merge.gates is not None
+
     def test_empty_gates_is_gated_in_both_loaders(self, p9, tmp_path):
         text = _HEADER + "auto_merge:\n  enabled: true\n  gates:\n"
         pyyaml = p9.load_policy_text(text).auto_merge.gates
@@ -892,7 +899,7 @@ class TestRoundTwoFindings:
         assert any(f"compare/{BASE}...{HEAD}" in c for c in flat)
         assert not any("compare/main..." in c for c in flat)
 
-    def test_listing_marks_removed_binaries_but_not_pure_renames(self, p9, monkeypatch):
+    def test_listing_marks_every_zero_line_row_including_renames(self, p9, monkeypatch):
         rows = ("assets/old.bin\t\tremoved\t0\n"
                 "docs/moved.md\tdocs/was.md\trenamed\t0\n"
                 "assets/new.bin\t\tadded\t0\n"
@@ -904,12 +911,77 @@ class TestRoundTwoFindings:
             return _Run(rows)
         monkeypatch.setattr(p9.subprocess, "run", run)
         listing = p9._gh_pr_listing(770, "broomva/test")
-        assert listing.unmeasured == ("assets/old.bin", "assets/new.bin")
+        assert listing.unmeasured == ("assets/old.bin", "docs/moved.md", "assets/new.bin")
         assert "docs/was.md" in listing.paths
 
-    @pytest.mark.parametrize("value", ['"false"', '"true"', "1", "yes-please"])
-    def test_a_non_boolean_enabled_is_rejected(self, p9, value):
+    @pytest.mark.parametrize("value", ['"false"', "'false'", '"true"', "1", "yes-please"])
+    def test_a_non_boolean_enabled_is_rejected_by_both_loaders(self, p9, value):
+        # bool("false") is True, so every loader must REJECT a non-boolean flag.
+        # CI runs without PyYAML (the minimal loader), so both are tested here.
         text = _HEADER + f"auto_merge:\n  enabled: {value}\n  gates:\n    p20:\n      pass_score: 7\n"
-        with pytest.raises(p9.PolicyError) as e:
-            p9.load_policy_text(text)
-        assert "enabled" in str(e.value)
+        loaders = [("minimal", lambda t: p9._parse_policy(p9._minimal_yaml_load(t)))]
+        try:
+            import yaml
+            loaders.append(("pyyaml", lambda t: p9._parse_policy(yaml.safe_load(t))))
+        except ImportError:
+            pass
+        for name, load in loaders:
+            with pytest.raises(p9.PolicyError) as e:
+                load(text)
+            assert "enabled" in str(e.value), name
+
+
+class TestRoundThreeFindings:
+    """P20 round 3 (Stratum B): the production pre-merge re-check, retargeting,
+    and an encoded branch name."""
+
+    def _unpinned(self, p9, monkeypatch, tmp_path, *, branch_shas, bases):
+        monkeypatch.delenv("BROOMVA_P9_POLICY", raising=False)
+        monkeypatch.chdir(tmp_path)
+        monkeypatch.setattr(p9, "load_policy", lambda *a, **k: p9.load_policy_text(
+            _GATED.read_text()))
+        calls = []
+        inner = _fake_gh(_view(), calls=calls, base_policy=_GATED.read_text())
+        shas, base_names = iter(branch_shas), iter(bases)
+
+        def run(cmd, *a, **k):
+            if cmd[:2] == ["gh", "api"] and any("/branches/" in c for c in cmd):
+                calls.append(cmd)
+                return _Run(json.dumps({"commit": {"sha": next(shas)}}))
+            if cmd[:3] == ["gh", "pr", "view"] and cmd[-1] == "baseRefName":
+                calls.append(cmd)
+                return _Run(json.dumps({"baseRefName": next(base_names)}))
+            return inner(cmd, *a, **k)
+        monkeypatch.setattr(p9.subprocess, "run", run)
+        return calls
+
+    def test_base_moving_after_the_pin_blocks_on_the_production_path(
+            self, p9, monkeypatch, tmp_path):
+        _seed_merge_ready(p9, 780)
+        calls = self._unpinned(p9, monkeypatch, tmp_path,
+                               branch_shas=[BASE, "f" * 40], bases=["main", "main"])
+        assert p9.main(["auto-merge", "780", "--repo", "broomva/test"]) == \
+            p9.EXIT_AUTO_MERGE_BLOCKED
+        assert not [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+
+    def test_steady_base_merges_on_the_production_path(self, p9, monkeypatch, tmp_path):
+        _seed_merge_ready(p9, 781)
+        calls = self._unpinned(p9, monkeypatch, tmp_path,
+                               branch_shas=[BASE, BASE], bases=["main", "main"])
+        assert p9.main(["auto-merge", "781", "--repo", "broomva/test"]) == p9.EXIT_OK
+        assert [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+
+    def test_retargeted_pr_blocks(self, p9, monkeypatch, tmp_path):
+        _seed_merge_ready(p9, 782)
+        calls = self._unpinned(p9, monkeypatch, tmp_path,
+                               branch_shas=[BASE, BASE], bases=["main", "release"])
+        assert p9.main(["auto-merge", "782", "--repo", "broomva/test"]) == \
+            p9.EXIT_AUTO_MERGE_BLOCKED
+        assert not [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+
+    def test_branch_name_is_url_encoded(self, p9, monkeypatch):
+        seen = []
+        monkeypatch.setattr(p9.subprocess, "run", lambda cmd, *a, **k: (
+            seen.append(cmd), _Run(json.dumps({"commit": {"sha": BASE}})))[1])
+        assert p9._gh_branch_sha("broomva/test", "main#x") == BASE
+        assert seen[0][-1] == "repos/broomva/test/branches/main%23x"

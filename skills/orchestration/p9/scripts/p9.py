@@ -1114,7 +1114,12 @@ def _resolve_pending_lists(node: Any) -> None:
 
 
 def _scalar(s: str) -> Any:
-    s = s.strip().strip('"').strip("'")
+    s = s.strip()
+    # A quoted scalar is a string, as in PyYAML: "false" must not become the
+    # boolean False here while PyYAML reads the string "false", or one policy
+    # would parse differently depending on whether PyYAML is installed.
+    if len(s) >= 2 and s[0] == s[-1] and s[0] in "\"'":
+        return s[1:-1]
     if s.lower() == "true":
         return True
     if s.lower() == "false":
@@ -1532,7 +1537,7 @@ class PRGateFacts:
     merge_state: str = "UNKNOWN"
     mergeable: str = "UNKNOWN"
     review_decision: str = ""
-    reviews: list = field(default_factory=list)        # gh latestReviews
+    reviews: list = field(default_factory=list)        # gh reviews (every page)
     comments: list = field(default_factory=list)       # gh comments
     additions: int = 0
     deletions: int = 0
@@ -3267,10 +3272,11 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
         # moved while the gates ran, the verdict is about a combination GitHub
         # would not be merging, so refuse and let the next pass re-judge it.
         now = _gh_branch_sha(repo, decision["base"])
-        if now != decision["base_sha"]:
-            print(f"auto-merge blocked: {decision['base']} moved during evaluation "
-                  f"({decision['base_sha'][:12]} -> {(now or 'unreadable')[:12]}); "
-                  f"re-run", file=sys.stderr)
+        retargeted = _gh_pr_base(pr, repo) != decision["base"]
+        if now != decision["base_sha"] or retargeted:
+            print(f"auto-merge blocked: the base moved or the PR was retargeted "
+                  f"during evaluation ({decision['base']}@{decision['base_sha'][:12]} "
+                  f"-> {(now or 'unreadable')[:12]}); re-run", file=sys.stderr)
             return EXIT_AUTO_MERGE_BLOCKED
 
     rc = _gh_pr_merge(
@@ -3457,7 +3463,10 @@ def _gh_pr_base(pr: int, repo: str) -> str:
 
 
 def _gh_branch_sha(repo: str, branch: str) -> str | None:
-    data = _gh_json(["gh", "api", f"repos/{repo}/branches/{branch}"])
+    import urllib.parse
+    # Encoded: gh treats `#` as a fragment, so branches/main#x would read main.
+    data = _gh_json(["gh", "api",
+                     f"repos/{repo}/branches/{urllib.parse.quote(branch, safe='')}"])
     sha = ((data or {}).get("commit") or {}).get("sha") if isinstance(data, dict) else None
     return sha or None
 
@@ -3466,8 +3475,8 @@ def _gh_branch_sha(repo: str, branch: str) -> str | None:
 class PRListing:
     """One read of what a PR changes. `paths` holds every current path AND
     every pre-rename path, because renaming AGENTS.md away must not carry it
-    out of the governance tier. `unmeasured` holds added or modified files
-    that report 0 changed lines, which in practice means binary."""
+    out of the governance tier. `unmeasured` holds every file that reports 0
+    changed lines (a binary, or a rename that could hide one)."""
     branch: str
     head_sha: str
     paths: tuple[str, ...]
@@ -3509,9 +3518,10 @@ def _gh_pr_listing(pr: int, repo: str) -> PRListing:
         paths.append(name)
         if prev:
             paths.append(prev)
-        # A 0-line row is binary (or empty), whether it was added, modified,
-        # copied or removed; only a pure rename legitimately changes 0 lines.
-        if status != "renamed" and changes == "0":
+        # A 0-line row is binary (or empty), whatever its status. A pure rename
+        # also shows 0 lines and cannot be told apart from a renamed binary
+        # without fetching both blobs, so it counts as unmeasured too.
+        if changes == "0":
             unmeasured.append(name)
     return PRListing(branch=str(data.get("branch") or ""),
                      head_sha=str(data.get("head") or ""),
@@ -4012,9 +4022,9 @@ def _unresolved_review_threads(pr: int, repo: str | None) -> int:
     """Count unresolved review threads via `gh api graphql` (best-effort).
 
     Returns the count, or -1 if it cannot be determined (no repo, gh/graphql
-    error). -1 does not block a merge — mergeStateStatus already reflects
-    GitHub-enforced conversation resolution when branch protection requires it;
-    this is the stricter bstack reflex-18 layer on top.
+    error, or more than 100 threads). The gated merge path treats -1 as a FAIL;
+    the legacy merge-ready verdict does not block on it, because
+    mergeStateStatus already reflects GitHub-enforced conversation resolution.
     """
     if not repo or "/" not in repo:
         return -1

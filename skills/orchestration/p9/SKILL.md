@@ -294,7 +294,7 @@ part of a diff. The listing, the gates and the merge must all describe one head,
 or the run blocks. The merge is pinned with `--match-head-commit` to that head.
 The base is pinned to one commit: the policy is read AT that commit, the
 `up_to_date` gate compares against it, and it is re-read just before merging. A
-moved base blocks.
+moved base blocks, and so does a PR retargeted to another base in between.
 
 | Gate | Passes iff | Unknown |
 |---|---|---|
@@ -305,7 +305,7 @@ moved base blocks.
 | `up_to_date` | 0 commits behind base, at a recorded base tip | FAIL |
 | `no_changes_requested` | no reviewer's latest *opinionated* review is `CHANGES_REQUESTED`. A later COMMENTED review does not withdraw it; a later APPROVED or DISMISSED one does. (gh preloads every page of reviews and comments.) | FAIL |
 | `threads_resolved` | 0 unresolved review threads (more than 100 threads block) | FAIL |
-| `p20` | if over the P20 threshold, the latest verdict is a PASS ≥ `pass_score`, bound to the reviewed commit. The threshold: >200 LOC, >1 file, an always-review path, a binary change (any 0-line add, modify, copy or removal; only a pure rename is exempt), or governance-class. | FAIL |
+| `p20` | if over the P20 threshold, the latest verdict is a PASS ≥ `pass_score`, bound to the reviewed commit. The threshold: >200 LOC, >1 file, an always-review path, a binary change (any row with 0 changed lines, including a rename: a pure rename cannot be told from a renamed binary without fetching both blobs), or governance-class. | FAIL |
 | `independent_check` | a check that is neither a bot nor an aggregate (`Merge Gate`, which passes vacuously when nothing else ran) ran and passed, **or** a P20 pass covers the PR | FAIL |
 | `governance_strata` | governance-class: the verdict lists strata A, B and C | FAIL |
 | `governance_checks` | governance-class: every run of each required check (default `stability-check`) passed; skipped or absent fails | FAIL |
@@ -372,8 +372,11 @@ it can stop a merge but never enable one.
 
 **No YAML can weaken a gate.** The parser rejects:
 
-- an unknown key at any level, since a typo would otherwise run on the default;
-- a flag that is not a real boolean (`enabled: "false"` would otherwise read as true);
+- an unknown key in the `auto_merge`, `gates`, `p20` or `governance` blocks, since a
+  typo would otherwise run on the default;
+- a flag that is not a real boolean (`enabled: "false"` would otherwise read as
+  true). Both YAML loaders reject it, because p9's minimal loader keeps a quoted
+  scalar as a string, as PyYAML does. CI runs the minimal one;
 - `pass_score < 7`, `max_loc > 200` or `max_files > 1`;
 - governance `paths` or `required_checks` that drop an L3 path or
   `stability-check`;
