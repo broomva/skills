@@ -1408,6 +1408,24 @@ else
     fail "T81: bare after scaled" "budget=$RC_LAUNDER record=$RC_REC (want 6 6) bare-then-scaled=$RC_FWD (want 3)"
 fi
 
+# ── T82: `unrecorded` names no stratum, so it cannot carry a verdict ──────
+# Continuation review before round 4: the letters were checked with the PANEL
+# predicate, which accepts `unrecorded` as a whole value, so a pass with no
+# A, B or C behind it recorded and read as PASSED.
+echo "T82. a verdict whose stratum is not A, B or C is refused at write and at read"
+LED=$(newledger t82)
+RC_W=$(rb record-round --run-id=t82 --ledger="$LED" --score=9/10 --defect=yes --stratum=unrecorded:9/10:PASS)
+N_BAD=$(rows_in "$LED")
+LED2=$(newledger t82b)
+printf 'ROUND\t1\t9/10\tyes\t\t-\tunrecorded\tunrecorded:9/10:PASS\n' > "$LED2"
+RC_R=$(rb budget --run-id=t82b --ledger="$LED2")
+RC_OK=$(rb record-round --run-id=t82 --ledger="$LED" --score=9/10 --defect=yes --stratum=C:9/10:PASS)
+if [ "$RC_W" = "2" ] && [ "$N_BAD" = "0" ] && [ "$RC_R" = "6" ] && [ "$RC_OK" = "0" ]; then
+    ok "T82: unrecorded:9/10:PASS refused (write 2, read 6); C:9/10:PASS records"
+else
+    fail "T82: letter must be A|B|C" "write=$RC_W (want 2) rows=$N_BAD (want 0) read=$RC_R (want 6) valid=$RC_OK (want 0)"
+fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

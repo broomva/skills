@@ -409,6 +409,16 @@ round_is_admissible() (
     IFS=,; set -f
     for entry in $verdicts; do
         letter=${entry%%:*}; rest=${entry#*:}; verdict=${rest##*:}; scored=${rest%:*}
+        # The letter on its own, BEFORE any set check. strata_is_valid answers a
+        # different question -- "is this a PANEL?" -- and accepts the literal
+        # `unrecorded` as a whole value, so reused here it passed
+        # `unrecorded:9/10:PASS` as a stratum and `budget` said PASSED with no
+        # A, B or C behind it (continuation review before round 4). An earlier
+        # round deleted this arm as unreachable; it was reachable by that token.
+        case "$letter" in
+            A|B|C) ;;
+            *) echo "stratum '$letter' is not one of A, B, C"; exit 1 ;;
+        esac
         if ! err=$(score_is_valid "$scored"); then echo "stratum '$letter': $err"; exit 1; fi
         num=$((10#${scored%%/*}))
         case "$verdict" in
@@ -422,7 +432,7 @@ round_is_admissible() (
         letters="${letters:+$letters,}$letter"
         if [ -z "$min" ] || [ "$num" -lt "$min" ]; then min=$num; fi
     done
-    # The same predicate `--strata` uses: non-empty, drawn from A, B, C, no repeats.
+    # Letters are already A|B|C each; what is left for the set check is REPEATS.
     if ! strata_is_valid "$letters"; then
         echo "the verdicts' strata '$letters' are not a set drawn from A, B, C"; exit 1
     fi

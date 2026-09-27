@@ -494,6 +494,11 @@ mutate "stratum PASS below the bar accepted" "T70" \
     'if [ "$num" -lt "$PASS_SCORE" ]; then' 'if [ "$num" -lt 0 ]; then'
 mutate "unknown verdict token accepted" "T70" \
     'want PASS or FAIL"; exit 1 ;;' 'want PASS or FAIL" >/dev/null ;;'
+mutate "stratum letter not checked alone" "T82" \
+    '            A|B|C) ;;
+            *) echo "stratum '"'"'$letter'"'"' is not one of A, B, C"; exit 1 ;;' \
+    '            A|B|C) ;;
+            *) ;;'
 mutate "verdict letters not a set" "T73" \
     'if ! strata_is_valid "$letters"; then' 'if false; then'
 
