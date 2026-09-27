@@ -313,7 +313,7 @@ moved base blocks, and so does a PR retargeted to another base in between.
 
 **Always-review paths.** These always need a P20 pass, whatever the change's
 size: `.github/workflows/**`, `.githooks/**`, `.claude/**` (settings, local
-settings, agents, commands, hooks) and `.control/preauth.yaml`. A `pull_request` run executes the PR's own workflow
+settings, agents, commands, hooks), `.mcp.json` and `.control/preauth.yaml`. A `pull_request` run executes the PR's own workflow
 files, so a one-line edit to the aggregate check would otherwise pass itself. A
 policy's `p20.public_api_paths` adds to this list and cannot remove from it.
 
@@ -387,8 +387,9 @@ it can stop a merge but never enable one.
 - an L3 budget looser than one commit per day;
 - `default_action: auto` alongside `gates`, because a p9 that predates gates
   reads only `default_action` and would merge everything ungated;
-- `action: auto` rules alongside `gates`, where rules may only block. Path rules
-  match case-folded, like the gates.
+- `action: auto` rules alongside `gates`, where rules may only block. A path rule
+  is a SUBSTRING match, not a glob (a `*` in it matches only a literal `*`);
+  blocking path rules match case-folded, `auto` ones exactly.
 
 `gates:` with no value means gated with the defaults, under both YAML loaders.
 
@@ -410,7 +411,9 @@ it can stop a merge but never enable one.
   combination, the same as a human click on a ruleset without "require up to
   date".
 - **The L3 counter is check-then-merge.** Two governance merges in the same
-  second could both see zero.
+  second could both see zero. It counts landings made through GitHub (merge,
+  squash, rebase); a commit pushed straight to base with an old committer date
+  is not listed (the workspace ruleset rejects direct pushes to main).
 - **Check identity is by name**, as in GitHub's own required-check model. A
   different app posting a check under a real check's name counts as that
   check. Pinning required checks to an app in the ruleset is the repo-side fix.

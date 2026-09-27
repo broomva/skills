@@ -1097,3 +1097,44 @@ class TestRoundFourFindings:
         assert act == "require_human"
         act, _ = p9.match_auto_merge_action(am, branch="docs/x", paths_touched=["docs/a.md"])
         assert act == "auto"
+
+
+class TestFixDeltaFindings:
+    """Post-pass verification of 973fa7b: renames count as governance landings,
+    and only blocking path rules fold case."""
+
+    def test_renaming_a_governance_file_away_is_a_landing(self, p9, monkeypatch):
+        def run(cmd, *a, **k):
+            if cmd[:3] == ["gh", "api", "--paginate"]:
+                return _Run("M\tP1\n")
+            return _Run(json.dumps({"status": "ahead", "files": [
+                {"filename": "docs/archive/AGENTS.md", "previous_filename": "AGENTS.md",
+                 "status": "renamed"}]}))
+        monkeypatch.setattr(p9.subprocess, "run", run)
+        assert p9._governance_landings_in_window("broomva/test", BASE, p9.GovernanceTier()) == 1
+
+    def test_a_compare_entry_without_a_filename_is_unknown(self, p9, monkeypatch):
+        monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: _Run(json.dumps(
+            {"status": "ahead", "files": [{"status": "modified"}]})))
+        assert p9._compare_files("broomva/test", f"{OLD}...{HEAD}") == ("ahead", None)
+
+    def _pass2(self, p9, tmp_path, rules):
+        f = tmp_path / "p2.yaml"
+        f.write_text(_HEADER + "auto_merge:\n  enabled: true\n  rules:\n" + rules, encoding="utf-8")
+        return p9.load_policy(f).auto_merge
+
+    def test_a_blocking_pass2_rule_folds_case(self, p9, tmp_path):
+        am = self._pass2(p9, tmp_path, '    - path_touched: Vendor/\n      action: notify\n'
+                                       '    - branch_pattern: "fix/*"\n      action: auto\n')
+        act, _ = p9.match_auto_merge_action(am, branch="fix/x", paths_touched=["vendor/lib.py"])
+        assert act == "notify"
+
+    def test_an_auto_path_rule_does_not_fold_case(self, p9, tmp_path):
+        am = self._pass2(p9, tmp_path, '    - path_touched: docs/\n      action: auto\n')
+        act, _ = p9.match_auto_merge_action(am, branch="x", paths_touched=["DOCS/run.py"])
+        assert act == "notify"   # default; the exact-match auto rule does not fire
+        act, _ = p9.match_auto_merge_action(am, branch="x", paths_touched=["docs/run.md"])
+        assert act == "auto"
+
+    def test_mcp_json_needs_p20(self, p9, gates):
+        assert "p20" in _failed(p9, gates, _good(p9, files=[".mcp.json"], additions=1, deletions=0))

@@ -787,7 +787,7 @@ _DEFAULT_GOVERNANCE_PATHS = ("CLAUDE.md", "AGENTS.md", "METALAYER.md",
 # could otherwise rewrite for itself. A `pull_request` run executes the PR's OWN
 # workflow files, so a one-line edit to the aggregate check passes itself.
 _ALWAYS_REVIEW_PATHS = (".github/workflows/**", ".githooks/**",
-                        ".claude/**", ".control/preauth.yaml")
+                        ".claude/**", ".mcp.json", ".control/preauth.yaml")
 # Checks that aggregate other checks. An aggregate passes vacuously when no
 # other check ran, so it cannot be the only thing that vouches for a PR.
 _DEFAULT_AGGREGATE_CHECKS = ("Merge Gate",)
@@ -1441,11 +1441,15 @@ def match_auto_merge_action(
                     return ("require_human",
                             f"path rule blocks: {rule.path_touched!r} in {p}")
 
-    # Pass 2: first match wins (path or branch).
+    # Pass 2: first match wins (path or branch). A BLOCKING path rule matches
+    # case-folded (a macOS checkout aliases case); an `auto` path rule keeps its
+    # exact substring match, so folding can only ever add a block.
     for rule in policy.rules:
         if rule.path_touched:
+            fold = rule.action != "auto"
             for p in paths:
-                if rule.path_touched.lower() in p.lower():
+                if ((rule.path_touched.lower() in p.lower()) if fold
+                        else (rule.path_touched in p)):
                     return (rule.action,
                             f"path rule matched: {rule.path_touched!r} in {p}")
         if rule.branch_pattern and fnmatch.fnmatch(branch, rule.branch_pattern):
@@ -1755,7 +1759,18 @@ def _compare_files(repo: str, basehead: str) -> tuple[str | None, list | None]:
         return None, None
     if not isinstance(data.get("files"), list):
         return data.get("status"), None
-    return data.get("status"), [x.get("filename") for x in data["files"]]
+    # A rename is BOTH paths: renaming AGENTS.md away changes a governance path
+    # as surely as deleting it. An entry without a filename is unreadable.
+    paths: list[str] = []
+    for x in data["files"]:
+        name = x.get("filename") if isinstance(x, dict) else None
+        if not isinstance(name, str) or not name:
+            return data.get("status"), None
+        paths.append(name)
+        prev = x.get("previous_filename")
+        if isinstance(prev, str) and prev:
+            paths.append(prev)
+    return data.get("status"), paths
 
 
 def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
@@ -1835,8 +1850,16 @@ def _governance_landings_in_window(repo: str, base_ref: str,
     within the window was invisible to it. Instead, walk the commits that
     reached base inside the window (a merge, a squash or a rebased commit is
     dated when it landed) and diff each against its first parent, which covers
-    everything a merge brought in. The budget is one per window, so the first
-    hit decides."""
+    everything a merge brought in. The budget is one per window (the parser
+    pins l3_max_per_window at 1), so the first hit decides; raising that limit
+    would need a real count here.
+
+    Named limits: a commit pushed straight to base with an old committer date
+    (bypassing a PR) is not listed, since `since` filters on committer date;
+    the workspace ruleset rejects direct pushes to main. The walk also lists
+    commits from merged branches, so an "update branch" merge inside the window
+    can re-report an older governance change: an overcount, which fails closed,
+    at one compare call per commit in the window."""
     if not base_ref:
         return None
     since = (_dt.datetime.now(_dt.timezone.utc)
