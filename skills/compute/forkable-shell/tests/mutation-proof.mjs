@@ -54,7 +54,7 @@ const MUTANTS = [
     "try { destEntry = nfs.lstatSync(destPath); } catch { /* genuinely absent */ }",
     "destEntry = nfs.existsSync(destPath) ? {} : null;"],
   ["M14 save writes in place", "scripts/world.mjs",
-    "const tmp = `${this.path}.tmp-${process.pid}`;\n    nfs.writeFileSync(tmp, payload);\n    nfs.renameSync(tmp, this.path);",
+    'nfs.writeFileSync(tmp, payload, { flag: "wx" });\n      nfs.renameSync(tmp, this.path);',
     "nfs.writeFileSync(this.path, payload);"],
   // (the former M15 targeted a redundant token check; the per-call mark in M17
   //  is what actually detects a skipped epilogue, so that mutant was deleted)
