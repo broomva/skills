@@ -1279,15 +1279,24 @@ def _parse_auto_merge(raw: Any) -> AutoMergePolicy:
                     f"(require_human | notify)"
                 )
     return AutoMergePolicy(
-        enabled=bool(raw.get("enabled", False)),
-        require_no_requested_changes=bool(raw.get("require_no_requested_changes", True)),
-        require_branch_up_to_date=bool(raw.get("require_branch_up_to_date", True)),
+        # bool("false") is True: a quoted "false" must not ENABLE auto-merge.
+        enabled=_bool(raw.get("enabled", False), "auto_merge.enabled"),
+        require_no_requested_changes=_bool(raw.get("require_no_requested_changes", True),
+                                           "auto_merge.require_no_requested_changes"),
+        require_branch_up_to_date=_bool(raw.get("require_branch_up_to_date", True),
+                                        "auto_merge.require_branch_up_to_date"),
         merge_method=method,
-        delete_branch=bool(raw.get("delete_branch", True)),
+        delete_branch=_bool(raw.get("delete_branch", True), "auto_merge.delete_branch"),
         rules=tuple(rules),
         default_action=default,
         gates=gates,
     )
+
+
+def _bool(raw: Any, where: str) -> bool:
+    if not isinstance(raw, bool):
+        raise PolicyError(f"{where} must be true or false, got {raw!r}")
+    return raw
 
 
 def _str_tuple(raw: Any, where: str) -> tuple[str, ...]:
@@ -1651,13 +1660,13 @@ def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
         if st in ("APPROVED", "CHANGES_REQUESTED", "DISMISSED"):
             stance[(r.get("author") or {}).get("login") or "?"] = st
     asked = sorted(a for a, st in stance.items() if st == "CHANGES_REQUESTED")
-    capped = len(f.reviews) >= 100
+    # `gh pr view --json reviews` preloads every page (preloadPrReviews in gh's
+    # pkg/cmd/pr/shared/finder.go, verified at v2.74.1), so the list is complete.
     gate("no_changes_requested",
-         not asked and not capped and f.review_decision != "CHANGES_REQUESTED",
+         not asked and f.review_decision != "CHANGES_REQUESTED",
          ("changes requested by " + ", ".join(asked)) if asked
-         else ("100+ reviews: the list may be truncated" if capped
-               else ("reviewDecision=CHANGES_REQUESTED"
-                     if f.review_decision == "CHANGES_REQUESTED" else "none requested")))
+         else ("reviewDecision=CHANGES_REQUESTED"
+               if f.review_decision == "CHANGES_REQUESTED" else "none requested"))
 
     gate("threads_resolved", f.unresolved_threads == 0,
          "unresolved threads could not be counted" if f.unresolved_threads < 0
@@ -1745,7 +1754,8 @@ def _compare_files(repo: str, basehead: str) -> tuple[str | None, list | None]:
 
 
 def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
-                         listing: "PRListing | None" = None) -> PRGateFacts:
+                         listing: "PRListing | None" = None,
+                         base_sha: str | None = None) -> PRGateFacts:
     """`listing` is the caller's COMPLETE file listing, pre-rename paths
     included (gh pr view caps its own at 100 and drops renames); without it, a
     longer PR fails the `classifiable` gate."""
@@ -1783,10 +1793,13 @@ def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
     f.required_checks = req if isinstance(req, list) else None
 
     if f.base and f.head_sha:
-        cmp = _gh_json(["gh", "api", f"repos/{repo}/compare/{f.base}...{f.head_sha}"])
+        # With a pinned base (the commit the policy was read at), compare
+        # against that commit, not the moving branch name.
+        ref = base_sha or f.base
+        cmp = _gh_json(["gh", "api", f"repos/{repo}/compare/{ref}...{f.head_sha}"])
         if isinstance(cmp, dict) and isinstance(cmp.get("behind_by"), int):
             f.behind_by = cmp["behind_by"]
-            f.base_sha = ((cmp.get("base_commit") or {}).get("sha")) or ""
+            f.base_sha = base_sha or ((cmp.get("base_commit") or {}).get("sha")) or ""
     f.unresolved_threads = _unresolved_review_threads(pr, repo)
 
     marker = latest_p20_marker(f.comments, g.review_bots)
@@ -1829,6 +1842,7 @@ def _count_governance_commits(repo: str, base: str, tier: GovernanceTier) -> int
 def authoritative_auto_merge_policy(
     local: AutoMergePolicy, repo: str, base: str, touched: Iterable[str],
 ) -> tuple[AutoMergePolicy | None, str]:
+    # `base` is a ref: decide_auto_merge passes the base COMMIT it pinned.
     """The policy that judges a PR is the one on its BASE branch.
 
     Reading the checkout's copy (cwd walk-up) let a PR that edits
@@ -3297,11 +3311,15 @@ def decide_auto_merge(local: AutoMergePolicy, *, pr: int, repo: str,
     am: AutoMergePolicy | None = local
     if not os.environ.get("BROOMVA_P9_POLICY"):
         base = _gh_pr_base(pr, repo)
-        if not base:
+        base_sha = _gh_branch_sha(repo, base) if base else None
+        if not base or not base_sha:
             return {"action": "require_human", "source": "unresolved", "policy": None,
                     "reason": "could not read the PR's base branch to load its policy",
                     "gates": [], "head_sha": None, "base": None, "base_sha": None}
-        am, source = authoritative_auto_merge_policy(local, repo, base, paths)
+        # The policy is read AT the base commit the gates will judge against,
+        # and the merge refuses if the branch has moved off it, so the policy,
+        # the facts and the merge all describe one base.
+        am, source = authoritative_auto_merge_policy(local, repo, base_sha, paths)
     if am is None:
         return {"action": "require_human", "reason": source, "source": source,
                 "policy": None, "gates": [], "head_sha": None, "base": None, "base_sha": None}
@@ -3334,7 +3352,9 @@ def decide_auto_merge(local: AutoMergePolicy, *, pr: int, repo: str,
     overlay_action, overlay_reason = match_auto_merge_action(
         dataclasses.replace(am, default_action="auto"),
         branch=branch, paths_touched=paths)
-    facts = gather_pr_gate_facts(pr, repo, am.gates, listing=listing)
+    facts = gather_pr_gate_facts(pr, repo, am.gates, listing=listing,
+                                 base_sha=None if os.environ.get("BROOMVA_P9_POLICY")
+                                 else base_sha)
     results = evaluate_merge_gates(am.gates, facts)
     gates = [dataclasses.asdict(r) for r in results]
     failed = [r for r in results if not r.ok]
@@ -3363,8 +3383,9 @@ def _format_gate_results(gates: list[dict]) -> str:
 
 def cmd_gate_check(args: argparse.Namespace) -> int:
     """Read-only: judge a PR against the governing policy's merge gates, without
-    touching state. Exit 0 iff the gates pass now; `auto-merge` additionally
-    needs the PR in MERGE_READY (watch -> merge-ready)."""
+    touching state. Exit 0 iff the decision is `auto` now: every gate passes
+    AND no blocking rule matches. `auto-merge` additionally needs the PR in
+    MERGE_READY (watch -> merge-ready)."""
     pr = int(args.pr)
     repo = resolve_repo(args.repo)
     policy = load_policy()
@@ -3488,7 +3509,9 @@ def _gh_pr_listing(pr: int, repo: str) -> PRListing:
         paths.append(name)
         if prev:
             paths.append(prev)
-        if status in ("added", "modified", "changed") and changes == "0":
+        # A 0-line row is binary (or empty), whether it was added, modified,
+        # copied or removed; only a pure rename legitimately changes 0 lines.
+        if status != "renamed" and changes == "0":
             unmeasured.append(name)
     return PRListing(branch=str(data.get("branch") or ""),
                      head_sha=str(data.get("head") or ""),
@@ -4786,7 +4809,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     pgc = sub.add_parser("gate-check",
                          help="Read-only: judge a PR against the governing "
-                              "policy's merge gates (exit 0 iff they pass now)")
+                              "policy's merge gates (exit 0 iff it would decide auto now)")
     pgc.add_argument("pr")
     pgc.add_argument("--repo", default=None)
     pgc.add_argument("--json", action="store_true")

@@ -474,7 +474,7 @@ class TestBasePolicyIsAuthoritative:
                             _fake_gh(view, calls=calls, base_policy=base_text))
         d = p9.decide_auto_merge(local, pr=703, repo="broomva/test",
                                  listing=_listing(p9, view))
-        assert d["source"] == "broomva/test@main"
+        assert d["source"] == f"broomva/test@{BASE}"   # read AT the pinned base commit
         assert d["action"] == "require_human"   # main's rules, not the PR's
 
     def test_pr_introducing_a_policy_file_is_blocked(self, unpinned, monkeypatch):
@@ -637,10 +637,14 @@ class TestChangeRequestsStand:
                                self._r("bo", "APPROVED", "2026-09-26T11:00:00Z")])
         assert "no_changes_requested" in _failed(p9, gates, f)
 
-    def test_a_possibly_truncated_review_list_blocks(self, p9, gates):
-        f = _good(p9, reviews=[self._r(f"u{i}", "COMMENTED", "2026-09-26T10:00:00Z")
-                               for i in range(100)])
-        assert "no_changes_requested" in _failed(p9, gates, f)
+    def test_a_change_request_on_page_two_still_blocks(self, p9, gates):
+        # gh preloads every page of reviews, so the list is complete: 150
+        # reviews do not block by themselves, and one change request among
+        # them does.
+        many = [self._r(f"u{i}", "COMMENTED", "2026-09-26T10:00:00Z") for i in range(150)]
+        assert _failed(p9, gates, _good(p9, reviews=many)) == set()
+        late = many + [self._r("ana", "CHANGES_REQUESTED", "2026-09-26T11:00:00Z")]
+        assert "no_changes_requested" in _failed(p9, gates, _good(p9, reviews=late))
 
 
 class TestIndependentCheck:
@@ -868,3 +872,44 @@ class TestBinaryDetectionEndToEnd:
     def test_same_pr_with_a_measured_change_merges(self, p9, monkeypatch):
         rc, merges = self._run(p9, monkeypatch, 751, binary=())
         assert rc == p9.EXIT_OK and merges
+
+
+class TestRoundTwoFindings:
+    """P20 round 2 (Stratum A): the policy is pinned to the base the gates saw,
+    removed binaries are unmeasured, and a quoted boolean cannot enable."""
+
+    def test_policy_and_compare_use_one_pinned_base(self, p9, monkeypatch, tmp_path):
+        monkeypatch.delenv("BROOMVA_P9_POLICY", raising=False)
+        monkeypatch.chdir(tmp_path)
+        calls = []
+        monkeypatch.setattr(p9.subprocess, "run", _fake_gh(
+            _view(), calls=calls, base_policy=_GATED.read_text()))
+        d = p9.decide_auto_merge(p9.load_policy(_GATED).auto_merge, pr=760,
+                                 repo="broomva/test", listing=_listing(p9, _view()))
+        assert d["action"] == "auto" and d["base_sha"] == BASE
+        flat = [" ".join(c) for c in calls]
+        assert any(f"contents/.control/policy.yaml?ref={BASE}" in c for c in flat)
+        assert any(f"compare/{BASE}...{HEAD}" in c for c in flat)
+        assert not any("compare/main..." in c for c in flat)
+
+    def test_listing_marks_removed_binaries_but_not_pure_renames(self, p9, monkeypatch):
+        rows = ("assets/old.bin\t\tremoved\t0\n"
+                "docs/moved.md\tdocs/was.md\trenamed\t0\n"
+                "assets/new.bin\t\tadded\t0\n"
+                "src/a.py\t\tmodified\t7\n")
+
+        def run(cmd, *a, **k):
+            if cmd[:3] == ["gh", "pr", "view"]:
+                return _Run(json.dumps({"branch": "b", "head": HEAD, "changed": 4}))
+            return _Run(rows)
+        monkeypatch.setattr(p9.subprocess, "run", run)
+        listing = p9._gh_pr_listing(770, "broomva/test")
+        assert listing.unmeasured == ("assets/old.bin", "assets/new.bin")
+        assert "docs/was.md" in listing.paths
+
+    @pytest.mark.parametrize("value", ['"false"', '"true"', "1", "yes-please"])
+    def test_a_non_boolean_enabled_is_rejected(self, p9, value):
+        text = _HEADER + f"auto_merge:\n  enabled: {value}\n  gates:\n    p20:\n      pass_score: 7\n"
+        with pytest.raises(p9.PolicyError) as e:
+            p9.load_policy_text(text)
+        assert "enabled" in str(e.value)
