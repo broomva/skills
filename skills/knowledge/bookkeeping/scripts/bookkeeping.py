@@ -2595,14 +2595,15 @@ def _frontmatter_value(text: str, key: str) -> object:
 # coherence gate below it cannot fail open. It runs first, so a refused page
 # never costs a coherence call.
 #
-# Measured on the promote door's real input (60 raw notes, 135 would-be new
-# pages, 2026-09-27): refuses 106 of the 115 the coherence gate rejects, and
-# 17 of its 20 accepts — of which a hand read finds ~2 legitimate
-# (system-initiative, freepik-company); the rest are junk the coherence gate
-# let through ("Verified against the paper." as recurrent-breast-cancer).
+# Measured with this code on the promote door's real input (60 raw notes,
+# 135 would-be new pages, 2026-09-27): refuses 122 — 105 of the 114 the
+# coherence gate rejects, and 17 of its 21 accepts, of which a hand read finds
+# ~3 arguably legitimate (system-initiative, freepik-company, long-proof); the
+# rest are junk the coherence gate let through ("Verified against the paper."
+# as recurrent-breast-cancer).
 # NOT a page-quality rule: hand-written claims legitimately omit the title
-# (a person page reads "Managing Director of ..."), and 22.6% of hand-authored
-# pages would fail it. It applies only where the claim is DERIVED from an
+# (a person page reads "Managing Director of ..."), and 540 of 1074
+# hand-authored pages (50.3%) would fail it. It applies only where the claim is DERIVED from an
 # item, i.e. the new-page path of promote_item.
 
 GROUNDING_FLOOR = 1
