@@ -182,7 +182,7 @@ mutate "every verdict reads as CONTINUE" "T37" \
     'LG_LAST_VERDICT=$(field "$last" 2)' \
     'LG_LAST_VERDICT=CONTINUE'
 mutate "ROUND arity unchecked" "T38" \
-    'if (NF != 6 && NF != 7) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
+    'if (NF != 6 && NF != 7 && NF != 8) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
 # NO mutation for the arity FLOOR, and the reason is a finding rather than an
 # omission. `if (NF != 6 && NF != 7 && NF != 5)` -- widening the check to admit
 # a five-field row -- was written, run, and SURVIVED: a short ROUND row leaves
@@ -455,6 +455,125 @@ mutate "blank stored panels skipped again" "T61" \
 mutate "--strata accepted on any command" "T62" \
     'if [ "$STRATA_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then' \
     'if [ "$STRATA_SET" = "1" ] && [ "$COMMAND" = "IMPOSSIBLE" ]; then'
+
+
+# ── BRO-2615: a score carries its scale; a pass carries its verdicts ──────
+# One mutation per guard, each the ONLY thing that refuses some input, each
+# naming the test whose arm that input is.
+echo ""
+echo "── BRO-2615 guards ──"
+
+# The incident itself: a /15 score accepted by a /10 ledger.
+mutate "foreign scale accepted" "T66" \
+    'if [ "$den" != "$LEDGER_SCALE" ]; then' 'if [ "$den" = "IMPOSSIBLE" ]; then'
+# Bare `10` is the one unscaled value the scale arm alone would admit.
+mutate "unscaled score accepted" "T67" \
+    '*) echo "'"'"'$v'"'"' carries no scale; write it as N/$LEDGER_SCALE"; return 1 ;;' \
+    '*) ;;'
+mutate "score above the scale accepted" "T67" \
+    '[ "$((10#$num))" -gt "$LEDGER_SCALE" ]' '[ "$((10#$num))" -gt 999 ]'
+mutate "overflowing score length unchecked" "T67" \
+    '[ "${#num}" -gt 2 ]' '[ "${#num}" -gt 99 ]'
+
+# A PASS can never sit over a FAIL stratum.
+mutate "FAIL stratum not tracked" "T68" \
+    'FAIL) failed=1 ;;' 'FAIL) ;;'
+mutate "pass-over-FAIL check dead" "T68" \
+    'if [ "$score" -ge "$PASS_SCORE" ] && [ "$failed" = "1" ]; then' \
+    'if [ "$score" -ge "$PASS_SCORE" ] && [ "$failed" = "IMPOSSIBLE" ]; then'
+# ...and never exceeds its lowest stratum.
+mutate "round may exceed its lowest stratum" "T69" \
+    'if [ "$score" -gt "$min" ]; then' 'if [ "$score" -gt 99 ]; then'
+
+# Stored rows go through the recorder's own predicate.
+mutate "stored rows not validated" "T70" \
+    'if ! verr=$(round_is_admissible' 'if false && verr=$(round_is_admissible'
+mutate "panel may disagree with verdicts" "T70" \
+    'if [ "$strata" != "$letters" ]; then' 'if [ "$strata" = "IMPOSSIBLE" ]; then'
+mutate "stratum PASS below the bar accepted" "T70" \
+    'if [ "$num" -lt "$PASS_SCORE" ]; then' 'if [ "$num" -lt 0 ]; then'
+mutate "unknown verdict token accepted" "T70" \
+    'want PASS or FAIL"; exit 1 ;;' 'want PASS or FAIL" >/dev/null ;;'
+mutate "stratum letter not checked alone" "T82" \
+    '            A|B|C) ;;
+            *) echo "stratum '"'"'$letter'"'"' is not one of A, B, C"; exit 1 ;;' \
+    '            A|B|C) ;;
+            *) ;;'
+mutate "verdict letters not a set" "T73" \
+    'if ! strata_is_valid "$letters"; then' 'if false; then'
+
+# PASS requires the verdicts it claims to summarize.
+mutate "PASSED without verdicts" "T71" \
+    '[ "$LG_LAST_VERIFIED" = "1" ] || return 1' 'true || return 1'
+mutate "verdictless pass admitted" "T71" \
+    'echo "round score $rscore would PASS with no per-stratum verdicts' 'return 0; echo "round score $rscore would PASS with no per-stratum verdicts'
+# The stored round score's own scale: at write the --score door already checked
+# it, so only a stored row can carry 7/15 in field 3.
+mutate "stored round score scale unchecked" "T74" \
+    'if ! err=$(score_is_valid "$rscore"); then echo "round score: $err"; exit 1; fi' ':'
+mutate "non-integer score arm gone" "T75" \
+    'case "$num" in '"''"'|*[!0-9]*) echo "'"'"'$v'"'"' has a non-integer score"; return 1 ;; esac' ':'
+
+mutate "--stratum accepted on any command" "T72" \
+    'if [ "$STRATUM_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then' \
+    'if [ "$STRATUM_SET" = "1" ] && [ "$COMMAND" = "IMPOSSIBLE" ]; then'
+mutate "--strata and --stratum both accepted" "T72" \
+    '        if [ "$STRATA_SET" = "1" ]; then
+            echo "round-budget: --strata and --stratum are exclusive' \
+    '        if false; then
+            echo "round-budget: --strata and --stratum are exclusive'
+
+
+# ── BRO-2615 round 2 (Stratum B): order, emptiness, NUL, the legacy boundary ──
+# The two folds over strata. Every test used to list the minimum first and the
+# FAIL last, so both of these survived 75/75 and each let a PASS through.
+mutate "minimum fold keeps the first entry" "T69" \
+    'if [ -z "$min" ] || [ "$num" -lt "$min" ]; then min=$num; fi' \
+    'if [ -z "$min" ]; then min=$num; fi'
+mutate "last verdict wins the FAIL fold" "T68" \
+    '                fi ;;
+            FAIL) failed=1 ;;' \
+    '                fi; failed=0 ;;
+            FAIL) failed=1 ;;'
+mutate "stratum scale unchecked" "T66" \
+    'if ! err=$(score_is_valid "$scored"); then' 'if false && err=$(score_is_valid "$scored"); then'
+mutate "NUL byte read through" "T76" \
+    'refusing to read it."
+        exit 6' \
+    'refusing to read it." >/dev/null'
+mutate "trailing empty verdict entry dropped" "T77" \
+    '*,) echo "the verdict list' 'IMPOSSIBLE) echo "the verdict list'
+mutate "leading empty --stratum vanishes" "T77" \
+    'if [ "$STRATUM_SET" = "1" ]; then STRATUM_VERDICTS="$STRATUM_VERDICTS,${arg#*=}"' \
+    'if [ -n "$STRATUM_VERDICTS" ]; then STRATUM_VERDICTS="$STRATUM_VERDICTS,${arg#*=}"'
+mutate "bare compared with scaled" "T78" \
+    'if (kind != prevkind) prev=-1' 'if (0) prev=-1'
+mutate "unverified pass unexplained" "T78" \
+    'echo "  Note: the last round scored' 'return 0; echo "  Note: the last round scored'
+mutate "note printed under any exit code" "T80" \
+    '        0|5)
+            if [ -n "$LG_SCORE" ]' \
+    '        *)
+            if [ -n "$LG_SCORE" ]'
+mutate "note printed below the bar" "T80" \
+    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ]; then' \
+    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge 0 ]; then'
+mutate "bare row after scaled accepted" "T81" \
+    'if (kind == "bare" && sawscaled) badhistory=' 'if (0) badhistory='
+mutate "show renders through a NUL" "T76" \
+    'echo "  MALFORMED: this ledger contains a NUL byte' ': "  MALFORMED: this ledger contains a NUL byte'
+mutate "blank verdicts render as a value" "T79" \
+    '($8=="" ? "MALFORMED" : $8)' '$8'
+
+
+# ── BRO-2615 round 4 (post-verdict tightenings) ──
+mutate "leading-zero score accepted" "T83" \
+    'case "$num" in 0?*) echo' 'case "$num" in IMPOSSIBLE) echo'
+mutate "stratum text glob-expanded" "T84" \
+    '    IFS=,; set -f
+    for entry in $verdicts; do' \
+    '    IFS=,
+    for entry in $verdicts; do'
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"

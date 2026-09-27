@@ -210,6 +210,14 @@ decide pass or fail with `spec-contract`'s rule first, then pass `--score` as:
   score of 7 or more as passed and closes, so without the cap a round at
   11/15 that fails on R2 or R4 would close the budget on a failure.
 
+Write both halves with their scale — `--score=N/10` and one
+`--stratum=L:N/10:PASS|FAIL` per stratum carrying the stratum's own
+`spec-contract` verdict. The ledger refuses a raw `/15` score and any bare
+integer (BRO-2615), and it refuses a round of 7 or more over a stratum marked
+FAIL -- so the cap is enforced for every stratum you record. It cannot see a
+stratum you leave out: a failing stratum omitted from `--stratum` is not
+detected, which is the writer's assertion, same as `--strata`.
+
 Pass `--defect=yes` when the round located at least one checkable defect in
 the text (a contradiction, a wrong number, a gate that cannot be checked as
 written), `no` otherwise. Two consecutive `no` rounds stop the budget, which is
