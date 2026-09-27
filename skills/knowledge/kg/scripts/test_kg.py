@@ -409,18 +409,27 @@ def test_resolve_enclosing_checkout_is_worktree_aware():
         base = Path(d).resolve()
         main, wt = base / "main", base / "wt"
         (main / ".git").mkdir(parents=True)
+        (main / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
         (main / "research" / "entities").mkdir(parents=True)
         (wt / "research" / "entities" / "concept").mkdir(parents=True)
+        (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+        (main / ".git" / "worktrees" / "wt" / "HEAD").write_text("x\n")
         (wt / ".git").write_text(f"gitdir: {main}/.git/worktrees/wt\n")
         root, ent, cat = kg._resolve_knowledge_paths(start_dir=wt / "research" / "entities", env={})
         assert root == wt and ent == wt / "research" / "entities"
         assert cat == wt / "docs" / "knowledge-index.md"
         nested = main / "skills"
         (nested / ".git").mkdir(parents=True)
+        (nested / ".git" / "HEAD").write_text("x\n")
         root2, _, _ = kg._resolve_knowledge_paths(start_dir=nested, env={})
         assert root2 == main, "a nested repo without a graph must not be adopted"
         root3, _, _ = kg._resolve_knowledge_paths(start_dir=wt, env={"BROOMVA_ROOT": "/env/root"})
         assert root3 == Path("/env/root"), "an explicit override beats the CWD checkout"
+        fake = base / "fake"
+        (fake / "research" / "entities").mkdir(parents=True)
+        (fake / ".git").write_text("not git\n")
+        root4, _, _ = kg._resolve_knowledge_paths(start_dir=fake, env={})
+        assert root4 == Path.home() / "broomva", "a text file named .git is not a checkout"
         check(True, "enclosing checkout: worktree resolves to itself, env overrides")
 
 

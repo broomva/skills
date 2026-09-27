@@ -79,13 +79,33 @@ def _read_knowledge_block(policy):
     return kn if isinstance(kn, dict) else {}
 
 
+def _is_git_toplevel(d):
+    """`d/.git` is a git dir (has HEAD), or a worktree/submodule `.git` FILE
+    whose `gitdir:` target has HEAD. Any other `.git` is not a checkout."""
+    g = d / ".git"
+    try:
+        if g.is_dir():
+            return (g / "HEAD").is_file()
+        if not g.is_file():
+            return False
+        first = g.read_text(errors="replace").split("\n", 1)[0].strip()
+    except OSError:
+        return False
+    if not first.startswith("gitdir:"):
+        return False
+    target = Path(first[len("gitdir:"):].strip()).expanduser()
+    if not target.is_absolute():
+        target = d / target
+    return (target / "HEAD").is_file()
+
+
 def _enclosing_knowledge_checkout(start):
     """Nearest ancestor of `start` (inclusive) that is a git toplevel holding
     research/entities, else None. A filesystem walk, not `git rev-parse`: no
     subprocess at import time, and a worktree's `.git` is a file."""
     start = Path(start).resolve()
     for d in (start, *start.parents):
-        if (d / ".git").exists() and (d / "research" / "entities").is_dir():
+        if (d / "research" / "entities").is_dir() and _is_git_toplevel(d):
             return d
     return None
 

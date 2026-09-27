@@ -231,12 +231,17 @@ class TestDisplayPathNeverCrashes:
 # ── Enclosing checkout, worktree-aware (BRO-2614) ─────────────────────────────
 
 def _checkout(path: Path, *, worktree_of: Path | None = None, graph: bool = True) -> Path:
-    """A git toplevel: a `.git` dir, or a worktree's `.git` FILE."""
+    """A git toplevel: a `.git` dir with HEAD, or a worktree's `.git` FILE whose
+    gitdir target has HEAD — the shapes git itself writes."""
     path.mkdir(parents=True, exist_ok=True)
     if worktree_of is None:
         (path / ".git").mkdir()
+        (path / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
     else:
-        (path / ".git").write_text(f"gitdir: {worktree_of}/.git/worktrees/{path.name}\n")
+        gitdir = worktree_of / ".git" / "worktrees" / path.name
+        gitdir.mkdir(parents=True, exist_ok=True)
+        (gitdir / "HEAD").write_text("ref: refs/heads/feature\n")
+        (path / ".git").write_text(f"gitdir: {gitdir}\n")
     if graph:
         (path / "research" / "entities").mkdir(parents=True)
     return path
@@ -273,6 +278,31 @@ class TestEnclosingCheckout:
         (tmp_path / "loose" / "research" / "entities").mkdir(parents=True)
         root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=tmp_path / "loose", env={})
         assert root == DEFAULT_ROOT
+
+    @pytest.mark.parametrize("dotgit", [
+        "file:not git",                       # a text file named .git
+        "file:gitdir: /nonexistent/wt",       # gitdir target missing
+        "dir-without-HEAD",                   # an empty .git directory
+    ])
+    def test_a_dotgit_that_is_not_a_checkout_is_not_adopted(self, tmp_path, dotgit):
+        d = tmp_path / "fake"
+        (d / "research" / "entities").mkdir(parents=True)
+        if dotgit.startswith("file:"):
+            (d / ".git").write_text(dotgit[len("file:"):] + "\n")
+        else:
+            (d / ".git").mkdir()
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
+        assert root == DEFAULT_ROOT
+
+    def test_relative_gitdir_resolves_against_the_checkout(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        wt = tmp_path / "wt"
+        (wt / "research" / "entities").mkdir(parents=True)
+        (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+        (main / ".git" / "worktrees" / "wt" / "HEAD").write_text("x\n")
+        (wt / ".git").write_text("gitdir: ../main/.git/worktrees/wt\n")
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=wt, env={})
+        assert root == wt
 
     @pytest.mark.parametrize("key", ["BROOMVA_ROOT", "KG_ROOT"])
     def test_explicit_override_beats_the_cwd_checkout(self, tmp_path, key):

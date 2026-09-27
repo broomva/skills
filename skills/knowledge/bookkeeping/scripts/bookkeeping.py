@@ -24,6 +24,7 @@ import http.client
 import json
 import os
 import re
+import unicodedata
 import shutil
 import subprocess
 import sys
@@ -104,13 +105,33 @@ def _read_knowledge_block(policy):
     return kn if isinstance(kn, dict) else {}
 
 
+def _is_git_toplevel(d):
+    """`d/.git` is a git dir (has HEAD), or a worktree/submodule `.git` FILE
+    whose `gitdir:` target has HEAD. Any other `.git` is not a checkout."""
+    g = d / ".git"
+    try:
+        if g.is_dir():
+            return (g / "HEAD").is_file()
+        if not g.is_file():
+            return False
+        first = g.read_text(errors="replace").split("\n", 1)[0].strip()
+    except OSError:
+        return False
+    if not first.startswith("gitdir:"):
+        return False
+    target = Path(first[len("gitdir:"):].strip()).expanduser()
+    if not target.is_absolute():
+        target = d / target
+    return (target / "HEAD").is_file()
+
+
 def _enclosing_knowledge_checkout(start):
     """Nearest ancestor of `start` (inclusive) that is a git toplevel holding
     research/entities, else None. A filesystem walk, not `git rev-parse`: no
     subprocess at import time, and a worktree's `.git` is a file."""
     start = Path(start).resolve()
     for d in (start, *start.parents):
-        if (d / ".git").exists() and (d / "research" / "entities").is_dir():
+        if (d / "research" / "entities").is_dir() and _is_git_toplevel(d):
             return d
     return None
 
@@ -1234,7 +1255,11 @@ def is_entity_shaped_slug(slug: str) -> bool:
 #   2. `{1,5}` — the `{1,3}` cap truncated long titles into fragments
 #      ("The Singularity Is Not Near" → `the-singularity-is-not`). The shape
 #      gate above, not an arbitrary word cap, is what rejects fragments now.
-_TITLECASE_RUN_RE = re.compile(r"(?<![-\w])([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,5})(?![-\w])")
+#   3. `[ \t]+`, not `\s+` — a run never crosses a line break (BRO-2614). With
+#      `\s+`, Format-2's "Items\n\nVerified against..." minted `items-verified`:
+#      a heading glued to the next line's first word, which then grounds itself
+#      because its head noun IS the claim's first word.
+_TITLECASE_RUN_RE = re.compile(r"(?<![-\w])([A-Z][a-z]+(?:[ \t]+[A-Z][a-z]+){1,5})(?![-\w])")
 
 # How many Title-Case runs to consider per item body. Bounded on purpose: the
 # gate must REDUCE what reaches disk, never widen it.
@@ -2568,7 +2593,8 @@ def _frontmatter_value(text: str, key: str) -> object:
 # ── Grounding floor (promotion stage, BRO-2614) ───────────────────────────────
 #
 # The per-axis floor that the Nous (n, s, r) axes cannot provide. Measured on
-# workspace#789 (2026-09-27), where 12 of 14 new entities were junk:
+# workspace#789 (2026-09-27): 13 of its 14 new entities were auto-promoted and
+# all 13 were junk as written (review dropped 12, rewrote the 13th):
 #
 #   - The (n, s, r) scores are NOTE-level. Every item of a note inherits the
 #     note's density, so the kept person/beata-halassy and the junk
@@ -2591,19 +2617,23 @@ def _frontmatter_value(text: str, key: str) -> object:
 #      noun (the slug's last content token: the surname of a person, the head
 #      of a noun phrase — "jev-judge" is grounded by "judge", not by "jev");
 #   0  otherwise.
+# The floor is NECESSARY, not sufficient: a head noun can recur by accident
+# ("design-review" / "we review the choices"), so a grounded page still goes on
+# to the coherence gate. It only removes pages whose claim cannot be about them.
+#
 # GROUNDING_FLOOR = 1. Deterministic, local, no transport — so unlike the
 # coherence gate below it cannot fail open. It runs first, so a refused page
 # never costs a coherence call.
 #
 # Measured with this code on the promote door's real input (60 raw notes,
-# 135 would-be new pages, 2026-09-27): refuses 122 — 105 of the 114 the
-# coherence gate rejects, and 17 of its 21 accepts, of which a hand read finds
+# 134 would-be new pages, 2026-09-27): refuses 122 — 105 of the 114 the
+# coherence gate rejects, and 17 of its 20 accepts, of which a hand read finds
 # ~3 arguably legitimate (system-initiative, freepik-company, long-proof); the
 # rest are junk the coherence gate let through ("Verified against the paper."
 # as recurrent-breast-cancer).
 # NOT a page-quality rule: hand-written claims legitimately omit the title
-# (a person page reads "Managing Director of ..."), and 540 of 1074
-# hand-authored pages (50.3%) would fail it. It applies only where the claim is DERIVED from an
+# (a person page reads "Managing Director of ..."), and 595 of 1074
+# hand-authored pages (55.4%) would fail it. It applies only where the claim is DERIVED from an
 # item, i.e. the new-page path of promote_item.
 
 GROUNDING_FLOOR = 1
@@ -2616,11 +2646,16 @@ _GROUNDING_NONCONTENT = _SLUG_LEAD_STOPWORDS | _SLUG_TRAIL_STOPWORDS | frozenset
 })
 
 grounding_refused = 0
+# (type, slug) refused this run — the caller-side twin of
+# _coherence_rejected_keys: in dry-run promote_item returns None for a refusal
+# AND for a would-be create, so callers must ask which it was.
+_grounding_refused_keys: set[tuple[str, str]] = set()
 
 
 def reset_grounding_run_state() -> None:
     global grounding_refused
     grounding_refused = 0
+    _grounding_refused_keys.clear()
 
 
 def grounding_stats() -> dict:
@@ -2628,14 +2663,21 @@ def grounding_stats() -> dict:
 
 
 def _grounding_words(text: str) -> list[str]:
-    return re.sub(r"[^a-z0-9]+", " ", (text or "").lower()).split()
+    # Accents fold (Núñez ~ nunez): slugs are ASCII, prose often is not.
+    folded = unicodedata.normalize("NFKD", (text or "").casefold())
+    folded = "".join(c for c in folded if not unicodedata.combining(c))
+    return re.sub(r"[^a-z0-9]+", " ", folded).split()
 
 
 def _grounding_stem(token: str) -> str:
-    """Plural-folded 5-char prefix: keys~key, programmers~programming."""
-    if len(token) > 3 and token.endswith("s") and not token.endswith("ss"):
-        token = token[:-1]
-    return token[:5]
+    """Exact token, plural-folded only: keys~key, policies~policy. A prefix
+    stem would make corporal~corporate — identity needs the whole word.
+    (A possessive needs no rule: "Halassy's" tokenizes to halassy + s.)"""
+    if len(token) > 4 and token.endswith("ies"):
+        return token[:-3] + "y"
+    if len(token) > 3 and token.endswith("s") and not token.endswith(("ss", "us", "is")):
+        return token[:-1]
+    return token
 
 
 def _grounding_tokens(words: "list[str]") -> list[str]:
@@ -2854,6 +2896,16 @@ def coherence_rejected_slug(slug: str, item: "RawItem | None" = None) -> bool:
     if item is not None:
         return (_infer_entity_type(slug, item), slug) in _coherence_rejected_keys
     return any(s == slug for _t, s in _coherence_rejected_keys)
+
+
+def promotion_refused_slug(slug: str, item: "RawItem | None" = None) -> bool:
+    """True if EITHER promotion gate (grounding floor, coherence) refused
+    `slug` this run. Same type scoping as `coherence_rejected_slug`."""
+    if coherence_rejected_slug(slug, item):
+        return True
+    if item is not None:
+        return (_infer_entity_type(slug, item), slug) in _grounding_refused_keys
+    return any(s == slug for _t, s in _grounding_refused_keys)
 
 
 def coherence_gate_enabled() -> bool:
@@ -3132,7 +3184,7 @@ def promote_item(
     entity-shaped; no derivable core_claim; an existing page that needed no
     substantive update; or the coherence gate quarantined the page (fresh
     verdict, or remembered from an earlier run). A caller that must tell a
-    dry-run "would create" from a gate refusal asks `coherence_rejected_slug`.
+    dry-run "would create" from a gate refusal asks `promotion_refused_slug`.
     """
     global grounding_refused
     if entity_type is None:
@@ -3240,6 +3292,7 @@ def promote_item(
     heading = _item_section_heading(scored.item)
     if not passes_grounding_floor(entity_slug, core_claim, heading):
         grounding_refused += 1
+        _grounding_refused_keys.add((entity_type, entity_slug))
         print(f"  [promote] SKIP (grounding < {GROUNDING_FLOOR}: the derived claim "
               f"does not name it): {entity_type}/{entity_slug} — {core_claim[:80]!r}")
         return None
@@ -4906,7 +4959,7 @@ def run_pipeline(
         for slug, is_existing in resolved[:1]:
             path = promote_item(scored, slug, dry_run=dry_run, verbose=verbose)
             # Type-scoped through the inference promote_item itself applied.
-            refused = path is None and coherence_rejected_slug(slug, scored.item)
+            refused = path is None and promotion_refused_slug(slug, scored.item)
             if is_existing:
                 # promote_item returns the path only when a substantive
                 # update was written (or, in dry-run, would be written);
@@ -5233,7 +5286,7 @@ def cmd_promote(args: argparse.Namespace) -> None:
         for slug, is_existing in resolved[:1]:
             # NOT `path`: that name is the source file, used in the summary.
             written = promote_item(scored, slug, dry_run=args.dry_run, verbose=True)
-            refused = written is None and coherence_rejected_slug(slug, scored.item)
+            refused = written is None and promotion_refused_slug(slug, scored.item)
             # Register the slug only if a page now exists (or would, in
             # dry-run): a skipped or gate-refused slug registered here would
             # make a later candidate resolve to a page that is not on disk.

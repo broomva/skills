@@ -133,6 +133,19 @@ def test_head_noun_not_modifier_grounds():
 def test_plural_and_possessive_fold():
     assert entity_grounding("agent-key", "Three classes of Agent Keys.", "") == 1
     assert entity_grounding("beata-halassy", "Halassy's tumour shrank.", "") == 1
+    assert entity_grounding("data-policy", "Two policies changed.", "") == 1
+
+
+def test_identity_needs_the_whole_word_not_a_prefix():
+    # a 5-char prefix stem made corporal ~ corporate (P20 round 1, Codex)
+    assert entity_grounding("corporal-punishment", "The policy changed.",
+                            "Corporate Punishment") == 0
+    assert entity_grounding("corporal-punishment", "Corporate punishment rose.", "") == 1
+    assert entity_grounding("programming-language", "Programmers use it.", "") == 0
+
+
+def test_accents_fold():
+    assert entity_grounding("maria-nunez", "Núñez published the result.", "") == 1
 
 
 def test_number_words_do_not_ground():
@@ -224,3 +237,67 @@ def test_format2_ingest_records_section_heading():
     items = bookkeeping._ingest_markdown(text, "2026-09-27-t-raw", "research")
     assert [i.metadata.get(bookkeeping._SECTION_HEADING_METADATA_KEY) for i in items] \
         == ["Beata Halassy", "Items"]
+
+
+# ── Callers must not count a refusal as a promotion (P20 round 1, Codex) ─────
+
+REFUSED_NOTE = (
+    "---\nsource: checkit\n---\n\n"
+    "# Items\n\n"
+    "Verified against the paper. The case report by Beata Halassy gives tumour "
+    "volumes of 2.47 and 0.91 cm3 (63%), measured on 2026-09-15 before and after "
+    "the neoadjuvant course, per https://doi.org/10.3390/vaccines12091007.\n"
+    "Second line of the section.\nThird line of the section.\n"
+)
+GROUNDED_NOTE = REFUSED_NOTE.replace(
+    "Verified against the paper. The case report by Beata Halassy",
+    "Beata Halassy treated her own recurrent cancer with a virus. The case report")
+
+
+def _pipeline(door, tmp_path, monkeypatch, text):
+    notes = tmp_path / "research" / "notes"
+    notes.mkdir(parents=True, exist_ok=True)
+    for old in notes.glob("*.md"):
+        old.unlink()
+    config = tmp_path / "config"
+    monkeypatch.setattr(bookkeeping, "NOTES_DIR", notes)
+    monkeypatch.setattr(bookkeeping, "CONFIG_DIR", config)
+    monkeypatch.setattr(bookkeeping, "RUN_LOG", config / "run-log.jsonl")
+    monkeypatch.setattr(bookkeeping, "STATUS_CACHE", config / "status.json")
+    note = notes / "2026-09-27-grounding-raw.md"
+    note.write_text(text)
+    return note
+
+
+def test_title_case_run_never_crosses_a_line_break():
+    items = bookkeeping._ingest_markdown(REFUSED_NOTE.split("---\n", 2)[2],
+                                         "2026-09-27-t-raw", "research")
+    cands = bookkeeping._build_entity_slug_candidates(items[0])
+    assert "items-verified" not in cands     # heading + next line's first word
+    assert "beata-halassy" in cands
+
+
+def test_run_pipeline_dry_run_does_not_count_a_grounding_refusal(
+        door, tmp_path, monkeypatch):
+    _pipeline(door, tmp_path, monkeypatch, REFUSED_NOTE)
+    entry = bookkeeping.run_pipeline(dry_run=True, verbose=False)
+    assert entry["grounding"]["refused"] >= 1
+    assert entry["entities_created"] == 0
+    assert entry["items_promoted"] == 0
+    # Control: the same note, grounded, IS counted as a would-be create.
+    _pipeline(door, tmp_path, monkeypatch, GROUNDED_NOTE)
+    entry = bookkeeping.run_pipeline(dry_run=True, verbose=False)
+    assert entry["grounding"]["refused"] == 0
+    assert entry["entities_created"] >= 1 and entry["items_promoted"] >= 1
+
+
+def test_cmd_promote_dry_run_does_not_count_a_grounding_refusal(
+        door, tmp_path, monkeypatch, capsys):
+    import argparse
+    note = _pipeline(door, tmp_path, monkeypatch, REFUSED_NOTE)
+    bookkeeping.cmd_promote(argparse.Namespace(file=str(note), dry_run=True, verbose=False))
+    assert "Done: 0 items promoted" in capsys.readouterr().out
+    note = _pipeline(door, tmp_path, monkeypatch, GROUNDED_NOTE)
+    bookkeeping.reset_grounding_run_state()
+    bookkeeping.cmd_promote(argparse.Namespace(file=str(note), dry_run=True, verbose=False))
+    assert "Done: 1 items promoted" in capsys.readouterr().out
