@@ -811,6 +811,36 @@ class TestEnvelopeAudit:
         })
         assert any("cannot supersede itself" in e.message for e in errors)
 
+    def test_self_supersession_warns_when_slug_is_absent(self):
+        """The guard must derive the page's own slug from the filename.
+
+        `test_self_supersession_warns` supplies `slug:` in its fixture, so it
+        cannot reach the case production is moving to: the field deleted
+        corpus-wide (workspace#530). Absent the field the guard read None, the
+        `self_slug and ...` condition short-circuited, and the self-reference
+        fell through to entity_lookup() — which resolves, because the file is
+        itself — recording a self-loop as a valid supersession.
+        """
+        errors = _lint_temporal_drift(
+            "current.md",
+            {"supersedes": ["[[current]]"], "revision_link": "ticket://BRO-1"},
+            "",
+            audit_date=AUDIT_DATE,
+            entity_lookup=lambda _slug: {},
+        )
+        assert any("cannot supersede itself" in e.message for e in errors)
+
+    def test_absent_slug_does_not_invent_a_self_supersession(self):
+        """The stem fallback must not make an unrelated supersedes self-match."""
+        errors = _lint_temporal_drift(
+            "current.md",
+            {"supersedes": ["[[something-else]]"], "revision_link": "ticket://BRO-1"},
+            "",
+            audit_date=AUDIT_DATE,
+            entity_lookup=lambda _slug: {},
+        )
+        assert not any("cannot supersede itself" in e.message for e in errors)
+
     def test_supersedes_without_revision_link_warns(self):
         errors = _lint_envelope({"slug": "current", "supersedes": ["[[old]]"]})
         assert "temporal_revision_link" in _fields(errors)

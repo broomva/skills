@@ -1,0 +1,45 @@
+version: "1.0"
+profile: governed
+workspace: broomva-test
+
+ci_watch:
+  enabled: true
+  max_concurrent_prs: 1
+  isolation_tier_map:
+    research: none
+    docs: none
+    code_independent: worktree
+    code_dependent: stacked_branch
+    governance: blocked
+
+ci_heal:
+  enabled: true
+  max_attempts: 5
+  stability_floor: 0.3
+  classified_failure_types: [lint, format, test_flaky, codegen_drift, import_missing]
+  escalation_channel:
+    linear_team: BRO
+    linear_label: ci-heal-escalation
+    notify_hook: skills/p9/scripts/p9-escalate-notify.sh
+
+auto_merge:
+  enabled: true
+  merge_method: squash
+  delete_branch: true
+  default_action: notify
+  rules:
+    - path_touched: secrets/
+      action: require_human
+  gates:
+    review_bots: [some-lint-bot]
+    p20:
+      pass_score: 7
+      max_loc: 200
+      max_files: 1
+      public_api_paths: ["schemas/**"]
+    governance:
+      paths: [CLAUDE.md, AGENTS.md, METALAYER.md, .control/policy.yaml, .control/rcs-parameters.toml]
+      required_strata: [A, B, C]
+      required_checks: [stability-check]
+      l3_max_per_window: 1
+      l3_window_seconds: 86400

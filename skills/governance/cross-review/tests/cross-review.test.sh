@@ -354,6 +354,81 @@ else
     fail "T15: codex sandboxed" "Strata A does not pin a read-only sandbox"
 fi
 
+# ── T27-T28: the printed Strata A command, run exactly as printed ─────────
+# A stub `codex` records its argv and stdin, so the command an agent would copy
+# really executes without contacting anything. It runs from a directory that is
+# not a git repo, against a copy of the skill installed under a path with a
+# space, so an unquoted rubric path shows up as a broken prompt. The only edit
+# to the printed text is the stdin path: the real /tmp/cross-review-diff.patch
+# may belong to a review in progress. No trap: T17's would replace it.
+CX_TMP=$(mktemp -d)
+CX_SKILL="$CX_TMP/skill dir/cross-review"
+mkdir -p "$CX_TMP/skill dir" "$CX_TMP/bin" "$CX_TMP/cwd"
+cp -R "$REPO" "$CX_SKILL"
+cat > "$CX_TMP/bin/codex" <<'STUB'
+#!/usr/bin/env bash
+printf '%s\0' "$@" > "$CODEX_STUB_ARGV"
+cat > "$CODEX_STUB_STDIN"
+STUB
+chmod +x "$CX_TMP/bin/codex"
+printf 'diff --git a/probe b/probe\n+stdin-marker-5821\n' > "$CX_TMP/diff.patch"
+
+# Runs pre-push's step-2 command as printed; fills CX_ARGV from the stub.
+# $1 is CROSS_REVIEW_CODEX_MODEL ('' = unset). The command's own exit status
+# is ignored on purpose: an injected second command may fail after the stub ran.
+run_printed_codex() {
+    local cmd a
+    CX_ARGV=()
+    rm -f "$CX_TMP/argv" "$CX_TMP/stdin"
+    cmd=$(PATH="$CX_TMP/bin:$PATH" CROSS_REVIEW_CODEX_MODEL="$1" FORCE_GATE=1 \
+            bash "$CX_SKILL/scripts/cross-review.sh" pre-push --diff-base=HEAD 2>/dev/null \
+          | sed -n '/^ *codex exec -c/,/cross-review-diff\.patch$/p' | sed 's/^ *//')
+    cmd=${cmd//\/tmp\/cross-review-diff.patch/$CX_TMP/diff.patch}
+    [ -n "$cmd" ] || return 0
+    (cd "$CX_TMP/cwd" && PATH="$CX_TMP/bin:$PATH" CODEX_STUB_ARGV="$CX_TMP/argv" \
+        CODEX_STUB_STDIN="$CX_TMP/stdin" bash -c "$cmd") >/dev/null 2>&1
+    [ -f "$CX_TMP/argv" ] || return 0
+    while IFS= read -r -d '' a; do CX_ARGV+=("$a"); done < "$CX_TMP/argv"
+}
+
+echo "T27. a model value containing a space or ';' stays one argument"
+CANARY="$CX_TMP/cwd/canary"
+MODEL27="gpt-x; touch $CANARY"
+run_printed_codex "$MODEL27"
+M27=""
+for ((i = 0; i < ${#CX_ARGV[@]}; i++)); do
+    [ "${CX_ARGV[$i]}" = "-m" ] && M27="${CX_ARGV[$((i + 1))]:-}"
+done
+if [ ! -e "$CANARY" ] && [ "$M27" = "$MODEL27" ]; then
+    ok "T27: model value is quoted"
+else
+    fail "T27: model value is quoted" "canary created: $([ -e "$CANARY" ] && echo yes || echo no); -m received: '$M27'"
+fi
+
+echo "T28. the Codex prompt is the Strata-A preamble, then the rubric"
+PREAMBLE=$(awk '/^## Strata-A specific/ {f = 1; next} /^## / {f = 0} f && /^> / {sub(/^> /, ""); print}' "$REPO/references/rubric.md")
+run_printed_codex ""
+N28=${#CX_ARGV[@]}
+PROMPT28=""; FLAGS28=""
+if [ "$N28" -gt 0 ]; then
+    PROMPT28="${CX_ARGV[$((N28 - 1))]}"
+    for ((i = 0; i < N28 - 1; i++)); do FLAGS28="$FLAGS28 ${CX_ARGV[$i]}"; done
+fi
+case "$PROMPT28" in
+    "$PREAMBLE"*) STARTS28=1 ;;
+    *) STARTS28=0 ;;
+esac
+if [ -n "$PREAMBLE" ] && [ "$STARTS28" = "1" ] \
+   && printf '%s\n' "$PROMPT28" | grep -q '^# Anti-Slop Rubric' \
+   && [ "$FLAGS28" = " exec -c sandbox_mode=read-only" ] \
+   && grep -q 'stdin-marker-5821' "$CX_TMP/stdin" 2>/dev/null; then
+    ok "T28: prompt composed preamble-first, diff on stdin"
+else
+    fail "T28: prompt composed preamble-first, diff on stdin" \
+        "flags:'$FLAGS28' first line:'$(printf '%s\n' "$PROMPT28" | head -1)' preamble:'$PREAMBLE'"
+fi
+rm -rf "$CX_TMP"
+
 # ── Summary ───────────────────────────────────────────────────────────────
 # ── T16: --max-rounds is retired and fails LOUDLY ─────────────────────────
 # The flag was accepted-and-ignored for its whole life. Silently continuing to
