@@ -309,11 +309,11 @@ moved base blocks, and so does a PR retargeted to another base in between.
 | `independent_check` | a check that is neither a bot nor an aggregate (`Merge Gate`, which passes vacuously when nothing else ran) ran and passed, **or** a P20 pass covers the PR | FAIL |
 | `governance_strata` | governance-class: the verdict lists strata A, B and C | FAIL |
 | `governance_checks` | governance-class: every run of each required check (default `stability-check`) passed; skipped or absent fails | FAIL |
-| `l3_rate` | governance-class: fewer than one governance commit on base inside the τ_a₃ window (≥ 1 day) | FAIL |
+| `l3_rate` | governance-class: no governance change LANDED on base inside the τ_a₃ window (≥ 1 day). Each commit that reached base in the window (a merge, squash or rebase is dated when it landed) is diffed against its first parent, so an old-dated governance commit merged by a human still counts. | FAIL |
 
 **Always-review paths.** These always need a P20 pass, whatever the change's
-size: `.github/workflows/**`, `.githooks/**`, `.claude/settings.json` and
-`.control/preauth.yaml`. A `pull_request` run executes the PR's own workflow
+size: `.github/workflows/**`, `.githooks/**`, `.claude/**` (settings, local
+settings, agents, commands, hooks) and `.control/preauth.yaml`. A `pull_request` run executes the PR's own workflow
 files, so a one-line edit to the aggregate check would otherwise pass itself. A
 policy's `p20.public_api_paths` adds to this list and cannot remove from it.
 
@@ -374,9 +374,12 @@ it can stop a merge but never enable one.
 
 - an unknown key in the `auto_merge`, `gates`, `p20` or `governance` blocks, since a
   typo would otherwise run on the default;
-- a flag that is not a real boolean (`enabled: "false"` would otherwise read as
-  true). Both YAML loaders reject it, because p9's minimal loader keeps a quoted
-  scalar as a string, as PyYAML does. CI runs the minimal one;
+- a flag that is not a real boolean, here and in `ci_watch`/`ci_heal`
+  (`enabled: "false"` would otherwise read as true). A quoted value is a string
+  in both YAML loaders, so both reject it. Unquoted spellings differ (PyYAML
+  reads `yes`/`on` as true, the minimal loader reads `tRUE` as true), but each
+  loader rejects what it does not read as a boolean, so neither weakens a gate.
+  CI runs the minimal one;
 - `pass_score < 7`, `max_loc > 200` or `max_files > 1`;
 - governance `paths` or `required_checks` that drop an L3 path or
   `stability-check`;
@@ -384,7 +387,8 @@ it can stop a merge but never enable one.
 - an L3 budget looser than one commit per day;
 - `default_action: auto` alongside `gates`, because a p9 that predates gates
   reads only `default_action` and would merge everything ungated;
-- `action: auto` rules alongside `gates`, where rules may only block.
+- `action: auto` rules alongside `gates`, where rules may only block. Path rules
+  match case-folded, like the gates.
 
 `gates:` with no value means gated with the defaults, under both YAML loaders.
 

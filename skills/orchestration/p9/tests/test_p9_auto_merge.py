@@ -180,6 +180,9 @@ def _gh_pr(cmd, *, branch, files, merge_state="CLEAN", head=HEAD, verdict_head=H
     if cmd[:3] == ["gh", "api", "--paginate"]:
         return _FakeRun(stdout="".join(
             f"{f}\t{renamed.get(f, '')}\tmodified\t5\n" for f in files))
+    if cmd[:3] == ["gh", "pr", "view"] and cmd[-1] == "headRefOid":
+        # the listing's own re-read of the head (it must match the listed head)
+        return _FakeRun(stdout=json.dumps({"headRefOid": head}))
     if cmd[:3] == ["gh", "pr", "view"]:
         v = {"mergeable": "MERGEABLE", "mergeStateStatus": merge_state,
              "reviewDecision": ""}

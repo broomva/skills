@@ -343,6 +343,8 @@ def _fake_gh(view, *, required=None, all_checks=None, calls, base_policy=None,
             return _Run(json.dumps({"baseRefName": view["baseRefName"]}))
         if cmd[:3] == ["gh", "pr", "view"]:
             return _Run(json.dumps(capped))
+        if cmd[:3] == ["gh", "api", "--paginate"] and any("/commits" in c for c in cmd):
+            return _Run("")  # no commits landed on base inside the L3 window
         if cmd[:3] == ["gh", "api", "--paginate"]:
             return _Run("".join(
                 f"{p}\t{renamed.get(p, '')}\tmodified\t{0 if p in binary else 5}\n"
@@ -701,6 +703,8 @@ class TestHeadConsistency:
             if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
                 calls.append(cmd)
                 return _Run(json.dumps({"branch": "fix/anything", "head": OLD, "changed": 2}))
+            if cmd[:3] == ["gh", "pr", "view"] and cmd[-1] == "headRefOid":
+                return _Run(json.dumps({"headRefOid": OLD}))  # the listing is self-consistent
             return inner(cmd, *a, **k)
         monkeypatch.setattr(p9.subprocess, "run", run)
         assert p9.main(["auto-merge", "732", "--repo", "broomva/test"]) == \
@@ -711,22 +715,51 @@ class TestHeadConsistency:
 class TestGathering:
     """The half of the gate that talks to GitHub, run against the fake."""
 
-    def test_l3_counter_counts_distinct_governance_commits(self, p9, monkeypatch):
+    def _landings(self, p9, monkeypatch, rows, compare):
         seen = []
 
         def run(cmd, *a, **k):
             seen.append(cmd)
-            path = next(c.split("=", 1)[1] for c in cmd if c.startswith("path="))
-            shas = {"CLAUDE.md": ["s1"], "AGENTS.md": ["s1", "s2"]}.get(path, [])
-            return _Run(json.dumps([{"sha": x} for x in shas]))
+            if cmd[:3] == ["gh", "api", "--paginate"]:
+                return rows if isinstance(rows, _Run) else _Run(rows)
+            basehead = next(c for c in cmd if "/compare/" in c).split("/compare/")[1]
+            return compare(basehead)
         monkeypatch.setattr(p9.subprocess, "run", run)
-        tier = p9.GovernanceTier()
-        assert p9._count_governance_commits("broomva/test", "main", tier) == 2
-        assert all("sha=main" in c for c in seen)
+        return p9._governance_landings_in_window("broomva/test", BASE, p9.GovernanceTier()), seen
 
-    def test_l3_counter_unreadable_is_none(self, p9, monkeypatch):
-        monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: _Run(returncode=1))
-        assert p9._count_governance_commits("broomva/test", "main", p9.GovernanceTier()) is None
+    def _files(self, *paths):
+        return _Run(json.dumps({"status": "ahead", "files": [{"filename": x} for x in paths]}))
+
+    def test_a_merge_commit_landing_an_old_governance_change_counts(self, p9, monkeypatch):
+        # The merge commit M is dated when it landed; its branch commit that
+        # edited AGENTS.md is days older. Diffing M against its first parent
+        # sees the change; filtering commits by date and path did not.
+        got, seen = self._landings(p9, monkeypatch, "M\tP1\nS\tP0\n",
+                                   lambda bh: self._files("AGENTS.md", "x.py") if bh == "P1...M"
+                                   else self._files("docs/a.md"))
+        assert got == 1
+        listing = " ".join(seen[0])
+        assert f"sha={BASE}" in listing and "path=" not in listing
+
+    def test_no_governance_landing_is_zero(self, p9, monkeypatch):
+        got, _ = self._landings(p9, monkeypatch, "M\tP1\nS\tP0\n",
+                                lambda bh: self._files("docs/a.md"))
+        assert got == 0
+
+    def test_an_empty_window_is_zero(self, p9, monkeypatch):
+        assert self._landings(p9, monkeypatch, "", lambda bh: self._files())[0] == 0
+
+    @pytest.mark.parametrize("rows,compare", [
+        (_Run(returncode=1), None),                                  # listing failed
+        ("M\t\n", None),                                            # no parent: root/unreadable
+        ("M\tP1\n", lambda bh: _Run(returncode=1)),                  # compare failed
+        ("M\tP1\n", lambda bh: _Run(json.dumps({"status": "ahead"}))),  # no files key
+        ("M\tP1\n", lambda bh: _Run(json.dumps({"status": "ahead",
+                                                "files": [{"filename": "z"}] * 300}))),
+    ])
+    def test_unknown_landings_are_none(self, p9, monkeypatch, rows, compare):
+        got, _ = self._landings(p9, monkeypatch, rows, compare or (lambda bh: self._files()))
+        assert got is None
 
     def test_governance_pr_merges_end_to_end_only_with_every_strict_condition(
             self, p9, monkeypatch):
@@ -907,7 +940,8 @@ class TestRoundTwoFindings:
 
         def run(cmd, *a, **k):
             if cmd[:3] == ["gh", "pr", "view"]:
-                return _Run(json.dumps({"branch": "b", "head": HEAD, "changed": 4}))
+                return _Run(json.dumps({"branch": "b", "head": HEAD, "changed": 4,
+                                        "headRefOid": HEAD}))
             return _Run(rows)
         monkeypatch.setattr(p9.subprocess, "run", run)
         listing = p9._gh_pr_listing(770, "broomva/test")
@@ -985,3 +1019,81 @@ class TestRoundThreeFindings:
             seen.append(cmd), _Run(json.dumps({"commit": {"sha": BASE}})))[1])
         assert p9._gh_branch_sha("broomva/test", "main#x") == BASE
         assert seen[0][-1] == "repos/broomva/test/branches/main%23x"
+
+
+class TestRoundFourFindings:
+    """P20 round 4 (Stratum C): threads on a truncated page, settings.local,
+    case-folded rules, ci flags, and a head that moves mid-listing."""
+
+    def _threads(self, p9, monkeypatch, total, open_on_page_one):
+        nodes = [{"isResolved": i >= open_on_page_one} for i in range(100)]
+        payload = {"data": {"repository": {"pullRequest": {"reviewThreads": {
+            "totalCount": total, "nodes": nodes}}}}}
+        monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: _Run(json.dumps(payload)))
+        return p9._unresolved_review_threads(1, "broomva/test")
+
+    def test_open_threads_on_a_truncated_page_are_still_counted(self, p9, monkeypatch):
+        # The legacy merge-ready verdict blocks only on a positive count; it
+        # must still see the 10 open threads on page one of 150.
+        assert self._threads(p9, monkeypatch, 150, 10) == 10
+
+    def test_a_truncated_page_with_none_open_is_unknown(self, p9, monkeypatch):
+        assert self._threads(p9, monkeypatch, 150, 0) == -1
+
+    @pytest.mark.parametrize("path", [".claude/settings.local.json", ".claude/agents/x.md"])
+    def test_everything_under_dot_claude_needs_p20(self, p9, gates, path):
+        assert "p20" in _failed(p9, gates, _good(p9, files=[path], additions=1, deletions=0))
+
+    def test_blocking_rules_match_case_folded(self, p9):
+        legacy = p9.load_policy(_FIXTURES / "policy-with-auto-merge.yaml").auto_merge
+        act, _ = p9.match_auto_merge_action(legacy, branch="docs/x", paths_touched=["claude.md"])
+        assert act == "require_human"
+        gated = p9.load_policy(_GATED).auto_merge
+        probe = dataclasses.replace(gated, default_action="auto")
+        act, _ = p9.match_auto_merge_action(probe, branch="fix/x", paths_touched=["SECRETS/k"])
+        assert act == "require_human"
+
+    @pytest.mark.parametrize("block", ["ci_watch", "ci_heal"])
+    def test_quoted_ci_flags_are_rejected(self, p9, block):
+        text = _HEADER.replace(f"{block}:\n  enabled: true", f'{block}:\n  enabled: "false"')
+        assert text != _HEADER
+        with pytest.raises(p9.PolicyError):
+            p9._parse_policy(p9._minimal_yaml_load(text))
+
+    def test_head_moving_while_files_are_listed_refuses(self, p9, monkeypatch):
+        def run(cmd, *a, **k):
+            if cmd[:3] == ["gh", "pr", "view"] and "-q" in cmd:
+                return _Run(json.dumps({"branch": "b", "head": HEAD, "changed": 1}))
+            if cmd[:3] == ["gh", "pr", "view"]:
+                return _Run(json.dumps({"headRefOid": OLD}))
+            return _Run("src/a.py\t\tmodified\t3\n")
+        monkeypatch.setattr(p9.subprocess, "run", run)
+        with pytest.raises(p9.P9Error):
+            p9._gh_pr_listing(790, "broomva/test")
+
+    def test_reviewed_files_compare_against_the_pinned_base(self, p9, monkeypatch, tmp_path):
+        monkeypatch.delenv("BROOMVA_P9_POLICY", raising=False)
+        monkeypatch.chdir(tmp_path)
+        calls = []
+        view = _view(comments=[_comment(_marker(sha=OLD))])
+        monkeypatch.setattr(p9.subprocess, "run", _fake_gh(
+            view, calls=calls, base_policy=_GATED.read_text(), compare_files=["docs/z.md"]))
+        p9.decide_auto_merge(p9.load_policy(_GATED).auto_merge, pr=791, repo="broomva/test",
+                             listing=_listing(p9, view))
+        flat = [" ".join(c) for c in calls]
+        assert any(f"compare/{BASE}...{OLD}" in c for c in flat)
+        assert not any(f"compare/main...{OLD}" in c for c in flat)
+
+    def test_the_require_human_prepass_is_case_folded(self, p9, tmp_path):
+        # An auto branch rule listed BEFORE the governance path rule: only the
+        # pre-pass stops `claude.md` from riding the branch rule to `auto`.
+        f = tmp_path / "order.yaml"
+        f.write_text(_HEADER + 'auto_merge:\n  enabled: true\n  rules:\n'
+                     '    - branch_pattern: "docs/*"\n      action: auto\n'
+                     '    - path_touched: CLAUDE.md\n      action: require_human\n',
+                     encoding="utf-8")
+        am = p9.load_policy(f).auto_merge
+        act, _ = p9.match_auto_merge_action(am, branch="docs/x", paths_touched=["claude.md"])
+        assert act == "require_human"
+        act, _ = p9.match_auto_merge_action(am, branch="docs/x", paths_touched=["docs/a.md"])
+        assert act == "auto"

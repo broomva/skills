@@ -787,7 +787,7 @@ _DEFAULT_GOVERNANCE_PATHS = ("CLAUDE.md", "AGENTS.md", "METALAYER.md",
 # could otherwise rewrite for itself. A `pull_request` run executes the PR's OWN
 # workflow files, so a one-line edit to the aggregate check passes itself.
 _ALWAYS_REVIEW_PATHS = (".github/workflows/**", ".githooks/**",
-                        ".claude/settings.json", ".control/preauth.yaml")
+                        ".claude/**", ".control/preauth.yaml")
 # Checks that aggregate other checks. An aggregate passes vacuously when no
 # other check ran, so it cannot be the only thing that vouches for a PR.
 _DEFAULT_AGGREGATE_CHECKS = ("Merge Gate",)
@@ -1182,7 +1182,7 @@ def _parse_policy(data: dict[str, Any]) -> PolicyConfig:
         )
     return PolicyConfig(
         ci_watch=CIWatchPolicy(
-            enabled=bool(cw_raw.get("enabled", True)),
+            enabled=_bool(cw_raw.get("enabled", True), "ci_watch.enabled"),
             max_concurrent_prs=int(cw_raw.get("max_concurrent_prs", 1)),
             max_concurrent_prs_scope=scope,
             isolation_tier_map=IsolationTierMap(
@@ -1194,7 +1194,7 @@ def _parse_policy(data: dict[str, Any]) -> PolicyConfig:
             ),
         ),
         ci_heal=CIHealPolicy(
-            enabled=bool(ch_raw.get("enabled", True)),
+            enabled=_bool(ch_raw.get("enabled", True), "ci_heal.enabled"),
             max_attempts=int(ch_raw.get("max_attempts", 5)),
             stability_floor=float(ch_raw.get("stability_floor", 0.3)),
             classified_failure_types=tuple(str(t) for t in types_raw),
@@ -1437,7 +1437,7 @@ def match_auto_merge_action(
     for rule in policy.rules:
         if rule.path_touched and rule.action == "require_human":
             for p in paths:
-                if rule.path_touched in p:
+                if rule.path_touched.lower() in p.lower():
                     return ("require_human",
                             f"path rule blocks: {rule.path_touched!r} in {p}")
 
@@ -1445,7 +1445,7 @@ def match_auto_merge_action(
     for rule in policy.rules:
         if rule.path_touched:
             for p in paths:
-                if rule.path_touched in p:
+                if rule.path_touched.lower() in p.lower():
                     return (rule.action,
                             f"path rule matched: {rule.path_touched!r} in {p}")
         if rule.branch_pattern and fnmatch.fnmatch(branch, rule.branch_pattern):
@@ -1813,35 +1813,50 @@ def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
         f.marker_is_ancestor = None if status is None else status == "ahead"
         f.marker_delta_files = delta
         if f.base:
-            _, f.reviewed_files = _compare_files(repo, f"{f.base}...{marker.sha}")
+            _, f.reviewed_files = _compare_files(repo, f"{base_sha or f.base}...{marker.sha}")
 
     allc = _gh_json(["gh", "pr", "checks", str(pr), "--repo", repo,
                      "--json", "name,bucket"], any_rc=True)
     f.all_checks = allc if isinstance(allc, list) else None
     if governance_paths_touched(g, f):
-        f.l3_recent_commits = _count_governance_commits(repo, f.base, g.governance)
+        f.l3_recent_commits = _governance_landings_in_window(
+            repo, base_sha or f.base, g.governance)
     return f
 
 
-def _count_governance_commits(repo: str, base: str, tier: GovernanceTier) -> int | None:
-    """Distinct commits on `base` inside the L3 window that touched a governance
-    path. The L3 budget (one per tau_a3) is enforced HERE, at the moment a
-    governance change lands: CI's stability-check reports the rate but passes."""
-    if not base:
+def _governance_landings_in_window(repo: str, base_ref: str,
+                                   tier: GovernanceTier) -> int | None:
+    """1 if a governance path changed on `base_ref` inside the L3 window, 0 if
+    none did, None if that cannot be told (which the gate reads as FAIL).
+
+    The budget counts LANDINGS, not authored commits. The commits API's `since`
+    filters on each commit's own date, and with a `path` filter it drops merge
+    commits, so a governance commit authored days ago and merged by a human
+    within the window was invisible to it. Instead, walk the commits that
+    reached base inside the window (a merge, a squash or a rebased commit is
+    dated when it landed) and diff each against its first parent, which covers
+    everything a merge brought in. The budget is one per window, so the first
+    hit decides."""
+    if not base_ref:
         return None
     since = (_dt.datetime.now(_dt.timezone.utc)
              - _dt.timedelta(seconds=tier.l3_window_seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    shas: set[str] = set()
-    for path in tier.paths:
-        if any(ch in path for ch in "*?["):
-            return None  # the commits API filters by literal path only
-        data = _gh_json(["gh", "api", "-X", "GET", f"repos/{repo}/commits",
-                         "-f", f"sha={base}", "-f", f"since={since}",
-                         "-f", f"path={path}", "-f", "per_page=100"])
-        if not isinstance(data, list):
+    rows = _gh_paginated_list([
+        "gh", "api", "--paginate", "-X", "GET", f"repos/{repo}/commits",
+        "-f", f"sha={base_ref}", "-f", f"since={since}", "-f", "per_page=100",
+        "--jq", '.[] | [.sha, (.parents[0].sha // "")] | @tsv'])
+    if rows is None:
+        return None
+    for row in rows:
+        sha, _, parent = row.partition("\t")
+        if not sha or not parent:
+            return None  # a root commit or an unreadable row: cannot tell
+        _, files = _compare_files(repo, f"{parent}...{sha}")
+        if files is None or len(files) >= _COMPARE_FILE_CAP:
             return None
-        shas.update(c.get("sha") for c in data if c.get("sha"))
-    return len(shas)
+        if any(_path_matches(p, tier.paths) for p in files):
+            return 1
+    return 0
 
 
 def authoritative_auto_merge_policy(
@@ -3210,8 +3225,10 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
          Gated policy: re-verify every gate against GitHub NOW (the
          MERGE_READY row is history, and `--no-verify` can write it) → auto
          iff all pass and no blocking rule matches.
-      6. auto → `gh pr merge` pinned to the verified head SHA (or print the plan
-         in --dry-run), transition MERGE_READY → MERGED, return 0.
+      6. auto → re-read the base: if it moved off the pinned commit, or the PR
+         was retargeted, block. Otherwise `gh pr merge` pinned to the verified
+         head SHA (or print the plan in --dry-run), transition MERGE_READY →
+         MERGED, return 0.
          Otherwise → idempotent self-transition recording every failed gate,
          return 7 (EXIT_AUTO_MERGE_BLOCKED).
     """
@@ -3309,8 +3326,9 @@ def decide_auto_merge(local: AutoMergePolicy, *, pr: int, repo: str,
                       listing: PRListing) -> dict:
     """One decision for both `auto-merge` and `gate-check`.
 
-    Returns {action, reason, source, policy, gates, head_sha}; `gates` is a
-    list of {gate, ok, reason} dicts in gated mode and [] in legacy mode.
+    Returns {action, reason, source, policy, gates, head_sha, base, base_sha};
+    `gates` is a list of {gate, ok, reason} dicts in gated mode and [] in
+    legacy mode, and base/base_sha are set only on the gated path.
     """
     branch, paths = listing.branch, list(listing.paths)
     source = "local policy"
@@ -3331,7 +3349,7 @@ def decide_auto_merge(local: AutoMergePolicy, *, pr: int, repo: str,
                 "policy": None, "gates": [], "head_sha": None, "base": None, "base_sha": None}
     if not am.enabled:
         return {"action": "notify", "source": source, "policy": am, "gates": [],
-                "head_sha": None,
+                "head_sha": None, "base": None, "base_sha": None,
                 "reason": f"auto_merge.enabled=false in the governing policy ({source})"}
 
     if am.gates is None:
@@ -3508,6 +3526,11 @@ def _gh_pr_listing(pr: int, repo: str) -> PRListing:
         raise P9Error(f"PR #{pr}: could not list all changed files "
                       f"(got {len(rows) if rows is not None else 'none'} of {changed}); "
                       f"refusing to judge an incomplete diff")
+    # The head and the rows are two reads; a push between them would pair one
+    # head with another commit's files. Re-read the head and require it equal.
+    again = _gh_json(["gh", "pr", "view", str(pr), "--repo", repo, "--json", "headRefOid"])
+    if not isinstance(again, dict) or again.get("headRefOid") != data.get("head"):
+        raise P9Error(f"PR #{pr}: the head moved while its files were listed; re-run")
     paths: list[str] = []
     unmeasured: list[str] = []
     for row in rows:
@@ -4040,9 +4063,13 @@ def _unresolved_review_threads(pr: int, repo: str | None) -> int:
         threads = (json.loads(out.stdout)["data"]["repository"]["pullRequest"]
                    ["reviewThreads"])
         nodes = threads["nodes"]
-        if threads["totalCount"] > len(nodes):
-            return -1  # >100 threads: the unseen ones are unknown
-        return sum(1 for t in nodes if not t.get("isResolved", False))
+        seen = sum(1 for t in nodes if not t.get("isResolved", False))
+        if threads["totalCount"] > len(nodes) and seen == 0:
+            # >100 threads and none open on the first page: the rest are
+            # unknown (-1). Open ones on the first page are still counted, so
+            # the legacy merge-ready verdict blocks on them as it always did.
+            return -1
+        return seen
     except (FileNotFoundError, subprocess.TimeoutExpired, json.JSONDecodeError, KeyError, TypeError):
         return -1
 
