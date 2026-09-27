@@ -240,6 +240,18 @@ stem is used only when that field is absent. Both were once accepted together,
 which let a payload naming session A and session B's transcript resolve B's
 opt-in and speak in A.
 
+**`--session <id>` targeting another session is deliberate, and it is not a
+security boundary.** Session A running `talkback-hook.py --session B --off`
+enables or disables B's talk mode without B's consent — there is no ownership
+check binding a flag to the session that set it. That is a feature, kept on
+purpose rather than reverted: every session on the box runs as the same OS
+user, so any session can already write another session's flag file directly
+under `~/.talkback/sessions/`. An ownership check inside the CLI would only
+stop the polite path through the flag, not the direct one — a same-principal
+boundary cannot stop a writer who shares the principal. The flag scopes
+*audio*, so parallel agents stay silent by default; it does not scope
+*control*, and nothing here should be read as though it did.
+
 ### Detail levels
 
 | Mode | Speaks |

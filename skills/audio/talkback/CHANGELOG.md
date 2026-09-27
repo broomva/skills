@@ -30,6 +30,16 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 - `newest_transcript_session()` and `project_slug()`, which existed only to
   support the removed fallback.
 
+### Documented
+
+- **`--session <id>` targeting another session is deliberate, not a gap.**
+  Round-2 review flagged it as a blocker: nothing binds a flag to the session
+  that set it, so session A can enable or disable session B's talk mode.
+  Decision: keep it. Every session runs as the same OS user, so an ownership
+  check would only stop the polite path through the CLI — any session can
+  already write another session's flag file directly. The flag scopes audio,
+  not control, and SKILL.md now says so.
+
 ## [0.3.0] — 2026-08-26
 
 **Talk mode is a property of a session, not of the machine.** The 0.2.0 hook was
