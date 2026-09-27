@@ -2,9 +2,9 @@
 // Mutation proof: a green suite means nothing until you show it can go red.
 //
 // Each mutant breaks ONE real behaviour. The suite must fail for every one.
-// Runs the UNIT suite only -- the MCP integration tests spawn a subprocess per
-// call and would make this minutes long; every mutant below is reachable from
-// unit tests by construction.
+// Runs the unit suite plus the MCP integration test (tests/integration/mcp.test.mjs);
+// containment.test.mjs is excluded because it spawns a subprocess per vector and
+// would make this minutes long. Every mutant below is reachable from SUITE.
 //
 // Guards learned the hard way:
 //   - refuse to run on a dirty tree (revert-to-HEAD destroys uncommitted work)

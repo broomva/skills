@@ -15,6 +15,18 @@ test("a new world persists across a fresh open", async () => {
   assert.equal(await again.fs.readFile("/work/a.txt"), "hello\n");
 });
 
+test("only /work persists across a reopen -- writes elsewhere do not", async () => {
+  // Pins what the MCP tool description tells the agent: /tmp and $HOME are
+  // session-only. If this starts passing with /tmp surviving, update the
+  // description instead of deleting the assertion.
+  const d = tmp(), p = path.join(d, "w.json");
+  const w = await World.open(p);
+  await w.exec("echo keep > /work/keep.txt; echo gone > /tmp/gone.txt");
+  const again = await World.open(p);
+  assert.equal(await again.fs.readFile("/work/keep.txt"), "keep\n");
+  await assert.rejects(again.fs.readFile("/tmp/gone.txt"));
+});
+
 test("seeded files land in the world", async () => {
   const d = tmp(), p = path.join(d, "w.json");
   const w = await World.open(p, { files: { "/work/data/x.csv": "a,b\n1,2\n" } });

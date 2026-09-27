@@ -93,6 +93,10 @@ Measured. The first five have regression tests in this skill; the Bun, turn-budg
 and custom-backend notes are findings from the session that produced it, recorded here
 because they will bite you, and are **not** covered by these tests:
 
+- **Only `/work` persists.** A snapshot saves the `/work` prefix. A write to `/tmp`
+  or `$HOME` succeeds (rc 0) but lives only in the running server, so it is gone
+  after a restart and absent from any fork. Keep everything that matters in `/work`.
+  (The one item here that IS pinned by a test: `tests/unit/world.test.mjs`.)
 - **Shell state does not persist by itself.** just-bash resets env, cwd and functions
   between `exec()` calls; only the filesystem is shared. `scripts/persistent-shell.mjs`
   replays state host-side.

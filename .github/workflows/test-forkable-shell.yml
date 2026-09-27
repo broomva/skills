@@ -41,7 +41,7 @@ jobs:
         with:
           node-version: ${{ matrix.node }}
       - name: Install
-        run: npm ci || npm install
+        run: npm ci
       - name: Unit + integration tests
         run: npm test
       - name: Mutation proof (the suite must be able to fail)
@@ -54,6 +54,7 @@ jobs:
           node scripts/vbash.mjs fork /tmp/t.json /tmp/b.json
           node scripts/vbash.mjs exec /tmp/b.json "echo only > /work/branch.txt"
           node scripts/vbash.mjs info /tmp/t.json | grep -q 'base.txt'
+          node scripts/vbash.mjs info /tmp/b.json | grep -q 'branch.txt'
           if node scripts/vbash.mjs info /tmp/t.json | grep -q 'branch.txt'; then
             echo "FAIL: branch file leaked into the trunk"; exit 1
           fi

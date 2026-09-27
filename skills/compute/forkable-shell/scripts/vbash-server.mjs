@@ -38,7 +38,9 @@ server.registerTool("vbash", {
     "Run a bash command inside an isolated virtual filesystem. This is the ONLY " +
     "filesystem you can see or modify; the host machine is not reachable. Your " +
     "workspace is /work. Standard unix tools are available (ls, cat, sed, awk, grep, " +
-    "jq, sqlite3, find, sort, tar, wc). State persists across calls.",
+    "jq, sqlite3, find, sort, tar, wc). Only /work persists: files you write " +
+    "elsewhere (/tmp, $HOME) exist for this session only and are lost on restart " +
+    "or fork. Shell cwd and env persist across calls.",
   inputSchema: { command: z.string().describe("bash command to run") },
 }, async ({ command }) => {
   const res = await world.exec(command);
