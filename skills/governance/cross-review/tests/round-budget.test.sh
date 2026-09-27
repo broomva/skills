@@ -1109,7 +1109,11 @@ rows_in() { if [ -f "$1" ]; then grep -c '^ROUND' "$1" || true; else echo 0; fi;
 echo "T66. a /15 score is refused by a /10 ledger; a /10 score still passes"
 LED=$(newledger t66)
 RC_ROUND=$(rb record-round --run-id=t66 --ledger="$LED" --score=7/15 --defect=yes --stratum=A:7/10:PASS)
-RC_STRAT=$(rb record-round --run-id=t66 --ledger="$LED" --score=7/10 --defect=yes --stratum=A:7/15:FAIL --stratum=B:7/15:FAIL)
+# The incident's own strata -- 7/15 FAIL twice -- under a round score (6/10)
+# that no other check refuses: nothing passes, nothing exceeds the minimum, so
+# only the stratum scale check stands. (Round 2 of review found the first
+# version of this arm also tripped the pass-over-FAIL check, proving nothing.)
+RC_STRAT=$(rb record-round --run-id=t66 --ledger="$LED" --score=6/10 --defect=yes --stratum=A:7/15:FAIL --stratum=B:7/15:FAIL)
 N_BAD=$(rows_in "$LED")
 RC_OK=$(rb record-round --run-id=t66 --ledger="$LED" --score=7/10 --defect=yes --stratum=A:7/10:PASS --stratum=B:8/10:PASS)
 RC_BUDGET=$(rb budget --run-id=t66 --ledger="$LED")
@@ -1154,13 +1158,20 @@ RC_WOK=$(rb record-round --run-id=t68 --ledger="$LED" --score=6/10 --defect=yes 
 LED2=$(newledger t68b)
 printf 'ROUND\t1\t8/10\tyes\t\t-\tA,B\tA:8/10:PASS,B:8/10:FAIL\n' > "$LED2"
 RC_R=$(rb budget --run-id=t68b --ledger="$LED2")
+# ORDER. Every arm above lists the FAIL last; a fold where the last verdict wins
+# passed all of them. The same claims with the FAIL first.
+RC_WF=$(rb record-round --run-id=t68 --ledger="$LED" --score=7/10 --defect=yes --stratum=A:7/10:FAIL --stratum=B:8/10:PASS)
+LED4=$(newledger t68d)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tA,B\tA:8/10:FAIL,B:8/10:PASS\n' > "$LED4"
+RC_RF=$(rb budget --run-id=t68d --ledger="$LED4")
 LED3=$(newledger t68c)
 printf 'ROUND\t1\t8/10\tyes\t\t-\tA,B\tA:8/10:PASS,B:8/10:PASS\n' > "$LED3"
 RC_RC=$(rb budget --run-id=t68c --ledger="$LED3")
-if [ "$RC_W" = "2" ] && [ "$N_BAD" = "0" ] && [ "$RC_WOK" = "0" ] && [ "$RC_R" = "6" ] && [ "$RC_RC" = "3" ]; then
-    ok "T68: PASS over FAIL refused at write (2) and STOPs at read (6); the all-PASS row PASSES"
+if [ "$RC_W" = "2" ] && [ "$N_BAD" = "0" ] && [ "$RC_WOK" = "0" ] && [ "$RC_R" = "6" ] && [ "$RC_RC" = "3" ] \
+   && [ "$RC_WF" = "2" ] && [ "$RC_RF" = "6" ]; then
+    ok "T68: PASS over FAIL refused at write (2) and STOPs at read (6), FAIL first or last; the all-PASS row PASSES"
 else
-    fail "T68: PASS over a FAIL stratum" "write=$RC_W (want 2) rows=$N_BAD (want 0) fail-below-bar=$RC_WOK (want 0) stored=$RC_R (want 6) all-pass=$RC_RC (want 3)"
+    fail "T68: PASS over a FAIL stratum" "write=$RC_W (want 2) rows=$N_BAD (want 0) fail-below-bar=$RC_WOK (want 0) stored=$RC_R (want 6) all-pass=$RC_RC (want 3) fail-first write=$RC_WF (want 2) read=$RC_RF (want 6)"
 fi
 
 # ── T69: the round score never exceeds the lowest stratum ────────────────
@@ -1174,10 +1185,18 @@ RC_R=$(rb budget --run-id=t69b --ledger="$LED2")
 LED3=$(newledger t69c)
 printf 'ROUND\t1\t4/10\tyes\t\t-\tA,C\tA:4/10:FAIL,C:9/10:PASS\n' > "$LED3"
 RC_RC=$(rb budget --run-id=t69c --ledger="$LED3")
-if [ "$RC_W" = "2" ] && [ "$RC_WEQ" = "0" ] && [ "$RC_R" = "6" ] && [ "$RC_RC" = "0" ]; then
-    ok "T69: score > min refused (write 2, read 6); score = min records and authorizes"
+# ORDER. The arms above put the minimum FIRST, so a fold that kept only the first
+# entry passed them. The minimum last, at write and at read, both passing strata.
+LED5=$(newledger t69e)
+RC_WL=$(rb record-round --run-id=t69e --ledger="$LED5" --score=8/10 --defect=yes --stratum=A:9/10:PASS --stratum=C:7/10:PASS)
+LED6=$(newledger t69f)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tA,C\tA:9/10:PASS,C:7/10:PASS\n' > "$LED6"
+RC_RL=$(rb budget --run-id=t69f --ledger="$LED6")
+if [ "$RC_W" = "2" ] && [ "$RC_WEQ" = "0" ] && [ "$RC_R" = "6" ] && [ "$RC_RC" = "0" ] \
+   && [ "$RC_WL" = "2" ] && [ "$RC_RL" = "6" ]; then
+    ok "T69: score > min refused (write 2, read 6), minimum first or last; score = min records and authorizes"
 else
-    fail "T69: round exceeds min stratum" "write=$RC_W (want 2) equal=$RC_WEQ (want 0) stored=$RC_R (want 6) stored-equal=$RC_RC (want 0)"
+    fail "T69: round exceeds min stratum" "write=$RC_W (want 2) equal=$RC_WEQ (want 0) stored=$RC_R (want 6) stored-equal=$RC_RC (want 0) min-last write=$RC_WL (want 2) read=$RC_RL (want 6)"
 fi
 
 # ── T70: stored verdicts are checked with the recorder's own predicate ────
@@ -1280,6 +1299,76 @@ if printf '%s' "$OUT_R" | grep -q "non-integer score" && printf '%s' "$OUT_S" | 
     ok "T75: x/10 refused at the round and the stratum, with the reason, nothing written"
 else
     fail "T75: non-integer reason" "round='$OUT_R' stratum='$OUT_S' rows=$N_BAD"
+fi
+
+# ── T76: a NUL byte cannot hide a stored FAIL ─────────────────────────────
+echo "T76. a ledger holding a NUL byte STOPs"
+LED=$(newledger t76)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\0,B:3/10:FAIL\n' > "$LED"
+RC_NUL=$(rb budget --run-id=t76 --ledger="$LED")
+LED2=$(newledger t76b)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\n' > "$LED2"
+RC_CTRL=$(rb budget --run-id=t76b --ledger="$LED2")
+if [ "$RC_NUL" = "6" ] && [ "$RC_CTRL" = "3" ]; then
+    ok "T76: NUL-bearing ledger STOPs; the same row without it PASSES"
+else
+    fail "T76: NUL byte" "nul=$RC_NUL (want 6) control=$RC_CTRL (want 3)"
+fi
+
+# ── T77: an empty verdict entry is refused wherever it sits ───────────────
+# IFS word splitting drops a trailing empty field, so a stored trailing comma
+# validated while the recorder refused the same text; and `--stratum=` given
+# FIRST vanished while given last it was refused.
+echo "T77. an empty stratum entry is refused at read and at write, in any position"
+LED=$(newledger t77)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS,\n' > "$LED"
+RC_TRAIL=$(rb budget --run-id=t77 --ledger="$LED")
+LED2=$(newledger t77b)
+RC_EFIRST=$(rb record-round --run-id=t77b --ledger="$LED2" --score=8/10 --defect=yes --stratum= --stratum=A:8/10:PASS)
+RC_ELAST=$(rb record-round --run-id=t77b --ledger="$LED2" --score=8/10 --defect=yes --stratum=A:8/10:PASS --stratum=)
+N_BAD=$(rows_in "$LED2")
+RC_OK=$(rb record-round --run-id=t77b --ledger="$LED2" --score=8/10 --defect=yes --stratum=A:8/10:PASS)
+if [ "$RC_TRAIL" = "6" ] && [ "$RC_EFIRST" = "2" ] && [ "$RC_ELAST" = "2" ] && [ "$N_BAD" = "0" ] && [ "$RC_OK" = "0" ]; then
+    ok "T77: stored trailing comma STOPs; empty --stratum refused first and last; A alone records"
+else
+    fail "T77: empty entries" "trailing=$RC_TRAIL (want 6) empty-first=$RC_EFIRST empty-last=$RC_ELAST (want 2 2) rows=$N_BAD (want 0) ok=$RC_OK (want 0)"
+fi
+
+# ── T78: a bare legacy score is not compared against a scaled one ─────────
+# A pre-BRO-2615 row's integer has no unit (the incident row was a bare 7 that
+# meant 7/15). Compared against an honest scaled round it manufactured a
+# permanent regression STOP. Within each kind the rule still holds.
+echo "T78. regression is not computed across the bare/scaled boundary, and still is within each"
+LED=$(newledger t78)
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t9\tyes\t\t-\n' > "$LED"
+OUT_LEGACY=$(rbout budget --run-id=t78 --ledger="$LED")
+bash "$RB" record-round --run-id=t78 --ledger="$LED" --score=8/10 --defect=yes --stratum=A:8/10:PASS >/dev/null 2>&1
+RC_CROSS=$(rb budget --run-id=t78 --ledger="$LED")
+LED2=$(newledger t78b)
+printf 'ROUND\t1\t6/10\tyes\t\t-\tA\tA:6/10:FAIL\nROUND\t2\t5/10\tyes\t\t-\tA\tA:5/10:FAIL\n' > "$LED2"
+RC_SCALED=$(rb budget --run-id=t78b --ledger="$LED2")
+if [ "$RC_CROSS" = "3" ] && [ "$RC_SCALED" = "6" ] && printf '%s' "$OUT_LEGACY" | grep -q "not read as a pass"; then
+    ok "T78: bare 9 then scaled 8/10 PASSES; scaled 6 then 5 still STOPs; a legacy 9 says why it is not a pass"
+else
+    fail "T78: bare/scaled boundary" "cross=$RC_CROSS (want 3) scaled-regression=$RC_SCALED (want 6) legacy-note=$(printf '%s' "$OUT_LEGACY" | grep -c 'not read as a pass') (want 1)"
+fi
+
+# ── T79: `show` renders a blank verdicts field as MALFORMED ───────────────
+# Same absence-as-value defect T64 pins for field 7: `budget` STOPs on a blank
+# field 8, so `show` must not render it as though something were recorded.
+echo "T79. show renders a blank field 8 as MALFORMED and '-' as none"
+LED=$(newledger t79)
+printf 'ROUND\t1\t5/10\tyes\t\t-\tA\t\n' > "$LED"
+OUT_BLANK=$(rbout show --run-id=t79 --ledger="$LED")
+RC_BLANK=$(rb budget --run-id=t79 --ledger="$LED")
+LED2=$(newledger t79b)
+printf 'ROUND\t1\t5/10\tyes\t\t-\tA\t-\n' > "$LED2"
+OUT_NONE=$(rbout show --run-id=t79b --ledger="$LED2")
+if printf '%s' "$OUT_BLANK" | grep -q "verdicts: MALFORMED" && [ "$RC_BLANK" = "6" ] \
+   && printf '%s' "$OUT_NONE" | grep -q "verdicts: none"; then
+    ok "T79: blank field 8 renders MALFORMED (and STOPs); '-' renders none"
+else
+    fail "T79: show field 8" "blank='$OUT_BLANK' rc=$RC_BLANK none='$OUT_NONE'"
 fi
 
 echo ""

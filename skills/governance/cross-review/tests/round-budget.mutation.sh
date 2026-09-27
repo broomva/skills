@@ -518,6 +518,37 @@ mutate "--strata and --stratum both accepted" "T72" \
     '        if false; then
             echo "round-budget: --strata and --stratum are exclusive'
 
+
+# ── BRO-2615 round 2 (Stratum B): order, emptiness, NUL, the legacy boundary ──
+# The two folds over strata. Every test used to list the minimum first and the
+# FAIL last, so both of these survived 75/75 and each let a PASS through.
+mutate "minimum fold keeps the first entry" "T69" \
+    'if [ -z "$min" ] || [ "$num" -lt "$min" ]; then min=$num; fi' \
+    'if [ -z "$min" ]; then min=$num; fi'
+mutate "last verdict wins the FAIL fold" "T68" \
+    '                fi ;;
+            FAIL) failed=1 ;;' \
+    '                fi; failed=0 ;;
+            FAIL) failed=1 ;;'
+mutate "stratum scale unchecked" "T66" \
+    'if ! err=$(score_is_valid "$scored"); then' 'if false && err=$(score_is_valid "$scored"); then'
+mutate "NUL byte read through" "T76" \
+    'refusing to read it."
+        exit 6' \
+    'refusing to read it." >/dev/null'
+mutate "empty verdict entry dropped" "T77" \
+    ',*|*,|*,,*) echo "the verdict list' 'IMPOSSIBLE) echo "the verdict list'
+mutate "leading empty --stratum vanishes" "T77" \
+    'if [ "$STRATUM_SET" = "1" ]; then STRATUM_VERDICTS="$STRATUM_VERDICTS,${arg#*=}"' \
+    'if [ -n "$STRATUM_VERDICTS" ]; then STRATUM_VERDICTS="$STRATUM_VERDICTS,${arg#*=}"'
+mutate "bare compared with scaled" "T78" \
+    'if (kind != prevkind) prev=-1' 'if (0) prev=-1'
+mutate "unverified pass unexplained" "T78" \
+    'if [ "$rule" != "passed" ] && [ "$LG_LAST_VERIFIED" != "1" ]' \
+    'if false && [ "$LG_LAST_VERIFIED" != "1" ]'
+mutate "blank verdicts render as a value" "T79" \
+    '($8=="" ? "MALFORMED" : $8)' '$8'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ "$SURVIVED" -gt 0 ]; then

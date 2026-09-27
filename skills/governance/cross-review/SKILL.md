@@ -44,7 +44,9 @@ instead, which is this gate applied to a design:
    from this rubric once landed in the ledger and came back PASSED while both
    strata said FAIL. Decide pass/fail on the /15 rule first, then log the round
    through `autoreview`'s adapter — the stratum's own verdict goes in
-   `--stratum=L:N/10:PASS|FAIL`, and a FAIL can never close the budget.
+   `--stratum=L:N/10:PASS|FAIL`, and a FAIL that is *recorded* can never close
+   the budget. A stratum left out of the record is not detected (see *NOT
+   enforced*).
 
    **Stratum B is a documented exception, not a substitute.** When Codex is
    unavailable the fallback is a fresh-context subagent on the *same* model,
@@ -252,6 +254,13 @@ appended to it.
 - **The ledger is not a security boundary.** It is a plain file under `.git/`.
   An agent determined to evade it can edit or delete it. It is bookkeeping that
   makes drift *visible*, not a control that makes drift impossible.
+- **`--stratum` is the agent's own assertion too** (BRO-2615). The ledger
+  checks every verdict it is *given* — scale, range, PASS only at ≥7, round ≤
+  the lowest, no pass over a FAIL — and nothing about the ones it is *not*
+  given. A failing stratum omitted from the record, or a verdict transcribed
+  as PASS that the reviewer called FAIL, passes. What it removes is the unit
+  mismatch and the pass-over-a-recorded-FAIL, which is the incident; it does
+  not make transcription honest.
 - **`--strata=A,B,C` is the agent's own assertion.** Nothing verifies that
   Stratum A actually ran, or that its verdict is the one being scored. It is
   the same class as `--defect` below: the record is checkable for *shape*, not

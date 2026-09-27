@@ -214,7 +214,9 @@ Write both halves with their scale — `--score=N/10` and one
 `--stratum=L:N/10:PASS|FAIL` per stratum carrying the stratum's own
 `spec-contract` verdict. The ledger refuses a raw `/15` score and any bare
 integer (BRO-2615), and it refuses a round of 7 or more over a stratum marked
-FAIL, so the cap is now enforced as well as documented.
+FAIL -- so the cap is enforced for every stratum you record. It cannot see a
+stratum you leave out: a failing stratum omitted from `--stratum` is not
+detected, which is the writer's assertion, same as `--strata`.
 
 Pass `--defect=yes` when the round located at least one checkable defect in
 the text (a contradiction, a wrong number, a gate that cannot be checked as
