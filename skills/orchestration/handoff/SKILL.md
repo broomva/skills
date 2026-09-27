@@ -58,8 +58,8 @@ in a single pass.
 
 - **End of substantive in-session work** that another agent (or the
   same user in a fresh context) will resume.
-- **Mid-arc snapshot** when context is approaching 100K tokens and
-  the user wants to break before continuing in a fresh context (this
+- **Mid-arc snapshot** when the user wants to break before
+  continuing in a fresh context (this
   is the *handoff* half of P12 — `PROMPT.md` is the *state-replay* half).
 - **Stage boundary** in a multi-stage arc (Stage 0 → Stage 1 →
   Stage 2 pattern that appeared 4× in the Houston/Life-Houston work).
