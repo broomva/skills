@@ -365,6 +365,10 @@ checkout let a PR be judged by its own policy edit. The fallbacks:
 - **Base ref missing** (`No commit found for the ref`) or **an unreadable
   policy:** blocks.
 
+The checkout's own `auto_merge.enabled` is a fail-closed pre-check. A checkout
+that disables auto-merge, or cannot parse, refuses before the base is read, so
+it can stop a merge but never enable one.
+
 **No YAML can weaken a gate.** The parser rejects:
 
 - an unknown key at any level, since a typo would otherwise run on the default;
