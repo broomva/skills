@@ -157,8 +157,18 @@ PROBES: tuple[tuple[str, str, re.Pattern[str], object, str], ...] = (
      "a PEM private key block."),
     ("jwt", BLOCK, re.compile(r"eyJ[A-Za-z0-9_\-]{10,}\.eyJ[A-Za-z0-9_\-]{10,}\."), None,
      "a JWT, which decodes to whatever claims it carries."),
-    ("bearer-header", BLOCK, re.compile(r"(?i)(?:authorization|bearer)\s*[:=]?\s*"
-                                        r"(?:bearer\s+)?[A-Za-z0-9._\-]{24,}"),
+    # `\s*[:=]?\s*` used to be able to match ZERO characters, so "authorization"
+    # glued straight onto the next identifier segment with no separator at all —
+    # `authorizationPolicy.protectedAgent.blockAssignment` (a boolean-valued config
+    # field quoted verbatim from a doc a checkit trial fetched) tripped this as a
+    # bearer token. A real header or env-var always has an actual separator: a
+    # colon/equals, or — for the RFC 6750 "Bearer <token>" form — at least one
+    # space. Requiring one closes the glued-identifier false positive without
+    # missing any of those three real shapes.
+    ("bearer-header", BLOCK,
+     re.compile(r"(?i)(?:authorization\s*[:=]\s*|authorization\s+"
+                r"|bearer\s*[:=]\s*|bearer\s+)"
+                r"(?:bearer\s+)?[A-Za-z0-9._\-]{24,}"),
      _secret_is_real, "an Authorization header with a long value."),
     # The boundaries reject a longer dotted-number run. Both "public IPs" in the
     # first sweep were fragments of an SVG `d="…"` coordinate string — `3.7.3.9`

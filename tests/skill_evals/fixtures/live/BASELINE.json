@@ -1,5 +1,5 @@
 {
-  "graded_trials_total": 296,
+  "graded_trials_total": 301,
   "recorded_at_sweep": "2026-09-27",
   "skills": {
     "autonomous": {
@@ -10,24 +10,24 @@
         "passes": 18,
         "trials": 18
       },
-      "passes": 19,
+      "passes": 18,
       "positive": {
-        "passes": 1,
+        "passes": 0,
         "trials": 30
       },
       "trials": 48
     },
     "checkit": {
-      "errors": 5,
-      "graded_trials": 46,
+      "errors": 0,
+      "graded_trials": 51,
       "invisible": 0,
       "negative": {
-        "passes": 16,
+        "passes": 18,
         "trials": 18
       },
-      "passes": 17,
+      "passes": 21,
       "positive": {
-        "passes": 1,
+        "passes": 3,
         "trials": 33
       },
       "trials": 51
@@ -55,9 +55,9 @@
         "passes": 18,
         "trials": 18
       },
-      "passes": 41,
+      "passes": 38,
       "positive": {
-        "passes": 23,
+        "passes": 20,
         "trials": 33
       },
       "trials": 51

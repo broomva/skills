@@ -1,10 +1,10 @@
 {
   "asset": "skill-eval-fixtures-2026-09-27.tar.gz",
-  "bytes": 5599798,
+  "bytes": 5341197,
   "files": 606,
   "note": "PUBLIC asset. Scrubbed and audited before publication; scrubbing is a blocklist and fails open. See scripts/skill_evals/scrub.py.",
   "release_tag": "skill-eval-fixtures-2026-09-27",
-  "sha256": "ad6123a78ac95e9df835188cb407d53d8bc978452a69bedbce5fae213a4c1be7",
+  "sha256": "202e67d6250b65d279962cefe7b675442f0af9a2258b466e36cbde9b0d2272ac",
   "skills": [
     "autonomous",
     "checkit",
