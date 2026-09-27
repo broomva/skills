@@ -126,6 +126,9 @@ class TestParse:
         ("  gates:\n    governance:\n      paths: []\n", "paths"),
         ("  gates:\n    governance:\n      l3_max_per_window: 0\n", "l3_max_per_window"),
         ("  gates:\n    requred_strata: [A]\n", "unknown key"),
+        ("  gates:\n    p20: []\n", "p20 must be a mapping"),
+        ("  gates:\n    p20: false\n", "p20 must be a mapping"),
+        ("  gates:\n    governance: []\n", "governance must be a mapping"),
         ("  gates:\n    p20:\n      pass_scor: 9\n", "unknown key"),
         ("  rules:\n    - branch_pattern: \"docs/*\"\n      action: auto\n"
          "  gates:\n    p20:\n      pass_score: 7\n", "action=auto"),

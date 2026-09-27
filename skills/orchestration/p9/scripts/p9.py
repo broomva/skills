@@ -1330,7 +1330,9 @@ def _parse_gates(raw: Any) -> MergeGates | None:
                  if "aggregate_checks" in raw else ())
     aggregates = tuple(dict.fromkeys(_DEFAULT_AGGREGATE_CHECKS + extra_agg))
 
-    p20_raw = raw.get("p20") or {}
+    # An absent or empty block means the defaults (the strictest values); a
+    # present block of the wrong type (`p20: []`, `p20: false`) is an error.
+    p20_raw = {} if raw.get("p20") is None else raw["p20"]
     if not isinstance(p20_raw, dict):
         raise PolicyError("auto_merge.gates.p20 must be a mapping")
     _only_keys(p20_raw, {"pass_score", "max_loc", "max_files", "public_api_paths"},
@@ -1348,7 +1350,7 @@ def _parse_gates(raw: Any) -> MergeGates | None:
             if "public_api_paths" in p20_raw else ()))),
     )
 
-    gov_raw = raw.get("governance") or {}
+    gov_raw = {} if raw.get("governance") is None else raw["governance"]
     if not isinstance(gov_raw, dict):
         raise PolicyError("auto_merge.gates.governance must be a mapping")
     _only_keys(gov_raw, {"paths", "required_strata", "required_checks",
