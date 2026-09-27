@@ -2,7 +2,7 @@
 name: bookkeeping
 tier: D
 category: knowledge
-version: 1.4.0
+version: 1.5.0
 primitive: P6
 description: Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph
 author: broomva
@@ -122,6 +122,16 @@ Apply promotion decision based on total score:
 
 Entity page type is inferred from the candidate context; the live list is `ENTITY_TYPES` in `scripts/bookkeeping.py` (`concept`, `pattern`, `tool`, `person`, `project`, `discovery`, `question`, `framework-refinement`, `industry-pattern`, `persona`, `org`). Use the template at `templates/entity-page.md` when creating new pages.
 
+### Grounding floor (promotion stage, runs first)
+
+The per-axis floor the Nous axes cannot supply. On workspace#789 (2026-09-27) 13 of 14 new pages were auto-promoted and all 13 were junk as written (review dropped 12 and rewrote the 13th; the 14th was hand-authored), and the (n, s, r) scores could not have told them apart: they are **note-level**, so the kept `person/beata-halassy` and the junk `pattern/insane-method` carry an identical `6/9 (n=3 s=3 r=0)`; a `relevance >= 1 ∧ specificity >= 1` floor refuses the kept page and admits three junk ones. That is why `AXIS_FLOOR` stays 0 (a test pins it against the fixture). The junk is an *attribution* failure — `core_claim` is derived per item, the slug per candidate — so the floor is on a per-item axis instead:
+
+- **Grounding** of the would-be page: **2** if the item's section heading *is* the entity (the slug covers at least half the heading's content tokens, or the heading begins with the entity's name); **1** if the derived claim, with that heading stripped, **names** the entity — a `person` by surname, a one- or two-word name by every word (`jev-judge` needs "jev" *and* "judge"; `design-review` is not named by "we review …"), a longer claim-shaped slug by its head noun plus at least half its content words; **0** otherwise. Tokens are whole words, plural- and accent-folded. `GROUNDING_FLOOR = 1`. The floor is necessary, not sufficient — a grounded page still goes on to the coherence gate.
+- Format-2 ingest records the heading as `metadata.section_heading`; items without one (paragraph, Moltbook formats) are never stripped. The key is **reserved**: `_make_item` drops it from source-supplied metadata, so frontmatter or a JSONL object cannot forge a heading (and with it grounding 2).
+- **Deterministic and local**, so unlike the coherence gate it cannot fail open; it runs before the coherence call, so a refused page costs no call. A refusal prints `SKIP (grounding < 1 …)` and is counted as `grounding.refused` in every run-log entry. Nothing is quarantined — the verdict is a pure function of the raw note, which stays in Layer 2.
+- Measured with this code on the door's real input (60 raw notes → 134 would-be new pages): refuses 124 — 107 of the 114 the coherence gate rejects and 17 of its 20 accepts, of which a hand read finds ~3 arguably legitimate (`system-initiative`, `freepik-company`, `long-proof`). **Not a page-quality rule** — hand-written claims omit the title legitimately (668 of 1,074 hand-authored pages, 62.2%, would fail it); it applies only to claims *derived* from an item, i.e. the new-page path of `promote_item`.
+- Fixture: `tests/fixtures/pr789/entities.json` (13 junk refused, 2 kept pass).
+
 ### Entity coherence gate (promotion stage)
 
 The sum gate's false positives are **identity** failures, not score failures: a section heading, a person's name, or a phrase lifted from a source document, filed as a `concept` with a claim that is not about its own title. Measured 2026-09-18 (jev-1.13.0) on the 9 human-quarantined junk pages (`~/.config/bookkeeping/quarantine/2026-09-16-nous-sum-gate/`) vs 30 accepted pages: specificity AUC **0.60**, relevance AUC **0.81**, and a Noul question — *is the title a coherent knowledge-graph node that the core_claim is genuinely about, vs a heading / name / lifted phrase?* — AUC **0.98**. The three Nous axes do not measure entity identity; this gate does, once, at the single door every new page passes through (`promote_item`, new-page path only — the existing-page update branch is never gated).
@@ -134,6 +144,10 @@ The sum gate's false positives are **identity** failures, not score failures: a 
 - **Counters:** `coherence.{enabled,checked,rejected,remembered,unavailable}` in every run-log entry and in the `run` summary line `Coherence gate: on | checked: N | rejected: N | remembered: N | unavailable: N`.
 - **`--dry-run` still asks the classifier** — the verdict *is* the preview (`dry-run: would QUARANTINE …`) — but writes neither the page nor the quarantine file. A dry run is therefore not free or offline.
 - **Knobs:** `BOOKKEEPING_COHERENCE_GATE=0` disables explicitly (transport never called, memory ignored). Default ON when a key is present. That default was *not* acceptable for the scoring judge, which runs on every in-band item, costs seconds per call and changes scores; this gate runs only on new promotions (a handful per run), takes ~300 ms and ~$0.00005 per call, and quarantines rather than deletes. What default-on *does* change: the slug, title, derived `core_claim` and first 1500 chars of every **new** page leave the machine to a third-party API — opt out with the knob if that is not acceptable for a corpus.
+
+### Graph root resolution
+
+Every command resolves `(root, entities_dir, catalog)` once, at import. Precedence: a top-level `knowledge:` block in the nearest `.control/policy.yaml` > `KG_ROOT` / `KG_ENTITIES_DIR` / `KG_CATALOG` / legacy `BROOMVA_ROOT` (explicit overrides; `KG_NO_POLICY=1` skips the policy layer) > **the nearest enclosing git toplevel that holds `research/entities`** (a `.git` dir, or a worktree's `.git` file — so a worktree resolves to itself; a nested repo without a graph is walked past) > `~/broomva`, only when CWD is inside no such checkout. Before 1.5.0 the last layer applied from anywhere, so `index` run from a worktree overwrote the main checkout's catalog. `kg` carries the same resolver.
 
 ### Stage 6 — SYNTHESIZE
 

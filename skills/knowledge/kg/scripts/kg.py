@@ -42,8 +42,9 @@ from pathlib import Path
 # first): a TOP-LEVEL `knowledge:` block in the nearest .control/policy.yaml
 # (found by walking up from CWD; keys root/entities_dir/catalog_path,
 # root-relative unless absolute) > KG_ROOT/KG_ENTITIES_DIR/KG_CATALOG (legacy
-# BROOMVA_ROOT still honored for root) > ~/broomva + research/entities +
-# docs/knowledge-index.md. Only the top-level `knowledge:` key is read — a
+# BROOMVA_ROOT still honored for root) > the nearest enclosing git toplevel
+# (worktree-aware) that holds research/entities (BRO-2614) > ~/broomva +
+# research/entities + docs/knowledge-index.md. Only the top-level `knowledge:` key is read — a
 # nested `plants.knowledge` control-plant block is deliberately ignored.
 
 
@@ -78,6 +79,55 @@ def _read_knowledge_block(policy):
     return kn if isinstance(kn, dict) else {}
 
 
+def _is_git_head(head):
+    """HEAD as git writes it: a symbolic ref, or a detached SHA-1/SHA-256."""
+    try:
+        first = head.read_text(errors="replace").split("\n", 1)[0].strip()
+    except OSError:
+        return False
+    if re.fullmatch(r"[0-9a-f]{40}|[0-9a-f]{64}", first):
+        return True
+    # A symbolic ref: `ref: refs/<name>`, with git check-ref-format's rules
+    # that a bare prefix or trailing junk would break (P20 round 3).
+    m = re.fullmatch(r"ref: (refs/[^\x00-\x20\x7f~^:?*\[\\]+)", first)
+    if not m:
+        return False
+    name = m.group(1)
+    return not (name.endswith(("/", ".", ".lock")) or ".." in name or "//" in name
+                or "@{" in name or any(c.startswith(".") for c in name.split("/")))
+
+
+def _is_git_toplevel(d):
+    """`d/.git` is a git dir with a real HEAD, or a worktree/submodule `.git`
+    FILE whose `gitdir:` target has one. Any other `.git` is not a checkout."""
+    g = d / ".git"
+    try:
+        if g.is_dir():
+            return _is_git_head(g / "HEAD")
+        if not g.is_file():
+            return False
+        first = g.read_text(errors="replace").split("\n", 1)[0].strip()
+    except OSError:
+        return False
+    if not first.startswith("gitdir:"):
+        return False
+    target = Path(first[len("gitdir:"):].strip()).expanduser()
+    if not target.is_absolute():
+        target = d / target
+    return _is_git_head(target / "HEAD")
+
+
+def _enclosing_knowledge_checkout(start):
+    """Nearest ancestor of `start` (inclusive) that is a git toplevel holding
+    research/entities, else None. A filesystem walk, not `git rev-parse`: no
+    subprocess at import time, and a worktree's `.git` is a file."""
+    start = Path(start).resolve()
+    for d in (start, *start.parents):
+        if (d / "research" / "entities").is_dir() and _is_git_toplevel(d):
+            return d
+    return None
+
+
 def _abs_or_rel(value, base):
     """Expand `value`; return as-is if absolute, else joined under `base`."""
     p = Path(value).expanduser()
@@ -92,8 +142,12 @@ def _resolve_knowledge_paths(start_dir=None, env=None):
     env = os.environ if env is None else env
     start_dir = Path.cwd() if start_dir is None else Path(start_dir)
 
-    # (3) default root, honoring legacy BROOMVA_ROOT
-    root = Path(env.get("BROOMVA_ROOT") or (Path.home() / "broomva")).expanduser()
+    # (4) default root < (3) enclosing checkout < legacy BROOMVA_ROOT (an
+    #     explicit override, like KG_ROOT below — it must beat the CWD guess)
+    if env.get("BROOMVA_ROOT"):
+        root = Path(env["BROOMVA_ROOT"]).expanduser()
+    else:
+        root = _enclosing_knowledge_checkout(start_dir) or (Path.home() / "broomva")
     entities_dir = None
     catalog_path = None
 
