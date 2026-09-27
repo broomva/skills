@@ -840,6 +840,256 @@ else
         "live+force=$RC_LIVE (want 6), corrupt+plain=$RC_CORRUPT_PLAIN (want 6), corrupt+force=$RC_CORRUPT_FORCE (want 0), corrupt archives=$CORRUPT_ARCHIVES (want 1)"
 fi
 
+# ── T57: widening the ROUND arity did not open the SHORT row ─────────────
+# ROUND rows are 6 OR 7 fields now (field 7 = the strata that produced the
+# score). T38 pins the ceiling with an 8-field row; this pins that the short
+# row -- the dangerous direction, because it leaves $6 empty and takes the
+# REFUTED accounting with it -- is still refused after the widening.
+#
+# What actually refuses it is NOT the arity check, and the distinction is
+# recorded rather than assumed: widening the arity to admit NF==5 was mutated
+# in and SURVIVED this assertion. A five-field row leaves $6 empty, and the
+# settles arm reads "" as neither REFUTED, CONFIRMED nor "-" and sets badrow
+# first, so nothing can reach the arity floor. The floor stays in the source
+# as the honest statement of the row shape; it is not what this test proves,
+# and round-budget.mutation.sh says so where the mutation would have gone.
+echo "T57. a SHORT ROUND row still fails closed"
+LED=$(newledger t57)
+printf 'ROUND\t1\t5\tyes\t-\n' > "$LED"
+RC=$(rb budget --run-id=t57 --ledger="$LED")
+if [ "$RC" = "6" ]; then ok "T57: five-field ROUND row STOPs"; else fail "T57: ROUND arity floor" "exit $RC, want 6"; fi
+
+# ── T58: the strata that produced a score are recorded and surfaced ───────
+# A 7/10 from A+B+C and a 7/10 from C alone are different evidence carrying the
+# same integer -- Stratum A is the only cross-vendor verdict and the only one
+# where "cannot write" is literally true, so a panel of B+C is the writer's own
+# model twice. The score alone cannot say which ran.
+#
+# The SECOND arm is the one that matters and is the reason this is one test
+# rather than two: recording nothing must not render as a panel. If omission
+# produced a blank -- or worse, a letter -- then "nobody wrote down which strata
+# ran" and "only Stratum C ran" would read the same, which is the exact defect
+# class ("absence read as a value") this field exists to remove.
+echo "T58. show surfaces the panel, and an unrecorded panel is NOT a blank"
+LED=$(newledger t58)
+bash "$RB" record-round --run-id=t58 --ledger="$LED" --score=5 --defect=yes --strata=A,B,C >/dev/null
+bash "$RB" record-round --run-id=t58 --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=t58 --ledger="$LED" --score=5 --defect=yes --strata=C >/dev/null
+OUT=$(rbout show --run-id=t58 --ledger="$LED")
+FULL=$(printf '%s\n' "$OUT" | grep -c 'round 1 .*strata=A,B,C' || true)
+UNREC=$(printf '%s\n' "$OUT" | grep -c 'round 2 .*strata=unrecorded' || true)
+CONLY=$(printf '%s\n' "$OUT" | grep -c 'round 3 .*strata=C ' || true)
+if [ "$FULL" = "1" ] && [ "$UNREC" = "1" ] && [ "$CONLY" = "1" ]; then
+    ok "T58: A,B,C / unrecorded / C each surface distinctly in show"
+else
+    fail "T58: strata surfaced" "A,B,C=$FULL unrecorded=$UNREC C=$CONLY (want 1 1 1)
+$OUT"
+fi
+
+# ── T59: BACKWARD COMPATIBILITY — a pre-strata ledger still works ─────────
+# Every ROUND row written before this field existed has six fields. If those
+# stopped parsing, a valid arc would be refused for a reason that has nothing to
+# do with it -- a fail-closed refusal on real work, which is a regression and
+# not caution. So field 7 is OPTIONAL ON READ.
+#
+# Both halves are asserted, because either alone passes a broken implementation:
+# an old ledger must still AUTHORIZE (not merely "not crash"), and `show` must
+# render its missing panel as the SAME named token an omitted --strata writes.
+# Rendering it blank would reintroduce the absence-read-as-a-value defect at the
+# one surface a human actually reads.
+echo "T59. an OLD-FORMAT (six-field) ledger still parses, authorizes, and reads as unrecorded"
+LED=$(newledger t59)
+printf 'ROUND\t1\t4\tyes\t\t-\nROUND\t2\t5\tyes\t\t-\n' > "$LED"
+RC=$(rb budget --run-id=t59 --ledger="$LED")
+OUT=$(rbout show --run-id=t59 --ledger="$LED")
+UNREC=$(printf '%s\n' "$OUT" | grep -c 'strata=unrecorded' || true)
+BLANK=$(printf '%s\n' "$OUT" | grep -c 'strata= ' || true)
+# A six-field ledger must also still ACCEPT an append: the recorder writes a
+# seven-field row onto it and the mixed-arity history keeps parsing.
+bash "$RB" record-round --run-id=t59 --ledger="$LED" --score=5 --defect=yes --strata=B,C >/dev/null 2>&1
+# RC_MIXED=5 is itself the landing check: three rounds is REVIEW-REQUIRED, two
+# is a free round (0). MIXED_SHOW then proves the appended row reads BACK -- a
+# row that landed but could not be rendered would satisfy the exit code alone.
+RC_MIXED=$(rb budget --run-id=t59 --ledger="$LED")
+MIXED_SHOW=$(rbout show --run-id=t59 --ledger="$LED" | grep -c 'round 3 .*strata=B,C' || true)
+if [ "$RC" = "0" ] && [ "$UNREC" = "2" ] && [ "$BLANK" = "0" ] && \
+   [ "$RC_MIXED" = "5" ] && [ "$MIXED_SHOW" = "1" ]; then
+    ok "T59: old ledger authorizes, renders as unrecorded, and accepts a new-format append"
+else
+    fail "T59: old-format ledger" "budget=$RC (want 0), unrecorded rows=$UNREC (want 2), blank=$BLANK (want 0), mixed=$RC_MIXED (want 5), appended row rendered=$MIXED_SHOW (want 1)
+$OUT"
+fi
+
+# ── T60: a garbage panel is refused at WRITE ──────────────────────────────
+# Same polarity as the score check: an unknown letter, an empty value and a
+# repeat are all garbage, and garbage fails closed rather than being stored.
+# `--strata=` with an EMPTY value is the interesting one -- it is a MALFORMED
+# claim, not an absent one, so it must not quietly become `unrecorded`. Keyed on
+# the value alone the two states are identical, which is why the recorder tracks
+# whether the flag was given at all.
+echo "T60. an invalid --strata is refused, and the valid arm still records"
+LED=$(newledger t60)
+RC_UNKNOWN=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=D)
+RC_EMPTY=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=)
+RC_DUP=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=A,A)
+RC_MIXEDCASE=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=a,c)
+RC_COMMA=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=A,)
+# The separator-injection arm, and the reason the shape check is a glob rather
+# than `grep -qE`: grep matches LINE BY LINE, so a value carrying a newline
+# passes on its first line while the printf writes a RECORD SEPARATOR into the
+# field and splits the row. This is the same attack T14 pins for predictions,
+# where `sanitize` is what stops it; the panel is validated instead of
+# sanitized, so the validator has to see the whole string.
+RC_NEWLINE=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata="$(printf 'A\nD')")
+WROTE=$([ -f "$LED" ] && echo yes || echo no)
+# Polarity: a validator that refused EVERYTHING would pass every arm above.
+RC_OK=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=A,C)
+if [ "$RC_UNKNOWN" = "2" ] && [ "$RC_EMPTY" = "2" ] && [ "$RC_DUP" = "2" ] && \
+   [ "$RC_MIXEDCASE" = "2" ] && [ "$RC_COMMA" = "2" ] && [ "$RC_NEWLINE" = "2" ] && \
+   [ "$WROTE" = "no" ] && [ "$RC_OK" = "0" ]; then
+    ok "T60: unknown/empty/dup/lowercase/trailing-comma/newline refused, nothing written, A,C accepted"
+else
+    fail "T60: strata write validation" \
+        "D=$RC_UNKNOWN empty=$RC_EMPTY dup=$RC_DUP lower=$RC_MIXEDCASE comma=$RC_COMMA newline=$RC_NEWLINE ledger_created=$WROTE ok=$RC_OK (want 2 2 2 2 2 2 no 0)"
+fi
+# The newline arm above asserts an exit code; this asserts the CONSEQUENCE it
+# exists to prevent, because a refusal that still wrote would satisfy the code
+# alone. The ledger must hold exactly the one row the valid call added.
+T60_LINES=$(grep -c . "$LED" || true)
+T60_COLS=$(awk -F"\t" 'END{print NF}' "$LED")
+if [ "$T60_LINES" = "1" ] && [ "$T60_COLS" = "7" ]; then
+    ok "T60b: one seven-field row landed; no refused call wrote or split a row"
+else
+    fail "T60b: no row smuggled past the refusals" "lines=$T60_LINES cols=$T60_COLS (want 1 and 7)"
+fi
+
+# ── T61: the panel must satisfy the rule at READ time too ─────────────────
+# The same claim T29 makes for predictions, for the same reason: a rule enforced
+# only at the entry point is one a hand-edited row walks straight past. A stored
+# row naming a panel that no recorder could have written is a history that
+# cannot be read, and this controller refuses those rather than acting on them.
+# The empty arm is the load-bearing one -- a blank field is what a reader would
+# take for `unrecorded` while nothing ever wrote it.
+echo "T61. a stored panel that would not pass the recorder fails closed"
+LED=$(newledger t61)
+printf 'ROUND\t1\t5\tyes\t\t-\tD,E\n' > "$LED"
+RC_GARBAGE=$(rb budget --run-id=t61 --ledger="$LED")
+LED2=$(newledger t61b)
+printf 'ROUND\t1\t5\tyes\t\t-\t\n' > "$LED2"
+RC_BLANK=$(rb budget --run-id=t61b --ledger="$LED2")
+LED3=$(newledger t61c)
+printf 'ROUND\t1\t5\tyes\t\t-\tA,C\n' > "$LED3"
+RC_GOOD=$(rb budget --run-id=t61c --ledger="$LED3")
+LED4=$(newledger t61d)
+printf 'ROUND\t1\t5\tyes\t\t-\tunrecorded\n' > "$LED4"
+RC_UNREC=$(rb budget --run-id=t61d --ledger="$LED4")
+if [ "$RC_GARBAGE" = "6" ] && [ "$RC_BLANK" = "6" ] && [ "$RC_GOOD" = "0" ] && [ "$RC_UNREC" = "0" ]; then
+    ok "T61: stored garbage/blank panels STOP; A,C and unrecorded still authorize"
+else
+    fail "T61: read-time strata validation" \
+        "garbage=$RC_GARBAGE blank=$RC_BLANK good=$RC_GOOD unrecorded=$RC_UNREC (want 6 6 0 0)"
+fi
+
+# ── T62: --strata means something on ONE command, so it is refused on the rest ──
+# `budget --strata=A,C` would otherwise exit 0 having recorded nothing, and a
+# flag accepted where it has no meaning reads as a flag that had one -- the same
+# failure --force's own scope guard exists to stop. It matters more here than
+# elsewhere: the thing silently not recorded IS "which panel scored this".
+echo "T62. --strata is scoped to record-round"
+LED=$(newledger t62)
+bash "$RB" record-round --run-id=t62 --ledger="$LED" --score=5 --defect=yes --strata=A,C >/dev/null
+RC_BUDGET=$(rb budget --run-id=t62 --ledger="$LED" --strata=A,C)
+RC_SHOW=$(rb show --run-id=t62 --ledger="$LED" --strata=A,C)
+RC_VERDICT=$(rb record-verdict --run-id=t62 --ledger="$LED" --verdict=STOP --strata=A,C)
+# Polarity: a guard that refused --strata everywhere would pass all three.
+RC_RECORD=$(rb record-round --run-id=t62 --ledger="$LED" --score=5 --defect=yes --strata=B)
+if [ "$RC_BUDGET" = "2" ] && [ "$RC_SHOW" = "2" ] && [ "$RC_VERDICT" = "2" ] && [ "$RC_RECORD" = "0" ]; then
+    ok "T62: --strata refused on budget/show/record-verdict, accepted on record-round"
+else
+    fail "T62: --strata scope" "budget=$RC_BUDGET show=$RC_SHOW verdict=$RC_VERDICT record=$RC_RECORD (want 2 2 2 0)"
+fi
+
+# ── T63: recording a panel changes NO stop and NO authorization ───────────
+# This field is bookkeeping. It must not become a fourth way to buy a round or
+# a fifth way to lose one, and "I only added a column" is exactly the claim that
+# needs checking rather than asserting. Every absorbing stop is re-run on
+# SEVEN-field rows carrying a full A,B,C panel -- the strongest panel available,
+# which is the direction that would flatter the writer if the field leaked into
+# a predicate.
+echo "T63. every pre-existing stop still holds on rows that carry a panel"
+# regression, on 7-field rows
+LED=$(newledger t63a)
+printf 'ROUND\t1\t6\tyes\t\t-\tA,B,C\nROUND\t2\t5\tyes\t\t-\tA,B,C\n' > "$LED"
+RC_REG=$(rb budget --run-id=t63a --ledger="$LED")
+# two consecutive REFUTED, and a later CONFIRMED + passing score clears neither
+LED=$(newledger t63b)
+{
+    printf 'ROUND\t1\t5\tyes\t\t-\tA,B,C\n'
+    printf 'VERDICT\tCONTINUE\ta at scripts/a.sh:1\t\nROUND\t2\t5\tyes\t\tREFUTED\tA,B,C\n'
+    printf 'VERDICT\tCONTINUE\tb at scripts/b.sh:2\t\nROUND\t3\t5\tyes\t\tREFUTED\tA,B,C\n'
+    printf 'ROUND\t4\t9\tyes\t\tCONFIRMED\tA,B,C\n'
+} > "$LED"
+RC_REF=$(rb budget --run-id=t63b --ledger="$LED")
+OUT_REF=$(rbout budget --run-id=t63b --ledger="$LED")
+# two no-defect rounds, then a passing round: PASSED must not outrank the stop
+LED=$(newledger t63c)
+printf 'ROUND\t1\t5\tno\t\t-\tA,B,C\nROUND\t2\t5\tno\t\t-\tA,B,C\nROUND\t3\t9\tyes\t\t-\tA,B,C\n' > "$LED"
+RC_NOD=$(rb budget --run-id=t63c --ledger="$LED")
+# a terminal verdict, then a passing round appended past it
+LED=$(newledger t63d)
+printf 'ROUND\t1\t5\tyes\t\t-\tA,B,C\nVERDICT\tSTOP\t\t\nROUND\t2\t9\tyes\t\t-\tA,B,C\n' > "$LED"
+RC_TERM=$(rb budget --run-id=t63d --ledger="$LED")
+# the human ceiling
+LED=$(newledger t63e)
+for i in 1 2 3 4 5 6 7 8; do printf 'ROUND\t%s\t5\tyes\t\t-\tA,B,C\n' "$i"; done > "$LED"
+RC_CEIL=$(rb budget --run-id=t63e --ledger="$LED")
+if [ "$RC_REG" = "6" ] && [ "$RC_REF" = "6" ] && [ "$RC_NOD" = "6" ] && \
+   [ "$RC_TERM" = "6" ] && [ "$RC_CEIL" = "7" ] && \
+   printf '%s\n' "$OUT_REF" | grep -q "REFUTED"; then
+    ok "T63: regression / two REFUTED / two no-defect / terminal / ceiling all still absorbing"
+else
+    fail "T63: stops on 7-field rows" \
+        "reg=$RC_REG ref=$RC_REF nodefect=$RC_NOD terminal=$RC_TERM ceiling=$RC_CEIL (want 6 6 6 6 7)"
+fi
+
+echo "T64. a BLANK panel on a 7-field row renders as MALFORMED, never as unrecorded"
+# Stratum B finding: `load_ledger` exits 6 on a blank field 7 -- "the value that
+# must not slip through" -- while `show` rendered that same byte as
+# `unrecorded`. The operator whose `budget` just said "does not parse" ran
+# `show` to find out why and was told the panel was merely unrecorded: a
+# fail-closed condition laundered into a legitimate value.
+LED=$(newledger t64a)
+printf 'ROUND\t1\t5\tyes\t\t-\t\n' > "$LED"
+OUT_BLANK=$(rbout show --run-id=t64a --ledger="$LED")
+RC_BLANK64=$(rb budget --run-id=t64a --ledger="$LED")
+# a six-field row is a REAL absence and must still read as unrecorded
+LED=$(newledger t64b)
+printf 'ROUND\t1\t5\tyes\t\t-\n' > "$LED"
+OUT_OLD=$(rbout show --run-id=t64b --ledger="$LED")
+# and a real panel still renders verbatim
+LED=$(newledger t64c)
+printf 'ROUND\t1\t5\tyes\t\t-\tA,C\n' > "$LED"
+OUT_REAL=$(rbout show --run-id=t64c --ledger="$LED")
+if printf '%s\n' "$OUT_BLANK" | grep -q "MALFORMED" && \
+   ! printf '%s\n' "$OUT_BLANK" | grep -q "strata=unrecorded" && \
+   [ "$RC_BLANK64" = "6" ] && \
+   printf '%s\n' "$OUT_OLD" | grep -q "strata=unrecorded" && \
+   printf '%s\n' "$OUT_REAL" | grep -q "strata=A,C"; then
+    ok "T64: blank panel reads MALFORMED and still STOPs; six-field still unrecorded; real panel verbatim"
+else
+    fail "T64: show must not launder a refused blank into unrecorded" \
+        "blank=$OUT_BLANK rc=$RC_BLANK64 old=$OUT_OLD real=$OUT_REAL"
+fi
+
+# T65 (the pre-push strata hint) is DELIBERATELY NOT TESTED HERE, and that is a
+# recorded gap rather than an oversight. The assertion needs `cross-review.sh
+# pre-push` to run, which needs real repo context; the mutation harness copies
+# this skill to a NON-GIT scratch dir on purpose, so such a test makes the whole
+# sweep refuse to run on a red baseline. A test that costs the mutation proof
+# is a bad trade. Tracked as a follow-up; the behaviour it would pin is the
+# hint derivation at cross-review.sh (STRATA_HINT), and cross-review.test.sh --
+# which runs in a real tree -- is where it belongs.
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

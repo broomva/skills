@@ -131,6 +131,39 @@ jobs:
             echo "::error::an unlistable subtree was silently dropped"; cat /tmp/eacces.txt; exit 1; }
           echo "an unlistable subtree is reported, exit 1, no crash"
 
+      - name: The gate catches a skill directory with NO manifest
+        # The gate validated every manifest it FOUND and never asked whether a
+        # skill HAD one, so skills/simulation/sourcer shipped 3180 lines behind
+        # `OK — 101 SKILL.md files pass`. Not failed: invisible. The probe keeps
+        # the rest of the repo in place so the count stays non-zero, which is
+        # exactly what hid it.
+        run: |
+          mkdir -p skills/tooling/zzz-naked-probe/scripts
+          echo 'x = 1' > skills/tooling/zzz-naked-probe/scripts/impl.py
+          # And the NESTED position, `<...>/skills/<child>`. A depth-2 rule
+          # exempted it, and the depth-2 probe alone would not have noticed.
+          mkdir -p skills/tooling/zzz-naked-probe-host/skills/zzz-nested-probe/scripts
+          printf -- '---\nname: zzz-naked-probe-host\ndescription: Probe.\n---\n' \
+            > skills/tooling/zzz-naked-probe-host/SKILL.md
+          echo 'x = 1' > skills/tooling/zzz-naked-probe-host/skills/zzz-nested-probe/scripts/impl.py
+          set +e
+          python3 scripts/lint_skill_md.py > /tmp/naked.txt 2>&1
+          code=$?
+          set -e
+          rm -rf skills/tooling/zzz-naked-probe skills/tooling/zzz-naked-probe-host
+          if [ "$code" -ne 1 ]; then
+            echo "::error::a manifestless skill dir must exit 1, got $code"; cat /tmp/naked.txt; exit 1
+          fi
+          grep -q 'zzz-nested-probe' /tmp/naked.txt || {
+            echo "::error::a nested sub-skill with no manifest went unreported"
+            cat /tmp/naked.txt; exit 1; }
+          if grep -q 'Traceback' /tmp/naked.txt; then
+            echo "::error::the lint crashed instead of reporting"; cat /tmp/naked.txt; exit 1
+          fi
+          grep -q 'zzz-naked-probe' /tmp/naked.txt || {
+            echo "::error::a skill with no manifest went unreported"; cat /tmp/naked.txt; exit 1; }
+          echo "a skill directory with no SKILL.md is reported by name, exit 1, no crash"
+
       - name: The gate catches a dangling manifest
         # `Path.rglob` filters candidates through `Path.exists()`, which follows
         # symlinks, so on this job's Python 3.11 a dangling SKILL.md was never

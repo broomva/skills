@@ -2,7 +2,7 @@
 name: bookkeeping
 tier: D
 category: knowledge
-version: 1.3.0
+version: 1.4.0
 primitive: P6
 description: Universal knowledge engine — scores, promotes, and compounds knowledge across all sources into a permanent, query-able entity graph
 author: broomva
@@ -120,7 +120,20 @@ Apply promotion decision based on total score:
 | 3–4   | Hold    | Stays in `research/notes/YYYY-MM-DD-{source}-raw.md` (Layer 2) |
 | ≤ 2   | Discard | Dropped, not written |
 
-Entity page type is inferred from the candidate context: `tool`, `person`, `concept`, `project`, `paper`, `pattern`, `dataset`. Use the template at `templates/entity-page.md` when creating new pages.
+Entity page type is inferred from the candidate context; the live list is `ENTITY_TYPES` in `scripts/bookkeeping.py` (`concept`, `pattern`, `tool`, `person`, `project`, `discovery`, `question`, `framework-refinement`, `industry-pattern`, `persona`, `org`). Use the template at `templates/entity-page.md` when creating new pages.
+
+### Entity coherence gate (promotion stage)
+
+The sum gate's false positives are **identity** failures, not score failures: a section heading, a person's name, or a phrase lifted from a source document, filed as a `concept` with a claim that is not about its own title. Measured 2026-09-18 (jev-1.13.0) on the 9 human-quarantined junk pages (`~/.config/bookkeeping/quarantine/2026-09-16-nous-sum-gate/`) vs 30 accepted pages: specificity AUC **0.60**, relevance AUC **0.81**, and a Noul question — *is the title a coherent knowledge-graph node that the core_claim is genuinely about, vs a heading / name / lifted phrase?* — AUC **0.98**. The three Nous axes do not measure entity identity; this gate does, once, at the single door every new page passes through (`promote_item`, new-page path only — the existing-page update branch is never gated).
+
+- **Transport:** one stdlib POST to `https://api.typesafe.ai/v1/systemone` (`model: jev-latest`, one `noul` question), 10 s timeout, no SDK. Key from `TYPESAFE_API_KEY`, else `~/.config/typesafe/api_key`; the key must be a single printable token (no spaces, no line breaks) or it is refused unsent.
+- **Type-aware criteria** (`COHERENCE_CRITERIA` in `scripts/bookkeeping.py`): for `tool` / `person` / `project` / `org` a product or personal NAME as the title is legitimate — the question is whether the claim is about that named thing; for every other type in `ENTITY_TYPES` (`concept`, `pattern`, `question`, `discovery`, `framework-refinement`, `industry-pattern`, `persona` — persona pages are preference claims, not identity names) the title must name the concept the claim asserts, and a heading, a name, or a lifted phrase is `false`. The two sets partition `ENTITY_TYPES` and a test enforces it, so a new type forces a criteria decision.
+- **Verdict:** `p < COHERENCE_THRESHOLD` (0.5) ⇒ the page is **not** written to `research/entities/`; it goes to `~/.config/bookkeeping/quarantine/<YYYY-MM-DD>-coherence/<type>_<slug>.md` with `coherence: <p>` and `coherence_gate: rejected` added to its frontmatter, and one line is printed. Quarantine, never delete — recovery is `mv` + deleting those two lines.
+- **Memory** (two doors, both counted as `remembered`): within a run, a `(type, slug)` refused earlier is skipped without a call — this is the only door a `--dry-run` has, since it writes no file; across runs, while `<type>_<slug>.md` sits in *any* dated quarantine dir the item is skipped and the quarantined copy is never overwritten. A permanently junk item is charged once, not once per run. Moving the file out (recovery) or deleting it (re-judge) re-opens the question on the next run.
+- **Unavailable** (no key, malformed key, HTTP error, timeout, malformed response) ⇒ pass-through (the page is written, status quo) but LOUD: one stderr line per distinct cause per run, and counted. The key is refused before a request is built if it is not a single printable token, and is redacted from any cause line. A failed quarantine *write* is also loud; the page is then written nowhere and the item is re-judged next run.
+- **Counters:** `coherence.{enabled,checked,rejected,remembered,unavailable}` in every run-log entry and in the `run` summary line `Coherence gate: on | checked: N | rejected: N | remembered: N | unavailable: N`.
+- **`--dry-run` still asks the classifier** — the verdict *is* the preview (`dry-run: would QUARANTINE …`) — but writes neither the page nor the quarantine file. A dry run is therefore not free or offline.
+- **Knobs:** `BOOKKEEPING_COHERENCE_GATE=0` disables explicitly (transport never called, memory ignored). Default ON when a key is present. That default was *not* acceptable for the scoring judge, which runs on every in-band item, costs seconds per call and changes scores; this gate runs only on new promotions (a handful per run), takes ~300 ms and ~$0.00005 per call, and quarantines rather than deletes. What default-on *does* change: the slug, title, derived `core_claim` and first 1500 chars of every **new** page leave the machine to a third-party API — opt out with the knob if that is not acceptable for a corpus.
 
 ### Stage 6 — SYNTHESIZE
 

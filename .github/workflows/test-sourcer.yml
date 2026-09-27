@@ -1,0 +1,186 @@
+name: test-sourcer
+
+# The sourcer trust substrate (skills/simulation/sourcer/).
+#
+# This workflow exists because of a defect it is itself the fix for. Every PR in
+# this arc reported "pytest (Python 3.11)" and "pytest (Python 3.12)" green,
+# and neither ran a single sourcer test -- those checks belong to
+# test-skill-evals, which matched on other paths. Nine commits and 156 tests
+# were merged behind a green tick that was measuring something else entirely.
+# A gate named after the thing it does not test is worse than no gate, because
+# it manufactures exactly the confidence it fails to earn.
+#
+# What is tested here is the half a test can hold: the custody chain, the
+# refusals, and the accounting. What sourcer EXTRACTS is a model's judgement and
+# is not testable in CI without a corpus and a network; mocking both would test
+# the mock. That split is the design.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/simulation/sourcer/**'
+      - '.github/workflows/test-sourcer.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/simulation/sourcer/**'
+      - '.github/workflows/test-sourcer.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-sourcer-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the floor deliberately: it is what /usr/bin/python3 resolves to
+        # on the development box, so it is the version the suite is actually run
+        # against by hand. Dropping it would let a 3.10+ syntax feature land and
+        # be discovered only by the next person running the documented command.
+        python: ['3.9', '3.11', '3.12']
+    defaults:
+      run:
+        working-directory: skills/simulation/sourcer
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+
+      - name: Install
+        run: python3 -m pip install --upgrade pytest
+
+      - name: Test
+        # PYTHONDONTWRITEBYTECODE because a same-size edit inside one second
+        # reuses stale bytecode (CPython invalidates on mtime+size), which
+        # reports a mutant as SURVIVED without ever having run it.
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          SOURCER_CHAIN_KEY: ci-test-key
+        run: python3 -m pytest tests/ -q
+
+  unkeyed:
+    name: an unkeyed chain refuses to start
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    defaults:
+      run:
+        working-directory: skills/simulation/sourcer
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: The daemon will not construct without a key
+        # A chain keyed by nothing verifies and proves nothing, so the refusal is
+        # load-bearing. Asserted with the variable genuinely absent from the
+        # environment -- which the `test` job above cannot do, since it must set
+        # the key to run at all.
+        run: |
+          set +e
+          out=$(python3 -c "
+          import sys; sys.path.insert(0, 'scripts')
+          import fetchd, pathlib
+          fetchd.FetchDaemon(root=pathlib.Path('/tmp/x'), run_id='r1')
+          " 2>&1)
+          code=$?
+          set -e
+          echo "$out"
+          [ "$code" != "0" ] || { echo "::error::an unkeyed daemon constructed"; exit 1; }
+
+  nonvacuous:
+    name: the suite can actually go red
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: skills/simulation/sourcer
+    # THE GATE ON THE GATE.
+    #
+    # `pytest -q` printing "156 passed" is compatible with a suite that asserts
+    # nothing. This job breaks a load-bearing invariant in the source and
+    # requires the suite to notice -- so a future refactor that quietly guts a
+    # check cannot leave the tick green. It is the cheap, always-on form of the
+    # mutation sweep run by hand during development.
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install
+        run: python3 -m pip install --upgrade pytest
+      - name: Baseline is green
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          SOURCER_CHAIN_KEY: ci-test-key
+        run: python3 -m pytest tests/ -q
+
+      - name: Each planted defect is caught
+        env:
+          PYTHONDONTWRITEBYTECODE: '1'
+          SOURCER_CHAIN_KEY: ci-test-key
+        run: |
+          python3 - <<'PY'
+          import pathlib, subprocess, sys, os
+          # (file, old, new, what it breaks)
+          MUTANTS = [
+            ("scripts/traverse.py",
+             "return len(self.pages) + len(self.dropped) == self.seen",
+             "return True",
+             "traversal accounting can be vacuously closed"),
+            ("scripts/traverse.py",
+             "if _DOCTYPE.search(payload):",
+             "if False:",
+             "a sitemap DOCTYPE is parsed instead of refused"),
+            ("scripts/traverse.py",
+             'if host_of(url) != home:\n            dropped.append((raw, f"off-host: {host_of(url)} is not {home}"))',
+             'if False:\n            dropped.append((raw, f"off-host: {host_of(url)} is not {home}"))',
+             "a sitemap may list pages on any host"),
+            ("scripts/store.py",
+             "def expandable(self) -> bool:",
+             "def expandable(self) -> bool:\n        return True  # planted",
+             "an unverified record may seed the next hop"),
+          ]
+          env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+          failed = []
+          for rel, old, new, what in MUTANTS:
+              p = pathlib.Path(rel)
+              src = p.read_text()
+              n = src.count(old)
+              if n != 1:
+                  failed.append(f"STALE ANCHOR ({n} matches) in {rel}: {what}")
+                  continue
+              p.write_text(src.replace(old, new, 1))
+              r = subprocess.run([sys.executable, "-m", "pytest", "tests/", "-q", "-x",
+                                  "-p", "no:cacheprovider"],
+                                 capture_output=True, text=True, env=env)
+              p.write_text(src)
+              status = "caught" if r.returncode != 0 else "SURVIVED"
+              print(f"{status:9} {what}")
+              if r.returncode == 0:
+                  failed.append(f"SURVIVED: {what}")
+          if failed:
+              print("::error::the suite did not notice a planted defect:")
+              for f in failed:
+                  print(f"::error::  {f}")
+              sys.exit(1)
+          print(f"\nall {len(MUTANTS)} planted defects caught")
+          PY
+
+      - name: And the tree is restored
+        # A mutation job that leaves the source mutated would hand every later
+        # step a file nobody wrote. Cheap to assert, and the assertion is what
+        # makes the restore above trustworthy rather than intended.
+        run: |
+          cd "$GITHUB_WORKSPACE"
+          git diff --exit-code -- skills/simulation/sourcer || {
+            echo "::error::the mutation step did not restore the tree"; exit 1; }

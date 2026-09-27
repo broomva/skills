@@ -37,6 +37,14 @@ dependencies = [
     "click>=8.3.0",
     "rich>=14.0.0",
     "jsonschema>=4.21.0",
+    # RUNTIME, not dev. The extraction pipeline imports bookkeeping for the
+    # canonical Nous gate and derive_core_claim, and bookkeeping's render.py
+    # does `import mistune`. Declared under [dev] this resolves in CI and in a
+    # `-e ".[dev]"` checkout, and NOWHERE else: a plain `pip install .` leaves
+    # _bookkeeping_module() returning None, _derive_core_claim() returning None,
+    # and every candidate classified unpromotable — zero pages, silently.
+    # Verified: pip install . (no extras) -> ModuleNotFoundError: mistune.
+    "mistune>=3.0.0",
 ]
 
 [project.optional-dependencies]
