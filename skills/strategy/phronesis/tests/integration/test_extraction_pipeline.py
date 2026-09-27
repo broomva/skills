@@ -24,6 +24,11 @@ from tests.fixtures.tropico_renovables import build_tropico_engagement
 pytestmark = [pytest.mark.integration]
 
 
+def _entity_snapshot(root: Path) -> set[str]:
+    """Every entity page under `root`, as repo-relative strings."""
+    return {str(p.relative_to(root)) for p in root.rglob("*.md")}
+
+
 # Pre-emptively force the deterministic stub scorer for these tests.
 # Real bookkeeping scoring depends on the optional `mistune` import +
 # network LLM calls — both unsuitable for CI. The bookkeeping-integration
@@ -212,12 +217,17 @@ class TestBookkeepCli:
     ):
         monkeypatch.chdir(tmp_path)
         queue_dir = tmp_path / "queue"
+        entity_dir = tmp_path / "entities"
+        (entity_dir / "industry-pattern").mkdir(parents=True)
+        (entity_dir / "framework-refinement").mkdir(parents=True)
 
         eng = build_tropico_engagement()
         from runners.cli.io import journal_path, save_tenant
 
         save_tenant(eng.tenant.tenant_slug, eng.tenant)
         eng.journal.save_jsonl(journal_path(eng.tenant.tenant_slug))
+
+        entity_before = _entity_snapshot(entity_dir)
 
         runner = CliRunner()
         result = runner.invoke(
@@ -228,12 +238,21 @@ class TestBookkeepCli:
                 "--dry-run",
                 "--queue-root",
                 str(queue_dir),
+                "--entity-graph-root",
+                str(entity_dir),
             ],
         )
         assert result.exit_code == 0
         assert "[dry-run]" in result.output
         # dry-run uses an in-process tempdir; queue_dir is never written.
         assert not queue_dir.exists()
+        # ...and NEITHER is the entity graph. This half was missing, which is
+        # how a --dry-run that wrote 6 pages into the operator's live knowledge
+        # graph passed CI: the test asserted only about the queue.
+        assert entity_before == _entity_snapshot(entity_dir), (
+            "--dry-run PERSISTED entity page(s): "
+            f"{sorted(_entity_snapshot(entity_dir) - entity_before)}"
+        )
 
 
 class TestEntityStub:
@@ -253,5 +272,210 @@ class TestEntityStub:
         # Frontmatter closes
         assert "\n---\n" in body
         # Required fields
-        for key in ("type:", "slug:", "title:", "status: candidate", "score:"):
+        for key in ("type:", "title:", "status: candidate", "score:"):
             assert key in body
+        # The original read `"slug:" in body`, which ALSO matches
+        # `engagement_slug:` — so it passed with no top-level slug key present,
+        # and asserted the opposite of the unit test
+        # (`"slug" not in _frontmatter(...)`, since workspace#530 dropped the
+        # redundant field). Line-anchored, and asserting ABSENCE, so the two
+        # tests now agree and this one can actually fail.
+        assert not any(ln.startswith("slug:") for ln in body.splitlines()), \
+            "top-level slug: is redundant with the filename (workspace#530)"
+
+
+class TestPromotionRefusals:
+    """The two refusals the writer used to ignore (BRO-2404).
+
+    A P20 mutation sweep found both of these behaviours SURVIVING every
+    mutation — the guards shipped with no test at all, which is the same
+    shape as the defect they were added to fix.
+    """
+
+    def test_existing_entity_page_is_never_overwritten(
+        self, queue_root: Path, entity_root: Path
+    ) -> None:
+        """This module's docstring says candidates "do NOT go directly to
+        research/entities/ — every candidate must clear a human review pass
+        first". `write_text` was unconditional and clobbered operator-polished
+        pages; observed overwriting a claim authored by repair commit
+        a1242b227.
+        """
+        eng = build_nova_construction_engagement()
+        first = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+        assert first.promotion_paths, "fixture unreachable — nothing was promoted"
+
+        polished = first.promotion_paths[0]
+        sentinel = "OPERATOR-POLISHED BODY — MUST SURVIVE RE-EXTRACTION"
+        polished.write_text(sentinel, encoding="utf-8")
+
+        second = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+
+        assert polished.read_text(encoding="utf-8") == sentinel
+        assert polished in second.skipped_existing
+        assert polished not in second.promotion_paths
+
+    def test_queue_record_is_still_written_when_promotion_is_skipped(
+        self, queue_root: Path, entity_root: Path
+    ) -> None:
+        """Refusing to clobber must not lose the candidate."""
+        eng = build_nova_construction_engagement()
+        extract_and_queue(eng, queue_root=queue_root, entity_graph_root=entity_root)
+        second = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+        assert second.skipped_existing
+        assert second.queue_paths, "the queue record is the operator's recovery path"
+
+    def test_underivable_claim_blocks_promotion_instead_of_truncating(
+        self, monkeypatch: pytest.MonkeyPatch, queue_root: Path, entity_root: Path
+    ) -> None:
+        """`derive_core_claim` returning None is promotion-blocking (BRO-1983).
+
+        The previous code truncated to `sentence[:139] + "…"`, which the
+        linter rejects as a hard ERROR.
+        """
+        import core.extraction.pipeline as pipeline
+
+        monkeypatch.setattr(pipeline, "_derive_core_claim", lambda c: None)
+        eng = build_nova_construction_engagement()
+        result = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+
+        assert result.unpromotable, "nothing was blocked — the guard is inert"
+        assert result.promotion_paths == []
+        assert not list(entity_root.rglob("*.md"))
+        assert result.queue_paths, "blocked candidates must still be queued"
+
+    def test_promoted_pages_are_status_candidate_not_active(
+        self, queue_root: Path, entity_root: Path
+    ) -> None:
+        """A stub entering the graph as `active` would bypass operator review."""
+        import yaml
+
+        eng = build_nova_construction_engagement()
+        result = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+        assert result.promotion_paths
+        for page in result.promotion_paths:
+            fm = yaml.safe_load(page.read_text(encoding="utf-8").split("---", 2)[1])
+            assert fm["status"] == "candidate"
+
+
+class TestPromotedPageContent:
+    """The edge no unit test in this repo can close: what lands on disk.
+
+    A P20 mutation proved this edge was open — making `extract_and_queue`
+    render a hardcoded `"Placeholder claim."` instead of the derived claim
+    left all 500 tests green. The unit test that claimed to cover it computed
+    the claim, passed it into the renderer, and asserted the output equalled
+    it: a tautology. This reads the promoted file back off disk.
+    """
+
+    def test_promoted_page_carries_the_derived_claim(
+        self, queue_root: Path, entity_root: Path
+    ) -> None:
+        import yaml
+
+        from core.extraction.pipeline import _derive_core_claim, extract_and_queue
+
+        eng = build_nova_construction_engagement()
+        result = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+        assert result.promotion_paths, "fixture unreachable — nothing was promoted"
+
+        checked = 0
+        for page in result.promotion_paths:
+            fm = yaml.safe_load(page.read_text(encoding="utf-8").split("---", 2)[1])
+            claim = fm["core_claim"]
+            # The page's own body is what the claim was derived from.
+            body = page.read_text(encoding="utf-8").split("## Pattern (anonymized)")[1]
+            body = body.split("##")[0].strip()
+
+            class _C:
+                content = body
+                title = fm["title"]
+                slug = page.stem
+
+            expected = _derive_core_claim(_C())
+            if expected is None:
+                continue
+            assert claim == expected, f"{page.name}: page claim is not the derived one"
+            checked += 1
+
+        assert checked > 0, "no promoted page exercised the derivation"
+
+
+class TestOperatorSummary:
+    """The refusals must be legible to the operator, not just to the model.
+
+    Before this, a re-run over a populated graph printed
+        Total candidates: 6 / Promoted: 0 / Queued for review (score <5/9): 0
+    -- six candidates and six queue writes, reported as nothing.
+    """
+
+    def test_skipped_pages_are_reported_not_swallowed(
+        self, queue_root: Path, entity_root: Path
+    ) -> None:
+        eng = build_nova_construction_engagement()
+        extract_and_queue(eng, queue_root=queue_root, entity_graph_root=entity_root)
+        result = extract_and_queue(
+            eng, queue_root=queue_root, entity_graph_root=entity_root
+        )
+        assert result.skipped_existing, "fixture unreachable — nothing was skipped"
+
+        import click.testing
+
+        from runners.cli.commands.bookkeep import _print_summary
+
+        runner = click.testing.CliRunner()
+        with runner.isolation() as (out, _err, _):
+            _print_summary(result, dry_run=False)
+        text = out.getvalue().decode()
+        assert "Already on disk" in text, text
+        assert str(len(result.skipped_existing)) in text
+
+    def test_unpromotable_is_not_labelled_as_a_low_score(
+        self, monkeypatch: pytest.MonkeyPatch, queue_root: Path, entity_root: Path
+    ) -> None:
+        """They scored >=5; printing them under "score <5/9" states a falsehood."""
+        import core.extraction.pipeline as pipeline
+
+        monkeypatch.setattr(pipeline, "_derive_core_claim", lambda c: None)
+        result = extract_and_queue(
+            build_nova_construction_engagement(),
+            queue_root=queue_root,
+            entity_graph_root=entity_root,
+        )
+        assert result.unpromotable, "fixture unreachable — nothing was blocked"
+
+        import click.testing
+
+        from runners.cli.commands.bookkeep import _print_summary
+
+        runner = click.testing.CliRunner()
+        with runner.isolation() as (out, _err, _):
+            _print_summary(result, dry_run=False)
+        text = out.getvalue().decode()
+        low = [ln for ln in text.splitlines() if "score <5/9" in ln][0]
+        assert low.strip().endswith("0"), f"unpromotable leaked into the low-score line: {low}"
+        assert "No self-contained claim" in text, text
+
+    # DELETED: test_dry_run_predicts_the_real_run_over_a_populated_graph.
+    #
+    # It built its own symlink mirror inline and called extract_and_queue
+    # directly, never invoking `bookkeep` -- so it tested a re-implementation
+    # of the dry-run block rather than the block itself, and passed while the
+    # real command wrote 6 pages into the live knowledge graph. A gate that
+    # re-implements the code under test is why that shipped.
+    #
+    # The prediction gap it described is real and now documented as a known
+    # limitation in bookkeep.py; the safe fix (a read-only existence oracle)
+    # is an API change and belongs in its own PR.

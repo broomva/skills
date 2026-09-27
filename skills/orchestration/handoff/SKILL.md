@@ -58,8 +58,8 @@ in a single pass.
 
 - **End of substantive in-session work** that another agent (or the
   same user in a fresh context) will resume.
-- **Mid-arc snapshot** when context is approaching 100K tokens and
-  the user wants to break before continuing in a fresh context (this
+- **Mid-arc snapshot** when the user wants to break before
+  continuing in a fresh context (this
   is the *handoff* half of P12 — `PROMPT.md` is the *state-replay* half).
 - **Stage boundary** in a multi-stage arc (Stage 0 → Stage 1 →
   Stage 2 pattern that appeared 4× in the Houston/Life-Houston work).
@@ -240,6 +240,7 @@ This too is a reflex, not a request.
 | **`persist` (P12)** | When the handoff is the prelude to a fresh-context loop. The handoff is the human-readable narrative; `PROMPT.md` is the machine-readable state. Both exist; they're different artifacts. |
 | **`bookkeeping`** | When the handoff cites lessons that should also live as entity pages (`research/entities/pattern/<lesson>.md`). File the lesson via `bookkeeping file` AFTER the handoff is written; reference the entity in the handoff's "Related context" section. |
 | **`make-spec`** | When the handoff is dense enough that a separate HTML companion (spec / plan) is warranted. The handoff stays markdown; the companion is HTML. P18 audience rule: handoff is agent-loaded → markdown. |
+| **`spec-contract`** | Whenever that companion is a spec / plan / ADR / **RFD** rather than a narrative. Applies to an existing document the handoff merely CITES, not only to one it creates — a handoff can run standalone, and its own checklist checks handoff structure, not the artifact it points at. `make-spec` decides how it looks; `spec-contract` decides what is in it — run `spec_check.py` on the companion before the handoff cites it, or the next agent inherits a document that states decisions without stating what they cost to reverse. |
 | **`/p9 watch`** | If the handoff is being written mid-CI (after a push, before merge), include the watch command + PR number so the next agent doesn't restart the wait. |
 | **`handback`** | Whenever the arc is stopping on something only a *person* can resolve. The two are siblings with different readers: `handback` is the chat message the **human** acts on (asks first, each with a default); this handoff is what the **next agent** loads. The handback's Detail block links here, and the narrative — the review sagas, the corrections, the what-happened prose — belongs in this document rather than in that message. |
 

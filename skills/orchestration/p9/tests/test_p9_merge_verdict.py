@@ -56,7 +56,8 @@ def _mock_gh(p9, monkeypatch, *, view=None, threads=None,
             if graphql_rc != 0:
                 return _Run(stderr="graphql err", returncode=graphql_rc)
             payload = {"data": {"repository": {"pullRequest": {
-                "reviewThreads": {"nodes": threads or []}}}}}
+                "reviewThreads": {"totalCount": len(threads or []),
+                                  "nodes": threads or []}}}}}
             return _Run(stdout=json.dumps(payload), returncode=0)
         return _Run(returncode=1)
     monkeypatch.setattr(p9.subprocess, "run", fake)
