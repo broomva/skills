@@ -68,6 +68,15 @@ def _response(p):
     }
 
 
+@pytest.fixture(autouse=True)
+def _grounding_floor_off(monkeypatch):
+    """This suite's fixture items are not written to name their slugs; what it
+    tests is downstream of the grounding floor (BRO-2614), which has its own
+    suite in test_grounding_floor.py. Off here so these tests keep testing
+    what they are about."""
+    monkeypatch.setattr(bookkeeping, "GROUNDING_FLOOR", 0)
+
+
 @pytest.fixture
 def gate(tmp_path, monkeypatch):
     """Gate ON, every on-disk root redirected under tmp_path, counters reset.

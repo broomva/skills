@@ -1,0 +1,51 @@
+name: test-talkback
+
+# Python test gate for the `talkback` skill (skills/audio/talkback/).
+# Path-filtered so it runs ONLY when skills/audio/talkback/** changes — the
+# monorepo's tests-optional default (lint-skill-md.yml) stands everywhere else.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/audio/talkback/**'
+      - '.github/workflows/test-talkback.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/audio/talkback/**'
+      - '.github/workflows/test-talkback.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-talkback-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/audio/talkback
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Unit tests (session isolation + toggle)
+        # PYTHONDONTWRITEBYTECODE: same-size mutants can otherwise reuse stale
+        # .pyc and report SURVIVED without running.
+        run: PYTHONDONTWRITEBYTECODE=1 python -m pytest tests/ -v
+      - name: Scripts are importable and executable
+        run: |
+          python -c "import ast,pathlib; [ast.parse(p.read_text()) for p in pathlib.Path('scripts').glob('*.py')]"
+          test -x scripts/talkback-hook.py
+          test -x scripts/talkback.py

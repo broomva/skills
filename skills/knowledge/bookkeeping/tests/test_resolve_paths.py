@@ -226,3 +226,156 @@ class TestDisplayPathNeverCrashes:
         import argparse
         bookkeeping.cmd_index(argparse.Namespace(dry_run=False))  # must NOT raise
         assert catalog.is_file()
+
+
+# ── Enclosing checkout, worktree-aware (BRO-2614) ─────────────────────────────
+
+def _checkout(path: Path, *, worktree_of: Path | None = None, graph: bool = True) -> Path:
+    """A git toplevel: a `.git` dir with HEAD, or a worktree's `.git` FILE whose
+    gitdir target has HEAD — the shapes git itself writes."""
+    path.mkdir(parents=True, exist_ok=True)
+    if worktree_of is None:
+        (path / ".git").mkdir()
+        (path / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+    else:
+        gitdir = worktree_of / ".git" / "worktrees" / path.name
+        gitdir.mkdir(parents=True, exist_ok=True)
+        (gitdir / "HEAD").write_text("ref: refs/heads/feature\n")
+        (path / ".git").write_text(f"gitdir: {gitdir}\n")
+    if graph:
+        (path / "research" / "entities").mkdir(parents=True)
+    return path
+
+
+class TestEnclosingCheckout:
+    def test_worktree_resolves_to_itself_not_the_main_checkout(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        wt = _checkout(tmp_path / "wt", worktree_of=main)
+        root, ent, cat = bookkeeping._resolve_knowledge_paths(
+            start_dir=wt / "research" / "entities", env={})
+        assert root == wt
+        assert ent == wt / "research" / "entities"
+        assert cat == wt / "docs" / "knowledge-index.md"
+
+    def test_worktree_nested_inside_the_main_checkout(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        wt = _checkout(main / ".worktrees" / "x", worktree_of=main)
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=wt, env={})
+        assert root == wt
+
+    def test_main_checkout_resolves_to_itself(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=main / "docs", env={})
+        assert root == main
+
+    def test_nested_repo_without_a_graph_is_walked_past(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        skills = _checkout(main / "skills", graph=False)
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=skills / "x", env={})
+        assert root == main
+
+    def test_graph_dir_without_git_is_not_a_checkout(self, tmp_path):
+        (tmp_path / "loose" / "research" / "entities").mkdir(parents=True)
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=tmp_path / "loose", env={})
+        assert root == DEFAULT_ROOT
+
+    @pytest.mark.parametrize("dotgit", [
+        "file:not git",                       # a text file named .git
+        "file:gitdir: /nonexistent/wt",       # gitdir target missing
+        "dir-without-HEAD",                   # an empty .git directory
+        "dir-with-HEAD:not-a-git-head",       # HEAD is not git's HEAD (round 2)
+        "dir-with-HEAD:",                     # empty HEAD
+        "dir-with-HEAD:ref: refs/",           # bare prefix (round 3)
+        "dir-with-HEAD:ref: refs/heads/main junk",
+        "dir-with-HEAD:ref: refs/heads/a..b",
+        "dir-with-HEAD:ref: refs/heads/x.lock",
+    ])
+    def test_a_dotgit_that_is_not_a_checkout_is_not_adopted(self, tmp_path, dotgit):
+        d = tmp_path / "fake"
+        (d / "research" / "entities").mkdir(parents=True)
+        if dotgit.startswith("file:"):
+            (d / ".git").write_text(dotgit[len("file:"):] + "\n")
+        else:
+            (d / ".git").mkdir()
+            if dotgit.startswith("dir-with-HEAD:"):
+                (d / ".git" / "HEAD").write_text(dotgit[len("dir-with-HEAD:"):] + "\n")
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
+        assert root == DEFAULT_ROOT
+
+    def test_a_malformed_pointer_naming_a_real_gitdir_is_not_a_checkout(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        target = main / ".git" / "worktrees" / "x"
+        target.mkdir(parents=True)
+        (target / "HEAD").write_text("ref: refs/heads/x\n")
+        d = tmp_path / "fake"
+        (d / "research" / "entities").mkdir(parents=True)
+        (d / ".git").write_text(f"gitdir! {target}\n")   # not a `gitdir:` line
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
+        assert root == DEFAULT_ROOT
+
+    @pytest.mark.parametrize("head", ["a" * 40, "b" * 64, "ref: refs/heads/feat/bro-2614-x"])
+    def test_a_detached_head_is_a_checkout(self, tmp_path, head):
+        d = _checkout(tmp_path / "det")
+        (d / ".git" / "HEAD").write_text(head + "\n")
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
+        assert root == d
+
+    def test_a_gitdir_target_with_a_bogus_head_is_not_a_checkout(self, tmp_path):
+        target = tmp_path / "gd"
+        target.mkdir()
+        (target / "HEAD").write_text("not-a-git-head\n")
+        d = tmp_path / "wt"
+        (d / "research" / "entities").mkdir(parents=True)
+        (d / ".git").write_text(f"gitdir: {target}\n")
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=d, env={})
+        assert root == DEFAULT_ROOT
+
+    def test_relative_gitdir_resolves_against_the_checkout(self, tmp_path):
+        main = _checkout(tmp_path / "main")
+        wt = tmp_path / "wt"
+        (wt / "research" / "entities").mkdir(parents=True)
+        (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+        (main / ".git" / "worktrees" / "wt" / "HEAD").write_text("ref: refs/heads/wt\n")
+        (wt / ".git").write_text("gitdir: ../main/.git/worktrees/wt\n")
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=wt, env={})
+        assert root == wt
+
+    @pytest.mark.parametrize("key", ["BROOMVA_ROOT", "KG_ROOT"])
+    def test_explicit_override_beats_the_cwd_checkout(self, tmp_path, key):
+        wt = _checkout(tmp_path / "wt", worktree_of=tmp_path / "main")
+        root, _, _ = bookkeeping._resolve_knowledge_paths(start_dir=wt, env={key: "/env/root"})
+        assert root == Path("/env/root")
+
+
+def test_index_from_a_worktree_never_writes_the_main_checkout(tmp_path):
+    """End to end, as the #789 drain ran it: `bookkeeping index` from a worktree,
+    no KG_* env. HOME is faked so the legacy default ~/broomva IS the main
+    checkout — the pre-fix resolver writes there."""
+    import os
+    import subprocess
+    import sys
+
+    home = tmp_path / "home"
+    main = _checkout(home / "broomva")
+    wt = _checkout(tmp_path / "wt", worktree_of=main)
+    for repo, slug in ((main, "main-only"), (wt, "wt-only")):
+        d = repo / "research" / "entities" / "concept"
+        d.mkdir(parents=True)
+        (d / f"{slug}.md").write_text(
+            f"---\ntype: concept\nstatus: entity\ncore_claim: The {slug} claim.\n---\nBody.\n")
+    main_catalog = main / "docs" / "knowledge-index.md"
+    main_catalog.parent.mkdir()
+    main_catalog.write_text("SENTINEL — the main checkout's own catalog\n")
+    before = main_catalog.read_bytes()
+
+    env = {k: v for k, v in os.environ.items()
+           if k not in ("BROOMVA_ROOT", "KG_ROOT", "KG_ENTITIES_DIR", "KG_CATALOG")}
+    env.update(HOME=str(home), KG_NO_POLICY="1")
+    script = Path(bookkeeping.__file__).resolve()
+    res = subprocess.run([sys.executable, str(script), "index"], cwd=wt, env=env,
+                         capture_output=True, text=True, timeout=120)
+    assert res.returncode == 0, res.stderr
+
+    assert main_catalog.read_bytes() == before
+    wt_catalog = (wt / "docs" / "knowledge-index.md").read_text()
+    assert "wt-only" in wt_catalog and "main-only" not in wt_catalog

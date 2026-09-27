@@ -1,8 +1,8 @@
 # Skills Inventory
 
-> 100 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-07.
+> 103 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
-## Governance & control — `skills/governance/` (10)
+## Governance & control — `skills/governance/` (11)
 
 | Skill | What it does |
 |---|---|
@@ -16,8 +16,9 @@
 | `unhobble` | Audit and rightsize a context surface against machine-enforced mechanisms, duplication, contradiction, and token-budget pressure |
 | `legal-readiness` | Build or adversarially audit an evidence-first legal-readiness system for a software product, SaaS, AI app, API, marketplace, or website. Inventory every public and contractual claim; determine… |
 | `spec-contract` | The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked… |
+| `autoreview` | Unattended multi-lens review of a plan, launch plan, spec, strategy doc, ADR or proposal. The autonomous counterpart to grill-with-docs: instead of interviewing the human, the agent asks the grilling… |
 
-## Orchestration & autonomy — `skills/orchestration/` (10)
+## Orchestration & autonomy — `skills/orchestration/` (11)
 
 | Skill | What it does |
 |---|---|
@@ -31,6 +32,7 @@
 | `persist` | bstack P12 — Persistent Loop Discipline |
 | `role-x` | bstack P17 — Lens-Routed Request Articulation |
 | `resume` | Restore an arc that was killed mid-flight by something external — API 529 / 500, ENOTFOUND, ConnectionRefused, an expired login, a laptop that slept, a Ctrl-C. The operator restarts, types `resume`… |
+| `provider-manager` | Autonomous AI provider and subscription management toolkit. Enables seamless account discovery, credential switching, automated zero-touch browser-session OAuth re-authentication, and proactive… |
 
 ## Skill & prompt tooling — `skills/tooling/` (9)
 
@@ -44,7 +46,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 100 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 103 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
 
@@ -137,12 +139,13 @@
 | `investment-management` | Investment management skill — portfolio construction, analysis, and execution |
 | `wealth-management` | Wealth management, financial planning, and investment analytics skill |
 
-## Compute infrastructure — `skills/compute/` (3)
+## Compute infrastructure — `skills/compute/` (4)
 
 | Skill | What it does |
 |---|---|
 | `agentic-vps` | Provision and harden a fresh Linux VPS into an autonomous-agent dev host using the capability-preserving model — the box IS the sandbox: full agent autonomy inside it |
 | `colab-remote` | Orchestrate Google Colab Pro/Pro+ GPU instances as remote training backends via SSH |
+| `forkable-shell` | Give an agent session a disposable sandboxed bash shell whose entire filesystem is one JSON file — snapshot, fork, branch and resume a workspace at ~0.24ms per fork instead of seconds per container |
 | `remote-gpu` | Orchestrate a headless GPU server (NUC, cloud VM, or any SSH-accessible machine) from a local Mac or workstation |
 
 ## Model runtimes — `skills/models/` (2)
@@ -221,8 +224,8 @@
 
 ## Aggregates
 
-- **Total skills**: 100
+- **Total skills**: 103
 - **Total category buckets**: 23
-- **Largest bucket**: Governance & control, Orchestration & autonomy (10)
+- **Largest bucket**: Governance & control, Orchestration & autonomy (11)
 - **Smallest buckets** (1): Science
 - Taxonomy = the 23 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.

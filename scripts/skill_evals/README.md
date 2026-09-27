@@ -484,7 +484,35 @@ as trustworthy as it is: `cost` and `duration`. In replay they print with an
 explicit "as recorded in fixtures — not re-incurred" tag. They are context, never
 evidence.
 
-## Committed fixtures
+## Where the fixtures live
+
+Two sets, in two different places, for two different reasons.
+
+**`tests/skill_evals/fixtures/harness-selftest/` — in git.** Synthetic, tiny, and CI's
+graded replay depends on it. It is evidence about the *harness*.
+
+**`tests/skill_evals/fixtures/live/` — in a release asset, NOT in git** (BRO-2030).
+703 files / 20 MB of recorded model output per sweep, and git history is forever on a
+public repo. `MANIFEST.json` pins the asset's sha256; `BASELINE.json` pins the numbers
+it must grade to.
+
+```bash
+python3 scripts/skill_evals/fixture_pack.py fetch      # download + verify + extract
+python3 scripts/skill_evals/fixture_pack.py baseline   # assert the pinned aggregates
+python3 scripts/skill_evals/fixture_pack.py pack       # scrub + audit + tarball + sha
+```
+
+**The asset is PUBLIC.** A release asset on a public repo is publicly downloadable —
+relocation bought revocability and repo weight, not secrecy. Scrubbing is mandatory and
+is enforced at three moments: `--record` scrubs on the way to disk and *fails closed*
+(`fixture_guard.py`), a test asserts every git-TRACKED fixture in the repo is
+scrub-clean, and `pack` re-runs both gates before an archive exists. All three are the
+same blocklist, which fails open — see `scrub.py`'s docstring.
+
+CI's `live-replay` job fetches the asset and asserts the pinned baseline. It never
+skips: a missing asset, a checksum mismatch, a wrong file count or a moved number all
+fail loudly. A replay job that shrugs at a missing asset reports green having graded
+nothing.
 
 `tests/skill_evals/fixtures/harness-selftest/` — 4 cases x 3 trials, replayed and
 graded by CI on every PR, plus a mutation-proof step that rewrites the fixture

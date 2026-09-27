@@ -45,7 +45,10 @@ mut "missing baseline treated as pass"     'An unverifiable review is not a pass
                 exit 0'
 mut "verify always admissible"             '            if [ "$BEFORE" = "$AFTER" ]; then' '            if true; then'
 mut "strata B back to general-purpose"     "subagent_type='Explore'" "subagent_type='general-purpose'"
-mut "strata A sandbox removed"             "codex exec -m gpt-5.4 -c sandbox_mode=read-only" "codex exec -m gpt-5.4"
+mut "strata A sandbox removed"             "codex exec -c sandbox_mode=read-only" "codex exec"
+mut "strata A model value unquoted"        "printf -v CODEX_MODEL_Q '%q' \"\$CODEX_MODEL\"" "CODEX_MODEL_Q=\"\$CODEX_MODEL\""
+mut "strata A rubric path unquoted"        "printf -v RUBRIC_Q '%q' \"\$RUBRIC_FILE\"" "RUBRIC_Q=\"\$RUBRIC_FILE\""
+mut "strata A preamble dropped"            "sed -n '/^## Strata-A specific/,/^## /s/^> //p' \$RUBRIC_Q; echo; " ""
 # mutations for the properties added after P20 round 1
 mut "git errors no longer fail closed"     '        echo "reviewer-guard: git diff failed: $df" >&2; return 1' '        df=""'
 mut "empty baseline accepted"              '            if [ -z "$BEFORE" ]; then' '            if false; then'

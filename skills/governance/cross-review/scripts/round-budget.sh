@@ -82,9 +82,15 @@
 # wrong.
 #
 # Usage:
-#   round-budget.sh record-round   --run-id=ID --score=N --defect=yes|no \
+#   round-budget.sh record-round   --run-id=ID --score=N/10 --defect=yes|no \
+#                                  [--stratum=L:N/10:PASS|FAIL ...] \
 #                                  [--fingerprints=a,b] [--settles=CONFIRMED|REFUTED] \
 #                                  [--strata=A,B,C|unrecorded]
+#
+#   Every score carries its scale, and the scale must be the ledger's (/10).
+#   A round scoring >= 7 must carry one --stratum per stratum that scored it,
+#   each PASS, and the round score may not exceed the lowest of them.
+#   --stratum and --strata are exclusive: with --stratum the panel is derived.
 #   round-budget.sh record-verdict --run-id=ID --verdict=CONTINUE|STOP|STRUCTURAL \
 #                                  [--prediction=TEXT] [--directive=TEXT]
 #   round-budget.sh budget         --run-id=ID     # may another round run?
@@ -92,7 +98,7 @@
 #   round-budget.sh reset          --run-id=ID [--force]
 #
 # `reset` archives the ledger of an arc that DECLARED ITSELF finished — a
-# recorded STOP/STRUCTURAL verdict, or a passing score. `--force` archives one
+# recorded STOP/STRUCTURAL verdict, or a passing score carrying its verdicts. `--force` archives one
 # that did not: a ledger sitting on a nonterminal stop, one at the round ceiling,
 # or one that no longer parses. It applies to `reset` and to nothing else.
 #
@@ -111,6 +117,12 @@ export LC_ALL=C
 FREE_ROUNDS=3
 HUMAN_CEILING=8
 PASS_SCORE=7
+# The ledger's one scale (BRO-2615). A bare integer used to be accepted, and this
+# same skill grades design docs on a /15 rubric that passes at 11: a 7/15 --
+# a FAIL -- was recorded as `7` and came back PASSED over two strata that both
+# said FAIL. A number without its unit is not a score, so the unit is required at
+# every door and a foreign one is refused, never converted.
+LEDGER_SCALE=10
 # One producer for the "no panel was written down" token. It is written by the
 # recorder, accepted by the validator, and rendered by `show`; spelling it at
 # three sites is three places for them to disagree about what absence looks like.
@@ -139,6 +151,8 @@ VERDICT=""; PREDICTION=""; DIRECTIVE=""; LEDGER_PATH=""; RESET_FORCE=0
 # all and records `unrecorded`. Keyed on the value alone the two are the same
 # state, which is the distinction this whole field exists to keep.
 STRATA=""; STRATA_SET=0
+# Per-stratum verdicts, `L:N/10:PASS|FAIL`, comma-joined across repeated flags.
+STRATUM_VERDICTS=""; STRATUM_SET=0
 
 for arg in "$@"; do
     case "$arg" in
@@ -148,6 +162,11 @@ for arg in "$@"; do
         --fingerprints=*) FINGERPRINTS="${arg#*=}" ;;
         --settles=*)      SETTLES="${arg#*=}" ;;
         --strata=*)       STRATA="${arg#*=}"; STRATA_SET=1 ;;
+        # Joined on STRATUM_SET, not on the value being non-empty: `--stratum=`
+        # must survive as an empty ENTRY (and be refused) wherever it sits, not
+        # vanish when it happens to come first.
+        --stratum=*)      if [ "$STRATUM_SET" = "1" ]; then STRATUM_VERDICTS="$STRATUM_VERDICTS,${arg#*=}"
+                          else STRATUM_VERDICTS="${arg#*=}"; fi; STRATUM_SET=1 ;;
         --verdict=*)      VERDICT="${arg#*=}" ;;
         --prediction=*)   PREDICTION="${arg#*=}" ;;
         --directive=*)    DIRECTIVE="${arg#*=}" ;;
@@ -181,6 +200,10 @@ fi
 # followed.
 if [ "$STRATA_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then
     echo "round-budget: --strata applies to 'record-round' only, not '$COMMAND'." >&2
+    exit 2
+fi
+if [ "$STRATUM_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then
+    echo "round-budget: --stratum applies to 'record-round' only, not '$COMMAND'." >&2
     exit 2
 fi
 
@@ -308,6 +331,127 @@ strata_is_valid() {
     [ "$n" = "$u" ]
 }
 
+# ─── Scores carry their scale (BRO-2615) ─────────────────────────────────
+#
+# One definition, called at write AND at read, like the two predicates above.
+#
+# The verdict is the EXIT STATUS, and only an explicit `return 0` at the end is
+# a pass. The first version printed its reason and signalled "valid" by printing
+# NOTHING -- so a predicate that crashed (`10#x` is a fatal arithmetic error)
+# also printed nothing, and read as valid. Status-as-verdict makes a crash a
+# refusal. Callers use `if ! reason=$(pred ...)`, never `[ -n "$reason" ]`.
+#
+# Checked, in order: a scale is present; the score is an integer; the scale is
+# the ledger's; the score is inside it. One arm per line, one mutation per arm.
+score_is_valid() {
+    local v="$1" num den
+    case "$v" in
+        */*) ;;
+        *) echo "'$v' carries no scale; write it as N/$LEDGER_SCALE"; return 1 ;;
+    esac
+    num=${v%%/*}; den=${v#*/}
+    case "$num" in ''|*[!0-9]*) echo "'$v' has a non-integer score"; return 1 ;; esac
+    # One spelling per value. `07` means 7 to `10#` and to awk, so it decided
+    # nothing -- but a stored `A:07/10` is text no canonical reader expects,
+    # and the recorder normalized --score while storing --stratum verbatim.
+    case "$num" in 0?*) echo "'$v' has a leading zero; write it as ${num#"${num%%[!0]*}"}/$LEDGER_SCALE"; return 1 ;; esac
+    # String equality, not arithmetic: it refuses a non-integer scale too, so a
+    # separate integer check on the denominator could never be the one refusing.
+    if [ "$den" != "$LEDGER_SCALE" ]; then
+        echo "'$v' is on a /$den scale; this ledger is /$LEDGER_SCALE and does not convert"; return 1
+    fi
+    # Length first: bash arithmetic wraps silently at 2^64, so 18446744073709551621
+    # evaluates to 5 and would compare as in range.
+    if [ "${#num}" -gt 2 ] || [ "$((10#$num))" -gt "$LEDGER_SCALE" ]; then
+        echo "'$v' is outside 0-$LEDGER_SCALE"; return 1
+    fi
+    return 0
+}
+
+# A whole ROUND row's score against the verdicts it claims to summarize. The
+# recorder calls it on the row it is about to write; load_ledger calls it on
+# every stored eight-field row. Args: the round score AS WRITTEN (`N/10`), the
+# panel field, the verdicts field (`-` = none recorded).
+#
+#   - the round score carries the ledger's scale and lies inside it
+#   - with no verdicts, the round cannot pass -- that is the whole of the rule
+#     for a verdictless row
+#   - every verdict entry is `L:N/10:PASS|FAIL`; the letters form a set from A,B,C
+#   - a stratum cannot say PASS below the bar; it MAY say FAIL above it (a
+#     reviewer who scored 7 and still blocked), and the FAIL is what counts
+#   - the panel field is exactly the verdicts' letters
+#   - the round score never exceeds the lowest stratum score
+#   - a passing round score over any FAIL stratum is refused
+#
+# A subshell body, so the IFS / noglob it sets cannot leak on an early return,
+# and so a fatal expansion inside it exits the SUBSHELL non-zero -- a refusal.
+#
+# No separate shape arms. An entry with too few or too many colons, an empty
+# entry, or a newline all leave a scored half that score_is_valid refuses or a
+# letter the set check refuses -- so each was a guard no input could reach, and
+# three were written and deleted here for that reason.
+round_is_admissible() (
+    rscore="$1"; strata="$2"; verdicts="$3"
+    if ! err=$(score_is_valid "$rscore"); then echo "round score: $err"; exit 1; fi
+    score=$((10#${rscore%%/*}))
+    if [ "$verdicts" = "-" ]; then
+        if [ "$score" -ge "$PASS_SCORE" ]; then
+            echo "round score $rscore would PASS with no per-stratum verdicts; a pass must carry one --stratum=L:N/$LEDGER_SCALE:PASS|FAIL per stratum that scored it"
+            exit 1
+        fi
+        exit 0
+    fi
+    # A TRAILING comma only. Word splitting on IFS=, drops a trailing empty
+    # field, so a stored `A:8/10:PASS,` validated as `A:8/10:PASS` while the
+    # recorder refused the same text. A leading or doubled comma leaves an empty
+    # entry INSIDE the list, which score_is_valid refuses, so those arms could
+    # never decide and are not written.
+    case "$verdicts" in
+        *,) echo "the verdict list '$verdicts' ends in an empty entry"; exit 1 ;;
+    esac
+    letters=""; min=""; failed=0
+    IFS=,; set -f
+    for entry in $verdicts; do
+        letter=${entry%%:*}; rest=${entry#*:}; verdict=${rest##*:}; scored=${rest%:*}
+        # The letter on its own, BEFORE any set check. strata_is_valid answers a
+        # different question -- "is this a PANEL?" -- and accepts the literal
+        # `unrecorded` as a whole value, so reused here it passed
+        # `unrecorded:9/10:PASS` as a stratum and `budget` said PASSED with no
+        # A, B or C behind it (continuation review before round 4). An earlier
+        # round deleted this arm as unreachable; it was reachable by that token.
+        case "$letter" in
+            A|B|C) ;;
+            *) echo "stratum '$letter' is not one of A, B, C"; exit 1 ;;
+        esac
+        if ! err=$(score_is_valid "$scored"); then echo "stratum '$letter': $err"; exit 1; fi
+        num=$((10#${scored%%/*}))
+        case "$verdict" in
+            PASS)
+                if [ "$num" -lt "$PASS_SCORE" ]; then
+                    echo "stratum $letter says PASS at $scored, below the $PASS_SCORE/$LEDGER_SCALE bar"; exit 1
+                fi ;;
+            FAIL) failed=1 ;;
+            *) echo "stratum '$letter' carries verdict '$verdict'; want PASS or FAIL"; exit 1 ;;
+        esac
+        letters="${letters:+$letters,}$letter"
+        if [ -z "$min" ] || [ "$num" -lt "$min" ]; then min=$num; fi
+    done
+    # Letters are already A|B|C each; what is left for the set check is REPEATS.
+    if ! strata_is_valid "$letters"; then
+        echo "the verdicts' strata '$letters' are not a set drawn from A, B, C"; exit 1
+    fi
+    if [ "$strata" != "$letters" ]; then
+        echo "the panel field '$strata' disagrees with the verdicts' strata '$letters'"; exit 1
+    fi
+    if [ "$score" -gt "$min" ]; then
+        echo "round score $rscore exceeds the lowest stratum ($min/$LEDGER_SCALE)"; exit 1
+    fi
+    if [ "$score" -ge "$PASS_SCORE" ] && [ "$failed" = "1" ]; then
+        echo "round score $rscore would PASS over a stratum that said FAIL"; exit 1
+    fi
+    exit 0
+)
+
 # mkdir is the portable atomic test-and-set. LOCK_DIR is global so the EXIT trap
 # can still resolve it; as a `local` the trap died under `set -u` and never
 # released.
@@ -353,7 +497,7 @@ analyze() {
         BEGIN { rounds=0; prev=-1; last=-1; regressed=0
                 ref=0; maxref=0; nod=0; maxnod=0
                 terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0
-                badhistory="" }
+                badhistory=""; lastverified=0; prevkind=""; sawscaled=0 }
         $1=="ROUND" {
             # 6 OR 7. Field 7 (strata) is optional ON READ: every ledger
             # written before the field existed has six-field ROUND rows, and
@@ -368,12 +512,37 @@ analyze() {
             # would have proved a floor here survives for that reason, and
             # round-budget.mutation.sh records that rather than citing a kill
             # the input never reaches.
-            if (NF != 6 && NF != 7) { badrow=1 }
+            # 8 = a round carrying per-stratum verdicts (BRO-2615); its
+            # contents are checked in load_ledger by round_is_admissible.
+            if (NF != 6 && NF != 7 && NF != 8) { badrow=1 }
+            # NF==8 alone: an eight-field row at a passing score with no
+            # verdicts (`-`) is refused outright by round_is_admissible, so a
+            # `$8!="-"` half here could never be the check that decided.
+            lastverified=(NF==8)
             rounds++
-            if ($3 !~ /^[0-9]+$/ || $3+0 > 10) { badscore=1 }
+            # An eight-field row stores `N/10`. Its scale -- including a bare
+            # integer where `N/10` belongs -- is checked in load_ledger by
+            # round_is_admissible; only the numerator is compared here.
+            sc=$3
+            if (NF==8) sub(/\/.*/, "", sc)
+            # Regression compares like with like. A pre-BRO-2615 row holds a
+            # bare integer on an UNSTATED scale -- the incident row was a bare 7
+            # that meant 7/15 -- so it is not comparable to a scaled one, and an
+            # honest 6/10 after it must not read as a fall. Across the boundary
+            # the comparison restarts; within either kind it holds as before.
+            kind=(NF==8) ? "scaled" : "bare"
+            if (kind != prevkind) prev=-1
+            prevkind=kind
+            # ...and the boundary is crossed ONCE, bare -> scaled. The recorder
+            # writes only scaled rows, so a bare row AFTER a scaled one is a
+            # hand edit -- and without this it reset the comparison above and
+            # turned a regression STOP into a PASS (review round 3).
+            if (kind == "bare" && sawscaled) badhistory="a bare-integer round follows a scaled one; the recorder writes only N/10 rows"
+            if (kind == "scaled") sawscaled=1
+            if (sc !~ /^[0-9]+$/ || sc+0 > 10) { badscore=1 }
             else {
-                if (prev >= 0 && $3+0 < prev) regressed=1
-                prev=$3+0; last=$3+0
+                if (prev >= 0 && sc+0 < prev) regressed=1
+                prev=sc+0; last=sc+0
             }
             if ($4=="no")  { nod++; if (nod>maxnod) maxnod=nod } else if ($4=="yes") nod=0; else badrow=1
             if ($6=="REFUTED")   { ref++; if (ref>maxref) maxref=ref }
@@ -399,7 +568,7 @@ analyze() {
             next
         }
         NF>0 { badrow=1 }
-        END { print rounds"\t"last"\t"regressed"\t"maxref"\t"maxnod"\t"terminal"\t"badscore"\t"badverdict"\t"pending"\t"directive"\t"badrow"\t"badhistory }'
+        END { print rounds"\t"last"\t"regressed"\t"maxref"\t"maxnod"\t"terminal"\t"badscore"\t"badverdict"\t"pending"\t"directive"\t"badrow"\t"badhistory"\t"lastverified }'
 }
 
 # ─── The one gate ─────────────────────────────────────────────────────────
@@ -410,7 +579,7 @@ analyze() {
 # prediction validation at write but not at read. One site makes that class of
 # defect unrepresentable, and collapses four redundant `analyze` passes into one.
 LG_N=""; LG_SCORE=""; LG_REGRESSED=""; LG_MAXREF=""; LG_MAXNOD=""
-LG_TERMINAL=""; LG_PENDING=""; LG_DIRECTIVE=""
+LG_TERMINAL=""; LG_PENDING=""; LG_DIRECTIVE=""; LG_LAST_VERIFIED=""
 # Snapshotted in load_ledger so the RULES never re-read the file. This bounds the
 # inconsistency; it does not remove it. load_ledger itself still reads the ledger
 # more than once (analyze, the tail, the CONTINUE rows) and `budget` takes no
@@ -432,6 +601,14 @@ last_row_is_verdict()   { [ "$LG_LAST_TYPE" = "VERDICT" ]; }
 verdict_earns_a_round() { [ "$LG_LAST_VERDICT" = "CONTINUE" ]; }
 load_ledger() {
     local a
+    # A NUL byte is not a character any recorder writes, and the readers do not
+    # agree about it: BSD awk ends the record there and bash drops the byte, so
+    # `A:8/10:PASS<NUL>,B:3/10:FAIL` validated as a lone PASS. Refused whole.
+    if [ -f "$LEDGER" ] && [ -r "$LEDGER" ] && \
+       [ "$(tr -d '\000' < "$LEDGER" | wc -c | tr -d ' ')" != "$(wc -c < "$LEDGER" | tr -d ' ')" ]; then
+        echo "STOP — $LEDGER contains a NUL byte. No recorder writes one; refusing to read it."
+        exit 6
+    fi
     a="$(analyze)" || exit 6
     LG_N=$(printf '%s' "$a" | cut -f1)
     LG_SCORE=$(printf '%s' "$a" | cut -f2)
@@ -441,6 +618,7 @@ load_ledger() {
     LG_TERMINAL=$(printf '%s' "$a" | cut -f6)
     LG_PENDING=$(printf '%s' "$a" | cut -f9)
     LG_DIRECTIVE=$(printf '%s' "$a" | cut -f10)
+    LG_LAST_VERIFIED=$(printf '%s' "$a" | cut -f13)
     local badscore badverdict badrow badhistory last
     badscore=$(printf '%s' "$a" | cut -f7)
     badverdict=$(printf '%s' "$a" | cut -f8)
@@ -502,7 +680,7 @@ load_ledger() {
     #
     # Only NF==7 rows are collected. A six-field row predates the field, carries
     # no claim about the panel, and has nothing here to validate.
-    if ! stratarows=$(read_rows | awk -F'\t' '$1=="ROUND" && NF==7 {print "S:" $7}'); then
+    if ! stratarows=$(read_rows | awk -F'\t' '$1=="ROUND" && NF>=7 {print "S:" $7}'); then
         echo "STOP — could not read the ROUND rows of $LEDGER to validate them."
         exit 6
     fi
@@ -519,6 +697,30 @@ load_ledger() {
             echo "  Strata are a set drawn from A, B, C, or the literal"
             echo "  '$STRATA_UNRECORDED'. Anything else names no panel, and a panel"
             echo "  that cannot be read back cannot be told apart from none."
+            exit 6
+        fi
+    done
+    set +f
+    IFS=$old_ifs
+
+    # Field 8, the per-stratum verdicts, against the SAME predicate the recorder
+    # applies. A hand-edited `A:7/15:PASS` is the incident this exists for.
+    local vrows vrow verr
+    if ! vrows=$(read_rows | awk -F'\t' '$1=="ROUND" && NF==8'); then
+        echo "STOP — could not read the ROUND rows of $LEDGER to validate them."
+        exit 6
+    fi
+    old_ifs=$IFS
+    IFS='
+'
+    set -f
+    for vrow in $vrows; do
+        if ! verr=$(round_is_admissible "$(field "$vrow" 3)" "$(field "$vrow" 7)" "$(field "$vrow" 8)"); then
+            set +f; IFS=$old_ifs
+            echo "STOP — a ROUND row in $LEDGER records verdicts the recorder would refuse:"
+            echo "  ${verr:-the check failed without a reason; refusing rather than guessing}"
+            echo "  A score is only comparable to the bar on the ledger's own scale, and"
+            echo "  a round cannot claim more than the strata it summarizes."
             exit 6
         fi
     done
@@ -588,8 +790,13 @@ rule_terminal() {
     fi
     return 0
 }
+# PASSED needs the verdicts it claims to summarize. A round row without them --
+# every row written before BRO-2615 -- carries a bare integer on an unstated
+# scale, which is exactly what passed a 7/15 as a 7/10. It is not read as a pass;
+# the arc records one more round, with verdicts.
 rule_passed() {
     [ "$LG_SCORE" -ge "$PASS_SCORE" ] || return 1
+    [ "$LG_LAST_VERIFIED" = "1" ] || return 1
     echo "PASSED — last round scored $LG_SCORE (>= $PASS_SCORE). No further round needed."
     return 0
 }
@@ -721,6 +928,20 @@ decide_and_exit() {
     fi
     rule=${entry%%:*}; code=${entry##*:}
     "rule_$rule"          # re-run for its message
+    # Say WHY a passing-looking score did not pass, rather than leave a pre-
+    # BRO-2615 ledger reading "REVIEW-REQUIRED" or "AUTHORIZED" with no reason.
+    # Only where another round CAN be recorded (0 authorized, 5 review first);
+    # under a stop or the ceiling "record a round" is advice the recorder
+    # refuses. No verified-row test: a passing score on a verified row IS
+    # rule_passed (exit 3), so at 0/5 a score >= the bar is always unverified.
+    case "$code" in
+        0|5)
+            if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ]; then
+                echo "  Note: the last round scored $LG_SCORE with no per-stratum verdicts on"
+                echo "  an unstated scale, so it is not read as a pass. The next round is"
+                echo "  recorded as --score=N/$LEDGER_SCALE with one --stratum=L:N/$LEDGER_SCALE:PASS|FAIL per stratum."
+            fi ;;
+    esac
     exit "$code"
 }
 
@@ -730,9 +951,14 @@ record-round)
     with_lock
     load_ledger
     refuse_past_terminal
-    [ -n "$SCORE" ]  || { echo "round-budget: --score=N required" >&2; exit 2; }
-    case "$SCORE" in ''|*[!0-9]*) echo "round-budget: --score must be an integer 0-10" >&2; exit 2 ;; esac
-    [ "$SCORE" -le 10 ] || { echo "round-budget: --score must be 0-10" >&2; exit 2; }
+    [ -n "$SCORE" ]  || { echo "round-budget: --score=N/$LEDGER_SCALE required" >&2; exit 2; }
+    if ! SCORE_ERR=$(score_is_valid "$SCORE"); then
+        echo "round-budget: --score $SCORE_ERR." >&2
+        echo "  The bar is $PASS_SCORE/$LEDGER_SCALE. A score from another rubric (the" >&2
+        echo "  design-doc rubric is /15) does not belong in this ledger." >&2
+        exit 2
+    fi
+    SCORE_INT=$((10#${SCORE%%/*}))
     case "$DEFECT" in
         yes|no) ;;
         *) echo "round-budget: --defect=yes|no required (was a reproduced, executable defect found IN THE CHANGE?)" >&2; exit 2 ;;
@@ -760,7 +986,15 @@ record-round)
     # "nobody said" and "C alone" one indistinguishable blank apart, which is
     # the read this field is here to prevent -- and `-` is already spoken for by
     # `settles`, so absence would be spelled two ways in one row.
-    if [ "$STRATA_SET" = "1" ]; then
+    if [ "$STRATUM_SET" = "1" ]; then
+        if [ "$STRATA_SET" = "1" ]; then
+            echo "round-budget: --strata and --stratum are exclusive; with --stratum the" >&2
+            echo "  panel is derived from the verdicts, so it cannot disagree with them." >&2
+            exit 2
+        fi
+        ROUND_STRATA=$(printf '%s\n' "$STRATUM_VERDICTS" | tr ',' '\n' | cut -d: -f1 | paste -sd, -)
+        ROUND_VERDICTS="$STRATUM_VERDICTS"
+    elif [ "$STRATA_SET" = "1" ]; then
         if ! strata_is_valid "$STRATA"; then
             echo "round-budget: --strata must be a comma-separated set drawn from" >&2
             echo "  A, B, C -- the strata that actually produced this score -- with no" >&2
@@ -771,11 +1005,22 @@ record-round)
     else
         ROUND_STRATA="$STRATA_UNRECORDED"
     fi
+    if [ "$STRATUM_SET" != "1" ]; then ROUND_VERDICTS="-"; fi
+
+    # Every row this recorder writes has eight fields and stores its score WITH
+    # its scale, so no row written from here on is a bare integer. The row is
+    # checked by the same predicate load_ledger applies to it later -- one site,
+    # so the door and the stored artifact cannot disagree about what passes.
+    ROUND_SCORE="$SCORE_INT/$LEDGER_SCALE"
+    if ! VERDICT_ERR=$(round_is_admissible "$ROUND_SCORE" "$ROUND_STRATA" "$ROUND_VERDICTS"); then
+        echo "round-budget: refusing this round: ${VERDICT_ERR:-the check failed without a reason}." >&2
+        exit 2
+    fi
 
     N=$(( LG_N + 1 ))
-    printf 'ROUND\t%s\t%s\t%s\t%s\t%s\t%s\n' \
-        "$N" "$SCORE" "$DEFECT" "$(sanitize "$FINGERPRINTS")" "${SETTLES:--}" "$ROUND_STRATA" >> "$LEDGER"
-    echo "round-budget: recorded round $N (score $SCORE, defect=$DEFECT, settles=${SETTLES:--}, strata=$ROUND_STRATA) -> $LEDGER"
+    printf 'ROUND\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$N" "$ROUND_SCORE" "$DEFECT" "$(sanitize "$FINGERPRINTS")" "${SETTLES:--}" "$ROUND_STRATA" "$ROUND_VERDICTS" >> "$LEDGER"
+    echo "round-budget: recorded round $N (score $SCORE_INT/$LEDGER_SCALE, defect=$DEFECT, settles=${SETTLES:--}, strata=$ROUND_STRATA, verdicts=$ROUND_VERDICTS) -> $LEDGER"
     ;;
 
 record-verdict)
@@ -902,7 +1147,7 @@ reset)
         echo "round-budget: refusing to reset a LIVE arc." >&2
         echo "  budget says: ${RESET_RULE:-none} (exit ${RESET_CODE:-none})." >&2
         echo "  reset retires an arc that DECLARED ITSELF finished — a recorded" >&2
-        echo "  STOP/STRUCTURAL verdict, or a passing score. --force does not open" >&2
+        echo "  STOP/STRUCTURAL verdict, or a passing score with verdicts. --force does not open" >&2
         echo "  this one, because nothing here is blocked: a live arc has an in-band" >&2
         echo "  way to end. Record its verdict." >&2
         exit 6
@@ -916,6 +1161,14 @@ show)
     if [ ! -f "$LEDGER" ]; then echo "round-budget: no ledger at $LEDGER"; exit 0; fi
     echo "  Ledger: $LEDGER"
     echo ""
+    # awk ends a record at a NUL, so the rows below would render whatever came
+    # before it -- a lone PASS where the stored row also held a FAIL. `budget`
+    # refuses such a ledger; `show` says so before rendering anything.
+    if [ "$(tr -d '\000' < "$LEDGER" | wc -c | tr -d ' ')" != "$(wc -c < "$LEDGER" | tr -d ' ')" ]; then
+        echo "  MALFORMED: this ledger contains a NUL byte; rows below may be truncated"
+        echo "  and budget refuses it."
+        echo ""
+    fi
     # `unrec` is passed in rather than spelled here: one producer for the token,
     # or `show` and the recorder could disagree about what absence is called.
     #
@@ -934,8 +1187,9 @@ show)
     #   NF>=7, blank    -> MALFORMED: nothing wrote it, and it must not read
     #                      like something that did
     awk -F'\t' -v unrec="$STRATA_UNRECORDED" '
-        $1=="ROUND"   { printf "  round %-3s score %-3s defect=%-4s settles=%-10s strata=%-12s %s\n", \
-                               $2,$3,$4,$6,(NF<7 ? unrec : ($7!="" ? $7 : "MALFORMED")),$5 }
+        $1=="ROUND"   { printf "  round %-3s score %-5s defect=%-4s settles=%-10s strata=%-12s %s%s\n", \
+                               $2,$3,$4,$6,(NF<7 ? unrec : ($7!="" ? $7 : "MALFORMED")),$5, \
+                               (NF>=8 ? "  [verdicts: " ($8=="-" ? "none" : ($8=="" ? "MALFORMED" : $8)) "]" : "") }
         $1=="VERDICT" { printf "  verdict %-11s %s%s\n", $2, $3, ($4!="" ? "  [directive: " $4 "]" : "") }
     ' "$LEDGER"
     ;;

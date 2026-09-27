@@ -401,6 +401,50 @@ def test_resolve_malformed_config_degrades():
         check(True, "typo-only block does not hijack root")
 
 
+def test_resolve_enclosing_checkout_is_worktree_aware():
+    # BRO-2614: with no config and no env the root is the nearest git toplevel
+    # holding research/entities — a worktree (`.git` FILE) resolves to itself,
+    # not to the main checkout; a nested repo without a graph is walked past.
+    with tempfile.TemporaryDirectory() as d:
+        base = Path(d).resolve()
+        main, wt = base / "main", base / "wt"
+        (main / ".git").mkdir(parents=True)
+        (main / ".git" / "HEAD").write_text("ref: refs/heads/main\n")
+        (main / "research" / "entities").mkdir(parents=True)
+        (wt / "research" / "entities" / "concept").mkdir(parents=True)
+        (main / ".git" / "worktrees" / "wt").mkdir(parents=True)
+        (main / ".git" / "worktrees" / "wt" / "HEAD").write_text("ref: refs/heads/x\n")
+        (wt / ".git").write_text(f"gitdir: {main}/.git/worktrees/wt\n")
+        root, ent, cat = kg._resolve_knowledge_paths(start_dir=wt / "research" / "entities", env={})
+        assert root == wt and ent == wt / "research" / "entities"
+        assert cat == wt / "docs" / "knowledge-index.md"
+        nested = main / "skills"
+        (nested / ".git").mkdir(parents=True)
+        (nested / ".git" / "HEAD").write_text("ref: refs/heads/x\n")
+        root2, _, _ = kg._resolve_knowledge_paths(start_dir=nested, env={})
+        assert root2 == main, "a nested repo without a graph must not be adopted"
+        root3, _, _ = kg._resolve_knowledge_paths(start_dir=wt, env={"BROOMVA_ROOT": "/env/root"})
+        assert root3 == Path("/env/root"), "an explicit override beats the CWD checkout"
+        fake = base / "fake"
+        (fake / "research" / "entities").mkdir(parents=True)
+        (fake / ".git").write_text("not git\n")
+        root4, _, _ = kg._resolve_knowledge_paths(start_dir=fake, env={})
+        assert root4 == Path.home() / "broomva", "a text file named .git is not a checkout"
+        (fake / ".git").write_text(f"gitdir! {main}/.git/worktrees/wt\n")  # malformed pointer, real target
+        root5, _, _ = kg._resolve_knowledge_paths(start_dir=fake, env={})
+        assert root5 == Path.home() / "broomva", "only a `gitdir:` line points at a git dir"
+        decoy = base / "decoy"
+        (decoy / "research" / "entities").mkdir(parents=True)
+        (decoy / ".git").mkdir()
+        (decoy / ".git" / "HEAD").write_text("not-a-git-head\n")
+        root6, _, _ = kg._resolve_knowledge_paths(start_dir=decoy, env={})
+        assert root6 == Path.home() / "broomva", "a HEAD that is not git's is not a checkout"
+        (decoy / ".git" / "HEAD").write_text("ref: refs/\n")
+        root7, _, _ = kg._resolve_knowledge_paths(start_dir=decoy, env={})
+        assert root7 == Path.home() / "broomva", "a bare ref prefix is not a refname"
+        check(True, "enclosing checkout: worktree resolves to itself, env overrides")
+
+
 def test_resolve_kg_no_policy_and_display():
     # KG_NO_POLICY bypasses the policy layer; _display_path never crashes on a
     # configured path outside the root.
