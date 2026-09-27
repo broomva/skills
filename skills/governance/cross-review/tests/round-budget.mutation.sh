@@ -468,7 +468,7 @@ mutate "foreign scale accepted" "T66" \
     'if [ "$den" != "$LEDGER_SCALE" ]; then' 'if [ "$den" = "IMPOSSIBLE" ]; then'
 # Bare `10` is the one unscaled value the scale arm alone would admit.
 mutate "unscaled score accepted" "T67" \
-    '*) echo "'"'"'$v'"'"' carries no scale; write it as N/$LEDGER_SCALE"; return ;;' \
+    '*) echo "'"'"'$v'"'"' carries no scale; write it as N/$LEDGER_SCALE"; return 1 ;;' \
     '*) ;;'
 mutate "score above the scale accepted" "T67" \
     '[ "$((10#$num))" -gt "$LEDGER_SCALE" ]' '[ "$((10#$num))" -gt 999 ]'
@@ -486,22 +486,28 @@ mutate "round may exceed its lowest stratum" "T69" \
     'if [ "$score" -gt "$min" ]; then' 'if [ "$score" -gt 99 ]; then'
 
 # Stored rows go through the recorder's own predicate.
-mutate "stored verdicts not validated" "T70" \
-    'if [ -n "$verr" ]; then' 'if [ "$verr" = "IMPOSSIBLE" ]; then'
+mutate "stored rows not validated" "T70" \
+    'if ! verr=$(round_is_admissible' 'if false && verr=$(round_is_admissible'
 mutate "panel may disagree with verdicts" "T70" \
     'if [ "$strata" != "$letters" ]; then' 'if [ "$strata" = "IMPOSSIBLE" ]; then'
 mutate "stratum PASS below the bar accepted" "T70" \
     'if [ "$num" -lt "$PASS_SCORE" ]; then' 'if [ "$num" -lt 0 ]; then'
 mutate "unknown verdict token accepted" "T70" \
-    '*) echo "stratum '"'"'$letter'"'"' carries verdict' '*) : "stratum '"'"'$letter'"'"' carries verdict'
+    'want PASS or FAIL"; exit 1 ;;' 'want PASS or FAIL" >/dev/null ;;'
 mutate "verdict letters not a set" "T73" \
     'if ! strata_is_valid "$letters"; then' 'if false; then'
 
 # PASS requires the verdicts it claims to summarize.
 mutate "PASSED without verdicts" "T71" \
     '[ "$LG_LAST_VERIFIED" = "1" ] || return 1' 'true || return 1'
-mutate "verdictless pass recorded" "T71" \
-    'elif [ "$SCORE_INT" -ge "$PASS_SCORE" ]; then' 'elif false; then'
+mutate "verdictless pass admitted" "T71" \
+    'echo "round score $rscore would PASS with no per-stratum verdicts' 'return 0; echo "round score $rscore would PASS with no per-stratum verdicts'
+# The stored round score's own scale: at write the --score door already checked
+# it, so only a stored row can carry 7/15 in field 3.
+mutate "stored round score scale unchecked" "T74" \
+    'if ! err=$(score_is_valid "$rscore"); then echo "round score: $err"; exit 1; fi' ':'
+mutate "non-integer score arm gone" "T75" \
+    'case "$num" in '"''"'|*[!0-9]*) echo "'"'"'$v'"'"' has a non-integer score"; return 1 ;; esac' ':'
 
 mutate "--stratum accepted on any command" "T72" \
     'if [ "$STRATUM_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then' \

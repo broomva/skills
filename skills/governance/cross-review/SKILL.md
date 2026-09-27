@@ -239,7 +239,7 @@ appended to it.
 | A `CONTINUE` cannot be empty of content | the prediction must name a location the next round can check |
 | The arithmetic is not from recall | the round count and score series come from a file, which is the thing agents do worst from memory |
 | The panel that produced a score is part of the record | a round records the strata that scored it (`record-round --strata=A,B,C`). The strata are **not equal** — A is the only cross-vendor verdict and the only one where *cannot write* is literally true — so a 7/10 from A+B+C and a 7/10 from C alone are different evidence carrying the same integer, and the score alone cannot tell them apart. Validated at write **and** against the stored row, same as the prediction. Omitting the flag records the literal `unrecorded`, never a blank: *"nobody wrote down which strata ran"* and *"only Stratum C ran"* must not serialize to the same bytes. Ledgers written before the field parse unchanged — field 7 is optional **on read**, and `show` renders their missing panel as that same `unrecorded` token |
-| A score carries its scale, and a pass carries its verdicts | BRO-2615. Every `--score` and every `--stratum` score is written `N/10`; a bare integer, a foreign scale (`7/15`), or an out-of-range value is refused, never converted — this skill's own design rubric is /15 and a bare `7` from it once came back PASSED over two FAIL strata. A round scoring ≥7 must carry `--stratum=L:N/10:PASS\|FAIL` for each stratum that scored it; the round score may not exceed the lowest stratum, a stratum cannot say PASS below 7, and a round cannot pass over any FAIL. All of it is checked at write **and** against the stored row by one predicate. A round row without verdicts — every row written before this — is never read as PASSED; the arc records one more round, with verdicts |
+| A score carries its scale, and a pass carries its verdicts | BRO-2615. Every `--score` and every `--stratum` score is written `N/10`; a bare integer, a foreign scale (`7/15`), or an out-of-range value is refused, never converted — this skill's own design rubric is /15 and a bare `7` from it once came back PASSED over two FAIL strata. A round scoring ≥7 must carry `--stratum=L:N/10:PASS\|FAIL` for each stratum that scored it; the round score may not exceed the lowest stratum, a stratum cannot say PASS below 7, and a round cannot pass over any FAIL. Every row the recorder writes stores its round score as `N/10` (field 3) and its verdicts in field 8 (`-` when none), and one predicate (`round_is_admissible`) checks the row at write **and** every stored row at read. Predicates decide by exit status, so a predicate that crashes refuses rather than passing. A round without verdicts — a failing round recorded with `--strata`, or any row written before this — is never read as PASSED |
 | One guard site, not one per caller | every command that reads or mutates the history passes through `load_ledger` (`show` only renders), and the budget's stop/pass ordering is one `PRECEDENCE` list. Three review rounds each found a guard living at one caller and not its sibling, or an ordering wrong in one of six branches — so the continuation review returned `STRUCTURAL` and the shape changed instead of a sixth guard being added |
 
 **NOT enforced — the bypasses, stated rather than implied:**
@@ -454,9 +454,9 @@ cross-review round record-round --run-id=$ARC --score=6/10 --defect=yes        #
 cross-review round record-round --run-id=$ARC --score=7/10 --defect=no  --stratum=C:7/10:PASS
 
 cross-review round show --run-id=$ARC
-#   round 1   score 5   defect=yes  settles=-          strata=A,B,C
-#   round 2   score 6   defect=yes  settles=-          strata=unrecorded
-#   round 3   score 7   defect=no   settles=-          strata=C              [verdicts: C:7/10:PASS]
+#   round 1   score 5/10  defect=yes  settles=-          strata=A,B,C          [verdicts: none]
+#   round 2   score 6/10  defect=yes  settles=-          strata=unrecorded     [verdicts: none]
+#   round 3   score 7/10  defect=no   settles=-          strata=C              [verdicts: C:7/10:PASS]
 ```
 
 The arc passes on round 3, and the record now says the passing 7 came from
