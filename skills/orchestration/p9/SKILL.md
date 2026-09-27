@@ -279,6 +279,84 @@ Query it directly without transitioning state:
 p9 merge-status <n> [--json]   # exit 0 iff merge-ready; prints the verdict + reason
 ```
 
+### Gated auto-merge: the gates decide, not the branch name (BRO-2591)
+
+`p9 auto-merge <n>` merges a `MERGE_READY` PR under `.control/policy.yaml`
+`auto_merge`. With a `gates:` block, **any branch** merges iff every gate passes.
+Without one, the legacy prefix rules apply. Each gate is re-read from GitHub at
+merge time, because the `MERGE_READY` row is history and `merge-ready
+--no-verify` can write it. The merge is pinned with `--match-head-commit` to the
+SHA the gates verified.
+
+| Gate | Passes iff | Unknown |
+|---|---|---|
+| `classifiable` | head/base read; file list not truncated | FAIL |
+| `open` | `OPEN` and not draft | FAIL |
+| `mergeable` | `MERGEABLE`, `mergeStateStatus ∈ {CLEAN, UNSTABLE, HAS_HOOKS}` | FAIL |
+| `required_checks` | every required check `pass`, and at least one that is not a review bot | FAIL |
+| `up_to_date` | 0 commits behind base | FAIL |
+| `no_changes_requested` | no `CHANGES_REQUESTED` review (bots included) | n/a |
+| `threads_resolved` | 0 unresolved review threads | FAIL |
+| `p20` | if over the P20 threshold (>200 LOC, >1 file, a `public_api_paths` match, or governance-class): the latest `P20-VERDICT` marker is a PASS ≥ `pass_score`, bound to the reviewed commit | FAIL |
+| `governance_strata` | governance-class: the marker lists every `required_strata` (default A,B,C) | FAIL |
+| `governance_checks` | governance-class: each `required_checks` entry (default `stability-check`) ran and passed; skipped/absent fails | FAIL |
+| `l3_rate` | governance-class: fewer than `l3_max_per_window` governance commits on base inside `l3_window_seconds` | FAIL |
+
+**Review bots never vouch.** A rate-limited CodeRabbit reports SUCCESS without
+reviewing anything. So a check or review from a `review_bots` login (or any
+`*[bot]`) never counts as a required check, and cannot record a P20 verdict.
+Configured bots *extend* the built-in list (`coderabbitai`, `CodeRabbit`,
+`copilot-pull-request-reviewer`) and never replace it.
+
+**The P20 marker.** Record it with the helper, which pins the PR's current head
+SHA:
+
+```text
+p9 p20-record <n> --score 8 --strata B,C [--verdict PASS|FAIL|STOP] [--note "..."]
+# posts:  P20-VERDICT: PASS score=8 strata=B,C sha=<head sha>
+```
+
+Only comments from `OWNER`/`MEMBER`/`COLLABORATOR` accounts that are not bots
+count. The **latest** marker wins, so a later FAIL cancels an earlier PASS. A
+marker on an older commit carries forward only when that commit is an ancestor
+of head and nothing since has touched a reviewed file or a current PR file.
+That happens when the only new commits come from updating the branch from
+base. Anything else is unreviewed code and needs a new verdict. The marker is
+self-attested: it records that a review passed, and cannot prove the review
+happened. It is still a gate, because a PR with no pass, a low pass, or a pass
+on different code does not merge.
+
+**Governance-class paths get a stricter gate, not a human click.** Governance
+paths are `CLAUDE.md`, `AGENTS.md`, `METALAYER.md`, `.control/policy.yaml` and
+`.control/rcs-parameters.toml` (repo-root, case-folded). They carry L3, the
+level with the narrowest stability margin, so the tier adds three conditions:
+
+- all three P20 strata, including a cross-vendor review;
+- the L3 `stability-check` actually running;
+- the L3 rate budget, one governance commit per τ_a₃, which CI only reports.
+
+A governance change that cannot get a cross-vendor verdict (Codex down) waits
+for one.
+
+**The base branch's policy judges the PR.** p9 reads `.control/policy.yaml` from
+the PR's base ref, not from the checkout. Reading the checkout let a PR that
+edits the policy be judged by its own edit. If the base has no policy file,
+the local one applies, unless the PR is the one introducing it. An unreadable
+base policy blocks. `BROOMVA_P9_POLICY` is an explicit operator/test pin and is
+honored as-is.
+
+**No YAML can weaken a gate.** The parser rejects:
+
+- `pass_score < 7`, `max_loc > 200` or `max_files > 1`;
+- an empty `required_checks` or `paths` list;
+- strata outside A,B,C;
+- unknown keys, since a typo would otherwise run on the default;
+- `action: auto` rules alongside `gates`, where rules may only block.
+
+```text
+p9 gate-check <n> [--json]   # read-only verdict: every gate, PASS/FAIL + reason; exit 0 iff it would merge
+```
+
 ## Termination conditions
 
 The agent exits the heal loop when **any** of:
@@ -312,7 +390,8 @@ $ p9 status --pr 42 --json
 $ p9 merge-ready 42
 PR #42 marked MERGE_READY (control metalayer authorizes merge)
 
-# control-gate-hook authorizes; agent runs `gh pr merge`
+# the policy's gates authorize; p9 re-verifies them and merges
+$ p9 auto-merge 42
 ```
 
 ### Example 2 — Lint-failure self-heal
