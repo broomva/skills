@@ -102,7 +102,7 @@ V3's state must not close the round budget. In a scratch git repository, log it
 the way SKILL.md's adapter says and read the budget:
 
 ```bash
-cross-review round record-round --run-id=v3 --score=6 --defect=yes --strata=A
+cross-review round record-round --run-id=v3 --score=6/10 --defect=yes --stratum=A:6/10:FAIL
 cross-review round budget --run-id=v3; echo "exit=$?"
 ```
 

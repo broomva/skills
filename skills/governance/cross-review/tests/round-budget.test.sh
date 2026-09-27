@@ -63,8 +63,8 @@ echo ""
 # reproduce something at the same score.
 echo "T1. null control: rounds that reproduce NO defect stop the arc"
 LED=$(newledger t1)
-bash "$RB" record-round --run-id=null --ledger="$LED" --score=5 --defect=no >/dev/null
-bash "$RB" record-round --run-id=null --ledger="$LED" --score=5 --defect=no >/dev/null
+bash "$RB" record-round --run-id=null --ledger="$LED" --score=5/10 --defect=no >/dev/null
+bash "$RB" record-round --run-id=null --ledger="$LED" --score=5/10 --defect=no >/dev/null
 RC=$(rb budget --run-id=null --ledger="$LED")
 OUT=$(rbout budget --run-id=null --ledger="$LED")
 if [ "$RC" = "6" ] && echo "$OUT" | grep -q "reproduced NO defect"; then
@@ -78,8 +78,8 @@ fi
 # --defect. If this also stopped, T1 would be measuring the counter again.
 echo "T2. polarity control: same flat score, but defects reproduced -> not stopped"
 LED=$(newledger t2)
-bash "$RB" record-round --run-id=live --ledger="$LED" --score=5 --defect=yes >/dev/null
-bash "$RB" record-round --run-id=live --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=live --ledger="$LED" --score=5/10 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=live --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 RC=$(rb budget --run-id=live --ledger="$LED")
 if [ "$RC" = "0" ]; then
     ok "T2: live arc still authorized — T1 discriminates on liveness, not count"
@@ -92,35 +92,35 @@ echo "T3. first three rounds need no continuation review"
 LED=$(newledger t3)
 RC=$(rb budget --run-id=free --ledger="$LED")
 if [ "$RC" = "0" ]; then ok "T3a: round 1 free"; else fail "T3a: round 1 free" "exit $RC"; fi
-bash "$RB" record-round --run-id=free --ledger="$LED" --score=4 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=free --ledger="$LED" --score=4/10 --defect=yes >/dev/null
 RC=$(rb budget --run-id=free --ledger="$LED")
 if [ "$RC" = "0" ]; then ok "T3b: round 2 free"; else fail "T3b: round 2 free" "exit $RC"; fi
-bash "$RB" record-round --run-id=free --ledger="$LED" --score=4 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=free --ledger="$LED" --score=4/10 --defect=yes >/dev/null
 RC=$(rb budget --run-id=free --ledger="$LED")
 if [ "$RC" = "0" ]; then ok "T3c: round 3 free"; else fail "T3c: round 3 free" "exit $RC"; fi
 
 # ── T4: round 4 requires a continuation verdict (exit 5) ──────────────────
 echo "T4. round 4 requires a continuation review"
-bash "$RB" record-round --run-id=free --ledger="$LED" --score=4 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=free --ledger="$LED" --score=4/10 --defect=yes >/dev/null
 RC=$(rb budget --run-id=free --ledger="$LED")
 if [ "$RC" = "5" ]; then ok "T4: REVIEW-REQUIRED at round 4"; else fail "T4: REVIEW-REQUIRED at round 4" "exit $RC, want 5"; fi
 
 # ── T5: score regression stops immediately ────────────────────────────────
 echo "T5. score regression -> STOP"
 LED=$(newledger t4)
-bash "$RB" record-round --run-id=reg --ledger="$LED" --score=6 --defect=yes >/dev/null
-bash "$RB" record-round --run-id=reg --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=reg --ledger="$LED" --score=6/10 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=reg --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 RC=$(rb budget --run-id=reg --ledger="$LED")
 if [ "$RC" = "6" ]; then ok "T5: STOP on regression (6->5)"; else fail "T5: STOP on regression" "exit $RC, want 6"; fi
 
 # ── T6: two refuted predictions -> STOP, even under a live CONTINUE ───────
 echo "T6. two consecutive REFUTED predictions -> STOP"
 LED=$(newledger t5)
-bash "$RB" record-round --run-id=ref --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=ref --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --prediction="empty-input branch in parse_args at scripts/foo.sh:88" >/dev/null
-bash "$RB" record-round --run-id=ref --ledger="$LED" --score=5 --defect=yes --settles=REFUTED >/dev/null
+bash "$RB" record-round --run-id=ref --ledger="$LED" --score=5/10 --defect=yes --settles=REFUTED >/dev/null
 bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --prediction="unquoted expansion in emit() at scripts/bar.sh:12" >/dev/null
-bash "$RB" record-round --run-id=ref --ledger="$LED" --score=5 --defect=yes --settles=REFUTED >/dev/null
+bash "$RB" record-round --run-id=ref --ledger="$LED" --score=5/10 --defect=yes --settles=REFUTED >/dev/null
 bash "$RB" record-verdict --run-id=ref --ledger="$LED" --verdict=CONTINUE --prediction="off-by-one in the retry loop at scripts/baz.sh:41" >/dev/null
 RC=$(rb budget --run-id=ref --ledger="$LED")
 if [ "$RC" = "6" ]; then ok "T6: STOP after two REFUTED"; else fail "T6: STOP after two REFUTED" "exit $RC, want 6 — a live CONTINUE must not override it"; fi
@@ -128,10 +128,10 @@ if [ "$RC" = "6" ]; then ok "T6: STOP after two REFUTED"; else fail "T6: STOP af
 # ── T7: the human ceiling overrides any verdict ───────────────────────────
 echo "T7. round ceiling -> HUMAN, whatever the verdict says"
 LED=$(newledger t6)
-bash "$RB" record-round --run-id=ceil --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=ceil --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 for i in 2 3 4 5 6 7 8; do
     bash "$RB" record-verdict --run-id=ceil --ledger="$LED" --verdict=CONTINUE --prediction="defect class $i at scripts/loop.sh:$i" >/dev/null
-    bash "$RB" record-round --run-id=ceil --ledger="$LED" --score=5 --defect=yes --settles=CONFIRMED >/dev/null
+    bash "$RB" record-round --run-id=ceil --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
 done
 bash "$RB" record-verdict --run-id=ceil --ledger="$LED" --verdict=CONTINUE --prediction="p9" >/dev/null
 RC=$(rb budget --run-id=ceil --ledger="$LED")
@@ -148,15 +148,15 @@ if [ "$RC" = "2" ]; then ok "T8b: whitespace-only prediction refused"; else fail
 # ── T9: anti-vacuity rule 2 — a round after CONTINUE must settle it ───────
 echo "T9. a round following CONTINUE must settle the prediction"
 LED=$(newledger t8)
-bash "$RB" record-round --run-id=s1 --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=s1 --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 bash "$RB" record-verdict --run-id=s1 --ledger="$LED" --verdict=CONTINUE --prediction="missing null guard at scripts/qux.sh:7" >/dev/null
-RC=$(rb record-round --run-id=s1 --ledger="$LED" --score=5 --defect=yes)
+RC=$(rb record-round --run-id=s1 --ledger="$LED" --score=5/10 --defect=yes)
 if [ "$RC" = "2" ]; then ok "T9: unsettled round refused"; else fail "T9: unsettled round refused" "exit $RC, want 2 — else the two-refuted stop is unreachable"; fi
 
 # ── T10: anti-vacuity rule 4 — CONTINUE verdicts cannot stack ─────────────
 echo "T10. CONTINUE verdicts cannot stack without an intervening round"
 LED=$(newledger t9)
-bash "$RB" record-round --run-id=st --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=st --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 bash "$RB" record-verdict --run-id=st --ledger="$LED" --verdict=CONTINUE --prediction="empty-input branch in parse_args at scripts/foo.sh:88" >/dev/null
 RC=$(rb record-verdict --run-id=st --ledger="$LED" --verdict=CONTINUE --prediction="unquoted expansion in emit() at scripts/bar.sh:12")
 if [ "$RC" = "2" ]; then ok "T10: stacked CONTINUE refused"; else fail "T10: stacked CONTINUE refused" "exit $RC, want 2"; fi
@@ -164,7 +164,7 @@ if [ "$RC" = "2" ]; then ok "T10: stacked CONTINUE refused"; else fail "T10: sta
 # ── T11: STRUCTURAL is a stop, and carries its directive ──────────────────
 echo "T11. STRUCTURAL stops the fix loop and names the directive"
 LED=$(newledger t10)
-for i in 1 2 3 4; do bash "$RB" record-round --run-id=str --ledger="$LED" --score=5 --defect=yes >/dev/null; done
+for i in 1 2 3 4; do bash "$RB" record-round --run-id=str --ledger="$LED" --score=5/10 --defect=yes >/dev/null; done
 bash "$RB" record-verdict --run-id=str --ledger="$LED" --verdict=STRUCTURAL --directive="hoist the invariant out of the alternation" >/dev/null
 RC=$(rb budget --run-id=str --ledger="$LED")
 OUT=$(rbout budget --run-id=str --ledger="$LED")
@@ -177,7 +177,7 @@ fi
 # ── T12: a passing score ends the loop ────────────────────────────────────
 echo "T12. score >= 7 ends the loop"
 LED=$(newledger t11)
-bash "$RB" record-round --run-id=p --ledger="$LED" --score=8 --defect=no >/dev/null
+bash "$RB" record-round --run-id=p --ledger="$LED" --score=8/10 --stratum=A:8/10:PASS --defect=no >/dev/null
 RC=$(rb budget --run-id=p --ledger="$LED")
 if [ "$RC" = "3" ]; then ok "T12: PASSED"; else fail "T12: PASSED" "exit $RC, want 3"; fi
 
@@ -186,16 +186,16 @@ if [ "$RC" = "3" ]; then ok "T12: PASSED"; else fail "T12: PASSED" "exit $RC, wa
 # has spent its authority; reusing it is how a single CONTINUE buys three rounds.
 echo "T13. a verdict already settled by a later round cannot re-authorize"
 LED=$(newledger t12)
-for i in 1 2 3; do bash "$RB" record-round --run-id=stale --ledger="$LED" --score=5 --defect=yes >/dev/null; done
+for i in 1 2 3; do bash "$RB" record-round --run-id=stale --ledger="$LED" --score=5/10 --defect=yes >/dev/null; done
 bash "$RB" record-verdict --run-id=stale --ledger="$LED" --verdict=CONTINUE --prediction="empty-input branch in parse_args at scripts/foo.sh:88" >/dev/null
-bash "$RB" record-round --run-id=stale --ledger="$LED" --score=5 --defect=yes --settles=CONFIRMED >/dev/null
+bash "$RB" record-round --run-id=stale --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
 RC=$(rb budget --run-id=stale --ledger="$LED")
 if [ "$RC" = "5" ]; then ok "T13: spent verdict does not re-authorize"; else fail "T13: spent verdict does not re-authorize" "exit $RC, want 5"; fi
 
 # ── T14: field separators cannot be smuggled through a prediction ─────────
 echo "T14. tabs in a prediction cannot shift the ledger columns"
 LED=$(newledger t13)
-bash "$RB" record-round --run-id=inj --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=inj --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 bash "$RB" record-verdict --run-id=inj --ledger="$LED" --verdict=CONTINUE \
     --prediction="$(printf 'evil\tREFUTED\tinjected at scripts/evil.sh:1')" >/dev/null
 LINES=$(grep -c . "$LED")
@@ -211,7 +211,7 @@ fi
 # unreadable ledger must therefore be an error, never an empty history.
 echo "T15. unreadable ledger does not authorize"
 LED=$(newledger t15)
-bash "$RB" record-round --run-id=unread --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=unread --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 chmod 000 "$LED"
 if [ -r "$LED" ]; then
     # running as root, or a filesystem that ignores the mode bits
@@ -234,7 +234,7 @@ chmod 644 "$LED" 2>/dev/null || true
 # the window where an arc is most likely to be told to stop.
 echo "T19. a STOP verdict is honoured inside the free rounds"
 LED=$(newledger t19)
-bash "$RB" record-round  --run-id=t19 --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round  --run-id=t19 --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 bash "$RB" record-verdict --run-id=t19 --ledger="$LED" --verdict=STOP >/dev/null
 RC=$(rb budget --run-id=t19 --ledger="$LED")
 if [ "$RC" = "6" ]; then ok "T19: STOP beats the free-round path"; else fail "T19: STOP beats the free-round path" "exit $RC, want 6"; fi
@@ -243,20 +243,20 @@ if [ "$RC" = "6" ]; then ok "T19: STOP beats the free-round path"; else fail "T1
 echo "T20. appending after STOP does not clear it"
 bash "$RB" record-verdict --run-id=t19 --ledger="$LED" --verdict=CONTINUE \
     --prediction="another look at scripts/again.sh:5" >/dev/null 2>&1 || true
-bash "$RB" record-round --run-id=t19 --ledger="$LED" --score=5 --defect=yes --settles=CONFIRMED >/dev/null 2>&1 || true
+bash "$RB" record-round --run-id=t19 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null 2>&1 || true
 RC=$(rb budget --run-id=t19 --ledger="$LED")
 if [ "$RC" = "6" ]; then ok "T20: STOP is absorbing"; else fail "T20: STOP is absorbing" "exit $RC, want 6 — a stop you can append your way out of is not a stop"; fi
 
 # ── T21: two REFUTED is absorbing too ─────────────────────────────────────
 echo "T21. a later CONFIRMED does not clear two REFUTED"
 LED=$(newledger t21)
-bash "$RB" record-round  --run-id=t21 --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round  --run-id=t21 --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 for pr in "a at scripts/a.sh:1" "b at scripts/b.sh:2"; do
     bash "$RB" record-verdict --run-id=t21 --ledger="$LED" --verdict=CONTINUE --prediction="$pr" >/dev/null
-    bash "$RB" record-round  --run-id=t21 --ledger="$LED" --score=5 --defect=yes --settles=REFUTED >/dev/null
+    bash "$RB" record-round  --run-id=t21 --ledger="$LED" --score=5/10 --defect=yes --settles=REFUTED >/dev/null
 done
 bash "$RB" record-verdict --run-id=t21 --ledger="$LED" --verdict=CONTINUE --prediction="c at scripts/c.sh:3" >/dev/null 2>&1 || true
-bash "$RB" record-round --run-id=t21 --ledger="$LED" --score=5 --defect=yes --settles=CONFIRMED >/dev/null 2>&1 || true
+bash "$RB" record-round --run-id=t21 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null 2>&1 || true
 RC=$(rb budget --run-id=t21 --ledger="$LED")
 if [ "$RC" = "6" ]; then ok "T21: two-REFUTED is absorbing"; else fail "T21: two-REFUTED is absorbing" "exit $RC, want 6"; fi
 
@@ -265,7 +265,7 @@ if [ "$RC" = "6" ]; then ok "T21: two-REFUTED is absorbing"; else fail "T21: two
 # token fell off the end and the script's last status was 0, in silence.
 echo "T22. an unrecognised verdict token fails closed"
 LED=$(newledger t22)
-for i in 1 2 3; do bash "$RB" record-round --run-id=t22 --ledger="$LED" --score=5 --defect=yes >/dev/null; done
+for i in 1 2 3; do bash "$RB" record-round --run-id=t22 --ledger="$LED" --score=5/10 --defect=yes >/dev/null; done
 printf 'VERDICT\tcontinue\tlowercase is not a token\t\n' >> "$LED"
 RC=$(rb budget --run-id=t22 --ledger="$LED")
 if [ "$RC" = "6" ]; then ok "T22: unknown verdict -> STOP"; else fail "T22: unknown verdict -> STOP" "exit $RC, want 6 — silent AUTHORIZED is the worst failure here"; fi
@@ -344,7 +344,7 @@ fi
 echo "T30. record-* refuses to append to a corrupt ledger"
 LED=$(newledger t30)
 printf 'ROUND\t1\tten\tyes\t\t-\n' > "$LED"
-RC=$(rb record-round --run-id=t30 --ledger="$LED" --score=5 --defect=yes)
+RC=$(rb record-round --run-id=t30 --ledger="$LED" --score=5/10 --defect=yes)
 if [ "$RC" = "6" ]; then ok "T30: corrupt ledger refuses appends"; else fail "T30: corrupt ledger refuses appends" "exit $RC, want 6"; fi
 
 # ── T31: a stop OUTRANKS a passing score ──────────────────────────────────
@@ -353,13 +353,13 @@ if [ "$RC" = "6" ]; then ok "T30: corrupt ledger refuses appends"; else fail "T3
 # self-report, so the cost of escaping any stop was a single integer.
 echo "T31. a self-reported passing score does not clear a stop"
 LED=$(newledger t31)
-printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tSTOP\t\t\nROUND\t2\t9\tyes\t\t-\n' > "$LED"
+printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tSTOP\t\t\nROUND\t2\t9\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED"
 RC=$(rb budget --run-id=t31 --ledger="$LED")
 LED2=$(newledger t31b)
-printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\nROUND\t3\t8\tyes\t\t-\n' > "$LED2"
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\nROUND\t3\t8\tyes\t\t-\tA\tA:8/10:PASS\n' > "$LED2"
 RC2=$(rb budget --run-id=t31b --ledger="$LED2")
 LED3=$(newledger t31c)
-printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t8\tyes\t\t-\n' > "$LED3"
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t8\tyes\t\t-\tA\tA:8/10:PASS\n' > "$LED3"
 RC3=$(rb budget --run-id=t31c --ledger="$LED3")
 # All FOUR stops, not two. The ordering was pinned for terminal-then-pass and
 # regression-then-pass only; moving PASSED above the refuted or no-defect stop
@@ -369,11 +369,11 @@ LED4=$(newledger t31d)
     printf 'ROUND\t1\t5\tyes\t\t-\n'
     printf 'VERDICT\tCONTINUE\ta at scripts/a.sh:1\t\nROUND\t2\t5\tyes\t\tREFUTED\n'
     printf 'VERDICT\tCONTINUE\tb at scripts/b.sh:2\t\nROUND\t3\t5\tyes\t\tREFUTED\n'
-    printf 'ROUND\t4\t9\tyes\t\t-\n'
+    printf 'ROUND\t4\t9\tyes\t\t-\tA\tA:9/10:PASS\n'
 } > "$LED4"
 RC4=$(rb budget --run-id=t31d --ledger="$LED4")
 LED5=$(newledger t31e)
-printf 'ROUND\t1\t5\tno\t\t-\nROUND\t2\t5\tno\t\t-\nROUND\t3\t9\tyes\t\t-\n' > "$LED5"
+printf 'ROUND\t1\t5\tno\t\t-\nROUND\t2\t5\tno\t\t-\nROUND\t3\t9\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED5"
 RC5=$(rb budget --run-id=t31e --ledger="$LED5")
 if [ "$RC" = "6" ] && [ "$RC2" = "6" ] && [ "$RC4" = "6" ] && [ "$RC5" = "6" ] && [ "$RC3" = "3" ]; then
     ok "T31: all four stops outrank a pass; a clean arc still passes"
@@ -392,7 +392,7 @@ if [ "$RC" = "6" ]; then ok "T35: no verdict appended past a stop"; else fail "T
 echo "T32. record-round refuses to append after a STOP"
 LED=$(newledger t32)
 printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tSTOP\t\t\n' > "$LED"
-RC=$(rb record-round --run-id=t32 --ledger="$LED" --score=9 --defect=yes)
+RC=$(rb record-round --run-id=t32 --ledger="$LED" --score=9/10 --stratum=A:9/10:PASS --defect=yes)
 if [ "$RC" = "6" ]; then ok "T32: no appending past a stop"; else fail "T32: no appending past a stop" "exit $RC, want 6"; fi
 
 # ── T33: a BLANK CONTINUE prediction is the emptiest vacuous continuation ──
@@ -415,8 +415,8 @@ if [ "$RC" = "6" ]; then ok "T33: blank prediction STOPs"; else fail "T33: blank
 # two-round ledger and asserted the restart worked.
 echo "T34. reset retires a FINISHED arc and refuses a live one"
 LED=$(newledger t34)
-bash "$RB" record-round --run-id=t34 --ledger="$LED" --score=5 --defect=yes >/dev/null
-bash "$RB" record-round --run-id=t34 --ledger="$LED" --score=5 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=t34 --ledger="$LED" --score=5/10 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=t34 --ledger="$LED" --score=5/10 --defect=yes >/dev/null
 RC_LIVE=$(rb reset --run-id=t34 --ledger="$LED")
 bash "$RB" record-verdict --run-id=t34 --ledger="$LED" --verdict=STRUCTURAL --directive="hoist the invariant" >/dev/null
 RC_DONE=$(rb reset --run-id=t34 --ledger="$LED")
@@ -462,9 +462,12 @@ fi
 # ── T38: ROUND rows are arity-checked too ─────────────────────────────────
 # T28 pinned arity with VERDICT fixtures only, so `if (NF != 6)` was a surviving
 # mutant: gutting it left all tests green.
+# Eight fields became a legal arity with BRO-2615 (field 8 = per-stratum
+# verdicts), so the extra field rides on a row that is otherwise a VALID passing
+# round: only the arity check stands between this row and PASSED.
 echo "T38. a wrong-arity ROUND row fails closed"
 LED=$(newledger t38)
-printf 'ROUND\t1\t5\tyes\t\t-\tSMUGGLED\tEXTRA\n' > "$LED"
+printf 'ROUND\t1\t7\tyes\t\t-\tA\tA:7/10:PASS\tEXTRA\n' > "$LED"
 RC=$(rb budget --run-id=t38 --ledger="$LED")
 if [ "$RC" = "6" ]; then ok "T38: extra-field ROUND row STOPs"; else fail "T38: ROUND arity" "exit $RC, want 6"; fi
 
@@ -509,12 +512,12 @@ fi
 # "finished" to reset. Live-vs-finished now comes from the budget's precedence.
 echo "T42. a passing round cannot be appended past a nonterminal stop"
 LED=$(newledger t42)
-bash "$RB" record-round --run-id=t42 --ledger="$LED" --score=5 --defect=no >/dev/null
-bash "$RB" record-round --run-id=t42 --ledger="$LED" --score=5 --defect=no >/dev/null
-RC_APPEND=$(rb record-round --run-id=t42 --ledger="$LED" --score=7 --defect=yes)
+bash "$RB" record-round --run-id=t42 --ledger="$LED" --score=5/10 --defect=no >/dev/null
+bash "$RB" record-round --run-id=t42 --ledger="$LED" --score=5/10 --defect=no >/dev/null
+RC_APPEND=$(rb record-round --run-id=t42 --ledger="$LED" --score=7/10 --stratum=A:7/10:PASS --defect=yes)
 LED2=$(newledger t42b)
 printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\n' > "$LED2"
-RC_REG=$(rb record-round --run-id=t42b --ledger="$LED2" --score=9 --defect=yes)
+RC_REG=$(rb record-round --run-id=t42b --ledger="$LED2" --score=9/10 --stratum=A:9/10:PASS --defect=yes)
 if [ "$RC_APPEND" = "6" ] && [ "$RC_REG" = "6" ]; then
     ok "T42: no appending past a nonterminal stop (no-defect and regression)"
 else
@@ -527,7 +530,7 @@ echo "T40. a second archive of equal length does not clobber the first"
 LED=$(newledger t40)
 printf 'ROUND\t1\t5\tyes\t\t-\nVERDICT\tSTOP\t\t\n' > "$LED"
 bash "$RB" reset --run-id=t40 --ledger="$LED" >/dev/null
-printf 'ROUND\t1\t9\tyes\t\t-\nVERDICT\tSTOP\t\t\n' > "$LED"
+printf 'ROUND\t1\t9\tyes\t\t-\tA\tA:9/10:PASS\nVERDICT\tSTOP\t\t\n' > "$LED"
 bash "$RB" reset --run-id=t40 --ledger="$LED" >/dev/null
 N_ARCH=$(find "$(dirname "$LED")" -name "$(basename "$LED").archived.*" | wc -l | tr -d ' ')
 if [ "$N_ARCH" = "2" ]; then ok "T40: both archives survive"; else fail "T40: archive clobber" "$N_ARCH archive(s), want 2"; fi
@@ -624,10 +627,10 @@ fi
 # cannot pass it.
 echo "T47. a trailing self-reported pass does not make a stopped arc finished"
 LED=$(newledger t47)
-printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\nROUND\t3\t9\tyes\t\t-\n' > "$LED"
+printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\nROUND\t3\t9\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED"
 RC_LAUNDER=$(rb reset --run-id=t47 --ledger="$LED")
 LED2=$(newledger t47b)
-printf 'ROUND\t1\t3\tyes\t\t-\nROUND\t2\t6\tyes\t\t-\nROUND\t3\t9\tyes\t\t-\n' > "$LED2"
+printf 'ROUND\t1\t3\tyes\t\t-\nROUND\t2\t6\tyes\t\t-\nROUND\t3\t9\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED2"
 RC_CLEAN=$(rb reset --run-id=t47b --ledger="$LED2")
 if [ "$RC_LAUNDER" = "6" ] && [ "$RC_CLEAN" = "0" ]; then
     ok "T47: pass-after-regression refused, a clean pass still archives"
@@ -642,7 +645,7 @@ fi
 echo "T48. --force is refused by every command that is not reset"
 LED=$(newledger t48)
 RC_BUDGET=$(rb budget --run-id=t48 --ledger="$LED" --force)
-RC_ROUND=$(rb record-round --run-id=t48 --ledger="$LED" --score=5 --defect=yes --force)
+RC_ROUND=$(rb record-round --run-id=t48 --ledger="$LED" --score=5/10 --defect=yes --force)
 RC_VERDICT=$(rb record-verdict --run-id=t48 --ledger="$LED" --verdict=STOP --force)
 # Polarity: a gate that rejected --force EVERYWHERE would pass the three above.
 # It must still be accepted by the one command it belongs to.
@@ -753,7 +756,7 @@ chmod 644 "$LED" 2>/dev/null || true
 # test could not see.
 echo "T53. a dangling symlink at the archive name is not clobbered"
 LED=$(newledger t53)
-printf 'ROUND\t1\t8\tyes\t\t-\n' > "$LED"
+printf 'ROUND\t1\t8\tyes\t\t-\tA\tA:8/10:PASS\n' > "$LED"
 ln -s "$TMP/t53-no-such-target" "$LED.archived.1"
 # The fixture must be DANGLING or this test silently exercises `-e` instead of
 # `-L` and passes against the defect. `-e` follows the link, so on a dangling
@@ -776,7 +779,7 @@ fi
 # -- the operator told where it went, and told wrong.
 echo "T54. a directory at the archive name is stepped over, not linked into"
 LED=$(newledger t54)
-printf 'ROUND\t1\t8\tyes\t\t-\n' > "$LED"
+printf 'ROUND\t1\t8\tyes\t\t-\tA\tA:8/10:PASS\n' > "$LED"
 mkdir "$LED.archived.1"
 # One invocation for both, for the reason T43 carries: a second reset would run
 # with the ledger already archived -- "nothing to reset", exit 0 -- so its code
@@ -872,9 +875,9 @@ if [ "$RC" = "6" ]; then ok "T57: five-field ROUND row STOPs"; else fail "T57: R
 # class ("absence read as a value") this field exists to remove.
 echo "T58. show surfaces the panel, and an unrecorded panel is NOT a blank"
 LED=$(newledger t58)
-bash "$RB" record-round --run-id=t58 --ledger="$LED" --score=5 --defect=yes --strata=A,B,C >/dev/null
-bash "$RB" record-round --run-id=t58 --ledger="$LED" --score=5 --defect=yes >/dev/null
-bash "$RB" record-round --run-id=t58 --ledger="$LED" --score=5 --defect=yes --strata=C >/dev/null
+bash "$RB" record-round --run-id=t58 --ledger="$LED" --score=5/10 --defect=yes --strata=A,B,C >/dev/null
+bash "$RB" record-round --run-id=t58 --ledger="$LED" --score=5/10 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=t58 --ledger="$LED" --score=5/10 --defect=yes --strata=C >/dev/null
 OUT=$(rbout show --run-id=t58 --ledger="$LED")
 FULL=$(printf '%s\n' "$OUT" | grep -c 'round 1 .*strata=A,B,C' || true)
 UNREC=$(printf '%s\n' "$OUT" | grep -c 'round 2 .*strata=unrecorded' || true)
@@ -906,7 +909,7 @@ UNREC=$(printf '%s\n' "$OUT" | grep -c 'strata=unrecorded' || true)
 BLANK=$(printf '%s\n' "$OUT" | grep -c 'strata= ' || true)
 # A six-field ledger must also still ACCEPT an append: the recorder writes a
 # seven-field row onto it and the mixed-arity history keeps parsing.
-bash "$RB" record-round --run-id=t59 --ledger="$LED" --score=5 --defect=yes --strata=B,C >/dev/null 2>&1
+bash "$RB" record-round --run-id=t59 --ledger="$LED" --score=5/10 --defect=yes --strata=B,C >/dev/null 2>&1
 # RC_MIXED=5 is itself the landing check: three rounds is REVIEW-REQUIRED, two
 # is a free round (0). MIXED_SHOW then proves the appended row reads BACK -- a
 # row that landed but could not be rendered would satisfy the exit code alone.
@@ -929,21 +932,21 @@ fi
 # whether the flag was given at all.
 echo "T60. an invalid --strata is refused, and the valid arm still records"
 LED=$(newledger t60)
-RC_UNKNOWN=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=D)
-RC_EMPTY=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=)
-RC_DUP=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=A,A)
-RC_MIXEDCASE=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=a,c)
-RC_COMMA=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=A,)
+RC_UNKNOWN=$(rb record-round --run-id=t60 --ledger="$LED" --score=5/10 --defect=yes --strata=D)
+RC_EMPTY=$(rb record-round --run-id=t60 --ledger="$LED" --score=5/10 --defect=yes --strata=)
+RC_DUP=$(rb record-round --run-id=t60 --ledger="$LED" --score=5/10 --defect=yes --strata=A,A)
+RC_MIXEDCASE=$(rb record-round --run-id=t60 --ledger="$LED" --score=5/10 --defect=yes --strata=a,c)
+RC_COMMA=$(rb record-round --run-id=t60 --ledger="$LED" --score=5/10 --defect=yes --strata=A,)
 # The separator-injection arm, and the reason the shape check is a glob rather
 # than `grep -qE`: grep matches LINE BY LINE, so a value carrying a newline
 # passes on its first line while the printf writes a RECORD SEPARATOR into the
 # field and splits the row. This is the same attack T14 pins for predictions,
 # where `sanitize` is what stops it; the panel is validated instead of
 # sanitized, so the validator has to see the whole string.
-RC_NEWLINE=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata="$(printf 'A\nD')")
+RC_NEWLINE=$(rb record-round --run-id=t60 --ledger="$LED" --score=5/10 --defect=yes --strata="$(printf 'A\nD')")
 WROTE=$([ -f "$LED" ] && echo yes || echo no)
 # Polarity: a validator that refused EVERYTHING would pass every arm above.
-RC_OK=$(rb record-round --run-id=t60 --ledger="$LED" --score=5 --defect=yes --strata=A,C)
+RC_OK=$(rb record-round --run-id=t60 --ledger="$LED" --score=5/10 --defect=yes --strata=A,C)
 if [ "$RC_UNKNOWN" = "2" ] && [ "$RC_EMPTY" = "2" ] && [ "$RC_DUP" = "2" ] && \
    [ "$RC_MIXEDCASE" = "2" ] && [ "$RC_COMMA" = "2" ] && [ "$RC_NEWLINE" = "2" ] && \
    [ "$WROTE" = "no" ] && [ "$RC_OK" = "0" ]; then
@@ -997,12 +1000,12 @@ fi
 # elsewhere: the thing silently not recorded IS "which panel scored this".
 echo "T62. --strata is scoped to record-round"
 LED=$(newledger t62)
-bash "$RB" record-round --run-id=t62 --ledger="$LED" --score=5 --defect=yes --strata=A,C >/dev/null
+bash "$RB" record-round --run-id=t62 --ledger="$LED" --score=5/10 --defect=yes --strata=A,C >/dev/null
 RC_BUDGET=$(rb budget --run-id=t62 --ledger="$LED" --strata=A,C)
 RC_SHOW=$(rb show --run-id=t62 --ledger="$LED" --strata=A,C)
 RC_VERDICT=$(rb record-verdict --run-id=t62 --ledger="$LED" --verdict=STOP --strata=A,C)
 # Polarity: a guard that refused --strata everywhere would pass all three.
-RC_RECORD=$(rb record-round --run-id=t62 --ledger="$LED" --score=5 --defect=yes --strata=B)
+RC_RECORD=$(rb record-round --run-id=t62 --ledger="$LED" --score=5/10 --defect=yes --strata=B)
 if [ "$RC_BUDGET" = "2" ] && [ "$RC_SHOW" = "2" ] && [ "$RC_VERDICT" = "2" ] && [ "$RC_RECORD" = "0" ]; then
     ok "T62: --strata refused on budget/show/record-verdict, accepted on record-round"
 else
@@ -1089,6 +1092,156 @@ fi
 # is a bad trade. Tracked as a follow-up; the behaviour it would pin is the
 # hint derivation at cross-review.sh (STRATA_HINT), and cross-review.test.sh --
 # which runs in a real tree -- is where it belongs.
+
+# ─── BRO-2615: a score carries its scale; a pass carries its verdicts ─────
+#
+# The incident: this skill grades design docs on a /15 rubric that passes at 11.
+# A 7/15 -- a FAIL -- was recorded as a bare `7` into this /10 ledger, and
+# `budget` returned PASSED while both strata that produced it said FAIL. Every
+# test below has both arms: the refusal, and the valid input that must still
+# record, so a gate that simply refuses everything cannot pass them.
+rows_in() { if [ -f "$1" ]; then grep -c '^ROUND' "$1" || true; else echo 0; fi; }
+
+# ── T66: the incident, verbatim — a /15 score into a /10 ledger is REFUSED ─
+echo "T66. a /15 score is refused by a /10 ledger; a /10 score still passes"
+LED=$(newledger t66)
+RC_ROUND=$(rb record-round --run-id=t66 --ledger="$LED" --score=7/15 --defect=yes --stratum=A:7/10:PASS)
+RC_STRAT=$(rb record-round --run-id=t66 --ledger="$LED" --score=7/10 --defect=yes --stratum=A:7/15:FAIL --stratum=B:7/15:FAIL)
+N_BAD=$(rows_in "$LED")
+RC_OK=$(rb record-round --run-id=t66 --ledger="$LED" --score=7/10 --defect=yes --stratum=A:7/10:PASS --stratum=B:8/10:PASS)
+RC_BUDGET=$(rb budget --run-id=t66 --ledger="$LED")
+if [ "$RC_ROUND" = "2" ] && [ "$RC_STRAT" = "2" ] && [ "$N_BAD" = "0" ] && [ "$RC_OK" = "0" ] && [ "$RC_BUDGET" = "3" ]; then
+    ok "T66: /15 refused at the round and at the stratum, nothing written; a /10 pass still PASSES"
+else
+    fail "T66: scale mismatch" "round=$RC_ROUND stratum=$RC_STRAT (want 2 2), rows after refusals=$N_BAD (want 0), valid=$RC_OK (want 0), budget=$RC_BUDGET (want 3)"
+fi
+
+# ── T67: a score without a scale, or outside it, fails closed ────────────
+echo "T67. a bare, out-of-range, or non-integer score is refused"
+LED=$(newledger t67)
+RC_BARE=$(rb record-round --run-id=t67 --ledger="$LED" --score=5 --defect=yes)
+# Bare `10` is the one bare value whose "scale" half would read as /10 if the
+# no-scale arm were gone, so it is the input that proves that arm on its own.
+RC_BARE10=$(rb record-round --run-id=t67 --ledger="$LED" --score=10 --defect=yes --stratum=A:10/10:PASS)
+RC_HIGH=$(rb record-round --run-id=t67 --ledger="$LED" --score=11/10 --defect=yes)
+# 2^64+5. Bash arithmetic wraps silently, so without the length check this
+# reads as 5/10 and records. A merely large value wraps to something > 10 and is
+# refused by the range check, which is why the first version of this arm proved
+# nothing.
+RC_HUGE=$(rb record-round --run-id=t67 --ledger="$LED" --score=18446744073709551621/10 --defect=yes)
+RC_NAN=$(rb record-round --run-id=t67 --ledger="$LED" --score=x/10 --defect=yes)
+RC_DEN=$(rb record-round --run-id=t67 --ledger="$LED" --score=5/x --defect=yes)
+RC_SHUGE=$(rb record-round --run-id=t67 --ledger="$LED" --score=5/10 --defect=yes --stratum=A:18446744073709551621/10:FAIL)
+RC_SHIGH=$(rb record-round --run-id=t67 --ledger="$LED" --score=5/10 --defect=yes --stratum=A:11/10:FAIL)
+N_BAD=$(rows_in "$LED")
+RC_OK=$(rb record-round --run-id=t67 --ledger="$LED" --score=5/10 --defect=yes --stratum=A:5/10:FAIL)
+if [ "$RC_BARE$RC_BARE10$RC_HIGH$RC_HUGE$RC_NAN$RC_DEN$RC_SHIGH$RC_SHUGE" = "22222222" ] && [ "$N_BAD" = "0" ] && [ "$RC_OK" = "0" ] && [ "$(rows_in "$LED")" = "1" ]; then
+    ok "T67: bare/11/huge/non-integer/bad-scale/stratum-out-of-range refused; 5/10 records"
+else
+    fail "T67: fail closed on range" "bare=$RC_BARE bare10=$RC_BARE10 high=$RC_HIGH huge=$RC_HUGE nan=$RC_NAN den=$RC_DEN stratum=$RC_SHIGH stratum-wrap=$RC_SHUGE (want 2 each), rows=$N_BAD (want 0), valid=$RC_OK (want 0)"
+fi
+
+# ── T68: a PASS over any FAIL stratum is impossible — at write and at read ──
+echo "T68. a passing round over a FAIL stratum cannot be recorded or read as PASSED"
+LED=$(newledger t68)
+RC_W=$(rb record-round --run-id=t68 --ledger="$LED" --score=7/10 --defect=yes --stratum=A:8/10:PASS --stratum=B:7/10:FAIL)
+N_BAD=$(rows_in "$LED")
+# A FAIL stratum still records, at a round score that does not pass.
+RC_WOK=$(rb record-round --run-id=t68 --ledger="$LED" --score=6/10 --defect=yes --stratum=A:8/10:PASS --stratum=B:7/10:FAIL)
+LED2=$(newledger t68b)
+printf 'ROUND\t1\t8\tyes\t\t-\tA,B\tA:8/10:PASS,B:8/10:FAIL\n' > "$LED2"
+RC_R=$(rb budget --run-id=t68b --ledger="$LED2")
+LED3=$(newledger t68c)
+printf 'ROUND\t1\t8\tyes\t\t-\tA,B\tA:8/10:PASS,B:8/10:PASS\n' > "$LED3"
+RC_RC=$(rb budget --run-id=t68c --ledger="$LED3")
+if [ "$RC_W" = "2" ] && [ "$N_BAD" = "0" ] && [ "$RC_WOK" = "0" ] && [ "$RC_R" = "6" ] && [ "$RC_RC" = "3" ]; then
+    ok "T68: PASS over FAIL refused at write (2) and STOPs at read (6); the all-PASS row PASSES"
+else
+    fail "T68: PASS over a FAIL stratum" "write=$RC_W (want 2) rows=$N_BAD (want 0) fail-below-bar=$RC_WOK (want 0) stored=$RC_R (want 6) all-pass=$RC_RC (want 3)"
+fi
+
+# ── T69: the round score never exceeds the lowest stratum ────────────────
+echo "T69. a round score above its lowest stratum is refused, at write and at read"
+LED=$(newledger t69)
+RC_W=$(rb record-round --run-id=t69 --ledger="$LED" --score=8/10 --defect=yes --stratum=A:7/10:PASS --stratum=C:9/10:PASS)
+RC_WEQ=$(rb record-round --run-id=t69 --ledger="$LED" --score=4/10 --defect=yes --stratum=A:4/10:FAIL --stratum=C:9/10:PASS)
+LED2=$(newledger t69b)
+printf 'ROUND\t1\t5\tyes\t\t-\tA,C\tA:4/10:FAIL,C:9/10:PASS\n' > "$LED2"
+RC_R=$(rb budget --run-id=t69b --ledger="$LED2")
+LED3=$(newledger t69c)
+printf 'ROUND\t1\t4\tyes\t\t-\tA,C\tA:4/10:FAIL,C:9/10:PASS\n' > "$LED3"
+RC_RC=$(rb budget --run-id=t69c --ledger="$LED3")
+if [ "$RC_W" = "2" ] && [ "$RC_WEQ" = "0" ] && [ "$RC_R" = "6" ] && [ "$RC_RC" = "0" ]; then
+    ok "T69: score > min refused (write 2, read 6); score = min records and authorizes"
+else
+    fail "T69: round exceeds min stratum" "write=$RC_W (want 2) equal=$RC_WEQ (want 0) stored=$RC_R (want 6) stored-equal=$RC_RC (want 0)"
+fi
+
+# ── T70: stored verdicts are checked with the recorder's own predicate ────
+# One arm per clause a hand edit could break. The control row is identical to
+# each broken one but for the broken clause.
+echo "T70. stored per-stratum verdicts that the recorder would refuse STOP the ledger"
+t70() { local l; l=$(newledger "t70$1"); printf '%b' "$2" > "$l"; rb budget --run-id="t70$1" --ledger="$l"; }
+R_SCALE=$(t70 a 'ROUND\t1\t7\tyes\t\t-\tA\tA:7/15:PASS\n')
+R_PANEL=$(t70 b 'ROUND\t1\t7\tyes\t\t-\tA,B\tA:7/10:PASS\n')
+R_LOWPASS=$(t70 c 'ROUND\t1\t5\tyes\t\t-\tA\tA:5/10:PASS\n')
+R_LETTER=$(t70 d 'ROUND\t1\t5\tyes\t\t-\tA\tD:5/10:FAIL\n')
+R_TOKEN=$(t70 e 'ROUND\t1\t5\tyes\t\t-\tA\tA:5/10:MAYBE\n')
+R_DUP=$(t70 f 'ROUND\t1\t5\tyes\t\t-\tA,A\tA:5/10:FAIL,A:5/10:FAIL\n')
+R_SHAPE=$(t70 g 'ROUND\t1\t5\tyes\t\t-\tA\tA:5:FAIL\n')
+R_CTRL=$(t70 h 'ROUND\t1\t7\tyes\t\t-\tA\tA:7/10:PASS\n')
+if [ "$R_SCALE$R_PANEL$R_LOWPASS$R_LETTER$R_TOKEN$R_DUP$R_SHAPE" = "6666666" ] && [ "$R_CTRL" = "3" ]; then
+    ok "T70: /15, panel mismatch, PASS below bar, bad letter, bad token, repeat, bad shape all STOP; control PASSES"
+else
+    fail "T70: read-side verdict validation" "scale=$R_SCALE panel=$R_PANEL lowpass=$R_LOWPASS letter=$R_LETTER token=$R_TOKEN dup=$R_DUP shape=$R_SHAPE (want 6 each), control=$R_CTRL (want 3)"
+fi
+
+# ── T71: a pass must carry the verdicts it claims to summarize ────────────
+# A row with no verdicts -- every row written before BRO-2615 -- holds a bare
+# integer on an unstated scale. That is the exact shape that passed a 7/15.
+echo "T71. a passing score without verdicts is refused at write and is not PASSED at read"
+LED=$(newledger t71)
+RC_W=$(rb record-round --run-id=t71 --ledger="$LED" --score=8/10 --defect=yes --strata=A,C)
+RC_WLOW=$(rb record-round --run-id=t71 --ledger="$LED" --score=6/10 --defect=yes --strata=A,C)
+LED2=$(newledger t71b)
+printf 'ROUND\t1\t8\tyes\t\t-\tA,C\n' > "$LED2"
+RC_LEGACY=$(rb budget --run-id=t71b --ledger="$LED2")
+LED3=$(newledger t71c)
+printf 'ROUND\t1\t8\tyes\t\t-\n' > "$LED3"
+RC_SIX=$(rb budget --run-id=t71c --ledger="$LED3")
+if [ "$RC_W" = "2" ] && [ "$RC_WLOW" = "0" ] && [ "$RC_LEGACY" = "0" ] && [ "$RC_SIX" = "0" ]; then
+    ok "T71: verdictless 8/10 refused (2), 6/10 records; legacy 7- and 6-field 8s AUTHORIZE, not PASS"
+else
+    fail "T71: pass requires verdicts" "write=$RC_W (want 2) below-bar=$RC_WLOW (want 0) legacy7=$RC_LEGACY legacy6=$RC_SIX (want 0 0, never 3)"
+fi
+
+# ── T72: --stratum is scoped, and exclusive with --strata ─────────────────
+echo "T72. --stratum is record-round only and cannot be combined with --strata"
+LED=$(newledger t72)
+RC_BOTH=$(rb record-round --run-id=t72 --ledger="$LED" --score=5/10 --defect=yes --strata=A --stratum=A:5/10:FAIL)
+RC_BUDGET=$(rb budget --run-id=t72 --ledger="$LED" --stratum=A:5/10:FAIL)
+RC_ONE=$(rb record-round --run-id=t72 --ledger="$LED" --score=5/10 --defect=yes --stratum=A:5/10:FAIL)
+if [ "$RC_BOTH" = "2" ] && [ "$RC_BUDGET" = "2" ] && [ "$RC_ONE" = "0" ]; then
+    ok "T72: both-flags refused, --stratum on budget refused, --stratum alone records"
+else
+    fail "T72: --stratum scope" "both=$RC_BOTH budget=$RC_BUDGET (want 2 2) alone=$RC_ONE (want 0)"
+fi
+
+# ── T73: at the WRITE door the stratum letters are checked as a set ───────
+# At read, a bad letter or a repeat is also caught by the panel checks on field
+# 7; at write the panel is DERIVED from the letters, so the set check is the
+# only thing refusing them. The first sweep proved that by leaving it alive.
+echo "T73. record-round refuses an unknown or repeated stratum letter"
+LED=$(newledger t73)
+RC_LETTER=$(rb record-round --run-id=t73 --ledger="$LED" --score=5/10 --defect=yes --stratum=D:5/10:FAIL)
+RC_DUP=$(rb record-round --run-id=t73 --ledger="$LED" --score=5/10 --defect=yes --stratum=A:5/10:FAIL --stratum=A:6/10:FAIL)
+N_BAD=$(rows_in "$LED")
+RC_OK=$(rb record-round --run-id=t73 --ledger="$LED" --score=5/10 --defect=yes --stratum=A:5/10:FAIL --stratum=B:6/10:FAIL)
+if [ "$RC_LETTER" = "2" ] && [ "$RC_DUP" = "2" ] && [ "$N_BAD" = "0" ] && [ "$RC_OK" = "0" ]; then
+    ok "T73: D and A,A refused with nothing written; A,B records"
+else
+    fail "T73: write-side stratum set" "letter=$RC_LETTER dup=$RC_DUP (want 2 2) rows=$N_BAD (want 0) valid=$RC_OK (want 0)"
+fi
 
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
