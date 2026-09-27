@@ -174,8 +174,9 @@ def test_accents_fold():
     assert entity_grounding("maria-nunez", "Núñez published the result.", "", "person") == 1
 
 
-def test_number_words_do_not_ground():
+def test_number_words_are_part_of_the_name():
     assert entity_grounding("system-one", "One of the arms failed.", "") == 0
+    assert entity_grounding("system-one", "System design changed.", "") == 0
     assert entity_grounding("system-one", "System One beat chance.", "") == 1
 
 

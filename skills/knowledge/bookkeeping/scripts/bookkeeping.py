@@ -2655,16 +2655,15 @@ def _frontmatter_value(text: str, key: str) -> object:
 # rest are junk the coherence gate let through ("Verified against the paper."
 # as recurrent-breast-cancer).
 # NOT a page-quality rule: hand-written claims legitimately omit the title
-# (a person page reads "Managing Director of ..."), and 662 of 1074
-# hand-authored pages (61.6%) would fail it. It applies only where the claim is DERIVED from an
+# (a person page reads "Managing Director of ..."), and 663 of 1074
+# hand-authored pages (61.7%) would fail it. It applies only where the claim is DERIVED from an
 # item, i.e. the new-page path of promote_item.
 
 GROUNDING_FLOOR = 1
 
-# Number words match too much prose to ground anything ("system-one" must not
-# be grounded by "one of the ...").
+# Number words stay CONTENT: "system-one" is named by "System One", and with
+# "one" dropped any "System design ..." sentence would name it.
 _GROUNDING_NONCONTENT = _SLUG_LEAD_STOPWORDS | _SLUG_TRAIL_STOPWORDS | frozenset({
-    "one", "two", "three", "four", "five", "six", "seven", "eight", "nine", "ten",
     "via", "vs", "versus", "towards", "toward",
 })
 
