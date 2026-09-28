@@ -1812,6 +1812,55 @@ else
     fail "T97: show axes rendering" "declared=$A1 explicit_none=$A2 pre_field=$A3 (want ok ok ok)"
 fi
 
+# ── T98: the contradiction is scoped to the BAR, not to every score ───────
+# Round 3 refused a zero beside --defect=no at EVERY score, and the reviewer
+# measured two costs. Every score <=4 necessarily contains a zero (five parts,
+# max two each), so an axes-declaring round at 4/10 was FORCED to --defect=yes:
+# that corrupts the field the continuation currency is measured in, and it reset
+# the `nodefect` streak, defeating an absorbing stop. It also made an honest
+# sub-passing round unrecordable -- truthful axes plus a truthful --defect=no
+# was refused, so the reviewer had to drop one of two true things.
+#
+# The trap only exists AT OR ABOVE the bar, where the floor withholds a pass and
+# the round falls into `nodefect`. Below it there is no pass to withhold.
+echo "T98. below the bar, a zero axis coexists with --defect=no and nodefect still bites"
+LED=$(newledger t98)
+RC_HONEST=$(rb record-round --run-id=t98 --ledger="$LED" --score=4/10 --defect=no --axes=1,1,1,1,0)
+# The absorbing stop must still fire below the bar -- that is the streak the
+# round-3 rule was silently defeating.
+RC_SECOND=$(rb record-round --run-id=t98 --ledger="$LED" --score=4/10 --defect=no --axes=2,1,1,0,0)
+RC_STREAK=$(rb budget --run-id=t98 --ledger="$LED")
+# And at the bar the contradiction is still refused.
+LED2=$(newledger t98b)
+RC_AT_BAR=$(rb record-round --run-id=t98b --ledger="$LED2" --score=8/10 --defect=no --axes=2,2,2,2,0 --stratum=B:8/10:PASS)
+# 7/10 is the bar itself, not just above it.
+LED3=$(newledger t98c)
+RC_ON_BAR=$(rb record-round --run-id=t98c --ledger="$LED3" --score=7/10 --defect=no --axes=2,2,2,1,0 --stratum=B:7/10:PASS)
+if [ "$RC_HONEST" = "0" ] && [ "$RC_SECOND" = "0" ] && [ "$RC_STREAK" = "6" ] && \
+   [ "$RC_AT_BAR" = "2" ] && [ "$RC_ON_BAR" = "2" ]; then
+    ok "T98: 4/10 zero+defect=no records twice and still STOPs on nodefect (6); 7/10 and 8/10 refuse (2)"
+else
+    fail "T98: contradiction scoped to the bar" \
+        "honest=$RC_HONEST second=$RC_SECOND streak=$RC_STREAK at_bar=$RC_AT_BAR on_bar=$RC_ON_BAR (want 0 0 6 2 2)"
+fi
+
+# ── T99: --axes is scoped to record-round, like the panel flags ────────────
+# Accepted and silently ignored elsewhere -- including values record-round would
+# refuse. "A flag accepted where it has no meaning reads as a flag that had one."
+echo "T99. --axes is refused on commands that cannot record it"
+LED=$(newledger t99)
+printf 'ROUND\t1\t5\tyes\t\t-\n' > "$LED"
+RC_BUDGET=$(rb budget --run-id=t99 --ledger="$LED" --axes=9,9,9,9,9)
+RC_SHOW=$(rb show --run-id=t99 --ledger="$LED" --axes=2,2,2,1,1)
+# Polarity: it must still be accepted where it DOES mean something.
+LED2=$(newledger t99b)
+RC_REC=$(rb record-round --run-id=t99b --ledger="$LED2" --score=8/10 --defect=yes --axes=2,2,2,1,1 --stratum=B:8/10:PASS)
+if [ "$RC_BUDGET" = "2" ] && [ "$RC_SHOW" = "2" ] && [ "$RC_REC" = "0" ]; then
+    ok "T99: --axes refused on budget and show (2); accepted on record-round (0)"
+else
+    fail "T99: --axes scope" "budget=$RC_BUDGET show=$RC_SHOW record=$RC_REC (want 2 2 0)"
+fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

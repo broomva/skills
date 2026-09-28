@@ -41,7 +41,14 @@ jobs:
   gate:
     name: Merge Gate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 65, not 30. The loop below polls for up to ~60 min, and a JOB timeout
+    # shorter than its own loop makes the loop's bound decorative: GitHub kills
+    # the job and annotates "The job has exceeded the maximum execution time of
+    # 30m0s", which surfaces as a FAILED required check rather than as a
+    # timeout. Raising the poll count alone was INERT -- measured on run
+    # 36402444090, cancelled at 30m15s with that annotation while the loop was
+    # only at poll 59/120.
+    timeout-minutes: 65
     steps:
       - name: Require all other checks green (or skipped)
         env:

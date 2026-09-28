@@ -642,8 +642,19 @@ mutate "ninth field classifies as bare" "T90" \
 
 # The zero-is-a-defect contradiction (review round 2), at BOTH doors.
 mutate "zero axis accepted beside defect=no" "T94" \
-    '                if [ "$rdefect" = "no" ]; then' \
-    '                if [ "$rdefect" = "IMPOSSIBLE" ]; then'
+    '                if [ "$score" -ge "$PASS_SCORE" ] && [ "$rdefect" = "no" ]; then' \
+    '                if [ "$score" -ge "$PASS_SCORE" ] && [ "$rdefect" = "IMPOSSIBLE" ]; then'
+# The SCOPE of that rule, on its own. Widening it back to every score is the
+# round-3 defect: it forces --defect=yes on any axes-declaring round <=4 (every
+# such score contains a zero), which corrupts the continuation currency and
+# defeats the absorbing `nodefect` stop.
+mutate "contradiction widened past the bar" "T98" \
+    '                if [ "$score" -ge "$PASS_SCORE" ] && [ "$rdefect" = "no" ]; then' \
+    '                if [ "$score" -ge 0 ] && [ "$rdefect" = "no" ]; then'
+# The flag scope.
+mutate "--axes accepted outside record-round" "T99" \
+    'if [ "$AXES_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then' \
+    'if [ "$AXES_SET" = "1" ] && [ "$COMMAND" = "IMPOSSIBLE" ]; then'
 mutate "stored defect not passed to the predicate" "T95" \
     '"$(field "$vrow" 9)" "$(field "$vrow" 4)"' \
     '"$(field "$vrow" 9)" ""'

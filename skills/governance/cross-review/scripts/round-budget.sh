@@ -215,6 +215,13 @@ if [ "$STRATUM_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then
     echo "round-budget: --stratum applies to 'record-round' only, not '$COMMAND'." >&2
     exit 2
 fi
+# Same scope as the panel flags. Without it `budget --axes=9,9,9,9,9` was
+# accepted and silently ignored -- including values record-round would refuse --
+# and a flag accepted where it has no meaning reads as a flag that had one.
+if [ "$AXES_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then
+    echo "round-budget: --axes applies to 'record-round' only, not '$COMMAND'." >&2
+    exit 2
+fi
 
 [ -n "$RUN_ID" ] || { echo "round-budget: --run-id=ID required" >&2; exit 2; }
 case "$RUN_ID" in
@@ -409,8 +416,10 @@ axes_are_valid() (
         # the range test below would accept nothing it rejects, but a leading
         # zero ('02') is a different string for the same value and the ledger
         # stores strings.
-        case "$a" in 0?*) echo "axis $n ('$a') has a leading zero"; exit 1 ;; esac
-        # LENGTH BEFORE ARITHMETIC. `$((10#$a))` wraps on a long digit run:
+        # LENGTH BEFORE ARITHMETIC. This also subsumes the leading-zero arm that
+        # sat here: every string it caught ('02') is length >= 2 and is refused
+        # below, so it only changed the message. The file's own doctrine deletes
+        # guards no input can reach alone. `$((10#$a))` wraps on a long digit run:
         # 10#18446744073709551616 evaluates to 0, so an axis of that string
         # summed as ZERO, satisfied the sum check, and then the floor's string
         # match never saw a `0` -- reproducing the exact 2+2+2+2+0=8 incident
@@ -480,8 +489,9 @@ round_is_admissible() (
     # nothing to make and the artifact keeps it.
     if [ "$axes" != "-" ]; then
         if ! err=$(axes_are_valid "$axes" "$score"); then echo "rubric axes: $err"; exit 1; fi
-        # A DECLARED ZERO IS A DEFECT, so `--defect=no` beside one is an internal
-        # contradiction and is refused here, with the other contradictions.
+        # A declared zero at a PASSING score contradicts `--defect=no`, and is
+        # refused here with the other contradictions. Scoped to the bar on
+        # purpose -- see below.
         #
         # Review round 2 found the incentive inversion had survived round 1's fix,
         # displaced by one round: withholding the pass drops the round into the
@@ -494,10 +504,28 @@ round_is_admissible() (
         # the absorbing stops untouched and costs an honest reviewer nothing: a
         # dimension scored zero IS a reproduced deficiency in the change, so
         # `--defect=yes` is true by construction wherever a zero is declared.
+        # ONLY AT OR ABOVE THE BAR. Round 3 refused the contradiction at EVERY
+        # score and that was too wide in two ways the reviewer measured:
+        #
+        #   - Every score <=4 necessarily contains a zero (five parts, max two
+        #     each), so an axes-declaring round at 4/10 was FORCED to
+        #     --defect=yes. That corrupts the field the continuation currency is
+        #     measured in: SKILL.md says "a reproduced, executable defect in the
+        #     change -- not a score bump, not reviewer opinion", and an unmet
+        #     dimension is an absence, not an executable defect. It also reset
+        #     the `nodefect` streak, defeating an absorbing stop.
+        #   - An honest sub-passing round became UNRECORDABLE: truthful axes plus
+        #     a truthful --defect=no was refused, so the reviewer had to drop one
+        #     of two true things.
+        #
+        # The trap this closes only exists at or above the bar, where the floor
+        # WITHHOLDS a pass and the round then falls into `nodefect`. Below the
+        # bar the round was not going to pass anyway, so there is nothing to
+        # withhold and the streak is a legitimate signal.
         case ",$axes," in
             *,0,*)
-                if [ "$rdefect" = "no" ]; then
-                    echo "axes '$axes' declare a ZERO dimension but the round reports --defect=no; a dimension scored 0 is a reproduced defect"
+                if [ "$score" -ge "$PASS_SCORE" ] && [ "$rdefect" = "no" ]; then
+                    echo "axes '$axes' declare a ZERO dimension at a PASSING score of $rscore but the round reports --defect=no; at or above the bar the zero is the finding that withholds the pass"
                     exit 1
                 fi ;;
         esac
