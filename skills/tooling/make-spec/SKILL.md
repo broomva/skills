@@ -66,10 +66,17 @@ saves ~5 minutes per doc.
 The four variants (generated, not shipped — apply to the
 `template-spec.html` base + the canonical skeleton below):
 
+> **The base template has no Non-goals or Alternatives-considered slot**, and
+> `spec-contract` requires both on the `spec` profile — so the shipped scaffold
+> fails the content gate it now composes with. Add both sections when generating
+> from it; they are the two classes the workspace corpus is weakest on (7.6%
+> each), which is exactly why a scaffold that omits them perpetuates the gap.
+
 3. **Plan variant** — base + sub-phase table + acceptance-criteria
    sections.
 4. **ADR variant** — base + Status / Context / Decision /
-   Consequences / Alternatives sections.
+   Consequences / Alternatives sections — the `adr` profile in
+   `spec-contract`, which enforces them rather than listing them.
 5. **Report variant** — base + Executive summary / Findings /
    Recommendations / Appendix sections.
 6. **PR-explainer variant** — base + What changed / Why / Test plan
@@ -212,6 +219,7 @@ Slug names the **topic**, not the date. The date is the mtime.
 
 | Compose with | When |
 |---|---|
+| **`spec-contract`** | **Always, for a design doc.** This skill owns how the doc LOOKS; `spec-contract` owns what is IN it (reversal-cost inclusion rule, required sections by class, ≥2 alternatives with rejection reasons, measurable acceptance, implementation-manual detector) plus the judgment rubric a script cannot run. Scaffold here, then gate with `python3 skills/governance/spec-contract/scripts/spec_check.py <doc>`. |
 | **`bookkeeping render`** | NEVER for native HTML — `bookkeeping render` is for Category-B (MD canonical → HTML projection). This skill produces Category-C natives. They're disjoint per P18. |
 | **`handoff`** | A handoff is markdown (agent-loaded) but may *link to* a make-spec HTML companion when the arc warrants. Handoff stays MD; companion is HTML. |
 | **`autonomous`** | When `/autonomous` is mid-arc and a substantive plan emerges, fork the plan into `docs/plans/<slug>.html` via this skill, then continue execution. |
@@ -219,12 +227,18 @@ Slug names the **topic**, not the date. The date is the mtime.
 
 ## Validation (spec self-test)
 
+> **These checks are about the shell, not the contents.** Every item below can
+> pass on a document that argues nothing — that is not a defect in the list, it
+> is its scope. The contents are gated by `spec-contract`, whose checker is the
+> last item here and is the only one that reads what the doc says.
+
 - [ ] `<title>` and `<h1>` match (with doc-type prefix on `<title>`)
 - [ ] `<p class="meta">` line present with author + date + status + risk
 - [ ] Theme CSS is the `references/theme.css` content verbatim (or `<link>` to it if hosted) — no inline drift
 - [ ] At least one `<div class="toc">` if the doc has ≥4 H2 sections
 - [ ] All `tag` chips use one of the six canonical classes (info/ok/warn/bad/pick/cfd)
 - [ ] Filename matches `YYYY-MM-DD-<slug>.html` (date = mtime, slug = topic)
+- [ ] **Contents gated**: `python3 skills/governance/spec-contract/scripts/spec_check.py <doc>` exits 0, and the `spec-contract` rubric scores ≥11/15 with no axis at 0
 
 ## References
 

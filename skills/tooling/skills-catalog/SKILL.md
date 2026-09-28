@@ -2,7 +2,7 @@
 name: skills-catalog
 category: tooling
 description: >
-  Canonical reference inventory of the 99 agent skills in the broomva/skills monorepo,
+  Canonical reference inventory of the 103 agent skills in the broomva/skills monorepo,
   organized into 23 single-noun category buckets that mirror the skills/<category>/ directory
   layout, with a Remotion video showcase generator and X thread copy. Use when discovering
   available skills, browsing the full skills catalog, generating skills showcase content, or
@@ -23,12 +23,12 @@ Canonical inventory and showcase for the agent skills ecosystem.
 
 The full categorized reference lives in [references/skills-inventory.md](references/skills-inventory.md).
 
-99 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
+103 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
 
 | Category | Count | Key skills |
 |---|---|---|
-| Governance & control (`governance`) | 9 | agentic-control-kernel, architecture-design-principles, bstack |
-| Orchestration & autonomy (`orchestration`) | 10 | arc, autonomous, eve-forge, governed-autonomy-loop |
+| Governance & control (`governance`) | 11 | agentic-control-kernel, architecture-design-principles, bstack |
+| Orchestration & autonomy (`orchestration`) | 11 | arc, autonomous, eve-forge, governed-autonomy-loop |
 | Skill & prompt tooling (`tooling`) | 9 | audit-harness-usage, broomva-cli, make-spec |
 | Knowledge & memory (`knowledge`) | 8 | bookkeeping, braindump, colombia-conflict |
 | Research (`research`) | 2 | checkit, deep-dive-research-orchestrator |
@@ -39,7 +39,7 @@ The full categorized reference lives in [references/skills-inventory.md](referen
 | Audio & music (`audio`) | 3 | livecoding, omnivoice |
 | Design & brand (`design`) | 7 | arcan-glass, broomva-design, design-engineering |
 | Finance & payments (`finance`) | 4 | finance-substrate, haima, investment-management |
-| Compute infrastructure (`compute`) | 3 | agentic-vps, colab-remote, remote-gpu |
+| Compute infrastructure (`compute`) | 4 | agentic-vps, colab-remote, remote-gpu |
 | Model runtimes (`models`) | 2 | bitnet, heretic-abliteration |
 | Messaging channels (`messaging`) | 2 | claude-code-channels, claude-remote-sessions |
 | Robotics (`robotics`) | 2 | capx-agentic-robotics, orcahand |

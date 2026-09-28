@@ -62,6 +62,8 @@ Does this item connect to Broomva's active work, open questions, or strategic di
 | **3–4** | **Ambiguous band** — trigger LLM-as-judge (see Section 3). Do not auto-promote or auto-discard. |
 | **≤ 2** | Discard from Layer 3. May retain in Layer 2 raw extract for archival. Do not create entity page. |
 
+**What the three axes do not measure — entity identity.** Novelty, specificity and relevance are properties of the *claim*; none of them asks whether the *title* is a coherent knowledge-graph node that the claim is genuinely about. A section heading, a person's name, or a phrase lifted from a source document can carry a specific, relevant claim and sum to 6/9 — and be filed as a `concept` that no reader would ever look up. Measured 2026-09-18 (jev-1.13.0) on 9 human-quarantined junk pages vs 30 accepted pages: specificity separated them with AUC 0.60, relevance 0.81, and a single Noul question about title/claim coherence 0.98. That question is asked once, at promotion, by the entity coherence gate in `promote_item` (see SKILL.md § Entity coherence gate): `p < 0.5` quarantines the would-be page instead of writing it. The rubric above is unchanged; the gate covers the axis it never had.
+
 ---
 
 ## 3. Two-Pass Scoring Protocol

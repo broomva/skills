@@ -182,7 +182,23 @@ mutate "every verdict reads as CONTINUE" "T37" \
     'LG_LAST_VERDICT=$(field "$last" 2)' \
     'LG_LAST_VERDICT=CONTINUE'
 mutate "ROUND arity unchecked" "T38" \
-    'if (NF != 6) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
+    'if (NF != 6 && NF != 7 && NF != 8) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
+# NO mutation for the arity FLOOR, and the reason is a finding rather than an
+# omission. `if (NF != 6 && NF != 7 && NF != 5)` -- widening the check to admit
+# a five-field row -- was written, run, and SURVIVED: a short ROUND row leaves
+# $6 empty, the settles arm below reads "" as neither REFUTED, CONFIRMED nor
+# "-", and sets badrow first. Every NF<6 row is caught there, so no input can
+# reach the floor and no test can distinguish it. T57 pins that a short row
+# fails closed -- which is true and worth holding -- but it is the settles arm
+# doing it, and claiming the mutation as a proof of the floor would be citing a
+# kill for a check the input never reaches.
+#
+# There is likewise no mutation for "6 is still accepted". Narrowing to
+# `NF != 7` reddens every fixture in this file, and the harness scores a mutant
+# that breaks the suite globally as UNATTRIBUTED rather than killed -- correctly,
+# because "the suite went red" says nothing about the rule. That claim is carried
+# by the suite's shape instead: every hand-written ROUND fixture here is six
+# fields, and T59 asserts an old six-field ledger AUTHORIZES.
 mutate "corrupt ledger cannot be reset" "T39" \
     'if ! ( load_ledger ) >/dev/null 2>&1; then' 'if false; then'
 # The entry test has exactly TWO arms, so it gets exactly two mutations -- one
@@ -355,6 +371,209 @@ mutate "corrupt refusal archives before refusing" "T39" \
 mutate "reset treats an unusable verdict as finished" "T55" \
     'if [ "$rule" = "passed" ]; then return 0; fi' \
     'if [ "$rule" = "passed" ] || [ "$rule" = "unusable_verdict" ]; then return 0; fi'
+
+# ─── The recorded panel (BRO-2507) ───────────────────────────────────────
+#
+# The field is bookkeeping -- no rule reads it -- so every proof here is about
+# the RECORD being readable, not about the budget changing. Each mutation
+# restores one specific way the record could lie.
+
+# The one that matters most: omitting --strata must write a NAMED absence.
+# Recording a letter instead makes "nobody wrote down which strata ran" and
+# "only Stratum C ran" the same bytes, which is the whole defect.
+mutate "omitted strata recorded as a real panel" "T58" \
+    'ROUND_STRATA="$STRATA_UNRECORDED"' 'ROUND_STRATA="C"'
+
+# Same claim at the RENDERING surface, for the rows that predate the field.
+# `show` takes no gate, so it is the only thing that decides how a six-field
+# row's missing panel reads -- and a blank is what a reader silently supplies
+# a meaning for.
+mutate "old rows render as a blank panel" "T59" \
+    '(NF<7 ? unrec : ($7!="" ? $7 : "MALFORMED"))' '$7'
+
+# ONE ARM PER CLAIM. The renderer's ternary carries two independent claims and
+# the mutant above only exercises the arity half: replacing the whole
+# expression with `$7` is killed by T59's six-field fixtures alone, leaving the
+# blank-field half unpinned. Stratum B reproduced that by hand. This mutant
+# collapses ONLY the blank arm, so it is killed by T64 and by nothing else --
+# the same "one arm per claim" discipline strata_is_valid already follows.
+mutate "blank panel renders as unrecorded again" "T64" \
+    '(NF<7 ? unrec : ($7!="" ? $7 : "MALFORMED"))' '(NF<7 ? unrec : ($7!="" ? $7 : unrec))'
+
+
+# The validator, at each of its two call sites. One definition, so one
+# mutation each -- the same accounting prediction_is_valid gets.
+mutate "strata write check off" "T60" \
+    'if ! strata_is_valid "$STRATA"; then' 'if false; then'
+mutate "strata read-time check off" "T61" \
+    'if ! strata_is_valid "$vstrata"; then' 'if false; then'
+
+# The shape guard, one mutation per arm. Fused into one alternation these
+# would have been ONE anchor with a kill cited three times; split, each arm
+# restores a different real defect and names the assertion that catches it.
+#
+# `: ;;` rather than deleting the arm: the case still MATCHES and the control
+# flow stays intact, so the mutant cannot redden a test by crashing. That is
+# this file's own rule -- values, not branches.
+
+# The alphabet arm is the one a NEWLINE hits, and a newline in this field is a
+# record separator: the row splits in two. So it is named against T60b, which
+# asserts that consequence (one row, seven columns) rather than an exit code.
+mutate "strata alphabet arm dead" "T60b" \
+    "        *[!ABC,]*) return 1 ;;" \
+    "        *[!ABC,]*) : ;;"
+# An EMPTY --strata is a MALFORMED claim, not an absent one. Accepting it
+# writes a blank panel, which is what a reader takes for `unrecorded`.
+mutate "empty strata accepted as a panel" "T60" \
+    "        '') return 1 ;;" \
+    "        '') : ;;"
+# Comma shape: a leading, trailing or doubled separator names a member that
+# does not exist.
+mutate "strata comma shape unchecked" "T60" \
+    "        ,*|*,|*,,*) return 1 ;;" \
+    "        ,*|*,|*,,*) : ;;"
+# The duplicate arm. `A,A` passes every arm above and names no set; nothing
+# else here touches that path.
+mutate "duplicate strata accepted" "T60" \
+    '[ "$n" = "$u" ]' '[ "$n" != "IMPOSSIBLE" ]'
+
+# `--strata=` with an empty value is a MALFORMED claim; the flag omitted is no
+# claim. Keyed on the value alone they collapse into one state, and the empty
+# one would quietly become `unrecorded`.
+mutate "empty --strata reads as omitted" "T60" \
+    '--strata=*)       STRATA="${arg#*=}"; STRATA_SET=1 ;;' \
+    '--strata=*)       STRATA="${arg#*=}"; STRATA_SET=1; [ -n "$STRATA" ] || STRATA_SET=0 ;;'
+
+# The "S:" prefix, same proof T33 gives the "P:" one: without it an EMPTY
+# stored panel vanishes from the validation loop rather than failing it, and a
+# blank field is precisely what a reader would mistake for `unrecorded`.
+mutate "blank stored panels skipped again" "T61" \
+    'vstrata=${srow#S:}' 'vstrata=${srow#S:}; [ -n "$vstrata" ] || continue'
+
+# A flag accepted where it has no meaning reads as a flag that had one, and
+# the thing silently not recorded here is which panel produced the score.
+mutate "--strata accepted on any command" "T62" \
+    'if [ "$STRATA_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then' \
+    'if [ "$STRATA_SET" = "1" ] && [ "$COMMAND" = "IMPOSSIBLE" ]; then'
+
+
+# ── BRO-2615: a score carries its scale; a pass carries its verdicts ──────
+# One mutation per guard, each the ONLY thing that refuses some input, each
+# naming the test whose arm that input is.
+echo ""
+echo "── BRO-2615 guards ──"
+
+# The incident itself: a /15 score accepted by a /10 ledger.
+mutate "foreign scale accepted" "T66" \
+    'if [ "$den" != "$LEDGER_SCALE" ]; then' 'if [ "$den" = "IMPOSSIBLE" ]; then'
+# Bare `10` is the one unscaled value the scale arm alone would admit.
+mutate "unscaled score accepted" "T67" \
+    '*) echo "'"'"'$v'"'"' carries no scale; write it as N/$LEDGER_SCALE"; return 1 ;;' \
+    '*) ;;'
+mutate "score above the scale accepted" "T67" \
+    '[ "$((10#$num))" -gt "$LEDGER_SCALE" ]' '[ "$((10#$num))" -gt 999 ]'
+mutate "overflowing score length unchecked" "T67" \
+    '[ "${#num}" -gt 2 ]' '[ "${#num}" -gt 99 ]'
+
+# A PASS can never sit over a FAIL stratum.
+mutate "FAIL stratum not tracked" "T68" \
+    'FAIL) failed=1 ;;' 'FAIL) ;;'
+mutate "pass-over-FAIL check dead" "T68" \
+    'if [ "$score" -ge "$PASS_SCORE" ] && [ "$failed" = "1" ]; then' \
+    'if [ "$score" -ge "$PASS_SCORE" ] && [ "$failed" = "IMPOSSIBLE" ]; then'
+# ...and never exceeds its lowest stratum.
+mutate "round may exceed its lowest stratum" "T69" \
+    'if [ "$score" -gt "$min" ]; then' 'if [ "$score" -gt 99 ]; then'
+
+# Stored rows go through the recorder's own predicate.
+mutate "stored rows not validated" "T70" \
+    'if ! verr=$(round_is_admissible' 'if false && verr=$(round_is_admissible'
+mutate "panel may disagree with verdicts" "T70" \
+    'if [ "$strata" != "$letters" ]; then' 'if [ "$strata" = "IMPOSSIBLE" ]; then'
+mutate "stratum PASS below the bar accepted" "T70" \
+    'if [ "$num" -lt "$PASS_SCORE" ]; then' 'if [ "$num" -lt 0 ]; then'
+mutate "unknown verdict token accepted" "T70" \
+    'want PASS or FAIL"; exit 1 ;;' 'want PASS or FAIL" >/dev/null ;;'
+mutate "stratum letter not checked alone" "T82" \
+    '            A|B|C) ;;
+            *) echo "stratum '"'"'$letter'"'"' is not one of A, B, C"; exit 1 ;;' \
+    '            A|B|C) ;;
+            *) ;;'
+mutate "verdict letters not a set" "T73" \
+    'if ! strata_is_valid "$letters"; then' 'if false; then'
+
+# PASS requires the verdicts it claims to summarize.
+mutate "PASSED without verdicts" "T71" \
+    '[ "$LG_LAST_VERIFIED" = "1" ] || return 1' 'true || return 1'
+mutate "verdictless pass admitted" "T71" \
+    'echo "round score $rscore would PASS with no per-stratum verdicts' 'return 0; echo "round score $rscore would PASS with no per-stratum verdicts'
+# The stored round score's own scale: at write the --score door already checked
+# it, so only a stored row can carry 7/15 in field 3.
+mutate "stored round score scale unchecked" "T74" \
+    'if ! err=$(score_is_valid "$rscore"); then echo "round score: $err"; exit 1; fi' ':'
+mutate "non-integer score arm gone" "T75" \
+    'case "$num" in '"''"'|*[!0-9]*) echo "'"'"'$v'"'"' has a non-integer score"; return 1 ;; esac' ':'
+
+mutate "--stratum accepted on any command" "T72" \
+    'if [ "$STRATUM_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then' \
+    'if [ "$STRATUM_SET" = "1" ] && [ "$COMMAND" = "IMPOSSIBLE" ]; then'
+mutate "--strata and --stratum both accepted" "T72" \
+    '        if [ "$STRATA_SET" = "1" ]; then
+            echo "round-budget: --strata and --stratum are exclusive' \
+    '        if false; then
+            echo "round-budget: --strata and --stratum are exclusive'
+
+
+# ── BRO-2615 round 2 (Stratum B): order, emptiness, NUL, the legacy boundary ──
+# The two folds over strata. Every test used to list the minimum first and the
+# FAIL last, so both of these survived 75/75 and each let a PASS through.
+mutate "minimum fold keeps the first entry" "T69" \
+    'if [ -z "$min" ] || [ "$num" -lt "$min" ]; then min=$num; fi' \
+    'if [ -z "$min" ]; then min=$num; fi'
+mutate "last verdict wins the FAIL fold" "T68" \
+    '                fi ;;
+            FAIL) failed=1 ;;' \
+    '                fi; failed=0 ;;
+            FAIL) failed=1 ;;'
+mutate "stratum scale unchecked" "T66" \
+    'if ! err=$(score_is_valid "$scored"); then' 'if false && err=$(score_is_valid "$scored"); then'
+mutate "NUL byte read through" "T76" \
+    'refusing to read it."
+        exit 6' \
+    'refusing to read it." >/dev/null'
+mutate "trailing empty verdict entry dropped" "T77" \
+    '*,) echo "the verdict list' 'IMPOSSIBLE) echo "the verdict list'
+mutate "leading empty --stratum vanishes" "T77" \
+    'if [ "$STRATUM_SET" = "1" ]; then STRATUM_VERDICTS="$STRATUM_VERDICTS,${arg#*=}"' \
+    'if [ -n "$STRATUM_VERDICTS" ]; then STRATUM_VERDICTS="$STRATUM_VERDICTS,${arg#*=}"'
+mutate "bare compared with scaled" "T78" \
+    'if (kind != prevkind) prev=-1' 'if (0) prev=-1'
+mutate "unverified pass unexplained" "T78" \
+    'echo "  Note: the last round scored' 'return 0; echo "  Note: the last round scored'
+mutate "note printed under any exit code" "T80" \
+    '        0|5)
+            if [ -n "$LG_SCORE" ]' \
+    '        *)
+            if [ -n "$LG_SCORE" ]'
+mutate "note printed below the bar" "T80" \
+    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ]; then' \
+    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge 0 ]; then'
+mutate "bare row after scaled accepted" "T81" \
+    'if (kind == "bare" && sawscaled) badhistory=' 'if (0) badhistory='
+mutate "show renders through a NUL" "T76" \
+    'echo "  MALFORMED: this ledger contains a NUL byte' ': "  MALFORMED: this ledger contains a NUL byte'
+mutate "blank verdicts render as a value" "T79" \
+    '($8=="" ? "MALFORMED" : $8)' '$8'
+
+
+# ── BRO-2615 round 4 (post-verdict tightenings) ──
+mutate "leading-zero score accepted" "T83" \
+    'case "$num" in 0?*) echo' 'case "$num" in IMPOSSIBLE) echo'
+mutate "stratum text glob-expanded" "T84" \
+    '    IFS=,; set -f
+    for entry in $verdicts; do' \
+    '    IFS=,
+    for entry in $verdicts; do'
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"

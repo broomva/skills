@@ -66,3 +66,45 @@ Interceptor's native screenshot command timed out after the real-browser interac
 **Surfaces driven:** Interceptor in real Chrome, Playwright Chromium, local HTTP, and the materializer CLI.
 
 **Time-to-receipt:** approximately 3 minutes from first test-harness write to captured portability evidence.
+
+## Exploratory specimen: settings defaults (BRO-2537, not adopted)
+
+Date: 2026-09-23. This specimen explored a proposed rule: never fade a setting's default to make changed values stand out, and mark the change instead with a cue that is not color alone. The rule came from a `/checkit` of Kole Jain, *The secret behind weirdly perfect UI designs* (https://www.youtube.com/watch?v=neE6wOuBIP8), which grays defaults (07:49). The proposal departed from that.
+
+**The rule was not adopted into `DESIGN.md`.** P20 review stopped at round 3 (score 6/10). Its encoding and a `Field` slot for the default label are open work (BRO-2539); see broomva/skills#228 for the review record. The specimen is a 20-row settings list rendered with the shipped foundation tokens. Three values differ from their defaults; one of them is a switch that is off by choice but on by default.
+
+The cue tried here is a `2px` Resonant AI Blue line on the row's leading edge plus a `Default:` label. That line collides with the active-section indicator in the archived Maestro settings (`assets/system/apps/maestro/settings.css`).
+
+**Files**
+
+- Harness: [`dogfood/settings-change-marker.html`](dogfood/settings-change-marker.html).
+- Measuring frame: [`dogfood/settings-change-marker-frame.html`](dogfood/settings-change-marker-frame.html).
+- Driver: [`dogfood/settings-change-marker-measure.sh`](dogfood/settings-change-marker-measure.sh). Its output, which begins with the harness hash it measured, is [`dogfood/settings-change-marker-measure.out`](dogfood/settings-change-marker-measure.out).
+- Setup: copy the harness and the frame into `<target>/settings/` of a `foundation`-profile target, and serve the target over local HTTP.
+- Colors, type, spacing and radii come from foundation variables. Row height, switch geometry and chip padding are fixed values.
+
+**What was measured**
+
+- **Viewports:** 1440px, 768px and 375px, in light and dark themes. Headless Chrome has a 500px minimum window, so the frame renders the harness in an iframe of exactly the requested width.
+- **Overflow:** `scrollWidth - clientWidth` is 0px at every width and theme. The positive control reads 1625px.
+- **Overlap:** the number of value elements that intersect their row label's rendered text is 0 at every width and theme. The positive control reads 35. Overlap is measured against the label's text range, not its element box, because a squeezed label paints its text outside its box.
+- **Contrast:** [`dogfood/settings-change-marker-contrast.py`](dogfood/settings-change-marker-contrast.py) applies WCAG 2.x to the OKLCH token values. Text pairs need 4.5:1; non-text pairs need 3:1.
+
+![Settings list before and after, 1440px light and dark, 375px light and dark](dogfood/settings-change-marker-contact-sheet.png)
+
+**Contrast results**
+
+| Pair | Light | Dark | Needs | Result |
+|---|---:|---:|---:|---|
+| Value: foreground on card | 18.98 | 17.16 | 4.5 | Pass |
+| `Default:` label: muted-foreground on card | 6.00 | 5.21 | 4.5 | Pass |
+| Leading line: Resonant AI Blue vs card | 3.98 | 4.78 | 3.0 | Pass |
+| Default in a lighter role: Muted current on card | 6.00 | — | 4.5 | Pass |
+| Default in a lighter role: Placeholder mist on card | 2.88 | — | 4.5 | **Fail** |
+| Blue value text on card | 3.98 | 4.78 | 4.5 | **Fail** light, pass dark |
+| Off switch track vs card | 1.63 | 1.49 | 3.0 | **Fail** |
+
+**Reading the rows**
+
+- A lighter text role is not always a contrast failure: in light theme, Muted current passes and Placeholder mist fails. The proposal's case against fading rested on state, not contrast: a faded value can read as unavailable, and an on-by-default switch drawn neutral reads as off.
+- Two rows predate this change and are tracked as foundation contrast gaps (BRO-2538): light-theme links, which use the same blue on white at 3.98:1, and the off switch track.

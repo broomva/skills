@@ -16,6 +16,7 @@ import argparse
 import json
 import os
 import re
+import fcntl
 import shutil
 import subprocess
 import sys
@@ -30,17 +31,32 @@ HOME = Path.home()
 STATE_DIR = Path(os.environ.get("TALKBACK_HOME", HOME / ".talkback"))
 AUDIO_DIR = STATE_DIR / "audio"
 LEDGER = STATE_DIR / "ledger.jsonl"
-ENABLED_FLAG = STATE_DIR / "hook-enabled"
 
 ELEVEN_API = "https://api.elevenlabs.io"
 ELEVEN_DEFAULT_VOICE = "SAz9YHcvj6GT2YYXdXww"  # River — relaxed, neutral, informative
 ELEVEN_DEFAULT_MODEL = "eleven_turbo_v2_5"
 SAY_DEFAULT_VOICE = os.environ.get("TALKBACK_SAY_VOICE", "Samantha")
+#: Where the sound comes out. Empty means the system default output. Audio plays
+#: on the machine running this script — if a session is driven from a phone or
+#: another device, the sound still lands on the host, so the useful lever is
+#: choosing which of the HOST's outputs (AirPods, an AirPlay speaker, a display)
+#: it goes to.
+DEFAULT_OUTPUT = os.environ.get("TALKBACK_OUTPUT", "")
 OMNIVOICE_URL = os.environ.get("OMNIVOICE_API_URL", "http://localhost:3900")
 
 # Keep a floor of characters in reserve so a quota is never fully drained by
 # one long explanation; the next short one should still get through.
 ELEVEN_RESERVE_CHARS = 250
+
+#: The quality ladder, best first. A backend that is unusable — no key, quota
+#: spent, local server down, synthesis error — hands off to the next one down,
+#: so the voice degrades instead of the audio disappearing. Asking for a rung
+#: explicitly starts the ladder THERE and only descends: `--fast` means "local
+#: now" and must not climb back up to a metered backend.
+CHAIN = tuple(
+    b.strip() for b in os.environ.get("TALKBACK_CHAIN", "elevenlabs,omnivoice,say").split(",")
+    if b.strip()
+)
 
 
 # --------------------------------------------------------------------------
@@ -57,7 +73,7 @@ _PATH_RE = re.compile(r"(?<![\w/])(?:[\w.-]+/){1,}[\w.-]+")
 _WS_RE = re.compile(r"\s+")
 
 # Emphasis is stripped only where the marker actually delimits a span. A bare
-# underscore inside an identifier (resolve_backend) is not emphasis, and eating
+# underscore inside an identifier (backend_chain) is not emphasis, and eating
 # it turns a symbol the listener could search for into one they cannot.
 _EMPH_PATTERNS = [
     re.compile(r"\*\*(.+?)\*\*", re.S),
@@ -254,10 +270,134 @@ def backend_omnivoice(text: str, out_base: Path, profile: str | None) -> Path:
 
 
 # --------------------------------------------------------------------------
+# audio output devices
+# --------------------------------------------------------------------------
+
+_SAY_DEVICE_RE = re.compile(r"^\s*(\d+)\s+(.+?)\s*$")
+_CA_DEVICE_RE = re.compile(r"\[(\d+)\]\s+(.+?),\s*([^,]+)\s*$")
+
+
+def say_outputs() -> list[tuple[str, str]]:
+    """`(id, name)` for every output device, from `say -a '?'`.
+
+    `say` lists outputs only, which is what we want — the CoreAudio list below
+    is indexed across inputs and outputs together.
+    """
+    if not shutil.which("say"):
+        return []
+    try:
+        out = subprocess.run(["say", "-a", "?"], capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return []
+    rows = []
+    for line in out.splitlines():
+        m = _SAY_DEVICE_RE.match(line)
+        if m:
+            rows.append((m.group(1), m.group(2)))
+    return rows
+
+
+def coreaudio_devices() -> list[tuple[int, str]]:
+    """`(index, name)` as ffmpeg's audiotoolbox muxer numbers them.
+
+    These indices are what `-audio_device_index` takes, and they are NOT the
+    `say -a` ids: this list interleaves inputs and outputs.
+    """
+    if not shutil.which("ffmpeg"):
+        return []
+    try:
+        proc = subprocess.run(
+            ["ffmpeg", "-hide_banner", "-f", "lavfi", "-i", "anullsrc=r=8000:cl=mono",
+             "-t", "0.01", "-f", "audiotoolbox", "-list_devices", "true", "-"],
+            capture_output=True, text=True, timeout=30,
+        )
+    except Exception:
+        return []
+    rows = []
+    for line in (proc.stderr or "").splitlines():
+        m = _CA_DEVICE_RE.search(line)
+        if m:
+            rows.append((int(m.group(1)), m.group(2).strip()))
+    return rows
+
+
+def list_outputs() -> None:
+    rows = say_outputs()
+    if not rows:
+        print("no audio output devices found (macOS `say` unavailable)")
+        return
+    print("# audio outputs — pass a name or id to --device")
+    for dev_id, name in rows:
+        print(f"{dev_id:>5}  {name}")
+    print("\nAudio plays on the machine running talkback. A session driven from")
+    print("another device still sounds here, so pick one of THESE outputs.")
+
+
+def _ca_index(device: str) -> int | None:
+    """Match a `say` device name onto ffmpeg's CoreAudio index."""
+    if not device:
+        return None
+    wanted = device.strip().lower()
+    for index, name in coreaudio_devices():
+        if name.strip().lower() == wanted:
+            return index
+    return None
+
+
+# --------------------------------------------------------------------------
 # playback + ledger
 # --------------------------------------------------------------------------
 
-def play(path: Path) -> None:
+def _play_lock():
+    """Serialize playback across processes when overlap policy is `queue`.
+
+    Returned as a context-manager-ish handle the caller keeps open for the
+    duration of playback; the flock releases when the process exits even if it
+    is killed, so a crashed player cannot wedge the queue.
+    """
+    if os.environ.get("TALKBACK_ON_OVERLAP", "").strip().lower() != "queue":
+        return None
+    try:
+        STATE_DIR.mkdir(parents=True, exist_ok=True)
+        fh = (STATE_DIR / "play.lock").open("w")
+        fcntl.flock(fh, fcntl.LOCK_EX)
+        return fh
+    except OSError:
+        return None
+
+
+def play(path: Path, device: str = "") -> None:
+    """Play the file, on `device` when one is named.
+
+    `afplay` cannot target a device, so a named output routes through ffmpeg's
+    audiotoolbox muxer instead. A device that cannot be resolved falls back to
+    the system default with a warning: a readback is never worth failing over.
+    """
+    lock = _play_lock()
+    try:
+        _play(path, device)
+    finally:
+        if lock is not None:
+            lock.close()
+
+
+def _play(path: Path, device: str) -> None:
+    if device:
+        index = _ca_index(device)
+        if index is None:
+            print(f"[talkback] output {device!r} not found; using the default device",
+                  file=sys.stderr)
+        elif shutil.which("ffmpeg"):
+            rc = subprocess.run(
+                ["ffmpeg", "-hide_banner", "-loglevel", "error", "-i", str(path),
+                 "-f", "audiotoolbox", "-audio_device_index", str(index), "-"],
+                check=False,
+            ).returncode
+            if rc == 0:
+                return
+            print(f"[talkback] ffmpeg could not play on {device!r}; using the default",
+                  file=sys.stderr)
+
     player = shutil.which("afplay") or shutil.which("ffplay")
     if not player:
         print(f"[talkback] no player found; audio at {path}", file=sys.stderr)
@@ -276,37 +416,45 @@ def record(entry: dict) -> None:
 
 # --------------------------------------------------------------------------
 
-def resolve_backend(requested: str, n_chars: int, strict: bool) -> tuple[str, str]:
-    """Return (backend, note). Falls back to `say` rather than failing loudly."""
-    if requested == "say":
-        return "say", ""
-    if requested == "omnivoice":
+def backend_chain(requested: str) -> list[str]:
+    """Backends to try, in order: `requested`, then everything below it."""
+    chain = list(CHAIN)
+    if requested in chain:
+        return chain[chain.index(requested):]
+    return [requested] + chain
+
+
+def backend_viable(backend: str, n_chars: int) -> tuple[bool, str]:
+    """Can this backend take the job right now? `(ok, why-not)`."""
+    if backend == "say":
+        if not shutil.which("say"):
+            return False, "`say` is unavailable (macOS only)"
+        return True, ""
+    if backend == "omnivoice":
         if omnivoice_up():
-            return "omnivoice", ""
-        if strict:
-            raise RuntimeError(f"omnivoice backend unreachable at {OMNIVOICE_URL}")
-        return "say", f"omnivoice down at {OMNIVOICE_URL} — fell back to say"
-    if requested == "elevenlabs":
+            return True, ""
+        return False, f"unreachable at {OMNIVOICE_URL}"
+    if backend == "elevenlabs":
         key = eleven_key()
         if not key:
-            if strict:
-                raise RuntimeError("no ElevenLabs key")
-            return "say", "no ElevenLabs key — fell back to say"
+            return False, "no API key"
         q = eleven_quota(key)
         if q is None:
-            if strict:
-                raise RuntimeError("could not read ElevenLabs quota")
-            return "say", "ElevenLabs quota unreadable — fell back to say"
+            return False, "quota unreadable"
         if q["remaining"] - n_chars < ELEVEN_RESERVE_CHARS:
-            msg = (
-                f"ElevenLabs quota too low ({q['remaining']}/{q['limit']} left, "
-                f"need {n_chars}) — fell back to say"
-            )
-            if strict:
-                raise RuntimeError(msg.replace(" — fell back to say", ""))
-            return "say", msg
-        return "elevenlabs", ""
-    return "say", ""
+            return False, (f"quota too low ({q['remaining']}/{q['limit']} left, "
+                           f"need {n_chars})")
+        return True, ""
+    return True, ""
+
+
+def synthesise(backend: str, text: str, out_base: Path, a) -> Path:
+    if backend == "elevenlabs":
+        voice = a.voice or os.environ.get("TALKBACK_ELEVEN_VOICE", ELEVEN_DEFAULT_VOICE)
+        return backend_elevenlabs(text, out_base, voice, a.model)
+    if backend == "omnivoice":
+        return backend_omnivoice(text, out_base, a.voice)
+    return backend_say(text, out_base, a.voice or SAY_DEFAULT_VOICE)
 
 
 def main() -> int:
@@ -336,6 +484,10 @@ def main() -> int:
                    help="read full file paths aloud instead of just the basename")
     p.add_argument("--quota", action="store_true", help="report ElevenLabs quota and exit")
     p.add_argument("--voices", action="store_true", help="list available voices and exit")
+    p.add_argument("-d", "--device", default=DEFAULT_OUTPUT,
+                   help="audio output device, by name or `say -a` id (default: system output)")
+    p.add_argument("--outputs", action="store_true",
+                   help="list audio output devices and exit")
     p.add_argument("--dry-run", action="store_true",
                    help="show the spoken text and chosen backend, synthesise nothing")
     a = p.parse_args()
@@ -354,6 +506,10 @@ def main() -> int:
             reset = " · resets " + datetime.fromtimestamp(q["resets_unix"]).strftime("%Y-%m-%d")
         print(f"ElevenLabs [{q['tier']}] {q['used']}/{q['limit']} used · "
               f"{q['remaining']} remaining{reset}")
+        return 0
+
+    if a.outputs:
+        list_outputs()
         return 0
 
     if a.voices:
@@ -387,52 +543,56 @@ def main() -> int:
         requested = "elevenlabs"
     else:
         requested = a.backend
-    try:
-        backend, note = resolve_backend(requested, len(text), a.strict)
-    except RuntimeError as e:
-        print(f"[talkback] {e}", file=sys.stderr)
-        return 1
-    if note:
-        print(f"[talkback] {note}", file=sys.stderr)
+    candidates = backend_chain(requested)
 
     if a.dry_run:
-        print(f"[talkback] backend={backend} chars={len(text)}")
-        print(text)
-        return 0
+        for candidate in candidates:
+            ok, why = backend_viable(candidate, len(text))
+            if ok:
+                print(f"[talkback] backend={candidate} chars={len(text)}")
+                print(text)
+                return 0
+            print(f"[talkback] {candidate}: {why}", file=sys.stderr)
+            if a.strict:
+                return 1
+        print("[talkback] no backend available", file=sys.stderr)
+        return 1
 
     out_dir = Path(a.out_dir) if a.out_dir else AUDIO_DIR
     out_dir.mkdir(parents=True, exist_ok=True)
     stamp = datetime.now().strftime("%Y%m%d-%H%M%S")
     out_base = out_dir / f"{stamp}-{slugify(text)}"
 
-    try:
-        if backend == "elevenlabs":
-            voice = a.voice or os.environ.get("TALKBACK_ELEVEN_VOICE", ELEVEN_DEFAULT_VOICE)
-            path = backend_elevenlabs(text, out_base, voice, a.model)
-        elif backend == "omnivoice":
-            path = backend_omnivoice(text, out_base, a.voice)
-        else:
-            path = backend_say(text, out_base, a.voice or SAY_DEFAULT_VOICE)
-    except Exception as e:
-        print(f"[talkback] {backend} failed: {e}", file=sys.stderr)
-        if backend != "say" and not a.strict:
-            print("[talkback] retrying with say", file=sys.stderr)
-            try:
-                path = backend_say(text, out_base, SAY_DEFAULT_VOICE)
-                backend = "say"
-            except Exception as e2:
-                print(f"[talkback] say also failed: {e2}", file=sys.stderr)
+    backend, path = "", None
+    for candidate in candidates:
+        ok, why = backend_viable(candidate, len(text))
+        if not ok:
+            print(f"[talkback] {candidate}: {why}", file=sys.stderr)
+            if a.strict:
                 return 1
-        else:
-            return 1
+            continue
+        try:
+            path = synthesise(candidate, text, out_base, a)
+            backend = candidate
+            break
+        except Exception as e:
+            print(f"[talkback] {candidate} failed: {e}", file=sys.stderr)
+            if a.strict:
+                return 1
+    if path is None:
+        print("[talkback] every backend in the chain failed", file=sys.stderr)
+        return 1
+    if backend != requested:
+        print(f"[talkback] fell back to {backend}", file=sys.stderr)
 
     if not a.no_play:
-        play(path)
+        play(path, a.device)
 
     record({
         "ts": datetime.now().isoformat(timespec="seconds"),
         "backend": backend,
         "chars": len(text),
+        "device": a.device or None,
         "audio": str(path) if not a.no_save else None,
         "cwd": os.getcwd(),
     })
