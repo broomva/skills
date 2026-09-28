@@ -1720,6 +1720,98 @@ else
         "blank=$RC_BLANK dash=$RC_DASH dash_note=$DASH_NOTE (want 6 3 yes)"
 fi
 
+# ── T94: a declared zero is a DEFECT; --defect=no beside one is refused ───
+# Review round 2's blocker. Withholding the pass drops the round into the
+# PRECEDENCE list, where `nodefect` is an ABSORBING exit 6 -- so at a passing
+# score with `--defect=no` (the modal polarity for a round scoring >=7)
+# declaring the zero turned a PASS into a dead arc needing `reset --force`,
+# while omitting --axes passed. The same incentive inversion round 1 named,
+# displaced by one round.
+#
+# Refused at the DOOR as a contradiction, beside the other contradictions,
+# rather than by special-casing an absorbing stop. It costs an honest reviewer
+# nothing: a dimension scored 0 IS a reproduced deficiency, so --defect=yes is
+# true by construction wherever a zero is declared.
+#
+# THE POLARITY THIS TEST EXISTS FOR: T85 and T86 are both --defect=yes, the one
+# value class that evades the trap. A suite on one side of a boundary cannot
+# fail for the boundary.
+echo "T94. a zero axis with --defect=no is refused; with --defect=yes it records"
+LED=$(newledger t94)
+RC_NO=$(rb record-round --run-id=t94 --ledger="$LED" --score=8/10 --defect=no  --axes=2,2,2,2,0 --stratum=B:8/10:PASS)
+WROTE=$([ -f "$LED" ] && echo yes || echo no)
+RC_YES=$(rb record-round --run-id=t94 --ledger="$LED" --score=8/10 --defect=yes --axes=2,2,2,2,0 --stratum=B:8/10:PASS)
+# No zero + defect=no must still be legal, or the rule is "defect=no is banned".
+LED2=$(newledger t94b)
+RC_CLEAN=$(rb record-round --run-id=t94b --ledger="$LED2" --score=8/10 --defect=no --axes=2,2,2,1,1 --stratum=B:8/10:PASS)
+RC_CLEAN_B=$(rb budget --run-id=t94b --ledger="$LED2")
+# And the arc that round 2 killed must now reach a pass.
+RC_FIX=$(rb record-round --run-id=t94 --ledger="$LED" --score=9/10 --defect=no --axes=2,2,2,2,1 --stratum=B:9/10:PASS)
+RC_AFTER=$(rb budget --run-id=t94 --ledger="$LED")
+if [ "$RC_NO" = "2" ] && [ "$WROTE" = "no" ] && [ "$RC_YES" = "0" ] && \
+   [ "$RC_CLEAN" = "0" ] && [ "$RC_CLEAN_B" = "3" ] && [ "$RC_FIX" = "0" ] && [ "$RC_AFTER" = "3" ]; then
+    ok "T94: zero+defect=no refused (nothing written); zero+defect=yes records; no-zero+defect=no passes; the fix round reaches PASSED"
+else
+    fail "T94: zero-axis defect contradiction" \
+        "no=$RC_NO wrote=$WROTE yes=$RC_YES clean=$RC_CLEAN clean_budget=$RC_CLEAN_B fix=$RC_FIX after=$RC_AFTER (want 2 no 0 0 3 0 3)"
+fi
+
+# ── T95: a STORED zero beside defect=no fails closed ──────────────────────
+# The read-time half, as for every other contradiction: a rule enforced only at
+# the entry point is one a hand-edited row walks past.
+echo "T95. a stored row with a zero axis and defect=no fails closed"
+LED=$(newledger t95a)
+printf 'ROUND\t1\t8/10\tno\t\t-\tB\tB:8/10:PASS\t2,2,2,2,0\n' > "$LED"
+RC_STORED=$(rb budget --run-id=t95a --ledger="$LED")
+LED2=$(newledger t95b)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tB\tB:8/10:PASS\t2,2,2,2,0\n' > "$LED2"
+RC_OK=$(rb budget --run-id=t95b --ledger="$LED2")
+if [ "$RC_STORED" = "6" ] && [ "$RC_OK" = "0" ]; then
+    ok "T95: stored zero+defect=no STOPs (6); stored zero+defect=yes withholds the pass (0)"
+else
+    fail "T95: stored zero/defect contradiction" "stored_no=$RC_STORED stored_yes=$RC_OK (want 6 0)"
+fi
+
+# ── T96: the human ceiling explains a withheld pass ───────────────────────
+# Exit 7 sits outside the 0|5 note arm, so a human escalated to at round 8
+# inherited "HUMAN — 8 rounds recorded" with no statement that the last round
+# scored at or above the bar and was floored.
+echo "T96. at the ceiling, a withheld pass still says why"
+LED=$(newledger t96)
+n=1
+while [ "$n" -le 7 ]; do
+    bash "$RB" record-round --run-id=t96 --ledger="$LED" --score=5/10 --defect=yes --axes=2,1,1,1,0 >/dev/null 2>&1
+    n=$((n+1))
+done
+bash "$RB" record-round --run-id=t96 --ledger="$LED" --score=8/10 --defect=yes --axes=2,2,2,2,0 --stratum=B:8/10:PASS >/dev/null 2>&1
+OUT=$(rbout budget --run-id=t96 --ledger="$LED")
+case "$OUT" in
+    *"HUMAN"*"rubric axis is ZERO"*) ok "T96: the ceiling names the floor that withheld the pass" ;;
+    *) fail "T96: ceiling explanation" "got: $(printf '%s' "$OUT" | head -3)" ;;
+esac
+
+# ── T97: `show` renders the axes column ───────────────────────────────────
+# The ledger is the artifact a reviewer reads back. A field the gate acts on but
+# `show` hides is a decision with no visible cause -- the same argument field 7
+# and field 8 already carry. Three arms because the renderer has three cases and
+# a test on one of them cannot fail for the others.
+echo "T97. show renders declared axes, an explicit absence, and a blank"
+LED=$(newledger t97)
+printf 'ROUND\t1\t7/10\tyes\t\t-\tA\tA:7/10:PASS\t2,2,1,1,1\n'  > "$LED"
+printf 'ROUND\t2\t8/10\tyes\t\t-\tA\tA:8/10:PASS\t-\n'         >> "$LED"
+printf 'ROUND\t3\t6/10\tyes\t\t-\tA\t-\n'                      >> "$LED"
+OUT=$(rbout show --run-id=t97 --ledger="$LED")
+case "$OUT" in *"[axes: 2,2,1,1,1]"*) A1=ok ;; *) A1=missing ;; esac
+case "$OUT" in *"[axes: none]"*)      A2=ok ;; *) A2=missing ;; esac
+# An eight-field row predates the field and must render NO axes column at all --
+# not "none", which is the value a nine-field row uses to say "declared none".
+case "$OUT" in *"round 3"*"[axes:"*)  A3=leaked ;; *) A3=ok ;; esac
+if [ "$A1" = "ok" ] && [ "$A2" = "ok" ] && [ "$A3" = "ok" ]; then
+    ok "T97: declared axes render; an explicit '-' renders as none; a pre-field row grows no column"
+else
+    fail "T97: show axes rendering" "declared=$A1 explicit_none=$A2 pre_field=$A3 (want ok ok ok)"
+fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

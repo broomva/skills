@@ -640,6 +640,32 @@ mutate "ninth field classifies as bare" "T90" \
     '            kind=(NF>=8) ? "scaled" : "bare"' \
     '            kind=(NF==8) ? "scaled" : "bare"'
 
+# The zero-is-a-defect contradiction (review round 2), at BOTH doors.
+mutate "zero axis accepted beside defect=no" "T94" \
+    '                if [ "$rdefect" = "no" ]; then' \
+    '                if [ "$rdefect" = "IMPOSSIBLE" ]; then'
+mutate "stored defect not passed to the predicate" "T95" \
+    '"$(field "$vrow" 9)" "$(field "$vrow" 4)"' \
+    '"$(field "$vrow" 9)" ""'
+
+# The five doors review round 2 found undoored. Each is a distinct way for the
+# ninth field to stop being read, and "100 killed" was silent on all of them.
+mutate "blank field 9 accepted" "T93" \
+    '        if [ -z "$vaxes" ]; then' \
+    '        if [ -z "IMPOSSIBLE" ]; then'
+mutate "ninth field never parsed" "T85" \
+    '            lastaxes=(NF>=9 ? $9 : "-")' \
+    '            lastaxes="-"'
+mutate "axes never read out of analyze" "T85" \
+    "    LG_LAST_AXES=\$(printf '%s' \"\$a\" | cut -f14)" \
+    '    LG_LAST_AXES="-"'
+mutate "withheld pass unexplained" "T86" \
+    '            if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ] && axis_floor_blocks; then' \
+    '            if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ] && false; then'
+mutate "show hides the axes column" "T97" \
+    '(NF>=9 ? "  [axes: " ($9=="-" ? "none" : ($9=="" ? "MALFORMED" : $9)) "]" : "") }' \
+    '"" }'
+
 # The read-time door. round_is_admissible has two callers so the door and the
 # stored artifact cannot disagree; this proves the SECOND caller runs.
 #

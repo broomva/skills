@@ -461,7 +461,7 @@ axes_are_valid() (
 # letter the set check refuses -- so each was a guard no input could reach, and
 # three were written and deleted here for that reason.
 round_is_admissible() (
-    rscore="$1"; strata="$2"; verdicts="$3"; axes="${4:--}"
+    rscore="$1"; strata="$2"; verdicts="$3"; axes="${4:--}"; rdefect="${5:-}"
     if ! err=$(score_is_valid "$rscore"); then echo "round score: $err"; exit 1; fi
     score=$((10#${rscore%%/*}))
     # The rubric axes (BRO-2636), when the round declares them. Shape and
@@ -480,6 +480,27 @@ round_is_admissible() (
     # nothing to make and the artifact keeps it.
     if [ "$axes" != "-" ]; then
         if ! err=$(axes_are_valid "$axes" "$score"); then echo "rubric axes: $err"; exit 1; fi
+        # A DECLARED ZERO IS A DEFECT, so `--defect=no` beside one is an internal
+        # contradiction and is refused here, with the other contradictions.
+        #
+        # Review round 2 found the incentive inversion had survived round 1's fix,
+        # displaced by one round: withholding the pass drops the round into the
+        # PRECEDENCE list, where `nodefect` is an ABSORBING exit 6. At a passing
+        # score with `--defect=no` -- the modal polarity for a round scoring >=7 --
+        # declaring the zero turned a PASS into a dead arc needing `reset --force`,
+        # while omitting `--axes` passed. Same inversion, one round later.
+        #
+        # Refusing the CONTRADICTION rather than special-casing `nodefect` keeps
+        # the absorbing stops untouched and costs an honest reviewer nothing: a
+        # dimension scored zero IS a reproduced deficiency in the change, so
+        # `--defect=yes` is true by construction wherever a zero is declared.
+        case ",$axes," in
+            *,0,*)
+                if [ "$rdefect" = "no" ]; then
+                    echo "axes '$axes' declare a ZERO dimension but the round reports --defect=no; a dimension scored 0 is a reproduced defect"
+                    exit 1
+                fi ;;
+        esac
     fi
     if [ "$verdicts" = "-" ]; then
         if [ "$score" -ge "$PASS_SCORE" ]; then
@@ -851,7 +872,7 @@ load_ledger() {
 '
     set -f
     for vrow in $vrows; do
-        if ! verr=$(round_is_admissible "$(field "$vrow" 3)" "$(field "$vrow" 7)" "$(field "$vrow" 8)" "$(field "$vrow" 9)"); then
+        if ! verr=$(round_is_admissible "$(field "$vrow" 3)" "$(field "$vrow" 7)" "$(field "$vrow" 8)" "$(field "$vrow" 9)" "$(field "$vrow" 4)"); then
             set +f; IFS=$old_ifs
             echo "STOP — a ROUND row in $LEDGER records verdicts the recorder would refuse:"
             echo "  ${verr:-the check failed without a reason; refusing rather than guessing}"
@@ -1115,9 +1136,13 @@ decide_and_exit() {
     # the pass from a row that IS verified, so without the test this note fired
     # on a round that had recorded its strata and told the reviewer to do the one
     # thing it had already done.
+    # 7 (the human ceiling) joins 0|5 for the axis note only: a human escalated
+    # to at round 8 must be told the last round scored at or above the bar and
+    # was floored, or they inherit an exit 7 with no idea why it did not pass.
+    # The unscaled-score note stays at 0|5, where another round can still fix it.
     case "$code" in
-        0|5)
-            if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ] && [ "$LG_LAST_VERIFIED" != "1" ]; then
+        0|5|7)
+            if [ "$code" != "7" ] && [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ] && [ "$LG_LAST_VERIFIED" != "1" ]; then
                 echo "  Note: the last round scored $LG_SCORE with no per-stratum verdicts on"
                 echo "  an unstated scale, so it is not read as a pass. The next round is"
                 echo "  recorded as --score=N/$LEDGER_SCALE with one --stratum=L:N/$LEDGER_SCALE:PASS|FAIL per stratum."
@@ -1218,7 +1243,7 @@ record-round)
     else
         ROUND_AXES="-"
     fi
-    if ! VERDICT_ERR=$(round_is_admissible "$ROUND_SCORE" "$ROUND_STRATA" "$ROUND_VERDICTS" "$ROUND_AXES"); then
+    if ! VERDICT_ERR=$(round_is_admissible "$ROUND_SCORE" "$ROUND_STRATA" "$ROUND_VERDICTS" "$ROUND_AXES" "$DEFECT"); then
         echo "round-budget: refusing this round: ${VERDICT_ERR:-the check failed without a reason}." >&2
         exit 2
     fi
