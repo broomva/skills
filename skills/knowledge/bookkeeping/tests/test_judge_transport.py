@@ -1468,13 +1468,6 @@ def test_a_reconciled_item_is_internally_consistent(hn, hs, hr, jn, js, jr):
     assert bk._scored_item_is_sane(out), "the reconciler produced a score the gate calls invalid"
 
 
-def test_reconciliation_promote_uses_the_admission_predicate():
-    """promote must come from passes_nous_gate, not the sum — AXIS_FLOOR."""
-    it = _item()
-    out = bk._reconcile_judge_with_heuristic(_si(it, 0, 3, 3), _si(it, 0, 3, 3, "claude_cli"))
-    assert out.promote == bk.passes_nous_gate(out.novelty, out.specificity, out.relevance)
-
-
 def test_score_item_applies_the_reconciliation(monkeypatch):
     """End to end: the rule is applied on the real path, not only in the helper."""
     it = _item()
@@ -1703,3 +1696,104 @@ def test_a_judged_page_does_not_claim_the_heuristic_decided_it(tmp_path, monkeyp
     text = written.read_text()
     assert "pass: llm-judge" in text, "a judge-scored page still claims pass: heuristic"
     assert "pass: heuristic" not in text
+
+
+# ── the permissive class, swept at BOTH floor settings ──────────────────────
+
+@pytest.mark.parametrize("floor", [0, 1])
+def test_no_in_band_pair_promotes_what_both_passes_refused_at_any_floor(floor, monkeypatch):
+    """
+    The previous sweep ran only at the shipped AXIS_FLOOR=0, where the property
+    is arithmetically free. At AXIS_FLOOR=1 the floor is per-AXIS and
+    `_axes_summing_to` bumps the first non-full axis, which lifted 46 in-band
+    pairs over a floor both passes had failed — F1's exact defect, relocated.
+    """
+    import itertools
+    monkeypatch.setattr(bk, "AXIS_FLOOR", floor)
+    it = _item()
+    ax = range(4)
+    offenders = []
+    for hd in itertools.product(ax, ax, ax):
+        for jd in itertools.product(ax, ax, ax):
+            h, j = _si(it, *hd), _si(it, *jd, "claude_cli")
+            if abs(j.total - h.total) >= 2:
+                continue
+            if h.promote or j.promote:
+                continue
+            out = bk._reconcile_judge_with_heuristic(h, j)
+            if out.promote:
+                offenders.append((hd, jd, out.total))
+    assert not offenders, f"AXIS_FLOOR={floor}: {len(offenders)} promoted, e.g. {offenders[:3]}"
+
+
+def test_the_floor_guard_actually_exercises_the_axis_bump(monkeypatch):
+    """
+    The previous floor-aware test picked h=j=(0,3,3), where target ==
+    judged.total and NO bump occurs — so it passed without ever reaching
+    `_axes_summing_to`. This pair does bump.
+    """
+    monkeypatch.setattr(bk, "AXIS_FLOOR", 1)
+    it = _item()
+    h = _si(it, 0, 2, 3)   # 5/9, refused on the novelty axis
+    j = _si(it, 0, 1, 3)   # 4/9, refused on the novelty axis
+    assert not h.promote and not j.promote
+    out = bk._reconcile_judge_with_heuristic(h, j)
+    assert out.total == 5, "target should bump by one from the judge's 4"
+    assert (out.novelty, out.specificity, out.relevance) != (0, 1, 3), "no bump happened"
+    assert out.promote is False, "the bump lifted it over a floor both passes failed"
+
+
+# ── the promoted page must lint clean, warnings included ───────────────────
+
+def test_a_promoted_page_emits_no_scoring_provenance_warning(tmp_path, monkeypatch):
+    """
+    A PARTIAL scoring block was worse than none: before it existed the lint
+    returned early, so five-of-nine fields gave every page the tool writes a
+    permanent warning no fixer repairs. The pre-existing lint test filters to
+    severity == "error", so the suite was structurally blind to it.
+    """
+    entities = tmp_path / "research" / "entities"
+    for et in bk.ENTITY_TYPES:
+        (entities / et).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(bk, "BROOMVA_ROOT", tmp_path)
+    monkeypatch.setattr(bk, "ENTITIES_DIR", entities)
+    monkeypatch.setenv(bk.COHERENCE_GATE_ENV, "0")
+    bk.reset_grounding_run_state()
+
+    it = bk.RawItem(item_id="lint0001", source_id="2026-09-27-x-raw",
+                    source_type="research",
+                    content="Beata Halassy\n\nA virologist who treated her own "
+                            "recurrent breast cancer with lab-grown viruses.",
+                    quote="", author="", timestamp="2026-09-27T00:00:00+00:00",
+                    metadata={bk._SECTION_HEADING_METADATA_KEY: "Beata Halassy"})
+    scored = bk.ScoredItem(item=it, novelty=3, specificity=3, relevance=1, total=7,
+                           promote=True, candidate_entities=[],
+                           scoring_method="claude_cli", reasoning={})
+    written = bk.promote_item(scored, "beata-halassy", "person")
+    assert written is not None
+    issues = bk.lint_entity_page(pathlib.Path(written))
+    scoring_issues = [e for e in issues if e.field == "scoring"]
+    assert not scoring_issues, f"promoted page carries scoring lint: {scoring_issues}"
+
+
+def test_heuristic_promote_uses_the_gate_not_the_sum(monkeypatch):
+    """
+    The third promotion field in the row was left on the raw threshold while
+    its two siblings were routed through the gate, so the row held two
+    different predicates for the same question. Nothing read the field, so
+    reverting it left the whole suite green — this is its first guard.
+
+    AXIS_FLOOR=1 is what makes the two forms differ: (0,3,3) totals 6 and is
+    still refused on the novelty axis.
+    """
+    monkeypatch.setattr(bk, "AXIS_FLOOR", 1)
+    it = _item()
+    h = _si(it, 0, 3, 3)                  # total 6: raw read says promote
+    j = _si(it, 0, 3, 3, "claude_cli")
+    assert (h.total >= bk.PROMOTE_THRESHOLD) is True, "pair is not divergent"
+    assert bk.passes_nous_gate(0, 3, 3) is False
+    row = bk._calibration_row(it, h, j, [])
+    assert row["heuristic_promote"] is False, (
+        "the sheet reported the heuristic promoted an item the gate refuses")
+    # and the row must not hold two answers to the same question
+    assert row["heuristic_promote"] == bk.passes_nous_gate(h.novelty, h.specificity, h.relevance)

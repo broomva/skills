@@ -2455,14 +2455,29 @@ def _reconcile_judge_with_heuristic(h: ScoredItem, judged: ScoredItem) -> Scored
 
     total = -(-(h.total + judged.total) // 2)   # ceil of the mean of the TOTALS
     novelty, specificity, relevance = _axes_summing_to(total, judged)
-    total = novelty + specificity + relevance   # the clamp can make it unreachable
+    total = novelty + specificity + relevance   # a clamped target is unreachable
+
+    # NEVER promote what BOTH passes refused. At AXIS_FLOOR=0 this is already
+    # arithmetically impossible, so it reads as belt-and-braces — but the
+    # floor is per-AXIS, and `_axes_summing_to` bumps the first non-full axis,
+    # which can lift an item over a floor that both passes failed. Swept at
+    # AXIS_FLOOR=1 that is 46 in-band pairs, e.g. h=(0,2,3) and j=(0,1,3) are
+    # both refused on novelty and the reconciled (1,1,3) promotes. That is
+    # verbatim the defect this whole function was rewritten for, relocated
+    # from the sum to the floor, and the repo advertises flipping the floor as
+    # a one-constant change — so the guard is here now, not after the flip.
+    if not passes_nous_gate(h.novelty, h.specificity, h.relevance) \
+            and not passes_nous_gate(judged.novelty, judged.specificity, judged.relevance):
+        admit = False
+    else:
+        admit = passes_nous_gate(novelty, specificity, relevance)
     return ScoredItem(
         item=judged.item,
         novelty=novelty,
         specificity=specificity,
         relevance=relevance,
         total=total,
-        promote=passes_nous_gate(novelty, specificity, relevance),
+        promote=admit,
         candidate_entities=judged.candidate_entities or h.candidate_entities,
         # `scoring_method` keeps naming the TRANSPORT, not the combination.
         # A composite like "llm_judge+heuristic" misses every lookup keyed on
@@ -2712,6 +2727,10 @@ scoring:
   specificity: {specificity}
   relevance: {relevance}
   pass: {scoring_pass}
+  promoted_by: "{promoted_by}"
+  promoted_at: "{promoted_at}"
+  blog_candidate: false
+  priority: {priority}
 tags:
   - {entity_type}
   - bookkeeping
@@ -4175,6 +4194,15 @@ def promote_item(
         # reconciled promotion would say the heuristic decided it, and a later
         # recalibration could not find the judged pages to re-score.
         "scoring_pass": _scoring_pass_label(scored.scoring_method),
+        # `SCORING_PROVENANCE_FIELDS` requires all of these whenever a
+        # `scoring` block exists. Emitting a PARTIAL block was worse than
+        # emitting none: before this change a promoted page had no block and
+        # `_lint_scoring_provenance` returned early, so five-of-nine fields
+        # made every page the tool writes carry a permanent lint warning that
+        # no fixer repairs. `promote_item` already holds every value.
+        "promoted_by": "bookkeeping",
+        "promoted_at": today,
+        "priority": "true" if scored.total >= IMMEDIATE_PROMOTE_THRESHOLD else "false",
     }
     page = template
     for key, value in content_map.items():
@@ -8230,12 +8258,13 @@ def _calibration_row(
         "heuristic_total": h.total,
         "judge_total": j.total,
         "delta": j.total - h.total,
-        "heuristic_promote": h.total >= PROMOTE_THRESHOLD,
+        "heuristic_promote": passes_nous_gate(h.novelty, h.specificity, h.relevance),
         # The decision PRODUCTION makes, not a raw threshold read. These two
         # fields model what `--judge` would actually do, and the operator is
         # told three times to consult them before opting in. Computing
-        # `total >= PROMOTE_THRESHOLD` diverged from production on 11.1% of
-        # in-band pairs, one-directionally: the sheet said "not promoted"
+        # A raw `total >= PROMOTE_THRESHOLD` read diverges from production on
+        # 144 of the 1672 in-band pairs (8.6%, re-measured), one-
+        # directionally: the sheet said "not promoted"
         # where production promotes, so it UNDERSTATED the blast radius of the
         # very change it exists to size.
         "judge_promote": _production_promote(h, j),
