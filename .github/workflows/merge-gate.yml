@@ -41,7 +41,16 @@ jobs:
   gate:
     name: Merge Gate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # 65, not 30. The step below polls every 30s for up to 60 min, and a JOB
+    # timeout SHORTER than its own loop makes that bound decorative: GitHub kills
+    # the job first and annotates "The job has exceeded the maximum execution
+    # time of 30m0s", which surfaces as a FAILED required check rather than as a
+    # timeout. Measured on run 36402444090: cancelled at 30m15s with exactly that
+    # annotation while the loop was only at poll 59/120, waiting on `bash smoke
+    # tests` (36m21s). Raising the poll count alone was INERT for the same
+    # reason. The invariant is the ordering -- the job timeout must exceed the
+    # loop's own bound -- not either number on its own.
+    timeout-minutes: 65
     steps:
       - name: Require all other checks green (or skipped)
         env:
@@ -53,7 +62,13 @@ jobs:
           # Conclusions that BLOCK a merge (a check that actually failed).
           # success / skipped / neutral do NOT block.
           BLOCKING='failure|cancelled|timed_out|action_required|startup_failure|stale'
-          for i in $(seq 1 60); do   # up to ~30 min
+          # 120 polls x 30s = ~60 min, under the job's 65. Two numbers, one
+          # invariant: JOB TIMEOUT > LOOP BOUND > the slowest job it waits on.
+          # On main they were EQUAL (30 and 30), so the job was killed at the
+          # exact moment the loop would have reported its own timeout -- and the
+          # kill wins, which is why the check read "failure" rather than saying
+          # what it was waiting for. `bash smoke tests` measured 36m21s.
+          for i in $(seq 1 120); do   # up to ~60 min
             # All check-runs on this head SHA except this gate itself.
             runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs" \
                      --jq '.check_runs[] | select(.name != "Merge Gate") | [.name, .status, (.conclusion // "")] | @tsv' \
@@ -81,7 +96,7 @@ jobs:
               echo "Merge Gate PASS — no other checks on this PR after grace (all repo CI path-filtered out)."
               exit 0
             fi
-            echo "waiting: $n check(s), $incomplete still running, commit status=$st_state (poll $i/60)…"
+            echo "waiting: $n check(s), $incomplete still running, commit status=$st_state (poll $i/120)…"
             sleep 30
           done
           echo "::error::Merge Gate timed out waiting for checks to conclude."
