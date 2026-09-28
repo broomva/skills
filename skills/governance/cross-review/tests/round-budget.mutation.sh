@@ -552,13 +552,13 @@ mutate "unverified pass unexplained" "T78" \
     'echo "  Note: the last round scored $LG_SCORE with no per-stratum verdicts on"' \
     'return 0; echo "  Note: the last round scored $LG_SCORE with no per-stratum verdicts on"'
 mutate "note printed under any exit code" "T80" \
-    '        0|5)
-            if [ -n "$LG_SCORE" ]' \
+    '        0|5|7)
+            if [ "$code" != "7" ]' \
     '        *)
-            if [ -n "$LG_SCORE" ]'
+            if [ "$code" != "7" ]'
 mutate "note printed below the bar" "T80" \
-    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ] && [ "$LG_LAST_VERIFIED" != "1" ]; then' \
-    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge 0 ] && [ "$LG_LAST_VERIFIED" != "1" ]; then'
+    '[ "$code" != "7" ] && [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ] && [ "$LG_LAST_VERIFIED" != "1" ]; then' \
+    '[ "$code" != "7" ] && [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge 0 ] && [ "$LG_LAST_VERIFIED" != "1" ]; then'
 mutate "bare row after scaled accepted" "T81" \
     'if (kind == "bare" && sawscaled) badhistory=' 'if (0) badhistory='
 mutate "show renders through a NUL" "T76" \
