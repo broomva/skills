@@ -1598,6 +1598,14 @@ RC_EMPTY=$(rb record-round --run-id=t105 --ledger="$LED" --score=8/10 --defect=y
 # The tie to the RAW total: axes that do not sum to --score make the field
 # decoration and the derivation compute from numbers describing another round.
 RC_SUM=$(rb   record-round --run-id=t105 --ledger="$LED" --score=8/10 --defect=yes --axes=2,2,2,2,2 --stratum=B:8/10:PASS)
+# THE ARM THAT REACHES THE SUM CHECK ON ITS OWN. The mismatch above is caught by
+# the DERIVATION check too (axes sum 10, effective 10, score 8 -> refused), so
+# gutting the sum check left the suite green -- a mutant masked by a downstream
+# guard, which reads exactly like a coverage hole and is one until an input
+# separates them. This is that input: `--score` given as the already-CAPPED value
+# instead of the raw. The derivation agrees (effective(8) with a zero IS 6, and
+# the score says 6), so only the sum check can see that the axes sum to 8, not 6.
+RC_CAPPED=$(rb record-round --run-id=t105 --ledger="$LED" --score=6/10 --defect=yes --axes=2,2,2,2,0 --stratum=B:6/10:FAIL)
 # `$((10#…))` WRAPS on a long digit run: 2^64 evaluates to 0, so without a LENGTH
 # bound this axis summed as zero, satisfied the total check, and was never seen
 # as a zero by the derivation -- the original incident, through the new code.
@@ -1605,12 +1613,12 @@ RC_WRAP=$(rb  record-round --run-id=t105 --ledger="$LED" --score=8/10 --defect=y
 WROTE=$([ -f "$LED" ] && echo yes || echo no)
 RC_OK=$(rb    record-round --run-id=t105 --ledger="$LED" --score=8/10 --defect=yes --axes=2,2,2,1,1 --stratum=B:8/10:PASS)
 if [ "$RC_FEW" = "2" ] && [ "$RC_MANY" = "2" ] && [ "$RC_HIGH" = "2" ] && [ "$RC_ALPHA" = "2" ] && \
-   [ "$RC_TRAIL" = "2" ] && [ "$RC_EMPTY" = "2" ] && [ "$RC_SUM" = "2" ] && [ "$RC_WRAP" = "2" ] && \
+   [ "$RC_TRAIL" = "2" ] && [ "$RC_EMPTY" = "2" ] && [ "$RC_SUM" = "2" ] && [ "$RC_CAPPED" = "2" ] && [ "$RC_WRAP" = "2" ] && \
    [ "$WROTE" = "no" ] && [ "$RC_OK" = "0" ]; then
-    ok "T105: few/many/high/alpha/trailing/empty/sum-mismatch/overflow refused, nothing written, 2,2,2,1,1 accepted"
+    ok "T105: few/many/high/alpha/trailing/empty/sum-mismatch/capped-as-raw/overflow refused, nothing written, 2,2,2,1,1 accepted"
 else
     fail "T105: axis write validation" \
-        "few=$RC_FEW many=$RC_MANY high=$RC_HIGH alpha=$RC_ALPHA trail=$RC_TRAIL empty=$RC_EMPTY sum=$RC_SUM wrap=$RC_WRAP wrote=$WROTE ok=$RC_OK (want 2 x8 no 0)"
+        "few=$RC_FEW many=$RC_MANY high=$RC_HIGH alpha=$RC_ALPHA trail=$RC_TRAIL empty=$RC_EMPTY sum=$RC_SUM capped=$RC_CAPPED wrap=$RC_WRAP wrote=$WROTE ok=$RC_OK (want 2 x9 no 0)"
 fi
 
 # ── T106: the STORED score must be the one its axes derive ────────────────

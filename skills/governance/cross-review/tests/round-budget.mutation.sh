@@ -609,14 +609,20 @@ mutate "axis range unchecked" "T105" \
     '        if [ "$((10#$a))" -gt 99 ]; then'
 # The LENGTH bound is not the range bound: `$((10#$a))` wraps, so 2^64 summed as
 # ZERO, satisfied the total check, and was never seen as a zero by the cap.
+# Anchored on the MESSAGE line, not the bound: `${#a} -gt 1` appears in BOTH
+# axes_sum and axes_are_valid, so a bare anchor matched twice and the harness
+# refused to apply it. The reachable bound is this one.
 mutate "long digit run wraps past the range check" "T105" \
-    '        if [ "${#a}" -gt 1 ]; then' \
-    '        if [ "${#a}" -gt 99 ]; then'
+    'is longer than one digit; every axis is 0-$RUBRIC_AXIS_MAX"; exit 1' \
+    'is longer than one digit; every axis is 0-$RUBRIC_AXIS_MAX"; exit 0'
+
 # `--axes=` must not read as "declared none" -- the trap the panel field
 # documents for `--stratum=`.
-mutate "empty --axes= treated as absent" "T105" \
-    '        [ -n "$AXES" ] || {' \
-    '        [ -n "IMPOSSIBLE" ] || {'
+# NO MUTANT for the empty-`--axes=` guard, and the reason is a finding. Gutting
+# it does NOT let an empty value through: an empty string splits to ZERO axes and
+# axes_are_valid's count check refuses it one line later -- measured, the mutated
+# build still prints "refusing this round". The guard exists for its MESSAGE (it
+# names the flag rather than the count), not for a decision no other check makes.
 
 # THE READ DOOR: the stored score must be the one its axes derive. This is the
 # claim the whole design rests on, so a hand-edited row must not be able to make
@@ -630,13 +636,13 @@ mutate "stored axes never revalidated" "T106" \
 
 # The three analyze() width tests the ninth field passes through. Each fails
 # DIFFERENTLY and silently, so each is mutated alone.
-mutate "ninth field un-verifies the row" "T100" \
+mutate "ninth field un-verifies the row" "T109" \
     '            lastverified=(NF>=8)' \
     '            lastverified=(NF==8)'
-mutate "ninth field keeps its scale in the compare" "T100" \
+mutate "ninth field keeps its scale in the compare" "T101" \
     '            if (NF>=8) sub(/\/.*/, "", sc)' \
     '            if (NF==8) sub(/\/.*/, "", sc)'
-mutate "ninth field classifies as bare" "T100" \
+mutate "ninth field classifies as bare" "T81" \
     '            kind=(NF>=8) ? "scaled" : "bare"' \
     '            kind=(NF==8) ? "scaled" : "bare"'
 
@@ -657,11 +663,10 @@ mutate "unfloored pass does not say so" "T109" \
     '    if [ -z "${LG_LAST_AXES:-}" ] || [ "$LG_LAST_AXES" = "-" ]; then' \
     '    if [ -z "IMPOSSIBLE" ]; then'
 
-# The shared parse. One function, two callers -- gutting its length bound must
-# reach the write door.
-mutate "shared axes parse drops its length bound" "T105" \
-    '        if [ "${#a}" -gt 1 ]; then printf '"'"'%s'"'"' -1; exit 0; fi' \
-    '        if [ "${#a}" -gt 99 ]; then printf '"'"'%s'"'"' -1; exit 0; fi'
+# NO MUTANT for axes_sum's OWN length bound, for the same reason: axes_are_valid
+# carries its own, and the write door runs both, so gutting one leaves the other
+# to refuse. Measured -- the mutated build still refuses a 2^64 axis. The bound
+# that is REACHABLE is the one in axes_are_valid, and it has a mutant above.
 
 mutate "--axes=- accepted as a third spelling of absence" "T110" \
     '        [ "$AXES" != "-" ] || {' \
