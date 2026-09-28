@@ -1537,3 +1537,169 @@ def test_a_reconciled_gemini_row_keeps_geminis_evidence_slice(method, want):
     assert len(row["content_seen_by_judge"]) == want
     if method == "llm_judge":
         assert row["context_seen_by_judge"]["active_projects"] == []
+
+
+# ── F1: the rubric's rule is averaging the TOTALS, not the axes ──────────────
+
+def test_averaging_uses_the_totals_not_the_axes():
+    """
+    Ceil-per-axis is >= ceil-of-total by up to +1. Swept exhaustively that was
+    576 differing totals and 168 differing PROMOTION decisions, every one more
+    permissive — including pairs where BOTH passes refused and the re-summed
+    axes promoted. This is the witness pair.
+    """
+    it = _item()
+    h = _si(it, 0, 1, 3)              # 4/9, refused
+    j = _si(it, 1, 1, 2, "claude_cli")  # 4/9, refused
+    assert not h.promote and not j.promote
+    out = bk._reconcile_judge_with_heuristic(h, j)
+    assert out.total == 4, "axis-wise averaging promoted what both passes refused"
+    assert out.promote is False
+
+
+def test_no_in_band_pair_promotes_what_both_passes_refused():
+    """The property, not one witness: swept over the whole in-band space."""
+    import itertools
+    it = _item()
+    ax = range(4)
+    for hd in itertools.product(ax, ax, ax):
+        for jd in itertools.product(ax, ax, ax):
+            h, j = _si(it, *hd), _si(it, *jd, "claude_cli")
+            if abs(j.total - h.total) >= 2:
+                continue
+            out = bk._reconcile_judge_with_heuristic(h, j)
+            if not h.promote and not j.promote:
+                assert not out.promote, f"h={hd} j={jd} -> {out.total}/9 promoted"
+
+
+def test_the_reconciled_total_is_ceil_of_the_mean_of_totals():
+    import itertools, math
+    it = _item()
+    ax = range(4)
+    for hd in itertools.product(ax, ax, ax):
+        for jd in itertools.product(ax, ax, ax):
+            h, j = _si(it, *hd), _si(it, *jd, "claude_cli")
+            if abs(j.total - h.total) >= 2:
+                continue
+            out = bk._reconcile_judge_with_heuristic(h, j)
+            assert out.total == math.ceil((h.total + j.total) / 2), f"h={hd} j={jd}"
+
+
+# ── F2: the sheet must model the decision production makes ──────────────────
+
+def test_judge_promote_matches_production_not_a_raw_threshold():
+    """
+    The sheet said "not promoted" where production promotes, on 11.1% of
+    in-band pairs — understating the blast radius of the very change the
+    operator is told to size with it.
+    """
+    it = _item()
+    # A DIVERGENT pair, which the previous version of this test lacked — its
+    # own comment said so and it shipped anyway, so reverting the fix left the
+    # suite green. h=5, j=4: reconciles to ceil(9/2)=5 and production PROMOTES,
+    # while the raw read (j.total >= PROMOTE_THRESHOLD) says 4 -> not promoted.
+    # That is the 11.1% one-directional understatement, in one pair.
+    h = _si(it, 2, 2, 1)                 # 5/9
+    j = _si(it, 2, 1, 1, "claude_cli")   # 4/9, diff 1
+    assert (j.total >= bk.PROMOTE_THRESHOLD) is False, "pair is not divergent"
+    row = bk._calibration_row(it, h, j, [])
+    assert row["judge_promote"] is True, (
+        "the sheet reported 'not promoted' for an item production promotes")
+    assert row["judge_promote"] == bk._production_promote(h, j)
+
+
+def test_decision_flipped_is_computed_from_the_production_decision():
+    """Also divergent: the raw read would call this a flip; production does not."""
+    it = _item()
+    h = _si(it, 2, 2, 1)                 # 5/9, heuristic promotes
+    j = _si(it, 2, 1, 1, "claude_cli")   # 4/9, diff 1 -> reconciles to 5, promotes
+    raw_flip = (h.total >= bk.PROMOTE_THRESHOLD) != (j.total >= bk.PROMOTE_THRESHOLD)
+    assert raw_flip is True, "pair is not divergent"
+    row = bk._calibration_row(it, h, j, [])
+    assert row["decision_flipped"] is False, (
+        "a raw-threshold read reported a flip production does not make")
+
+
+def test_decision_flipped_fires_on_a_real_flip():
+    """Positive control: a field asserted by nothing was forced False and the
+    whole suite stayed green."""
+    it = _item()
+    h = _si(it, 1, 1, 1)                 # 3/9 refused
+    j = _si(it, 3, 3, 3, "claude_cli")   # 9/9, diff 6 -> judge stands, promotes
+    row = bk._calibration_row(it, h, j, [])
+    assert row["decision_flipped"] is True and row["judge_promote"] is True
+
+
+# ── F3: the admission predicate is not the sum (proved by flipping the floor) ─
+
+def test_the_sanity_check_uses_the_axis_floor_not_the_sum(monkeypatch):
+    """
+    At AXIS_FLOOR=0 `passes_nous_gate` reduces to the sum, so the previous
+    test compared the implementation to itself and reverting the fix left the
+    suite green. Flipping the floor is the repo's own idiom
+    (test_nous_per_axis_floor.py) and is what makes the two forms differ.
+    """
+    monkeypatch.setattr(bk, "AXIS_FLOOR", 1)
+    it = _item()
+    # 0/3/3 totals 6 (>= threshold) but fails the novelty axis.
+    out = bk.ScoredItem(item=it, novelty=0, specificity=3, relevance=3, total=6,
+                        promote=False, candidate_entities=[],
+                        scoring_method="claude_cli", reasoning={})
+    assert bk.passes_nous_gate(0, 3, 3) is False
+    assert bk._scored_item_is_sane(out), (
+        "a correct transport result (promote=False, total=6) was rejected as invalid")
+    sum_form = bk.ScoredItem(item=it, novelty=0, specificity=3, relevance=3, total=6,
+                             promote=True, candidate_entities=[],
+                             scoring_method="claude_cli", reasoning={})
+    assert not bk._scored_item_is_sane(sum_form), (
+        "promote=True for a score the axis floor refuses was accepted")
+
+
+def test_the_reconciler_respects_the_axis_floor(monkeypatch):
+    monkeypatch.setattr(bk, "AXIS_FLOOR", 1)
+    it = _item()
+    out = bk._reconcile_judge_with_heuristic(_si(it, 0, 3, 3), _si(it, 0, 3, 3, "claude_cli"))
+    assert out.promote is False, "reconciler promoted past the axis floor"
+
+
+# ── F4: the page records which pass decided it ──────────────────────────────
+
+@pytest.mark.parametrize("method,want", [
+    ("heuristic", "heuristic"),
+    ("claude_cli", "llm-judge"),
+    ("authored_agents", "llm-judge"),
+    ("llm_judge", "llm-judge"),
+])
+def test_scoring_pass_label(method, want):
+    assert bk._scoring_pass_label(method) == want
+
+
+def test_a_judged_page_does_not_claim_the_heuristic_decided_it(tmp_path, monkeypatch):
+    """
+    `pass: heuristic` was a template literal with no placeholder. It was true
+    for every page while the judge never ran, and this PR is what makes it a
+    lie on disk — `reasoning` is not persisted, so it was the only durable
+    provenance.
+    """
+    entities = tmp_path / "research" / "entities"
+    for et in bk.ENTITY_TYPES:
+        (entities / et).mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(bk, "BROOMVA_ROOT", tmp_path)
+    monkeypatch.setattr(bk, "ENTITIES_DIR", entities)
+    monkeypatch.setenv(bk.COHERENCE_GATE_ENV, "0")
+    bk.reset_grounding_run_state()
+
+    it = bk.RawItem(item_id="p0000001", source_id="2026-09-27-x-raw",
+                    source_type="research",
+                    content="Beata Halassy\n\nA virologist who treated her own "
+                            "recurrent breast cancer with lab-grown viruses.",
+                    quote="", author="", timestamp="2026-09-27T00:00:00+00:00",
+                    metadata={bk._SECTION_HEADING_METADATA_KEY: "Beata Halassy"})
+    scored = bk.ScoredItem(item=it, novelty=3, specificity=3, relevance=1, total=7,
+                           promote=True, candidate_entities=[],
+                           scoring_method="claude_cli", reasoning={})
+    written = bk.promote_item(scored, "beata-halassy", "person")
+    assert written is not None
+    text = written.read_text()
+    assert "pass: llm-judge" in text, "a judge-scored page still claims pass: heuristic"
+    assert "pass: heuristic" not in text

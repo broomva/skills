@@ -2406,31 +2406,56 @@ def judge_failure_count() -> int:
     return _JUDGE_STATE["failures"]
 
 
+def _axes_summing_to(target: int, base: ScoredItem) -> tuple[int, int, int]:
+    """
+    Axes as close to `base`'s as possible that sum to `target`, each in 0..3.
+
+    A ScoredItem carries axes AND a total, and `_scored_item_is_sane` requires
+    total == sum(axes). The rubric's rule is stated over TOTALS, so the total
+    is computed first and the axes are then moved to agree with it — not the
+    other way round. Deterministic: axes are walked novelty, specificity,
+    relevance in that fixed order, so the same inputs always give the same
+    page.
+    """
+    dims = [base.novelty, base.specificity, base.relevance]
+    i = 0
+    while sum(dims) < target and i < 12:
+        if dims[i % 3] < 3:
+            dims[i % 3] += 1
+        i += 1
+    i = 0
+    while sum(dims) > target and i < 12:
+        if dims[i % 3] > 0:
+            dims[i % 3] -= 1
+        i += 1
+    return dims[0], dims[1], dims[2]
+
+
 def _reconcile_judge_with_heuristic(h: ScoredItem, judged: ScoredItem) -> ScoredItem:
     """
-    Combine the two passes per references/scoring-rubric.md §3.
+    Combine the two passes per references/scoring-rubric.md §3 Pass 2:
 
         |judge - heuristic| >= 2  ->  the judge's score stands
-        otherwise                 ->  average the totals, rounding UP
+        otherwise                 ->  average the TOTALS, rounding up
 
-    The averaging branch is why this is not a one-liner: a ScoredItem carries
-    per-axis scores AND a total, and an averaged total no longer equals the sum
-    of either pass's axes. The axes are averaged the same way and the total is
-    recomputed from them, so `_scored_item_is_sane`'s `total == sum(dims)`
-    invariant still holds; rounding up each axis can make the axis sum exceed
-    the rounded-up total, so the total is taken from the reconciled axes rather
-    than computed separately.
+    THE TOTALS, not the axes. An earlier version of this function averaged each
+    AXIS with ceil and re-summed, which is not the same rule: ceil-per-axis is
+    >= ceil-of-total, by up to +1. Swept exhaustively over every in-band pair,
+    that produced 576 differing totals and 168 differing PROMOTION decisions,
+    every one of them more permissive — including pairs where both passes
+    refused the item and the re-summed axes promoted it (h=0/1/3 and j=1/1/2
+    are each 4/9 and refused; axis-wise gave 5/9 and promoted). On the band
+    that covers ~54% of a million-item corpus, in a change whose subject is
+    junk promotion, an accidental permissive bias is the wrong direction to be
+    wrong in. So the rubric's rule is implemented as written, and the axes are
+    reconciled to the resulting total by `_axes_summing_to`.
     """
     if abs(judged.total - h.total) >= 2:
         return judged
 
-    def up(a: int, b: int) -> int:
-        return min(3, -(-(a + b) // 2))  # ceil, clamped to the 0-3 axis range
-
-    novelty = up(h.novelty, judged.novelty)
-    specificity = up(h.specificity, judged.specificity)
-    relevance = up(h.relevance, judged.relevance)
-    total = novelty + specificity + relevance
+    total = -(-(h.total + judged.total) // 2)   # ceil of the mean of the TOTALS
+    novelty, specificity, relevance = _axes_summing_to(total, judged)
+    total = novelty + specificity + relevance   # the clamp can make it unreachable
     return ScoredItem(
         item=judged.item,
         novelty=novelty,
@@ -2444,15 +2469,13 @@ def _reconcile_judge_with_heuristic(h: ScoredItem, judged: ScoredItem) -> Scored
         # transport name: JUDGE_EVIDENCE_CHARS fell through to 2000 for a
         # Gemini-scored item that saw 800, and `_judge_context` took the
         # authored branch and reported 8 active projects and the slug list to
-        # a transport that receives neither. That is precisely the
-        # mis-measurement those two tables exist to prevent, and a composite
-        # name reintroduced it. The reconciliation is recorded as reasoning.
+        # a transport that receives neither.
         scoring_method=judged.scoring_method,
         reasoning={**(judged.reasoning or {}),
                    "reconciled_with_heuristic": {
                        "heuristic_total": h.total,
                        "judge_total": judged.total,
-                       "rule": "averaged (|diff| < 2), rounded up",
+                       "rule": "ceil(mean of totals) (|diff| < 2)",
                    }},
     )
 
@@ -2683,6 +2706,12 @@ related: []
 created: {created}
 updated: {updated}
 recorded_at: "{recorded_at}"
+scoring:
+  raw_score: {score}
+  novelty: {novelty}
+  specificity: {specificity}
+  relevance: {relevance}
+  pass: {scoring_pass}
 tags:
   - {entity_type}
   - bookkeeping
@@ -4138,6 +4167,14 @@ def promote_item(
         "novelty": str(scored.novelty),
         "specificity": str(scored.specificity),
         "relevance": str(scored.relevance),
+        # Which PASS decided this page. The template hardcoded `heuristic`,
+        # which was true for 100% of pages while the judge never ran (0 calls
+        # in 7,765 runs) and becomes false the moment it does — so this PR is
+        # exactly what turns that literal into a lie on disk. `reasoning` is
+        # not persisted, so without this the durable record of a judged or
+        # reconciled promotion would say the heuristic decided it, and a later
+        # recalibration could not find the judged pages to re-score.
+        "scoring_pass": _scoring_pass_label(scored.scoring_method),
     }
     page = template
     for key, value in content_map.items():
@@ -8122,6 +8159,33 @@ def cmd_status(_args: argparse.Namespace) -> None:
     run_status()
 
 
+def _scoring_pass_label(scoring_method: str) -> str:
+    """Map an internal transport name to the page schema's `pass` vocabulary.
+
+    The schema allows "heuristic" | "llm-judge" | "human"; the transports are
+    named claude_cli / authored_agents / llm_judge. Anything judge-derived is
+    "llm-judge"; only the heuristic fast-path is "heuristic".
+    """
+    if scoring_method == "heuristic":
+        return "heuristic"
+    if scoring_method in {name for name, _attr in JUDGE_TRANSPORTS}:
+        return "llm-judge"
+    return "heuristic"
+
+
+def _production_promote(h: ScoredItem, j: ScoredItem) -> bool:
+    """
+    Would `--judge` actually promote this item?
+
+    One producer for the answer, because the calibration sheet and production
+    must not drift: `score_item` reconciles the two passes and admits through
+    `passes_nous_gate`, so a sheet that read `judge.total >= PROMOTE_THRESHOLD`
+    was modelling a decision the pipeline does not make.
+    """
+    final = _reconcile_judge_with_heuristic(h, j)
+    return passes_nous_gate(final.novelty, final.specificity, final.relevance)
+
+
 def _judge_context(scoring_method: str, item: RawItem, existing_slugs: list[str]) -> dict:
     """
     The non-content evidence the NAMED transport actually sends its model.
@@ -8167,10 +8231,18 @@ def _calibration_row(
         "judge_total": j.total,
         "delta": j.total - h.total,
         "heuristic_promote": h.total >= PROMOTE_THRESHOLD,
-        "judge_promote": j.total >= PROMOTE_THRESHOLD,
+        # The decision PRODUCTION makes, not a raw threshold read. These two
+        # fields model what `--judge` would actually do, and the operator is
+        # told three times to consult them before opting in. Computing
+        # `total >= PROMOTE_THRESHOLD` diverged from production on 11.1% of
+        # in-band pairs, one-directionally: the sheet said "not promoted"
+        # where production promotes, so it UNDERSTATED the blast radius of the
+        # very change it exists to size.
+        "judge_promote": _production_promote(h, j),
         # The DECISION, not just the score: two totals can differ while
         # landing the same side of the promotion boundary.
-        "decision_flipped": (h.total >= PROMOTE_THRESHOLD) != (j.total >= PROMOTE_THRESHOLD),
+        "decision_flipped": passes_nous_gate(h.novelty, h.specificity, h.relevance)
+                            != _production_promote(h, j),
         "judge_reasoning": j.reasoning,
         "scoring_method": j.scoring_method,
         # Exactly the slice the transport that ACTUALLY scored this item sent.

@@ -57,6 +57,17 @@ def _isolate_knowledge_graph(tmp_path_factory, monkeypatch):
     # deleted with the suite still green.
     import bookkeeping as _bk
     _bk._TEST_KG_SANDBOX_ROOT = root
+    # CONFIG_DIR / RUN_LOG / STATUS_CACHE too. The argument above — that
+    # isolation each test opts into is isolation a future edit removes for
+    # free — applies verbatim to these, and they were left per-test. A new
+    # test calling run_pipeline() without remembering appends to the
+    # operator's real ~/.config/bookkeeping/run-log.jsonl: the very file this
+    # ticket's evidence (1,051,042 items / 0 judge calls) was read from.
+    cfg = root / "config"
+    cfg.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(_bk, "CONFIG_DIR", cfg, raising=False)
+    monkeypatch.setattr(_bk, "RUN_LOG", cfg / "run-log.jsonl", raising=False)
+    monkeypatch.setattr(_bk, "STATUS_CACHE", cfg / "status.json", raising=False)
     entities = root / "entities"
     notes = root / "notes"
     entities.mkdir(parents=True, exist_ok=True)
