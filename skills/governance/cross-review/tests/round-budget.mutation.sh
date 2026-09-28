@@ -182,7 +182,7 @@ mutate "every verdict reads as CONTINUE" "T37" \
     'LG_LAST_VERDICT=$(field "$last" 2)' \
     'LG_LAST_VERDICT=CONTINUE'
 mutate "ROUND arity unchecked" "T38" \
-    'if (NF != 6 && NF != 7 && NF != 8) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
+    'if (NF != 6 && NF != 7 && NF != 8 && NF != 9) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
 # NO mutation for the arity FLOOR, and the reason is a finding rather than an
 # omission. `if (NF != 6 && NF != 7 && NF != 5)` -- widening the check to admit
 # a five-field row -- was written, run, and SURVIVED: a short ROUND row leaves
@@ -625,8 +625,8 @@ mutate "stored score never re-derived" "T106" \
     '        if [ "$score" != "$want" ]; then' \
     '        if [ "$score" = "IMPOSSIBLE" ]; then'
 mutate "stored axes never revalidated" "T106" \
-    """awk -F'\t' '$1=="ROUND" && NF>=8')""" \
-    """awk -F'\t' '$1=="ROUND" && NF==0')"""
+    'ROUND" && NF>=8' \
+    'ROUND" && NF==0'
 
 # The three analyze() width tests the ninth field passes through. Each fails
 # DIFFERENTLY and silently, so each is mutated alone.
