@@ -1695,6 +1695,24 @@ else
         "forged=$RC_FORGED dash=$RC_DASH eight=$RC_EIGHT eight_announces=$EIGHT_SAYS (want 6 3 3 yes)"
 fi
 
+# ── T110: `-` is the ledger's sentinel, not a caller's value ──────────────
+# Two spellings of one state is the thing field 9 exists to prevent. `--axes=`
+# was refused as malformed while `--axes=-` silently took an uncapped pass, so
+# absence had three spellings reachable from the CLI: omitted, empty, and the
+# sentinel. Only the first is legitimate.
+echo "T110. --axes=- is refused; omitting the flag is the way to declare none"
+LED=$(newledger t110)
+RC_SENT=$(rb record-round --run-id=t110 --ledger="$LED" --score=8/10 --defect=yes --axes=- --stratum=B:8/10:PASS)
+WROTE=$([ -f "$LED" ] && echo yes || echo no)
+LED2=$(newledger t110b)
+RC_OMIT=$(rb record-round --run-id=t110b --ledger="$LED2" --score=8/10 --defect=yes --stratum=B:8/10:PASS)
+STORED=$(awk -F'\t' '$1=="ROUND"{print $9}' "$LED2")
+if [ "$RC_SENT" = "2" ] && [ "$WROTE" = "no" ] && [ "$RC_OMIT" = "0" ] && [ "$STORED" = "-" ]; then
+    ok "T110: --axes=- refused (2, nothing written); omitting stores the sentinel '-' (0)"
+else
+    fail "T110: axes sentinel" "sentinel=$RC_SENT wrote=$WROTE omitted=$RC_OMIT stored=$STORED (want 2 no 0 -)"
+fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

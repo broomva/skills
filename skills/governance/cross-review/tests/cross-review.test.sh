@@ -546,6 +546,21 @@ else
     fail "T23: all documented exit codes are reachable" "documented but never emitted:$MISSING"
 fi
 
+# ── S-B: Strata B is not suppressed by codex being installed ─────────────
+# `[ A ] || [ B ] && C` parses left-associatively as `(A||B) && C`, so an
+# EXPLICIT --strata=B was suppressed whenever codex was on PATH -- silently
+# skipping the stratum SKILL.md makes MANDATORY, for exactly the users who have
+# the optional one installed. Asserted with codex present, which is the arm that
+# was broken; `auto` deferring to codex is unchanged and covered elsewhere.
+echo "S-B. an explicit --strata=B prints its block even when codex is installed"
+SB_COUNT=$(bash "$CROSS_REVIEW_SH" pre-push --strata=B 2>&1 | grep -c "Strata B")
+SB_CODEX=$(command -v codex >/dev/null 2>&1 && echo present || echo absent)
+if [ "$SB_COUNT" -ge 1 ]; then
+    ok "S-B: --strata=B prints its block (codex $SB_CODEX, $SB_COUNT block(s))"
+else
+    fail "S-B: Strata B suppressed by operator precedence" "printed=$SB_COUNT with codex $SB_CODEX (want >=1)"
+fi
+
 echo ""
 echo "── results ────────────────────────────────────────────────────"
 echo "  $PASS passed, $FAIL failed"

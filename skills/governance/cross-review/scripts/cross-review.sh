@@ -525,7 +525,12 @@ if [ "$COMMAND" = "pre-push" ]; then
     fi
 
     # Strata B — fresh subagent
-    if [ "$SELECTED_STRATA" = "B" ] || [ "$SELECTED_STRATA" = "auto" ] && ! command -v codex >/dev/null 2>&1; then
+    # PARENTHESISED. `[ A ] || [ B ] && C` parses left-associatively as
+    # `(A||B) && C`, so an EXPLICIT --strata=B was suppressed whenever codex was
+    # on PATH -- silently skipping the stratum SKILL.md makes mandatory, for
+    # exactly the users who have the optional one installed. `auto` is the only
+    # selector that should depend on codex being absent.
+    if [ "$SELECTED_STRATA" = "B" ] || { [ "$SELECTED_STRATA" = "auto" ] && ! command -v codex >/dev/null 2>&1; }; then
         echo "  ─── Strata B: fresh-context subagent under devil's-advocate brief ──"
         echo ""
         echo "  [TODO-AGENT] The agent runs the following pattern:"
@@ -540,7 +545,7 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "        advocate. Read references/rubric.md. Score each dimension"
         echo "        and report verdict. You cannot change code: report, do not fix.'"
         echo "    3. Parse the subagent's response"
-        echo "    4. Same loop: ≥7 pass, <7 fix-rescore, then drive the round budget"
+        echo "    4. Same loop: ≥7 AND no dimension at 0 to pass; otherwise fix-rescore, then drive the round budget"
         echo "       (printed above, and identical for every stratum)."
         echo ""
         echo "  (This script enforces the structure; the agent dispatches the subagent)"

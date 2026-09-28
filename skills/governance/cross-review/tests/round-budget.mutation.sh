@@ -663,6 +663,10 @@ mutate "shared axes parse drops its length bound" "T105" \
     '        if [ "${#a}" -gt 1 ]; then printf '"'"'%s'"'"' -1; exit 0; fi' \
     '        if [ "${#a}" -gt 99 ]; then printf '"'"'%s'"'"' -1; exit 0; fi'
 
+mutate "--axes=- accepted as a third spelling of absence" "T110" \
+    '        [ "$AXES" != "-" ] || {' \
+    '        [ "$AXES" != "IMPOSSIBLE" ] || {'
+
 # NO MUTANT for the `*,0,*` field-vs-substring match in effective_score, and the
 # reason is a finding rather than an omission. Every legal axis is ONE DIGIT
 # (0-2) and load_ledger revalidates every nine-field row before any consumer

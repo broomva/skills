@@ -146,7 +146,10 @@ When dispatching a Claude subagent via `Agent` tool for Strata B, prepend:
 
 ## Scoring output format
 
-The evaluator MUST output the verdict in this exact structure (parseable):
+The evaluator MUST output the verdict in this exact structure (parseable).
+`AXES` is the five per-dimension scores in rubric order — the controller derives
+the round's effective score from them, and a zero caps it below the bar however
+high the total.
 
 ```
 === CROSS-REVIEW VERDICT ===
@@ -159,7 +162,8 @@ Score:
   Dim 4 (failure modes):                 {0|1|2}  reason: ...
   Dim 5 (tests cover change):            {0|1|2}  reason: ...
 Total: {0-10}
-Verdict: {APPROVE|REVISE}
+AXES: {d1},{d2},{d3},{d4},{d5}
+Verdict: {APPROVE|REVISE}   ← APPROVE only if Total ≥7 AND no dimension is 0
 Deductions (if REVISE):
   - file:line — dim X — specific issue
   - file:line — dim X — specific issue

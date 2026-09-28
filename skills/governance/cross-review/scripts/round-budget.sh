@@ -417,6 +417,12 @@ score_is_valid() {
 # rounds ABOVE the bar the ordering does collapse to the cap, so a floored 9 and
 # a floored 8 both read 6. That is deliberate -- the claim is "cannot reach the
 # bar", and it is the only claim this derivation makes.
+#
+# The reachable collapse is 8 <-> 7, not 9 <-> 8: a zero plus four axes capped at
+# 2 tops out at a raw 8, so no floored 9 exists. Its real consequence, stated
+# because it is not obvious: between two floored rounds the absorbing REGRESSION
+# stop cannot fire, since both store the cap. A fall from raw 8 to raw 7 with a
+# zero on both reads as flat, not as a regression.
 effective_score() {
     local raw="$1" axes="$2"
     if [ -z "$axes" ] || [ "$axes" = "-" ]; then printf '%s' "$raw"; return 0; fi
@@ -524,9 +530,15 @@ round_is_admissible() (
     # one-predicate-two-callers shape the panel and the verdicts already use, so
     # a hand-edited row cannot claim a score its own axes do not produce.
     if [ "$axes" != "-" ]; then
-        # ONE parse. An earlier draft re-implemented the digit/length walk here,
-        # which made axes_are_valid's sum check tautological on this path and
-        # created a second place to be wrong about what an axis is.
+        # ONE parse, because an earlier draft re-implemented the digit/length
+        # walk here -- a second place to be wrong about what an axis is.
+        #
+        # Note what this does NOT buy: axes_are_valid's sum check IS tautological
+        # on this path, and sharing the parse does not change that. It cannot be
+        # otherwise -- the read door has no independently-declared total to check
+        # against, so it derives one. The real read-door tie is the next check,
+        # `score == effective(rawsum, axes)`; axes_are_valid is called here for
+        # its SHAPE rules (count, range, length), not its arithmetic.
         rawsum=$(axes_sum "$axes")
         if [ "$rawsum" -lt 0 ]; then echo "rubric axes '$axes' are not $RUBRIC_AXES single digits"; exit 1; fi
         if ! err=$(axes_are_valid "$axes" "$rawsum"); then echo "rubric axes: $err"; exit 1; fi
@@ -1226,6 +1238,13 @@ record-round)
     if [ "$AXES_SET" = "1" ]; then
         [ -n "$AXES" ] || {
             echo "round-budget: --axes= is empty; give $RUBRIC_AXES values 0-$RUBRIC_AXIS_MAX (e.g. --axes=2,2,2,1,1) or omit the flag" >&2
+            exit 2; }
+        # `-` is the LEDGER's sentinel for "declared none", not a value a caller
+        # may write. Accepting it made a third spelling of absence reachable from
+        # the CLI -- `--axes=` refused, `--axes=-` silently uncapped -- and two
+        # spellings of one state is the thing this field exists to prevent.
+        [ "$AXES" != "-" ] || {
+            echo "round-budget: --axes=- is the ledger's own marker for 'no axes declared'; omit the flag instead" >&2
             exit 2; }
         ROUND_AXES="$AXES"
     else
