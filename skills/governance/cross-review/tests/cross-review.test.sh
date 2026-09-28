@@ -553,7 +553,10 @@ fi
 # the optional one installed. Asserted with codex present, which is the arm that
 # was broken; `auto` deferring to codex is unchanged and covered elsewhere.
 echo "S-B. an explicit --strata=B prints its block even when codex is installed"
-SB_COUNT=$(bash "$CROSS_REVIEW_SH" pre-push --strata=B 2>&1 | grep -c "Strata B")
+# FORCE_GATE=1: on main (an empty diff vs origin/main) pre-push exits at the
+# substantive-threshold skip BEFORE printing any stratum, so without it this
+# test passed only on branches and failed on every main build (3fa6584bd).
+SB_COUNT=$(FORCE_GATE=1 bash "$CROSS_REVIEW_SH" pre-push --strata=B 2>&1 | grep -c "Strata B")
 SB_CODEX=$(command -v codex >/dev/null 2>&1 && echo present || echo absent)
 if [ "$SB_COUNT" -ge 1 ]; then
     ok "S-B: --strata=B prints its block (codex $SB_CODEX, $SB_COUNT block(s))"
