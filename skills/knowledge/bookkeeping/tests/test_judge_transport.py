@@ -1797,3 +1797,22 @@ def test_heuristic_promote_uses_the_gate_not_the_sum(monkeypatch):
         "the sheet reported the heuristic promoted an item the gate refuses")
     # and the row must not hold two answers to the same question
     assert row["heuristic_promote"] == bk.passes_nous_gate(h.novelty, h.specificity, h.relevance)
+
+
+def test_production_promote_honours_the_both_refused_guard(monkeypatch):
+    """
+    `_production_promote` re-derived `passes_nous_gate` on the reconciled
+    axes, which skips the guard the reconciler applies — so the sheet reported
+    a promotion production refuses, at the one place the operator reads it.
+    """
+    monkeypatch.setattr(bk, "AXIS_FLOOR", 1)
+    it = _item()
+    h = _si(it, 0, 2, 3)   # refused on novelty
+    j = _si(it, 0, 1, 3, "claude_cli")   # refused on novelty
+    assert not h.promote and not j.promote
+    final = bk._reconcile_judge_with_heuristic(h, j)
+    assert final.promote is False
+    assert bk._production_promote(h, j) is False, (
+        "the sheet claimed a promotion the reconciler refuses")
+    row = bk._calibration_row(it, h, j, [])
+    assert row["judge_promote"] is False

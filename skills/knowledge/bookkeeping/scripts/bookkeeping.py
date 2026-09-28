@@ -8210,8 +8210,12 @@ def _production_promote(h: ScoredItem, j: ScoredItem) -> bool:
     `passes_nous_gate`, so a sheet that read `judge.total >= PROMOTE_THRESHOLD`
     was modelling a decision the pipeline does not make.
     """
-    final = _reconcile_judge_with_heuristic(h, j)
-    return passes_nous_gate(final.novelty, final.specificity, final.relevance)
+    # `final.promote`, NOT a re-derivation. `_reconcile_judge_with_heuristic`
+    # carries a guard the axes alone cannot express — it refuses to promote
+    # what BOTH passes refused — so re-running `passes_nous_gate` here skips
+    # exactly the check this sheet exists to report. A fix applied at the
+    # producer and re-derived at the consumer is a fix at one of two sites.
+    return _reconcile_judge_with_heuristic(h, j).promote
 
 
 def _judge_context(scoring_method: str, item: RawItem, existing_slugs: list[str]) -> dict:
