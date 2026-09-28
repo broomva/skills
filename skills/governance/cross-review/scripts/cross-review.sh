@@ -10,7 +10,8 @@
 # Auto-detects environment: if `codex` CLI is on PATH, fires Strata A;
 # otherwise falls back to Strata B. Always runs Strata C in parallel.
 #
-# Scoring: anti-slop rubric (see references/rubric.md). PASS at ≥7/10.
+# Scoring: anti-slop rubric (see references/rubric.md). PASS at ≥7/10 AND no
+# dimension at 0 — a zeroed axis caps the round below the bar (BRO-2636).
 # Round budget is DYNAMIC: 3 free, 4-7 earned by a continuation verdict
 # carrying a falsifiable prediction, >=8 escalates to a human. The budget is
 # kept in a ledger by scripts/round-budget.sh -- see `cross-review round`.
@@ -633,7 +634,8 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "    - Strata used + score per dimension"
     echo "    - Specific deductions (file:line references)"
     echo "    - Fix recommendations or APPROVAL"
-    echo "  Paste into PR description or comment. Push only when verdict ≥7."
+    echo "  Paste into PR description or comment. Push only when the verdict is ≥7"
+    echo "  AND no rubric dimension scored 0 — a zeroed axis caps the round below the bar."
     echo ""
     exit 0
 fi

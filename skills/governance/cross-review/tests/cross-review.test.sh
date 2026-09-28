@@ -561,6 +561,61 @@ else
     fail "S-B: Strata B suppressed by operator precedence" "printed=$SB_COUNT with codex $SB_CODEX (want >=1)"
 fi
 
+# ── S-RULE: every surface that states the pass rule states the zero clause ──
+# THE RECURRENCE THIS CLOSES. The zero clause was added to one surface per round
+# for three consecutive rounds -- rubric.md's summary line, then its MUST-emit
+# block, then the Strata-A sub-step, then the Strata-B sub-step, then the gate's
+# closing "push only when" directive -- and each round the reviewer found the
+# next one. Nothing tested them, so reverting ALL of the prose fixes reddened
+# zero tests while every code hunk reddened precisely its own.
+#
+# That is the same defect this PR argues against in the code: a rule spelled once
+# per site is forgotten once per site. The answer there was to derive the score
+# in one place; the answer here is to ENUMERATE the sites and assert the rule at
+# each, so adding a surface without the clause fails rather than waiting for a
+# reviewer to notice.
+#
+# The enumeration is the load-bearing part. A surface added later and not listed
+# here is still unguarded -- so the list is grepped from the files rather than
+# hand-held where that is possible: any line stating a >=7 threshold must also
+# carry the zero clause.
+echo "S-RULE. no surface states the >=7 bar without the no-zero clause"
+SRULE_BAD=""
+for f in "$REPO/scripts/cross-review.sh" "$REPO/references/rubric.md" "$REPO/SKILL.md"; do
+    [ -f "$f" ] || { SRULE_BAD="$SRULE_BAD missing:$(basename "$f")"; continue; }
+    # Lines that state the THRESHOLD as a rule. The frontmatter description and
+    # prose that merely mentions the number in passing are excluded by requiring
+    # the line to also carry a pass/push/approve verb.
+    # A TWO-LINE WINDOW, because grep is line-oriented and these statements wrap.
+    # The first draft flagged two of its own fixes: the clause sat on the
+    # continuation line, so the match line looked bare. A claim wrapped across a
+    # newline is unmatchable by a line-oriented check, and reformatting the prose
+    # to suit the checker would be fixing the corpus instead of the checker.
+    while IFS= read -r ln; do
+        n=${ln%%:*}
+        window=$(sed -n "${n},$((n+1))p" "$f" | tr '\n' ' ')
+        case "$window" in
+            *"no dimension"*|*"no rubric dimension"*|*"zero"*|*"ZERO"*|*"axes"*|*"axis"*) continue ;;
+        esac
+        SRULE_BAD="$SRULE_BAD
+    $(basename "$f"): $ln"
+    done < <(grep -nE 'PASS at (≥7|>=7)|PASS: (≥7|>=7)|Threshold is (≥7|>=7)|Push only when|(≥7|>=7)[^.]*→ APPROVE|(≥7|>=7)( AND[^:]*)?[:]? pass|If score (≥7|>=7)' "$f" 2>/dev/null \
+             | grep -vE '^[0-9]+:description:' || true)
+
+    # The pattern above matches lines that state the threshold AS THE PASS RULE.
+    # A first draft matched any line pairing ">=7" with a pass-ish word, and it
+    # was wrong on half its firings -- SKILL.md's BRO-2615 row says "A round
+    # scoring >=7 must carry --stratum=..." which is a PRECONDITION on a passing
+    # round, not a statement of what passing is, and adding a zero clause there
+    # would have made that sentence wrong. A checker wrong on half its firings
+    # gets narrowed, not obeyed.
+done
+if [ -z "$SRULE_BAD" ]; then
+    ok "S-RULE: every pass-rule surface in cross-review.sh, rubric.md and SKILL.md carries the no-zero clause"
+else
+    fail "S-RULE: a surface states the bar without the zero clause" "$SRULE_BAD"
+fi
+
 echo ""
 echo "── results ────────────────────────────────────────────────────"
 echo "  $PASS passed, $FAIL failed"

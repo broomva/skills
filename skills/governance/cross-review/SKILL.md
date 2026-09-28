@@ -461,7 +461,7 @@ completely, so the round ledger records the panel alongside the score:
 ```bash
 cross-review round record-round --run-id=$ARC --score=5/10 --defect=yes --strata=<actual>
 cross-review round record-round --run-id=$ARC --score=6/10 --defect=yes        # panel not stated
-cross-review round record-round --run-id=$ARC --score=7/10 --defect=no  --stratum=C:7/10:PASS
+cross-review round record-round --run-id=$ARC --score=7/10 --axes=2,2,1,1,1 --defect=no  --stratum=C:7/10:PASS
 
 cross-review round show --run-id=$ARC
 #   round 1   score 5/10  defect=yes  settles=-          strata=A,B,C          [verdicts: none]
@@ -615,7 +615,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 | "CodeRabbit + claude-review already reviewed it" | Those are external gates that catch *specific patterns*. P20 is *additional* — the writer's own attempt must face a fresh-context adversarial verdict before merge, not just rubber-stamp validators. |
 | "We don't have Codex installed — P20 doesn't apply" | Strata B (fresh subagent) + Strata C (composed skills) are always available. The substance is the gate, not the vendor pair. |
 | "The Haiku evaluator in /goal already judges quality" | `/goal` evaluates *condition met*, not *work quality*. Different gate. |
-| "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7. <7 → fix, rescore, ask the budget. Don't push override. |
+| "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7 AND no dimension at 0. Below either → fix, rescore, ask the budget. Don't push override. |
 | "The reviewer said one more round seems reasonable" | That is the vacuous yes. A `CONTINUE` without a falsifiable prediction is refused by `round-budget.sh` at record time, because a verdict that cannot be wrong is not a verdict. |
 | "The score is flat but each round finds something real — keep going" | Check the *shape* first. Same defect class at a new location each round is `STRUCTURAL`: hoist the invariant instead of taking another swing. Eighteen rounds of BRO-2185 were this. |
 | "We are at round 9 but the last verdict said CONTINUE" | The ceiling overrides every verdict. Escalate through the handback contract with the ledger attached. |

@@ -414,15 +414,15 @@ score_is_valid() {
 # A CAP, not a zero. Zeroing would erase the ordering among floored rounds and
 # make two different failures look identical; capping keeps every comparison
 # below the bar meaningful. The cost is stated rather than hidden: among floored
-# rounds ABOVE the bar the ordering does collapse to the cap, so a floored 9 and
-# a floored 8 both read 6. That is deliberate -- the claim is "cannot reach the
-# bar", and it is the only claim this derivation makes.
+# rounds ABOVE the bar the ordering collapses to the cap. That is deliberate --
+# the claim is "cannot reach the bar", and it is the only claim this derivation
+# makes.
 #
-# The reachable collapse is 8 <-> 7, not 9 <-> 8: a zero plus four axes capped at
-# 2 tops out at a raw 8, so no floored 9 exists. Its real consequence, stated
-# because it is not obvious: between two floored rounds the absorbing REGRESSION
-# stop cannot fire, since both store the cap. A fall from raw 8 to raw 7 with a
-# zero on both reads as flat, not as a regression.
+# Concretely, the ONLY reachable collapse is raw 8 <-> raw 7, because a zero plus
+# four axes capped at 2 tops out at 8. Its consequence, stated because it is not
+# obvious: between two floored rounds the absorbing REGRESSION stop cannot fire,
+# since both store the cap -- a fall from raw 8 to raw 7 with a zero on both
+# reads as flat.
 effective_score() {
     local raw="$1" axes="$2"
     if [ -z "$axes" ] || [ "$axes" = "-" ]; then printf '%s' "$raw"; return 0; fi
