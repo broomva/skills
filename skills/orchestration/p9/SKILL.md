@@ -305,7 +305,7 @@ moved base blocks, and so does a PR retargeted to another base in between.
 | `up_to_date` | 0 commits behind base, at a recorded base tip | FAIL |
 | `no_changes_requested` | no reviewer's latest *opinionated* review is `CHANGES_REQUESTED`. A later COMMENTED review does not withdraw it; a later APPROVED or DISMISSED one does. (gh preloads every page of reviews and comments.) | FAIL |
 | `threads_resolved` | 0 unresolved review threads (more than 100 threads block) | FAIL |
-| `p20` | if over the P20 threshold, the latest verdict is a PASS ≥ `pass_score`, bound to the reviewed commit. The threshold: >200 LOC, >1 file, an always-review path, a binary change (any row with 0 changed lines, including a rename: a pure rename cannot be told from a renamed binary without fetching both blobs), or governance-class. | FAIL |
+| `p20` | if over the P20 threshold, the latest verdict is a PASS ≥ `pass_score`, bound to the reviewed commit. Under the threshold no verdict is required, but once one is recorded it binds: the gate judges it as over the threshold, so a non-pass blocks and a PASS must cover the head. The threshold: >200 LOC, >1 file, an always-review path, a binary change (any row with 0 changed lines, including a rename: a pure rename cannot be told from a renamed binary without fetching both blobs), or governance-class. | FAIL |
 | `independent_check` | a check that is neither a bot nor an aggregate (`Merge Gate`, which passes vacuously when nothing else ran) ran and passed, **or** a P20 pass covers the PR | FAIL |
 | `governance_strata` | governance-class: the verdict lists strata A, B and C | FAIL |
 | `governance_checks` | governance-class: every run of each required check (default `stability-check`) passed; skipped or absent fails | FAIL |
@@ -347,6 +347,19 @@ Rules for reading markers:
   when that commit is an ancestor of head and nothing since has touched a
   reviewed file or a current PR file. That is the case after updating the branch
   from base.
+- **A recorded verdict binds at every size.** Under the P20 threshold no
+  verdict is required, but once a PR carries a trusted, non-bot marker the gate
+  judges it exactly as over the threshold. A latest FAIL, STOP, MALFORMED, or
+  PASS below `pass_score` blocks, and later commits never clear it (a merge
+  from base brings in files the PR never changed, so the file list cannot prove
+  the reviewed code changed). A PASS clears it only if it covers the head, at
+  head or by the carry-forward rule above, so a PASS recorded for another
+  commit does not clear a FAIL on this one, and a stale PASS stops vouching once
+  its reviewed code changes. Remedies: record a PASS ≥ `pass_score` for the
+  head (`p9 p20-record`); a STOP goes to a person; a comment that only mentions
+  `P20-VERDICT` (and so reads as MALFORMED) can be edited. Limit: markers are
+  per PR, so a replacement PR from the same branch starts with none. Without
+  this, a small PR whose review failed was one `gate-check` away from merging.
 
 **Governance-class paths get a stricter gate, not a human click.** The
 governance paths are `CLAUDE.md`, `AGENTS.md`, `METALAYER.md`,
