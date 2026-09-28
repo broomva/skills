@@ -546,6 +546,100 @@ else
     fail "T23: all documented exit codes are reachable" "documented but never emitted:$MISSING"
 fi
 
+# ── S-B: Strata B is not suppressed by codex being installed ─────────────
+# `[ A ] || [ B ] && C` parses left-associatively as `(A||B) && C`, so an
+# EXPLICIT --strata=B was suppressed whenever codex was on PATH -- silently
+# skipping the stratum SKILL.md makes MANDATORY, for exactly the users who have
+# the optional one installed. Asserted with codex present, which is the arm that
+# was broken; `auto` deferring to codex is unchanged and covered elsewhere.
+echo "S-B. an explicit --strata=B prints its block even when codex is installed"
+SB_COUNT=$(bash "$CROSS_REVIEW_SH" pre-push --strata=B 2>&1 | grep -c "Strata B")
+SB_CODEX=$(command -v codex >/dev/null 2>&1 && echo present || echo absent)
+if [ "$SB_COUNT" -ge 1 ]; then
+    ok "S-B: --strata=B prints its block (codex $SB_CODEX, $SB_COUNT block(s))"
+else
+    fail "S-B: Strata B suppressed by operator precedence" "printed=$SB_COUNT with codex $SB_CODEX (want >=1)"
+fi
+
+# ── S-RULE: every surface that states the pass rule states the zero clause ──
+# THE RECURRENCE THIS CLOSES. The zero clause was added to one surface per round
+# for three consecutive rounds -- rubric.md's summary line, then its MUST-emit
+# block, then the Strata-A sub-step, then the Strata-B sub-step, then the gate's
+# closing "push only when" directive -- and each round the reviewer found the
+# next one. Nothing tested them, so reverting ALL of the prose fixes reddened
+# zero tests while every code hunk reddened precisely its own.
+#
+# That is the same defect this PR argues against in the code: a rule spelled once
+# per site is forgotten once per site. The answer there was to derive the score
+# in one place; the answer here is to ENUMERATE the sites and assert the rule at
+# each, so adding a surface without the clause fails rather than waiting for a
+# reviewer to notice.
+#
+# The enumeration is the load-bearing part. A surface added later and not listed
+# here is still unguarded -- so the list is grepped from the files rather than
+# hand-held where that is possible: any line stating a >=7 threshold must also
+# carry the zero clause.
+echo "S-RULE. no surface states the >=7 bar without the no-zero clause"
+SRULE_BAD=""
+for f in "$REPO/scripts/cross-review.sh" "$REPO/references/rubric.md" "$REPO/SKILL.md"; do
+    [ -f "$f" ] || { SRULE_BAD="$SRULE_BAD missing:$(basename "$f")"; continue; }
+    # Lines that state the THRESHOLD as a rule. The frontmatter description and
+    # prose that merely mentions the number in passing are excluded by requiring
+    # the line to also carry a pass/push/approve verb.
+    # A TWO-LINE WINDOW, because grep is line-oriented and these statements wrap.
+    # The first draft flagged two of its own fixes: the clause sat on the
+    # continuation line, so the match line looked bare. A claim wrapped across a
+    # newline is unmatchable by a line-oriented check, and reformatting the prose
+    # to suit the checker would be fixing the corpus instead of the checker.
+    while IFS= read -r ln; do
+        n=${ln%%:*}
+        window=$(sed -n "${n},$((n+1))p" "$f" | tr '\n' ' ')
+        case "$window" in
+            *"no dimension"*|*"no rubric dimension"*|*"zero"*|*"ZERO"*|*"axes"*|*"axis"*) continue ;;
+        esac
+        SRULE_BAD="$SRULE_BAD
+    $(basename "$f"): $ln"
+    done < <(grep -nE 'PASS at (≥7|>=7)|PASS: (≥7|>=7)|Threshold is (≥7|>=7)|Push only when|(≥7|>=7)[^.]*→ APPROVE|(≥7|>=7)( AND[^:]*)?[:]? pass|If score (≥7|>=7)' "$f" 2>/dev/null \
+             | grep -vE '^[0-9]+:description:' || true)
+
+    # The pattern above matches lines that state the threshold AS THE PASS RULE.
+    # A first draft matched any line pairing ">=7" with a pass-ish word, and it
+    # was wrong on half its firings -- SKILL.md's BRO-2615 row says "A round
+    # scoring >=7 must carry --stratum=..." which is a PRECONDITION on a passing
+    # round, not a statement of what passing is, and adding a zero clause there
+    # would have made that sentence wrong. A checker wrong on half its firings
+    # gets narrowed, not obeyed.
+done
+if [ -z "$SRULE_BAD" ]; then
+    ok "S-RULE: every pass-rule surface in cross-review.sh, rubric.md and SKILL.md carries the no-zero clause"
+else
+    fail "S-RULE: a surface states the bar without the zero clause" "$SRULE_BAD"
+fi
+
+# ── S-LOOP: every arm's fix instruction covers what its pass rule refuses ──
+# Step 4 refuses a round at >=7 with a zero. If step 5 only says "if score <7",
+# that round matches NEITHER and the agent is given no instruction for the exact
+# state this change introduces. The Strata-B arm folded both into one sentence
+# and was fine; the Strata-A arm kept a bare `<7` and was not. Found by review
+# after the pass rule itself had been fixed in five places -- the COMPLEMENT of a
+# rule is a surface too.
+echo "S-LOOP. no arm's fix-rescore instruction is narrower than its pass rule"
+SLOOP_BAD=""
+while IFS= read -r ln; do
+    n=${ln%%:*}
+    window=$(sed -n "${n},$((n+3))p" "$CROSS_REVIEW_SH" | tr '\n' ' ')
+    case "$window" in
+        *"dimension at 0"*|*"dimension scored 0"*|*"any dimension"*|*"with a zero"*|*"zero"*) continue ;;
+    esac
+    SLOOP_BAD="$SLOOP_BAD
+    $ln"
+done < <(grep -nE 'If score <7|score <7:|<7: fix|<7 fix' "$CROSS_REVIEW_SH" 2>/dev/null || true)
+if [ -z "$SLOOP_BAD" ]; then
+    ok "S-LOOP: every fix-rescore instruction covers the zero case its pass rule refuses"
+else
+    fail "S-LOOP: a fix instruction is narrower than its pass rule" "$SLOOP_BAD"
+fi
+
 echo ""
 echo "── results ────────────────────────────────────────────────────"
 echo "  $PASS passed, $FAIL failed"

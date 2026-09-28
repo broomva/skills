@@ -182,7 +182,7 @@ mutate "every verdict reads as CONTINUE" "T37" \
     'LG_LAST_VERDICT=$(field "$last" 2)' \
     'LG_LAST_VERDICT=CONTINUE'
 mutate "ROUND arity unchecked" "T38" \
-    'if (NF != 6 && NF != 7 && NF != 8) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
+    'if (NF != 6 && NF != 7 && NF != 8 && NF != 9) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
 # NO mutation for the arity FLOOR, and the reason is a finding rather than an
 # omission. `if (NF != 6 && NF != 7 && NF != 5)` -- widening the check to admit
 # a five-field row -- was written, run, and SURVIVED: a short ROUND row leaves
@@ -574,6 +574,113 @@ mutate "stratum text glob-expanded" "T84" \
     for entry in $verdicts; do' \
     '    IFS=,
     for entry in $verdicts; do'
+
+# ── BRO-2636: the effective score ──
+# The design claim is that ONE derivation replaces four floor guards, so the
+# mutants target the derivation and each consumer's reliance on it separately.
+# A single mutant breaking two would prove nothing about either.
+
+# THE DERIVATION. Without the cap a zeroed round keeps its raw total and passes.
+mutate "zeroed axis keeps its raw score" "T100" \
+    '    if [ "$raw" -ge "$PASS_SCORE" ]; then printf '"'"'%s'"'"' "$((PASS_SCORE - 1))"; else printf '"'"'%s'"'"' "$raw"; fi' \
+    '    printf '"'"'%s'"'"' "$raw"'
+
+# The zero TEST inside the derivation, on its own: cap everything, and a
+# zero-free round is capped too.
+mutate "every round capped, not just zeroed ones" "T100" \
+    '        *) printf '"'"'%s'"'"' "$raw"; return 0 ;;' \
+    '        *) ;;'
+
+# The derivation is not WIRED to the writer -- the raw score is stored instead.
+mutate "writer stores the raw score" "T100" \
+    '        EFFECTIVE=$(effective_score "$SCORE_INT" "$ROUND_AXES")' \
+    '        EFFECTIVE="$SCORE_INT"'
+
+# The tie to the raw total. Without it the axes describe a different round and
+# the derivation computes from numbers that are not this round's.
+mutate "axes need not sum to the raw total" "T105" \
+    '    if [ "$sum" != "$want" ]; then' \
+    '    if [ "$sum" = "IMPOSSIBLE" ]; then'
+mutate "axis count unchecked" "T105" \
+    '    if [ "$n" != "$RUBRIC_AXES" ]; then' \
+    '    if [ "$n" = "IMPOSSIBLE" ]; then'
+mutate "axis range unchecked" "T105" \
+    '        if [ "$((10#$a))" -gt "$RUBRIC_AXIS_MAX" ]; then' \
+    '        if [ "$((10#$a))" -gt 99 ]; then'
+# The LENGTH bound is not the range bound: `$((10#$a))` wraps, so 2^64 summed as
+# ZERO, satisfied the total check, and was never seen as a zero by the cap.
+# THE length bound, now singular. It lived in two places that masked each other
+# -- gutting either left the other to refuse, so neither was independently
+# reachable and a mutant on either SURVIVED while both looked covered. Collapsed
+# into axes_sum, which is the one place a written axis becomes a number.
+mutate "long digit run wraps past the range check" "T105" \
+    '        if [ "${#a}" -gt 1 ]; then printf '"'"'%s'"'"' -1; exit 0; fi' \
+    '        if [ "${#a}" -gt 99 ]; then printf '"'"'%s'"'"' -1; exit 0; fi'
+
+# `--axes=` must not read as "declared none" -- the trap the panel field
+# documents for `--stratum=`.
+# NO MUTANT for the empty-`--axes=` guard, and the reason is a finding. Gutting
+# it does NOT let an empty value through: an empty string splits to ZERO axes and
+# axes_are_valid's count check refuses it one line later -- measured, the mutated
+# build still prints "refusing this round". The guard exists for its MESSAGE (it
+# names the flag rather than the count), not for a decision no other check makes.
+
+# THE READ DOOR: the stored score must be the one its axes derive. This is the
+# claim the whole design rests on, so a hand-edited row must not be able to make
+# it false.
+mutate "stored score never re-derived" "T106" \
+    '        if [ "$score" != "$want" ]; then' \
+    '        if [ "$score" = "IMPOSSIBLE" ]; then'
+mutate "stored axes never revalidated" "T106" \
+    'ROUND" && NF>=8' \
+    'ROUND" && NF==0'
+
+# The three analyze() width tests the ninth field passes through. Each fails
+# DIFFERENTLY and silently, so each is mutated alone.
+mutate "ninth field un-verifies the row" "T109" \
+    '            lastverified=(NF>=8)' \
+    '            lastverified=(NF==8)'
+mutate "ninth field keeps its scale in the compare" "T101" \
+    '            if (NF>=8) sub(/\/.*/, "", sc)' \
+    '            if (NF==8) sub(/\/.*/, "", sc)'
+mutate "ninth field classifies as bare" "T81" \
+    '            kind=(NF>=8) ? "scaled" : "bare"' \
+    '            kind=(NF==8) ? "scaled" : "bare"'
+
+# The flag scope.
+mutate "--axes accepted outside record-round" "T108" \
+    'if [ "$AXES_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then' \
+    'if [ "$AXES_SET" = "1" ] && [ "$COMMAND" = "IMPOSSIBLE" ]; then'
+
+# The forgery door. Found by the cross-vendor stratum: blanking field 9 erases
+# the derivation check, because the read path reads empty as "absent".
+mutate "blanked axes field erases the derivation check" "T109" \
+    '        if [ -z "$vaxes" ]; then' \
+    '        if [ -z "IMPOSSIBLE" ]; then'
+
+# The unfloored-pass note: a checked round and an unchecked one must not report
+# the same thing.
+mutate "unfloored pass does not say so" "T109" \
+    '    if [ -z "${LG_LAST_AXES:-}" ] || [ "$LG_LAST_AXES" = "-" ]; then' \
+    '    if [ -z "IMPOSSIBLE" ]; then'
+
+# (The note that used to sit here called axes_sum's length bound inert because
+# axes_are_valid carried a duplicate. That was true and was the problem: the
+# duplicate is gone, this bound is now the only one, and the mutant above kills
+# on it.)
+
+mutate "--axes=- accepted as a third spelling of absence" "T110" \
+    '        [ "$AXES" != "-" ] || {' \
+    '        [ "$AXES" != "IMPOSSIBLE" ] || {'
+
+# NO MUTANT for the `*,0,*` field-vs-substring match in effective_score, and the
+# reason is a finding rather than an omission. Every legal axis is ONE DIGIT
+# (0-2) and load_ledger revalidates every nine-field row before any consumer
+# reads it, so a `0` can only ever appear as a whole field: `*0*` and `*,0,*`
+# accept and reject exactly the same reachable set. The mutation applies and
+# changes no behaviour, which reports SURVIVED and is indistinguishable from a
+# genuinely untested invariant. It was written, it survived for that reason, and
+# it is recorded here instead of being left in the sweep as a false finding.
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"

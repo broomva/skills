@@ -10,7 +10,8 @@
 # Auto-detects environment: if `codex` CLI is on PATH, fires Strata A;
 # otherwise falls back to Strata B. Always runs Strata C in parallel.
 #
-# Scoring: anti-slop rubric (see references/rubric.md). PASS at ≥7/10.
+# Scoring: anti-slop rubric (see references/rubric.md). PASS at ≥7/10 AND no
+# dimension at 0 — a zeroed axis caps the round below the bar (BRO-2636).
 # Round budget is DYNAMIC: 3 free, 4-7 earned by a continuation verdict
 # carrying a falsifiable prediction, >=8 escalates to a human. The budget is
 # kept in a ledger by scripts/round-budget.sh -- see `cross-review round`.
@@ -460,8 +461,12 @@ if [ "$COMMAND" = "pre-push" ]; then
     fi
     echo "  After each scored round, one --stratum per stratum that scored it:"
     echo "    cross-review round record-round --run-id=$CR_ARC_ID \\"
-    echo "      --score=N/10 --defect=yes|no [--settles=CONFIRMED|REFUTED] \\"
+    echo "      --score=N/10 --axes=a,b,c,d,e --defect=yes|no [--settles=CONFIRMED|REFUTED] \\"
     echo "      $(printf '%s' "$STRATA_HINT" | sed 's/\([ABC]\)/--stratum=\1:N\/10:PASS|FAIL/g; s/,/ /g')"
+    echo ""
+    echo "  --axes is the five rubric dimensions, 0-2 each, summing to --score. A ZERO"
+    echo "  caps the STORED score below the bar: 2+2+2+2+0 = 8 records as 6/10 and"
+    echo "  cannot pass. Omit it and no cap applies -- the pass then says it was unfloored."
     echo ""
     echo "  Every score carries its scale and the ledger is /10: a /15 design score"
     echo "  is refused, never converted here. The round score may not exceed the"
@@ -513,15 +518,22 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "        patch the tree stops reporting and starts fixing — the same"
         echo "        defect as dispatching Strata B as 'general-purpose')"
         echo "    3. Parse Codex's response: score (0-10) + reasoning per rubric dim"
-        echo "    4. If score >=7: pass (echo verdict, exit 0)"
-        echo "    5. If score <7: fix the deductions, rescore, then drive the round"
-        echo "       budget (printed above, and identical for every stratum)."
+        echo "    4. If score >=7 AND no dimension scored 0: pass (echo verdict, exit 0)"
+        echo "    5. Otherwise — score <7, OR any dimension at 0 — fix the deductions,"
+        echo "       rescore, then drive the round budget (printed above, and identical"
+        echo "       for every stratum). A round at >=7 WITH a zero is refused by step 4"
+        echo "       and lands here: the zero is the deduction to fix."
         echo ""
         echo "  (This script enforces the structure; the agent runs the Codex call)"
     fi
 
     # Strata B — fresh subagent
-    if [ "$SELECTED_STRATA" = "B" ] || [ "$SELECTED_STRATA" = "auto" ] && ! command -v codex >/dev/null 2>&1; then
+    # PARENTHESISED. `[ A ] || [ B ] && C` parses left-associatively as
+    # `(A||B) && C`, so an EXPLICIT --strata=B was suppressed whenever codex was
+    # on PATH -- silently skipping the stratum SKILL.md makes mandatory, for
+    # exactly the users who have the optional one installed. `auto` is the only
+    # selector that should depend on codex being absent.
+    if [ "$SELECTED_STRATA" = "B" ] || { [ "$SELECTED_STRATA" = "auto" ] && ! command -v codex >/dev/null 2>&1; }; then
         echo "  ─── Strata B: fresh-context subagent under devil's-advocate brief ──"
         echo ""
         echo "  [TODO-AGENT] The agent runs the following pattern:"
@@ -536,7 +548,7 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "        advocate. Read references/rubric.md. Score each dimension"
         echo "        and report verdict. You cannot change code: report, do not fix.'"
         echo "    3. Parse the subagent's response"
-        echo "    4. Same loop: ≥7 pass, <7 fix-rescore, then drive the round budget"
+        echo "    4. Same loop: ≥7 AND no dimension at 0 to pass; otherwise fix-rescore, then drive the round budget"
         echo "       (printed above, and identical for every stratum)."
         echo ""
         echo "  (This script enforces the structure; the agent dispatches the subagent)"
@@ -624,7 +636,8 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "    - Strata used + score per dimension"
     echo "    - Specific deductions (file:line references)"
     echo "    - Fix recommendations or APPROVAL"
-    echo "  Paste into PR description or comment. Push only when verdict ≥7."
+    echo "  Paste into PR description or comment. Push only when the verdict is ≥7"
+    echo "  AND no rubric dimension scored 0 — a zeroed axis caps the round below the bar."
     echo ""
     exit 0
 fi

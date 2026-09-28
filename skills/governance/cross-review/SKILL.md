@@ -105,7 +105,7 @@ ANTI-SLOP RUBRIC (10 points total)
            coverage matches what the change introduces;
            no critical path untested)
 
-PASS: ≥7/10
+PASS: ≥7/10   (record --axes=a,b,c,d,e; a ZERO axis caps the stored score to 6)
 LOOP: <7 → fix the specific deductions → rescore
 BUDGET: 3 free rounds · 4-7 earned by a continuation verdict · ≥8 human
 ESCALATE: STOP verdict, two refuted predictions, a score regression, or round 8
@@ -129,7 +129,7 @@ bump, not reviewer opinion, and never a finding about the *justification* for th
 change. Track it with `cross-review round`:
 
 ```bash
-cross-review round record-round   --run-id=$ID --score=5/10 --defect=yes \
+cross-review round record-round   --run-id=$ID --score=5/10 --axes=2,1,1,1,0 --defect=yes \
                                   --stratum=A:5/10:FAIL --stratum=C:6/10:FAIL
                                                   # every score carries its /10 scale;
                                                   # one --stratum per stratum that scored.
@@ -240,6 +240,7 @@ appended to it.
 | An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |
 | A `CONTINUE` cannot be empty of content | the prediction must name a location the next round can check |
 | The arithmetic is not from recall | the round count and score series come from a file, which is the thing agents do worst from memory |
+| A zeroed dimension cannot reach the bar | the rubric is five dimensions at 2 points, and `2+2+2+2+0 = 8` cleared the ≥7 bar with *tests cover the change* — the one dimension a machine can check — at **zero**. This is fixed by changing what a score IS, not by guarding the things that read one: `record-round --axes=a,b,c,d,e` stores the **effective** score, and a zero caps it to `PASS_SCORE - 1`. `--score` is the RAW total the five axes must sum to; the ledger stores what the axes derive, and `round_is_admissible` re-derives it from the stored row so a hand edit cannot claim a score its own axes do not produce. Every consumer then reads one value and needs no floor: `rule_passed` simply does not pass; the regression compare sees a floored 8 as a 6, so the honest fix round at 7 is an *improvement* rather than a regression; stratum admissibility allows a FAIL because the round is not a pass; and `--defect` is never coerced, so the `nodefect` streak stays a real signal. A **cap, not a zero** — zeroing would erase the ordering among floored rounds; the stated cost is that above the bar that ordering collapses to the cap. Omitting `--axes` applies no floor and the pass says so (BRO-2636) |
 | The panel that produced a score is part of the record | a round records the strata that scored it (`record-round --strata=A,B,C`). The strata are **not equal** — A is the only cross-vendor verdict and the only one where *cannot write* is literally true — so a 7/10 from A+B+C and a 7/10 from C alone are different evidence carrying the same integer, and the score alone cannot tell them apart. Validated at write **and** against the stored row, same as the prediction. Omitting the flag records the literal `unrecorded`, never a blank: *"nobody wrote down which strata ran"* and *"only Stratum C ran"* must not serialize to the same bytes. Ledgers written before the field parse unchanged — field 7 is optional **on read**, and `show` renders their missing panel as that same `unrecorded` token |
 | A score carries its scale, and a pass carries its verdicts | BRO-2615. Every `--score` and every `--stratum` score is written `N/10`; a bare integer, a foreign scale (`7/15`), or an out-of-range value is refused, never converted — this skill's own design rubric is /15 and a bare `7` from it once came back PASSED over two FAIL strata. A round scoring ≥7 must carry `--stratum=L:N/10:PASS\|FAIL` for each stratum that scored it; the round score may not exceed the lowest stratum, a stratum cannot say PASS below 7, and a round cannot pass over any FAIL. Every row the recorder writes stores its round score as `N/10` (field 3) and its verdicts in field 8 (`-` when none), and one predicate (`round_is_admissible`) checks the row at write **and** every stored row at read. Predicates decide by exit status, so a predicate that crashes refuses rather than passing. A round without verdicts — a failing round recorded with `--strata`, or any row written before this — is never read as PASSED |
 | One guard site, not one per caller | every command that reads or mutates the history passes through `load_ledger` (`show` only renders), and the budget's stop/pass ordering is one `PRECEDENCE` list. Three review rounds each found a guard living at one caller and not its sibling, or an ordering wrong in one of six branches — so the continuation review returned `STRUCTURAL` and the shape changed instead of a sixth guard being added |
@@ -460,7 +461,7 @@ completely, so the round ledger records the panel alongside the score:
 ```bash
 cross-review round record-round --run-id=$ARC --score=5/10 --defect=yes --strata=<actual>
 cross-review round record-round --run-id=$ARC --score=6/10 --defect=yes        # panel not stated
-cross-review round record-round --run-id=$ARC --score=7/10 --defect=no  --stratum=C:7/10:PASS
+cross-review round record-round --run-id=$ARC --score=7/10 --axes=2,2,1,1,1 --defect=no  --stratum=C:7/10:PASS
 
 cross-review round show --run-id=$ARC
 #   round 1   score 5/10  defect=yes  settles=-          strata=A,B,C          [verdicts: none]
@@ -595,7 +596,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 
 1. **Before pushing any substantive PR** — fire `cross-review pre-push`. State the strata + score in the response.
 1b. **When the PR claims test coverage for a fix** — mutation-prove it. "I added a test" is a claim; `verdict=PROVEN` is evidence. Report the verdict either way; UNPROVEN does not block, it obliges an answer.
-2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore, and record the round: `cross-review round record-round --run-id=$ID --score=N/10 --defect=yes|no --stratum=L:N/10:PASS|FAIL ...` (one `--stratum` per stratum that scored; `--strata=<actual>` is accepted instead only for a failing round), where the letters are the panel that really produced the score — `A,C` when Codex ran, `B,C` when it did not, `C` alone when only the composed skills did. Writing `A,B,C` out of habit is the failure this field exists to prevent. Ask `cross-review round budget` before starting another; past round 3 it will require a continuation verdict.
+2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore, and record the round: `cross-review round record-round --run-id=$ID --score=N/10 --axes=a,b,c,d,e --defect=yes|no --stratum=L:N/10:PASS|FAIL ...` (one `--stratum` per stratum that scored; `--strata=<actual>` is accepted instead only for a failing round), where the letters are the panel that really produced the score — `A,C` when Codex ran, `B,C` when it did not, `C` alone when only the composed skills did. Writing `A,B,C` out of habit is the failure this field exists to prevent. Ask `cross-review round budget` before starting another; past round 3 it will require a continuation verdict.
 2b. **When the budget returns REVIEW-REQUIRED (exit 5)** — run the continuation review on *the decision to continue*, against a STOP default. `CONTINUE` obliges a falsifiable prediction that the next round settles; two refuted in a row end the loop regardless of score.
 3. **When the writer is the only model in the loop** — STOP. Strata B at minimum is mandatory.
 4. **When tempted to skip "this PR is small enough"** — apply the substantive-threshold test (>200 LOC OR public API OR multi-file OR governance-class).
@@ -614,7 +615,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 | "CodeRabbit + claude-review already reviewed it" | Those are external gates that catch *specific patterns*. P20 is *additional* — the writer's own attempt must face a fresh-context adversarial verdict before merge, not just rubber-stamp validators. |
 | "We don't have Codex installed — P20 doesn't apply" | Strata B (fresh subagent) + Strata C (composed skills) are always available. The substance is the gate, not the vendor pair. |
 | "The Haiku evaluator in /goal already judges quality" | `/goal` evaluates *condition met*, not *work quality*. Different gate. |
-| "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7. <7 → fix, rescore, ask the budget. Don't push override. |
+| "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7 AND no dimension at 0. Below either → fix, rescore, ask the budget. Don't push override. |
 | "The reviewer said one more round seems reasonable" | That is the vacuous yes. A `CONTINUE` without a falsifiable prediction is refused by `round-budget.sh` at record time, because a verdict that cannot be wrong is not a verdict. |
 | "The score is flat but each round finds something real — keep going" | Check the *shape* first. Same defect class at a new location each round is `STRUCTURAL`: hoist the invariant instead of taking another swing. Eighteen rounds of BRO-2185 were this. |
 | "We are at round 9 but the last verdict said CONTINUE" | The ceiling overrides every verdict. Escalate through the handback contract with the ledger attached. |

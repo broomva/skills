@@ -12,7 +12,31 @@ This is the canonical scoring rubric for `cross-review` adversarial verdicts. Ev
 | **Failure modes named explicitly** | 2 | What happens on bad input, network fail, race condition, empty state, very large input, concurrent access — surfaced in code or docs, not implicit |
 | **Tests cover the change** | 2 | Unit / integration / E2E proportional to change shape; coverage matches what the change introduces; critical path tested |
 
-**Total: 10 points. PASS at ≥7. LOOP if <7. ESCALATE if round 3 still <7.**
+**Total: 10 points. PASS at ≥7 AND no dimension at 0. LOOP if <7. ESCALATE if round 3 still <7.**
+
+### A zero on any dimension caps the round (BRO-2636)
+
+The total is not the verdict. `2+2+2+2+0 = 8` clears ≥7 with *tests cover the
+change* — the one dimension a machine can check — at **zero**, and a sum does not
+record which axes produced it.
+
+So report the five per-dimension scores and the controller derives the round's
+effective score from them:
+
+```
+cross-review round record-round --run-id=$ID --score=8/10 --axes=2,2,2,2,0 ...
+  →  recorded round 1 (score 6/10, ..., axes=2,2,2,2,0)
+     A rubric axis is ZERO, so the raw total 8/10 was CAPPED to 6/10.
+```
+
+`--score` is the RAW total your five axes sum to. A zero caps what the ledger
+stores to `PASS_SCORE - 1`, so the round cannot pass on the strength of the
+other four — and every downstream rule (the pass, the regression compare,
+stratum admissibility, the no-defect streak) reads that one derived value.
+
+**Omitting `--axes` applies no cap**, and the pass then says so in its own
+output. An unfloored pass is a pass on the total alone: it cannot tell
+`2,2,2,1,1` from `2,2,2,2,0`.
 
 ## The adversarial brief (what to give the evaluator)
 
@@ -26,7 +50,9 @@ When invoking a Strata-A (Codex) or Strata-B (subagent) evaluator, include this 
 > - 1: marginal, named caveat with file:line reference
 > - 2: clean pass
 >
-> Sum the points (max 10). Total ≥7 → APPROVE. <7 → REVISE.
+> Sum the points (max 10). Total ≥7 AND no dimension at 0 → APPROVE. Otherwise REVISE.
+>
+> **Report the five per-dimension scores, not just the total** — as `AXES: a,b,c,d,e` in rubric order. A total that clears the bar with a dimension at zero is not a pass: `2+2+2+2+0 = 8` leaves *tests cover the change* unmet, and the controller caps such a round below the bar from the axes you report.
 >
 > When you REVISE, name the specific failures the writer must address. Don't give vague feedback. Each deduction must cite a file path + line range + the rubric dimension violated. Be ruthless — finding nothing wrong is suspicious; correlated blind spots are real.
 
@@ -120,7 +146,10 @@ When dispatching a Claude subagent via `Agent` tool for Strata B, prepend:
 
 ## Scoring output format
 
-The evaluator MUST output the verdict in this exact structure (parseable):
+The evaluator MUST output the verdict in this exact structure (parseable).
+`AXES` is the five per-dimension scores in rubric order — the controller derives
+the round's effective score from them, and a zero caps it below the bar however
+high the total.
 
 ```
 === CROSS-REVIEW VERDICT ===
@@ -133,7 +162,8 @@ Score:
   Dim 4 (failure modes):                 {0|1|2}  reason: ...
   Dim 5 (tests cover change):            {0|1|2}  reason: ...
 Total: {0-10}
-Verdict: {APPROVE|REVISE}
+AXES: {d1},{d2},{d3},{d4},{d5}
+Verdict: {APPROVE|REVISE}   ← APPROVE only if Total ≥7 AND no dimension is 0
 Deductions (if REVISE):
   - file:line — dim X — specific issue
   - file:line — dim X — specific issue
