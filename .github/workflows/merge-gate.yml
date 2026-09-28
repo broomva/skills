@@ -53,7 +53,13 @@ jobs:
           # Conclusions that BLOCK a merge (a check that actually failed).
           # success / skipped / neutral do NOT block.
           BLOCKING='failure|cancelled|timed_out|action_required|startup_failure|stale'
-          for i in $(seq 1 60); do   # up to ~30 min
+          # 120, not 60. The gate polls every 30s and was CANCELLED at poll
+          # 59/60 on PR 237 while `bash smoke tests` was still running: that job
+          # carries the round-budget mutation sweep, which BRO-2636 grew from 90
+          # to 107 mutants and 35m58s -- past the old ~30 min budget. A gate
+          # whose window is shorter than the job it waits on can never pass, and
+          # it reports that as a FAILURE rather than as its own timeout.
+          for i in $(seq 1 120); do   # up to ~60 min
             # All check-runs on this head SHA except this gate itself.
             runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs" \
                      --jq '.check_runs[] | select(.name != "Merge Gate") | [.name, .status, (.conclusion // "")] | @tsv' \
@@ -81,7 +87,7 @@ jobs:
               echo "Merge Gate PASS — no other checks on this PR after grace (all repo CI path-filtered out)."
               exit 0
             fi
-            echo "waiting: $n check(s), $incomplete still running, commit status=$st_state (poll $i/60)…"
+            echo "waiting: $n check(s), $incomplete still running, commit status=$st_state (poll $i/120)…"
             sleep 30
           done
           echo "::error::Merge Gate timed out waiting for checks to conclude."
