@@ -427,6 +427,21 @@ effective_score() {
     if [ "$raw" -ge "$PASS_SCORE" ]; then printf '%s' "$((PASS_SCORE - 1))"; else printf '%s' "$raw"; fi
 }
 
+# The one place a written axis list becomes numbers. Returns the sum, or -1 if
+# any entry is not a single digit -- LENGTH before arithmetic, because
+# `$((10#$a))` WRAPS on a long digit run and 2^64 would otherwise sum as ZERO,
+# satisfy the total check, and never be seen as a zero by the derivation.
+axes_sum() (
+    IFS=,; set -f
+    total=0
+    for a in $1; do
+        case "$a" in ''|*[!0-9]*) printf '%s' -1; exit 0 ;; esac
+        if [ "${#a}" -gt 1 ]; then printf '%s' -1; exit 0; fi
+        total=$((total + 10#$a))
+    done
+    printf '%s' "$total"
+)
+
 # The rubric's five axes, as written (`a,b,c,d,e`), against the RAW total they
 # must sum to. `-` means the round declared none and never reaches here.
 #
@@ -509,14 +524,10 @@ round_is_admissible() (
     # one-predicate-two-callers shape the panel and the verdicts already use, so
     # a hand-edited row cannot claim a score its own axes do not produce.
     if [ "$axes" != "-" ]; then
-        rawsum=0
-        oldifs=$IFS; IFS=,; set -f
-        for _a in $axes; do
-            case "$_a" in ''|*[!0-9]*) rawsum=-1; break ;; esac
-            [ "${#_a}" -gt 1 ] && { rawsum=-1; break; }
-            rawsum=$((rawsum + 10#$_a))
-        done
-        set +f; IFS=$oldifs
+        # ONE parse. An earlier draft re-implemented the digit/length walk here,
+        # which made axes_are_valid's sum check tautological on this path and
+        # created a second place to be wrong about what an axis is.
+        rawsum=$(axes_sum "$axes")
         if [ "$rawsum" -lt 0 ]; then echo "rubric axes '$axes' are not $RUBRIC_AXES single digits"; exit 1; fi
         if ! err=$(axes_are_valid "$axes" "$rawsum"); then echo "rubric axes: $err"; exit 1; fi
         want=$(effective_score "$rawsum" "$axes")
@@ -629,7 +640,7 @@ analyze() {
         BEGIN { rounds=0; prev=-1; last=-1; regressed=0
                 ref=0; maxref=0; nod=0; maxnod=0
                 terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0
-                badhistory=""; lastverified=0; prevkind=""; sawscaled=0 }
+                badhistory=""; lastverified=0; prevkind=""; sawscaled=0; lastaxes="-" }
         $1=="ROUND" {
             # 6 OR 7. Field 7 (strata) is optional ON READ: every ledger
             # written before the field existed has six-field ROUND rows, and
@@ -651,7 +662,25 @@ analyze() {
             # NF==8 alone: an eight-field row at a passing score with no
             # verdicts (`-`) is refused outright by round_is_admissible, so a
             # `$8!="-"` half here could never be the check that decided.
-            lastverified=(NF>=8)   # >=8, not ==8: as `==` this un-verified the very rounds that declared the most
+            # NF>=8, deliberately, and the residual it leaves is named rather
+            # than papered over.
+            #
+            # A nine-field row whose field 9 is DELETED is byte-identical to a
+            # legitimate pre-BRO-2636 eight-field row, so no rule can tell them
+            # apart, and the derivation check is skipped for it. `NF>=9` was
+            # tried: it closes that forgery and breaks TEN existing assertions,
+            # because it also stops every pre-existing eight-field ledger from
+            # ever passing -- a refusal that blocks real work mid-arc, which this
+            # doctrine in this file rates worse than the caution it buys.
+            #
+            # It is not worth its cost because the forgery buys nothing that is
+            # not already available by a shorter route: an agent willing to edit
+            # the ledger can simply omit `--axes` and take an unfloored pass,
+            # which is disclosed in SKILL.md and announced by `budget` itself.
+            # BLANKING field 9 is still refused (load_ledger), because a blank is
+            # a shape no recorder ever writes and costs nothing to reject.
+            lastverified=(NF>=8)
+            lastaxes=(NF>=9 ? $9 : "-")
             rounds++
             # An eight-field row stores `N/10`. Its scale -- including a bare
             # integer where `N/10` belongs -- is checked in load_ledger by
@@ -701,7 +730,7 @@ analyze() {
             next
         }
         NF>0 { badrow=1 }
-        END { print rounds"\t"last"\t"regressed"\t"maxref"\t"maxnod"\t"terminal"\t"badscore"\t"badverdict"\t"pending"\t"directive"\t"badrow"\t"badhistory"\t"lastverified }'
+        END { print rounds"\t"last"\t"regressed"\t"maxref"\t"maxnod"\t"terminal"\t"badscore"\t"badverdict"\t"pending"\t"directive"\t"badrow"\t"badhistory"\t"lastverified"\t"lastaxes }'
 }
 
 # ─── The one gate ─────────────────────────────────────────────────────────
@@ -712,7 +741,7 @@ analyze() {
 # prediction validation at write but not at read. One site makes that class of
 # defect unrepresentable, and collapses four redundant `analyze` passes into one.
 LG_N=""; LG_SCORE=""; LG_REGRESSED=""; LG_MAXREF=""; LG_MAXNOD=""
-LG_TERMINAL=""; LG_PENDING=""; LG_DIRECTIVE=""; LG_LAST_VERIFIED=""
+LG_TERMINAL=""; LG_PENDING=""; LG_DIRECTIVE=""; LG_LAST_VERIFIED=""; LG_LAST_AXES=""
 # Snapshotted in load_ledger so the RULES never re-read the file. This bounds the
 # inconsistency; it does not remove it. load_ledger itself still reads the ledger
 # more than once (analyze, the tail, the CONTINUE rows) and `budget` takes no
@@ -752,6 +781,7 @@ load_ledger() {
     LG_PENDING=$(printf '%s' "$a" | cut -f9)
     LG_DIRECTIVE=$(printf '%s' "$a" | cut -f10)
     LG_LAST_VERIFIED=$(printf '%s' "$a" | cut -f13)
+    LG_LAST_AXES=$(printf '%s' "$a" | cut -f14)
     local badscore badverdict badrow badhistory last
     badscore=$(printf '%s' "$a" | cut -f7)
     badverdict=$(printf '%s' "$a" | cut -f8)
@@ -830,6 +860,42 @@ load_ledger() {
             echo "  Strata are a set drawn from A, B, C, or the literal"
             echo "  '$STRATA_UNRECORDED'. Anything else names no panel, and a panel"
             echo "  that cannot be read back cannot be told apart from none."
+            exit 6
+        fi
+    done
+    set +f
+    IFS=$old_ifs
+
+    # Field 9, the rubric axes, by the same "A:" prefix trick field 7 uses and
+    # for the same reason: an EMPTY field survives as a line rather than
+    # vanishing under word splitting.
+    #
+    # A BLANK field 9 is the value that must not slip through, and it is the
+    # forgery this whole design would otherwise permit. The recorder ALWAYS
+    # writes `-` when no axes were declared, so a blank one was written by
+    # something else -- and because the read path reads an empty field 9 as
+    # "absent", blanking it ERASES the derivation check. Restore the score to
+    # its raw total, blank the axes, and a floored round reads as a pass. The
+    # write door already refuses `--axes=` for the same reason; this is its
+    # other half, and without it the stored-row contract is forgeable.
+    local axrows axrow vaxes
+    if ! axrows=$(read_rows | awk -F'\t' '$1=="ROUND" && NF>=9 {print "A:" $9}'); then
+        echo "STOP — could not read the ROUND rows of $LEDGER to validate them."
+        exit 6
+    fi
+    old_ifs=$IFS
+    IFS='
+'
+    set -f
+    for axrow in $axrows; do
+        vaxes=${axrow#A:}
+        if [ -z "$vaxes" ]; then
+            set +f; IFS=$old_ifs
+            echo "STOP — a ROUND row in $LEDGER carries a BLANK rubric-axes field."
+            echo "  The recorder writes '-' when a round declares no axes, never a"
+            echo "  blank, so nothing wrote this. A blank reads as 'no axes', which"
+            echo "  would skip the check that the stored score is the one its axes"
+            echo "  derive — the single thing this field exists to make unforgeable."
             exit 6
         fi
     done
@@ -931,6 +997,14 @@ rule_passed() {
     [ "$LG_SCORE" -ge "$PASS_SCORE" ] || return 1
     [ "$LG_LAST_VERIFIED" = "1" ] || return 1
     echo "PASSED — last round scored $LG_SCORE (>= $PASS_SCORE). No further round needed."
+    # A checked round and an unchecked one must not report the same thing. SKILL.md
+    # claims the pass says when it was unfloored; without this it did not, and
+    # only `show` carried the information.
+    if [ -z "${LG_LAST_AXES:-}" ] || [ "$LG_LAST_AXES" = "-" ]; then
+        echo "  NOTE: this round declared no rubric axes, so no per-axis cap was applied."
+        echo "  A pass on the total alone cannot tell 2,2,2,1,1 from 2,2,2,2,0."
+        echo "  Record the axes to get the cap: record-round ... --axes=a,b,c,d,e"
+    fi
     return 0
 }
 rule_ceiling() {
@@ -1181,7 +1255,7 @@ record-round)
     N=$(( LG_N + 1 ))
     printf 'ROUND\t%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n' \
         "$N" "$ROUND_SCORE" "$DEFECT" "$(sanitize "$FINGERPRINTS")" "${SETTLES:--}" "$ROUND_STRATA" "$ROUND_VERDICTS" "$ROUND_AXES" >> "$LEDGER"
-    echo "round-budget: recorded round $N (score $SCORE_INT/$LEDGER_SCALE, defect=$DEFECT, settles=${SETTLES:--}, strata=$ROUND_STRATA, verdicts=$ROUND_VERDICTS, axes=$ROUND_AXES) -> $LEDGER"
+    echo "round-budget: recorded round $N (score $EFFECTIVE/$LEDGER_SCALE, defect=$DEFECT, settles=${SETTLES:--}, strata=$ROUND_STRATA, verdicts=$ROUND_VERDICTS, axes=$ROUND_AXES) -> $LEDGER"
     if [ "$ROUND_AXES" != "-" ] && [ "$EFFECTIVE" != "$SCORE_INT" ]; then
         echo "  A rubric axis is ZERO, so the raw total $SCORE_INT/$LEDGER_SCALE was CAPPED to $EFFECTIVE/$LEDGER_SCALE."
         echo "  A zeroed dimension cannot reach the $PASS_SCORE/$LEDGER_SCALE bar on the strength of the others."

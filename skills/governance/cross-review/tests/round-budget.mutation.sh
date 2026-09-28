@@ -645,6 +645,24 @@ mutate "--axes accepted outside record-round" "T108" \
     'if [ "$AXES_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then' \
     'if [ "$AXES_SET" = "1" ] && [ "$COMMAND" = "IMPOSSIBLE" ]; then'
 
+# The forgery door. Found by the cross-vendor stratum: blanking field 9 erases
+# the derivation check, because the read path reads empty as "absent".
+mutate "blanked axes field erases the derivation check" "T109" \
+    '        if [ -z "$vaxes" ]; then' \
+    '        if [ -z "IMPOSSIBLE" ]; then'
+
+# The unfloored-pass note: a checked round and an unchecked one must not report
+# the same thing.
+mutate "unfloored pass does not say so" "T109" \
+    '    if [ -z "${LG_LAST_AXES:-}" ] || [ "$LG_LAST_AXES" = "-" ]; then' \
+    '    if [ -z "IMPOSSIBLE" ]; then'
+
+# The shared parse. One function, two callers -- gutting its length bound must
+# reach the write door.
+mutate "shared axes parse drops its length bound" "T105" \
+    '        if [ "${#a}" -gt 1 ]; then printf '"'"'%s'"'"' -1; exit 0; fi' \
+    '        if [ "${#a}" -gt 99 ]; then printf '"'"'%s'"'"' -1; exit 0; fi'
+
 # NO MUTANT for the `*,0,*` field-vs-substring match in effective_score, and the
 # reason is a finding rather than an omission. Every legal axis is ONE DIGIT
 # (0-2) and load_ledger revalidates every nine-field row before any consumer

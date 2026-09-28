@@ -1499,10 +1499,20 @@ fi
 # ── T101: CONSUMER 1 — rule_passed needs no floor of its own ──────────────
 echo "T101. a floored round does not pass, and the arc is NOT stopped"
 LED=$(newledger t101)
-bash "$RB" record-round --run-id=t101 --ledger="$LED" --score=8/10 --defect=yes --axes=2,2,2,2,0 --stratum=B:8/10:FAIL >/dev/null 2>&1
+# The WRITE status is captured, and the ledger asserted to exist. Discarding it
+# made this test pass against a build with the cap deleted: without the cap the
+# round is an 8/10 over a FAIL stratum, the recorder REFUSES it, the ledger is
+# never created, and `budget` on a missing ledger also returns 0. The assertion
+# held for the wrong reason -- a masked fixture, not a check.
+RC_W=$(rb record-round --run-id=t101 --ledger="$LED" --score=8/10 --defect=yes --axes=2,2,2,2,0 --stratum=B:8/10:FAIL)
+EXISTS=$([ -f "$LED" ] && echo yes || echo no)
+STORED=$(awk -F'\t' '$1=="ROUND"{print $3}' "$LED" 2>/dev/null)
 RC=$(rb budget --run-id=t101 --ledger="$LED")
-if [ "$RC" = "0" ]; then ok "T101: floored round authorizes another round (0), never PASSED (3) and never a STOP (6)"
-else fail "T101: floored round verdict" "exit $RC, want 0"; fi
+if [ "$RC_W" = "0" ] && [ "$EXISTS" = "yes" ] && [ "$STORED" = "6/10" ] && [ "$RC" = "0" ]; then
+    ok "T101: the floored round RECORDS as 6/10 and then authorizes (0) — never PASSED (3), never a STOP (6)"
+else
+    fail "T101: floored round verdict" "write=$RC_W ledger=$EXISTS stored=$STORED budget=$RC (want 0 yes 6/10 0)"
+fi
 
 # ── T102: CONSUMER 2 — the regression compare ─────────────────────────────
 # THE ROUND-4 DEFECT. Under a bolted-on floor the INFLATED total was the
@@ -1511,7 +1521,10 @@ else fail "T101: floored round verdict" "exit $RC, want 0"; fi
 # IS a 6, so a clean 7 is an improvement.
 echo "T102. the honest fix round after a floored round is an improvement, not a regression"
 LED=$(newledger t102)
-bash "$RB" record-round --run-id=t102 --ledger="$LED" --score=8/10 --defect=yes --axes=2,2,2,2,0 --stratum=B:8/10:FAIL >/dev/null 2>&1
+# Captured for the same reason as T101: with the cap gone this write is refused
+# and every later assertion in this test reads an empty ledger.
+RC_W1=$(rb record-round --run-id=t102 --ledger="$LED" --score=8/10 --defect=yes --axes=2,2,2,2,0 --stratum=B:8/10:FAIL)
+STORED1=$(awk -F'\t' '$1=="ROUND"{print $3}' "$LED" 2>/dev/null)
 RC_FIX=$(rb record-round --run-id=t102 --ledger="$LED" --score=7/10 --defect=no --axes=2,2,1,1,1 --stratum=B:7/10:PASS)
 RC=$(rb budget --run-id=t102 --ledger="$LED")
 # Polarity: a REAL regression must still STOP, or this test passes because the
@@ -1524,10 +1537,10 @@ LED2=$(newledger t102b)
 bash "$RB" record-round --run-id=t102b --ledger="$LED2" --score=6/10 --defect=yes --axes=2,1,1,1,1 >/dev/null 2>&1
 bash "$RB" record-round --run-id=t102b --ledger="$LED2" --score=4/10 --defect=yes --axes=1,1,1,1,0 >/dev/null 2>&1
 RC_REAL=$(rb budget --run-id=t102b --ledger="$LED2")
-if [ "$RC_FIX" = "0" ] && [ "$RC" = "3" ] && [ "$RC_REAL" = "6" ]; then
+if [ "$RC_W1" = "0" ] && [ "$STORED1" = "6/10" ] && [ "$RC_FIX" = "0" ] && [ "$RC" = "3" ] && [ "$RC_REAL" = "6" ]; then
     ok "T102: floored 8 -> clean 7 records and PASSES (3); a true 6 -> 4 fall still STOPs (6)"
 else
-    fail "T102: regression compare on derived scores" "fix_write=$RC_FIX after=$RC real_regression=$RC_REAL (want 0 3 6)"
+    fail "T102: regression compare on derived scores" "first_write=$RC_W1 stored1=$STORED1 fix_write=$RC_FIX after=$RC real_regression=$RC_REAL (want 0 6/10 0 3 6)"
 fi
 
 # ── T103: CONSUMER 3 — stratum PASS/FAIL admissibility ────────────────────
@@ -1641,6 +1654,45 @@ if [ "$RC_B" = "2" ] && [ "$RC_S" = "2" ] && [ "$RC_R" = "0" ]; then
     ok "T108: --axes refused on budget and show (2); accepted on record-round (0)"
 else
     fail "T108: --axes scope" "budget=$RC_B show=$RC_S record=$RC_R (want 2 2 0)"
+fi
+
+# ── T109: THE FORGERY — a blank axes field must not erase the derivation ──
+# Found by the cross-vendor stratum. The read path reads an empty field 9 as
+# "absent", so blanking it SKIPS the check that the stored score is the one its
+# axes derive: restore the score to its raw total, blank the axes, and a floored
+# round reads as a pass. The recorder always writes `-`, never a blank, so a
+# blank was written by something else.
+#
+# This is the single thing the whole design rests on — a stored score that its
+# own axes cannot produce — so it gets both polarities and the forged row is
+# built exactly as an editor would build it.
+echo "T109. a blanked axes field fails closed; an explicit '-' still reads as absent"
+LED=$(newledger t109a)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tB\tB:8/10:PASS\t\n' > "$LED"
+RC_FORGED=$(rb budget --run-id=t109a --ledger="$LED")
+# Polarity 1: the literal `-` is a legitimate absence and must still pass.
+LED2=$(newledger t109b)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tB\tB:8/10:PASS\t-\n' > "$LED2"
+RC_DASH=$(rb budget --run-id=t109b --ledger="$LED2")
+# Polarity 2: an eight-field row has no field 9 at all and is untouched by this.
+LED3=$(newledger t109c)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tB\tB:8/10:PASS\n' > "$LED3"
+RC_EIGHT=$(rb budget --run-id=t109c --ledger="$LED3")
+# THE RESIDUAL, asserted rather than left silently true. DELETING field 9 makes
+# a row byte-identical to a legitimate pre-BRO-2636 eight-field row, so no rule
+# can tell them apart and the derivation check is skipped. `NF>=9` for
+# lastverified closes it and breaks TEN existing assertions by stopping every
+# pre-existing ledger from passing -- not worth it, because an agent willing to
+# edit the ledger can simply omit --axes and take the unfloored pass that
+# `budget` announces. This arm pins the behaviour so a later reader finds it
+# stated, and so tightening it later is a deliberate change to a recorded fact.
+OUT_EIGHT=$(rbout budget --run-id=t109c --ledger="$LED3")
+case "$OUT_EIGHT" in *"no rubric axes"*) EIGHT_SAYS=yes ;; *) EIGHT_SAYS=no ;; esac
+if [ "$RC_FORGED" = "6" ] && [ "$RC_DASH" = "3" ] && [ "$RC_EIGHT" = "3" ] && [ "$EIGHT_SAYS" = "yes" ]; then
+    ok "T109: blanked axes STOP (6); explicit '-' and an eight-field row pass (3) and BOTH announce they were unfloored"
+else
+    fail "T109: blank-axes forgery and the deleted-field residual" \
+        "forged=$RC_FORGED dash=$RC_DASH eight=$RC_EIGHT eight_announces=$EIGHT_SAYS (want 6 3 3 yes)"
 fi
 
 echo ""
