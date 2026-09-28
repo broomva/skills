@@ -171,8 +171,8 @@ mutate "unreadable ledger fails open" "T15" \
 # mutation". The hoist made that false -- ordering IS a value now, and declining
 # the proof on an invalidated rationale is how a new shape ships unmutated.
 mutate "PASSED reordered above the stops" "T31" \
-    'PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 passed:3' \
-    'PRECEDENCE="passed:3 regressed:6 refuted:6 nodefect:6 terminal:6'
+    'PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 axis_floor:6 passed:3' \
+    'PRECEDENCE="passed:3 regressed:6 refuted:6 nodefect:6 terminal:6 axis_floor:6'
 # "Only CONTINUE earns" is ONE rule held at TWO sites: rule_unusable_verdict
 # fires first and stops, rule_earned refuses to admit. Gutting either alone
 # leaves T37 green -- which is defence in depth working, and also why the
@@ -182,7 +182,7 @@ mutate "every verdict reads as CONTINUE" "T37" \
     'LG_LAST_VERDICT=$(field "$last" 2)' \
     'LG_LAST_VERDICT=CONTINUE'
 mutate "ROUND arity unchecked" "T38" \
-    'if (NF != 6 && NF != 7 && NF != 8) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
+    'if (NF != 6 && NF != 7 && NF != 8 && NF != 9) { badrow=1 }' 'if (NF != 99) { badrow=0 }'
 # NO mutation for the arity FLOOR, and the reason is a finding rather than an
 # omission. `if (NF != 6 && NF != 7 && NF != 5)` -- widening the check to admit
 # a five-field row -- was written, run, and SURVIVED: a short ROUND row leaves
@@ -574,6 +574,77 @@ mutate "stratum text glob-expanded" "T84" \
     for entry in $verdicts; do' \
     '    IFS=,
     for entry in $verdicts; do'
+
+# ── BRO-2636 (the per-axis floor) ──
+# One mutant per DOOR. The floor is reachable by four independent routes -- the
+# rule itself, its slot in PRECEDENCE, the ordering of that slot, and the three
+# analyze() width tests the ninth field passes through -- and a single mutant
+# that broke two at once would prove nothing about either.
+
+# The rule, neutered at its first guard. Nothing else moves.
+mutate "axis floor never fires" "T85" \
+    '    [ -n "$LG_LAST_AXES" ] && [ "$LG_LAST_AXES" != "-" ] || return 1' \
+    '    return 1'
+
+# The rule fires, but on the wrong predicate: `0` anywhere in the string rather
+# than as a whole field. `2,2,2,1,1` has no zero and must still pass, so a
+# substring match would stop it and T85's positive arm goes red.
+mutate "axis floor matches a substring, not a field" "T85" \
+    '        *,0,*) ;;' \
+    '        *0*) ;;'
+
+# Unwired from PRECEDENCE entirely.
+mutate "axis_floor not in PRECEDENCE" "T85" \
+    'terminal:6 axis_floor:6 passed:3' \
+    'terminal:6 passed:3'
+
+# THE ORDERING CLAIM, on its own. The rule exists, is wired, and still cannot
+# stop anything because `passed` is reached first -- which is the whole reason
+# every other stop sits above `passed`.
+mutate "axis_floor ordered after passed" "T85" \
+    'terminal:6 axis_floor:6 passed:3' \
+    'terminal:6 passed:3 axis_floor:6'
+
+# The arithmetic tie. Without it the axes are decoration beside the score.
+mutate "axes need not sum to the score" "T88" \
+    '    if [ "$sum" != "$want" ]; then' \
+    '    if [ "$sum" = "IMPOSSIBLE" ]; then'
+
+# The count bound.
+mutate "axis count unchecked" "T88" \
+    '    if [ "$n" != "$RUBRIC_AXES" ]; then' \
+    '    if [ "$n" = "IMPOSSIBLE" ]; then'
+
+# The per-axis range bound.
+mutate "axis range unchecked" "T88" \
+    '        if [ "$((10#$a))" -gt "$RUBRIC_AXIS_MAX" ]; then' \
+    '        if [ "$((10#$a))" -gt 99 ]; then'
+
+# The empty-flag door. `--axes=` must not read as "declared none": that is the
+# same trap the panel field documents for `--stratum=`, and it shipped here
+# first time round -- T88 caught it, which is why this mutant exists.
+mutate "empty --axes= treated as absent" "T88" \
+    '        [ -n "$AXES" ] || {' \
+    '        [ -n "IMPOSSIBLE" ] || {'
+
+# The three analyze() width tests the ninth field passes through. Each fails
+# DIFFERENTLY and silently, so each is mutated alone: as `==8` the row reads
+# un-verified, keeps its `/10` in the numeric compare, and classifies as "bare".
+mutate "ninth field un-verifies the row" "T90" \
+    '            lastverified=(NF>=8)' \
+    '            lastverified=(NF==8)'
+mutate "ninth field keeps its scale in the compare" "T90" \
+    '            if (NF>=8) sub(/\/.*/, "", sc)' \
+    '            if (NF==8) sub(/\/.*/, "", sc)'
+mutate "ninth field classifies as bare" "T90" \
+    '            kind=(NF>=8) ? "scaled" : "bare"' \
+    '            kind=(NF==8) ? "scaled" : "bare"'
+
+# The read-time door. round_is_admissible has two callers so the door and the
+# stored artifact cannot disagree; this proves the SECOND caller runs.
+mutate "stored axes never revalidated" "T89" \
+    """awk -F'\t' '$1=="ROUND" && NF>=8')""" \
+    """awk -F'\t' '$1=="ROUND" && NF==0')"""
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
