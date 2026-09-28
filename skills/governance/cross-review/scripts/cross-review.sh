@@ -351,7 +351,7 @@ if [ "$COMMAND" = "pre-push" ]; then
 
     if [ "$SUBSTANTIVE" = "0" ]; then
         echo "  [info] Diff below substantive threshold (<=200 LOC AND <=3 files)."
-        echo "         Gate is OPTIONAL but not forbidden. Pass --force to fire anyway."
+        echo "         Gate is OPTIONAL but not forbidden. Set FORCE_GATE=1 to fire anyway."
         echo ""
         if [ "${FORCE_GATE:-0}" != "1" ]; then
             echo "  [skip] Trivial PR — gate not required by P20 reflexive trigger."
