@@ -297,6 +297,12 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
         )
     target_email = email or detected_email
 
+    orca = get_orca_data()
+    managed = orca.get("settings", {}).get("claudeManagedAccounts", [])
+    matching_acc = next((a for a in managed if a.get("email", "").lower() == target_email.lower()), None)
+    if matching_acc and matching_acc.get("organizationUuid"):
+        org_uuid = matching_acc.get("organizationUuid")
+
     if not org_uuid:
         raise RuntimeError(f"No organization UUID resolved for session ({detected_email}).")
 
@@ -346,27 +352,27 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
     if profile:
         approve_cmd.append(profile)
 
-    appr_res = run_cmd(approve_cmd)
-    if appr_res.returncode != 0:
-        proc.kill()
-        proc.communicate()
-        raise RuntimeError(f"Autonomous OAuth approval failed: {appr_res.stderr}")
+    appr_res = run_cmd(approve_cmd, check=False)
+    formatted_code = None
+    if appr_res.returncode == 0:
+        try:
+            appr_data = json.loads(appr_res.stdout)
+            formatted_code = appr_data.get("formattedInput")
+        except json.JSONDecodeError:
+            pass
 
-    appr_data = json.loads(appr_res.stdout)
-    formatted_code = appr_data.get("formattedInput")
-    if not formatted_code:
-        proc.kill()
-        proc.communicate()
-        raise RuntimeError("No formatted authorization code returned.")
+    if formatted_code:
+        sys.stdout.write(f"[*] Authorization code obtained autonomously. Injecting into login process...\n")
+        proc.stdin.write(f"{formatted_code}\n")
+        proc.stdin.flush()
+    else:
+        err_msg = appr_res.stderr.strip() if appr_res else "No code returned"
+        sys.stdout.write(f"[*] Autonomous grant approval unavailable ({err_msg}).\n")
+        sys.stdout.write(f"[*] Local listener active; waiting up to 90s for browser sign-in completion...\n")
 
-    sys.stdout.write(f"[*] Authorization code obtained. Injecting into login process...\n")
-
-    # 4. Inject formatted code into claude process
-    proc.stdin.write(f"{formatted_code}\n")
-    proc.stdin.flush()
-
+    # 4. Wait for login process to complete (either via injected code or browser redirect callback)
     try:
-        stdout_rem, stderr_rem = proc.communicate(timeout=15)
+        stdout_rem, stderr_rem = proc.communicate(timeout=90)
     except subprocess.TimeoutExpired:
         proc.kill()
         proc.communicate()
