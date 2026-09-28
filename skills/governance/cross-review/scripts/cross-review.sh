@@ -519,8 +519,10 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "        defect as dispatching Strata B as 'general-purpose')"
         echo "    3. Parse Codex's response: score (0-10) + reasoning per rubric dim"
         echo "    4. If score >=7 AND no dimension scored 0: pass (echo verdict, exit 0)"
-        echo "    5. If score <7: fix the deductions, rescore, then drive the round"
-        echo "       budget (printed above, and identical for every stratum)."
+        echo "    5. Otherwise — score <7, OR any dimension at 0 — fix the deductions,"
+        echo "       rescore, then drive the round budget (printed above, and identical"
+        echo "       for every stratum). A round at >=7 WITH a zero is refused by step 4"
+        echo "       and lands here: the zero is the deduction to fix."
         echo ""
         echo "  (This script enforces the structure; the agent runs the Codex call)"
     fi

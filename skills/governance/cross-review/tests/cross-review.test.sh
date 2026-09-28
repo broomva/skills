@@ -616,6 +616,30 @@ else
     fail "S-RULE: a surface states the bar without the zero clause" "$SRULE_BAD"
 fi
 
+# ── S-LOOP: every arm's fix instruction covers what its pass rule refuses ──
+# Step 4 refuses a round at >=7 with a zero. If step 5 only says "if score <7",
+# that round matches NEITHER and the agent is given no instruction for the exact
+# state this change introduces. The Strata-B arm folded both into one sentence
+# and was fine; the Strata-A arm kept a bare `<7` and was not. Found by review
+# after the pass rule itself had been fixed in five places -- the COMPLEMENT of a
+# rule is a surface too.
+echo "S-LOOP. no arm's fix-rescore instruction is narrower than its pass rule"
+SLOOP_BAD=""
+while IFS= read -r ln; do
+    n=${ln%%:*}
+    window=$(sed -n "${n},$((n+3))p" "$CROSS_REVIEW_SH" | tr '\n' ' ')
+    case "$window" in
+        *"dimension at 0"*|*"dimension scored 0"*|*"any dimension"*|*"with a zero"*|*"zero"*) continue ;;
+    esac
+    SLOOP_BAD="$SLOOP_BAD
+    $ln"
+done < <(grep -nE 'If score <7|score <7:|<7: fix|<7 fix' "$CROSS_REVIEW_SH" 2>/dev/null || true)
+if [ -z "$SLOOP_BAD" ]; then
+    ok "S-LOOP: every fix-rescore instruction covers the zero case its pass rule refuses"
+else
+    fail "S-LOOP: a fix instruction is narrower than its pass rule" "$SLOOP_BAD"
+fi
+
 echo ""
 echo "── results ────────────────────────────────────────────────────"
 echo "  $PASS passed, $FAIL failed"
