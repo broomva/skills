@@ -469,7 +469,18 @@ fi
 # would go unproven -- the first rewrite of this fixture did exactly that.
 echo "T38. a wrong-arity ROUND row fails closed"
 LED=$(newledger t38)
-printf 'ROUND\t1\t5\tyes\t\t-\tA\t-\tEXTRA\n' > "$LED"
+# TEN fields, not nine. BRO-2636 made NF=9 a LEGAL arity (the rubric axes), and
+# this fixture was left at nine -- so the arity check could be gutted entirely
+# and T38 stayed green. The anchor was updated with that change and the fixture
+# was not, which is the whole failure: a mutant that still applies against a
+# fixture that no longer discriminates reports a false KILL.
+# The score is SCALED and the axes are VALID on purpose. A bare `5` here is
+# rejected by the scale check inside round_is_admissible before arity is ever
+# consulted, so the arity mutant survives against it -- which is the trap this
+# fixture's own note above describes, and which the first rewrite of it for
+# BRO-2636 walked straight into. Every field but the tenth must be something the
+# recorder would accept, so ARITY is the only thing left that can reject it.
+printf 'ROUND\t1\t5/10\tyes\t\t-\tA\tA:5/10:FAIL\t2,2,1,0,0\tEXTRA\n' > "$LED"
 RC=$(rb budget --run-id=t38 --ledger="$LED")
 if [ "$RC" = "6" ]; then ok "T38: extra-field ROUND row STOPs"; else fail "T38: ROUND arity" "exit $RC, want 6"; fi
 
@@ -1464,13 +1475,16 @@ else
     fail "T84: glob in --stratum" "glob=$RC_GLOB (want 2) plain=$RC_OK (want 0)"
 fi
 
-# ── T85: THE MOTIVATING CASE — a zero axis does not pass on the sum ────────
+# ── T85: THE MOTIVATING CASE — a zero axis withholds the pass ─────────────
 # `2+2+2+2+0 = 8` cleared the >=7 bar with rubric dimension 5 ("Tests cover the
 # change") at zero. Both arms carry the SAME score, the same panel and the same
-# verdict; the only thing that differs is where the two missing points sit. If
-# the floor keyed on the score, on the presence of --axes, or on anything but
-# the zero, the two arms would agree and this test could not tell them apart.
-echo "T85. a zero rubric axis STOPs at a passing sum; the same sum without a zero PASSES"
+# verdict; only the placement of the two missing points differs. If the floor
+# keyed on the score, on the presence of --axes, or on anything but the zero,
+# the arms would agree and this test could not tell them apart.
+#
+# The floor WITHHOLDS THE PASS (exit 0, arc continues). It is not a stop. Review
+# round 1 shipped it as an absorbing stop and that was backwards -- see T92.
+echo "T85. a zero rubric axis withholds the pass; the same sum without a zero PASSES"
 LED=$(newledger t85a)
 RC_ZERO_W=$(rb record-round --run-id=t85a --ledger="$LED" --score=8/10 \
     --stratum=A:8/10:PASS --defect=yes --axes=2,2,2,2,0)
@@ -1481,53 +1495,95 @@ RC_SPREAD_W=$(rb record-round --run-id=t85b --ledger="$LED2" --score=8/10 \
 RC_SPREAD_B=$(rb budget --run-id=t85b --ledger="$LED2")
 # The zero must be RECORDED (write 0), not refused: refusing it would price an
 # honest 2,2,2,2,0 above a dishonest 2,2,2,1,1 and teach the reviewer to inflate.
-if [ "$RC_ZERO_W" = "0" ] && [ "$RC_ZERO_B" = "6" ] && \
+if [ "$RC_ZERO_W" = "0" ] && [ "$RC_ZERO_B" = "0" ] && \
    [ "$RC_SPREAD_W" = "0" ] && [ "$RC_SPREAD_B" = "3" ]; then
-    ok "T85: 2,2,2,2,0 records then STOPs (6); 2,2,2,1,1 at the same 8/10 PASSES (3)"
+    ok "T85: 2,2,2,2,0 records then withholds the pass (0); 2,2,2,1,1 at the same 8/10 PASSES (3)"
 else
     fail "T85: per-axis floor" \
-        "zero_write=$RC_ZERO_W zero_budget=$RC_ZERO_B spread_write=$RC_SPREAD_W spread_budget=$RC_SPREAD_B (want 0 6 0 3)"
+        "zero_write=$RC_ZERO_W zero_budget=$RC_ZERO_B spread_write=$RC_SPREAD_W spread_budget=$RC_SPREAD_B (want 0 0 0 3)"
 fi
 
-# ── T86: the floor names the zero, and says so in the stop text ───────────
-# An exit code alone cannot distinguish this stop from the four that share code
-# 6. A reader who cannot tell which rule fired cannot act on it.
-echo "T86. the axis-floor stop is attributable in its own output"
-OUT=$(rbout budget --run-id=t85a --ledger="$(newledger t85a)")
+# ── T86: the withheld pass says why, and the remedy it prints WORKS ────────
+# An exit code alone cannot distinguish a withheld pass from an ordinary
+# authorized round -- both are 0. A reader who cannot tell which applies cannot
+# act. And the instruction has to be CARRYABLE: round 1 printed "fix the zeroed
+# dimension and rescore" from an absorbing stop that then refused the very
+# append it demanded, which is a dead end wearing the costume of guidance.
+echo "T86. the withheld pass is attributable, and its printed remedy is accepted"
 LED=$(newledger t86)
 bash "$RB" record-round --run-id=t86 --ledger="$LED" --score=8/10 \
     --stratum=A:8/10:PASS --defect=yes --axes=2,2,2,2,0 >/dev/null 2>&1
 OUT=$(rbout budget --run-id=t86 --ledger="$LED")
+# The remedy: fix the zeroed dimension, record again.
+RC_REMEDY=$(rb record-round --run-id=t86 --ledger="$LED" --score=9/10 \
+    --stratum=A:9/10:PASS --defect=yes --axes=2,2,2,2,1)
+RC_AFTER=$(rb budget --run-id=t86 --ledger="$LED")
 case "$OUT" in
-    *"rubric axis at ZERO"*"2,2,2,2,0"*) ok "T86: the stop names the rule and prints the axes" ;;
-    *) fail "T86: axis-floor stop text" "got: $(printf '%s' "$OUT" | head -2)" ;;
+    *"rubric axis is ZERO"*"2,2,2,2,0"*"NOT stopped"*) ATTR=yes ;;
+    *) ATTR=no ;;
 esac
+if [ "$ATTR" = "yes" ] && [ "$RC_REMEDY" = "0" ] && [ "$RC_AFTER" = "3" ]; then
+    ok "T86: names the rule, prints the axes, and the fix round it demands is accepted then PASSES"
+else
+    fail "T86: withheld-pass text and remedy" \
+        "attributed=$ATTR remedy_write=$RC_REMEDY after=$RC_AFTER (want yes 0 3); got: $(printf '%s' "$OUT" | head -2)"
+fi
 
 # ── T87: absence is advisory, not fatal (backward compatibility) ───────────
 # Making --axes mandatory would fail closed on every ledger written before the
-# field existed. The cost of that choice is that an unfloored pass exists, so
-# the pass must SAY it is unfloored -- otherwise the gate silently reports the
-# same thing for a checked round and an unchecked one.
+# field existed. The cost is that an unfloored pass exists, so the pass must SAY
+# it is unfloored -- a checked round and an unchecked one must not read alike.
 echo "T87. a round with no --axes still passes, and the pass declares itself unfloored"
 LED=$(newledger t87)
 RC_W=$(rb record-round --run-id=t87 --ledger="$LED" --score=8/10 --stratum=A:8/10:PASS --defect=yes)
 RC_B=$(rb budget --run-id=t87 --ledger="$LED")
 OUT=$(rbout budget --run-id=t87 --ledger="$LED")
-# Polarity: the note must be ABSENT when axes were given, or it is just noise
-# printed on every pass and tells the reader nothing.
-OUT_FLOORED=$(rbout budget --run-id=t85b --ledger="$(newledger t85b)")
-case "$OUT$OUT_FLOORED" in
-    *"no rubric axes"*) NOTE=yes ;;
-    *) NOTE=no ;;
-esac
-case "$OUT_FLOORED" in
-    *"no rubric axes"*) NOTE_LEAKED=yes ;;
-    *) NOTE_LEAKED=no ;;
-esac
-if [ "$RC_W" = "0" ] && [ "$RC_B" = "3" ] && [ "$NOTE" = "yes" ] && [ "$NOTE_LEAKED" = "no" ]; then
-    ok "T87: unfloored pass still passes (3), says so; the note does not leak onto a floored pass"
+# Polarity, on a fixture built HERE. Round 1 borrowed T85's ledger id through
+# `newledger`, which returns a PATH and does not create it -- so the arm was
+# satisfied by a file that did not exist, and passed for the absence of any
+# floored pass rather than for the note not leaking onto one.
+LED_F=$(newledger t87floored)
+bash "$RB" record-round --run-id=t87floored --ledger="$LED_F" --score=8/10 \
+    --stratum=A:8/10:PASS --defect=yes --axes=2,2,2,1,1 >/dev/null 2>&1
+OUT_FLOORED=$(rbout budget --run-id=t87floored --ledger="$LED_F")
+case "$OUT_FLOORED" in *"PASSED"*) FLOORED_PASSED=yes ;; *) FLOORED_PASSED=no ;; esac
+case "$OUT" in *"no rubric axes"*) NOTE=yes ;; *) NOTE=no ;; esac
+case "$OUT_FLOORED" in *"no rubric axes"*) NOTE_LEAKED=yes ;; *) NOTE_LEAKED=no ;; esac
+if [ "$RC_W" = "0" ] && [ "$RC_B" = "3" ] && [ "$NOTE" = "yes" ] && \
+   [ "$NOTE_LEAKED" = "no" ] && [ "$FLOORED_PASSED" = "yes" ]; then
+    ok "T87: unfloored pass passes (3) and says so; the note does not leak onto a REAL floored pass"
 else
-    fail "T87: advisory absence" "write=$RC_W budget=$RC_B note=$NOTE leaked=$NOTE_LEAKED (want 0 3 yes no)"
+    fail "T87: advisory absence" \
+        "write=$RC_W budget=$RC_B note=$NOTE leaked=$NOTE_LEAKED floored_passed=$FLOORED_PASSED (want 0 3 yes no yes)"
+fi
+
+# ── T92: THE ROUND-1 REGRESSION — a sub-passing round is not a stop ────────
+# Shipped-and-caught: the floor fired at EVERY score as an absorbing exit 6. A
+# 4/10 round is `2,2,0,0,0` or similar by arithmetic necessity, so every ordinary
+# early round that declared its axes burned the arc, while the same round with
+# the flag omitted was AUTHORIZED -- the honest reviewer punished, the silent one
+# untouched. The rubric's own "LOOP: <7 -> fix the deductions -> rescore" was
+# unreachable. Asserted at three sub-passing scores because the defect was in the
+# MISSING score guard, not in one value.
+echo "T92. a sub-passing round with zeroed axes authorizes, exactly as without them"
+T92_BAD=""
+for pair in "4/10:2,2,0,0,0" "2/10:2,0,0,0,0" "6/10:2,2,2,0,0"; do
+    sc=${pair%%:*}; ax=${pair#*:}
+    LEDA=$(newledger "t92a${sc%%/*}")
+    bash "$RB" record-round --run-id="t92a${sc%%/*}" --ledger="$LEDA" --score="$sc" --defect=yes --axes="$ax" >/dev/null 2>&1
+    RCA=$(rb budget --run-id="t92a${sc%%/*}" --ledger="$LEDA")
+    LEDB=$(newledger "t92b${sc%%/*}")
+    bash "$RB" record-round --run-id="t92b${sc%%/*}" --ledger="$LEDB" --score="$sc" --defect=yes >/dev/null 2>&1
+    RCB=$(rb budget --run-id="t92b${sc%%/*}" --ledger="$LEDB")
+    # The claim is EQUALITY with the no-axes path, not merely "not 6": declaring
+    # axes must not change the verdict of a round the floor has no business
+    # touching.
+    [ "$RCA" = "$RCB" ] && [ "$RCA" = "0" ] || T92_BAD="$T92_BAD $sc(axes=$RCA,none=$RCB)"
+done
+if [ -z "$T92_BAD" ]; then
+    ok "T92: 2/10, 4/10 and 6/10 with zeroed axes each authorize, identically to the same round without axes"
+else
+    fail "T92: sub-passing rounds must not be stopped by the floor" "mismatches:$T92_BAD (want each 0/0)"
 fi
 
 # ── T88: axis SHAPE is refused at write, and nothing is written ────────────
@@ -1547,15 +1603,21 @@ RC_TRAIL=$(rb record-round --run-id=t88 --ledger="$LED" --score=8/10 --stratum=A
 RC_EMPTY=$(rb record-round --run-id=t88 --ledger="$LED" --score=8/10 --stratum=A:8/10:PASS --defect=yes --axes=)
 # The arithmetic tie: axes that do not sum to the score make the field decoration.
 RC_SUM=$(rb   record-round --run-id=t88 --ledger="$LED" --score=8/10 --stratum=A:8/10:PASS --defect=yes --axes=2,2,2,2,2)
+# THE OVERFLOW ARM. `$((10#$a))` WRAPS on a long digit run: 10#18446744073709551616
+# evaluates to 0, so this axis summed as zero, satisfied the sum check at 8/10,
+# and the floor's string match then never saw a `0` -- reproducing the exact
+# 2+2+2+2+0=8 incident THROUGH THE NEW CODE. The bound is on LENGTH, asserted
+# before any arithmetic touches the value.
+RC_WRAP=$(rb  record-round --run-id=t88 --ledger="$LED" --score=8/10 --stratum=A:8/10:PASS --defect=yes --axes=18446744073709551616,2,2,2,2)
 WROTE=$([ -f "$LED" ] && echo yes || echo no)
 RC_OK=$(rb    record-round --run-id=t88 --ledger="$LED" --score=8/10 --stratum=A:8/10:PASS --defect=yes --axes=2,2,2,1,1)
 if [ "$RC_FEW" = "2" ] && [ "$RC_MANY" = "2" ] && [ "$RC_HIGH" = "2" ] && [ "$RC_NEG" = "2" ] && \
    [ "$RC_ALPHA" = "2" ] && [ "$RC_LEAD" = "2" ] && [ "$RC_TRAIL" = "2" ] && [ "$RC_EMPTY" = "2" ] && \
-   [ "$RC_SUM" = "2" ] && [ "$WROTE" = "no" ] && [ "$RC_OK" = "0" ]; then
-    ok "T88: few/many/high/neg/alpha/leading-zero/trailing/empty/sum-mismatch refused, nothing written, 2,2,2,1,1 accepted"
+   [ "$RC_SUM" = "2" ] && [ "$RC_WRAP" = "2" ] && [ "$WROTE" = "no" ] && [ "$RC_OK" = "0" ]; then
+    ok "T88: few/many/high/neg/alpha/leading-zero/trailing/empty/sum-mismatch/overflow refused, nothing written, 2,2,2,1,1 accepted"
 else
     fail "T88: axis write validation" \
-        "few=$RC_FEW many=$RC_MANY high=$RC_HIGH neg=$RC_NEG alpha=$RC_ALPHA lead=$RC_LEAD trail=$RC_TRAIL empty=$RC_EMPTY sum=$RC_SUM wrote=$WROTE ok=$RC_OK (want 2 x9 no 0)"
+        "few=$RC_FEW many=$RC_MANY high=$RC_HIGH neg=$RC_NEG alpha=$RC_ALPHA lead=$RC_LEAD trail=$RC_TRAIL empty=$RC_EMPTY sum=$RC_SUM wrap=$RC_WRAP wrote=$WROTE ok=$RC_OK (want 2 x10 no 0)"
 fi
 
 # ── T89: the axes are checked at READ time too ─────────────────────────────
@@ -1571,7 +1633,8 @@ LED2=$(newledger t89b)
 printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\t9,9,9,9,9\n' > "$LED2"
 RC_BADRANGE=$(rb budget --run-id=t89b --ledger="$LED2")
 # A hand-written row with a ZERO axis is well-formed -- it must not fail closed
-# as corrupt, it must STOP as a floor. Different code, different meaning.
+# as corrupt (6); it must WITHHOLD THE PASS (0). Different code, different
+# meaning, and the difference is whether the arc can continue.
 LED3=$(newledger t89c)
 printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\t2,2,2,2,0\n' > "$LED3"
 RC_FLOOR=$(rb budget --run-id=t89c --ledger="$LED3")
@@ -1580,11 +1643,11 @@ RC_FLOOR=$(rb budget --run-id=t89c --ledger="$LED3")
 LED4=$(newledger t89d)
 printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\t2,2,2,1,1\n' > "$LED4"
 RC_GOOD=$(rb budget --run-id=t89d --ledger="$LED4")
-if [ "$RC_BADSUM" = "6" ] && [ "$RC_BADRANGE" = "6" ] && [ "$RC_FLOOR" = "6" ] && [ "$RC_GOOD" = "3" ]; then
-    ok "T89: stored bad-sum/out-of-range axes fail closed; a stored zero STOPs; a clean row PASSES"
+if [ "$RC_BADSUM" = "6" ] && [ "$RC_BADRANGE" = "6" ] && [ "$RC_FLOOR" = "0" ] && [ "$RC_GOOD" = "3" ]; then
+    ok "T89: stored bad-sum/out-of-range axes fail closed (6); a stored zero withholds the pass (0); a clean row PASSES (3)"
 else
     fail "T89: read-time axis validation" \
-        "badsum=$RC_BADSUM badrange=$RC_BADRANGE floor=$RC_FLOOR good=$RC_GOOD (want 6 6 6 3)"
+        "badsum=$RC_BADSUM badrange=$RC_BADRANGE floor=$RC_FLOOR good=$RC_GOOD (want 6 6 0 3)"
 fi
 
 # ── T90: a nine-field row is still a VERIFIED, SCALED row ──────────────────
@@ -1597,7 +1660,13 @@ fi
 # broke is one that cannot direct a fix.
 echo "T90. the ninth field does not un-verify, un-scale, or un-date a row"
 LED=$(newledger t90)
-printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\t2,2,2,1,1\n' > "$LED"
+# TWO rows, and the second is the nine-field one. "bare-integer round follows a
+# scaled one" is a TRANSITION, so a single-row fixture cannot observe it: with
+# one row there is no `prevkind` to disagree with, and the kind mutant survived
+# against exactly that. An eight-field row first establishes "scaled"; if the
+# nine-field row then classifies as "bare", the history error fires.
+printf 'ROUND\t1\t7/10\tyes\t\t-\tA\tA:7/10:PASS\n' > "$LED"
+printf 'ROUND\t2\t8/10\tyes\t\t-\tA\tA:8/10:PASS\t2,2,2,1,1\n' >> "$LED"
 OUT=$(rbout budget --run-id=t90 --ledger="$LED")
 case "$OUT" in *"PASSED"*) V=ok ;; *) V=broken ;; esac          # lastverified
 case "$OUT" in *"out of range"*|*"non-integer"*) SC=broken ;; *) SC=ok ;; esac
@@ -1626,6 +1695,29 @@ if [ "$RC6" = "0" ] && [ "$RC7" = "0" ] && [ "$RC8" = "3" ] && [ "$RC10" = "6" ]
     ok "T91: 6/7-field authorize (0), 8-field passes (3), a 10-field row fails closed (6)"
 else
     fail "T91: legacy row widths" "six=$RC6 seven=$RC7 eight=$RC8 ten=$RC10 (want 0 0 3 6)"
+fi
+
+# ── T93: a BLANK field 9 is not a legitimate absence ──────────────────────
+# The recorder always writes `-` when a round declares no axes, so a blank field
+# 9 was written by something else. Before this, the gate read it as "no axes
+# declared" and PASSED while `show` rendered the same bytes as MALFORMED -- two
+# readings of one row, which is the condition fields 7 and 8 already refuse.
+# Polarity: the literal `-` must still be a legitimate absence, or "blank fails
+# closed" is indistinguishable from "every nine-field row fails closed".
+echo "T93. a blank rubric-axes field fails closed; the literal '-' does not"
+LED=$(newledger t93a)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\t\n' > "$LED"
+RC_BLANK=$(rb budget --run-id=t93a --ledger="$LED")
+LED2=$(newledger t93b)
+printf 'ROUND\t1\t8/10\tyes\t\t-\tA\tA:8/10:PASS\t-\n' > "$LED2"
+RC_DASH=$(rb budget --run-id=t93b --ledger="$LED2")
+OUT_DASH=$(rbout budget --run-id=t93b --ledger="$LED2")
+case "$OUT_DASH" in *"no rubric axes"*) DASH_NOTE=yes ;; *) DASH_NOTE=no ;; esac
+if [ "$RC_BLANK" = "6" ] && [ "$RC_DASH" = "3" ] && [ "$DASH_NOTE" = "yes" ]; then
+    ok "T93: blank field 9 STOPs (6); an explicit '-' passes (3) and reports itself unfloored"
+else
+    fail "T93: blank vs explicit-absent axes" \
+        "blank=$RC_BLANK dash=$RC_DASH dash_note=$DASH_NOTE (want 6 3 yes)"
 fi
 
 echo ""

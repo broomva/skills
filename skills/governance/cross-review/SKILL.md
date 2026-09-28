@@ -459,9 +459,9 @@ degrades to B+C — both the same model as the writer, same vendor — and
 completely, so the round ledger records the panel alongside the score:
 
 ```bash
-cross-review round record-round --run-id=$ARC --score=5/10 --defect=yes --strata=<actual>
-cross-review round record-round --run-id=$ARC --score=6/10 --defect=yes        # panel not stated
-cross-review round record-round --run-id=$ARC --score=7/10 --defect=no  --stratum=C:7/10:PASS
+cross-review round record-round --run-id=$ARC --score=5/10 --axes=2,1,1,1,0 --defect=yes --strata=<actual>
+cross-review round record-round --run-id=$ARC --score=6/10 --defect=yes        # panel not stated, no axes -> unfloored
+cross-review round record-round --run-id=$ARC --score=7/10 --axes=2,2,1,1,1 --defect=no  --stratum=C:7/10:PASS
 
 cross-review round show --run-id=$ARC
 #   round 1   score 5/10  defect=yes  settles=-          strata=A,B,C          [verdicts: none]
@@ -596,7 +596,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 
 1. **Before pushing any substantive PR** — fire `cross-review pre-push`. State the strata + score in the response.
 1b. **When the PR claims test coverage for a fix** — mutation-prove it. "I added a test" is a claim; `verdict=PROVEN` is evidence. Report the verdict either way; UNPROVEN does not block, it obliges an answer.
-2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore, and record the round: `cross-review round record-round --run-id=$ID --score=N/10 --defect=yes|no --stratum=L:N/10:PASS|FAIL ...` (one `--stratum` per stratum that scored; `--strata=<actual>` is accepted instead only for a failing round), where the letters are the panel that really produced the score — `A,C` when Codex ran, `B,C` when it did not, `C` alone when only the composed skills did. Writing `A,B,C` out of habit is the failure this field exists to prevent. Ask `cross-review round budget` before starting another; past round 3 it will require a continuation verdict.
+2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore, and record the round: `cross-review round record-round --run-id=$ID --score=N/10 --axes=a,b,c,d,e --defect=yes|no --stratum=L:N/10:PASS|FAIL ...` (one `--stratum` per stratum that scored; `--strata=<actual>` is accepted instead only for a failing round), where the letters are the panel that really produced the score — `A,C` when Codex ran, `B,C` when it did not, `C` alone when only the composed skills did. Writing `A,B,C` out of habit is the failure this field exists to prevent. Ask `cross-review round budget` before starting another; past round 3 it will require a continuation verdict.
 2b. **When the budget returns REVIEW-REQUIRED (exit 5)** — run the continuation review on *the decision to continue*, against a STOP default. `CONTINUE` obliges a falsifiable prediction that the next round settles; two refuted in a row end the loop regardless of score.
 3. **When the writer is the only model in the loop** — STOP. Strata B at minimum is mandatory.
 4. **When tempted to skip "this PR is small enough"** — apply the substantive-threshold test (>200 LOC OR public API OR multi-file OR governance-class).

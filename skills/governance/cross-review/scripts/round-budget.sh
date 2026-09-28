@@ -410,6 +410,16 @@ axes_are_valid() (
         # zero ('02') is a different string for the same value and the ledger
         # stores strings.
         case "$a" in 0?*) echo "axis $n ('$a') has a leading zero"; exit 1 ;; esac
+        # LENGTH BEFORE ARITHMETIC. `$((10#$a))` wraps on a long digit run:
+        # 10#18446744073709551616 evaluates to 0, so an axis of that string
+        # summed as ZERO, satisfied the sum check, and then the floor's string
+        # match never saw a `0` -- reproducing the exact 2+2+2+2+0=8 incident
+        # through the new code. Every legal axis is one digit because
+        # RUBRIC_AXIS_MAX is 2, so the bound is length 1, asserted before any
+        # arithmetic touches the value.
+        if [ "${#a}" -gt 1 ]; then
+            echo "axis $n ('$a') is longer than one digit; every axis is 0-$RUBRIC_AXIS_MAX"; exit 1
+        fi
         if [ "$((10#$a))" -gt "$RUBRIC_AXIS_MAX" ]; then
             echo "axis $n ('$a') is above the per-axis maximum of $RUBRIC_AXIS_MAX"; exit 1
         fi
@@ -455,11 +465,19 @@ round_is_admissible() (
     if ! err=$(score_is_valid "$rscore"); then echo "round score: $err"; exit 1; fi
     score=$((10#${rscore%%/*}))
     # The rubric axes (BRO-2636), when the round declares them. Shape and
-    # arithmetic only: a zero axis is RECORDED here and stopped by
-    # rule_axis_floor at `budget`. Refusing the write would price an honest
-    # 2,2,2,2,0 higher than a dishonest 2,2,2,1,1 -- the reviewer escapes by
-    # inflating one number, and the gate has taught it to lie. A stop the
-    # reviewer cannot buy off with a keystroke has to sit after the write.
+    # arithmetic only: a zero axis is RECORDED here, and the pass is withheld
+    # from it by rule_passed at `budget`. Refusing the write would price an
+    # honest 2,2,2,2,0 higher than a dishonest 2,2,2,1,1.
+    #
+    # An earlier draft claimed this placement made the floor "a stop the
+    # reviewer cannot buy off with a keystroke". That was FALSE, and review
+    # round 1 proved it: the reviewer authors the score AND the axes, and every
+    # passing total has a zero-free partition -- 10 of them at 7/10, 10 at 8/10,
+    # 5 at 9/10, 1 at 10/10. Nothing here can make the floor unbuyable, because
+    # both numbers come from the same author. What recording rather than
+    # refusing buys is narrower and worth stating exactly: a reviewer who
+    # declares a zero is not punished for the honesty, so the admission costs
+    # nothing to make and the artifact keeps it.
     if [ "$axes" != "-" ]; then
         if ! err=$(axes_are_valid "$axes" "$score"); then echo "rubric axes: $err"; exit 1; fi
     fi
@@ -790,6 +808,37 @@ load_ledger() {
     set +f
     IFS=$old_ifs
 
+    # Field 9, the rubric axes, by the same "A:" prefix trick field 7 uses and
+    # for the same reason: an EMPTY field survives as a line rather than
+    # vanishing under word splitting. A blank field 9 is the value that must not
+    # slip through -- the recorder ALWAYS writes `-` when no axes were declared,
+    # so a blank one was written by something else, and the gate read it as a
+    # legitimate absence (PASSED, "no per-axis floor was applied") while `show`
+    # rendered the same bytes as MALFORMED. Two readings of one row is the
+    # condition fields 7 and 8 already refuse.
+    local axrows axrow vaxes
+    if ! axrows=$(read_rows | awk -F'\t' '$1=="ROUND" && NF>=9 {print "A:" $9}'); then
+        echo "STOP — could not read the ROUND rows of $LEDGER to validate them."
+        exit 6
+    fi
+    old_ifs=$IFS
+    IFS='
+'
+    set -f
+    for axrow in $axrows; do
+        vaxes=${axrow#A:}
+        if [ -z "$vaxes" ]; then
+            set +f; IFS=$old_ifs
+            echo "STOP — a ROUND row in $LEDGER carries a BLANK rubric-axes field."
+            echo "  The recorder writes '-' when a round declares no axes, never a"
+            echo "  blank, so nothing wrote this. A blank cannot be told apart from"
+            echo "  'no axes declared', and those must not read alike."
+            exit 6
+        fi
+    done
+    set +f
+    IFS=$old_ifs
+
     # Field 8, the per-stratum verdicts, against the SAME predicate the recorder
     # applies. A hand-edited `A:7/15:PASS` is the incident this exists for.
     local vrows vrow verr
@@ -844,7 +893,7 @@ refuse_past_terminal() {
 # ONE source of truth for both the ORDER and the EXIT CODE. Keeping names in
 # a list and codes in a separate `case` wrote each rule in three places —
 # list, function name, case arm — which could disagree.
-PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 axis_floor:6 passed:3 ceiling:7 free:0 unusable_verdict:6 review_required:5 earned:0"
+PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 passed:3 ceiling:7 free:0 unusable_verdict:6 review_required:5 earned:0"
 
 rule_regressed() {
     [ "$LG_REGRESSED" != "0" ] || return 1
@@ -884,31 +933,37 @@ rule_terminal() {
 # The per-axis floor (BRO-2636). The rubric is five dimensions at two points
 # each summed to ten, and `2+2+2+2+0 = 8` cleared the >=7 bar with "Tests cover
 # the change" -- the one dimension SKILL.md calls machine-checkable -- at zero.
-# A sum does not record which axes produced it, so nothing downstream could see
-# the zero either.
 #
-# Placed BEFORE `passed` in PRECEDENCE for the reason every other stop is: the
-# score is the agent's own self-report, so a stop reachable only after a pass
-# has already been granted is not a stop.
+# It WITHHOLDS THE PASS; it is not a stop. Review round 1 shipped it as an
+# absorbing stop in PRECEDENCE and that was backwards in two ways at once:
 #
-# It fires only on a round that DECLARED its axes. A round that declares none is
-# not blocked -- see the note in rule_passed about what that costs.
-rule_axis_floor() {
-    [ -n "$LG_LAST_AXES" ] && [ "$LG_LAST_AXES" != "-" ] || return 1
+#   - it fired at EVERY score, so an ordinary 4/10 round -- which is 2,2,0,0,0
+#     or similar by arithmetic necessity -- became an absorbing exit 6 and burned
+#     the arc, while the same round with the flag omitted was AUTHORIZED. The
+#     honest reviewer lost the round budget; the silent one did not.
+#   - the remedy it printed ("fix the zeroed dimension and rescore") was then
+#     refused by the recorder, because a code in arc_closed_code closes the arc.
+#     A stop whose own instruction cannot be carried out is a dead end.
+#
+# Withholding the pass instead lets the precedence fall through to the ordinary
+# budget rules (ceiling, free, earned), which is exactly the "LOOP: <7 -> fix the
+# specific deductions -> rescore" the rubric already documents. The reason is
+# printed by decide_and_exit, because a rule that returns 1 has its output
+# discarded by the precedence walker.
+axis_floor_blocks() {
+    [ -n "${LG_LAST_AXES:-}" ] && [ "$LG_LAST_AXES" != "-" ] || return 1
     case ",$LG_LAST_AXES," in
-        *,0,*) ;;
+        *,0,*) return 0 ;;
         *) return 1 ;;
     esac
-    echo "STOP — the last round scored $LG_SCORE with a rubric axis at ZERO ($LG_LAST_AXES)."
-    echo "  The anti-slop rubric is $RUBRIC_AXES dimensions at $RUBRIC_AXIS_MAX points; a sum"
-    echo "  clears the bar while one dimension is unmet. Fix the zeroed dimension"
-    echo "  and rescore — a passing total does not buy it off."
-    return 0
 }
 
 rule_passed() {
     [ "$LG_SCORE" -ge "$PASS_SCORE" ] || return 1
     [ "$LG_LAST_VERIFIED" = "1" ] || return 1
+    # A declared zero withholds the pass. Not a stop -- the arc continues under
+    # the ordinary budget so the zeroed dimension can be fixed and rescored.
+    ! axis_floor_blocks || return 1
     echo "PASSED — last round scored $LG_SCORE (>= $PASS_SCORE). No further round needed."
     # Absence is advisory, not fatal. Making it fatal would fail closed on every
     # ledger written before this field existed, which is a refusal that blocks
@@ -1054,14 +1109,26 @@ decide_and_exit() {
     # BRO-2615 ledger reading "REVIEW-REQUIRED" or "AUTHORIZED" with no reason.
     # Only where another round CAN be recorded (0 authorized, 5 review first);
     # under a stop or the ceiling "record a round" is advice the recorder
-    # refuses. No verified-row test: a passing score on a verified row IS
-    # rule_passed (exit 3), so at 0/5 a score >= the bar is always unverified.
+    # refuses. The verified-row test USED to be unnecessary -- "a passing score
+    # on a verified row IS rule_passed (exit 3), so at 0/5 a score >= the bar is
+    # always unverified" -- and BRO-2636 falsified that: the axis floor withholds
+    # the pass from a row that IS verified, so without the test this note fired
+    # on a round that had recorded its strata and told the reviewer to do the one
+    # thing it had already done.
     case "$code" in
         0|5)
-            if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ]; then
+            if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ] && [ "$LG_LAST_VERIFIED" != "1" ]; then
                 echo "  Note: the last round scored $LG_SCORE with no per-stratum verdicts on"
                 echo "  an unstated scale, so it is not read as a pass. The next round is"
                 echo "  recorded as --score=N/$LEDGER_SCALE with one --stratum=L:N/$LEDGER_SCALE:PASS|FAIL per stratum."
+            fi
+            # The axis floor, for the same reason: a score at or above the bar
+            # that did not pass must say why. Gated on the bar because below it
+            # the zero is not what withheld the pass -- the score was.
+            if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ] && axis_floor_blocks; then
+                echo "  Note: the last round scored $LG_SCORE but a rubric axis is ZERO ($LG_LAST_AXES)."
+                echo "  A passing total does not buy off an unmet dimension. Fix that dimension"
+                echo "  and record another round; the arc is NOT stopped."
             fi ;;
     esac
     exit "$code"

@@ -171,8 +171,8 @@ mutate "unreadable ledger fails open" "T15" \
 # mutation". The hoist made that false -- ordering IS a value now, and declining
 # the proof on an invalidated rationale is how a new shape ships unmutated.
 mutate "PASSED reordered above the stops" "T31" \
-    'PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 axis_floor:6 passed:3' \
-    'PRECEDENCE="passed:3 regressed:6 refuted:6 nodefect:6 terminal:6 axis_floor:6'
+    'PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 passed:3' \
+    'PRECEDENCE="passed:3 regressed:6 refuted:6 nodefect:6 terminal:6'
 # "Only CONTINUE earns" is ONE rule held at TWO sites: rule_unusable_verdict
 # fires first and stops, rule_earned refuses to admit. Gutting either alone
 # leaves T37 green -- which is defence in depth working, and also why the
@@ -549,15 +549,16 @@ mutate "leading empty --stratum vanishes" "T77" \
 mutate "bare compared with scaled" "T78" \
     'if (kind != prevkind) prev=-1' 'if (0) prev=-1'
 mutate "unverified pass unexplained" "T78" \
-    'echo "  Note: the last round scored' 'return 0; echo "  Note: the last round scored'
+    'echo "  Note: the last round scored $LG_SCORE with no per-stratum verdicts on"' \
+    'return 0; echo "  Note: the last round scored $LG_SCORE with no per-stratum verdicts on"'
 mutate "note printed under any exit code" "T80" \
     '        0|5)
             if [ -n "$LG_SCORE" ]' \
     '        *)
             if [ -n "$LG_SCORE" ]'
 mutate "note printed below the bar" "T80" \
-    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ]; then' \
-    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge 0 ]; then'
+    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge "$PASS_SCORE" ] && [ "$LG_LAST_VERIFIED" != "1" ]; then' \
+    'if [ -n "$LG_SCORE" ] && [ "$LG_SCORE" -ge 0 ] && [ "$LG_LAST_VERIFIED" != "1" ]; then'
 mutate "bare row after scaled accepted" "T81" \
     'if (kind == "bare" && sawscaled) badhistory=' 'if (0) badhistory='
 mutate "show renders through a NUL" "T76" \
@@ -576,53 +577,52 @@ mutate "stratum text glob-expanded" "T84" \
     for entry in $verdicts; do'
 
 # ── BRO-2636 (the per-axis floor) ──
-# One mutant per DOOR. The floor is reachable by four independent routes -- the
-# rule itself, its slot in PRECEDENCE, the ordering of that slot, and the three
-# analyze() width tests the ninth field passes through -- and a single mutant
-# that broke two at once would prove nothing about either.
+# One mutant per DOOR: the pass guard, the four validation bounds, the three
+# analyze() width tests, and the read-time revalidation. A single mutant that
+# broke two at once would prove nothing about either.
 
-# The rule, neutered at its first guard. Nothing else moves.
-mutate "axis floor never fires" "T85" \
-    '    [ -n "$LG_LAST_AXES" ] && [ "$LG_LAST_AXES" != "-" ] || return 1' \
-    '    return 1'
+# The pass guard. This is the floor: rule_passed consults axis_floor_blocks, and
+# without it a zeroed dimension passes on the sum -- the original defect.
+mutate "zeroed axis passes on the sum" "T85" \
+    '    ! axis_floor_blocks || return 1' \
+    '    true'
 
-# The rule fires, but on the wrong predicate: `0` anywhere in the string rather
-# than as a whole field. `2,2,2,1,1` has no zero and must still pass, so a
-# substring match would stop it and T85's positive arm goes red.
-mutate "axis floor matches a substring, not a field" "T85" \
-    '        *,0,*) ;;' \
-    '        *0*) ;;'
+# NO MUTANT for the `!= "-"` half of axis_floor_blocks's first guard, and the
+# reason is the same class of finding as the `*,0,*` note below. Dropping that
+# half leaves `case ",-," in *,0,*)`, which does not match, so the function
+# still returns 1 and NOTHING observable changes. It was written, it SURVIVED
+# against T87 for that reason, and it is recorded here rather than left in the
+# sweep as a false finding. The half is kept in the source as a statement of
+# intent -- `-` means "declared none" -- not as a reachable branch.
 
-# Unwired from PRECEDENCE entirely.
-mutate "axis_floor not in PRECEDENCE" "T85" \
-    'terminal:6 axis_floor:6 passed:3' \
-    'terminal:6 passed:3'
+# NO MUTANT for the `*,0,*` field-vs-substring match, and the reason is a
+# finding rather than an omission. Every legal axis is ONE DIGIT (0-2), so a `0`
+# can only ever appear as a whole field: `*0*` and `*,0,*` accept and reject
+# exactly the same set of valid inputs. The mutation applies and changes no
+# behaviour, which reports SURVIVED and is indistinguishable from a genuinely
+# untested invariant. It was written, it survived for that reason, and it is
+# recorded here instead of being left in the sweep as a false finding.
 
-# THE ORDERING CLAIM, on its own. The rule exists, is wired, and still cannot
-# stop anything because `passed` is reached first -- which is the whole reason
-# every other stop sits above `passed`.
-mutate "axis_floor ordered after passed" "T85" \
-    'terminal:6 axis_floor:6 passed:3' \
-    'terminal:6 passed:3 axis_floor:6'
-
-# The arithmetic tie. Without it the axes are decoration beside the score.
+# The four validation bounds, each alone.
 mutate "axes need not sum to the score" "T88" \
     '    if [ "$sum" != "$want" ]; then' \
     '    if [ "$sum" = "IMPOSSIBLE" ]; then'
-
-# The count bound.
 mutate "axis count unchecked" "T88" \
     '    if [ "$n" != "$RUBRIC_AXES" ]; then' \
     '    if [ "$n" = "IMPOSSIBLE" ]; then'
-
-# The per-axis range bound.
 mutate "axis range unchecked" "T88" \
     '        if [ "$((10#$a))" -gt "$RUBRIC_AXIS_MAX" ]; then' \
     '        if [ "$((10#$a))" -gt 99 ]; then'
+# The LENGTH bound, which is not the range bound: `$((10#$a))` wraps on a long
+# digit run, so without this an axis of 2^64 summed as ZERO, satisfied the sum
+# check at 8/10, and the floor never saw a `0`.
+mutate "long digit run wraps past the range check" "T88" \
+    '        if [ "${#a}" -gt 1 ]; then' \
+    '        if [ "${#a}" -gt 99 ]; then'
 
-# The empty-flag door. `--axes=` must not read as "declared none": that is the
-# same trap the panel field documents for `--stratum=`, and it shipped here
-# first time round -- T88 caught it, which is why this mutant exists.
+# The empty-flag door. `--axes=` must not read as "declared none" -- the same
+# trap the panel field documents for `--stratum=`. It shipped that way first
+# time round and T88 caught it, which is why this mutant exists.
 mutate "empty --axes= treated as absent" "T88" \
     '        [ -n "$AXES" ] || {' \
     '        [ -n "IMPOSSIBLE" ] || {'
@@ -642,9 +642,13 @@ mutate "ninth field classifies as bare" "T90" \
 
 # The read-time door. round_is_admissible has two callers so the door and the
 # stored artifact cannot disagree; this proves the SECOND caller runs.
+#
+# Single-quoted, NOT python triple quotes. Written as `"""..."""` first time,
+# which bash reads as "" + "..." + "": `$1` then EXPANDED, the file died under
+# `set -u` at load time, and the whole sweep aborted before printing a verdict.
 mutate "stored axes never revalidated" "T89" \
-    """awk -F'\t' '$1=="ROUND" && NF>=8')""" \
-    """awk -F'\t' '$1=="ROUND" && NF==0')"""
+    'ROUND" && NF>=8'"'"')' \
+    'ROUND" && NF==0'"'"')'
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
