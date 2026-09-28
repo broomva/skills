@@ -70,14 +70,29 @@ def read_keychain_generic_password(service: str, account: Optional[str] = None) 
 
 def write_keychain_generic_password(service: str, account: str, data: Dict[str, Any]) -> bool:
     payload = json.dumps(data)
-    payload_hex = payload.encode("utf-8").hex()
-    command = " ".join([
-        "add-generic-password", "-U",
-        "-s", shlex.quote(service),
-        "-a", shlex.quote(account),
-        "-X", payload_hex,
-    ])
-    res = run_cmd(["security", "-i"], input_str=command + "\n", check=False)
+    # macOS SecurityTool interactive mode (security -i) has a fixed line-buffer limit (<1024 bytes)
+    # which truncates larger payloads. Use interactive mode for small payloads,
+    # and direct argv for larger payloads or as fallback.
+    if len(payload) < 800:
+        payload_hex = payload.encode("utf-8").hex()
+        command = " ".join([
+            "add-generic-password", "-U",
+            "-s", shlex.quote(service),
+            "-a", shlex.quote(account),
+            "-X", payload_hex,
+        ])
+        res = run_cmd(["security", "-i"], input_str=command + "\n", check=False)
+        if res.returncode == 0:
+            return True
+
+    cmd = [
+        "security", "add-generic-password",
+        "-U",
+        "-s", service,
+        "-a", account,
+        "-w", payload
+    ]
+    res = run_cmd(cmd, check=False)
     return res.returncode == 0
 
 
