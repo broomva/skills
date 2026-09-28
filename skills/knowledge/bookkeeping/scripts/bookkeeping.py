@@ -2439,8 +2439,21 @@ def _reconcile_judge_with_heuristic(h: ScoredItem, judged: ScoredItem) -> Scored
         total=total,
         promote=passes_nous_gate(novelty, specificity, relevance),
         candidate_entities=judged.candidate_entities or h.candidate_entities,
-        scoring_method=f"{judged.scoring_method}+heuristic",
-        reasoning=judged.reasoning,
+        # `scoring_method` keeps naming the TRANSPORT, not the combination.
+        # A composite like "llm_judge+heuristic" misses every lookup keyed on
+        # transport name: JUDGE_EVIDENCE_CHARS fell through to 2000 for a
+        # Gemini-scored item that saw 800, and `_judge_context` took the
+        # authored branch and reported 8 active projects and the slug list to
+        # a transport that receives neither. That is precisely the
+        # mis-measurement those two tables exist to prevent, and a composite
+        # name reintroduced it. The reconciliation is recorded as reasoning.
+        scoring_method=judged.scoring_method,
+        reasoning={**(judged.reasoning or {}),
+                   "reconciled_with_heuristic": {
+                       "heuristic_total": h.total,
+                       "judge_total": judged.total,
+                       "rule": "averaged (|diff| < 2), rounded up",
+                   }},
     )
 
 

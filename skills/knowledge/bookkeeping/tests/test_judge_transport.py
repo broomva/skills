@@ -1444,7 +1444,8 @@ def test_the_two_are_averaged_when_they_differ_by_less_than_two():
     j = _si(it, 2, 2, 1, "claude_cli")        # total 5, diff 1
     out = bk._reconcile_judge_with_heuristic(h, j)
     assert out.total == 6, "heuristic 6 / judge 5 must not fall to 5"
-    assert out.scoring_method == "claude_cli+heuristic"
+    assert out.scoring_method == "claude_cli"
+    assert out.reasoning["reconciled_with_heuristic"]["heuristic_total"] == 6
 
 
 @pytest.mark.parametrize("hn,hs,hr,jn,js,jr", [
@@ -1485,7 +1486,7 @@ def test_score_item_applies_the_reconciliation(monkeypatch):
         out = bk.score_item(it, [])
     finally:
         bk.set_judge_enabled(False)
-    assert out.total == 6 and out.scoring_method == "claude_cli+heuristic"
+    assert out.total == 6 and out.scoring_method == "claude_cli"
 
 
 # ── CLI argument validation ─────────────────────────────────────────────────
@@ -1507,3 +1508,32 @@ def test_sample_zero_is_still_the_plain_diagnostic(capsys):
     import argparse
     bk.cmd_judge_check(argparse.Namespace(sample=0, labels=None, verify=False))
     assert "--sample" in capsys.readouterr().out
+
+
+def test_a_reconciled_score_still_names_a_known_transport():
+    """
+    `scoring_method` keys JUDGE_EVIDENCE_CHARS and dispatches `_judge_context`.
+    A composite name ("llm_judge+heuristic") missed both: evidence fell through
+    to 2000 for a transport that shows 800, and the sheet claimed the judge saw
+    projects and slugs Gemini never receives — the exact mis-measurement those
+    tables exist to prevent.
+    """
+    known = {name for name, _attr in bk.JUDGE_TRANSPORTS}
+    it = _item()
+    for method in known:
+        out = bk._reconcile_judge_with_heuristic(_si(it, 2, 2, 2), _si(it, 2, 2, 1, method))
+        assert out.scoring_method in known, f"reconciler emitted {out.scoring_method!r}"
+        assert out.scoring_method in bk.JUDGE_EVIDENCE_CHARS, (
+            f"{out.scoring_method!r} would fall through to the default slice")
+
+
+@pytest.mark.parametrize("method,want", [("llm_judge", 800), ("claude_cli", 2000)])
+def test_a_reconciled_gemini_row_keeps_geminis_evidence_slice(method, want):
+    """End to end through the calibration row, which is where it would lie."""
+    it = _item("y" * 5000)
+    out = bk._reconcile_judge_with_heuristic(_si(it, 2, 2, 2), _si(it, 2, 2, 1, method))
+    row = bk._calibration_row(it, _si(it, 2, 2, 2), out, ["a", "b"])
+    assert row["evidence_chars"] == want
+    assert len(row["content_seen_by_judge"]) == want
+    if method == "llm_judge":
+        assert row["context_seen_by_judge"]["active_projects"] == []
