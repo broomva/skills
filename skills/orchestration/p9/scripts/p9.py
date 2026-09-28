@@ -1621,22 +1621,25 @@ def _p20_verdict(g: MergeGates, f: PRGateFacts,
                   f"no reviewed or PR file")
 
 
-def _p20_nonpass_hold(g: MergeGates, m: P20Marker | None) -> str | None:
-    """Under the P20 threshold no verdict is REQUIRED, but a recorded one still
-    binds. A latest FAIL, STOP or MALFORMED marker, or a PASS below pass_score,
-    blocks at every PR size; otherwise one `gate-check` after a failed review
-    would merge the very PR that review failed. It is absorbing: later commits
-    do not clear it, whoever wrote them (a merge from base brings in files the
-    PR never changed, so "the reviewed code changed" is not provable from the
-    file list). Only a newer trusted marker supersedes it. Returns the reason
-    to block, or None."""
-    if m is None or (m.verdict == "PASS" and m.score >= g.p20.pass_score):
+def _p20_recorded_binds(g: MergeGates, f: PRGateFacts, m: P20Marker | None) -> str | None:
+    """Under the P20 threshold no verdict is REQUIRED, but once a PR carries a
+    trusted P20 marker it BINDS at any size: the gate judges it exactly as over
+    the threshold (`_p20_verdict`). So a latest FAIL, STOP, MALFORMED or
+    below-pass_score marker blocks, and later commits never clear it; a PASS
+    clears it only if it covers the head (at head, or carried forward across
+    commits that touch no reviewed or PR file). Without this, one `gate-check`
+    after a failed review merged the very PR that review failed, and a PASS
+    naming some other commit cleared a FAIL on the head. Returns the reason to
+    block, or None."""
+    if m is None:
         return None
-    what = ("does not parse (MALFORMED)" if m.verdict == "MALFORMED"
-            else f"is {m.verdict} {m.score}/10 at {m.sha[:12]}")
-    return (f"under the P20 threshold, but the latest P20 marker (by {m.author}) "
-            f"{what}; a recorded non-pass verdict binds at any size. Clear it by "
-            f"recording a PASS >= {g.p20.pass_score} with `p9 p20-record`")
+    ok, why = _p20_verdict(g, f, m)
+    if ok:
+        return None
+    return (f"under the P20 threshold, but a recorded P20 verdict binds at any size: "
+            f"{why}. Clear it with a PASS >= {g.p20.pass_score} for the head "
+            f"(`p9 p20-record`); a STOP goes to a person, and a comment that only "
+            f"mentions P20-VERDICT can be edited")
 
 
 def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
@@ -1705,7 +1708,7 @@ def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
         ok, reason = _p20_verdict(g, f, marker)
         gate("p20", ok, f"required ({'; '.join(why)}): {reason}")
     else:
-        hold = _p20_nonpass_hold(g, marker)
+        hold = _p20_recorded_binds(g, f, marker)
         gate("p20", hold is None, hold or "under the P20 threshold")
 
     # Something independent must have looked at this PR: a check that actually

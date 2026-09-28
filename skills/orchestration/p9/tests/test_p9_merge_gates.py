@@ -270,7 +270,8 @@ class TestP20:
 
 
 class TestRecordedNonPassBindsAtAnySize:
-    """A recorded FAIL/STOP holds a PR that is UNDER the P20 threshold too
+    """A recorded P20 verdict binds a PR that is UNDER the P20 threshold too:
+    once a trusted marker exists, the gate judges it as over the threshold
     (workspace#781 round 5: a one-file PR carrying a trusted FAIL at head used
     to return `auto`, so a failed review was one gate-check from merging)."""
 
@@ -287,7 +288,7 @@ class TestRecordedNonPassBindsAtAnySize:
         assert _failed(p9, gates, f) == {"p20"}
 
     def test_block_reason_names_the_remedy(self, p9, gates):
-        for body, what in [(_marker(verdict="FAIL", score=3), "FAIL 3/10"),
+        for body, what in [(_marker(verdict="FAIL", score=3), "FAIL"),
                            ("P20-VERDICT: REVISE score=5 strata=A sha=" + HEAD, "MALFORMED")]:
             f = _good(p9, comments=[_comment(body)])
             [r] = [r for r in p9.evaluate_merge_gates(gates, f) if r.gate == "p20"]
@@ -304,6 +305,35 @@ class TestRecordedNonPassBindsAtAnySize:
     ])
     def test_small_pr_without_a_binding_non_pass_merges(self, p9, gates, comments):
         assert _failed(p9, gates, _good(p9, comments=comments)) == set()
+
+    def test_a_pass_for_another_commit_does_not_clear_a_fail_on_head(self, p9, gates):
+        # skills#238 round 2 (Stratum B): a slow stratum records the commit it
+        # read; a PASS on OLD must not clear a FAIL on HEAD when the code moved.
+        f = _good(p9, comments=[
+            _comment(_marker(verdict="FAIL", score=3), at="2026-09-26T10:00:00Z"),
+            _comment(_marker(verdict="PASS", score=8, sha=OLD), at="2026-09-26T11:00:00Z")],
+            marker_is_ancestor=True, reviewed_files=["src/x.py"],
+            marker_delta_files=["src/x.py"])
+        assert _failed(p9, gates, f) == {"p20"}
+
+    def test_a_pass_carried_across_an_unrelated_base_update_clears(self, p9, gates):
+        f = _good(p9, comments=[_comment(_marker(sha=OLD))], marker_is_ancestor=True,
+                  reviewed_files=["src/x.py"], marker_delta_files=["docs/unrelated.md"])
+        assert _failed(p9, gates, f) == set()
+
+    def test_a_stale_pass_binds_once_recorded(self, p9, gates):
+        # Recording a verdict opts the PR into it: a PASS whose reviewed code
+        # has since changed no longer vouches, even under the threshold.
+        f = _good(p9, comments=[_comment(_marker(sha=OLD))], marker_is_ancestor=True,
+                  reviewed_files=["src/x.py"], marker_delta_files=["src/x.py"])
+        assert _failed(p9, gates, f) == {"p20"}
+
+    def test_the_policy_pass_score_decides_not_the_floor(self, p9, tmp_path):
+        g = _policy(p9, tmp_path, "  gates:\n    p20:\n      pass_score: 9\n").auto_merge.gates
+        f = _good(p9, comments=[_comment(_marker(score=8))])
+        [r] = [r for r in p9.evaluate_merge_gates(g, f) if r.gate == "p20"]
+        assert not r.ok and "PASS >= 9" in r.reason
+        assert _failed(p9, g, _good(p9, comments=[_comment(_marker(score=9))])) == set()
 
     def test_a_newer_fail_keeps_holding(self, p9, gates):
         f = _good(p9, comments=[
