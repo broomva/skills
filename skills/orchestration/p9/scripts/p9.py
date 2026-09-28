@@ -1602,56 +1602,41 @@ def _p20_verdict(g: MergeGates, f: PRGateFacts,
         return False, f"score {m.score} < {g.p20.pass_score}"
     if m.sha == f.head_sha:
         return True, f"PASS {m.score}/10 strata={','.join(m.strata)} at head"
-    covers, why = _marker_covers_head(f, m)
-    if not covers:
-        return False, why
-    return True, f"PASS {m.score}/10 at {m.sha[:12]}; {why}"
-
-
-def _marker_covers_head(f: PRGateFacts, m: P20Marker) -> tuple[bool | None, str]:
-    """Does a verdict recorded at an older commit still describe the head? It
-    carries forward only across commits that leave every reviewed file and
-    every current PR file untouched, i.e. an update from the base branch.
-    True = provably covers; False = provably superseded (later commits changed
-    reviewed code); None = cannot tell (history rewritten, or unreadable)."""
-    if m.sha == f.head_sha:
-        return True, "at head"
+    # The verdict names an older commit. It carries forward only across commits
+    # that leave every reviewed file and every current PR file untouched, i.e.
+    # an update from the base branch. Anything else is new, unreviewed code.
     if f.marker_is_ancestor is not True:
-        return None, (f"reviewed commit {m.sha[:12]} is not an ancestor of head "
-                      f"{f.head_sha[:12]} (history rewritten, or unreadable)")
+        return False, (f"reviewed commit {m.sha[:12]} is not an ancestor of head "
+                       f"{f.head_sha[:12]} (history rewritten, or unreadable)")
     if f.marker_delta_files is None or f.reviewed_files is None:
-        return None, f"could not read what changed since {m.sha[:12]}"
+        return False, f"could not read what changed since {m.sha[:12]}"
     if (len(f.marker_delta_files) >= _COMPARE_FILE_CAP
             or len(f.reviewed_files) >= _COMPARE_FILE_CAP):
-        return None, f"too many files changed since {m.sha[:12]} to prove them unrelated"
+        return False, f"too many files changed since {m.sha[:12]} to prove them unrelated"
     overlap = sorted(set(f.marker_delta_files) & (set(f.reviewed_files) | set(f.files)))
     if overlap:
         return False, (f"reviewed at {m.sha[:12]}, but later commits changed "
                        f"{overlap[:5]}; record a new verdict")
-    return True, "later commits touch no reviewed or PR file"
+    return True, (f"PASS {m.score}/10 at {m.sha[:12]}; later commits touch "
+                  f"no reviewed or PR file")
 
 
-def _p20_nonpass_hold(g: MergeGates, f: PRGateFacts, m: P20Marker | None) -> str | None:
+def _p20_nonpass_hold(g: MergeGates, m: P20Marker | None) -> str | None:
     """Under the P20 threshold no verdict is REQUIRED, but a recorded one still
-    binds. A latest FAIL/STOP, or a PASS below pass_score, blocks at every PR
-    size while it covers the head; otherwise one `gate-check` after a failed
-    review would merge the very PR that review failed ("stops are absorbing").
-    It clears only when later commits PROVABLY changed the reviewed code, or a
-    newer marker supersedes it. Unprovable coverage holds (fail closed), and a
-    MALFORMED marker holds: its commit is unreadable. Returns the reason to
-    block, or None."""
+    binds. A latest FAIL, STOP or MALFORMED marker, or a PASS below pass_score,
+    blocks at every PR size; otherwise one `gate-check` after a failed review
+    would merge the very PR that review failed. It is absorbing: later commits
+    do not clear it, whoever wrote them (a merge from base brings in files the
+    PR never changed, so "the reviewed code changed" is not provable from the
+    file list). Only a newer trusted marker supersedes it. Returns the reason
+    to block, or None."""
     if m is None or (m.verdict == "PASS" and m.score >= g.p20.pass_score):
         return None
-    if m.verdict == "MALFORMED":
-        return (f"under the P20 threshold, but the latest P20 marker (by {m.author}) "
-                f"does not parse; a recorded verdict binds at any size, so record "
-                f"a readable one")
-    covers, why = _marker_covers_head(f, m)
-    if covers is False:
-        return None
-    return (f"under the P20 threshold, but the latest marker is {m.verdict} "
-            f"{m.score}/10 at {m.sha[:12]} (by {m.author}; {why}); a recorded "
-            f"non-pass verdict blocks at any size")
+    what = ("does not parse (MALFORMED)" if m.verdict == "MALFORMED"
+            else f"is {m.verdict} {m.score}/10 at {m.sha[:12]}")
+    return (f"under the P20 threshold, but the latest P20 marker (by {m.author}) "
+            f"{what}; a recorded non-pass verdict binds at any size. Clear it by "
+            f"recording a PASS >= {g.p20.pass_score} with `p9 p20-record`")
 
 
 def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
@@ -1720,7 +1705,7 @@ def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
         ok, reason = _p20_verdict(g, f, marker)
         gate("p20", ok, f"required ({'; '.join(why)}): {reason}")
     else:
-        hold = _p20_nonpass_hold(g, f, marker)
+        hold = _p20_nonpass_hold(g, marker)
         gate("p20", hold is None, hold or "under the P20 threshold")
 
     # Something independent must have looked at this PR: a check that actually

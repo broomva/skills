@@ -269,7 +269,6 @@ class TestP20:
         assert "p20" in _failed(p9, gates, f)
 
 
-
 class TestRecordedNonPassBindsAtAnySize:
     """A recorded FAIL/STOP holds a PR that is UNDER the P20 threshold too
     (workspace#781 round 5: a one-file PR carrying a trusted FAIL at head used
@@ -278,23 +277,26 @@ class TestRecordedNonPassBindsAtAnySize:
     @pytest.mark.parametrize("marker", [
         _marker(verdict="FAIL", score=3),
         _marker(verdict="STOP", score=4, strata="A,B,C"),
-        _marker(verdict="PASS", score=5),                    # a PASS below pass_score
+        _marker(verdict="FAIL", score=8),                    # a non-pass at a passing score
+        _marker(verdict="STOP", score=7),
+        _marker(verdict="PASS", score=6),                    # a PASS below pass_score
         "P20-VERDICT: REVISE score=5 strata=A,B,C sha=" + HEAD,   # MALFORMED
     ])
     def test_non_pass_at_head_blocks_a_small_pr(self, p9, gates, marker):
         f = _good(p9, comments=[_comment(marker)])
         assert _failed(p9, gates, f) == {"p20"}
 
-    def test_malformed_marker_names_itself(self, p9, gates):
-        # Its commit is unreadable, so coverage would also be unprovable; the
-        # reason must still say what to fix.
-        f = _good(p9, comments=[_comment("P20-VERDICT: REVISE score=5 strata=A sha=" + HEAD)])
-        [r] = [r for r in p9.evaluate_merge_gates(gates, f) if r.gate == "p20"]
-        assert not r.ok and "does not parse" in r.reason
+    def test_block_reason_names_the_remedy(self, p9, gates):
+        for body, what in [(_marker(verdict="FAIL", score=3), "FAIL 3/10"),
+                           ("P20-VERDICT: REVISE score=5 strata=A sha=" + HEAD, "MALFORMED")]:
+            f = _good(p9, comments=[_comment(body)])
+            [r] = [r for r in p9.evaluate_merge_gates(gates, f) if r.gate == "p20"]
+            assert not r.ok and what in r.reason and "p20-record" in r.reason
 
     @pytest.mark.parametrize("comments", [
         [],                                                   # no verdict: none required
         [_comment(_marker())],                                # PASS at head
+        [_comment(_marker(score=7))],                         # PASS exactly at pass_score
         [_comment(_marker(verdict="FAIL", score=3), at="2026-09-26T10:00:00Z"),
          _comment(_marker(verdict="PASS", score=8), at="2026-09-26T11:00:00Z")],
         [_comment(_marker(verdict="FAIL", score=3), assoc="NONE")],   # drive-by FAIL
@@ -303,29 +305,28 @@ class TestRecordedNonPassBindsAtAnySize:
     def test_small_pr_without_a_binding_non_pass_merges(self, p9, gates, comments):
         assert _failed(p9, gates, _good(p9, comments=comments)) == set()
 
-    def test_fail_carried_across_a_base_update_still_blocks(self, p9, gates):
-        # Merging main in moves the head but not the reviewed code: the FAIL
-        # still describes it, so a base update cannot launder a stop.
-        f = _good(p9, comments=[_comment(_marker(verdict="FAIL", score=3, sha=OLD))],
-                  marker_is_ancestor=True, reviewed_files=["src/x.py"],
-                  marker_delta_files=["docs/unrelated.md"])
+    def test_a_newer_fail_keeps_holding(self, p9, gates):
+        f = _good(p9, comments=[
+            _comment(_marker(verdict="FAIL", score=3), at="2026-09-26T10:00:00Z"),
+            _comment(_marker(verdict="FAIL", score=5), at="2026-09-26T11:00:00Z")])
         assert _failed(p9, gates, f) == {"p20"}
-
-    def test_fail_superseded_by_a_change_to_the_reviewed_code_clears(self, p9, gates):
-        f = _good(p9, comments=[_comment(_marker(verdict="FAIL", score=3, sha=OLD))],
-                  marker_is_ancestor=True, reviewed_files=["src/x.py"],
-                  marker_delta_files=["src/x.py"])
-        assert _failed(p9, gates, f) == set()
 
     @pytest.mark.parametrize("over", [
+        # base merge that only touched unrelated files
+        {"marker_is_ancestor": True, "reviewed_files": ["src/x.py"],
+         "marker_delta_files": ["docs/unrelated.md"]},
+        # base merge that touched the PR's own file: overlap is NOT proof the
+        # author changed the reviewed code (P20 round 1 on skills#238, B+C)
+        {"marker_is_ancestor": True, "reviewed_files": ["src/x.py"],
+         "marker_delta_files": ["src/x.py"]},
         {"marker_is_ancestor": False, "marker_delta_files": [], "reviewed_files": []},
-        {"marker_is_ancestor": None, "marker_delta_files": [], "reviewed_files": []},
-        {"marker_is_ancestor": True, "marker_delta_files": None, "reviewed_files": []},
-        {"marker_is_ancestor": True, "marker_delta_files": ["z"] * 300, "reviewed_files": []},
+        {"marker_is_ancestor": None, "marker_delta_files": None, "reviewed_files": None},
     ])
-    def test_unprovable_supersession_holds(self, p9, gates, over):
-        f = _good(p9, comments=[_comment(_marker(verdict="FAIL", score=3, sha=OLD))], **over)
+    @pytest.mark.parametrize("verdict", ["FAIL", "STOP"])
+    def test_later_commits_do_not_clear_a_non_pass(self, p9, gates, over, verdict):
+        f = _good(p9, comments=[_comment(_marker(verdict=verdict, score=3, sha=OLD))], **over)
         assert _failed(p9, gates, f) == {"p20"}
+
 
 class TestGovernanceTier:
     def test_all_strata_checks_and_rate_merges(self, p9, gates):

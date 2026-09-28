@@ -305,7 +305,7 @@ moved base blocks, and so does a PR retargeted to another base in between.
 | `up_to_date` | 0 commits behind base, at a recorded base tip | FAIL |
 | `no_changes_requested` | no reviewer's latest *opinionated* review is `CHANGES_REQUESTED`. A later COMMENTED review does not withdraw it; a later APPROVED or DISMISSED one does. (gh preloads every page of reviews and comments.) | FAIL |
 | `threads_resolved` | 0 unresolved review threads (more than 100 threads block) | FAIL |
-| `p20` | if over the P20 threshold, the latest verdict is a PASS ≥ `pass_score`, bound to the reviewed commit. Under the threshold no verdict is required, but a recorded non-pass one (FAIL, STOP, MALFORMED, or a PASS below `pass_score`) still blocks while it covers the head. The threshold: >200 LOC, >1 file, an always-review path, a binary change (any row with 0 changed lines, including a rename: a pure rename cannot be told from a renamed binary without fetching both blobs), or governance-class. | FAIL |
+| `p20` | if over the P20 threshold, the latest verdict is a PASS ≥ `pass_score`, bound to the reviewed commit. Under the threshold no verdict is required, but a latest non-pass one (FAIL, STOP, MALFORMED, or a PASS below `pass_score`) still blocks until a newer PASS supersedes it. The threshold: >200 LOC, >1 file, an always-review path, a binary change (any row with 0 changed lines, including a rename: a pure rename cannot be told from a renamed binary without fetching both blobs), or governance-class. | FAIL |
 | `independent_check` | a check that is neither a bot nor an aggregate (`Merge Gate`, which passes vacuously when nothing else ran) ran and passed, **or** a P20 pass covers the PR | FAIL |
 | `governance_strata` | governance-class: the verdict lists strata A, B and C | FAIL |
 | `governance_checks` | governance-class: every run of each required check (default `stability-check`) passed; skipped or absent fails | FAIL |
@@ -348,11 +348,14 @@ Rules for reading markers:
   reviewed file or a current PR file. That is the case after updating the branch
   from base.
 - **A recorded non-pass binds at every size.** Under the P20 threshold no
-  verdict is required, but a latest FAIL, STOP, MALFORMED marker, or PASS below
-  `pass_score` still blocks while it covers the head (by the carry-forward rule
-  above, so merging base in does not clear it). It clears only when a newer
-  marker supersedes it, or later commits provably changed the reviewed code; if
-  that cannot be proven, it holds. Without this, a small PR whose review failed
+  verdict is required, but a latest FAIL, STOP or MALFORMED marker, or a PASS
+  below `pass_score`, still blocks. It is absorbing: later commits do not clear
+  it, whoever wrote them, because a merge from base brings in files the PR never
+  changed, so the file list cannot prove the reviewed code changed. Only a newer
+  trusted PASS ≥ `pass_score` (`p9 p20-record`) clears it; a newer FAIL keeps
+  holding. A MALFORMED marker is any trusted comment naming `P20-VERDICT` whose
+  first line does not parse, so prose that merely mentions it blocks too: edit
+  that comment, or record a PASS. Without this, a small PR whose review failed
   was one `gate-check` away from merging.
 
 **Governance-class paths get a stricter gate, not a human click.** The
