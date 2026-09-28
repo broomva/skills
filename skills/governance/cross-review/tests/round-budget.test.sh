@@ -469,7 +469,13 @@ fi
 # would go unproven -- the first rewrite of this fixture did exactly that.
 echo "T38. a wrong-arity ROUND row fails closed"
 LED=$(newledger t38)
-printf 'ROUND\t1\t5\tyes\t\t-\tA\t-\tEXTRA\n' > "$LED"
+# TEN fields, and every one but the tenth is something the recorder would
+# ACCEPT. BRO-2636 made NF=9 a legal arity, so a nine-field fixture no longer
+# proves anything; and a BARE score is rejected by the scale check before arity
+# is ever consulted, so arity must be the ONLY thing left that can reject this
+# row. The note above describes exactly this trap and the fixture walked into it
+# anyway when the field was added.
+printf 'ROUND\t1\t5/10\tyes\t\t-\tA\tA:5/10:FAIL\t2,2,1,0,0\tEXTRA\n' > "$LED"
 RC=$(rb budget --run-id=t38 --ledger="$LED")
 if [ "$RC" = "6" ]; then ok "T38: extra-field ROUND row STOPs"; else fail "T38: ROUND arity" "exit $RC, want 6"; fi
 
