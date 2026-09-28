@@ -464,28 +464,24 @@ axes_are_valid() (
     case "$axes" in
         *,) echo "'$axes' ends in an empty axis"; exit 1 ;;
     esac
-    n=0; sum=0
+    # THE DIGIT/LENGTH RULE LIVES IN axes_sum, AND ONLY THERE. This function used
+    # to carry its own copy, and the two MASKED EACH OTHER: gutting either left
+    # the other to refuse, so neither could be killed by a mutant and both read
+    # as covered while neither was independently reachable. Two guards enforcing
+    # one rule is one guard and one decoy.
+    sum=$(axes_sum "$axes")
+    if [ "$sum" -lt 0 ]; then
+        echo "'$axes' contains an entry that is not a single digit 0-$RUBRIC_AXIS_MAX"; exit 1
+    fi
+    n=0
     IFS=,; set -f
     for a in $axes; do
         n=$((n + 1))
-        case "$a" in
-            ''|*[!0-9]*) echo "axis $n ('$a') is not an integer 0-$RUBRIC_AXIS_MAX"; exit 1 ;;
-        esac
-        # LENGTH BEFORE ARITHMETIC. `$((10#$a))` WRAPS on a long digit run:
-        # 10#18446744073709551616 evaluates to 0, so such an axis would sum as
-        # zero, satisfy the total check, and never be seen as a zero by the
-        # derivation -- reproducing the very incident this exists to stop. Every
-        # legal axis is one digit because RUBRIC_AXIS_MAX is 2, so the bound is
-        # length 1, asserted before any arithmetic touches the value. It also
-        # subsumes a leading-zero arm ('02' is length 2), which is why none is
-        # written.
-        if [ "${#a}" -gt 1 ]; then
-            echo "axis $n ('$a') is longer than one digit; every axis is 0-$RUBRIC_AXIS_MAX"; exit 1
-        fi
+        # Range only. The digit class and the length are already settled by
+        # axes_sum, so `10#$a` here is a single digit and cannot wrap.
         if [ "$((10#$a))" -gt "$RUBRIC_AXIS_MAX" ]; then
             echo "axis $n ('$a') is above the per-axis maximum of $RUBRIC_AXIS_MAX"; exit 1
         fi
-        sum=$((sum + 10#$a))
     done
     if [ "$n" != "$RUBRIC_AXES" ]; then
         echo "'$axes' carries $n axes; the rubric has $RUBRIC_AXES"; exit 1
@@ -541,6 +537,10 @@ round_is_admissible() (
         # its SHAPE rules (count, range, length), not its arithmetic.
         rawsum=$(axes_sum "$axes")
         if [ "$rawsum" -lt 0 ]; then echo "rubric axes '$axes' are not $RUBRIC_AXES single digits"; exit 1; fi
+        # axes_are_valid re-derives the same sum internally; passing rawsum makes
+        # its arithmetic tie a no-op HERE by construction. That is fine and is
+        # stated rather than dressed up: on this path it is called for its COUNT
+        # and RANGE rules. The real read-door tie is the derivation check below.
         if ! err=$(axes_are_valid "$axes" "$rawsum"); then echo "rubric axes: $err"; exit 1; fi
         want=$(effective_score "$rawsum" "$axes")
         if [ "$score" != "$want" ]; then

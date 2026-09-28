@@ -609,12 +609,13 @@ mutate "axis range unchecked" "T105" \
     '        if [ "$((10#$a))" -gt 99 ]; then'
 # The LENGTH bound is not the range bound: `$((10#$a))` wraps, so 2^64 summed as
 # ZERO, satisfied the total check, and was never seen as a zero by the cap.
-# Anchored on the MESSAGE line, not the bound: `${#a} -gt 1` appears in BOTH
-# axes_sum and axes_are_valid, so a bare anchor matched twice and the harness
-# refused to apply it. The reachable bound is this one.
+# THE length bound, now singular. It lived in two places that masked each other
+# -- gutting either left the other to refuse, so neither was independently
+# reachable and a mutant on either SURVIVED while both looked covered. Collapsed
+# into axes_sum, which is the one place a written axis becomes a number.
 mutate "long digit run wraps past the range check" "T105" \
-    'is longer than one digit; every axis is 0-$RUBRIC_AXIS_MAX"; exit 1' \
-    'is longer than one digit; every axis is 0-$RUBRIC_AXIS_MAX"; exit 0'
+    '        if [ "${#a}" -gt 1 ]; then printf '"'"'%s'"'"' -1; exit 0; fi' \
+    '        if [ "${#a}" -gt 99 ]; then printf '"'"'%s'"'"' -1; exit 0; fi'
 
 # `--axes=` must not read as "declared none" -- the trap the panel field
 # documents for `--stratum=`.
@@ -663,10 +664,10 @@ mutate "unfloored pass does not say so" "T109" \
     '    if [ -z "${LG_LAST_AXES:-}" ] || [ "$LG_LAST_AXES" = "-" ]; then' \
     '    if [ -z "IMPOSSIBLE" ]; then'
 
-# NO MUTANT for axes_sum's OWN length bound, for the same reason: axes_are_valid
-# carries its own, and the write door runs both, so gutting one leaves the other
-# to refuse. Measured -- the mutated build still refuses a 2^64 axis. The bound
-# that is REACHABLE is the one in axes_are_valid, and it has a mutant above.
+# (The note that used to sit here called axes_sum's length bound inert because
+# axes_are_valid carried a duplicate. That was true and was the problem: the
+# duplicate is gone, this bound is now the only one, and the mutant above kills
+# on it.)
 
 mutate "--axes=- accepted as a third spelling of absence" "T110" \
     '        [ "$AXES" != "-" ] || {' \
