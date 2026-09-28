@@ -105,7 +105,7 @@ ANTI-SLOP RUBRIC (10 points total)
            coverage matches what the change introduces;
            no critical path untested)
 
-PASS: ≥7/10
+PASS: ≥7/10   (record --axes=a,b,c,d,e; a ZERO axis caps the stored score to 6)
 LOOP: <7 → fix the specific deductions → rescore
 BUDGET: 3 free rounds · 4-7 earned by a continuation verdict · ≥8 human
 ESCALATE: STOP verdict, two refuted predictions, a score regression, or round 8
@@ -129,7 +129,7 @@ bump, not reviewer opinion, and never a finding about the *justification* for th
 change. Track it with `cross-review round`:
 
 ```bash
-cross-review round record-round   --run-id=$ID --score=5/10 --defect=yes \
+cross-review round record-round   --run-id=$ID --score=5/10 --axes=2,1,1,1,0 --defect=yes \
                                   --stratum=A:5/10:FAIL --stratum=C:6/10:FAIL
                                                   # every score carries its /10 scale;
                                                   # one --stratum per stratum that scored.
@@ -240,6 +240,7 @@ appended to it.
 | An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |
 | A `CONTINUE` cannot be empty of content | the prediction must name a location the next round can check |
 | The arithmetic is not from recall | the round count and score series come from a file, which is the thing agents do worst from memory |
+| A zeroed dimension cannot reach the bar | the rubric is five dimensions at 2 points, and `2+2+2+2+0 = 8` cleared the ≥7 bar with *tests cover the change* — the one dimension a machine can check — at **zero**. This is fixed by changing what a score IS, not by guarding the things that read one: `record-round --axes=a,b,c,d,e` stores the **effective** score, and a zero caps it to `PASS_SCORE - 1`. `--score` is the RAW total the five axes must sum to; the ledger stores what the axes derive, and `round_is_admissible` re-derives it from the stored row so a hand edit cannot claim a score its own axes do not produce. Every consumer then reads one value and needs no floor: `rule_passed` simply does not pass; the regression compare sees a floored 8 as a 6, so the honest fix round at 7 is an *improvement* rather than a regression; stratum admissibility allows a FAIL because the round is not a pass; and `--defect` is never coerced, so the `nodefect` streak stays a real signal. A **cap, not a zero** — zeroing would erase the ordering among floored rounds; the stated cost is that above the bar that ordering collapses to the cap. Omitting `--axes` applies no floor and the pass says so (BRO-2636) |
 | The panel that produced a score is part of the record | a round records the strata that scored it (`record-round --strata=A,B,C`). The strata are **not equal** — A is the only cross-vendor verdict and the only one where *cannot write* is literally true — so a 7/10 from A+B+C and a 7/10 from C alone are different evidence carrying the same integer, and the score alone cannot tell them apart. Validated at write **and** against the stored row, same as the prediction. Omitting the flag records the literal `unrecorded`, never a blank: *"nobody wrote down which strata ran"* and *"only Stratum C ran"* must not serialize to the same bytes. Ledgers written before the field parse unchanged — field 7 is optional **on read**, and `show` renders their missing panel as that same `unrecorded` token |
 | A score carries its scale, and a pass carries its verdicts | BRO-2615. Every `--score` and every `--stratum` score is written `N/10`; a bare integer, a foreign scale (`7/15`), or an out-of-range value is refused, never converted — this skill's own design rubric is /15 and a bare `7` from it once came back PASSED over two FAIL strata. A round scoring ≥7 must carry `--stratum=L:N/10:PASS\|FAIL` for each stratum that scored it; the round score may not exceed the lowest stratum, a stratum cannot say PASS below 7, and a round cannot pass over any FAIL. Every row the recorder writes stores its round score as `N/10` (field 3) and its verdicts in field 8 (`-` when none), and one predicate (`round_is_admissible`) checks the row at write **and** every stored row at read. Predicates decide by exit status, so a predicate that crashes refuses rather than passing. A round without verdicts — a failing round recorded with `--strata`, or any row written before this — is never read as PASSED |
 | One guard site, not one per caller | every command that reads or mutates the history passes through `load_ledger` (`show` only renders), and the budget's stop/pass ordering is one `PRECEDENCE` list. Three review rounds each found a guard living at one caller and not its sibling, or an ordering wrong in one of six branches — so the continuation review returned `STRUCTURAL` and the shape changed instead of a sixth guard being added |

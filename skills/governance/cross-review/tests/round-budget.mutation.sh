@@ -575,6 +575,85 @@ mutate "stratum text glob-expanded" "T84" \
     '    IFS=,
     for entry in $verdicts; do'
 
+# ── BRO-2636: the effective score ──
+# The design claim is that ONE derivation replaces four floor guards, so the
+# mutants target the derivation and each consumer's reliance on it separately.
+# A single mutant breaking two would prove nothing about either.
+
+# THE DERIVATION. Without the cap a zeroed round keeps its raw total and passes.
+mutate "zeroed axis keeps its raw score" "T100" \
+    '    if [ "$raw" -ge "$PASS_SCORE" ]; then printf '"'"'%s'"'"' "$((PASS_SCORE - 1))"; else printf '"'"'%s'"'"' "$raw"; fi' \
+    '    printf '"'"'%s'"'"' "$raw"'
+
+# The zero TEST inside the derivation, on its own: cap everything, and a
+# zero-free round is capped too.
+mutate "every round capped, not just zeroed ones" "T100" \
+    '        *) printf '"'"'%s'"'"' "$raw"; return 0 ;;' \
+    '        *) ;;'
+
+# The derivation is not WIRED to the writer -- the raw score is stored instead.
+mutate "writer stores the raw score" "T100" \
+    '        EFFECTIVE=$(effective_score "$SCORE_INT" "$ROUND_AXES")' \
+    '        EFFECTIVE="$SCORE_INT"'
+
+# The tie to the raw total. Without it the axes describe a different round and
+# the derivation computes from numbers that are not this round's.
+mutate "axes need not sum to the raw total" "T105" \
+    '    if [ "$sum" != "$want" ]; then' \
+    '    if [ "$sum" = "IMPOSSIBLE" ]; then'
+mutate "axis count unchecked" "T105" \
+    '    if [ "$n" != "$RUBRIC_AXES" ]; then' \
+    '    if [ "$n" = "IMPOSSIBLE" ]; then'
+mutate "axis range unchecked" "T105" \
+    '        if [ "$((10#$a))" -gt "$RUBRIC_AXIS_MAX" ]; then' \
+    '        if [ "$((10#$a))" -gt 99 ]; then'
+# The LENGTH bound is not the range bound: `$((10#$a))` wraps, so 2^64 summed as
+# ZERO, satisfied the total check, and was never seen as a zero by the cap.
+mutate "long digit run wraps past the range check" "T105" \
+    '        if [ "${#a}" -gt 1 ]; then' \
+    '        if [ "${#a}" -gt 99 ]; then'
+# `--axes=` must not read as "declared none" -- the trap the panel field
+# documents for `--stratum=`.
+mutate "empty --axes= treated as absent" "T105" \
+    '        [ -n "$AXES" ] || {' \
+    '        [ -n "IMPOSSIBLE" ] || {'
+
+# THE READ DOOR: the stored score must be the one its axes derive. This is the
+# claim the whole design rests on, so a hand-edited row must not be able to make
+# it false.
+mutate "stored score never re-derived" "T106" \
+    '        if [ "$score" != "$want" ]; then' \
+    '        if [ "$score" = "IMPOSSIBLE" ]; then'
+mutate "stored axes never revalidated" "T106" \
+    """awk -F'\t' '$1=="ROUND" && NF>=8')""" \
+    """awk -F'\t' '$1=="ROUND" && NF==0')"""
+
+# The three analyze() width tests the ninth field passes through. Each fails
+# DIFFERENTLY and silently, so each is mutated alone.
+mutate "ninth field un-verifies the row" "T100" \
+    '            lastverified=(NF>=8)' \
+    '            lastverified=(NF==8)'
+mutate "ninth field keeps its scale in the compare" "T100" \
+    '            if (NF>=8) sub(/\/.*/, "", sc)' \
+    '            if (NF==8) sub(/\/.*/, "", sc)'
+mutate "ninth field classifies as bare" "T100" \
+    '            kind=(NF>=8) ? "scaled" : "bare"' \
+    '            kind=(NF==8) ? "scaled" : "bare"'
+
+# The flag scope.
+mutate "--axes accepted outside record-round" "T108" \
+    'if [ "$AXES_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then' \
+    'if [ "$AXES_SET" = "1" ] && [ "$COMMAND" = "IMPOSSIBLE" ]; then'
+
+# NO MUTANT for the `*,0,*` field-vs-substring match in effective_score, and the
+# reason is a finding rather than an omission. Every legal axis is ONE DIGIT
+# (0-2) and load_ledger revalidates every nine-field row before any consumer
+# reads it, so a `0` can only ever appear as a whole field: `*0*` and `*,0,*`
+# accept and reject exactly the same reachable set. The mutation applies and
+# changes no behaviour, which reports SURVIVED and is indistinguishable from a
+# genuinely untested invariant. It was written, it survived for that reason, and
+# it is recorded here instead of being left in the sweep as a false finding.
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ "$SURVIVED" -gt 0 ]; then
