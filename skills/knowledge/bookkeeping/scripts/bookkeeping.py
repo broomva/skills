@@ -1930,7 +1930,12 @@ def score_item_claude_cli(
         specificity=results["specificity"],
         relevance=results["relevance"],
         total=total,
-        promote=total >= PROMOTE_THRESHOLD,
+        # The same admission predicate every other transport uses. Deriving
+        # this from the sum alone predates AXIS_FLOOR and made THIS transport
+        # the only one that could hand back promote=True for a score the gate
+        # refuses (0/3/3 totals 6 and fails the novelty axis).
+        promote=passes_nous_gate(
+            results["novelty"], results["specificity"], results["relevance"]),
         candidate_entities=_build_entity_slug_candidates(item),
         scoring_method="claude_cli",
         reasoning=reasoning,
@@ -2226,7 +2231,13 @@ def _scored_item_is_sane(out: ScoredItem) -> bool:
         return False
     if out.total != sum(dims):
         return False
-    return out.promote == (out.total >= PROMOTE_THRESHOLD)
+    # `passes_nous_gate`, NOT `total >= PROMOTE_THRESHOLD`. The sum is only the
+    # first half of admission since main added AXIS_FLOOR: a 0/3/3 totals 6 and
+    # is still refused on the novelty axis. Checking the sum here rejected a
+    # CORRECT transport result (promote=False, total=6) as invalid — the merge
+    # of this PR onto #235 introduced that, because this predicate was written
+    # when the sum was the whole gate.
+    return out.promote == passes_nous_gate(out.novelty, out.specificity, out.relevance)
 
 
 def _run_transport(name: str, fn, item: RawItem, existing_slugs: list[str]):
@@ -2395,6 +2406,44 @@ def judge_failure_count() -> int:
     return _JUDGE_STATE["failures"]
 
 
+def _reconcile_judge_with_heuristic(h: ScoredItem, judged: ScoredItem) -> ScoredItem:
+    """
+    Combine the two passes per references/scoring-rubric.md §3.
+
+        |judge - heuristic| >= 2  ->  the judge's score stands
+        otherwise                 ->  average the totals, rounding UP
+
+    The averaging branch is why this is not a one-liner: a ScoredItem carries
+    per-axis scores AND a total, and an averaged total no longer equals the sum
+    of either pass's axes. The axes are averaged the same way and the total is
+    recomputed from them, so `_scored_item_is_sane`'s `total == sum(dims)`
+    invariant still holds; rounding up each axis can make the axis sum exceed
+    the rounded-up total, so the total is taken from the reconciled axes rather
+    than computed separately.
+    """
+    if abs(judged.total - h.total) >= 2:
+        return judged
+
+    def up(a: int, b: int) -> int:
+        return min(3, -(-(a + b) // 2))  # ceil, clamped to the 0-3 axis range
+
+    novelty = up(h.novelty, judged.novelty)
+    specificity = up(h.specificity, judged.specificity)
+    relevance = up(h.relevance, judged.relevance)
+    total = novelty + specificity + relevance
+    return ScoredItem(
+        item=judged.item,
+        novelty=novelty,
+        specificity=specificity,
+        relevance=relevance,
+        total=total,
+        promote=passes_nous_gate(novelty, specificity, relevance),
+        candidate_entities=judged.candidate_entities or h.candidate_entities,
+        scoring_method=f"{judged.scoring_method}+heuristic",
+        reasoning=judged.reasoning,
+    )
+
+
 def score_item(item: RawItem, existing_slugs: list[str], verbose: bool = False) -> ScoredItem:
     """
     Two-pass scorer: heuristic fast-path, then LLM judge for the ambiguous band.
@@ -2435,12 +2484,22 @@ def score_item(item: RawItem, existing_slugs: list[str], verbose: bool = False) 
         print(f"  [{item.item_id}] heuristic={h.total}/9 -> judge (subscription first)...")
     judged = score_item_with_judge(item, existing_slugs)
     if judged is not None:
+        # RECONCILE with the heuristic, per references/scoring-rubric.md §3
+        # Pass 2: "use judge score if it differs from Pass 1 by >= 2 points;
+        # otherwise average and round up." This PR is what makes that rule
+        # live — the judge had never run, so nothing had ever reconciled, and
+        # replacing the heuristic outright would have made the code and the
+        # rubric disagree the moment the path activated. A documented rule the
+        # code does not implement is the defect class this arc keeps finding.
+        final = _reconcile_judge_with_heuristic(h, judged)
         if verbose:
             print(
                 f"  [{item.item_id}] {judged.scoring_method}={judged.total}/9 "
                 f"(n={judged.novelty} s={judged.specificity} r={judged.relevance})"
+                + ("" if final.total == judged.total
+                   else f" -> reconciled {final.total}/9 with heuristic {h.total}/9")
             )
-        return judged
+        return final
 
     # Every transport failed while the judge was explicitly ENABLED. The
     # operator asked for a judged score on an in-band item and did not get
@@ -8156,6 +8215,12 @@ def cmd_judge_check(args: argparse.Namespace) -> None:
         if not ok:
             raise SystemExit(1)
 
+    if args.sample and args.sample < 0:
+        # `--sample -1` is TRUTHY, so it skipped this branch and the collection
+        # loop stopped at `len(band) >= -1` — silently reporting a one-item
+        # sample instead of refusing an invalid request.
+        print(f"\n--sample must be non-negative (got {args.sample}).", file=sys.stderr)
+        raise SystemExit(2)
     if not args.sample:
         if args.labels:
             # `--labels` without `--sample` used to exit 0 having written

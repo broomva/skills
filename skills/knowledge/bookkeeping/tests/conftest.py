@@ -51,6 +51,12 @@ def _isolate_knowledge_graph(tmp_path_factory, monkeypatch):
     forgetting.
     """
     root = tmp_path_factory.mktemp("kg")
+    # Exposed so a test can assert against THE FIXTURE'S root rather than a
+    # hardcoded path. An assertion against "/Users/broomva/broomva" passes
+    # vacuously on CI and on any other machine, which would let the fixture be
+    # deleted with the suite still green.
+    import bookkeeping as _bk
+    _bk._TEST_KG_SANDBOX_ROOT = root
     entities = root / "entities"
     notes = root / "notes"
     entities.mkdir(parents=True, exist_ok=True)

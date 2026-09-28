@@ -166,9 +166,12 @@ other** — say so rather than pick one. Single dimension calls were measured at
 (three calls) somewhere between ~16s and ~95s. Separately, a 6-item
 `judge-check --sample` took 11m41s wall = 117s/item, *above* that range.
 
-Per-call latency alone accounts for most of the gap, and the arithmetic is the
-whole explanation: 6 items x 3 dimension calls = 18 calls, which at the 31.6s
-end is 569s — 81% of the 701s observed. Ingest is **not** the explanation. An
+Per-call latency is the largest known term, and the figure below is an
+ESTIMATE, not a full attribution: 6 items x 3 dimension calls = 18 calls, which
+at the 31.6s end would be 569s — about 81% of the 701s observed. It applies one
+observed call latency to all 18 calls, which is why it is an estimate; the
+remaining ~19% is unattributed and nobody has instrumented the phases
+separately. Ingest is **not** the explanation. An
 earlier version of this note asserted that sampling "ingests and heuristically
 scores every discovered extract before it judges anything"; that is false
 (`cmd_judge_check` stops at the first files that fill the band) and full ingest

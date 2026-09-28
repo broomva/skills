@@ -1158,18 +1158,22 @@ def test_relevance_prompt_actually_carries_a_known_project():
     assert "life-agent-os" in user, "the relevance scorer was sent no project list"
 
 
-def test_labels_without_sample_refuses_instead_of_silently_writing_nothing():
+def test_labels_without_sample_refuses_instead_of_silently_writing_nothing(tmp_path):
     """
     `--labels PATH` without `--sample` exited 0 having written nothing, with
     only a generic hint — a silent no-op on an explicit request for a file,
     which is this ticket's defect class on its own CLI.
     """
     import argparse
-    args = argparse.Namespace(sample=0, labels="/tmp/should-not-appear.json", verify=False)
+    # A pytest temp path, not a fixed /tmp name: a leftover file from another
+    # test or the operator's shell made this fail even when cmd_judge_check
+    # correctly wrote nothing.
+    target = tmp_path / "should-not-appear.json"
+    args = argparse.Namespace(sample=0, labels=str(target), verify=False)
     with pytest.raises(SystemExit) as exc:
         bk.cmd_judge_check(args)
     assert exc.value.code == 2
-    assert not pathlib.Path("/tmp/should-not-appear.json").exists()
+    assert not target.exists()
 
 
 def test_no_labels_and_no_sample_is_still_a_clean_exit():
@@ -1394,18 +1398,112 @@ def test_absent_pyyaml_still_reports_genuinely_missing_specs(tmp_path, monkeypat
 
 def test_every_test_is_isolated_from_the_live_knowledge_graph():
     """
-    Proves the CONFTEST FIXTURE is active, not this test's own setup.
+    Asserts against THE FIXTURE'S OWN temporary root, not a hardcoded path.
 
-    The version this replaces applied its own monkeypatches and then asserted
-    on them — tautological, and it let the real mutation (deleting another
-    test's patch) survive. This takes NO setup: if the autouse fixture in
-    conftest is removed or broken, the module attributes point at the
-    operator's real graph and this fails.
+    The previous version compared only against "/Users/broomva/broomva", so on
+    CI — or any machine with a different checkout — deleting the autouse
+    fixture left BROOMVA_ROOT pointing at the real graph and this test still
+    passed. A proof tied to a path that is not the live root on the machine
+    running it proves nothing.
     """
-    real_root = pathlib.Path("/Users/broomva/broomva").resolve()
+    sandbox = getattr(bk, "_TEST_KG_SANDBOX_ROOT", None)
+    assert sandbox is not None, "the conftest isolation fixture did not run"
+    sandbox = pathlib.Path(sandbox).resolve()
     for attr in ("BROOMVA_ROOT", "ENTITIES_DIR", "NOTES_DIR"):
         resolved = pathlib.Path(getattr(bk, attr)).resolve()
-        assert resolved != real_root and real_root not in resolved.parents, (
-            f"bk.{attr} = {resolved} points into the live knowledge graph — "
+        assert resolved == sandbox or sandbox in resolved.parents, (
+            f"bk.{attr} = {resolved} is outside the fixture sandbox {sandbox} — "
             "the conftest isolation fixture is not active"
         )
+
+
+# ── rubric reconciliation (scoring-rubric.md §3 Pass 2) ──────────────────────
+
+def _si(item, n, s, r, method="heuristic"):
+    t = n + s + r
+    return bk.ScoredItem(item=item, novelty=n, specificity=s, relevance=r, total=t,
+                         promote=bk.passes_nous_gate(n, s, r), candidate_entities=[],
+                         scoring_method=method, reasoning={})
+
+
+def test_judge_stands_when_it_differs_by_two_or_more():
+    """|judge - heuristic| >= 2 -> the judge's score stands, verbatim."""
+    it = _item()
+    out = bk._reconcile_judge_with_heuristic(_si(it, 2, 1, 1), _si(it, 3, 3, 3, "claude_cli"))
+    assert (out.novelty, out.specificity, out.relevance, out.total) == (3, 3, 3, 9)
+    assert out.scoring_method == "claude_cli"
+
+
+def test_the_two_are_averaged_when_they_differ_by_less_than_two():
+    """
+    The branch the rubric documents and nothing exercised: heuristic 6, judge 5
+    must stay 6, not become 5. Averaging rounds UP per the rubric.
+    """
+    it = _item()
+    h = _si(it, 2, 2, 2)                      # total 6
+    j = _si(it, 2, 2, 1, "claude_cli")        # total 5, diff 1
+    out = bk._reconcile_judge_with_heuristic(h, j)
+    assert out.total == 6, "heuristic 6 / judge 5 must not fall to 5"
+    assert out.scoring_method == "claude_cli+heuristic"
+
+
+@pytest.mark.parametrize("hn,hs,hr,jn,js,jr", [
+    (2, 2, 2, 2, 2, 1),   # 6 vs 5
+    (1, 2, 2, 2, 2, 2),   # 5 vs 6
+    (3, 3, 0, 3, 2, 1),   # 6 vs 6
+    (1, 1, 1, 1, 1, 2),   # 3 vs 4
+])
+def test_a_reconciled_item_is_internally_consistent(hn, hs, hr, jn, js, jr):
+    """
+    An averaged total no longer equals either pass's axis sum, so the
+    reconciler must recompute it or `_scored_item_is_sane` rejects its own
+    output.
+    """
+    it = _item()
+    out = bk._reconcile_judge_with_heuristic(_si(it, hn, hs, hr),
+                                             _si(it, jn, js, jr, "claude_cli"))
+    assert out.total == out.novelty + out.specificity + out.relevance
+    assert all(0 <= d <= 3 for d in (out.novelty, out.specificity, out.relevance))
+    assert bk._scored_item_is_sane(out), "the reconciler produced a score the gate calls invalid"
+
+
+def test_reconciliation_promote_uses_the_admission_predicate():
+    """promote must come from passes_nous_gate, not the sum — AXIS_FLOOR."""
+    it = _item()
+    out = bk._reconcile_judge_with_heuristic(_si(it, 0, 3, 3), _si(it, 0, 3, 3, "claude_cli"))
+    assert out.promote == bk.passes_nous_gate(out.novelty, out.specificity, out.relevance)
+
+
+def test_score_item_applies_the_reconciliation(monkeypatch):
+    """End to end: the rule is applied on the real path, not only in the helper."""
+    it = _item()
+    monkeypatch.setattr(bk, "score_item_heuristic", lambda i: _si(i, 2, 2, 2))
+    monkeypatch.setattr(bk, "score_item_with_judge",
+                        lambda i, s: _si(i, 2, 2, 1, "claude_cli"))
+    bk.set_judge_enabled(True)
+    try:
+        out = bk.score_item(it, [])
+    finally:
+        bk.set_judge_enabled(False)
+    assert out.total == 6 and out.scoring_method == "claude_cli+heuristic"
+
+
+# ── CLI argument validation ─────────────────────────────────────────────────
+
+@pytest.mark.parametrize("bad", [-1, -20])
+def test_a_negative_sample_is_refused(bad, tmp_path):
+    """
+    `--sample -1` is truthy, so the collection loop stopped at `len(band) >= -1`
+    and the command silently reported a ONE-item sample instead of refusing.
+    """
+    import argparse
+    with pytest.raises(SystemExit) as exc:
+        bk.cmd_judge_check(argparse.Namespace(
+            sample=bad, labels=None, verify=False))
+    assert exc.value.code == 2
+
+
+def test_sample_zero_is_still_the_plain_diagnostic(capsys):
+    import argparse
+    bk.cmd_judge_check(argparse.Namespace(sample=0, labels=None, verify=False))
+    assert "--sample" in capsys.readouterr().out
