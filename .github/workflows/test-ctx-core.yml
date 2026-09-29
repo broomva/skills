@@ -1,0 +1,58 @@
+name: test-ctx-core
+
+# Python test gate for the `ctx-core` skill (skills/orchestration/ctx-core/).
+# Path-filtered so it runs ONLY when the skill or this workflow changes. The
+# mutation check proves the suite goes red when a protection is removed (the
+# lock, redaction, the self-deadline, SessionStart's cached-board read).
+
+on:
+  pull_request:
+    paths:
+      - 'skills/orchestration/ctx-core/**'
+      - '.github/workflows/test-ctx-core.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/orchestration/ctx-core/**'
+      - '.github/workflows/test-ctx-core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-ctx-core-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/orchestration/ctx-core
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the floor ctx.py claims; 3.14 is the interpreter the owner's
+        # registration snippet pins; macOS is where the hooks actually run.
+        include:
+          - {os: ubuntu-22.04, python: "3.9"}
+          - {os: ubuntu-latest, python: "3.11"}
+          - {os: ubuntu-latest, python: "3.12"}
+          - {os: ubuntu-latest, python: "3.14"}
+          - {os: macos-latest, python: "3.14"}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Tests
+        run: python -m pytest tests/ -v
+      - name: Mutation check (every mutant must be killed)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: python tests/mutation_check.py
