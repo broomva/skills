@@ -431,8 +431,10 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
         raise RuntimeError(f"Failed to sync credentials to Orca Keychain for {target_uuid}.")
 
     # Mirror fresh creds across both Claude Keychains so they remain synchronized
-    write_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED, username, fresh_creds)
-    write_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED, username, fresh_creds)
+    ok_unscoped = write_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED, username, fresh_creds)
+    ok_scoped = write_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED, username, fresh_creds)
+    if not (ok_unscoped and ok_scoped):
+        sys.stderr.write(f"Warning: Partial keychain synchronization (unscoped={ok_unscoped}, scoped={ok_scoped})\n")
 
     orca.setdefault("settings", {})["activeClaudeManagedAccountId"] = target_uuid
     if matching_acc:

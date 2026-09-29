@@ -267,9 +267,9 @@ async function approveOAuth(authUrl, cookieHeader, targetOrgUuid) {
   // If redirect_uri is localhost, ping it via HTTP GET to deliver the code to Claude Code's local listener
   if (approveData.redirect_uri.startsWith("http://localhost:") || approveData.redirect_uri.startsWith("http://127.0.0.1:")) {
     try {
-      await fetch(approveData.redirect_uri, { method: "GET" });
+      await fetch(approveData.redirect_uri, { method: "GET", signal: AbortSignal.timeout(5000) });
     } catch (e) {
-      // Listener might close connection immediately upon receiving callback
+      // Listener might close connection immediately upon receiving callback or timeout
     }
   }
 
