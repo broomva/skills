@@ -71,7 +71,7 @@ jobs:
           for i in $(seq 1 120); do   # up to ~60 min
             # All check-runs on this head SHA except this gate itself.
             runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs" \
-                     --jq '.check_runs[] | select(.name != "Merge Gate") | [.name, .status, (.conclusion // "")] | @tsv' \
+                     --jq '.check_runs[] | select(.name != "Merge Gate" and .name != "copilot-pull-request-reviewer") | [.name, .status, (.conclusion // "")] | @tsv' \
                    || echo "")
             # Legacy commit statuses (belt-and-suspenders; most checks are check-runs).
             st_state=$(gh api "repos/$REPO/commits/$SHA/status" --jq '.state' 2>/dev/null || echo "unknown")
