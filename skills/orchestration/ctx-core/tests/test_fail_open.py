@@ -101,8 +101,9 @@ def test_a_hook_that_runs_out_of_time_leaves_a_breadcrumb(timed: World, tmp_path
     proj.mkdir(parents=True)
     (proj / "t.jsonl").write_text(json.dumps({"cwd": str(timed.broomva)}) + "\n")
     report = timed.cli("doctor", cwd=timed.broomva)
-    assert report.returncode == 1 and "1 hook runs out of time in 24h, by stage: run 1" in report.stdout
-    assert "the hooks are running out of time (see misses)" in report.stdout
+    assert report.returncode == 1 and "1 hook runs in 24h ran out of time or skipped work, machine-wide" in report.stdout
+    assert "by stage: run 1" in report.stdout
+    assert "the hooks are running out of time or skipping work (see misses)" in report.stdout
 
 
 def test_no_breadcrumb_without_a_ctx_config(timed: World, tmp_path: Path) -> None:
@@ -113,3 +114,16 @@ def test_no_breadcrumb_without_a_ctx_config(timed: World, tmp_path: Path) -> Non
     (d / "ctx.py").write_text(BROKEN["hangs"])
     timed.hook("stop", {"session_id": "s-1", "cwd": str(timed.broomva)}, script=d / "ctx_hook.py")
     assert not (timed.home / ".local").exists()
+
+
+def test_the_misses_log_rotates_instead_of_going_silent(timed: World, tmp_path: Path) -> None:
+    state = timed.home / ".local" / "state" / "ctx"
+    state.mkdir(parents=True)
+    (state / "hook-misses.jsonl").write_text(("x" * 99 + "\n") * 10486)  # just over 1 MiB
+    d = tmp_path / "plugin-hangs"
+    d.mkdir()
+    shutil.copy2(HOOK, d / "ctx_hook.py")
+    (d / "ctx.py").write_text(BROKEN["hangs"])
+    timed.hook("stop", {"session_id": "s-1", "cwd": str(timed.broomva)}, script=d / "ctx_hook.py")
+    assert (state / "hook-misses.jsonl.1").stat().st_size > 1 << 20
+    assert json.loads((state / "hook-misses.jsonl").read_text())["stage"] == "run"

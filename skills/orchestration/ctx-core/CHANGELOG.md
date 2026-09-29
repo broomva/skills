@@ -11,7 +11,8 @@ read-only shared board.
     the way git does, with no process spawned, and tested to agree with `git
     rev-parse`.
   - An append-only `events.jsonl` per scope. The `fcntl` lock is never waited
-    on for more than 40 ms in a hook or 150 ms in the CLI.
+    on for more than 40 ms in a hook (StopFailure: the rest of its budget); the
+    CLI retries for up to 2 s.
   - A `board.json` folded on every write, byte-identical to `ctx board
     --rebuild`.
   - A redaction pass (a denylist) that runs before any clipping.
@@ -25,9 +26,10 @@ read-only shared board.
   - StopFailure: a `died` status, read from both the payload Claude Code 2.1.280
     sends and the documented one.
 
-  A 100 ms self-deadline, exit 0 always, no output on any failure, and a
-  deadline-miss breadcrumb. Shipped unregistered; SKILL.md carries the owner's
-  snippet.
+  A 100 ms self-deadline. A hook never parses a board.json over 2 MiB, which
+  is what keeps that deadline hard. Exit 0 always, no output on any failure,
+  and a machine-wide miss log (rotated at 1 MiB) for deadline misses and
+  skipped appends. Shipped unregistered; SKILL.md carries the owner's snippet.
 - From #825:
   - Round 4: SessionStart renders from the cached board and never parses the
     log, and nothing reads `CLAUDE_CODE_ENTRYPOINT`.

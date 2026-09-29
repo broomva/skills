@@ -83,6 +83,15 @@ RECENT_WINDOW_S = 48 * 3600
 MAX_STR = 400
 MAX_LINE = 8192
 
+#: A hook does not parse a board.json bigger than this. json.loads/dumps are C
+#: calls the deadline alarm cannot interrupt, so this is what makes the hook's
+#: deadline hard: 2 MiB is about 3,000 sessions and ~15 ms of parse + dump. With
+#: no retention in phase 1 the board grows past it in time; hooks then skip the
+#: fold and the brief (recorded as a miss), and `ctx doctor` reports it.
+HOOK_BOARD_CAP = 2 * 1024 * 1024
+#: The pre-cap bounds regex time on a long string before redaction.
+PRECAP = 8 * MAX_STR
+
 #: A hook folds at most this many log bytes that board.json has not seen. Past
 #: that it leaves the board alone (its time must not grow with the log); `ctx
 #: board` and `ctx board --rebuild` catch it up, and `ctx doctor` reports the
@@ -102,6 +111,9 @@ ARC_STATUS_RE = re.compile(r"^[ \t>*_`]*ARC-STATUS:[ \t]*([A-Z][A-Z0-9_-]*)\b[^\
 
 #: Where the running hook is, for the deadline-miss record ctx_hook.py writes.
 STAGE = "loaded"
+#: Set by run_hook when it finished in time but skipped work (a busy lock, a
+#: board over its cap): ctx_hook.py records it as a miss too.
+MISSED: Optional[str] = None
 
 
 class ConfigError(ValueError):
@@ -359,6 +371,9 @@ def _git(cwd: str, args: List[str], timeout: float) -> Optional[str]:
     return out.decode("utf-8", "replace")
 
 
+_REFNAME = re.compile(r"[^\x00-\x20\x7f~^:?*\[\\]{1,200}")
+
+
 def _read_branch(git_dir: str, toplevel: str, timeout: float) -> Optional[str]:
     try:
         with open(os.path.join(git_dir, "HEAD"), encoding="utf-8") as fh:
@@ -368,7 +383,8 @@ def _read_branch(git_dir: str, toplevel: str, timeout: float) -> Optional[str]:
     if head.startswith("ref: refs/heads/"):
         name = head[len("ref: refs/heads/"):]
         if name != ".invalid":
-            return name
+            # git's own refname rules, roughly: no controls, spaces or ~^:?*[\
+            return name if _REFNAME.fullmatch(name) else None
         # A reftable repo keeps HEAD as a stub; ask git.
         out = _git(toplevel, ["symbolic-ref", "-q", "--short", "HEAD"], timeout)
         return out.strip() if out and out.strip() else None
@@ -487,7 +503,7 @@ _SECRET_PATTERNS: List[Tuple[re.Pattern, str]] = [
     # key=value / key: value where the key names a secret (camelCase included).
     # Bare values need 6+ characters, so prose like "sort key: ts" or "missing
     # token: see PR 12" is left alone.
-    (re.compile(r"(?i)\b([a-z0-9_.-]*?(?:token|secret|passw(?:or)?d|passwd|pwd|passphrase|credentials?"
+    (re.compile(r"(?i)\b([a-z0-9_.-]{0,40}?(?:token|secret|passw(?:or)?d|passwd|pwd|passphrase|credentials?"
                 r"|(?:api|access|secret|private|signing|client|master|encryption)[_.-]?key))"
                 r"([\"']?\s*[:=]\s*)" + _V + r"\"[^\"]+\"|'[^']+'|[^\s,;&\"'()\[\]{}]{6,})"), _R),
     # SHOUTY_ENV_VAR_KEY=value
@@ -497,9 +513,10 @@ _SECRET_PATTERNS: List[Tuple[re.Pattern, str]] = [
                 r"(?=[A-Za-z0-9._~+/=-]*\d)[A-Za-z0-9._~+/=-]{16,}"), _R),
     (re.compile(r"(?i)\b(passw(?:or)?d)(\s+is\s+)" + _V + r"\S+)"), _R),
     # an unknown vendor's token: an unbroken run of 32+ letters and digits that
-    # mixes upper case, lower case and digits. Git SHAs, UUIDs and hex digests
-    # are lower-case; hyphenated names (branches, slugs) are broken into short runs.
-    (re.compile(r"(?<![A-Za-z0-9])(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*\d)"
+    # mixes upper case, lower case and at least four digits. Git SHAs, UUIDs and
+    # hex digests are lower-case; hyphenated names are broken into short runs;
+    # camelCase identifiers ("handleOAuth2Callback...") rarely carry four digits.
+    (re.compile(r"(?<![A-Za-z0-9])(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*[a-z])(?=(?:[A-Za-z]*\d){4})"
                 r"[A-Za-z0-9]{32,}(?![A-Za-z0-9])"), _REDACTED),
 ]
 _PATH_TOKEN = re.compile(r"[^\s\"'<>()\[\]{},;`|]+")
@@ -525,9 +542,10 @@ def redact_text(s: str) -> str:
 
 
 def _flat(s: Any, cap: int = MAX_STR) -> str:
-    """One line: every control character, newline and tab included, becomes a
-    space, so no field can start a line of its own in another session's brief."""
-    s = re.sub(r"[\x00-\x1f\x7f  ]", " ", str(s))
+    """One line: every C0 and C1 control character (newline, tab, NEL included)
+    and U+2028/U+2029 become a space, so no field can start a line of its own in
+    another session's brief: whatever str.splitlines() splits on is gone."""
+    s = re.sub(r"[\x00-\x1f\x7f-\x9f\u2028\u2029]", " ", str(s))
     return s if len(s) <= cap else s[: cap - 1] + "…"
 
 
@@ -535,11 +553,14 @@ def redact(value: Any) -> Any:
     """Redact every string in a JSON-shaped value; keys are left alone.
 
     Redaction runs BEFORE the clip. Clipping first could cut a token in half
-    and leave a prefix too short for any pattern to recognise. The pre-cap only
-    bounds regex time: whatever it cuts lies far past the final clip.
+    and leave a prefix too short for any pattern to recognise. The pre-cap that
+    bounds regex time can cut one too, so a cut string also loses its trailing
+    partial word before it is redacted.
     """
     if isinstance(value, str):
-        return _flat(redact_text(value[: 8 * MAX_STR]))
+        if len(value) > PRECAP:
+            value = re.sub(r"\S*$", "", value[:PRECAP])
+        return _flat(redact_text(value))
     if isinstance(value, dict):
         return {k: redact(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -610,8 +631,16 @@ def make_event(etype: str, scope: Scope, session_id: str, payload: Dict[str, Any
     }
     agent = os.environ.get("PASEO_AGENT_ID")
     if agent:
-        event["paseo_agent_id"] = agent
-    return redact(event)
+        event["paseo_agent_id"] = _flat(agent, 128)
+    # Only the payload is free text. The identifiers come from git and the
+    # filesystem (an excluded cwd never gets this far); running them through
+    # the text redaction made `fix/credentials` read as `[excluded-path]`, so
+    # stored and live branches stopped matching. They are flattened instead.
+    for key in ("cwd", "repo", "branch"):
+        if isinstance(event[key], str):
+            event[key] = _flat(event[key], 1024)
+    event["payload"] = redact(payload)
+    return event
 
 
 def _acquire(fd: int, budget: float) -> bool:
@@ -646,14 +675,15 @@ def _open_lock(scope: Scope) -> int:
 
 
 def append(scope: Scope, event: Dict[str, Any], budget: float = LOCK_BUDGET_S,
-           fold_cap: Optional[int] = FOLD_CAP) -> Tuple[bool, Optional[Dict[str, Any]]]:
+           fold_cap: Optional[int] = FOLD_CAP,
+           board_cap: Optional[int] = None) -> Tuple[bool, Optional[Dict[str, Any]]]:
     """Append one event under the lock, then fold the new log bytes into
     board.json under the same lock. Returns (written, board).
 
     written is False, and nothing is written, when the lock is not acquired
     within min(budget, LOCK_BUDGET_S) or the event is not writable. board is
     None when board.json was not brought up to date (more than fold_cap unseen
-    bytes).
+    bytes, or a board.json over board_cap: MISSED says which).
 
     A writer killed mid-write can leave a line without its newline. The next
     append starts on a fresh line, so the damage is one skipped line, never a
@@ -682,11 +712,23 @@ def append(scope: Scope, event: Dict[str, Any], budget: float = LOCK_BUDGET_S,
             while view:
                 view = view[os.write(fd, view):]
             STAGE = "fold"
-            return True, _sync_board(scope, fd, size + len(line), fold_cap)
+            try:
+                board = _sync_board(scope, fd, size + len(line), fold_cap, board_cap)
+            except BoardTooBig:
+                _missed("board-cap")
+                return True, None
+            if board is None:
+                _missed("fold-cap")
+            return True, board
         finally:
             os.close(fd)
     finally:
         os.close(lock_fd)
+
+
+def _missed(what: str) -> None:
+    global MISSED
+    MISSED = MISSED or what
 
 
 def read_log(scope: Scope) -> bytes:
@@ -697,7 +739,8 @@ def read_log(scope: Scope) -> bytes:
 
 
 def _valid_event(ev: Any) -> bool:
-    if not (isinstance(ev, dict) and ev.get("v") == SCHEMA_VERSION and isinstance(ev.get("type"), str)
+    if not (isinstance(ev, dict) and type(ev.get("v")) is int and ev["v"] == SCHEMA_VERSION
+            and isinstance(ev.get("type"), str)
             and isinstance(ev.get("ts"), str) and TS_RE.match(ev["ts"])
             and isinstance(ev.get("session_id"), str) and SESSION_ID_RE.match(ev["session_id"])
             and isinstance(ev.get("cwd"), str) and isinstance(ev.get("repo"), str)
@@ -817,7 +860,8 @@ def rebuild(scope_id: str, data: bytes) -> Dict[str, Any]:
 
 
 def board_bytes(board: Dict[str, Any]) -> bytes:
-    return (json.dumps(board, sort_keys=True, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+    # Compact: a hook re-serialises the whole board on every write.
+    return (json.dumps(board, sort_keys=True, separators=(",", ":"), ensure_ascii=False) + "\n").encode("utf-8")
 
 
 def _valid_board(board: Any, scope_id: str) -> bool:
@@ -830,10 +874,17 @@ def _valid_board(board: Any, scope_id: str) -> bool:
     )
 
 
-def load_board(scope: Scope) -> Optional[Dict[str, Any]]:
+class BoardTooBig(Exception):
+    """board.json is over the cap a hook may parse."""
+
+
+def load_board(scope: Scope, cap: Optional[int] = None) -> Optional[Dict[str, Any]]:
     """The cached board.json, or None when missing or malformed. This is what
-    SessionStart reads; it never parses the log."""
+    SessionStart reads; it never parses the log. Raises BoardTooBig when the
+    file is over `cap` bytes, which is checked before it is read."""
     try:
+        if cap is not None and scope.board_path.stat().st_size > cap:
+            raise BoardTooBig()
         board = json.loads(scope.board_path.read_bytes().decode("utf-8"))
     except (OSError, ValueError, UnicodeDecodeError):
         return None
@@ -868,16 +919,19 @@ def write_board(scope: Scope, board: Dict[str, Any]) -> None:
     _write_atomic(scope.board_path, board_bytes(board))
 
 
-def _sync_board(scope: Scope, fd: int, size: int, cap: Optional[int]) -> Optional[Dict[str, Any]]:
+def _sync_board(scope: Scope, fd: int, size: int, cap: Optional[int], board_cap: Optional[int] = None,
+                board: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
     """Bring board.json up to `size` log bytes. Call with the lock held.
 
-    Folds only the bytes after the cached board's log_offset, when its tail
-    signature still matches the log. Otherwise (no board, a malformed one, or a
-    log that was replaced) it refolds the log from byte 0.
-    Either way it reads at most `cap` log bytes; past that it returns None and
-    leaves board.json alone.
+    Starts from `board` if given (the CLI builds one outside the lock), else
+    from the cached board.json. Folds only the bytes after its log_offset,
+    when its tail signature still matches the log; otherwise (no board, a
+    malformed one, or a log that was replaced) it refolds the log from byte 0.
+    Returns None, leaving board.json alone, when that means reading more than
+    `cap` log bytes; raises BoardTooBig when board.json is over `board_cap`.
     """
-    board = load_board(scope)
+    if board is None:
+        board = load_board(scope, board_cap)
     if board is not None:
         off = board["log_offset"]
         if off <= size:
@@ -896,57 +950,45 @@ def _sync_board(scope: Scope, fd: int, size: int, cap: Optional[int]) -> Optiona
     return board
 
 
-def check_board(scope: Scope) -> Tuple[str, int]:
+def check_board(scope: Scope) -> Tuple[str, int, bytes]:
     """Is the cached board.json exactly the fold of what it claims to have
     folded? Read-only and lock-free: the board is read BEFORE the log, and the
     log only grows, so the prefix it covers is always there.
 
-    Returns (status, lag_bytes); status is "ok", "missing", "differs" or
+    Returns (status, lag_bytes, log); status is "ok", "missing", "differs" or
     "stale-log" (the log no longer starts with what the board folded)."""
     board = load_board(scope)
     data = read_log(scope)
     if board is None:
-        return ("missing" if not scope.board_path.exists() else "differs"), len(data)
+        return ("missing" if not scope.board_path.exists() else "differs"), len(data), data
     off = board["log_offset"]
     if off > len(data) or _tail_sig(data[max(0, off - TAIL_BYTES):off]) != board.get("log_tail"):
-        return "stale-log", len(data)
+        return "stale-log", len(data), data
     expected = rebuild(scope.id, data[:off])
     if board_bytes(expected) != board_bytes(board):
-        return "differs", len(data) - off
-    return "ok", len(data) - off
+        return "differs", len(data) - off, data
+    return "ok", len(data) - off, data
 
 
 def sync_board(scope: Scope, full: bool = False, wait: float = 2.0) -> Optional[Dict[str, Any]]:
-    """CLI path: bring board.json up to date with no size cap. With `full`, the
-    whole log is refolded. The long fold runs OUTSIDE the lock, on a read of
-    the log; under the lock only the bytes appended since are folded, so hooks
-    are not made to skip their appends while the CLI works. None when the lock
-    stayed busy for `wait` seconds."""
-    if not scope.log.exists():
-        board = rebuild(scope.id, b"")
-        write_board(scope, board)
-        return board
-    board = rebuild(scope.id, read_log(scope)) if full else load_board(scope)
+    """CLI path: bring board.json up to date with no size cap. With `full`, or
+    when the cached board is missing or unusable, the whole log is folded
+    OUTSIDE the lock, on a read of the log; under the lock only the bytes
+    appended since are folded, so hooks are not made to skip their appends
+    while the CLI works. The lock is retried for up to `wait` seconds; None if
+    it stayed busy."""
+    board = None if full else load_board(scope)
+    if board is None:
+        board = rebuild(scope.id, read_log(scope))
     lock_fd = _open_lock(scope)
     try:
         deadline = time.monotonic() + wait
         while not _acquire(lock_fd, LOCK_BUDGET_S):
             if time.monotonic() >= deadline:
                 return None
-        fd = os.open(str(scope.log), os.O_RDONLY)
+        fd = os.open(str(scope.log), os.O_RDONLY | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
         try:
-            size = os.fstat(fd).st_size
-            if board is not None and board["log_offset"] <= size:
-                off = board["log_offset"]
-                n = min(TAIL_BYTES, off)
-                prior = _pread_all(fd, n, off - n)
-                if _tail_sig(prior) == board.get("log_tail"):
-                    fold(board, _pread_all(fd, size - off, off), off, prior)
-                    write_board(scope, board)
-                    return board
-            board = rebuild(scope.id, _pread_all(fd, size, 0))
-            write_board(scope, board)
-            return board
+            return _sync_board(scope, fd, os.fstat(fd).st_size, None, board=board)
         finally:
             os.close(fd)
     finally:
@@ -990,7 +1032,7 @@ def _row_sentence(row: Dict[str, Any], now: float) -> str:
     if row.get("paseo_agent_id"):
         bits.append("Paseo agent %s" % _short(row["paseo_agent_id"]))
     if row.get("fleet_role"):
-        bits.append("role %s" % _flat(row["fleet_role"], 32))
+        bits.append("role, quoted: %s" % json.dumps(_flat(row["fleet_role"], 32), ensure_ascii=False))
     bits.append("branch %s" % _flat(row.get("branch") or "-", 80))
     bits.append("cwd %s" % _tilde(row.get("cwd")))
     bits.append("last event %s ago (%s)" % (_age(now - parse_ts(row["last_ts"])), _flat(row.get("last_event"), 20)))
@@ -1056,10 +1098,12 @@ def render_brief(board: Dict[str, Any], me: Where, session_id: str, now: float,
 
 def render_table(board: Dict[str, Any], now: float) -> str:
     rows = sorted(board.get("sessions", {}).values(), key=lambda r: (r["last_ts"], r["session_id"]), reverse=True)
-    lines = ["scope %s: %d sessions (%d live: no died event, an event in the last %dh), %d events, "
-             "%d skipped lines, last event %s" % (
-                 board.get("scope"), len(rows), sum(1 for r in rows if is_live(r, now)), LIVE_WINDOW_S // 3600,
-                 board.get("events", 0), board.get("skipped_lines", 0), board.get("last_ts") or "-")]
+    live = [r for r in rows if is_live(r, now)]
+    lines = ["scope %s: %d sessions (%d live: no session.died and an event in the last %dh; %d of them with a "
+             "Paseo agent), %d events, %d skipped lines, last event %s" % (
+                 board.get("scope"), len(rows), len(live), LIVE_WINDOW_S // 3600,
+                 sum(1 for r in live if r.get("paseo_agent_id")), board.get("events", 0),
+                 board.get("skipped_lines", 0), board.get("last_ts") or "-")]
     if not rows:
         return lines[0]
     hdr = ("SESSION", "AGENT", "STATE", "LIVE", "LAST", "BRANCH", "STATUS", "CWD")
@@ -1109,10 +1153,11 @@ def run_hook(event: str, raw: str, deadline: float, now: Optional[float] = None)
     """Handle one hook event. Returns the text for stdout ("" for none).
 
     `deadline` is a time.monotonic() value. Work that cannot finish before it
-    is skipped; the wrapper's alarm is the backstop.
+    is skipped, and skipped work is named in MISSED for the wrapper to record;
+    the wrapper's alarm is the backstop.
     """
-    global STAGE
-    STAGE = "parse"
+    global STAGE, MISSED
+    STAGE, MISSED = "parse", None
     data = json.loads(raw) if raw.strip() else None
     if not isinstance(data, dict):
         return ""
@@ -1129,8 +1174,7 @@ def run_hook(event: str, raw: str, deadline: float, now: Optional[float] = None)
     scope = resolve_scope(cwd, timeout=left() - 0.03)
     if scope is None or left() <= 0.01:
         return ""
-    lock_budget = min(HOOK_LOCK_BUDGET_S, left() - 0.02)
-
+    STAGE = "event"
     if event == "session-start":
         payload: Dict[str, Any] = {}
         for key in ("source", "model", "agent_type"):
@@ -1139,25 +1183,35 @@ def run_hook(event: str, raw: str, deadline: float, now: Optional[float] = None)
         role = os.environ.get("FLEET_ROLE")
         if role:
             payload["fleet_role"] = role
-        _, board = append(scope, make_event("session.start", scope, session_id, payload, now), budget=lock_budget)
-        STAGE = "brief"
-        if board is None:
-            board = load_board(scope)  # the cached board; the log is never parsed here
-        if board is None or left() <= 0.005:
-            return ""
-        brief = render_brief(board, scope.where, session_id, time.time() if now is None else now)
-        if not brief:
-            return ""
-        return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
-                                                  "additionalContext": brief}}, ensure_ascii=False)
-    if event == "stop":
-        payload = _extract_arc(data.get("last_assistant_message"))
-        append(scope, make_event("session.stop", scope, session_id, payload, now), budget=lock_budget)
+        ev = make_event("session.start", scope, session_id, payload, now)
+    elif event == "stop":
+        ev = make_event("session.stop", scope, session_id, _extract_arc(data.get("last_assistant_message")), now)
+    elif event == "stop-failure":
+        ev = make_event("session.died", scope, session_id, _died_payload(data), now)
+    else:
         return ""
-    if event == "stop-failure":
-        append(scope, make_event("session.died", scope, session_id, _died_payload(data), now), budget=lock_budget)
+    # session.died is the only terminal event and the one a burst (an
+    # account-wide limit) makes contend: it may wait for the lock with all the
+    # budget has left. The others wait HOOK_LOCK_BUDGET_S at most.
+    wait = left() - 0.02 if event == "stop-failure" else min(HOOK_LOCK_BUDGET_S, left() - 0.02)
+    written, board = append(scope, ev, budget=wait, board_cap=HOOK_BOARD_CAP)
+    if not written:
+        _missed("lock")
+    if event != "session-start":
         return ""
-    return ""
+    STAGE = "brief"
+    if board is None and MISSED != "board-cap":
+        try:
+            board = load_board(scope, HOOK_BOARD_CAP)  # the cached board; the log is never parsed here
+        except BoardTooBig:
+            _missed("board-cap")
+    if board is None or left() <= 0.005:
+        return ""
+    brief = render_brief(board, scope.where, session_id, time.time() if now is None else now)
+    if not brief:
+        return ""
+    return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                              "additionalContext": brief}}, ensure_ascii=False)
 
 
 # --------------------------------------------------------------------------
@@ -1249,13 +1303,18 @@ def recent_sessions(days: float, now: float) -> Tuple[Dict[str, Dict[str, Any]],
 
 
 def _misses(now: float, days: float = 1.0) -> Dict[str, int]:
-    """Deadline misses recorded by ctx_hook.py in the window, by stage."""
+    """Misses recorded by ctx_hook.py in the window, by stage: runs out of time,
+    and runs that skipped work (a busy lock, a board over its cap). The file is
+    rotated to .1 at 1 MiB, so both are read. Records carry no path: they are
+    machine-wide, not per scope."""
     out: Dict[str, int] = {}
-    try:
-        lines = misses_path().read_text(encoding="utf-8", errors="replace").splitlines()
-    except OSError:
-        return out
-    for line in lines[-5000:]:
+    lines: List[str] = []
+    for path in (Path(str(misses_path()) + ".1"), misses_path()):
+        try:
+            lines += path.read_text(encoding="utf-8", errors="replace").splitlines()
+        except OSError:
+            pass
+    for line in lines:
         try:
             rec = json.loads(line)
             if now - float(rec["ts"]) <= days * 86400:
@@ -1288,14 +1347,19 @@ def doctor_scoped(scope: Scope, scopes: Scopes, now: float) -> Tuple[List[str], 
            "  repo      %s (branch %s)" % (scope.where.common_dir, scope.where.branch or "-"),
            "  store     %s" % scope.store]
     problems = 0
-    status, lag = check_board(scope)
-    data = read_log(scope)
+    status, lag, data = check_board(scope)
     lines = data.split(b"\n")[:-1]
     board = rebuild(scope.id, data)
     out.append("  log       %d bytes, %d events, %d skipped lines, %d ignored events"
                % (len(data), board["events"], board["skipped_lines"], board["ignored_events"]))
     out.append("  lock      %s" % _lock_state(scope))
     size = scope.board_path.stat().st_size if scope.board_path.exists() else 0
+    if size > HOOK_BOARD_CAP:
+        problems += 1
+        out.append("  PROBLEM   board.json is %d bytes, over the %d a hook will parse: hooks append but no longer "
+                   "fold or brief (no retention in phase 1; retention is phase 2)" % (size, HOOK_BOARD_CAP))
+    elif size > HOOK_BOARD_CAP // 2:
+        out.append("  WARN      board.json is %d bytes, over half the %d a hook will parse" % (size, HOOK_BOARD_CAP))
     if status == "ok" and lag <= FOLD_CAP:
         out.append("  board     %d bytes, %d sessions; equals a rebuild of what it folded%s"
                    % (size, len(board["sessions"]), (", %d bytes behind (the next write folds them)" % lag) if lag else ""))
@@ -1343,13 +1407,14 @@ def doctor_scoped(scope: Scope, scopes: Scopes, now: float) -> Tuple[List[str], 
         out.append("  %-12s %s" % (hook, ("last event %s ago" % _age(now - parse_ts(ts))) if ts else "no event in the log"))
     misses = _misses(now)
     if misses:
-        out.append("  misses    %d hook runs out of time in 24h, by stage: %s" % (
-            sum(misses.values()), ", ".join("%s %d" % kv for kv in sorted(misses.items()))))
+        out.append("  misses    %d hook runs in 24h ran out of time or skipped work, machine-wide (misses carry "
+                   "no path), by stage: %s" % (
+                       sum(misses.values()), ", ".join("%s %d" % kv for kv in sorted(misses.items()))))
     out.append("  sessions  %d Claude Code sessions in this scope's repos in the last 24h (transcripts)" % seen)
     if seen and not fresh:
         problems += 1
         out.append("  PROBLEM   sessions ran in this scope in the last 24h but no hook event was recorded: "
-                   "%s" % ("the hooks are running out of time (see misses)" if misses
+                   "%s" % ("the hooks are running out of time or skipping work (see misses)" if misses
                            else "the hooks are not registered, or not firing"))
     return out, problems
 
@@ -1410,7 +1475,7 @@ def main(argv: Optional[List[str]] = None) -> int:
 
     before = None
     if args.rebuild:
-        status, _ = check_board(scope)
+        status, _, _ = check_board(scope)
         before = status
     board = sync_board(scope, full=args.rebuild)
     if board is None:

@@ -48,8 +48,8 @@ retention.
 | `scripts/ctx_hook.py` | The hook entry for `session-start`, `stop` and `stop-failure`. It owns the deadline, the output guard, the deadline-miss record, and exit 0 |
 | `~/.config/ctx/scopes.yaml` | Scope id → repos, written by the owner. The key is the realpath of the repo's git common dir, so every worktree of a repo lands in its main checkout's scope |
 | `~/.local/state/ctx/<scope>/events.jsonl` | Append-only, one JSON object per line. Schema: [`references/event-schema.md`](references/event-schema.md) |
-| `~/.local/state/ctx/<scope>/board.json` | The log folded. Derived, never edited by hand |
-| `~/.local/state/ctx/hook-misses.jsonl` | One line per hook that ran out of time: event, stage, ms, with no path. Written only when `scopes.yaml` exists |
+| `~/.local/state/ctx/<scope>/board.json` | The log folded, as compact JSON. Derived, never edited by hand |
+| `~/.local/state/ctx/hook-misses.jsonl` | One line per hook that ran out of time or had to skip work (a busy lock, a board over its cap): event, stage, ms, with no path. Machine-wide. Written only when `scopes.yaml` exists, and rotated to `.1` at 1 MiB |
 
 | Hook | Publishes | Prints |
 |---|---|---|
@@ -94,26 +94,40 @@ Invariants, each pinned by a test:
   - URL credentials and credential query parameters;
   - private-key blocks;
   - a credential named in prose ("token 1a2b…", "the password is …");
-  - any unbroken run of 32 or more characters mixing upper case, lower case and
-    digits.
+  - any unbroken run of 32 or more letters and digits that mixes upper case,
+    lower case and at least four digits.
 
   Paths under `crm/`, or with a secret-shaped segment (`.env*`, `.ssh`, `.aws`,
   `*.pem`, `id_*`, `credentials`, `secrets`), become `[excluded-path]`, and a
-  session whose cwd is such a path writes nothing. **This is still a denylist.**
+  session whose cwd is such a path writes nothing. Only the payload is free
+  text and redacted. The identifiers (cwd, repo, branch) come from git and the
+  filesystem, so they are validated and flattened rather than redacted. That
+  way a branch like `fix/credentials` still matches its peers. The pre-cap that
+  bounds regex time also drops a partial word at the cut, so it cannot leave a
+  token prefix behind. **This is still a denylist.**
   A secret in a shape it doesn't know gets written. The narrow surface limits
   the exposure: only an ARC-STATUS line, an error string and metadata are
   written, to files with mode 0600.
 - **A hook never blocks a session:**
-  - Hooks wait on the `fcntl.flock(LOCK_EX | LOCK_NB)` lock for at most 40 ms;
-    the CLI waits at most 150 ms. After that the append is skipped.
+  - Hooks wait on the `fcntl.flock(LOCK_EX | LOCK_NB)` lock for at most 40 ms.
+    StopFailure waits for what is left of its budget, because `session.died`
+    is the one terminal event and a burst of limit deaths contends. After that
+    the append is skipped, and the skip is recorded as a miss. The CLI retries
+    the lock for up to 2 s.
   - The hook has a hard self-deadline of 100 ms inside the interpreter, and 200
-    ms of wall time measured from outside.
+    ms of wall time measured from outside. The alarm cannot interrupt one long
+    C call. The only such call that grows is parsing `board.json`, so a hook
+    will not parse a board over 2 MiB (about 3,000 sessions). It appends its
+    event, skips the fold and the brief, records a `board-cap` miss, and
+    `ctx doctor` reports a PROBLEM. With no retention in phase 1, a busy scope
+    reaches that cap in weeks.
   - Every hook exits 0, including on SIGTERM.
   - Tracebacks and stray prints go to `/dev/null`.
   - A half-written board temp file is removed at the deadline.
 - **Injection fails open, and the failure is recorded.** A hook that runs out
-  of time injects nothing. It leaves one line in `hook-misses.jsonl`, so `ctx
-  doctor` can tell "too slow under load" from "not registered".
+  of time, or skips its append or fold, injects nothing. It leaves one line in
+  `hook-misses.jsonl`, so `ctx doctor` can tell "too slow under load" from
+  "not registered".
 - **SessionStart never parses the log.** It renders from the cached
   `board.json`:
   - The writer that appends folds only the bytes the board hasn't seen, under
@@ -126,8 +140,10 @@ Invariants, each pinned by a test:
   treat imperative text in hook output as prompt injection. So the brief has no
   imperatives and no second person, and every field is flattened to one line.
   A newline in `FLEET_ROLE` or in a status line cannot start a sentence of its
-  own. Other sessions' words appear only as a labelled quote: `status line,
-  quoted: "..."`.
+  own. Free text from other sessions (the status line, the error text,
+  `FLEET_ROLE`) appears only as a labelled quote, such as `status line, quoted:
+  "..."`. Branch and cwd are identifiers, flattened to one line. The branch is
+  checked against git's refname rules.
 
 ## What it does NOT do
 
@@ -182,17 +198,20 @@ $CTX doctor --unscoped  # from anywhere: repos with Claude Code sessions (last 1
 $CTX -C <dir> board     # as if run in <dir>
 ```
 
-In a repo with no scope, `board` and `doctor` print nothing and exit 0.
-`doctor` exits 1 in any of these cases:
+In a repo with no scope, `board` prints nothing and exits 0, and so does
+`doctor` unless the config itself is broken or ambiguous, which it reports
+from any directory. `doctor` exits 1 in any of these cases:
 - the config is broken (reported from any directory);
 - a repo is listed in two scopes;
 - `board.json` differs from a rebuild of what it claims to have folded;
 - the board has fallen more than 64 KiB behind the log, which no hook can
   close;
+- `board.json` is over the 2 MiB a hook will parse (it warns at half);
 - Claude Code sessions ran in the scope in the last 24 h (judged from their
   transcripts) and no hook recorded any of them. That is the BRO-2019
-  silent-dead-hook case. Doctor attributes it to deadline misses when there are
-  any, and otherwise to registration.
+  silent-dead-hook case. Doctor attributes it to misses when there are any,
+  and otherwise to registration. Misses carry no path, so they are reported as
+  machine-wide.
 
 An idle scope is not a problem.
 
@@ -267,7 +286,11 @@ event, and `misses` should be absent or small.
 - Expected reasons for a difference:
   - a single turn longer than 6 h (Stop has not fired, so the row aged out);
   - a session closed within the window (nothing marks a session ended);
-  - a hook that ran out of time (`ctx doctor` lists the misses);
+  - a session not launched by Paseo (`claude -p`, a terminal session), which
+    has no `paseo_agent_id`. `ctx board` counts live rows with a Paseo agent
+    separately;
+  - a hook that ran out of time or skipped its append (`ctx doctor` lists the
+    misses, by stage);
   - a session in an unscoped repo.
 
 **Rollback:** delete the three entries from `settings.json`. The store under
@@ -279,15 +302,15 @@ event, and `misses` should be absent or small.
 cd skills/orchestration/ctx-core
 python3 -m pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py   # each protection removed in turn; every mutant must fail a test
+python3 tests/mutation_check.py   # 22 protections removed in turn; the test pinning each must fail
 ```
 
 | File | Pins |
 |---|---|
 | `test_scope_isolation.py` | Unscoped is a silent no-op. A worktree shares its main checkout's scope. The filesystem resolver agrees with `git rev-parse` on every layout. sri never reads broomva (`open()` audit). Per-repo ambiguity. Malformed configs. crm/ cwds. `doctor --unscoped` |
-| `test_lock_contention.py` | A held lock: the hook returns under 200 ms and skips the append. Two concurrent writers: neither blocks, and no line tears |
+| `test_lock_contention.py` | A held lock: the hook returns under 200 ms, skips the append, and records the skip. Two concurrent writers: neither blocks, and no line tears |
 | `test_rebuild_determinism.py` | The board kept on write equals a full rebuild. Any split of the log folds the same. A torn line is healed. A hand edit is detected and replaced. A replaced log is detected. SessionStart never reads the log. A board past the fold cap is a doctor problem |
 | `test_fail_open.py` | A ctx module that fails to import, raises, prints, hangs, gets SIGTERM or exits non-zero: exit 0 and no output every time. Hostile stdin. An unwritable store. The deadline-miss breadcrumb |
-| `test_redaction.py` | Every token shape, header, flag and key=value, the paths, no over-redaction, idempotence, end to end through the hooks, and a token straddling the clip |
-| `test_hook_deadline.py` | The normal path, git never run (or bounded and killed on the `GIT_DIR` path), an 11 MB log and a 10 MB board: each under 200 ms of wall time |
+| `test_redaction.py` | Every token shape, header, flag and key=value, the paths, no over-redaction, idempotence, end to end through the hooks, a token straddling the clip or the pre-cap, and no quadratic pattern |
+| `test_hook_deadline.py` | The normal path, git never run (or bounded and killed on the `GIT_DIR` path), an 11 MB log, and a board over the cap (not parsed, the cut-off recorded, the events still appended): each under 200 ms of wall time |
 | `test_hooks.py` | What each hook publishes, including both StopFailure shapes. The brief's relevance, cap, one-line fields, linear cost and factual register. The CLI. Doctor tells idle from dead, and reports a broken config from anywhere |

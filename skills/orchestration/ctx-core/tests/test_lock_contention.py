@@ -1,6 +1,6 @@
 """The lock never blocks a session.
 
-fcntl.flock with LOCK_NB, retried for at most 150 ms (50 ms inside a hook).
+fcntl.flock with LOCK_NB, retried for at most 150 ms (40 ms inside a hook, except StopFailure).
 If it is still not acquired, the append is skipped and the hook exits 0. Two cases: a writer that
 holds the lock for seconds, and two writers appending at the same time.
 """
@@ -92,3 +92,19 @@ def test_two_concurrent_writers_neither_blocks_and_no_line_tears(timed: World) -
     assert all(r["written"] > 0 for r in results), "a writer never got the lock: %s" % results
     # The board was kept up to date under the same lock by whichever writer won.
     assert (timed.store("broomva") / "board.json").read_bytes() == ctx.board_bytes(ctx.rebuild("broomva", raw))
+
+
+def test_a_skipped_append_is_recorded_as_a_miss(timed: World) -> None:
+    """A lock-skipped session.died would otherwise leave a ghost live row for 6 h
+    with nothing anywhere saying why."""
+    timed.start("s-seed", timed.broomva)
+    holder = _hold(timed, 5)
+    try:
+        run = timed.died("s-1", timed.broomva)
+        assert (run.rc, run.stdout) == (0, "")
+    finally:
+        holder.kill()
+        holder.wait()
+    misses = (timed.home / ".local" / "state" / "ctx" / "hook-misses.jsonl").read_text().splitlines()
+    rec = json.loads(misses[-1])
+    assert (rec["event"], rec["stage"]) == ("stop-failure", "lock")

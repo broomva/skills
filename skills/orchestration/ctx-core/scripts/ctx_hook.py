@@ -16,13 +16,15 @@ The contract holds for every event, whatever ctx.py does:
   * A hard self-deadline of BUDGET_S of wall time inside the interpreter.
     Interpreter start-up and teardown are the rest of the 200 ms; a CI runner
     measured about 90 ms of that. The alarm fires between bytecodes, so one
-    long C call (a json.loads of a huge board) can delay it; retention keeps
-    the board small.
-  * A run that hits the deadline appends one line to
+    long C call can delay it. The one such call that grows, the board.json
+    parse, is capped (ctx.HOOK_BOARD_CAP), so the deadline stays hard.
+  * A run that hits the deadline, or finishes but had to skip work (a busy
+    lock, a board over its cap), appends one line to
     ~/.local/state/ctx/hook-misses.jsonl (time, event, stage, ms; no path),
-    but only when ~/.config/ctx/scopes.yaml exists. That is how `ctx doctor`
-    tells "too slow under load" from "not registered". It is the one write a
-    hook can make before it knows the session's scope.
+    but only when ~/.config/ctx/scopes.yaml exists. The file is rotated to .1
+    at 1 MiB. That is how `ctx doctor` tells "too slow under load" from "not
+    registered". A deadline miss is the one write a hook can make before it
+    knows the session's scope.
 
 CTX_HOOK_BUDGET_MS overrides the budget for tests of behaviour on a loaded
 machine; the registered hooks leave it unset.
@@ -61,13 +63,18 @@ def _record_miss(stage):
     if not home or not os.path.isfile(os.path.join(home, ".config", "ctx", "scopes.yaml")):
         return
     d = os.path.join(home, ".local", "state", "ctx")
+    path = os.path.join(d, "hook-misses.jsonl")
     try:
         os.makedirs(d, mode=0o700, exist_ok=True)
-        fd = os.open(os.path.join(d, "hook-misses.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
         try:
-            if os.fstat(fd).st_size < MISS_LOG_CAP:
-                os.write(fd, ('{"ts":%.3f,"event":"%s","stage":"%s","ms":%d}\n' % (
-                    time.time(), _EVENT, stage, (time.monotonic() - _T0) * 1000)).encode())
+            if os.lstat(path).st_size >= MISS_LOG_CAP:
+                os.replace(path, path + ".1")  # rotate; doctor reads both
+        except FileNotFoundError:
+            pass
+        fd = os.open(path, os.O_WRONLY | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            os.write(fd, ('{"ts":%.3f,"event":"%s","stage":"%s","ms":%d}\n' % (
+                time.time(), _EVENT, stage, (time.monotonic() - _T0) * 1000)).encode())
         finally:
             os.close(fd)
     except OSError:
@@ -120,6 +127,8 @@ def main(argv):
 
         out = ctx.run_hook(event, raw, deadline=_T0 + budget)
         signal.setitimer(signal.ITIMER_REAL, 0)
+        if getattr(ctx, "MISSED", None):
+            _record_miss(str(ctx.MISSED))
         signal.signal(signal.SIGTERM, signal.SIG_IGN)  # the write below is not interrupted
         if out:
             data = out.encode("utf-8")

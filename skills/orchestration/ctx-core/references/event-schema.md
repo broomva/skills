@@ -20,9 +20,13 @@ too, because the store is coordination data, not a security boundary.
 | `branch` | string or null | yes | The branch name, `<branch>` from `ref: refs/heads/<branch>` in the worktree's own `HEAD`; `detached@<sha12>` when detached; null when unknown |
 | `payload` | object | yes | Per type, below |
 
-Every string passes the redaction pass before the write, then is clipped to
-400 chars. Redaction always comes first, so a clip can never leave a partial
-token behind.
+Every payload string passes the redaction pass before the write, then is
+clipped to 400 chars. Redaction always comes first, so a clip can never leave
+a partial token behind; the pre-cap (3,200 chars) drops a partial word at its
+cut for the same reason. The identifiers (`cwd`, `repo`, `branch`,
+`paseo_agent_id`) come from git, the filesystem and the environment, not from
+free text. They are flattened to one line rather than redacted, so a branch
+like `fix/credentials` is stored as itself and matches its peers.
 
 ### Payloads
 
@@ -41,9 +45,11 @@ The next append starts on a fresh line.
 ## board.json
 
 A fold of the log, in log order, maintained under the append lock by the
-writer that appends. It is serialised with `json.dumps(sort_keys=True,
-indent=2)` and a trailing newline, so the same log always gives the same
-bytes. Nothing in it reads a clock.
+writer that appends. It is serialised as compact JSON (`json.dumps(sort_keys=
+True, separators=(",", ":"))`) with a trailing newline, so the same log always
+gives the same bytes. Nothing in it reads a clock. A hook does not parse a
+board.json over 2 MiB. There is no retention in phase 1, so it grows with the
+number of distinct sessions.
 
 | Field | Meaning |
 |---|---|

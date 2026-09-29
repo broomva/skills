@@ -190,7 +190,11 @@ def test_the_filesystem_resolver_agrees_with_git(world: World, tmp_path) -> None
                    check=True, capture_output=True)
     bare = tmp_path / "bare.git"
     subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
-    cases = [world.broomva, sub, world.worktree, world.sri, world.sri, world.broomva / "vendor" / "other",
+    wt_sub = world.worktree / "a" / "b"
+    wt_sub.mkdir(parents=True)
+    mod_sub = world.broomva / "vendor" / "other" / "x"
+    mod_sub.mkdir(parents=True)
+    cases = [world.broomva, sub, world.worktree, wt_sub, world.sri, world.broomva / "vendor" / "other", mod_sub,
              world.broomva / ".git", world.broomva / ".git" / "refs", bare, world.home]
     for cwd in cases:
         got = ctx.locate(str(cwd))
@@ -214,3 +218,25 @@ def test_git_redirected_by_the_environment_falls_back_to_git(world: World, monke
     monkeypatch.setenv("GIT_DIR", str(world.sri / ".git"))
     where = ctx.locate(str(world.broomva))
     assert where and where.common_dir == os.path.realpath(str(world.sri / ".git"))
+
+
+def test_a_config_entry_may_name_a_submodule(world: World) -> None:
+    subprocess.run(["git", "-c", "protocol.file.allow=always", "-c", "user.name=t", "-c", "user.email=t@e",
+                    "submodule", "add", "-q", str(world.other), "vendor/other"], cwd=str(world.broomva),
+                   check=True, capture_output=True)
+    mod = world.broomva / "vendor" / "other"
+    (world.home / ".config" / "ctx" / "scopes.yaml").write_text("scopes:\n  mods:\n    - %s\n" % mod)
+    world.start("s-1", mod)
+    assert [e["session_id"] for e in world.events("mods")] == ["s-1"]
+    assert world.events("mods")[0]["repo"] == os.path.realpath(str(world.broomva / ".git" / "modules" / "vendor" / "other"))
+
+
+def test_a_reftable_repo_gets_its_branch_from_git(tmp_path) -> None:
+    repo = tmp_path / "rt"
+    made = subprocess.run(["git", "init", "-q", "--ref-format=reftable", "-b", "feat/rt", str(repo)],
+                          capture_output=True)
+    if made.returncode != 0:
+        import pytest as _pytest
+        _pytest.skip("this git has no reftable support")
+    assert (repo / ".git" / "HEAD").read_text().strip() == "ref: refs/heads/.invalid"
+    assert ctx.locate(str(repo)).branch == "feat/rt"

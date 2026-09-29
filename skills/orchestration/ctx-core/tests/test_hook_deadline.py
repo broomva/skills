@@ -100,11 +100,23 @@ def test_a_large_log_with_no_cached_board_is_cut_off_not_parsed(timed: World) ->
         assert run.elapsed < HOOK_WALL_S, "%.0f ms" % (run.elapsed * 1000)
 
 
-def test_a_huge_board_still_meets_the_deadline(timed: World) -> None:
-    """20,000 distinct sessions make a ~10 MB board.json. Parsing it does not fit
-    the budget, so the hook is cut off and injects nothing; it does not overrun."""
+def test_a_board_over_the_cap_is_not_parsed_and_the_cut_off_is_recorded(timed: World) -> None:
+    """20,000 distinct sessions make a board.json well over HOOK_BOARD_CAP. A
+    json.loads that size is one C call the alarm cannot interrupt (216 ms on a
+    macOS runner in round 2), so a hook must not start it: it appends its event,
+    skips the fold and the brief, and records why."""
     timed.start("s-peer", timed.worktree)
     _grow(timed, 20000, sessions=20000)
-    assert ctx.sync_board(ctx.resolve_scope(str(timed.worktree))) is not None
-    run = timed.start("s-new", timed.worktree)
-    assert run.rc == 0 and run.stderr == "" and run.elapsed < HOOK_WALL_S, "%.0f ms" % (run.elapsed * 1000)
+    scope = ctx.resolve_scope(str(timed.worktree))
+    assert ctx.sync_board(scope) is not None
+    assert scope.board_path.stat().st_size > ctx.HOOK_BOARD_CAP
+    for event in ("session-start", "stop", "stop-failure"):
+        run = timed.hook(event, {"session_id": "s-new", "cwd": str(timed.worktree)})
+        assert (run.rc, run.stdout, run.stderr) == (0, "", "")
+        assert run.elapsed < HOOK_WALL_S, "%.0f ms" % (run.elapsed * 1000)
+    assert [e["session_id"] for e in timed.events("broomva")[-3:]] == ["s-new"] * 3, "the appends were lost"
+    stages = [json.loads(line)["stage"] for line in
+              (timed.home / ".local" / "state" / "ctx" / "hook-misses.jsonl").read_text().splitlines()]
+    assert stages[-3:] == ["board-cap"] * 3
+    report = timed.cli("doctor", cwd=timed.worktree)
+    assert report.returncode == 1 and "over the %d a hook will parse" % ctx.HOOK_BOARD_CAP in report.stdout

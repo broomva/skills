@@ -152,3 +152,22 @@ def test_a_token_straddling_the_clip_is_redacted_before_the_cut(world: World) ->
         world.stop("s-%d" % pad, world.broomva, line)
     raw = (world.store("broomva") / "events.jsonl").read_text()
     assert "ghp_" not in raw
+
+
+@pytest.mark.parametrize("text", ["a-" * 1600, "a1-" * 1066, "api-" * 800, "A_" * 1600, "token" * 640,
+                                  "x." * 1600, "Aa1" * 1066, "bearer " * 457])
+def test_no_pattern_is_quadratic(text: str) -> None:
+    """Round-2 finding: an unbounded lazy key prefix took 415 ms on `a-a-a…`."""
+    import time as _time
+    t0 = _time.perf_counter()
+    ctx.redact(text)
+    assert _time.perf_counter() - t0 < 0.05, "%.0f ms" % ((_time.perf_counter() - t0) * 1000)
+
+
+def test_the_pre_cap_leaves_no_partial_token() -> None:
+    """Round-2 finding: a cut at the pre-cap could leave a token prefix too short
+    to recognise, and redaction shrinking the text could bring it inside the clip."""
+    for pad in range(ctx.PRECAP - 45, ctx.PRECAP + 2):
+        text = "ARC-STATUS: BLOCKED token=" + "A" * (pad - 27) + " " + SECRETS["github classic"]
+        out = ctx.redact(text)
+        assert "ghp_" not in out and "gh" + "p" not in out.split()[-1], (pad, out[-40:])
