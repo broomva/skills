@@ -11,7 +11,11 @@ Pinned here, against the real hook scripts copied into a scratch plugin dir:
     exactly the clean run's output, and no plant ever executes;
   - a positive control: a plant IS imported by a non-isolated interpreter, so
     the suite is not vacuous;
-  - mutation: removing -I from any one site turns the suite red.
+  - mutation: removing -I from any one site turns the suite red;
+  - the user-site path: -I hides user site-packages, where PyYAML lives on the
+    owner's machine. With an interpreter whose ONLY PyYAML is in its user site,
+    both hooks must still work, and removing any one of the three re-adds must
+    turn this red (without them, intake goes silent on every prompt).
 """
 from __future__ import annotations
 
@@ -68,10 +72,12 @@ def _setup(tmp: Path, mutate: tuple[str, int] | None = None, planted: bool = Fal
     return plugin, ws, marks
 
 
-def _run(plugin: Path, ws: Path, tmp: Path, hook: str) -> tuple[int, str]:
+def _run(plugin: Path, ws: Path, tmp: Path, hook: str, python: str | None = None,
+         extra_env: dict | None = None) -> tuple[int, str]:
     env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
+    env.update(extra_env or {})
     env.update({
-        "ROLE_X_PYTHON": sys.executable,
+        "ROLE_X_PYTHON": python or sys.executable,
         "CLAUDE_PROJECT_DIR": str(ws),
         "HOME": str(tmp / "home"),
         "PYTHONDONTWRITEBYTECODE": "1",
@@ -129,3 +135,60 @@ def test_every_interpreter_launch_is_isolated():
 def test_mutant_without_I_is_caught(tmp_path, site):
     _, marks = _outcomes(tmp_path, mutate=site, planted=True)
     assert marks, f"removing -I from {site} went unnoticed"
+
+
+# ── the user-site path ──────────────────────────────────────────────────────
+
+USERSITE_MUTANTS = [
+    ("role-x-intake-hook.sh", "sys.path.append(site.getusersitepackages()); ", ""),
+    ("role-x-coverage-hook.sh", "sys.path.append(site.getusersitepackages()); ", ""),
+    ("role-x.py", "        sys.path.append(_user_site)\n", "        pass\n"),
+]
+
+
+@pytest.fixture(scope="module")
+def usersite_python(tmp_path_factory):
+    """An interpreter whose ONLY PyYAML is in its user site (the owner's Mac)."""
+    import yaml
+
+    root = tmp_path_factory.mktemp("usersite")
+    venv = root / "venv"
+    subprocess.run([sys.executable, "-m", "venv", "--without-pip", str(venv)], check=True)
+    vpy = str(venv / "bin" / "python")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
+    env["PYTHONUSERBASE"] = str(root / "userbase")
+    site_dir = subprocess.run([vpy, "-I", "-c", "import site; print(site.getusersitepackages())"],
+                              env=env, capture_output=True, text=True, check=True).stdout.strip()
+    assert subprocess.run([vpy, "-I", "-c", "import yaml"], env=env,
+                          capture_output=True).returncode != 0, "venv already has PyYAML: vacuous"
+    Path(site_dir).mkdir(parents=True)
+    shutil.copytree(Path(yaml.__file__).parent, Path(site_dir) / "yaml")
+    return vpy, {"PYTHONUSERBASE": env["PYTHONUSERBASE"]}
+
+
+def _usersite_outcome(tmp: Path, vpy: str, extra: dict, mutant=None):
+    plugin, ws, _ = _setup(tmp)
+    if mutant:
+        name, old, new = mutant
+        text = (plugin / name).read_text()
+        assert text.count(old) == 1, (name, old)
+        (plugin / name).write_text(text.replace(old, new))
+    rc, out = _run(plugin, ws, tmp, "role-x-intake-hook.sh", vpy, extra)
+    crc, _ = _run(plugin, ws, tmp, "role-x-coverage-hook.sh", vpy, extra)
+    # The coverage hook prints nothing on a healthy registry; it touches its
+    # cooldown stamp only once the PyYAML probe has passed.
+    stamp = (tmp / "home" / ".config" / "broomva" / "role" / "coverage-stamp").exists()
+    return rc, "rust" in out, crc, stamp
+
+
+def test_user_site_pyyaml_still_routes(tmp_path, usersite_python):
+    vpy, extra = usersite_python
+    assert _usersite_outcome(tmp_path, vpy, extra) == (0, True, 0, True)
+
+
+@pytest.mark.parametrize("mutant", USERSITE_MUTANTS, ids=lambda m: m[0])
+def test_user_site_mutant_is_caught(tmp_path, usersite_python, mutant):
+    vpy, extra = usersite_python
+    got = _usersite_outcome(tmp_path, vpy, extra, mutant)
+    assert got != (0, True, 0, True), f"removing the user-site re-add in {mutant[0]} went unnoticed"
+    assert got[0] == 0 and got[2] == 0, f"a hook stopped failing open: {got}"

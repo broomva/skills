@@ -40,6 +40,10 @@ fi
 WORKSPACE="${CLAUDE_PROJECT_DIR:-$PWD}"
 
 # Stream stdin (the hook JSON payload) through to the intake subcommand.
-# `intake` always exits 0; we still guard with `|| true` so the hook never
-# fails the user's turn for any unexpected reason.
-exec "$PYTHON_BIN" -I "$ROLE_X_PY" intake --workspace "$WORKSPACE" || true
+# `intake` always exits 0, and the guard below makes that hold for ANY failure:
+# this is UserPromptSubmit, where exit 2 blocks and erases the user's prompt.
+# No `exec`: an exec'd process replaces this shell, so a `|| true` after it
+# never ran and role-x.py's own exit code (e.g. 2, "PyYAML required") was the
+# hook's.
+"$PYTHON_BIN" -I "$ROLE_X_PY" intake --workspace "$WORKSPACE" || true
+exit 0
