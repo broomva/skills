@@ -10,6 +10,12 @@
 
 set -eu
 
+# -I on every interpreter launch (BRO-2591 P20 r8): this hook runs with the
+# session's cwd, so a bare `python -c` would import a yaml.py / json.py committed
+# at that repo's root in place of the real module, and `python role-x.py` would
+# put this scripts/ dir first. -I drops cwd, the script dir, PYTHONPATH and user
+# site-packages; PyYAML may live only in the user site, so the probe below and
+# role-x.py re-add that one directory by APPENDING it (the stdlib still wins).
 PYTHON_BIN="${ROLE_X_PYTHON:-python3}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROLE_X_PY="$SCRIPT_DIR/role-x.py"
@@ -25,7 +31,7 @@ fi
 if [ ! -f "$ROLE_X_PY" ]; then
   exit 0
 fi
-if ! "$PYTHON_BIN" -c "import yaml" >/dev/null 2>&1; then
+if ! "$PYTHON_BIN" -I -c "import site, sys; sys.path.append(site.getusersitepackages()); import yaml" >/dev/null 2>&1; then
   exit 0
 fi
 
@@ -45,7 +51,7 @@ if [ -f "$STAMP_FILE" ]; then
 fi
 
 # Run the coverage summary. The subcommand stays silent when healthy.
-"$PYTHON_BIN" "$ROLE_X_PY" coverage --since 7d 2>/dev/null || true
+"$PYTHON_BIN" -I "$ROLE_X_PY" coverage --since 7d 2>/dev/null || true
 
 # Refresh the stamp regardless of whether we printed anything
 mkdir -p "$(dirname "$STAMP_FILE")"

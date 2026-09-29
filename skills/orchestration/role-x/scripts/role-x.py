@@ -32,8 +32,19 @@ from pathlib import Path
 try:
     import yaml
 except ImportError:
-    print("error: PyYAML required (pip install pyyaml)", file=sys.stderr)
-    sys.exit(2)
+    # The hooks run this file isolated (-I), which hides user site-packages,
+    # where `pip install --user pyyaml` puts it. Re-add that one directory by
+    # APPENDING it, so the stdlib and the interpreter's own site-packages win.
+    import site
+
+    _user_site = site.getusersitepackages()
+    if isinstance(_user_site, str) and _user_site not in sys.path:
+        sys.path.append(_user_site)
+    try:
+        import yaml
+    except ImportError:
+        print("error: PyYAML required (pip install pyyaml)", file=sys.stderr)
+        sys.exit(2)
 
 
 REQUIRED_FIELDS = {
