@@ -13,6 +13,12 @@
 
 set -eu
 
+# -I on every interpreter launch (BRO-2591 P20 r8): this hook runs with the
+# session's cwd, so a bare `python -c` would import a yaml.py / json.py committed
+# at that repo's root in place of the real module, and `python role-x.py` would
+# put this scripts/ dir first. -I drops cwd, the script dir, PYTHONPATH and user
+# site-packages; PyYAML may live only in the user site, so the probe below and
+# role-x.py re-add that one directory by APPENDING it (the stdlib still wins).
 PYTHON_BIN="${ROLE_X_PYTHON:-python3}"
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ROLE_X_PY="$SCRIPT_DIR/role-x.py"
@@ -26,7 +32,7 @@ if [ ! -f "$ROLE_X_PY" ]; then
 fi
 
 # Graceful-fail if PyYAML isn't importable in the chosen interpreter.
-if ! "$PYTHON_BIN" -c "import yaml" >/dev/null 2>&1; then
+if ! "$PYTHON_BIN" -I -c "import site, sys; sys.path.append(site.getusersitepackages()); import yaml" >/dev/null 2>&1; then
   exit 0
 fi
 
@@ -36,4 +42,4 @@ WORKSPACE="${CLAUDE_PROJECT_DIR:-$PWD}"
 # Stream stdin (the hook JSON payload) through to the intake subcommand.
 # `intake` always exits 0; we still guard with `|| true` so the hook never
 # fails the user's turn for any unexpected reason.
-exec "$PYTHON_BIN" "$ROLE_X_PY" intake --workspace "$WORKSPACE" || true
+exec "$PYTHON_BIN" -I "$ROLE_X_PY" intake --workspace "$WORKSPACE" || true
