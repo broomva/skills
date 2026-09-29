@@ -75,7 +75,7 @@ def _grow(world: World, n: int, sessions: int = 50) -> None:
     with open(scope.log, "ab") as fh:
         for i in range(n):
             ev = ctx.make_event("session.stop", elsewhere, "s-fill-%d" % (i % sessions),
-                                {"arc_status": "DONE", "arc_line": "x" * 200})
+                                {"arc_status": "DONE", "arc_line": "ARC-STATUS: DONE " + "x " * 50})
             fh.write((json.dumps(ev, sort_keys=True, separators=(",", ":")) + "\n").encode())
 
 
@@ -83,7 +83,7 @@ def test_a_large_log_does_not_slow_session_start(timed: World) -> None:
     timed.start("s-peer", timed.worktree)
     _grow(timed, 20000)  # ~11 MB of log from 50 sessions: many turns, as in real use
     scope = ctx.resolve_scope(str(timed.worktree))
-    assert ctx.sync_board(scope) is not None
+    ctx.read_board(scope)
     for i in range(3):
         run = timed.start("s-new-%d" % i, timed.worktree)
         assert run.rc == 0 and run.elapsed < HOOK_WALL_S, "%.0f ms" % (run.elapsed * 1000)
@@ -93,7 +93,7 @@ def test_a_large_log_does_not_slow_session_start(timed: World) -> None:
 def test_a_large_log_with_no_cached_board_is_cut_off_not_parsed(timed: World) -> None:
     timed.start("s-peer", timed.worktree)
     _grow(timed, 20000)
-    (timed.store("broomva") / "board.json").unlink()
+    assert not (timed.store("broomva") / "board.json").exists()  # hooks never wrote one
     for event in ("session-start", "stop"):
         run = timed.hook(event, {"session_id": "s-late", "cwd": str(timed.worktree)})
         assert (run.rc, run.stdout) == (0, "")
@@ -103,12 +103,13 @@ def test_a_large_log_with_no_cached_board_is_cut_off_not_parsed(timed: World) ->
 def test_a_board_over_the_cap_is_not_parsed_and_the_cut_off_is_recorded(timed: World) -> None:
     """20,000 distinct sessions make a board.json well over HOOK_BOARD_CAP. A
     json.loads that size is one C call the alarm cannot interrupt (216 ms on a
-    macOS runner in round 2), so a hook must not start it: it appends its event,
-    skips the fold and the brief, and records why."""
+    macOS runner in round 2), so SessionStart must not start it: it appends its
+    event, gives no brief, and records why. Stop and StopFailure never read the
+    board at all."""
     timed.start("s-peer", timed.worktree)
     _grow(timed, 20000, sessions=20000)
     scope = ctx.resolve_scope(str(timed.worktree))
-    assert ctx.sync_board(scope) is not None
+    ctx.read_board(scope)
     assert scope.board_path.stat().st_size > ctx.HOOK_BOARD_CAP
     for event in ("session-start", "stop", "stop-failure"):
         run = timed.hook(event, {"session_id": "s-new", "cwd": str(timed.worktree)})
@@ -117,6 +118,7 @@ def test_a_board_over_the_cap_is_not_parsed_and_the_cut_off_is_recorded(timed: W
     assert [e["session_id"] for e in timed.events("broomva")[-3:]] == ["s-new"] * 3, "the appends were lost"
     stages = [json.loads(line)["stage"] for line in
               (timed.home / ".local" / "state" / "ctx" / "hook-misses.jsonl").read_text().splitlines()]
-    assert stages[-3:] == ["board-cap"] * 3
+    assert stages == ["board-cap"]
     report = timed.cli("doctor", cwd=timed.worktree)
     assert report.returncode == 1 and "over the %d a hook will parse" % ctx.HOOK_BOARD_CAP in report.stdout
+    assert "move events.jsonl aside by hand" in report.stdout and "ctx board --rebuild" in report.stdout

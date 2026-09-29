@@ -33,7 +33,7 @@
 | `role-x` | bstack P17 — Lens-Routed Request Articulation |
 | `resume` | Restore an arc that was killed mid-flight by something external — API 529 / 500, ENOTFOUND, ConnectionRefused, an expired login, a laptop that slept, a Ctrl-C. The operator restarts, types `resume`… |
 | `provider-manager` | Autonomous AI provider and subscription management toolkit. Enables seamless account discovery, credential switching, automated zero-touch browser-session OAuth re-authentication, and proactive… |
-| `ctx-core` | The shared context core, phase 1: a read-only shared board. Hooks publish each session's start, ARC-STATUS line and death to a per-scope log; SessionStart injects a factual brief of the other sessions on the same branch. Coordination only, not a security boundary |
+| `ctx-core` | The shared context core, phase 1: a read-only shared board. Hooks append each session's start, ARC-STATUS keyword and death to a per-scope log as structured fields only; SessionStart injects a factual brief of the other sessions on the same branch. Coordination only, not a security boundary |
 
 ## Skill & prompt tooling — `skills/tooling/` (9)
 

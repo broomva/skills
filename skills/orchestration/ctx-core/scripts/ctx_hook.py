@@ -1,9 +1,13 @@
 #!/usr/bin/env python3
 """Claude Code hook entry for ctx: SessionStart, Stop and StopFailure.
 
-    python3 -I -S /path/to/ctx_hook.py session-start   < hook JSON on stdin
-    python3 -I -S /path/to/ctx_hook.py stop
-    python3 -I -S /path/to/ctx_hook.py stop-failure
+    /bin/sh /path/to/ctx-hook.sh session-start   < hook JSON on stdin
+    /bin/sh /path/to/ctx-hook.sh stop
+    /bin/sh /path/to/ctx-hook.sh stop-failure
+
+ctx-hook.sh execs `python3 -I -S` on this file only if it exists; otherwise it
+exits 0 (a Python asked to run a missing file exits 2, which would keep a Stop
+hook's session turning).
 
 The contract holds for every event, whatever ctx.py does:
 
@@ -19,7 +23,7 @@ The contract holds for every event, whatever ctx.py does:
     long C call can delay it. The one such call that grows, the board.json
     parse, is capped (ctx.HOOK_BOARD_CAP), so the deadline stays hard.
   * A run that hits the deadline, or finishes but had to skip work (a busy
-    lock, a board over its cap), appends one line to
+    lock, a board over its cap, a cache too far behind), appends one line to
     ~/.local/state/ctx/hook-misses.jsonl (time, event, stage, ms; no path),
     but only when ~/.config/ctx/scopes.yaml exists. The file is rotated to .1
     at 1 MiB. That is how `ctx doctor` tells "too slow under load" from "not

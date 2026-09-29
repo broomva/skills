@@ -35,7 +35,7 @@ WRITER = textwrap.dedent("""
     for i in range(int(sys.argv[3])):
         ev = ctx.make_event("session.stop", scope, "%s-%d" % (sys.argv[5], i), {})
         t0 = time.monotonic()
-        ok, _ = ctx.append(scope, ev)
+        ok = ctx.append(scope, ev)
         worst = max(worst, time.monotonic() - t0)
         written += ok
     print(json.dumps({"worst": worst, "written": written}))
@@ -63,7 +63,7 @@ def test_a_held_lock_skips_the_append_and_the_hook_returns_in_time(timed: World)
 
         scope = ctx.resolve_scope(str(timed.broomva))
         t0 = time.monotonic()
-        assert ctx.append(scope, ctx.make_event("session.stop", scope, "s-4", {})) == (False, None)
+        assert ctx.append(scope, ctx.make_event("session.stop", scope, "s-4", {})) is False
         waited = time.monotonic() - t0
         # It gives up at its budget, and not long after: it never blocks.
         assert ctx.LOCK_BUDGET_S <= waited < ctx.LOCK_BUDGET_S + 0.1, waited
@@ -90,8 +90,8 @@ def test_two_concurrent_writers_neither_blocks_and_no_line_tears(timed: World) -
     written = sum(r["written"] for r in results)
     assert len(lines) == 1 + written
     assert all(r["written"] > 0 for r in results), "a writer never got the lock: %s" % results
-    # The board was kept up to date under the same lock by whichever writer won.
-    assert (timed.store("broomva") / "board.json").read_bytes() == ctx.board_bytes(ctx.rebuild("broomva", raw))
+    board, complete = ctx.read_board(ctx.resolve_scope(str(timed.broomva)))
+    assert complete and ctx.board_bytes(board) == ctx.board_bytes(ctx.rebuild("broomva", raw))
 
 
 def test_a_skipped_append_is_recorded_as_a_miss(timed: World) -> None:
@@ -108,3 +108,23 @@ def test_a_skipped_append_is_recorded_as_a_miss(timed: World) -> None:
     misses = (timed.home / ".local" / "state" / "ctx" / "hook-misses.jsonl").read_text().splitlines()
     rec = json.loads(misses[-1])
     assert (rec["event"], rec["stage"]) == ("stop-failure", "lock")
+
+
+def test_the_lock_is_held_only_for_the_append(timed: World) -> None:
+    """The board is not touched under the lock, so its size cannot lengthen the
+    hold: under 5 ms with a 10,000-session board.json in place."""
+    scope = ctx.resolve_scope(str(timed.broomva))
+    elsewhere = scope._replace(where=scope.where._replace(branch="filler", cwd="/elsewhere"))
+    scope.store.mkdir(parents=True, exist_ok=True)
+    with open(scope.log, "ab") as fh:
+        for i in range(10000):
+            ev = ctx.make_event("session.start", elsewhere, "s-%05d" % i, {})
+            fh.write((json.dumps(ev, sort_keys=True, separators=(",", ":")) + "\n").encode())
+    board, _ = ctx.read_board(scope)
+    assert len(board["sessions"]) == 10000 and scope.board_path.stat().st_size > 1 << 20
+    holds = []
+    for i in range(20):
+        assert ctx.append(scope, ctx.make_event("session.stop", scope, "s-hold", {}))
+        holds.append(ctx.LAST_LOCK_HOLD)
+    assert sorted(holds)[len(holds) // 2] < 0.005, "median hold %.1f ms" % (sorted(holds)[10] * 1000)
+    assert max(holds) < 0.05, holds

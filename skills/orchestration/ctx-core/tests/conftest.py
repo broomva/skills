@@ -4,8 +4,9 @@
     sri       its own repo (branch main)                           -> scope sri
     other     a repo with no scope                                 -> no-op
 
-Hooks run as the owner would register them: `python3 -I -S ctx_hook.py <event>`
-with the hook JSON on stdin, in a subprocess, timed.
+Hooks run as the owner registers them: `/bin/sh ctx-hook.sh <event>` with
+CTX_PYTHON set and the hook JSON on stdin, in a subprocess, timed. The wrapper
+execs `python3 -I -S ctx_hook.py`.
 """
 from __future__ import annotations
 
@@ -23,6 +24,7 @@ import pytest
 HERE = Path(__file__).resolve().parent
 SCRIPTS = HERE.parent / "scripts"
 HOOK = SCRIPTS / "ctx_hook.py"
+WRAPPER = SCRIPTS / "ctx-hook.sh"
 CTX = SCRIPTS / "ctx.py"
 sys.path.insert(0, str(SCRIPTS))  # so every test module can `import ctx`
 
@@ -76,16 +78,20 @@ class World:
         return json.loads((self.store(scope) / "board.json").read_text())
 
     def hook(self, event: str, payload: Dict, env: Optional[Dict[str, str]] = None,
-             script: Path = HOOK, raw: Optional[str] = None) -> HookRun:
+             script: Optional[Path] = None, raw: Optional[str] = None) -> HookRun:
+        """Through the wrapper, as registered; or, with `script`, a ctx_hook.py
+        run directly (the fail-open tests pair a copy with a broken ctx.py)."""
         full_env = dict(os.environ)
         full_env.pop("CTX_HOOK_BUDGET_MS", None)
         if self.budget_ms:
             full_env["CTX_HOOK_BUDGET_MS"] = self.budget_ms
+        full_env["CTX_PYTHON"] = sys.executable
         full_env.update(env or {})
         data = raw if raw is not None else json.dumps(payload)
+        cmd = (["/bin/sh", str(WRAPPER), event] if script is None
+               else [sys.executable, "-I", "-S", str(script), event])
         t0 = time.monotonic()
-        proc = subprocess.run([sys.executable, "-I", "-S", str(script), event], input=data.encode(),
-                              capture_output=True, env=full_env, timeout=30)
+        proc = subprocess.run(cmd, input=data.encode(), capture_output=True, env=full_env, timeout=30)
         return HookRun(proc.returncode, proc.stdout.decode(), proc.stderr.decode(), time.monotonic() - t0)
 
     def start(self, sid: str, cwd: Path, **env: str) -> HookRun:
@@ -97,13 +103,12 @@ class World:
                                   "stop_hook_active": False, "last_assistant_message": message}, env)
 
     def died(self, sid: str, cwd: Path, error: str = "rate_limit") -> HookRun:
-        # The shape Claude Code 2.1.280 sends: the class in `error`, the text in
-        # `error_details` (read from the shipped binary; the reference docs name
-        # the class `error_type`, and both shapes are tested).
+        # The shape Claude Code 2.1.280 sends: the class in `error`, free text in
+        # `error_details` and `last_assistant_message` (neither is stored).
         return self.hook("stop-failure", {"session_id": sid, "cwd": str(cwd),
                                           "hook_event_name": "StopFailure", "error": error,
-                                          "error_details": "429 Too Many Requests",
-                                          "last_assistant_message": ""})
+                                          "error_details": "429 Too Many Requests: resets at 5pm",
+                                          "last_assistant_message": "partial answer text"})
 
     def cli(self, *args: str, cwd: Path) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, "-I", str(CTX), *args], cwd=str(cwd),

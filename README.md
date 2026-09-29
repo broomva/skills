@@ -73,7 +73,7 @@ npx skills add broomva/skills --skill '*'
 | [`resume`](skills/orchestration/resume/) | Restore an arc killed mid-flight by an API error, a dropped connection or an expired login — reconstruct what died from the transcript, recover dead subagents' work off disk, and continue rather than conclude |
 | [`role-x`](skills/orchestration/role-x/) | bstack P17 — Lens-Routed Request Articulation |
 | [`provider-manager`](skills/orchestration/provider-manager/) | Autonomous AI provider and subscription management toolkit. Enables seamless account discovery, credential switching, automated zero-touch browser-session OAuth re-authentication, and proactive… |
-| [`ctx-core`](skills/orchestration/ctx-core/) | The shared context core, phase 1: a read-only shared board. Hooks publish each session's start, ARC-STATUS line and death to a per-scope log; SessionStart injects a factual brief of the other sessions on the same branch. Coordination only, not a security boundary |
+| [`ctx-core`](skills/orchestration/ctx-core/) | The shared context core, phase 1: a read-only shared board. Hooks append each session's start, ARC-STATUS keyword and death to a per-scope log as structured fields only; SessionStart injects a factual brief of the other sessions on the same branch. Coordination only, not a security boundary |
 
 ### Skill & prompt tooling — `skills/tooling/`
 

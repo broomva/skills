@@ -69,6 +69,9 @@ def test_an_sri_session_never_opens_a_path_in_broomvas_store(world: World, monke
     sri hooks run in-process."""
     world.start("b-1", world.broomva)
     world.stop("b-1", world.broomva, "ARC-STATUS: MERGED x")
+    world.start("s-0", world.sri)
+    world.cli("board", cwd=world.sri)  # sri has a cache, so SessionStart opens its board.json
+    world.cli("board", cwd=world.broomva)  # and so does broomva: a cross read would be possible
     opened = []
     real_open, real_io_open, real_os_open = builtins.open, io.open, os.open
 
@@ -87,7 +90,7 @@ def test_an_sri_session_never_opens_a_path_in_broomvas_store(world: World, monke
     monkeypatch.setattr(builtins, "open", audit_open)
     monkeypatch.setattr(io, "open", audit_io_open)
     monkeypatch.setattr(os, "open", audit_os_open)
-    for event, extra in (("session-start", {"source": "startup"}),
+    for event, extra in (("session-start", {}),
                          ("stop", {"last_assistant_message": "ARC-STATUS: DONE"}),
                          ("stop-failure", {"error_type": "server_error"})):
         payload = dict({"session_id": "s-audit", "cwd": str(world.sri)}, **extra)
@@ -139,20 +142,23 @@ def test_config_accepts_comments_quotes_and_git_dirs(world: World) -> None:
     assert parsed == {"a": ["~/p q", "~/r#s"]}
 
 
-def test_crm_and_secret_shaped_cwds_are_never_written(world: World) -> None:
-    for sub in ("crm", "crm/deals", "notes/.ssh", "config/secrets"):
+def test_crm_and_credential_shaped_cwds_are_never_written(world: World) -> None:
+    subs = ("crm", "crm/deals", "vendor/xoxb-tokens", "k/" + "A1b2" * 8)
+    for sub in subs:
         d = world.broomva / sub
         d.mkdir(parents=True, exist_ok=True)
-        run = world.start("s-%s" % sub.replace("/", "-").replace(".", ""), d)
+        run = world.start("s-%d" % subs.index(sub), d)
         assert (run.rc, run.stdout) == (0, "")
         assert ctx.resolve_scope(str(d)) is None, sub  # the first layer, on its own
     assert world.events("broomva") == []
-    # The second layer: the writer refuses an excluded cwd even with a scope in hand.
+    # The second layer: an event is not even built for a guard-failing cwd.
     scope = ctx.resolve_scope(str(world.broomva))
-    ev = ctx.make_event("session.stop", scope, "s-x", {})
-    ev["cwd"] = str(world.broomva / "crm" / "deals")
-    assert ctx.append(scope, ev) == (False, None)
-    assert world.events("broomva") == []
+    crm = scope._replace(where=scope.where._replace(cwd=str(world.broomva / "crm")))
+    assert ctx.make_event("session.stop", crm, "s-x", {}) is None
+    # "mycrm" is not crm/, and "task-list" is not a token.
+    for sub in ("mycrm", "fix/task-list"):
+        (world.broomva / sub).mkdir(parents=True)
+        assert ctx.resolve_scope(str(world.broomva / sub)) is not None, sub
 
 
 def test_doctor_unscoped_lists_repos_with_sessions_but_no_scope(world: World) -> None:

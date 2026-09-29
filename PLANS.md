@@ -2,7 +2,8 @@
 
 ## ctx-core phase 1: the read-only shared board
 
-Status: in review (PR broomva/skills#246)
+Status: final review (PR broomva/skills#246), narrowed by the owner after the
+fresh round (B 6/10, C 7/10).
 
 Branch: `feat/ctx-core-phase1`
 
@@ -13,54 +14,71 @@ Design: broomva/workspace#825, `docs/specs/2026-09-29-shared-context-core.html`
 ### Objective
 
 Ship `skills/orchestration/ctx-core/`:
-- `ctx.py`, the single writer and reader of a per-scope `events.jsonl`, with
-  the `board.json` fold, `ctx board [--json] [--rebuild]`, `ctx doctor` and
+- `ctx.py`, the single writer and reader of a per-scope `events.jsonl`, with a
+  cached `board.json` fold, `ctx board [--json] [--rebuild]`, `ctx doctor` and
   `ctx doctor --unscoped`;
-- the SessionStart, Stop and StopFailure hook entry.
+- the SessionStart, Stop and StopFailure hook entry, behind the `ctx-hook.sh`
+  missing-file guard.
 
 The hooks ship as scripts only. Registering them is an owner step.
 
 ### Constraints
 
 - Coordination only, not a security boundary (owner decision 2026-09-29).
-- Hooks: under 200 ms of wall time, exit 0 always, and no output on any
-  failure.
-- A repo with no scope is a silent no-op. Nothing under `crm/`, and nothing
-  secret-shaped, is written. The `sri` and `broomva` stores never cross.
+- Hooks: under 200 ms of wall time, exit 0 always, no output on any failure,
+  and the lock held only for the append.
+- Structured fields only (the owner's narrowing). No free text is stored, and
+  one linear guard covers what is.
+- A repo with no scope is a silent no-op. Nothing under `crm/` is written. The
+  `sri` and `broomva` stores never cross.
 - Never edit `~/.claude/settings.json`, `~/broomva/.claude/settings.json` or
   any `hooks.json`.
 
+### Definitions
+
+- **Live:** an event within the last 6 h and no `session.died` since the
+  session's last other event. The same text is in SKILL.md and in
+  `ctx.LIVE_DEFINITION`. `session.died` is the only terminal event; Stop fires
+  every turn.
+- **Board cap:** a hook will not parse a `board.json` over 2 MiB. At 550–720
+  bytes a row, that is about 2,900–3,800 sessions, roughly 4 weeks at ~117 a
+  day. The recovery path:
+  1. `ctx board --rebuild`, for a stale or hand-edited cache;
+  2. to shrink the board, move `events.jsonl` aside by hand, then run `ctx
+     board --rebuild`.
+
+  The scripted archive procedure is phase 2.
+
 ### Out of scope
 
-- Phase 2 of the design: the mailbox, deltas, asyncRewake, and
-  retention/compaction (deferred from phase 1 in round 7; `ctx doctor` says
-  "no retention in phase 1"). Also phase 2: splitting died from failed, and
-  extracting reset times. Phase 1 keeps one `session.died` event, with the
-  redacted error text on the board row (`died_error`).
+- Phase 2 of the design:
+  - the mailbox, deltas and asyncRewake;
+  - retention and the archive procedure (`ctx doctor` says "no retention in
+    phase 1");
+  - splitting died from failed, and reset-time extraction.
 - The role gate and the owner CLI are **not** later work. The design cut them
   (round 7). The boundary is GitHub rulesets and the server-side merge gate.
 
 ### Exit criterion (phase 1)
 
-- One side is the board's live rows: rows with an event inside the build's 6 h
-  `LIVE_WINDOW_S` and no `session.died`, which is the only terminal event (Stop
-  fires every turn).
+- One side is the board's live rows (the definition above).
 - The other side is the `list_agents(cwd:"/")` agents in scope whose
   transcript was modified in the same 6 h.
-- The criterion passes when at least 95% of each set appears in the other, and
-  every difference is listed with its reason.
+- It passes when at least 95% of each set appears in the other, and every
+  difference is listed with its reason.
 - One expected reason for a difference is a single turn longer than 6 h.
 
 ### Milestones
 
-- [x] `ctx.py` + `ctx_hook.py`, stdlib only, Python 3.9+.
-- [x] Tests: scope isolation, lock contention, rebuild determinism, fail-open,
-  redaction, hook deadline, plus a mutation check.
-- [x] SKILL.md with the owner's registration snippet; catalog rows; CI
-  workflow.
-- [ ] Cross-Review (P20) >= 7/10 (round 1: B 7, C 6; round 2 pending), p9
-  gate-check, and a merge pinned to the head.
-- [ ] Local dogfood: synthetic hook JSON into each script, and the board
+- [x] `ctx.py` + `ctx_hook.py` + `ctx-hook.sh`, stdlib only, Python 3.9+.
+- [x] Tests: scope isolation, lock contention (including the lock hold),
+  rebuild determinism, fail-open, the guard (free text, and linear time at
+  10 KB and 1 MB), the hook deadline, and the wrapper. Plus a mutation check.
+- [x] SKILL.md with the owner's registration snippet (via the wrapper); catalog
+  rows; CI workflow.
+- [ ] Cross-Review (P20), final round, then p9 gate-check and a merge pinned to
+  the head, or BLOCKED.
+- [x] Local dogfood: synthetic hook JSON into each script, and the board
   rebuilds.
 
 ## Legal-readiness skill
