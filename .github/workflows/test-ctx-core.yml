@@ -1,0 +1,51 @@
+name: test-ctx-core
+
+# Python test gate for the `ctx-core` skill (skills/orchestration/ctx-core/).
+# Path-filtered so it runs ONLY when the skill or this workflow changes. The
+# mutation check proves the suite goes red when a protection is removed (the
+# lock, redaction, the self-deadline, SessionStart's cached-board read).
+
+on:
+  pull_request:
+    paths:
+      - 'skills/orchestration/ctx-core/**'
+      - '.github/workflows/test-ctx-core.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/orchestration/ctx-core/**'
+      - '.github/workflows/test-ctx-core.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-ctx-core-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/orchestration/ctx-core
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Tests
+        run: python -m pytest tests/ -v
+      - name: Mutation check (every mutant must be killed)
+        if: matrix.python == '3.12'
+        run: python tests/mutation_check.py

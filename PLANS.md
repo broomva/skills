@@ -1,5 +1,46 @@
 # PLANS.md
 
+## ctx-core phase 1: the read-only shared board
+
+Status: in progress
+
+Branch: `feat/ctx-core-phase1`
+
+Design: broomva/workspace#825, `docs/specs/2026-09-29-shared-context-core.html`
+(round 3), revised by the phase-0 spike
+(`~/.config/broomva/fleet/ctx-spike-20260929/SPIKE-REPORT.md`).
+
+### Objective
+
+Ship `skills/orchestration/ctx-core/`: `ctx.py` (the single writer and reader
+of a per-scope `events.jsonl`, the pure `board.json` rebuild, `ctx board`,
+`ctx doctor`, `ctx doctor --unscoped`) and the SessionStart, Stop and
+StopFailure hook entry. Hooks are shipped as scripts only; registering them is
+an owner step.
+
+### Constraints
+
+- Coordination only, not a security boundary (owner decision 2026-09-29).
+- Hooks: under 200 ms wall time, exit 0 always, no output on any failure.
+- A repo with no scope is a silent no-op. Nothing under `crm/`, nothing
+  secret-shaped, is written. The `sri` and `broomva` stores never cross.
+- Never edit `~/.claude/settings.json`, `~/broomva/.claude/settings.json` or
+  any `hooks.json`.
+
+### Non-goals (later phases)
+
+- Mailbox, deltas and asyncRewake (phase 2); the role gate and owner CLI
+  (phase 3); retention and archiving.
+
+### Milestones
+
+- [ ] `ctx.py` + `ctx_hook.py`, stdlib only, Python 3.9+.
+- [ ] Tests: scope isolation, lock contention, rebuild determinism, fail-open,
+  redaction, hook deadline.
+- [ ] SKILL.md with the owner's registration snippet; catalog rows; CI workflow.
+- [ ] Cross-Review (P20) >= 7/10, p9 gate-check, merge pinned to head.
+- [ ] Local dogfood: synthetic hook JSON into each script, board rebuilds.
+
 ## Legal-readiness skill
 
 Status: in progress
