@@ -31,7 +31,7 @@ sys.path.insert(0, str(SCRIPTS))  # so every test module can `import ctx`
 HOOK_WALL_S = 0.200
 #: Behaviour tests give the hook a generous budget, so a loaded test machine
 #: cannot turn "what does the hook publish" into a timing test. The `timed`
-#: fixture restores the real 120 ms for the tests that are about time.
+#: fixture restores the real 100 ms for the tests that are about time.
 BEHAVIOUR_BUDGET_MS = "5000"
 
 
@@ -96,10 +96,14 @@ class World:
         return self.hook("stop", {"session_id": sid, "cwd": str(cwd), "hook_event_name": "Stop",
                                   "stop_hook_active": False, "last_assistant_message": message}, env)
 
-    def died(self, sid: str, cwd: Path, error_type: str = "rate_limit") -> HookRun:
+    def died(self, sid: str, cwd: Path, error: str = "rate_limit") -> HookRun:
+        # The shape Claude Code 2.1.280 sends: the class in `error`, the text in
+        # `error_details` (read from the shipped binary; the reference docs name
+        # the class `error_type`, and both shapes are tested).
         return self.hook("stop-failure", {"session_id": sid, "cwd": str(cwd),
-                                          "hook_event_name": "StopFailure", "error": "429 Too Many Requests",
-                                          "error_type": error_type, "last_assistant_message": ""})
+                                          "hook_event_name": "StopFailure", "error": error,
+                                          "error_details": "429 Too Many Requests",
+                                          "last_assistant_message": ""})
 
     def cli(self, *args: str, cwd: Path) -> subprocess.CompletedProcess:
         return subprocess.run([sys.executable, "-I", str(CTX), *args], cwd=str(cwd),

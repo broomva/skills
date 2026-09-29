@@ -25,7 +25,9 @@ def test_the_normal_path_is_inside_the_deadline(timed: World) -> None:
     assert len(timed.events("broomva")) == 15, "the budget is so tight that appends were dropped"
 
 
-def test_a_hanging_git_is_killed_not_waited_on(timed: World, tmp_path: Path, monkeypatch) -> None:
+def test_hooks_do_not_run_git_and_a_hanging_git_is_killed(timed: World, tmp_path: Path, monkeypatch) -> None:
+    """A hook resolves the repo from the filesystem; git runs only when GIT_DIR
+    and friends redirect it, and then it is bounded and killed."""
     bindir = tmp_path / "bin"
     bindir.mkdir()
     pidfile = tmp_path / "git.pid"
@@ -41,17 +43,24 @@ def test_a_hanging_git_is_killed_not_waited_on(timed: World, tmp_path: Path, mon
     for event in ("session-start", "stop", "stop-failure"):
         run = timed.hook(event, {"session_id": "s-1", "cwd": str(timed.broomva)}, env=env)
         assert (run.rc, run.stdout, run.stderr) == (0, "", "")
+        assert run.elapsed < HOOK_WALL_S, "%.0f ms" % (run.elapsed * 1000)
+    assert not pidfile.exists(), "a hook ran git on the normal path"
+    assert len(timed.events("broomva")) == 3
+    env["GIT_DIR"] = str(timed.broomva / ".git")
+    for event in ("session-start", "stop", "stop-failure"):
+        run = timed.hook(event, {"session_id": "s-2", "cwd": str(timed.broomva)}, env=env)
+        assert (run.rc, run.stdout, run.stderr) == (0, "", "")
         assert run.elapsed < HOOK_WALL_S, "%s waited %.0f ms on git" % (event, run.elapsed * 1000)
     time.sleep(0.05)
     pids = [int(p) for p in pidfile.read_text().split()]
-    assert len(pids) == 3, "the fake git never ran: the test is vacuous"
+    assert len(pids) == 3, "the fake git never ran on the GIT_DIR path: the test is vacuous"
     for pid in pids:
         try:
             os.kill(pid, 0)
         except ProcessLookupError:
             continue
         raise AssertionError("git %d outlived its hook" % pid)
-    assert timed.events("broomva") == []
+    assert len(timed.events("broomva")) == 3
     # The inner layer on its own: git is bounded by its own timeout and killed,
     # without relying on the wrapper's alarm.
     monkeypatch.setenv("PATH", env["PATH"])
@@ -74,7 +83,7 @@ def test_a_large_log_does_not_slow_session_start(timed: World) -> None:
     timed.start("s-peer", timed.worktree)
     _grow(timed, 20000)  # ~11 MB of log from 50 sessions: many turns, as in real use
     scope = ctx.resolve_scope(str(timed.worktree))
-    assert ctx.sync_board(scope)[0] is not None
+    assert ctx.sync_board(scope) is not None
     for i in range(3):
         run = timed.start("s-new-%d" % i, timed.worktree)
         assert run.rc == 0 and run.elapsed < HOOK_WALL_S, "%.0f ms" % (run.elapsed * 1000)
@@ -96,6 +105,6 @@ def test_a_huge_board_still_meets_the_deadline(timed: World) -> None:
     the budget, so the hook is cut off and injects nothing; it does not overrun."""
     timed.start("s-peer", timed.worktree)
     _grow(timed, 20000, sessions=20000)
-    assert ctx.sync_board(ctx.resolve_scope(str(timed.worktree)))[0] is not None
+    assert ctx.sync_board(ctx.resolve_scope(str(timed.worktree))) is not None
     run = timed.start("s-new", timed.worktree)
     assert run.rc == 0 and run.stderr == "" and run.elapsed < HOOK_WALL_S, "%.0f ms" % (run.elapsed * 1000)

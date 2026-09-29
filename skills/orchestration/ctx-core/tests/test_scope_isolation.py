@@ -8,8 +8,10 @@ file the process opens, not only by looking at what it outputs.
 from __future__ import annotations
 
 import builtins
+import io
 import json
 import os
+import subprocess
 import time
 
 import pytest
@@ -63,21 +65,27 @@ def test_sri_and_broomva_stores_never_cross(world: World) -> None:
 
 
 def test_an_sri_session_never_opens_a_path_in_broomvas_store(world: World, monkeypatch) -> None:
-    """Audit every open() and os.open() while sri hooks run in-process."""
+    """Audit every open(), io.open() (which pathlib uses) and os.open() while
+    sri hooks run in-process."""
     world.start("b-1", world.broomva)
     world.stop("b-1", world.broomva, "ARC-STATUS: MERGED x")
     opened = []
-    real_open, real_os_open = builtins.open, os.open
+    real_open, real_io_open, real_os_open = builtins.open, io.open, os.open
 
     def audit_open(file, *a, **k):
         opened.append(str(file))
         return real_open(file, *a, **k)
+
+    def audit_io_open(file, *a, **k):
+        opened.append(str(file))
+        return real_io_open(file, *a, **k)
 
     def audit_os_open(path, *a, **k):
         opened.append(str(path))
         return real_os_open(path, *a, **k)
 
     monkeypatch.setattr(builtins, "open", audit_open)
+    monkeypatch.setattr(io, "open", audit_io_open)
     monkeypatch.setattr(os, "open", audit_os_open)
     for event, extra in (("session-start", {"source": "startup"}),
                          ("stop", {"last_assistant_message": "ARC-STATUS: DONE"}),
@@ -85,21 +93,28 @@ def test_an_sri_session_never_opens_a_path_in_broomvas_store(world: World, monke
         payload = dict({"session_id": "s-audit", "cwd": str(world.sri)}, **extra)
         ctx.run_hook(event, json.dumps(payload), deadline=time.monotonic() + 5)
     monkeypatch.setattr(builtins, "open", real_open)
+    monkeypatch.setattr(io, "open", real_io_open)
     monkeypatch.setattr(os, "open", real_os_open)
 
     broomva_store = str(world.store("broomva"))
-    assert any(p.startswith(str(world.store("sri"))) for p in opened), "the audit saw nothing: vacuous"
+    sri_store = str(world.store("sri"))
+    assert any(p.startswith(sri_store) for p in opened), "the audit saw nothing: vacuous"
+    assert any(p == sri_store + "/board.json" for p in opened), "a pathlib read went unaudited"
     assert [p for p in opened if p.startswith(broomva_store)] == []
 
 
-def test_a_repo_in_two_scopes_is_ambiguous_and_resolves_to_none(world: World) -> None:
+def test_a_repo_in_two_scopes_has_no_scope_and_the_others_are_unaffected(world: World) -> None:
     (world.home / ".config" / "ctx" / "scopes.yaml").write_text(
-        "scopes:\n  broomva:\n    - ~/broomva\n  sri:\n    - ~/broomva/.git\n")
+        "scopes:\n  broomva:\n    - ~/broomva\n    - ~/other\n  sri:\n    - ~/broomva/.git\n"
+        "    - ~/broomva/work/sri\n")
     run = world.start("s-1", world.broomva)
     assert (run.rc, run.stdout) == (0, "")
-    assert not world.store("broomva").exists() and not world.store("sri").exists()
+    world.start("s-2", world.other)
+    world.start("s-3", world.sri)
+    assert [e["session_id"] for e in world.events("broomva")] == ["s-2"]
+    assert [e["session_id"] for e in world.events("sri")] == ["s-3"]
     report = world.cli("doctor", "--unscoped", cwd=world.other)
-    assert report.returncode == 1 and "in two scopes" in report.stdout
+    assert report.returncode == 1 and "is listed in scopes broomva, sri" in report.stdout
 
 
 @pytest.mark.parametrize("bad", ["../evil", "Broomva", "a/b", "-x", ""])
@@ -153,3 +168,49 @@ def test_doctor_unscoped_lists_repos_with_sessions_but_no_scope(world: World) ->
     assert str(world.other.relative_to(world.home)) in res.stdout
     assert "broomva/.git" not in res.stdout
     assert "1 sessions in a cwd that no longer exists" in res.stdout
+
+
+def _git_says(cwd) -> tuple:
+    out = subprocess.run(["git", "-C", str(cwd), "rev-parse", "--path-format=absolute", "--git-common-dir",
+                          "--show-toplevel"], capture_output=True, text=True)
+    if out.returncode != 0:
+        return None
+    common, top = out.stdout.split()
+    return os.path.realpath(common), os.path.realpath(top)
+
+
+def test_the_filesystem_resolver_agrees_with_git(world: World, tmp_path) -> None:
+    """ctx reads .git / gitdir / commondir itself so a hook spawns no process.
+    It must give `git rev-parse` 's answer on every layout it handles."""
+    sub = world.broomva / "pkg" / "deep"
+    sub.mkdir(parents=True)
+    # a submodule
+    subprocess.run(["git", "-c", "protocol.file.allow=always", "-c", "user.name=t", "-c", "user.email=t@e",
+                    "submodule", "add", "-q", str(world.other), "vendor/other"], cwd=str(world.broomva),
+                   check=True, capture_output=True)
+    bare = tmp_path / "bare.git"
+    subprocess.run(["git", "init", "-q", "--bare", str(bare)], check=True)
+    cases = [world.broomva, sub, world.worktree, world.sri, world.sri, world.broomva / "vendor" / "other",
+             world.broomva / ".git", world.broomva / ".git" / "refs", bare, world.home]
+    for cwd in cases:
+        got = ctx.locate(str(cwd))
+        want = _git_says(cwd)
+        assert (got and (got.common_dir, got.toplevel)) == (want or None), cwd
+    assert ctx.locate(str(world.worktree)).branch == "feat/x"
+    subprocess.run(["git", "checkout", "-q", "--detach"], cwd=str(world.sri), check=True)
+    assert ctx.locate(str(world.sri)).branch.startswith("detached@")
+
+
+def test_a_config_entry_may_name_a_worktree_or_a_git_dir(world: World) -> None:
+    (world.home / ".config" / "ctx" / "scopes.yaml").write_text(
+        "scopes:\n  broomva:\n    - %s\n  sri:\n    - %s/.git\n" % (world.worktree, world.sri))
+    world.start("s-1", world.broomva)  # the main checkout, reached through its worktree's entry
+    world.start("s-2", world.sri)
+    assert [e["session_id"] for e in world.events("broomva")] == ["s-1"]
+    assert [e["session_id"] for e in world.events("sri")] == ["s-2"]
+
+
+def test_git_redirected_by_the_environment_falls_back_to_git(world: World, monkeypatch) -> None:
+    monkeypatch.setenv("GIT_DIR", str(world.sri / ".git"))
+    where = ctx.locate(str(world.broomva))
+    assert where and where.common_dir == os.path.realpath(str(world.sri / ".git"))

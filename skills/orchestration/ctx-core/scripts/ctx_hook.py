@@ -9,14 +9,23 @@ The contract holds for every event, whatever ctx.py does:
 
   * Exit status 0, always. SIGALRM (the self-deadline) and SIGTERM (Claude
     Code's own timeout) both end the process with 0.
-  * Nothing on stdout except one complete JSON object, written in a single
-    step after the work is done and the deadline timer is off. Anything ctx.py
+  * Nothing on stdout except one complete JSON object, written after the work
+    is done, with the deadline timer off and SIGTERM ignored. Anything ctx.py
     prints, and every traceback, goes to /dev/null. Injection fails OPEN: a
     failed or late hook injects nothing, and the session carries on.
   * A hard self-deadline of BUDGET_S of wall time inside the interpreter.
-    Interpreter start-up and teardown are the rest of the 200 ms.
-    CTX_HOOK_BUDGET_MS overrides it for tests of behaviour on a loaded machine;
-    the registered hooks leave it unset.
+    Interpreter start-up and teardown are the rest of the 200 ms; a CI runner
+    measured about 90 ms of that. The alarm fires between bytecodes, so one
+    long C call (a json.loads of a huge board) can delay it; retention keeps
+    the board small.
+  * A run that hits the deadline appends one line to
+    ~/.local/state/ctx/hook-misses.jsonl (time, event, stage, ms; no path),
+    but only when ~/.config/ctx/scopes.yaml exists. That is how `ctx doctor`
+    tells "too slow under load" from "not registered". It is the one write a
+    hook can make before it knows the session's scope.
+
+CTX_HOOK_BUDGET_MS overrides the budget for tests of behaviour on a loaded
+machine; the registered hooks leave it unset.
 
 `-I` keeps a module planted in the session's cwd, or in user site-packages,
 from being imported in place of the stdlib; this script adds only its own
@@ -30,10 +39,14 @@ import sys
 import time
 
 _T0 = time.monotonic()
-#: 120 ms inside the interpreter leaves 80 ms of the 200 ms wall for start-up
-#: and teardown, which a loaded machine or a slow Python can need.
-BUDGET_S = 0.120
+#: 100 ms inside the interpreter leaves 100 ms of the 200 ms wall for start-up
+#: and teardown.
+BUDGET_S = 0.100
 STDIN_CAP = 1 << 20
+MISS_LOG_CAP = 1 << 20
+EVENTS = ("session-start", "stop", "stop-failure")
+_EVENT = "other"
+_STAGE = "start"
 
 
 def _budget():
@@ -43,13 +56,35 @@ def _budget():
         return BUDGET_S
 
 
+def _record_miss(stage):
+    home = os.environ.get("HOME") or ""
+    if not home or not os.path.isfile(os.path.join(home, ".config", "ctx", "scopes.yaml")):
+        return
+    d = os.path.join(home, ".local", "state", "ctx")
+    try:
+        os.makedirs(d, mode=0o700, exist_ok=True)
+        fd = os.open(os.path.join(d, "hook-misses.jsonl"), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        try:
+            if os.fstat(fd).st_size < MISS_LOG_CAP:
+                os.write(fd, ('{"ts":%.3f,"event":"%s","stage":"%s","ms":%d}\n' % (
+                    time.time(), _EVENT, stage, (time.monotonic() - _T0) * 1000)).encode())
+        finally:
+            os.close(fd)
+    except OSError:
+        pass
+
+
 def _bail(signum=None, frame=None):
     ctx = sys.modules.get("ctx")
-    if ctx is not None:
-        try:
-            ctx.kill_child()
-        except BaseException:
-            pass
+    try:
+        ctx.on_deadline()  # kill a hung git, remove a half-written temp file
+    except BaseException:
+        pass
+    try:
+        stage = getattr(ctx, "STAGE", None) or _STAGE
+        _record_miss(("sigterm:" if signum == signal.SIGTERM else "") + str(stage))
+    except BaseException:
+        pass
     os._exit(0)
 
 
@@ -65,6 +100,7 @@ def _read_stdin():
 
 
 def main(argv):
+    global _EVENT, _STAGE
     try:
         signal.signal(signal.SIGALRM, _bail)
         signal.signal(signal.SIGTERM, _bail)
@@ -73,12 +109,18 @@ def main(argv):
         devnull = open(os.devnull, "w")
         sys.stdout = sys.stderr = devnull
         event = argv[1] if len(argv) > 1 else ""
+        _EVENT = event if event in EVENTS else "other"
+        _STAGE = "stdin"
         raw = _read_stdin()
+        _STAGE = "import"
         sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
         import ctx  # noqa: E402  (after the guards, so an import failure is caught too)
 
+        _STAGE = "run"
+
         out = ctx.run_hook(event, raw, deadline=_T0 + budget)
         signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGTERM, signal.SIG_IGN)  # the write below is not interrupted
         if out:
             data = out.encode("utf-8")
             while data:

@@ -33,7 +33,7 @@ def test_the_board_kept_on_write_equals_a_full_rebuild(world: World) -> None:
     on_disk = (world.store("broomva") / "board.json").read_bytes()
     assert on_disk == ctx.board_bytes(ctx.rebuild("broomva", _log(world)))
     res = world.cli("board", "--rebuild", cwd=world.broomva)
-    assert "the cached board.json was identical" in res.stdout
+    assert "the cached board.json equalled a rebuild of what it had folded" in res.stdout
     assert (world.store("broomva") / "board.json").read_bytes() == on_disk
 
 
@@ -91,9 +91,10 @@ def test_a_hand_edited_board_is_replaced(world: World) -> None:
     edited = json.loads(good)
     edited["sessions"]["s-a"]["arc_status"] = "MERGED"
     path.write_text(json.dumps(edited))
-    assert "differs from a full rebuild" in world.cli("doctor", cwd=world.broomva).stdout
+    report = world.cli("doctor", cwd=world.broomva)
+    assert report.returncode == 1 and "differs from a rebuild of the log it claims to have folded" in report.stdout
     res = world.cli("board", "--rebuild", cwd=world.broomva)
-    assert "differed and was replaced" in res.stdout
+    assert "differed from a rebuild (hand-edited or corrupt) and was replaced" in res.stdout
     assert path.read_bytes() == good
 
 
@@ -119,7 +120,7 @@ def test_session_start_reads_the_cached_board_and_never_the_whole_log(world: Wor
     with open(scope.log, "ab") as fh:
         for ev in filler:
             fh.write((json.dumps(ev, sort_keys=True, separators=(",", ":")) + "\n").encode())
-    board, _ = ctx.sync_board(scope)
+    board = ctx.sync_board(scope)
     assert board and scope.log.stat().st_size > 3 * ctx.FOLD_CAP
 
     reads = []
@@ -141,3 +142,26 @@ def test_session_start_reads_the_cached_board_and_never_the_whole_log(world: Wor
     assert out == "" and not scope.board_path.exists()
     assert max(reads, default=0) <= ctx.FOLD_CAP
     assert json.loads(scope.log.read_bytes().splitlines()[-1])["session_id"] == "s-new2", "registration was lost"
+
+
+def test_ts_round_trips_without_datetime() -> None:
+    for t in (0.0, 951782400.5, 1790700000.123, 4102444799.999, 1709164800.0):  # incl. 2000-02-29, 2024-02-29
+        assert abs(ctx.parse_ts(ctx.now_ts(t)) - t) < 0.001, t
+    assert ctx.now_ts(1709164800.0) == "2024-02-29T00:00:00.000Z"
+
+
+def test_a_board_behind_past_the_fold_cap_is_a_doctor_problem(world: World) -> None:
+    world.start("s-1", world.worktree)
+    scope = ctx.resolve_scope(str(world.worktree))
+    elsewhere = scope._replace(where=scope.where._replace(branch="filler", cwd="/elsewhere"))
+    with open(scope.log, "ab") as fh:  # appended behind the board's back
+        for i in range(400):
+            fh.write((json.dumps(ctx.make_event("session.stop", elsewhere, "s-f%d" % i, {}), sort_keys=True,
+                                 separators=(",", ":")) + "\n").encode())
+    assert scope.log.stat().st_size - world.board("broomva")["log_offset"] > ctx.FOLD_CAP
+    world.stop("s-1", world.worktree)  # a hook will not fold that much
+    report = world.cli("doctor", cwd=world.worktree)
+    assert report.returncode == 1 and "past the %d bytes a hook folds" % ctx.FOLD_CAP in report.stdout
+    world.cli("board", cwd=world.worktree)  # the CLI catches it up
+    assert world.cli("doctor", cwd=world.worktree).returncode == 0
+

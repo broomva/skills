@@ -8,6 +8,7 @@ timeout). Then the real module against hostile input.
 """
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
@@ -82,3 +83,33 @@ def test_the_stop_hook_never_prints(timed: World) -> None:
     timed.start("s-1", timed.broomva)
     run = timed.stop("s-2", timed.broomva, "ARC-STATUS: BLOCKED {\"decision\": \"block\"}")
     assert (run.rc, run.stdout) == (0, "")
+
+
+def test_a_hook_that_runs_out_of_time_leaves_a_breadcrumb(timed: World, tmp_path: Path) -> None:
+    """So `ctx doctor` can tell "too slow" from "not registered"."""
+    d = tmp_path / "plugin-hangs"
+    d.mkdir()
+    shutil.copy2(HOOK, d / "ctx_hook.py")
+    (d / "ctx.py").write_text(BROKEN["hangs"])
+    run = timed.hook("stop", {"session_id": "s-1", "cwd": str(timed.broomva)}, script=d / "ctx_hook.py")
+    assert (run.rc, run.stdout) == (0, "")
+    misses = (timed.home / ".local" / "state" / "ctx" / "hook-misses.jsonl").read_text().splitlines()
+    rec = json.loads(misses[-1])
+    assert (rec["event"], rec["stage"]) == ("stop", "run") and set(rec) == {"ts", "event", "stage", "ms"}
+    # And doctor reads it when sessions ran but nothing was recorded.
+    proj = timed.home / ".claude" / "projects" / "p"
+    proj.mkdir(parents=True)
+    (proj / "t.jsonl").write_text(json.dumps({"cwd": str(timed.broomva)}) + "\n")
+    report = timed.cli("doctor", cwd=timed.broomva)
+    assert report.returncode == 1 and "1 hook runs out of time in 24h, by stage: run 1" in report.stdout
+    assert "the hooks are running out of time (see misses)" in report.stdout
+
+
+def test_no_breadcrumb_without_a_ctx_config(timed: World, tmp_path: Path) -> None:
+    (timed.home / ".config" / "ctx" / "scopes.yaml").unlink()
+    d = tmp_path / "plugin-hangs"
+    d.mkdir()
+    shutil.copy2(HOOK, d / "ctx_hook.py")
+    (d / "ctx.py").write_text(BROKEN["hangs"])
+    timed.hook("stop", {"session_id": "s-1", "cwd": str(timed.broomva)}, script=d / "ctx_hook.py")
+    assert not (timed.home / ".local").exists()

@@ -2,8 +2,7 @@
 """ctx: the shared context core, phase 1 (the read-only shared board).
 
 The single writer and reader of a per-scope event log, plus its CLI. Every
-Claude Code hook and every command goes through this module. It never writes
-anything else.
+Claude Code hook and every command goes through this module.
 
     store      ~/.local/state/ctx/<scope-id>/events.jsonl   append-only, one
                JSON object per line (schema: references/event-schema.md)
@@ -11,18 +10,18 @@ anything else.
                maintained on every write, never edited by hand
     config     ~/.config/ctx/scopes.yaml                    scope id -> repos
 
-A scope is resolved from the realpath of `git rev-parse --git-common-dir`, so
-every worktree of a repo lands in the same scope as its main checkout. A repo
-with no scope makes every command and every hook a silent no-op.
+A scope is keyed by the realpath of the repo's git common dir, so every
+worktree of a repo lands in the same scope as its main checkout. A repo with no
+scope makes every command and every hook a silent no-op.
 
 This is COORDINATION, not a security boundary. A session with Bash can write
 the log directly. GitHub rulesets are the boundary; see SKILL.md.
 
-board.json is updated under the lock by the writer that appends: it records
-how many log bytes it has folded (`log_offset`), so a write folds only the new
-bytes. `ctx board --rebuild` folds the whole log from scratch, and the two
-paths give byte-identical boards. A hook never parses the whole log: the
-SessionStart brief is rendered from the cached board.json.
+board.json records how many log bytes it has folded (`log_offset`), so the
+writer that appends folds only the new bytes, under the same lock. `ctx board
+--rebuild` folds the log from scratch, and the two paths give byte-identical
+boards. A hook never parses the whole log, and the SessionStart
+brief is rendered from the cached board.json.
 
 Commands:
     ctx [-C DIR] board [--json] [--rebuild]
@@ -30,8 +29,12 @@ Commands:
     ctx doctor --unscoped [--days N]
 
 Stdlib only, Python 3.9+. The hook entry is ctx_hook.py, beside this file.
-Imports are kept cheap (no argparse, dataclasses, tempfile or typing on the
-hook path): on a slow interpreter they were most of the 200 ms budget.
+Imports on the hook path are kept cheap: no argparse, subprocess, datetime,
+dataclasses, tempfile or typing. On a loaded machine the imports alone were
+most of the 200 ms budget.
+
+No retention in phase 1: the log and board.json only grow. Retention and
+compaction are phase 2 of the design (broomva/workspace#825, round 7).
 """
 
 from __future__ import annotations
@@ -41,12 +44,10 @@ import fcntl
 import json
 import os
 import re
-import subprocess
 import sys
 import time
 import zlib
 from collections import namedtuple
-from datetime import datetime, timezone
 from pathlib import Path
 
 TYPE_CHECKING = False
@@ -60,26 +61,32 @@ SCHEMA_VERSION = 1
 EVENT_TYPES = ("session.start", "session.stop", "session.died")
 
 #: The fcntl lock is tried non-blocking and retried until this much time has
-#: passed. If it still isn't acquired, the append is skipped. A session is never
-#: blocked on another session's write.
+#: passed; then the append is skipped. A session is never blocked on another
+#: session's write. Hooks wait less: an append holds the lock for a few ms, and
+#: the rest of the hook's 100 ms is needed for start-up and the fold.
 LOCK_BUDGET_S = 0.150
+HOOK_LOCK_BUDGET_S = 0.040
 LOCK_RETRY_S = 0.005
 
 #: The SessionStart brief is capped here (Claude Code's own cap is 10,000).
 BRIEF_CAP = 4000
 
-#: A session is shown as live when it has no died event and its last event is
-#: this recent. Stop fires at the end of every turn, so a working session keeps
-#: publishing.
+#: Live: no died event, and an event this recent. Stop fires at the end of
+#: every turn, so a working session keeps publishing. This is also the window
+#: of the phase-1 exit comparator (live rows vs Paseo agents whose transcript
+#: moved in the last 6 h). Rows that are not live appear in the brief only if
+#: they are RECENT_WINDOW_S recent.
 LIVE_WINDOW_S = 6 * 3600
+RECENT_WINDOW_S = 48 * 3600
 
 #: Bounds on what one event can carry.
 MAX_STR = 400
 MAX_LINE = 8192
 
 #: A hook folds at most this many log bytes that board.json has not seen. Past
-#: that, the board is left for the next writer or `ctx board --rebuild`, so a
-#: hook's time never grows with the log.
+#: that it leaves the board alone (its time must not grow with the log); `ctx
+#: board` and `ctx board --rebuild` catch it up, and `ctx doctor` reports the
+#: lag as a problem.
 FOLD_CAP = 64 * 1024
 #: board.json's `log_tail` signs this many bytes before `log_offset`, so a log
 #: that was replaced or truncated is detected rather than folded from a wrong
@@ -93,13 +100,17 @@ TS_RE = re.compile(r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$")
 #: emphasis or a quote marker in front of it is tolerated.
 ARC_STATUS_RE = re.compile(r"^[ \t>*_`]*ARC-STATUS:[ \t]*([A-Z][A-Z0-9_-]*)\b[^\n]*$", re.M)
 
+#: Where the running hook is, for the deadline-miss record ctx_hook.py writes.
+STAGE = "loaded"
+
 
 class ConfigError(ValueError):
-    """scopes.yaml exists but cannot be used. Hooks treat this as no scope."""
+    """scopes.yaml exists but cannot be parsed or read. Hooks treat this as no
+    scope; `ctx doctor` reports it from any directory."""
 
 
 # --------------------------------------------------------------------------
-# Paths
+# Paths and time
 
 def home() -> Path:
     return Path(os.environ.get("HOME") or os.path.expanduser("~"))
@@ -113,24 +124,41 @@ def state_root() -> Path:
     return home() / ".local" / "state" / "ctx"
 
 
+def misses_path() -> Path:
+    return state_root() / "hook-misses.jsonl"
+
+
 def now_ts(now: Optional[float] = None) -> str:
     t = time.time() if now is None else now
-    dt = datetime.fromtimestamp(t, tz=timezone.utc)
-    return dt.strftime("%Y-%m-%dT%H:%M:%S.") + "%03dZ" % (dt.microsecond // 1000)
+    whole = int(t)
+    ms = min(999, int((t - whole) * 1000))
+    return time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(whole)) + ".%03dZ" % ms
+
+
+def _days_from_civil(y: int, m: int, d: int) -> int:
+    # H. Hinnant's algorithm; avoids importing datetime, whose strptime alone
+    # cost 200 ms on a loaded machine.
+    y -= m <= 2
+    era = y // 400
+    yoe = y - era * 400
+    doy = (153 * (m + (-3 if m > 2 else 9)) + 2) // 5 + d - 1
+    return era * 146097 + yoe * 365 + yoe // 4 - yoe // 100 + doy - 719468
 
 
 def parse_ts(ts: str) -> float:
-    return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%fZ").replace(tzinfo=timezone.utc).timestamp()
+    return (_days_from_civil(int(ts[0:4]), int(ts[5:7]), int(ts[8:10])) * 86400
+            + int(ts[11:13]) * 3600 + int(ts[14:16]) * 60 + int(ts[17:19]) + int(ts[20:23]) / 1000.0)
 
 
 # --------------------------------------------------------------------------
-# scopes.yaml: a deliberately tiny YAML subset, parsed with the stdlib so the
-# hook needs no third-party import and behaves the same under `python3 -I`.
+# scopes.yaml: a strict subset of YAML, parsed with the stdlib so the hook
+# needs no third-party import and behaves the same under `python3 -I`. Every
+# rejection is reported by `ctx doctor`, from any directory.
 #
 #   version: 1              # optional
 #   scopes:
 #     broomva:
-#       - ~/broomva         # a repo root, or its .git directory
+#       - ~/broomva         # a repo root, or its .git
 #       - ~/broomva/skills
 #     sri:
 #       - ~/broomva/work/stimulus/sri
@@ -206,56 +234,102 @@ def parse_scopes(text: str) -> Dict[str, List[str]]:
     return scopes
 
 
+def _gitdir_from_file(dotgit: str) -> Optional[str]:
+    """The target of a `.git` FILE (a linked worktree or a submodule)."""
+    try:
+        with open(dotgit, encoding="utf-8") as fh:
+            text = fh.read(4096).strip()
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not text.startswith("gitdir:"):
+        return None
+    return os.path.normpath(os.path.join(os.path.dirname(dotgit), text[len("gitdir:"):].strip()))
+
+
+def _common_of(gitdir: str) -> str:
+    """A git dir's common dir: its `commondir` file if it has one (a linked
+    worktree), else itself. The same rule `git rev-parse --git-common-dir` uses."""
+    try:
+        with open(os.path.join(gitdir, "commondir"), encoding="utf-8") as fh:
+            rel = fh.read(4096).strip()
+    except (OSError, UnicodeDecodeError):
+        return os.path.realpath(gitdir)
+    return os.path.realpath(os.path.join(gitdir, rel))
+
+
 def _entry_common_dir(raw: str) -> str:
-    """A configured repo path, normalised to the realpath of its git common dir."""
-    p = Path(os.path.expanduser(raw))
-    if p.name != ".git" and (p / ".git").is_dir():
-        p = p / ".git"
-    return os.path.realpath(str(p))
+    """A configured repo path, normalised to the realpath of its git common dir.
+    A worktree or submodule path is followed through its `.git` file."""
+    p = os.path.expanduser(raw)
+    if os.path.basename(os.path.normpath(p)) == ".git" and os.path.isdir(p):
+        return _common_of(p)
+    dotgit = os.path.join(p, ".git")
+    if os.path.isdir(dotgit):
+        return _common_of(dotgit)
+    if os.path.isfile(dotgit):
+        target = _gitdir_from_file(dotgit)
+        if target:
+            return _common_of(target)
+    return os.path.realpath(p)
 
 
-def load_scopes() -> Dict[str, str]:
-    """{realpath(git common dir): scope_id}. Empty when there is no config file.
+#: Scopes: {realpath(common dir): scope id}, with None for a repo listed in two
+#: scopes. An ambiguous repo has no scope; the other repos are unaffected.
+Scopes = namedtuple("Scopes", "by_repo ambiguous")
 
-    Raises ConfigError for an unreadable or ambiguous config. Callers that must
-    stay silent (hooks, unscoped commands) treat that as no scope.
-    """
+
+def load_scopes() -> Scopes:
+    """Empty when there is no config file. Raises ConfigError when the file
+    exists and cannot be read or parsed."""
     path = config_path()
     try:
         text = path.read_text(encoding="utf-8")
     except FileNotFoundError:
-        return {}
+        return Scopes({}, {})
     except (OSError, UnicodeDecodeError) as exc:
         raise ConfigError("%s: %s" % (path, exc))
-    mapping: Dict[str, str] = {}
+    by_repo: Dict[str, Optional[str]] = {}
+    ambiguous: Dict[str, List[str]] = {}
     for sid, entries in parse_scopes(text).items():
         for raw in entries:
             key = _entry_common_dir(raw)
-            other = mapping.get(key)
-            if other and other != sid:
-                raise ConfigError("%s is in two scopes: %s and %s" % (key, other, sid))
-            mapping[key] = sid
-    return mapping
+            if key in by_repo and by_repo.get(key) != sid:
+                ambiguous.setdefault(key, [s for s in [by_repo[key]] if s]).append(sid)
+                by_repo[key] = None
+            elif key not in by_repo:
+                by_repo[key] = sid
+    return Scopes(by_repo, ambiguous)
 
 
 # --------------------------------------------------------------------------
-# Where a session is: one `git rev-parse`, bounded by the caller's deadline.
+# Where a session is. Read from the filesystem the way git does, so a hook
+# spawns no process and imports no subprocess. git itself is used only when
+# GIT_DIR / GIT_WORK_TREE / GIT_COMMON_DIR redirect it, or for a reftable
+# repo's branch. A test checks this resolver agrees with `git rev-parse` on
+# every layout it handles.
 
 #: Where a session is: its cwd, the worktree top level, the realpath of the
-#: git common dir (the scope key) and the branch (None when unborn/unknown).
+#: git common dir (the scope key) and the branch (None when unknown).
 Where = namedtuple("Where", "cwd toplevel common_dir branch")
 
+_GIT_ENV = ("GIT_DIR", "GIT_WORK_TREE", "GIT_COMMON_DIR")
+_CHILD = None
+_TMP: Optional[str] = None
 
-_CHILD: Optional[subprocess.Popen] = None
 
-
-def kill_child() -> None:
-    """Called by the hook's deadline handler, so a hung git is not orphaned."""
-    child = _CHILD
+def on_deadline() -> None:
+    """Called by the hook's deadline handler before os._exit: a hung git is
+    killed rather than orphaned, and a half-written board temp file removed."""
+    child, tmp = _CHILD, _TMP
     if child is not None:
         try:
             child.kill()
         except Exception:
+            pass
+    if tmp:
+        try:
+            os.unlink(tmp)
+        except OSError:
             pass
 
 
@@ -263,13 +337,12 @@ def _git(cwd: str, args: List[str], timeout: float) -> Optional[str]:
     global _CHILD
     if timeout <= 0:
         return None
+    import subprocess  # the fallback path only
+
     env = dict(os.environ, GIT_OPTIONAL_LOCKS="0", LC_ALL="C")
     try:
-        proc = subprocess.Popen(
-            ["git", "-C", cwd] + args,
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
-            env=env,
-        )
+        proc = subprocess.Popen(["git", "-C", cwd] + args, stdin=subprocess.DEVNULL,
+                                stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, env=env)
     except OSError:
         return None
     _CHILD = proc
@@ -286,37 +359,75 @@ def _git(cwd: str, args: List[str], timeout: float) -> Optional[str]:
     return out.decode("utf-8", "replace")
 
 
-def _read_branch(git_dir: str) -> Optional[str]:
+def _read_branch(git_dir: str, toplevel: str, timeout: float) -> Optional[str]:
     try:
-        head = Path(git_dir, "HEAD").read_text(encoding="utf-8").strip()
-    except OSError:
+        with open(os.path.join(git_dir, "HEAD"), encoding="utf-8") as fh:
+            head = fh.read(4096).strip()
+    except (OSError, UnicodeDecodeError):
         return None
     if head.startswith("ref: refs/heads/"):
-        return head[len("ref: refs/heads/"):]
+        name = head[len("ref: refs/heads/"):]
+        if name != ".invalid":
+            return name
+        # A reftable repo keeps HEAD as a stub; ask git.
+        out = _git(toplevel, ["symbolic-ref", "-q", "--short", "HEAD"], timeout)
+        return out.strip() if out and out.strip() else None
     if re.fullmatch(r"[0-9a-f]{40,64}", head):
         return "detached@" + head[:12]
     return None
 
 
-def locate(cwd: str, timeout: float = 0.5) -> Optional[Where]:
+def _is_bare(d: str) -> bool:
+    return (os.path.isfile(os.path.join(d, "HEAD")) and os.path.isdir(os.path.join(d, "objects"))
+            and os.path.isdir(os.path.join(d, "refs")))
+
+
+def _locate_with_git(cwd: str, timeout: float) -> Optional[Where]:
     out = _git(cwd, ["rev-parse", "--path-format=absolute",
                      "--git-common-dir", "--git-dir", "--show-toplevel"], timeout)
-    if not out:
-        return None
-    lines = out.splitlines()
+    lines = out.splitlines() if out else []
     if len(lines) != 3:
         return None
     common, git_dir, top = lines
-    return Where(
-        cwd=os.path.realpath(cwd),
-        toplevel=os.path.realpath(top),
-        common_dir=os.path.realpath(common),
-        branch=_read_branch(git_dir),
-    )
+    return Where(os.path.realpath(cwd), os.path.realpath(top), os.path.realpath(common),
+                 _read_branch(git_dir, top, timeout))
+
+
+def locate(cwd: str, timeout: float = 0.5) -> Optional[Where]:
+    """The repo a directory is in, or None: not a directory, not in a work
+    tree, inside a .git dir or a bare repo."""
+    if any(os.environ.get(k) for k in _GIT_ENV):
+        return _locate_with_git(cwd, timeout)
+    d = os.path.realpath(cwd)
+    if not os.path.isdir(d):
+        return None
+    cur = d
+    while True:
+        dotgit = os.path.join(cur, ".git")
+        if os.path.isdir(dotgit):
+            git_dir: Optional[str] = dotgit
+            break
+        if os.path.isfile(dotgit):
+            git_dir = _gitdir_from_file(dotgit)
+            break
+        if _is_bare(cur):
+            return None
+        parent = os.path.dirname(cur)
+        if parent == cur:
+            return None
+        cur = parent
+    if not git_dir or not os.path.isfile(os.path.join(git_dir, "HEAD")):
+        return None
+    return Where(d, cur, _common_of(git_dir), _read_branch(git_dir, cur, timeout))
 
 
 # --------------------------------------------------------------------------
-# Exclusions and redaction. Applied to every event before it is written.
+# Exclusions and redaction. Applied to every string of every event before it
+# is written, and before any clipping.
+#
+# Redaction is a best-effort denylist, not a guarantee: a secret in a shape it
+# does not know is written. What bounds the exposure is the narrow surface (an
+# ARC-STATUS line, an error string, and metadata) and the 0600 files.
 
 #: A path segment that makes a path secret-shaped.
 _SECRET_SEGMENT = re.compile(
@@ -330,7 +441,7 @@ _EXCLUDED_SEGMENT = re.compile(r"^crm$", re.I)
 
 
 def excluded_path(path: str) -> bool:
-    """True for a path under crm/ or with a secret-shaped segment."""
+    """True for a local path under crm/ or with a secret-shaped segment."""
     for seg in re.split(r"[/\\]+", path):
         if seg and (_EXCLUDED_SEGMENT.match(seg) or _SECRET_SEGMENT.match(seg)):
             return True
@@ -341,40 +452,65 @@ _REDACTED = "[REDACTED]"
 #: Every value pattern tries an existing marker first, so a second pass is a
 #: no-op instead of eating the character after it.
 _V = r"(?:\[REDACTED\]|"
+_R = r"\1\2" + _REDACTED
 _SECRET_PATTERNS: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?(?:-----END [A-Z0-9 ]*PRIVATE KEY-----|\Z)", re.S),
      _REDACTED),
+    # headers
     (re.compile(r"(?i)\b(authorization|proxy-authorization|x-api-key|api-key|cookie|set-cookie)"
-                r"(\s*[:=]\s*)(?:(?:bearer|basic|token|digest)\s+)?" + _V + r"[^\s,;\"'&]+)"),
-     r"\1\2" + _REDACTED),
-    (re.compile(r"(?i)\bbearer\s+[A-Za-z0-9._~+/=-]{4,}"), "Bearer " + _REDACTED),
+                r"(\s*[:=]\s*)(?:(?:bearer|basic|token|digest)\s+)?" + _V + r"[^\s,;\"'&]+)"), _R),
+    (re.compile(r"(?i)\bbearer\s+(?=[A-Za-z0-9._~+/=-]*\d)[A-Za-z0-9._~+/=-]{12,}"), "Bearer " + _REDACTED),
+    # vendor token shapes
     (re.compile(r"\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})"), _REDACTED),
     (re.compile(r"\bsk-(?:ant-|proj-|live-|test-)?[A-Za-z0-9_-]{16,}"), _REDACTED),
     (re.compile(r"\b(?:sk|pk|rk)_(?:live|test)_[A-Za-z0-9]{10,}"), _REDACTED),
-    (re.compile(r"\bxox[abposr]-[A-Za-z0-9-]{8,}"), _REDACTED),
+    (re.compile(r"\b(?:xox[abposr]|xapp)-[A-Za-z0-9-]{8,}"), _REDACTED),
+    (re.compile(r"hooks\.slack\.com/(?:services|workflows|triggers)/[A-Za-z0-9/_-]+"), "hooks.slack.com/" + _REDACTED),
     (re.compile(r"\b(?:AKIA|ASIA)[0-9A-Z]{16}\b"), _REDACTED),
     (re.compile(r"\bAIza[0-9A-Za-z_-]{30,}"), _REDACTED),
-    (re.compile(r"\b(?:npm|lin_api|shpat|shpss|whsec|hf|dop_v1)_[A-Za-z0-9]{20,}"), _REDACTED),
+    (re.compile(r"\bya29\.[0-9A-Za-z_-]{20,}"), _REDACTED),
+    (re.compile(r"\bSG\.[A-Za-z0-9_-]{16,}\.[A-Za-z0-9_-]{16,}"), _REDACTED),
+    (re.compile(r"\b\d{8,10}:AA[A-Za-z0-9_-]{30,}"), _REDACTED),  # Telegram bot
+    (re.compile(r"\b(?:npm|lin_api|lin_oauth|shpat|shpss|whsec|hf|dop_v1|sbp|gsk|xai|pplx)_[A-Za-z0-9]{20,}"),
+     _REDACTED),
     (re.compile(r"\bglpat-[A-Za-z0-9_-]{20,}"), _REDACTED),
     (re.compile(r"\bpypi-[A-Za-z0-9_-]{40,}"), _REDACTED),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}"), _REDACTED),
-    # userinfo in a URL: scheme://user:secret@host
+    # userinfo in a URL, and credentials in a URL query
     (re.compile(r"(\b[a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@\s/]+@", re.I), r"\1" + _REDACTED + "@"),
-    # URL query parameters that carry credentials
-    (re.compile(r"(?i)([?&](?:access_token|token|api_key|apikey|key|secret|password|sig|signature|auth)=)" + _V + r"[^&\s#]+)"),
-     r"\1" + _REDACTED),
-    # key=value and key: value where the key names a secret
-    (re.compile(r"(?i)\b((?:[a-z0-9]+[_.-])*(?:token|secret|passw(?:or)?d|pwd|passphrase|credentials?"
-                r"|api[_-]?key|access[_-]?key|private[_-]?key|client[_-]?secret|session[_-]?token|key))"
-                r"([\"']?\s*[:=]\s*)" + _V + r"\"[^\"]*\"|'[^']*'|[^\s,;&\"']+)"),
-     r"\1\2" + _REDACTED),
+    (re.compile(r"(?i)([?&](?:access_token|token|api_key|apikey|key|secret|password|sig|signature|auth)=)"
+                + _V + r"[^&\s#]+)"), r"\1" + _REDACTED),
+    # command lines: --password x, --token=x, curl -u user:pass
+    (re.compile(r"(?i)(--(?:password|passwd|pass|token|secret|api-key|apikey|access-token|auth-token)"
+                r")([= ]+)" + _V + r"[^\s\"']+)"), _R),
+    (re.compile(r"(\s(?:-u|--user)\s+[^\s:]+)(:)" + _V + r"[^\s\"']+)"), _R),
+    # key=value / key: value where the key names a secret (camelCase included).
+    # Bare values need 6+ characters, so prose like "sort key: ts" or "missing
+    # token: see PR 12" is left alone.
+    (re.compile(r"(?i)\b([a-z0-9_.-]*?(?:token|secret|passw(?:or)?d|passwd|pwd|passphrase|credentials?"
+                r"|(?:api|access|secret|private|signing|client|master|encryption)[_.-]?key))"
+                r"([\"']?\s*[:=]\s*)" + _V + r"\"[^\"]+\"|'[^']+'|[^\s,;&\"'()\[\]{}]{6,})"), _R),
+    # SHOUTY_ENV_VAR_KEY=value
+    (re.compile(r"\b([A-Z][A-Z0-9_]*_KEY)(\s*[:=]\s*)" + _V + r"\"[^\"]+\"|'[^']+'|[^\s,;&\"']+)"), _R),
+    # a credential named in prose: "token abc123...", "password is hunter2"
+    (re.compile(r"(?i)\b(token|bearer|secret|api key|password|passwd)(\s+(?:is\s+|was\s+|=\s*)?)"
+                r"(?=[A-Za-z0-9._~+/=-]*\d)[A-Za-z0-9._~+/=-]{16,}"), _R),
+    (re.compile(r"(?i)\b(passw(?:or)?d)(\s+is\s+)" + _V + r"\S+)"), _R),
+    # an unknown vendor's token: an unbroken run of 32+ letters and digits that
+    # mixes upper case, lower case and digits. Git SHAs, UUIDs and hex digests
+    # are lower-case; hyphenated names (branches, slugs) are broken into short runs.
+    (re.compile(r"(?<![A-Za-z0-9])(?=[A-Za-z0-9]*[A-Z])(?=[A-Za-z0-9]*[a-z])(?=[A-Za-z0-9]*\d)"
+                r"[A-Za-z0-9]{32,}(?![A-Za-z0-9])"), _REDACTED),
 ]
 _PATH_TOKEN = re.compile(r"[^\s\"'<>()\[\]{},;`|]+")
+_URL = re.compile(r"^[a-z][a-z0-9+.-]*://", re.I)
 
 
 def _redact_paths(s: str) -> str:
     def repl(m: re.Match) -> str:
         tok = m.group(0)
+        if _URL.match(tok):  # a URL is not a local path; only its secrets are redacted
+            return tok
         looks_like_path = "/" in tok or "\\" in tok or tok.startswith((".", "~"))
         if looks_like_path and excluded_path(tok.rstrip(".:")):
             return "[excluded-path]"
@@ -388,8 +524,10 @@ def redact_text(s: str) -> str:
     return _redact_paths(s)
 
 
-def _clip(s: str, cap: int = MAX_STR) -> str:
-    s = re.sub(r"[\x00-\x08\x0b-\x1f\x7f]", " ", s)
+def _flat(s: Any, cap: int = MAX_STR) -> str:
+    """One line: every control character, newline and tab included, becomes a
+    space, so no field can start a line of its own in another session's brief."""
+    s = re.sub(r"[\x00-\x1f\x7f  ]", " ", str(s))
     return s if len(s) <= cap else s[: cap - 1] + "…"
 
 
@@ -401,7 +539,7 @@ def redact(value: Any) -> Any:
     bounds regex time: whatever it cuts lies far past the final clip.
     """
     if isinstance(value, str):
-        return _clip(redact_text(value[: 8 * MAX_STR]))
+        return _flat(redact_text(value[: 8 * MAX_STR]))
     if isinstance(value, dict):
         return {k: redact(v) for k, v in value.items()}
     if isinstance(value, (list, tuple)):
@@ -433,23 +571,21 @@ class Scope(namedtuple("Scope", "id store where")):
 def resolve_scope(cwd: str, timeout: float = 0.5) -> Optional[Scope]:
     """The scope for a working directory, or None (the silent no-op).
 
-    None when: there is no config or it is unusable, cwd is not in a git repo,
-    the repo's common dir is not configured, or cwd is excluded (crm/ or a
-    secret-shaped path).
+    None when: there is no config or it is unusable, cwd is not in a git work
+    tree, the repo is not configured or is listed in two scopes, or cwd is
+    excluded (crm/ or a secret-shaped path).
     """
     try:
-        mapping = load_scopes()
+        scopes = load_scopes()
     except ConfigError:
         return None
-    if not mapping:
+    if not scopes.by_repo:
         return None
     where = locate(cwd, timeout)
     if where is None:
         return None
-    sid = mapping.get(where.common_dir)
-    if sid is None:
-        return None
-    if excluded_path(where.cwd):
+    sid = scopes.by_repo.get(where.common_dir)
+    if sid is None or excluded_path(where.cwd):
         return None
     return Scope(id=sid, store=state_root() / sid, where=where)
 
@@ -479,7 +615,7 @@ def make_event(etype: str, scope: Scope, session_id: str, payload: Dict[str, Any
 
 
 def _acquire(fd: int, budget: float) -> bool:
-    deadline = time.monotonic() + max(0.0, min(budget, LOCK_BUDGET_S))
+    deadline = time.monotonic() + max(0.0, budget)
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -504,32 +640,40 @@ def _pread_all(fd: int, size: int, offset: int) -> bytes:
     return b"".join(chunks)
 
 
+def _open_lock(scope: Scope) -> int:
+    scope.store.mkdir(parents=True, exist_ok=True, mode=0o700)
+    return os.open(str(scope.lock_path), os.O_RDWR | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
+
+
 def append(scope: Scope, event: Dict[str, Any], budget: float = LOCK_BUDGET_S,
            fold_cap: Optional[int] = FOLD_CAP) -> Tuple[bool, Optional[Dict[str, Any]]]:
     """Append one event under the lock, then fold the new log bytes into
     board.json under the same lock. Returns (written, board).
 
     written is False, and nothing is written, when the lock is not acquired
-    within the budget or the event is not writable. board is None when
-    board.json was not brought up to date (more than fold_cap unseen bytes).
+    within min(budget, LOCK_BUDGET_S) or the event is not writable. board is
+    None when board.json was not brought up to date (more than fold_cap unseen
+    bytes).
 
     A writer killed mid-write can leave a line without its newline. The next
     append starts on a fresh line, so the damage is one skipped line, never a
     corrupted neighbour.
     """
+    global STAGE
     cwd = event.get("cwd")
     if not isinstance(cwd, str) or not os.path.isabs(cwd) or excluded_path(cwd):
         return False, None
     line = (json.dumps(event, sort_keys=True, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
     if len(line) > MAX_LINE:
         return False, None
-    scope.store.mkdir(parents=True, exist_ok=True, mode=0o700)
-    nofollow = getattr(os, "O_NOFOLLOW", 0)
-    lock_fd = os.open(str(scope.lock_path), os.O_RDWR | os.O_CREAT | nofollow, 0o600)
+    lock_fd = _open_lock(scope)
     try:
-        if not _acquire(lock_fd, budget):
+        STAGE = "lock"
+        if not _acquire(lock_fd, min(budget, LOCK_BUDGET_S)):
             return False, None
-        fd = os.open(str(scope.log), os.O_RDWR | os.O_APPEND | os.O_CREAT | nofollow, 0o600)
+        STAGE = "write"
+        # Opened by path, under the lock.
+        fd = os.open(str(scope.log), os.O_RDWR | os.O_APPEND | os.O_CREAT | getattr(os, "O_NOFOLLOW", 0), 0o600)
         try:
             size = os.fstat(fd).st_size
             if size and os.pread(fd, 1, size - 1) != b"\n":
@@ -537,6 +681,7 @@ def append(scope: Scope, event: Dict[str, Any], budget: float = LOCK_BUDGET_S,
             view = memoryview(line)
             while view:
                 view = view[os.write(fd, view):]
+            STAGE = "fold"
             return True, _sync_board(scope, fd, size + len(line), fold_cap)
         finally:
             os.close(fd)
@@ -552,35 +697,36 @@ def read_log(scope: Scope) -> bytes:
 
 
 def _valid_event(ev: Any) -> bool:
-    return (
-        isinstance(ev, dict)
-        and ev.get("v") == SCHEMA_VERSION
-        and isinstance(ev.get("type"), str)
-        and isinstance(ev.get("ts"), str) and bool(TS_RE.match(ev["ts"]))
-        and isinstance(ev.get("session_id"), str) and bool(SESSION_ID_RE.match(ev["session_id"]))
-        and isinstance(ev.get("payload"), dict)
-    )
+    if not (isinstance(ev, dict) and ev.get("v") == SCHEMA_VERSION and isinstance(ev.get("type"), str)
+            and isinstance(ev.get("ts"), str) and TS_RE.match(ev["ts"])
+            and isinstance(ev.get("session_id"), str) and SESSION_ID_RE.match(ev["session_id"])
+            and isinstance(ev.get("cwd"), str) and isinstance(ev.get("repo"), str)
+            and (ev.get("branch") is None or isinstance(ev["branch"], str))
+            and ("paseo_agent_id" not in ev or isinstance(ev["paseo_agent_id"], str))
+            and isinstance(ev.get("payload"), dict)):
+        return False
+    return all(v is None or isinstance(v, (str, int, float, bool)) for v in ev["payload"].values())
 
 
 # --------------------------------------------------------------------------
 # board.json: the log folded, in log order.
 #
-# The fold is the same function on both paths. `rebuild` folds every complete
-# line from byte 0; a write folds only the lines after `log_offset`. Folding
-# lines 0..k and then k..n is folding 0..n, so the incremental board and the
-# full rebuild are byte-identical (a test pins this). Nothing reads a clock.
+# The fold is one function on every path. `rebuild` folds every complete line
+# from byte 0; a write folds only the lines after `log_offset`. Folding lines
+# 0..k and then k..n is folding 0..n, so the incremental board and the full
+# rebuild are byte-identical (a test pins this). Nothing reads a clock.
 #
-# "Latest" fields move only for an event whose ts is >= the row's, so two
-# writers whose appends landed out of timestamp order still leave the true
-# latest state. Counters are sums and do not depend on order.
+# "Latest" fields move only for an event whose ts is >= the row's own ts for
+# that field, and counters are sums, so two writers whose appends landed out
+# of timestamp order still leave the true latest state.
 
 _STATES = {"session.start": "started", "session.stop": "stopped", "session.died": "died"}
+_BOARD_INTS = ("log_offset", "events", "skipped_lines", "ignored_events")
 
 
 def _empty_board(scope_id: str) -> Dict[str, Any]:
     return {"v": SCHEMA_VERSION, "scope": scope_id, "events": 0, "skipped_lines": 0,
-            "ignored_events": 0, "last_ts": None, "log_offset": 0, "log_tail": None,
-            "sessions": {}}
+            "ignored_events": 0, "last_ts": None, "log_offset": 0, "log_tail": None, "sessions": {}}
 
 
 def _tail_sig(tail: bytes) -> Optional[str]:
@@ -596,32 +742,57 @@ def _apply(board: Dict[str, Any], ev: Dict[str, Any]) -> None:
         row = board["sessions"][sid] = {
             "session_id": sid, "first_ts": ts, "last_ts": ts, "last_event": None, "state": None,
             "cwd": None, "repo": None, "branch": None, "starts": 0, "stops": 0, "started_ts": None,
-            "paseo_agent_id": None, "fleet_role": None, "arc_status": None, "arc_line": None,
-            "arc_ts": None, "died_ts": None, "died_reason": None,
+            "paseo_agent_id": None, "agent_ts": None, "fleet_role": None, "arc_status": None,
+            "arc_line": None, "arc_ts": None, "died_ts": None, "died_reason": None, "died_error": None,
         }
     row["first_ts"] = min(row["first_ts"], ts)
     if row["last_event"] is None or ts >= row["last_ts"]:
         row.update(last_ts=ts, last_event=etype, state=_STATES[etype],
-                   cwd=ev.get("cwd"), repo=ev.get("repo"), branch=ev.get("branch"))
-        if ev.get("paseo_agent_id"):
-            row["paseo_agent_id"] = ev["paseo_agent_id"]
-    elif ev.get("paseo_agent_id") and not row["paseo_agent_id"]:
-        row["paseo_agent_id"] = ev["paseo_agent_id"]
+                   cwd=ev["cwd"], repo=ev["repo"], branch=ev.get("branch"))
+    agent = ev.get("paseo_agent_id")
+    if agent and (row["agent_ts"] is None or ts >= row["agent_ts"]):
+        row.update(paseo_agent_id=agent, agent_ts=ts)
     if etype == "session.start":
         row["starts"] += 1
         if row["started_ts"] is None or ts >= row["started_ts"]:
             row["started_ts"] = ts
-            if p.get("fleet_role"):
+            if isinstance(p.get("fleet_role"), str):
                 row["fleet_role"] = p["fleet_role"]
     elif etype == "session.stop":
         row["stops"] += 1
     elif row["died_ts"] is None or ts >= row["died_ts"]:
+        # The only terminal event: Stop fires every turn, so session.stop is a
+        # heartbeat. The redacted error text is kept on the row so a reader of
+        # the board (fleet-reconcile's usage-limit class) has it without the log;
+        # splitting died from failed, and extracting reset times, is phase 2.
         row["died_ts"] = ts
-        row["died_reason"] = p.get("error_type") or "unknown"
-    if p.get("arc_status") and (row["arc_ts"] is None or ts >= row["arc_ts"]):
-        row.update(arc_status=p["arc_status"], arc_line=p.get("arc_line"), arc_ts=ts)
+        row["died_reason"] = p["error_type"] if isinstance(p.get("error_type"), str) else "unknown"
+        row["died_error"] = p["error"] if isinstance(p.get("error"), str) else None
+    if isinstance(p.get("arc_status"), str) and (row["arc_ts"] is None or ts >= row["arc_ts"]):
+        row.update(arc_status=p["arc_status"],
+                   arc_line=p["arc_line"] if isinstance(p.get("arc_line"), str) else None, arc_ts=ts)
     if board["last_ts"] is None or ts > board["last_ts"]:
         board["last_ts"] = ts
+
+
+def _fold_line(board: Dict[str, Any], raw: bytes) -> Optional[Dict[str, Any]]:
+    """Fold one line; return the event when it was applied."""
+    if not raw.strip():
+        return None
+    try:
+        ev = json.loads(raw.decode("utf-8"))
+    except (ValueError, UnicodeDecodeError):
+        board["skipped_lines"] += 1
+        return None
+    if not _valid_event(ev):
+        board["skipped_lines"] += 1
+        return None
+    if ev["type"] not in EVENT_TYPES:  # a later phase's type
+        board["ignored_events"] += 1
+        return None
+    board["events"] += 1
+    _apply(board, ev)
+    return ev
 
 
 def fold(board: Dict[str, Any], chunk: bytes, base_offset: int, prior: bytes = b"") -> None:
@@ -633,21 +804,7 @@ def fold(board: Dict[str, Any], chunk: bytes, base_offset: int, prior: bytes = b
     if end == 0:
         return
     for raw in chunk[:end].split(b"\n")[:-1]:
-        if not raw.strip():
-            continue
-        try:
-            ev = json.loads(raw.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            board["skipped_lines"] += 1
-            continue
-        if not _valid_event(ev):
-            board["skipped_lines"] += 1
-            continue
-        if ev["type"] not in EVENT_TYPES:
-            board["ignored_events"] += 1
-            continue
-        board["events"] += 1
-        _apply(board, ev)
+        _fold_line(board, raw)
     board["log_offset"] = base_offset + end
     board["log_tail"] = _tail_sig((prior + chunk[:end])[-TAIL_BYTES:])
 
@@ -667,15 +824,15 @@ def _valid_board(board: Any, scope_id: str) -> bool:
     return (
         isinstance(board, dict) and board.get("v") == SCHEMA_VERSION and board.get("scope") == scope_id
         and isinstance(board.get("sessions"), dict)
-        and all(isinstance(board.get(k), int) and board[k] >= 0
-                for k in ("log_offset", "events", "skipped_lines", "ignored_events"))
-        and all(isinstance(r, dict) and isinstance(r.get("last_ts"), str) for r in board["sessions"].values())
+        and all(isinstance(board.get(k), int) and board[k] >= 0 for k in _BOARD_INTS)
+        and all(isinstance(r, dict) and isinstance(r.get("last_ts"), str) and isinstance(r.get("session_id"), str)
+                for r in board["sessions"].values())
     )
 
 
 def load_board(scope: Scope) -> Optional[Dict[str, Any]]:
-    """The cached board.json, or None when it is missing or malformed. This is
-    what SessionStart reads; it never parses the log."""
+    """The cached board.json, or None when missing or malformed. This is what
+    SessionStart reads; it never parses the log."""
     try:
         board = json.loads(scope.board_path.read_bytes().decode("utf-8"))
     except (OSError, ValueError, UnicodeDecodeError):
@@ -683,28 +840,32 @@ def load_board(scope: Scope) -> Optional[Dict[str, Any]]:
     return board if _valid_board(board, scope.id) else None
 
 
-def write_board(scope: Scope, board: Dict[str, Any]) -> bool:
-    """Atomically replace board.json when its bytes differ. True if written."""
-    data = board_bytes(board)
+def _write_atomic(path: Path, data: bytes) -> None:
+    global _TMP
+    tmp = str(path.parent / (".%s.%d.%d.tmp" % (path.name, os.getpid(), time.monotonic_ns())))
+    _TMP = tmp
     try:
-        if scope.board_path.read_bytes() == data:
-            return False
-    except OSError:
-        pass
-    scope.store.mkdir(parents=True, exist_ok=True, mode=0o700)
-    tmp = str(scope.store / (".board.%d.%d.tmp" % (os.getpid(), time.monotonic_ns())))
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
-    try:
-        with os.fdopen(fd, "wb") as fh:
-            fh.write(data)
-        os.replace(tmp, str(scope.board_path))
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+        try:
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view):]
+        finally:
+            os.close(fd)
+        os.replace(tmp, str(path))
     except BaseException:
         try:
             os.unlink(tmp)
         except OSError:
             pass
         raise
-    return True
+    finally:
+        _TMP = None
+
+
+def write_board(scope: Scope, board: Dict[str, Any]) -> None:
+    scope.store.mkdir(parents=True, exist_ok=True, mode=0o700)
+    _write_atomic(scope.board_path, board_bytes(board))
 
 
 def _sync_board(scope: Scope, fd: int, size: int, cap: Optional[int]) -> Optional[Dict[str, Any]]:
@@ -712,8 +873,9 @@ def _sync_board(scope: Scope, fd: int, size: int, cap: Optional[int]) -> Optiona
 
     Folds only the bytes after the cached board's log_offset, when its tail
     signature still matches the log. Otherwise (no board, a malformed one, or a
-    log that was replaced) it folds from byte 0. Either way it reads at most
-    `cap` bytes; past that it returns None and leaves board.json alone.
+    log that was replaced) it refolds the log from byte 0.
+    Either way it reads at most `cap` log bytes; past that it returns None and
+    leaves board.json alone.
     """
     board = load_board(scope)
     if board is not None:
@@ -734,35 +896,57 @@ def _sync_board(scope: Scope, fd: int, size: int, cap: Optional[int]) -> Optiona
     return board
 
 
-def sync_board(scope: Scope, full: bool = False, wait: float = 2.0) -> Tuple[Optional[Dict[str, Any]], bool]:
-    """CLI path: bring board.json up to date with no size cap (`full` refolds the
-    whole log). Returns (board, matched): matched is whether the cached
-    board.json already equalled the result."""
-    before = None
-    try:
-        before = scope.board_path.read_bytes()
-    except OSError:
-        pass
+def check_board(scope: Scope) -> Tuple[str, int]:
+    """Is the cached board.json exactly the fold of what it claims to have
+    folded? Read-only and lock-free: the board is read BEFORE the log, and the
+    log only grows, so the prefix it covers is always there.
+
+    Returns (status, lag_bytes); status is "ok", "missing", "differs" or
+    "stale-log" (the log no longer starts with what the board folded)."""
+    board = load_board(scope)
+    data = read_log(scope)
+    if board is None:
+        return ("missing" if not scope.board_path.exists() else "differs"), len(data)
+    off = board["log_offset"]
+    if off > len(data) or _tail_sig(data[max(0, off - TAIL_BYTES):off]) != board.get("log_tail"):
+        return "stale-log", len(data)
+    expected = rebuild(scope.id, data[:off])
+    if board_bytes(expected) != board_bytes(board):
+        return "differs", len(data) - off
+    return "ok", len(data) - off
+
+
+def sync_board(scope: Scope, full: bool = False, wait: float = 2.0) -> Optional[Dict[str, Any]]:
+    """CLI path: bring board.json up to date with no size cap. With `full`, the
+    whole log is refolded. The long fold runs OUTSIDE the lock, on a read of
+    the log; under the lock only the bytes appended since are folded, so hooks
+    are not made to skip their appends while the CLI works. None when the lock
+    stayed busy for `wait` seconds."""
     if not scope.log.exists():
         board = rebuild(scope.id, b"")
-        return board, before == board_bytes(board)
-    lock_fd = os.open(str(scope.lock_path), os.O_RDWR | os.O_CREAT, 0o600)
+        write_board(scope, board)
+        return board
+    board = rebuild(scope.id, read_log(scope)) if full else load_board(scope)
+    lock_fd = _open_lock(scope)
     try:
         deadline = time.monotonic() + wait
         while not _acquire(lock_fd, LOCK_BUDGET_S):
             if time.monotonic() >= deadline:
-                return load_board(scope), False
+                return None
         fd = os.open(str(scope.log), os.O_RDONLY)
         try:
             size = os.fstat(fd).st_size
-            if full:
-                board = rebuild(scope.id, _pread_all(fd, size, 0))
-                matched = before == board_bytes(board)
-                write_board(scope, board)
-            else:
-                board = _sync_board(scope, fd, size, None)
-                matched = before == board_bytes(board) if board else False
-            return board, matched
+            if board is not None and board["log_offset"] <= size:
+                off = board["log_offset"]
+                n = min(TAIL_BYTES, off)
+                prior = _pread_all(fd, n, off - n)
+                if _tail_sig(prior) == board.get("log_tail"):
+                    fold(board, _pread_all(fd, size - off, off), off, prior)
+                    write_board(scope, board)
+                    return board
+            board = rebuild(scope.id, _pread_all(fd, size, 0))
+            write_board(scope, board)
+            return board
         finally:
             os.close(fd)
     finally:
@@ -772,7 +956,8 @@ def sync_board(scope: Scope, full: bool = False, wait: float = 2.0) -> Tuple[Opt
 # --------------------------------------------------------------------------
 # Rendering. Every sentence is a statement of fact from the store. The spike
 # (2026-09-29) found models treat imperative hook text as prompt injection, so
-# nothing here tells the reader to do anything.
+# nothing here tells the reader to do anything. Every interpolated field is
+# flattened to one line; other sessions' words appear only as a quoted string.
 
 def _age(seconds: float) -> str:
     s = max(0, int(seconds))
@@ -785,24 +970,19 @@ def _age(seconds: float) -> str:
     return "%dd" % (s // 86400)
 
 
-def _short(sid: Optional[str]) -> str:
-    return (sid or "-")[:8]
+def _short(sid: Any) -> str:
+    return _flat(str(sid or "-")[:8])
 
 
-def _tilde(path: Optional[str]) -> str:
-    if not path:
+def _tilde(path: Any) -> str:
+    if not isinstance(path, str) or not path:
         return "-"
     h = str(home())
-    return "~" + path[len(h):] if path == h or path.startswith(h + "/") else path
+    return _flat("~" + path[len(h):] if path == h or path.startswith(h + "/") else path, 160)
 
 
 def is_live(row: Dict[str, Any], now: float) -> bool:
-    if row.get("state") == "died":
-        return False
-    try:
-        return now - parse_ts(row["last_ts"]) <= LIVE_WINDOW_S
-    except (KeyError, TypeError, ValueError):
-        return False
+    return row.get("state") != "died" and str(row.get("last_ts") or "") >= now_ts(now - LIVE_WINDOW_S)
 
 
 def _row_sentence(row: Dict[str, Any], now: float) -> str:
@@ -810,76 +990,85 @@ def _row_sentence(row: Dict[str, Any], now: float) -> str:
     if row.get("paseo_agent_id"):
         bits.append("Paseo agent %s" % _short(row["paseo_agent_id"]))
     if row.get("fleet_role"):
-        bits.append("role %s" % row["fleet_role"])
-    bits.append("branch %s" % (row.get("branch") or "-"))
+        bits.append("role %s" % _flat(row["fleet_role"], 32))
+    bits.append("branch %s" % _flat(row.get("branch") or "-", 80))
     bits.append("cwd %s" % _tilde(row.get("cwd")))
-    bits.append("last event %s ago (%s)" % (_age(now - parse_ts(row["last_ts"])), row.get("last_event")))
+    bits.append("last event %s ago (%s)" % (_age(now - parse_ts(row["last_ts"])), _flat(row.get("last_event"), 20)))
     if row.get("state") == "died":
-        bits.append("died: %s" % row.get("died_reason"))
+        bits.append("died: %s" % _flat(row.get("died_reason"), 40))
+        if row.get("died_error"):
+            bits.append("error text, quoted: %s" % json.dumps(_flat(row["died_error"], 160), ensure_ascii=False))
     if row.get("arc_line"):
-        bits.append("status line, quoted: %s" % json.dumps(_clip(row["arc_line"], 200), ensure_ascii=False))
+        bits.append("status line, quoted: %s" % json.dumps(_flat(row["arc_line"], 200), ensure_ascii=False))
     return "- " + ", ".join(bits) + "."
 
 
 def render_brief(board: Dict[str, Any], me: Where, session_id: str, now: float,
                  cap: int = BRIEF_CAP) -> str:
-    """The SessionStart brief: board rows for this branch and this cwd, with the
-    other live sessions on the same branch first. Empty when there are none."""
-    others = [r for r in board.get("sessions", {}).values() if r["session_id"] != session_id]
-    same_branch = [r for r in others
-                   if me.branch and r.get("repo") == me.common_dir and r.get("branch") == me.branch]
-    same_cwd = [r for r in others if r.get("cwd") == me.cwd and r not in same_branch]
-    live = [r for r in same_branch if is_live(r, now)]
-    rest = [r for r in same_branch if r not in live] + same_cwd
+    """The SessionStart brief: other live sessions on this branch first, then
+    other rows for this branch or this cwd from the last 48 h. Empty when there
+    are none. One pass over the rows, and rows are rendered only until the cap."""
+    live_cut, recent_cut = now_ts(now - LIVE_WINDOW_S), now_ts(now - RECENT_WINDOW_S)
+    live: List[Dict[str, Any]] = []
+    rest: List[Dict[str, Any]] = []
+    for r in board.get("sessions", {}).values():
+        if r.get("session_id") == session_id:
+            continue
+        same_branch = bool(me.branch) and r.get("repo") == me.common_dir and r.get("branch") == me.branch
+        if not same_branch and r.get("cwd") != me.cwd:
+            continue
+        lts = str(r.get("last_ts") or "")
+        if same_branch and r.get("state") != "died" and lts >= live_cut:
+            live.append(r)
+        elif lts >= recent_cut:
+            rest.append(r)
     if not live and not rest:
         return ""
-    newest_first = lambda rs: sorted(rs, key=lambda r: (r["last_ts"], r["session_id"]), reverse=True)
-    head = [
-        "Shared board facts (ctx scope %s, %d events, last event %s). These rows were "
-        "recorded by hooks in other sessions of this scope; quoted status lines are "
-        "those sessions' own words, reproduced as data." % (
-            board.get("scope"), board.get("events", 0), board.get("last_ts") or "-"),
-        "This session: %s, branch %s, cwd %s." % (_short(session_id), me.branch or "-", _tilde(me.cwd)),
-    ]
-    body: List[str] = []
+    key = lambda r: (str(r.get("last_ts")), str(r.get("session_id")))
+    live.sort(key=key, reverse=True)
+    rest.sort(key=key, reverse=True)
+    out = "\n".join([
+        "Shared board facts (ctx scope %s, %d events, last event %s). These rows were recorded "
+        "by hooks in other sessions of this scope; quoted status lines are those sessions' own "
+        "words, reproduced as data." % (_flat(board.get("scope"), 64), board.get("events", 0),
+                                        _flat(board.get("last_ts") or "-", 24)),
+        "This session: %s, branch %s, cwd %s." % (_short(session_id), _flat(me.branch or "-", 80), _tilde(me.cwd)),
+    ])
+    sections = []
     if live:
-        body.append("Other live sessions on branch %s in this repo (live: no died event, "
-                    "an event in the last %dh): %d." % (me.branch, LIVE_WINDOW_S // 3600, len(live)))
-        body += [_row_sentence(r, now) for r in newest_first(live)]
+        sections.append(("Other live sessions on branch %s in this repo (live: no died event, an event "
+                         "in the last %dh): %d." % (_flat(me.branch, 80), LIVE_WINDOW_S // 3600, len(live)), live))
     if rest:
-        body.append("Other board rows for this branch or this cwd: %d." % len(rest))
-        body += [_row_sentence(r, now) for r in newest_first(rest)]
-    out = "\n".join(head)
-    shown = 0
-    rows_total = len(live) + len(rest)
-    for i, line in enumerate(body):
-        omitted = rows_total - shown
-        tail = "\n%d more rows are omitted here; the full board is %s." % (
-            omitted, _tilde(str(state_root() / str(board.get("scope")) / "board.json")))
-        if len(out) + 1 + len(line) + len(tail) > cap:
-            if omitted > 0:
-                out += tail
-            break
-        out += "\n" + line
-        if line.startswith("- "):
-            shown += 1
+        sections.append(("Other board rows for this branch or this cwd, last %dh: %d."
+                         % (RECENT_WINDOW_S // 3600, len(rest)), rest))
+    total, shown = len(live) + len(rest), 0
+    where = _tilde(str(state_root() / str(board.get("scope")) / "board.json"))
+    for header, rows in sections:
+        for line in [header] + rows:
+            text = line if isinstance(line, str) else _row_sentence(line, now)
+            tail = "\n%d more rows are omitted here; the full board is %s." % (total - shown, where)
+            if len(out) + 1 + len(text) + len(tail) > cap:
+                return (out + tail)[:cap]
+            out += "\n" + text
+            shown += 0 if isinstance(line, str) else 1
     return out[:cap]
 
 
 def render_table(board: Dict[str, Any], now: float) -> str:
     rows = sorted(board.get("sessions", {}).values(), key=lambda r: (r["last_ts"], r["session_id"]), reverse=True)
-    lines = ["scope %s: %d sessions, %d events, %d skipped lines, last event %s" % (
-        board.get("scope"), len(rows), board.get("events", 0), board.get("skipped_lines", 0),
-        board.get("last_ts") or "-")]
+    lines = ["scope %s: %d sessions (%d live: no died event, an event in the last %dh), %d events, "
+             "%d skipped lines, last event %s" % (
+                 board.get("scope"), len(rows), sum(1 for r in rows if is_live(r, now)), LIVE_WINDOW_S // 3600,
+                 board.get("events", 0), board.get("skipped_lines", 0), board.get("last_ts") or "-")]
     if not rows:
         return lines[0]
     hdr = ("SESSION", "AGENT", "STATE", "LIVE", "LAST", "BRANCH", "STATUS", "CWD")
     table = [hdr]
     for r in rows:
         table.append((
-            _short(r["session_id"]), _short(r.get("paseo_agent_id")), r.get("state") or "-",
+            _short(r["session_id"]), _short(r.get("paseo_agent_id")), _flat(r.get("state") or "-", 10),
             "yes" if is_live(r, now) else "no", _age(now - parse_ts(r["last_ts"])),
-            _clip(r.get("branch") or "-", 40), r.get("arc_status") or "-", _tilde(r.get("cwd")),
+            _flat(r.get("branch") or "-", 40), _flat(r.get("arc_status") or "-", 20), _tilde(r.get("cwd")),
         ))
     widths = [max(len(str(row[i])) for row in table) for i in range(len(hdr) - 1)]
     for row in table:
@@ -901,12 +1090,29 @@ def _extract_arc(message: Any) -> Dict[str, str]:
     return {"arc_status": m.group(1), "arc_line": m.group(0).strip().strip("*_`> \t")}
 
 
+def _died_payload(data: Dict[str, Any]) -> Dict[str, Any]:
+    """StopFailure's error class and detail. Claude Code 2.1.280 sends the class
+    in `error` and the text in `error_details`; the hooks reference documents
+    `error_type` (class) and `error` (text). Both shapes are read."""
+    if isinstance(data.get("error_type"), str):
+        cls, detail = data["error_type"], data.get("error")
+    else:
+        cls, detail = data.get("error"), data.get("error_details")
+    payload: Dict[str, Any] = {"error_type": cls if isinstance(cls, str) and cls else "unknown"}
+    if isinstance(detail, str) and detail:
+        payload["error"] = detail
+    payload.update(_extract_arc(data.get("last_assistant_message")))
+    return payload
+
+
 def run_hook(event: str, raw: str, deadline: float, now: Optional[float] = None) -> str:
     """Handle one hook event. Returns the text for stdout ("" for none).
 
     `deadline` is a time.monotonic() value. Work that cannot finish before it
     is skipped; the wrapper's alarm is the backstop.
     """
+    global STAGE
+    STAGE = "parse"
     data = json.loads(raw) if raw.strip() else None
     if not isinstance(data, dict):
         return ""
@@ -917,11 +1123,13 @@ def run_hook(event: str, raw: str, deadline: float, now: Optional[float] = None)
     if not isinstance(cwd, str) or not os.path.isabs(cwd):
         return ""
     left = lambda: deadline - time.monotonic()
-    # git gets what the budget has left, less a margin for the append; with the
-    # registered 120 ms budget that is roughly 70 ms.
+    STAGE = "scope"
+    # git runs only on the fallback path; it gets what the budget has left, less
+    # a margin for the append.
     scope = resolve_scope(cwd, timeout=left() - 0.03)
-    if scope is None or left() <= 0.02:
+    if scope is None or left() <= 0.01:
         return ""
+    lock_budget = min(HOOK_LOCK_BUDGET_S, left() - 0.02)
 
     if event == "session-start":
         payload: Dict[str, Any] = {}
@@ -931,33 +1139,24 @@ def run_hook(event: str, raw: str, deadline: float, now: Optional[float] = None)
         role = os.environ.get("FLEET_ROLE")
         if role:
             payload["fleet_role"] = role
-        _, board = append(scope, make_event("session.start", scope, session_id, payload, now),
-                          budget=min(LOCK_BUDGET_S, left() - 0.02))
+        _, board = append(scope, make_event("session.start", scope, session_id, payload, now), budget=lock_budget)
+        STAGE = "brief"
         if board is None:
             board = load_board(scope)  # the cached board; the log is never parsed here
-        if board is None or left() <= 0.01:
+        if board is None or left() <= 0.005:
             return ""
         brief = render_brief(board, scope.where, session_id, time.time() if now is None else now)
         if not brief:
             return ""
         return json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
                                                   "additionalContext": brief}}, ensure_ascii=False)
-
     if event == "stop":
         payload = _extract_arc(data.get("last_assistant_message"))
-        append(scope, make_event("session.stop", scope, session_id, payload, now),
-               budget=min(LOCK_BUDGET_S, left() - 0.02))
+        append(scope, make_event("session.stop", scope, session_id, payload, now), budget=lock_budget)
         return ""
-
     if event == "stop-failure":
-        payload = {"error_type": data.get("error_type") if isinstance(data.get("error_type"), str) else "unknown"}
-        if isinstance(data.get("error"), str):
-            payload["error"] = data["error"]
-        payload.update(_extract_arc(data.get("last_assistant_message")))
-        append(scope, make_event("session.died", scope, session_id, payload, now),
-               budget=min(LOCK_BUDGET_S, left() - 0.02))
+        append(scope, make_event("session.died", scope, session_id, _died_payload(data), now), budget=lock_budget)
         return ""
-
     return ""
 
 
@@ -978,61 +1177,6 @@ def _lock_state(scope: Scope) -> str:
         return "free"
     finally:
         os.close(fd)
-
-
-def doctor_scoped(scope: Scope, now: float) -> Tuple[List[str], int]:
-    out = ["scope %s" % scope.id,
-           "  repo      %s (branch %s)" % (scope.where.common_dir, scope.where.branch or "-"),
-           "  config    %s" % config_path(),
-           "  store     %s" % scope.store]
-    problems = 0
-    data = read_log(scope)
-    lines = data.split(b"\n")[:-1]
-    board = rebuild(scope.id, data)
-    out.append("  log       %d bytes, %d events, %d skipped lines, %d ignored events"
-               % (len(data), board["events"], board["skipped_lines"], board["ignored_events"]))
-    out.append("  lock      %s" % _lock_state(scope))
-    try:
-        on_disk = scope.board_path.read_bytes()
-        out.append("  board     %d bytes, %d sessions (no retention in phase 1; SessionStart parses this file)"
-                   % (len(on_disk), len(board["sessions"])))
-        if on_disk == board_bytes(board):
-            out.append("  board     equals a full rebuild of the log")
-        else:
-            cached = load_board(scope)
-            behind = (cached is not None and cached["log_offset"] < board["log_offset"])
-            out.append("  board     %s" % ("behind the log by %d bytes (caught up by the next write or `ctx board`)"
-                                           % (board["log_offset"] - cached["log_offset"]) if behind else
-                                           "WARN: differs from a full rebuild (`ctx board --rebuild` replaces it)"))
-            problems += 0 if behind else 1
-    except FileNotFoundError:
-        out.append("  board     not built yet")
-    stray = sorted(p.name for p in scope.store.glob(".board.*.tmp")) if scope.store.exists() else []
-    if stray:
-        out.append("  WARN      %d stray board temp files: %s" % (len(stray), ", ".join(stray[:3])))
-    # The BRO-2019 failure: a hook that silently stopped firing.
-    last: Dict[str, str] = {}
-    for raw in lines:
-        try:
-            ev = json.loads(raw.decode("utf-8"))
-        except (ValueError, UnicodeDecodeError):
-            continue
-        if _valid_event(ev) and ev["type"] in EVENT_TYPES and ev["ts"] > last.get(ev["type"], ""):
-            last[ev["type"]] = ev["ts"]
-    for etype, hook in (("session.start", "SessionStart"), ("session.stop", "Stop"),
-                        ("session.died", "StopFailure")):
-        ts = last.get(etype)
-        if ts is None:
-            note = "never fired" + ("" if etype == "session.died" else " (hooks not registered?)")
-            if etype != "session.died":
-                problems += 1
-            out.append("  %-12s %s" % (hook, note))
-        else:
-            age = now - parse_ts(ts)
-            stale = age > 24 * 3600 and etype != "session.died"
-            problems += 1 if stale else 0
-            out.append("  %-12s last event %s ago%s" % (hook, _age(age), " (WARN: none in 24h)" if stale else ""))
-    return out, problems
 
 
 def _claude_projects_dir() -> Path:
@@ -1059,19 +1203,10 @@ def _transcript_cwd(path: Path) -> Optional[str]:
     return None
 
 
-def doctor_unscoped(days: float, now: float) -> Tuple[List[str], int]:
-    """Repos that have Claude Code sessions in the window but no scope."""
-    out: List[str] = []
-    problems = 0
-    try:
-        mapping = load_scopes()
-        n_scopes = len(set(mapping.values()))
-        out.append("config    %s: %s" % (config_path(), "%d scopes, %d repos" % (n_scopes, len(mapping))
-                                          if mapping else "absent or empty (every repo is unscoped)"))
-    except ConfigError as exc:
-        mapping = {}
-        problems += 1
-        out.append("config    %s: ERROR %s (every repo is unscoped until fixed)" % (config_path(), exc))
+def recent_sessions(days: float, now: float) -> Tuple[Dict[str, Dict[str, Any]], int, int]:
+    """Claude Code sessions (transcripts) modified in the last `days`, grouped
+    by repo common dir. Returns (by_repo, sessions_in_gone_cwds,
+    sessions_outside_git)."""
     root = _claude_projects_dir()
     cutoff = now - days * 86400
     by_repo: Dict[str, Dict[str, Any]] = {}
@@ -1106,22 +1241,131 @@ def doctor_unscoped(days: float, now: float) -> Tuple[List[str], int]:
         if where is None:
             outside += len(recent)
             continue
-        if where.common_dir in mapping:
-            continue
         slot = by_repo.setdefault(where.common_dir, {"sessions": 0, "last": 0.0, "cwds": set()})
         slot["sessions"] += len(recent)
         slot["last"] = max(slot["last"], recent[0][0])
         slot["cwds"].add(cwd)
-    out.append("sessions  Claude Code transcripts under %s, last %g days" % (_tilde(str(root)), days))
-    if by_repo:
-        out.append("unscoped repos with sessions: %d" % len(by_repo))
-        for repo, slot in sorted(by_repo.items(), key=lambda kv: (-kv[1]["sessions"], kv[0])):
-            out.append("  %-60s %4d sessions, last %s ago, %d cwds" % (
-                _tilde(repo), slot["sessions"], _age(now - slot["last"]), len(slot["cwds"])))
+    return by_repo, gone, outside
+
+
+def _misses(now: float, days: float = 1.0) -> Dict[str, int]:
+    """Deadline misses recorded by ctx_hook.py in the window, by stage."""
+    out: Dict[str, int] = {}
+    try:
+        lines = misses_path().read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return out
+    for line in lines[-5000:]:
+        try:
+            rec = json.loads(line)
+            if now - float(rec["ts"]) <= days * 86400:
+                out[str(rec.get("stage"))] = out.get(str(rec.get("stage")), 0) + 1
+        except (ValueError, KeyError, TypeError):
+            continue
+    return out
+
+
+def doctor_config() -> Tuple[List[str], int, Optional[Scopes]]:
+    try:
+        scopes = load_scopes()
+    except ConfigError as exc:
+        return ["config    %s: ERROR %s (every repo is unscoped until it is fixed)" % (config_path(), exc)], 1, None
+    lines = ["config    %s: %s" % (config_path(), "%d scopes, %d repos" % (
+        len({s for s in scopes.by_repo.values() if s}), len(scopes.by_repo))
+        if scopes.by_repo else "absent or empty (every repo is unscoped)")]
+    problems = 0
+    for repo, sids in sorted(scopes.ambiguous.items()):
+        lines.append("  ERROR   %s is listed in scopes %s: it has no scope until one is removed"
+                     % (_tilde(repo), ", ".join(sids)))
+        problems += 1
+    for repo in sorted(r for r in scopes.by_repo if not os.path.isdir(r)):
+        lines.append("  WARN    %s does not exist" % _tilde(repo))
+    return lines, problems, scopes
+
+
+def doctor_scoped(scope: Scope, scopes: Scopes, now: float) -> Tuple[List[str], int]:
+    out = ["scope     %s" % scope.id,
+           "  repo      %s (branch %s)" % (scope.where.common_dir, scope.where.branch or "-"),
+           "  store     %s" % scope.store]
+    problems = 0
+    status, lag = check_board(scope)
+    data = read_log(scope)
+    lines = data.split(b"\n")[:-1]
+    board = rebuild(scope.id, data)
+    out.append("  log       %d bytes, %d events, %d skipped lines, %d ignored events"
+               % (len(data), board["events"], board["skipped_lines"], board["ignored_events"]))
+    out.append("  lock      %s" % _lock_state(scope))
+    size = scope.board_path.stat().st_size if scope.board_path.exists() else 0
+    if status == "ok" and lag <= FOLD_CAP:
+        out.append("  board     %d bytes, %d sessions; equals a rebuild of what it folded%s"
+                   % (size, len(board["sessions"]), (", %d bytes behind (the next write folds them)" % lag) if lag else ""))
+    elif status == "ok":
+        problems += 1
+        out.append("  PROBLEM   board.json is %d bytes behind the log, past the %d bytes a hook folds; "
+                   "hooks no longer update it (`ctx board` catches it up)" % (lag, FOLD_CAP))
+    elif status == "missing":
+        out.append("  board     not built yet")
+        if len(data) > FOLD_CAP:
+            problems += 1
+            out.append("  PROBLEM   no board.json and the log is past %d bytes, so hooks will not build one "
+                       "(`ctx board` builds it)" % FOLD_CAP)
     else:
-        out.append("unscoped repos with sessions: 0")
-    out.append("  (%d sessions in a cwd that no longer exists; %d outside any git repo)" % (gone, outside))
+        problems += 1
+        out.append("  PROBLEM   board.json %s (`ctx board --rebuild` replaces it)" % (
+            "differs from a rebuild of the log it claims to have folded" if status == "differs"
+            else "was folded from a log that has since been replaced or truncated"))
+    stray = sorted(p.name for p in scope.store.glob(".*.tmp")) if scope.store.exists() else []
+    if stray:
+        out.append("  WARN      %d stray temp files: %s" % (len(stray), ", ".join(stray[:3])))
+    last: Dict[str, str] = {}
+    oldest = None
+    for raw in lines:
+        try:
+            ev = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if _valid_event(ev) and ev["type"] in EVENT_TYPES:
+            if ev["ts"] > last.get(ev["type"], ""):
+                last[ev["type"]] = ev["ts"]
+            oldest = ev["ts"] if oldest is None or ev["ts"] < oldest else oldest
+    out.append("  retention no retention in phase 1: the log and board.json only grow%s (compaction is phase 2)"
+               % ((", oldest event %s" % oldest[:10]) if oldest else ""))
+    # The BRO-2019 failure: a hook that silently stopped firing. Transcripts tell
+    # an idle scope from a dead hook.
+    by_repo, _, _ = recent_sessions(1.0, now)
+    repos = {r for r, s in scopes.by_repo.items() if s == scope.id}
+    seen = sum(slot["sessions"] for r, slot in by_repo.items() if r in repos)
+    newest = max(last.values()) if last else None
+    fresh = newest is not None and now - parse_ts(newest) <= 86400
+    for etype, hook in (("session.start", "SessionStart"), ("session.stop", "Stop"),
+                        ("session.died", "StopFailure")):
+        ts = last.get(etype)
+        out.append("  %-12s %s" % (hook, ("last event %s ago" % _age(now - parse_ts(ts))) if ts else "no event in the log"))
+    misses = _misses(now)
+    if misses:
+        out.append("  misses    %d hook runs out of time in 24h, by stage: %s" % (
+            sum(misses.values()), ", ".join("%s %d" % kv for kv in sorted(misses.items()))))
+    out.append("  sessions  %d Claude Code sessions in this scope's repos in the last 24h (transcripts)" % seen)
+    if seen and not fresh:
+        problems += 1
+        out.append("  PROBLEM   sessions ran in this scope in the last 24h but no hook event was recorded: "
+                   "%s" % ("the hooks are running out of time (see misses)" if misses
+                           else "the hooks are not registered, or not firing"))
     return out, problems
+
+
+def doctor_unscoped(scopes: Optional[Scopes], days: float, now: float) -> List[str]:
+    """Repos that have Claude Code sessions in the window but no scope."""
+    mapped = scopes.by_repo if scopes else {}
+    by_repo, gone, outside = recent_sessions(days, now)
+    unscoped = {r: s for r, s in by_repo.items() if not mapped.get(r)}
+    out = ["sessions  Claude Code transcripts under %s, last %g days" % (_tilde(str(_claude_projects_dir())), days),
+           "unscoped repos with sessions: %d" % len(unscoped)]
+    for repo, slot in sorted(unscoped.items(), key=lambda kv: (-kv[1]["sessions"], kv[0])):
+        out.append("  %-60s %4d sessions, last %s ago, %d cwds" % (
+            _tilde(repo), slot["sessions"], _age(now - slot["last"]), len(slot["cwds"])))
+    out.append("  (%d sessions in a cwd that no longer exists; %d outside any git repo)" % (gone, outside))
+    return out
 
 
 # --------------------------------------------------------------------------
@@ -1136,8 +1380,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     b = sub.add_parser("board", help="bring board.json up to date with the log and print it")
     b.add_argument("--json", action="store_true", help="print board.json itself")
     b.add_argument("--rebuild", action="store_true",
-                   help="fold the whole log from scratch and replace board.json")
-    d = sub.add_parser("doctor", help="health of this scope's store and hooks")
+                   help="refold the log from scratch and replace board.json")
+    d = sub.add_parser("doctor", help="config, store, board and hook health")
     d.add_argument("--unscoped", action="store_true",
                    help="list repos that have sessions but no scope (works from any directory)")
     d.add_argument("--days", type=float, default=14.0, help="session window for --unscoped (default 14)")
@@ -1145,32 +1389,45 @@ def main(argv: Optional[List[str]] = None) -> int:
     cwd = os.path.realpath(args.directory or os.getcwd())
     now = time.time()
 
-    if args.cmd == "doctor" and args.unscoped:
-        lines, problems = doctor_unscoped(args.days, now)
-        print("\n".join(lines))
-        return 1 if problems else 0
+    if args.cmd == "doctor":
+        cfg_lines, problems, scopes = doctor_config()
+        if args.unscoped:
+            print("\n".join(cfg_lines + doctor_unscoped(scopes, args.days, now)))
+            return 1 if problems else 0
+        scope = resolve_scope(cwd)
+        if scope is None:
+            if problems:  # a broken config is reported from anywhere
+                print("\n".join(cfg_lines))
+                return 1
+            return 0  # no scope: silent
+        lines, more = doctor_scoped(scope, scopes, now)
+        print("\n".join(cfg_lines + lines))
+        return 1 if problems + more else 0
 
     scope = resolve_scope(cwd)
     if scope is None:
         return 0  # no scope: every command is a silent no-op
 
-    if args.cmd == "board":
-        board, matched = sync_board(scope, full=args.rebuild)
-        if board is None:
-            print("ctx: the log lock stayed busy; board.json was not updated", file=sys.stderr)
-            return 1
-        if args.rebuild and not args.json:
-            print("rebuilt from the log; the cached board.json %s" % (
-                "was identical" if matched else "differed and was replaced"))
-        if args.json:
-            sys.stdout.write(board_bytes(board).decode("utf-8"))
-        else:
-            print(render_table(board, now))
-        return 0
-
-    lines, problems = doctor_scoped(scope, now)
-    print("\n".join(lines))
-    return 1 if problems else 0
+    before = None
+    if args.rebuild:
+        status, _ = check_board(scope)
+        before = status
+    board = sync_board(scope, full=args.rebuild)
+    if board is None:
+        print("ctx: events.lock stayed busy; board.json was not updated", file=sys.stderr)
+        return 1
+    if args.rebuild and not args.json:
+        print("rebuilt from the log; the cached board.json %s" % {
+            "ok": "equalled a rebuild of what it had folded",
+            "missing": "did not exist",
+            "differs": "differed from a rebuild (hand-edited or corrupt) and was replaced",
+            "stale-log": "was folded from a replaced or truncated log and was replaced",
+        }[before])
+    if args.json:
+        sys.stdout.write(board_bytes(board).decode("utf-8"))
+    else:
+        print(render_table(board, now))
+    return 0
 
 
 if __name__ == "__main__":

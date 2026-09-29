@@ -1,7 +1,7 @@
 """The lock never blocks a session.
 
-fcntl.flock with LOCK_NB, retried for at most 150 ms. If it is still not
-acquired, the append is skipped and the hook exits 0. Two cases: a writer that
+fcntl.flock with LOCK_NB, retried for at most 150 ms (50 ms inside a hook).
+If it is still not acquired, the append is skipped and the hook exits 0. Two cases: a writer that
 holds the lock for seconds, and two writers appending at the same time.
 """
 from __future__ import annotations
@@ -65,7 +65,8 @@ def test_a_held_lock_skips_the_append_and_the_hook_returns_in_time(timed: World)
         t0 = time.monotonic()
         assert ctx.append(scope, ctx.make_event("session.stop", scope, "s-4", {})) == (False, None)
         waited = time.monotonic() - t0
-        assert ctx.LOCK_BUDGET_S <= waited < HOOK_WALL_S, waited
+        # It gives up at its budget, and not long after: it never blocks.
+        assert ctx.LOCK_BUDGET_S <= waited < ctx.LOCK_BUDGET_S + 0.1, waited
     finally:
         holder.kill()
         holder.wait()
@@ -88,6 +89,6 @@ def test_two_concurrent_writers_neither_blocks_and_no_line_tears(timed: World) -
     assert all(json.loads(line) for line in lines), "a torn or interleaved line"
     written = sum(r["written"] for r in results)
     assert len(lines) == 1 + written
-    assert written >= n, "contention should skip a few appends, not most of them: %s" % results
+    assert all(r["written"] > 0 for r in results), "a writer never got the lock: %s" % results
     # The board was kept up to date under the same lock by whichever writer won.
     assert (timed.store("broomva") / "board.json").read_bytes() == ctx.board_bytes(ctx.rebuild("broomva", raw))

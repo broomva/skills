@@ -30,12 +30,19 @@ defaults:
 
 jobs:
   test:
-    name: pytest (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    name: pytest (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.11", "3.12"]
+        # 3.9 is the floor ctx.py claims; 3.14 is the interpreter the owner's
+        # registration snippet pins; macOS is where the hooks actually run.
+        include:
+          - {os: ubuntu-22.04, python: "3.9"}
+          - {os: ubuntu-latest, python: "3.11"}
+          - {os: ubuntu-latest, python: "3.12"}
+          - {os: ubuntu-latest, python: "3.14"}
+          - {os: macos-latest, python: "3.14"}
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python }}
@@ -47,5 +54,5 @@ jobs:
       - name: Tests
         run: python -m pytest tests/ -v
       - name: Mutation check (every mutant must be killed)
-        if: matrix.python == '3.12'
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: python tests/mutation_check.py
