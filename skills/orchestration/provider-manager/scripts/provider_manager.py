@@ -41,7 +41,22 @@ def run_cmd(cmd: List[str], input_str: Optional[str] = None, check: bool = True,
     )
 
 
+def get_current_username() -> str:
+    user = os.environ.get("USER")
+    if not user:
+        try:
+            user = getpass.getuser()
+        except Exception:
+            user = "claude-code-user"
+    if not re.match(r"^[a-zA-Z0-9._-]+$", user):
+        user = "claude-code-user"
+    return user
+
+
 def read_keychain_generic_password(service: str, account: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    if account is None and service.startswith("Claude Code"):
+        account = get_current_username()
+
     cmd = ["security", "find-generic-password", "-s", service]
     if account:
         cmd.extend(["-a", account])
@@ -195,7 +210,7 @@ def list_accounts() -> List[Dict[str, Any]]:
             if expires_at:
                 token_valid = expires_at > (time.time() * 1000)
 
-        is_active = (acc_id == active_id) or (active_email and email == active_email)
+        is_active = (acc_id == active_id) if active_id else bool(active_email and email == active_email)
 
         accounts.append({
             "id": acc_id,
@@ -362,9 +377,13 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
             pass
 
     if formatted_code:
-        sys.stdout.write(f"[*] Authorization code obtained autonomously. Injecting into login process...\n")
-        proc.stdin.write(f"{formatted_code}\n")
-        proc.stdin.flush()
+        sys.stdout.write(f"[*] Authorization code obtained autonomously. Notifying login listener...\n")
+        try:
+            if proc.stdin and not proc.stdin.closed:
+                proc.stdin.write(f"{formatted_code}\n")
+                proc.stdin.flush()
+        except (BrokenPipeError, OSError):
+            pass
     else:
         err_msg = appr_res.stderr.strip() if appr_res else "No code returned"
         sys.stdout.write(f"[*] Autonomous grant approval unavailable ({err_msg}).\n")
@@ -386,16 +405,22 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
     sys.stdout.write("[*] Login confirmed by Claude Code.\n")
 
     # 5. Sync fresh credentials into Orca Keychain & orca-data.json
-    fresh_creds = read_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED)
+    username = get_current_username()
+    fresh_creds = None
+    for s in [KEYCHAIN_CLAUDE_UNSCOPED, KEYCHAIN_CLAUDE_SCOPED]:
+        candidate = read_keychain_generic_password(s, username)
+        if candidate and candidate.get("claudeAiOauth", {}).get("accessToken"):
+            fresh_creds = candidate
+            break
     if not fresh_creds:
-        fresh_creds = read_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED)
+        fresh_creds = read_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED, username) or read_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED, username)
 
     orca = get_orca_data()
     managed = orca.get("settings", {}).get("claudeManagedAccounts", [])
     matching_acc = next((a for a in managed if a.get("email", "").lower() == target_email.lower()), None)
 
-    if not fresh_creds:
-        raise RuntimeError("Login succeeded in CLI, but no credentials found in Claude Keychain.")
+    if not fresh_creds or not fresh_creds.get("claudeAiOauth", {}).get("accessToken"):
+        raise RuntimeError("Login succeeded in CLI, but no valid credentials found in Claude Keychain.")
 
     target_uuid = matching_acc.get("id") if matching_acc else session_info.get("accountUuid")
     if not target_uuid:
@@ -404,6 +429,10 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
     ok = write_keychain_generic_password(KEYCHAIN_ORCA_SERVICE, target_uuid, fresh_creds)
     if not ok:
         raise RuntimeError(f"Failed to sync credentials to Orca Keychain for {target_uuid}.")
+
+    # Mirror fresh creds across both Claude Keychains so they remain synchronized
+    write_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED, username, fresh_creds)
+    write_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED, username, fresh_creds)
 
     orca.setdefault("settings", {})["activeClaudeManagedAccountId"] = target_uuid
     if matching_acc:
