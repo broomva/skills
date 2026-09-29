@@ -63,7 +63,7 @@ EVENT_TYPES = ("session.start", "session.stop", "session.died")
 #: The fcntl lock is tried non-blocking and retried until this much time has
 #: passed; then the append is skipped. A session is never blocked on another
 #: session's write. Hooks wait less: an append holds the lock for a few ms, and
-#: the rest of the hook's 100 ms is needed for start-up and the fold.
+#: the rest of the hook's 80 ms is needed for the fold and the brief.
 LOCK_BUDGET_S = 0.150
 HOOK_LOCK_BUDGET_S = 0.040
 LOCK_RETRY_S = 0.005

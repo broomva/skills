@@ -26,7 +26,7 @@ read-only shared board.
   - StopFailure: a `died` status, read from both the payload Claude Code 2.1.280
     sends and the documented one.
 
-  A 100 ms self-deadline. A hook never parses a board.json over 2 MiB, which
+  An 80 ms self-deadline (run as `python3 -I -S`). A hook never parses a board.json over 2 MiB, which
   is what keeps that deadline hard. Exit 0 always, no output on any failure,
   and a machine-wide miss log (rotated at 1 MiB) for deadline misses and
   skipped appends. Shipped unregistered; SKILL.md carries the owner's snippet.

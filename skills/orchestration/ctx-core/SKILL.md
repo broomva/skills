@@ -114,8 +114,8 @@ Invariants, each pinned by a test:
     is the one terminal event and a burst of limit deaths contends. After that
     the append is skipped, and the skip is recorded as a miss. The CLI retries
     the lock for up to 2 s.
-  - The hook has a hard self-deadline of 100 ms inside the interpreter, and 200
-    ms of wall time measured from outside. The alarm cannot interrupt one long
+  - The hook has a hard self-deadline of 80 ms inside the interpreter, and 200
+    ms of wall time measured from outside (it runs as `python3 -I -S`). The alarm cannot interrupt one long
     C call. The only such call that grows is parsing `board.json`, so a hook
     will not parse a board over 2 MiB (about 3,000 sessions). It appends its
     event, skips the fold and the brief, records a `board-cap` miss, and
@@ -252,15 +252,15 @@ swap in a slower Python:
   "hooks": {
     "SessionStart": [
       { "hooks": [ { "type": "command", "timeout": 2,
-        "command": "/opt/homebrew/bin/python3 -I /Users/broomva/broomva/skills/skills/orchestration/ctx-core/scripts/ctx_hook.py session-start" } ] }
+        "command": "/opt/homebrew/bin/python3 -I -S /Users/broomva/broomva/skills/skills/orchestration/ctx-core/scripts/ctx_hook.py session-start" } ] }
     ],
     "Stop": [
       { "hooks": [ { "type": "command", "timeout": 2,
-        "command": "/opt/homebrew/bin/python3 -I /Users/broomva/broomva/skills/skills/orchestration/ctx-core/scripts/ctx_hook.py stop" } ] }
+        "command": "/opt/homebrew/bin/python3 -I -S /Users/broomva/broomva/skills/skills/orchestration/ctx-core/scripts/ctx_hook.py stop" } ] }
     ],
     "StopFailure": [
       { "hooks": [ { "type": "command", "timeout": 2,
-        "command": "/opt/homebrew/bin/python3 -I /Users/broomva/broomva/skills/skills/orchestration/ctx-core/scripts/ctx_hook.py stop-failure" } ] }
+        "command": "/opt/homebrew/bin/python3 -I -S /Users/broomva/broomva/skills/skills/orchestration/ctx-core/scripts/ctx_hook.py stop-failure" } ] }
     ]
   }
 }
@@ -269,7 +269,9 @@ swap in a slower Python:
 The path assumes the `~/broomva/skills` checkout is on `main`. If the skill is
 installed with `npx skills add broomva/skills --skill ctx-core`, use the
 installed copy's `scripts/ctx_hook.py` instead. `timeout: 2` is Claude Code's
-outer bound. The hook's own deadline is 100 ms.
+outer bound. The hook's own deadline is 80 ms. `-I` keeps a module planted in
+the session's cwd from being imported; `-S` skips `site`, which is a third of
+interpreter start-up, and everything here is stdlib.
 
 **3. Verify.** Open a new session in a scoped repo and end one turn. Then run
 `ctx doctor` in that repo. `SessionStart` and `Stop` should report a last

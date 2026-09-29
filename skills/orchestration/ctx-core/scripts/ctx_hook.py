@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Claude Code hook entry for ctx: SessionStart, Stop and StopFailure.
 
-    python3 -I /path/to/ctx_hook.py session-start   < hook JSON on stdin
-    python3 -I /path/to/ctx_hook.py stop
-    python3 -I /path/to/ctx_hook.py stop-failure
+    python3 -I -S /path/to/ctx_hook.py session-start   < hook JSON on stdin
+    python3 -I -S /path/to/ctx_hook.py stop
+    python3 -I -S /path/to/ctx_hook.py stop-failure
 
 The contract holds for every event, whatever ctx.py does:
 
@@ -14,8 +14,8 @@ The contract holds for every event, whatever ctx.py does:
     prints, and every traceback, goes to /dev/null. Injection fails OPEN: a
     failed or late hook injects nothing, and the session carries on.
   * A hard self-deadline of BUDGET_S of wall time inside the interpreter.
-    Interpreter start-up and teardown are the rest of the 200 ms; a CI runner
-    measured about 90 ms of that. The alarm fires between bytecodes, so one
+    Interpreter start-up and teardown are the rest of the 200 ms: about 20 ms
+    on the owner's machine, and about 110 ms on a macOS CI runner. The alarm fires between bytecodes, so one
     long C call can delay it. The one such call that grows, the board.json
     parse, is capped (ctx.HOOK_BOARD_CAP), so the deadline stays hard.
   * A run that hits the deadline, or finishes but had to skip work (a busy
@@ -31,7 +31,8 @@ machine; the registered hooks leave it unset.
 
 `-I` keeps a module planted in the session's cwd, or in user site-packages,
 from being imported in place of the stdlib; this script adds only its own
-directory to sys.path, for ctx.py. SIGKILL cannot be caught. A writer killed
+directory to sys.path, for ctx.py. `-S` skips the `site` import, a third of
+interpreter start-up; everything here is stdlib. SIGKILL cannot be caught. A writer killed
 mid-append leaves at most one torn line, which ctx.py skips and heals.
 """
 
@@ -41,9 +42,9 @@ import sys
 import time
 
 _T0 = time.monotonic()
-#: 100 ms inside the interpreter leaves 100 ms of the 200 ms wall for start-up
+#: 80 ms inside the interpreter leaves 120 ms of the 200 ms wall for start-up
 #: and teardown.
-BUDGET_S = 0.100
+BUDGET_S = 0.080
 STDIN_CAP = 1 << 20
 MISS_LOG_CAP = 1 << 20
 EVENTS = ("session-start", "stop", "stop-failure")

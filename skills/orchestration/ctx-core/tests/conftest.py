@@ -4,7 +4,7 @@
     sri       its own repo (branch main)                           -> scope sri
     other     a repo with no scope                                 -> no-op
 
-Hooks run as the owner would register them: `python3 -I ctx_hook.py <event>`
+Hooks run as the owner would register them: `python3 -I -S ctx_hook.py <event>`
 with the hook JSON on stdin, in a subprocess, timed.
 """
 from __future__ import annotations
@@ -31,7 +31,7 @@ sys.path.insert(0, str(SCRIPTS))  # so every test module can `import ctx`
 HOOK_WALL_S = 0.200
 #: Behaviour tests give the hook a generous budget, so a loaded test machine
 #: cannot turn "what does the hook publish" into a timing test. The `timed`
-#: fixture restores the real 100 ms for the tests that are about time.
+#: fixture restores the real 80 ms for the tests that are about time.
 BEHAVIOUR_BUDGET_MS = "5000"
 
 
@@ -84,7 +84,7 @@ class World:
         full_env.update(env or {})
         data = raw if raw is not None else json.dumps(payload)
         t0 = time.monotonic()
-        proc = subprocess.run([sys.executable, "-I", str(script), event], input=data.encode(),
+        proc = subprocess.run([sys.executable, "-I", "-S", str(script), event], input=data.encode(),
                               capture_output=True, env=full_env, timeout=30)
         return HookRun(proc.returncode, proc.stdout.decode(), proc.stderr.decode(), time.monotonic() - t0)
 
