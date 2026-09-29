@@ -493,7 +493,7 @@ _SECRET_PATTERNS: List[Tuple[re.Pattern, str]] = [
     (re.compile(r"\bpypi-[A-Za-z0-9_-]{40,}"), _REDACTED),
     (re.compile(r"\beyJ[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}\.[A-Za-z0-9_-]{6,}"), _REDACTED),
     # userinfo in a URL, and credentials in a URL query
-    (re.compile(r"(\b[a-z][a-z0-9+.-]*://[^/\s:@]+:)[^@\s/]+@", re.I), r"\1" + _REDACTED + "@"),
+    (re.compile(r"(\b[a-z][a-z0-9+.-]{0,30}://[^/\s:@]+:)[^@\s/]+@", re.I), r"\1" + _REDACTED + "@"),
     (re.compile(r"(?i)([?&](?:access_token|token|api_key|apikey|key|secret|password|sig|signature|auth)=)"
                 + _V + r"[^&\s#]+)"), r"\1" + _REDACTED),
     # command lines: --password x, --token=x, curl -u user:pass
@@ -503,7 +503,7 @@ _SECRET_PATTERNS: List[Tuple[re.Pattern, str]] = [
     # key=value / key: value where the key names a secret (camelCase included).
     # Bare values need 6+ characters, so prose like "sort key: ts" or "missing
     # token: see PR 12" is left alone.
-    (re.compile(r"(?i)\b([a-z0-9_.-]{0,40}?(?:token|secret|passw(?:or)?d|passwd|pwd|passphrase|credentials?"
+    (re.compile(r"(?i)\b([a-z0-9_.-]{0,24}?(?:token|secret|passw(?:or)?d|passwd|pwd|passphrase|credentials?"
                 r"|(?:api|access|secret|private|signing|client|master|encryption)[_.-]?key))"
                 r"([\"']?\s*[:=]\s*)" + _V + r"\"[^\"]+\"|'[^']+'|[^\s,;&\"'()\[\]{}]{6,})"), _R),
     # SHOUTY_ENV_VAR_KEY=value
@@ -520,7 +520,7 @@ _SECRET_PATTERNS: List[Tuple[re.Pattern, str]] = [
                 r"[A-Za-z0-9]{32,}(?![A-Za-z0-9])"), _REDACTED),
 ]
 _PATH_TOKEN = re.compile(r"[^\s\"'<>()\[\]{},;`|]+")
-_URL = re.compile(r"^[a-z][a-z0-9+.-]*://", re.I)
+_URL = re.compile(r"^[a-z][a-z0-9+.-]{0,30}://", re.I)
 
 
 def _redact_paths(s: str) -> str:
@@ -535,9 +535,30 @@ def _redact_paths(s: str) -> str:
     return _PATH_TOKEN.sub(repl, s)
 
 
+#: The patterns that anchor on a keyword run only when one of their keywords
+#: is in the text. On text without one (almost every status line) they cost
+#: nothing; with one, their bounded prefixes keep them linear.
+_NEEDS = {
+    id(pat): words for pat, words in (
+        (_SECRET_PATTERNS[1][0], ("authorization", "api-key", "cookie")),
+        (_SECRET_PATTERNS[2][0], ("bearer",)),
+        (_SECRET_PATTERNS[17][0], ("://",)),
+        (_SECRET_PATTERNS[-5][0], ("token", "secret", "passw", "pwd", "passphrase", "credential", "key")),
+        (_SECRET_PATTERNS[-4][0], ("_key",)),
+        (_SECRET_PATTERNS[-3][0], ("token", "bearer", "secret", "api key", "password", "passwd")),
+        (_SECRET_PATTERNS[-2][0], ("passw",)),
+    )
+}
+
+
 def redact_text(s: str) -> str:
+    low = s.lower()
     for pat, repl in _SECRET_PATTERNS:
+        words = _NEEDS.get(id(pat))
+        if words and not any(w in low for w in words):
+            continue
         s = pat.sub(repl, s)
+        low = s.lower() if words else low
     return _redact_paths(s)
 
 

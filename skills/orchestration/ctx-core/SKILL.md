@@ -302,7 +302,7 @@ event, and `misses` should be absent or small.
 cd skills/orchestration/ctx-core
 python3 -m pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py   # 22 protections removed in turn; the test pinning each must fail
+python3 tests/mutation_check.py   # 23 protections removed in turn; the test pinning each must fail
 ```
 
 | File | Pins |

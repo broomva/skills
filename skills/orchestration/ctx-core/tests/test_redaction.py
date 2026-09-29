@@ -154,14 +154,30 @@ def test_a_token_straddling_the_clip_is_redacted_before_the_cut(world: World) ->
     assert "ghp_" not in raw
 
 
-@pytest.mark.parametrize("text", ["a-" * 1600, "a1-" * 1066, "api-" * 800, "A_" * 1600, "token" * 640,
-                                  "x." * 1600, "Aa1" * 1066, "bearer " * 457])
-def test_no_pattern_is_quadratic(text: str) -> None:
-    """Round-2 finding: an unbounded lazy key prefix took 415 ms on `a-a-a…`."""
+@pytest.mark.parametrize("unit,tail", [(u, "") for u in ("a-", "a1-", "api-", "A_", "token", "x.", "Aa1", "bearer ",
+                                                          "key-", "token-", "secret.", "_key_", "password ",
+                                                          "--password ")] + [("a-", "://x")])
+def test_no_pattern_is_quadratic(unit: str, tail: str) -> None:
+    """Round-2 findings: an unbounded lazy key prefix took 415 ms on `a-a-a…`,
+    and an unbounded URL scheme scanned to the end of the string from every
+    word boundary. Measured as GROWTH, not wall time, so it holds on any
+    machine: 4x the input must cost well under the 16x a quadratic pattern
+    costs (linear is 4x)."""
     import time as _time
-    t0 = _time.perf_counter()
-    ctx.redact(text)
-    assert _time.perf_counter() - t0 < 0.05, "%.0f ms" % ((_time.perf_counter() - t0) * 1000)
+
+    def best(text: str) -> float:
+        runs = []
+        for _ in range(5):
+            t0 = _time.perf_counter()
+            ctx.redact(text)
+            runs.append(_time.perf_counter() - t0)
+        return min(runs)
+
+    big = unit * ((ctx.PRECAP - len(tail)) // len(unit)) + tail
+    small = unit * ((ctx.PRECAP - len(tail)) // len(unit) // 4) + tail
+    grow = best(big) / max(best(small), 1e-5)
+    assert grow < 9, "4x the input cost %.1fx" % grow
+    assert best(big) < 0.5
 
 
 def test_the_pre_cap_leaves_no_partial_token() -> None:
