@@ -120,7 +120,14 @@ def test_a_hand_written_line_with_free_text_is_skipped_on_read(line: dict) -> No
 
 # ---------------------------------------------------------------- linear time
 
-def _best(fn, arg, runs: int = 3) -> float:
+#: 100x the input costs ~100x on a linear path and ~10,000x on a quadratic one
+#: (a known-quadratic regex measured 101x for only 10x the input). The bound is
+#: the geometric midpoint: it fails any quadratic path by a factor of 10 and
+#: leaves a slow, allocation-noisy CI runner (436x once on macOS) room.
+LINEAR_BOUND = 1000
+
+
+def _best(fn, arg, runs: int = 5) -> float:
     out = []
     for _ in range(runs):
         t0 = time.perf_counter()
@@ -135,7 +142,7 @@ UNITS = ["a-", "sk-", "task-", "A", "xox", "crm/", "Bearer ", "x ", "a1-"]
 @pytest.mark.parametrize("unit", UNITS)
 @pytest.mark.parametrize("fn", [ctx.guard_ok, ctx._flat, ctx._extract_arc], ids=["guard", "flat", "extract"])
 def test_linear_at_10kb_and_1mb(fn, unit: str) -> None:
-    """100x the input must cost well under the 10,000x a quadratic path costs."""
+    """100x the input must cost far less than the 10,000x a quadratic path costs."""
     small = (unit * (10_000 // len(unit) + 1))[:10_000]
     big = (unit * (1_000_000 // len(unit) + 1))[:1_000_000]
     if fn is ctx._extract_arc:  # give the line scanner real lines to scan
@@ -143,11 +150,11 @@ def test_linear_at_10kb_and_1mb(fn, unit: str) -> None:
         small, big = "ARC-STATUS: DONE " + small, "ARC-STATUS: DONE " + big
     t_small, t_big = _best(fn, small), _best(fn, big)
     assert t_big < 1.0, "%.0f ms at 1 MB" % (t_big * 1000)
-    assert t_big / max(t_small, 2e-5) < 400, "100x the input cost %.0fx" % (t_big / max(t_small, 2e-5))
+    assert t_big / max(t_small, 2e-5) < LINEAR_BOUND, "100x the input cost %.0fx" % (t_big / max(t_small, 2e-5))
 
 
 def test_extracting_from_a_1mb_message_of_many_lines_is_linear() -> None:
     lines_small = "ARC-STATUS: DONE step\nnoise line\n" * 300
     lines_big = "ARC-STATUS: DONE step\nnoise line\n" * 30000
     t_small, t_big = _best(ctx._extract_arc, lines_small), _best(ctx._extract_arc, lines_big)
-    assert t_big < 1.0 and t_big / max(t_small, 2e-5) < 400
+    assert t_big < 1.0 and t_big / max(t_small, 2e-5) < LINEAR_BOUND
