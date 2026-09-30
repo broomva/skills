@@ -36,6 +36,9 @@ permissions:
   contents: read
   checks: read
   statuses: read
+  # Reading the run behind the Copilot check (actions/runs/<id>). Without it the
+  # lookup answers 403, the row is kept, and Copilot blocks as before.
+  actions: read
 
 jobs:
   gate:
@@ -68,18 +71,51 @@ jobs:
           # exact moment the loop would have reported its own timeout -- and the
           # kill wins, which is why the check read "failure" rather than saying
           # what it was waiting for. `bash smoke tests` measured 36m21s.
+          #
+          # Copilot code review is advisory (BRO-2678), as p9 already treats every
+          # review bot: its findings arrive as review threads, and its check fails
+          # on the reviewer's own quota ("You have exceeded your monthly quota",
+          # red on every PR since 2026-09-29) while saying nothing about the code.
+          # The check is published by the github-actions app, like every workflow
+          # here, so neither its name nor its app tells it from a PR job named the
+          # same. The run behind it does: GitHub runs Copilot review as a dynamic
+          # workflow, event "dynamic" and path dynamic/agents/copilot-pull-request-reviewer,
+          # which no workflow file can produce. A row is dropped only when that run,
+          # on this head, says so; a failed lookup keeps the row, so it still blocks.
+          COPILOT_ORIGIN="dynamic dynamic/agents/copilot-pull-request-reviewer $SHA"
+          advisory=" "   # run ids already verified as Copilot's, looked up once
           for i in $(seq 1 120); do   # up to ~60 min
-            # All check-runs on this head SHA except this gate itself.
-            runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs" \
-                     --jq '.check_runs[] | select(.name != "Merge Gate") | [.name, .status, (.conclusion // "")] | @tsv' \
-                   || echo "")
+            # All check-runs on this head SHA except this gate itself. Fields are
+            # joined with \x1f, not a tab: tab is IFS whitespace, so `read` would
+            # collapse a running check's empty conclusion and shift every field.
+            all=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs" \
+                    --jq '.check_runs[] | select(.name != "Merge Gate") | [.name, .status, (.conclusion // ""), (.app.slug // ""), (.details_url // "")] | join("\u001f")' \
+                  || echo "")
+            runs=""
+            while IFS=$'\x1f' read -r name status concl app url; do
+              [ -n "$name" ] || continue
+              if [ "$name" = "copilot-pull-request-reviewer" ] && [ "$app" = "github-actions" ]; then
+                rid=$(printf '%s' "$url" | sed -n 's#.*/actions/runs/\([0-9][0-9]*\)/.*#\1#p')
+                case "$advisory" in *" $rid "*) continue ;; esac
+                origin=""
+                [ -n "$rid" ] && origin=$(gh api "repos/$REPO/actions/runs/$rid" --jq '.event + " " + .path + " " + .head_sha' 2>/dev/null || echo "")
+                if [ -n "$rid" ] && [ "$origin" = "$COPILOT_ORIGIN" ]; then
+                  echo "advisory, not gated: $name (${concl:-$status}) from Copilot's run $rid"
+                  advisory="$advisory$rid "
+                  continue
+                fi
+              fi
+              runs+="$name"$'\t'"$status"$'\t'"$concl"$'\n'
+            done <<< "$all"
             # Legacy commit statuses (belt-and-suspenders; most checks are check-runs).
             st_state=$(gh api "repos/$REPO/commits/$SHA/status" --jq '.state' 2>/dev/null || echo "unknown")
 
             failed=$(printf '%s\n' "$runs" | awk -F'\t' -v b="$BLOCKING" 'NF>=3 && $3 ~ ("^(" b ")$"){print $1}')
             if [ -n "$failed" ] || [ "$st_state" = "failure" ] || [ "$st_state" = "error" ]; then
               echo "::error::Merge Gate FAILED — blocking checks:"
-              [ -n "$failed" ] && printf '  - %s\n' $failed
+              # Quoted: check names carry spaces, and unquoted "pytest (Python 3.12)"
+              # was reported as three checks that do not exist (SC2086).
+              [ -n "$failed" ] && printf '%s\n' "$failed" | sed 's/^/  - /'
               [ "$st_state" = "failure" ] || [ "$st_state" = "error" ] && echo "  - (legacy commit status: $st_state)"
               exit 1
             fi

@@ -1,0 +1,44 @@
+name: test-merge-gate
+
+# Runs the Merge Gate's own step script (read out of merge-gate.yml, not copied)
+# against a fake `gh` that answers from fixtures through real jq, so the filter
+# that decides what blocks a merge is exercised as written (BRO-2678).
+
+on:
+  pull_request:
+    paths:
+      - '.github/workflows/merge-gate.yml'
+      - 'tests/test_merge_gate.py'
+      - '.github/workflows/test-merge-gate.yml'
+  push:
+    branches: [main]
+    paths:
+      - '.github/workflows/merge-gate.yml'
+      - 'tests/test_merge_gate.py'
+      - '.github/workflows/test-merge-gate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-merge-gate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install deps
+        run: pip install pyyaml pytest
+
+      - name: Merge Gate step tests
+        run: python3 -m pytest tests/test_merge_gate.py -v
