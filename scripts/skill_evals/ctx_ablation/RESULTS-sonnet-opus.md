@@ -4,7 +4,8 @@ The haiku pilot ([PILOT.md](PILOT.md)) found no established lift: only concrete 
 moved anything. This asks whether that holds on `claude-sonnet-5` and `claude-opus-5-5`.
 Same harness (a82e8ea, unchanged), same 6 arms, 3 trials, the pilot's 13 retained tasks.
 
-> **CHECKPOINT (WIP).** Sonnet: complete. Opus: calibrating. Run dirs are
+> **CHECKPOINT (WIP), 08:47 -05.** Sonnet: complete. Opus: calibration and 4 arms done; `all`
+> stopped by the budget guard at 0.85 (five-hour window resets 08:50 -05); `rolex-top2` pending. Run dirs are
 > `~/.cache/ctx-ablation/{sonnet,opus}` (not committed; the corpus is the operator's).
 
 ## Setup
