@@ -8,7 +8,8 @@ silently: phase 2's mail and spawn verbs refuse on it.
 
 Record fields (schema 1): v, ts, scope, tick, dry_run, kind, and per kind:
     intent / done / failed / unknown   id, verb, key, target | result | reason, detail, recovered
-    ack                                acks: {tick, asks}
+    ack                                acks: {tick, asks: "all" | [ids]} (the owner), or
+                                       {tick, keys, resolved: true} (a tick: those asks stopped being true)
     tick_fire / runner_exit            detail (and exit_code)
 """
 from __future__ import annotations
@@ -175,34 +176,49 @@ def open_asks(batch: Dict[str, Any]) -> List[Dict[str, Any]]:
     return [a for a in batch["asks"] if a.get("id") not in batch["acked"]]
 
 
+def key_states(records: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """Each ask key's state, folded in write order: {key: {"state", "tick",
+    "ask", "ts"}} where state is
+
+        open      asked, and neither acked nor resolved since;
+        acked     the owner acked it, and it has not stopped being true since;
+        resolved  it stopped being true at some tick (a resolution record).
+
+    An ask is per occurrence: a key asked again after a resolution is a new
+    ask. An owner's ack holds for as long as the condition does."""
+    st: Dict[str, Dict[str, Any]] = {}
+    for r in records:
+        kind = r.get("kind")
+        if kind == "intent" and r.get("verb") == "ask":
+            for a in (r.get("target") or {}).get("asks") or []:
+                st[a.get("key")] = {"state": "open", "tick": r.get("tick"), "ask": a, "ts": r.get("ts")}
+        elif kind == "ack":
+            a = r.get("acks") or {}
+            if a.get("resolved"):
+                for k in a.get("keys") or []:
+                    if k in st and st[k]["state"] in ("open", "acked"):
+                        st[k]["state"] = "resolved"
+                continue
+            through = a.get("tick")
+            if not isinstance(through, int):
+                continue
+            for v in st.values():
+                if v["state"] != "open" or not isinstance(v["tick"], int):
+                    continue
+                if (a.get("asks") == "all" and v["tick"] <= through) or \
+                        (v["tick"] == through and v["ask"].get("id") in (a.get("asks") or [])):
+                    v["state"] = "acked"
+    return st
+
+
 def open_by_key(records: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """{ask key: {"ask", "tick", "ts"}} for every key asked and not yet acked,
-    at its first unacked asking."""
-    out: Dict[str, Dict[str, Any]] = {}
-    for b in ask_batches(records):
-        for a in open_asks(b):
-            out.setdefault(a.get("key"), {"ask": a, "tick": b["tick"], "ts": b["ts"]})
-    return out
-
-
-def acked_keys(records: Iterable[Dict[str, Any]]) -> Dict[str, str]:
-    """{ask key: the latest time an ack covered it}."""
-    out: Dict[str, str] = {}
-    for b in ask_batches(records):
-        for a in b["asks"]:
-            ts = b["acked_ts"].get(a.get("id"))
-            if ts and ts > out.get(a.get("key"), ""):
-                out[a.get("key")] = ts
-    return out
+    """{ask key: {"ask", "tick", "ts"}} for every open key."""
+    return {k: v for k, v in key_states(records).items() if v["state"] == "open"}
 
 
 def last_notified(records: Iterable[Dict[str, Any]]) -> Optional[str]:
     stamps = [t for b in ask_batches(records) for t in b["notified"] if t]
     return max(stamps) if stamps else None
-
-
-def unacked(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    return [b for b in ask_batches(records) if open_asks(b)]
 
 
 def last_tick(records: Iterable[Dict[str, Any]]) -> Optional[int]:

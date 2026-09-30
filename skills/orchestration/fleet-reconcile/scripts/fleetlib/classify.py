@@ -65,7 +65,8 @@ class Env:
         self.open_prs: Dict[Tuple[str, str], List[int]] = {}
         for r in repos:
             for p in r.get("prs") or []:
-                self.open_prs.setdefault((r["repo"], p["head"]), []).append(p["number"])
+                if p.get("head_id"):
+                    self.open_prs.setdefault((r["repo"], p["head_id"]), []).append(p["number"])
 
 
 # --------------------------------------------------------------------------
@@ -78,8 +79,13 @@ def activity(s: Dict[str, Any]) -> Optional[float]:
 
 
 def went_on_after(s: Dict[str, Any], t: Optional[float]) -> bool:
-    a = activity(s)
-    return t is not None and a is not None and a > t + GRACE_S
+    """Did the session record a timestamped entry more than GRACE_S after t?
+    Read from the transcript's last timestamped entry, never its mtime:
+    Claude Code appends untimestamped records (last-prompt, cost-state) about
+    an hour after a turn, which moved every captured limit death's mtime
+    ~3,650 s past its death. Unknown (no entry read) is not "went on"."""
+    last = (s.get("transcript") or {}).get("last_entry")
+    return t is not None and last is not None and last > t + GRACE_S
 
 
 def current_arc(s: Dict[str, Any]) -> Optional[str]:
@@ -105,9 +111,7 @@ def idle(s: Dict[str, Any]) -> bool:
 def bg_question(s: Dict[str, Any]) -> bool:
     """A background session blocked on a question to its own user (§5.4 class 7)."""
     j = s.get("job") or {}
-    detail = (j.get("detail") or "").strip()
-    asks = bool(j.get("needs") or j.get("suggested_reply")) or detail.endswith("?") or \
-        detail.lower().startswith("awaiting user")
+    asks = bool(j.get("needs") or j.get("suggested_reply") or j.get("detail_asks"))
     return (s.get("kind") == "background" and j.get("state") == "blocked" and not j.get("limit_text")
             and asks and s.get("waiting_for") not in PROMPT_WAITS)
 
@@ -206,15 +210,15 @@ def _closed(s: Dict[str, Any], env: Env) -> Match:
     arc = current_arc(s)
     if arc not in TERMINAL:
         return None
-    repo, branch = s.get("repo"), s.get("branch")
+    repo, bid = s.get("repo"), s.get("branch_id")
     if not env.repo_ok.get(repo or "", False):
         return Stop("ARC-STATUS %s, but the PRs of its repo could not be read" % arc)
-    if not branch or branch.startswith("detached@"):
+    if not bid:
         return Stop("ARC-STATUS %s, but its branch is unknown, so its PR can't be checked" % arc)
-    open_ = env.open_prs.get((repo, branch), [])
+    open_ = env.open_prs.get((repo, bid), [])
     if open_:
         return None
-    return "board: ARC-STATUS %s; no open PR on %s" % (arc, branch or "its branch")
+    return "board: ARC-STATUS %s; no open PR on %s" % (arc, s.get("branch") or "its branch")
 
 
 def _stalled(s: Dict[str, Any], env: Env) -> Match:

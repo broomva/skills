@@ -1,6 +1,6 @@
 {
  "state": "blocked",
- "detail": "You've hit your session limit \u00b7 resets 10am (America/Bogota)",
+ "detail": "You've hit your session limit \u00b7 resets 9:50am (America/Bogota)",
  "tempo": "blocked",
  "sessionId": "00000037-f1ee-4000-8000-000000000037",
  "resumeSessionId": "00000037-f1ee-4000-8000-000000000037",
@@ -18,7 +18,7 @@
   "--settings",
   "{\"crossSessionInbound\":\"accept\"}"
  ],
- "needs": "You've hit your session limit \u00b7 resets 10am (America/Bogota)",
+ "needs": "rate limited \u2014 wait and retry \u00b7 You've hit your session limit \u00b7 resets 9:50am (America/Bogota)",
  "worktreePath": "{HOME}/gone/23",
  "worktreeBranch": "worktree-branch-11",
  "name": "background-session-36"

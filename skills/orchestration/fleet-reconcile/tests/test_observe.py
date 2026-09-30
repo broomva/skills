@@ -218,3 +218,24 @@ def test_an_existing_directory_outside_any_repo_is_placed_as_such(world, meta, t
     plain.mkdir()
     scope, repo, branch, how = observe.place(str(plain), {"repo": "/x/.git", "branch": "b"}, None, {})
     assert (scope, how) == (None, "no-repo")
+
+
+def test_the_captured_limit_deaths_classify_as_class_2_despite_their_late_transcript_writes(world, meta):
+    # P20 round 2 (N1): every captured limit death's transcript mtime sits
+    # about an hour past its last timestamped entry (Claude Code's
+    # untimestamped last-prompt and cost-state records). Read from the last
+    # entry, each is still class 2 in its own scope.
+    snap = _observe(world, meta)
+    limit = [s for s in snap["sessions"] if (s["job"] or {}).get("limit_text") and s["job"]["state"] == "blocked"]
+    assert limit, "the capture holds usage-limit deaths"
+    late = 0
+    for s in limit:
+        t = s["transcript"]
+        assert t["last_entry"] is not None
+        late += t["mtime"] - t["last_entry"] > 3000
+        env = classify.Env(s["scope"] or "none", meta["captured_at"], snap["repos"], snap["surfaces"])
+        got = classify.classify(s, env)
+        assert got["class"] in ("2", "1"), got
+        if s["scope"]:
+            assert got["class"] == "2", got
+    assert late, "the capture shows the late untimestamped write"

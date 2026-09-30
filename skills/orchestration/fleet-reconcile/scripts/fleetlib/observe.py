@@ -32,6 +32,22 @@ def _err(exc: Exception) -> str:
     return common.safe_text(str(exc), 200)
 
 
+def branch_id(branch: Optional[str]) -> Optional[str]:
+    """A join key for a branch: a hash of the raw name, so matching a session
+    to its PR never uses the display form, which the guard may withhold or
+    clip. None for no branch or a detached HEAD."""
+    if not branch or branch.startswith("detached@"):
+        return None
+    import hashlib
+
+    return hashlib.sha256(branch.encode("utf-8", "replace")).hexdigest()[:16]
+
+
+def _detail_asks(detail: str) -> bool:
+    d = (detail or "").strip()
+    return d.endswith("?") or d.lower().startswith("awaiting user")
+
+
 def fleet_shaped(name: str, scope_id: str) -> bool:
     """<scope>-<repo>-pr<N> (a driver) or <scope>-jan-<hash> (a janitor), §5.3."""
     return bool(re.fullmatch(r"%s-(?:[A-Za-z0-9._-]+-pr\d+|jan-[0-9a-f]{6,64})" % re.escape(scope_id), name or ""))
@@ -93,7 +109,7 @@ def _job_view(j: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         return None
     return {"job_id": j["job_id"], "state": j["state"], "detail": common.safe_text(j["detail"], 100),
             "needs": common.safe_text(j["needs"], 100), "suggested_reply": j["suggested_reply"],
-            "limit_text": j["limit_text"], "reset_text": j["reset_text"],
+            "limit_text": j["limit_text"], "reset_text": j["reset_text"], "detail_asks": _detail_asks(j["detail"]),
             "worktree_path": common.safe_path(j["worktree_path"]),
             "worktree_branch": common.safe_text(j["worktree_branch"], 120) or None, "updated_at": j["updated_at"],
             "settings_path": j["settings_path"]}
@@ -160,10 +176,13 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
         at_cap = len(rows) >= sec["listing_cap"]
         proven = at_cap and surf["jobs"]["ok"] and bool(job_ids) and set(job_ids) <= listed
         if at_cap and not proven:
+            missing = sorted(set(job_ids) - listed)
             surf["listing"] = _surface(False, rows=len(rows), failed_closed=True,
                                        error="%d rows, at or over the cap of %d, and the job files don't show it "
-                                             "complete: it may be truncated, so nothing is classified"
-                                             % (len(rows), sec["listing_cap"]))
+                                             "complete (%s): it may be truncated, so nothing is classified"
+                                             % (len(rows), sec["listing_cap"],
+                                                "not listed: %s" % ", ".join(missing[:5]) if missing
+                                                else "the job files were not read"))
             rows = []
         else:
             surf["listing"] = _surface(True, rows=len(rows), **({"completeness": "every job file is listed"}
@@ -203,6 +222,7 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
 
     # How gh authenticated this tick (tick.sh says; never the token itself) --
     surf["gh_auth"] = _surface(True, mode=common.safe_text(os.environ.get("FLEET_GH_AUTH") or "keyring", 80))
+    surf["release"] = _surface(True, name=common.safe_text(os.environ.get("FLEET_RELEASE") or "checkout", 80))
 
     # The core's board (every scope, for placement) --------------------------
     board, surf["board"] = _board_rows(scope_ids)
@@ -221,7 +241,14 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
         job = jobs.get(sid)
         brow = board.get(sid)
         scope, repo, branch, how = place(r["cwd"], brow, job, by_repo)
-        tr = transcripts.get(sid) or {}
+        tr = dict(transcripts.get(sid) or {})
+        # "Went on after" reads the last timestamped entry, not the mtime,
+        # which moves when Claude Code appends its untimestamped records
+        # (last-prompt, cost-state) about an hour after a turn. Read only
+        # where a class depends on it.
+        if tr.get("path") and ((brow and (brow.get("state") == "died" or brow.get("arc_status")))
+                               or (job and job.get("state") == "blocked")):
+            tr["last_entry"] = src.last_entry(tr)
         name_ok = common.safe_text(r["name"], 80)
         key = None
         if sid in adopted:
@@ -242,9 +269,11 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
             "paseo": None if p is None else {k: p[k] for k in ("agent_id", "archived", "labels", "last_status",
                                                                 "updated_at", "last_activity_at", "workspace_id",
                                                                 "session_id_from")},
-            "transcript": {"found": "mtime" in tr, "mtime": tr.get("mtime"), "sub": tr.get("sub")},
+            "transcript": {"found": "mtime" in tr, "mtime": tr.get("mtime"), "sub": tr.get("sub"),
+                           "last_entry": tr.get("last_entry")},
             "limit_text": limit_line,
-            "scope": scope, "repo": repo, "branch": common.safe_text(branch, 120) or None, "placement": how,
+            "scope": scope, "repo": repo, "branch": common.safe_text(branch, 120) or None,
+            "branch_id": branch_id(branch), "placement": how,
             "fleet_key": key, "adopted": sid in adopted,
             "job_unread": r["kind"] == "background" and sid[:8] in bad_jobs,
             "fleet_shaped": fleet_shaped(r["name"], scope_id),
@@ -304,6 +333,8 @@ def observe_repo(common_dir: str, sec: Dict[str, Any], src: Sources) -> Dict[str
         out["error"] = "%d open PRs, at or over the cap of %d: the list may be truncated" % (
             len(prs), sec["pr_list_cap"])
         return out
+    for p in prs:
+        p["head_id"] = branch_id(p.pop("head_raw", None))
     out["ok"] = True
     out["prs"] = prs
     return out

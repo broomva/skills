@@ -263,7 +263,10 @@ def test_an_arc_status_counts_only_while_it_is_the_latest_word():
 
 
 def test_a_terminal_status_with_an_open_pr_on_its_branch_is_not_closed():
-    repos = [{"repo": "/w/broomva/.git", "ok": True, "prs": [{"number": 7, "head": "feat/x"}]}]
+    from fleetlib import observe
+
+    repos = [{"repo": "/w/broomva/.git", "ok": True,
+              "prs": [{"number": 7, "head": "feat/x", "head_id": observe.branch_id("feat/x")}]}]
     s = S(board=arc("DONE"), activity_ago=900)
     assert cls(s, env_for(repos))["class"] == "10"
     assert cls(S(board=arc("DONE"), activity_ago=900, **OURS), env_for(repos))["class"] == "unknown"
@@ -380,9 +383,39 @@ def test_class_9_resumes_a_session_with_no_process_and_mails_a_live_one():
 
 
 def test_a_blocked_job_whose_detail_asks_its_user_is_class_7():
-    for detail in ("awaiting user confirmation; probe sequence flagged", "which fix should I take?"):
-        assert cls(bg(state="blocked", job={"state": "blocked", "detail": detail}))["class"] == "7"
-    assert cls(bg(state="blocked", job={"state": "blocked", "detail": "fix ready"}))["class"] == "10"
+    from fleetlib import observe
+
+    # Read from the whole detail, before the report clips it to 100 characters.
+    long_q = "x" * 150 + " which fix should I take?"
+    for detail in ("awaiting user confirmation; probe sequence flagged", "which fix should I take?", long_q):
+        job = {"state": "blocked", "detail": detail[:100], "detail_asks": observe._detail_asks(detail)}
+        assert cls(bg(state="blocked", job=job))["class"] == "7"
+    job = {"state": "blocked", "detail": "fix ready", "detail_asks": observe._detail_asks("fix ready")}
+    assert cls(bg(state="blocked", job=job))["class"] == "10"
+
+
+def test_a_late_untimestamped_write_does_not_revive_a_dead_session():
+    # 2.1.280 appends last-prompt and cost-state records ~1 h after a turn:
+    # the mtime moves, the last timestamped entry doesn't (P20 round 2, N1).
+    late = dict(activity_ago=600, last_entry_ago=4200)
+    assert cls(bg(state="blocked", job=dict(LIMIT_JOB, updated_at=NOW - 4200), **late))["class"] == "2"
+    assert cls(S(board=died("rate_limit", ago=4200), **late))["class"] == "2"
+    assert cls(S(board=arc("DONE", ago=4200), **late))["class"] == "8"
+    # Unknown last entry: nothing says it went on.
+    assert cls(S(board=died("rate_limit", ago=4200), activity_ago=60, last_entry_ago=None))["class"] == "2"
+    # A real later entry does.
+    assert cls(S(status="busy", board=died("rate_limit", ago=4200), activity_ago=60))["class"] == "5"
+
+
+def test_a_withheld_branch_still_matches_its_open_pr():
+    from fleetlib import observe
+
+    branch = "fix/sk-learn-bump"  # the guard withholds "sk-" at a token start
+    s = S(board=arc("DONE"), activity_ago=900, branch=branch)
+    s["branch"] = "[withheld]"  # the display form; branch_id was taken from the raw name
+    repos = [{"repo": "/w/broomva/.git", "ok": True,
+              "prs": [{"number": 12, "head": "[withheld]", "head_id": observe.branch_id(branch)}]}]
+    assert cls(s, env_for(repos))["class"] == "10"  # an open PR: not closed
 
 
 def test_only_5xx_and_network_errors_are_transient():

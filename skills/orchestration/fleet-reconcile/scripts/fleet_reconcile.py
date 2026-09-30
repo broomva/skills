@@ -122,6 +122,9 @@ def cmd_report(args: argparse.Namespace) -> int:
     common.write_json(td / "report.json", rep)
     common.write_atomic(td / "report.md", report.render_md(rep).encode("utf-8"))
     report.prune(sd, time.time())
+    if rep["resolved"]:
+        ledger.append(sd, {"kind": "ack", "scope": sec["scope"], "tick": args.tick, "dry_run": False,
+                           "acks": {"tick": args.tick, "keys": rep["resolved"], "resolved": True}})
     if rep["asks"]:
         batch = sd / "asks" / ("%05d.md" % args.tick)
         common.write_atomic(batch, report.render_batch(rep).encode("utf-8"))
@@ -136,7 +139,7 @@ def _aq(s: str) -> str:
     return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
 
 
-def notify(title: str, body: str) -> dict:
+def notify(title: str, body: str, remote_body: str = "") -> dict:
     """One osascript notification, and p9 notify when p9 is on PATH. Delivery
     can be observed and sight cannot, so an ask counts as seen only once acked."""
     out = {}
@@ -152,7 +155,7 @@ def notify(title: str, body: str) -> dict:
     p9 = os.environ.get("FLEET_P9_BIN") or shutil.which("p9")
     if p9:
         try:
-            out["p9"] = subprocess.run([p9, "notify", title, "--body", body, "--kind", "fleet-ask"],
+            out["p9"] = subprocess.run([p9, "notify", title, "--body", remote_body or title, "--kind", "fleet-ask"],
                                        stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                                        stderr=subprocess.DEVNULL, timeout=30).returncode
         except (OSError, subprocess.TimeoutExpired) as exc:
@@ -206,10 +209,13 @@ def cmd_act(args: argparse.Namespace) -> int:
     oldest = min((common.parse_iso(v["ts"]) or now) for v in open_now.values()) if open_now else now
     n = len(open_now)
     title = "fleet %s: %d open ask%s" % (sec["scope"], n, "" if n == 1 else "s")
-    body = "%s | oldest %s | %s asks --scope %s" % (
+    body = "%s | oldest %s | fleet asks --scope %s" % (
         common.safe_text(first_new[0]["question"] if first_new else "", 100), common.age(now - oldest),
-        HERE / "fleet", sec["scope"])
-    res = notify(title, body)
+        sec["scope"])
+    # The local notification carries the first ask; p9 may send off the
+    # machine (a phone channel), so it gets the count only.
+    res = notify(title, body, remote_body="%d open; read them on the Mac with fleet asks --scope %s"
+                 % (n, sec["scope"]))
     res["notified"] = res.get("osascript") == 0 or res.get("p9") == 0
     res["why"] = why
     ledger.append(sd, {"kind": "done", "verb": "ask", "id": target["id"], "key": "asks:%s" % target["tick"],
@@ -249,9 +255,14 @@ def cmd_ack(args: argparse.Namespace) -> int:
     sec = _sec(args)
     sd = config.state_dir(sec)
     records, _ = ledger.read(sd)
-    batches = [b for b in ledger.ask_batches(records) if b["tick"] == args.tick]
-    if not batches:
-        print("fleet ack: no ask batch for tick %d" % args.tick, file=sys.stderr)
+    every = ledger.ask_batches(records)
+    if not [b for b in every if isinstance(b["tick"], int) and b["tick"] <= args.tick]:
+        print("fleet ack: no ask batch at or before tick %d" % args.tick, file=sys.stderr)
+        return 1
+    batches = [b for b in every if b["tick"] == args.tick]
+    if args.ask and not batches:
+        print("fleet ack: tick %d wrote no batch; ack it whole, or name a tick that did" % args.tick,
+              file=sys.stderr)
         return 1
     ids = {a.get("id") for b in batches for a in b["asks"]}
     unknown = [a for a in args.ask or [] if a not in ids]

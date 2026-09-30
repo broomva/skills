@@ -18,6 +18,6 @@
   "--settings",
   "{\"crossSessionInbound\":\"accept\"}"
  ],
- "needs": "You've hit your session limit \u00b7 resets 10am (America/Bogota)",
+ "needs": "rate limited \u2014 wait and retry \u00b7 You've hit your session limit \u00b7 resets 10am (America/Bogota)",
  "name": "background-session-8"
 }

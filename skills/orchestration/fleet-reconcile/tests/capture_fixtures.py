@@ -8,8 +8,9 @@ parsers are pinned to the version captured (parsers.PINNED_CC_VERSION). This
 repo is public, so everything is anonymized before it is written:
 
 - kept: every key, every type, the enum values (kind, state, status,
-  waitingFor, lastStatus, archive state, label keys), timestamps, and the
-  usage-limit text's shape;
+  waitingFor, lastStatus, archive state, label keys), timestamps, each
+  transcript's mtime and last timestamped entry, and Claude Code's usage-limit
+  text verbatim;
 - replaced: session ids (fixed fake UUIDs), names, titles, job details and
   questions, prompts, run outputs, label values, and paths. A path is replaced
   by a template ({HOME}/broomva, {HOME}/client/sri, {HOME}/wt/<scope>-<n>,
@@ -38,6 +39,7 @@ sys.path.insert(0, str(HERE.parent / "scripts"))
 sys.path.insert(0, str(HERE.parent.parent / "ctx-core" / "scripts"))
 
 import ctx  # noqa: E402
+import ctx_compare  # noqa: E402
 
 from fleetlib import parsers  # noqa: E402
 
@@ -107,7 +109,7 @@ def free(text: str, label: str, a: Anon) -> str:
     if not text:
         return text
     if parsers.LIMIT_RE.search(text):
-        return LIMIT_CANON if "resets" in text else "rate limited — wait and retry · " + LIMIT_CANON
+        return text  # Claude Code's own limit text: its reset form is what the parser reads
     return "%s %d%s" % (label, a.n(label), "?" if text.rstrip().endswith("?") else "")
 
 
@@ -166,8 +168,11 @@ def capture(out: Path) -> None:
     for pdir in proj.iterdir():
         for real, fake in wanted.items():
             t = pdir / (real + ".jsonl")
-            if t.is_file():
-                idx.setdefault(fake, {})["mtime"] = max(idx.get(fake, {}).get("mtime", 0), t.stat().st_mtime)
+            if t.is_file() and t.stat().st_mtime >= idx.get(fake, {}).get("mtime", 0):
+                idx.setdefault(fake, {})["mtime"] = t.stat().st_mtime
+                # The last timestamped entry: Claude Code appends untimestamped
+                # records (last-prompt, cost-state) about an hour after a turn.
+                idx[fake]["last_entry"] = ctx_compare.last_entry_ts(str(t))
             sub = pdir / real / "subagents"
             if sub.is_dir():
                 m = max((f.stat().st_mtime for f in sub.glob("*.jsonl")), default=None)

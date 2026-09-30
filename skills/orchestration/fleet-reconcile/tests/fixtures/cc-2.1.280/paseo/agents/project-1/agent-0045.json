@@ -1,27 +1,27 @@
 {
- "id": "agent-0010",
+ "id": "agent-0045",
  "provider": "claude",
- "cwd": "{HOME}/wt/broomva-11",
- "workspaceId": "ws-10",
- "createdAt": "2026-09-30T00:06:31.965Z",
- "updatedAt": "2026-09-30T01:48:06.550Z",
- "lastActivityAt": "2026-09-30T01:48:06.550Z",
- "lastUserMessageAt": "2026-09-30T00:06:35.643Z",
- "title": "title 10",
+ "cwd": "{HOME}/gone/28",
+ "workspaceId": "ws-45",
+ "createdAt": "2026-09-27T03:46:16.732Z",
+ "updatedAt": "2026-09-29T15:39:51.505Z",
+ "lastActivityAt": "2026-09-29T15:39:51.505Z",
+ "lastUserMessageAt": "2026-09-29T14:12:57.737Z",
+ "title": "title 45",
  "labels": {},
- "lastStatus": "idle",
+ "lastStatus": "closed",
  "lastModeId": "bypassPermissions",
  "config": {
   "modeId": "bypassPermissions"
  },
  "runtimeInfo": {
   "provider": "claude",
-  "sessionId": "00000057-f1ee-4000-8000-000000000057"
+  "sessionId": "00000088-f1ee-4000-8000-000000000088"
  },
  "features": [],
  "persistence": {
   "provider": "claude",
-  "sessionId": "00000057-f1ee-4000-8000-000000000057",
+  "sessionId": "00000088-f1ee-4000-8000-000000000088",
   "metadata": {
    "mcpServers": {
     "paseo": {
@@ -37,5 +37,6 @@
  "requiresAttention": true,
  "attentionReason": "finished",
  "attentionTimestamp": null,
- "internal": false
+ "internal": false,
+ "archivedAt": "2026-09-29T15:39:51.505Z"
 }

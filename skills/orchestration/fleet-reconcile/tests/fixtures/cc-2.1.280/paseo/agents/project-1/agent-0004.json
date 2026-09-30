@@ -1,17 +1,15 @@
 {
  "id": "agent-0004",
  "provider": "claude",
- "cwd": "{HOME}/wt/broomva-16",
+ "cwd": "{HOME}/wt/broomva-24",
  "workspaceId": "ws-4",
- "createdAt": "2026-09-30T15:14:37.120Z",
- "updatedAt": "2026-09-30T21:10:45.480Z",
- "lastActivityAt": "2026-09-30T21:10:45.480Z",
- "lastUserMessageAt": "2026-09-30T20:32:54.576Z",
+ "createdAt": "2026-09-30T22:37:59.008Z",
+ "updatedAt": "2026-09-30T22:49:31.920Z",
+ "lastActivityAt": "2026-09-30T22:49:31.920Z",
+ "lastUserMessageAt": "2026-09-30T22:38:05.131Z",
  "title": "title 4",
  "labels": {
-  "coordinator": "v-6",
-  "fleet": "v-7",
-  "paseo.parent-agent-id": "v-8"
+  "paseo.parent-agent-id": "v-6"
  },
  "lastStatus": "running",
  "lastModeId": "bypassPermissions",
@@ -20,12 +18,12 @@
  },
  "runtimeInfo": {
   "provider": "claude",
-  "sessionId": "00000066-f1ee-4000-8000-000000000066"
+  "sessionId": null
  },
  "features": [],
  "persistence": {
   "provider": "claude",
-  "sessionId": "00000066-f1ee-4000-8000-000000000066",
+  "sessionId": "00000078-f1ee-4000-8000-000000000078",
   "metadata": {
    "mcpServers": {
     "paseo": {

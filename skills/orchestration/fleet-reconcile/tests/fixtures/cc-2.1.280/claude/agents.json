@@ -384,7 +384,7 @@
   "startedAt": 1790699043996,
   "sessionId": "00000043-f1ee-4000-8000-000000000043",
   "name": "auto-name-1-01",
-  "status": "idle"
+  "status": "busy"
  },
  {
   "pid": 10043,
@@ -588,7 +588,7 @@
   "pid": 10065,
   "cwd": "{HOME}/wt/broomva-16",
   "kind": "interactive",
-  "startedAt": 1790781277653,
+  "startedAt": 1790781293936,
   "sessionId": "00000066-f1ee-4000-8000-000000000066",
   "name": "interactive-session-45",
   "status": "busy"
@@ -597,7 +597,7 @@
   "pid": 10066,
   "cwd": "{HOME}/wt/broomva-17",
   "kind": "interactive",
-  "startedAt": 1790781293936,
+  "startedAt": 1790797969518,
   "sessionId": "00000067-f1ee-4000-8000-000000000067",
   "name": "interactive-session-46",
   "status": "busy"
@@ -606,43 +606,43 @@
   "pid": 10067,
   "cwd": "{HOME}/wt/broomva-18",
   "kind": "interactive",
-  "startedAt": 1790797969518,
+  "startedAt": 1790798860209,
   "sessionId": "00000068-f1ee-4000-8000-000000000068",
   "name": "interactive-session-47",
-  "status": "busy"
+  "status": "idle"
  },
  {
   "pid": 10068,
   "cwd": "{HOME}/wt/broomva-19",
   "kind": "interactive",
-  "startedAt": 1790798860209,
+  "startedAt": 1790799447183,
   "sessionId": "00000069-f1ee-4000-8000-000000000069",
-  "name": "interactive-session-48",
-  "status": "busy"
+  "name": "auto-name-21-15",
+  "status": "idle"
  },
  {
   "pid": 10069,
-  "cwd": "{HOME}/wt/broomva-20",
-  "kind": "interactive",
-  "startedAt": 1790799447183,
-  "sessionId": "00000070-f1ee-4000-8000-000000000070",
-  "name": "auto-name-21-15",
-  "status": "busy"
- },
- {
-  "pid": 10070,
   "cwd": "{HOME}/wt/sri-6",
   "kind": "interactive",
   "startedAt": 1790799825907,
-  "sessionId": "00000071-f1ee-4000-8000-000000000071",
+  "sessionId": "00000070-f1ee-4000-8000-000000000070",
   "name": "auto-name-22-16",
   "status": "idle"
+ },
+ {
+  "pid": 10070,
+  "cwd": "{HOME}/wt/broomva-20",
+  "kind": "interactive",
+  "startedAt": 1790800304785,
+  "sessionId": "00000071-f1ee-4000-8000-000000000071",
+  "name": "interactive-session-48",
+  "status": "busy"
  },
  {
   "pid": 10071,
   "cwd": "{HOME}/wt/broomva-21",
   "kind": "interactive",
-  "startedAt": 1790800304785,
+  "startedAt": 1790800565765,
   "sessionId": "00000072-f1ee-4000-8000-000000000072",
   "name": "interactive-session-49",
   "status": "busy"
@@ -651,36 +651,55 @@
   "pid": 10072,
   "cwd": "{HOME}/wt/broomva-22",
   "kind": "interactive",
-  "startedAt": 1790800565765,
+  "startedAt": 1790800598764,
   "sessionId": "00000073-f1ee-4000-8000-000000000073",
   "name": "interactive-session-50",
   "status": "busy"
  },
  {
   "pid": 10073,
-  "cwd": "{HOME}/wt/broomva-23",
-  "kind": "interactive",
-  "startedAt": 1790800598764,
-  "sessionId": "00000074-f1ee-4000-8000-000000000074",
-  "name": "interactive-session-51",
-  "status": "busy"
- },
- {
-  "pid": 10074,
   "cwd": "{HOME}/broomva",
   "kind": "interactive",
   "startedAt": 1790801288160,
+  "sessionId": "00000074-f1ee-4000-8000-000000000074",
+  "name": "interactive-session-51",
+  "status": "waiting",
+  "waitingFor": "input needed"
+ },
+ {
+  "pid": 10074,
+  "cwd": "{HOME}/wt/broomva-23",
+  "kind": "interactive",
+  "startedAt": 1790803051966,
   "sessionId": "00000075-f1ee-4000-8000-000000000075",
   "name": "interactive-session-52",
-  "status": "idle"
+  "status": "busy"
  },
  {
   "pid": 10075,
-  "cwd": "{HOME}/broomva",
+  "cwd": "{HOME}/client/sri",
   "kind": "interactive",
-  "startedAt": 1790802664069,
+  "startedAt": 1790806941507,
   "sessionId": "00000076-f1ee-4000-8000-000000000076",
   "name": "interactive-session-53",
+  "status": "busy"
+ },
+ {
+  "pid": 10076,
+  "cwd": "{HOME}/wt/sri-7",
+  "kind": "interactive",
+  "startedAt": 1790807731065,
+  "sessionId": "00000077-f1ee-4000-8000-000000000077",
+  "name": "auto-name-23-17",
+  "status": "idle"
+ },
+ {
+  "pid": 10077,
+  "cwd": "{HOME}/wt/broomva-24",
+  "kind": "interactive",
+  "startedAt": 1790807879803,
+  "sessionId": "00000078-f1ee-4000-8000-000000000078",
+  "name": "interactive-session-54",
   "status": "busy"
  }
 ]

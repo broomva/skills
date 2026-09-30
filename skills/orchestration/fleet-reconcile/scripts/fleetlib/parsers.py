@@ -360,7 +360,8 @@ def parse_pr_list(text: Any, what: str = "prs") -> List[Dict[str, Any]]:
         out.append({
             "number": _req(p, "number", int, w),
             "title": common.safe_text(p.get("title"), 72),
-            "head": _req(p, "headRefName", str, w),
+            "head": common.safe_text(_req(p, "headRefName", str, w), 120),
+            "head_raw": p["headRefName"],  # observe turns it into a join key and drops it
             "base": p.get("baseRefName") if isinstance(p.get("baseRefName"), str) else None,
             "draft": bool(p.get("isDraft")),
             "author": common.safe_text(login, 40),

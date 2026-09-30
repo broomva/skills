@@ -32,12 +32,17 @@ def _event(world, etype: str, sid: str, cwd: Path, at: float, payload=None) -> N
     assert ctx.append(scope, ev)
 
 
-def _transcript(world, sid: str, at: float) -> None:
+def _transcript(world, sid: str, at: float, entry_at=None, mtime=None) -> None:
+    """A transcript whose last timestamped entry is at `entry_at` (default
+    `at`), followed by the untimestamped records Claude Code appends later,
+    with its mtime at `mtime` (default `at`)."""
     d = world.home / ".claude" / "projects" / "-fixture-project"
     d.mkdir(parents=True, exist_ok=True)
     p = d / (sid + ".jsonl")
-    p.write_text("{}\n")
-    os.utime(p, (at, at))
+    p.write_text(json.dumps({"type": "assistant", "timestamp": ctx.now_ts(entry_at if entry_at else at)}) + "\n"
+                 + '{"type": "last-prompt"}\n{"type": "cost-state"}\n')
+    m = mtime if mtime else at
+    os.utime(p, (m, m))
 
 
 def _row(sid: str, cwd: Path) -> dict:
@@ -75,8 +80,9 @@ def scene(world):
     _transcript(world, s["H"], T - 0.3 * H)
     _transcript(world, s["I"], T - 0.1 * H)                        # sri: another scope
     _event(world, "session.start", s["K"], b, T - 2 * H)
-    _event(world, "session.died", s["K"], b, T - 1 * H)            # died, and stayed dead
-    _transcript(world, s["K"], T - 1 * H + 30)                     # the death's own write
+    _event(world, "session.died", s["K"], b, T - 1 * H)            # died, and stayed dead:
+    _transcript(world, s["K"], T - 1 * H + 30, mtime=T - 0.02 * H)  # its last entry is the death's;
+    # the mtime moved an hour later with the untimestamped records, as on 2.1.280
     listing = [_row(s["A"], b), _row(s["D"], b), _row(s["J"], gone), _row(s["E"], b), _row(s["F"], b),
                _row(s["G"], b), _row(s["H"], b), _row(s["I"], world.sri), _row(s["K"], b)]
     lf = world.home / "listing.json"
@@ -87,7 +93,7 @@ def scene(world):
 def test_every_reason_is_exercised_and_the_excluded_ones_do_not_count(world, scene):
     s, lf = scene
     res = ctx_compare.compare("broomva", ctx_compare.load_listing(str(lf)), ctx_compare.transcript_times(), T,
-                              hours=6, registered=T - 5.5 * H)
+                              hours=6, registered=T - 5.5 * H, paths=ctx_compare.transcript_paths())
     by = {d["session_id"]: d["reason"] for d in res["differences"]}
     assert by == {s["B"]: "no-transcript", s["C"]: "ended", s["D"]: "unexplained",
                   s["E"]: "died-then-continued", s["F"]: "no-event", s["G"]: "pre-registration",
@@ -169,6 +175,8 @@ def test_an_empty_listing_or_unreadable_transcripts_fail(world, tmp_path, capsys
     assert not (world.home / ".claude" / "projects").exists()
     assert ctx_compare.run_for_scope("broomva", listing_file=str(lf), now=T) == 1
     assert capsys.readouterr().out.count("could not be read") == 2
+    last = json.loads((world.store("broomva") / "compare.jsonl").read_text().splitlines()[-1])
+    assert last["pass"] is False and last["error"]  # the failure is on disk, not an old pass
 
 
 def test_the_board_row_places_only_a_session_whose_cwd_is_gone(world):
@@ -182,3 +190,11 @@ def test_the_board_row_places_only_a_session_whose_cwd_is_gone(world):
     listing = [_row(sid, world.home / "wt" / "removed")]  # gone: the row places it
     res = ctx_compare.compare("broomva", listing, ctx_compare.transcript_times(), T)
     assert res["sessions"] == 1 and res["both"] == 1
+
+
+def test_the_last_timestamped_entry_is_read_past_untimestamped_records(world):
+    sid = _sid(1)
+    _transcript(world, sid, T - 2 * H, mtime=T - 1 * H)
+    p = world.home / ".claude" / "projects" / "-fixture-project" / (sid + ".jsonl")
+    assert ctx_compare.last_entry_ts(str(p)) == pytest.approx(T - 2 * H, abs=0.01)
+    assert ctx_compare.last_entry_ts(str(p) + ".missing") is None

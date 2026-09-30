@@ -1,14 +1,18 @@
 {
  "id": "agent-0043",
  "provider": "claude",
- "cwd": "{HOME}/gone/28",
+ "cwd": "{HOME}/gone/26",
  "workspaceId": "ws-43",
- "createdAt": "2026-09-27T03:46:16.732Z",
- "updatedAt": "2026-09-29T15:39:51.505Z",
- "lastActivityAt": "2026-09-29T15:39:51.505Z",
- "lastUserMessageAt": "2026-09-29T14:12:57.737Z",
+ "createdAt": "2026-09-30T02:11:16.540Z",
+ "updatedAt": "2026-09-30T10:56:25.220Z",
+ "lastActivityAt": "2026-09-30T10:56:25.220Z",
+ "lastUserMessageAt": "2026-09-30T03:53:15.460Z",
  "title": "title 43",
- "labels": {},
+ "labels": {
+  "coordinator": "v-19",
+  "fleet": "v-20",
+  "paseo.parent-agent-id": "v-21"
+ },
  "lastStatus": "closed",
  "lastModeId": "bypassPermissions",
  "config": {
@@ -38,5 +42,5 @@
  "attentionReason": "finished",
  "attentionTimestamp": null,
  "internal": false,
- "archivedAt": "2026-09-29T15:39:51.505Z"
+ "archivedAt": "2026-09-30T10:56:25.220Z"
 }

@@ -27,8 +27,8 @@ is unexplained:
                          came after it: the board is right, and the transcript
                          counted on the session side is the death itself
     died-then-continued  the row's latest event is session.died, but the
-                         session is listed with a transcript entry more than
-                         GRACE_S after it
+                         session is listed with a timestamped transcript entry
+                         more than GRACE_S after it (see last_entry_ts)
     no-event             no event at all for a listed session
     stale-event          a listed session active in the window whose latest
                          event is older than the window (a long turn: until
@@ -89,6 +89,61 @@ def load_listing(path: Optional[str] = None, timeout: float = 30.0) -> List[Dict
     return rows
 
 
+def last_entry_ts(path: str, max_bytes: int = 64 * 1024) -> Optional[float]:
+    """The time of a transcript's last entry that carries a timestamp, or None.
+
+    A transcript's mtime is not its last entry: on 2.1.280 Claude Code appends
+    `last-prompt` and `cost-state` records, with no timestamp, about an hour
+    after a session's last turn (measured on four usage-limit deaths). "A later
+    transcript entry" (core §9) means a timestamped one. Reads only the tail,
+    and only the `timestamp` field of each line."""
+    try:
+        with open(path, "rb") as fh:
+            fh.seek(0, os.SEEK_END)
+            size = fh.tell()
+            fh.seek(max(0, size - max_bytes))
+            tail = fh.read()
+    except OSError:
+        return None
+    for raw in reversed(tail.split(b"\n")):
+        if b'"timestamp"' not in raw:
+            continue
+        try:
+            ts = json.loads(raw.decode("utf-8")).get("timestamp")
+        except (ValueError, UnicodeDecodeError, AttributeError):
+            continue
+        if isinstance(ts, str) and len(ts) >= 19:
+            try:
+                return ctx.parse_ts(ts[:19] + ".000Z") + (float("0." + ts[20:23]) if ts[19:20] == "." else 0.0)
+            except (ValueError, IndexError):
+                continue
+    return None
+
+
+def transcript_paths() -> Dict[str, str]:
+    """{session id: path of its newest top-level transcript}."""
+    out: Dict[str, Tuple[float, str]] = {}
+    root = ctx._claude_projects_dir()
+    try:
+        pdirs = [p for p in root.iterdir() if p.is_dir()]
+    except OSError as exc:
+        raise RuntimeError("%s: %s" % (root, exc.strerror or exc))
+    for pdir in pdirs:
+        try:
+            entries = list(os.scandir(pdir))
+        except OSError:
+            continue
+        for e in entries:
+            if e.name.endswith(".jsonl"):
+                try:
+                    mt = e.stat().st_mtime
+                except OSError:
+                    continue
+                if mt >= out.get(e.name[:-6], (0.0, ""))[0]:
+                    out[e.name[:-6]] = (mt, e.path)
+    return {k: v[1] for k, v in out.items()}
+
+
 def transcript_times() -> Dict[str, float]:
     """{session id: mtime of its top-level transcript}, across every project.
     Raises RuntimeError when the projects directory can't be read: that is no
@@ -122,7 +177,8 @@ def _live(row: Dict[str, Any], cut: str) -> bool:
 
 
 def compare(scope_id: str, listing: List[Dict[str, Any]], transcripts: Dict[str, float], now: float,
-            hours: float = 6.0, registered: Optional[float] = None) -> Dict[str, Any]:
+            hours: float = 6.0, registered: Optional[float] = None,
+            paths: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
     scopes = ctx.load_scopes()
     repos = {r for r, s in scopes.by_repo.items() if s == scope_id}
     sc = ctx.Scope(id=scope_id, store=ctx.state_root() / scope_id, where=None)
@@ -170,7 +226,9 @@ def compare(scope_id: str, listing: List[Dict[str, Any]], transcripts: Dict[str,
             reason = "pre-registration" if transcripts[sid] < registered else "no-event"
         elif row.get("state") == "died":
             died = ctx.parse_ts(row["died_ts"]) if row.get("died_ts") else None
-            reason = "died-then-continued" if died is not None and transcripts[sid] > died + GRACE_S else "died"
+            last = last_entry_ts((paths or {}).get(sid, "")) if (paths or {}).get(sid) else None
+            reason = "died-then-continued" if died is not None and last is not None and last > died + GRACE_S \
+                else "died"
         else:
             reason = "stale-event"
         diffs.append({"session_id": sid, "side": "sessions", "reason": reason})
@@ -240,11 +298,15 @@ def run_for_scope(scope_id: str, hours: float = 6.0, as_json: bool = False, list
     try:
         listing = load_listing(listing_file)
         transcripts = transcript_times()
+        paths = transcript_paths()
     except (RuntimeError, OSError, ValueError) as exc:
+        # The failure is on disk too, so the latest line never shows an old pass.
+        append_summary(scope_id, {"v": 1, "ts": ctx.now_ts(now), "scope": scope_id, "hours": hours,
+                                  "evidence": False, "pass": False, "error": str(exc)[:200]})
         print("compare   the session listing or the transcripts could not be read: %s" % exc)
         return 1
     reg = ctx.parse_ts(registered) if registered else None
-    res = compare(scope_id, listing, transcripts, now, hours, reg)
+    res = compare(scope_id, listing, transcripts, now, hours, reg, paths)
     append_summary(scope_id, res)
     print(json.dumps(res, indent=1, sort_keys=True) if as_json else render(res))
     return 0 if res["pass"] else 1

@@ -1,14 +1,18 @@
 {
  "id": "agent-0031",
  "provider": "claude",
- "cwd": "{HOME}/wt/sri-6",
+ "cwd": "{HOME}/gone/25",
  "workspaceId": "ws-31",
- "createdAt": "2026-09-30T20:23:44.578Z",
- "updatedAt": "2026-09-30T20:46:11.967Z",
- "lastActivityAt": "2026-09-30T20:46:11.967Z",
- "lastUserMessageAt": "2026-09-30T20:23:47.767Z",
+ "createdAt": "2026-09-23T20:25:33.978Z",
+ "updatedAt": "2026-09-27T13:31:53.723Z",
+ "lastActivityAt": "2026-09-27T13:31:53.723Z",
+ "lastUserMessageAt": "2026-09-27T13:28:34.963Z",
  "title": "title 31",
- "labels": {},
+ "labels": {
+  "coordination": "v-8",
+  "coordinator": "v-9",
+  "recovery_owner": "v-10"
+ },
  "lastStatus": "idle",
  "lastModeId": "bypassPermissions",
  "config": {
@@ -16,12 +20,12 @@
  },
  "runtimeInfo": {
   "provider": "claude",
-  "sessionId": "00000071-f1ee-4000-8000-000000000071"
+  "sessionId": "00000083-f1ee-4000-8000-000000000083"
  },
  "features": [],
  "persistence": {
   "provider": "claude",
-  "sessionId": "00000071-f1ee-4000-8000-000000000071",
+  "sessionId": "00000083-f1ee-4000-8000-000000000083",
   "metadata": {
    "mcpServers": {
     "paseo": {

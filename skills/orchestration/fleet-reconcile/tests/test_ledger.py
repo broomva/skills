@@ -82,14 +82,14 @@ def test_ask_batches_fold_with_notifications_and_acks(tmp_path):
     records, _ = ledger.read(tmp_path)
     b = ledger.ask_batches(records)
     assert [x["tick"] for x in b] == [1, 2] and len(b[0]["notified"]) == 1 and b[1]["notified"] == []
-    assert len(ledger.unacked(records)) == 2
+    assert set(ledger.open_by_key(records)) == {"k1", "k2", "k3"}
     ledger.append(tmp_path, dict(BASE, tick=1, kind="ack", acks={"tick": 1, "asks": ["a1"]}))
     records, _ = ledger.read(tmp_path)
     assert [a["id"] for a in ledger.open_asks(ledger.ask_batches(records)[0])] == ["a2"]
     ledger.append(tmp_path, dict(BASE, tick=1, kind="ack", acks={"tick": 1, "asks": "all"}))
     ledger.append(tmp_path, dict(BASE, tick=2, kind="ack", acks={"tick": 2, "asks": "all"}))
     records, _ = ledger.read(tmp_path)
-    assert ledger.unacked(records) == []
+    assert ledger.open_by_key(records) == {}
 
 
 def test_only_live_done_spawns_make_a_fleet_key(tmp_path):

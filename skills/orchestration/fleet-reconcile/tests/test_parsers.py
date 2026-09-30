@@ -94,8 +94,9 @@ def test_the_limit_text_is_recognised_and_its_reset_read():
     limited = [parsers.parse_job_state(t, jid) for jid, t in _jobs()]
     limited = [j for j in limited if j["limit_text"]]
     assert limited, "the capture holds usage-limit deaths"
-    for j in limited:
-        assert j["state"] == "blocked" and j["reset_text"].startswith("resets 10am")
+    for j in limited:  # Claude Code's own text, kept verbatim by the capture
+        assert j["state"] == "blocked" and parsers.RESET_RE.fullmatch(j["reset_text"])
+        assert parsers.reset_epoch(j["reset_text"], j["updated_at"]) > j["updated_at"]
     # 10am in Bogota (UTC-5) is 15:00Z; from 16:00Z the next one is tomorrow.
     base = 1790784000.0  # 2026-09-30T16:00:00Z
     t = parsers.reset_epoch("resets 10am (America/Bogota)", base)

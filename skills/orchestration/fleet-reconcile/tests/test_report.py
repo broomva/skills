@@ -78,20 +78,36 @@ def _ack(tick, asks="all", ago=H):
 def test_an_open_ask_is_asked_once_and_then_carried_as_still_open():
     s = S(session_id=_sid(1), status="waiting", waiting_for="dialog open")
     first = report.build(_snap([s]), [], True)
-    assert [a["key"] for a in first["asks"]] == ["prompt:" + _sid(1)] and first["asks_open"] == []
+    (key,) = [a["key"] for a in first["asks"]]
+    assert key.startswith("prompt:" + _sid(1) + ":") and first["asks_open"] == []
     again = report.build(_snap([s]), _batch_records(first["asks"]), True)
-    assert again["asks"] == [] and [a["key"] for a in again["asks_open"]] == ["prompt:" + _sid(1)]
+    assert again["asks"] == [] and [a["key"] for a in again["asks_open"]] == [key]
     assert again["asks_open"][0]["first_tick"] == 1
 
 
-def test_an_acked_ask_is_not_asked_again_for_a_day():
+def test_an_ack_holds_while_the_condition_lasts_and_a_recurrence_is_a_new_ask():
     s = S(session_id=_sid(1), status="waiting", waiting_for="dialog open")
     asks = report.build(_snap([s]), [], True)["asks"]
-    records = _batch_records(asks) + [_ack(1)]
-    rep = report.build(_snap([s]), records, True)
+    records = _batch_records(asks) + [_ack(1, ago=30 * H)]
+    rep = report.build(_snap([s]), records, True)  # still true 30 h after the ack: not asked again
     assert rep["asks"] == [] and rep["asks_open"] == [] and len(rep["acked_still_open"]) == 1
-    records[-1]["ts"] = common.ts(NOW - 25 * H)
-    assert len(report.build(_snap([s]), records, True)["asks"]) == 1
+    # The prompt is answered: the next tick sees it gone and closes the key...
+    gone = report.build(_snap([S(session_id=_sid(1))]), records, True)
+    assert gone["resolved"] == [asks[0]["key"]]
+    records += [{"v": 1, "ts": common.ts(NOW), "scope": "broomva", "tick": 2, "dry_run": False, "kind": "ack",
+                 "acks": {"tick": 2, "keys": gone["resolved"], "resolved": True}}]
+    # ...so the same prompt coming back is a new ask, notified at once.
+    again = report.build(_snap([s]), records, True)
+    assert [a["key"] for a in again["asks"]] == [asks[0]["key"]]
+
+
+def test_a_second_different_question_from_one_session_is_a_new_ask():
+    q1 = bg(session_id=_sid(1), state="blocked", job=dict(QUESTION_JOB, needs="approve plan A?"))
+    q2 = bg(session_id=_sid(1), state="blocked", job=dict(QUESTION_JOB, needs="approve plan B?"))
+    first = report.build(_snap([q1]), [], True)["asks"]
+    records = _batch_records(first) + [_ack(1)]
+    second = report.build(_snap([q2]), records, True)
+    assert len(second["asks"]) == 1 and second["asks"][0]["key"] != first[0]["key"]
 
 
 def test_acking_a_tick_acknowledges_every_earlier_batch():
@@ -115,15 +131,18 @@ def test_notify_for_a_new_batch_else_at_most_once_per_renotify_window():
     assert report.should_notify(stale + [_ack(5)], 6, ["k"], 6, NOW) == (False, "no open asks")
 
 
-def test_a_count_ask_is_new_when_its_members_change():
+def test_a_count_ask_keeps_its_key_when_its_members_change():
+    # Churn in the set (a session ends, another starts) must not mint a new
+    # ask every tick; the question carries the current count.
     def rep_with(ids):
         snap = _snap([S(session_id=_sid(9))], paseo_open=[
             {"agent_id": i, "session_id": None, "title": "t", "last_status": "idle", "scope": "broomva",
              "placement": "cwd"} for i in ids])
         return report.build(snap, [], True)
-    k1 = [a["key"] for a in rep_with(["p1", "p2"])["asks"] if a["key"].startswith("records-")]
-    k2 = [a["key"] for a in rep_with(["p1", "p3"])["asks"] if a["key"].startswith("records-")]
-    assert k1 and k2 and k1 != k2
+    a1 = [a for a in rep_with(["p1", "p2"])["asks"] if a["key"].startswith("records-")]
+    a2 = [a for a in rep_with(["p1", "p3", "p4"])["asks"] if a["key"].startswith("records-")]
+    assert a1[0]["key"] == a2[0]["key"] == "records-without-process"
+    assert a1[0]["question"].startswith("2 ") and a2[0]["question"].startswith("3 ")
 
 
 def test_a_surface_that_was_not_read_is_asked_about():
@@ -131,8 +150,8 @@ def test_a_surface_that_was_not_read_is_asked_about():
             "transcripts": {"ok": False, "error": "unreadable"},
             "board": {"broomva": {"ok": False, "error": "EIO"}}, "ledger": {"ok": False, "corrupt": 1}}
     keys = {a["key"] for a in report.build(_snap([], surfaces=surf), [], True)["asks"]}
-    assert {"surface:transcripts", "surface:board:broomva", "surface:jobs-unparsed:2",
-            "surface:ledger-corrupt:1"} <= keys
+    assert {"surface:transcripts", "surface:board:broomva", "surface:jobs-unparsed",
+            "surface:ledger-corrupt"} <= keys
 
 
 def test_a_rules_flag_says_no_driver_only_when_the_repo_is_not_eligible():

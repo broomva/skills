@@ -22,12 +22,21 @@ class SourceError(RuntimeError):
     pass
 
 
-#: Only gh needs the fleet token; every other child runs without it.
+#: Only gh needs the fleet token. Sources takes it out of the process
+#: environment when it starts, so no child inherits it (git run by ctx, say),
+#: and hands it to gh alone.
 _TOKEN_VARS = ("GH_TOKEN", "GITHUB_TOKEN")
+_TOKEN: Dict[str, str] = {}
+
+
+def _take_token() -> None:
+    for k in _TOKEN_VARS:
+        if k in os.environ:
+            _TOKEN[k] = os.environ.pop(k)
 
 
 def _run(argv: List[str], timeout: float, cwd: Optional[str] = None, token: bool = False) -> str:
-    env = None if token else {k: v for k, v in os.environ.items() if k not in _TOKEN_VARS}
+    env = dict(os.environ, **_TOKEN) if token else {k: v for k, v in os.environ.items() if k not in _TOKEN_VARS}
     try:
         proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=timeout, cwd=cwd, env=env)
@@ -58,6 +67,7 @@ class Sources:
     and files under $HOME."""
 
     def __init__(self) -> None:
+        _take_token()
         self.claude = os.environ.get("FLEET_CLAUDE_BIN") or "claude"
         self.gh = os.environ.get("FLEET_GH_BIN") or "gh"
 
@@ -78,8 +88,11 @@ class Sources:
             raise SourceError("%s: missing" % common.tilde(str(root)))
         for d in sorted(root.iterdir()):
             p = d / "state.json"
-            if p.is_file():
-                yield d.name, p.read_text(encoding="utf-8", errors="replace")
+            try:
+                text = p.read_text(encoding="utf-8", errors="replace")
+            except OSError:  # not a job dir, or removed while the tick read the others
+                continue
+            yield d.name, text
 
     def transcript_index(self) -> Dict[str, Dict[str, Any]]:
         """{session id: {"mtime": top-level transcript, "path": it, "sub":
@@ -126,6 +139,13 @@ class Sources:
         except OSError:
             return None
         return _last_limit(tail)
+
+    def last_entry(self, info: Dict[str, Any]) -> Optional[float]:
+        """The time of the transcript's last timestamped entry (ctx-core's
+        reader, so the core's comparison and the classes agree)."""
+        import ctx_compare
+
+        return ctx_compare.last_entry_ts(info["path"]) if info.get("path") else None
 
     # Paseo (read-only, from disk) ----------------------------------------
     def paseo_dir(self) -> Path:
@@ -218,8 +238,13 @@ class FixtureSources(Sources):
         p = self.root / "claude" / "transcripts.json"
         if not p.is_file():
             raise SourceError("fixture claude/transcripts.json: missing")
-        return {k: {kk: (float(vv) if kk in ("mtime", "sub") else vv) for kk, vv in v.items()}
+        return {k: {kk: (float(vv) if kk in ("mtime", "sub", "last_entry") and vv is not None else vv)
+                    for kk, vv in v.items()}
                 for k, v in json.loads(p.read_text()).items()}
+
+    def last_entry(self, info: Dict[str, Any]) -> Optional[float]:
+        v = info.get("last_entry")
+        return float(v) if v is not None else None
 
     def limit_text(self, sid: str, info: Dict[str, Any]) -> Optional[str]:
         p = self.root / "claude" / "transcript-tails" / (sid + ".txt")

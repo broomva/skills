@@ -1,12 +1,12 @@
 {
  "id": "agent-0022",
  "provider": "claude",
- "cwd": "{HOME}/wt/sri-2",
+ "cwd": "{HOME}/wt/broomva-14",
  "workspaceId": "ws-22",
- "createdAt": "2026-09-29T20:34:52.517Z",
- "updatedAt": "2026-09-30T15:09:42.016Z",
- "lastActivityAt": "2026-09-30T15:09:42.016Z",
- "lastUserMessageAt": "2026-09-30T14:53:51.599Z",
+ "createdAt": "2026-09-30T02:11:42.261Z",
+ "updatedAt": "2026-09-30T15:24:50.164Z",
+ "lastActivityAt": "2026-09-30T15:24:50.164Z",
+ "lastUserMessageAt": "2026-09-30T14:50:48.360Z",
  "title": "title 22",
  "labels": {},
  "lastStatus": "idle",
@@ -16,12 +16,12 @@
  },
  "runtimeInfo": {
   "provider": "claude",
-  "sessionId": "00000053-f1ee-4000-8000-000000000053"
+  "sessionId": "00000063-f1ee-4000-8000-000000000063"
  },
  "features": [],
  "persistence": {
   "provider": "claude",
-  "sessionId": "00000053-f1ee-4000-8000-000000000053",
+  "sessionId": "00000063-f1ee-4000-8000-000000000063",
   "metadata": {
    "mcpServers": {
     "paseo": {
@@ -34,8 +34,8 @@
    }
   }
  },
- "requiresAttention": false,
- "attentionReason": null,
+ "requiresAttention": true,
+ "attentionReason": "finished",
  "attentionTimestamp": null,
  "internal": false
 }

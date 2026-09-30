@@ -9,10 +9,10 @@
   "isDraft": false,
   "labels": [],
   "mergeStateStatus": "CLEAN",
-  "number": 252,
+  "number": 256,
   "title": "PR title 1",
-  "updatedAt": "2026-09-30T21:11:50Z",
-  "url": "https://github.com/broomva/skills/pull/252"
+  "updatedAt": "2026-09-30T22:49:48Z",
+  "url": "https://github.com/broomva/skills/pull/256"
  },
  {
   "author": {
@@ -21,13 +21,13 @@
   },
   "baseRefName": "main",
   "headRefName": "branch-2",
-  "isDraft": true,
+  "isDraft": false,
   "labels": [],
   "mergeStateStatus": "CLEAN",
-  "number": 250,
+  "number": 255,
   "title": "PR title 2",
-  "updatedAt": "2026-09-30T14:00:37Z",
-  "url": "https://github.com/broomva/skills/pull/250"
+  "updatedAt": "2026-09-30T22:45:02Z",
+  "url": "https://github.com/broomva/skills/pull/255"
  },
  {
   "author": {
@@ -38,9 +38,54 @@
   "headRefName": "branch-3",
   "isDraft": false,
   "labels": [],
+  "mergeStateStatus": "CLEAN",
+  "number": 254,
+  "title": "PR title 3",
+  "updatedAt": "2026-09-30T22:29:12Z",
+  "url": "https://github.com/broomva/skills/pull/254"
+ },
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "main",
+  "headRefName": "branch-4",
+  "isDraft": false,
+  "labels": [],
+  "mergeStateStatus": "BLOCKED",
+  "number": 253,
+  "title": "PR title 4",
+  "updatedAt": "2026-09-30T22:49:45Z",
+  "url": "https://github.com/broomva/skills/pull/253"
+ },
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "main",
+  "headRefName": "branch-5",
+  "isDraft": true,
+  "labels": [],
+  "mergeStateStatus": "CLEAN",
+  "number": 250,
+  "title": "PR title 5",
+  "updatedAt": "2026-09-30T14:00:37Z",
+  "url": "https://github.com/broomva/skills/pull/250"
+ },
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "main",
+  "headRefName": "branch-6",
+  "isDraft": false,
+  "labels": [],
   "mergeStateStatus": "BLOCKED",
   "number": 245,
-  "title": "PR title 3",
+  "title": "PR title 6",
   "updatedAt": "2026-09-29T14:49:48Z",
   "url": "https://github.com/broomva/skills/pull/245"
  }

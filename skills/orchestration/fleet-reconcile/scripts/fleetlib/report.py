@@ -23,7 +23,6 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import classify, common, ledger
 
-ASK_SUPPRESS_S = 24 * 3600  # an acked ask is not asked again for a day
 
 
 def tick_dir(state_dir: Path, tick: int) -> Path:
@@ -75,6 +74,7 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
     }
     rep["asks"], rep["asks_open"], rep["acked_still_open"] = make_asks(rep, records, now)
     rep["ask_keys_current"] = sorted(k for k, _, _ in candidates(rep))
+    rep["resolved"] = resolved_keys(records, rep["ask_keys_current"])
     return rep
 
 
@@ -94,17 +94,19 @@ def _repo_summary(r: Dict[str, Any]) -> Dict[str, Any]:
 
 
 # --------------------------------------------------------------------------
-# Asks: everything that needs the owner (§3). An ask is per-key state: it is
-# asked once, stays open until the owner acks it or it stops being true, and
-# comes back only if it is still true 24 h after an ack. A tick writes a batch
-# only when it has a new key, so the owner sees each ask once, not hourly.
+# Asks: everything that needs the owner (§3). An ask is per occurrence of a
+# condition: asked once, open until the owner acks it or it stops being true
+# (a resolution record), and an ack holds for as long as the condition does. A
+# condition that ends and comes back is a new ask. Keys are stable for a
+# condition: they carry no counts or error text, which change tick to tick.
+# A tick writes a batch only when it has a new key.
 
-def _members(items: Iterable[str]) -> str:
-    """A short, stable tag for a set: a count-type ask whose members change
-    (a new record stuck, say) is a new ask."""
+def _tag(text: str) -> str:
+    """A short, stable tag for a condition's content (a job's question, say),
+    so a different question from the same session is a different ask."""
     import hashlib
 
-    return hashlib.sha256("\n".join(sorted(items)).encode()).hexdigest()[:8]
+    return hashlib.sha256(text.encode("utf-8", "replace")).hexdigest()[:8]
 
 
 def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
@@ -115,11 +117,12 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
             continue
         label = "%s (%s)" % (s["name"] or "-", s["short"])
         if s["class"] == "3":
-            cands.append(("prompt:" + s["session_id"], "3", "Session %s is waiting at a prompt: %s. The fleet "
-                          "never approves prompts." % (label, s["evidence"])))
+            cands.append(("prompt:%s:%s" % (s["session_id"], _tag(s["evidence"])), "3",
+                          "Session %s is waiting at a prompt: %s. The fleet never approves prompts."
+                          % (label, s["evidence"])))
         elif s["class"] == "7":
-            cands.append(("blocked:" + s["session_id"], "7", "Session %s is blocked on you: %s." % (label,
-                                                                                                s["evidence"])))
+            cands.append(("blocked:%s:%s" % (s["session_id"], _tag(s["evidence"])), "7",
+                          "Session %s is blocked on you: %s." % (label, s["evidence"])))
     surf = rep["surfaces"]
     if not surf.get("listing", {}).get("ok"):
         cands.append(("listing", "observe", "The session listing was not read: %s. Nothing was classified."
@@ -136,10 +139,10 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
         if not st.get("ok"):
             cands.append(("surface:" + name, "observe", "Surface %s was not read: %s." % (name, st.get("error"))))
     if surf.get("jobs", {}).get("unparsed"):
-        cands.append(("surface:jobs-unparsed:%d" % surf["jobs"]["unparsed"], "observe",
+        cands.append(("surface:jobs-unparsed", "observe",
                       "%d job file(s) did not parse; their sessions read as unknown." % surf["jobs"]["unparsed"]))
     if surf.get("ledger", {}).get("corrupt"):
-        cands.append(("surface:ledger-corrupt:%d" % surf["ledger"]["corrupt"], "observe",
+        cands.append(("surface:ledger-corrupt", "observe",
                       "The ledger has %d corrupt line(s)." % surf["ledger"]["corrupt"]))
     for d in rep["drift"]:
         cands.append(("drift:" + d, "observe", "Parser drift: %s. Recapture the fixtures (tests/"
@@ -147,18 +150,18 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
     cc = rep["count_check"]
     if cc.get("ran") and cc.get("records_without_process"):
         recs = cc["records_without_process"]
-        cands.append(("records-without-process:" + _members(r["agent_id"] for r in recs), "count",
+        cands.append(("records-without-process", "count",
                       "%d Paseo record(s) in this scope are not archived and have no live process in claude "
                       "agents (listed in the report)." % len(recs)))
     shaped = [u for u in cc.get("unmanaged") or [] if u.get("fleet_shaped")]
     if shaped:
-        cands.append(("fleet-shaped-unledgered:" + _members(u["session_id"] for u in shaped), "count",
+        cands.append(("fleet-shaped-unledgered", "count",
                       "%d session(s) carry a fleet-shaped name the ledger doesn't hold; they are treated as "
                       "unmanaged." % len(shaped)))
     for r in rep["repos"]:
         name = r.get("slug") or common.tilde(r["repo"])
         if not r["ok"]:
-            cands.append(("repo:%s:%s" % (name, r.get("error")), "github",
+            cands.append(("repo:" + name, "github",
                           "Repo %s was not observed: %s." % (name, r.get("error"))))
         elif r.get("rules") and r["rules"]["flags"]:
             ru = r["rules"]
@@ -187,21 +190,28 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
 def make_asks(rep: Dict[str, Any], records: List[Dict[str, Any]],
               now: float) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """(new asks for this tick's batch, asks still open from earlier batches,
-    asks acked in the last 24 h that are still true)."""
-    open_keys = ledger.open_by_key(records)
-    acked = ledger.acked_keys(records)
+    asks the owner acked that are still true)."""
+    states = ledger.key_states(records)
     new, still, acked_open = [], [], []
     for key, cls, q in candidates(rep):
         q = common.safe_text(q, 400)
-        if key in open_keys:
-            o = open_keys[key]
-            still.append({"key": key, "class": cls, "question": q, "first_tick": o["tick"],
-                          "id": o["ask"].get("id")})
-        elif key in acked and now - (common.parse_iso(acked[key]) or 0.0) <= ASK_SUPPRESS_S:
+        v = states.get(key)
+        if v and v["state"] == "open":
+            still.append({"key": key, "class": cls, "question": q, "first_tick": v["tick"],
+                          "id": v["ask"].get("id")})
+        elif v and v["state"] == "acked":
             acked_open.append({"key": key, "class": cls, "question": q})
         else:
             new.append({"id": "a%d" % (len(new) + 1), "key": key, "class": cls, "question": q})
     return new, still, acked_open
+
+
+def resolved_keys(records: List[Dict[str, Any]], current: Iterable[str]) -> List[str]:
+    """Open or acked keys that are no longer true: the tick records their
+    resolution, so the same condition coming back is a new ask."""
+    now_true = set(current)
+    return sorted(k for k, v in ledger.key_states(records).items()
+                  if v["state"] in ("open", "acked") and k not in now_true)
 
 
 def should_notify(records: List[Dict[str, Any]], tick: int, current: Iterable[str], renotify_h: int,
@@ -385,7 +395,11 @@ def render_md(rep: Dict[str, Any]) -> str:
             L.append("- [tick %s, %s] %s" % (a["first_tick"], a["id"], a["question"]))
     if rep["acked_still_open"]:
         L.append("")
-        L.append("Acknowledged in the last 24 h and still open: %d." % len(rep["acked_still_open"]))
+        L.append("Acknowledged and still true: %d (not asked again while they stay true)."
+                 % len(rep["acked_still_open"]))
+    if rep.get("resolved"):
+        L.append("")
+        L.append("No longer true since the last tick, so closed: %d." % len(rep["resolved"]))
     return "\n".join(L) + "\n"
 
 
