@@ -3,11 +3,17 @@
 How to run and extend the harness: README.md § "Does the context we inject earn its
 tokens?". This file records the pilot.
 
-**v3 is the result.** It ran on the code at 625e5e4, after two review rounds. The
-commits after it add checks: a calibration bound to its task file, the memory
-check voiding a task with no bare reference, and a Trash watch that says
-"unreadable" instead of 0. None of these would change a v3 outcome: every v3 task
-has bare trials, and no v3 trial flips under them. v1 and v2 ran the same design on
+**v3 is the result.** It ran on the code at 8e8b5fa, after two review rounds; its
+calibration started a minute after that commit. The commits after it change
+nothing v3 graded:
+- 625e5e4 keeps a timed-out trial's partial transcript; the trial is still ERROR.
+- 33092e4 and 6535823 add three checks:
+  - a calibration bound to its task file;
+  - the memory check leaving a task with no bare reference unverified;
+  - a Trash watch that says "unreadable" instead of 0.
+
+  They also edit the `notes` text of `tasks/pilot.json`, but no task in it. Every v3
+  task has bare trials, so no v3 trial flips under these checks. v1 and v2 ran the same design on
 earlier code, and are kept at the end of this file with the reason each was
 superseded. Their numbers are never pooled with v3's.
 

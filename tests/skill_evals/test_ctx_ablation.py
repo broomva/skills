@@ -932,7 +932,7 @@ def test_git_refuses_every_non_file_remote_in_the_case(tmp_path):
 # ---------------------------------------------------------------------------
 
 
-def test_a_task_bare_never_graded_voids_its_memory_claims():
+def test_a_task_with_no_bare_reference_leaves_its_memory_claims_unverified():
     rows = [_rows_for("bare", "t", 18000), _rows_for("memory", "u", 28300)]
     out, _ = R.verify_memory_delivery(rows, {"bare": False, "memory": True})
     assert out[1]["outcome"] == M.ERROR and "not verified" in out[1]["detail"]
@@ -954,15 +954,28 @@ def test_a_missing_bare_reference_is_not_written_back_so_a_resume_can_verify(tmp
     """Round-4 review: a budget-guard stop can leave a task's memory trials without
     their bare trial. Persisting that as a void would make the resume skip them for
     good; only evidence-based verdicts are written back."""
+    arms = {"bare": False, "memory": True, "rolex": False}
     rows = [{**_rows_for("memory", "a", 28300), "run_key": "k"},
             {**_rows_for("bare", "b", 18000), "run_key": "k"},
-            {**_rows_for("memory", "b", 18100), "run_key": "k", "trial": 1}]
-    (tmp_path / "results.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
-    written = R.write_back_memory_verdicts(tmp_path, {"bare": False, "memory": True}, 0)
-    assert written == 1  # task b: memory arm with no memory in its tokens
+            {**_rows_for("memory", "b", 18100), "run_key": "k"},
+            {**_rows_for("rolex", "b", 28200), "run_key": "k"}]
+    results = tmp_path / "results.jsonl"
+    results.write_text("".join(json.dumps(r) + "\n" for r in rows))
+    # task b: a memory trial with no memory in its tokens, and a leak into rolex
+    assert R.write_back_memory_verdicts(tmp_path, arms, 0) == 2
     latest = R.latest_by_key(R.load_results(tmp_path))
     assert latest[("a", "memory", 1)]["outcome"] == M.PASS  # unverified, NOT persisted as void
     assert latest[("b", "memory", 1)]["outcome"] == M.INJECTION_MISSING
+    assert latest[("b", "rolex", 1)]["outcome"] == M.LEAKED
+    # a second pass writes nothing more
+    before = results.read_text()
+    assert R.write_back_memory_verdicts(tmp_path, arms, 0) == 0 and results.read_text() == before
+    # the resume supplies task a's bare trial, and a's memory trial is now verified, not void
+    with open(results, "a") as fh:
+        fh.write(json.dumps({**_rows_for("bare", "a", 18000), "run_key": "k"}) + "\n")
+    assert R.write_back_memory_verdicts(tmp_path, arms, 0) == 0
+    checked, _ = R.verify_memory_delivery(list(R.latest_by_key(R.load_results(tmp_path)).values()), arms)
+    assert {(r["task"], r["arm"]): r["outcome"] for r in checked}[("a", "memory")] == M.PASS
 
 
 def test_an_unreadable_trash_is_unchecked_not_clean(tmp_path):

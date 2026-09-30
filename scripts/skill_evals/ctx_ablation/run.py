@@ -398,8 +398,9 @@ def verify_memory_delivery(rows: Sequence[dict[str, Any]], arm_memory: dict[str,
             out.append(r)
             continue
         if ref is None:
-            # A task bare never graded has no reference: its memory claim (either way)
-            # is unverified, so the trial carries no evidence rather than a silent pass.
+            # No bare trial of this task reached its first call, so there is no
+            # reference: the memory claim (either way) is unverified, and the trial
+            # carries no evidence rather than a silent pass.
             out.append({**r, "outcome": m.ERROR,
                         "detail": "memory delivery not verified: no bare trial of this task to compare with"})
             unreferenced += 1
