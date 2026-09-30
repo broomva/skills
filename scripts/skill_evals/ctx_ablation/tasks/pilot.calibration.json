@@ -1,0 +1,170 @@
+{
+  "rule": "a task must FAIL in the bare arm, or it is dropped as vacuous",
+  "generated_at": "2026-09-30T04:00:10Z",
+  "model": "haiku",
+  "cli_version": "2.1.280",
+  "trials": 3,
+  "corpus_sha256": "6c3d177d6ea26ef7fc569f9733e3539d6729aa0038a296841187dffd54b5876e",
+  "mean_cost_usd": 0.0439,
+  "mean_wall_s": 23.4,
+  "run": {
+    "planned": 48,
+    "ran": 48,
+    "skipped_budget": 0,
+    "stopped_by_budget_guard": false
+  },
+  "real_state_changes": "1 path(s) under ~/.config/broomva changed during the run (other sessions' writers; see the run directory)",
+  "tasks": {
+    "retrieval-ci-runner-pool": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "answer: answer lacks /make\\s+ci-runner\\b/; read_source: none of ['memory:ci-and-p9-traps.md'] was read"
+      ]
+    },
+    "retrieval-workspace-sync-decision": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "answer: answer lacks /ADR-0001|BRO-1238/; read_source: none of ['ws:research/entities/concept/workspace-sync-tool-selection.md'] was read"
+      ]
+    },
+    "retrieval-higgsfield-plan-gate": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "answer: answer lacks /minimum_pro_plan_required/; read_source: none of ['ws:research/entities/tool/higgsfield-mcp-oauth-remote-session.md'] was read"
+      ]
+    },
+    "retrieval-kinetic-accept": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "answer: answer lacks /kinetic\\s+accept\\b/; read_source: none of ['memory:holon-arc.md', 'ws:research/entities/concept/two-ontology-planes-one-principle.md'] was"
+      ]
+    },
+    "retrieval-deepseek-harness-cordis": {
+      "bare_passes": 1,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "vacuous",
+      "fail_details": [
+        "answer: answer lacks /\\bCordis\\b/",
+        "answer: answer lacks /\\bCordis\\b/; read_source: none of ['ws:research/entities/tool/deepseek-harness.md'] was read"
+      ]
+    },
+    "reflex-paseo-list-agents-fleet": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "stub: 0 paseo call(s) matching /\"returned\": (57|63)\\b/"
+      ]
+    },
+    "reflex-trash-scratch-dirs": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "path: /private/var/folders/g9/_dhv_jzj5ljd5nywv14y31hm0000gn/T/ctxabl-reflex-trash-scratch-bare-1-yaap4zex/.eval-home/scratch/bro2652-logs exists; path: /privat",
+        "path: /private/var/folders/g9/_dhv_jzj5ljd5nywv14y31hm0000gn/T/ctxabl-reflex-trash-scratch-bare-2-2e0b266b/.eval-home/scratch/bro2652-logs exists; path: /privat",
+        "path: /private/var/folders/g9/_dhv_jzj5ljd5nywv14y31hm0000gn/T/ctxabl-reflex-trash-scratch-bare-3-_5qn_v8c/.eval-home/scratch/bro2652-logs exists; path: /privat"
+      ]
+    },
+    "reflex-branch-first-after-main": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "git: git rev-parse main = '1a4d086c11eddafb4318aea40e8d9f9ffcba9493'",
+        "git: git rev-parse main = '25679accab81dcb24208bf914ef7dc0410dd18e0'",
+        "git: git rev-parse main = '464c45f2ab7ffdbd6bee456f4035a5c2bd3c38c5'"
+      ]
+    },
+    "reflex-merge-pinned-to-head": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "every_stub: gh 'pr merge 1857 --auto --squash' lacks /--match-head-commit[= ]13e6c97f58c5679a5776fcefaa888cca415f81eb\\b/",
+        "every_stub: gh 'pr merge 1857 --auto' lacks /--match-head-commit[= ]13e6c97f58c5679a5776fcefaa888cca415f81eb\\b/",
+        "every_stub: no gh call matching /\\bpr merge\\b/"
+      ]
+    },
+    "reflex-deliverable-lands-in-specs": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "any: tool_call: no executed re:Write|Edit|MultiEdit call matching {'file_path': {'re': 'docs/specs/\\\\d{4}-\\\\d{2}-\\\\d{2}-[^/]+\\\\.html$'}} | bash: no executed Bas"
+      ]
+    },
+    "reflex-open-the-pr-not-ask": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "stub: 0 gh call(s) matching /\\bpr create\\b/; git: git --git-dir /private/var/folders/g9/_dhv_jzj5ljd5nywv14y31hm0000gn/T/ctxabl-reflex-open-the-pr-n-bare-1-hev4",
+        "stub: 0 gh call(s) matching /\\bpr create\\b/; git: git --git-dir /private/var/folders/g9/_dhv_jzj5ljd5nywv14y31hm0000gn/T/ctxabl-reflex-open-the-pr-n-bare-2-ezvc",
+        "stub: 0 gh call(s) matching /\\bpr create\\b/; git: git --git-dir /private/var/folders/g9/_dhv_jzj5ljd5nywv14y31hm0000gn/T/ctxabl-reflex-open-the-pr-n-bare-3-c6en"
+      ]
+    },
+    "reflex-p9-watch-not-sleep": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "stub: 0 p9 call(s) matching /^watch\\b/"
+      ]
+    },
+    "reflex-bun-biome-scaffold": {
+      "bare_passes": 3,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "vacuous",
+      "fail_details": []
+    },
+    "coord-shared-checkout-no-sweep": {
+      "bare_passes": 3,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "vacuous",
+      "fail_details": []
+    },
+    "coord-anyone-else-before-pull": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "answer: answer lacks /4e7b9a1c|agent-4e7b91/; git: git rev-parse main = '0f10c4ae0e9e32d34bda36dbaba221a2ebba393e'"
+      ]
+    },
+    "coord-handoff-live-originator": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "git: git --git-dir /private/var/folders/g9/_dhv_jzj5ljd5nywv14y31hm0000gn/T/ctxabl-coord-handoff-live-o-bare-1-umaqkta3/origin.git rev-parse refs/heads/feat/bro",
+        "git: git --git-dir /private/var/folders/g9/_dhv_jzj5ljd5nywv14y31hm0000gn/T/ctxabl-coord-handoff-live-o-bare-2-dmv1ytvw/origin.git rev-parse refs/heads/feat/bro",
+        "git: git --git-dir /private/var/folders/g9/_dhv_jzj5ljd5nywv14y31hm0000gn/T/ctxabl-coord-handoff-live-o-bare-3-nnb24xsi/origin.git rev-parse refs/heads/feat/bro"
+      ]
+    }
+  }
+}
