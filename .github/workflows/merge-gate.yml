@@ -72,16 +72,19 @@ jobs:
           # kill wins, which is why the check read "failure" rather than saying
           # what it was waiting for. `bash smoke tests` measured 36m21s.
           #
-          # Copilot code review is advisory (BRO-2678), as p9 already treats every
-          # review bot: its findings arrive as review threads, and its check fails
-          # on the reviewer's own quota ("You have exceeded your monthly quota",
-          # red on every PR since 2026-09-29) while saying nothing about the code.
+          # Copilot code review is advisory (BRO-2678), as p9's gate-check already
+          # treats every review bot: its findings arrive as review threads, and its
+          # check fails on the reviewer's own quota ("You have exceeded your monthly
+          # quota") while saying nothing about the code. Its verdict never blocks,
+          # but the gate still waits for it to FINISH, so its threads exist before a
+          # green gate invites a merge (a quota failure finishes in under a minute).
           # The check is published by the github-actions app, like every workflow
           # here, so neither its name nor its app tells it from a PR job named the
           # same. The run behind it does: GitHub runs Copilot review as a dynamic
           # workflow, event "dynamic" and path dynamic/agents/copilot-pull-request-reviewer,
-          # which no workflow file can produce. A row is dropped only when that run,
-          # on this head, says so; a failed lookup keeps the row, so it still blocks.
+          # which no workflow file can produce. Only a row whose run, on this head,
+          # says so is advisory; any other row, a failed lookup included, gates as
+          # before, with a warning that names what the lookup returned.
           COPILOT_ORIGIN="dynamic dynamic/agents/copilot-pull-request-reviewer $SHA"
           advisory=" "   # run ids already verified as Copilot's, looked up once
           for i in $(seq 1 120); do   # up to ~60 min
@@ -96,13 +99,21 @@ jobs:
               [ -n "$name" ] || continue
               if [ "$name" = "copilot-pull-request-reviewer" ] && [ "$app" = "github-actions" ]; then
                 rid=$(printf '%s' "$url" | sed -n 's#.*/actions/runs/\([0-9][0-9]*\)/.*#\1#p')
-                case "$advisory" in *" $rid "*) continue ;; esac
-                origin=""
-                [ -n "$rid" ] && origin=$(gh api "repos/$REPO/actions/runs/$rid" --jq '.event + " " + .path + " " + .head_sha' 2>/dev/null || echo "")
-                if [ -n "$rid" ] && [ "$origin" = "$COPILOT_ORIGIN" ]; then
-                  echo "advisory, not gated: $name (${concl:-$status}) from Copilot's run $rid"
-                  advisory="$advisory$rid "
-                  continue
+                case "$advisory" in *" ${rid:-none} "*) ;; *)
+                  origin="no run in details_url"
+                  if [ -n "$rid" ]; then
+                    origin=$(gh api "repos/$REPO/actions/runs/$rid" --jq '.event + " " + .path + " " + .head_sha' 2>&1) || true
+                  fi
+                  if [ -n "$rid" ] && [ "$origin" = "$COPILOT_ORIGIN" ]; then
+                    echo "advisory: $name from Copilot's run $rid; its verdict is not gated"
+                    advisory="$advisory$rid "
+                  else
+                    echo "::warning::$name gates as a normal check: run ${rid:-none} is '$(printf '%s' "$origin" | head -c 200)', not Copilot's dynamic run on this head"
+                  fi ;;
+                esac
+                if [ -n "$rid" ] && case "$advisory" in *" $rid "*) true ;; *) false ;; esac; then
+                  [ "$status" = "completed" ] && continue   # finished: its verdict is advisory
+                  concl=""                                  # still running: wait for it
                 fi
               fi
               runs+="$name"$'\t'"$status"$'\t'"$concl"$'\n'

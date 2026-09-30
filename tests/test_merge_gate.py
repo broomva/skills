@@ -1,11 +1,11 @@
 """Tests for the Merge Gate's step in .github/workflows/merge-gate.yml (BRO-2678).
 
 Copilot code review is advisory: its check fails on the reviewer's own quota and
-says nothing about the code. The step drops that check only when the run behind
-it is GitHub's dynamic Copilot workflow for this head. Every case runs the step
-script as it is in the workflow file, with a fake `gh` answering from fixtures
-through real jq, and every "not gated" case is paired with a look-alike that
-must still block.
+says nothing about the code. The step ignores that check's verdict, while still
+waiting for it to finish, only when the run behind it is GitHub's dynamic Copilot
+workflow for this head. Every case runs the step script as it is in the workflow
+file, with a fake `gh` answering from per-poll fixtures through real jq, and every
+advisory case is paired with a look-alike that must still gate.
 """
 
 from __future__ import annotations
@@ -27,6 +27,7 @@ COPILOT = "copilot-pull-request-reviewer"
 COPILOT_RUN = {"event": "dynamic", "path": "dynamic/agents/copilot-pull-request-reviewer",
                "head_sha": SHA}
 
+# Serves check-runs.<poll>.json (the last one once polls run out) and logs every call.
 FAKE_GH = r"""#!/usr/bin/env bash
 endpoint=""; filter="."
 while [ $# -gt 0 ]; do
@@ -37,8 +38,12 @@ while [ $# -gt 0 ]; do
   esac
   shift
 done
+echo "$endpoint" >> "$FAKE/calls"
 case "$endpoint" in
-  */check-runs) f="$FAKE/check-runs.json" ;;
+  */check-runs)
+    n=$(grep -c '/check-runs$' "$FAKE/calls"); n=$((n - 1))
+    f="$FAKE/check-runs.$n.json"
+    [ -f "$f" ] || f=$(ls "$FAKE"/check-runs.*.json | sort -t. -k2 -n | tail -1) ;;
   */status) f="$FAKE/status.json" ;;
   */actions/runs/*) f="$FAKE/run.${endpoint##*/}.json" ;;
   *) echo "unexpected gh api $endpoint" >&2; exit 3 ;;
@@ -61,9 +66,11 @@ def check(name: str, conclusion: str | None = "success", status: str = "complete
 
 
 GREEN = [check("lint"), check("pytest (Python 3.12)")]
+RUNNING = {"conclusion": None, "status": "in_progress"}
 
 
-def run_gate(checks: list[dict], runs: dict[int, dict] | None = None) -> tuple[int, str]:
+def run_gate(polls: list[list[dict]], runs: dict[int, dict] | None = None) -> tuple[int, str, list[str]]:
+    """One check-run list per poll; returns (exit code, output, gh endpoints called)."""
     with tempfile.TemporaryDirectory(prefix="merge-gate-") as t:
         fake = Path(t)
         bin_dir = fake / "bin"
@@ -72,15 +79,17 @@ def run_gate(checks: list[dict], runs: dict[int, dict] | None = None) -> tuple[i
             p = bin_dir / name
             p.write_text(body)
             p.chmod(p.stat().st_mode | stat.S_IEXEC)
-        (fake / "check-runs.json").write_text(json.dumps({"check_runs": checks}))
+        for i, checks in enumerate(polls):
+            (fake / f"check-runs.{i}.json").write_text(json.dumps({"check_runs": checks}))
         (fake / "status.json").write_text(json.dumps({"state": "success"}))
+        (fake / "calls").write_text("")
         for rid, run in (runs or {}).items():
             (fake / f"run.{rid}.json").write_text(json.dumps(run))
         env = {"PATH": f"{bin_dir}:{os.environ['PATH']}", "FAKE": str(fake),
                "GH_TOKEN": "x", "REPO": "o/r", "SHA": SHA}
         r = subprocess.run(["bash", "-c", step_script()], env=env,
                            capture_output=True, text=True, timeout=60)
-        return r.returncode, r.stdout + r.stderr
+        return r.returncode, r.stdout + r.stderr, (fake / "calls").read_text().split()
 
 
 def blocked(out: str) -> list[str]:
@@ -88,59 +97,78 @@ def blocked(out: str) -> list[str]:
 
 
 def test_all_green_passes():
-    code, out = run_gate(GREEN)
+    code, out, _ = run_gate([GREEN])
     assert code == 0, out
     assert "Merge Gate PASS" in out
 
 
 def test_copilots_quota_failure_does_not_block():
-    code, out = run_gate(GREEN + [check(COPILOT, "failure", run_id=7)], {7: COPILOT_RUN})
+    code, out, _ = run_gate([GREEN + [check(COPILOT, "failure", run_id=7)]], {7: COPILOT_RUN})
     assert code == 0, out
-    assert "advisory, not gated" in out
+    assert "its verdict is not gated" in out
 
 
-def test_a_running_copilot_review_is_not_waited_for():
-    code, out = run_gate(GREEN + [check(COPILOT, None, status="in_progress", run_id=7)],
-                         {7: COPILOT_RUN})
+def test_a_running_copilot_review_is_waited_for_then_not_gated():
+    code, out, _ = run_gate([GREEN + [check(COPILOT, run_id=7, **RUNNING)],
+                             GREEN + [check(COPILOT, "failure", run_id=7)]], {7: COPILOT_RUN})
     assert code == 0, out
-    assert "waiting:" not in out
+    # Poll 1 recognises Copilot's run while it is still running (a tab-joined
+    # read shifts a running row's fields and would only see it once finished),
+    # waits for it, then poll 2 ignores its verdict.
+    assert out.index("its verdict is not gated") < out.index("1 still running"), out
+    assert "Merge Gate PASS" in out
+
+
+def test_copilots_run_is_looked_up_once():
+    code, out, calls = run_gate([GREEN + [check(COPILOT, run_id=7, **RUNNING)],
+                                 GREEN + [check(COPILOT, run_id=7, **RUNNING)],
+                                 GREEN + [check(COPILOT, "failure", run_id=7)]], {7: COPILOT_RUN})
+    assert code == 0, out
+    assert sum(c.endswith("/actions/runs/7") for c in calls) == 1, calls
 
 
 def test_a_real_failure_still_blocks_beside_copilot():
-    code, out = run_gate(GREEN + [check("lint-catalog", "failure"),
-                                  check(COPILOT, "failure", run_id=7)], {7: COPILOT_RUN})
+    code, out, _ = run_gate([GREEN + [check("lint-catalog", "failure"),
+                                      check(COPILOT, "failure", run_id=7)]], {7: COPILOT_RUN})
     assert code == 1, out
     assert blocked(out) == ["lint-catalog"]
 
 
 def test_a_failed_check_is_named_whole():
-    code, out = run_gate([check("lint"), check("pytest (Python 3.12)", "failure")])
+    code, out, _ = run_gate([[check("lint"), check("pytest (Python 3.12)", "failure")]])
     assert code == 1, out
     assert blocked(out) == ["pytest (Python 3.12)"]
 
 
-@pytest.mark.parametrize("label,checks,runs", [
-    ("a PR job named like Copilot",
-     [check(COPILOT, "failure", run_id=8)],
+LOOK_ALIKES = [
+    ("a PR job named like Copilot", dict(run_id=8),
      {8: {"event": "pull_request", "path": ".github/workflows/x.yml", "head_sha": SHA}}),
-    ("Copilot's run for another head",
-     [check(COPILOT, "failure", run_id=7)],
-     {7: {**COPILOT_RUN, "head_sha": "b" * 40}}),
-    ("a run lookup that fails",
-     [check(COPILOT, "failure", run_id=404)], {}),
-    ("no run behind the check",
-     [check(COPILOT, "failure")], {}),
-    ("the same name from another app",
-     [check(COPILOT, "failure", app="some-app", run_id=7)], {7: COPILOT_RUN}),
-])
-def test_a_look_alike_still_blocks(label, checks, runs):
-    code, out = run_gate(GREEN + checks, runs)
-    assert code == 1, f"{label}: {out}"
-    assert blocked(out) == [COPILOT], f"{label}: {out}"
+    ("Copilot's run for another head", dict(run_id=7), {7: {**COPILOT_RUN, "head_sha": "b" * 40}}),
+    ("a run lookup that fails", dict(run_id=404), {}),
+    ("no run behind the check", dict(), {}),
+    ("the same name from another app", dict(app="some-app", run_id=7), {7: COPILOT_RUN}),
+]
 
 
-def test_the_token_can_read_the_run_behind_the_check():
+@pytest.mark.parametrize("label,kw,runs", LOOK_ALIKES, ids=[x[0] for x in LOOK_ALIKES])
+def test_a_look_alike_still_blocks(label, kw, runs):
+    code, out, _ = run_gate([GREEN + [check(COPILOT, "failure", **kw)]], runs)
+    assert code == 1, out
+    assert blocked(out) == [COPILOT], out
+    if kw.get("app") != "some-app":            # another app's check is never looked up
+        assert "::warning::copilot-pull-request-reviewer gates as a normal check" in out
+
+
+def test_a_running_look_alike_is_waited_for_and_its_failure_blocks():
+    look = {8: {"event": "pull_request", "path": ".github/workflows/x.yml", "head_sha": SHA}}
+    code, out, _ = run_gate([GREEN + [check(COPILOT, run_id=8, **RUNNING)],
+                             GREEN + [check(COPILOT, "failure", run_id=8)]], look)
+    assert code == 1, out
+    assert blocked(out) == [COPILOT]
+
+
+def test_the_job_requests_actions_read():
     # The fake gh cannot answer 403; without actions: read the lookup fails in
-    # CI, the row is kept, and Copilot blocks exactly as before.
+    # CI, the row gates as a normal check, and Copilot blocks exactly as before.
     doc = yaml.safe_load(WORKFLOW.read_text())
     assert (doc.get("permissions") or {}).get("actions") == "read"
