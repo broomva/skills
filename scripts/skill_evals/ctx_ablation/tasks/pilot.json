@@ -405,7 +405,8 @@
         {
           "kind": "no_stub",
           "stub": "trash",
-          "argv_re": "\"refused\": \\[\""
+          "field": "refused",
+          "argv_re": "^\\[\""
         }
       ],
       "exemplars": {

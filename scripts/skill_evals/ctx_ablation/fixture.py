@@ -58,7 +58,8 @@ from skill_evals import jail as jail_mod  # noqa: E402
 from skill_evals.ctx_ablation import arms as arms_mod  # noqa: E402
 
 DEFAULT_WORKSPACE_SRC = Path.home() / "broomva"
-DEFAULT_MEMORY_SRC = Path.home() / ".claude" / "projects" / "-Users-broomva-broomva" / "memory"
+DEFAULT_MEMORY_SRC = (Path.home() / ".claude" / "projects"
+                      / re.sub(r"[^A-Za-z0-9]", "-", str(Path.home() / "broomva")) / "memory")
 #: What of the real workspace a case gets. The knowledge graph and its catalog (what
 #: role-x reads and names), the specs, and the lens registry role-x selects from.
 DEFAULT_INCLUDE = ("research/entities", "docs/knowledge-index.md", "docs/specs", "roles")
@@ -133,7 +134,8 @@ class CaseLayout:
         absolute ``gh`` still finds the keychain the jail links in, so it gets a
         token that authenticates nothing. The system gitconfig (Xcode's sets the
         osxkeychain credential helper) is skipped and git never prompts, so a push
-        to a real remote fails instead of authenticating."""
+        to a real remote fails instead of authenticating; git accepts only file://
+        remotes."""
         env = jail_mod.build_case_env(self.root)
         env["PATH"] = f"{self.local_bin}{os.pathsep}{env.get('PATH', '')}"
         env.update({
@@ -141,6 +143,11 @@ class CaseLayout:
             "GIT_CONFIG_NOSYSTEM": "1",
             "GIT_TERMINAL_PROMPT": "0",
             "GCM_INTERACTIVE": "never",
+            # Only file:// remotes: https and ssh (whose keys come from the passwd
+            # entry's ~/.ssh, not $HOME) are refused by git itself. The fixture's
+            # origin is a local bare repo.
+            "GIT_ALLOW_PROTOCOL": "file",
+            "GIT_SSH_COMMAND": "false",
         })
         return env
 

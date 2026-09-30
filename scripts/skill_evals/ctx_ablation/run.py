@@ -79,11 +79,18 @@ OFFLINE_SESSION = "ctxabl-offline"
 #: role-x's own carve-out (CARVE_OUT_MIN_WORDS in role-x.py): shorter prompts get no
 #: intake block, in production as here.
 ROLEX_MIN_WORDS = 3
-#: Memory delivery, proven per trial from tokens: a memory arm's turn-one context must
-#: exceed bare's (same task) by at least this, and any other arm's must not. Measured
-#: on the pilot: memory arms +10,280 or more (the CLI's auto-memory block alone is
-#: ~3.2k), every other arm +1,019 or less (role-x plus the brief).
-MEMORY_MIN_DELTA_TOKENS = 2000
+#: Memory delivery, proven per trial from tokens. The UNEXPLAINED part of a trial's
+#: turn-one context (its excess over bare on the same task, minus a generous token
+#: estimate of the arm's own hook text) must, in a memory arm, cover the CLI's
+#: auto-memory block AND at least half of MEMORY.md; in any other arm it must stay
+#: below the auto-memory block alone. So neither "the block loaded but MEMORY.md did
+#: not" nor a memory leak into another arm can pass. Measured on pilot v2: memory
+#: arms +10.3k unexplained, every other arm within a few hundred of zero.
+AUTO_MEMORY_BLOCK_TOKENS = 3500
+MEMORY_LEAK_TOKENS = 2500
+#: Hook text is estimated at 3 characters per token: more tokens than it really
+#: costs, so an arm's own injection is never mistaken for unexplained memory.
+HOOK_CHARS_PER_TOKEN = 3
 
 def calibration_dir(out: Path) -> Path:
     return Path(out) / "calibration"
@@ -203,8 +210,9 @@ class Settings:
         self.out = out
         #: Every record carries this; a run directory holds one key only.
         self.calibration = str(getattr(args, "calibration_sha", "") or "uncalibrated")
-        self.run_key = "|".join([self.model, cli_version or "?",
-                                 str(corpus.manifest.get("sha256", "?"))[:12], self.calibration[:12]])
+        self.tasks_sha = hashlib.sha256(Path(args.tasks).read_bytes()).hexdigest() if getattr(args, "tasks", None) else "?"
+        self.run_key = "|".join([self.model, cli_version or "?", str(corpus.manifest.get("sha256", "?"))[:12],
+                                 self.tasks_sha[:12], self.calibration[:12]])
 
 
 def _argv(s: Settings, prompt: str, layout: fx.CaseLayout) -> list[str]:
@@ -249,6 +257,17 @@ def _outcome_for_injections(arm: arms_mod.Arm, case: fx.Case, t: Transcript, rol
     return "", ""
 
 
+def _guard_ran(case: fx.Case, t: Transcript) -> tuple[str, str]:
+    """The guard's own delivery proof. It fails OPEN if it crashes or times out (the
+    CLI then runs the call), so every trial must show a guard log row for each
+    guarded call that ran; one without is void, not graded in a world with no walls."""
+    guarded = [tu for tu in t.tool_uses() if tu.name in arms_mod.GUARDED_TOOLS and t.executed(tu)]
+    seen = len(fx.read_stub_logs(case.layout).get("guard") or [])
+    if seen < len(guarded):
+        return m.ERROR, f"the case guard logged {seen} of {len(guarded)} guarded tool calls"
+    return "", ""
+
+
 def run_trial(s: Settings, task: tasks_mod.Task, arm: arms_mod.Arm, trial: int) -> dict[str, Any]:
     root = Path(tempfile.mkdtemp(prefix=f"ctxabl-{task.id[:20]}-{arm.id}-{trial}-")).resolve()
     record: dict[str, Any] = {"task": task.id, "class": task.cls, "arm": arm.id, "trial": trial,
@@ -284,6 +303,8 @@ def run_trial(s: Settings, task: tasks_mod.Task, arm: arms_mod.Arm, trial: int) 
             record.update(outcome=m.ERROR, detail=(t.error_reason or stderr or f"exit {code}")[:300])
             return record
         bad, why = _outcome_for_injections(arm, case, t, rolex_text, task.prompt)
+        if not bad:
+            bad, why = _guard_ran(case, t)
         if bad:
             record.update(outcome=bad, detail=why)
             return record
@@ -301,6 +322,8 @@ def run_trial(s: Settings, task: tasks_mod.Task, arm: arms_mod.Arm, trial: int) 
         )
         return record
     finally:
+        # Every detail leaves without machine paths, whichever branch produced it.
+        record["detail"] = fx.sanitize(str(record.get("detail", "")), fx.CaseLayout(root))
         if not s.keep:
             shutil.rmtree(root, ignore_errors=True)
         else:
@@ -330,6 +353,7 @@ def _measure(s: Settings, task: tasks_mod.Task, arm: arms_mod.Arm, case: fx.Case
         "injected_chars_by_source": {"memory": memory_chars, "session_start": session_chars,
                                      "rolex": len(rolex_text)},
         "entities_injected": m.injected_entities(rolex_text),
+        "model_resolved": (t.init_event or {}).get("model"),
         "rate_limit_utilization": m.rate_limit_utilization(t),
     }
 
@@ -339,16 +363,22 @@ def _measure(s: Settings, task: tasks_mod.Task, arm: arms_mod.Arm, case: fx.Case
 # ---------------------------------------------------------------------------
 
 
-def verify_memory_delivery(rows: Sequence[dict[str, Any]], arm_memory: dict[str, bool]
-                           ) -> tuple[list[dict[str, Any]], str]:
+def memory_threshold(memory_chars: int) -> int:
+    """Unexplained turn-one tokens a memory arm must show: the auto-memory block plus
+    half of MEMORY.md at ~4 characters per token."""
+    return AUTO_MEMORY_BLOCK_TOKENS + max(0, memory_chars) // 8
+
+
+def verify_memory_delivery(rows: Sequence[dict[str, Any]], arm_memory: dict[str, bool],
+                           memory_chars: int = 0) -> tuple[list[dict[str, Any]], str]:
     """Prove memory delivery (and its absence) per trial, from the tokens.
 
     Auto-memory leaves no event in the stream, so the only direct evidence is the
-    size of the first call: a memory arm's must exceed the same task's bare minimum
-    by ``MEMORY_MIN_DELTA_TOKENS``; any other arm's must not. A graded trial that
-    breaks this becomes INJECTION_MISSING or LEAKED. Without a bare arm there is no
-    reference, and the note says so rather than passing silently.
+    size of the first call (see ``AUTO_MEMORY_BLOCK_TOKENS``). A graded trial that
+    breaks the rule becomes INJECTION_MISSING or LEAKED. Without a bare arm there is
+    no reference, and the note says so rather than passing silently.
     """
+    need = memory_threshold(memory_chars)
     bare: dict[str, int] = {}
     for r in rows:
         if r["arm"] == "bare" and isinstance(r.get("context_tokens"), int):
@@ -362,17 +392,21 @@ def verify_memory_delivery(rows: Sequence[dict[str, Any]], arm_memory: dict[str,
                 or not isinstance(ctx_tok, int) or r["arm"] not in arm_memory):
             out.append(r)
             continue
-        delivered = ctx_tok - ref >= MEMORY_MIN_DELTA_TOKENS
-        if arm_memory[r["arm"]] and not delivered:
+        by_source = r.get("injected_chars_by_source") or {}
+        own = (int(by_source.get("rolex") or 0) + int(by_source.get("session_start") or 0)) // HOOK_CHARS_PER_TOKEN
+        unexplained = ctx_tok - ref - own
+        if arm_memory[r["arm"]] and unexplained < need:
             r = {**r, "outcome": m.INJECTION_MISSING,
-                 "detail": f"memory arm, but turn one is only {ctx_tok - ref:+} tokens over bare"}
+                 "detail": f"memory arm, but only {unexplained:+} unexplained turn-one tokens (need {need})"}
             flipped += 1
-        elif not arm_memory[r["arm"]] and delivered:
+        elif not arm_memory[r["arm"]] and unexplained >= MEMORY_LEAK_TOKENS:
             r = {**r, "outcome": m.LEAKED,
-                 "detail": f"turn one is {ctx_tok - ref:+} tokens over bare in an arm without memory"}
+                 "detail": f"{unexplained:+} unexplained turn-one tokens in an arm without memory"}
             flipped += 1
         out.append(r)
-    return out, f"memory delivery verified from tokens against bare ({flipped} trial(s) voided)"
+    return out, (f"memory delivery verified from tokens against bare: memory arms need {need} "
+                 f"unexplained turn-one tokens, others under {MEMORY_LEAK_TOKENS} "
+                 f"({flipped} trial(s) voided)")
 
 
 def load_results(out: Path) -> list[dict[str, Any]]:
@@ -454,6 +488,34 @@ def run_suite(s: Settings, tasks: Sequence[tasks_mod.Task], arms: Sequence[arms_
         list(pool.map(one, todo))
     return {"planned": len(plan), "ran": counts["ran"], "skipped_budget": counts["skipped"],
             "stopped_by_budget_guard": stop.is_set()}
+
+
+class TrashWatch:
+    """Top-level entries of the operator's real Trash, before and after a run.
+
+    The first pilot put fixture folders there (a run followed ``/usr/bin/trash`` by
+    absolute path), and the real-state watch did not look there. Advisory, like that
+    watch: the operator may trash things during a run. New names are written to the
+    run directory and counted in the run's meta, never silently dropped.
+    """
+
+    def __init__(self, path: Path | None = None):
+        self.path = Path(path) if path else Path.home() / ".Trash"
+        self.before = self._names()
+
+    def _names(self) -> set[str]:
+        try:
+            return set(os.listdir(self.path))
+        except OSError:
+            return set()
+
+    def report(self, out: Path) -> int:
+        new = sorted(self._names() - self.before)
+        if new:
+            (Path(out) / "real-trash-new-entries.json").write_text(json.dumps(new, indent=2), encoding="utf-8")
+            print(f"[ctx-ablation] REAL TRASH: {len(new)} new entr(y/ies) during the run; see "
+                  f"{Path(out) / 'real-trash-new-entries.json'}", file=sys.stderr)
+        return len(new)
 
 
 def estimate(n_trials: int, jobs: int, calibration: dict[str, Any] | None) -> str:
@@ -689,6 +751,10 @@ def _live_setup(args, out: Path) -> tuple[Settings | None, int]:
               "nothing and every role-x trial would be a bare one", file=sys.stderr)
         return None, EXIT_FAIL
     cal = getattr(args, "calibration_doc", None)
+    if cal and cal.get("cli_version") and version and cal["cli_version"] != version:
+        print(f"[ctx-ablation] REFUSING: the calibration ran on CLI {cal['cli_version']}, this is "
+              f"{version}; recalibrate", file=sys.stderr)
+        return None, EXIT_FAIL
     if cal and cal.get("corpus_sha256") and cal["corpus_sha256"] != corpus.manifest.get("sha256"):
         print("[ctx-ablation] REFUSING: the calibration was taken on another corpus snapshot "
               f"({str(cal['corpus_sha256'])[:12]} != {str(corpus.manifest.get('sha256'))[:12]}); "
@@ -745,8 +811,10 @@ def cmd_calibrate(args) -> int:
     s.out.mkdir(parents=True, exist_ok=True)
     watch = jail_mod.RealStateWatch()
     watch.snapshot()
+    trash = TrashWatch()
     info = run_suite(s, tasks, [arms_mod.ARM_REGISTRY["bare"]], args.trials, jobs=args.jobs,
                      max_utilization=args.max_utilization, retry_void=args.retry_void, seed=args.seed)
+    info["real_trash_new_entries"] = trash.report(out)
     rows = [r for r in latest_by_key(load_results(s.out)).values() if r["arm"] == "bare"]
     verdicts = calibration_verdicts(rows, [t.id for t in tasks], args.trials)
     changes = watch.changes()
@@ -837,8 +905,20 @@ def cmd_run(args) -> int:
         return code
     watch = jail_mod.RealStateWatch()
     watch.snapshot()
+    trash = TrashWatch()
     info = run_suite(s, tasks, arms, args.trials, jobs=args.jobs, max_utilization=args.max_utilization,
                      retry_void=args.retry_void, seed=args.seed)
+    info["real_trash_new_entries"] = trash.report(out)
+    # The memory check needs bare, so it runs after the suite. Its verdicts are
+    # written back as new rows, so --retry-void re-runs what it voided.
+    rows = list(latest_by_key(load_results(out)).values())
+    checked, _note = verify_memory_delivery(
+        rows, {a.id: a.memory for a in arms}, int(s.corpus.manifest.get("memory_index_chars") or 0))
+    flipped = [r for r, before in zip(checked, rows) if r["outcome"] != before["outcome"]]
+    if flipped:
+        with open(out / "results.jsonl", "a", encoding="utf-8") as fh:
+            for r in flipped:
+                fh.write(json.dumps({**r, "reclassified_by": "memory-token-check"}, sort_keys=True) + "\n")
     changes = watch.changes()
     if changes:
         print(f"[ctx-ablation] REAL STATE CHANGED under ~/.config/broomva during the run "
@@ -863,8 +943,15 @@ def cmd_report(args) -> int:
             arm_memory[arm_id] = arms_mod.parse_arm(arm_id).memory
         except ValueError:
             pass
-    rows, memory_note = verify_memory_delivery(rows, arm_memory)
+    manifest_path = out / "corpus" / "manifest.json"
+    memory_chars = 0
+    if manifest_path.is_file():
+        memory_chars = int(json.loads(manifest_path.read_text(encoding="utf-8")).get("memory_index_chars") or 0)
+    rows, memory_note = verify_memory_delivery(rows, arm_memory, memory_chars)
     print(f"[ctx-ablation] {memory_note}", file=sys.stderr)
+    resolved = sorted({str(r.get("model_resolved")) for r in rows if r.get("model_resolved")})
+    if len(resolved) > 1:
+        memory_note += f"; WARNING: {len(resolved)} resolved model ids in one run ({', '.join(resolved)})"
     order = [a for a in arms_mod.DEFAULT_ARMS if any(r["arm"] == a for r in rows)]
     order += sorted({r["arm"] for r in rows} - set(order))
     if getattr(args, "task", None):

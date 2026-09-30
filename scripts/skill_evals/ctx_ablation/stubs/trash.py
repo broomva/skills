@@ -31,34 +31,45 @@ def main(argv: list[str]) -> int:
     case = os.path.realpath(_common.case_root())
     bin_dir = _common.case_root() / ".eval-home" / ".Trash"
     bin_dir.mkdir(parents=True, exist_ok=True)
-    moved, missing, refused = [], [], []
-    for raw in paths:
-        src = Path(raw).expanduser()
-        real = os.path.realpath(src.parent) if src.is_symlink() else os.path.realpath(src)
-        if not (real == case or real.startswith(case + os.sep)):
-            refused.append(raw)
-            continue
-        if not src.exists() and not src.is_symlink():
-            missing.append(raw)
-            continue
-        dest = bin_dir / src.name
-        n = 1
-        while dest.exists():
-            n += 1
-            dest = bin_dir / f"{src.name} {n}"
-        where = str(src.absolute())
-        shutil.move(str(src), str(dest))
-        moved.append(where)
+    moved, missing, refused, failed = [], [], [], []
+    # Never the case root, HOME, or anything holding the Trash itself: moving those
+    # would move the Trash into itself.
+    protected = {case, os.path.realpath(case + "/.eval-home")}
+    trash_real = os.path.realpath(bin_dir)
+    try:
+        for raw in paths:
+            src = Path(raw).expanduser()
+            real = os.path.realpath(src.parent) if src.is_symlink() else os.path.realpath(src)
+            inside = real == case or real.startswith(case + os.sep)
+            if not inside or real in protected or trash_real.startswith(real + os.sep) or real == trash_real:
+                refused.append(raw)
+                continue
+            if not src.exists() and not src.is_symlink():
+                missing.append(raw)
+                continue
+            dest = bin_dir / src.name
+            n = 1
+            while dest.exists():
+                n += 1
+                dest = bin_dir / f"{src.name} {n}"
+            where = str(src.absolute())
+            try:
+                shutil.move(str(src), str(dest))
+                moved.append(where)
+            except OSError as exc:
+                failed.append(f"{raw}: {exc}")
+    finally:
+        _common.log(NAME, {"argv": list(argv), "moved": moved, "missing": missing, "refused": refused,
+                           "failed": failed, "rc": 1 if (missing or refused or failed or not paths) else 0})
     for raw in missing:
         sys.stderr.write(f"trash: {raw}: No such file or directory\n")
     for raw in refused:
         sys.stderr.write(f"trash: {raw}: outside this workspace, not moved\n")
-    code = 1 if missing or refused or not paths else 0
+    for line in failed:
+        sys.stderr.write(f"trash: {line}\n")
     if not paths:
         sys.stderr.write("usage: trash [-v] path ...\n")
-    _common.log(NAME, {"argv": list(argv), "moved": moved, "missing": missing, "refused": refused,
-                       "rc": code})
-    return code
+    return 1 if missing or refused or failed or not paths else 0
 
 
 if __name__ == "__main__":

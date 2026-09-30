@@ -236,8 +236,14 @@ def cmd_api(cfg: dict, args: list[str]) -> int:
             }
             return _emit_json(rest, None, jq)
         if pr.get("headRefOid") and f"/commits/{pr['headRefOid']}/check-runs" in path:
+            state = _common.load_state(NAME)
+            polls = state.setdefault("polls", {})
+            polls[str(num)] = int(polls.get(str(num), 0)) + 1
+            _common.save_state(NAME, state)
             runs = {"total_count": len(_checks(pr)), "check_runs": [
-                {"name": c.get("name"), "status": "completed", "conclusion": str(c.get("conclusion", "")).lower()}
+                {"name": c.get("name"),
+                 "status": "completed" if c.get("conclusion") else "in_progress",
+                 "conclusion": str(c["conclusion"]).lower() if c.get("conclusion") else None}
                 for c in _checks(pr)]}
             return _emit_json(runs, None, jq)
     return _out(code=1, err="gh: Not Found (HTTP 404)")

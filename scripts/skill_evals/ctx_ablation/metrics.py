@@ -117,20 +117,12 @@ def rate_limit_utilization(t: Transcript) -> float | None:
 
 def _read_under(ctx: g.GradeContext, needles: Sequence[str]) -> bool:
     """Did the run READ something whose path contains one of *needles*? The same
-    evidence rule as ``graders.reads_path``: a Read, a Bash read verb naming it, or a
-    content-mode Grep. Listing (``ls``, Glob) and writing are not reading."""
+    evidence as the right-source grader (``graders.read_evidence``): a Read, a Bash
+    read verb, or a content-mode Grep. Listing and writing are not reading."""
     for tu in ctx.executed():
-        if tu.name in ("Read", "NotebookRead"):
-            target = str(tu.input.get("file_path") or tu.input.get("notebook_path") or "")
-            if any(n in target for n in needles):
-                return True
-        elif tu.name == "Bash":
-            cmd = str(tu.input.get("command") or "")
-            if g._READ_VERB_RE.search(cmd) and any(n in cmd for n in needles):
-                return True
-        elif tu.name == "Grep" and tu.input.get("output_mode") == "content":
-            if any(n in str(tu.input.get("path") or "") for n in needles):
-                return True
+        _kind, texts = g.read_evidence(tu, ctx.transcript)
+        if any(n in t for t in texts for n in needles):
+            return True
     return False
 
 
@@ -147,7 +139,20 @@ def reflexes(ctx: g.GradeContext) -> dict[str, bool]:
 
 
 def injected_entities(rolex_text: str) -> list[str]:
-    return sorted(set(_ENTITY_RE.findall(rolex_text or "")))
+    """The TASK-RELEVANT entity paths in a role-x block: the "Task-relevant knowledge"
+    list, which asks to be opened. Not the persona constraints above it, which carry
+    their claim inline and ask for nothing, so counting them would inflate the
+    denominator of the opened rate."""
+    out, in_section = [], False
+    for line in (rolex_text or "").splitlines():
+        if line.startswith("Task-relevant knowledge"):
+            in_section = True
+            continue
+        if in_section:
+            if not line.startswith("  - "):
+                break
+            out += _ENTITY_RE.findall(line)
+    return sorted(set(out))
 
 
 def entities_opened(ctx: g.GradeContext, entities: Iterable[str]) -> list[str]:
@@ -200,6 +205,10 @@ class ArmRow:
     entities_opened: int
     lift: float | None = None
     lift_ci: list[float] | None = None
+    #: The lift with TASK as the unit: a t-interval over per-task differences from
+    #: bare. Trials of one task are correlated, so this is the honest interval;
+    #: ``lift_ci`` treats every trial as independent and is narrower than the data.
+    lift_task_ci: list[float] | None = None
     lift_per_1k: float | None = None
     #: The lift interval divided by the (measured, near-constant) injected thousands.
     lift_per_1k_ci: list[float] | None = None
@@ -265,6 +274,9 @@ def aggregate(results: Sequence[Mapping[str, Any]], arm_order: Sequence[str]) ->
             entities_opened=sum(len(r.get("entities_opened") or []) for r in graded),
         ))
     bare = next((r for r in rows_out if r.arm == "bare"), None)
+    bare_by_task = _task_rates(by_arm.get("bare", []))
+    for row in rows_out:
+        row.lift_task_ci = _task_ci(_task_rates(by_arm[row.arm]), bare_by_task) if row.arm != "bare" else None
     for row in rows_out:
         if bare is None or row.arm == "bare" or row.pass_rate is None or bare.pass_rate is None:
             continue
@@ -277,6 +289,32 @@ def aggregate(results: Sequence[Mapping[str, Any]], arm_order: Sequence[str]) ->
             row.lift_per_1k_ci = [round(lo / k, 4), round(hi / k, 4)]
             row.pass_per_1k = round(row.pass_rate / k, 4)
     return rows_out
+
+
+#: Two-sided 95% t critical values by degrees of freedom (1..30); beyond, 1.96.
+_T95 = [12.706, 4.303, 3.182, 2.776, 2.571, 2.447, 2.365, 2.306, 2.262, 2.228, 2.201, 2.179, 2.160,
+        2.145, 2.131, 2.120, 2.110, 2.101, 2.093, 2.086, 2.080, 2.074, 2.069, 2.064, 2.060, 2.056,
+        2.052, 2.048, 2.045, 2.042]
+
+
+def _task_rates(rows: Iterable[Mapping[str, Any]]) -> dict[str, float]:
+    out = {}
+    for task, trs in _group(rows, "task").items():
+        graded = [r for r in trs if r["outcome"] not in NON_OUTCOMES]
+        if graded:
+            out[task] = sum(1 for r in graded if r["outcome"] == PASS) / len(graded)
+    return out
+
+
+def _task_ci(arm: Mapping[str, float], bare: Mapping[str, float]) -> list[float] | None:
+    diffs = [arm[t] - bare[t] for t in arm if t in bare]
+    if len(diffs) < 2:
+        return None
+    mean = sum(diffs) / len(diffs)
+    sd = math.sqrt(sum((d - mean) ** 2 for d in diffs) / (len(diffs) - 1))
+    df = len(diffs) - 1
+    half = (_T95[df - 1] if df <= len(_T95) else 1.96) * sd / math.sqrt(len(diffs))
+    return [round(max(-1.0, mean - half), 4), round(min(1.0, mean + half), 4)]
 
 
 def _group(rows: Iterable[Mapping[str, Any]], key: str) -> dict[str, list[Mapping[str, Any]]]:
@@ -312,9 +350,10 @@ def _f(v: float | None, fmt: str = "{:.2f}") -> str:
 
 def format_table(rows: Sequence[ArmRow]) -> str:
     """The per-arm table, as GitHub markdown."""
-    head = ("| arm | pass | 95% CI | lift vs bare (95% CI) | injected tok | lift / 1k tok (95% CI) | "
-            "pass / 1k tok | ctx tok (turn 1) | input tok (run) | tool calls | right source | wall s |")
-    lines = [head, "|" + "---|" * 12]
+    head = ("| arm | pass | 95% CI | lift vs bare (trial CI) | lift, task-clustered CI | injected tok | "
+            "lift / 1k tok (trial CI) | pass / 1k tok | ctx tok (turn 1) | input tok (run) | tool calls | "
+            "right source | wall s |")
+    lines = [head, "|" + "---|" * 13]
     for r in rows:
         ci = f"[{r.pass_ci[0]:.2f}, {r.pass_ci[1]:.2f}]" if r.pass_ci else "n/a"
         lift = "—" if r.arm == "bare" else (
@@ -323,8 +362,10 @@ def format_table(rows: Sequence[ArmRow]) -> str:
         void = f" +{sum(r.non_outcomes.values())} void" if r.non_outcomes else ""
         per1k = (f"{r.lift_per_1k:+.3f} [{r.lift_per_1k_ci[0]:+.2f}, {r.lift_per_1k_ci[1]:+.2f}]"
                  if r.lift_per_1k is not None and r.lift_per_1k_ci else "n/a")
+        task_ci = "—" if r.arm == "bare" else (
+            f"[{r.lift_task_ci[0]:+.2f}, {r.lift_task_ci[1]:+.2f}]" if r.lift_task_ci else "n/a")
         lines.append(
-            f"| {r.arm} | {r.passes}/{r.graded}{void} ({_f(r.pass_rate)}) | {ci} | {lift} | "
+            f"| {r.arm} | {r.passes}/{r.graded}{void} ({_f(r.pass_rate)}) | {ci} | {lift} | {task_ci} | "
             f"{_f(r.injected_tokens, '{:,.0f}')} | {per1k} | {_f(r.pass_per_1k, '{:.3f}')} | "
             f"{_f(r.context_tokens, '{:,.0f}')} | {_f(r.total_input_tokens, '{:,.0f}')} | "
             f"{_f(r.tool_calls, '{:.1f}')} | {src} | {_f(r.wall_s, '{:.0f}')} |"

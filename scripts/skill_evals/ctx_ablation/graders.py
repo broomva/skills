@@ -106,32 +106,52 @@ _READ_VERB_RE = re.compile(
 )
 
 
-def reads_path(tu: ToolUse, forms: list[str], transcript: Transcript) -> bool:
-    """Did this executed call pull in the content of the file named by *forms*?
+def read_evidence(tu: ToolUse, transcript: Transcript) -> tuple[str, list[str]]:
+    """What an executed call READ, as ``(kind, texts)``. The one evidence rule the
+    right-source grader and the reflex metric share.
 
-    * ``Read`` whose ``file_path`` ends with one of the spellings;
-    * ``Bash`` with a read verb (``cat``, ``sed -n``, ``grep``...) whose command
-      names the file, or whose RESULT does (``grep -rn fact research/`` prints the
-      matching lines under the file's name). ``ls research/entities/x.md`` is not
-      a read;
-    * ``Grep`` in ``content`` mode whose RESULT names the file: the matching lines
-      of that file reached the model.
+    * ``Read``: ``("file", [its file_path])``.
+    * ``Bash`` with a read verb (``cat``, ``sed -n``, ``grep``...): ``("text",
+      [command, *paths its output printed matches under])``, so ``grep -rn fact
+      research/``, whose output prints the matching lines under the file's name,
+      is a read of that file.
+      ``ls research/entities/x.md`` is not: there is no read verb.
+    * ``Grep`` in ``content`` mode: ``("text", [the paths its matches came from])``.
+    * anything else: ``("", [])``.
     """
     if tu.name in ("Read", "NotebookRead"):
-        target = str(tu.input.get("file_path") or tu.input.get("notebook_path") or "")
-        return any(target == f or target.endswith("/" + f) for f in forms)
+        return "file", [str(tu.input.get("file_path") or tu.input.get("notebook_path") or "")]
+    found = transcript.tool_results().get(tu.id)
+    paths = _result_paths(found.content if found else "")
     if tu.name == "Bash":
         cmd = str(tu.input.get("command") or "")
-        if not _READ_VERB_RE.search(cmd):
-            return False
-        if any(f in cmd for f in forms):
-            return True
-        found = transcript.tool_results().get(tu.id)
-        return bool(found) and any(f in found.content for f in forms)
+        return ("text", [cmd, *paths]) if _READ_VERB_RE.search(cmd) else ("", [])
     if tu.name == "Grep" and tu.input.get("output_mode") == "content":
-        found = transcript.tool_results().get(tu.id)
-        return bool(found) and any(f in found.content for f in forms)
-    return False
+        target = str(tu.input.get("path") or "")
+        # Searching one file prints no file names: the file itself is the evidence.
+        return "text", paths + ([target] if found and found.content.strip() and Path(target).suffix else [])
+    return "", []
+
+
+def _result_paths(result: str) -> list[str]:
+    """The paths a search printed its matches under: the text before the first ``:``
+    of each output line (``grep -rn`` / ``rg`` format). A file's CONTENT merely
+    mentioning another path is not evidence that the other file was read."""
+    out = []
+    for line in result.splitlines():
+        head = line.split(":", 1)[0].strip()
+        # A path, not prose: no whitespace (grep -rn / grep -l / rg print a bare path).
+        if head and not re.search(r"\s", head) and ("/" in head or head.endswith(".md")):
+            out.append(head)
+    return out
+
+
+def reads_path(tu: ToolUse, forms: list[str], transcript: Transcript) -> bool:
+    """Did this executed call pull in the content of the file named by *forms*?"""
+    kind, texts = read_evidence(tu, transcript)
+    if kind == "file":
+        return any(t == f or t.endswith("/" + f) for t in texts for f in forms)
+    return any(f in t for t in texts for f in forms)
 
 
 # ---------------------------------------------------------------------------
@@ -167,15 +187,25 @@ def _describe(tu: ToolUse) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _expand_tool_spec(ctx: GradeContext, spec: Mapping[str, Any]) -> dict[str, Any]:
+    """Template the spec: values inside a ``{"re": ...}`` matcher are regex-escaped,
+    values compared for equality are not."""
+    out = dict(spec)
+    out["input"] = {k: ({"re": expand(v["re"], ctx.variables, regex=True)} if isinstance(v, dict)
+                        else expand(v, ctx.variables))
+                    for k, v in (spec.get("input") or {}).items()}
+    return out
+
+
 def a_tool_call(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
-    spec = expand(dict(spec), ctx.variables, regex=True)
+    spec = _expand_tool_spec(ctx, spec)
     hit = next((tu for tu in ctx.executed() if _tool_matches(tu, spec)), None)
     return AssertionResult("tool_call", hit is not None,
                            _describe(hit) if hit else f"no executed {spec.get('tool')} call matching {spec.get('input')}")
 
 
 def a_no_tool_call(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
-    spec = expand(dict(spec), ctx.variables, regex=True)
+    spec = _expand_tool_spec(ctx, spec)
     hit = next((tu for tu in ctx.executed() if _tool_matches(tu, spec)), None)
     return AssertionResult("no_tool_call", hit is None, f"executed {_describe(hit)}" if hit else "")
 
@@ -267,9 +297,17 @@ def _stub_rows(ctx: GradeContext, stub: str) -> list[dict[str, Any]]:
     return list(ctx.stub_logs.get(stub) or [])
 
 
-def _stub_text(row: Mapping[str, Any]) -> str:
-    """The joined argv for a CLI stub; the row's JSON for one that logs no argv (the
-    Paseo MCP stub logs ``{"tool", "arguments", "returned"}``)."""
+def _stub_text(row: Mapping[str, Any], field: str | None = None) -> str:
+    """What a stub assertion's regex is matched against.
+
+    With ``field``, that one field of the log row as JSON (``"refused"`` on a trash
+    row: ``["~/x"]``). Otherwise the joined argv for a CLI stub, or the whole row's
+    JSON for one that logs no argv (the Paseo MCP stub). Without ``field`` a regex
+    on a JSON key of an argv-logging stub can never match, which once made a
+    ``no_stub`` assertion pass every run.
+    """
+    if field:
+        return json.dumps(row.get(field), sort_keys=True)
     if "argv" in row:
         return " ".join(str(a) for a in row["argv"])
     return json.dumps(row, sort_keys=True)
@@ -277,7 +315,7 @@ def _stub_text(row: Mapping[str, Any]) -> str:
 
 def a_stub(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
     pat = ctx.rx(spec["argv_re"])
-    hits = [r for r in _stub_rows(ctx, spec["stub"]) if pat.search(_stub_text(r))]
+    hits = [r for r in _stub_rows(ctx, spec["stub"]) if pat.search(_stub_text(r, spec.get("field")))]
     need = int(spec.get("min", 1))
     return AssertionResult("stub", len(hits) >= need,
                            f"{len(hits)} {spec['stub']} call(s) matching /{pat.pattern}/")
@@ -285,7 +323,7 @@ def a_stub(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
 
 def a_no_stub(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
     pat = ctx.rx(spec["argv_re"])
-    hits = [r for r in _stub_rows(ctx, spec["stub"]) if pat.search(_stub_text(r))]
+    hits = [r for r in _stub_rows(ctx, spec["stub"]) if pat.search(_stub_text(r, spec.get("field")))]
     return AssertionResult("no_stub", not hits,
                            f"{spec['stub']} ran {_stub_text(hits[0])[:100]!r}" if hits else "")
 
@@ -376,6 +414,7 @@ def source_retrieved(ctx: GradeContext, paths: list[str]) -> bool | None:
 
 __all__ = [
     "ASSERTION_KINDS",
+    "read_evidence",
     "AssertionResult",
     "GradeContext",
     "POSITIVE_REGEX_FIELDS",

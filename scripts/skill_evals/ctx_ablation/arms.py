@@ -4,7 +4,7 @@ THE RULE EVERY ARM FOLLOWS: STATE IS CONSTANT, ONLY THE INJECTION VARIES
 ------------------------------------------------------------------------
 Every case, whatever its arm, has the same files on disk: the knowledge graph and
 catalog in the workspace, the memory directory under ``~/.claude/projects``, the
-ctx store under ``~/.local/state/ctx``, the stubs and the delete gate. An arm
+ctx store under ``~/.local/state/ctx``, the stubs and the case guard. An arm
 changes only what is PUSHED into the model's context:
 
 * ``memory``   the CLI's auto-memory, which loads ``MEMORY.md`` into the system
@@ -53,6 +53,11 @@ CTX_SCRIPTS = REPO_ROOT / "skills" / "orchestration" / "ctx-core" / "scripts"
 #: misses it injects nothing. Under a parallel eval that miss would be noise in the
 #: ctx arm, so the harness gives it this much. The brief it renders is the same.
 CTX_HOOK_BUDGET_MS = 1500
+
+#: Every tool the case guard sees. Reads are in it: a bare trial reading the real
+#: memory directory by absolute path would contaminate the control.
+GUARD_MATCHER = "Bash|Write|Edit|MultiEdit|NotebookEdit|Read|NotebookRead|Grep|Glob"
+GUARDED_TOOLS = frozenset(GUARD_MATCHER.split("|"))
 
 #: Markers a hook's output must carry for the arm to count as delivered.
 ROLEX_MARKER = "[role-x intake"
@@ -143,7 +148,7 @@ def hook_commands(arm: Arm, case_root: Path, rt: HookRuntime) -> dict[str, list[
         case["CTXABL_REAL_HOME"] = rt.real_home
     hooks: dict[str, list[dict[str, Any]]] = {
         "PreToolUse": [{
-            "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
+            "matcher": GUARD_MATCHER,
             "hooks": [{"type": "command", "timeout": 10,
                        "command": _cmd(case, [rt.python, "-I", str(STUBS_DIR / "guard.py")])}],
         }],

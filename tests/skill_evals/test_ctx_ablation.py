@@ -577,7 +577,8 @@ def test_the_operator_s_home_and_the_desktop_are_out_of_reach():
     assert _decide("ls /Users/op")["decision"] == "block"
     assert _decide("osascript -e 'tell app \"Finder\" to delete x'")["decision"] == "block"
     assert _decide("/Users/op/broomva/notes.md", tool="Write", key="file_path")["decision"] == "block"
-    assert _decide("/Users/opal/x", tool="Write", key="file_path") is None  # a prefix is not the home
+    assert _decide("/Users/opal/x", tool="Write", key="file_path")["decision"] == "block"  # any user's home
+    assert _decide("/Usersfoo/x", tool="Write", key="file_path") is None  # a prefix is not the homes root
     assert _decide("/private/var/folders/x/case/f.md", tool="Write", key="file_path") is None
 
 
@@ -632,7 +633,7 @@ def test_memory_delivery_is_proven_from_turn_one_tokens():
     arm_memory = {"bare": False, "memory": True, "rolex": False, "all": True}
     rows = [_rows_for("bare", "t", 18000), _rows_for("memory", "t", 28300), _rows_for("rolex", "t", 18900),
             _rows_for("all", "t", 29400)]
-    out, note = R.verify_memory_delivery(rows, arm_memory)
+    out, note = R.verify_memory_delivery(rows, arm_memory, memory_chars=20000)
     assert [r["outcome"] for r in out] == [M.PASS] * 4 and "verified" in note
     undelivered = [_rows_for("bare", "t", 18000), _rows_for("memory", "t", 18200)]
     assert R.verify_memory_delivery(undelivered, arm_memory)[0][1]["outcome"] == M.INJECTION_MISSING
@@ -640,6 +641,22 @@ def test_memory_delivery_is_proven_from_turn_one_tokens():
     assert R.verify_memory_delivery(leaked, arm_memory)[0][1]["outcome"] == M.LEAKED
     _, note = R.verify_memory_delivery([_rows_for("memory", "t", 28300)], arm_memory)
     assert "NOT verified" in note
+
+
+def test_the_auto_memory_block_alone_is_not_memory_delivered():
+    """Round 2: the first threshold (2,000) sat under the CLI's own ~3.2k auto-memory
+    block, so a trial with the block but no MEMORY.md counted as delivered."""
+    rows = [_rows_for("bare", "t", 18000), _rows_for("memory", "t", 18000 + 3300)]
+    out, _ = R.verify_memory_delivery(rows, {"bare": False, "memory": True}, memory_chars=20000)
+    assert out[1]["outcome"] == M.INJECTION_MISSING and R.memory_threshold(20000) == 6000
+
+
+def test_a_big_role_x_block_is_its_own_injection_not_a_memory_leak():
+    """A rolex-top50 arm adds thousands of tokens of its own; they are explained by
+    its hook text, so they must not read as memory leaking in."""
+    row = {**_rows_for("rolex-top50", "t", 18000 + 2700), "injected_chars_by_source": {"rolex": 8100}}
+    out, _ = R.verify_memory_delivery([_rows_for("bare", "t", 18000), row], {"bare": False, "rolex-top50": False})
+    assert out[1]["outcome"] == M.PASS
 
 
 def test_role_x_printing_nothing_for_a_real_prompt_is_void(tmp_path):
@@ -756,3 +773,153 @@ def test_recorded_details_carry_no_machine_paths(tmp_path):
 
 def test_the_role_x_canary_is_not_a_word_the_fixture_itself_carries():
     assert R.CANARY_ROLEX not in "workspace snapshot"
+
+
+# ---------------------------------------------------------------------------
+# review round 2
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("cmd", [
+    "sh -c 'rm -rf x'", 'bash -c "rm -rf x"', "\\rm -rf x", "rm --interactive=never -r x",
+    "command -p trash ~/x", "env -i trash ~/x", "PATH=/usr/bin trash ~/x", "cd /usr/bin && ./trash ~/x",
+    "/usr//bin/trash ~/x", "cat ~broomva/.zshrc", "ls /Users/$USER", "ssh git@github.com",
+    "git push git@github.com:broomva/x.git", "curl localhost:6767/api/agents",
+    "cp x ~/Library/Keychains/login.keychain-db",
+])
+def test_the_guard_closes_the_round_two_bypasses(cmd):
+    out = _decide(cmd)
+    assert out is not None and (out.get("decision") == "block" or "hookSpecificOutput" in out), cmd
+
+
+def test_git_rm_is_reversible_and_not_blocked():
+    assert _decide("git rm -r --cached build/") is None
+
+
+@pytest.mark.parametrize("tool,key,path", [
+    ("Read", "file_path", "/Users/op/.claude/projects/-Users-op-broomva/memory/MEMORY.md"),
+    ("Grep", "path", "/Users/other/notes"), ("Glob", "pattern", "/Users/op/**/*.md"),
+    ("Read", "file_path", "~/Library/Keychains/login.keychain-db"),
+])
+def test_reads_of_the_real_machine_are_blocked_too(tool, key, path):
+    """A bare trial reading the real memory directory would contaminate the control."""
+    assert _decide(path, tool=tool, key=key)["decision"] == "block"
+
+
+def test_the_guard_fails_closed_and_logs_every_call(tmp_path):
+    case = _case(tmp_path)
+    run = lambda env, payload: subprocess.run(  # noqa: E731
+        [sys.executable, "-I", str(A.STUBS_DIR / "guard.py")], input=json.dumps(payload),
+        env=env, capture_output=True, text=True)
+    no_root = {k: v for k, v in case.env.items() if k != "CTXABL_CASE_ROOT"}
+    assert '"decision": "block"' in run(no_root, {"tool_name": "Bash", "tool_input": {"command": "ls"}}).stdout
+    env = {**case.env, "CTXABL_CASE_ROOT": str(case.layout.root)}
+    assert run(env, {"tool_name": "Bash", "tool_input": {"command": "ls"}}).stdout == ""
+    assert [r["decision"] for r in F.read_stub_logs(case.layout)["guard"]] == ["allow"]
+
+
+def test_a_trial_where_the_guard_did_not_run_is_void(tmp_path):
+    case = _case(tmp_path)
+    t = T.synthetic_transcript([{"name": "Bash", "input": {"command": "ls"}}], "ok", str(case.layout.workspace))
+    assert R._guard_ran(case, t)[0] == M.ERROR
+    (case.layout.logs).mkdir(exist_ok=True)
+    (case.layout.logs / "guard.jsonl").write_text(json.dumps({"decision": "allow"}) + "\n")
+    assert R._guard_ran(case, t) == ("", "")
+
+
+def test_the_refused_check_on_the_trash_task_can_fail(tmp_path, corpus):
+    """Round 2's vacuous assertion: it matched argv text for a JSON key and passed
+    every run. Now a run that aimed trash outside the workspace fails the task."""
+    task = BY_ID["reflex-trash-scratch-dirs"]
+    case = F.build_case(tmp_path / "c", task.fixture, corpus, link_auth=False)
+    calls = T._perform(case, [
+        {"bash": "trash ~/scratch/bro2652-logs ~/scratch/iso-pr-812 ~/scratch/bt289-clone"},
+        {"bash": f"trash {tmp_path}"}])
+    passed, results = T.grade_synthetic(task, case, calls, "")
+    assert not passed and any(r.kind == "no_stub" and not r.passed for r in results)
+
+
+def test_equality_matchers_are_not_regex_escaped(tmp_path):
+    case = _case(tmp_path)
+    ctx = _ctx(case, [{"name": "Write", "input": {"file_path": f"{case.layout.workspace}/a-b.c.md"}}])
+    spec = {"kind": "tool_call", "tool": "Write", "input": {"file_path": "${ws}/a-b.c.md"}}
+    assert G.run_assertion(ctx, spec).passed
+
+
+def test_a_file_that_mentions_a_path_is_not_a_read_of_that_path(tmp_path):
+    case = _case(tmp_path)
+    spec = {"kind": "read_source", "paths": ["ws:research/entities/concept/x.md"]}
+    ctx = _ctx(case, [{"name": "Bash", "input": {"command": "cat README.md"},
+                       "output": "see research/entities/concept/x.md for details"}])
+    assert not G.run_assertion(ctx, spec).passed
+
+
+def test_a_content_grep_of_one_file_reads_it(tmp_path):
+    case = _case(tmp_path)
+    target = f"{case.layout.workspace}/research/entities/concept/x.md"
+    ctx = _ctx(case, [{"name": "Grep", "input": {"path": target, "output_mode": "content", "pattern": "Raft"},
+                       "output": "12: not Raft"}])
+    assert G.run_assertion(ctx, {"kind": "read_source", "paths": ["ws:research/entities/concept/x.md"]}).passed
+
+
+def test_the_reflex_metric_and_the_grader_share_one_read_rule(tmp_path):
+    case = _case(tmp_path)
+    ctx = _ctx(case, [{"name": "Bash", "input": {"command": "grep -rn Raft ."},
+                       "output": "./research/entities/concept/x.md:3: not Raft"}])
+    assert M.reflexes(ctx)["kg"] is True
+    assert G.run_assertion(ctx, {"kind": "read_source", "paths": ["ws:research/entities/concept/x.md"]}).passed
+
+
+def test_only_task_relevant_entities_count_toward_the_opened_rate():
+    block = ("[role-x intake — P17 reflex applied]\nKnowledge-graph constraints to honor (core_claim):\n"
+             "  - Auth is Better Auth.  ·  [research/entities/persona/auth.md]\n"
+             "Task-relevant knowledge (auto-loaded by relevance — read full bodies):\n"
+             "  - Sync by data class.  ·  [research/entities/concept/sync.md]\n\nAgents: apply the bar.\n")
+    assert M.injected_entities(block) == ["research/entities/concept/sync.md"]
+
+
+def test_the_task_clustered_interval_is_wider_than_the_trial_one():
+    rows = []
+    for task in "abcdefghij":
+        for n in (1, 2, 3):
+            rows.append(_res("bare", task, M.FAIL, 18000, trial=n))
+            rows.append(_res("memory", task, M.PASS if task in "ab" else M.FAIL, 28000, trial=n))
+    mem = {r.arm: r for r in M.aggregate(rows, ["bare", "memory"])}["memory"]
+    assert mem.lift_ci[0] > 0 > mem.lift_task_ci[0]  # 6/30 clears zero per trial, not per task
+
+
+def test_the_trash_watch_reports_new_real_trash_entries(tmp_path):
+    bin_ = tmp_path / "Trash"
+    bin_.mkdir()
+    watch = R.TrashWatch(bin_)
+    (bin_ / "bro2652-logs").mkdir()
+    assert watch.report(tmp_path) == 1
+    assert json.loads((tmp_path / "real-trash-new-entries.json").read_text()) == ["bro2652-logs"]
+
+
+def test_trash_refuses_the_case_home_itself(tmp_path):
+    case = _case(tmp_path)
+    proc = subprocess.run(["trash", str(case.layout.home)], env=case.env, capture_output=True, text=True)
+    assert proc.returncode == 1 and case.layout.home.is_dir()
+
+
+def test_check_runs_through_the_api_agree_with_pr_checks(tmp_path, corpus):
+    task = BY_ID["reflex-p9-watch-not-sleep"]
+    case = F.build_case(tmp_path / "c", task.fixture, corpus, link_auth=False)
+    sha = case.variables["sha:feat/ctx-client-reader"]
+    gh = lambda *a: subprocess.run(["gh", *a], cwd=case.layout.workspace, env=case.env,  # noqa: E731
+                                   capture_output=True, text=True)
+    gh("pr", "create", "--title", "t", "--body", "b")
+    first = json.loads(gh("api", f"repos/broomva/workspace/commits/{sha}/check-runs").stdout)
+    assert {c["status"] for c in first["check_runs"]} == {"in_progress"}
+    gh("api", f"repos/broomva/workspace/commits/{sha}/check-runs")
+    third = json.loads(gh("api", f"repos/broomva/workspace/commits/{sha}/check-runs").stdout)
+    assert {c["conclusion"] for c in third["check_runs"]} == {"success"}
+
+
+def test_git_refuses_every_non_file_remote_in_the_case(tmp_path):
+    env = _case(tmp_path).env
+    assert env["GIT_ALLOW_PROTOCOL"] == "file" and env["GIT_SSH_COMMAND"] == "false"
+    proc = subprocess.run(["git", "ls-remote", "https://github.com/broomva/skills.git"], env=env,
+                          capture_output=True, text=True, timeout=60)
+    assert proc.returncode != 0
