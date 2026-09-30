@@ -106,6 +106,13 @@ jobs:
           # above runs — a green light wired to nothing is the failure mode, and it is
           # covered there rather than duplicated as shell here.
 
+      # Context ablation (scripts/skill_evals/ctx_ablation). Free: every committed
+      # task must FAIL a null run and its control-removed exemplar and PASS its
+      # informed exemplar, on a real fixture. The pytest step runs the same check
+      # per task; this step keeps the CLI a user runs honest too.
+      - name: Context-ablation tasks tell their control from its absence
+        run: python3 scripts/skill_evals/ctx_ablation/run.py validate --deep
+
       - name: Pilot prompt set validates against CHECK_REGISTRY
         run: |
           python3 scripts/skill_evals/runner.py \

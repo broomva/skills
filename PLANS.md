@@ -1,5 +1,57 @@
 # PLANS.md
 
+## Context evals, layer 2: the causal context-ablation harness
+
+Status: pilot v3 done; PR #248 in review round 3 (branch `feat/context-ablation-evals`). Layer 1, the observational
+context ledger in bstack's leverage sensor, is a separate session's work. The owner
+decided on 2026-09-29 to build both layers.
+
+### Objective
+
+Measure whether the context we inject makes sessions behave better per token:
+role-x intake, the ctx-core brief, and MEMORY.md. Also measure whether it triggers
+the right retrieval reflexes, and how far it compresses.
+
+### Scope and constraints
+
+- `scripts/skill_evals/ctx_ablation/`, a sibling of `runner.py` that imports its
+  jail, argv contract, stream parser and interval math.
+- Arms are explicit `--settings` files under a jailed HOME:
+  `bare, memory, rolex, ctx, all, rolex-top2`. `~/.claude/settings.json` is never
+  touched.
+- State is constant across arms. Only the injection varies.
+- Tasks come from real turns and memory feedback files. Graders assert on tool
+  inputs, end state and fact tokens, never on narration.
+- Control-absent rule: every task must fail in the bare arm in a calibration run,
+  or it is dropped as vacuous.
+- role-x's cap was a constant, so the compression arm uses a new env override,
+  `ROLE_X_TASK_ENTITY_TOP_N`, with tests.
+
+### Milestones
+
+1. [x] Harness: arms, fixture, stubs (gh, trash, p9, paseo, Paseo MCP, case guard),
+   graders, metrics and CLI. 137 tests; the mutants of every guard are killed.
+2. [x] 16 candidate tasks. Each fails a null run and its control-removed
+   exemplar, and passes its informed exemplar.
+3. [x] Preflight on the real corpus. The live canary shows each of the six arms
+   sees exactly its own injections.
+4. [x] Calibrate 16 candidates × 3 trials in the bare arm: 13 retained, 3
+   vacuous (`tasks/pilot.calibration.json`).
+5. [x] Pilot: 10 retained tasks × 6 arms × 3 trials, 180 trials
+   (`ctx_ablation/PILOT.md`). v1 was superseded after P20 round 1 (false fails, a
+   real-Trash side effect), and v2 after round 2 (a vacuous check, a weak memory proof,
+   a guard that could not prove it ran). v3 is the result: 180 trials, 2 void, run on 8e8b5fa.
+   The later commits add checks that change no v3 outcome.
+6. [ ] Scale to 30 tasks: not run. The owner held this session to the pilot
+   because of the shared subscription limit, and the pilot is floor-limited on
+   haiku. The next measurement is sonnet on the 13 retained tasks; PILOT.md has
+   the estimate.
+
+### Verification
+
+`python3 scripts/skill_evals/ctx_ablation/run.py validate --deep`, and
+`pytest tests/skill_evals/test_ctx_ablation.py`.
+
 ## ctx-core phase 1: the read-only shared board
 
 Status: final review (PR broomva/skills#246), narrowed by the owner after the
