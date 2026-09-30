@@ -427,13 +427,26 @@ has the same state on disk in every arm:
   `trash` refuses any path outside the case, and the `paseo` CLI refuses outright,
   because the real daemon is reachable from the host;
 - a Paseo MCP stub with the real `list_agents` defaults;
-- git and gh set to fail closed toward real GitHub (no system gitconfig, no
-  prompts, an invalid `GH_TOKEN`);
-- a **case guard** as a PreToolUse hook on Bash and the file tools:
-  - the workspace delete gate, G3, which blocks every `rm -r` spelling;
-  - it blocks `osascript` and any path in the operator's real home;
-  - it rewrites an absolute real `trash`, `gh`, `p9` or `paseo` to the case stub.
+- git set to accept only `file://` remotes (`GIT_ALLOW_PROTOCOL`, no SSH command,
+  no system gitconfig, no prompts), and gh given an invalid `GH_TOKEN`;
+- a **case guard**: a PreToolUse hook on Bash and on every file tool, reads
+  included.
+  - It is the workspace delete gate, G3: every `rm -r` spelling, including inside
+    `sh -c` and as `\rm` (but not `git rm`).
+  - It rewrites an absolute real `trash`, `gh`, `p9` or `paseo` to the case stub.
     The transcript keeps the command the model wrote.
+  - It blocks:
+    - PATH escapes (`command -p`, `env -i`, `PATH=`, `cd` into a real bin dir);
+    - `osascript`, SSH clients and `git@` remotes;
+    - any path under the directory of user homes, a `~user` path, and the linked
+      keychain;
+    - the Paseo daemon's port.
+  - It fails closed (an error blocks the call) and logs every call it sees. A trial
+    must show one guard row per guarded call that ran, or it is void: a guard that
+    crashed or timed out lets the call through, and that trial would otherwise be
+    graded in a world with no walls.
+  - It matches strings. It is a wall against a run that wanders, not a sandbox
+    against one that tries: a command assembled at runtime can get past it.
 
   The rewrite exists because in the first pilot, four runs followed the memory
   file's `/usr/bin/trash` literally. That moved fixture folders into the
@@ -472,11 +485,18 @@ context adds nothing". So delivery is checked per trial, not assumed.
   is the task prompt's sha256, under the jailed HOME. The injected text is
   recovered by running the same hook offline on the same prompt and workspace.
 - **memory:** auto-memory leaves no event in the stream, so delivery is proven from
-  tokens. The first call's context must exceed bare's (same task) by 2,000 tokens,
-  and in every other arm it must not; the pilot measured +10.3k against +1.0k at
-  most. `init.cwd` must also be the workspace, so the memory key is the one the
-  harness wrote to. `report` applies the token check to every trial, and without a
-  bare arm it says the check was not done.
+  tokens. A trial's *unexplained* turn-one tokens are its excess over bare on the
+  same task, minus a generous estimate of its own hook text (3 characters per
+  token).
+  - In a memory arm they must cover the CLI's auto-memory block (3,500 tokens) plus
+    half of MEMORY.md, so "the block loaded but the index did not" fails.
+  - In every other arm they must stay under 2,500, so a leak is caught.
+  - `init.cwd` must also be the workspace, so the memory key is the one the harness
+    wrote to.
+  - The check needs bare and runs when the suite finishes. Its verdicts are written
+    back to `results.jsonl`, so `--retry-void` sees them. Without a bare arm, the
+    report says the check was not done.
+- **the case guard:** one guard log row per guarded tool call that ran (above).
 
 A trial that fails any of these checks is `INJECTION_MISSING`, and one that got an
 injection its arm lacks is `LEAKED`. Both are void: counted, never graded. role-x
@@ -546,7 +566,10 @@ passes it. The run resumes where it stopped.
 ### What the numbers are
 
 - **pass rate:** trials passed out of graded trials, with a Wilson 95% interval.
-- **lift:** the pass rate minus bare's, with a Newcombe 95% interval.
+- **lift:** the pass rate minus bare's, with two intervals:
+  - a Newcombe interval that treats every trial as independent;
+  - a **task-clustered** t-interval over the per-task differences from bare. Trials
+    of one task are correlated, so this is the honest one.
 - **injected tokens:** for each task, the first call's input tokens
   (`input + cache_creation + cache_read`) minus bare's, averaged over tasks. It is
   measured rather than estimated, so it includes the auto-memory instructions the
@@ -561,12 +584,13 @@ passes it. The run resumes where it stopped.
   - wall time;
   - retrieval reflexes: the share of trials that read the KG, docs or memory, used
     the web, or spawned a subagent;
-  - the share of role-x's injected KG entities the run opened, the causal analogue
-    of the 1.7% open rate measured in production.
+  - the share of role-x's injected TASK-RELEVANT entities the run opened: the
+    "Task-relevant knowledge" list, not the persona constraints above it. It is a
+    causal analogue of the 1.7% open rate measured in production.
 
 What the numbers are **not**:
-- **Intervals treat trials as independent.** Trials of one task are correlated, so
-  read the per-task matrix before any aggregate.
+- **The trial interval treats trials as independent.** Read the task-clustered one,
+  and the per-task matrix, before any aggregate.
 - **Calibration selects tasks the bare arm failed.** Some of those failures were
   luck, so bare's rate in the full run is biased low on the retained set, and lifts
   are upper bounds for the population of tasks.
@@ -585,6 +609,9 @@ What the numbers are **not**:
   the CLI's refusal marker, so `Transcript.executed()` counts it as run. No
   committed grader asserts on a gated command; one that did would have to allow for
   this.
+- **A trial that times out is void** (`ERROR`), even when the timeout is the very
+  failure under test, such as polling CI in a `sleep` loop. That is conservative, and
+  the pilot record says how many there were.
 
 ## Does the description even reach the model? (`listing.py`)
 

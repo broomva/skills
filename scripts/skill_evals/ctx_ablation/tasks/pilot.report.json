@@ -11,27 +11,28 @@
         0.0,
         0.1135
       ],
-      "context_tokens": 17980.333333333332,
-      "total_input_tokens": 127186.73333333334,
-      "output_tokens": 1469.6666666666667,
+      "context_tokens": 17972.833333333332,
+      "total_input_tokens": 133394.96666666667,
+      "output_tokens": 1380.6,
       "injected_tokens": 0.0,
       "injected_chars": 0.0,
-      "tool_calls": 5.733333333333333,
+      "tool_calls": 6.0,
       "source_rate": 0.25,
       "source_n": 12,
-      "wall_s": 19.0262,
-      "cost_usd": 0.033958466666666666,
+      "wall_s": 27.6071,
+      "cost_usd": 0.03506888166666667,
       "reflex_rates": {
-        "kg": 0.0667,
-        "docs": 0.2333,
-        "memory": 0.0,
-        "web": 0.0,
-        "subagent": 0.0
+        "kg": 0.2,
+        "docs": 0.3,
+        "memory": 0.0333,
+        "web": 0.0333,
+        "subagent": 0.0667
       },
       "entities_injected": 0,
       "entities_opened": 0,
       "lift": null,
       "lift_ci": null,
+      "lift_task_ci": null,
       "lift_per_1k": null,
       "lift_per_1k_ci": null,
       "pass_per_1k": null
@@ -39,86 +40,96 @@
     {
       "arm": "memory",
       "trials": 30,
-      "graded": 30,
-      "passes": 5,
-      "non_outcomes": {},
-      "pass_rate": 0.16666666666666666,
+      "graded": 29,
+      "passes": 6,
+      "non_outcomes": {
+        "ERROR": 1
+      },
+      "pass_rate": 0.20689655172413793,
       "pass_ci": [
-        0.0734,
-        0.3356
+        0.0985,
+        0.3839
       ],
-      "context_tokens": 28334.833333333332,
-      "total_input_tokens": 149124.26666666666,
-      "output_tokens": 1332.0,
-      "injected_tokens": 10354.5,
+      "context_tokens": 28334.068965517243,
+      "total_input_tokens": 164279.1379310345,
+      "output_tokens": 1335.103448275862,
+      "injected_tokens": 10360.866666666667,
       "injected_chars": 20572.0,
-      "tool_calls": 4.666666666666667,
+      "tool_calls": 4.655172413793103,
       "source_rate": 0.08333333333333333,
       "source_n": 12,
-      "wall_s": 18.781799999999997,
-      "cost_usd": 0.059208203333333334,
+      "wall_s": 18.20241379310345,
+      "cost_usd": 0.06144059655172414,
       "reflex_rates": {
-        "kg": 0.0,
-        "docs": 0.2,
-        "memory": 0.0333,
+        "kg": 0.1379,
+        "docs": 0.2414,
+        "memory": 0.0345,
         "web": 0.0,
         "subagent": 0.0
       },
       "entities_injected": 0,
       "entities_opened": 0,
-      "lift": 0.1667,
+      "lift": 0.2069,
       "lift_ci": [
-        0.0197,
-        0.3356
+        0.0499,
+        0.3839
       ],
-      "lift_per_1k": 0.0161,
+      "lift_task_ci": [
+        -0.1016,
+        0.5016
+      ],
+      "lift_per_1k": 0.02,
       "lift_per_1k_ci": [
-        0.0019,
-        0.0324
+        0.0048,
+        0.0371
       ],
-      "pass_per_1k": 0.0161
+      "pass_per_1k": 0.02
     },
     {
       "arm": "rolex",
       "trials": 30,
       "graded": 30,
-      "passes": 2,
+      "passes": 1,
       "non_outcomes": {},
-      "pass_rate": 0.06666666666666667,
+      "pass_rate": 0.03333333333333333,
       "pass_ci": [
-        0.0185,
-        0.2132
+        0.0059,
+        0.1667
       ],
-      "context_tokens": 18846.566666666666,
-      "total_input_tokens": 120579.9,
-      "output_tokens": 1401.8333333333333,
-      "injected_tokens": 866.2333333333336,
+      "context_tokens": 18855.5,
+      "total_input_tokens": 127655.36666666667,
+      "output_tokens": 1463.7333333333333,
+      "injected_tokens": 882.6666666666664,
       "injected_chars": 2914.3,
-      "tool_calls": 5.333333333333333,
-      "source_rate": 0.08333333333333333,
+      "tool_calls": 6.4,
+      "source_rate": 0.16666666666666666,
       "source_n": 12,
-      "wall_s": 19.932633333333335,
-      "cost_usd": 0.03479994833333333,
+      "wall_s": 24.209966666666666,
+      "cost_usd": 0.04384298833333333,
       "reflex_rates": {
-        "kg": 0.1,
-        "docs": 0.2333,
-        "memory": 0.0,
-        "web": 0.0333,
-        "subagent": 0.0
+        "kg": 0.2,
+        "docs": 0.3333,
+        "memory": 0.0333,
+        "web": 0.0,
+        "subagent": 0.0333
       },
-      "entities_injected": 330,
+      "entities_injected": 120,
       "entities_opened": 3,
-      "lift": 0.0667,
+      "lift": 0.0333,
       "lift_ci": [
-        -0.0567,
-        0.2132
+        -0.0834,
+        0.1667
       ],
-      "lift_per_1k": 0.077,
+      "lift_task_ci": [
+        -0.0421,
+        0.1087
+      ],
+      "lift_per_1k": 0.0377,
       "lift_per_1k_ci": [
-        -0.0654,
-        0.2462
+        -0.0945,
+        0.1889
       ],
-      "pass_per_1k": 0.077
+      "pass_per_1k": 0.0378
     },
     {
       "arm": "ctx",
@@ -131,22 +142,22 @@
         0.0059,
         0.1667
       ],
-      "context_tokens": 18291.733333333334,
-      "total_input_tokens": 127936.36666666667,
-      "output_tokens": 1419.7,
-      "injected_tokens": 311.4000000000004,
+      "context_tokens": 18296.266666666666,
+      "total_input_tokens": 102020.36666666667,
+      "output_tokens": 1189.0666666666666,
+      "injected_tokens": 323.43333333333356,
       "injected_chars": 906.9,
-      "tool_calls": 5.2,
-      "source_rate": 0.0,
+      "tool_calls": 6.1,
+      "source_rate": 0.08333333333333333,
       "source_n": 12,
-      "wall_s": 30.00136666666667,
-      "cost_usd": 0.03451982333333334,
+      "wall_s": 22.448566666666668,
+      "cost_usd": 0.04256660333333333,
       "reflex_rates": {
-        "kg": 0.0,
-        "docs": 0.2,
+        "kg": 0.2,
+        "docs": 0.3,
         "memory": 0.0,
-        "web": 0.1333,
-        "subagent": 0.0
+        "web": 0.0333,
+        "subagent": 0.1
       },
       "entities_injected": 0,
       "entities_opened": 0,
@@ -155,96 +166,110 @@
         -0.0834,
         0.1667
       ],
-      "lift_per_1k": 0.1069,
-      "lift_per_1k_ci": [
-        -0.268,
-        0.5353
+      "lift_task_ci": [
+        -0.0421,
+        0.1087
       ],
-      "pass_per_1k": 0.107
+      "lift_per_1k": 0.103,
+      "lift_per_1k_ci": [
+        -0.258,
+        0.5154
+      ],
+      "pass_per_1k": 0.1031
     },
     {
       "arm": "all",
       "trials": 30,
       "graded": 30,
-      "passes": 5,
+      "passes": 8,
       "non_outcomes": {},
-      "pass_rate": 0.16666666666666666,
+      "pass_rate": 0.26666666666666666,
       "pass_ci": [
-        0.0734,
-        0.3356
+        0.1418,
+        0.4445
       ],
-      "context_tokens": 29524.266666666666,
-      "total_input_tokens": 157588.0,
-      "output_tokens": 1336.8,
-      "injected_tokens": 11543.933333333332,
+      "context_tokens": 29523.333333333332,
+      "total_input_tokens": 165308.06666666668,
+      "output_tokens": 1512.0,
+      "injected_tokens": 11550.5,
       "injected_chars": 24393.2,
-      "tool_calls": 4.933333333333334,
+      "tool_calls": 5.466666666666667,
       "source_rate": 0.16666666666666666,
       "source_n": 12,
-      "wall_s": 22.730733333333333,
-      "cost_usd": 0.070276455,
+      "wall_s": 22.616333333333333,
+      "cost_usd": 0.06806273333333333,
       "reflex_rates": {
-        "kg": 0.0667,
-        "docs": 0.2333,
-        "memory": 0.0,
+        "kg": 0.1333,
+        "docs": 0.2667,
+        "memory": 0.1,
         "web": 0.0,
-        "subagent": 0.0333
+        "subagent": 0.0667
       },
-      "entities_injected": 330,
-      "entities_opened": 2,
-      "lift": 0.1667,
+      "entities_injected": 120,
+      "entities_opened": 4,
+      "lift": 0.2667,
       "lift_ci": [
-        0.0197,
-        0.3356
+        0.0979,
+        0.4445
       ],
-      "lift_per_1k": 0.0144,
+      "lift_task_ci": [
+        -0.004,
+        0.5374
+      ],
+      "lift_per_1k": 0.0231,
       "lift_per_1k_ci": [
-        0.0017,
-        0.0291
+        0.0085,
+        0.0385
       ],
-      "pass_per_1k": 0.0144
+      "pass_per_1k": 0.0231
     },
     {
       "arm": "rolex-top2",
       "trials": 30,
-      "graded": 30,
-      "passes": 1,
-      "non_outcomes": {},
-      "pass_rate": 0.03333333333333333,
-      "pass_ci": [
-        0.0059,
-        0.1667
-      ],
-      "context_tokens": 18728.8,
-      "total_input_tokens": 122349.06666666667,
-      "output_tokens": 1411.5333333333333,
-      "injected_tokens": 748.4666666666665,
-      "injected_chars": 2505.3,
-      "tool_calls": 6.166666666666667,
-      "source_rate": 0.16666666666666666,
-      "source_n": 12,
-      "wall_s": 23.2109,
-      "cost_usd": 0.04190388833333333,
-      "reflex_rates": {
-        "kg": 0.1,
-        "docs": 0.2667,
-        "memory": 0.0,
-        "web": 0.0333,
-        "subagent": 0.0667
+      "graded": 29,
+      "passes": 2,
+      "non_outcomes": {
+        "ERROR": 1
       },
-      "entities_injected": 270,
+      "pass_rate": 0.06896551724137931,
+      "pass_ci": [
+        0.0191,
+        0.2196
+      ],
+      "context_tokens": 18732.931034482757,
+      "total_input_tokens": 112326.44827586207,
+      "output_tokens": 1302.655172413793,
+      "injected_tokens": 759.5,
+      "injected_chars": 2503.8275862068967,
+      "tool_calls": 5.068965517241379,
+      "source_rate": 0.25,
+      "source_n": 12,
+      "wall_s": 18.654241379310342,
+      "cost_usd": 0.033132693103448276,
+      "reflex_rates": {
+        "kg": 0.2069,
+        "docs": 0.2759,
+        "memory": 0.0,
+        "web": 0.0,
+        "subagent": 0.0
+      },
+      "entities_injected": 58,
       "entities_opened": 0,
-      "lift": 0.0333,
+      "lift": 0.069,
       "lift_ci": [
-        -0.0834,
-        0.1667
+        -0.055,
+        0.2196
       ],
-      "lift_per_1k": 0.0445,
+      "lift_task_ci": [
+        -0.1262,
+        0.3262
+      ],
+      "lift_per_1k": 0.0908,
       "lift_per_1k_ci": [
-        -0.1115,
-        0.2227
+        -0.0724,
+        0.2892
       ],
-      "pass_per_1k": 0.0445
+      "pass_per_1k": 0.0908
     }
   ],
   "matrix": {
@@ -253,7 +278,7 @@
       "memory": "0/3",
       "rolex": "0/3",
       "ctx": "1/3",
-      "all": "1/3",
+      "all": "2/3",
       "rolex-top2": "0/3"
     },
     "coord-handoff-live-originator": {
@@ -274,18 +299,18 @@
     },
     "reflex-p9-watch-not-sleep": {
       "bare": "0/3",
-      "memory": "0/3",
-      "rolex": "2/3",
+      "memory": "0/2 (1 void)",
+      "rolex": "1/3",
       "ctx": "0/3",
-      "all": "1/3",
-      "rolex-top2": "1/3"
+      "all": "2/3",
+      "rolex-top2": "2/2 (1 void)"
     },
     "reflex-paseo-list-agents-fleet": {
       "bare": "0/3",
-      "memory": "2/3",
+      "memory": "3/3",
       "rolex": "0/3",
       "ctx": "0/3",
-      "all": "0/3",
+      "all": "1/3",
       "rolex-top2": "0/3"
     },
     "reflex-trash-scratch-dirs": {

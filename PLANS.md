@@ -2,7 +2,7 @@
 
 ## Context evals, layer 2: the causal context-ablation harness
 
-Status: pilot done; PR under review (branch `feat/context-ablation-evals`). Layer 1, the observational
+Status: pilot v3 done; PR #248 in review round 3 (branch `feat/context-ablation-evals`). Layer 1, the observational
 context ledger in bstack's leverage sensor, is a separate session's work. The owner
 decided on 2026-09-29 to build both layers.
 
@@ -29,8 +29,8 @@ the right retrieval reflexes, and how far it compresses.
 
 ### Milestones
 
-1. [x] Harness: arms, fixture, stubs (gh, trash, p9, Paseo MCP, delete gate),
-   graders, metrics, CLI, and 72 tests with seven mutants killed.
+1. [x] Harness: arms, fixture, stubs (gh, trash, p9, paseo, Paseo MCP, case guard),
+   graders, metrics and CLI. 137 tests; the mutants of every guard are killed.
 2. [x] 16 candidate tasks. Each fails a null run and its control-removed
    exemplar, and passes its informed exemplar.
 3. [x] Preflight on the real corpus. The live canary shows each of the six arms
@@ -38,8 +38,9 @@ the right retrieval reflexes, and how far it compresses.
 4. [x] Calibrate 16 candidates × 3 trials in the bare arm: 13 retained, 3
    vacuous (`tasks/pilot.calibration.json`).
 5. [x] Pilot: 10 retained tasks × 6 arms × 3 trials, 180 trials, 0 void
-   (`ctx_ablation/PILOT.md`). v1 was superseded after P20 round 1 found false fails
-   and a real-Trash side effect. v2 re-ran calibration and the pilot with the fixes.
+   (`ctx_ablation/PILOT.md`). v1 was superseded after P20 round 1 (false fails, a
+   real-Trash side effect), and v2 after round 2 (a vacuous check, a weak memory proof,
+   a guard that could not prove it ran). v3 is the result, on the final code.
 6. [ ] Scale to 30 tasks: not run. The owner held this session to the pilot
    because of the shared subscription limit, and the pilot is floor-limited on
    haiku. The next measurement is sonnet on the 13 retained tasks; PILOT.md has

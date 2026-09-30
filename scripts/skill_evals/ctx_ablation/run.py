@@ -288,7 +288,10 @@ def run_trial(s: Settings, task: tasks_mod.Task, arm: arms_mod.Arm, trial: int) 
                                   timeout=s.timeout)
             stdout, stderr, code = proc.stdout, proc.stderr, proc.returncode
         except subprocess.TimeoutExpired as exc:
-            stdout = exc.stdout if isinstance(exc.stdout, str) else ""
+            # On a timeout the captured output is BYTES whatever text=True says; keep
+            # it, so the partial transcript survives for diagnosis (still graded ERROR).
+            raw = exc.stdout or b""
+            stdout = raw.decode("utf-8", "replace") if isinstance(raw, bytes) else str(raw)
             stderr, code = f"TIMEOUT after {s.timeout}s", 124
         except OSError as exc:
             record.update(outcome=m.ERROR, detail=f"could not launch the CLI: {exc}")
