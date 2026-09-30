@@ -66,7 +66,7 @@ DEFAULT_INCLUDE = ("research/entities", "docs/knowledge-index.md", "docs/specs",
 SCOPE_ID = "broomva"
 #: Fixed so a fixture commit's sha depends only on its content.
 FIXTURE_DATE = "2026-09-01T12:00:00+0000"
-STUB_NAMES = ("gh", "trash", "p9")
+STUB_NAMES = ("gh", "trash", "p9", "paseo")
 
 
 class FixtureError(RuntimeError):
@@ -128,9 +128,20 @@ class CaseLayout:
         return self.home / ".local" / "state" / "ctx" / SCOPE_ID
 
     def env(self) -> dict[str, str]:
-        """The trial's environment: the jail's, with the stubs first on PATH."""
+        """The trial's environment: the jail's, with the stubs first on PATH, and
+        every route to real GitHub failing closed. PATH order shadows ``gh``; an
+        absolute ``gh`` still finds the keychain the jail links in, so it gets a
+        token that authenticates nothing. The system gitconfig (Xcode's sets the
+        osxkeychain credential helper) is skipped and git never prompts, so a push
+        to a real remote fails instead of authenticating."""
         env = jail_mod.build_case_env(self.root)
         env["PATH"] = f"{self.local_bin}{os.pathsep}{env.get('PATH', '')}"
+        env.update({
+            "GH_TOKEN": "ctxabl-no-real-github",
+            "GIT_CONFIG_NOSYSTEM": "1",
+            "GIT_TERMINAL_PROMPT": "0",
+            "GCM_INTERACTIVE": "never",
+        })
         return env
 
 
@@ -206,6 +217,7 @@ def snapshot_corpus(
         _copy_regular(Path(memory_src), mem_dest, skipped)
     else:
         missing.append(str(memory_src))
+    rewritten = rewrite_home_paths(dest, Path.home())
     digest, files, size = _tree_digest(dest)
     manifest = {
         "workspace_src": str(workspace_src),
@@ -213,6 +225,7 @@ def snapshot_corpus(
         "include": list(include),
         "missing": missing,
         "skipped_symlinks": len(skipped),
+        "files_with_home_paths_rewritten": rewritten,
         "files": files,
         "bytes": size,
         "sha256": digest,
@@ -228,6 +241,35 @@ def load_corpus(dest: Path) -> Corpus:
     if not manifest_path.is_file():
         raise FixtureError(f"no corpus snapshot at {dest} (manifest.json missing)")
     return Corpus(Path(dest), json.loads(manifest_path.read_text(encoding="utf-8")))
+
+
+#: Text files whose absolute real-home paths are rewritten to ``~`` in the snapshot.
+_TEXT_SUFFIXES = (".md", ".json", ".yaml", ".yml", ".txt", ".html", ".toml", ".jsonl")
+
+
+def rewrite_home_paths(root: Path, real_home: Path) -> int:
+    """Point absolute real-home paths in the snapshot at the case HOME instead.
+
+    Memory and KG files name paths like ``/Users/<op>/broomva/...``. In a trial the
+    home is the jail, so ``~/broomva/...`` is the same place the author meant, and
+    the absolute spelling is a door to the operator's real files. Returns the number
+    of files changed; the manifest records it.
+    """
+    prefix = str(real_home).rstrip("/")
+    pattern = re.compile(re.escape(prefix) + r"(?=/|\b)")
+    changed = 0
+    for path in root.rglob("*"):
+        if not path.is_file() or path.suffix.lower() not in _TEXT_SUFFIXES:
+            continue
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError):
+            continue
+        new = pattern.sub("~", text)
+        if new != text:
+            path.write_text(new, encoding="utf-8")
+            changed += 1
+    return changed
 
 
 def _chars(path: Path) -> int:
@@ -264,20 +306,22 @@ def _run(argv: list[str], cwd: Path, env: Mapping[str, str], *, check: bool = Tr
     return proc
 
 
-def expand(value: Any, variables: Mapping[str, str]) -> Any:
+def expand(value: Any, variables: Mapping[str, str], *, regex: bool = False) -> Any:
     """Replace ``${name}`` in strings (recursively). An unknown name raises: an empty
-    substitution inside a regex matches everything, which is a vacuous grader."""
+    substitution inside a regex matches everything, which is a vacuous grader. With
+    ``regex=True`` each value is escaped, so a branch name's ``.`` or a path's ``+``
+    is matched literally."""
     if isinstance(value, str):
         def sub(m: re.Match) -> str:
             key = m.group(1)
             if key not in variables:
                 raise KeyError(f"unknown template variable ${{{key}}}")
-            return variables[key]
+            return re.escape(variables[key]) if regex else variables[key]
         return re.sub(r"\$\{([A-Za-z0-9_:./-]+)\}", sub, value)
     if isinstance(value, list):
-        return [expand(v, variables) for v in value]
+        return [expand(v, variables, regex=regex) for v in value]
     if isinstance(value, dict):
-        return {k: expand(v, variables) for k, v in value.items()}
+        return {k: expand(v, variables, regex=regex) for k, v in value.items()}
     return value
 
 
@@ -455,6 +499,10 @@ def build_case(
     else:
         layout.memory_dir.mkdir(parents=True)
 
+    # The stubs are on PATH before setup runs, so a setup step that calls gh or
+    # trash reaches the stub, never the real binary.
+    write_stub_wrappers(layout, python)
+    layout.stubs_config.write_text("{}", encoding="utf-8")
     setup_env = {**git_env, "WS": str(layout.workspace), "CASE_ROOT": str(layout.root)}
     for cmd in task_fixture.get("setup") or []:
         proc = _run(["/bin/sh", "-c", cmd], layout.workspace, setup_env, check=False)
@@ -470,8 +518,10 @@ def build_case(
     }
     for key, val in (task_fixture.get("vars") or {}).items():
         variables[str(key)] = str(expand(val, variables))
+    # An empty value substituted into a regex matches everything; drop it, so a
+    # reference to it fails as an unknown variable instead.
+    variables = {k: v for k, v in variables.items() if v}
 
-    write_stub_wrappers(layout, python)
     stubs = expand(task_fixture.get("stubs") or {}, variables)
     layout.stubs_config.write_text(json.dumps(stubs, indent=2, sort_keys=True), encoding="utf-8")
     write_mcp_config(layout, python)
@@ -484,6 +534,14 @@ def write_arm_settings(case: Case, arm: arms_mod.Arm, rt: arms_mod.HookRuntime) 
     settings = arms_mod.build_settings(arm, case.layout.root, rt)
     case.layout.settings.write_text(json.dumps(settings, indent=2), encoding="utf-8")
     return settings
+
+
+def sanitize(text: str, layout: CaseLayout) -> str:
+    """Replace the case's temp path with ``<case>`` in text headed for a record, so a
+    committed report carries no machine-specific paths."""
+    for root in {str(layout.root), os.path.realpath(layout.root)}:
+        text = text.replace(root, "<case>")
+    return text
 
 
 def read_stub_logs(layout: CaseLayout) -> dict[str, list[dict[str, Any]]]:
@@ -513,6 +571,8 @@ __all__ = [
     "load_corpus",
     "project_slug",
     "read_stub_logs",
+    "rewrite_home_paths",
+    "sanitize",
     "snapshot_corpus",
     "write_arm_settings",
     "write_ctx_store",

@@ -14,7 +14,9 @@ changes only what is PUSHED into the model's context:
                branch, reading the workspace's ``roles/`` and catalog.
 * ``ctx``      ctx-core's SessionStart hook, the real script, briefing from the
                fixture ctx store.
-* ``rolex_coverage``  role-x's SessionStart coverage nudge (``all`` only).
+* ``rolex_coverage``  role-x's SessionStart coverage nudge (``all`` only). It reads
+               the last 7 days of intake events, and a fresh jail has one, so it is
+               silent in every trial: registered for fidelity, it injects nothing.
 
 That is the counterfactual the question asks about: "what if this were not
 injected", not "what if the knowledge did not exist". A bare arm that also deleted
@@ -129,16 +131,21 @@ class HookRuntime:
     #: the hook would exit 0 having injected NOTHING — the role-x arm would silently
     #: be the bare arm. PYTHONUSERBASE puts it back; ``preflight`` proves it worked.
     pythonuserbase: str = ""
+    #: The operator's real home. The case guard blocks any command or file tool that
+    #: names a path under it.
+    real_home: str = ""
 
 
 def hook_commands(arm: Arm, case_root: Path, rt: HookRuntime) -> dict[str, list[dict[str, Any]]]:
-    """The ``hooks`` object for *arm*. The delete gate is in every arm."""
+    """The ``hooks`` object for *arm*. The case guard is in every arm."""
     case = {"CTXABL_CASE_ROOT": str(case_root)}
+    if rt.real_home:
+        case["CTXABL_REAL_HOME"] = rt.real_home
     hooks: dict[str, list[dict[str, Any]]] = {
         "PreToolUse": [{
-            "matcher": "Bash",
+            "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
             "hooks": [{"type": "command", "timeout": 10,
-                       "command": _cmd(case, [rt.python, "-I", str(STUBS_DIR / "delete_gate.py")])}],
+                       "command": _cmd(case, [rt.python, "-I", str(STUBS_DIR / "guard.py")])}],
         }],
     }
     rolex_env = {"ROLE_X_PYTHON": rt.python}

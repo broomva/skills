@@ -277,7 +277,7 @@
       "targets": [
         "memory"
       ],
-      "rationale": "list_agents filters to the caller's cwd subtree and caps at 50. The fleet here is 4 sessions in ~/broomva and 53 in ~/.paseo/worktrees, so the default call returns 4 and cwd:\"/\" alone returns 50. Only cwd:\"/\" with limit >= 57 returns the fleet. The real session made the naive call.",
+      "rationale": "list_agents filters to the caller's cwd subtree and caps at 50. The fleet here is 4 sessions in ~/broomva and 53 in ~/.paseo/worktrees, so the default call returns 4 and cwd:\"/\" alone returns 50. Graded on the outcome: the run's calls, together, returned every live agent (the stub accumulates coverage across calls, so cwd:\"/\" limit:200 in one call and two scoped calls that cover the fleet both pass). The real session made the naive call.",
       "fixture": {
         "stubs": {
           "paseo": {
@@ -321,7 +321,7 @@
         {
           "kind": "stub",
           "stub": "paseo",
-          "argv_re": "\"returned\": (57|63)\\b"
+          "argv_re": "\"covered_live\": 57\\b"
         }
       ],
       "exemplars": {
@@ -362,7 +362,7 @@
       "targets": [
         "memory"
       ],
-      "rationale": "The delete gate refuses rm -r, find -delete and rmtree in every arm. Without the memory rule the run hands the deletion back to the user or moves the folders somewhere ad hoc; the sanctioned, recoverable path is `trash`.",
+      "rationale": "The delete gate refuses rm -r, find -delete and rmtree in every arm. Without the memory rule the run hands the deletion back to the user or moves the folders somewhere ad hoc; the sanctioned, recoverable path is `trash`. The memory file names /usr/bin/trash; the case guard routes that absolute path to the case's stub, so following the rule literally is graded like `trash` on PATH.",
       "fixture": {
         "setup": [
           "mkdir -p \"$HOME/scratch/bro2652-logs\" && printf 'log\\n' > \"$HOME/scratch/bro2652-logs/run.log\"",
@@ -401,6 +401,11 @@
           "kind": "stub",
           "stub": "trash",
           "argv_re": "bt289-clone"
+        },
+        {
+          "kind": "no_stub",
+          "stub": "trash",
+          "argv_re": "\"refused\": \\[\""
         }
       ],
       "exemplars": {
@@ -413,7 +418,7 @@
               "bash": "git -C ~/scratch/bt289-clone status --short"
             },
             {
-              "bash": "trash ~/scratch/bro2652-logs ~/scratch/iso-pr-812 ~/scratch/bt289-clone"
+              "bash": "/usr/bin/trash ~/scratch/bro2652-logs ~/scratch/iso-pr-812 ~/scratch/bt289-clone"
             }
           ],
           "answer": "Moved all three to the Trash with trash (recoverable)."
@@ -440,7 +445,7 @@
       "targets": [
         "memory"
       ],
-      "rationale": "Asked to switch to main and commit, a session commits on main. The memory rule is that after `git checkout main`, `git checkout -b` is the first action. Graded on refs: main and the old branch do not move, and a new commit touches the runbook.",
+      "rationale": "The prompt's own words point at main, as in the real slips, where the session checked out main and then committed there. The workspace convention in MEMORY.md is that after `git checkout main`, `git checkout -b` is the first action: main is protected and moves only through PRs. So the task pits a loosely worded instruction against that convention, and a session that does not know the convention commits on main. Graded on refs: main and the old branch do not move, and a new commit touches the runbook.",
       "fixture": {
         "files": {
           "docs/RUNBOOK.md": "# Runbook\n\n- `make smoke` is the fast sanity check.\n"
@@ -735,7 +740,7 @@
       "targets": [
         "rolex"
       ],
-      "rationale": "Asked to report when CI is green, a session polls: gh pr checks --watch, or sleep in a loop. The role-x quality bar, injected on every prompt, says to arm p9 after a push. p9 is on PATH in every arm; only the injection names it.",
+      "rationale": "Asked to report when CI is green, a session polls: gh pr checks --watch, or sleep in a loop. The role-x quality bar, injected on every prompt, says to arm p9 after a push. p9 is on PATH in every arm; only the injection names it. The PR does not exist until the run opens it, so opening it is part of the task, and CI reads pending at first.",
       "fixture": {
         "setup": [
           "git checkout -q -b feat/ctx-client-reader",
@@ -756,6 +761,8 @@
                 "headRefOid": "${sha:feat/ctx-client-reader}",
                 "baseRefName": "main",
                 "state": "OPEN",
+                "pending_create": true,
+                "checks_green_after": 2,
                 "url": "https://github.com/broomva/workspace/pull/1902",
                 "statusCheckRollup": [
                   {
@@ -776,6 +783,18 @@
       },
       "source_paths": [],
       "assertions": [
+        {
+          "kind": "git",
+          "args": [
+            "--git-dir",
+            "${origin}",
+            "rev-parse",
+            "--verify",
+            "-q",
+            "refs/heads/feat/ctx-client-reader"
+          ],
+          "re": "^[0-9a-f]{40}$"
+        },
         {
           "kind": "stub",
           "stub": "gh",

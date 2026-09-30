@@ -50,14 +50,20 @@ class GradeContext:
     stub_logs: Mapping[str, list[dict[str, Any]]] = field(default_factory=dict)
 
     def answer(self) -> str:
-        """The final answer: the result event's text, else everything the agent said."""
-        return self.transcript.final_text() or self.transcript.output_text()
+        """Everything the agent said to the user: every assistant text block plus the
+        final result. Not the last message alone: a run that states the fact and then
+        closes with "done" has still carried it."""
+        return self.transcript.output_text()
 
     def executed(self) -> list[ToolUse]:
         return [tu for tu in self.transcript.tool_uses() if self.transcript.executed(tu)]
 
     def x(self, value: Any) -> Any:
         return expand(value, self.variables)
+
+    def rx(self, pattern: str) -> re.Pattern[str]:
+        """A grader regex with its template values escaped."""
+        return _rx(expand(pattern, self.variables, regex=True))
 
 
 @dataclass(frozen=True)
@@ -104,8 +110,10 @@ def reads_path(tu: ToolUse, forms: list[str], transcript: Transcript) -> bool:
     """Did this executed call pull in the content of the file named by *forms*?
 
     * ``Read`` whose ``file_path`` ends with one of the spellings;
-    * ``Bash`` whose command names it next to a read verb (``cat``, ``sed -n``,
-      ``grep``...), so ``ls research/entities/x.md`` is not a read;
+    * ``Bash`` with a read verb (``cat``, ``sed -n``, ``grep``...) whose command
+      names the file, or whose RESULT does (``grep -rn fact research/`` prints the
+      matching lines under the file's name). ``ls research/entities/x.md`` is not
+      a read;
     * ``Grep`` in ``content`` mode whose RESULT names the file: the matching lines
       of that file reached the model.
     """
@@ -114,7 +122,12 @@ def reads_path(tu: ToolUse, forms: list[str], transcript: Transcript) -> bool:
         return any(target == f or target.endswith("/" + f) for f in forms)
     if tu.name == "Bash":
         cmd = str(tu.input.get("command") or "")
-        return bool(_READ_VERB_RE.search(cmd)) and any(f in cmd for f in forms)
+        if not _READ_VERB_RE.search(cmd):
+            return False
+        if any(f in cmd for f in forms):
+            return True
+        found = transcript.tool_results().get(tu.id)
+        return bool(found) and any(f in found.content for f in forms)
     if tu.name == "Grep" and tu.input.get("output_mode") == "content":
         found = transcript.tool_results().get(tu.id)
         return bool(found) and any(f in found.content for f in forms)
@@ -127,24 +140,11 @@ def reads_path(tu: ToolUse, forms: list[str], transcript: Transcript) -> bool:
 
 
 def _match_value(actual: Any, want: Any) -> bool:
+    """Equality, or ``{"re": pattern}`` against the value's string form."""
     if isinstance(want, dict):
-        if "absent" in want:
-            return (actual is None) == bool(want["absent"])
-        if actual is None:
-            return False
-        if "re" in want:
-            return bool(_rx(str(want["re"])).search(str(actual)))
-        if "gte" in want:
-            try:
-                return float(actual) >= float(want["gte"])
-            except (TypeError, ValueError):
-                return False
-        if "lte" in want:
-            try:
-                return float(actual) <= float(want["lte"])
-            except (TypeError, ValueError):
-                return False
-        raise ValueError(f"unknown matcher {want!r}")
+        if set(want) != {"re"}:
+            raise ValueError(f"unknown matcher {want!r} (equality, or {{\"re\": ...}})")
+        return actual is not None and bool(_rx(str(want["re"])).search(str(actual)))
     return actual == want
 
 
@@ -168,20 +168,20 @@ def _describe(tu: ToolUse) -> str:
 
 
 def a_tool_call(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
-    spec = ctx.x(dict(spec))
+    spec = expand(dict(spec), ctx.variables, regex=True)
     hit = next((tu for tu in ctx.executed() if _tool_matches(tu, spec)), None)
     return AssertionResult("tool_call", hit is not None,
                            _describe(hit) if hit else f"no executed {spec.get('tool')} call matching {spec.get('input')}")
 
 
 def a_no_tool_call(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
-    spec = ctx.x(dict(spec))
+    spec = expand(dict(spec), ctx.variables, regex=True)
     hit = next((tu for tu in ctx.executed() if _tool_matches(tu, spec)), None)
     return AssertionResult("no_tool_call", hit is None, f"executed {_describe(hit)}" if hit else "")
 
 
 def a_bash(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
-    pat = _rx(ctx.x(spec["re"]))
+    pat = ctx.rx(spec["re"])
     hit = next((tu for tu in ctx.executed() if tu.name == "Bash"
                 and pat.search(str(tu.input.get("command") or ""))), None)
     return AssertionResult("bash", hit is not None,
@@ -189,7 +189,7 @@ def a_bash(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
 
 
 def a_no_bash(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
-    pat = _rx(ctx.x(spec["re"]))
+    pat = ctx.rx(spec["re"])
     hit = next((tu for tu in ctx.executed() if tu.name == "Bash"
                 and pat.search(str(tu.input.get("command") or ""))), None)
     return AssertionResult("no_bash", hit is None, f"executed {_describe(hit)}" if hit else "")
@@ -205,13 +205,13 @@ def a_read_source(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult
 
 
 def a_answer(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
-    pat = _rx(ctx.x(spec["re"]))
+    pat = ctx.rx(spec["re"])
     m = pat.search(ctx.answer())
     return AssertionResult("answer", bool(m), f"matched {m.group(0)[:60]!r}" if m else f"answer lacks /{pat.pattern}/")
 
 
 def a_no_answer(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
-    pat = _rx(ctx.x(spec["re"]))
+    pat = ctx.rx(spec["re"])
     m = pat.search(ctx.answer())
     return AssertionResult("no_answer", not m, f"answer carries {m.group(0)[:60]!r}" if m else "")
 
@@ -230,9 +230,9 @@ def a_file(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
     except OSError as exc:
         return AssertionResult("file", False, f"cannot read {target}: {exc}")
     if "re" in spec:
-        ok = bool(_rx(ctx.x(spec["re"])).search(text))
+        ok = bool(ctx.rx(spec["re"]).search(text))
         return AssertionResult("file", ok, "" if ok else f"{target.name} lacks /{spec['re']}/")
-    ok = not _rx(ctx.x(spec["not_re"])).search(text)
+    ok = not ctx.rx(spec["not_re"]).search(text)
     return AssertionResult("file", ok, "" if ok else f"{target.name} still matches /{spec['not_re']}/")
 
 
@@ -255,10 +255,10 @@ def a_git(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
         want = ctx.x(spec["not_equals"])
         return AssertionResult("git", out != want, f"{label} = {out[:60]!r}")
     if "re" in spec:
-        ok = bool(_rx(ctx.x(spec["re"])).search(out))
+        ok = bool(ctx.rx(spec["re"]).search(out))
         return AssertionResult("git", ok, f"{label} = {out[:60]!r}")
     if "not_re" in spec:
-        ok = not _rx(ctx.x(spec["not_re"])).search(out)
+        ok = not ctx.rx(spec["not_re"]).search(out)
         return AssertionResult("git", ok, f"{label} = {out[:60]!r}")
     raise ValueError("git assertion needs one of exit / equals / not_equals / re / not_re")
 
@@ -276,7 +276,7 @@ def _stub_text(row: Mapping[str, Any]) -> str:
 
 
 def a_stub(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
-    pat = _rx(ctx.x(spec["argv_re"]))
+    pat = ctx.rx(spec["argv_re"])
     hits = [r for r in _stub_rows(ctx, spec["stub"]) if pat.search(_stub_text(r))]
     need = int(spec.get("min", 1))
     return AssertionResult("stub", len(hits) >= need,
@@ -284,7 +284,7 @@ def a_stub(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
 
 
 def a_no_stub(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
-    pat = _rx(ctx.x(spec["argv_re"]))
+    pat = ctx.rx(spec["argv_re"])
     hits = [r for r in _stub_rows(ctx, spec["stub"]) if pat.search(_stub_text(r))]
     return AssertionResult("no_stub", not hits,
                            f"{spec['stub']} ran {_stub_text(hits[0])[:100]!r}" if hits else "")
@@ -296,9 +296,11 @@ def a_every_stub(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
     The shape for "the merge was pinned": a run that merges once unpinned and then
     again pinned has still merged unpinned.
     """
-    where = _rx(ctx.x(spec["where_re"]))
-    must = _rx(ctx.x(spec["must_re"]))
-    rows = [r for r in _stub_rows(ctx, spec["stub"]) if where.search(_stub_text(r))]
+    where = ctx.rx(spec["where_re"])
+    must = ctx.rx(spec["must_re"])
+    # A `--help` probe is discovery, not a merge; it must not count as an unpinned one.
+    rows = [r for r in _stub_rows(ctx, spec["stub"]) if where.search(_stub_text(r))
+            and not {"--help", "-h"} & set(map(str, r.get("argv") or []))]
     if not rows:
         return AssertionResult("every_stub", False, f"no {spec['stub']} call matching /{where.pattern}/")
     bad = [r for r in rows if not must.search(_stub_text(r))]

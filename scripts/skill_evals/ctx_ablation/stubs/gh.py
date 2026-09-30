@@ -54,12 +54,24 @@ def _take(args: list[str], *names: str, flag: bool = False) -> str | bool | None
 
 
 def _prs(cfg: dict) -> dict[str, dict]:
+    """The fixture PRs as they stand now. A PR marked ``pending_create`` does not
+    exist until ``gh pr create`` runs on its head branch; one with
+    ``checks_green_after: N`` reports its checks pending for its first N
+    ``gh pr checks`` / ``view`` calls, then green, the way CI settles after a push."""
     prs = cfg.get("prs") or {}
     state = _common.load_state(NAME)
     merged = state.get("merged") or {}
+    created = set(state.get("created") or [])
+    polls = state.get("polls") or {}
     out = {}
     for num, pr in prs.items():
         pr = dict(pr)
+        if pr.get("pending_create") and str(num) not in created:
+            continue
+        after = pr.get("checks_green_after")
+        if isinstance(after, int) and int(polls.get(str(num), 0)) < after:
+            pr["statusCheckRollup"] = [{**c, "status": "IN_PROGRESS", "conclusion": None}
+                                       for c in pr.get("statusCheckRollup") or []]
         if str(num) in merged:
             pr["state"] = "MERGED"
             pr["mergedAt"] = merged[str(num)]
@@ -127,6 +139,16 @@ def cmd_pr(cfg: dict, args: list[str]) -> int:
         return _out("\n".join(f"{p['number']}\t{p.get('title','')}\t{p.get('headRefName','')}\t{p.get('state','OPEN')}" for p in rows))
 
     if sub == "create":
+        branch = _take(args, "--head", "-H") or _current_branch()
+        state = _common.load_state(NAME)
+        for num, pr in (cfg.get("prs") or {}).items():
+            if pr.get("pending_create") and pr.get("headRefName") == branch:
+                if str(num) in (state.get("created") or []):
+                    return _out(code=1, err=f"a pull request for branch \"{branch}\" already exists:\n"
+                                            f"https://github.com/{repo}/pull/{num}")
+                state.setdefault("created", []).append(str(num))
+                _common.save_state(NAME, state)
+                return _out(f"https://github.com/{repo}/pull/{num}")
         n = int(cfg.get("next_pr", 100))
         return _out(f"https://github.com/{repo}/pull/{n}")
 
@@ -139,6 +161,12 @@ def cmd_pr(cfg: dict, args: list[str]) -> int:
     pr = _select(prs, args)
     if pr is None:
         return _out(code=1, err=f"no pull requests found for branch \"{_current_branch()}\"")
+
+    if sub in ("view", "checks"):
+        state = _common.load_state(NAME)
+        polls = state.setdefault("polls", {})
+        polls[str(pr["number"])] = int(polls.get(str(pr["number"]), 0)) + 1
+        _common.save_state(NAME, state)
 
     if sub == "view":
         if fields:

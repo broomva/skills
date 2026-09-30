@@ -79,6 +79,11 @@ OFFLINE_SESSION = "ctxabl-offline"
 #: role-x's own carve-out (CARVE_OUT_MIN_WORDS in role-x.py): shorter prompts get no
 #: intake block, in production as here.
 ROLEX_MIN_WORDS = 3
+#: Memory delivery, proven per trial from tokens: a memory arm's turn-one context must
+#: exceed bare's (same task) by at least this, and any other arm's must not. Measured
+#: on the pilot: memory arms +10,280 or more (the CLI's auto-memory block alone is
+#: ~3.2k), every other arm +1,019 or less (role-x plus the brief).
+MEMORY_MIN_DELTA_TOKENS = 2000
 
 def calibration_dir(out: Path) -> Path:
     return Path(out) / "calibration"
@@ -112,7 +117,7 @@ def resolve_runtime() -> tuple[arms_mod.HookRuntime, str]:
         ok = subprocess.run(
             [python, "-I", "-c", "import site, sys; sys.path.append(site.getusersitepackages()); import yaml"],
             env=env, capture_output=True, text=True, timeout=30).returncode == 0
-    rt = arms_mod.HookRuntime(python=python, pythonuserbase=userbase)
+    rt = arms_mod.HookRuntime(python=python, pythonuserbase=userbase, real_home=str(Path.home()))
     problem = "" if ok else (
         f"PyYAML is not importable by {python} under a moved HOME (PYTHONUSERBASE={userbase}); "
         "the role-x hook would exit 0 and inject nothing")
@@ -196,6 +201,10 @@ class Settings:
         self.rt = rt
         self.corpus = corpus
         self.out = out
+        #: Every record carries this; a run directory holds one key only.
+        self.calibration = str(getattr(args, "calibration_sha", "") or "uncalibrated")
+        self.run_key = "|".join([self.model, cli_version or "?",
+                                 str(corpus.manifest.get("sha256", "?"))[:12], self.calibration[:12]])
 
 
 def _argv(s: Settings, prompt: str, layout: fx.CaseLayout) -> list[str]:
@@ -211,8 +220,10 @@ def _outcome_for_injections(arm: arms_mod.Arm, case: fx.Case, t: Transcript, rol
     """``("", "")`` when the arm got exactly its injections, else (outcome, why)."""
     layout = case.layout
     init_cwd = (t.init_event or {}).get("cwd")
-    if init_cwd and os.path.realpath(init_cwd) != os.path.realpath(layout.workspace):
-        return m.ERROR, f"session cwd {init_cwd!r} is not the workspace, so the memory key is wrong"
+    if not init_cwd:
+        return m.ERROR, "the init event carries no cwd, so the memory key cannot be checked"
+    if os.path.realpath(init_cwd) != os.path.realpath(layout.workspace):
+        return m.ERROR, "the session cwd is not the workspace, so the memory key is wrong"
     hooks = m.hook_outputs(t)
     ctx_seen = any(arms_mod.CTX_MARKER in h["text"] for h in hooks)
     if arm.ctx and not ctx_seen:
@@ -225,6 +236,10 @@ def _outcome_for_injections(arm: arms_mod.Arm, case: fx.Case, t: Transcript, rol
     # and workspace says whether this is one; PyYAML being unreachable, the other
     # way to print nothing, is refused before any trial by resolve_runtime.
     rolex_expected = arms_mod.ROLEX_MARKER in rolex_text
+    if arm.rolex and not rolex_expected and len(prompt.split()) >= ROLEX_MIN_WORDS:
+        # Not the carve-out, so role-x printing nothing means it could not run (no
+        # roles/ or catalog in the corpus, a missing dependency): the arm is bare.
+        return m.INJECTION_MISSING, "role-x printed no intake block for a prompt it does not carve out"
     if arm.rolex and rolex_expected and not rolex_ran:
         return m.INJECTION_MISSING, "role-x arm, but the live intake hook logged no intake for this prompt"
     if not arm.rolex and rolex_ran:
@@ -237,7 +252,7 @@ def _outcome_for_injections(arm: arms_mod.Arm, case: fx.Case, t: Transcript, rol
 def run_trial(s: Settings, task: tasks_mod.Task, arm: arms_mod.Arm, trial: int) -> dict[str, Any]:
     root = Path(tempfile.mkdtemp(prefix=f"ctxabl-{task.id[:20]}-{arm.id}-{trial}-")).resolve()
     record: dict[str, Any] = {"task": task.id, "class": task.cls, "arm": arm.id, "trial": trial,
-                              "model": s.model, "cli_version": s.cli_version}
+                              "model": s.model, "cli_version": s.cli_version, "run_key": s.run_key}
     try:
         try:
             case = fx.build_case(root, task.fixture, s.corpus, python=s.rt.python)
@@ -275,10 +290,11 @@ def run_trial(s: Settings, task: tasks_mod.Task, arm: arms_mod.Arm, trial: int) 
         ctx = g.GradeContext(transcript=t, layout=case.layout, env=case.env, variables=case.variables,
                              stub_logs=fx.read_stub_logs(case.layout))
         passed, results = g.grade(ctx, task.assertions)
+        clean = lambda text: fx.sanitize(text, case.layout)  # noqa: E731
         record.update(
             outcome=m.PASS if passed else m.FAIL,
-            detail="; ".join(f"{r.kind}: {r.detail}" for r in results if not r.passed)[:600],
-            assertions=[r.to_dict() for r in results],
+            detail=clean("; ".join(f"{r.kind}: {r.detail}" for r in results if not r.passed))[:600],
+            assertions=[{**r.to_dict(), "detail": clean(r.detail)} for r in results],
             source_retrieved=g.source_retrieved(ctx, task.source_paths),
             reflexes=m.reflexes(ctx),
             entities_opened=m.entities_opened(ctx, record.get("entities_injected") or []),
@@ -323,6 +339,42 @@ def _measure(s: Settings, task: tasks_mod.Task, arm: arms_mod.Arm, case: fx.Case
 # ---------------------------------------------------------------------------
 
 
+def verify_memory_delivery(rows: Sequence[dict[str, Any]], arm_memory: dict[str, bool]
+                           ) -> tuple[list[dict[str, Any]], str]:
+    """Prove memory delivery (and its absence) per trial, from the tokens.
+
+    Auto-memory leaves no event in the stream, so the only direct evidence is the
+    size of the first call: a memory arm's must exceed the same task's bare minimum
+    by ``MEMORY_MIN_DELTA_TOKENS``; any other arm's must not. A graded trial that
+    breaks this becomes INJECTION_MISSING or LEAKED. Without a bare arm there is no
+    reference, and the note says so rather than passing silently.
+    """
+    bare: dict[str, int] = {}
+    for r in rows:
+        if r["arm"] == "bare" and isinstance(r.get("context_tokens"), int):
+            bare[r["task"]] = min(bare.get(r["task"], r["context_tokens"]), r["context_tokens"])
+    if not bare:
+        return list(rows), "memory delivery NOT verified: no bare arm in these results"
+    out, flipped = [], 0
+    for r in rows:
+        ref, ctx_tok = bare.get(r["task"]), r.get("context_tokens")
+        if (r["outcome"] in m.NON_OUTCOMES or r["arm"] == "bare" or ref is None
+                or not isinstance(ctx_tok, int) or r["arm"] not in arm_memory):
+            out.append(r)
+            continue
+        delivered = ctx_tok - ref >= MEMORY_MIN_DELTA_TOKENS
+        if arm_memory[r["arm"]] and not delivered:
+            r = {**r, "outcome": m.INJECTION_MISSING,
+                 "detail": f"memory arm, but turn one is only {ctx_tok - ref:+} tokens over bare"}
+            flipped += 1
+        elif not arm_memory[r["arm"]] and delivered:
+            r = {**r, "outcome": m.LEAKED,
+                 "detail": f"turn one is {ctx_tok - ref:+} tokens over bare in an arm without memory"}
+            flipped += 1
+        out.append(r)
+    return out, f"memory delivery verified from tokens against bare ({flipped} trial(s) voided)"
+
+
 def load_results(out: Path) -> list[dict[str, Any]]:
     path = out / "results.jsonl"
     if not path.is_file():
@@ -343,9 +395,21 @@ def latest_by_key(rows: Sequence[dict[str, Any]]) -> dict[tuple[str, str, int], 
     return out
 
 
+class MixedRunError(RuntimeError):
+    """The run directory already holds trials from a different model, CLI, corpus
+    or calibration; resuming would pool them into one table."""
+
+
 def run_suite(s: Settings, tasks: Sequence[tasks_mod.Task], arms: Sequence[arms_mod.Arm], trials: int,
               *, jobs: int, max_utilization: float, retry_void: bool, seed: int) -> dict[str, Any]:
-    done = latest_by_key(load_results(s.out))
+    existing = load_results(s.out)
+    foreign = sorted({r.get("run_key", "?") for r in existing} - {s.run_key})
+    if foreign:
+        raise MixedRunError(
+            f"{s.out} already holds trials under another run key ({foreign[0]}); this run is "
+            f"{s.run_key}. Use a new --out: a resume must not pool models, CLIs, corpora or "
+            "calibrations into one table.")
+    done = latest_by_key(existing)
     plan = []
     for trial in range(1, trials + 1):
         # Trial-major and shuffled within a trial, so a run the budget guard stops
@@ -531,9 +595,10 @@ def cmd_preflight(args) -> int:
 
 CANARY_MEMORY = "MEMCANARY-7Q"
 CANARY_CTX = "CTXCANARY-4K"
-#: The first quality-bar bullet of role-x's _meta lens; the canary's evidence that the
-#: role-x block reached the model.
-CANARY_ROLEX = "snapshot"
+#: From the first quality-bar bullet of role-x's _meta lens ("Snapshot (P15) and
+#: Dep-Chain (P14)..."): the canary's evidence that the role-x block reached the model.
+#: Not "snapshot", which the fixture's own commit message also carries.
+CANARY_ROLEX = "dep-chain"
 #: The question names no canary token. The first version quoted them, and role-x's
 #: "consider authoring a lens" nudge builds a slug from prompt words, so it echoed
 #: the tokens back into context and the role-x arms "saw" canaries they never had.
@@ -618,6 +683,17 @@ def _live_setup(args, out: Path) -> tuple[Settings | None, int]:
         print("[ctx-ablation] WARNING  no keychain to link into the jail: trials may all fail "
               "'Not logged in'", file=sys.stderr)
     corpus = _corpus(args, out)
+    missing = set(corpus.manifest.get("missing") or [])
+    if any(a.rolex for a in arms) and missing & {"roles", "docs/knowledge-index.md"}:
+        print(f"[ctx-ablation] REFUSING: the corpus lacks {sorted(missing)}, so role-x would print "
+              "nothing and every role-x trial would be a bare one", file=sys.stderr)
+        return None, EXIT_FAIL
+    cal = getattr(args, "calibration_doc", None)
+    if cal and cal.get("corpus_sha256") and cal["corpus_sha256"] != corpus.manifest.get("sha256"):
+        print("[ctx-ablation] REFUSING: the calibration was taken on another corpus snapshot "
+              f"({str(cal['corpus_sha256'])[:12]} != {str(corpus.manifest.get('sha256'))[:12]}); "
+              "recalibrate on this one", file=sys.stderr)
+        return None, EXIT_FAIL
     return Settings(args, cli, version, rt, corpus, out), EXIT_OK
 
 
@@ -673,6 +749,8 @@ def cmd_calibrate(args) -> int:
                      max_utilization=args.max_utilization, retry_void=args.retry_void, seed=args.seed)
     rows = [r for r in latest_by_key(load_results(s.out)).values() if r["arm"] == "bare"]
     verdicts = calibration_verdicts(rows, [t.id for t in tasks], args.trials)
+    changes = watch.changes()
+    (out / "real-state-changes.json").write_text(json.dumps(changes, indent=2), encoding="utf-8")
     costs = [r["cost_usd"] for r in rows if isinstance(r.get("cost_usd"), (int, float))]
     walls = [r["wall_ms"] / 1000 for r in rows if isinstance(r.get("wall_ms"), int)]
     cal = {
@@ -682,7 +760,10 @@ def cmd_calibrate(args) -> int:
         "corpus_sha256": s.corpus.manifest.get("sha256"),
         "mean_cost_usd": round(sum(costs) / len(costs), 4) if costs else None,
         "mean_wall_s": round(sum(walls) / len(walls), 1) if walls else None,
-        "run": info, "real_state_changes": watch.changes(),
+        "run": info,
+        # A count only: the paths name the operator's machine and go to their own file
+        # in the run directory, so this file is safe to commit as written.
+        "real_state_changes": len(changes),
         "tasks": verdicts,
     }
     (out / "calibration.json").write_text(json.dumps(cal, indent=2), encoding="utf-8")
@@ -720,7 +801,15 @@ def cmd_run(args) -> int:
     out.mkdir(parents=True, exist_ok=True)
     cal = None
     if args.calibration:
-        cal = json.loads(Path(args.calibration).read_text(encoding="utf-8"))
+        raw_cal = Path(args.calibration).read_bytes()
+        cal = json.loads(raw_cal)
+        args.calibration_doc = cal
+        args.calibration_sha = hashlib.sha256(raw_cal).hexdigest()
+        if cal.get("model") and cal["model"] != args.model:
+            print(f"error: the calibration was run on {cal['model']!r}, this run is {args.model!r}. "
+                  "Which tasks fail without injection depends on the model; recalibrate.",
+                  file=sys.stderr)
+            return EXIT_USAGE
         verdicts = cal.get("tasks") or {}
         dropped = [t.id for t in tasks if (verdicts.get(t.id) or {}).get("verdict") != CALIBRATION_RETAINED]
         for tid in dropped:
@@ -768,6 +857,14 @@ def cmd_report(args) -> int:
     if not rows:
         print(f"error: no results under {out}", file=sys.stderr)
         return EXIT_USAGE
+    arm_memory = {}
+    for arm_id in {r["arm"] for r in rows}:
+        try:
+            arm_memory[arm_id] = arms_mod.parse_arm(arm_id).memory
+        except ValueError:
+            pass
+    rows, memory_note = verify_memory_delivery(rows, arm_memory)
+    print(f"[ctx-ablation] {memory_note}", file=sys.stderr)
     order = [a for a in arms_mod.DEFAULT_ARMS if any(r["arm"] == a for r in rows)]
     order += sorted({r["arm"] for r in rows} - set(order))
     if getattr(args, "task", None):
@@ -775,6 +872,7 @@ def cmd_report(args) -> int:
     table = m.aggregate(rows, order)
     matrix = m.task_matrix(rows, order)
     text = "\n\n".join([
+        f"_{memory_note}._",
         "### Per arm\n\n" + m.format_table(table),
         "### Per task (passes / graded trials)\n\n" + m.format_matrix(matrix, order),
         "### Retrieval reflexes (share of graded trials)\n\n" + m.format_reflexes(table),
@@ -847,7 +945,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
         return args.fn(args)
-    except tasks_mod.TaskError as exc:
+    except (tasks_mod.TaskError, MixedRunError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return EXIT_USAGE
 

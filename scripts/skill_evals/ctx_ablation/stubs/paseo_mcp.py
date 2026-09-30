@@ -144,7 +144,16 @@ def handle(msg: dict) -> None:
             _reply(msg_id, error={"code": -32602, "message": f"unknown tool {name!r}"})
             return
         result = fn(args)
-        _common.log(NAME, {"tool": name, "arguments": args, "returned": result.get("count")})
+        # Coverage accumulates across calls, so two scoped calls that together return
+        # the whole fleet count the same as one wide call.
+        state = _common.load_state(NAME)
+        seen = set(state.get("seen_live") or [])
+        seen |= {a["id"] for a in result.get("agents") or [] if a.get("status") != "archived"}
+        state["seen_live"] = sorted(seen)
+        _common.save_state(NAME, state)
+        live_total = sum(1 for a in fleet() if a.get("status") != "archived")
+        _common.log(NAME, {"tool": name, "arguments": args, "returned": result.get("count"),
+                           "covered_live": len(seen), "live_total": live_total})
         _reply(msg_id, {"content": [{"type": "text", "text": json.dumps(result)}]})
     elif method == "ping":
         _reply(msg_id, {})

@@ -115,18 +115,34 @@ def rate_limit_utilization(t: Transcript) -> float | None:
     return best
 
 
-def reflexes(ctx: g.GradeContext) -> dict[str, bool]:
-    """Which retrieval channels the run reached for, from executed tool inputs."""
-    blobs = []
+def _read_under(ctx: g.GradeContext, needles: Sequence[str]) -> bool:
+    """Did the run READ something whose path contains one of *needles*? The same
+    evidence rule as ``graders.reads_path``: a Read, a Bash read verb naming it, or a
+    content-mode Grep. Listing (``ls``, Glob) and writing are not reading."""
     for tu in ctx.executed():
-        blobs.append((tu.name, json.dumps(tu.input, ensure_ascii=False)))
-    mem = str(ctx.layout.memory_dir)
+        if tu.name in ("Read", "NotebookRead"):
+            target = str(tu.input.get("file_path") or tu.input.get("notebook_path") or "")
+            if any(n in target for n in needles):
+                return True
+        elif tu.name == "Bash":
+            cmd = str(tu.input.get("command") or "")
+            if g._READ_VERB_RE.search(cmd) and any(n in cmd for n in needles):
+                return True
+        elif tu.name == "Grep" and tu.input.get("output_mode") == "content":
+            if any(n in str(tu.input.get("path") or "") for n in needles):
+                return True
+    return False
+
+
+def reflexes(ctx: g.GradeContext) -> dict[str, bool]:
+    """Which retrieval channels the run reached for, from executed tool calls."""
+    names = {tu.name for tu in ctx.executed()}
     return {
-        "kg": any("research/entities" in b for n, b in blobs if n in ("Read", "Bash", "Grep", "Glob")),
-        "docs": any("docs/" in b for n, b in blobs if n in ("Read", "Bash", "Grep", "Glob")),
-        "memory": any(mem in b or "/memory/" in b for n, b in blobs if n in ("Read", "Bash", "Grep", "Glob")),
-        "web": any(n in ("WebFetch", "WebSearch") for n, _ in blobs),
-        "subagent": any(n in ("Task", "Agent") for n, _ in blobs),
+        "kg": _read_under(ctx, ["research/entities"]),
+        "docs": _read_under(ctx, ["docs/"]),
+        "memory": _read_under(ctx, [str(ctx.layout.memory_dir), "/.claude/projects/"]),
+        "web": bool(names & {"WebFetch", "WebSearch"}),
+        "subagent": bool(names & {"Task", "Agent"}),
     }
 
 
@@ -179,12 +195,14 @@ class ArmRow:
     source_n: int
     wall_s: float | None
     cost_usd: float | None
-    reflex_rates: dict[str, float]
+    reflex_rates: dict[str, float | None]
     entities_injected: int
     entities_opened: int
     lift: float | None = None
     lift_ci: list[float] | None = None
     lift_per_1k: float | None = None
+    #: The lift interval divided by the (measured, near-constant) injected thousands.
+    lift_per_1k_ci: list[float] | None = None
     pass_per_1k: float | None = None
 
     def to_dict(self) -> dict[str, Any]:
@@ -242,7 +260,7 @@ def aggregate(results: Sequence[Mapping[str, Any]], arm_order: Sequence[str]) ->
             wall_s=_mean([(r.get("wall_ms") or 0) / 1000 for r in graded if r.get("wall_ms") is not None]),
             cost_usd=_mean([r.get("cost_usd") for r in graded]),
             reflex_rates={k: round(sum(1 for r in graded if (r.get("reflexes") or {}).get(k)) / len(graded), 4)
-                          if graded else 0.0 for k in reflex_keys},
+                          if graded else None for k in reflex_keys},
             entities_injected=sum(len(r.get("entities_injected") or []) for r in graded),
             entities_opened=sum(len(r.get("entities_opened") or []) for r in graded),
         ))
@@ -256,6 +274,7 @@ def aggregate(results: Sequence[Mapping[str, Any]], arm_order: Sequence[str]) ->
         if row.injected_tokens and row.injected_tokens > 0:
             k = row.injected_tokens / 1000.0
             row.lift_per_1k = round(row.lift / k, 4)
+            row.lift_per_1k_ci = [round(lo / k, 4), round(hi / k, 4)]
             row.pass_per_1k = round(row.pass_rate / k, 4)
     return rows_out
 
@@ -293,7 +312,7 @@ def _f(v: float | None, fmt: str = "{:.2f}") -> str:
 
 def format_table(rows: Sequence[ArmRow]) -> str:
     """The per-arm table, as GitHub markdown."""
-    head = ("| arm | pass | 95% CI | lift vs bare (95% CI) | injected tok | lift / 1k tok | "
+    head = ("| arm | pass | 95% CI | lift vs bare (95% CI) | injected tok | lift / 1k tok (95% CI) | "
             "pass / 1k tok | ctx tok (turn 1) | input tok (run) | tool calls | right source | wall s |")
     lines = [head, "|" + "---|" * 12]
     for r in rows:
@@ -302,9 +321,11 @@ def format_table(rows: Sequence[ArmRow]) -> str:
             f"{r.lift:+.2f} [{r.lift_ci[0]:+.2f}, {r.lift_ci[1]:+.2f}]" if r.lift is not None else "n/a")
         src = f"{r.source_rate:.2f} (n={r.source_n})" if r.source_rate is not None else "n/a"
         void = f" +{sum(r.non_outcomes.values())} void" if r.non_outcomes else ""
+        per1k = (f"{r.lift_per_1k:+.3f} [{r.lift_per_1k_ci[0]:+.2f}, {r.lift_per_1k_ci[1]:+.2f}]"
+                 if r.lift_per_1k is not None and r.lift_per_1k_ci else "n/a")
         lines.append(
             f"| {r.arm} | {r.passes}/{r.graded}{void} ({_f(r.pass_rate)}) | {ci} | {lift} | "
-            f"{_f(r.injected_tokens, '{:,.0f}')} | {_f(r.lift_per_1k, '{:+.3f}')} | {_f(r.pass_per_1k, '{:.3f}')} | "
+            f"{_f(r.injected_tokens, '{:,.0f}')} | {per1k} | {_f(r.pass_per_1k, '{:.3f}')} | "
             f"{_f(r.context_tokens, '{:,.0f}')} | {_f(r.total_input_tokens, '{:,.0f}')} | "
             f"{_f(r.tool_calls, '{:.1f}')} | {src} | {_f(r.wall_s, '{:.0f}')} |"
         )
@@ -325,8 +346,8 @@ def format_reflexes(rows: Sequence[ArmRow]) -> str:
         rr = r.reflex_rates
         opened = (f"{r.entities_opened}/{r.entities_injected} ({r.entities_opened / r.entities_injected:.1%})"
                   if r.entities_injected else "—")
-        lines.append(f"| {r.arm} | {rr['kg']:.2f} | {rr['docs']:.2f} | {rr['memory']:.2f} | "
-                     f"{rr['web']:.2f} | {rr['subagent']:.2f} | {opened} |")
+        cells = " | ".join(_f(rr[k]) for k in ("kg", "docs", "memory", "web", "subagent"))
+        lines.append(f"| {r.arm} | {cells} | {opened} |")
     return "\n".join(lines)
 
 

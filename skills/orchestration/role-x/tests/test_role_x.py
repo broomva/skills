@@ -1415,6 +1415,29 @@ def test_task_entity_top_n_clamps_to_the_cap(tmp_path):
     assert _surfaced_backoff(tmp_path / "lo", "-3") == []
 
 
+def test_task_entity_top_n_clamp_is_visible_above_fifty(tmp_path):
+    """55 qualifying entities, so a cap of 9999 and a cap of 50 differ. Filler keeps
+    `backoff` under the 15% rarity gate (55 of 385 entities), or nothing qualifies."""
+    hits = "".join(
+        f"#### backoff-{i:03d} [pattern·entity]\nRetry backoff note {i} is a clean one line claim.\n"
+        f"→ x · #pattern #backoff · src: note\npath: pattern/backoff-{i:03d}.md\n\n" for i in range(55))
+    filler = "".join(
+        f"#### filler-{i:03d} [concept·entity]\nUnrelated filler claim number {i} here.\n"
+        f"→ x · #concept #filler · src: note\npath: concept/filler-{i:03d}.md\n\n" for i in range(330))
+    catalog = ("---\ngenerator: bookkeeping index\nschema: dense-catalog-v2\nentity_count: 385\n---\n\n"
+               "# Knowledge Index\n\n## Entities\n\n### pattern (55)\n\n" + hits
+               + "### concept (330)\n\n" + filler)
+    workspace = _seed_workspace(tmp_path)
+    _seed_catalog(workspace, catalog)
+    rc, out, err = run_cli(
+        "intake", "--prompt", "tune the backoff between attempts please",
+        "--workspace", str(workspace), "--session", "clamp",
+        env={"HOME": str(tmp_path), "ROLE_X_TASK_ENTITY_TOP_N": "9999"},
+    )
+    assert rc == 0, f"stderr={err}"
+    assert sum(f"pattern/backoff-{i:03d}.md" in out for i in range(55)) == 50
+
+
 def test_intake_keeps_math_inequality_claim(tmp_path):
     """A claim with an interior ' > ' (math) must render inline, not be mistaken
     for a markdown blockquote and suppressed to path-only (P20 regression)."""

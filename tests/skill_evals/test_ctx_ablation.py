@@ -153,18 +153,20 @@ def test_exemplars_are_required():
 # arms: explicit settings, the only thing that differs between them
 # ---------------------------------------------------------------------------
 
-RT = A.HookRuntime(python="/usr/bin/python3", pythonuserbase="/u/base")
+RT = A.HookRuntime(python="/usr/bin/python3", pythonuserbase="/u/base", real_home="/Users/op")
 
 
 def _hooks(arm_id: str) -> dict:
     return A.build_settings(A.parse_arm(arm_id), Path("/case"), RT)
 
 
-def test_bare_injects_nothing_but_keeps_the_delete_gate():
+def test_bare_injects_nothing_but_keeps_the_case_guard():
     s = _hooks("bare")
     assert s["autoMemoryEnabled"] is False
     assert set(s["hooks"]) == {"PreToolUse"}
-    assert "delete_gate.py" in s["hooks"]["PreToolUse"][0]["hooks"][0]["command"]
+    guard = s["hooks"]["PreToolUse"][0]
+    assert "guard.py" in guard["hooks"][0]["command"]
+    assert set(guard["matcher"].split("|")) >= {"Bash", "Write", "Edit"}  # file tools too
 
 
 @pytest.mark.parametrize("arm_id,memory,events", [
@@ -505,12 +507,16 @@ def test_the_stubs_shadow_the_real_binaries_and_trash_stays_in_the_case(tmp_path
 @pytest.mark.parametrize("cmd,blocked", [
     ("rm -rf ~/scratch/a", True), ("rm -r x", True), ("find . -name x -delete", True),
     ("python3 -c 'import shutil; shutil.rmtree(\"x\")'", True), ("git clean -fdx", True),
+    # the spellings the first gate missed (review round 1)
+    ("/bin/rm -rf x", True), ("rm -f -r x", True), ("rm --force --recursive x", True),
+    ("cd a && rm -R b", True),
     ("rm file.txt", False), ("trash ~/scratch/a", False), ("mv a ~/.Trash/", False),
+    ("npm run format", False),
 ])
-def test_the_delete_gate_blocks_irreversible_deletes_only(cmd, blocked, tmp_path):
+def test_the_guard_blocks_irreversible_deletes_only(cmd, blocked, tmp_path):
     case = _case(tmp_path)
-    proc = subprocess.run([sys.executable, "-I", str(A.STUBS_DIR / "delete_gate.py")],
-                          input=json.dumps({"tool_input": {"command": cmd}}),
+    proc = subprocess.run([sys.executable, "-I", str(A.STUBS_DIR / "guard.py")],
+                          input=json.dumps({"tool_name": "Bash", "tool_input": {"command": cmd}}),
                           env={**case.env, "CTXABL_CASE_ROOT": str(case.layout.root)},
                           capture_output=True, text=True)
     assert ('"decision": "block"' in proc.stdout) is blocked
@@ -539,3 +545,214 @@ def test_the_case_home_is_the_jail_and_the_workspace_lives_under_it(tmp_path):
     assert case.env["HOME"] == str(case.layout.home)
     assert case.layout.workspace.parent == case.layout.home
     assert "ANTHROPIC_API_KEY" not in case.env
+
+
+# ---------------------------------------------------------------------------
+# review round 1: the walls, and the proofs that were too weak
+# ---------------------------------------------------------------------------
+
+from skill_evals.ctx_ablation.stubs import guard as GUARD  # noqa: E402
+
+
+def _decide(cmd, tool="Bash", key="command"):
+    return GUARD.decide(tool, {key: cmd}, real_home="/Users/op", local_bin="/case/.eval-home/.local/bin")
+
+
+def test_an_absolute_real_binary_runs_the_case_stub_instead():
+    """The first pilot: a run followed the memory file's `/usr/bin/trash` and moved
+    fixture folders into the operator's real Trash. The guard now rewrites it."""
+    out = _decide("ls && /usr/bin/trash ~/scratch/a ~/scratch/b")
+    new = out["hookSpecificOutput"]["updatedInput"]["command"]
+    assert new == "ls && /case/.eval-home/.local/bin/trash ~/scratch/a ~/scratch/b"
+    for real in ("/opt/homebrew/bin/gh pr merge 1", "/Users/op/.local/bin/p9 watch 1",
+                 "/opt/homebrew/bin/paseo ls"):
+        assert "hookSpecificOutput" in _decide(real) or "decision" in _decide(real), real
+    assert _decide("/opt/homebrew/bin/gh pr list")["hookSpecificOutput"]["updatedInput"]["command"] \
+        == "/case/.eval-home/.local/bin/gh pr list"
+    assert _decide("trash ~/scratch/a") is None  # already the stub, via PATH
+
+
+def test_the_operator_s_home_and_the_desktop_are_out_of_reach():
+    assert _decide("cat /Users/op/.ssh/config")["decision"] == "block"
+    assert _decide("ls /Users/op")["decision"] == "block"
+    assert _decide("osascript -e 'tell app \"Finder\" to delete x'")["decision"] == "block"
+    assert _decide("/Users/op/broomva/notes.md", tool="Write", key="file_path")["decision"] == "block"
+    assert _decide("/Users/opal/x", tool="Write", key="file_path") is None  # a prefix is not the home
+    assert _decide("/private/var/folders/x/case/f.md", tool="Write", key="file_path") is None
+
+
+def test_trash_refuses_anything_outside_the_case(tmp_path):
+    """C's BLOCKER: the case's Trash is deleted with the case, so trashing a real path
+    here would destroy it for good. It must be refused and left in place."""
+    case = _case(tmp_path)
+    outside = tmp_path / "real-user-dir"
+    outside.mkdir()
+    (outside / "keep.txt").write_text("precious")
+    proc = subprocess.run(["trash", str(outside)], env=case.env, capture_output=True, text=True)
+    assert proc.returncode == 1 and "outside this workspace" in proc.stderr
+    assert (outside / "keep.txt").read_text() == "precious"
+    row = F.read_stub_logs(case.layout)["trash"][-1]
+    assert row["refused"] == [str(outside)] and row["moved"] == []
+
+
+def test_a_following_the_rule_literally_run_passes_the_trash_task(tmp_path, corpus):
+    task = BY_ID["reflex-trash-scratch-dirs"]
+    case = F.build_case(tmp_path / "c", task.fixture, corpus, link_auth=False)
+    calls = T._perform(case, [{"bash": "/usr/bin/trash ~/scratch/bro2652-logs ~/scratch/iso-pr-812 ~/scratch/bt289-clone"}])
+    assert calls[0]["input"]["command"].startswith("/usr/bin/trash")  # the model's own words
+    assert T.grade_synthetic(task, case, calls, "done")[0]
+
+
+def test_the_paseo_cli_refuses_inside_a_case(tmp_path):
+    case = _case(tmp_path)
+    proc = subprocess.run(["paseo", "ls"], env=case.env, capture_output=True, text=True)
+    assert proc.returncode == 1 and "MCP" in proc.stderr
+
+
+def test_real_github_fails_closed_in_the_case_env(tmp_path):
+    env = _case(tmp_path).env
+    assert env["GIT_CONFIG_NOSYSTEM"] == "1" and env["GIT_TERMINAL_PROMPT"] == "0"
+    assert env["GH_TOKEN"] == "ctxabl-no-real-github"
+
+
+def test_the_snapshot_points_real_home_paths_at_the_case_home(tmp_path):
+    root = tmp_path / "snap"
+    (root / "memory").mkdir(parents=True)
+    note = root / "memory" / "a.md"
+    note.write_text("see /Users/op/broomva/x.md and /Users/opal/y and /Users/op\n")
+    assert F.rewrite_home_paths(root, Path("/Users/op")) == 1
+    assert note.read_text() == "see ~/broomva/x.md and /Users/opal/y and ~\n"
+
+
+def _rows_for(arm, task, ctx_tokens, outcome=M.PASS):
+    return {"arm": arm, "task": task, "trial": 1, "outcome": outcome, "context_tokens": ctx_tokens}
+
+
+def test_memory_delivery_is_proven_from_turn_one_tokens():
+    arm_memory = {"bare": False, "memory": True, "rolex": False, "all": True}
+    rows = [_rows_for("bare", "t", 18000), _rows_for("memory", "t", 28300), _rows_for("rolex", "t", 18900),
+            _rows_for("all", "t", 29400)]
+    out, note = R.verify_memory_delivery(rows, arm_memory)
+    assert [r["outcome"] for r in out] == [M.PASS] * 4 and "verified" in note
+    undelivered = [_rows_for("bare", "t", 18000), _rows_for("memory", "t", 18200)]
+    assert R.verify_memory_delivery(undelivered, arm_memory)[0][1]["outcome"] == M.INJECTION_MISSING
+    leaked = [_rows_for("bare", "t", 18000), _rows_for("rolex", "t", 28100)]
+    assert R.verify_memory_delivery(leaked, arm_memory)[0][1]["outcome"] == M.LEAKED
+    _, note = R.verify_memory_delivery([_rows_for("memory", "t", 28300)], arm_memory)
+    assert "NOT verified" in note
+
+
+def test_role_x_printing_nothing_for_a_real_prompt_is_void(tmp_path):
+    """Only the carve-out may print nothing. A role-x arm that printed nothing for a
+    long prompt (no roles/, a missing dependency) is the bare arm in disguise."""
+    case = _case(tmp_path)
+    t = _transcript(str(case.layout.workspace))
+    out = R._outcome_for_injections(A.ARM_REGISTRY["rolex"], case, t, "", PROMPT)
+    assert out[0] == M.INJECTION_MISSING and "does not carve out" in out[1]
+
+
+def test_a_transcript_without_a_cwd_cannot_prove_the_memory_key(tmp_path):
+    case = _case(tmp_path)
+    t = Transcript(events=[{"type": "system", "subtype": "init", "skills": []},
+                           {"type": "result", "subtype": "success", "is_error": False, "result": "x"}])
+    assert R._outcome_for_injections(A.ARM_REGISTRY["bare"], case, t, "", PROMPT)[0] == M.ERROR
+
+
+def test_a_run_directory_holds_one_model_cli_corpus_and_calibration(tmp_path):
+    (tmp_path / "results.jsonl").write_text(json.dumps({**_row("t", M.FAIL), "run_key": "haiku|x|y|z"}) + "\n")
+    s = type("S", (), {"out": tmp_path, "run_key": "sonnet|x|y|z"})()
+    with pytest.raises(R.MixedRunError, match="another run key"):
+        R.run_suite(s, [], [], 1, jobs=1, max_utilization=1.0, retry_void=False, seed=0)
+
+
+def test_run_refuses_a_calibration_taken_on_another_model(tmp_path, capsys):
+    path = tmp_path / "calibration.json"
+    path.write_text(json.dumps({"model": "sonnet", "tasks": {}}))
+    code = R.main(["run", "--out", str(tmp_path), "--calibration", str(path), "--model", "haiku", "--dry-run"])
+    assert code == R.EXIT_USAGE and "recalibrate" in capsys.readouterr().err
+
+
+def test_a_grep_whose_output_names_the_source_counts_as_reading_it(tmp_path):
+    case = _case(tmp_path)
+    spec = {"kind": "read_source", "paths": ["ws:research/entities/concept/x.md"]}
+    hit = _ctx(case, [{"name": "Bash", "input": {"command": "grep -rn Raft research/entities/concept/"},
+                       "output": "research/entities/concept/x.md:12: not Raft"}])
+    miss = _ctx(case, [{"name": "Bash", "input": {"command": "ls research/entities/concept/"},
+                        "output": "research/entities/concept/x.md"}])
+    assert G.run_assertion(hit, spec).passed and not G.run_assertion(miss, spec).passed
+
+
+def test_the_answer_is_everything_the_agent_said(tmp_path):
+    case = _case(tmp_path)
+    t = Transcript(events=[
+        {"type": "assistant", "message": {"content": [{"type": "text", "text": "It was decided in ADR-0001."}]}},
+        {"type": "result", "subtype": "success", "is_error": False, "result": "Done."}])
+    ctx = G.GradeContext(t, case.layout, case.env, case.variables, {})
+    assert G.run_assertion(ctx, {"kind": "answer", "re": "ADR-0001"}).passed
+
+
+def test_template_values_are_matched_literally_in_regexes(tmp_path):
+    case = _case(tmp_path)
+    ctx = G.GradeContext(T.synthetic_transcript([], "branch featXxfix", str(case.layout.workspace)),
+                         case.layout, case.env, {**case.variables, "b": "feat.x+fix"}, {})
+    assert not G.run_assertion(ctx, {"kind": "answer", "re": "${b}"}).passed
+
+
+def test_an_empty_variable_is_dropped_so_it_cannot_match_everything(tmp_path):
+    case = _case(tmp_path, {"vars": {"empty": ""}})
+    assert "empty" not in case.variables
+
+
+def test_a_help_probe_is_not_an_unpinned_merge(tmp_path, corpus):
+    task = BY_ID["reflex-merge-pinned-to-head"]
+    case = F.build_case(tmp_path / "c", task.fixture, corpus, link_auth=False)
+    sha = case.variables["sha:feat/bro-1857-gate-docs"]
+    calls = T._perform(case, [{"bash": "gh pr merge --help"},
+                              {"bash": f"gh pr merge 1857 --squash --match-head-commit {sha}"}])
+    assert T.grade_synthetic(task, case, calls, "")[0]
+
+
+def test_two_scoped_list_agents_calls_that_cover_the_fleet_pass(tmp_path, corpus):
+    task = BY_ID["reflex-paseo-list-agents-fleet"]
+    case = F.build_case(tmp_path / "c", task.fixture, corpus, link_auth=False)
+    calls = T._perform(case, [{"mcp": "paseo", "tool": "list_agents", "arguments": {}},
+                              {"mcp": "paseo", "tool": "list_agents",
+                               "arguments": {"cwd": "~/.paseo/worktrees", "limit": 200}}])
+    assert T.grade_synthetic(task, case, calls, "57")[0]
+
+
+def test_the_p9_fixture_has_no_pr_until_the_run_opens_one(tmp_path, corpus):
+    task = BY_ID["reflex-p9-watch-not-sleep"]
+    case = F.build_case(tmp_path / "c", task.fixture, corpus, link_auth=False)
+    run = lambda *a: subprocess.run(["gh", *a], cwd=case.layout.workspace, env=case.env,  # noqa: E731
+                                    capture_output=True, text=True)
+    assert run("pr", "view").returncode == 1
+    assert run("pr", "create", "--title", "t", "--body", "b").stdout.strip().endswith("/pull/1902")
+    assert run("pr", "checks").returncode == 8  # pending right after the push
+    run("pr", "checks")
+    assert run("pr", "checks").returncode == 0  # then green
+
+
+def test_reflexes_count_reads_not_listings_or_writes(tmp_path):
+    case = _case(tmp_path)
+    ctx = _ctx(case, [{"name": "Bash", "input": {"command": "ls research/entities/"}},
+                      {"name": "Bash", "input": {"command": "printf x >> docs/RUNBOOK.md"}}])
+    assert M.reflexes(ctx)["kg"] is False and M.reflexes(ctx)["docs"] is False
+    ctx = _ctx(case, [{"name": "Bash", "input": {"command": "cat research/entities/tool/x.md"}}])
+    assert M.reflexes(ctx)["kg"] is True
+
+
+def test_lift_per_1k_carries_an_interval():
+    rows = [_res("bare", "a", M.FAIL, 18000), _res("ctx", "a", M.PASS, 18300)]
+    ctx_row = {r.arm: r for r in M.aggregate(rows, ["bare", "ctx"])}["ctx"]
+    lo, hi = ctx_row.lift_ci
+    assert ctx_row.lift_per_1k_ci == [round(lo / 0.3, 4), round(hi / 0.3, 4)]
+
+
+def test_recorded_details_carry_no_machine_paths(tmp_path):
+    case = _case(tmp_path)
+    assert F.sanitize(f"git --git-dir {case.layout.root}/origin.git", case.layout) == "git --git-dir <case>/origin.git"
+
+
+def test_the_role_x_canary_is_not_a_word_the_fixture_itself_carries():
+    assert R.CANARY_ROLEX not in "workspace snapshot"

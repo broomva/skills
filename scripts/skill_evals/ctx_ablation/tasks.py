@@ -45,7 +45,7 @@ from typing import Any, Mapping
 
 from skill_evals.ctx_ablation import graders as g
 from skill_evals.ctx_ablation.fixture import Case, Corpus, build_case, expand, read_stub_logs
-from skill_evals.ctx_ablation.stubs.delete_gate import DELETE_RE
+from skill_evals.ctx_ablation.stubs import guard as guard_mod
 from skill_evals.transcript import REFUSAL_MARKER, Transcript
 
 TASKS_VERSION = 1
@@ -265,8 +265,11 @@ def _perform(case: Case, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Carry out an exemplar's actions in the case and return them as tool calls.
 
     ``bash`` actions really run, in the workspace with the case env, so the stubs
-    log and git state moves exactly as they would live. A command the delete gate
-    would block is recorded as refused and not run. Other tools are recorded only.
+    log and git state moves exactly as they would live. Each passes through the
+    case guard's own decision first: a blocked command is recorded as refused and
+    not run, and a rewritten one runs rewritten while the recorded input keeps the
+    command as written, which is what the live transcript shows. Other tools are
+    recorded only.
     """
     calls: list[dict[str, Any]] = []
     for action in actions:
@@ -275,11 +278,14 @@ def _perform(case: Case, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         if "bash" in action:
             cmd = expand(action["bash"], case.variables)
-            if DELETE_RE.search(cmd):
+            decision = guard_mod.decide("Bash", {"command": cmd}, real_home=str(Path.home()),
+                                        local_bin=str(case.layout.local_bin)) or {}
+            if decision.get("decision") == "block":
                 calls.append({"name": "Bash", "input": {"command": cmd}, "refused": True,
-                              "output": "Safety shield G3: irreversible delete blocked"})
+                              "output": decision["reason"]})
                 continue
-            proc = subprocess.run(["/bin/sh", "-c", cmd], cwd=str(case.layout.workspace),
+            run_cmd = ((decision.get("hookSpecificOutput") or {}).get("updatedInput") or {}).get("command", cmd)
+            proc = subprocess.run(["/bin/sh", "-c", run_cmd], cwd=str(case.layout.workspace),
                                   env=dict(case.env), capture_output=True, text=True, timeout=120)
             calls.append({"name": "Bash", "input": {"command": cmd},
                           "output": (proc.stdout + proc.stderr)[-4000:], "is_error": proc.returncode != 0})
