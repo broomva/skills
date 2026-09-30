@@ -1,0 +1,347 @@
+{
+ "version": 1,
+ "notes": "Sealed held-out routing cases for role-x's reflex router (spec §5.5 M3, §9 Q4; BRO-2674). Written 2026-09-30 by a fresh session that was shown only a one-line situation per id, never the catalog's lines, regexes or phrases, and told not to read any file. Committed and hashed before the router was run on them; they must not be used to tune the catalog. Scored by `role-x reflexes route --heldout`.",
+ "cases": {
+  "change_work": {
+   "positive": [
+    "add a --dry-run flag to scripts/audit_harness.sh so it just prints what it would change",
+    "the trace_id field is spelled trace-id in docs/OBSERVABILITY.md, fix it everywhere",
+    "refactor role-x/src/router.rs so the reflex catalog gets compiled once at startup, not on every call"
+   ],
+   "near_miss": [
+    "what does the reflex catalog in role-x/src/catalog.rs actually match on?",
+    "explain how ROLE_X_OUTPUT gets read, i dont follow the flow from main.rs"
+   ]
+  },
+  "p9.watch-after-push": {
+   "positive": [
+    "push this and open the pr, tell me how ci goes",
+    "ok pushed feat/role-x-reflex-router, lmk when the checks finish",
+    "kick off the vercel deploy for broomva.tech and ping me once its live or if it dies"
+   ],
+   "near_miss": [
+    "what does .github/workflows/ci.yml actually run on push?",
+    "how long does the docker build usually take in ci, roughly"
+   ]
+  },
+  "p10.branch-first": {
+   "positive": [
+    "switch to main, bump the version in Cargo.toml to 0.14.1 and commit",
+    "im on main rn, fix the broken link in README.md and commit it",
+    "on main - add STRIPE_KEY and STRIPE_WEBHOOK_SECRET to .env.example and commit that"
+   ],
+   "near_miss": [
+    "what branch am i on and is main behind origin?",
+    "show me the last 5 commits on main"
+   ]
+  },
+  "p4.merge-pinned-to-head": {
+   "positive": [
+    "merge #1211",
+    "looks good, go ahead and merge the role-x pr",
+    "squash and merge 1204 pls"
+   ],
+   "near_miss": [
+    "is #1211 mergeable or does it have conflicts?",
+    "should i turn on the github merge queue for this repo?"
+   ]
+  },
+  "p10.worktree-removal-guard": {
+   "positive": [
+    "remove the feat-role-x-reflex-router worktree, im done with it",
+    "tear down the paseo worktree 20g6lz69",
+    "clean up the old worktrees under ~/.paseo/worktrees from agents that already finished"
+   ],
+   "near_miss": [
+    "how many worktrees do i have open right now?",
+    "make a new worktree for fix/ci-timeout off main"
+   ]
+  },
+  "ctx.live-peer-before-git-op": {
+   "positive": [
+    "is another agent working in ~/broomva right now?",
+    "pull main in the shared checkout and push my commit on top",
+    "commit whats staged in ~/broomva/skills and push it"
+   ],
+   "near_miss": [
+    "whats the difference between git pull --rebase and a regular pull?",
+    "which agent opened PR #1190?"
+   ]
+  },
+  "p9.heal-on-red": {
+   "positive": [
+    "ci is red on #1215, fix it",
+    "the lint job keeps failing on feat/role-x-reflex-router, whats going on",
+    "checks failed on the kg pr, figure out why and get it green"
+   ],
+   "near_miss": [
+    "which ci checks are required on main?",
+    "add a ci job that runs make smoke on every pr"
+   ]
+  },
+  "convention.trash-not-rm": {
+   "positive": [
+    "delete the tmp/ and scratch/ folders in the repo root",
+    "get rid of the leftover eval-out-* dirs in skill-evals",
+    "clear out ~/Downloads/ablation-runs, dont need it anymore"
+   ],
+   "near_miss": [
+    "why is tmp/ not in .gitignore?",
+    "delete the ROLE_X_OUTPUT flag from config.toml, we dont need it"
+   ]
+  },
+  "convention.paseo-fleet-listing": {
+   "positive": [
+    "how many paseo agents are running rn?",
+    "which paseo sessions are still alive and what are they each doing",
+    "list the agents in paseo, is anything stuck?"
+   ],
+   "near_miss": [
+    "how do i install the paseo cli on the vps?",
+    "whats the cron syntax paseo schedules use?"
+   ]
+  },
+  "p2.gate-destructive-git": {
+   "positive": [
+    "force push feat/role-x-reflex-router, i rebased it",
+    "hard reset this branch to origin/main",
+    "delete fix/old-kg-loader locally and on origin"
+   ],
+   "near_miss": [
+    "whats the difference between reset --soft and --hard",
+    "revert ae56cae, it broke the regex"
+   ]
+  },
+  "p18.human-doc-in-specs": {
+   "positive": [
+    "write up an explainer on how the reflex router works that i can send the team",
+    "can you put together a report on the ctx-ablation results, something i can share",
+    "draft a spec for kg cache invalidation before we build it"
+   ],
+   "near_miss": [
+    "update the docstring on route_reflex() to mention the fallback",
+    "whats already in docs/specs?"
+   ]
+  },
+  "p15.snapshot": {
+   "positive": [
+    "where are we",
+    "whats pushed and whats merged from today?",
+    "status check: is #1204 green and did the role-x stuff land yet"
+   ],
+   "near_miss": [
+    "what status code does the api return when we hit the rate limit?",
+    "what do the M and ?? mean in git status -s"
+   ]
+  },
+  "skill.kg": {
+   "positive": [
+    "what do we already know about the rate limit budget guard in the kg?",
+    "load kg context on role-x before we start",
+    "anything in the knowledge graph on paseo heartbeats?"
+   ],
+   "near_miss": [
+    "quick q, knowledge graph vs vector db, which one for agent memory",
+    "rename the kg/ folder to knowledge/ and fix the imports"
+   ]
+  },
+  "p8.janitor-branches": {
+   "positive": [
+    "clean up the stale branches",
+    "delete every branch thats already merged into main",
+    "prune the old feat/* branches nobody touched in a month"
+   ],
+   "near_miss": [
+    "how many branches do we have on origin?",
+    "create a branch for the kg loader fix"
+   ]
+  },
+  "p11.bugfix-test-lock": {
+   "positive": [
+    "fix the bug where the reflex router treats a dot inside a path as a sentence end",
+    "regression: make smoke started failing after 22d6515, fix it",
+    "the kg loader crashes on empty frontmatter, pls fix"
+   ],
+   "near_miss": [
+    "is this a bug or intended? router returns None on an empty prompt",
+    "file a linear ticket for the path dot bug, dont fix it yet"
+   ]
+  },
+  "p12.persist": {
+   "positive": [
+    "keep this running overnight until all 31 evals pass",
+    "this will take hours, make it survive across sessions so it doesnt stop when context fills",
+    "keep iterating on the ablation runs thru the weekend"
+   ],
+   "near_miss": [
+    "how long did the last eval run take?",
+    "did the overnight eval job from yesterday finish?"
+   ]
+  },
+  "p7.freshness": {
+   "positive": [
+    "my skills seem outdated, the p9 one doesnt know about --notify",
+    "p20-record says --score-file isnt a valid flag but the SKILL.md says it is??",
+    "bstack cut a release yesterday, are my installed skills stale?"
+   ],
+   "near_miss": [
+    "update skills/p9/README.md to document the --notify flag",
+    "which skills do i have installed that touch git?"
+   ]
+  },
+  "p10.cleanup-after-merge": {
+   "positive": [
+    "#1211 merged, clean up",
+    "ok its in main, tidy up the branch and worktree",
+    "merged! remove whatever is left over from the role-x pr"
+   ],
+   "near_miss": [
+    "before we merge #1211 can you clean up the commit messages?",
+    "did #1211 merge yet?"
+   ]
+  },
+  "p20.cross-review": {
+   "positive": [
+    "get an adversarial review of #1215 before i merge",
+    "have a different model tear apart this diff before it goes in",
+    "independent review on the reflex router pr pls, dont grade your own work"
+   ],
+   "near_miss": [
+    "reply to the review comments on #1215",
+    "what did copilot say in its review on #1204?"
+   ]
+  },
+  "p4.ship-not-ask": {
+   "positive": [
+    "make a landing page for the kg feature",
+    "build a script that dedupes the eval results in skill-evals/out",
+    "put together a 5 slide deck on the ablation findings"
+   ],
+   "near_miss": [
+    "should we even build a landing page for this or is it premature?",
+    "any ideas what the ablation deck should cover? just brainstorm"
+   ]
+  },
+  "skill.arc": {
+   "positive": [
+    "im off to bed, finish the role-x pr and leave everything clean",
+    "gone for the weekend, take BRO-2674 all the way to merged and clean up after yourself",
+    "heading out, nobody's watching this tonight. land it and dont leave junk behind"
+   ],
+   "near_miss": [
+    "im going to bed soon, whats left for tomorrow?",
+    "ill be around, ping me when ci finishes on #1215"
+   ]
+  },
+  "skill.autonomous": {
+   "positive": [
+    "go",
+    "sounds good, proceed with the plan, no more questions",
+    "option 2. do it all, ship it"
+   ],
+   "near_miss": [
+    "go through the plan again and tell me the risks",
+    "what does autonomous mode mean in paseo?"
+   ]
+  },
+  "skill.resume": {
+   "positive": [
+    "resume",
+    "api died mid run, keep going",
+    "sorry login expired, continue where you left off"
+   ],
+   "near_miss": [
+    "unpause the nightly evals schedule in paseo",
+    "summarize what happened in the session that crashed yesterday, dont redo anything"
+   ]
+  },
+  "skill.handoff": {
+   "positive": [
+    "write a handoff so i can pick this up tomorrow in a fresh session",
+    "leave notes for the next agent on where BRO-2674 stands",
+    "im gonna /clear, write down the state so a new session can read it and keep going"
+   ],
+   "near_miss": [
+    "read docs/handoffs/2026-09-29-role-x.md and continue from there",
+    "whats the difference between handoff and handback?"
+   ]
+  },
+  "skill.checkit": {
+   "positive": [
+    "check this out https://github.com/letta-ai/letta",
+    "wdyt https://arxiv.org/abs/2609.01234",
+    "look into this ~/Downloads/agent-memory.pdf"
+   ],
+   "near_miss": [
+    "summarize https://arxiv.org/abs/2609.01234 in 3 bullets",
+    "check /tmp/eval.log for the 429 error and tell me which run hit it"
+   ]
+  },
+  "skill.dogfood": {
+   "positive": [
+    "prove the new onboarding flow actually works, click through it like a user would",
+    "run role-x on a bunch of real prompts and show me receipts that the reflex router does what we said",
+    "dont just run tests, open the app and actually use the kg search end to end"
+   ],
+   "near_miss": [
+    "write unit tests for the onboarding flow",
+    "what does dogfooding mean in our p11 principle?"
+   ]
+  },
+  "skill.unslop": {
+   "positive": [
+    "the landing page looks so AI generated, fix it",
+    "broomva.tech feels like every other shadcn template",
+    "the dashboard looks generic af, make it feel like ours"
+   ],
+   "near_miss": [
+    "the landing page is slow on mobile, check lighthouse",
+    "change the cta button to blue on /pricing"
+   ]
+  },
+  "skill.legal-readiness": {
+   "positive": [
+    "we launch getstimulus next week, are we legally ready?",
+    "audit the app for gdpr / privacy / terms gaps before launch",
+    "compliance check before we go live: cookies, ToS, data retention, all of it"
+   ],
+   "near_miss": [
+    "add a link to the terms page in the footer",
+    "whats the difference between a SAS and an LLC for a colombian founder?"
+   ]
+  },
+  "skill.audit-harness-usage": {
+   "positive": [
+    "how many tokens did i burn this week across claude and codex?",
+    "whats my agent spend looking like this month",
+    "which sessions cost the most yesterday"
+   ],
+   "near_miss": [
+    "cut the token count of the system prompt in role-x/prompt.md",
+    "whats the api pricing for opus 5.5?"
+   ]
+  },
+  "skill.disambiguate": {
+   "positive": [
+    "the acceptance criteria on BRO-2674 are vague, tighten them",
+    "make this requirement testable: 'router should be fast'",
+    "the ticket just says 'handle edge cases', pin down what that actually means"
+   ],
+   "near_miss": [
+    "what is BRO-2674 about?",
+    "close BRO-2674, its done"
+   ]
+  },
+  "skill.skillify": {
+   "positive": [
+    "that worked great, turn it into a skill",
+    "make what we just did with the ablation runs into a reusable skill with tests",
+    "package this cleanup flow so i never have to explain it again"
+   ],
+   "near_miss": [
+    "which skill handles the ablation runs?",
+    "fix the typo in the p9 skill description"
+   ]
+  }
+ }
+}
