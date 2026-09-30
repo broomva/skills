@@ -9,7 +9,7 @@ pilot's 13 retained tasks in its own bare arm.
 - **Stronger models, more lift.** On the 6 tasks all three models kept, every injected
   arm's pass rate rises from haiku to sonnet to opus. That is descriptive: 17–18 trials per
   cell, no CI, and haiku ran on another corpus. Across the full task sets, memory does not
-  rise (0.21 → 0.19 → 0.48).
+  rise monotonically (0.21 → 0.19 → 0.48).
 - **Opus and memory.** On opus, memory's lift is established: +0.48, task-clustered CI
   [+0.12, +0.85]. `all` is established on sonnet and opus.
 - **The ctx brief** is the most efficient per token on its targets: 6/6 on opus, for ~400
@@ -34,8 +34,8 @@ Each cell is passes / graded trials, with the task-clustered 95% CI of the lift 
 **Reading the table.** Compare within a column. Each model's task set is what it failed
 bare, so the first three columns are different task sets. The last column holds the 6 tasks
 all three models kept: 2 coordination, branch-first, p9, trash, higgsfield. On those, every
-injected arm rises from haiku to sonnet to opus. Across the full columns memory does not (0.21 →
-0.19 → 0.48).
+injected arm rises from haiku to sonnet to opus. Across the full columns memory does not rise
+monotonically (0.21 → 0.19 → 0.48).
 
 ## Headline: each injection on the tasks it targets (passes; bare is 0 on every row)
 
@@ -182,7 +182,7 @@ on sonnet, and 5.4%, 4.3% and 6.8% on opus.
    - The trash rule fires everywhere. The branch-first line is weaker: 0/3 on haiku, 1/3 on
      sonnet, 3/3 on opus.
    - Rules the index only hints at or omits fired 0/9 on sonnet and 7/9 on opus:
-     - **specs (3/3) and open-the-PR (2/2 passes):** opus opened the topic file,
+     - **specs (3/3) and open-the-PR (2/3):** in every pass opus opened the topic file,
        `deliverables-land-in-workspace-not-artifacts.md` or `pr-ask-stall-measured.md`;
      - **merge-pin:** passed on opus in memory (2/3) and `all` (3/3) without opening any
        memory file. It is 0/12 in every arm without memory, so the memory injection
