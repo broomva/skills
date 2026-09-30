@@ -229,7 +229,7 @@ interface CaptionOverlayProps {
   baseFontSize?: number;
   background?: "pill" | "shadow" | "gradient" | "none";
   backgroundOpacity?: number;
-  position?: "top" | "center" | "bottom";
+  position?: "top" | "center" | "bottom"; // 16:9 only: 9:16 always uses the caption band
 }
 
 function CaptionOverlay({
@@ -256,7 +256,11 @@ function CaptionOverlay({
   const vertical = useVerticalLayout(); // content-engine remotion/src/layout.ts
   const positionStyle = vertical
     ? { ...vertical.captionBand, justifyContent: "center" }
-    : { left: "5%", right: "5%", top: "auto", bottom: "8%" };
+    : {
+        left: "5%",
+        right: "5%",
+        ...{ top: { top: "8%" }, center: { top: "40%" }, bottom: { bottom: "8%" } }[position],
+      };
 
   return (
     <AbsoluteFill>
@@ -460,5 +464,5 @@ When wiring the CaptionOverlay into a Content Engine Remotion composition:
 2. Load Roboto Flex variable font (via `@fontsource-variable/roboto-flex` or CDN)
 3. Add `<CaptionOverlay cwiDocument={doc} />` as the last layer in the composition (on top of video)
 4. Match the composition fps and duration to the source video
-5. Set `background` and `position` based on the content type (reels = no background + top, editorial = pill + bottom)
+5. Set `background` and `position` based on the content type: reels (9:16) use no background, a black stroke and the caption band (`position` is ignored); editorial (16:9) uses a pill at the bottom
 6. Render: `npx remotion render CaptionedVideo --props='{"cwiPath":"captions.cwi.json"}'`

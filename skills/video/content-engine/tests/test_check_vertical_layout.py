@@ -509,6 +509,9 @@ def _break_contract(path):
     ("profiles", "reels-organic", "eye_line", [0.33, 0.45]),
     ("profiles", "reels-organic", "caption_band", "y1", 1.4),
     ("classification", "max_share_outside", 2),
+    ("profiles", "reels-organic", "legibility", "strong"),
+    ("profiles", "reels-organic", "eye_line", "y0", 0.5),                  # y0 > y1
+    ("profiles", "reels-organic", "caption_band", "centre_x_tolerance", -0.05),
     ("default_profile", "nope"),
 ])
 def test_malformed_layout_contract_exits_2(tmp_path, path):
@@ -521,7 +524,9 @@ def test_malformed_layout_contract_exits_2(tmp_path, path):
 
 def test_expected_title_missing_fails_vl4_and_meta_needs_any_text():
     frames = [cvl.Frame(label="a", texts=[caption_word("hello")], faces=[])]
-    assert run(frames, expect=frozenset({"title"}))["VL4"].status == "FAIL"
+    res = run(frames, expect=frozenset({"title"}))
+    assert res["VL4"].status == "FAIL"
+    assert "OCR found none" in res["VL4"].detail   # the caption in its band is not blamed
     # meta-ads has no bands to look in: any overlay text satisfies an expectation...
     res = run([cvl.Frame(label="a", texts=[text("buy now", 300, 1060, 780, 1120)], faces=[])],
               profile=META, expect=frozenset({"title", "caption"}))
@@ -529,13 +534,6 @@ def test_expected_title_missing_fails_vl4_and_meta_needs_any_text():
     # ...and no text at all fails it.
     res = run([cvl.Frame(label="a", texts=[], faces=[])], profile=META, expect=frozenset({"caption"}))
     assert res["VL2"].status == "FAIL"
-
-
-def test_framing_only_turns_the_text_rules_off():
-    frames = [cvl.Frame(label="a", texts=[text("SALE", 440, 1780, 640, 1840)], faces=[face(334, 616, 690, 972, 730)])]
-    res = {r.rule: r for r in cvl.evaluate(W, H, frames, ORGANIC, CLS, CANVAS, framing_only=True)}
-    assert all(res[r].status == "N/A" for r in ("VL2", "VL3", "VL4", "VL5", "VL9"))
-    assert res["VL6"].status == "PASS" and res["VL8"].status == "PASS"
 
 
 def test_spec_without_shots_skips_the_face_rules(tmp_path):
@@ -602,6 +600,18 @@ def test_contract_reproduces_the_measured_reel_pixels():
     assert safe.as_list() == [143, 277, 938, 1643]
     rail, bottom = (cvl.zone(a, W, H) for a in ORGANIC["avoid"])
     assert (round(rail.x0), round(rail.y0), round(bottom.y0)) == (872, 922, 1686)
+
+
+def test_brainrot_caption_band_constant_is_the_contracts_band():
+    """brainrot-for-good hard-codes the band for its Remotion snippet; it must be the
+    contract's band exactly, not merely numbers that appear somewhere in the contract."""
+    import re
+    doc = (SKILL.parent / "brainrot-for-good" / "SKILL.md").read_text()
+    m = re.search(r"CAPTION_BAND = \{ left: (\d+), top: (\d+), width: (\d+), height: (\d+) \}", doc)
+    assert m, "brainrot-for-good/SKILL.md: CAPTION_BAND constant not found"
+    left, top, width, height = (int(v) for v in m.groups())
+    cap = cvl.band(ORGANIC["caption_band"], cvl.zone(ORGANIC["safe_zone"], W, H), W, H).as_list()
+    assert [left, top, left + width, top + height] == cap
 
 
 def test_caption_band_clears_the_action_rail():
@@ -807,16 +817,6 @@ def test_legibility_warns_without_a_stroke_and_passes_with_one(tmp_path):
 
 
 @media
-def test_compose_video_gate_passes_good_and_fails_bad(videos):
-    """compose-video.py's run_layout_gate is what blocks a 9:16 campaign asset."""
-    mod = _compose_module()
-    detector = DETECTORS[0]
-    assert mod.run_layout_gate(videos["good"], expect_text=True, detector=detector) == (
-        "PASS" if detector == "vision" else "UNVERIFIED")
-    assert mod.run_layout_gate(videos["bottom"], expect_text=True, detector=detector) == "FAIL"
-
-
-@media
 @pytest.mark.parametrize("detector", DETECTORS)
 def test_video_captions_across_the_eyes_fail(videos, detector):
     code, res, _ = _check(videos["mid_captions"], detector, "--expect-captions")
@@ -870,49 +870,14 @@ def test_guide_paints_the_zones_where_the_contract_puts_them(tmp_path):
     assert max(r, g, b) - min(r, g, b) <= 3 and abs(r - 128) <= 4
 
 
+
+
 @media
-def test_compose_video_gate_fails_closed_on_missing_outputs(videos):
-    mod = _compose_module()
-    # stitch failed, render requested but never produced
-    assert mod.gate_vertical_outputs(None, None, remotion_requested=True) == {
-        "stitched": "MISSING", "rendered": "MISSING"}
-    outcome = mod.gate_vertical_outputs(videos["good"], videos["bottom"], remotion_requested=True)
-    assert outcome["rendered"] == "FAIL"
-    # No face in the fixture: Vision measures it (SKIP -> PASS); tesseract cannot
-    # (UNCHECKED -> UNVERIFIED). Neither may read as a silent pass.
-    expected = "PASS" if "vision" in DETECTORS else "UNVERIFIED"
-    assert outcome["stitched"] == expected
-    if "tesseract" in DETECTORS:
-        # Pinned to tesseract so the UNVERIFIED branch runs on every platform.
-        assert mod.run_layout_gate(videos["good"], expect_text=False, detector="tesseract") == "UNVERIFIED"
-
-
-def _compose_module():
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("compose_video", SKILL / "scripts" / "compose-video.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod
-
-
-def test_compose_gates_only_files_this_run_wrote(tmp_path):
-    import os
-    import time
-    mod = _compose_module()
-    stale = tmp_path / "reel-rendered.mp4"
-    stale.write_bytes(b"x")
-    old = time.time() - 600
-    os.utime(stale, (old, old))
-    started = time.time() - 1
-    assert mod.fresh(stale, started) is None          # left over from an earlier run
-    assert mod.fresh(tmp_path / "absent.mp4", started) is None
-    stale.write_bytes(b"new")
-    assert mod.fresh(stale, started) == stale         # written by this run
-
-
-def test_compose_exit_codes():
-    mod = _compose_module()
-    assert mod.gate_exit_code({"stitched": "PASS", "rendered": "PASS"}) == 0
-    assert mod.gate_exit_code({"stitched": "UNVERIFIED", "rendered": "PASS"}) == 3
-    for bad in ("FAIL", "MISSING", "ERROR"):
-        assert mod.gate_exit_code({"stitched": "UNVERIFIED", "rendered": bad}) == 1
+def test_report_records_the_declared_flags(videos, tmp_path):
+    """A verdict means little without knowing whether captions were declared."""
+    for flags, declared in (((), []), (("--expect-captions",), ["caption"])):
+        r = tmp_path / "r.json"
+        p = _cli("video", str(videos["good"]), "--detector", DETECTORS[0], "--report", str(r), "--no-guide", *flags)
+        assert p.returncode == 0, p.stdout + p.stderr
+        assert json.loads(r.read_text())["declared"] == declared
+        assert "declared:" in p.stdout

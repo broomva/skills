@@ -462,85 +462,6 @@ def write_manifest(output_dir: Path, storyboard: dict, clips: list, brand_slug: 
 
 
 # ---------------------------------------------------------------------------
-# 9:16 layout gate (references/vertical-layout.md)
-# ---------------------------------------------------------------------------
-
-def fresh(path: Path | None, since: float) -> Path | None:
-    """The path only if this run wrote it: stitch_clips returns any file that exists,
-    and a failed render leaves the previous run's file in a reused output dir. Gating
-    that stale file would pass the run on an artifact it never produced."""
-    if path is None or not path.exists() or path.stat().st_mtime < since:
-        return None
-    return path
-
-
-def run_layout_gate(video: Path | None, expect_text: bool, framing_only: bool = False,
-                    detector: str = "auto") -> str:
-    """Run check_vertical_layout.py on a 9:16 artifact and return its outcome:
-
-    PASS        no FAIL and nothing UNCHECKED (SKIPs are rules with nothing to judge)
-    UNVERIFIED  no FAIL, but rules UNCHECKED: off macOS the face rules, i.e. all of
-                the framing a raw clip is gated for; they must be checked on the guide
-    FAIL        a rule failed
-    MISSING     there is no artifact this run produced (stitch or render failed)
-    ERROR       the gate could not run (exit 2: no ffmpeg, no detector, ...)
-
-    `expect_text` marks a render that burned in captions and a title hook: finding
-    none, or finding them outside their bands, FAILs. `framing_only` marks raw clips
-    with no overlay text yet, so text in the footage is not judged as overlay.
-    """
-    if video is None:
-        print("Layout gate: the output is MISSING: this run produced nothing to gate.")
-        return "MISSING"
-    report = video.with_name(f"{video.stem}.layout-report.json")
-    cmd = [sys.executable, str(LAYOUT_CHECK), "video", str(video), "--report", str(report),
-           "--detector", detector]
-    if expect_text:
-        cmd += ["--expect-captions", "--expect-title"]
-    if framing_only:
-        cmd += ["--framing-only"]
-    print(f"Layout gate: {video.name}")
-    code = subprocess.run(cmd).returncode
-    if code == 2:
-        print("  Layout gate could not run (see the message above): ERROR.")
-        return "ERROR"
-    if code != 0:
-        return "FAIL"
-    try:
-        counts = json.loads(report.read_text()).get("counts", {})
-    except (OSError, json.JSONDecodeError):
-        print(f"  Layout report {report.name} is unreadable: ERROR.")
-        return "ERROR"
-    if counts.get("UNCHECKED"):
-        print(f"  {counts['UNCHECKED']} rule(s) UNCHECKED: open {video.stem}.layout-guide.png and check them by eye.")
-        return "UNVERIFIED"
-    return "PASS"
-
-
-def gate_vertical_outputs(final_path: Path | None, rendered_path: Path | None,
-                          remotion_requested: bool) -> dict[str, str]:
-    """Gate every 9:16 artifact this run was asked to produce: the stitched clips
-    (framing only; no overlay text yet) and, with --remotion, the render (everything,
-    text expected). Pass only paths `fresh()` confirmed; None is MISSING."""
-    outcomes = {"stitched": run_layout_gate(final_path, expect_text=False, framing_only=True)}
-    if remotion_requested:
-        outcomes["rendered"] = run_layout_gate(rendered_path, expect_text=True)
-    return outcomes
-
-
-def gate_exit_code(outcomes: dict[str, str]) -> int:
-    """1 when any artifact FAILed, is MISSING or could not be gated; 3 when the worst
-    is UNVERIFIED (not failed, not verified: do not distribute until checked by eye);
-    0 when every artifact PASSed."""
-    values = set(outcomes.values())
-    if values & {"FAIL", "MISSING", "ERROR"}:
-        return 1
-    if "UNVERIFIED" in values:
-        return 3
-    return 0
-
-
-# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -659,13 +580,11 @@ def main():
 
     # Stitch clips
     successful_clips = [c for c in clips if c is not None]
-    final_path: Path | None = None
-    rendered_path: Path | None = None
-    stitch_started = time.time()
+    final_path = output_dir / f"{slug}-final.mp4"
     if successful_clips:
         print()
         print(f"Stitching {len(successful_clips)} clips...")
-        final_path = fresh(stitch_clips(successful_clips, output_dir / f"{slug}-final.mp4"), stitch_started)
+        stitch_clips(successful_clips, final_path)
 
     # render.sh reads manifest.json, so it has to exist before Remotion runs.
     write_manifest(output_dir, storyboard, clips, args.brand)
@@ -718,34 +637,24 @@ def main():
     if args.remotion and successful_clips:
         print()
         remotion_dir = REPO_ROOT / "remotion"
-        render_target = output_dir / f"{slug}-rendered.mp4"
-        render_started = time.time()
+        rendered_path = output_dir / f"{slug}-rendered.mp4"
         render_script = remotion_dir / "render.sh"
 
         if render_script.exists():
             print("Rendering with Remotion (transitions + captions + brand)...")
             composition = "ContentEngineReel" if vertical else "ContentEngineVideo"
             try:
-                result = subprocess.run(
-                    ["bash", str(render_script), str(output_dir), str(render_target), composition],
+                subprocess.run(
+                    ["bash", str(render_script), str(output_dir), str(rendered_path), composition],
                     timeout=300,
                 )
-                if result.returncode != 0:
-                    print(f"  Remotion render failed (exit {result.returncode}).")
-                else:
-                    rendered_path = fresh(render_target, render_started)
-                    if rendered_path:
-                        print(f"  Rendered: {rendered_path.name} ({rendered_path.stat().st_size:,} bytes)")
+                if rendered_path.exists():
+                    size = rendered_path.stat().st_size
+                    print(f"  Rendered: {rendered_path.name} ({size:,} bytes)")
             except (subprocess.TimeoutExpired, FileNotFoundError) as e:
                 print(f"  Remotion render error: {e}")
         else:
             print("Remotion not set up. Run: cd remotion && bun install")
-
-    # 9:16 layout gate (references/vertical-layout.md)
-    gate = {}
-    if vertical:
-        print()
-        gate = gate_vertical_outputs(final_path, rendered_path, remotion_requested=args.remotion)
 
     # Summary
     print()
@@ -758,17 +667,16 @@ def main():
         print(f"Captions: {output_dir / 'captions'}")
     if args.remotion:
         print(f"Rendered: {output_dir / f'{slug}-rendered.mp4'}")
-    if gate:
-        print(f"Layout gate: {', '.join(f'{k} {v}' for k, v in gate.items())}")
-        code = gate_exit_code(gate)
-        if code == 1:
-            print("LAYOUT GATE FAILED: do not distribute. Read the .layout-report.json and")
-            print(".layout-guide.png beside each video (references/vertical-layout.md).")
-        elif code == 3:
-            print("LAYOUT GATE UNVERIFIED (exit 3): nothing failed, but some rules were not measured.")
-            print("Do not distribute until they are checked on the .layout-guide.png beside each video.")
-        if code:
-            sys.exit(code)
+    if vertical:
+        # The gate is run by hand, not here: an in-process gate kept deciding which
+        # files this run produced and whether that answer was honest, and got it
+        # wrong three different ways (PR #250 review). The checker is the contract.
+        print()
+        print("9:16: run the layout gate before distributing (references/vertical-layout.md):")
+        print(f"  python3 {LAYOUT_CHECK} video {final_path}")
+        if args.remotion:
+            print(f"  python3 {LAYOUT_CHECK} video {output_dir / f'{slug}-rendered.mp4'} "
+                  f"--expect-captions --expect-title")
 
 
 if __name__ == "__main__":

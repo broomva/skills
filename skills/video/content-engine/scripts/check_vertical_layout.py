@@ -186,13 +186,23 @@ def load_layout(path: Path | None = None) -> dict:
                     _check_zone(prof[key], f"{name}.{key}", keys=("y0", "y1"))
                     if "x0" in prof[key] or "x1" in prof[key]:
                         _check_zone(prof[key], f"{name}.{key}")
-            if prof.get("caption_band") is not None and not _is_num(prof["caption_band"].get("centre_x_tolerance")):
-                raise ToolError(f"layout contract: {name}.caption_band needs a numeric centre_x_tolerance")
+            cap = prof.get("caption_band")
+            if cap is not None and not (_is_num(cap.get("centre_x_tolerance")) and 0 < cap["centre_x_tolerance"] < 0.5):
+                raise ToolError(f"layout contract: {name}.caption_band needs a centre_x_tolerance in (0, 0.5)")
+            leg = prof.get("legibility")
+            if leg is not None and not (isinstance(leg, dict) and _is_num(leg.get("contrast_ratio"))
+                                        and leg["contrast_ratio"] >= 1
+                                        and _is_num(leg.get("min_halo_contrast_share"))
+                                        and 0 < leg["min_halo_contrast_share"] <= 1):
+                raise ToolError(f"layout contract: {name}.legibility must be null or an object with "
+                                f"contrast_ratio >= 1 and min_halo_contrast_share in (0, 1]")
             eye = prof.get("eye_line")
             if eye is not None and not (isinstance(eye, dict) and all(_is_num(eye.get(k)) for k in (
                     "y0", "y1", "max_shift_across_punch_in", "punch_in_scale_jump"))):
                 raise ToolError(f"layout contract: {name}.eye_line must be null or an object with numeric "
                                 f"y0, y1, max_shift_across_punch_in, punch_in_scale_jump")
+            if eye is not None:
+                _check_zone(eye, f"{name}.eye_line", keys=("y0", "y1"))
     except (KeyError, TypeError) as exc:
         raise ToolError(f"layout contract {path} is malformed: missing or mistyped {exc}") from exc
     return layout
@@ -286,22 +296,16 @@ def _seg_label(seg) -> str:
     return first if first == last else f"{first}..{last}"
 
 
-TEXT_RULES = ("VL2", "VL3", "VL4", "VL5", "VL9")
-
-
 def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
-             canvas_cfg: dict, expect: frozenset = frozenset(), framing_only: bool = False) -> list[Result]:
+             canvas_cfg: dict, expect: frozenset = frozenset()) -> list[Result]:
     """Apply VL1-VL9 to detections.
 
-    `expect` holds "title" and/or "caption" when the caller burned that text in. It is
-    how a caption placed outside its band is caught: roles are not inferred from what
-    text does (see "Why roles are declared" in references/vertical-layout.md), so text
-    elsewhere is only held to the safe and avoid zones, while an expected caption that
-    is not in the caption band FAILs VL5. It also turns unreadable text, which OCR
-    reports as absent, into a FAIL instead of a SKIP.
-
-    `framing_only` marks raw clips that carry no overlay text yet: the text rules
-    report N/A instead of judging whatever text is in the footage."""
+    `expect` holds "title" and/or "caption" when the caller burned that text in. Roles
+    come from position, not from what text does (see "Why roles are declared" in
+    references/vertical-layout.md), so the expectation is what turns "no text in the
+    caption band" into a FAIL: captions moved wholly out of the band, or unreadable
+    text that OCR reports as absent. It cannot see a caption set that is only partly
+    out of the band; nothing measured here can tell that caption from a label."""
     results: list[Result] = []
     names = dict(RULES)
 
@@ -351,7 +355,10 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
                   f"of height treated as scene text") if scene else ""
 
     def none_found(kind: str, rect: Box | None) -> str:
-        others = [t for _, t in overlay if t.region != kind]
+        # Candidates for a misplaced {kind}: plain overlay text, plus title-band text when
+        # captions are missing (captions parked at the top). Captions sitting in their
+        # own band are never offered as a misplaced title.
+        others = [t for _, t in overlay if t.region == "other" or (kind == "caption" and t.region == "title")]
         if others and rect:
             ys = sorted(round(t.box.cy) for t in others)
             return (f"expected {kind} text in the {kind} band (y {rect.y0:.0f}-{rect.y1:.0f}); none is there, "
@@ -574,9 +581,6 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
     else:
         add("VL9", "SKIP", "no overlay text found")
 
-    if framing_only:
-        results = [Result(r.rule, r.name, "N/A", "framing-only run: raw clips carry no overlay text yet")
-                   if r.rule in TEXT_RULES else r for r in results]
     return results
 
 
@@ -984,8 +988,12 @@ def verdict(results: list[Result], strict: bool) -> tuple[str, dict]:
 
 
 def render_table(meta: dict, results: list[Result], v: str, counts: dict) -> str:
+    declared = meta.get("declared")
     lines = [f"vertical layout check: {meta['input']}  (profile {meta['profile']}, "
              f"detector {meta.get('detector', '-')}, {meta.get('samples', 0)} sample(s))"]
+    if declared is not None:
+        # The verdict means little without this: undeclared captions are not checked.
+        lines.append(f"  declared: {', '.join(declared) if declared else 'none (captions and title not checked for presence)'}")
     if meta.get("detector_note"):
         lines.append(f"  note: {meta['detector_note']}")
     for r in results:
@@ -1041,7 +1049,7 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
         leg = profile.get("legibility") or {}
         measure_legibility(frames, leg.get("contrast_ratio", 3.0), cls["overlay_min_text_height"] * H)
         expect = frozenset(k for k, on in (("title", args.expect_title), ("caption", args.expect_captions)) if on)
-        results = evaluate(W, H, frames, profile, cls, layout["canvas"], expect, framing_only=args.framing_only)
+        results = evaluate(W, H, frames, profile, cls, layout["canvas"], expect)
         guide = None
         if not args.no_guide:
             guide = args.guide or _default_out(inputs[0], "layout-guide.png")
@@ -1050,7 +1058,7 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
         args.report = _default_out(inputs[0], "layout-report.json")
     meta = {"input": inputs[0] if is_video else inputs, "mode": "video" if is_video else "image",
             "profile": pname, "detector": detector, "canvas": [W, H], "samples": len(frames),
-            "report": args.report, "guide": guide}
+            "declared": sorted(expect), "report": args.report, "guide": guide}
     if detector_note:
         meta["detector_note"] = detector_note
     return emit(args, meta, results)
@@ -1118,8 +1126,6 @@ def build_parser() -> argparse.ArgumentParser:
                            help="captions were burned in: finding none is a FAIL, not a SKIP")
             p.add_argument("--expect-title", action="store_true",
                            help="a title hook was burned in: finding none is a FAIL, not a SKIP")
-            p.add_argument("--framing-only", action="store_true",
-                           help="raw clips with no overlay text yet: text rules report N/A, framing rules run")
 
     v = sub.add_parser("video", help="sample a video and check it")
     v.add_argument("input")

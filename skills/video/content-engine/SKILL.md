@@ -23,7 +23,7 @@ COMPILE → GENERATE → POST-PRODUCE → LAYOUT GATE (9:16) → DISTRIBUTE → 
 | `/content-engine autopilot run` | Batch generation via browser automation |
 | `/content-engine campaign {brief}` | Full pipeline: compile → generate → distribute |
 | `/content-engine loop` | Compound existing skills for distribution |
-| `/content-engine layout-check {video\|image\|spec}` | 9:16 layout gate: `python3 scripts/check_vertical_layout.py video final.mp4` (see Vertical Layout Gate) |
+| `/content-engine layout-check {video\|image\|spec}` | 9:16 layout gate: `python3 scripts/check_vertical_layout.py video final.mp4 --expect-captions --expect-title` for a render with captions and a title hook (see Vertical Layout Gate) |
 
 ## Architecture
 
@@ -268,7 +268,7 @@ because reading the right numbers does not guarantee that the pixels land inside
 | VL2 | Overlay text inside the safe zone x 143-938, y 277-1643 (title band excepted) |
 | VL3 | No overlay text or face on the action rail (x ≥ 872, y ≥ 922) or the bottom band (y ≥ 1686); small text there WARNs; a face counts if it is there in over a third of a shot |
 | VL4 | Title hook in the top band, y 121-436, centred near y 278 |
-| VL5 | Captions in the band x 220-860, y 1288-1463, centred; with `--expect-captions`, captions anywhere else FAIL as missing from the band |
+| VL5 | Captions in the band x 220-860, y 1288-1463, centred; with `--expect-captions`, an empty band FAILs (captions moved wholly elsewhere, or unreadable) |
 | VL6 | Eyes at 33-45% of the height (source Reel: 38-40%) |
 | VL7 | Eye line moves at most 58px across a punch-in; WARN only (a cut to another framing looks the same to the detector) |
 | VL8 | Face inside the safe zone (median, and in two thirds of each shot's samples) |
@@ -279,8 +279,9 @@ because reading the right numbers does not guarantee that the pixels land inside
 ```bash
 # rendered video with burned-in text (Remotion ContentEngineReel, CapCut export, ...)
 python3 scripts/check_vertical_layout.py video final.mp4 --expect-captions --expect-title
-# raw generated clip, before any text: framing only (VL1, VL6-VL8); text rules N/A
-python3 scripts/check_vertical_layout.py video clip.mp4 --framing-only
+# raw generated clip, before any text: read VL1 and VL6-VL8 (text rules describe
+# text inside the footage, not overlays)
+python3 scripts/check_vertical_layout.py video clip.mp4
 # overlay geometry you are about to draw (watermarks, CTAs: small text OCR skips)
 python3 scripts/check_vertical_layout.py spec overlays.json
 # paid placements: Meta's 14% top / 35% bottom / 6% sides. ContentEngineReel draws the
@@ -294,23 +295,12 @@ text is a caption (see "Why roles are declared" in the reference).
 Outside this skill's root, the script is at
 `~/.claude/skills/content-engine/scripts/check_vertical_layout.py`.
 
-`compose-video.py --aspect-ratio 9:16` gates what this run produced:
-- the stitched clips, with `--framing-only` (there is no overlay text yet)
-- the `--remotion` render, if one was requested, with `--expect-captions --expect-title`
+`compose-video.py --aspect-ratio 9:16` renders `ContentEngineReel` and prints the
+gate commands to run on what it wrote. It does not gate in-process. Run them before
+distributing.
 
-A file left over from an earlier run in the same output directory is never gated; only
-files written by this run count. Each artifact gets one outcome:
-
-| Outcome | Meaning | Exit |
-|---|---|---|
-| PASS | nothing failed and nothing was UNCHECKED (SKIPs had nothing to judge) | 0 |
-| UNVERIFIED | nothing failed, but rules were UNCHECKED; off macOS that is all of the framing rules. Check them on the guide sheet before distributing | 3 |
-| FAIL | a rule failed | 1 |
-| MISSING | a requested artifact was never produced (the stitch or render failed) | 1 |
-| ERROR | the gate could not run | 1 |
-
-**Pass criteria.** The last line of the checker's output is `VERDICT: PASS` (exit 0).
-Then:
+**Pass criteria.** The checker exits 0 and the last line of its table output reads
+`VERDICT: PASS`. Then:
 
 1. Every **FAIL** is fixed and the gate re-run. Never distribute on a FAIL.
 2. Every **UNCHECKED** rule is closed by looking at `<video>.layout-guide.png` (zones
@@ -318,8 +308,11 @@ Then:
    macOS; use `--strict` where that must fail.
 3. Every **SKIP** is one you expected (a raw clip has no text; a b-roll has no face). A
    render that burned in text must be run with `--expect-captions`/`--expect-title`,
-   because OCR sees unreadable text as no text.
-4. Every **WARN** is looked at:
+   because OCR sees unreadable text as no text. The `declared:` line in the output
+   shows which flags were passed.
+4. The guide sheet is looked at. The gate cannot see a caption set that is only partly
+   out of the band.
+5. Every **WARN** is looked at:
    - **VL9:** low contrast around the glyph edges. Add a stroke or a backing, or confirm
      on the guide sheet that it is a fade frame.
    - **VL7:** an eye-line jump. It is fine at a cut; a punch-in must be scaled about the

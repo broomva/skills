@@ -89,7 +89,7 @@ Output of `python3 scripts/check_vertical_layout.py --profile meta-ads-9x16 zone
 | VL2 | Overlay text stays inside the safe zone. Title-band text is exempt. | text boxes | Any overlay box leaves the zone. |
 | VL3 | No overlay text and no face touches an avoid zone | text + face boxes | Any overlay text box overlapping the action rail or the bottom band FAILs, and so does a shot whose median face overlaps it or whose face overlaps it in more than 34% of samples. Small (scene-sized) text there WARNs, because a handle or a "link in bio" that small looks the same as text inside the footage. |
 | VL4 | Top text (centre above 25% of height) sits in the title hook band | text boxes | A top box leaves the band. With `--expect-title`, finding no title also fails. |
-| VL5 | Captions sit in the caption band, centred | text boxes | Text centred in the band's rows must fit inside the band, with the median centre within ±54 px. With `--expect-captions`, no text in the band FAILs: captions placed anywhere else (at the top, across the eyes) are caught this way. |
+| VL5 | Captions sit in the caption band, centred | text boxes | Text centred in the band's rows must fit inside the band, with the median centre within ±54 px. With `--expect-captions`, an empty band FAILs. That catches captions moved wholly out of the band (to the top, across the eyes) and captions OCR cannot read. It does not catch a caption set that is only partly out of the band. |
 | VL6 | Eyes sit in the eye-line band (33-45%) | face landmarks | For any shot, the median eye line is outside the band, or more than 34% of its samples are. |
 | VL7 | The eye line holds across punch-ins | face landmarks | WARN, never FAIL, when the median eye line moves more than 3% of the height (58 px) across a face-scale change of 12% or more that persists. Face geometry cannot tell a punch-in from a cut between two framings (two centred speakers look like a punch-in), so the reader decides: a punch-in is scaled about the eye line; a cut is fine. |
 | VL8 | The face stays inside the safe zone | face boxes | A shot's median face box leaves the zone, or its face does in more than 34% of samples. |
@@ -118,11 +118,21 @@ layouts:
 - image mode has no time axis at all.
 
 So the gate no longer guesses. A pipeline that burned captions in passes
-`--expect-captions`. The gate then requires text in the caption band, and captions
-placed anywhere else (at the top, across the eyes) FAIL VL5 as missing from it.
-Without the flag, a caption outside the band is just overlay text: it is held to VL2
-and VL3, and nothing flags it as a misplaced caption.
-`--expect-title` does the same for the title band.
+`--expect-captions`, and the gate then requires text in the caption band.
+
+**What that catches:**
+- captions moved wholly somewhere else (at the top, across the eyes);
+- captions OCR cannot read.
+
+**What it does not catch:**
+- A caption set that is only partly out of the band, for example some words across the
+  eyes and some in the band. Measurement cannot tell a stray caption from a label.
+- A caption outside the band when the flag is not passed. It is plain overlay text,
+  held to VL2 and VL3 only.
+
+Look at the guide sheet for both. The report's `declared` field, and the `declared:`
+line under the table header, record which flags were passed, so a verdict produced
+without them is visible as such. `--expect-title` does the same for the title band.
 
 ## Running the gate
 
@@ -144,12 +154,14 @@ python3 $S/check_vertical_layout.py guide final.mp4 --out guide.png
 
 `video` and `image` write `<input>.layout-report.json` and `<input>.layout-guide.png`
 next to the input (`--report`, `--guide`, `--no-report` and `--no-guide` change that).
-The last output line is always `VERDICT: PASS|FAIL (n PASS, n FAIL, ...)`, so
-`tail -1` reads it; the `report:` and `guide:` paths print just above it.
+In the table output (the default), the last line is `VERDICT: PASS|FAIL (n PASS, n FAIL, ...)`,
+so `tail -1` reads it; the `report:` and `guide:` paths print just above it. With
+`--json`, read the `verdict` field instead.
 
-`--framing-only` is for raw clips that carry no overlay text yet: VL2-VL5 and VL9 report
-N/A and only the canvas and face rules run, so signage or a label inside generated
-footage is not judged as a misplaced overlay.
+For a raw generated clip, before any text is added, the rules that matter are VL1 and
+VL6-VL8. VL2-VL5 and VL9 then describe text inside the footage (signage, a label), not
+an overlay. A FAIL there means text in the footage sits where overlays would go.
+Reframe or regenerate the clip if that text matters.
 
 A spec file lists boxes in pixels:
 
@@ -191,7 +203,9 @@ detector, unreadable input). An exit of 2 is not a verdict.
 
 Read SKIP and UNCHECKED as "not checked", never as "passed". Each UNCHECKED rule has to
 be closed by looking at the guide sheet, and each SKIP has to be one you expected. For
-example, a raw generated clip has no text, so VL2-VL5 SKIP.
+example, a raw generated clip usually has no text, so VL2-VL5 SKIP; a b-roll has no
+face, so VL6-VL8 SKIP. A verdict of PASS where nothing but VL1 was judged verifies only
+the canvas.
 
 ## Detectors and their limits
 
@@ -240,6 +254,11 @@ Known limits, each measured while building this gate:
 - **Fades read as low contrast.** VL9 measures whatever frame it samples, so a title
   card fading in or out WARNs (0.53-0.59 on content-engine's own reel render). Confirm a
   VL9 WARN on the guide sheet before restyling.
+- **Position decides roles in a final render.** Text centred in the caption band's rows
+  is judged as a caption, and text centred in the top 25% as a title. A lower-third
+  name tag, a product label or a sign in the footage that sits in those rows is judged
+  the same way, and may FAIL VL4 or VL5. Keep such text out of those rows, or read the
+  FAIL against the guide sheet.
 - **The eye line needs a face.** Faceless content (product shots, b-roll) SKIPs VL6-VL8.
   Place key subjects inside the safe zone by eye, using the guide sheet.
 
