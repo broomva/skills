@@ -558,6 +558,15 @@ def test_routed_entries_cover_the_owner_s_initial_cases():
             "convention.trash-not-rm", "convention.paseo-fleet-listing", "p4.merge-pinned-to-head"} <= routed
 
 
+def test_a_dot_inside_a_path_is_not_a_sentence_end():
+    """Found on a held-out prompt: `[^.?!]` stopped at the dot of `.worktrees/`."""
+    rid = "p10.worktree-removal-guard"
+    assert rid in fired_ids("Remove the .worktrees/intent-ask worktree and your branch", feature_state())
+    assert rid in fired_ids("delete the worktree for v0.7.2 please", feature_state())
+    assert rid not in fired_ids("Remove it. The worktree list is long.", feature_state())
+    assert "convention.trash-not-rm" not in fired_ids("delete this. folders are fine", feature_state())
+
+
 def test_curly_apostrophes_route_like_straight_ones():
     assert "convention.trash-not-rm" in fired_ids("Can\u2019t you drop those scratch folders?", feature_state())
 

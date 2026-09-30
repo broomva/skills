@@ -114,6 +114,17 @@ def phrase_pattern(phrase: str) -> re.Pattern[str]:
     return re.compile(r"(?<!\w)" + re.escape(phrase) + r"(?!\w)", re.IGNORECASE)
 
 
+#: In a catalog regex, ``[^.?!]`` means "still in the same sentence". Punctuation
+#: followed by a non-space (the dot in ``.worktrees/``, ``README.md``, ``v0.7``) is
+#: not a sentence end, so the loader widens the class to let it through.
+SAME_SENTENCE = "[^.?!]"
+SAME_SENTENCE_WIDE = r"(?:[^.?!]|[.?!](?=\S))"
+
+
+def prompt_pattern(rx: str) -> re.Pattern[str]:
+    return re.compile(rx.replace(SAME_SENTENCE, SAME_SENTENCE_WIDE), re.IGNORECASE)
+
+
 def _load_yaml(path: Path) -> Any:
     import yaml  # role-x.py has already made PyYAML importable under -I
 
@@ -221,7 +232,7 @@ def _parse_entry(e: Any, index: int, seen: set[str]) -> Reflex:
         pats: list[re.Pattern[str]] = []
         for rx in _str_list(c.get("prompt"), f"{rid}: prompt"):
             try:
-                pats.append(re.compile(rx, re.IGNORECASE))
+                pats.append(prompt_pattern(rx))
             except re.error as exc:
                 raise CatalogError(f"{rid}: bad regex {rx!r}: {exc}") from exc
         phrases = _str_list(c.get("phrases"), f"{rid}: phrases")
