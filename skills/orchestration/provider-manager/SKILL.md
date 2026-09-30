@@ -53,17 +53,21 @@ python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py usage --fo
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py balance --threshold 85.0
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py balance --dry-run
 
-# 5. Switch active credentials to another account
+# 5. View audit history of balancing and rotation events
+python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py history
+python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py history --limit 20
+
+# 6. Switch active credentials to another account
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py switch dev@company.com
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py switch team@company.com
 
-# 6. Rotate to next available account (rate limit failover)
+# 7. Rotate to next available account (rate limit failover)
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py rotate --reason "rate_limit_429"
 
-# 7. Headless zero-touch login via browser session
+# 8. Headless zero-touch login via browser session
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py login-headless --email team@company.com
 
-# 8. Claude Code Hook Dispatcher (SessionStart, PostToolUse, UserPromptSubmit)
+# 9. Claude Code Hook Dispatcher (SessionStart, PostToolUse, UserPromptSubmit)
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager_hook.py session-start
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager_hook.py post-tool-use
 ```
