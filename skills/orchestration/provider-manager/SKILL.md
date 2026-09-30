@@ -45,15 +45,27 @@ python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py list --jso
 # 2. Check current active authentication & subscription status
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py status
 
-# 3. Switch active credentials to another account
+# 3. View live 5-hour and 7-day usage telemetry across all accounts
+python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py usage
+python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py usage --force  # bypass cache
+
+# 4. Proactively balance accounts (auto-switches if active exceeds threshold)
+python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py balance --threshold 85.0
+python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py balance --dry-run
+
+# 5. Switch active credentials to another account
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py switch dev@company.com
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py switch team@company.com
 
-# 4. Rotate to next available account (rate limit failover)
+# 6. Rotate to next available account (rate limit failover)
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py rotate --reason "rate_limit_429"
 
-# 5. Headless zero-touch login via browser session
+# 7. Headless zero-touch login via browser session
 python3 ~/.agents/skills/provider-manager/scripts/provider_manager.py login-headless --email team@company.com
+
+# 8. Claude Code Hook Dispatcher (SessionStart, PostToolUse, UserPromptSubmit)
+python3 ~/.agents/skills/provider-manager/scripts/provider_manager_hook.py session-start
+python3 ~/.agents/skills/provider-manager/scripts/provider_manager_hook.py post-tool-use
 ```
 
 ---
