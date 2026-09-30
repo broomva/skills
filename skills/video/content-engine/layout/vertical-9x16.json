@@ -10,10 +10,7 @@
   "classification": {
     "overlay_min_text_height": 0.015,
     "title_region_max_centre_y": 0.25,
-    "caption_region_min_centre_y": 0.6,
-    "caption_like_min_clusters": 3,
-    "caption_like_max_dominant_share": 0.5,
-    "caption_like_min_seconds": 1.5
+    "max_share_outside": 0.34
   },
   "default_profile": "reels-organic",
   "profiles": {
@@ -26,14 +23,12 @@
         { "name": "bottom username/caption band", "x0": 0.0, "y0": 0.878, "x1": 1.0, "y1": 1.0 }
       ],
       "title_band": { "y0": 0.063, "y1": 0.227 },
-      "caption_band": { "x0": 0.193, "y0": 0.671, "x1": 0.807, "y1": 0.762, "centre_x_tolerance": 0.05 },
+      "caption_band": { "x0": 0.204, "y0": 0.671, "x1": 0.796, "y1": 0.762, "centre_x_tolerance": 0.05 },
       "eye_line": {
         "y0": 0.33,
         "y1": 0.45,
-        "max_share_outside": 0.34,
         "max_shift_across_punch_in": 0.03,
-        "punch_in_scale_jump": 0.12,
-        "punch_in_max_centre_shift": 0.08
+        "punch_in_scale_jump": 0.12
       },
       "legibility": { "contrast_ratio": 3.0, "min_halo_contrast_share": 0.6 }
     },

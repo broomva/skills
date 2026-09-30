@@ -251,19 +251,18 @@ function CaptionOverlay({
 
   if (activeEvents.length === 0) return null;
 
-  const positionStyle = {
-    top: { top: "8%", bottom: "auto" },
-    center: { top: "40%", bottom: "auto" },
-    bottom: { top: "auto", bottom: "8%" },
-  }[position];
+  // 9:16: the caption band from layout/vertical-9x16.json (see Safe Zones below);
+  // 16:9: the lower third. Never percentage margins of your own on 9:16.
+  const vertical = useVerticalLayout(); // content-engine remotion/src/layout.ts
+  const positionStyle = vertical
+    ? { ...vertical.captionBand, justifyContent: "center" }
+    : { left: "5%", right: "5%", top: "auto", bottom: "8%" };
 
   return (
     <AbsoluteFill>
       <div
         style={{
           position: "absolute",
-          left: "5%",
-          right: "5%",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -353,8 +352,8 @@ The caption background ensures readability against any video content.
 ### Safe Zones
 
 On 9:16 the caption container is the caption band of the vertical layout contract
-(`layout/vertical-9x16.json`, `references/vertical-layout.md`): x 208-872, y 1288-1463
-at 1080x1920, i.e. centred on 72% of the height and stopping where the action rail begins.
+(`layout/vertical-9x16.json`, `references/vertical-layout.md`): x 220-860, y 1288-1463
+at 1080x1920, i.e. centred on 72% of the height and ending short of the action rail (x 872).
 The `ContentEngineReel` composition places it there; do not use percentage margins
 of your own. The old guidance here (5% side margins, top 12% for Reels) put captions in
 the zones the Reel's UI covers.

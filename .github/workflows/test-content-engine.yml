@@ -8,11 +8,13 @@ on:
   pull_request:
     paths:
       - 'skills/video/content-engine/**'
+      - 'skills/video/brainrot-for-good/**'   # its CAPTION_BAND is drift-tested here
       - '.github/workflows/test-content-engine.yml'
   push:
     branches: [main]
     paths:
       - 'skills/video/content-engine/**'
+      - 'skills/video/brainrot-for-good/**'   # its CAPTION_BAND is drift-tested here
       - '.github/workflows/test-content-engine.yml'
   workflow_dispatch:
 

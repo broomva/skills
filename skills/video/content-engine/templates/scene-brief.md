@@ -157,7 +157,7 @@ the screen. Left hand may be transitioning from keyboard to mouse."}
 **9:16 layout (reel only; `references/vertical-layout.md`):**
 - Framing: {framing -- e.g., "medium close-up, subject centred, eyes on the upper-third line (~38% from top)"}
 - Title hook (top band, y 121-436): {title_hook -- e.g., "Why your captions get covered", or "none"}
-- Captions (caption band x 208-872, centred on y 1376, white + black stroke): {captions -- "word-by-word" | "none"}
+- Captions (caption band x 220-860, centred on y 1376, white + black stroke): {captions -- "word-by-word" | "none"}
 - Punch-ins: {punch_ins -- e.g., "1.2x at 0:08, scaled about the eye line"}
 - Gate: `python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video <file>`,
   adding `--expect-captions` / `--expect-title` only for text this scene burns in;

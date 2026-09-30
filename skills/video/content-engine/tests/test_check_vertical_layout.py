@@ -85,7 +85,8 @@ def test_bottom_captions_fail_safe_zone_avoid_zone_and_caption_band():
     assert res["VL2"].status == "FAIL"
     assert res["VL3"].status == "FAIL"
     assert "bottom" in res["VL3"].evidence[0]["why"]
-    assert res["VL5"].status == "FAIL"
+    assert res["VL5"].status == "SKIP"        # undeclared: not judged as a caption...
+    assert run(frames, expect=CAPS)["VL5"].status == "FAIL"   # ...declared: missing from the band
 
 
 def test_text_on_the_action_rail_fails_vl3_even_inside_the_safe_zone():
@@ -105,22 +106,43 @@ def timed(texts_per_frame, step=0.5):
 WORDS = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]
 
 
-def test_word_by_word_text_in_the_title_band_is_treated_as_captions():
+CAPS = frozenset({"caption"})
+
+
+def test_declared_captions_parked_at_the_top_fail_vl5():
     # The old campaign-plan template put captions "top-center, 12% from top".
-    res = run(timed([[text(w, 440, 200, 640, 260)] for w in WORDS]))
+    frames = timed([[text(w, 440, 200, 640, 260)] for w in WORDS])
+    res = run(frames, expect=CAPS)
     assert res["VL5"].status == "FAIL"
-    assert "in the title band" in res["VL5"].detail
-    assert res["VL2"].status == "FAIL"  # 200 < 277: no title-band exemption for captions
+    assert "outside its band" in res["VL5"].detail
 
 
-def test_word_by_word_captions_across_the_eyes_fail_vl5():
+def test_declared_captions_across_the_eyes_fail_vl5_in_video_and_image_mode():
     # CapCut's default: captions at mid-frame, over the face.
+    for step in (0.5, None):  # video samples, and stills with no time axis
+        frames = [cvl.Frame(label=f"f{i}", t=None if step is None else i * step,
+                            texts=[text(w, 440, 930, 640, 990)], faces=[]) for i, w in enumerate(WORDS)]
+        res = run(frames, expect=CAPS)
+        assert res["VL5"].status == "FAIL", step
+        assert "OCR found none" not in res["VL5"].detail
+
+
+def test_undeclared_text_outside_the_bands_is_a_plain_overlay():
+    # Without --expect-captions the gate does not guess: mid-frame words, a CTA below
+    # the caption band, rotating chapter titles in the title band all stay legal.
     res = run(timed([[text(w, 440, 930, 640, 990)] for w in WORDS]))
-    assert res["VL5"].status == "FAIL"
-    assert "middle of the frame" in res["VL5"].detail
-    res = run(timed([[text(w, 440, 930, 640, 990)] for w in WORDS]), expect=frozenset({"caption"}))
-    assert res["VL5"].status == "FAIL"
-    assert "OCR found none" not in res["VL5"].detail
+    assert (res["VL2"].status, res["VL5"].status) == ("PASS", "SKIP")
+    res = run(timed([[text("Link in bio", 330, 1510, 750, 1550)]] * 4))
+    assert (res["VL2"].status, res["VL5"].status) == ("PASS", "SKIP")
+    chapters = timed([[text(c, 330, 240, 750, 320)] for c in ("Tip 1", "Tip 1", "Tip 2", "Tip 2", "Tip 3", "Tip 3")])
+    res = run(chapters, expect=frozenset({"title"}))
+    assert (res["VL4"].status, res["VL5"].status) == ("PASS", "SKIP")
+
+
+def test_a_larger_static_label_does_not_hide_declared_captions():
+    frames = timed([[text(w, 440, 1345, 640, 1405), text("JUN YU founder", 200, 1000, 880, 1100)] for w in WORDS])
+    res = run(frames, expect=CAPS)
+    assert res["VL5"].status == "PASS"
 
 
 def test_static_mid_text_is_a_plain_overlay_and_an_expected_title_names_it():
@@ -129,29 +151,14 @@ def test_static_mid_text_is_a_plain_overlay_and_an_expected_title_names_it():
     assert (res["VL2"].status, res["VL4"].status, res["VL5"].status) == ("PASS", "SKIP", "SKIP")
     res = run(timed([[text("Why agents fail", 300, 540, 780, 620)]] * 6), expect=frozenset({"title"}))
     assert res["VL4"].status == "FAIL"
-    assert "1 other overlay" in res["VL4"].detail or "6 other overlay" in res["VL4"].detail
+    assert "6 other overlay box(es)" in res["VL4"].detail and "outside its band" in res["VL4"].detail
 
 
-def test_ocr_jitter_on_a_static_title_does_not_make_it_captions():
+def test_ocr_jitter_on_a_static_title_keeps_it_a_title():
     reads = ["Why agents fail", "fail.", "fai", "Why agenis fail", "Why agents fail", "Why agents fail"]
     res = run(timed([[text(r, 330, 240, 750, 320)] for r in reads]))
     assert res["VL4"].status == "PASS"
     assert res["VL5"].status == "SKIP"
-
-
-def test_caption_classification_does_not_move_with_the_sample_rate():
-    # The same 3 s of word-by-word captions sampled at 2 fps and at 10 fps.
-    for step in (0.5, 0.1):
-        n = int(3 / step)
-        frames = timed([[text(WORDS[int(i * step / 0.5) % len(WORDS)], 440, 200, 640, 260)] for i in range(n)], step)
-        assert run(frames)["VL5"].status == "FAIL", step
-
-
-def test_same_line_matches_ocr_variants_but_not_short_words():
-    assert cvl.same_line("Why agents fail", "fail.")
-    assert cvl.same_line("Why agents fail", "Why agenis fail")
-    assert not cvl.same_line("this", "is")
-    assert not cvl.same_line("alpha", "bravo")
 
 
 def test_static_title_in_the_band_is_a_title_and_passes():
@@ -170,8 +177,8 @@ def test_title_above_the_band_fails_vl4_and_vl2():
 
 
 def test_off_centre_caption_fails_vl5():
-    # Inside the band (x 208-872) but centred at x 310, not 540.
-    frames = [cvl.Frame(label="a", texts=[text("left", 210, 1345, 410, 1405)], faces=[])]
+    # Inside the band (x 220-860) but centred at x 322, not 540.
+    frames = [cvl.Frame(label="a", texts=[text("left", 222, 1345, 422, 1405)], faces=[])]
     res = run(frames)
     assert res["VL5"].status == "FAIL"
     assert "median centre off" in res["VL5"].evidence[0]["why"]
@@ -235,22 +242,31 @@ def test_punch_in_that_holds_the_eye_line_passes_vl7():
     assert res["VL7"].evidence[0]["shift_px"] == 40
 
 
-def test_punch_in_that_drops_the_eye_line_fails_vl7():
+def test_punch_in_that_drops_the_eye_line_warns_vl7():
     # Scaling about the frame centre instead of the eye line moves the eyes a lot.
+    # WARN, not FAIL: the same geometry is a cut between two centred speakers.
     wide = [cvl.Frame(label=f"w{i}", faces=[face(360, 620, 700, 960, 730)]) for i in range(4)]
     tight = [cvl.Frame(label=f"p{i}", faces=[face(300, 700, 780, 1180, 840)]) for i in range(4)]
     res = run(wide + tight)
-    assert res["VL7"].status == "FAIL"
+    assert res["VL7"].status == "WARN"
+    assert cvl.verdict(list(run(wide + tight).values()), strict=False)[0] == "PASS"
 
 
-def test_a_cut_to_a_new_framing_only_warns_vl7():
-    # Two shots, each fine for VL6, face moved sideways: a new shot, not a punch-in.
-    a = [cvl.Frame(label=f"a{i}", faces=[face(200, 560, 520, 880, 680)]) for i in range(4)]
-    b = [cvl.Frame(label=f"b{i}", faces=[face(520, 600, 920, 1000, 800)]) for i in range(4)]
+def test_a_cut_between_two_centred_speakers_only_warns_vl7():
+    a = [cvl.Frame(label=f"a{i}", faces=[face(360, 560, 720, 880, 680)]) for i in range(4)]
+    b = [cvl.Frame(label=f"b{i}", faces=[face(340, 600, 740, 1000, 810)]) for i in range(4)]
     res = run(a + b)
     assert res["VL6"].status == "PASS"
     assert res["VL7"].status == "WARN"
-    assert res["VL7"].evidence[0]["kind"] == "cut"
+
+
+def test_a_face_drifting_onto_the_rail_for_part_of_a_shot_fails_vl3_and_vl8():
+    # Same scale throughout (one shot); the median face is fine, 4 of 10 samples are not.
+    frames = [cvl.Frame(label=f"t{i}", faces=[face(334, 616, 690, 972, 730)]) for i in range(6)]
+    frames += [cvl.Frame(label=f"d{i}", faces=[face(620, 616, 976, 972, 730)]) for i in range(4)]
+    res = run(frames)
+    assert res["VL3"].status == "FAIL" and "of samples" in res["VL3"].evidence[0]["why"]
+    assert res["VL8"].status == "FAIL"
 
 
 def test_one_leaning_frame_does_not_fail_vl3_for_the_shot():
@@ -452,6 +468,8 @@ def test_spec_mode_exit_codes(tmp_path):
     {"canvas": [1080, 1920], "shots": [{"eye_y": 300}]},
     {"canvas": [1080, 1920], "shots": [{"face_box": [1, 2, 3]}]},
     {"canvas": [1080, 1920], "shots": [5]},
+    {"canvas": [1080, 0.5], "elements": [{"box": [1, 2, 3, 4]}]},
+    {"canvas": [1080, 1920], "elements": [{"role": "captions", "box": [440, 930, 640, 990]}]},
 ])
 def test_malformed_spec_exits_2_never_a_verdict(tmp_path, spec):
     p = tmp_path / "spec.json"
@@ -469,23 +487,69 @@ def test_spec_roles_and_backgrounds_are_case_insensitive(tmp_path):
     assert by["VL9"] == "FAIL"   # busy, unstroked
 
 
-def test_malformed_layout_contract_exits_2(tmp_path):
-    bad = json.loads((SKILL / "layout" / "vertical-9x16.json").read_text())
-    del bad["profiles"]["reels-organic"]["safe_zone"]
+def _break_contract(path):
+    """Apply `path` = (keys..., new value or DELETE) to a copy of the contract."""
+    c = json.loads((SKILL / "layout" / "vertical-9x16.json").read_text())
+    *keys, value = path
+    node = c
+    for k in keys[:-1]:
+        node = node[k]
+    if value == "DELETE":
+        del node[keys[-1]]
+    else:
+        node[keys[-1]] = value
+    return c
+
+
+@pytest.mark.parametrize("path", [
+    ("profiles", "reels-organic", "safe_zone", "DELETE"),
+    ("profiles", "reels-organic", "safe_zone", "x0", 0.9),                  # x0 > x1
+    ("profiles", "reels-organic", "caption_band", "centre_x_tolerance", "DELETE"),
+    ("profiles", "reels-organic", "avoid", 0, "name", "DELETE"),
+    ("profiles", "reels-organic", "eye_line", [0.33, 0.45]),
+    ("profiles", "reels-organic", "caption_band", "y1", 1.4),
+    ("classification", "max_share_outside", 2),
+    ("default_profile", "nope"),
+])
+def test_malformed_layout_contract_exits_2(tmp_path, path):
     p = tmp_path / "layout.json"
-    p.write_text(json.dumps(bad))
+    p.write_text(json.dumps(_break_contract(path)))
     r = _cli("--layout", str(p), "zones")
-    assert r.returncode == 2 and "Traceback" not in r.stderr
+    assert r.returncode == 2, (path, r.stdout, r.stderr)
+    assert "Traceback" not in r.stderr
 
 
-def test_expected_title_missing_fails_vl4_and_meta_carries_it_on_vl2():
+def test_expected_title_missing_fails_vl4_and_meta_needs_any_text():
     frames = [cvl.Frame(label="a", texts=[caption_word("hello")], faces=[])]
     assert run(frames, expect=frozenset({"title"}))["VL4"].status == "FAIL"
-    # meta-ads has no title band: an expected, missing title fails VL2 even though
-    # other overlay text exists.
-    res = run([cvl.Frame(label="a", texts=[text("buy", 440, 900, 640, 960)], faces=[])],
-              profile=META, expect=frozenset({"title"}))
+    # meta-ads has no bands to look in: any overlay text satisfies an expectation...
+    res = run([cvl.Frame(label="a", texts=[text("buy now", 300, 1060, 780, 1120)], faces=[])],
+              profile=META, expect=frozenset({"title", "caption"}))
+    assert res["VL2"].status == "PASS"
+    # ...and no text at all fails it.
+    res = run([cvl.Frame(label="a", texts=[], faces=[])], profile=META, expect=frozenset({"caption"}))
     assert res["VL2"].status == "FAIL"
+
+
+def test_framing_only_turns_the_text_rules_off():
+    frames = [cvl.Frame(label="a", texts=[text("SALE", 440, 1780, 640, 1840)], faces=[face(334, 616, 690, 972, 730)])]
+    res = {r.rule: r for r in cvl.evaluate(W, H, frames, ORGANIC, CLS, CANVAS, framing_only=True)}
+    assert all(res[r].status == "N/A" for r in ("VL2", "VL3", "VL4", "VL5", "VL9"))
+    assert res["VL6"].status == "PASS" and res["VL8"].status == "PASS"
+
+
+def test_spec_without_shots_skips_the_face_rules(tmp_path):
+    rep = json.loads(_cli("spec", str(_spec(tmp_path, [{"role": "title", "box": [312, 233, 765, 323]}])),
+                          "--json").stdout)
+    by = {r["rule"]: r["status"] for r in rep["results"]}
+    assert by["VL6"] == by["VL8"] == "SKIP"
+
+
+def test_vision_unavailable_says_why(monkeypatch):
+    monkeypatch.setattr(cvl.sys, "platform", "darwin")
+    monkeypatch.setattr(cvl.shutil, "which", lambda name: None)
+    binary, why = cvl.vision_binary()
+    assert binary is None and "swiftc" in why
 
 
 def test_tesseract_tsv_drops_punctuation_and_unsure_single_glyphs():
@@ -547,9 +611,12 @@ def test_caption_band_clears_the_action_rail():
         if not prof.get("caption_band"):
             continue
         safe = cvl.zone(prof["safe_zone"], W, H)
-        cap = cvl.band(prof["caption_band"], safe, W, H)
+        cap = cvl.Box(*cvl.band(prof["caption_band"], safe, W, H).as_list())  # rendered pixels
+        slack = cvl.BOX_SLACK * H
+        grown = cvl.Box(cap.x0 - slack, cap.y0 - slack, cap.x1 + slack, cap.y1 + slack)
         for a in prof.get("avoid") or []:
-            assert not cap.intersects(cvl.zone(a, W, H)), (name, a["name"])
+            # Even a caption overhanging the band by the checker's slack stays clear.
+            assert not grown.intersects(cvl.zone(a, W, H)), (name, a["name"])
 
 
 def _contract_pixels() -> set[int]:
@@ -565,8 +632,7 @@ def _contract_pixels() -> set[int]:
             vals |= {x0, y0, x1, y1, x1 - x0, y1 - y0, int((y0 + y1) / 2), int((y0 + y1) / 2 + 0.5)}
         eye = prof.get("eye_line")
         if eye:
-            vals |= {round(eye["y0"] * H), round(eye["y1"] * H), round(eye["max_shift_across_punch_in"] * H),
-                     round(eye["punch_in_max_centre_shift"] * W)}
+            vals |= {round(eye["y0"] * H), round(eye["y1"] * H), round(eye["max_shift_across_punch_in"] * H)}
         if prof.get("caption_band"):
             vals.add(round(prof["caption_band"]["centre_x_tolerance"] * W))
     vals.add(round(CLS["overlay_min_text_height"] * H))
@@ -684,7 +750,7 @@ def test_video_good_layout_passes(videos, detector):
 @media
 @pytest.mark.parametrize("detector", DETECTORS)
 def test_video_bottom_captions_fail(videos, detector):
-    code, res, _ = _check(videos["bottom"], detector)
+    code, res, _ = _check(videos["bottom"], detector, "--expect-captions")
     assert code == 1
     assert res["VL3"]["status"] == "FAIL"
     assert res["VL5"]["status"] == "FAIL"
@@ -693,7 +759,7 @@ def test_video_bottom_captions_fail(videos, detector):
 @media
 @pytest.mark.parametrize("detector", DETECTORS)
 def test_video_captions_in_the_title_band_fail(videos, detector):
-    code, res, _ = _check(videos["top_captions"], detector)
+    code, res, _ = _check(videos["top_captions"], detector, "--expect-captions")
     assert code == 1
     assert res["VL5"]["status"] == "FAIL"
 
@@ -722,7 +788,7 @@ def test_video_writes_report_and_guide(videos, detector, tmp_path):
     assert p.returncode == 0, p.stdout + p.stderr
     assert json.loads(report.read_text())["verdict"] == "PASS"
     assert guide.stat().st_size > 10_000
-    assert "VERDICT: PASS" in p.stdout
+    assert p.stdout.rstrip().splitlines()[-1].startswith("VERDICT: PASS")  # tail -1 reads the verdict
 
 
 NOISE = "nullsrc=s=216x384:d=1,geq=90+random(1)*110:128:128,scale=1080:1920:flags=neighbor"
@@ -743,18 +809,17 @@ def test_legibility_warns_without_a_stroke_and_passes_with_one(tmp_path):
 @media
 def test_compose_video_gate_passes_good_and_fails_bad(videos):
     """compose-video.py's run_layout_gate is what blocks a 9:16 campaign asset."""
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("compose_video", SKILL / "scripts" / "compose-video.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    assert mod.run_layout_gate(videos["good"], expect_text=True) in ("PASS", "UNVERIFIED")
-    assert mod.run_layout_gate(videos["bottom"], expect_text=True) == "FAIL"
+    mod = _compose_module()
+    detector = DETECTORS[0]
+    assert mod.run_layout_gate(videos["good"], expect_text=True, detector=detector) == (
+        "PASS" if detector == "vision" else "UNVERIFIED")
+    assert mod.run_layout_gate(videos["bottom"], expect_text=True, detector=detector) == "FAIL"
 
 
 @media
 @pytest.mark.parametrize("detector", DETECTORS)
 def test_video_captions_across_the_eyes_fail(videos, detector):
-    code, res, _ = _check(videos["mid_captions"], detector)
+    code, res, _ = _check(videos["mid_captions"], detector, "--expect-captions")
     assert code == 1
     assert res["VL5"]["status"] == "FAIL"
 
@@ -807,10 +872,7 @@ def test_guide_paints_the_zones_where_the_contract_puts_them(tmp_path):
 
 @media
 def test_compose_video_gate_fails_closed_on_missing_outputs(videos):
-    import importlib.util
-    spec = importlib.util.spec_from_file_location("compose_video", SKILL / "scripts" / "compose-video.py")
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
+    mod = _compose_module()
     # stitch failed, render requested but never produced
     assert mod.gate_vertical_outputs(None, None, remotion_requested=True) == {
         "stitched": "MISSING", "rendered": "MISSING"}
@@ -823,3 +885,34 @@ def test_compose_video_gate_fails_closed_on_missing_outputs(videos):
     if "tesseract" in DETECTORS:
         # Pinned to tesseract so the UNVERIFIED branch runs on every platform.
         assert mod.run_layout_gate(videos["good"], expect_text=False, detector="tesseract") == "UNVERIFIED"
+
+
+def _compose_module():
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("compose_video", SKILL / "scripts" / "compose-video.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
+
+
+def test_compose_gates_only_files_this_run_wrote(tmp_path):
+    import os
+    import time
+    mod = _compose_module()
+    stale = tmp_path / "reel-rendered.mp4"
+    stale.write_bytes(b"x")
+    old = time.time() - 600
+    os.utime(stale, (old, old))
+    started = time.time() - 1
+    assert mod.fresh(stale, started) is None          # left over from an earlier run
+    assert mod.fresh(tmp_path / "absent.mp4", started) is None
+    stale.write_bytes(b"new")
+    assert mod.fresh(stale, started) == stale         # written by this run
+
+
+def test_compose_exit_codes():
+    mod = _compose_module()
+    assert mod.gate_exit_code({"stitched": "PASS", "rendered": "PASS"}) == 0
+    assert mod.gate_exit_code({"stitched": "UNVERIFIED", "rendered": "PASS"}) == 3
+    for bad in ("FAIL", "MISSING", "ERROR"):
+        assert mod.gate_exit_code({"stitched": "UNVERIFIED", "rendered": bad}) == 1

@@ -99,9 +99,10 @@ frame for the layout contract at generation time (`../../references/vertical-lay
   `crop=iw/1.2:ih/1.2:(iw-ow)/2:ih*0.39-oh*0.39,scale=1080:1920` in ffmpeg, or
   `transform-origin: 50% 39%` in CSS/Remotion.
 - **Verify every raw clip before any text goes on:**
-  `python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video clip.mp4`. On macOS (Vision),
-  VL6 (eye line), VL7 (punch-in) and VL8 (face in the safe zone) come back PASS or
-  FAIL. With tesseract they are UNCHECKED, so read the guide sheet. A FAIL means
+  `python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video clip.mp4 --framing-only`.
+  On macOS (Vision), VL6 (eye line) and VL8 (face in the safe zone) PASS or FAIL,
+  VL7 (eye line across punch-ins) PASSes or WARNs, and all three SKIP when no face is
+  found. With tesseract they are UNCHECKED, so read the guide sheet. A FAIL means
   regenerate or reframe the clip; it cannot be fixed with a caption.
 
 ## Tool Priority Matrix

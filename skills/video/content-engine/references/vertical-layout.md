@@ -50,14 +50,15 @@ Output of `python3 scripts/check_vertical_layout.py zones` (profile `reels-organ
 | Avoid: right action rail | 872-1080 | 922-1920 | 80.7-100.0 | 48.0-100.0 |
 | Avoid: bottom username/caption band | 0-1080 | 1686-1920 | 0.0-100.0 | 87.8-100.0 |
 | Title hook band | 143-938 | 121-436 | 13.2-86.8 | 6.3-22.7 |
-| Caption band | 208-872 | 1288-1463 | 19.3-80.7 | 67.1-76.2 |
+| Caption band | 220-860 | 1288-1463 | 20.4-79.6 | 67.1-76.2 |
 | Eye-line band | 0-1080 | 634-864 | 0.0-100.0 | 33.0-45.0 |
 
 The action rail lies partly inside the safe zone (x 872-938, y 922-1643). Anything
 there passes VL2 and fails VL3, which is deliberate: the Reel marks that corner "avoid
 at all costs". The caption band therefore does not use the full safe width. It is
-x 208-872, symmetric about the centre and ending where the rail begins, so that centred
-captions cannot reach the rail. That leaves 664 px of width for a caption.
+x 220-860: symmetric about the centre, ending 12 px short of the rail so that a
+caption touching the band's edge cannot touch the rail, and leaving 640 px for a
+caption. `test_caption_band_clears_the_action_rail` checks this on rounded pixels.
 
 ### Paid placements: `meta-ads-9x16`
 
@@ -86,12 +87,12 @@ Output of `python3 scripts/check_vertical_layout.py --profile meta-ads-9x16 zone
 |---|---|---|---|
 | VL1 | Canvas is 9:16, at least 1080 wide | ffprobe | Not 9:16 (±1%): FAIL, and every other rule is N/A. 9:16 but narrower than 1080: WARN. |
 | VL2 | Overlay text stays inside the safe zone. Title-band text is exempt. | text boxes | Any overlay box leaves the zone. |
-| VL3 | No overlay text and no face touches an avoid zone | text + face boxes | Any overlay text box, or any shot's median face box, overlapping the action rail or the bottom band FAILs. Small (scene-sized) text there WARNs, because a handle or a "link in bio" that small looks the same as text inside the footage. |
+| VL3 | No overlay text and no face touches an avoid zone | text + face boxes | Any overlay text box overlapping the action rail or the bottom band FAILs, and so does a shot whose median face overlaps it or whose face overlaps it in more than 34% of samples. Small (scene-sized) text there WARNs, because a handle or a "link in bio" that small looks the same as text inside the footage. |
 | VL4 | Top text (centre above 25% of height) sits in the title hook band | text boxes | A top box leaves the band. With `--expect-title`, finding no title also fails. |
-| VL5 | Captions sit in the caption band, centred | text boxes | A caption box leaves the band, or the median caption centre is more than ±54 px off. With `--expect-captions`, finding no captions also fails. |
+| VL5 | Captions sit in the caption band, centred | text boxes | Text centred in the band's rows must fit inside the band, with the median centre within ±54 px. With `--expect-captions`, no text in the band FAILs: captions placed anywhere else (at the top, across the eyes) are caught this way. |
 | VL6 | Eyes sit in the eye-line band (33-45%) | face landmarks | For any shot, the median eye line is outside the band, or more than 34% of its samples are. |
-| VL7 | The eye line holds across punch-ins | face landmarks | A punch-in moves the median eye line by more than 3% of the height (58 px): FAIL. A shot is a face-scale change of 12% or more that persists. It counts as a punch-in when the face centre moves sideways by no more than 8% of the width (86 px); otherwise it is a cut to a new shot, and an eye-line jump there only WARNs. |
-| VL8 | The face stays inside the safe zone | face boxes | A shot's median face box leaves the zone. |
+| VL7 | The eye line holds across punch-ins | face landmarks | WARN, never FAIL, when the median eye line moves more than 3% of the height (58 px) across a face-scale change of 12% or more that persists. Face geometry cannot tell a punch-in from a cut between two framings (two centred speakers look like a punch-in), so the reader decides: a punch-in is scaled about the eye line; a cut is fine. |
+| VL8 | The face stays inside the safe zone | face boxes | A shot's median face box leaves the zone, or its face does in more than 34% of samples. |
 | VL9 | Text over a busy background has a stroke | declared (spec mode) / measured (video, image) | Declared: an element marked `"background": "busy"` without `"stroke": true` FAILs. Measured: WARN when under 60% of the ring 2-4 px around light glyphs reaches 3:1 contrast with the glyph fill. |
 
 "Overlay text" means text boxes at least 1.5% of the height tall (29 px at 1920).
@@ -101,24 +102,27 @@ Smaller text is treated as part of the scene (book spines, signs, UI inside the
 footage). VL2 counts it, and VL3 WARNs when it sits in an avoid zone.
 
 **Which rule applies to a piece of text.** In spec mode the declared `role` decides. In
-video mode it is decided by position first:
+video and image mode, position decides:
 
 - centre in the top 25% of the height: title (VL4)
-- centre in the bottom 40%: caption (VL5)
+- centre within the caption band's rows (y 1288-1463): caption (VL5)
 - anything else: plain overlay (VL2 and VL3 only)
 
-Behaviour then overrides position. Captions replace each other and a title stays. Text
-in the title region or the middle of the frame is judged as captions when it:
+**Why roles are declared, not inferred.** OCR cannot tell a caption from a label, a CTA
+or a title card. An earlier round of this gate inferred roles from behaviour: captions
+replace each other, a title stays. The adversarial review broke it with legitimate
+layouts:
+- rotating chapter titles read as captions and FAILed;
+- one repeated word read as a title;
+- a larger static label hid the captions under it;
+- image mode has no time axis at all.
 
-- forms at least 3 distinct lines,
-- has no single line on screen for half the samples or more, and
-- spans at least 1.5 s.
-
-Captions parked at the top, or across the eyes, therefore fail VL5 wherever they sit.
-Lines are matched fuzzily: a fragment ("fail." of "Why agents fail") or a one-glyph
-misread counts as the same line, so OCR jitter on a static title is not read as
-captions. The rule uses fractions of uniformly spaced samples, so changing `--fps` does
-not change the verdict.
+So the gate no longer guesses. A pipeline that burned captions in passes
+`--expect-captions`. The gate then requires text in the caption band, and captions
+placed anywhere else (at the top, across the eyes) FAIL VL5 as missing from it.
+Without the flag, a caption outside the band is just overlay text: it is held to VL2
+and VL3, and nothing flags it as a misplaced caption.
+`--expect-title` does the same for the title band.
 
 ## Running the gate
 
@@ -128,7 +132,7 @@ S=~/.claude/skills/content-engine/scripts   # or the skill dir in the repo
 # A rendered or stitched video. Pass --expect-* for text you burned in.
 python3 $S/check_vertical_layout.py video final.mp4 --expect-captions --expect-title
 
-# Stills (a Remotion `still`, a thumbnail, carousel frames of one size)
+# 9:16 stills of one size (a Remotion `still`, a cover); a 1:1 carousel fails VL1
 python3 $S/check_vertical_layout.py image cover.png
 
 # The overlay geometry a pipeline intends to draw, before rendering anything
@@ -140,7 +144,12 @@ python3 $S/check_vertical_layout.py guide final.mp4 --out guide.png
 
 `video` and `image` write `<input>.layout-report.json` and `<input>.layout-guide.png`
 next to the input (`--report`, `--guide`, `--no-report` and `--no-guide` change that).
-The last output line is `VERDICT: PASS|FAIL (n PASS, n FAIL, ...)`.
+The last output line is always `VERDICT: PASS|FAIL (n PASS, n FAIL, ...)`, so
+`tail -1` reads it; the `report:` and `guide:` paths print just above it.
+
+`--framing-only` is for raw clips that carry no overlay text yet: VL2-VL5 and VL9 report
+N/A and only the canvas and face rules run, so signage or a label inside generated
+footage is not judged as a misplaced overlay.
 
 A spec file lists boxes in pixels:
 
@@ -245,11 +254,13 @@ Known limits, each measured while building this gate:
   `crop=iw/1.2:ih/1.2:(iw-ow)/2:ih*0.39-oh*0.39,scale=1080:1920`. In CSS or Remotion, use
   `transform: scale(1.2)` with `transform-origin: 50% 39%`.
 - **Captions:** one word or a short chunk at a time, centred on y ≈ 1376 (71.7%), and at
-  most 664 px wide (x 208-872). Use white bold at 64-80 px with a 4-6 px black stroke
+  most 640 px wide (x 220-860), counting any pop-in scale. Use white bold at 64-80 px with a 4-6 px black stroke
   (`-webkit-text-stroke` plus `paint-order: stroke fill`; in ffmpeg `drawtext`,
   `borderw=6:bordercolor=black`). Shrink long words to fit rather than let them run
   onto the rail. The Remotion overlay does this with `fitFontSize`.
 - **Title hook:** at most two lines, centred on y ≈ 278 (14.5%), within the safe width
   of 795 px.
 - **Logos, watermarks, CTAs:** inside the safe zone, left of x = 872 anywhere below
-  y = 922. The Remotion watermark sits at the safe zone's bottom-left for this reason.
+  y = 922, and outside the title and caption bands' rows (text centred in those rows is
+  judged as a title or a caption). The Remotion watermark sits at the safe zone's
+  bottom-left, below the caption band, for this reason.

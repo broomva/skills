@@ -273,13 +273,16 @@ const VerticalWordCaption: React.FC<{
           fontSize: fitFontSize(
             word.text,
             layout.captionBand.width,
-            Math.round(VERTICAL_FONT_SIZE * Math.min(word.size ?? 1.0, 1.2) * emphasis)
+            Math.round(VERTICAL_FONT_SIZE * Math.min(word.size ?? 1.0, 1.2) * emphasis),
+            1.12, // the pop-in scale below
+            layout.strokePx
           ),
           lineHeight: 1.1,
           display: "inline-block",
           transform: `scale(${scale})`,
+          // No maxWidth: on a nowrap span it pins the left edge and pushes any
+          // overflow right, onto the action rail. Centred, overflow is symmetric.
           whiteSpace: "nowrap",
-          maxWidth: layout.captionBand.width,
           ...strokeStyle(layout.strokePx),
         }}
       >

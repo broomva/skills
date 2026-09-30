@@ -248,7 +248,7 @@ opencaptions:
   # Caption positioning. On 9:16 the position comes from layout/vertical-9x16.json
   # (caption band centred at 72% of the height); top 12% sits above the safe zone.
   # Verify with scripts/check_vertical_layout.py (references/vertical-layout.md).
-  position: "caption_band"   # caption_band (9:16) | bottom (16:9)
+  position: "caption_band"   # caption_band (9:16) | top | center | bottom (16:9)
 
   # Visual style
   style_preset: "clean"      # clean | hormozi | fireship | brainrot

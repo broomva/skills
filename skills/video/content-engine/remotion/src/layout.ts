@@ -5,8 +5,10 @@ import contract from "../../layout/vertical-9x16.json";
 /**
  * Vertical (9:16) overlay geometry, read from the same contract that
  * scripts/check_vertical_layout.py enforces (layout/vertical-9x16.json;
- * rules in references/vertical-layout.md). Nothing here hard-codes a pixel:
- * change the contract and both the renderer and the gate move together.
+ * rules in references/vertical-layout.md). Zone positions come from the
+ * contract's reels-organic profile; font sizes live in the components. Reading
+ * the right numbers does not prove the pixels land inside them, so renders are
+ * gated like any other video.
  */
 
 type Zone = { x0: number; y0: number; x1: number; y1: number };
@@ -101,12 +103,21 @@ export function useVerticalLayout(): VerticalLayout | null {
 }
 
 /**
- * Largest font size (<= `preferred`) at which `text` fits `width` on one line.
- * Bold sans averages ~0.62em per character; this is an estimate, and the gate
- * (check_vertical_layout.py VL3/VL5) is what verifies the rendered result.
+ * Largest font size (<= `preferred`) at which `text` fits `width` on one line,
+ * allowing for the pop-in `scale` and the stroke on both sides. Widths are a
+ * conservative estimate for bold sans: 0.62em per lowercase character and 0.74em
+ * per capital or digit. The gate (check_vertical_layout.py VL3/VL5) verifies the
+ * rendered result; this only keeps the renderer from aiming past the band.
  */
-export function fitFontSize(text: string, width: number, preferred: number): number {
-  const estimate = Math.floor(width / Math.max(1, text.length * 0.62));
+export function fitFontSize(
+  text: string,
+  width: number,
+  preferred: number,
+  scale = 1,
+  strokePx = 0
+): number {
+  const ems = [...text].reduce((sum, ch) => sum + (/[A-Z0-9]/.test(ch) ? 0.74 : 0.62), 0);
+  const estimate = Math.floor((width - 2 * strokePx) / (Math.max(ems, 1) * scale));
   return Math.max(24, Math.min(preferred, estimate));
 }
 

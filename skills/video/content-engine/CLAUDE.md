@@ -30,7 +30,7 @@ content-engine/
 - **Compiled files** are Markdown with YAML frontmatter and tool-specific prompt sections
 - **Raw assets** are never modified by the LLM — they are the source of truth
 - **Provenance** — every compiled file traces back to its raw sources
-- **9:16 assets pass the layout gate before distribution** — `scripts/check_vertical_layout.py`; the Remotion overlays and the checker both read `layout/vertical-9x16.json`, so change geometry there and nowhere else
+- **9:16 assets pass the layout gate before distribution** — `scripts/check_vertical_layout.py`; the Remotion overlays and the checker both read `layout/vertical-9x16.json`. Change geometry there; pixel values quoted in docs (and brainrot-for-good's `CAPTION_BAND`) are copies that `test_skill_docs_quote_only_contract_pixels` fails on when they drift
 - **Tool-specific prompts** — each compiled file contains prompt fragments for Higgsfield models (Soul V2, Nano Banana 2, Veo 3.1, Kling 3.0, Seedance 2.0, Flux 2), Marketing Studio modes, Weavy, etc.
 
 ## Dependencies

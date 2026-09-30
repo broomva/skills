@@ -157,8 +157,8 @@ word-by-word captions via Remotion. Background audio: ambient synth."}
 - FPS: 30
 - Codec: H.265 (CRF 18)
 - Audio: Gemini TTS narration + ambient music mix
-- Captions: caption band x 208-872, centred on y 1376 (72%), white bold + black stroke;
-  title hook centred on y 278 (14%). Top 12% is above the safe zone.
+- Captions: caption band x 220-860, centred on y 1376 (72%), white bold + black stroke;
+  title hook centred on y 278 (14.5%). Top 12% is above the safe zone.
   Contract: `references/vertical-layout.md`
 - Layout gate: `python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video {reel}.mp4 [--expect-captions] [--expect-title]`,
   meeting the pass criteria in content-engine SKILL.md "Vertical Layout Gate"
@@ -228,7 +228,7 @@ word-by-word captions via Remotion. Background audio: ambient synth."}
 - Reels with word-by-word captions (Remotion composition)
 - Carousel posts with swipe-through narrative
 - Stories: behind-the-scenes of generation process (meta-content)
-- Caption positioning: caption band at 72% of the height, title hook at 14%
+- Caption positioning: caption band at 72% of the height, title hook at 14.5%
   (`references/vertical-layout.md`). Paid Reels must pass `--profile meta-ads-9x16`,
   which needs captions above 65%; the Remotion reel layout does not do that
 

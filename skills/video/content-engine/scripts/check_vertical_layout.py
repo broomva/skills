@@ -41,7 +41,6 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
-from difflib import SequenceMatcher
 from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -173,24 +172,27 @@ def load_layout(path: Path | None = None) -> dict:
         if not (_is_num(canvas["aspect_tolerance"]) and _is_num(canvas["min_width"])
                 and len(canvas["aspect"]) == 2 and all(_is_num(v) and v > 0 for v in canvas["aspect"])):
             raise ToolError("layout contract: canvas needs aspect [w, h], aspect_tolerance, min_width")
-        for key in ("overlay_min_text_height", "title_region_max_centre_y", "caption_region_min_centre_y",
-                    "caption_like_min_clusters", "caption_like_max_dominant_share", "caption_like_min_seconds"):
-            if not _is_num(cls[key]):
-                raise ToolError(f"layout contract: classification.{key} must be a number")
+        for key in ("overlay_min_text_height", "title_region_max_centre_y", "max_share_outside"):
+            if not (_is_num(cls[key]) and 0 < cls[key] < 1):
+                raise ToolError(f"layout contract: classification.{key} must be a number in (0, 1)")
         for name, prof in profiles.items():
             _check_zone(prof["safe_zone"], f"{name}.safe_zone")
             for i, a in enumerate(prof.get("avoid") or []):
                 _check_zone(a, f"{name}.avoid[{i}]")
+                if not (isinstance(a.get("name"), str) and a["name"]):
+                    raise ToolError(f"layout contract: {name}.avoid[{i}] needs a name")
             for key in ("title_band", "caption_band"):
                 if prof.get(key) is not None:
                     _check_zone(prof[key], f"{name}.{key}", keys=("y0", "y1"))
                     if "x0" in prof[key] or "x1" in prof[key]:
                         _check_zone(prof[key], f"{name}.{key}")
+            if prof.get("caption_band") is not None and not _is_num(prof["caption_band"].get("centre_x_tolerance")):
+                raise ToolError(f"layout contract: {name}.caption_band needs a numeric centre_x_tolerance")
             eye = prof.get("eye_line")
-            if eye is not None and not all(_is_num(eye.get(k)) for k in (
-                    "y0", "y1", "max_share_outside", "max_shift_across_punch_in",
-                    "punch_in_scale_jump", "punch_in_max_centre_shift")):
-                raise ToolError(f"layout contract: {name}.eye_line is missing a numeric field")
+            if eye is not None and not (isinstance(eye, dict) and all(_is_num(eye.get(k)) for k in (
+                    "y0", "y1", "max_shift_across_punch_in", "punch_in_scale_jump"))):
+                raise ToolError(f"layout contract: {name}.eye_line must be null or an object with numeric "
+                                f"y0, y1, max_shift_across_punch_in, punch_in_scale_jump")
     except (KeyError, TypeError) as exc:
         raise ToolError(f"layout contract {path} is malformed: missing or mistyped {exc}") from exc
     return layout
@@ -284,59 +286,22 @@ def _seg_label(seg) -> str:
     return first if first == last else f"{first}..{last}"
 
 
-def _norm(text: str) -> str:
-    return " ".join("".join(ch if ch.isalnum() else " " for ch in text.lower()).split())
-
-
-def same_line(a: str, b: str) -> bool:
-    """Whether two OCR reads are the same line of text. OCR of one static title
-    drops a glyph, misreads one ("agenis"), or returns a fragment ("fail." of "Why
-    agents fail"); those are the same line. Words of 1-2 characters must match
-    exactly, so "is" is not "this"."""
-    a, b = _norm(a), _norm(b)
-    if a == b:
-        return True
-    short, long_ = sorted((a, b), key=len)
-    if len(short) < 3:
-        return False
-    if short in long_:
-        return True
-    n = len(short)
-    best = max(SequenceMatcher(None, short, long_[i:i + n]).ratio() for i in range(len(long_) - n + 1))
-    return best >= 0.75
-
-
-def behaves_like_captions(samples: list[tuple[float, str]], cls: dict) -> bool:
-    """Captions replace each other; a title stays. Given (time, dominant text) for
-    every sample where a region holds text, the text is caption-like when it forms
-    at least `caption_like_min_clusters` distinct lines, none of them on screen for
-    `caption_like_max_dominant_share` of the samples or more, over at least
-    `caption_like_min_seconds`. Shares are fractions of uniformly spaced samples, so
-    the verdict does not move with the sample rate; fuzzy line matching keeps OCR
-    jitter on a static title from reading as new lines."""
-    if len(samples) < 2:
-        return False
-    times = sorted(t for t, _ in samples)
-    step = statistics.median(b - a for a, b in zip(times, times[1:]))
-    if times[-1] - times[0] + step < cls["caption_like_min_seconds"]:
-        return False
-    clusters: list[list[str]] = []
-    for _, text in samples:
-        for c in clusters:
-            if same_line(c[0], text):
-                c.append(text)
-                break
-        else:
-            clusters.append([text])
-    share = max(len(c) for c in clusters) / len(samples)
-    return len(clusters) >= cls["caption_like_min_clusters"] and share < cls["caption_like_max_dominant_share"]
+TEXT_RULES = ("VL2", "VL3", "VL4", "VL5", "VL9")
 
 
 def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
-             canvas_cfg: dict, expect: frozenset = frozenset()) -> list[Result]:
-    """Apply VL1-VL9 to detections. `expect` holds "title" and/or "caption" when the
-    caller knows it burned that text in: OCR cannot tell missing text from text too
-    illegible to read, so without it an absent caption is a SKIP and with it a FAIL."""
+             canvas_cfg: dict, expect: frozenset = frozenset(), framing_only: bool = False) -> list[Result]:
+    """Apply VL1-VL9 to detections.
+
+    `expect` holds "title" and/or "caption" when the caller burned that text in. It is
+    how a caption placed outside its band is caught: roles are not inferred from what
+    text does (see "Why roles are declared" in references/vertical-layout.md), so text
+    elsewhere is only held to the safe and avoid zones, while an expected caption that
+    is not in the caption band FAILs VL5. It also turns unreadable text, which OCR
+    reports as absent, into a FAIL instead of a SKIP.
+
+    `framing_only` marks raw clips that carry no overlay text yet: the text rules
+    report N/A instead of judging whatever text is in the footage."""
     results: list[Result] = []
     names = dict(RULES)
 
@@ -369,45 +334,29 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
         for t in f.texts:
             (overlay if t.role or t.box.h >= cls["overlay_min_text_height"] * H else scene).append((f, t))
 
-    # Role: declared, else position, then behaviour ------------------------
+    # Role: declared (spec mode), else position. Text centred in the top region is a
+    # title (VL4); text centred in the caption band's rows is a caption (VL5);
+    # anything else is a plain overlay held to VL2/VL3. A caption placed anywhere
+    # else is caught by --expect-captions, not by guessing from its behaviour.
     for _, t in overlay:
         if t.role:
             t.region = t.role if t.role in ("title", "caption") else "other"
-        elif t.box.cy <= cls["title_region_max_centre_y"] * H:
+        elif title_rect and t.box.cy <= cls["title_region_max_centre_y"] * H:
             t.region = "title"
-        elif t.box.cy >= cls["caption_region_min_centre_y"] * H:
+        elif cap_rect and cap_rect.y0 <= t.box.cy <= cap_rect.y1:
             t.region = "caption"
         else:
-            t.region = "mid"
-    moved: dict[str, int] = {}
-    for region in ("title", "mid"):
-        members = [(f, t) for f, t in overlay if t.region == region and not t.role]
-        if not members or any(f.t is None for f, _ in members):
-            continue
-        dominant: dict[int, tuple[float, Text]] = {}
-        for f, t in members:
-            key = id(f)
-            if key not in dominant or t.box.w * t.box.h > dominant[key][1].box.w * dominant[key][1].box.h:
-                dominant[key] = (f.t, t)
-        if behaves_like_captions([(tt, t.text) for tt, t in dominant.values()], cls):
-            moved[region] = len(members)
-            for _, t in members:
-                t.region = "caption"
-        elif region == "mid":
-            for _, t in members:
-                t.region = "other"
-    moved_note = "; caption-like text found " + ", ".join(
-        f"in the {'title band' if r == 'title' else 'middle of the frame'} ({n} box(es))" for r, n in moved.items()
-    ) + " is judged as captions" if moved else ""
-
+            t.region = "other"
     scene_note = (f"; {len(scene)} small text box(es) under {pct(cls['overlay_min_text_height'] * H, H)} "
                   f"of height treated as scene text") if scene else ""
 
-    def none_found(kind: str) -> str:
-        others = [t for _, t in overlay if t.region not in (kind,)]
-        if others:
-            return (f"expected {kind} text; none sits in or behaves like the {kind} role "
-                    f"({len(others)} other overlay box(es) found: see VL2/VL3 evidence)")
+    def none_found(kind: str, rect: Box | None) -> str:
+        others = [t for _, t in overlay if t.region != kind]
+        if others and rect:
+            ys = sorted(round(t.box.cy) for t in others)
+            return (f"expected {kind} text in the {kind} band (y {rect.y0:.0f}-{rect.y1:.0f}); none is there, "
+                    f"but {len(others)} other overlay box(es) are centred at y {ys[0]}-{ys[-1]}: "
+                    f"a {kind} placed outside its band")
         return (f"expected {kind} text; OCR found none: the text is missing or too illegible "
                 f"to read, which is itself a legibility failure")
 
@@ -415,7 +364,8 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
     # An expected title/caption is failed by its own band rule (VL4/VL5); VL2 carries
     # it only for a profile that has no band for it.
     uncovered = sorted(e for e in expect if not {"title": title_rect, "caption": cap_rect}.get(e))
-    missing = [e for e in uncovered if not any(t.region == e for _, t in overlay)]
+    # No band to look in: any overlay text satisfies the expectation.
+    missing = [e for e in uncovered if not overlay]
     where = f"safe zone x {safe.x0:.0f}-{safe.x1:.0f}, y {safe.y0:.0f}-{safe.y1:.0f}"
     bad = [(f, t) for f, t in overlay
            if not t.box.inside(safe, slack)
@@ -423,7 +373,7 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
     if bad or missing:
         detail = "; ".join(
             ([f"{len(bad)}/{len(overlay)} overlay text box(es) leave the {where}"] if bad else [])
-            + [none_found(e) for e in missing])
+            + [none_found(e, None) for e in missing])
         add("VL2", "FAIL", detail + scene_note, [_ev(f, t) for f, t in bad])
     elif not overlay:
         add("VL2", "SKIP", "no overlay text found" + scene_note)
@@ -440,6 +390,16 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
     def seg_face(seg) -> Box:
         return Box(*(statistics.median(getattr(face.box, k) for _, face in seg) for k in ("x0", "y0", "x1", "y1")))
 
+    max_out = cls["max_share_outside"]
+
+    def seg_violates(seg, bad_sample) -> str:
+        """A shot violates when its median face does, or when more than `max_out` of
+        its samples do: the median alone hides a face that drifts out for 4 of 10."""
+        if bad_sample(seg_face(seg)):
+            return "median face"
+        share = sum(bool(bad_sample(face.box)) for _, face in seg) / len(seg)
+        return f"{share:.0%} of samples" if share > max_out else ""
+
     # VL3 avoid zones ------------------------------------------------------
     avoid = [(a["name"], zone(a, W, H)) for a in profile.get("avoid") or []]
     if not avoid:
@@ -449,9 +409,10 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
         for f, t in overlay:
             hits += [_ev(f, t, name) for name, rect in avoid if t.box.intersects(rect)]
         for seg in segs:
-            med = seg_face(seg)
-            hits += [{"at": _seg_label(seg), "face": med.as_list(), "why": name}
-                     for name, rect in avoid if med.intersects(rect)]
+            for name, rect in avoid:
+                how = seg_violates(seg, rect.intersects)
+                if how:
+                    hits.append({"at": _seg_label(seg), "face": seg_face(seg).as_list(), "why": f"{name} ({how})"})
         for f, t in scene:
             small += [_ev(f, t, f"{name} (small text: an overlay, or text in the footage?)")
                       for name, rect in avoid if t.box.intersects(rect)]
@@ -464,7 +425,7 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
                                f"watermark there is covered by the platform UI; confirm on the guide sheet{faces_note}",
                 small)
         elif not checked:
-            add("VL3", "SKIP", "no text or face found")
+            add("VL3", "SKIP", "no text found" + (" and no face found" if faces_seen else faces_note))
         else:
             add("VL3", "PASS", f"{checked} element(s) clear of {', '.join(n for n, _ in avoid)}{faces_note}")
 
@@ -475,7 +436,7 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
         titles = [(f, t) for f, t in overlay if t.region == "title"]
         span = f"y {title_rect.y0:.0f}-{title_rect.y1:.0f} ({pct(title_rect.y0, H)}-{pct(title_rect.y1, H)})"
         if not titles and "title" in expect:
-            add("VL4", "FAIL", none_found("title") + f"; a title hook belongs in {span}")
+            add("VL4", "FAIL", none_found("title", title_rect))
         elif not titles:
             add("VL4", "SKIP", "no title-hook text found")
         else:
@@ -496,7 +457,7 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
         span = (f"x {cap_rect.x0:.0f}-{cap_rect.x1:.0f}, y {cap_rect.y0:.0f}-{cap_rect.y1:.0f} "
                 f"({pct(cap_rect.y0, H)}-{pct(cap_rect.y1, H)})")
         if not caps and "caption" in expect:
-            add("VL5", "FAIL", none_found("caption") + f"; captions belong in {span}")
+            add("VL5", "FAIL", none_found("caption", cap_rect))
         elif not caps:
             add("VL5", "SKIP", "no caption text found")
         else:
@@ -511,7 +472,7 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
                 bad.append({"at": "all captions", "why": f"median centre off by {med_dx:+.0f}px"})
             if bad:
                 add("VL5", "FAIL", f"{len(bad)} caption problem(s): boxes must sit in {span} with the median "
-                                   f"centre within +/-{tol:.0f}px{moved_note}", bad)
+                                   f"centre within +/-{tol:.0f}px", bad)
             else:
                 cys = [t.box.cy for _, t in caps]
                 stray = f"; {strays} box(es) off-centre on their own (partial OCR reads)" if strays else ""
@@ -540,7 +501,7 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
         if not measured:
             add("VL6", "UNCHECKED", "faces found but no eye landmarks")
         else:
-            limit_share = eye_cfg["max_share_outside"]
+            limit_share = max_out
             bad = [{"at": _seg_label(seg), "eye_y": round(y), "outside": f"{out:.0%}"}
                    for seg, y, out in measured if not lo <= y <= hi or out > limit_share]
             if bad:
@@ -551,24 +512,21 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
                 add("VL6", "PASS", f"eye line {min(ys):.0f}-{max(ys):.0f}px ({pct(min(ys), H)}-{pct(max(ys), H)}) "
                                    f"across {len(measured)} shot(s), inside {span}")
         if len(measured) < 2:
-            add("VL7", "SKIP", f"no punch-in found (face-scale change >= {eye_cfg['punch_in_scale_jump']:.0%})")
+            add("VL7", "SKIP", f"no punch-in or cut found (face-scale change >= {eye_cfg['punch_in_scale_jump']:.0%})")
         else:
+            # WARN, never FAIL: a face-scale change is a punch-in or a cut to another
+            # shot, and face geometry cannot tell them apart (two centred speakers look
+            # like a punch-in). The rule is the Reel's for punch-ins; the reader decides.
             limit = eye_cfg["max_shift_across_punch_in"] * H
-            same_spot = eye_cfg["punch_in_max_centre_shift"] * W
             cuts = []
             for (sa, ya, _), (sb, yb, _) in zip(measured, measured[1:]):
-                dcx = seg_face(sb).cx - seg_face(sa).cx
-                kind = "punch-in" if abs(dcx) <= same_spot else "cut"
-                cuts.append({"at": f"{_seg_label(sa)} -> {_seg_label(sb)}", "kind": kind,
-                             "shift_px": round(yb - ya), "face_dx_px": round(dcx)})
+                cuts.append({"at": f"{_seg_label(sa)} -> {_seg_label(sb)}", "shift_px": round(yb - ya),
+                             "face_dx_px": round(seg_face(sb).cx - seg_face(sa).cx)})
             over = [c for c in cuts if abs(c["shift_px"]) > limit]
-            punch = [c for c in over if c["kind"] == "punch-in"]
-            if punch:
-                add("VL7", "FAIL", f"eye line moves more than {limit:.0f}px ({pct(limit, H)}) across "
-                                   f"{len(punch)} punch-in(s); scale about the eye line", cuts)
-            elif over:
-                add("VL7", "WARN", f"eye line jumps more than {limit:.0f}px across {len(over)} cut(s) where the "
-                                   f"face also moves sideways (> {same_spot:.0f}px): a new shot, not a punch-in", cuts)
+            if over:
+                add("VL7", "WARN", f"eye line moves more than {limit:.0f}px ({pct(limit, H)}) across {len(over)} "
+                                   f"scale change(s): a punch-in should be scaled about the eye line; a cut to "
+                                   f"another shot is fine. Check the guide sheet", cuts)
             else:
                 worst = max(abs(c["shift_px"]) for c in cuts)
                 add("VL7", "PASS", f"{len(cuts)} cut(s); largest eye-line shift {worst}px, limit {limit:.0f}px", cuts)
@@ -579,8 +537,11 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
     elif not face_frames:
         add("VL8", "SKIP", "no face found")
     else:
-        bad = [{"at": _seg_label(seg), "face": seg_face(seg).as_list()}
-               for seg in segs if not seg_face(seg).inside(safe, slack)]
+        bad = []
+        for seg in segs:
+            how = seg_violates(seg, lambda b: not b.inside(safe, slack))
+            if how:
+                bad.append({"at": _seg_label(seg), "face": seg_face(seg).as_list(), "why": how})
         if bad:
             add("VL8", "FAIL", f"the face leaves the safe zone in {len(bad)} shot(s)", bad)
         else:
@@ -613,6 +574,9 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
     else:
         add("VL9", "SKIP", "no overlay text found")
 
+    if framing_only:
+        results = [Result(r.rule, r.name, "N/A", "framing-only run: raw clips carry no overlay text yet")
+                   if r.rule in TEXT_RULES else r for r in results]
     return results
 
 
@@ -936,6 +900,7 @@ def measure_legibility(frames: list[Frame], ratio: float, min_text_height: float
 # ---------------------------------------------------------------------------
 
 SPEC_KEYS = {"canvas", "elements", "shots"}
+SPEC_ROLES = {"title", "caption", "watermark", "logo", "cta", "handle", "label", "other"}
 SPEC_ELEMENT_KEYS = {"role", "label", "box", "stroke", "background"}
 SPEC_SHOT_KEYS = {"eye_y", "face_box"}
 BACKGROUNDS = {"busy", "calm"}
@@ -960,8 +925,9 @@ def frames_from_spec(spec) -> tuple[int, int, list[Frame]]:
     if unknown:
         raise ToolError(f"spec has unknown key(s) {sorted(unknown)}; allowed: {sorted(SPEC_KEYS)}")
     canvas = spec.get("canvas")
-    if not (isinstance(canvas, list) and len(canvas) == 2 and all(_is_num(v) and v > 0 for v in canvas)):
-        raise ToolError('spec needs "canvas": [width, height] with positive numbers')
+    if not (isinstance(canvas, list) and len(canvas) == 2
+            and all(_is_num(v) and v >= 1 and float(v).is_integer() for v in canvas)):
+        raise ToolError('spec needs "canvas": [width, height] as whole numbers of pixels')
     W, H = int(canvas[0]), int(canvas[1])
     elements, shots = spec.get("elements", []), spec.get("shots", [])
     if not isinstance(elements, list) or not isinstance(shots, list):
@@ -977,6 +943,8 @@ def frames_from_spec(spec) -> tuple[int, int, list[Frame]]:
             raise ToolError(f"spec element {i} has unknown key(s) {sorted(bad_keys)}")
         box = _spec_box(el.get("box"), f"element {i}")
         role = str(el.get("role") or "other").strip().lower()
+        if role not in SPEC_ROLES:
+            raise ToolError(f"spec element {i} role {el.get('role')!r} is not one of {sorted(SPEC_ROLES)}")
         background = el.get("background")
         if background is not None:
             background = str(background).strip().lower()
@@ -1025,10 +993,10 @@ def render_table(meta: dict, results: list[Result], v: str, counts: dict) -> str
         for e in r.evidence:
             lines.append(f"        - {json.dumps(e, ensure_ascii=False)}")
     tally = ", ".join(f"{counts[k]} {k}" for k in ("PASS", "FAIL", "WARN", "SKIP", "N/A", "UNCHECKED") if counts.get(k))
-    lines.append(f"VERDICT: {v}  ({tally})")
     for key in ("report", "guide"):
         if meta.get(key):
             lines.append(f"{key}: {meta[key]}")
+    lines.append(f"VERDICT: {v}  ({tally})")  # last line, always: `tail -1` reads the verdict
     return "\n".join(lines)
 
 
@@ -1073,7 +1041,7 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
         leg = profile.get("legibility") or {}
         measure_legibility(frames, leg.get("contrast_ratio", 3.0), cls["overlay_min_text_height"] * H)
         expect = frozenset(k for k, on in (("title", args.expect_title), ("caption", args.expect_captions)) if on)
-        results = evaluate(W, H, frames, profile, cls, layout["canvas"], expect)
+        results = evaluate(W, H, frames, profile, cls, layout["canvas"], expect, framing_only=args.framing_only)
         guide = None
         if not args.no_guide:
             guide = args.guide or _default_out(inputs[0], "layout-guide.png")
@@ -1150,6 +1118,8 @@ def build_parser() -> argparse.ArgumentParser:
                            help="captions were burned in: finding none is a FAIL, not a SKIP")
             p.add_argument("--expect-title", action="store_true",
                            help="a title hook was burned in: finding none is a FAIL, not a SKIP")
+            p.add_argument("--framing-only", action="store_true",
+                           help="raw clips with no overlay text yet: text rules report N/A, framing rules run")
 
     v = sub.add_parser("video", help="sample a video and check it")
     v.add_argument("input")
