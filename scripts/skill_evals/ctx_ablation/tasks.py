@@ -285,6 +285,13 @@ def _perform(case: Case, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
                               "output": decision["reason"]})
                 continue
             run_cmd = ((decision.get("hookSpecificOutput") or {}).get("updatedInput") or {}).get("command", cmd)
+            # Defence in depth: whatever the guard decided, this executor never runs a
+            # real stubbed binary. A mutation proof that neutered the guard's rewrite
+            # once ran the real /usr/bin/trash from a test, into the operator's Trash.
+            if guard_mod.real_binary_re(str(Path.home())).search(run_cmd):
+                calls.append({"name": "Bash", "input": {"command": cmd}, "refused": True,
+                              "output": "synthetic executor: a real stubbed binary, not run"})
+                continue
             proc = subprocess.run(["/bin/sh", "-c", run_cmd], cwd=str(case.layout.workspace),
                                   env=dict(case.env), capture_output=True, text=True, timeout=120)
             calls.append({"name": "Bash", "input": {"command": cmd},

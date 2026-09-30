@@ -390,7 +390,9 @@ python3 $CA report --out RUN                                  # re-render the ta
 The first run, with its calibration, tables and findings, is in
 [`ctx_ablation/PILOT.md`](ctx_ablation/PILOT.md).
 
-`RUN` is a directory outside the repo. It gets a read-only snapshot of the
+`RUN` is a directory outside the repo, and it holds ONE run key (model, CLI
+version, corpus snapshot and calibration). A resume that would pool two is refused,
+and so is a calibration taken on another model or corpus. It gets a read-only snapshot of the
 knowledge graph and memory (`corpus/`, with a sha256 manifest), every transcript,
 `results.jsonl` (one line per trial, appended as it finishes, so an interrupted run
 resumes), `calibration.json` and `report.md`. None of it is committed: this repo is
@@ -421,10 +423,24 @@ has the same state on disk in every arm:
 - the memory directory;
 - a ctx scope and board: three finished sessions from hours ago, plus the task's
   peers;
-- `gh`, `trash` and `p9` stubs first on PATH, which log every call and keep trials
-  off real GitHub;
+- `gh`, `trash`, `p9` and `paseo` stubs first on PATH, which log every call.
+  `trash` refuses any path outside the case, and the `paseo` CLI refuses outright,
+  because the real daemon is reachable from the host;
 - a Paseo MCP stub with the real `list_agents` defaults;
-- a copy of the workspace delete gate, G3, as a PreToolUse hook.
+- git and gh set to fail closed toward real GitHub (no system gitconfig, no
+  prompts, an invalid `GH_TOKEN`);
+- a **case guard** as a PreToolUse hook on Bash and the file tools:
+  - the workspace delete gate, G3, which blocks every `rm -r` spelling;
+  - it blocks `osascript` and any path in the operator's real home;
+  - it rewrites an absolute real `trash`, `gh`, `p9` or `paseo` to the case stub.
+    The transcript keeps the command the model wrote.
+
+  The rewrite exists because in the first pilot, four runs followed the memory
+  file's `/usr/bin/trash` literally. That moved fixture folders into the
+  operator's real Trash, and the runs were graded FAIL for doing the right thing.
+
+  The snapshot also rewrites absolute real-home paths in memory and KG files to
+  `~`, which in a trial is the jail.
 
 **State is constant; only the injection varies.** A bare arm that also deleted the
 knowledge graph would measure the graph, not the injection.
@@ -455,8 +471,12 @@ context adds nothing". So delivery is checked per trial, not assumed.
   2.1.280). Instead, the live hook must have logged an intake whose `prompt_digest`
   is the task prompt's sha256, under the jailed HOME. The injected text is
   recovered by running the same hook offline on the same prompt and workspace.
-- **memory:** the session's `init.cwd` must be the workspace, so the auto-memory key
-  is the one the harness wrote `MEMORY.md` under.
+- **memory:** auto-memory leaves no event in the stream, so delivery is proven from
+  tokens. The first call's context must exceed bare's (same task) by 2,000 tokens,
+  and in every other arm it must not; the pilot measured +10.3k against +1.0k at
+  most. `init.cwd` must also be the workspace, so the memory key is the one the
+  harness wrote to. `report` applies the token check to every trial, and without a
+  bare arm it says the check was not done.
 
 A trial that fails any of these checks is `INJECTION_MISSING`, and one that got an
 injection its arm lacks is `LEAKED`. Both are void: counted, never graded. role-x

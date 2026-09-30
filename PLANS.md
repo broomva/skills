@@ -38,7 +38,8 @@ the right retrieval reflexes, and how far it compresses.
 4. [x] Calibrate 16 candidates × 3 trials in the bare arm: 13 retained, 3
    vacuous (`tasks/pilot.calibration.json`).
 5. [x] Pilot: 10 retained tasks × 6 arms × 3 trials, 180 trials, 0 void
-   (`ctx_ablation/PILOT.md`).
+   (`ctx_ablation/PILOT.md`). v1 was superseded after P20 round 1 found false fails
+   and a real-Trash side effect. v2 re-ran calibration and the pilot with the fixes.
 6. [ ] Scale to 30 tasks: not run. The owner held this session to the pilot
    because of the shared subscription limit, and the pilot is floor-limited on
    haiku. The next measurement is sonnet on the 13 retained tasks; PILOT.md has
