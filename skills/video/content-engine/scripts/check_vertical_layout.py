@@ -41,6 +41,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from difflib import SequenceMatcher
 from pathlib import Path
 
 SKILL_ROOT = Path(__file__).resolve().parent.parent
@@ -145,12 +146,54 @@ class Result:
 # Layout contract
 # ---------------------------------------------------------------------------
 
+def _is_num(v) -> bool:
+    return isinstance(v, (int, float)) and not isinstance(v, bool) and v == v and abs(v) != float("inf")
+
+
+def _check_zone(z, where: str, keys=("x0", "y0", "x1", "y1")) -> None:
+    if not isinstance(z, dict) or not all(_is_num(z.get(k)) for k in keys):
+        raise ToolError(f"layout contract: {where} needs numeric {', '.join(keys)}")
+    for lo, hi in (("x0", "x1"), ("y0", "y1")):
+        if lo in z and hi in z and not 0 <= z[lo] < z[hi] <= 1:
+            raise ToolError(f"layout contract: {where} needs 0 <= {lo} < {hi} <= 1")
+
+
 def load_layout(path: Path | None = None) -> dict:
+    """Read and validate the contract. A malformed contract is a tool error (exit 2),
+    never a verdict: a KeyError halfway through `evaluate` would exit 1, the FAIL code."""
     path = path or DEFAULT_LAYOUT
     try:
-        return json.loads(Path(path).read_text())
+        layout = json.loads(Path(path).read_text())
     except (OSError, json.JSONDecodeError) as exc:
         raise ToolError(f"cannot read layout contract {path}: {exc}") from exc
+    try:
+        canvas, cls, profiles = layout["canvas"], layout["classification"], layout["profiles"]
+        if layout["default_profile"] not in profiles:
+            raise ToolError(f"layout contract: default_profile {layout['default_profile']!r} is not a profile")
+        if not (_is_num(canvas["aspect_tolerance"]) and _is_num(canvas["min_width"])
+                and len(canvas["aspect"]) == 2 and all(_is_num(v) and v > 0 for v in canvas["aspect"])):
+            raise ToolError("layout contract: canvas needs aspect [w, h], aspect_tolerance, min_width")
+        for key in ("overlay_min_text_height", "title_region_max_centre_y", "caption_region_min_centre_y",
+                    "caption_like_min_clusters", "caption_like_max_dominant_share", "caption_like_min_seconds"):
+            if not _is_num(cls[key]):
+                raise ToolError(f"layout contract: classification.{key} must be a number")
+        for name, prof in profiles.items():
+            _check_zone(prof["safe_zone"], f"{name}.safe_zone")
+            for i, a in enumerate(prof.get("avoid") or []):
+                _check_zone(a, f"{name}.avoid[{i}]")
+            for key in ("title_band", "caption_band"):
+                if prof.get(key) is not None:
+                    _check_zone(prof[key], f"{name}.{key}", keys=("y0", "y1"))
+                    if "x0" in prof[key] or "x1" in prof[key]:
+                        _check_zone(prof[key], f"{name}.{key}")
+            eye = prof.get("eye_line")
+            if eye is not None and not all(_is_num(eye.get(k)) for k in (
+                    "y0", "y1", "max_share_outside", "max_shift_across_punch_in",
+                    "punch_in_scale_jump", "punch_in_max_centre_shift")):
+                raise ToolError(f"layout contract: {name}.eye_line is missing a numeric field")
+    except (KeyError, TypeError) as exc:
+        raise ToolError(f"layout contract {path} is malformed: missing or mistyped {exc}") from exc
+    return layout
 
 
 def get_profile(layout: dict, name: str | None) -> tuple[str, dict]:
@@ -164,9 +207,12 @@ def zone(z: dict, W: float, H: float) -> Box:
     return Box(z["x0"] * W, z["y0"] * H, z["x1"] * W, z["y1"] * H)
 
 
-def band(z: dict, safe: Box, H: float) -> Box:
-    """A horizontal band, bounded left and right by the safe zone."""
-    return Box(safe.x0, z["y0"] * H, safe.x1, z["y1"] * H)
+def band(z: dict, safe: Box, W: float, H: float) -> Box:
+    """A horizontal band: its own x range when the contract gives one (the caption
+    band stops short of the action rail), else the safe zone's."""
+    x0 = z["x0"] * W if "x0" in z else safe.x0
+    x1 = z["x1"] * W if "x1" in z else safe.x1
+    return Box(x0, z["y0"] * H, x1, z["y1"] * H)
 
 
 def pct(v: float, whole: float) -> str:
@@ -197,9 +243,10 @@ def _primary_face(frame: Frame) -> Face | None:
 def punch_in_segments(face_frames: list[tuple[Frame, Face]], jump: float) -> list[list[tuple[Frame, Face]]]:
     """Split face frames into shots: by declared shot index when present, else where
     the face scale moves >= `jump` off the current shot's median face height and
-    stays there on the next sample (a punch-in or punch-out). Measuring against the
-    shot median, not the previous sample, keeps a subject leaning in (the source reel
-    drifts 14% sample-to-sample inside one shot) from reading as a cut."""
+    stays there on the next sample. Measuring against the shot median, not the
+    previous sample, keeps a subject leaning in (the source reel drifts 14% sample to
+    sample inside one shot) from reading as a cut. A one-sample shot is a detector
+    glitch or the appended last frame, never a shot: it joins its neighbour."""
     if not face_frames:
         return []
     if all(f.shot is not None for f, _ in face_frames):
@@ -220,7 +267,16 @@ def punch_in_segments(face_frames: list[tuple[Frame, Face]], jump: float) -> lis
             segs_l.append([cur])
         else:
             seg.append(cur)
-    return segs_l
+    if len(segs_l) > 1 and len(segs_l[0]) == 1:
+        segs_l[1] = segs_l[0] + segs_l[1]
+        segs_l.pop(0)
+    merged: list[list] = []
+    for seg in segs_l:
+        if len(seg) == 1 and merged:
+            merged[-1].extend(seg)
+        else:
+            merged.append(seg)
+    return merged
 
 
 def _seg_label(seg) -> str:
@@ -228,11 +284,59 @@ def _seg_label(seg) -> str:
     return first if first == last else f"{first}..{last}"
 
 
+def _norm(text: str) -> str:
+    return " ".join("".join(ch if ch.isalnum() else " " for ch in text.lower()).split())
+
+
+def same_line(a: str, b: str) -> bool:
+    """Whether two OCR reads are the same line of text. OCR of one static title
+    drops a glyph, misreads one ("agenis"), or returns a fragment ("fail." of "Why
+    agents fail"); those are the same line. Words of 1-2 characters must match
+    exactly, so "is" is not "this"."""
+    a, b = _norm(a), _norm(b)
+    if a == b:
+        return True
+    short, long_ = sorted((a, b), key=len)
+    if len(short) < 3:
+        return False
+    if short in long_:
+        return True
+    n = len(short)
+    best = max(SequenceMatcher(None, short, long_[i:i + n]).ratio() for i in range(len(long_) - n + 1))
+    return best >= 0.75
+
+
+def behaves_like_captions(samples: list[tuple[float, str]], cls: dict) -> bool:
+    """Captions replace each other; a title stays. Given (time, dominant text) for
+    every sample where a region holds text, the text is caption-like when it forms
+    at least `caption_like_min_clusters` distinct lines, none of them on screen for
+    `caption_like_max_dominant_share` of the samples or more, over at least
+    `caption_like_min_seconds`. Shares are fractions of uniformly spaced samples, so
+    the verdict does not move with the sample rate; fuzzy line matching keeps OCR
+    jitter on a static title from reading as new lines."""
+    if len(samples) < 2:
+        return False
+    times = sorted(t for t, _ in samples)
+    step = statistics.median(b - a for a, b in zip(times, times[1:]))
+    if times[-1] - times[0] + step < cls["caption_like_min_seconds"]:
+        return False
+    clusters: list[list[str]] = []
+    for _, text in samples:
+        for c in clusters:
+            if same_line(c[0], text):
+                c.append(text)
+                break
+        else:
+            clusters.append([text])
+    share = max(len(c) for c in clusters) / len(samples)
+    return len(clusters) >= cls["caption_like_min_clusters"] and share < cls["caption_like_max_dominant_share"]
+
+
 def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
              canvas_cfg: dict, expect: frozenset = frozenset()) -> list[Result]:
-    """`expect` holds "title" and/or "caption" when the caller knows it burned that
-    text in. OCR cannot tell missing text from text too illegible to read, so without
-    it an absent caption is a SKIP; with it, the absence is a FAIL."""
+    """Apply VL1-VL9 to detections. `expect` holds "title" and/or "caption" when the
+    caller knows it burned that text in: OCR cannot tell missing text from text too
+    illegible to read, so without it an absent caption is a SKIP and with it a FAIL."""
     results: list[Result] = []
     names = dict(RULES)
 
@@ -254,19 +358,18 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
 
     slack = BOX_SLACK * H
     safe = zone(profile["safe_zone"], W, H)
-    title_rect = band(profile["title_band"], safe, H) if profile.get("title_band") else None
+    title_rect = band(profile["title_band"], safe, W, H) if profile.get("title_band") else None
     cap_cfg = profile.get("caption_band")
-    cap_rect = band(cap_cfg, safe, H) if cap_cfg else None
+    cap_rect = band(cap_cfg, safe, W, H) if cap_cfg else None
 
-    # Overlay vs scene text, then region ------------------------------------
+    # Overlay vs scene text ------------------------------------------------
     overlay: list[tuple[Frame, Text]] = []
-    scene = 0
+    scene: list[tuple[Frame, Text]] = []
     for f in frames:
         for t in f.texts:
-            if t.role or t.box.h >= cls["overlay_min_text_height"] * H:
-                overlay.append((f, t))
-            else:
-                scene += 1
+            (overlay if t.role or t.box.h >= cls["overlay_min_text_height"] * H else scene).append((f, t))
+
+    # Role: declared, else position, then behaviour ------------------------
     for _, t in overlay:
         if t.role:
             t.region = t.role if t.role in ("title", "caption") else "other"
@@ -276,82 +379,107 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
             t.region = "caption"
         else:
             t.region = "mid"
-
-    # Word-by-word text parked in the title band is a caption, not a title.
-    captions_in_top = False
-    measured_top = [(f, t) for f, t in overlay if t.region == "title" and not t.role]
-    if measured_top:
-        by_frame: dict[str, list[str]] = {}
-        order: list[str] = []
-        for f, t in measured_top:
-            if f.label not in by_frame:
-                order.append(f.label)
-            by_frame.setdefault(f.label, []).append(t.text.strip().lower())
-        seq = [" ".join(sorted(by_frame[k])) for k in order]
-        n = len(seq)
-        changes = sum(1 for a, b in zip(seq, seq[1:]) if a != b)
-        if n >= cls["caption_like_min_samples"] and changes / (n - 1) >= cls["caption_like_change_fraction"]:
-            captions_in_top = True
-            for _, t in measured_top:
+    moved: dict[str, int] = {}
+    for region in ("title", "mid"):
+        members = [(f, t) for f, t in overlay if t.region == region and not t.role]
+        if not members or any(f.t is None for f, _ in members):
+            continue
+        dominant: dict[int, tuple[float, Text]] = {}
+        for f, t in members:
+            key = id(f)
+            if key not in dominant or t.box.w * t.box.h > dominant[key][1].box.w * dominant[key][1].box.h:
+                dominant[key] = (f.t, t)
+        if behaves_like_captions([(tt, t.text) for tt, t in dominant.values()], cls):
+            moved[region] = len(members)
+            for _, t in members:
                 t.region = "caption"
+        elif region == "mid":
+            for _, t in members:
+                t.region = "other"
+    moved_note = "; caption-like text found " + ", ".join(
+        f"in the {'title band' if r == 'title' else 'middle of the frame'} ({n} box(es))" for r, n in moved.items()
+    ) + " is judged as captions" if moved else ""
 
-    unread = "OCR found none: the text is missing or too illegible to read, which is itself a legibility failure"
-    scene_note = f"; {scene} small text box(es) under {pct(cls['overlay_min_text_height'] * H, H)} of height ignored as scene text" if scene else ""
+    scene_note = (f"; {len(scene)} small text box(es) under {pct(cls['overlay_min_text_height'] * H, H)} "
+                  f"of height treated as scene text") if scene else ""
+
+    def none_found(kind: str) -> str:
+        others = [t for _, t in overlay if t.region not in (kind,)]
+        if others:
+            return (f"expected {kind} text; none sits in or behaves like the {kind} role "
+                    f"({len(others)} other overlay box(es) found: see VL2/VL3 evidence)")
+        return (f"expected {kind} text; OCR found none: the text is missing or too illegible "
+                f"to read, which is itself a legibility failure")
 
     # VL2 safe zone --------------------------------------------------------
     # An expected title/caption is failed by its own band rule (VL4/VL5); VL2 carries
     # it only for a profile that has no band for it.
     uncovered = sorted(e for e in expect if not {"title": title_rect, "caption": cap_rect}.get(e))
-    if not overlay and uncovered:
-        add("VL2", "FAIL", f"expected {' and '.join(uncovered)} text; {unread}" + scene_note)
+    missing = [e for e in uncovered if not any(t.region == e for _, t in overlay)]
+    where = f"safe zone x {safe.x0:.0f}-{safe.x1:.0f}, y {safe.y0:.0f}-{safe.y1:.0f}"
+    bad = [(f, t) for f, t in overlay
+           if not t.box.inside(safe, slack)
+           and not (t.region == "title" and title_rect and t.box.inside(title_rect, slack))]
+    if bad or missing:
+        detail = "; ".join(
+            ([f"{len(bad)}/{len(overlay)} overlay text box(es) leave the {where}"] if bad else [])
+            + [none_found(e) for e in missing])
+        add("VL2", "FAIL", detail + scene_note, [_ev(f, t) for f, t in bad])
     elif not overlay:
         add("VL2", "SKIP", "no overlay text found" + scene_note)
     else:
-        bad = [(f, t) for f, t in overlay
-               if not t.box.inside(safe, slack)
-               and not (t.region == "title" and title_rect and t.box.inside(title_rect, slack))]
-        where = f"safe zone x {safe.x0:.0f}-{safe.x1:.0f}, y {safe.y0:.0f}-{safe.y1:.0f}"
-        if bad:
-            add("VL2", "FAIL", f"{len(bad)}/{len(overlay)} overlay text box(es) leave the {where}" + scene_note,
-                [_ev(f, t) for f, t in bad])
-        else:
-            extra = " (title band excepted)" if title_rect else ""
-            add("VL2", "PASS", f"{len(overlay)} overlay text box(es) inside the {where}{extra}" + scene_note)
+        extra = " (title band excepted)" if title_rect else ""
+        add("VL2", "PASS", f"{len(overlay)} overlay text box(es) inside the {where}{extra}" + scene_note)
+
+    # Faces, per shot ------------------------------------------------------
+    eye_cfg = profile.get("eye_line") or {}
+    faces_seen = any(f.faces is not None for f in frames)
+    face_frames = [(f, _primary_face(f)) for f in frames if _primary_face(f)]
+    segs = punch_in_segments(face_frames, eye_cfg.get("punch_in_scale_jump", 0.12))
+
+    def seg_face(seg) -> Box:
+        return Box(*(statistics.median(getattr(face.box, k) for _, face in seg) for k in ("x0", "y0", "x1", "y1")))
 
     # VL3 avoid zones ------------------------------------------------------
     avoid = [(a["name"], zone(a, W, H)) for a in profile.get("avoid") or []]
-    faces_seen = any(f.faces is not None for f in frames)
     if not avoid:
         add("VL3", "N/A", "profile defines no avoid zones")
     else:
-        items = [(f, t) for f, t in overlay]
-        items += [(f, face) for f in frames for face in ([_primary_face(f)] if _primary_face(f) else [])]
-        if not items:
-            add("VL3", "SKIP", "no overlay text or face found")
+        hits, small = [], []
+        for f, t in overlay:
+            hits += [_ev(f, t, name) for name, rect in avoid if t.box.intersects(rect)]
+        for seg in segs:
+            med = seg_face(seg)
+            hits += [{"at": _seg_label(seg), "face": med.as_list(), "why": name}
+                     for name, rect in avoid if med.intersects(rect)]
+        for f, t in scene:
+            small += [_ev(f, t, f"{name} (small text: an overlay, or text in the footage?)")
+                      for name, rect in avoid if t.box.intersects(rect)]
+        faces_note = "" if faces_seen else " (faces not measured by this detector)"
+        checked = len(overlay) + len(segs) + len(scene)
+        if hits:
+            add("VL3", "FAIL", f"{len(hits)} element(s) touch an avoid zone{faces_note}", hits + small)
+        elif small:
+            add("VL3", "WARN", f"{len(small)} small text box(es) touch an avoid zone: a handle, link or "
+                               f"watermark there is covered by the platform UI; confirm on the guide sheet{faces_note}",
+                small)
+        elif not checked:
+            add("VL3", "SKIP", "no text or face found")
         else:
-            hits = []
-            for f, item in items:
-                for name, rect in avoid:
-                    if item.box.intersects(rect):
-                        hits.append(_ev(f, item, name))
-            faces_note = "" if faces_seen else " (faces not measured by this detector)"
-            if hits:
-                add("VL3", "FAIL", f"{len(hits)} element(s) touch an avoid zone{faces_note}", hits)
-            else:
-                add("VL3", "PASS", f"{len(items)} element(s) clear of {', '.join(n for n, _ in avoid)}{faces_note}")
+            add("VL3", "PASS", f"{checked} element(s) clear of {', '.join(n for n, _ in avoid)}{faces_note}")
 
     # VL4 title hook band --------------------------------------------------
     if not title_rect:
         add("VL4", "N/A", "profile defines no title band")
     else:
         titles = [(f, t) for f, t in overlay if t.region == "title"]
+        span = f"y {title_rect.y0:.0f}-{title_rect.y1:.0f} ({pct(title_rect.y0, H)}-{pct(title_rect.y1, H)})"
         if not titles and "title" in expect:
-            add("VL4", "FAIL", f"expected a title hook; {unread}")
+            add("VL4", "FAIL", none_found("title") + f"; a title hook belongs in {span}")
         elif not titles:
             add("VL4", "SKIP", "no title-hook text found")
         else:
             bad = [(f, t) for f, t in titles if not t.box.inside(title_rect, slack)]
-            span = f"y {title_rect.y0:.0f}-{title_rect.y1:.0f} ({pct(title_rect.y0, H)}-{pct(title_rect.y1, H)})"
             if bad:
                 add("VL4", "FAIL", f"{len(bad)}/{len(titles)} title box(es) outside the title band {span}",
                     [_ev(f, t) for f, t in bad])
@@ -365,8 +493,10 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
         add("VL5", "N/A", "profile defines no caption band; captions are held to VL2 only")
     else:
         caps = [(f, t) for f, t in overlay if t.region == "caption"]
+        span = (f"x {cap_rect.x0:.0f}-{cap_rect.x1:.0f}, y {cap_rect.y0:.0f}-{cap_rect.y1:.0f} "
+                f"({pct(cap_rect.y0, H)}-{pct(cap_rect.y1, H)})")
         if not caps and "caption" in expect:
-            add("VL5", "FAIL", f"expected captions; {unread}")
+            add("VL5", "FAIL", none_found("caption") + f"; captions belong in {span}")
         elif not caps:
             add("VL5", "SKIP", "no caption text found")
         else:
@@ -379,27 +509,17 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
             strays = sum(1 for _, t in caps if abs(t.box.cx - W / 2) > tol)
             if abs(med_dx) > tol:
                 bad.append({"at": "all captions", "why": f"median centre off by {med_dx:+.0f}px"})
-            span = f"y {cap_rect.y0:.0f}-{cap_rect.y1:.0f} ({pct(cap_rect.y0, H)}-{pct(cap_rect.y1, H)})"
-            top = "; word-by-word text found in the title band is treated as captions" if captions_in_top else ""
             if bad:
                 add("VL5", "FAIL", f"{len(bad)} caption problem(s): boxes must sit in {span} with the median "
-                                   f"centre within +/-{tol:.0f}px{top}", bad)
+                                   f"centre within +/-{tol:.0f}px{moved_note}", bad)
             else:
                 cys = [t.box.cy for _, t in caps]
                 stray = f"; {strays} box(es) off-centre on their own (partial OCR reads)" if strays else ""
                 add("VL5", "PASS", f"{len(caps)} caption box(es) in {span}, median centre {med_dx:+.0f}px; centre y "
                                    f"{min(cys):.0f}-{max(cys):.0f} ({pct(min(cys), H)}-{pct(max(cys), H)}){stray}")
 
-    # Faces: VL6, VL7, VL8 -------------------------------------------------
-    eye_cfg = profile.get("eye_line")
-    face_frames = [(f, _primary_face(f)) for f in frames if _primary_face(f)]
+    # VL6 eye line, VL7 punch-ins ------------------------------------------
     no_faces_detector = "detector reports no faces (tesseract); run on macOS (Vision) or check the guide sheet by eye"
-    segs = punch_in_segments(face_frames, eye_cfg["punch_in_scale_jump"]) if eye_cfg else []
-
-    def seg_eye(seg) -> float | None:
-        ys = [face.eye_y for _, face in seg if face.eye_y is not None]
-        return statistics.median(ys) if ys else None
-
     if not eye_cfg:
         add("VL6", "N/A", "profile defines no eye line")
         add("VL7", "N/A", "profile defines no eye line")
@@ -411,50 +531,60 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
         add("VL7", "SKIP", "no face found")
     else:
         lo, hi = eye_cfg["y0"] * H, eye_cfg["y1"] * H
-        rows = [(seg, seg_eye(seg)) for seg in segs]
-        measured = [(seg, y) for seg, y in rows if y is not None]
+        measured = []
+        for seg in segs:
+            ys = [face.eye_y for _, face in seg if face.eye_y is not None]
+            if ys:
+                measured.append((seg, statistics.median(ys), sum(not lo <= y <= hi for y in ys) / len(ys)))
+        span = f"y {lo:.0f}-{hi:.0f} ({pct(lo, H)}-{pct(hi, H)})"
         if not measured:
             add("VL6", "UNCHECKED", "faces found but no eye landmarks")
         else:
-            bad = [{"at": _seg_label(seg), "eye_y": round(y), "why": f"{pct(y, H)} outside {pct(lo, H)}-{pct(hi, H)}"}
-                   for seg, y in measured if not lo <= y <= hi]
-            span = f"y {lo:.0f}-{hi:.0f} ({pct(lo, H)}-{pct(hi, H)})"
+            limit_share = eye_cfg["max_share_outside"]
+            bad = [{"at": _seg_label(seg), "eye_y": round(y), "outside": f"{out:.0%}"}
+                   for seg, y, out in measured if not lo <= y <= hi or out > limit_share]
             if bad:
-                add("VL6", "FAIL", f"{len(bad)}/{len(measured)} shot(s) put the eyes outside {span}", bad)
+                add("VL6", "FAIL", f"{len(bad)}/{len(measured)} shot(s) put the eyes outside {span} "
+                                   f"(median, or more than {limit_share:.0%} of samples)", bad)
             else:
-                ys = [y for _, y in measured]
+                ys = [y for _, y, _ in measured]
                 add("VL6", "PASS", f"eye line {min(ys):.0f}-{max(ys):.0f}px ({pct(min(ys), H)}-{pct(max(ys), H)}) "
                                    f"across {len(measured)} shot(s), inside {span}")
         if len(measured) < 2:
-            add("VL7", "SKIP", f"no punch-in found (face-scale jump >= {eye_cfg['punch_in_scale_jump']:.0%})")
+            add("VL7", "SKIP", f"no punch-in found (face-scale change >= {eye_cfg['punch_in_scale_jump']:.0%})")
         else:
             limit = eye_cfg["max_shift_across_punch_in"] * H
-            shifts = []
-            for (sa, ya), (sb, yb) in zip(measured, measured[1:]):
-                shifts.append({"at": f"{_seg_label(sa)} -> {_seg_label(sb)}", "shift_px": round(yb - ya)})
-            bad = [s for s in shifts if abs(s["shift_px"]) > limit]
-            if bad:
+            same_spot = eye_cfg["punch_in_max_centre_shift"] * W
+            cuts = []
+            for (sa, ya, _), (sb, yb, _) in zip(measured, measured[1:]):
+                dcx = seg_face(sb).cx - seg_face(sa).cx
+                kind = "punch-in" if abs(dcx) <= same_spot else "cut"
+                cuts.append({"at": f"{_seg_label(sa)} -> {_seg_label(sb)}", "kind": kind,
+                             "shift_px": round(yb - ya), "face_dx_px": round(dcx)})
+            over = [c for c in cuts if abs(c["shift_px"]) > limit]
+            punch = [c for c in over if c["kind"] == "punch-in"]
+            if punch:
                 add("VL7", "FAIL", f"eye line moves more than {limit:.0f}px ({pct(limit, H)}) across "
-                                   f"{len(bad)}/{len(shifts)} cut(s)", bad)
+                                   f"{len(punch)} punch-in(s); scale about the eye line", cuts)
+            elif over:
+                add("VL7", "WARN", f"eye line jumps more than {limit:.0f}px across {len(over)} cut(s) where the "
+                                   f"face also moves sideways (> {same_spot:.0f}px): a new shot, not a punch-in", cuts)
             else:
-                worst = max(abs(s["shift_px"]) for s in shifts)
-                add("VL7", "PASS", f"{len(shifts)} cut(s); largest eye-line shift {worst}px, limit {limit:.0f}px",
-                    shifts)
+                worst = max(abs(c["shift_px"]) for c in cuts)
+                add("VL7", "PASS", f"{len(cuts)} cut(s); largest eye-line shift {worst}px, limit {limit:.0f}px", cuts)
 
+    # VL8 subject in safe zone ---------------------------------------------
     if not faces_seen:
         add("VL8", "UNCHECKED", no_faces_detector)
     elif not face_frames:
         add("VL8", "SKIP", "no face found")
     else:
-        bad = []
-        for seg in segs or [face_frames]:
-            med = Box(*(statistics.median(getattr(face.box, k) for _, face in seg) for k in ("x0", "y0", "x1", "y1")))
-            if not med.inside(safe, slack):
-                bad.append({"at": _seg_label(seg), "face": med.as_list()})
+        bad = [{"at": _seg_label(seg), "face": seg_face(seg).as_list()}
+               for seg in segs if not seg_face(seg).inside(safe, slack)]
         if bad:
             add("VL8", "FAIL", f"the face leaves the safe zone in {len(bad)} shot(s)", bad)
         else:
-            add("VL8", "PASS", f"face inside the safe zone across {len(segs) or 1} shot(s)")
+            add("VL8", "PASS", f"face inside the safe zone across {len(segs)} shot(s)")
 
     # VL9 legibility -------------------------------------------------------
     leg = profile.get("legibility") or {}
@@ -504,16 +634,29 @@ def _run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
 def probe(path: str) -> dict:
     _need("ffprobe")
     p = _run(["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-              "stream=width,height:format=duration", "-of", "json", path], text=True)
+              "stream=width,height:stream_side_data=rotation:stream_tags=rotate:format=duration",
+              "-of", "json", path], text=True)
     if p.returncode != 0:
         raise ToolError(f"ffprobe failed on {path}: {p.stderr.strip()}")
     data = json.loads(p.stdout)
     streams = data.get("streams") or []
     if not streams:
         raise ToolError(f"no video stream in {path}")
+    st = streams[0]
+    w, h = int(st["width"]), int(st["height"])
+    # Phone footage is often stored landscape with a rotation flag; ffmpeg decodes it
+    # upright, so the canvas the viewer sees is the swapped one.
+    rotation = st.get("tags", {}).get("rotate")
+    for sd in st.get("side_data_list") or []:
+        if "rotation" in sd:
+            rotation = sd["rotation"]
+    try:
+        if int(float(rotation or 0)) % 180 != 0:
+            w, h = h, w
+    except ValueError:
+        pass
     dur = data.get("format", {}).get("duration")
-    return {"w": int(streams[0]["width"]), "h": int(streams[0]["height"]),
-            "duration": float(dur) if dur not in (None, "N/A") else None}
+    return {"w": w, "h": h, "duration": float(dur) if dur not in (None, "N/A") else None}
 
 
 def sample_frames(video: str, duration: float | None, fps: float, max_frames: int, out: Path) -> list[Frame]:
@@ -621,7 +764,7 @@ def draw_filter(W: int, H: int, profile: dict) -> str:
     parts.append(box(safe, "lime@0.9", "6"))
     for key in ("title_band", "caption_band"):
         if profile.get(key):
-            parts.append(box(band(profile[key], safe, H), "yellow@0.9", "4"))
+            parts.append(box(band(profile[key], safe, W, H), "yellow@0.9", "4"))
     eye = profile.get("eye_line")
     if eye:
         for y in (eye["y0"], eye["y1"]):
@@ -664,16 +807,22 @@ def _cache_dir() -> Path:
     return d
 
 
-def vision_binary() -> Path | None:
-    if sys.platform != "darwin" or not shutil.which("swiftc") or not VISION_SRC.exists():
-        return None
+def vision_binary() -> tuple[Path | None, str]:
+    """(binary, why-not). The reason is reported, never swallowed: a Vision build that
+    fails would otherwise fall back to tesseract and quietly drop the face rules."""
+    if sys.platform != "darwin":
+        return None, "macOS Vision needs darwin"
+    if not shutil.which("swiftc"):
+        return None, "macOS Vision needs swiftc (xcode-select --install)"
+    if not VISION_SRC.exists():
+        return None, f"missing {VISION_SRC}"
     digest = hashlib.sha256(VISION_SRC.read_bytes()).hexdigest()[:12]
     binary = _cache_dir() / f"vision_probe-{digest}"
     if not binary.exists():
-        p = _run(["swiftc", "-O", str(VISION_SRC), "-o", str(binary)])
+        p = _run(["swiftc", "-O", str(VISION_SRC), "-o", str(binary)], text=True)
         if p.returncode != 0:
-            return None
-    return binary
+            return None, f"swiftc failed to build vision_probe: {p.stderr.strip()[-300:]}"
+    return binary, ""
 
 
 def detect_vision(binary: Path, frames: list[Frame]) -> None:
@@ -701,7 +850,9 @@ def detect_vision(binary: Path, frames: list[Frame]) -> None:
 def _merge_words(words: list[tuple[str, Box]]) -> list[Text]:
     """Join tesseract word boxes into line boxes."""
     lines: list[list] = []
-    for text, b in sorted(words, key=lambda w: (w[1].y0, w[1].x0)):
+    # Left to right: sorting by top edge first put "Tide" (capital, taller) ahead of
+    # "was", and "was" then started a line of its own.
+    for text, b in sorted(words, key=lambda w: (w[1].x0, w[1].y0)):
         for line in lines:
             lb = line[1]
             overlap = min(lb.y1, b.y1) - max(lb.y0, b.y0)
@@ -724,37 +875,48 @@ def detect_tesseract(frames: list[Frame], min_conf: float = 60.0) -> None:
         p = _run(["tesseract", f.path, "-", "--psm", "11", "tsv"], text=True)
         if p.returncode != 0:
             raise ToolError(f"tesseract failed on {f.path}: {p.stderr.strip()[-300:]}")
-        words = []
-        for row in p.stdout.splitlines()[1:]:
-            cols = row.split("\t")
-            if len(cols) < 12 or not _is_words(cols[11]):
-                continue
-            try:
-                conf = float(cols[10])
-            except ValueError:
-                continue
-            # Busy footage makes tesseract read texture as short words; a single
-            # glyph must be near-certain to count.
-            if conf < min_conf or (sum(ch.isalnum() for ch in cols[11]) < 2 and conf < 85):
-                continue
-            x, y, w, h = (int(c) for c in cols[6:10])
-            words.append((cols[11].strip(), Box(x, y, x + w, y + h)))
-        f.texts = _merge_words(words)
+        f.texts = parse_tesseract_tsv(p.stdout, min_conf)
         f.faces = None
 
 
-def run_detector(name: str, frames: list[Frame]) -> str:
+def parse_tesseract_tsv(tsv: str, min_conf: float = 60.0) -> list[Text]:
+    """Word rows of `tesseract ... tsv` -> line boxes. Busy footage makes tesseract
+    read texture as words: rows with no letter or digit are dropped, and a single
+    glyph must be near-certain (conf >= 85) to count."""
+    words = []
+    for row in tsv.splitlines()[1:]:
+        cols = row.split("\t")
+        if len(cols) < 12 or not _is_words(cols[11]):
+            continue
+        try:
+            conf = float(cols[10])
+            x, y, w, h = (int(c) for c in cols[6:10])
+        except ValueError:
+            continue
+        if conf < min_conf or (sum(ch.isalnum() for ch in cols[11]) < 2 and conf < 85):
+            continue
+        words.append((cols[11].strip(), Box(x, y, x + w, y + h)))
+    return _merge_words(words)
+
+
+def run_detector(name: str, frames: list[Frame]) -> tuple[str, str]:
+    """Run the named detector over the frames; returns (detector, note). The note says
+    why Vision was not used when `auto` fell back, so a report never hides it."""
+    note = ""
     if name in ("auto", "vision"):
-        binary = vision_binary()
+        binary, why = vision_binary()
         if binary:
             detect_vision(binary, frames)
-            return "vision"
+            return "vision", ""
         if name == "vision":
-            raise ToolError("macOS Vision is unavailable (needs darwin + swiftc)")
+            raise ToolError(f"macOS Vision is unavailable: {why}")
+        note = f"Vision unavailable ({why}); tesseract has no face detector, so VL6-VL8 are UNCHECKED"
+        if sys.platform == "darwin":
+            print(f"check_vertical_layout: warning: {note}", file=sys.stderr)
     if name in ("auto", "tesseract"):
         if shutil.which("tesseract"):
             detect_tesseract(frames)
-            return "tesseract"
+            return "tesseract", note
         raise ToolError("no detector: tesseract is not installed and macOS Vision is unavailable")
     raise ToolError(f"unknown detector {name!r}")
 
@@ -773,23 +935,69 @@ def measure_legibility(frames: list[Frame], ratio: float, min_text_height: float
 # Spec input
 # ---------------------------------------------------------------------------
 
-def frames_from_spec(spec: dict) -> tuple[int, int, list[Frame]]:
-    try:
-        W, H = spec["canvas"]
-    except (KeyError, TypeError, ValueError) as exc:
-        raise ToolError('spec needs "canvas": [width, height]') from exc
+SPEC_KEYS = {"canvas", "elements", "shots"}
+SPEC_ELEMENT_KEYS = {"role", "label", "box", "stroke", "background"}
+SPEC_SHOT_KEYS = {"eye_y", "face_box"}
+BACKGROUNDS = {"busy", "calm"}
+
+
+def _spec_box(v, where: str) -> Box:
+    if not isinstance(v, list) or len(v) != 4 or not all(_is_num(c) for c in v):
+        raise ToolError(f"spec {where} needs a box of 4 numbers [x0, y0, x1, y1] in pixels")
+    b = Box(*(float(c) for c in v))
+    if not (b.x0 < b.x1 and b.y0 < b.y1):
+        raise ToolError(f"spec {where} box needs x0 < x1 and y0 < y1, got {v}")
+    return b
+
+
+def frames_from_spec(spec) -> tuple[int, int, list[Frame]]:
+    """Validate a declared-overlay spec and turn it into frames. Anything malformed
+    is a ToolError (exit 2): an exception escaping here would exit 1, which reads as
+    a FAIL verdict, and an unknown key (a typo) would otherwise check nothing."""
+    if not isinstance(spec, dict):
+        raise ToolError("spec must be a JSON object")
+    unknown = set(spec) - SPEC_KEYS
+    if unknown:
+        raise ToolError(f"spec has unknown key(s) {sorted(unknown)}; allowed: {sorted(SPEC_KEYS)}")
+    canvas = spec.get("canvas")
+    if not (isinstance(canvas, list) and len(canvas) == 2 and all(_is_num(v) and v > 0 for v in canvas)):
+        raise ToolError('spec needs "canvas": [width, height] with positive numbers')
+    W, H = int(canvas[0]), int(canvas[1])
+    elements, shots = spec.get("elements", []), spec.get("shots", [])
+    if not isinstance(elements, list) or not isinstance(shots, list):
+        raise ToolError('spec "elements" and "shots" must be lists')
+    if not elements and not shots:
+        raise ToolError("spec declares no elements and no shots: there is nothing to check")
     texts = []
-    for i, el in enumerate(spec.get("elements") or []):
-        if "box" not in el or len(el["box"]) != 4:
-            raise ToolError(f"spec element {i} needs a 4-number box [x0, y0, x1, y1] in pixels")
-        texts.append(Text(el.get("label") or el.get("role") or f"element {i}", Box(*el["box"]),
-                          role=el.get("role") or "other", stroke=el.get("stroke"),
-                          background=el.get("background")))
+    for i, el in enumerate(elements):
+        if not isinstance(el, dict):
+            raise ToolError(f"spec element {i} must be an object")
+        bad_keys = set(el) - SPEC_ELEMENT_KEYS
+        if bad_keys:
+            raise ToolError(f"spec element {i} has unknown key(s) {sorted(bad_keys)}")
+        box = _spec_box(el.get("box"), f"element {i}")
+        role = str(el.get("role") or "other").strip().lower()
+        background = el.get("background")
+        if background is not None:
+            background = str(background).strip().lower()
+            if background not in BACKGROUNDS:
+                raise ToolError(f"spec element {i} background must be one of {sorted(BACKGROUNDS)}")
+        stroke = el.get("stroke")
+        if stroke is not None and not isinstance(stroke, bool):
+            raise ToolError(f"spec element {i} stroke must be true or false")
+        texts.append(Text(str(el.get("label") or role or f"element {i}"), box, role=role,
+                          stroke=stroke, background=background))
     frames = [Frame(label="overlays", texts=texts, faces=None)]
-    shots = spec.get("shots") or []
     for i, shot in enumerate(shots):
-        face = Face(Box(*shot["face_box"]), shot.get("eye_y")) if shot.get("face_box") else None
-        frames.append(Frame(label=f"shot {i + 1}", faces=[face] if face else [], shot=i))
+        if not isinstance(shot, dict) or set(shot) - SPEC_SHOT_KEYS:
+            raise ToolError(f"spec shot {i} must be an object with {sorted(SPEC_SHOT_KEYS)}")
+        if "face_box" not in shot:
+            raise ToolError(f"spec shot {i} needs a face_box (eye_y alone places no face)")
+        eye = shot.get("eye_y")
+        if eye is not None and not _is_num(eye):
+            raise ToolError(f"spec shot {i} eye_y must be a number")
+        face = Face(_spec_box(shot["face_box"], f"shot {i} face_box"), float(eye) if eye is not None else None)
+        frames.append(Frame(label=f"shot {i + 1}", faces=[face], shot=i))
     if not shots:
         frames[0].faces = []  # nothing declared: the face rules SKIP, they are not unmeasurable
     return W, H, frames
@@ -810,6 +1018,8 @@ def verdict(results: list[Result], strict: bool) -> tuple[str, dict]:
 def render_table(meta: dict, results: list[Result], v: str, counts: dict) -> str:
     lines = [f"vertical layout check: {meta['input']}  (profile {meta['profile']}, "
              f"detector {meta.get('detector', '-')}, {meta.get('samples', 0)} sample(s))"]
+    if meta.get("detector_note"):
+        lines.append(f"  note: {meta['detector_note']}")
     for r in results:
         lines.append(f"  {r.rule}  {r.name:<26} {r.status:<9} {r.detail}")
         for e in r.evidence:
@@ -858,7 +1068,7 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
                 raise ToolError(f"images differ in size: {sorted(sizes)}")
             (W, H), info = sizes.pop(), {"duration": None}
             frames = [Frame(label=Path(i).name, path=str(Path(i).resolve())) for i in inputs]
-        detector = run_detector(args.detector, frames)
+        detector, detector_note = run_detector(args.detector, frames)
         cls = layout["classification"]
         leg = profile.get("legibility") or {}
         measure_legibility(frames, leg.get("contrast_ratio", 3.0), cls["overlay_min_text_height"] * H)
@@ -873,6 +1083,8 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
     meta = {"input": inputs[0] if is_video else inputs, "mode": "video" if is_video else "image",
             "profile": pname, "detector": detector, "canvas": [W, H], "samples": len(frames),
             "report": args.report, "guide": guide}
+    if detector_note:
+        meta["detector_note"] = detector_note
     return emit(args, meta, results)
 
 
@@ -904,9 +1116,9 @@ def zones_table(profile: dict, W: int, H: int) -> str:
     rows = [("Safe zone", safe)]
     rows += [(f"Avoid: {a['name']}", zone(a, W, H)) for a in profile.get("avoid") or []]
     if profile.get("title_band"):
-        rows.append(("Title hook band", band(profile["title_band"], safe, H)))
+        rows.append(("Title hook band", band(profile["title_band"], safe, W, H)))
     if profile.get("caption_band"):
-        rows.append(("Caption band", band(profile["caption_band"], safe, H)))
+        rows.append(("Caption band", band(profile["caption_band"], safe, W, H)))
     eye = profile.get("eye_line")
     if eye:
         rows.append(("Eye-line band", Box(0, eye["y0"] * H, W, eye["y1"] * H)))

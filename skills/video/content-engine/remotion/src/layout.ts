@@ -10,7 +10,7 @@ import contract from "../../layout/vertical-9x16.json";
  */
 
 type Zone = { x0: number; y0: number; x1: number; y1: number };
-type Band = { y0: number; y1: number };
+type Band = { y0: number; y1: number; x0?: number; x1?: number };
 
 export interface Rect {
   left: number;
@@ -26,7 +26,7 @@ export interface VerticalLayout {
   safe: Rect;
   /** Title hook text sits in this band (VL4). */
   titleBand: Rect;
-  /** Captions sit in this band, centred (VL5). */
+  /** Captions sit in this band, centred (VL5); it stops short of the action rail. */
   captionBand: Rect;
   /**
    * The safe zone above the first avoid zone that cuts into it (the action
@@ -57,11 +57,13 @@ function zoneRect(z: Zone, w: number, h: number): Rect {
   };
 }
 
-function bandRect(b: Band, safe: Rect, h: number): Rect {
+function bandRect(b: Band, safe: Rect, w: number, h: number): Rect {
+  const left = b.x0 === undefined ? safe.left : Math.round(b.x0 * w);
+  const right = b.x1 === undefined ? safe.left + safe.width : Math.round(b.x1 * w);
   return {
-    left: safe.left,
+    left,
     top: Math.round(b.y0 * h),
-    width: safe.width,
+    width: right - left,
     height: Math.round((b.y1 - b.y0) * h),
   };
 }
@@ -86,8 +88,8 @@ export function verticalLayout(
     width,
     height,
     safe,
-    titleBand: bandRect(organic.title_band, safe, height),
-    captionBand: bandRect(organic.caption_band, safe, height),
+    titleBand: bandRect(organic.title_band, safe, width, height),
+    captionBand: bandRect(organic.caption_band, safe, width, height),
     upper: { ...safe, height: Math.round(cutTop * height) - safe.top },
     strokePx: Math.max(3, Math.round(width / 180)),
   };
@@ -96,6 +98,16 @@ export function verticalLayout(
 export function useVerticalLayout(): VerticalLayout | null {
   const { width, height } = useVideoConfig();
   return verticalLayout(width, height);
+}
+
+/**
+ * Largest font size (<= `preferred`) at which `text` fits `width` on one line.
+ * Bold sans averages ~0.62em per character; this is an estimate, and the gate
+ * (check_vertical_layout.py VL3/VL5) is what verifies the rendered result.
+ */
+export function fitFontSize(text: string, width: number, preferred: number): number {
+  const estimate = Math.floor(width / Math.max(1, text.length * 0.62));
+  return Math.max(24, Math.min(preferred, estimate));
 }
 
 /** Outline style for white overlay text on footage. */

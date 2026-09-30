@@ -257,7 +257,7 @@ opencaptions:
   # Visual parameters
   font_family: "Roboto Flex"      # Variable font for weight axis
   base_font_size: 48              # Pixels at 1080p
-  position: "bottom"              # top | center | bottom
+  position: "bottom"              # caption_band (9:16, layout/vertical-9x16.json) | top | center | bottom
   max_chars_per_line: 42          # FCC compliance
   background: "pill"              # pill | shadow | gradient | none
   background_opacity: 0.6         # 0.0 - 1.0

@@ -157,10 +157,11 @@ word-by-word captions via Remotion. Background audio: ambient synth."}
 - FPS: 30
 - Codec: H.265 (CRF 18)
 - Audio: Gemini TTS narration + ambient music mix
-- Captions: caption band, centred on y 1376 (72%), white bold + black stroke;
+- Captions: caption band x 208-872, centred on y 1376 (72%), white bold + black stroke;
   title hook centred on y 278 (14%). Top 12% is above the safe zone.
   Contract: `references/vertical-layout.md`
-- Layout gate: `python3 scripts/check_vertical_layout.py video {reel}.mp4 --expect-captions --expect-title` → `VERDICT: PASS`
+- Layout gate: `python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video {reel}.mp4 [--expect-captions] [--expect-title]`,
+  meeting the pass criteria in content-engine SKILL.md "Vertical Layout Gate"
 - Export: `ffmpeg -movflags +faststart`
 
 ### Carousels (1:1)
@@ -228,7 +229,8 @@ word-by-word captions via Remotion. Background audio: ambient synth."}
 - Carousel posts with swipe-through narrative
 - Stories: behind-the-scenes of generation process (meta-content)
 - Caption positioning: caption band at 72% of the height, title hook at 14%
-  (`references/vertical-layout.md`); paid Reels use `--profile meta-ads-9x16`
+  (`references/vertical-layout.md`). Paid Reels must pass `--profile meta-ads-9x16`,
+  which needs captions above 65%; the Remotion reel layout does not do that
 
 **LinkedIn:**
 - Professional framing of the same content
@@ -271,8 +273,9 @@ word-by-word captions via Remotion. Background audio: ambient synth."}
 - [ ] All assets color-graded with brand LUT
 - [ ] All assets exported at correct resolution/format
 - [ ] Captions added to video assets (OpenCaptions pipeline, when available)
-- [ ] Every 9:16 asset passes the layout gate (`check_vertical_layout.py`: `VERDICT: PASS`,
-      UNCHECKED rules closed on the guide sheet, report path recorded here)
+- [ ] Every 9:16 asset meets the layout gate's pass criteria (content-engine SKILL.md
+      "Vertical Layout Gate": `VERDICT: PASS`, UNCHECKED rules closed on the guide sheet,
+      report path recorded here)
 - [ ] Upscale pass completed (Real-ESRGAN for any sub-native assets)
 - [ ] Final quality review (run acceptance criteria on each scene)
 

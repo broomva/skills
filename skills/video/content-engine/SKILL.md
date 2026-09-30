@@ -258,20 +258,21 @@ output/{campaign-slug}/
 Every 9:16 asset (Reels, TikTok, Shorts, Stories) passes this gate **before it is
 distributed**. The contract is `layout/vertical-9x16.json`, measured from a creator's
 layout-guide Reel; the rules, their source and the checker's limits are in
-`references/vertical-layout.md`. The Remotion `ContentEngineReel` composition draws its
-overlays from the same JSON, so the renderer and the gate cannot drift apart.
+`references/vertical-layout.md`. The Remotion `ContentEngineReel` composition reads its
+overlay geometry from the same JSON. Its renders are still gated like any other video,
+because reading the right numbers does not guarantee that the pixels land inside them.
 
 | Rule | What must hold (1080x1920) |
 |------|---------------------------|
 | VL1 | Canvas 9:16, at least 1080 wide |
 | VL2 | Overlay text inside the safe zone x 143-938, y 277-1643 (title band excepted) |
-| VL3 | Nothing on the action rail (x ≥ 872, y ≥ 922) or the bottom band (y ≥ 1686) |
+| VL3 | No overlay text or face on the action rail (x ≥ 872, y ≥ 922) or the bottom band (y ≥ 1686); small text there WARNs |
 | VL4 | Title hook in the top band, y 121-436, centred near y 278 |
-| VL5 | Captions in the band y 1288-1463, centred, one word or short chunk at a time |
+| VL5 | Captions in the band x 208-872, y 1288-1463, centred; text that changes like captions is judged here wherever it sits |
 | VL6 | Eyes at 33-45% of the height (source Reel: 38-40%) |
-| VL7 | Eye line moves at most 58px across a punch-in |
+| VL7 | Eye line moves at most 58px across a punch-in (a jump across a cut to a new shot only WARNs) |
 | VL8 | Face inside the safe zone |
-| VL9 | Text over a busy background has a stroke |
+| VL9 | Text over a busy background has a stroke: FAIL when declared without one, WARN on measured low edge contrast |
 
 **Run it:**
 
@@ -282,12 +283,24 @@ python3 scripts/check_vertical_layout.py video final.mp4 --expect-captions --exp
 python3 scripts/check_vertical_layout.py video clip.mp4
 # overlay geometry you are about to draw (watermarks, CTAs: small text OCR skips)
 python3 scripts/check_vertical_layout.py spec overlays.json
-# paid placements: Meta's 14% top / 35% bottom / 6% sides
+# paid placements: Meta's 14% top / 35% bottom / 6% sides. ContentEngineReel draws the
+# organic layout and FAILS this profile; place ad captions above 65% by hand
 python3 scripts/check_vertical_layout.py --profile meta-ads-9x16 video ad.mp4
 ```
 
-`compose-video.py --aspect-ratio 9:16` runs the gate itself (framing on the stitched
-clips, the full gate on a `--remotion` render) and exits 1 on a FAIL.
+Pass `--expect-captions` / `--expect-title` only for text the asset actually burned in.
+Outside this skill's root, the script is at
+`~/.claude/skills/content-engine/scripts/check_vertical_layout.py`.
+
+`compose-video.py --aspect-ratio 9:16` gates what it produced:
+- the stitched clips (framing only; there is no text yet)
+- the `--remotion` render, if one was requested (text expected)
+
+It prints one outcome per artifact: PASS, UNVERIFIED, FAIL, MISSING or ERROR.
+- **FAIL, MISSING, ERROR:** the run exits 1. MISSING means a requested artifact was
+  never produced, for example because the render died.
+- **UNVERIFIED:** rules came back UNCHECKED. Off macOS this covers all of the framing
+  rules, so check them on the guide sheet it names.
 
 **Pass criteria** — the last line reads `VERDICT: PASS` (exit 0), and then:
 

@@ -16,5 +16,7 @@ if [ ! -f "$MANIFEST" ]; then
 fi
 
 cd "$(dirname "$0")"
-npx remotion render src/index.ts "$COMPOSITION" "$OUT" --props "$MANIFEST"
+# --public-dir: manifest.json names clips relative to its own directory, and the
+# composition resolves them with staticFile(), i.e. against the public dir.
+npx remotion render src/index.ts "$COMPOSITION" "$OUT" --props "$MANIFEST" --public-dir "$DIR"
 echo "Rendered: $OUT"

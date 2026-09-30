@@ -1,7 +1,7 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame, interpolate } from "remotion";
 import type { ShotEntry } from "../hooks/useManifest";
-import { strokeStyle, useVerticalLayout, type VerticalLayout } from "../layout";
+import { fitFontSize, strokeStyle, useVerticalLayout, type VerticalLayout } from "../layout";
 
 // ---------------------------------------------------------------------------
 // CWI (Contextual Word Intelligence) Types — from OpenCaptions
@@ -269,12 +269,17 @@ const VerticalWordCaption: React.FC<{
           color: "#ffffff",
           fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
           fontWeight: Math.max(700, word.weight ?? 700),
-          fontSize: Math.round(VERTICAL_FONT_SIZE * Math.min(word.size ?? 1.0, 1.2) * emphasis),
+          // Shrink long words to the band: past its right edge is the action rail.
+          fontSize: fitFontSize(
+            word.text,
+            layout.captionBand.width,
+            Math.round(VERTICAL_FONT_SIZE * Math.min(word.size ?? 1.0, 1.2) * emphasis)
+          ),
           lineHeight: 1.1,
           display: "inline-block",
           transform: `scale(${scale})`,
           whiteSpace: "nowrap",
-          maxWidth: layout.safe.width,
+          maxWidth: layout.captionBand.width,
           ...strokeStyle(layout.strokePx),
         }}
       >
@@ -336,7 +341,7 @@ const FallbackCaptions: React.FC<{
             fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
             fontWeight: 700,
             lineHeight: 1.15,
-            maxWidth: vertical.safe.width,
+            maxWidth: vertical.captionBand.width,
             // Two lines at most, so the text cannot spill out of the band.
             display: "-webkit-box",
             WebkitLineClamp: 2,

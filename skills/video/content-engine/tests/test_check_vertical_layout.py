@@ -46,8 +46,8 @@ def reel_like_frames(n=10, faces=True):
     captions, one talking head at eye line ~730px."""
     frames = []
     for i in range(n):
-        texts = [caption_word(f"w{i}")]
-        if i < 3:
+        texts = [caption_word(f"word{i}")]
+        if i < 5:  # >= caption_like span: the static-title path really runs
             texts.append(text("Title hook", 312, 233, 765, 323))
         fc = [face(334, 616, 690, 972, 730 + (i % 3) * 8)] if faces else None
         frames.append(cvl.Frame(label=f"t={i / 2:.2f}s", t=i / 2, texts=texts, faces=fc))
@@ -97,19 +97,65 @@ def test_text_on_the_action_rail_fails_vl3_even_inside_the_safe_zone():
     assert res["VL3"].evidence[0]["why"] == "right action rail"
 
 
+def timed(texts_per_frame, step=0.5):
+    return [cvl.Frame(label=f"t={i * step:.2f}s", t=i * step, texts=ts, faces=[])
+            for i, ts in enumerate(texts_per_frame)]
+
+
+WORDS = ["alpha", "bravo", "charlie", "delta", "echo", "foxtrot"]
+
+
 def test_word_by_word_text_in_the_title_band_is_treated_as_captions():
     # The old campaign-plan template put captions "top-center, 12% from top".
-    frames = [cvl.Frame(label=f"t{i}", texts=[text(f"word{i}", 440, 200, 640, 260)], faces=[])
-              for i in range(6)]
-    res = run(frames)
+    res = run(timed([[text(w, 440, 200, 640, 260)] for w in WORDS]))
     assert res["VL5"].status == "FAIL"
-    assert "treated as captions" in res["VL5"].detail
+    assert "in the title band" in res["VL5"].detail
     assert res["VL2"].status == "FAIL"  # 200 < 277: no title-band exemption for captions
 
 
+def test_word_by_word_captions_across_the_eyes_fail_vl5():
+    # CapCut's default: captions at mid-frame, over the face.
+    res = run(timed([[text(w, 440, 930, 640, 990)] for w in WORDS]))
+    assert res["VL5"].status == "FAIL"
+    assert "middle of the frame" in res["VL5"].detail
+    res = run(timed([[text(w, 440, 930, 640, 990)] for w in WORDS]), expect=frozenset({"caption"}))
+    assert res["VL5"].status == "FAIL"
+    assert "OCR found none" not in res["VL5"].detail
+
+
+def test_static_mid_text_is_a_plain_overlay_and_an_expected_title_names_it():
+    frames = timed([[text("Why agents fail", 300, 540, 780, 620)]] * 6)
+    res = run(frames)
+    assert (res["VL2"].status, res["VL4"].status, res["VL5"].status) == ("PASS", "SKIP", "SKIP")
+    res = run(timed([[text("Why agents fail", 300, 540, 780, 620)]] * 6), expect=frozenset({"title"}))
+    assert res["VL4"].status == "FAIL"
+    assert "1 other overlay" in res["VL4"].detail or "6 other overlay" in res["VL4"].detail
+
+
+def test_ocr_jitter_on_a_static_title_does_not_make_it_captions():
+    reads = ["Why agents fail", "fail.", "fai", "Why agenis fail", "Why agents fail", "Why agents fail"]
+    res = run(timed([[text(r, 330, 240, 750, 320)] for r in reads]))
+    assert res["VL4"].status == "PASS"
+    assert res["VL5"].status == "SKIP"
+
+
+def test_caption_classification_does_not_move_with_the_sample_rate():
+    # The same 3 s of word-by-word captions sampled at 2 fps and at 10 fps.
+    for step in (0.5, 0.1):
+        n = int(3 / step)
+        frames = timed([[text(WORDS[int(i * step / 0.5) % len(WORDS)], 440, 200, 640, 260)] for i in range(n)], step)
+        assert run(frames)["VL5"].status == "FAIL", step
+
+
+def test_same_line_matches_ocr_variants_but_not_short_words():
+    assert cvl.same_line("Why agents fail", "fail.")
+    assert cvl.same_line("Why agents fail", "Why agenis fail")
+    assert not cvl.same_line("this", "is")
+    assert not cvl.same_line("alpha", "bravo")
+
+
 def test_static_title_in_the_band_is_a_title_and_passes():
-    frames = [cvl.Frame(label=f"t{i}", texts=[text("How I edit", 330, 240, 750, 320)], faces=[])
-              for i in range(6)]
+    frames = timed([[text("How I edit", 330, 240, 750, 320)]] * 6)
     res = run(frames)
     assert res["VL4"].status == "PASS"
     assert res["VL2"].status == "PASS"  # 240 < 277 but inside the title band
@@ -124,7 +170,8 @@ def test_title_above_the_band_fails_vl4_and_vl2():
 
 
 def test_off_centre_caption_fails_vl5():
-    frames = [cvl.Frame(label="a", texts=[text("left", 150, 1345, 350, 1405)], faces=[])]
+    # Inside the band (x 208-872) but centred at x 310, not 540.
+    frames = [cvl.Frame(label="a", texts=[text("left", 210, 1345, 410, 1405)], faces=[])]
     res = run(frames)
     assert res["VL5"].status == "FAIL"
     assert "median centre off" in res["VL5"].evidence[0]["why"]
@@ -144,6 +191,22 @@ def test_small_scene_text_is_ignored_but_counted():
     res = run(frames)
     assert res["VL2"].status == "SKIP"
     assert "1 small text box" in res["VL2"].detail
+    assert res["VL3"].status == "PASS"
+
+
+def test_small_text_on_the_rail_warns_instead_of_vanishing():
+    # A 24px "@brand" on the like/comment rail: scene-sized, but in the avoid zone.
+    frames = [cvl.Frame(label="a", texts=[text("@brand", 880, 1500, 1060, 1524)], faces=[])]
+    res = run(frames)
+    assert res["VL3"].status == "WARN"
+    assert "small text" in res["VL3"].evidence[0]["why"]
+
+
+def test_caption_band_stops_at_the_action_rail():
+    # Inside the safe zone and the old 143-938 band, but its right end is on the rail.
+    res = run([cvl.Frame(label="a", texts=[text("a long caption line", 150, 1300, 930, 1360)], faces=[])])
+    assert res["VL3"].status == "FAIL"
+    assert res["VL5"].status == "FAIL"
 
 
 def test_eye_line_outside_the_band_fails_vl6():
@@ -151,6 +214,17 @@ def test_eye_line_outside_the_band_fails_vl6():
     res = run(frames)
     assert res["VL6"].status == "FAIL"
     assert res["VL8"].status == "PASS"
+
+
+def test_eye_line_out_of_band_in_a_third_of_samples_fails_even_with_a_good_median():
+    eyes = [700, 700, 700, 700, 900, 900, 900]  # median 700 is inside; 3/7 are not
+    frames = [cvl.Frame(label=f"t{i}", faces=[face(334, 600, 690, 956, y)]) for i, y in enumerate(eyes)]
+    assert run(frames)["VL6"].status == "FAIL"
+
+
+def test_face_without_eye_landmarks_is_unchecked_for_vl6():
+    frames = [cvl.Frame(label=f"t{i}", faces=[face(334, 600, 690, 956, None)]) for i in range(3)]
+    assert run(frames)["VL6"].status == "UNCHECKED"
 
 
 def test_punch_in_that_holds_the_eye_line_passes_vl7():
@@ -167,6 +241,25 @@ def test_punch_in_that_drops_the_eye_line_fails_vl7():
     tight = [cvl.Frame(label=f"p{i}", faces=[face(300, 700, 780, 1180, 840)]) for i in range(4)]
     res = run(wide + tight)
     assert res["VL7"].status == "FAIL"
+
+
+def test_a_cut_to_a_new_framing_only_warns_vl7():
+    # Two shots, each fine for VL6, face moved sideways: a new shot, not a punch-in.
+    a = [cvl.Frame(label=f"a{i}", faces=[face(200, 560, 520, 880, 680)]) for i in range(4)]
+    b = [cvl.Frame(label=f"b{i}", faces=[face(520, 600, 920, 1000, 800)]) for i in range(4)]
+    res = run(a + b)
+    assert res["VL6"].status == "PASS"
+    assert res["VL7"].status == "WARN"
+    assert res["VL7"].evidence[0]["kind"] == "cut"
+
+
+def test_one_leaning_frame_does_not_fail_vl3_for_the_shot():
+    frames = [cvl.Frame(label=f"t{i}", faces=[face(334, 616, 690, 972, 730)]) for i in range(5)]
+    frames.append(cvl.Frame(label="lean", faces=[face(560, 900, 900, 1240, 1000)]))
+    frames += [cvl.Frame(label=f"u{i}", faces=[face(334, 616, 690, 972, 730)]) for i in range(5)]
+    res = run(frames)
+    assert res["VL3"].status == "PASS"
+    assert res["VL8"].status == "PASS"
 
 
 def test_face_on_the_rail_fails_vl3_and_vl8():
@@ -243,6 +336,12 @@ def test_segments_ignore_a_one_sample_glitch():
     assert len(cvl.punch_in_segments(_ff(heights), 0.12)) == 1
 
 
+def test_segments_ignore_a_glitch_on_the_first_or_last_sample():
+    # sample_frames appends a "last" frame, so a glitch there happens on any video.
+    assert len(cvl.punch_in_segments(_ff([350, 345, 352, 348, 351, 450]), 0.12)) == 1
+    assert len(cvl.punch_in_segments(_ff([450, 350, 345, 352, 348, 351]), 0.12)) == 1
+
+
 # ---------------------------------------------------------------------------
 # Legibility metric on synthetic pixels
 # ---------------------------------------------------------------------------
@@ -276,6 +375,25 @@ def test_halo_share_is_high_with_a_stroke_and_low_on_a_light_busy_background():
     high = cvl.halo_contrast_share(_bytes(stroked), 200, 120, box, 3.0)
     assert low is not None and high is not None
     assert low < 0.2 < 0.9 < high
+
+
+def test_halo_share_skips_the_anti_aliased_first_ring():
+    # Stroked text as rendered: 255 fill, a 1px anti-aliased 170 edge, then a 6px
+    # black stroke. Only the stroke should be judged.
+    def light(x, y):
+        return 200
+
+    img = _canvas(200, 120, light)
+    for gx in range(40, 160, 30):
+        _draw_glyph(img, gx - 1, 39, gx + 13, 81, stroke=6)  # stroke band, glyph area
+        for y in range(39, 81):
+            for x in range(gx - 1, gx + 13):
+                img[y][x] = 170  # anti-aliased edge ring ...
+        for y in range(40, 80):
+            for x in range(gx, gx + 12):
+                img[y][x] = 255  # ... around the fill
+    share = cvl.halo_contrast_share(_bytes(img), 200, 120, cvl.Box(30, 30, 170, 90), 3.0)
+    assert share is not None and share > 0.9
 
 
 def test_halo_share_is_none_without_light_text():
@@ -316,6 +434,80 @@ def test_spec_mode_exit_codes(tmp_path):
     assert "VL3" in p.stdout and "FAIL" in p.stdout
 
 
+@pytest.mark.parametrize("spec", [
+    {"canvas": [1080, 1920], "elements": []},
+    {"canvas": [1080, 1920], "element": [{"role": "caption", "box": [440, 1345, 640, 1405]}]},
+    # Typos next to valid content: only the unknown-key check can reject these.
+    {"canvas": [1080, 1920], "elements": [{"role": "caption", "box": [440, 1345, 640, 1405]}],
+     "shot": [{"eye_y": 300, "face_box": [300, 200, 700, 600]}]},
+    {"canvas": [1080, 1920], "elements": [{"roll": "caption", "box": [440, 1345, 640, 1405]}]},
+    {"canvas": [1080, 0], "elements": [{"box": [1, 2, 3, 4]}]},
+    {"canvas": ["1080", "1920"], "elements": [{"box": [1, 2, 3, 4]}]},
+    {"canvas": {"w": 1080, "h": 1920}, "elements": [{"box": [1, 2, 3, 4]}]},
+    {"canvas": [1080, 1920], "elements": [{"box": None}]},
+    {"canvas": [1080, 1920], "elements": ["caption"]},
+    {"canvas": [1080, 1920], "elements": {"box": [1, 2, 3, 4]}},
+    {"canvas": [1080, 1920], "elements": [{"box": [640, 1345, 440, 1405]}]},
+    {"canvas": [1080, 1920], "elements": [{"box": [1, 2, 3, 4], "background": "noisy"}]},
+    {"canvas": [1080, 1920], "shots": [{"eye_y": 300}]},
+    {"canvas": [1080, 1920], "shots": [{"face_box": [1, 2, 3]}]},
+    {"canvas": [1080, 1920], "shots": [5]},
+])
+def test_malformed_spec_exits_2_never_a_verdict(tmp_path, spec):
+    p = tmp_path / "spec.json"
+    p.write_text(json.dumps(spec))
+    r = _cli("spec", str(p))
+    assert r.returncode == 2, r.stdout + r.stderr
+    assert "Traceback" not in r.stderr
+
+
+def test_spec_roles_and_backgrounds_are_case_insensitive(tmp_path):
+    p = _spec(tmp_path, [{"role": "Caption", "box": [440, 1345, 640, 1405], "background": "Busy", "stroke": False}])
+    rep = json.loads(_cli("spec", str(p), "--json").stdout)
+    by = {r["rule"]: r["status"] for r in rep["results"]}
+    assert by["VL5"] == "PASS"   # a caption, not "other"
+    assert by["VL9"] == "FAIL"   # busy, unstroked
+
+
+def test_malformed_layout_contract_exits_2(tmp_path):
+    bad = json.loads((SKILL / "layout" / "vertical-9x16.json").read_text())
+    del bad["profiles"]["reels-organic"]["safe_zone"]
+    p = tmp_path / "layout.json"
+    p.write_text(json.dumps(bad))
+    r = _cli("--layout", str(p), "zones")
+    assert r.returncode == 2 and "Traceback" not in r.stderr
+
+
+def test_expected_title_missing_fails_vl4_and_meta_carries_it_on_vl2():
+    frames = [cvl.Frame(label="a", texts=[caption_word("hello")], faces=[])]
+    assert run(frames, expect=frozenset({"title"}))["VL4"].status == "FAIL"
+    # meta-ads has no title band: an expected, missing title fails VL2 even though
+    # other overlay text exists.
+    res = run([cvl.Frame(label="a", texts=[text("buy", 440, 900, 640, 960)], faces=[])],
+              profile=META, expect=frozenset({"title"}))
+    assert res["VL2"].status == "FAIL"
+
+
+def test_tesseract_tsv_drops_punctuation_and_unsure_single_glyphs():
+    head = "level\tpage_num\tblock_num\tpar_num\tline_num\tword_num\tleft\ttop\twidth\theight\tconf\ttext"
+    rows = [
+        "5\t1\t1\t1\t1\t1\t400\t1340\t40\t60\t95\t=",       # punctuation: never text
+        "5\t1\t2\t1\t1\t1\t100\t500\t30\t60\t80\t7",        # single glyph, unsure
+        "5\t1\t3\t1\t1\t1\t600\t500\t30\t60\t90\t8",        # single glyph, sure
+        "5\t1\t4\t1\t1\t1\t300\t900\t60\t40\t61\the",       # short word, above min_conf
+        "5\t1\t5\t1\t1\t1\t300\t1200\t60\t40\t40\tnope",    # below min_conf
+    ]
+    got = sorted(t.text for t in cvl.parse_tesseract_tsv("\n".join([head, *rows])))
+    assert got == ["8", "he"]
+
+
+def test_merge_words_joins_a_line_left_to_right():
+    words = [("was", cvl.Box(300, 1360, 400, 1400)), ("Tide", cvl.Box(420, 1340, 540, 1400)),
+             ("now", cvl.Box(560, 1360, 660, 1400))]
+    lines = cvl._merge_words(words)
+    assert [t.text for t in lines] == ["was Tide now"]
+
+
 def test_cli_usage_errors_exit_2(tmp_path):
     assert _cli("spec", str(tmp_path / "missing.json")).returncode == 2
     assert _cli("--profile", "nope", "zones").returncode == 2
@@ -327,6 +519,8 @@ def test_cli_usage_errors_exit_2(tmp_path):
 def test_contract_fractions_are_sane():
     for name, prof in LAYOUT["profiles"].items():
         zones = [prof["safe_zone"], *(prof.get("avoid") or [])]
+        if prof.get("caption_band") and "x0" in prof["caption_band"]:
+            zones.append(prof["caption_band"])
         for z in zones:
             assert 0 <= z["x0"] < z["x1"] <= 1 and 0 <= z["y0"] < z["y1"] <= 1, name
         for key in ("title_band", "caption_band"):
@@ -344,6 +538,63 @@ def test_contract_reproduces_the_measured_reel_pixels():
     assert safe.as_list() == [143, 277, 938, 1643]
     rail, bottom = (cvl.zone(a, W, H) for a in ORGANIC["avoid"])
     assert (round(rail.x0), round(rail.y0), round(bottom.y0)) == (872, 922, 1686)
+
+
+def test_caption_band_clears_the_action_rail():
+    """The contract must not contradict itself: a caption filling its band cannot
+    touch an avoid zone."""
+    for name, prof in LAYOUT["profiles"].items():
+        if not prof.get("caption_band"):
+            continue
+        safe = cvl.zone(prof["safe_zone"], W, H)
+        cap = cvl.band(prof["caption_band"], safe, W, H)
+        for a in prof.get("avoid") or []:
+            assert not cap.intersects(cvl.zone(a, W, H)), (name, a["name"])
+
+
+def _contract_pixels() -> set[int]:
+    """Every pixel value a doc may quote: zone edges and sizes, band centres, the
+    derived limits, the canvas."""
+    vals = {W, H}
+    for prof in LAYOUT["profiles"].values():
+        safe = cvl.zone(prof["safe_zone"], W, H)
+        rects = [safe, *(cvl.zone(a, W, H) for a in prof.get("avoid") or [])]
+        rects += [cvl.band(prof[k], safe, W, H) for k in ("title_band", "caption_band") if prof.get(k)]
+        for r in rects:
+            x0, y0, x1, y1 = r.as_list()
+            vals |= {x0, y0, x1, y1, x1 - x0, y1 - y0, int((y0 + y1) / 2), int((y0 + y1) / 2 + 0.5)}
+        eye = prof.get("eye_line")
+        if eye:
+            vals |= {round(eye["y0"] * H), round(eye["y1"] * H), round(eye["max_shift_across_punch_in"] * H),
+                     round(eye["punch_in_max_centre_shift"] * W)}
+        if prof.get("caption_band"):
+            vals.add(round(prof["caption_band"]["centre_x_tolerance"] * W))
+    vals.add(round(CLS["overlay_min_text_height"] * H))
+    return vals
+
+
+GATE_SECTIONS = [
+    (SKILL / "SKILL.md", "## Vertical Layout Gate", "## Extension Points"),
+    (SKILL / "skills/content-engine-cinema/SKILL.md", "### Framing for 9:16", "## Tool Priority Matrix"),
+    (SKILL / "templates/campaign-plan.md", "### Reels (9:16)", "### Carousels"),
+    (SKILL / "templates/scene-brief.md", "**9:16 layout", "### Tool Selection"),
+    (SKILL / "extensions/opencaptions/references/cwi-remotion-bridge.md", "### Safe Zones", "### Multi-Speaker"),
+    (SKILL.parent / "brainrot-for-good/SKILL.md", "Placement follows content-engine", "const WordByWordCaption"),
+]
+
+
+@pytest.mark.parametrize("path,start,end", GATE_SECTIONS, ids=[str(p.relative_to(SKILL.parent)) for p, _, _ in GATE_SECTIONS])
+def test_skill_docs_quote_only_contract_pixels(path, start, end):
+    """Pixel values are copied into the skills' prose; each must still be derivable
+    from the JSON, so moving a zone without updating the docs fails here."""
+    import re
+    doc = path.read_text()
+    assert start in doc and end in doc, f"{path}: section markers moved"
+    section = doc[doc.index(start):doc.index(end, doc.index(start))]
+    allowed = _contract_pixels()
+    quoted = {int(n) for n in re.findall(r"(?<![\d.])(\d{3,4})(?![\d.])", section)}
+    stray = sorted(quoted - allowed)
+    assert not stray, f"{path.name}: {stray} are not derivable from layout/vertical-9x16.json"
 
 
 def test_doc_embeds_the_generated_zone_tables():
@@ -365,7 +616,7 @@ FONTS = [
 ]
 FONT = next((f for f in FONTS if Path(f).exists()), None)
 HAVE_FFMPEG = bool(shutil.which("ffmpeg") and shutil.which("ffprobe"))
-DETECTORS = [d for d, ok in (("vision", cvl.vision_binary() is not None),
+DETECTORS = [d for d, ok in (("vision", cvl.vision_binary()[0] is not None),
                              ("tesseract", bool(shutil.which("tesseract")))) if ok]
 
 media = pytest.mark.skipif(not (HAVE_FFMPEG and FONT and DETECTORS),
@@ -407,6 +658,8 @@ def videos(tmp_path_factory):
         "bottom": _render(d / "bottom.mp4", _words(1800)),
         "top_captions": _render(d / "top.mp4", _words(230)),
         "rail": _render(d / "rail.mp4", [_dt("Tap", 1100, size=72, x="900")]),
+        "mid_captions": _render(d / "mid.mp4", _words(960)),
+        "lowercase": _render(d / "lower.mp4", _words(1376, words=("one", "see", "was", "now"))),
         "landscape": _render(d / "landscape.mp4", _words(900), size="1920x1080"),
     }
 
@@ -424,8 +677,8 @@ def test_video_good_layout_passes(videos, detector):
     code, res, rep = _check(videos["good"], detector, "--expect-captions", "--expect-title")
     assert rep["detector"] == detector
     assert code == 0, json.dumps(res, indent=1)
-    for rule in ("VL1", "VL2", "VL3", "VL4", "VL5"):
-        assert res[rule]["status"] == "PASS", (rule, res[rule])
+    for rule in ("VL1", "VL2", "VL3", "VL4", "VL5", "VL9"):
+        assert res[rule]["status"] == "PASS", (rule, res[rule])  # VL9: legibility was measured
 
 
 @media
@@ -494,5 +747,79 @@ def test_compose_video_gate_passes_good_and_fails_bad(videos):
     spec = importlib.util.spec_from_file_location("compose_video", SKILL / "scripts" / "compose-video.py")
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
-    assert mod.run_layout_gate(videos["good"], expect_text=True) is True
-    assert mod.run_layout_gate(videos["bottom"], expect_text=True) is False
+    assert mod.run_layout_gate(videos["good"], expect_text=True) in ("PASS", "UNVERIFIED")
+    assert mod.run_layout_gate(videos["bottom"], expect_text=True) == "FAIL"
+
+
+@media
+@pytest.mark.parametrize("detector", DETECTORS)
+def test_video_captions_across_the_eyes_fail(videos, detector):
+    code, res, _ = _check(videos["mid_captions"], detector)
+    assert code == 1
+    assert res["VL5"]["status"] == "FAIL"
+
+
+@media
+@pytest.mark.parametrize("detector", DETECTORS)
+def test_video_lowercase_captions_are_overlay_not_scene_text(videos, detector):
+    # tesseract boxes "one" at 64px as 36px of ink: under the old 2% (38px) cut.
+    code, res, _ = _check(videos["lowercase"], detector, "--expect-captions")
+    assert code == 0, res["VL5"]
+    assert res["VL5"]["status"] == "PASS"
+
+
+@media
+@pytest.mark.parametrize("detector", DETECTORS)
+def test_video_rotated_phone_footage_is_measured_upright(tmp_path, detector):
+    up = _render(tmp_path / "up.mp4", _words(1376))
+    side = tmp_path / "side.mp4"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-i", str(up), "-vf", "transpose=1", "-c:v", "libx264",
+                    "-preset", "ultrafast", "-pix_fmt", "yuv420p", str(side)], check=True)
+    rot = tmp_path / "rot.mp4"
+    p = subprocess.run(["ffmpeg", "-v", "error", "-y", "-display_rotation", "90", "-i", str(side), "-c", "copy",
+                        str(rot)], capture_output=True, text=True)
+    if p.returncode != 0:
+        pytest.skip(f"this ffmpeg cannot write rotation metadata: {p.stderr.strip()[:120]}")
+    code, res, rep = _check(rot, detector, "--expect-captions")
+    assert rep["canvas"] == [1080, 1920]
+    assert res["VL1"]["status"] == "PASS"
+    assert res["VL5"]["status"] == "PASS"
+
+
+@media
+def test_guide_paints_the_zones_where_the_contract_puts_them(tmp_path):
+    img = tmp_path / "gray.png"
+    subprocess.run(["ffmpeg", "-v", "error", "-y", "-f", "lavfi", "-i", "color=c=0x808080:s=1080x1920",
+                    "-frames:v", "1", str(img)], check=True)
+    out = tmp_path / "guide.png"
+    assert _cli("guide", str(img), "--out", str(out)).returncode == 0
+
+    def rgb(x, y):  # the guide is scaled to 360 wide: 1/3 of the canvas
+        raw = subprocess.run(["ffmpeg", "-v", "error", "-i", str(out), "-vf", f"crop=1:1:{x // 3}:{y // 3}",
+                              "-f", "rawvideo", "-pix_fmt", "rgb24", "-"], capture_output=True, check=True).stdout
+        return tuple(raw)
+
+    r, g, b = rgb(1000, 1300)          # on the action rail
+    assert r > g + 40 and r > b + 40
+    r, g, b = rgb(540, 1000)           # middle of the safe zone: untouched grey
+    assert max(r, g, b) - min(r, g, b) <= 3 and abs(r - 128) <= 4
+
+
+@media
+def test_compose_video_gate_fails_closed_on_missing_outputs(videos):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("compose_video", SKILL / "scripts" / "compose-video.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    # stitch failed, render requested but never produced
+    assert mod.gate_vertical_outputs(None, None, remotion_requested=True) == {
+        "stitched": "MISSING", "rendered": "MISSING"}
+    outcome = mod.gate_vertical_outputs(videos["good"], videos["bottom"], remotion_requested=True)
+    assert outcome["rendered"] == "FAIL"
+    # No face in the fixture: Vision measures it (SKIP -> PASS); tesseract cannot
+    # (UNCHECKED -> UNVERIFIED). Neither may read as a silent pass.
+    expected = "PASS" if "vision" in DETECTORS else "UNVERIFIED"
+    assert outcome["stitched"] == expected
+    if "tesseract" in DETECTORS:
+        # Pinned to tesseract so the UNVERIFIED branch runs on every platform.
+        assert mod.run_layout_gate(videos["good"], expect_text=False, detector="tesseract") == "UNVERIFIED"

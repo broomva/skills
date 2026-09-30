@@ -353,8 +353,8 @@ The caption background ensures readability against any video content.
 ### Safe Zones
 
 On 9:16 the caption container is the caption band of the vertical layout contract
-(`layout/vertical-9x16.json`, `references/vertical-layout.md`): x 143-938, y 1288-1463
-at 1080x1920, i.e. centred on 72% of the height, inside a safe zone of 13.2-86.8% width.
+(`layout/vertical-9x16.json`, `references/vertical-layout.md`): x 208-872, y 1288-1463
+at 1080x1920, i.e. centred on 72% of the height and stopping where the action rail begins.
 The `ContentEngineReel` composition places it there; do not use percentage margins
 of your own. The old guidance here (5% side margins, top 12% for Reels) put captions in
 the zones the Reel's UI covers.

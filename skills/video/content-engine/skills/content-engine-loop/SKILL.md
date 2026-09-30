@@ -41,8 +41,10 @@ CREATE
   │
   ▼
 LAYOUT GATE (every 9:16 asset; ../../references/vertical-layout.md)
-  └─ check_vertical_layout.py video <asset> --expect-captions --expect-title
-     → VERDICT: PASS, UNCHECKED closed on the guide sheet, report path in the campaign
+  └─ python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video <asset>
+       [--expect-captions] [--expect-title]    ← only for text the asset burned in
+     → pass criteria: content-engine SKILL.md "Vertical Layout Gate"
+       (VERDICT: PASS, UNCHECKED closed on the guide sheet, report path in the campaign)
   │
   ▼
 DISTRIBUTE
@@ -266,7 +268,7 @@ Week N: Identity is now a distilled, performance-proven visual language
 |---------|---------|-------------|
 | `/loop plan` | "plan a campaign", "content calendar" | Create or update a campaign with content pieces and schedule |
 | `/loop create` | "create campaign content", "generate batch" | Run compounded skill pipeline for all planned pieces |
-| `/loop distribute` | "publish campaign", "distribute content" | Deploy content per calendar schedule. A 9:16 asset without a `VERDICT: PASS` layout report is not distributed; paid placements use `--profile meta-ads-9x16` |
+| `/loop distribute` | "publish campaign", "distribute content" | Deploy content per calendar schedule. A 9:16 asset is not distributed without a layout report that meets the gate's pass criteria. Paid placements are checked with `--profile meta-ads-9x16`, which the Remotion reel layout fails (its captions sit below 65%) |
 | `/loop measure` | "track performance", "check metrics" | Pull and aggregate metrics for active campaigns |
 | `/loop refine` | "refine identity", "what worked" | Run feedback synthesis and update compiled identity |
 | `/loop status` | "campaign status", "loop status" | Show active campaigns, scheduled posts, recent metrics |
