@@ -38,7 +38,6 @@ from dataclasses import dataclass
 from typing import Any, Iterable, Mapping, Sequence
 
 from skill_evals import ablation as ablation_mod
-from skill_evals.ctx_ablation import arms as arms_mod
 from skill_evals.ctx_ablation import graders as g
 from skill_evals.transcript import Transcript
 
@@ -94,6 +93,10 @@ def hook_outputs(t: Transcript) -> list[dict[str, Any]]:
     for ev in t.events:
         if ev.get("type") == "system" and ev.get("subtype") == "hook_response":
             text = str(ev.get("output") or ev.get("stdout") or "")
+            try:  # a JSON hook's context is its additionalContext, not the wrapper
+                text = json.loads(text)["hookSpecificOutput"]["additionalContext"]
+            except (ValueError, KeyError, TypeError):
+                pass
             out.append({"event": ev.get("hook_event"), "name": ev.get("hook_name"),
                         "exit_code": ev.get("exit_code"), "chars": len(text), "text": text})
     return out

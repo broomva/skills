@@ -245,6 +245,14 @@ PROMPT = "what the deepseek harness architecture?"
 BLOCK = "[role-x intake — P17 reflex applied]\nMode: augment"
 
 
+def test_a_json_hook_counts_only_the_context_the_model_sees():
+    wrapped = json.dumps({"hookSpecificOutput": {"hookEventName": "SessionStart",
+                                                 "additionalContext": "Shared board facts: x"}})
+    t = _transcript("/w", wrapped)
+    assert M.hook_outputs(t)[0]["text"] == "Shared board facts: x"
+    assert M.hook_outputs(_transcript("/w", "plain text"))[0]["chars"] == len("plain text")
+
+
 def test_a_ctx_arm_without_the_brief_is_void(tmp_path):
     case = _case(tmp_path)
     t = _transcript(str(case.layout.workspace))
