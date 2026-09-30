@@ -39,6 +39,8 @@
 #   measured:  optional, a measured effect of injecting this line.
 #   priority:  lower ranks first among entries that fire the same way. Rank is
 #              state+prompt, then state alone, then prompt alone, then priority.
+#   pinned:    true for the p9 rule only (spec I1): first slot whenever it fires, and
+#              exempt from the per-session repeat cap.
 #
 # Budget: at most `max_lines` lines and `max_chars` characters, header included
 # (~150 tokens as bytes/4). Lines are atomic: one that does not fit is dropped.
@@ -47,12 +49,13 @@ max_lines: 3
 max_chars: 600
 
 routes:
-  # The prompt asks for a change to be made (spec §5.3). Imperative at the start of
-  # the prompt or a clause, or asked for ("can you ..."); a question about code is not.
+  # The prompt asks for a change to be made (spec §5.3, I1). Imperative at the start
+  # of the prompt or a clause, or asked for ("can you ..."); a question is not, so the
+  # unanchored forms refuse a prompt that opens with a question word.
   change_work:
     - '^\W*(please\s+|pls\s+|now\s+|ok\s+|so\s+)?(add|fix|edit|change|update|write|implement|refactor|create|commit|bump|rename|scaffold|build|port|migrate|wire|rewrite|set up)\b'
-    - '\b(can|could|would) you\s+(please\s+)?(add|fix|edit|change|update|write|implement|refactor|create|commit|bump|rename|scaffold|build|port|migrate|wire|rewrite|set up)\b'
-    - '\b(let''?s|lets|go ahead and|and then|then|and)\s+(add|fix|edit|change|update|write|implement|refactor|create|commit|bump|rename|scaffold|build|port|migrate|wire|rewrite)\b'
+    - '^(?!\W*(what|what''?s|whats|how|why|when|where|which|who|is|are|does|do|did|should|explain|describe|compare|summarize)\b).*?\b(can|could|would) you\s+(please\s+)?(add|fix|edit|change|update|write|implement|refactor|create|commit|bump|rename|scaffold|build|port|migrate|wire|rewrite|set up)\b'
+    - '^(?!\W*(what|what''?s|whats|how|why|when|where|which|who|is|are|does|do|did|should|explain|describe|compare|summarize)\b).*?\b(let''?s|lets|go ahead and|and then|then|and)\s+(add|fix|edit|change|update|write|implement|refactor|create|commit|bump|rename|scaffold|build|port|migrate|wire|rewrite)\b'
 
 reflexes:
   # ------------------------------------------------------------ state predicates
@@ -63,11 +66,20 @@ reflexes:
     skill_source: skills/orchestration/p9/SKILL.md
     routing: skills/orchestration/p9/evals/prompts.json
     status: routed
+    # spec I1: the one measured effect. First slot whenever it fires, never capped.
+    pinned: true
     priority: 10
     when:
       - state: [branch_pushed_recently]
-      - routes: [change_work]
+      - state: [in_git_repo]
+        routes: [change_work]
+      # I1's state signal: work not yet shipped, and a short go-ahead or ship verb
+      - state: [unshipped_work]
+        prompt:
+          - '^\W*(go|go ahead|continue|keep going|carry on|proceed|ship it|lgtm|looks good|do it|yes|yep|ok|okay|sure)\b'
+          - '^\W*(commit|push|merge)(\s+(it|this|that|them|now|please|pls|the branch|and push|and merge|and open a pr))*\W*$'
       - prompt:
+          - '\b(commit( this| it| that)? and push|push (it|this|that|the branch|to origin))\b'
           - '\b(open|opening|create|raise|put up)\b[^.?!]{0,30}\b(a |the |an )?(pr|pull request)\b'
           - '\bpush(ed|ing)?\b[^.?!]{0,80}\b(pr|pull request|ci|checks?)\b'
           - '\b(open|opening|create|raise)\b[^.?!]{0,30}\b(pr|pull request)\b[^.?!]{0,80}\b(ci|checks?|green|pass(es|ing)?)\b'
@@ -157,9 +169,11 @@ reflexes:
     priority: 15
     when:
       - prompt:
-          - '\b(ci|checks|build|pipeline|workflow|check runs?)\b[^.?!]{0,40}\b(fail(ed|ing|s|ure)?|red|broke(n)?|errored)\b'
-          - '\b(fail(ed|ing|ure)?|red|broken)\b[^.?!]{0,25}\b(ci|checks|build|pipeline|workflow)\b'
-          - '\b(pr|pull request|#\d{2,6})\b[^.?!]{0,40}\b(fail(ed|ing|s)?|red|broke(n)?)\b'
+          - '\b(ci|checks|pipeline|check runs?|the (build|workflow))\b[^.?!]{0,40}\b(fail(ed|ing|s|ure)?|broke(n)?|errored|(is|are|went|turned|still) red)\b'
+          - '\bbuild\s+(failed|is failing|fails|broke|is broken|is red|went red)\b'
+          - '\b(failed|failing|broken)\s+(ci|checks|build|pipeline|workflow)\b'
+          - '(\bprs?\b|\bpull request\b|#\d{2,6}\b)[^.?!]{0,30}\b(why did it|did it|it) fail(ed)?\b'
+          - '#\d{2,6}\s+(failed|is failing|is red|went red|is broken)\b'
     line: "When a PR's checks fail, the stack runs `p9 heal <pr> --classify` before editing or asking, applies a classified heal inside the PR diff, then re-arms `p9 watch`."
     signature: [{tool: Bash, argv_prefix: [p9, heal]}]
     source: "AGENTS.md §P9 reflex 3"
@@ -174,6 +188,8 @@ reflexes:
       - prompt:
           - '\b(delete|remove|drop|clean(\s|-)?up|clear( out)?|get rid of|wipe|nuke|trash|purge)\b[^.?!]{0,60}\b(folders?|dirs?|director(y|ies)|scratch|tmp|temp|copies|clones?|files|logs|outputs?)\b'
           - '\b(folders?|dirs?|director(y|ies)|scratch|copies|clones)\b[^.?!]{0,40}\b(delete|remove|drop|clean(ed)?(\s|-)?up|clear|get rid of|trash)\b'
+        # a path or a folder, and never a worktree (its guard is a separate line)
+        requires: ['^(?!.*\bworktrees?\b)', '(~/|\S/|\b(folders?|dirs?|directories|director(y|ies))\b)']
     line: "Scratch and temp folders are removed with `trash <path>`, which is recoverable; `rm -rf`, `find -delete` and `rmtree` are gated."
     signature: [{tool: Bash, argv_prefix: [trash]}]
     source: "memory: use-trash-not-ask-for-scratch-cleanup.md; workspace delete gate G3"
@@ -544,7 +560,7 @@ reflexes:
       - phrases: [check this out, checkit, research this, look into this, dig into this, wdyt,
                   what do you think of this, found this]
         # the description's "+ an artifact": a URL, a path, or a file name
-        requires: ['(https?://|www\.|(?:^|\s)[~./]?[\w.-]+/[\w./-]+|\b[\w-]+\.(pdf|md|html|png|jpg|txt|json|csv)\b)']
+        requires: ['(https?://|www\.|~/\S+|\b[\w-]+\.(pdf|md|html|png|jpg|jpeg|txt|csv|mp4|pptx|docx)\b)']
     line: "A shared link or file with a terse ask is the `checkit` skill: contextualize, research, document the finding, rank next steps."
     signature: [{tool: Skill, name: checkit}]
     source: "skills/research/checkit/SKILL.md"

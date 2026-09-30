@@ -66,12 +66,14 @@ The intake block's "Task-relevant knowledge" list holds at most 5 catalog entiti
 | `shadow` | the lens block | the intake row and the `reflex` row it would have injected |
 | `qbar` | the lens block cut to header, lenses, mode and quality bar | the intake row, `render: qbar` |
 
-The reflex router (`scripts/reflex_router.py`) reads `references/reflexes.yaml`: each entry is trigger clauses → one line that names the command → the source that states the rule. It routes in three stages, and each stage only narrows the set it is given:
-1. **State predicates:** one `git status --porcelain=v2 --branch`, one reflog tail, and ctx-core's `board.json` cache (never its log).
-2. **Lexical prompt match:** the catalog's regexes and the phrases copied from each skill's description.
+The reflex router (`scripts/reflex_router.py`) reads `references/reflexes.yaml`: each entry is trigger clauses → one line that names the command → the source that states the rule. Per clause it works cheapest first, and each stage only narrows:
+1. **The prompt:** the catalog's regexes, the phrases copied from each skill's description, and named routes such as `change_work`. Pure regex, no I/O.
+2. **State, only for clauses whose prompt side matched:** one `git status --porcelain=v2 --branch`, one reflog tail, and ctx-core's `board.json` cache (never its log). A failing source costs only its own predicate.
 3. **`ROLE_X_JEV`:** the seam for a typed classifier; `off` in v1.
 
-No persona lines, no entity list. Lines state facts ("after a push, the stack runs `p9 watch <pr> --background`"), never orders. An id goes out at most twice per session (a small per-session file under `~/.config/broomva/role/reflex-sessions/`). Any error prints nothing and logs its class; a state source that fails costs only its own predicate.
+State still ranks first: state+prompt fires, then state, then prompt. The p9 rule is `pinned` (spec I1): on change work, or on a short go-ahead with unshipped work, it takes the first slot, and the repeat cap never drops it.
+
+No persona lines, no entity list. Lines state facts ("after a push, the stack runs `p9 watch <pr> --background`"), never orders. A line goes out at most twice per session for the same fact (a small per-session file under `~/.config/broomva/role/reflex-sessions/`; `shadow` counts too). Any error prints nothing and logs its class; a state source that fails costs only its own predicate.
 
 Only `status: routed` entries are injected. An entry routes when its prompt side clears the sealed held-out routing cases (`evals/reflex-routing-heldout.json`, written blind and hashed before any tuning): recall ≥ 0.60 and false fire ≤ 0.20, which a test enforces. Entries below that bar are `listed`, with the measurement in `m3:`; judgment-call triggers are `judgment`. Both stay in the catalog so the gap is visible. `role-x reflexes route --prompt "…"` shows what a prompt would get, `--heldout` scores the sealed cases, and `--evals` scores each skill's own `evals/prompts.json` (in-sample, since the phrases come from the same descriptions). Design of record: [`broomva/workspace`](https://github.com/broomva/workspace)`/docs/specs/2026-09-30-reflex-router-and-ontology-ranked-context.html` §5 (BRO-2674). Eval: `scripts/skill_evals/ctx_ablation/RESULTS-reflex.md`.
 

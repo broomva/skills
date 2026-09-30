@@ -453,9 +453,10 @@ EXAMPLES: dict[str, tuple[list[str], list[str]]] = {
     "p9.watch-after-push": (["push this branch, open the PR and let me know when CI is green",
                              "ship it as a PR and ping me when the checks pass", "is the watcher running?",
                              "add some random jitter to backoff(n) in src/retry.py, then open a pr for it",
-                             "fix the flaky test in tests/test_io.py"],
+                             "fix the flaky test in tests/test_io.py", "commit this and push", "lgtm, ship it",
+                             "go", "push it"],
                             ["what does ci.yml do?", "push notifications for the app",
-                             "what did the build agent change?"]),
+                             "what did the build agent change?", "how do git add and commit differ?"]),
     "p10.branch-first": (["switch to main and add a line to docs/RUNBOOK.md, then commit it",
                       "go back to master and commit the fix"],
                      ["switch to main and tell me what changed", "what is on main?"]),
@@ -470,12 +471,17 @@ EXAMPLES: dict[str, tuple[list[str], list[str]]] = {
     "ctx.live-peer-before-git-op": (["is anyone else working in this checkout right now?"],
                                 ["who else is on the team?", "is anyone free for lunch?"]),
     "p9.heal-on-red": (["CI on #1903 went red, sort it out", "the checks are failing on my PR",
-                                "build failed again", "please check PR #1192 why did it failed?"],
+                                "build failed again", "please check PR #1192 why did it failed?", "#1857 failed"],
                                ["check the CI config", "red button styling",
-                                "write a test that fails on empty input", "check the parser, it failed on me"]),
+                                "write a test that fails on empty input", "check the parser, it failed on me",
+                                "build a red button for the form", "Build a workflow that retries failed payments",
+                                "add a test to the PR that fails without the fix",
+                                "the PR description is broken, fix the markdown"]),
     "convention.trash-not-rm": (["Can't you drop those scratch folders?", "clear out the tmp dirs under ~/scratch",
-                      "delete the old clones"],
-                     ["drop the database index", "remove this function"]),
+                      "delete the old clones under ~/scratch"],
+                     ["drop the database index", "remove this function", "delete the old clones",
+                      "remove the tmp variable from utils.py", "drop the scratch column from the users table",
+                      "delete the worktree folder .worktrees/intent-ask"]),
     "convention.paseo-fleet-listing": (["the paseo app ui still shows a lot of sessions", "how many paseo agents are running?"],
                             ["paseo release notes", "list the sessions in the log"]),
     "p2.gate-destructive-git": (["force push the branch", "git reset --hard to origin"],
@@ -533,7 +539,7 @@ EXAMPLES: dict[str, tuple[list[str], list[str]]] = {
     "skill.checkit": (["check this out https://x.com/a", "wdyt? https://arxiv.org/abs/2609.01",
                        "look into this ~/Downloads/paper.pdf"],
                       ["check this box", "checkout the branch", "look into this failing test",
-                       "I found this bug", "wdyt?"]),
+                       "I found this bug", "wdyt?", "look into this flaky test in tests/test_x.py"]),
     "skill.dogfood": (["dogfood this", "click through the app and prove it"],
                       ["dog food brands", "the app crashed"]),
     "skill.unslop": (["this site looks vibecoded", "unslop this landing page"],
@@ -608,7 +614,8 @@ def test_change_work_route_is_an_imperative_not_a_question():
               "switch to main and add a line", "please create a proper keynote", "refactor router.py"):
         assert hit(p), p
     for p in ("what did the build agent change?", "how does the fix work?", "is the update live?",
-              "delete the old clones"):
+              "delete the old clones", "how do git add and commit differ?",
+              "whats the difference between create and update in the REST api?"):
         assert not hit(p), p
 
 
@@ -646,7 +653,7 @@ def test_the_stage_3_seam_narrows_and_defaults_to_off(monkeypatch):
     monkeypatch.setenv(rr.JEV_ENV, "recording")
     prompt = "skillify it, then push this branch and open the PR"
     assert [f.reflex.id for f in rr.route(prompt, feature_state(), CAT_ALL)] == ["skill.skillify"]
-    assert "skill.skillify#0" in seen[0] and "p9.watch-after-push#2" in seen[0]
+    assert "skill.skillify#0" in seen[0] and "p9.watch-after-push#3" in seen[0]
     monkeypatch.setenv(rr.JEV_ENV, "no-such-narrower")
     assert rr.get_narrower().name == "off"
     monkeypatch.delenv(rr.JEV_ENV)
@@ -664,12 +671,12 @@ def test_stage_3_sees_only_what_stages_1_and_2_kept():
 
     assert rr.route("fix it", feature_state(), CAT, Spy()) == []  # abstaining drops everything
     assert "p10.branch-first#1" not in Spy.keys  # prompt matched, but its gate on_default_branch is closed
-    assert Spy.keys == ["p9.watch-after-push#1"]  # change_work carries the p9 rule
+    assert Spy.keys == ["p9.watch-after-push#1"]  # change_work, in a repo, carries the p9 rule
     Spy.keys = []
     rr.route("hmm, interesting", feature_state(), CAT, Spy())
     assert Spy.keys == []  # nothing matched, so stage 3 is never asked
     rr.route("switch to main and fix it, then commit", feature_state(), CAT, Spy())
-    assert Spy.keys == ["p9.watch-after-push#1", "p10.branch-first#2"]
+    assert Spy.keys == ["p9.watch-after-push#1", "p10.branch-first#2"]  # feature_state's git is ok
 
 
 # ------------------------------------------------------------------- budget
@@ -764,12 +771,44 @@ def test_an_id_goes_out_at_most_twice_per_session(repo, tmp_path, monkeypatch):
     assert third["cut"] == ["p4.merge-pinned-to-head"]
 
 
-def test_shadow_and_unknown_sessions_do_not_count(repo, tmp_path, monkeypatch):
+def test_the_offline_cli_and_unknown_sessions_do_not_count(repo, tmp_path, monkeypatch):
     monkeypatch.setenv("HOME", str(tmp_path / "h"))
     for _ in range(3):
         assert rr.run("Merge 1857", repo, "sess-s", catalog=CAT, count=False)[1]["selected"]
         assert rr.run("Merge 1857", repo, "unknown", catalog=CAT)[1]["selected"]
     assert not rr.sessions_dir(tmp_path / "h").exists() or not list(rr.sessions_dir(tmp_path / "h").glob("*.json"))
+
+
+def test_the_pinned_p9_rule_is_never_capped_and_goes_first(repo, tmp_path, monkeypatch):
+    """Spec I1: on every change-work prompt p9 is in the first slot, however often."""
+    monkeypatch.setenv("HOME", str(tmp_path / "h"))
+    prompts = ["implement the retry logic", "fix the failing test", "refactor the parser, then add docs"] * 2
+    for p in prompts:
+        meta = rr.run(p, repo, "sess-p", catalog=CAT, state=rr.State(cwd=repo, ctx_loader=no_board))[1]
+        assert meta["selected"][0] == "p9.watch-after-push", (p, meta)
+
+
+def test_the_cap_is_per_fact_so_a_new_fact_rearms_it(repo, tmp_path, monkeypatch):
+    """branch-first with the state fact "`main` has N staged change(s)": capped at two
+    per fact, and the digits do not make every prompt a new fact."""
+    monkeypatch.setenv("HOME", str(tmp_path / "h"))
+    (repo / "README.md").write_text("# changed\n", encoding="utf-8")
+    git(repo, "add", "README.md")
+    got = [rr.run("ok, what is next?", repo, "sess-f", catalog=CAT,
+                  state=rr.State(cwd=repo, ctx_loader=no_board))[1]["selected"] for _ in range(3)]
+    assert ["p10.branch-first" in g for g in got] == [True, True, False]
+    commit(repo, "extra.txt")  # a different staged count is the same fact once digits drop
+    (repo / "other.txt").write_text("x\n", encoding="utf-8")
+    git(repo, "add", "other.txt")
+    again = rr.run("ok, what is next?", repo, "sess-f", catalog=CAT, state=rr.State(cwd=repo, ctx_loader=no_board))
+    assert "p10.branch-first" not in again[1]["selected"]
+
+
+def test_shadow_counts_like_reflex_would(repo, tmp_path, usersite_env):
+    home = tmp_path / "h"
+    rows = [[r for r in run_hook("Merge 1857 please now", repo, home, mode="shadow")[1]
+             if r.get("event") == "reflex"][-1] for _ in range(3)]
+    assert [r["selected"] for r in rows] == [["p4.merge-pinned-to-head"]] * 2 + [[]]
 
 
 def test_a_hostile_session_id_names_no_file(tmp_path):
@@ -785,6 +824,8 @@ def test_a_hostile_session_id_names_no_file(tmp_path):
     ("echo p9 watch", {"tool": "Bash", "argv_prefix": ["p9", "watch"]}, False),
     ("p9 status", {"tool": "Bash", "argv_prefix": ["p9", "watch"]}, False),
     ("gh pr merge 1 --squash --match-head-commit abc", {"tool": "Bash", "argv_prefix": ["gh", "pr", "merge"]}, True),
+    ("cd /w && gh pr merge 1 --squash", {"tool": "Bash", "argv_prefix": ["gh", "pr", "merge"]}, True),
+    ("git fetch; p9 watch 12", {"tool": "Bash", "argv_prefix": ["p9", "watch"]}, True),
 ])
 def test_signatures_match_canonical_invocations(command, sig, want):
     assert rr.signature_matches(sig, "Bash", command=command) is want
@@ -1027,6 +1068,19 @@ def test_the_legacy_block_is_byte_for_byte_main_s(tmp_path):
     assert outs[0] and outs[0] == outs[1]
 
 
+def test_the_legacy_block_matches_the_golden_taken_from_main(tmp_path):
+    """Default output, pinned in CI too: fixtures/legacy-block.golden.txt is main's
+    role-x.py output for this workspace and prompt (generated at 0618873's base)."""
+    ws = _lens_workspace(tmp_path)
+    env = {k: v for k, v in os.environ.items() if k not in ("ROLE_X_OUTPUT", "ROLE_X_MODE")}
+    env["HOME"] = str(tmp_path / "h")
+    p = subprocess.run([sys.executable, str(ROLE_X_PY), "intake", "--workspace", str(ws), "--prompt",
+                        "push this branch and open the PR, then let me know"], capture_output=True, text=True,
+                       env=env)
+    assert p.returncode == 0, p.stderr
+    assert p.stdout == (SKILL_DIR / "tests" / "fixtures" / "legacy-block.golden.txt").read_text(encoding="utf-8")
+
+
 def test_an_unrecognised_output_value_is_recorded_not_silent(tmp_path, usersite_env):
     ws = _lens_workspace(tmp_path)
     p, rows = run_hook("push this branch and open the PR", ws, tmp_path / "h", mode="quality-bar")
@@ -1084,7 +1138,20 @@ def _scn_peer(repo, mod):
             "pull origin/main into it", "ctx.live-peer-before-git-op")
 
 
+def _scn_in_repo(repo, mod):
+    # on main, clean: only the change_work clause (gated by in_git_repo) can fire p9
+    return mod.State(cwd=repo, ctx_loader=no_board), "refactor the parser", "p9.watch-after-push"
+
+
+def _scn_unshipped(repo, mod):
+    git(repo, "switch", "-q", "-c", "feat/y")
+    commit(repo, "y.txt")  # no upstream: the commit exists nowhere else
+    return mod.State(cwd=repo, ctx_loader=no_board), "go", "p9.watch-after-push"
+
+
 SCENARIOS = {
+    "in_git_repo": _scn_in_repo,
+    "unshipped_work": _scn_unshipped,
     "branch_pushed_recently": _scn_just_pushed,
     "on_default_branch": _scn_on_protected,
     "staged_on_default_branch": _scn_staged,

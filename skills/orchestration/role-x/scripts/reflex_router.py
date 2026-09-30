@@ -119,6 +119,8 @@ class Reflex:
     phrases: tuple[str, ...] = ()
     signature: tuple[dict[str, Any], ...] = ()
     measured: str = ""
+    #: spec I1: goes in the first slot when it fires, and the repeat cap skips it
+    pinned: bool = False
 
     @property
     def routed(self) -> bool:
@@ -292,6 +294,7 @@ def _parse_entry(e: Any, index: int, seen: set[str], routes: dict[str, tuple]) -
         primitive=str(e.get("primitive") or ""), skill=str(skill or ""),
         skill_source=str(skill_source or ""), routing=str(e.get("routing") or ""),
         phrases=tuple(phrases_all), signature=signature, measured=str(e.get("measured") or ""),
+        pinned=e.get("pinned") is True,
     )
 
 
@@ -323,9 +326,10 @@ def signature_matches(sig: dict[str, Any], tool: str, *, command: str = "", name
     elif tool != want:
         return False
     if "argv_prefix" in sig:
-        words = _argv_words(command)
         prefix = list(sig["argv_prefix"])
-        return words[:len(prefix)] == prefix
+        # each command of a chain (`cd x && gh pr merge 1`, `a; b`, `a || b`, `a | b`)
+        return any(_argv_words(part)[:len(prefix)] == prefix
+                   for part in re.split(r"&&|\|\||;|\|", command))
     if "path_re" in sig:
         return bool(re.search(sig["path_re"], path or ""))
     return name == sig.get("name")
@@ -569,11 +573,34 @@ def _live_peer_on_branch(s: State) -> tuple[bool, str]:
     return s.peer
 
 
+def _in_git_repo(s: State) -> tuple[bool, str]:
+    return s.git.ok, ""
+
+
+def _unshipped_work(s: State) -> tuple[bool, str]:
+    """Spec I1's state signal for change work: staged changes, a branch ahead of its
+    upstream, or a feature branch with no upstream yet (its commits exist nowhere
+    else). From the same one `git status`."""
+    g = s.git
+    if not g.ok:
+        return False, ""
+    if g.staged:
+        return True, f"`{g.branch or 'HEAD'}` has {g.staged} staged change(s)"
+    if g.branch and g.branch not in DEFAULT_BRANCHES:
+        if g.upstream and (g.ahead or 0) > 0:
+            return True, f"`{g.branch}` is {g.ahead} commit(s) ahead of `{g.upstream}`"
+        if not g.upstream:
+            return True, f"`{g.branch}` has no upstream yet"
+    return False, ""
+
+
 STATE_PREDICATES: dict[str, Callable[[State], tuple[bool, str]]] = {
     "branch_pushed_recently": _branch_pushed_recently,
     "on_default_branch": _on_default_branch,
     "staged_on_default_branch": _staged_on_default_branch,
     "live_peer_on_branch": _live_peer_on_branch,
+    "in_git_repo": _in_git_repo,
+    "unshipped_work": _unshipped_work,
 }
 
 
@@ -675,10 +702,18 @@ class Fired:
     reflex: Reflex
     via: str
     facts: tuple[str, ...]
+    clause: int = 0
 
     @property
-    def sort_key(self) -> tuple[int, int, int]:
-        return (VIA_RANK[self.via], self.reflex.priority, self.reflex.index)
+    def sort_key(self) -> tuple[int, int, int, int]:
+        # a pinned rule takes the first slot whenever it fires (spec I1)
+        return (0 if self.reflex.pinned else 1, VIA_RANK[self.via], self.reflex.priority, self.reflex.index)
+
+    @property
+    def repeat_key(self) -> str:
+        """(id, fact key): a new fact (another branch, a new push) is a new line;
+        digits are dropped so "pushed 2 min ago" and "3 min ago" are one fact."""
+        return self.reflex.id + "|" + re.sub(r"\d+", "#", "; ".join(self.facts))
 
 
 @dataclass
@@ -743,7 +778,7 @@ def route_detail(prompt: str, state: State, catalog: Catalog,
     best: dict[str, Fired] = {}
     for c in kept:
         via = ("state+prompt" if c.clause.has_prompt else "state") if c.clause.state else "prompt"
-        f = Fired(c.reflex, via, c.facts)
+        f = Fired(c.reflex, via, c.facts, int(c.key.rsplit("#", 1)[1]))
         if c.reflex.id not in best or f.sort_key < best[c.reflex.id].sort_key:
             best[c.reflex.id] = f
     return Routed(
@@ -771,13 +806,16 @@ def render_line(f: Fired) -> str:
 def render(fired: Sequence[Fired], max_lines: int, max_chars: int,
            counts: dict[str, int] | None = None) -> tuple[str, list[Fired]]:
     """The block and the reflexes in it. Empty when nothing fits: never a bare header.
-    An id already injected ``REPEAT_CAP`` times this session is skipped."""
+    A line already injected ``REPEAT_CAP`` times this session for the same fact is
+    skipped, unless its entry is pinned (spec §5.3 row 8, I1)."""
     counts = counts or {}
     out, shown, used, seen = [HEADER], [], len(HEADER), set()
     for f in fired:
         if len(shown) >= max_lines:
             break
-        if f.reflex.line in seen or counts.get(f.reflex.id, 0) >= REPEAT_CAP:
+        if f.reflex.line in seen:
+            continue
+        if not f.reflex.pinned and counts.get(f.repeat_key, 0) >= REPEAT_CAP:
             continue
         text = render_line(f)
         if used + 1 + len(text) > max_chars:
@@ -793,7 +831,8 @@ def run(prompt: str, cwd: Path, session_id: str = "", *, catalog: Catalog | None
         state: State | None = None, narrower: Narrower | None = None,
         count: bool = True) -> tuple[str, dict[str, Any]]:
     """The whole reflex path: (text to print, the event record's fields). With
-    ``count`` (a real injection, not shadow) the session's repeat counts advance."""
+    ``count`` the session's repeat counts advance; shadow counts too, so its record
+    is what reflex would have injected. Only the offline CLI passes False."""
     started = time.monotonic()
     catalog = catalog or load_catalog()
     state = state or State(cwd=cwd, session_id=session_id)
@@ -803,8 +842,8 @@ def run(prompt: str, cwd: Path, session_id: str = "", *, catalog: Catalog | None
     text, shown = render(routed.fired, catalog.max_lines, catalog.max_chars, counts)
     shown_ids = [f.reflex.id for f in shown]
     if count and shown_ids:
-        for rid in shown_ids:
-            counts[rid] = counts.get(rid, 0) + 1
+        for f in shown:
+            counts[f.repeat_key] = counts.get(f.repeat_key, 0) + 1
         try:
             save_counts(session_id, counts)
         except OSError:
@@ -812,6 +851,7 @@ def run(prompt: str, cwd: Path, session_id: str = "", *, catalog: Catalog | None
     meta = {
         "selected": shown_ids,
         "via": {f.reflex.id: f.via for f in shown},
+        "clause": {f.reflex.id: f.clause for f in shown},
         "cut": [f.reflex.id for f in routed.fired if f.reflex.id not in shown_ids],
         "predicates_true": routed.predicates_true,
         "jev": narrower.name,

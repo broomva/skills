@@ -1653,7 +1653,7 @@ def _intake_reflex(prompt: str | None, session_id: str, workspace_arg: str | Non
             cwd = Path(workspace_arg).resolve()
         else:
             cwd = _find_workspace_root()
-        text, meta = _load_reflex_router().run(prompt, cwd, session_id, count=not shadow)
+        text, meta = _load_reflex_router().run(prompt, cwd, session_id)
     except Exception as exc:  # noqa: BLE001 — a hook error must mean no output
         text, meta = "", {"error": type(exc).__name__}
     if shadow:
@@ -2246,7 +2246,7 @@ def _score(router, catalog, key: str, cases: list[tuple[str, bool]]) -> dict:
     ff = round(false_fire / (false_fire + clean), 2) if false_fire + clean else None
     return {"id": key, "should_route": hit + miss, "recall": recall, "near_miss": false_fire + clean,
             "false_fire": ff, "passes_m3": recall is not None and recall >= M3_MIN_RECALL
-            and (ff or 0) <= M3_MAX_FALSE_FIRE, "missed": missed, "fired_on_near_miss": fired_near}
+            and ff is not None and ff <= M3_MAX_FALSE_FIRE, "missed": missed, "fired_on_near_miss": fired_near}
 
 
 def cmd_reflexes(args: argparse.Namespace) -> int:

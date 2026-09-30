@@ -1,0 +1,13 @@
+[role-x intake — P17 reflex applied]
+Lens(es): _meta only (no domain lens scored ≥2)
+Mode: augment
+Quality bar (P14 dep-chain template):
+  - Wait (P9): after a push, `p9 watch <pr> --background`; never sleep on CI
+Context files to surface:
+  - AGENTS.md
+Knowledge-graph constraints to honor (core_claim):
+  - bun and biome  ·  [research/entities/persona/toolchain-bun-biome.md]
+
+Agents: apply the quality_bar entries as the P14 enumeration template for this response. If mode != augment, surface the rewrite/decompose proposal to the user before proceeding.
+
+Note: no domain lens scored ≥2 for this prompt. If this kind of work recurs, consider expanding the registry: `role-x init push-this` (status: candidate).
