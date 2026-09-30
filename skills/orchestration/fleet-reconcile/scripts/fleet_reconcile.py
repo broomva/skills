@@ -31,6 +31,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
+from typing import Dict, List, Optional
 
 HERE = Path(__file__).resolve().parent
 CTX_SCRIPTS = HERE.parent.parent / "ctx-core" / "scripts"
@@ -59,8 +60,9 @@ def _sec(args: argparse.Namespace) -> dict:
 
 
 def _dry(args: argparse.Namespace, sec: dict) -> bool:
-    """Dry unless the config says exactly 0 and nothing forces dry."""
-    if os.environ.get("DRY_RUN") == "1" or getattr(args, "dry_run", None) == "1":
+    """Dry unless the config says exactly 0 and nothing forces dry: any DRY_RUN
+    value but "" or "0" forces it, as in tick.sh."""
+    if os.environ.get("DRY_RUN", "") not in ("", "0") or getattr(args, "dry_run", None) == "1":
         return True
     return sec.get("dry_run") != 0
 
@@ -119,6 +121,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     rep = report.build(snap, records, dry, _latest_compare(sec["scope"]))
     common.write_json(td / "report.json", rep)
     common.write_atomic(td / "report.md", report.render_md(rep).encode("utf-8"))
+    report.prune(sd, time.time())
     if rep["asks"]:
         batch = sd / "asks" / ("%05d.md" % args.tick)
         common.write_atomic(batch, report.render_batch(rep).encode("utf-8"))
@@ -159,6 +162,19 @@ def notify(title: str, body: str) -> dict:
     return out
 
 
+def _current_keys(sd: Path) -> Optional[List[str]]:
+    """The ask keys still true at the latest tick (its report.json), or None
+    when no report exists yet."""
+    rep = report.latest_report(sd)
+    return None if rep is None else list(rep.get("ask_keys_current") or [])
+
+
+def _open_now(records: list, sd: Path) -> Dict[str, Dict]:
+    opened = ledger.open_by_key(records)
+    current = _current_keys(sd)
+    return {k: v for k, v in opened.items() if current is None or k in current}
+
+
 def cmd_act(args: argparse.Namespace) -> int:
     sec = _sec(args)
     if args.verb != "ask":
@@ -167,48 +183,63 @@ def cmd_act(args: argparse.Namespace) -> int:
         return EXIT_REFUSED
     sd = config.state_dir(sec)
     records, _ = ledger.read(sd)
-    batches = [b for b in ledger.ask_batches(records) if b["tick"] == args.tick]
-    pending = ledger.unacked(records)
+    open_now = _open_now(records, sd)
     if not args.notify:
-        print("fleet act ask: %d open batch(es); pass --notify to notify" % len(pending))
+        print("fleet act ask: %d open ask(s); pass --notify to notify" % len(open_now))
+        return 0
+    dry = _dry(args, sec)
+    # The ask is the owner channel. In report mode (phase 1) it notifies even
+    # when dry, since it reaches no session; in act mode a dry tick logs it
+    # only, as §9 row 2 asks of every verb.
+    if dry and sec["mode"] != "report":
+        print("fleet act ask: dry run in act mode; logged, not notified")
         return 0
     now = time.time()
-    go, why = report.should_notify(records, args.tick, sec["ask_renotify_h"], now)
-    target = batches[-1] if batches else (pending[-1] if pending else None)
-    if target is None:
-        print("fleet act ask: nothing to notify (%s)" % why)
-        return 0
-    if not go:
+    go, why = report.should_notify(records, args.tick, list(open_now), sec["ask_renotify_h"], now)
+    batches = ledger.ask_batches(records)
+    this = [b for b in batches if b["tick"] == args.tick]
+    target = this[-1] if this else ([b for b in batches if ledger.open_asks(b)] or [None])[-1]
+    if not go or target is None:
         print("fleet act ask: not notified (%s)" % why)
         return 0
-    n_open = sum(len(ledger.open_asks(b)) for b in pending)
-    oldest = min((common.parse_iso(b["ts"]) or now) for b in pending) if pending else now
-    first = (ledger.open_asks(target) or [{"question": ""}])[0]["question"]
-    title = "fleet %s: %d open ask%s" % (sec["scope"], n_open, "" if n_open == 1 else "s")
-    body = "%s | oldest %s | run: fleet asks" % (common.safe_text(first, 110), common.age(now - oldest))
+    first_new = (ledger.open_asks(this[-1]) if this else []) or [v["ask"] for v in open_now.values()]
+    oldest = min((common.parse_iso(v["ts"]) or now) for v in open_now.values()) if open_now else now
+    n = len(open_now)
+    title = "fleet %s: %d open ask%s" % (sec["scope"], n, "" if n == 1 else "s")
+    body = "%s | oldest %s | %s asks --scope %s" % (
+        common.safe_text(first_new[0]["question"] if first_new else "", 100), common.age(now - oldest),
+        HERE / "fleet", sec["scope"])
     res = notify(title, body)
     res["notified"] = res.get("osascript") == 0 or res.get("p9") == 0
     res["why"] = why
     ledger.append(sd, {"kind": "done", "verb": "ask", "id": target["id"], "key": "asks:%s" % target["tick"],
-                       "scope": sec["scope"], "tick": args.tick, "dry_run": _dry(args, sec), "result": res})
+                       "scope": sec["scope"], "tick": args.tick, "dry_run": dry, "result": res})
     print("fleet act ask: %s (%s)" % ("notified" if res["notified"] else "notification failed", why))
     return 0
 
 
 def cmd_asks(args: argparse.Namespace) -> int:
     sec = _sec(args)
-    records, corrupt = ledger.read(config.state_dir(sec))
-    batches = ledger.ask_batches(records) if args.all else ledger.unacked(records)
+    sd = config.state_dir(sec)
+    records, corrupt = ledger.read(sd)
     now = time.time()
-    if not batches:
-        print("fleet asks: no unacknowledged ask batches in scope %s" % sec["scope"])
-    for b in batches:
-        t = common.parse_iso(b["ts"]) or now
-        asks = b["asks"] if args.all else ledger.open_asks(b)
-        print("tick %s · %s ago · %d open · %s" % (b["tick"], common.age(now - t), len(ledger.open_asks(b)),
-                                                   common.tilde(b["batch"])))
-        for a in asks:
-            print("  [%s] (%s) %s" % (a.get("id"), a.get("class"), a.get("question")))
+    if args.all:
+        for b in ledger.ask_batches(records):
+            print("tick %s · %s · %s" % (b["tick"], b["ts"], "acked" if not ledger.open_asks(b) else
+                                         "%d open" % len(ledger.open_asks(b))))
+            for a in b["asks"]:
+                print("  [%s] (%s) %s" % (a.get("id"), a.get("class"), a.get("question")))
+    else:
+        open_now = _open_now(records, sd)
+        if not open_now:
+            print("fleet asks: no open asks in scope %s" % sec["scope"])
+        for key, v in sorted(open_now.items(), key=lambda kv: (kv[1]["tick"], kv[1]["ask"].get("id") or "")):
+            t = common.parse_iso(v["ts"]) or now
+            print("[tick %s, %s] %s ago · (%s) %s" % (v["tick"], v["ask"].get("id"), common.age(now - t),
+                                                    v["ask"].get("class"), v["ask"].get("question")))
+        if open_now:
+            last = max(v["tick"] for v in open_now.values())
+            print("\nfleet ack %d acknowledges all of these; fleet ack <tick> --ask <id> one." % last)
     if corrupt:
         print("fleet asks: %d corrupt ledger line(s)" % corrupt, file=sys.stderr)
     return 0
@@ -229,7 +260,26 @@ def cmd_ack(args: argparse.Namespace) -> int:
         return 1
     ledger.append(sd, {"kind": "ack", "scope": sec["scope"], "tick": args.tick, "dry_run": False,
                        "acks": {"tick": args.tick, "asks": args.ask or "all"}})
-    print("fleet ack: tick %d, %s" % (args.tick, ", ".join(args.ask) if args.ask else "all asks"))
+    print("fleet ack: %s" % ("tick %d: %s" % (args.tick, ", ".join(args.ask)) if args.ask
+                             else "tick %d and every earlier batch" % args.tick))
+    return 0
+
+
+def cmd_next_tick(args: argparse.Namespace) -> int:
+    """The next tick number: one past both the counter file and the ledger's
+    last tick_fire, so a lost counter can't reuse a number. Writes the counter.
+    tick.sh calls it while holding the scope's lock."""
+    sec = _sec(args)
+    sd = config.state_dir(sec)
+    counter = sd / "tick-counter"
+    try:
+        n = int(counter.read_text().strip() or 0)
+    except (OSError, ValueError):
+        n = 0
+    records, _ = ledger.read(sd)
+    n = max(n, ledger.last_tick(records) or 0) + 1
+    common.write_atomic(counter, ("%d\n" % n).encode())
+    print(n)
     return 0
 
 
@@ -310,6 +360,8 @@ def main(argv=None) -> int:
     p.add_argument("tick", type=int)
     p.add_argument("--ask", action="append", help="one ask id (repeatable); default all")
     p.set_defaults(func=cmd_ack)
+    p = scoped(sub.add_parser("next-tick"))
+    p.set_defaults(func=cmd_next_tick)
     p = scoped(sub.add_parser("ledger-record"))
     p.add_argument("what", choices=("fire", "exit"))
     p.add_argument("--tick", type=int, required=True)

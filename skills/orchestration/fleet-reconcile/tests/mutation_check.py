@@ -9,7 +9,10 @@
   slug reading as zero, the bearer and env never extracted, activity read from
   transcripts only, the arc and death currency rules, the ask suppression and
   re-notify windows, the text guard, and in tick.sh the recursion guard, the
-  kill switch, dry-falls-toward-dry and the token's export.
+  kill switch, dry-falls-toward-dry and the token's export; plus one per P20
+  round-1 finding (the job time, the cap cross-check, degraded surfaces, the
+  unknown branch, ack-through, per-key asks, token scoping, a failed tick's
+  exit, the process-group kill, tick numbering).
 
 Each mutant edits a scratch copy of this skill (and ctx-core beside it) and
 runs the tests that pin it. Exit 1 on a survivor, a stale anchor, or an error.
@@ -30,7 +33,7 @@ CLS, OBS, PAR, REP, COM, TICK = ("scripts/fleetlib/classify.py", "scripts/fleetl
 T = "tests/"
 
 PROTECTIONS = [
-    ("listing cap not enforced", OBS, 'if len(rows) >= sec["listing_cap"]:', "if False:",
+    ("listing cap not enforced", OBS, "        if at_cap and not proven:", "        if False:",
      [T + "test_observe.py", "-k", "cap"]),
     ("PR list cap not enforced", OBS, 'if len(prs) >= sec["pr_list_cap"]:', "if False:",
      [T + "test_observe.py", "-k", "pr_list_at_the_cap"]),
@@ -70,7 +73,37 @@ PROTECTIONS = [
     ("no kill switch", TICK, 'if [ "$KILL" != "1" ]; then', "if false; then", [T + "test_tick.py", "-k", "kill_switch"]),
     ("an env value makes a tick live", TICK, "  (*) DRY=1 ;;", "  (*) DRY=0 ;;",
      [T + "test_tick.py", "-k", "falls_toward_dry"]),
-    ("the token not exported", TICK, "    export GH_TOKEN\n", "", [T + "test_tick.py", "-k", "token_reaches"]),
+    ("the token not exported", TICK, 'if [ -n "$TOKEN" ]; then export GH_TOKEN="$TOKEN"; fi', ":",
+     [T + "test_tick.py", "-k", "token_reaches"]),
+    # P20 round 1 findings, each pinned
+    ("a job's time read as epoch ms only", PAR, '        "updated_at": _epoch(d.get("updatedAt")),',
+     '        "updated_at": (d["updatedAt"] / 1000.0) if type(d.get("updatedAt")) is int else None,',
+     [T + "test_parsers.py", "-k", "update_time"]),
+    ("a listing at the cap taken on faith", OBS,
+     'proven = at_cap and surf["jobs"]["ok"] and bool(job_ids) and set(job_ids) <= listed', "proven = at_cap",
+     [T + "test_observe.py", "-k", "cap"]),
+    ("an unread surface degrades nothing", CLS,
+     "            missing = _unread(s, env) if rule.id in ABSENCE_CLASSES else None", "            missing = None",
+     [T + "test_classify.py", "-k", "unread"]),
+    ("an unknown branch reads as closed", CLS,
+     '    if not branch or branch.startswith("detached@"):\n', '    if False:\n',
+     [T + "test_classify.py", "-k", "unknown_or_detached"]),
+    ("an ack covers only its own tick", "scripts/fleetlib/ledger.py",
+     'if a.get("asks") == "all" and b["tick"] <= through:', 'if a.get("asks") == "all" and b["tick"] == through:',
+     [T + "test_report.py", "-k", "every_earlier"]),
+    ("a batch every tick", REP, "        if key in open_keys:", "        if False:",
+     [T + "test_report.py", "-k", "asked_once"]),
+    ("the token reaches every child", "scripts/fleetlib/sources.py",
+     "    env = None if token else {k: v for k, v in os.environ.items() if k not in _TOKEN_VARS}",
+     "    env = None", [T + "test_tick.py", "-k", "token_reaches"]),
+    ("a failed tick exits 0", TICK, '  alert tick "tick $N failed at $FAILED ($RCS)"\n  exit 1',
+     '  alert tick "tick $N failed at $FAILED ($RCS)"\n  exit 0', [T + "test_tick.py", "-k", "failed_step"]),
+    ("the watchdog kills the step but not its children", TICK,
+     '      kill -TERM -- "-$STEP_PID" 2>/dev/null\n      echo', '      kill -TERM "$STEP_PID" 2>/dev/null\n      echo',
+     [T + "test_tick.py", "-k", "watchdog"]),
+    ("a lost counter reuses a tick number", "scripts/fleet_reconcile.py",
+     "    n = max(n, ledger.last_tick(records) or 0) + 1", "    n = n + 1",
+     [T + "test_tick.py", "-k", "lost_counter"]),
 ]
 
 

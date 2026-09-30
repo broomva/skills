@@ -236,11 +236,13 @@ catches up by itself.
 `doctor --compare [--hours 6] [--json]` is the phase-1 exit criterion (core
 spec §9): board rows that are live against in-scope sessions from `claude agents
 --json --all` whose transcript was modified in the same window, matched on the
-full session id. Every difference gets a reason from a fixed list; three of
-them (`no-transcript`, `ended`, `pre-registration`) describe what the comparator
-can see and are left out of the 95%. It rebuilds the board in memory and writes
-none of the store's files; it appends one summary line to
-`<store>/compare.jsonl` and exits 1 under 95%. fleet-reconcile's tick runs it
+full session id. Every difference gets a reason from a fixed list; four of
+them (`no-transcript`, `ended`, `pre-registration`, `died`) describe what the
+comparator can see and are left out of the 95%. No evidence is not a pass: an
+unreadable transcript directory, an empty listing, or a side with nothing left
+to count fails. It rebuilds the board in memory and writes none of the store's
+files; it appends one summary line to `<store>/compare.jsonl` and exits 1
+under 95%. fleet-reconcile's tick runs it
 once a day.
 
 ## Registration (owner step; an agent does not apply it)
@@ -333,7 +335,7 @@ computes it:
 cd skills/orchestration/ctx-core
 python3 -m pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py   # 27 protections removed in turn; the test pinning each must fail
+python3 tests/mutation_check.py   # 29 protections removed in turn; the test pinning each must fail
 ```
 
 | File | Pins |

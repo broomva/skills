@@ -132,8 +132,11 @@ def spawned(records: Iterable[Dict[str, Any]]) -> Dict[str, List[str]]:
 
 def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Every ask batch, oldest first: {tick, id, ts, batch, asks, notified: [ts],
-    acked: set of ask ids or "all", dry_run}. Dry and live batches are both
-    kept: the owner channel runs in every mode (see SKILL.md)."""
+    acked: set of ask ids or "all", acked_ts: {ask id: ts}, dry_run}.
+
+    An ack of a whole tick (`fleet ack N`) acknowledges batch N and every
+    earlier batch: the owner answers what they have read, not one hour's
+    envelope. `fleet ack N --ask ID` acknowledges one ask of batch N."""
     batches: Dict[str, Dict[str, Any]] = {}
     order: List[str] = []
     for r in records:
@@ -141,7 +144,7 @@ def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
         if kind == "intent" and r.get("verb") == "ask":
             t = r.get("target") or {}
             batches[r["id"]] = {"id": r["id"], "tick": r.get("tick"), "ts": r.get("ts"), "batch": t.get("batch"),
-                                "asks": t.get("asks") or [], "notified": [], "acked": set(),
+                                "asks": t.get("asks") or [], "notified": [], "acked": set(), "acked_ts": {},
                                 "dry_run": bool(r.get("dry_run"))}
             order.append(r["id"])
         elif kind == "done" and r.get("verb") == "ask" and r.get("id") in batches:
@@ -150,13 +153,19 @@ def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 batches[r["id"]]["notified"].append(r.get("ts"))
         elif kind == "ack":
             a = r.get("acks") or {}
+            through = a.get("tick")
             for bid in order:
                 b = batches[bid]
-                if b["tick"] == a.get("tick"):
-                    if a.get("asks") == "all":
-                        b["acked"] = "all"
-                    elif b["acked"] != "all":
-                        b["acked"] |= set(a.get("asks") or [])
+                if not isinstance(through, int) or not isinstance(b["tick"], int):
+                    continue
+                if a.get("asks") == "all" and b["tick"] <= through:
+                    b["acked"] = "all"
+                    for ask in b["asks"]:
+                        b["acked_ts"].setdefault(ask.get("id"), r.get("ts"))
+                elif b["tick"] == through and b["acked"] != "all":
+                    for aid in a.get("asks") or []:
+                        b["acked"].add(aid)
+                        b["acked_ts"][aid] = r.get("ts")
     return [batches[i] for i in order]
 
 
@@ -164,6 +173,32 @@ def open_asks(batch: Dict[str, Any]) -> List[Dict[str, Any]]:
     if batch["acked"] == "all":
         return []
     return [a for a in batch["asks"] if a.get("id") not in batch["acked"]]
+
+
+def open_by_key(records: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """{ask key: {"ask", "tick", "ts"}} for every key asked and not yet acked,
+    at its first unacked asking."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for b in ask_batches(records):
+        for a in open_asks(b):
+            out.setdefault(a.get("key"), {"ask": a, "tick": b["tick"], "ts": b["ts"]})
+    return out
+
+
+def acked_keys(records: Iterable[Dict[str, Any]]) -> Dict[str, str]:
+    """{ask key: the latest time an ack covered it}."""
+    out: Dict[str, str] = {}
+    for b in ask_batches(records):
+        for a in b["asks"]:
+            ts = b["acked_ts"].get(a.get("id"))
+            if ts and ts > out.get(a.get("key"), ""):
+                out[a.get("key")] = ts
+    return out
+
+
+def last_notified(records: Iterable[Dict[str, Any]]) -> Optional[str]:
+    stamps = [t for b in ask_batches(records) for t in b["notified"] if t]
+    return max(stamps) if stamps else None
 
 
 def unacked(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:

@@ -39,7 +39,7 @@ def test_the_report_renders_every_section_and_serializes(tmp_path):
     json.dumps(rep)
     md = report.render_md(rep)
     for heading in ("## Observation", "## Classes", "## Sessions in scope broomva", "## Count check",
-                    "## Overlap pass", "## Repos, rules and PRs", "## Scheduled work", "## Asks this tick"):
+                    "## Overlap pass", "## Repos, rules and PRs", "## Scheduled work", "## Asks"):
         assert heading in md
     assert "Report only (phase 1). Nothing was sent, spawned, labelled or resumed." in md
     assert [a["class"] for a in rep["asks"]] == ["3", "7"]
@@ -70,37 +70,80 @@ def _batch_records(asks, tick=1, ts=None, notified=None):
     return recs
 
 
-def test_an_ask_already_open_in_an_unacked_batch_is_marked_not_new():
+def _ack(tick, asks="all", ago=H):
+    return {"v": 1, "ts": common.ts(NOW - ago), "scope": "broomva", "tick": tick, "dry_run": False, "kind": "ack",
+            "acks": {"tick": tick, "asks": asks}}
+
+
+def test_an_open_ask_is_asked_once_and_then_carried_as_still_open():
     s = S(session_id=_sid(1), status="waiting", waiting_for="dialog open")
-    first = report.build(_snap([s]), [], True)["asks"]
-    assert first[0]["new"] is True
-    records = _batch_records(first)
-    again = report.build(_snap([s]), records, True)["asks"]
-    assert again[0]["new"] is False
+    first = report.build(_snap([s]), [], True)
+    assert [a["key"] for a in first["asks"]] == ["prompt:" + _sid(1)] and first["asks_open"] == []
+    again = report.build(_snap([s]), _batch_records(first["asks"]), True)
+    assert again["asks"] == [] and [a["key"] for a in again["asks_open"]] == ["prompt:" + _sid(1)]
+    assert again["asks_open"][0]["first_tick"] == 1
 
 
 def test_an_acked_ask_is_not_asked_again_for_a_day():
     s = S(session_id=_sid(1), status="waiting", waiting_for="dialog open")
     asks = report.build(_snap([s]), [], True)["asks"]
-    records = _batch_records(asks) + [{"v": 1, "ts": common.ts(NOW - H), "scope": "broomva", "tick": 1,
-                                       "dry_run": False, "kind": "ack", "acks": {"tick": 1, "asks": "all"}}]
+    records = _batch_records(asks) + [_ack(1)]
     rep = report.build(_snap([s]), records, True)
-    assert rep["asks"] == [] and len(rep["acked_still_open"]) == 1
+    assert rep["asks"] == [] and rep["asks_open"] == [] and len(rep["acked_still_open"]) == 1
     records[-1]["ts"] = common.ts(NOW - 25 * H)
     assert len(report.build(_snap([s]), records, True)["asks"]) == 1
 
 
-def test_notify_for_new_asks_else_at_most_once_per_renotify_window():
-    new = [{"id": "a1", "key": "k", "class": "3", "question": "q", "new": True}]
-    old = [dict(new[0], new=False)]
-    assert report.should_notify(_batch_records(new, tick=5), 5, 6, NOW)[0] is True
-    recent = _batch_records(old, tick=5, notified=common.ts(NOW - H))
-    assert report.should_notify(recent, 5, 6, NOW) == (False, "notified 60m ago; re-notify after 6h")
-    stale = _batch_records(old, tick=5, notified=common.ts(NOW - 7 * H))
-    assert report.should_notify(stale, 5, 6, NOW)[0] is True
-    acked = stale + [{"v": 1, "ts": common.ts(NOW), "scope": "broomva", "tick": 5, "dry_run": False, "kind": "ack",
-                      "acks": {"tick": 5, "asks": "all"}}]
-    assert report.should_notify(acked, 5, 6, NOW) == (False, "no open asks")
+def test_acking_a_tick_acknowledges_every_earlier_batch():
+    recs = []
+    for t in (1, 2, 3):
+        recs += _batch_records([{"id": "a1", "key": "k%d" % t, "class": "3", "question": "q"}], tick=t)
+    assert set(ledger.open_by_key(recs)) == {"k1", "k2", "k3"}
+    assert set(ledger.open_by_key(recs + [_ack(2)])) == {"k3"}
+    assert set(ledger.open_by_key(recs + [_ack(3, ["a1"])])) == {"k1", "k2"}
+    assert ledger.open_by_key(recs + [_ack(3)]) == {}
+
+
+def test_notify_for_a_new_batch_else_at_most_once_per_renotify_window():
+    ask = [{"id": "a1", "key": "k", "class": "3", "question": "q"}]
+    assert report.should_notify(_batch_records(ask, tick=5), 5, ["k"], 6, NOW)[0] is True
+    recent = _batch_records(ask, tick=5, notified=common.ts(NOW - H))
+    assert report.should_notify(recent, 6, ["k"], 6, NOW) == (False, "notified 60m ago; re-notify after 6h")
+    stale = _batch_records(ask, tick=5, notified=common.ts(NOW - 7 * H))
+    assert report.should_notify(stale, 6, ["k"], 6, NOW)[0] is True
+    assert report.should_notify(stale, 6, [], 6, NOW) == (False, "no open asks")  # no longer true: resolved
+    assert report.should_notify(stale + [_ack(5)], 6, ["k"], 6, NOW) == (False, "no open asks")
+
+
+def test_a_count_ask_is_new_when_its_members_change():
+    def rep_with(ids):
+        snap = _snap([S(session_id=_sid(9))], paseo_open=[
+            {"agent_id": i, "session_id": None, "title": "t", "last_status": "idle", "scope": "broomva",
+             "placement": "cwd"} for i in ids])
+        return report.build(snap, [], True)
+    k1 = [a["key"] for a in rep_with(["p1", "p2"])["asks"] if a["key"].startswith("records-")]
+    k2 = [a["key"] for a in rep_with(["p1", "p3"])["asks"] if a["key"].startswith("records-")]
+    assert k1 and k2 and k1 != k2
+
+
+def test_a_surface_that_was_not_read_is_asked_about():
+    surf = {"listing": {"ok": True}, "paseo_records": {"ok": True}, "jobs": {"ok": True, "unparsed": 2},
+            "transcripts": {"ok": False, "error": "unreadable"},
+            "board": {"broomva": {"ok": False, "error": "EIO"}}, "ledger": {"ok": False, "corrupt": 1}}
+    keys = {a["key"] for a in report.build(_snap([], surfaces=surf), [], True)["asks"]}
+    assert {"surface:transcripts", "surface:board:broomva", "surface:jobs-unparsed:2",
+            "surface:ledger-corrupt:1"} <= keys
+
+
+def test_a_rules_flag_says_no_driver_only_when_the_repo_is_not_eligible():
+    def rules(flags, eligible):
+        return {"types": [], "pull_request": True, "approvals": 0, "checks": [], "unpinned": [],
+                "driver_eligible": eligible, "flags": flags}
+    repos = [{"repo": "/a", "slug": "o/a", "ok": True, "rules": rules(["no pull_request rule"], False), "prs": []},
+             {"repo": "/b", "slug": "o/b", "ok": True,
+              "rules": rules(["force-push to the default branch not blocked"], True), "prs": []}]
+    asks = {a["key"].split(":")[1]: a["question"] for a in report.build(_snap([], repos=repos), [], True)["asks"]}
+    assert "no driver" in asks["o/a"] and "no driver" not in asks["o/b"]
 
 
 def test_scheduled_asks_come_from_a_failing_exit_or_an_overdue_schedule_only():
@@ -115,7 +158,7 @@ def test_scheduled_asks_come_from_a_failing_exit_or_an_overdue_schedule_only():
          "last_run": None, "last_result": None, "next_run": NOW - 2 * H, "stale": True, "detail": ""},
     ]
     rep = report.build(_snap([], scheduled={"items": items, "surfaces": {}}), [], True)
-    assert sorted(a["key"] for a in rep["asks"]) == ["sched:launchd:com.x.b", "sched:paseo:s1"]
+    assert sorted(a["key"].rsplit(":", 1)[0] for a in rep["asks"]) == ["sched:launchd:com.x.b", "sched:paseo:s1"]
 
 
 def _rep(tick, classes):
@@ -132,8 +175,9 @@ def test_the_labelling_sheet_is_stratified_distinct_first_and_reproducible():
     per = {}
     for r in rows:
         per.setdefault(r["class"], []).append(r)
-    assert {k: len(v) for k, v in per.items()} == {"1": 1, "3": 1, "5": 3, "10": 3, "unknown": 1}
-    assert len({r["session"] for r in per["10"]}) == 3  # distinct sessions before repeats
+    # Distinct sessions only: class 5 has one session over three ticks, so one row.
+    assert {k: len(v) for k, v in per.items()} == {"1": 1, "3": 1, "5": 1, "10": 3, "unknown": 1}
+    assert len({r["session"] for r in per["10"]}) == 3
     assert available["5"] == 1 and available["10"] == 4
     assert rows == report.labelling_sheet(reps, per_class=3, seed=7)[0]
     assert [r["row"] for r in rows] == list(range(1, len(rows) + 1))

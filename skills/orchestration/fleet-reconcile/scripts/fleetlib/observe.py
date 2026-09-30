@@ -11,6 +11,7 @@ PR count at all, not zero.
 """
 from __future__ import annotations
 
+import os
 import re
 import time
 from typing import Any, Dict, List, Optional, Tuple
@@ -45,6 +46,8 @@ def place(cwd: Optional[str], board_row: Optional[Dict[str, Any]], job: Optional
     w = ctx.locate(cwd, timeout=2.0) if cwd else None
     if w is not None:
         return by_repo.get(w.common_dir), w.common_dir, w.branch, "cwd"
+    if cwd and os.path.isdir(cwd):
+        return None, None, None, "no-repo"  # it exists and is in no repo: no hook placed it either
     if board_row and board_row.get("repo"):
         return by_repo.get(board_row["repo"]), board_row["repo"], board_row.get("branch"), "board"
     for p in (cwd, (job or {}).get("worktree_path")):
@@ -90,8 +93,9 @@ def _job_view(j: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
         return None
     return {"job_id": j["job_id"], "state": j["state"], "detail": common.safe_text(j["detail"], 100),
             "needs": common.safe_text(j["needs"], 100), "suggested_reply": j["suggested_reply"],
-            "limit_text": j["limit_text"], "reset_text": j["reset_text"], "worktree_path": j["worktree_path"],
-            "worktree_branch": j["worktree_branch"], "updated_at": j["updated_at"],
+            "limit_text": j["limit_text"], "reset_text": j["reset_text"],
+            "worktree_path": common.safe_path(j["worktree_path"]),
+            "worktree_branch": common.safe_text(j["worktree_branch"], 120) or None, "updated_at": j["updated_at"],
             "settings_path": j["settings_path"]}
 
 
@@ -120,37 +124,52 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
         snap["cc_version"] = None
         surf["claude_version"] = _surface(False, error=_err(exc))
 
-    # The session listing ---------------------------------------------------
-    rows: List[Dict[str, Any]] = []
-    try:
-        rows, drift = parsers.parse_listing(src.agents_listing())
-        snap["drift"].extend(drift)
-        if len(rows) >= sec["listing_cap"]:
-            surf["listing"] = _surface(False, rows=len(rows), failed_closed=True,
-                                       error="%d rows, at or over the cap of %d: the listing may be truncated, "
-                                             "so nothing is classified" % (len(rows), sec["listing_cap"]))
-            rows = []
-        else:
-            surf["listing"] = _surface(True, rows=len(rows))
-    except (SourceError, parsers.ParseError) as exc:
-        surf["listing"] = _surface(False, error=_err(exc))
-
     # Background job files ---------------------------------------------------
+    # A file that doesn't parse (one read mid-write, say) degrades only its
+    # own session (job_unread), not every background session.
     jobs: Dict[str, Dict[str, Any]] = {}
-    bad_jobs = 0
+    job_ids: List[str] = []
+    bad_jobs: List[str] = []
     try:
         for job_id, text in src.job_states():
+            job_ids.append(job_id)
             try:
                 j = parsers.parse_job_state(text, job_id)
             except parsers.ParseError:
-                bad_jobs += 1
+                bad_jobs.append(job_id)
                 continue
             jobs[j["session_id"]] = j
             if not j["state_known"]:
                 snap["drift"].append("job file: state %r" % j["state"])
-        surf["jobs"] = _surface(True, files=len(jobs), unparsed=bad_jobs)
+        surf["jobs"] = _surface(True, files=len(job_ids), unparsed=len(bad_jobs))
     except (SourceError, OSError) as exc:
         surf["jobs"] = _surface(False, error=_err(exc))
+
+    # The session listing ---------------------------------------------------
+    # `claude agents --json --all` has no limit parameter, but it lists every
+    # background job ever run, so it can legitimately pass the cap. At or over
+    # the cap the listing counts as complete only when every job file on disk
+    # appears in it (a second reading); otherwise it may be truncated and
+    # nothing is classified (the 09-26 run's 6-vs-30 error came from a list cut
+    # at its limit).
+    rows: List[Dict[str, Any]] = []
+    try:
+        rows, drift = parsers.parse_listing(src.agents_listing())
+        snap["drift"].extend(drift)
+        listed = {r["session_id"][:8] for r in rows}
+        at_cap = len(rows) >= sec["listing_cap"]
+        proven = at_cap and surf["jobs"]["ok"] and bool(job_ids) and set(job_ids) <= listed
+        if at_cap and not proven:
+            surf["listing"] = _surface(False, rows=len(rows), failed_closed=True,
+                                       error="%d rows, at or over the cap of %d, and the job files don't show it "
+                                             "complete: it may be truncated, so nothing is classified"
+                                             % (len(rows), sec["listing_cap"]))
+            rows = []
+        else:
+            surf["listing"] = _surface(True, rows=len(rows), **({"completeness": "every job file is listed"}
+                                                               if at_cap else {}))
+    except (SourceError, parsers.ParseError) as exc:
+        surf["listing"] = _surface(False, error=_err(exc))
 
     # Transcripts -----------------------------------------------------------
     try:
@@ -181,6 +200,9 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
                                          not_archived=sum(1 for r in records if not r["archived"]))
     except (SourceError, OSError) as exc:
         surf["paseo_records"] = _surface(False, error=_err(exc))
+
+    # How gh authenticated this tick (tick.sh says; never the token itself) --
+    surf["gh_auth"] = _surface(True, mode=common.safe_text(os.environ.get("FLEET_GH_AUTH") or "keyring", 80))
 
     # The core's board (every scope, for placement) --------------------------
     board, surf["board"] = _board_rows(scope_ids)
@@ -213,7 +235,7 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
             limit_line = common.safe_text(src.limit_text(sid, tr), 100) or None
         sessions.append({
             "session_id": sid, "name": name_ok, "kind": r["kind"],
-            "cwd": common.safe_path(r["cwd"]) or common.WITHHELD, "cwd_exists": how == "cwd",
+            "cwd": common.safe_path(r["cwd"]) or common.WITHHELD, "cwd_exists": how in ("cwd", "no-repo"),
             "bg_id": r["bg_id"], "state": r["state"], "pid": r["pid"], "status": r["status"],
             "waiting_for": r["waiting_for"], "started_at": r["started_at"],
             "job": _job_view(job), "board": _board_view(brow),
@@ -222,8 +244,9 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
                                                                 "session_id_from")},
             "transcript": {"found": "mtime" in tr, "mtime": tr.get("mtime"), "sub": tr.get("sub")},
             "limit_text": limit_line,
-            "scope": scope, "repo": repo, "branch": branch, "placement": how,
+            "scope": scope, "repo": repo, "branch": common.safe_text(branch, 120) or None, "placement": how,
             "fleet_key": key, "adopted": sid in adopted,
+            "job_unread": r["kind"] == "background" and sid[:8] in bad_jobs,
             "fleet_shaped": fleet_shaped(r["name"], scope_id),
         })
     snap["sessions"] = sessions

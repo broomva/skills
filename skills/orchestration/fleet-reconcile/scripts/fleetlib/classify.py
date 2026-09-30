@@ -18,8 +18,13 @@ Choices the spec leaves open, pending the spec (broomva/workspace#842):
   ARC-STATUS is current only when its Stop is the row's latest event.
 - "idle" is status idle, or a background session with no process whose state
   is done or stopped (resume's case in §5.3).
-- A terminal status on a repo whose PRs could not be read is unknown, not
-  closed: "the PR (if any) merged or closed" can't be checked.
+- A terminal status on a repo whose PRs could not be read, or with an unknown
+  branch, is unknown, not closed: "the PR (if any) merged or closed" can't be
+  checked.
+- A class reached only because evidence was absent (9, 9a, 10) is unknown when
+  the surface holding that evidence (the board, a job file) was not read.
+- The spawn pause counts a limit death in any scope: every scope on this
+  machine runs on one account.
 """
 from __future__ import annotations
 
@@ -32,7 +37,8 @@ RUNNING_S = 2 * 3600    # classes 5 and 6
 STALL_S = 3600          # classes 9 and 9a
 GRACE_S = 120           # transcript writes this soon after an event belong to it
 LIMIT_ERRORS = ("rate_limit",)
-TRANSIENT_ERRORS = ("server_error", "overloaded", "api_error", "network_error", "timeout", "max_output_tokens")
+#: §5.4 class 4 allows one resume "for a transient 5xx or network error".
+TRANSIENT_ERRORS = ("server_error", "overloaded", "api_error", "network_error")
 TERMINAL = ("MERGED", "CLOSED", "DONE")
 PROMPT_WAITS = ("permission prompt", "dialog open")
 
@@ -46,9 +52,15 @@ Rule = namedtuple("Rule", "id name test act")
 
 
 class Env:
-    def __init__(self, scope: str, now: float, repos: List[Dict[str, Any]]) -> None:
+    def __init__(self, scope: str, now: float, repos: List[Dict[str, Any]],
+                 surfaces: Optional[Dict[str, Any]] = None) -> None:
         self.scope = scope
         self.now = now
+        surf = surfaces or {}
+        #: Surfaces a class depends on that were not read. A class reached
+        #: only because their evidence was absent can't stand (see classify).
+        self.board_failed = {s for s, b in (surf.get("board") or {}).items() if not b.get("ok")}
+        self.jobs_failed = bool(surf.get("jobs")) and not surf["jobs"].get("ok")
         self.repo_ok = {r["repo"]: bool(r.get("ok")) for r in repos}
         self.open_prs: Dict[Tuple[str, str], List[int]] = {}
         for r in repos:
@@ -93,9 +105,11 @@ def idle(s: Dict[str, Any]) -> bool:
 def bg_question(s: Dict[str, Any]) -> bool:
     """A background session blocked on a question to its own user (§5.4 class 7)."""
     j = s.get("job") or {}
+    detail = (j.get("detail") or "").strip()
+    asks = bool(j.get("needs") or j.get("suggested_reply")) or detail.endswith("?") or \
+        detail.lower().startswith("awaiting user")
     return (s.get("kind") == "background" and j.get("state") == "blocked" and not j.get("limit_text")
-            and bool(j.get("needs") or j.get("suggested_reply"))
-            and s.get("waiting_for") not in PROMPT_WAITS)
+            and asks and s.get("waiting_for") not in PROMPT_WAITS)
 
 
 #: When no reset time can be read (an interactive session's limit text lives
@@ -131,6 +145,8 @@ def _out_of_scope(s: Dict[str, Any], env: Env) -> Match:
         return None
     if s.get("placement") == "unplaced":
         return "cwd gone and no board row or worktree parent to place it"
+    if s.get("placement") == "no-repo":
+        return "cwd is not in a git repo"
     return "placed in scope %s by %s" % (s.get("scope") or "none", s.get("placement"))
 
 
@@ -193,7 +209,9 @@ def _closed(s: Dict[str, Any], env: Env) -> Match:
     repo, branch = s.get("repo"), s.get("branch")
     if not env.repo_ok.get(repo or "", False):
         return Stop("ARC-STATUS %s, but the PRs of its repo could not be read" % arc)
-    open_ = env.open_prs.get((repo, branch or ""), [])
+    if not branch or branch.startswith("detached@"):
+        return Stop("ARC-STATUS %s, but its branch is unknown, so its PR can't be checked" % arc)
+    open_ = env.open_prs.get((repo, branch), [])
     if open_:
         return None
     return "board: ARC-STATUS %s; no open PR on %s" % (arc, branch or "its branch")
@@ -238,7 +256,10 @@ ACTIONS = {
     "6": _act("report; one mail"),
     "7": _act("carry the ask forward", "carry the ask forward"),
     "8": _act("report what a janitor would remove"),
-    "9": _act("one mail per 6 h, from fixed templates"),
+    # §5.3: a session with a live process is mailed; a background one without
+    # a process is resumed (mail would fail as not_live).
+    "9": lambda s: ("report" if not ours(s) else "one mail per 6 h, from fixed templates"
+                    if s.get("pid") is not None else "resume once, with no flags (no live process)"),
     "9a": _act("nothing", "nothing"),
     "10": _act("report only", "report only"),
 }
@@ -261,12 +282,30 @@ ORDER = [r.id for r in RULES] + ["unknown"]
 NAMES = dict([(r.id, r.name) for r in RULES] + [("unknown", "unknown")])
 
 
+#: Classes reached only because a board death or ARC-STATUS, or a job file's
+#: limit text or question, was absent. When the surface holding that evidence
+#: was not read, they can't stand.
+ABSENCE_CLASSES = ("9", "9a", "10")
+
+
+def _unread(s: Dict[str, Any], env: Env) -> Optional[str]:
+    if s.get("scope") in env.board_failed:
+        return "the board"
+    if s.get("kind") == "background" and (env.jobs_failed or s.get("job_unread")):
+        return "its job file"
+    return None
+
+
 def classify(s: Dict[str, Any], env: Env) -> Dict[str, str]:
     for rule in RULES:
         got = rule.test(s, env)
         if isinstance(got, Stop):
             return {"class": "unknown", "name": "unknown", "evidence": str(got), "action": "report only"}
         if got:
+            missing = _unread(s, env) if rule.id in ABSENCE_CLASSES else None
+            if missing:
+                return {"class": "unknown", "name": "unknown", "action": "report only",
+                        "evidence": "%s was not read, so classes 2, 4, 7 and 8 could not be checked" % missing}
             return {"class": rule.id, "name": rule.name, "evidence": got, "action": rule.act(s)}
     t = s.get("transcript") or {}
     why = "transcript missing" if not t.get("found") else "no class matched (state %s, status %s)" % (
@@ -346,18 +385,20 @@ def count_check(snap: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def classify_all(snap: Dict[str, Any]) -> List[Dict[str, Any]]:
-    env = Env(snap["scope"], snap["now"], snap.get("repos") or [])
+    env = Env(snap["scope"], snap["now"], snap.get("repos") or [], snap.get("surfaces"))
     return [dict(classify(s, env), session_id=s["session_id"]) for s in snap["sessions"]]
 
 
 def spawn_pause(snap: Dict[str, Any], results: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
-    """Class 2's pause applies whoever hit the limit, since the limit is shared."""
-    by_id = {s["session_id"]: s for s in snap["sessions"]}
-    resets = [(limit_reset(by_id[r["session_id"]]), r["session_id"]) for r in results
-              if r["class"] == "2" and by_id[r["session_id"]].get("scope") == snap["scope"]]
+    """Class 2's pause applies whoever hit the limit, since the limit is shared:
+    a limit death in any scope counts, because every scope on this machine runs
+    on one account (pending the spec, which says "whichever session")."""
+    env = Env(snap["scope"], snap["now"], snap.get("repos") or [], snap.get("surfaces"))
+    resets = [(limit_reset(s), s) for s in snap["sessions"] if _dead_limit(s, env)]
     if not resets:
         return None
     known = [(t, how) for (t, how), _ in resets if t]
     until, how = max(known) if known else (None, "unknown")
-    return {"until": until, "how": how, "sessions": [sid for _, sid in resets],
+    return {"until": until, "how": how, "sessions": [s["session_id"] for _, s in resets],
+            "other_scopes": sum(1 for _, s in resets if s.get("scope") != snap["scope"]),
             "active": until is None or until > snap["now"]}

@@ -54,7 +54,7 @@ def _hashes(store: Path) -> dict:
 def scene(world):
     b, wt = world.broomva, world.worktree
     gone = world.home / "wt" / "removed-after-merge"
-    s = {k: _sid(i) for i, k in enumerate("ABCDEFGHIJ", 1)}
+    s = {k: _sid(i) for i, k in enumerate("ABCDEFGHIJK", 1)}
     # Board-live rows
     _event(world, "session.start", s["A"], b, T - 1 * H)           # both
     _transcript(world, s["A"], T - 0.5 * H)
@@ -74,8 +74,11 @@ def scene(world):
     _event(world, "session.start", s["H"], b, T - 7 * H)           # a long turn
     _transcript(world, s["H"], T - 0.3 * H)
     _transcript(world, s["I"], T - 0.1 * H)                        # sri: another scope
+    _event(world, "session.start", s["K"], b, T - 2 * H)
+    _event(world, "session.died", s["K"], b, T - 1 * H)            # died, and stayed dead
+    _transcript(world, s["K"], T - 1 * H + 30)                     # the death's own write
     listing = [_row(s["A"], b), _row(s["D"], b), _row(s["J"], gone), _row(s["E"], b), _row(s["F"], b),
-               _row(s["G"], b), _row(s["H"], b), _row(s["I"], world.sri)]
+               _row(s["G"], b), _row(s["H"], b), _row(s["I"], world.sri), _row(s["K"], b)]
     lf = world.home / "listing.json"
     lf.write_text(json.dumps(listing))
     return s, lf
@@ -88,15 +91,15 @@ def test_every_reason_is_exercised_and_the_excluded_ones_do_not_count(world, sce
     by = {d["session_id"]: d["reason"] for d in res["differences"]}
     assert by == {s["B"]: "no-transcript", s["C"]: "ended", s["D"]: "unexplained",
                   s["E"]: "died-then-continued", s["F"]: "no-event", s["G"]: "pre-registration",
-                  s["H"]: "stale-event"}
+                  s["H"]: "stale-event", s["K"]: "died"}
     assert set(res["reasons"]) == set(ctx_compare.REASONS)
-    assert (res["board_live"], res["sessions"], res["both"]) == (5, 6, 2)
+    assert (res["board_live"], res["sessions"], res["both"]) == (5, 7, 2)
     # Board side: A and J of five, less B and C (excluded) -> 2/3.
     assert res["board_pct"] == pytest.approx(2 / 3, abs=1e-4)
     assert res["board_raw_pct"] == pytest.approx(2 / 5, abs=1e-4)
-    # Session side: A and J of six, less G (excluded) -> 2/5.
+    # Session side: A and J of seven, less G and K (excluded) -> 2/5.
     assert res["session_pct"] == pytest.approx(2 / 5, abs=1e-4)
-    assert res["pass"] is False
+    assert res["pass"] is False and res["evidence"] is True
 
 
 def test_a_run_changes_none_of_the_store_files_and_appends_one_summary(world, scene, capsys):
@@ -142,3 +145,40 @@ def test_the_cli_runs_it_from_a_scoped_directory(world, scene):
 def test_the_cli_says_so_outside_a_scope(world):
     proc = world.cli("doctor", "--compare", cwd=world.other)
     assert proc.returncode == 1 and "not in a scope" in proc.stdout
+
+
+def test_no_evidence_is_not_a_pass(world, tmp_path, capsys):
+    # A listing with only another scope's session, and an empty board: nothing
+    # to count on either side.
+    lf = world.home / "listing.json"
+    _transcript(world, _sid(1), T - 0.1 * H)
+    lf.write_text(json.dumps([_row(_sid(1), world.sri)]))
+    res = ctx_compare.compare("broomva", ctx_compare.load_listing(str(lf)), ctx_compare.transcript_times(), T)
+    assert res["evidence"] is False and res["pass"] is False and res["board_pct"] is None
+    assert ctx_compare.run_for_scope("broomva", listing_file=str(lf), now=T) == 1
+    assert "NO EVIDENCE" in capsys.readouterr().out
+
+
+def test_an_empty_listing_or_unreadable_transcripts_fail(world, tmp_path, capsys):
+    empty = tmp_path / "empty.json"
+    empty.write_text("[]")
+    assert ctx_compare.run_for_scope("broomva", listing_file=str(empty), now=T) == 1
+    lf = world.home / "listing.json"
+    lf.write_text(json.dumps([_row(_sid(1), world.broomva)]))
+    # No ~/.claude/projects at all in this HOME: the transcripts can't be read.
+    assert not (world.home / ".claude" / "projects").exists()
+    assert ctx_compare.run_for_scope("broomva", listing_file=str(lf), now=T) == 1
+    assert capsys.readouterr().out.count("could not be read") == 2
+
+
+def test_the_board_row_places_only_a_session_whose_cwd_is_gone(world):
+    b = world.broomva
+    sid = _sid(1)
+    _event(world, "session.start", sid, b, T - 1 * H)
+    _transcript(world, sid, T - 0.5 * H)
+    listing = [_row(sid, world.other)]  # the cwd exists and is another repo: not placed by the board row
+    res = ctx_compare.compare("broomva", listing, ctx_compare.transcript_times(), T)
+    assert res["sessions"] == 0
+    listing = [_row(sid, world.home / "wt" / "removed")]  # gone: the row places it
+    res = ctx_compare.compare("broomva", listing, ctx_compare.transcript_times(), T)
+    assert res["sessions"] == 1 and res["both"] == 1

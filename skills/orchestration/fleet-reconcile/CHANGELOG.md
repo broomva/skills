@@ -31,3 +31,11 @@ Observe and classify, report only; no session is acted on. Ticket BRO-2674.
   later Dream and heartbeat section.
 - **The core comparison** lands in ctx-core 0.2.0 as `ctx doctor --compare`;
   the tick runs it daily.
+- After Cross-Review (P20) round 1: a job's `updatedAt` is read as the ISO
+  string 2.1.280 writes; the listing cap is cross-checked against the job
+  files; an unread board or job file turns 9/9a/10 into unknown; an unknown
+  branch is unknown, not closed; asks are per-key state with ack-through; a
+  failed tick notifies and exits 1; the token reaches gh only; the watchdog
+  kills the step's process group; the job runs a pinned copy of the code;
+  bootstrap waits for bootout and retries; tick numbers come from the ledger
+  too; snapshots are pruned after 7 days.

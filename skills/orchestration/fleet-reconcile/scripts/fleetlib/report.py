@@ -73,9 +73,8 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
         "scheduled": snap.get("scheduled") or {},
         "core_compare": compare,
     }
-    rep["asks"], rep["acked_still_open"] = make_asks(rep, records, now)
-    rep["unacked"] = [{"tick": b["tick"], "ts": b["ts"], "open": len(ledger.open_asks(b))}
-                      for b in ledger.unacked(records)]
+    rep["asks"], rep["asks_open"], rep["acked_still_open"] = make_asks(rep, records, now)
+    rep["ask_keys_current"] = sorted(k for k, _, _ in candidates(rep))
     return rep
 
 
@@ -88,17 +87,29 @@ def _repo_summary(r: Dict[str, Any]) -> Dict[str, Any]:
     held = [p for p in prs if any(lb.lower() == "hold" for lb in p["labels"])]
     out["prs"] = {"open": len(prs), "drafts": sum(1 for p in prs if p["draft"]),
                   "dependabot": sum(1 for p in prs if p["dependabot"]), "held": len(held),
-                  "list": [{"number": p["number"], "title": p["title"], "head": p["head"], "draft": p["draft"],
+                  "list": [{"number": p["number"], "title": p["title"], "head": common.safe_text(p["head"], 120),
+                            "draft": p["draft"],
                             "dependabot": p["dependabot"], "labels": p["labels"]} for p in prs if not p["dependabot"]]}
     return out
 
 
 # --------------------------------------------------------------------------
-# Asks: everything that needs the owner, batched into one per tick (§3)
+# Asks: everything that needs the owner (§3). An ask is per-key state: it is
+# asked once, stays open until the owner acks it or it stops being true, and
+# comes back only if it is still true 24 h after an ack. A tick writes a batch
+# only when it has a new key, so the owner sees each ask once, not hourly.
 
-def make_asks(rep: Dict[str, Any], records: List[Dict[str, Any]],
-              now: float) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
-    cands: List[Tuple[str, str, str]] = []  # (key, class, question)
+def _members(items: Iterable[str]) -> str:
+    """A short, stable tag for a set: a count-type ask whose members change
+    (a new record stuck, say) is a new ask."""
+    import hashlib
+
+    return hashlib.sha256("\n".join(sorted(items)).encode()).hexdigest()[:8]
+
+
+def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
+    """(key, class, question) for everything this tick would ask."""
+    cands: List[Tuple[str, str, str]] = []
     for s in rep["sessions"]:
         if s["scope"] != rep["scope"]:
             continue
@@ -113,26 +124,48 @@ def make_asks(rep: Dict[str, Any], records: List[Dict[str, Any]],
     if not surf.get("listing", {}).get("ok"):
         cands.append(("listing", "observe", "The session listing was not read: %s. Nothing was classified."
                       % surf.get("listing", {}).get("error", "?")))
+    for name, st in sorted(surf.items()):
+        if name == "listing":
+            continue
+        if name == "board":
+            for sid, b in sorted(st.items()):
+                if not b.get("ok"):
+                    cands.append(("surface:board:" + sid, "observe", "The %s board was not read (%s); sessions "
+                                  "that would have been 9, 9a or 10 read as unknown." % (sid, b.get("error"))))
+            continue
+        if not st.get("ok"):
+            cands.append(("surface:" + name, "observe", "Surface %s was not read: %s." % (name, st.get("error"))))
+    if surf.get("jobs", {}).get("unparsed"):
+        cands.append(("surface:jobs-unparsed:%d" % surf["jobs"]["unparsed"], "observe",
+                      "%d job file(s) did not parse; their sessions read as unknown." % surf["jobs"]["unparsed"]))
+    if surf.get("ledger", {}).get("corrupt"):
+        cands.append(("surface:ledger-corrupt:%d" % surf["ledger"]["corrupt"], "observe",
+                      "The ledger has %d corrupt line(s)." % surf["ledger"]["corrupt"]))
     for d in rep["drift"]:
         cands.append(("drift:" + d, "observe", "Parser drift: %s. Recapture the fixtures (tests/"
                       "capture_fixtures.py) and review the parsers." % d))
     cc = rep["count_check"]
     if cc.get("ran") and cc.get("records_without_process"):
-        n = len(cc["records_without_process"])
-        cands.append(("records-without-process", "count", "%d Paseo record(s) in this scope are not archived and "
-                      "have no live process in claude agents (listed in the report)." % n))
+        recs = cc["records_without_process"]
+        cands.append(("records-without-process:" + _members(r["agent_id"] for r in recs), "count",
+                      "%d Paseo record(s) in this scope are not archived and have no live process in claude "
+                      "agents (listed in the report)." % len(recs)))
     shaped = [u for u in cc.get("unmanaged") or [] if u.get("fleet_shaped")]
     if shaped:
-        cands.append(("fleet-shaped-unledgered", "count", "%d session(s) carry a fleet-shaped name the ledger "
-                      "doesn't hold; they are treated as unmanaged." % len(shaped)))
+        cands.append(("fleet-shaped-unledgered:" + _members(u["session_id"] for u in shaped), "count",
+                      "%d session(s) carry a fleet-shaped name the ledger doesn't hold; they are treated as "
+                      "unmanaged." % len(shaped)))
     for r in rep["repos"]:
         name = r.get("slug") or common.tilde(r["repo"])
         if not r["ok"]:
-            cands.append(("repo:" + name, "github", "Repo %s was not observed: %s." % (name, r.get("error"))))
+            cands.append(("repo:%s:%s" % (name, r.get("error")), "github",
+                          "Repo %s was not observed: %s." % (name, r.get("error"))))
         elif r.get("rules") and r["rules"]["flags"]:
-            cands.append(("rules:%s:%s" % (name, ";".join(r["rules"]["flags"])), "github",
-                          "Repo %s: %s. Its PRs get no driver until it has a pull_request rule and pinned "
-                          "checks." % (name, "; ".join(r["rules"]["flags"]))))
+            ru = r["rules"]
+            cands.append(("rules:%s:%s" % (name, ";".join(ru["flags"])), "github", "Repo %s: %s.%s" % (
+                name, "; ".join(ru["flags"]),
+                " Its PRs get no driver until it has a pull_request rule and checks pinned to GitHub Actions."
+                if not ru["driver_eligible"] else "")))
     for it in (rep["scheduled"].get("items") or []):
         # A launchd job's staleness is read from a log's mtime, which a
         # self-gated job leaves untouched for hours, so only a failing exit is
@@ -143,55 +176,47 @@ def make_asks(rep: Dict[str, Any], records: List[Dict[str, Any]],
             int(it["last_result"][5:]) != 0
         overdue = it["source"] == "paseo" and it.get("stale")
         if failing or overdue:
-            cands.append(("sched:%s:%s" % (it["source"], it["id"]), "scheduled",
+            cands.append(("sched:%s:%s:%s" % (it["source"], it["id"], it.get("last_result")), "scheduled",
                           "Scheduled %s %s %s: last run %s, cadence %s." % (
                               it["source"], it["name"], "last exited %s" % it["last_result"][5:] if failing
                               else "is overdue", common.ts(it["last_run"])[:16] if it.get("last_run") else "never",
                               it.get("cadence") or "-")))
-    acked_recent = _acked_keys(records, now)
-    open_before = {a.get("key") for b in ledger.unacked(records) for a in ledger.open_asks(b)}
-    asks, still = [], []
-    for key, cls, q in cands:
-        if key in acked_recent:
-            still.append({"key": key, "class": cls, "question": q})
-            continue
-        asks.append({"id": "", "key": key, "class": cls, "question": common.safe_text(q, 400),
-                     "new": key not in open_before})
-    for i, a in enumerate(asks, 1):
-        a["id"] = "a%d" % i
-    return asks, still
+    return cands
 
 
-def _acked_keys(records: List[Dict[str, Any]], now: float) -> set:
-    keys = set()
-    acks = {}
-    for r in records:
-        if r.get("kind") == "ack":
-            t = common.parse_iso(r.get("ts")) or 0.0
-            acks.setdefault((r.get("acks") or {}).get("tick"), []).append((t, r.get("acks") or {}))
-    for b in ledger.ask_batches(records):
-        for t, a in acks.get(b["tick"], []):
-            if now - t > ASK_SUPPRESS_S:
-                continue
-            for ask in b["asks"]:
-                if a.get("asks") == "all" or ask.get("id") in (a.get("asks") or []):
-                    keys.add(ask.get("key"))
-    return keys
+def make_asks(rep: Dict[str, Any], records: List[Dict[str, Any]],
+              now: float) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
+    """(new asks for this tick's batch, asks still open from earlier batches,
+    asks acked in the last 24 h that are still true)."""
+    open_keys = ledger.open_by_key(records)
+    acked = ledger.acked_keys(records)
+    new, still, acked_open = [], [], []
+    for key, cls, q in candidates(rep):
+        q = common.safe_text(q, 400)
+        if key in open_keys:
+            o = open_keys[key]
+            still.append({"key": key, "class": cls, "question": q, "first_tick": o["tick"],
+                          "id": o["ask"].get("id")})
+        elif key in acked and now - (common.parse_iso(acked[key]) or 0.0) <= ASK_SUPPRESS_S:
+            acked_open.append({"key": key, "class": cls, "question": q})
+        else:
+            new.append({"id": "a%d" % (len(new) + 1), "key": key, "class": cls, "question": q})
+    return new, still, acked_open
 
 
-def should_notify(records: List[Dict[str, Any]], tick: int, renotify_h: int, now: float) -> Tuple[bool, str]:
-    """Notify for a batch with a new ask; otherwise re-notify the unacked
-    batches at most once per renotify_h."""
-    batches = ledger.ask_batches(records)
-    this = [b for b in batches if b["tick"] == tick]
-    if this and any(a.get("new") for a in ledger.open_asks(this[-1])):
+def should_notify(records: List[Dict[str, Any]], tick: int, current: Iterable[str], renotify_h: int,
+                  now: float) -> Tuple[bool, str]:
+    """Notify for a tick that wrote a batch (it has a new ask); otherwise
+    re-notify at most once per renotify_h while an ask that is still true is
+    unacknowledged."""
+    if any(b["tick"] == tick for b in ledger.ask_batches(records)):
         return True, "new asks"
-    pending = [b for b in batches if ledger.open_asks(b)]
-    if not pending:
+    open_now = set(ledger.open_by_key(records)) & set(current)
+    if not open_now:
         return False, "no open asks"
-    last = max((common.parse_iso(t) or 0.0 for b in pending for t in b["notified"]), default=0.0)
+    last = common.parse_iso(ledger.last_notified(records) or "") or 0.0
     if now - last >= renotify_h * 3600:
-        return True, "unacknowledged for %s since the last notification" % common.age(now - last)
+        return True, "%d ask(s) unacknowledged; last notified %s ago" % (len(open_now), common.age(now - last))
     return False, "notified %s ago; re-notify after %dh" % (common.age(now - last), renotify_h)
 
 
@@ -210,13 +235,18 @@ def render_md(rep: Dict[str, Any]) -> str:
     L.append("Report only (phase 1). Nothing was sent, spawned, labelled or resumed. The \"would do\" column is "
              "what phase 3 would do.")
     L.append("")
-    un = rep["unacked"]
-    if un:
-        oldest = min(common.parse_iso(b["ts"]) or now for b in un)
-        L.append("**Unacknowledged ask batches: %d** (oldest %s). Read them with `fleet asks`, answer with "
-                 "`fleet ack <tick>`." % (len(un), common.age(now - oldest)))
+    still = rep["asks_open"]
+    n_open = len(still) + len(rep["asks"])
+    if n_open:
+        first = min([a["first_tick"] for a in still] or [rep["tick"]])
+        L.append("**Open asks: %d** (%d new this tick; the oldest first asked in tick %d). Read them with "
+                 "`fleet asks`; `fleet ack <tick>` acknowledges that tick's batch and every earlier one."
+                 % (n_open, len(rep["asks"]), first))
     else:
-        L.append("Unacknowledged ask batches: 0.")
+        L.append("Open asks: 0.")
+    if rep.get("surfaces", {}).get("gh_auth", {}).get("mode", "").startswith("keyring"):
+        L.append("")
+        L.append("GitHub was read with the keyring token (%s), not the fleet token." % rep["surfaces"]["gh_auth"]["mode"])
     L.append("")
     L.append("## Observation")
     L.append("")
@@ -343,12 +373,16 @@ def render_md(rep: Dict[str, Any]) -> str:
             c.get("ts", "?"), _pct(c.get("board_pct")), _pct(c.get("session_pct")), _pct(c.get("board_raw_pct")),
             _pct(c.get("session_raw_pct")), "pass" if c.get("pass") else "FAIL"))
         L.append("")
-    L.append("## Asks this tick")
+    L.append("## Asks")
     L.append("")
-    if not rep["asks"]:
-        L.append("None.")
+    L.append("New this tick: %d." % len(rep["asks"]))
     for a in rep["asks"]:
-        L.append("- [%s] %s%s" % (a["id"], a["question"], "" if a["new"] else " (asked before)"))
+        L.append("- [%s] %s" % (a["id"], a["question"]))
+    if still:
+        L.append("")
+        L.append("Still open from earlier ticks: %d." % len(still))
+        for a in still:
+            L.append("- [tick %s, %s] %s" % (a["first_tick"], a["id"], a["question"]))
     if rep["acked_still_open"]:
         L.append("")
         L.append("Acknowledged in the last 24 h and still open: %d." % len(rep["acked_still_open"]))
@@ -361,9 +395,12 @@ def _pct(v: Any) -> str:
 
 def render_batch(rep: Dict[str, Any]) -> str:
     L = ["# fleet asks · %s · tick %d · %s" % (rep["scope"], rep["tick"], rep["ts"]), "",
-         "Answer with `fleet ack %d` (all) or `fleet ack %d --ask <id>`." % (rep["tick"], rep["tick"]), ""]
+         "New asks. `fleet ack %d` acknowledges them and every earlier batch; `fleet ack %d --ask <id>` one ask."
+         % (rep["tick"], rep["tick"]), ""]
     for a in rep["asks"]:
         L.append("- [%s] (%s) %s" % (a["id"], a["class"], a["question"]))
+    if rep["asks_open"]:
+        L += ["", "Also still open from earlier ticks: %d (`fleet asks`)." % len(rep["asks_open"])]
     return "\n".join(L) + "\n"
 
 
@@ -396,7 +433,7 @@ def labelling_sheet(reports: Iterable[Dict[str, Any]], per_class: int = 3,
             (repeats if s["session_id"] in seen else distinct).append((tick, s))
             seen.add(s["session_id"])
         available[cls] = len(seen)
-        for tick, s in (distinct + repeats)[:per_class]:
+        for tick, s in distinct[:per_class]:  # §9: fewer only if fewer exist; never one session twice
             rows.append({"tick": tick, "session": s["short"], "name": s["name"], "kind": s["kind"],
                          "class": cls, "class_name": classify.NAMES[cls], "evidence": s["evidence"],
                          "would_do": s["action"], "owner_agree_or_disagree": "", "owner_note": ""})
@@ -427,6 +464,34 @@ def sheet_csv(rows: List[Dict[str, Any]]) -> str:
     for r in rows:
         w.writerow({k: r.get(k, "") for k in SHEET_COLUMNS})
     return buf.getvalue()
+
+
+#: Snapshots are the bulk of a tick (about 120 KB); reports stay.
+SNAPSHOT_KEEP_S = 7 * 86400
+
+
+def prune(state_dir: Path, now: float) -> int:
+    """Remove this tool's own snapshot.json files older than a week; the
+    report.json and report.md of every tick stay. Returns how many went."""
+    n = 0
+    for p in (Path(state_dir) / "ticks").glob("*/snapshot.json"):
+        try:
+            if now - p.stat().st_mtime > SNAPSHOT_KEEP_S:
+                p.unlink()
+                n += 1
+        except OSError:
+            continue
+    return n
+
+
+def latest_report(state_dir: Path) -> Optional[Dict[str, Any]]:
+    ticks = sorted(p for p in (Path(state_dir) / "ticks").glob("*/report.json"))
+    if not ticks:
+        return None
+    try:
+        return json.loads(ticks[-1].read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
 
 
 def load_report(state_dir: Path, tick: int) -> Dict[str, Any]:

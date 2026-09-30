@@ -67,7 +67,7 @@ POSITIVE = [
     ("7", S(board=arc("BLOCKED"), activity_ago=900)),
     ("7", bg(state="blocked", job=QUESTION_JOB)),
     ("8", S(board=arc("DONE"), activity_ago=900)),
-    ("8", S(board=arc("MERGED"), activity_ago=900, branch=None)),
+    ("8", S(board=arc("MERGED"), activity_ago=900, branch="fix/y")),
     ("9", S(activity_ago=2 * H, **OURS)),
     ("9", bg(state="done", activity_ago=2 * H, **OURS)),  # no process, done: idle
     ("9a", S(activity_ago=20 * 60, **OURS)),
@@ -75,6 +75,7 @@ POSITIVE = [
     ("10", S(name="broomva-workspace-pr9", fleet_shaped=True)),
     ("unknown", S(no_transcript=True, **OURS)),
     ("unknown", S(status="busy", no_transcript=True, **OURS)),
+    ("unknown", S(board=arc("DONE"), activity_ago=900, branch=None)),  # its PR can't be checked
 ]
 
 
@@ -306,11 +307,9 @@ def _snap(sessions, **kw):
     return snap
 
 
-def test_the_spawn_pause_applies_whoever_hit_the_limit_in_this_scope():
+def test_the_spawn_pause_applies_whoever_hit_the_limit():
     mine = S(session_id="a" * 8 + "-0000-4000-8000-000000000001", board=died("rate_limit", 600), activity_ago=900)
-    other = oos(session_id="b" * 8 + "-0000-4000-8000-000000000002", board=died("rate_limit", 60),
-                activity_ago=900)
-    snap = _snap([mine, other])
+    snap = _snap([mine])
     pause = classify.spawn_pause(snap, classify.classify_all(snap))
     assert pause["sessions"] == [mine["session_id"]] and pause["active"] and pause["how"] == "assumed"
     assert classify.spawn_pause(_snap([S()]), classify.classify_all(_snap([S()]))) is None
@@ -348,3 +347,58 @@ def test_the_overlap_pass_ignores_unknown_claims_dead_sessions_and_other_scopes(
     claims = {a["session_id"]: [path], dead["session_id"]: [path], other["session_id"]: [path],
               unk["session_id"]: [{"repo": "/w/broomva/.git", "unknown": True}]}
     assert classify.overlap_pass([a, dead, other, unk], claims, "broomva")["overlaps"] == []
+
+
+# --------------------------------------------------------------------------
+# Round-2 fixes (P20 round 1)
+
+def test_a_terminal_status_with_an_unknown_or_detached_branch_is_unknown():
+    for branch in (None, "", "detached@abc123def456"):
+        got = cls(S(board=arc("DONE"), activity_ago=900, branch=branch))
+        assert got["class"] == "unknown" and "branch is unknown" in got["evidence"]
+
+
+def test_an_unread_board_or_job_file_turns_an_absence_class_into_unknown():
+    surfaces_board = {"board": {"broomva": {"ok": False, "error": "x"}}, "jobs": {"ok": True}}
+    env_b = classify.Env("broomva", NOW, [{"repo": "/w/broomva/.git", "ok": True, "prs": []}], surfaces_board)
+    got = classify.classify(S(), env_b)  # would be 10
+    assert got["class"] == "unknown" and "the board was not read" in got["evidence"]
+    assert classify.classify(S(status="busy", activity_ago=60), env_b)["class"] == "5"  # positive evidence stands
+    assert classify.classify(oos(), env_b)["class"] == "1"
+    env_j = classify.Env("broomva", NOW, [{"repo": "/w/broomva/.git", "ok": True, "prs": []}],
+                         {"board": {"broomva": {"ok": True}}, "jobs": {"ok": False, "error": "x"}})
+    assert classify.classify(bg(state="done"), env_j)["class"] == "unknown"
+    assert classify.classify(S(), env_j)["class"] == "10"  # an interactive session has no job file
+    unread = bg(state="done")
+    unread["job_unread"] = True
+    assert cls(unread)["class"] == "unknown" and "its job file" in cls(unread)["evidence"]
+
+
+def test_class_9_resumes_a_session_with_no_process_and_mails_a_live_one():
+    assert cls(bg(state="done", activity_ago=2 * H, **OURS))["action"].startswith("resume once")
+    assert cls(S(activity_ago=2 * H, **OURS))["action"].startswith("one mail")
+
+
+def test_a_blocked_job_whose_detail_asks_its_user_is_class_7():
+    for detail in ("awaiting user confirmation; probe sequence flagged", "which fix should I take?"):
+        assert cls(bg(state="blocked", job={"state": "blocked", "detail": detail}))["class"] == "7"
+    assert cls(bg(state="blocked", job={"state": "blocked", "detail": "fix ready"}))["class"] == "10"
+
+
+def test_only_5xx_and_network_errors_are_transient():
+    assert "transient" in cls(S(board=died("server_error"), activity_ago=900))["evidence"]
+    for err in ("max_output_tokens", "timeout", "authentication_failed"):
+        assert "transient" not in cls(S(board=died(err), activity_ago=900))["evidence"]
+
+
+def test_the_spawn_pause_counts_a_limit_death_in_another_scope():
+    other = oos(session_id="b" * 8 + "-0000-4000-8000-000000000002", board=died("rate_limit", 60),
+                activity_ago=900)
+    snap = _snap([S(), other])
+    pause = classify.spawn_pause(snap, classify.classify_all(snap))
+    assert pause["sessions"] == [other["session_id"]] and pause["other_scopes"] == 1 and pause["active"]
+
+
+def test_a_session_in_an_existing_directory_outside_any_repo_is_out_of_scope_as_such():
+    got = cls(S(scope=None, placement="no-repo"))
+    assert got["class"] == "1" and got["evidence"] == "cwd is not in a git repo"

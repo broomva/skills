@@ -22,10 +22,15 @@ class SourceError(RuntimeError):
     pass
 
 
-def _run(argv: List[str], timeout: float, cwd: Optional[str] = None) -> str:
+#: Only gh needs the fleet token; every other child runs without it.
+_TOKEN_VARS = ("GH_TOKEN", "GITHUB_TOKEN")
+
+
+def _run(argv: List[str], timeout: float, cwd: Optional[str] = None, token: bool = False) -> str:
+    env = None if token else {k: v for k, v in os.environ.items() if k not in _TOKEN_VARS}
     try:
         proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                              timeout=timeout, cwd=cwd)
+                              timeout=timeout, cwd=cwd, env=env)
     except FileNotFoundError:
         raise SourceError("%s: not found" % argv[0])
     except subprocess.TimeoutExpired:
@@ -145,16 +150,16 @@ class Sources:
         return _run(["git", "--git-dir", common_dir, "remote", "get-url", "origin"], 10).strip()
 
     def default_branch(self, slug: str) -> str:
-        return _run([self.gh, "api", "repos/%s" % slug, "--jq", ".default_branch"], 30).strip()
+        return _run([self.gh, "api", "repos/%s" % slug, "--jq", ".default_branch"], 30, token=True).strip()
 
     def rules(self, slug: str, branch: str) -> str:
-        return _run([self.gh, "api", "repos/%s/rules/branches/%s" % (slug, branch)], 30)
+        return _run([self.gh, "api", "repos/%s/rules/branches/%s" % (slug, branch)], 30, token=True)
 
     def open_prs(self, slug: str, limit: int) -> str:
         from .parsers import PR_FIELDS
 
         return _run([self.gh, "pr", "list", "-R", slug, "--state", "open", "--limit", str(limit),
-                     "--json", PR_FIELDS], 60)
+                     "--json", PR_FIELDS], 60, token=True)
 
     # launchd and run logs ------------------------------------------------
     def launch_agents(self, prefix: str) -> Iterator[Tuple[str, str]]:

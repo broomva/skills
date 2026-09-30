@@ -13,14 +13,19 @@
 # owner's cadence) and the inner resume tick (phase 2's resume verb).
 #
 # PHASE 1 runs deterministic code only; no model runs and no session is acted
-# on. Per tick: kill switch, config-check, lock, the fleet GH_TOKEN, observe,
-# report (classes, count check, the ask batch), the ask notification, the core
-# comparison once a day, and the ledger's tick_fire and runner_exit records.
+# on. Per tick: kill switch, config-check, lock, the tick number, the fleet
+# token, observe, report (classes, count check, asks), the ask notification,
+# the core comparison once a day, and the ledger's tick_fire and runner_exit.
 # Phase 2 adds `fleet recover` before the coordinator and the coordinator itself.
+#
+# A tick that fails (a bad config, observe or report failing) notifies the
+# owner directly, at most once per 6 h per kind, and exits 1 so launchd's last
+# exit shows it. The kill switch set to off is not a failure: exit 0.
 #
 # Env: FLEET_SCOPE (required); FLEET_CONFIG (default ~/.config/ctx/fleet.json);
 # DRY_RUN (any value but 0 forces dry; no value makes a tick live, only the
-# config's dry_run 0 does); FLEET_PYTHON.
+# config's dry_run 0 does); FLEET_PYTHON. Test seams: FLEET_TICK_TIMEOUT_S,
+# FLEET_NOTIFY=0, FLEET_OSASCRIPT_BIN, FLEET_P9_BIN.
 set -uo pipefail
 
 # ── recursion guard ──────────────────────────────────────────────────────────
@@ -34,7 +39,7 @@ FLEET="$SCRIPT_DIR/fleet"
 SCOPE="${FLEET_SCOPE:-}"
 case "$SCOPE" in
   ([a-z0-9]*) : ;;
-  (*) echo "tick.sh: FLEET_SCOPE is unset or not a scope id" >&2; exit 0 ;;
+  (*) echo "tick.sh: FLEET_SCOPE is unset or not a scope id" >&2; exit 2 ;;
 esac
 
 cfg() { "$FLEET" config-get "$SCOPE" "$1" 2>/dev/null; }
@@ -54,11 +59,37 @@ mkdir -p "$STATE_DIR" 2>/dev/null && chmod 700 "$STATE_DIR" 2>/dev/null
 LOG="$STATE_DIR/tick.log"
 NOTICE="$STATE_DIR/.disabled-notice"
 LOCK="$STATE_DIR/.tick.lock"
-COUNTER="$STATE_DIR/tick-counter"
 log() { echo "[$(date -u +%FT%TZ)] $*" >> "$LOG"; }
 
+# alert KIND MESSAGE: tell the owner directly, from bash, so it works when
+# Python or the config is what broke. At most once per 6 h per kind. The
+# message is this script's own text, never another session's words.
+alert() {
+  local kind=$1 msg=$2 stamp="$STATE_DIR/.alert-$1" now last
+  log "ALERT $kind: $msg"
+  now=$(date +%s)
+  last=$(file_mtime "$stamp"); case "$last" in (""|*[!0-9]*) last=0 ;; esac
+  [ $((now - last)) -ge 21600 ] || return 0
+  touch "$stamp"
+  [ "${FLEET_NOTIFY:-}" = "0" ] && return 0
+  local title="fleet $SCOPE: tick failed" body="$msg | log: $LOG"
+  body=${body//\\/\\\\}; body=${body//\"/\\\"}
+  "${FLEET_OSASCRIPT_BIN:-osascript}" -e "display notification \"$body\" with title \"$title\"" \
+    >/dev/null 2>&1 </dev/null
+  local p9="${FLEET_P9_BIN:-$(command -v p9 2>/dev/null)}"
+  [ -n "$p9" ] && "$p9" notify "$title" --body "$msg" --kind fleet-alert >/dev/null 2>&1 </dev/null
+  return 0
+}
+
 # ── kill switch: read before anything fires; an unreadable value is off ──────
+# Off by the owner's choice (a value other than 1) exits 0. Off because the
+# config can't be read is also off, and is a failure the owner hears about.
 KILL=$(cfg dispatch_enabled)
+KILL_RC=$?
+if [ "$KILL_RC" != "0" ]; then
+  alert config "the fleet config can't be read for scope $SCOPE (fleet config-check says why); no tick"
+  exit 1
+fi
 if [ "$KILL" != "1" ]; then
   if [ ! -f "$NOTICE" ]; then
     log "scope $SCOPE DISABLED (dispatch_enabled='${KILL:-<unreadable>}'): no tick until it is exactly 1"
@@ -69,8 +100,8 @@ fi
 rm -f "$NOTICE"
 
 if ! "$FLEET" config-check "$SCOPE" >> "$LOG" 2>&1; then
-  log "config-check failed for $SCOPE: no tick"
-  exit 0
+  alert config "config-check failed for scope $SCOPE; no tick until it passes"
+  exit 1
 fi
 
 # ── dry run falls toward dry ─────────────────────────────────────────────────
@@ -82,50 +113,60 @@ case "${DRY_RUN:-}" in
 esac
 
 # ── lock: one tick per scope at a time ───────────────────────────────────────
+# A stale lock is reclaimed under a second mkdir mutex, and its holder is
+# re-read inside it, so two ticks that both judged it stale can't both run.
 NOW=$(date +%s)
 if ! mkdir "$LOCK" 2>/dev/null; then
+  RECLAIM="$LOCK.reclaim"
+  if ! mkdir "$RECLAIM" 2>/dev/null; then
+    RT=$(file_mtime "$RECLAIM"); case "$RT" in (""|*[!0-9]*) RT=$NOW ;; esac
+    [ $((NOW - RT)) -ge 60 ] && rmdir "$RECLAIM" 2>/dev/null
+    exit 0
+  fi
   HOLDER=$(cat "$LOCK/pid" 2>/dev/null || echo "")
   STEP=$(cat "$LOCK/runner-pid" 2>/dev/null || echo "")
-  if [ -n "$HOLDER" ] && kill -0 "$HOLDER" 2>/dev/null; then
-    log "tick skipped: tick $HOLDER is still running"; exit 0
+  MT=$(file_mtime "$LOCK"); case "$MT" in (""|*[!0-9]*) MT=$NOW ;; esac
+  if { [ -n "$HOLDER" ] && kill -0 "$HOLDER" 2>/dev/null; } || { [ -n "$STEP" ] && kill -0 "$STEP" 2>/dev/null; } \
+     || [ $((NOW - MT)) -lt 120 ]; then
+    rmdir "$RECLAIM" 2>/dev/null
+    log "tick skipped: a tick holds the lock (tick ${HOLDER:-?}, step ${STEP:-?})"
+    exit 0
   fi
-  if [ -n "$STEP" ] && kill -0 "$STEP" 2>/dev/null; then
-    log "tick skipped: step $STEP is still running"; exit 0
-  fi
-  MT=$(file_mtime "$LOCK")
-  case "$MT" in (""|*[!0-9]*) MT=$NOW ;; esac
-  if [ $((NOW - MT)) -lt 120 ]; then exit 0; fi
-  if ! mv "$LOCK" "$LOCK.stale.$$" 2>/dev/null; then exit 0; fi
-  rm -f "$LOCK.stale.$$/pid" "$LOCK.stale.$$/runner-pid"
-  rmdir "$LOCK.stale.$$" 2>/dev/null
-  mkdir "$LOCK" 2>/dev/null || exit 0
+  rm -f "$LOCK/pid" "$LOCK/runner-pid"
+  rmdir "$LOCK" 2>/dev/null
+  if ! mkdir "$LOCK" 2>/dev/null; then rmdir "$RECLAIM" 2>/dev/null; exit 0; fi
+  rmdir "$RECLAIM" 2>/dev/null
   log "reclaimed a stale lock (tick ${HOLDER:-?}, step ${STEP:-?}, both gone)"
 fi
 echo $$ > "$LOCK/pid"
 STEP_PID=""
+WD_PID=""
 release() {
-  [ -n "$STEP_PID" ] && kill "$STEP_PID" 2>/dev/null
+  [ -n "$STEP_PID" ] && kill -TERM -- "-$STEP_PID" 2>/dev/null
+  [ -n "$WD_PID" ] && kill "$WD_PID" 2>/dev/null
   rm -f "$LOCK/pid" "$LOCK/runner-pid"
   rmdir "$LOCK" 2>/dev/null
 }
 trap release EXIT
 
-# ── tick number ──────────────────────────────────────────────────────────────
-N=$(cat "$COUNTER" 2>/dev/null || echo 0)
-case "$N" in (*[!0-9]*|"") N=0 ;; esac
-N=$((N + 1))
-echo "$N" > "$COUNTER"
+# ── tick number: past both the counter and the ledger's last tick ─────────────
+N=$("$FLEET" next-tick --scope "$SCOPE" 2>>"$LOG")
+case "$N" in
+  (""|*[!0-9]*) alert tick "could not take a tick number for scope $SCOPE"; exit 1 ;;
+esac
 
-# ── the fleet GH_TOKEN: read from its 0600 file, never argv, never printed ───
+# ── the fleet token: read from its 0600 file, never argv, never printed ───────
+# Exported for the observe step only (gh is the only reader); observe passes it
+# to gh and to nothing else.
 GH_AUTH="keyring"
+TOKEN=""
 TOKFILE=$(cfg gh_token_file)
 if [ -n "$TOKFILE" ]; then
   if [ -r "$TOKFILE" ]; then
     MODE=$(file_mode "$TOKFILE")
     [ "$MODE" = "600" ] || [ "$MODE" = "400" ] || log "WARN: $TOKFILE has mode $MODE, not 600"
-    GH_TOKEN=$(head -c 512 "$TOKFILE" | tr -d '[:space:]')
-    export GH_TOKEN
-    GH_AUTH="fleet token file"
+    TOKEN=$(head -c 512 "$TOKFILE" | tr -d '[:space:]')
+    if [ -n "$TOKEN" ]; then GH_AUTH="fleet token file"; else GH_AUTH="keyring (token file $TOKFILE is empty)"; fi
   else
     GH_AUTH="keyring (token file $TOKFILE unreadable)"
   fi
@@ -138,53 +179,67 @@ log "tick $N scope $SCOPE (dry_run=$DRY, gh: $GH_AUTH)"
 TIMEOUT_MIN=$(cfg tick_timeout_min)
 case "$TIMEOUT_MIN" in (*[!0-9]*|""|0) TIMEOUT_MIN=15 ;; esac
 BUDGET_S=$((TIMEOUT_MIN * 60))
-case "${FLEET_TICK_TIMEOUT_S:-}" in (""|*[!0-9]*) : ;; (*) BUDGET_S=$FLEET_TICK_TIMEOUT_S ;; esac  # tests
+case "${FLEET_TICK_TIMEOUT_S:-}" in (""|*[!0-9]*) : ;; (*) BUDGET_S=$FLEET_TICK_TIMEOUT_S ;; esac
 DEADLINE=$((NOW + BUDGET_S))
 
-# step NAME CMD... : run CMD in the background under a TERM-then-KILL watchdog;
-# sets RC. The watchdog traps TERM and kills its own sleep, so no sleep outlives
-# the tick.
+# step NAME CMD... : run CMD in its own process group under a TERM-then-KILL
+# watchdog, so a timeout also ends the command's children (claude, gh); sets RC.
 step() {
   local name=$1; shift
   local left=$((DEADLINE - $(date +%s)))
   if [ "$left" -le 0 ]; then log "step $name skipped: the tick is out of time"; RC=124; return; fi
-  "$@" >> "$LOG" 2>&1 &
+  set -m
+  "$@" < /dev/null >> "$LOG" 2>&1 &
   STEP_PID=$!
+  set +m
   echo "$STEP_PID" > "$LOCK/runner-pid"
   (
     trap 'kill $(jobs -p) 2>/dev/null; exit 0' TERM
     sleep "$left" &
     wait
     if kill -0 "$STEP_PID" 2>/dev/null; then
-      kill "$STEP_PID" 2>/dev/null
-      echo "[$(date -u +%FT%TZ)] step $name over the tick's budget: sent TERM" >> "$LOG"
+      kill -TERM -- "-$STEP_PID" 2>/dev/null
+      echo "[$(date -u +%FT%TZ)] step $name over the tick's budget: sent TERM to its process group" >> "$LOG"
       # In the background too: bash runs a trap only after a foreground
       # command ends, so a foreground sleep here would hold the reap for 30 s.
       sleep 30 &
       wait
-      kill -9 "$STEP_PID" 2>/dev/null
+      kill -KILL -- "-$STEP_PID" 2>/dev/null
     fi
   ) >> "$LOG" 2>&1 &
-  local wd=$!
+  WD_PID=$!
   wait "$STEP_PID"
   RC=$?
   STEP_PID=""
-  kill "$wd" 2>/dev/null
-  wait "$wd" 2>/dev/null
+  kill "$WD_PID" 2>/dev/null
+  wait "$WD_PID" 2>/dev/null
+  WD_PID=""
   log "step $name rc=$RC"
 }
 
 RCS=""
+FAILED=""
+if [ -n "$TOKEN" ]; then export GH_TOKEN="$TOKEN"; fi
+export FLEET_GH_AUTH="$GH_AUTH"
 step observe "$FLEET" observe --scope "$SCOPE" --tick "$N"; RCS="observe=$RC"
-if [ "$RC" = "0" ]; then
+unset GH_TOKEN TOKEN
+[ "$RC" = "0" ] || FAILED="observe"
+if [ -z "$FAILED" ]; then
   step report "$FLEET" report --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS report=$RC"
+  [ "$RC" = "0" ] || FAILED="report"
 fi
 step ask "$FLEET" act ask --notify --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS ask=$RC"
+[ "$RC" = "0" ] || FAILED="${FAILED:-ask}"
 step compare "$FLEET" core-compare --scope "$SCOPE"; RCS="$RCS compare=$RC"
 
 FINAL=0
-case "$RCS" in (*observe=[!0]*|*report=[!0]*|*ask=[!0]*) FINAL=1 ;; esac
+[ -n "$FAILED" ] && FINAL=1
 "$FLEET" ledger-record exit --scope "$SCOPE" --tick "$N" --dry-run "$DRY" --exit-code "$FINAL" \
   --detail "$RCS" >> "$LOG" 2>&1
 log "tick $N done: $RCS"
+echo "[$(date -u +%FT%TZ)] fleet-reconcile $SCOPE tick $N: $RCS"   # launchd's log: one line per run
+if [ -n "$FAILED" ]; then
+  alert tick "tick $N failed at $FAILED ($RCS)"
+  exit 1
+fi
 exit 0

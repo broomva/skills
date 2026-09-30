@@ -32,6 +32,9 @@ PINNED_CC_VERSION = "2.1.280"
 LISTING_KINDS = ("interactive", "background")
 LISTING_STATES = ("working", "done", "blocked", "failed", "stopped")
 LISTING_STATUSES = ("idle", "busy", "waiting")
+#: waitingFor values seen on 2.1.280 (evidence files and captures). Class 3
+#: versus class 7 reads this field, so an unfamiliar value is drift.
+WAITING_FOR = ("permission prompt", "dialog open", "input needed")
 JOB_STATES = LISTING_STATES
 
 
@@ -103,6 +106,8 @@ def parse_listing(text: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
             drift.append("listing: kind %r" % kind)
         if row["state"] is not None and row["state"] not in LISTING_STATES:
             drift.append("listing: state %r" % row["state"])
+        if row["waiting_for"] is not None and row["waiting_for"] not in WAITING_FOR:
+            drift.append("listing: waitingFor %r" % row["waiting_for"])
         if row["status"] is not None and row["status"] not in LISTING_STATUSES:
             drift.append("listing: status %r" % row["status"])
         extra = set(r) - {"sessionId", "kind", "cwd", "name", "startedAt", "id", "state", "pid", "status",
@@ -117,10 +122,13 @@ def parse_listing(text: Any) -> Tuple[List[Dict[str, Any]], List[str]]:
 # ~/.claude/jobs/<id>/state.json
 
 #: The usage-limit text Claude Code writes into a background job's detail and
-#: needs: "You've hit your session limit · resets 10am (America/Bogota)".
+#: needs: "You've hit your session limit · resets 10am (America/Bogota)". A
+#: limit that resets on another day names the date: "resets Oct 3, 10am (…)".
 LIMIT_RE = re.compile(r"hit your (?:[a-z0-9-]+ )?limit", re.IGNORECASE)
-RESET_RE = re.compile(r"resets\s+(\d{1,2})(?::(\d{2}))?\s*([ap]m)\s*\(([A-Za-z_]+(?:/[A-Za-z_+-]+)*)\)",
+RESET_RE = re.compile(r"resets\s+(?:([A-Z][a-z]{2})[a-z]*\.?\s+(\d{1,2}),?\s+(?:at\s+)?)?"
+                      r"(\d{1,2})(?::(\d{2}))?\s*([ap]m)\s*\(([A-Za-z_]+(?:/[A-Za-z_+-]+)*)\)",
                       re.IGNORECASE)
+_MONTHS = ("jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec")
 
 
 def parse_job_state(text: Any, job_id: str) -> Dict[str, Any]:
@@ -151,9 +159,17 @@ def parse_job_state(text: Any, job_id: str) -> Dict[str, Any]:
         "worktree_branch": d.get("worktreeBranch") if isinstance(d.get("worktreeBranch"), str) else None,
         "name": d.get("name") if isinstance(d.get("name"), str) else None,
         "cli_version": d.get("cliVersion") if isinstance(d.get("cliVersion"), str) else None,
-        "updated_at": (d["updatedAt"] / 1000.0) if type(d.get("updatedAt")) is int else None,
+        "updated_at": _epoch(d.get("updatedAt")),
         "settings_path": settings_path,
     }
+
+
+def _epoch(v: Any) -> Optional[float]:
+    """A job file's time: an ISO string on 2.1.280 (every captured file), or
+    epoch milliseconds."""
+    if type(v) is int:
+        return v / 1000.0
+    return common.parse_iso(v)
 
 
 def _reset_text(s: str) -> Optional[str]:
@@ -162,8 +178,9 @@ def _reset_text(s: str) -> Optional[str]:
 
 
 def reset_epoch(reset_text: Optional[str], after: float) -> Optional[float]:
-    """The first moment at or after `after` that matches "resets 9:50am
-    (America/Bogota)", or None when it can't be read."""
+    """When the limit resets: for "resets 9:50am (America/Bogota)" the first
+    such moment at or after `after`; for "resets Oct 3, 10am (…)" that date,
+    in the year that puts it nearest after `after`. None when unreadable."""
     m = RESET_RE.search(reset_text or "")
     if not m:
         return None
@@ -171,12 +188,24 @@ def reset_epoch(reset_text: Optional[str], after: float) -> Optional[float]:
         from zoneinfo import ZoneInfo
         import datetime as dt
 
-        tz = ZoneInfo(m.group(4))
+        tz = ZoneInfo(m.group(6))
     except Exception:
         return None
-    hour = int(m.group(1)) % 12 + (12 if m.group(3).lower() == "pm" else 0)
-    minute = int(m.group(2) or 0)
+    hour = int(m.group(3)) % 12 + (12 if m.group(5).lower() == "pm" else 0)
+    minute = int(m.group(4) or 0)
     base = dt.datetime.fromtimestamp(after, tz)
+    if m.group(1):
+        mon = m.group(1).lower()
+        if mon not in _MONTHS:
+            return None
+        try:
+            cand = base.replace(month=_MONTHS.index(mon) + 1, day=int(m.group(2)), hour=hour, minute=minute,
+                                second=0, microsecond=0)
+        except ValueError:
+            return None
+        if cand.timestamp() < after - 180 * 86400:
+            cand = cand.replace(year=cand.year + 1)
+        return cand.timestamp()
     cand = base.replace(hour=hour, minute=minute, second=0, microsecond=0)
     if cand.timestamp() < after:
         cand = cand + dt.timedelta(days=1)
@@ -361,7 +390,8 @@ def parse_launchctl_print(text: str) -> Dict[str, Any]:
                 out["runs"] = int(value.strip())
             elif key == "last exit code":
                 v = value.strip()
-                out["last_exit"] = int(v) if re.fullmatch(r"-?\d+", v) else v
+                m = re.match(r"(-?\d+)\b", v)  # "0", or "78: EX_CONFIG"
+                out["last_exit"] = int(m.group(1)) if m else v
             elif key == "pid" and value.strip().isdigit():
                 out["pid"] = int(value.strip())
     return out

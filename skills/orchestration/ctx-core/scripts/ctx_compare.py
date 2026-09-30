@@ -11,7 +11,7 @@ days of the criterion stay on disk.
 Matching is on the full session id, never on counts: a compaction and a resume
 each publish a session.start, so start counts overstate sessions.
 
-Reasons, a fixed list (a new one is a code change with a test). The first three
+Reasons, a fixed list (a new one is a code change with a test). The first four
 describe what the comparator can see, not the hooks, and are left out of the
 95%; the rest count against it because in them the board is wrong or the gap
 is unexplained:
@@ -23,8 +23,12 @@ is unexplained:
                          longer lists the session
     pre-registration     listed session with no transcript entry after the
                          hooks were registered
+    died                 the row's latest event is session.died and nothing
+                         came after it: the board is right, and the transcript
+                         counted on the session side is the death itself
     died-then-continued  the row's latest event is session.died, but the
-                         session is listed with a later transcript entry
+                         session is listed with a transcript entry more than
+                         GRACE_S after it
     no-event             no event at all for a listed session
     stale-event          a listed session active in the window whose latest
                          event is older than the window (a long turn: until
@@ -32,8 +36,12 @@ is unexplained:
                          StopFailure)
     unexplained          any other board-only row
 
-Two of these (stale-event, unexplained) are this build's additions to the
-spec's five, pending the spec (broomva/workspace#842).
+Three of these (died, stale-event, unexplained) are this build's additions to
+the spec's five, pending the spec (broomva/workspace#842).
+
+No evidence is not a pass: an unreadable transcript directory or an empty
+listing is an error, and a side with nothing left to count after the
+exclusions reads as NO EVIDENCE, which fails.
 
 Placed in `ctx_compare.py` rather than inside ctx.py (where the spec puts it)
 so ctx.py's diff stays to the doctor dispatch; it uses ctx.py's own readers.
@@ -49,10 +57,12 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import ctx
 
-EXCLUDED = ("no-transcript", "ended", "pre-registration")
+EXCLUDED = ("no-transcript", "ended", "pre-registration", "died")
 COUNTED = ("died-then-continued", "no-event", "stale-event", "unexplained")
 REASONS = EXCLUDED + COUNTED
 THRESHOLD = 0.95
+#: Transcript writes this soon after a death belong to it (as in fleet-reconcile).
+GRACE_S = 120
 
 
 def load_listing(path: Optional[str] = None, timeout: float = 30.0) -> List[Dict[str, Any]]:
@@ -73,17 +83,22 @@ def load_listing(path: Optional[str] = None, timeout: float = 30.0) -> List[Dict
     rows = json.loads(text)
     if not isinstance(rows, list):
         raise RuntimeError("claude agents: not a JSON array")
-    return [r for r in rows if isinstance(r, dict) and isinstance(r.get("sessionId"), str)]
+    rows = [r for r in rows if isinstance(r, dict) and isinstance(r.get("sessionId"), str)]
+    if not rows:
+        raise RuntimeError("claude agents listed no session (it lists at least the one asking)")
+    return rows
 
 
 def transcript_times() -> Dict[str, float]:
-    """{session id: mtime of its top-level transcript}, across every project."""
+    """{session id: mtime of its top-level transcript}, across every project.
+    Raises RuntimeError when the projects directory can't be read: that is no
+    evidence, not an empty set."""
     out: Dict[str, float] = {}
     root = ctx._claude_projects_dir()
     try:
         pdirs = [p for p in root.iterdir() if p.is_dir()]
-    except OSError:
-        return out
+    except OSError as exc:
+        raise RuntimeError("%s: %s" % (root, exc.strerror or exc))
     for pdir in pdirs:
         try:
             entries = list(os.scandir(pdir))
@@ -127,10 +142,11 @@ def compare(scope_id: str, listing: List[Dict[str, Any]], transcripts: Dict[str,
         if mt is None or mt < window:
             continue
         cwd = r.get("cwd") if isinstance(r.get("cwd"), str) else ""
-        where = ctx.locate(cwd, timeout=2.0) if cwd and os.path.isdir(cwd) else None
+        exists = bool(cwd) and os.path.isdir(cwd)
+        where = ctx.locate(cwd, timeout=2.0) if exists else None
         if where is not None:
             repo = where.common_dir
-        elif sid in rows:
+        elif not exists and sid in rows:  # a worktree removed after merge: its row says where it was
             repo = rows[sid].get("repo")
         else:
             unplaced += 1
@@ -153,31 +169,39 @@ def compare(scope_id: str, listing: List[Dict[str, Any]], transcripts: Dict[str,
         if row is None:
             reason = "pre-registration" if transcripts[sid] < registered else "no-event"
         elif row.get("state") == "died":
-            reason = "died-then-continued"
+            died = ctx.parse_ts(row["died_ts"]) if row.get("died_ts") else None
+            reason = "died-then-continued" if died is not None and transcripts[sid] > died + GRACE_S else "died"
         else:
             reason = "stale-event"
         diffs.append({"session_id": sid, "side": "sessions", "reason": reason})
 
-    def frac(side: str, total: int) -> Tuple[float, float]:
+    def frac(side: str, total: int) -> Tuple[Optional[float], Optional[float]]:
+        """(raw, adjusted); None where there is nothing to count."""
         excl = sum(1 for d in diffs if d["side"] == side and d["reason"] in EXCLUDED)
-        raw = len(both) / total if total else 1.0
-        adj = len(both) / (total - excl) if total - excl > 0 else 1.0
+        raw = len(both) / total if total else None
+        adj = len(both) / (total - excl) if total - excl > 0 else None
         return raw, adj
 
     b_raw, b_adj = frac("board", len(board_live))
     s_raw, s_adj = frac("sessions", len(session_side))
+    evidence = b_adj is not None and s_adj is not None
     counts = {r: sum(1 for d in diffs if d["reason"] == r) for r in REASONS}
     return {
         "v": 1, "ts": ctx.now_ts(now), "scope": scope_id, "hours": hours,
         "registered": ctx.now_ts(registered), "board_live": len(board_live), "sessions": len(session_side),
-        "both": len(both), "board_pct": round(b_adj, 4), "session_pct": round(s_adj, 4),
-        "board_raw_pct": round(b_raw, 4), "session_raw_pct": round(s_raw, 4), "reasons": counts,
-        "unplaced_listed": unplaced, "pass": b_adj >= THRESHOLD and s_adj >= THRESHOLD, "differences": diffs,
+        "both": len(both), "board_pct": _r(b_adj), "session_pct": _r(s_adj),
+        "board_raw_pct": _r(b_raw), "session_raw_pct": _r(s_raw), "reasons": counts,
+        "unplaced_listed": unplaced, "evidence": evidence,
+        "pass": evidence and b_adj >= THRESHOLD and s_adj >= THRESHOLD, "differences": diffs,
     }
 
 
+def _r(v: Optional[float]) -> Optional[float]:
+    return None if v is None else round(v, 4)
+
+
 def render(res: Dict[str, Any]) -> str:
-    pct = lambda v: "%.0f%%" % (v * 100)  # noqa: E731
+    pct = lambda v: "-" if v is None else "%.0f%%" % (v * 100)  # noqa: E731
     lines = [
         "compare   scope %s, window %gh, hooks registered %s" % (res["scope"], res["hours"], res["registered"]),
         "  board     %d live rows (an event in the window, not session.died)" % res["board_live"],
@@ -187,7 +211,8 @@ def render(res: Dict[str, Any]) -> str:
         "  figures   board side %s, session side %s (raw %s, %s); %s of each set must appear in the other, "
         "without the reasons %s" % (pct(res["board_pct"]), pct(res["session_pct"]), pct(res["board_raw_pct"]),
                                     pct(res["session_raw_pct"]), pct(THRESHOLD), ", ".join(EXCLUDED)),
-        "  result    %s" % ("PASS" if res["pass"] else "FAIL"),
+        "  result    %s" % ("PASS" if res["pass"] else "FAIL" if res["evidence"] else
+                            "NO EVIDENCE (a side has nothing left to count), which fails"),
     ]
     for d in res["differences"]:
         lines.append("  %-9s %s  %s%s" % (d["side"], d["session_id"], d["reason"],
@@ -214,11 +239,12 @@ def run_for_scope(scope_id: str, hours: float = 6.0, as_json: bool = False, list
     now = time.time() if now is None else now
     try:
         listing = load_listing(listing_file)
+        transcripts = transcript_times()
     except (RuntimeError, OSError, ValueError) as exc:
-        print("compare   the session listing could not be read: %s" % exc)
+        print("compare   the session listing or the transcripts could not be read: %s" % exc)
         return 1
     reg = ctx.parse_ts(registered) if registered else None
-    res = compare(scope_id, listing, transcript_times(), now, hours, reg)
+    res = compare(scope_id, listing, transcripts, now, hours, reg)
     append_summary(scope_id, res)
     print(json.dumps(res, indent=1, sort_keys=True) if as_json else render(res))
     return 0 if res["pass"] else 1

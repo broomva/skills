@@ -99,11 +99,19 @@ MUTANTS = [
      "            if problems:  # a broken config is reported from anywhere", "            if False:",
      [T + "test_hooks.py::test_doctor_reports_a_broken_config_from_any_directory"]),
     ("compare counts the excluded reasons", "scripts/ctx_compare.py",
-     "        adj = len(both) / (total - excl) if total - excl > 0 else 1.0", "        adj = raw",
+     "        adj = len(both) / (total - excl) if total - excl > 0 else None", "        adj = raw",
      [T + "test_compare.py::test_every_reason_is_exercised_and_the_excluded_ones_do_not_count"]),
     ("compare writes the board", "scripts/ctx_compare.py",
      "    rows = board[\"sessions\"]\n", "    ctx.write_board(sc, board)\n    rows = board[\"sessions\"]\n",
      [T + "test_compare.py::test_a_run_changes_none_of_the_store_files_and_appends_one_summary"]),
+    ("compare calls every listed death continued", "scripts/ctx_compare.py",
+     'reason = "died-then-continued" if died is not None and transcripts[sid] > died + GRACE_S else "died"',
+     'reason = "died-then-continued"',
+     [T + "test_compare.py::test_every_reason_is_exercised_and_the_excluded_ones_do_not_count"]),
+    ("compare passes on no evidence", "scripts/ctx_compare.py",
+     "    evidence = b_adj is not None and s_adj is not None",
+     "    evidence = True\n    b_adj = 1.0 if b_adj is None else b_adj\n    s_adj = 1.0 if s_adj is None else s_adj",
+     [T + "test_compare.py::test_no_evidence_is_not_a_pass"]),
 ]
 
 

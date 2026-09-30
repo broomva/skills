@@ -14,7 +14,7 @@
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>{{SKILL_DIR}}/scripts/tick.sh</string>
+        <string>{{TICK}}</string>
     </array>
     <key>EnvironmentVariables</key>
     <dict>

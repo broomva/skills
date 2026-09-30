@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import time
@@ -31,10 +32,11 @@ def rig(fresh_world, tmp_path):
     calls_dir = tmp_path / "calls"
     calls_dir.mkdir()
     fx = w.fixture
-    _stub(bin_ / "claude", 'case "$1" in\n'
+    _stub(bin_ / "claude", 'echo "${#GH_TOKEN}" >> "%s/claude-token-lengths"\n'
+          'case "$1" in\n'
           '  --version) cat "%s/claude/version.txt" ;;\n'
-          '  agents) [ -n "${STUB_HANG:-}" ] && sleep 30; cat "%s/claude/agents.json" ;;\n'
-          '  *) exit 2 ;;\nesac\n' % (fx, fx))
+          '  agents) [ -n "${STUB_HANG:-}" ] && sleep 33; cat "%s/claude/agents.json" ;;\n'
+          '  *) exit 2 ;;\nesac\n' % (calls_dir, fx, fx))
     _stub(bin_ / "gh", 'echo "${#GH_TOKEN}" >> "%s/gh-token-lengths"\n'
           'slug=""; for a in "$@"; do case "$a" in repos/*) slug=${a#repos/}; slug=${slug%%%%/rules*} ;; esac; done\n'
           'if [ "$1" = pr ]; then slug=$4; fi\n'
@@ -109,6 +111,7 @@ def test_the_fleet_token_reaches_gh_through_the_environment_and_nowhere_else(rig
     rig.tick()
     lengths = set(rig.calls("gh-token-lengths"))
     assert lengths == {str(len(TOKEN))}
+    assert set(rig.calls("claude-token-lengths")) == {"0"}  # claude runs without it
     sd = rig.world.state["broomva"]
     for p in sd.rglob("*"):
         if p.is_file():
@@ -116,11 +119,19 @@ def test_the_fleet_token_reaches_gh_through_the_environment_and_nowhere_else(rig
     assert "gh: fleet token file" in rig.log()
 
 
-def test_without_a_token_file_gh_falls_back_to_the_keyring(rig):
+def test_without_a_token_file_gh_falls_back_to_the_keyring_and_the_report_says_so(rig):
     rig.token_file.unlink()
     rig.tick()
     assert set(rig.calls("gh-token-lengths")) == {"0"}
     assert "token file" in rig.log() and "unreadable" in rig.log()
+    md = (rig.world.state["broomva"] / "ticks" / "00001" / "report.md").read_text()
+    assert "read with the keyring token" in md
+
+
+def test_an_empty_token_file_is_not_a_token(rig):
+    rig.token_file.write_text("\n")
+    rig.tick()
+    assert set(rig.calls("gh-token-lengths")) == {"0"} and "is empty" in rig.log()
 
 
 def test_the_kill_switch_stops_the_tick_before_anything_fires(rig):
@@ -135,10 +146,40 @@ def test_the_kill_switch_stops_the_tick_before_anything_fires(rig):
 
 @pytest.mark.parametrize("bad", ["not json", json.dumps({"v": 1, "scopes": {"broomva": {"dispatch_enabled": 1,
                                                                                          "surprise": 1}}})])
-def test_an_unreadable_or_invalid_config_stops_the_tick(rig, bad):
+def test_an_unreadable_or_invalid_config_stops_the_tick_and_alerts_once(rig, bad):
     rig.world.config.write_text(bad)
-    rig.tick()
+    first, second = rig.tick(), rig.tick()
+    assert first.returncode == 1 and second.returncode == 1
     assert rig.ledger() == [] and rig.calls("gh-token-lengths") == []
+    alerts = [c for c in rig.calls("osascript") if "tick failed" in c]
+    assert len(alerts) == 1  # at most once per 6 h per kind
+
+
+def test_a_failed_step_alerts_and_exits_1(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    (sd / "ticks").write_text("a file where the ticks dir goes")  # observe can't write its snapshot
+    r = rig.tick()
+    assert r.returncode == 1
+    assert rig.ledger()[-1]["kind"] == "runner_exit" and rig.ledger()[-1]["exit_code"] == 1
+    assert any("failed at observe" in c for c in rig.calls("osascript"))
+
+
+def test_a_lost_counter_does_not_reuse_a_tick_number(rig):
+    rig.tick()
+    rig.tick()
+    (rig.world.state["broomva"] / "tick-counter").unlink()
+    rig.tick()
+    fires = [x["tick"] for x in rig.ledger() if x["kind"] == "tick_fire"]
+    assert fires == [1, 2, 3]
+
+
+def test_each_run_leaves_one_line_on_stdout_for_launchds_log(rig):
+    r = rig.tick()
+    lines = r.stdout.strip().splitlines()
+    assert len(lines) == 1 and re.search(r"fleet-reconcile broomva tick 1: observe=0 report=0 ask=0 compare=\d$",
+                                         lines[0]), r.stdout
+    assert r.returncode == 0  # the core comparison's own verdict doesn't fail the tick
 
 
 @pytest.mark.parametrize("cfg_dry,env_dry,expected", [(1, None, True), (0, None, False), (0, "1", True),
@@ -157,7 +198,7 @@ def test_a_live_lock_skips_the_tick_and_a_stale_one_is_reclaimed(rig):
     lock.mkdir()
     (lock / "pid").write_text(str(os.getpid()))  # this test process: alive
     rig.tick()
-    assert "still running" in rig.log() and not (sd / "tick-counter").exists()
+    assert "holds the lock" in rig.log() and not (sd / "tick-counter").exists()
     dead = subprocess.Popen(["true"])
     dead.wait()
     (lock / "pid").write_text(str(dead.pid))
@@ -168,18 +209,38 @@ def test_a_live_lock_skips_the_tick_and_a_stale_one_is_reclaimed(rig):
     assert not lock.exists()
 
 
+def test_a_reclaim_in_progress_keeps_a_second_tick_out(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    lock = sd / ".tick.lock"
+    lock.mkdir()
+    old = time.time() - 600
+    os.utime(lock, (old, old))  # stale: no pid, old
+    (sd / ".tick.lock.reclaim").mkdir()  # another tick is reclaiming it right now
+    assert rig.tick().returncode == 0
+    assert not (sd / "tick-counter").exists() and lock.exists()
+
+
+def test_the_kill_switch_off_is_not_a_failure(rig):
+    rig.world.write_config(dispatch_enabled=0)
+    assert rig.tick().returncode == 0 and rig.calls("osascript") == []
+
+
 def test_the_recursion_guard_exits_before_anything(rig):
     rig.tick(FLEET_CHILD="1")
     assert rig.ledger() == [] and rig.log() == ""
 
 
-def test_a_hung_step_is_stopped_by_the_watchdog(rig):
+def test_a_hung_step_is_stopped_by_the_watchdog_children_included(rig):
     t0 = time.monotonic()
-    rig.tick(FLEET_TICK_TIMEOUT_S="3", STUB_HANG="1")
-    assert time.monotonic() - t0 < 25
-    assert "over the tick's budget: sent TERM" in rig.log()
+    r = rig.tick(FLEET_TICK_TIMEOUT_S="3", STUB_HANG="1")
+    assert time.monotonic() - t0 < 25 and r.returncode == 1
+    assert "over the tick's budget: sent TERM to its process group" in rig.log()
     assert rig.ledger()[-1]["kind"] == "runner_exit" and rig.ledger()[-1]["exit_code"] == 1
     assert not (rig.world.state["broomva"] / ".tick.lock").exists()
+    time.sleep(0.5)
+    left = subprocess.run(["pgrep", "-f", "sleep 33"], capture_output=True, text=True).stdout.split()
+    assert left == [], "the hung stub's child outlived the tick"
 
 
 def test_a_second_tick_does_not_renotify_an_unchanged_batch_within_six_hours(rig):
@@ -194,10 +255,10 @@ def test_the_owner_reads_and_acks_asks_and_other_verbs_refuse(rig):
     rig.tick()
     asks = rig.fleet("asks")
     assert asks.returncode == 0
-    assert "tick 1" in asks.stdout and "[a1]" in asks.stdout
+    assert "[tick 1, a1]" in asks.stdout
     assert rig.fleet("ack", "1", "--ask", "zz").returncode == 1
     assert rig.fleet("ack", "1").returncode == 0
-    assert "no unacknowledged" in rig.fleet("asks").stdout
+    assert "no open asks" in rig.fleet("asks").stdout
     assert any(x["kind"] == "ack" for x in rig.ledger())
     for verb in ("mail", "spawn", "label", "resume"):
         out = rig.fleet("act", verb)

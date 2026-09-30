@@ -52,7 +52,7 @@ def test_the_fake_bearer_never_reaches_a_snapshot_or_report(world, meta):
 
 def test_a_listing_at_the_cap_fails_closed_and_nothing_is_classified(world, meta):
     rows = json.loads((world.fixture / "claude" / "agents.json").read_text())
-    big = [dict(rows[i % len(rows)], sessionId="%08x-0000-4000-8000-%012d" % (i, i)) for i in range(200)]
+    big = [dict(rows[i % len(rows)], sessionId="f%07x-0000-4000-8000-%012d" % (i, i)) for i in range(200)]
     (world.fixture / "claude" / "agents.json").write_text(json.dumps(big))
     snap = _observe(world, meta)
     assert snap["surfaces"]["listing"]["ok"] is False and snap["surfaces"]["listing"]["failed_closed"]
@@ -68,8 +68,10 @@ def test_a_listing_at_the_cap_fails_closed_and_nothing_is_classified(world, meta
 
 
 def test_the_cap_is_the_configured_one(world, meta):
-    snap = _observe(world, meta, listing_cap=10)
-    assert snap["surfaces"]["listing"]["failed_closed"]
+    # At a cap of 10 the capture's listing is over it, so it is read only
+    # because every job file appears in it; at the default 200 no check runs.
+    assert _observe(world, meta, listing_cap=10)["surfaces"]["listing"]["completeness"]
+    assert "completeness" not in _observe(world, meta)["surfaces"]["listing"]
 
 
 def test_a_slug_that_does_not_resolve_fails_that_repo_and_does_not_read_as_zero(world, meta):
@@ -171,3 +173,48 @@ def test_a_limit_line_is_read_from_the_transcript_tail_for_a_board_death(world, 
     s = {x["session_id"]: x for x in snap["sessions"]}[sid]
     assert s["limit_text"].endswith("resets 10:50pm (America/Bogota)")
     assert classify.limit_reset(s)[1] == "stated"
+
+
+# --------------------------------------------------------------------------
+# Round-2 fixes (P20 round 1)
+
+def test_a_listing_at_the_cap_is_read_when_every_job_file_is_in_it(world, meta):
+    # `claude agents --all` has no limit, and lists every background job ever
+    # run, so it can pass the cap legitimately: then the job files prove it whole.
+    rows = json.loads((world.fixture / "claude" / "agents.json").read_text())
+    extra = [dict(rows[0], kind="interactive", sessionId="e%07x-0000-4000-8000-%012d" % (i + 1, i), pid=20000 + i,
+                  status="idle", name="extra-%d" % i) for i in range(210 - len(rows))]
+    for r in extra:
+        r.pop("id", None)
+        r.pop("state", None)
+    (world.fixture / "claude" / "agents.json").write_text(json.dumps(rows + extra))
+    snap = _observe(world, meta)
+    assert snap["surfaces"]["listing"]["ok"] and snap["surfaces"]["listing"]["completeness"]
+    assert len(snap["sessions"]) == 210
+    # One job file missing from the listing: it may be truncated after all.
+    bg = [r for r in rows if r["kind"] == "background"][0]
+    (world.fixture / "claude" / "agents.json").write_text(json.dumps([r for r in rows + extra if r is not bg]
+                                                                     + [dict(extra[0], sessionId="f" * 8 + extra[0]["sessionId"][8:])]))
+    assert _observe(world, meta)["surfaces"]["listing"]["failed_closed"]
+
+
+def test_an_unparsed_job_file_degrades_only_its_own_session(world, meta):
+    rows = json.loads((world.fixture / "claude" / "agents.json").read_text())
+    bg = [r for r in rows if r["kind"] == "background" and "pid" not in r][0]
+    (world.fixture / "claude" / "jobs" / bg["id"] / "state.json").write_text("{torn")
+    snap = _observe(world, meta)
+    assert snap["surfaces"]["jobs"]["ok"] and snap["surfaces"]["jobs"]["unparsed"] == 1
+    by = {s["session_id"]: s for s in snap["sessions"]}
+    assert by[bg["sessionId"]]["job_unread"] is True
+    assert sum(1 for s in snap["sessions"] if s["job_unread"]) == 1
+    rep = report.build(snap, [], True)
+    row = [x for x in rep["sessions"] if x["session_id"] == bg["sessionId"]][0]
+    assert row["class"] in ("1", "unknown")  # never a healthy 9, 9a or 10
+    assert any(a["key"].startswith("surface:jobs-unparsed") for a in rep["asks"])
+
+
+def test_an_existing_directory_outside_any_repo_is_placed_as_such(world, meta, tmp_path):
+    plain = tmp_path / "plain"
+    plain.mkdir()
+    scope, repo, branch, how = observe.place(str(plain), {"repo": "/x/.git", "branch": "b"}, None, {})
+    assert (scope, how) == (None, "no-repo")

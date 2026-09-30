@@ -108,6 +108,34 @@ def test_the_limit_text_is_recognised_and_its_reset_read():
     assert parsers.reset_epoch("resets 10am (Not/AZone)", base) is None
 
 
+def test_every_captured_job_file_gives_its_update_time():
+    # 2.1.280 writes updatedAt as an ISO string (P20 round 1: it was read as
+    # epoch ms only, so every real job's time was None).
+    for jid, text in _jobs():
+        raw = json.loads(text)["updatedAt"]
+        j = parsers.parse_job_state(text, jid)
+        assert isinstance(raw, str) and j["updated_at"] is not None and j["updated_at"] > 1.7e9
+    ms = {"state": "done", "sessionId": "abcd1234-0000-4000-8000-000000000001", "updatedAt": 1790784000000}
+    assert parsers.parse_job_state(json.dumps(ms), "abcd1234")["updated_at"] == 1790784000.0
+
+
+def test_a_dated_reset_is_read_as_that_date():
+    base = 1790784000.0  # 2026-09-30T16:00:00Z, 11:00 in Bogota
+    assert parsers.reset_epoch("hit your weekly limit · resets Oct 3, 10am (America/Bogota)", base) == \
+        pytest.approx(base + 3 * 86400 - 3600)
+    assert parsers.reset_epoch("resets Oct 3 at 9:30pm (America/Bogota)", base) == \
+        pytest.approx(base + 3 * 86400 + 10.5 * 3600)
+    assert parsers.reset_epoch("resets Foo 3, 10am (America/Bogota)", base) is None
+
+
+def test_an_unfamiliar_waiting_for_value_is_drift():
+    rows = json.loads(_read("claude/agents.json"))
+    live = [r for r in rows if "pid" in r][0]
+    live.update(status="waiting", waitingFor="some new prompt")
+    _, drift = parsers.parse_listing(json.dumps(rows))
+    assert any("waitingFor" in d and "some new prompt" in d for d in drift)
+
+
 def test_a_job_file_never_carries_env_output_or_inline_settings_into_the_parse():
     for jid, text in _jobs():
         j = parsers.parse_job_state(text, jid)
@@ -251,3 +279,8 @@ def test_the_captured_launchctl_print_parses():
     assert kg["last_exit"] == 0
     never = parsers.parse_launchctl_print("gui/501/x = {\n\tstate = not running\n\tlast exit code = (never exited)\n}")
     assert never["last_exit"] == "(never exited)"
+
+
+def test_a_named_exit_code_is_read_as_its_number():
+    named = parsers.parse_launchctl_print("x = {\n\tstate = not running\n\tlast exit code = 78: EX_CONFIG\n}")
+    assert named["last_exit"] == 78

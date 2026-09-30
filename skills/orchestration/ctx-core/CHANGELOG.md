@@ -6,11 +6,15 @@
   in the 2026-09-30 build-readiness amendment, broomva/workspace#842). Live
   board rows against in-scope `claude agents --json --all` sessions with a
   transcript modified in the same window, matched on the full session id, each
-  difference with a reason from a fixed list. Two reasons beyond the spec's
-  five, pending the spec: `stale-event` (a listed session active in the window
-  whose latest event is older, a long turn) and `unexplained`. In
+  difference with a reason from a fixed list. Three reasons beyond the spec's
+  five, pending the spec: `died`, `stale-event` (a listed session active in the
+  window whose latest event is older, a long turn) and `unexplained`. In
   `scripts/ctx_compare.py`, dispatched from `ctx.py`'s doctor path only; no
   hook imports it. Read-only on the store; appends `compare.jsonl`.
+- A death with nothing after it is `died` (excluded: the board is right), and
+  `died-then-continued` needs a transcript entry past the death's grace. No
+  evidence is not a pass: an unreadable transcript directory or an empty
+  listing fails, and so does a side with nothing left to count.
 - Not done here, left to the core: the spec's hook change that records a miss
   (with the session id) on the early return at the scope stage.
 
