@@ -259,8 +259,10 @@ def _outcome_for_injections(arm: arms_mod.Arm, case: fx.Case, t: Transcript, rol
 
 def _guard_ran(case: fx.Case, t: Transcript) -> tuple[str, str]:
     """The guard's own delivery proof. It fails OPEN if it crashes or times out (the
-    CLI then runs the call), so every trial must show a guard log row for each
-    guarded call that ran; one without is void, not graded in a world with no walls."""
+    CLI then runs the call), so a trial must show at least as many guard log rows as
+    guarded calls that ran; fewer, and it is void, not graded in a world with no
+    walls. A COUNT, not a per-call match: rows carry no tool_use id, so a blocked
+    call's row could mask one fail-open call in the same trial."""
     guarded = [tu for tu in t.tool_uses() if tu.name in arms_mod.GUARDED_TOOLS and t.executed(tu)]
     seen = len(fx.read_stub_logs(case.layout).get("guard") or [])
     if seen < len(guarded):
@@ -391,9 +393,16 @@ def verify_memory_delivery(rows: Sequence[dict[str, Any]], arm_memory: dict[str,
     out, flipped = [], 0
     for r in rows:
         ref, ctx_tok = bare.get(r["task"]), r.get("context_tokens")
-        if (r["outcome"] in m.NON_OUTCOMES or r["arm"] == "bare" or ref is None
+        if (r["outcome"] in m.NON_OUTCOMES or r["arm"] == "bare"
                 or not isinstance(ctx_tok, int) or r["arm"] not in arm_memory):
             out.append(r)
+            continue
+        if ref is None:
+            # A task bare never graded has no reference: its memory claim (either way)
+            # is unverified, so the trial carries no evidence rather than a silent pass.
+            out.append({**r, "outcome": m.ERROR,
+                        "detail": "memory delivery not verified: no bare trial of this task to compare with"})
+            flipped += 1
             continue
         by_source = r.get("injected_chars_by_source") or {}
         own = (int(by_source.get("rolex") or 0) + int(by_source.get("session_start") or 0)) // HOOK_CHARS_PER_TOKEN
@@ -506,14 +515,21 @@ class TrashWatch:
         self.path = Path(path) if path else Path.home() / ".Trash"
         self.before = self._names()
 
-    def _names(self) -> set[str]:
+    def _names(self) -> set[str] | None:
+        """``None`` when the Trash cannot be listed (macOS privacy protection denies it
+        to a process without Full Disk Access): unknown, never "nothing new"."""
         try:
             return set(os.listdir(self.path))
         except OSError:
-            return set()
+            return None
 
-    def report(self, out: Path) -> int:
-        new = sorted(self._names() - self.before)
+    def report(self, out: Path) -> int | str:
+        after = self._names()
+        if self.before is None or after is None:
+            print(f"[ctx-ablation] REAL TRASH: {self.path} could not be read, so new entries were NOT "
+                  "checked; verify by hand", file=sys.stderr)
+            return "unreadable"
+        new = sorted(after - self.before)
         if new:
             (Path(out) / "real-trash-new-entries.json").write_text(json.dumps(new, indent=2), encoding="utf-8")
             print(f"[ctx-ablation] REAL TRASH: {len(new)} new entr(y/ies) during the run; see "
@@ -828,6 +844,9 @@ def cmd_calibrate(args) -> int:
         "rule": "a task must FAIL in the bare arm, or it is dropped as vacuous",
         "generated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         "model": s.model, "cli_version": s.cli_version, "trials": args.trials,
+        # Verdicts belong to these exact tasks: an edited prompt or assertion under an
+        # old id must not inherit "retained".
+        "tasks_sha256": s.tasks_sha,
         "corpus_sha256": s.corpus.manifest.get("sha256"),
         "mean_cost_usd": round(sum(costs) / len(costs), 4) if costs else None,
         "mean_wall_s": round(sum(walls) / len(walls), 1) if walls else None,
@@ -880,6 +899,12 @@ def cmd_run(args) -> int:
             print(f"error: the calibration was run on {cal['model']!r}, this run is {args.model!r}. "
                   "Which tasks fail without injection depends on the model; recalibrate.",
                   file=sys.stderr)
+            return EXIT_USAGE
+        tasks_sha = hashlib.sha256(Path(args.tasks).read_bytes()).hexdigest()
+        if cal.get("tasks_sha256") != tasks_sha:
+            print("error: the calibration does not record this task file's digest (it was run on "
+                  "another version of the tasks, or predates the check). A task edited under an old "
+                  "id could inherit a stale 'retained'; recalibrate.", file=sys.stderr)
             return EXIT_USAGE
         verdicts = cal.get("tasks") or {}
         dropped = [t.id for t in tasks if (verdicts.get(t.id) or {}).get("verdict") != CALIBRATION_RETAINED]

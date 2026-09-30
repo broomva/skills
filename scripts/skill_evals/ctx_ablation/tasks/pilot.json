@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "notes": "Candidate tasks for the context-ablation pilot. Every one is calibrated in the bare arm first; a task that passes there is dropped as vacuous (see calibration.json in the run directory and the committed CALIBRATION.md). Prompts come from real session turns where the transcript had one (origin.verbatim says whether it is byte-for-byte), otherwise from the memory feedback file or lens rule that records the reflex. Facts and paths refer to the operator's workspace snapshot, which is taken at run time and never committed.",
+  "notes": "Candidate tasks for the context-ablation pilot. Every one is calibrated in the bare arm first; a task that passes there is dropped as vacuous (see calibration.json in the run directory, the committed tasks/pilot.calibration.json, and PILOT.md). Prompts come from real session turns where the transcript had one (origin.verbatim says whether it is byte-for-byte), otherwise from the memory feedback file or lens rule that records the reflex. Facts and paths refer to the operator's workspace snapshot, which is taken at run time and never committed.",
   "tasks": [
     {
       "id": "retrieval-ci-runner-pool",

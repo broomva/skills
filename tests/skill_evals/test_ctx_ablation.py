@@ -347,7 +347,9 @@ def test_run_refuses_without_a_calibration(tmp_path, capsys):
 
 
 def test_run_drops_tasks_the_calibration_did_not_retain(tmp_path, capsys):
-    cal = {"tasks": {t.id: {"verdict": R.CALIBRATION_VACUOUS} for t in TASKS}}
+    import hashlib
+    cal = {"tasks": {t.id: {"verdict": R.CALIBRATION_VACUOUS} for t in TASKS},
+           "tasks_sha256": hashlib.sha256(TASK_FILE.read_bytes()).hexdigest()}
     cal["tasks"]["reflex-bun-biome-scaffold"] = {"verdict": R.CALIBRATION_RETAINED}
     path = tmp_path / "calibration.json"
     path.write_text(json.dumps(cal))
@@ -923,3 +925,32 @@ def test_git_refuses_every_non_file_remote_in_the_case(tmp_path):
     proc = subprocess.run(["git", "ls-remote", "https://github.com/broomva/skills.git"], env=env,
                           capture_output=True, text=True, timeout=60)
     assert proc.returncode != 0
+
+
+# ---------------------------------------------------------------------------
+# CodeRabbit on 625e5e4
+# ---------------------------------------------------------------------------
+
+
+def test_a_task_bare_never_graded_voids_its_memory_claims():
+    rows = [_rows_for("bare", "t", 18000), _rows_for("memory", "u", 28300)]
+    out, _ = R.verify_memory_delivery(rows, {"bare": False, "memory": True})
+    assert out[1]["outcome"] == M.ERROR and "not verified" in out[1]["detail"]
+
+
+@pytest.mark.parametrize("cal_sha", [None, "0" * 64])
+def test_a_calibration_from_another_task_file_is_refused(tmp_path, capsys, cal_sha):
+    """A prompt or assertion edited under an old id must not inherit 'retained'."""
+    cal = {"model": "haiku", "tasks": {t.id: {"verdict": R.CALIBRATION_RETAINED} for t in TASKS}}
+    if cal_sha:
+        cal["tasks_sha256"] = cal_sha
+    path = tmp_path / "calibration.json"
+    path.write_text(json.dumps(cal))
+    code = R.main(["run", "--out", str(tmp_path), "--calibration", str(path), "--dry-run"])
+    assert code == R.EXIT_USAGE and "recalibrate" in capsys.readouterr().err
+
+
+def test_an_unreadable_trash_is_unchecked_not_clean(tmp_path):
+    watch = R.TrashWatch(tmp_path / "no-such-trash")
+    assert watch.report(tmp_path) == "unreadable"
+    assert not (tmp_path / "real-trash-new-entries.json").exists()

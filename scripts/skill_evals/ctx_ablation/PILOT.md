@@ -18,7 +18,7 @@ file with the reason each was superseded. Their numbers are never pooled with v3
 | calibration | bare arm, 3 trials per task: 48 trials, 0 void, $1.53 notional (`tasks/pilot.calibration.json`) |
 | pilot | 10 tasks × 6 arms × 3 trials = 180 trials, $8.43 notional; the rate-limit window peaked at 0.31 |
 | void trials | 2 of 180 (see below) |
-| real state | no new entries in the operator's real Trash; nothing flagged under `~/.config/broomva` that the harness wrote |
+| real state | no new entries in the operator's real Trash. That was checked by listing it by hand before and after, outside the sandbox the harness ran in, where its own Trash watch may not have been able to read it. `~/.config/broomva` changed at 1 path during calibration, another session's harness budget file; no harness write was found there |
 
 **Every graded trial carries four delivery proofs:**
 - **ctx:** the SessionStart `hook_response` carried the brief.
@@ -26,7 +26,8 @@ file with the reason each was superseded. Their numbers are never pooled with v3
 - **memory:** the unexplained turn-one tokens cleared the threshold. Memory arms need
   at least 6,071, which covers the CLI's auto-memory block plus half of MEMORY.md;
   every other arm must stay under 2,500. No trial was flipped.
-- **the case guard:** it logged one decision for every guarded tool call that ran.
+- **the case guard:** it logged at least as many decisions as guarded tool calls
+  that ran. This is a count, not a per-call match.
 
 **The 2 void trials** are both the p9 task, in memory and role-x-top2. Each hit the
 420 s trial timeout while polling CI in a `sleep` loop, which is the behaviour the

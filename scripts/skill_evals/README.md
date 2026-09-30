@@ -391,8 +391,11 @@ The first run, with its calibration, tables and findings, is in
 [`ctx_ablation/PILOT.md`](ctx_ablation/PILOT.md).
 
 `RUN` is a directory outside the repo, and it holds ONE run key (model, CLI
-version, corpus snapshot and calibration). A resume that would pool two is refused,
-and so is a calibration taken on another model or corpus. It gets a read-only snapshot of the
+version, corpus snapshot, task file and calibration). A resume that would pool two
+is refused. So is a calibration taken on another model, CLI, corpus or task file:
+a task edited under an old id must not inherit "retained". The real Trash is
+watched on every run, and a Trash the harness cannot list (macOS privacy) is
+reported as unchecked, never as clean. It gets a read-only snapshot of the
 knowledge graph and memory (`corpus/`, with a sha256 manifest), every transcript,
 `results.jsonl` (one line per trial, appended as it finishes, so an interrupted run
 resumes), `calibration.json` and `report.md`. None of it is committed: this repo is
@@ -442,9 +445,11 @@ has the same state on disk in every arm:
       keychain;
     - the Paseo daemon's port.
   - It fails closed (an error blocks the call) and logs every call it sees. A trial
-    must show one guard row per guarded call that ran, or it is void: a guard that
-    crashed or timed out lets the call through, and that trial would otherwise be
-    graded in a world with no walls.
+    must show at least as many guard rows as guarded calls that ran, or it is void: a
+    guard that crashed or timed out lets the call through, and that trial would
+    otherwise be graded in a world with no walls. This is a count, not a per-call
+    match: the rows carry no tool-call id, so a blocked call's row could mask one
+    fail-open call in the same trial.
   - It matches strings. It is a wall against a run that wanders, not a sandbox
     against one that tries: a command assembled at runtime can get past it.
 
@@ -495,7 +500,8 @@ context adds nothing". So delivery is checked per trial, not assumed.
     wrote to.
   - The check needs bare and runs when the suite finishes. Its verdicts are written
     back to `results.jsonl`, so `--retry-void` sees them. Without a bare arm, the
-    report says the check was not done.
+    report says the check was not done; a task with no graded bare trial voids its
+    other arms' trials.
 - **the case guard:** one guard log row per guarded tool call that ran (above).
 
 A trial that fails any of these checks is `INJECTION_MISSING`, and one that got an
