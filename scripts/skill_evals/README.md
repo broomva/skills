@@ -369,6 +369,199 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
 baseline gets its own exit code (`4`), because nothing is wrong with the skill — the
 *measurement* is void, and reporting that as a threshold failure would send a reader
 to fix the wrong thing. `--fail-on-retire-candidate` is opt-in.
+## Does the context we inject earn its tokens? (`ctx_ablation/`)
+
+Every session here gets context pushed into it: role-x's intake block on every
+prompt (~3k characters), the ctx-core board brief at SessionStart, and `MEMORY.md`
+through the CLI's auto-memory. `ctx_ablation/` measures whether that context makes a
+session behave better, per token spent. It is causal, not observational: the same
+task runs in the same world under **arms** that differ only in what is injected,
+and deterministic graders score what the run did.
+
+```bash
+CA=scripts/skill_evals/ctx_ablation/run.py
+python3 $CA validate --deep                                   # free: every task can fail
+python3 $CA preflight --out RUN --live-canary                 # hooks offline; 1 call per arm
+python3 $CA calibrate --out RUN --trials 3                    # bare arm only
+python3 $CA run --out RUN --calibration RUN/calibration.json  # every arm, retained tasks
+python3 $CA report --out RUN                                  # re-render the tables
+```
+
+`RUN` is a directory outside the repo. It gets a read-only snapshot of the
+knowledge graph and memory (`corpus/`, with a sha256 manifest), every transcript,
+`results.jsonl` (one line per trial, appended as it finishes, so an interrupted run
+resumes), `calibration.json` and `report.md`. None of it is committed: this repo is
+public and the corpus is the operator's. `--dry-run` on `calibrate` and `run` prints
+the trial count and a cost estimate and spends nothing.
+
+### Why a sibling module, not a runner mode
+
+`runner.py` is built around one skill under test: its fixtures are bound to a
+`SKILL.md` hash, its visibility registry installs or hides that skill, and its
+checks ask whether the skill fired. Context ablation has no skill under test. Its
+independent variable is a settings file, its world is a git repo with a remote, a
+ctx store, stubs and an MCP server, and its graders read end state. Folding that
+into `runner.main` would have overloaded every concept it has. So `ctx_ablation/`
+reuses the parts that transfer, and imports them rather than copying:
+- the env jail (`jail.build_case_env` / `prepare_jail` / `verify_jail`);
+- the CLI argv contract (`LiveRunner.build_argv`);
+- the stream-json parser (`Transcript`, including `executed()`);
+- the interval math (`ablation.wilson_interval` / `newcombe_difference`).
+
+### The world a trial runs in
+
+HOME is the jail and the workspace is `~/broomva` inside it, as in production, so
+the memory directory's key and the `~/...` paths in memory files resolve. Every case
+has the same state on disk in every arm:
+- a git repo with a bare `origin`, holding a snapshot of `research/entities`,
+  `docs/knowledge-index.md`, `docs/specs` and `roles/`;
+- the memory directory;
+- a ctx scope and board: three finished sessions from hours ago, plus the task's
+  peers;
+- `gh`, `trash` and `p9` stubs first on PATH, which log every call and keep trials
+  off real GitHub;
+- a Paseo MCP stub with the real `list_agents` defaults;
+- a copy of the workspace delete gate, G3, as a PreToolUse hook.
+
+**State is constant; only the injection varies.** A bare arm that also deleted the
+knowledge graph would measure the graph, not the injection.
+
+| arm | what is injected |
+|---|---|
+| `bare` | nothing (auto-memory off, no context hooks) |
+| `memory` | `MEMORY.md` via auto-memory (`autoMemoryEnabled: true`) |
+| `rolex` | role-x's real UserPromptSubmit intake hook, this branch's copy |
+| `ctx` | ctx-core's real SessionStart hook, briefing from the fixture board |
+| `all` | all three, plus role-x's SessionStart coverage hook |
+| `rolex-top2` | role-x with its task-entity list cut from 5 to 2 (`rolex-top<N>` for any N) |
+
+Each arm is an explicit `--settings` file under `--setting-sources project` and a
+jailed HOME. The operator's `~/.claude/settings.json` is never read or written.
+
+role-x had no knob for the size of its block: `TASK_ENTITY_TOP_N = 5` was a constant
+(the default is 5, not 10). The compression arm uses a new
+`ROLE_X_TASK_ENTITY_TOP_N` override. It changes only the final slice, so a
+compressed block is a prefix of the default one, and a role-x test pins that.
+
+### Proof that each arm delivered its injection
+
+An arm that silently injected nothing scores exactly like bare, and reads as "this
+context adds nothing". So delivery is checked per trial, not assumed.
+- **ctx:** the SessionStart `hook_response` in the stream must carry the brief.
+- **role-x:** UserPromptSubmit output never appears in stream-json (measured on CLI
+  2.1.280). Instead, the live hook must have logged an intake whose `prompt_digest`
+  is the task prompt's sha256, under the jailed HOME. The injected text is
+  recovered by running the same hook offline on the same prompt and workspace.
+- **memory:** the session's `init.cwd` must be the workspace, so the auto-memory key
+  is the one the harness wrote `MEMORY.md` under.
+
+A trial that fails any of these checks is `INJECTION_MISSING`, and one that got an
+injection its arm lacks is `LEAKED`. Both are void: counted, never graded. role-x
+declines prompts under three words in production too, so a role-x arm on such a
+prompt is graded as it stands.
+
+`preflight --live-canary` spends one short call per arm. It plants a canary in
+`MEMORY.md` and one in the board, and the model reports which it can see. Every arm
+must see exactly its own. The first canary quoted its tokens in the question, and
+role-x's "consider a lens" nudge echoed them back into context, so the prompt now
+names no canary at all.
+
+### Tasks, and the control-absent rule
+
+`ctx_ablation/tasks/pilot.json` holds the candidates, in three classes:
+- **retrieval:** the answer lives only in a KG entity, a spec or a memory topic
+  file;
+- **reflex:** a memory feedback rule or a role-x lens rule;
+- **coordination:** a live peer on the board.
+
+Each task comes from a real session turn where one exists (`origin.verbatim` says
+whether it is byte-for-byte), otherwise from the memory file or lens rule that
+records the reflex.
+
+The graders assert on executed tool inputs, end state (git refs, files, stub logs)
+and short fact tokens in the answer. They never assert on narration. A task is only
+worth running if it can fail, and that is checked four times:
+
+1. `validate`: an empty assertion list, a positive regex that matches the empty
+   string, or an answer regex that matches the prompt is an error.
+2. `validate --deep`: the task must FAIL a null run, FAIL its fail exemplar (the
+   run with the control removed) and PASS its pass exemplar, all on a real fixture.
+   CI runs this per task.
+3. `calibrate`: every task runs in the bare arm, and one pass drops it as
+   **vacuous**. A grader that passes without the control measures nothing about the
+   control. `run` refuses to start without a calibration and drops every task it
+   did not retain.
+4. The per-trial delivery proof above.
+
+**Adding a task.** Append an object to the task file (the schema is in
+`tasks.py`'s docstring):
+- `prompt` from a real turn;
+- `targets`: which injection should carry what it needs;
+- a `rationale` saying why bare fails;
+- a `fixture` (files, `setup` shell steps, `stubs`, `ctx_peers`);
+- `assertions`;
+- a `pass` and a `fail` exemplar.
+
+Exemplar `bash` actions really run in the fixture with the stubs on PATH, and `mcp`
+actions call the Paseo stub. Then run `validate --deep` and recalibrate. Name
+retrieval sources as `ws:`, `memory:` or `home:` paths. They feed the
+right-source-retrieved metric.
+
+### Which model
+
+`haiku` by default, for two reasons. First, cost: the pilot is ~250 trials, and
+every one draws on the subscription's five-hour window, which the whole fleet
+shares (it stood at 0.89 when the pilot started). Second, haiku is the skill-evals
+default, so the numbers sit beside the trigger evals. But production sessions run
+larger models, so a haiku lift is evidence about haiku. The harness takes
+`--model`, and re-running the arms that moved on sonnet is the obvious next step.
+
+`--max-utilization` (default 0.90) stops new trials once the rate-limit window
+passes it. The run resumes where it stopped.
+
+### What the numbers are
+
+- **pass rate:** trials passed out of graded trials, with a Wilson 95% interval.
+- **lift:** the pass rate minus bare's, with a Newcombe 95% interval.
+- **injected tokens:** for each task, the first call's input tokens
+  (`input + cache_creation + cache_read`) minus bare's, averaged over tasks. It is
+  measured rather than estimated, so it includes the auto-memory instructions the
+  CLI adds (about 3.2k tokens on CLI 2.1.280, before any line of `MEMORY.md`). With
+  no bare arm in the run it is not computed. It is never defaulted to zero.
+- **headline:** lift per 1k injected tokens, and pass rate per 1k injected tokens.
+- **other columns:**
+  - input tokens for the whole run (`result.usage`);
+  - tool calls;
+  - right-source-retrieved rate: an executed `Read`, a `Bash` read verb, or a
+    content-mode `Grep` of a task's source path;
+  - wall time;
+  - retrieval reflexes: the share of trials that read the KG, docs or memory, used
+    the web, or spawned a subagent;
+  - the share of role-x's injected KG entities the run opened, the causal analogue
+    of the 1.7% open rate measured in production.
+
+What the numbers are **not**:
+- **Intervals treat trials as independent.** Trials of one task are correlated, so
+  read the per-task matrix before any aggregate.
+- **Calibration selects tasks the bare arm failed.** Some of those failures were
+  luck, so bare's rate in the full run is biased low on the retained set, and lifts
+  are upper bounds for the population of tasks.
+- **Held at absent in every arm:**
+  - the workspace `CLAUDE.md`;
+  - installed skills and plugins;
+  - four production SessionStart hooks: skill freshness, git identity, auth
+    preflight, skill-source sync. They live in the workspace repo and speak only
+    when something is wrong, and two of them probe the network.
+
+  Where those overlap an injection, production's marginal value is lower than
+  measured here.
+- **The ctx hook gets a 1,500 ms budget, not 80 ms,** so a parallel run does not
+  lose briefs to load. The brief's content is the same.
+- **A tool call a PreToolUse hook blocked** comes back as an error result without
+  the CLI's refusal marker, so `Transcript.executed()` counts it as run. No
+  committed grader asserts on a gated command; one that did would have to allow for
+  this.
+
 ## Does the description even reach the model? (`listing.py`)
 
 The arc's premise was that the description we author is the description the model

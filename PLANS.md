@@ -1,5 +1,50 @@
 # PLANS.md
 
+## Context evals, layer 2: the causal context-ablation harness
+
+Status: pilot (branch `feat/context-ablation-evals`). Layer 1, the observational
+context ledger in bstack's leverage sensor, is a separate session's work. The owner
+decided on 2026-09-29 to build both layers.
+
+### Objective
+
+Measure whether the context we inject makes sessions behave better per token:
+role-x intake, the ctx-core brief, and MEMORY.md. Also measure whether it triggers
+the right retrieval reflexes, and how far it compresses.
+
+### Scope and constraints
+
+- `scripts/skill_evals/ctx_ablation/`, a sibling of `runner.py` that imports its
+  jail, argv contract, stream parser and interval math.
+- Arms are explicit `--settings` files under a jailed HOME:
+  `bare, memory, rolex, ctx, all, rolex-top2`. `~/.claude/settings.json` is never
+  touched.
+- State is constant across arms. Only the injection varies.
+- Tasks come from real turns and memory feedback files. Graders assert on tool
+  inputs, end state and fact tokens, never on narration.
+- Control-absent rule: every task must fail in the bare arm in a calibration run,
+  or it is dropped as vacuous.
+- role-x's cap was a constant, so the compression arm uses a new env override,
+  `ROLE_X_TASK_ENTITY_TOP_N`, with tests.
+
+### Milestones
+
+1. [x] Harness: arms, fixture, stubs (gh, trash, p9, Paseo MCP, delete gate),
+   graders, metrics, CLI, and 72 tests with seven mutants killed.
+2. [x] 16 candidate tasks. Each fails a null run and its control-removed
+   exemplar, and passes its informed exemplar.
+3. [x] Preflight on the real corpus. The live canary shows each of the six arms
+   sees exactly its own injections.
+4. [ ] Calibrate 16 candidates × 3 trials in the bare arm.
+5. [ ] Pilot: 10 retained tasks × 6 arms × 3 trials, with the results table in the
+   PR.
+6. [ ] Scale to 30 tasks, only if the pilot is healthy.
+
+### Verification
+
+`python3 scripts/skill_evals/ctx_ablation/run.py validate --deep`, and
+`pytest tests/skill_evals/test_ctx_ablation.py`.
+
 ## ctx-core phase 1: the read-only shared board
 
 Status: final review (PR broomva/skills#246), narrowed by the owner after the

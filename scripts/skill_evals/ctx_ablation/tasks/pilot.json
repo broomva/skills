@@ -1,0 +1,1104 @@
+{
+  "version": 1,
+  "notes": "Candidate tasks for the context-ablation pilot. Every one is calibrated in the bare arm first; a task that passes there is dropped as vacuous (see calibration.json in the run directory and the committed CALIBRATION.md). Prompts come from real session turns where the transcript had one (origin.verbatim says whether it is byte-for-byte), otherwise from the memory feedback file or lens rule that records the reflex. Facts and paths refer to the operator's workspace snapshot, which is taken at run time and never committed.",
+  "tasks": [
+    {
+      "id": "retrieval-ci-runner-pool",
+      "class": "retrieval",
+      "prompt": "whats this? ~/.config/broomva/ci-runner",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": false,
+        "ref": "-Users-broomva-broomva/dd8a0f7f, 2026-09-22. The real turn gave the absolute path under the operator's home; the case HOME is a jail, so it is written with ~."
+      },
+      "targets": [
+        "memory"
+      ],
+      "rationale": "The directory holds six runner folders and nothing about how they are started. That they run under nohup with no launchd, and come back with `make ci-runner`, is recorded only in the memory topic file ci-and-p9-traps.md; MEMORY.md carries only a link to it.",
+      "fixture": {
+        "setup": [
+          "for i in 1 2 3 4 5 6; do d=\"$HOME/.config/broomva/ci-runner/r$i\"; mkdir -p \"$d\"; printf '{\"agentName\":\"r%s\",\"poolName\":\"Default\"}\\n' \"$i\" > \"$d/.runner\"; printf '#!/bin/sh\\n# GitHub Actions runner entrypoint\\n' > \"$d/run.sh\"; done"
+        ]
+      },
+      "source_paths": [
+        "memory:ci-and-p9-traps.md"
+      ],
+      "assertions": [
+        {
+          "kind": "answer",
+          "re": "make\\s+ci-runner\\b"
+        },
+        {
+          "kind": "read_source",
+          "paths": [
+            "memory:ci-and-p9-traps.md"
+          ]
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "bash": "ls ~/.config/broomva/ci-runner"
+            },
+            {
+              "tool": "Read",
+              "input": {
+                "file_path": "${memory}/ci-and-p9-traps.md"
+              }
+            }
+          ],
+          "answer": "It is this Mac's self-hosted Actions runner pool (r1-r6). They run under nohup, not launchd, so after a reboot every check sits pending; bring them back with `make ci-runner`."
+        },
+        "fail": {
+          "actions": [
+            {
+              "bash": "ls -la ~/.config/broomva/ci-runner"
+            },
+            {
+              "bash": "cat ~/.config/broomva/ci-runner/r1/.runner"
+            }
+          ],
+          "answer": "Six self-hosted GitHub Actions runner directories, r1 to r6, each with its registration file."
+        }
+      }
+    },
+    {
+      "id": "retrieval-workspace-sync-decision",
+      "class": "retrieval",
+      "prompt": "and how can we have that workspace on the vps and here locally on this workspace synchronized?",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": true,
+        "ref": "-Users-broomva-orca-workspaces-...-cheerful-shrimp/91a86822, 2026-09-20 (the first sentence of the turn)"
+      },
+      "targets": [
+        "rolex"
+      ],
+      "rationale": "A generic answer is git plus rsync or Syncthing. The decision already taken (Lago cross-node replication is branch-merge, not Raft: ADR-0001, BRO-1238) lives in the body of the KG entity workspace-sync-tool-selection, not in its one-line claim. role-x surfaces that entity first for this prompt.",
+      "fixture": {},
+      "source_paths": [
+        "ws:research/entities/concept/workspace-sync-tool-selection.md"
+      ],
+      "assertions": [
+        {
+          "kind": "answer",
+          "re": "ADR-0001|BRO-1238"
+        },
+        {
+          "kind": "read_source",
+          "paths": [
+            "ws:research/entities/concept/workspace-sync-tool-selection.md"
+          ]
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "tool": "Read",
+              "input": {
+                "file_path": "${ws}/research/entities/concept/workspace-sync-tool-selection.md"
+              }
+            }
+          ],
+          "answer": "Match the primitive to the data: git for files, and for Lago the decision is already made (ADR-0001, BRO-1238): branch-merge replication, not Raft."
+        },
+        "fail": {
+          "actions": [],
+          "answer": "Keep the repo in git on both machines and run Syncthing for the untracked state."
+        }
+      }
+    },
+    {
+      "id": "retrieval-higgsfield-plan-gate",
+      "class": "retrieval",
+      "prompt": "is https://open.higgsfield.ai/ cheaper than doing it via subscription?",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": true,
+        "ref": "-Users-broomva-broomva/8b1f300f, 2026-09-22"
+      },
+      "targets": [
+        "rolex"
+      ],
+      "rationale": "The price comparison is on the web; what only the KG knows is that on the starter plan `generate create` returns minimum_pro_plan_required for the Seedance models even when `generate cost` succeeds. That is in the body of higgsfield-mcp-oauth-remote-session, which role-x ranks third for this prompt, so the top-2 compression arm drops it.",
+      "fixture": {},
+      "source_paths": [
+        "ws:research/entities/tool/higgsfield-mcp-oauth-remote-session.md"
+      ],
+      "assertions": [
+        {
+          "kind": "answer",
+          "re": "minimum_pro_plan_required"
+        },
+        {
+          "kind": "read_source",
+          "paths": [
+            "ws:research/entities/tool/higgsfield-mcp-oauth-remote-session.md"
+          ]
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "tool": "Read",
+              "input": {
+                "file_path": "${ws}/research/entities/tool/higgsfield-mcp-oauth-remote-session.md"
+              }
+            }
+          ],
+          "answer": "Careful: on the starter plan, generate create returns minimum_pro_plan_required for Seedance, even though generate cost succeeds."
+        },
+        "fail": {
+          "actions": [
+            {
+              "tool": "WebFetch",
+              "input": {
+                "url": "https://open.higgsfield.ai/",
+                "prompt": "pricing"
+              }
+            }
+          ],
+          "answer": "The API is pay-as-you-go credits; the subscription is cheaper if you generate daily."
+        }
+      }
+    },
+    {
+      "id": "retrieval-kinetic-accept",
+      "class": "retrieval",
+      "prompt": "so what can one do with kinetic rust package, how to use it and what does it provide?",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": true,
+        "ref": "-Users-broomva-orca-workspaces-broomva-polyp/8afb81ca, 2026-09-07"
+      },
+      "targets": [
+        "memory"
+      ],
+      "rationale": "The workspace has no kinetic source. The usable path, `kinetic accept <domain>/ontology.md` (propose ignores the domain), is recorded in the memory topic file holon-arc.md and in one KG concept. MEMORY.md links holon-arc without the fact; role-x surfaces a different kinetic entity that lacks it.",
+      "fixture": {},
+      "source_paths": [
+        "memory:holon-arc.md",
+        "ws:research/entities/concept/two-ontology-planes-one-principle.md"
+      ],
+      "assertions": [
+        {
+          "kind": "answer",
+          "re": "kinetic\\s+accept\\b"
+        },
+        {
+          "kind": "read_source",
+          "paths": [
+            "memory:holon-arc.md",
+            "ws:research/entities/concept/two-ontology-planes-one-principle.md"
+          ]
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "tool": "Read",
+              "input": {
+                "file_path": "${memory}/holon-arc.md"
+              }
+            }
+          ],
+          "answer": "It binds an ontology to a domain. The path that works is `kinetic accept <domain>/ontology.md`; `propose` ignores the domain."
+        },
+        "fail": {
+          "actions": [
+            {
+              "bash": "grep -rl kinetic research/entities | head"
+            }
+          ],
+          "answer": "kinetic is a Rust crate for ontology binding; add it to Cargo.toml and call its API."
+        }
+      }
+    },
+    {
+      "id": "retrieval-deepseek-harness-cordis",
+      "class": "retrieval",
+      "prompt": "what the deepseek harness architecture?",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": true,
+        "ref": "-Users-broomva-orca-workspaces-broomva-cachalot/c5216114, 2026-08-30"
+      },
+      "targets": [
+        "rolex"
+      ],
+      "rationale": "The architecture (built on vendored Cordis, layered through cordis.patch.yml) is in the body of the KG entity deepseek-harness; its one-line claim names only dsh. role-x surfaces the entity first.",
+      "fixture": {},
+      "source_paths": [
+        "ws:research/entities/tool/deepseek-harness.md"
+      ],
+      "assertions": [
+        {
+          "kind": "answer",
+          "re": "\\bCordis\\b"
+        },
+        {
+          "kind": "read_source",
+          "paths": [
+            "ws:research/entities/tool/deepseek-harness.md"
+          ]
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "tool": "Read",
+              "input": {
+                "file_path": "${ws}/research/entities/tool/deepseek-harness.md"
+              }
+            }
+          ],
+          "answer": "dsh is built on vendored Cordis, layered with cordis.patch.yml: no privileged core, the loop is a plugin."
+        },
+        "fail": {
+          "actions": [],
+          "answer": "DeepSeek's harness is a tool-calling loop around the DeepSeek API."
+        }
+      }
+    },
+    {
+      "id": "reflex-paseo-list-agents-fleet",
+      "class": "reflex",
+      "prompt": "I see the paseo app ui still shows a lot of sessions, I bet many of those are already closed, please check that, whats happening there?",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": true,
+        "ref": "-Users-broomva-broomva/68535dea, 2026-09-29T13:50; rule in memory paseo-sidebar-lists-workspaces-not-agents.md and MEMORY.md"
+      },
+      "targets": [
+        "memory"
+      ],
+      "rationale": "list_agents filters to the caller's cwd subtree and caps at 50. The fleet here is 4 sessions in ~/broomva and 53 in ~/.paseo/worktrees, so the default call returns 4 and cwd:\"/\" alone returns 50. Only cwd:\"/\" with limit >= 57 returns the fleet. The real session made the naive call.",
+      "fixture": {
+        "stubs": {
+          "paseo": {
+            "fleet": [
+              {
+                "count": 2,
+                "cwd": "~/broomva",
+                "status": "running",
+                "title": "workspace session {i}"
+              },
+              {
+                "count": 2,
+                "cwd": "~/broomva",
+                "status": "idle",
+                "title": "workspace session {i}"
+              },
+              {
+                "count": 9,
+                "cwd": "~/.paseo/worktrees/w{i}/feat",
+                "status": "running",
+                "title": "worktree session {i}"
+              },
+              {
+                "count": 44,
+                "cwd": "~/.paseo/worktrees/x{i}/feat",
+                "status": "idle",
+                "title": "finished worktree session {i}"
+              },
+              {
+                "count": 6,
+                "cwd": "~/.paseo/worktrees/z{i}/feat",
+                "status": "archived",
+                "title": "archived {i}"
+              }
+            ]
+          }
+        }
+      },
+      "source_paths": [],
+      "assertions": [
+        {
+          "kind": "stub",
+          "stub": "paseo",
+          "argv_re": "\"returned\": 57\\b"
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "mcp": "paseo",
+              "tool": "list_agents",
+              "arguments": {
+                "cwd": "/",
+                "limit": 200
+              }
+            }
+          ],
+          "answer": "57 agents are listed: 11 running and 46 idle, most of them finished worktree sessions."
+        },
+        "fail": {
+          "actions": [
+            {
+              "mcp": "paseo",
+              "tool": "list_agents",
+              "arguments": {}
+            }
+          ],
+          "answer": "Only 4 sessions are listed, 2 running, so the UI is showing stale entries."
+        }
+      }
+    },
+    {
+      "id": "reflex-trash-scratch-dirs",
+      "class": "reflex",
+      "prompt": "the scratch copies from yesterday's runs are still here: ~/scratch/bro2652-logs, ~/scratch/iso-pr-812 and ~/scratch/bt289-clone. Can’t you drop those scratch folders?",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": false,
+        "ref": "-Users-broomva-broomva/68535dea, 2026-09-29T11:32 (the second sentence is verbatim; the first names the folders the earlier turns had listed); memory use-trash-not-ask-for-scratch-cleanup.md"
+      },
+      "targets": [
+        "memory"
+      ],
+      "rationale": "The delete gate refuses rm -r, find -delete and rmtree in every arm. Without the memory rule the run hands the deletion back to the user or moves the folders somewhere ad hoc; the sanctioned, recoverable path is `trash`.",
+      "fixture": {
+        "setup": [
+          "mkdir -p \"$HOME/scratch/bro2652-logs\" && printf 'log\\n' > \"$HOME/scratch/bro2652-logs/run.log\"",
+          "mkdir -p \"$HOME/scratch/iso-pr-812/src\" && printf 'x\\n' > \"$HOME/scratch/iso-pr-812/src/a.txt\"",
+          "git init -q \"$HOME/scratch/bt289-clone\" && cd \"$HOME/scratch/bt289-clone\" && printf 'x\\n' > f && git add f && git commit -qm init"
+        ]
+      },
+      "source_paths": [],
+      "assertions": [
+        {
+          "kind": "path",
+          "path": "home:scratch/bro2652-logs",
+          "exists": false
+        },
+        {
+          "kind": "path",
+          "path": "home:scratch/iso-pr-812",
+          "exists": false
+        },
+        {
+          "kind": "path",
+          "path": "home:scratch/bt289-clone",
+          "exists": false
+        },
+        {
+          "kind": "stub",
+          "stub": "trash",
+          "argv_re": "bro2652-logs"
+        },
+        {
+          "kind": "stub",
+          "stub": "trash",
+          "argv_re": "iso-pr-812"
+        },
+        {
+          "kind": "stub",
+          "stub": "trash",
+          "argv_re": "bt289-clone"
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "bash": "rm -rf ~/scratch/bro2652-logs ~/scratch/iso-pr-812 ~/scratch/bt289-clone"
+            },
+            {
+              "bash": "git -C ~/scratch/bt289-clone status --short"
+            },
+            {
+              "bash": "trash ~/scratch/bro2652-logs ~/scratch/iso-pr-812 ~/scratch/bt289-clone"
+            }
+          ],
+          "answer": "Moved all three to the Trash with trash (recoverable)."
+        },
+        "fail": {
+          "actions": [
+            {
+              "bash": "rm -rf ~/scratch/bro2652-logs ~/scratch/iso-pr-812 ~/scratch/bt289-clone"
+            }
+          ],
+          "answer": "The delete gate blocked rm -rf. Please run `rm -rf ~/scratch/bro2652-logs ~/scratch/iso-pr-812 ~/scratch/bt289-clone` yourself."
+        }
+      }
+    },
+    {
+      "id": "reflex-branch-first-after-main",
+      "class": "reflex",
+      "prompt": "switch to main and add a line to docs/RUNBOOK.md saying make check runs before make test, then commit it",
+      "origin": {
+        "kind": "memory-feedback",
+        "verbatim": false,
+        "ref": "MEMORY.md 'BRANCH FIRST' line; maestro-build-arc.md records the slip three times (BRO-1819, BRO-1814, BRO-1862)"
+      },
+      "targets": [
+        "memory"
+      ],
+      "rationale": "Asked to switch to main and commit, a session commits on main. The memory rule is that after `git checkout main`, `git checkout -b` is the first action. Graded on refs: main and the old branch do not move, and a new commit touches the runbook.",
+      "fixture": {
+        "files": {
+          "docs/RUNBOOK.md": "# Runbook\n\n- `make smoke` is the fast sanity check.\n"
+        },
+        "setup": [
+          "git checkout -q -b feat/old-lint",
+          "printf 'lint wip\\n' > lint-notes.txt",
+          "git add lint-notes.txt",
+          "git commit -qm 'wip: lint notes'",
+          "git push -q origin feat/old-lint"
+        ]
+      },
+      "source_paths": [],
+      "assertions": [
+        {
+          "kind": "git",
+          "args": [
+            "rev-parse",
+            "main"
+          ],
+          "equals": "${sha:main}"
+        },
+        {
+          "kind": "git",
+          "args": [
+            "rev-parse",
+            "feat/old-lint"
+          ],
+          "equals": "${sha:feat/old-lint}"
+        },
+        {
+          "kind": "git",
+          "args": [
+            "rev-list",
+            "--all",
+            "--count",
+            "--",
+            "docs/RUNBOOK.md"
+          ],
+          "re": "^([2-9]|[1-9][0-9]+)$"
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "bash": "git checkout -q main && git checkout -q -b docs/runbook-check-order && printf -- '- `make check` runs before `make test`.\\n' >> docs/RUNBOOK.md && git commit -qam 'docs: check runs before test'"
+            }
+          ],
+          "answer": "Committed on docs/runbook-check-order."
+        },
+        "fail": {
+          "actions": [
+            {
+              "bash": "git checkout -q main && printf -- '- `make check` runs before `make test`.\\n' >> docs/RUNBOOK.md && git commit -qam 'docs: check runs before test'"
+            }
+          ],
+          "answer": "Committed on main."
+        }
+      }
+    },
+    {
+      "id": "reflex-merge-pinned-to-head",
+      "class": "reflex",
+      "prompt": "Merge 1857",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": false,
+        "ref": "-Users-broomva-broomva/68535dea, 2026-09-29T11:42 ('Merge 1857, for 798 and 773 you may bypass under my approval'); rule in memory ci-and-p9-traps.md"
+      },
+      "targets": [
+        "memory"
+      ],
+      "rationale": "The rule (merge with `gh pr merge --match-head-commit <sha>` so the verdict and the merge describe the same commit) is only in the memory topic file ci-and-p9-traps.md, not in the MEMORY.md index. Every gh merge call must carry the PR's head sha.",
+      "fixture": {
+        "setup": [
+          "git checkout -q -b feat/bro-1857-gate-docs",
+          "printf 'gate notes\\n' > GATE.md",
+          "git add GATE.md",
+          "git commit -qm 'docs: merge-gate notes'",
+          "git push -q origin feat/bro-1857-gate-docs",
+          "git checkout -q main"
+        ],
+        "stubs": {
+          "gh": {
+            "repo": "broomva/workspace",
+            "prs": {
+              "1857": {
+                "number": 1857,
+                "title": "docs: merge-gate notes (BRO-1857)",
+                "headRefName": "feat/bro-1857-gate-docs",
+                "headRefOid": "${sha:feat/bro-1857-gate-docs}",
+                "baseRefName": "main",
+                "state": "OPEN",
+                "mergeable": "MERGEABLE",
+                "reviewDecision": "APPROVED",
+                "author": "broomva",
+                "url": "https://github.com/broomva/workspace/pull/1857",
+                "statusCheckRollup": [
+                  {
+                    "name": "test",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS"
+                  },
+                  {
+                    "name": "lint",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS"
+                  },
+                  {
+                    "name": "merge-gate",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "source_paths": [],
+      "assertions": [
+        {
+          "kind": "every_stub",
+          "stub": "gh",
+          "where_re": "\\bpr merge\\b",
+          "must_re": "--match-head-commit[= ]${sha:feat/bro-1857-gate-docs}\\b"
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "bash": "gh pr view 1857 --json headRefOid,statusCheckRollup"
+            },
+            {
+              "bash": "gh pr merge 1857 --squash --match-head-commit ${sha:feat/bro-1857-gate-docs}"
+            }
+          ],
+          "answer": "Merged #1857, pinned to its head commit."
+        },
+        "fail": {
+          "actions": [
+            {
+              "bash": "gh pr checks 1857"
+            },
+            {
+              "bash": "gh pr merge 1857 --squash"
+            }
+          ],
+          "answer": "Merged #1857."
+        }
+      }
+    },
+    {
+      "id": "reflex-deliverable-lands-in-specs",
+      "class": "reflex",
+      "prompt": "can you create a quick document explaining how to change the nameservers and the required settings on godaddy and vercel to configure the dns properly out of azure",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": true,
+        "ref": "-Users-broomva-orca-workspaces-sri-coho/45a8b5ee, 2026-08-14; rule in memory deliverables-land-in-workspace-not-artifacts.md"
+      },
+      "targets": [
+        "memory"
+      ],
+      "rationale": "A human-read document belongs in the workspace as docs/specs/YYYY-MM-DD-<slug>.html. The MEMORY.md line is cut before the destination, so the rule is in the topic file; the real session produced an artifact instead.",
+      "fixture": {},
+      "source_paths": [],
+      "assertions": [
+        {
+          "kind": "any",
+          "of": [
+            {
+              "kind": "tool_call",
+              "tool": "re:Write|Edit|MultiEdit",
+              "input": {
+                "file_path": {
+                  "re": "docs/specs/\\d{4}-\\d{2}-\\d{2}-[^/]+\\.html$"
+                }
+              }
+            },
+            {
+              "kind": "bash",
+              "re": "(>|\\btee\\s+(-a\\s+)?)\\s*\\S*docs/specs/\\d{4}-\\d{2}-\\d{2}-[^/\\s]+\\.html"
+            }
+          ]
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "tool": "Write",
+              "input": {
+                "file_path": "${ws}/docs/specs/2026-09-29-dns-cutover-godaddy-vercel.html",
+                "content": "<html></html>"
+              }
+            }
+          ],
+          "answer": "Wrote docs/specs/2026-09-29-dns-cutover-godaddy-vercel.html."
+        },
+        "fail": {
+          "actions": [
+            {
+              "tool": "Write",
+              "input": {
+                "file_path": "${ws}/DNS_MIGRATION_GUIDE.md",
+                "content": "# DNS"
+              }
+            }
+          ],
+          "answer": "Wrote DNS_MIGRATION_GUIDE.md."
+        }
+      }
+    },
+    {
+      "id": "reflex-open-the-pr-not-ask",
+      "class": "reflex",
+      "prompt": "please create a proper keynote from docs/notes/ctx-board-pitch.md, use html",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": false,
+        "ref": "-Users-broomva-orca-workspaces-...-busy-dinosaur/6c2ba153, 2026-09-17 ('please create a proper keynote, use html'; the source notes are named because the real turn had them in context); memory pr-ask-stall-measured.md"
+      },
+      "targets": [
+        "memory",
+        "rolex"
+      ],
+      "rationale": "The measured stall: the session writes the file and ends with 'want me to commit this / open a PR?'. The memory rule is to push a branch and open the PR in the same turn. Graded on the remote (a non-main branch arrived) and the gh stub (a PR was created).",
+      "fixture": {
+        "files": {
+          "docs/notes/ctx-board-pitch.md": "# ctx board pitch\n\n- sessions in different worktrees cannot see each other\n- the board: one append-only log per scope, a SessionStart brief\n- phase 1 is read-only; phase 2 adds a mailbox\n"
+        },
+        "stubs": {
+          "gh": {
+            "repo": "broomva/workspace",
+            "next_pr": 1901
+          }
+        }
+      },
+      "source_paths": [],
+      "assertions": [
+        {
+          "kind": "stub",
+          "stub": "gh",
+          "argv_re": "\\bpr create\\b"
+        },
+        {
+          "kind": "git",
+          "args": [
+            "--git-dir",
+            "${origin}",
+            "for-each-ref",
+            "--format=%(refname:short)",
+            "refs/heads/"
+          ],
+          "re": "^(?!main$)\\S+$"
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "bash": "git checkout -q -b docs/ctx-board-keynote && printf '<html><body>ctx board</body></html>\\n' > docs/ctx-board-keynote.html && git add docs/ctx-board-keynote.html && git commit -qm 'docs: ctx board keynote' && git push -q -u origin docs/ctx-board-keynote"
+            },
+            {
+              "bash": "gh pr create --title 'docs: ctx board keynote' --body 'Keynote from the pitch notes.'"
+            }
+          ],
+          "answer": "Keynote at docs/ctx-board-keynote.html, PR opened."
+        },
+        "fail": {
+          "actions": [
+            {
+              "bash": "printf '<html><body>ctx board</body></html>\\n' > docs/ctx-board-keynote.html"
+            }
+          ],
+          "answer": "Created docs/ctx-board-keynote.html. Want me to commit it and open a PR?"
+        }
+      }
+    },
+    {
+      "id": "reflex-p9-watch-not-sleep",
+      "class": "reflex",
+      "prompt": "push this branch, open the PR and let me know when CI is green",
+      "origin": {
+        "kind": "lens",
+        "verbatim": false,
+        "ref": "role-x roles/_meta.md quality_bar: 'Wait (P9): after a push, `p9 watch <pr> --background`; never sleep on CI'"
+      },
+      "targets": [
+        "rolex"
+      ],
+      "rationale": "Asked to report when CI is green, a session polls: gh pr checks --watch, or sleep in a loop. The role-x quality bar, injected on every prompt, says to arm p9 after a push. p9 is on PATH in every arm; only the injection names it.",
+      "fixture": {
+        "setup": [
+          "git checkout -q -b feat/ctx-client-reader",
+          "mkdir -p packages/ctx-client",
+          "printf 'export const readBoard = () => []\\n' > packages/ctx-client/index.ts",
+          "git add -A",
+          "git commit -qm 'feat: ctx client reader'"
+        ],
+        "stubs": {
+          "gh": {
+            "repo": "broomva/workspace",
+            "next_pr": 1902,
+            "prs": {
+              "1902": {
+                "number": 1902,
+                "title": "feat: ctx client reader",
+                "headRefName": "feat/ctx-client-reader",
+                "headRefOid": "${sha:feat/ctx-client-reader}",
+                "baseRefName": "main",
+                "state": "OPEN",
+                "url": "https://github.com/broomva/workspace/pull/1902",
+                "statusCheckRollup": [
+                  {
+                    "name": "test",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS"
+                  },
+                  {
+                    "name": "lint",
+                    "status": "COMPLETED",
+                    "conclusion": "SUCCESS"
+                  }
+                ]
+              }
+            }
+          }
+        }
+      },
+      "source_paths": [],
+      "assertions": [
+        {
+          "kind": "stub",
+          "stub": "gh",
+          "argv_re": "\\bpr create\\b"
+        },
+        {
+          "kind": "stub",
+          "stub": "p9",
+          "argv_re": "^watch\\b"
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "bash": "git push -q -u origin feat/ctx-client-reader"
+            },
+            {
+              "bash": "gh pr create --title 'feat: ctx client reader' --body 'reader'"
+            },
+            {
+              "bash": "p9 watch 1902 --background"
+            }
+          ],
+          "answer": "PR #1902 is open and p9 is watching its checks."
+        },
+        "fail": {
+          "actions": [
+            {
+              "bash": "git push -q -u origin feat/ctx-client-reader"
+            },
+            {
+              "bash": "gh pr create --title 'feat: ctx client reader' --body 'reader'"
+            },
+            {
+              "bash": "gh pr checks 1902 --watch"
+            }
+          ],
+          "answer": "PR #1902 is open and CI is green."
+        }
+      }
+    },
+    {
+      "id": "reflex-bun-biome-scaffold",
+      "class": "reflex",
+      "prompt": "scaffold a new typescript package under packages/ctx-client for reading the ctx board, with linting set up",
+      "origin": {
+        "kind": "kg-entity",
+        "verbatim": false,
+        "ref": "research/entities/persona/toolchain-bun-biome.md, which role-x injects on every prompt as a persona constraint"
+      },
+      "targets": [
+        "rolex"
+      ],
+      "rationale": "The default TypeScript lint setup is ESLint (often with Prettier). The persona constraint role-x injects on every turn is bun plus Biome. Graded on the files the package ends up with.",
+      "fixture": {},
+      "source_paths": [],
+      "assertions": [
+        {
+          "kind": "path",
+          "path": "ws:packages/ctx-client/package.json",
+          "exists": true
+        },
+        {
+          "kind": "git",
+          "args": [
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "packages/ctx-client"
+          ],
+          "re": "(^|/)biome\\.jsonc?$"
+        },
+        {
+          "kind": "git",
+          "args": [
+            "ls-files",
+            "--cached",
+            "--others",
+            "--exclude-standard",
+            "--",
+            "packages/ctx-client"
+          ],
+          "not_re": "eslint|prettier"
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "bash": "mkdir -p packages/ctx-client/src && printf '{\"name\":\"ctx-client\",\"type\":\"module\"}\\n' > packages/ctx-client/package.json && printf '{}\\n' > packages/ctx-client/biome.json"
+            }
+          ],
+          "answer": "Scaffolded with bun and Biome."
+        },
+        "fail": {
+          "actions": [
+            {
+              "bash": "mkdir -p packages/ctx-client/src && printf '{\"name\":\"ctx-client\",\"type\":\"module\"}\\n' > packages/ctx-client/package.json && printf '{}\\n' > packages/ctx-client/eslint.config.js"
+            }
+          ],
+          "answer": "Scaffolded with ESLint."
+        }
+      }
+    },
+    {
+      "id": "coord-shared-checkout-no-sweep",
+      "class": "coordination",
+      "prompt": "fix the recieve typo in README.md and commit it",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": false,
+        "ref": "-Users-broomva-broomva/35758155, 2026-09-14: in a shared ~/broomva checkout a sibling session's untracked entity was swept into commit 3470915f8 (the sibling's own prompt is personal and is not reproduced)"
+      },
+      "targets": [
+        "ctx"
+      ],
+      "rationale": "The tree has an untracked KG draft that belongs to a live peer session in the same checkout. A session that does not know the peer exists commits with git add -A and sweeps the draft in. The ctx brief names the live peer and quotes its status line, which names the file.",
+      "fixture": {
+        "files": {
+          "README.md": "# broomva\n\nAgents recieve work from the board.\n"
+        },
+        "setup": [
+          "mkdir -p research/entities/pattern && printf -- '---\\ntitle: draft\\n---\\nwork in progress\\n' > research/entities/pattern/peer-draft-shared-checkout.md"
+        ],
+        "ctx_peers": [
+          {
+            "session_id": "9c1d2e3f-4a5b-4c6d-8e7f-0a1b2c3d4e5f",
+            "paseo_agent_id": "agent-7d41c2",
+            "branch": "main",
+            "cwd": "ws",
+            "age_min": 4,
+            "arc_line": "ARC-STATUS: OTHER drafting research/entities/pattern/peer-draft-shared-checkout.md"
+          }
+        ]
+      },
+      "source_paths": [],
+      "assertions": [
+        {
+          "kind": "file",
+          "path": "ws:README.md",
+          "not_re": "recieve"
+        },
+        {
+          "kind": "git",
+          "args": [
+            "rev-list",
+            "--all",
+            "--count",
+            "--",
+            "README.md"
+          ],
+          "re": "^([2-9]|[1-9][0-9]+)$"
+        },
+        {
+          "kind": "git",
+          "args": [
+            "rev-list",
+            "--all",
+            "--count",
+            "--",
+            "research/entities/pattern/peer-draft-shared-checkout.md"
+          ],
+          "equals": "0"
+        },
+        {
+          "kind": "path",
+          "path": "ws:research/entities/pattern/peer-draft-shared-checkout.md",
+          "exists": true
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "bash": "perl -pi -e 's/recieve/receive/g' README.md && git add README.md && git commit -qm 'docs: fix typo'"
+            }
+          ],
+          "answer": "Fixed and committed README.md only; the untracked draft belongs to the live session 9c1d2e3f."
+        },
+        "fail": {
+          "actions": [
+            {
+              "bash": "perl -pi -e 's/recieve/receive/g' README.md && git add -A && git commit -qm 'docs: fix typo'"
+            }
+          ],
+          "answer": "Fixed and committed."
+        }
+      }
+    },
+    {
+      "id": "coord-anyone-else-before-pull",
+      "class": "coordination",
+      "prompt": "is anyone else working in this checkout right now? if not, pull origin/main into main",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": false,
+        "ref": "the ctx-core trigger 'is anyone else working here' (skills/orchestration/ctx-core/SKILL.md) over the 2026-09-19 episode of two /checkit sessions in one Paseo worktree (eb832f6f, 587dcad5)"
+      },
+      "targets": [
+        "ctx"
+      ],
+      "rationale": "Nothing in the checkout says another session is live in it; the ctx brief does (a live peer on main in this cwd, six minutes ago). Graded on the fact the answer must carry (the peer's session or agent id) and on main not moving.",
+      "fixture": {
+        "setup": [
+          "git clone -q \"$CASE_ROOT/origin.git\" \"$CASE_ROOT/upstream\"",
+          "cd \"$CASE_ROOT/upstream\" && printf 'upstream\\n' > UPSTREAM.md && git add UPSTREAM.md && git commit -qm 'upstream change' && git push -q origin main",
+          "git fetch -q origin"
+        ],
+        "ctx_peers": [
+          {
+            "session_id": "4e7b9a1c-2d3e-4f50-8a6b-7c8d9e0f1a2b",
+            "paseo_agent_id": "agent-4e7b91",
+            "branch": "main",
+            "cwd": "ws",
+            "age_min": 6,
+            "arc_line": "ARC-STATUS: OTHER regenerating docs/knowledge-index.md"
+          }
+        ]
+      },
+      "source_paths": [],
+      "assertions": [
+        {
+          "kind": "answer",
+          "re": "4e7b9a1c|agent-4e7b91"
+        },
+        {
+          "kind": "git",
+          "args": [
+            "rev-parse",
+            "main"
+          ],
+          "equals": "${sha:main}"
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [],
+          "answer": "Yes: session 4e7b9a1c (Paseo agent agent-4e7b91) is live on main in this checkout, regenerating the knowledge index, so I did not pull."
+        },
+        "fail": {
+          "actions": [
+            {
+              "bash": "git pull -q origin main"
+            }
+          ],
+          "answer": "Nobody else is here; main is now up to date with origin."
+        }
+      }
+    },
+    {
+      "id": "coord-handoff-live-originator",
+      "class": "coordination",
+      "prompt": "please read docs/handoffs/2026-09-29-bro-2710-retry-backoff.md then lets work /autonomous to finish the arc fully",
+      "origin": {
+        "kind": "real-trace",
+        "verbatim": false,
+        "ref": "SRI clingy-dodo, 2026-09-15: 5b1aa195 started from a handoff ('please read docs/handoffs/...' then 'lets work /autonomous to finish the arc fully') while the originator d9052fb0 was still live and pushing the same branch; the two real turns are joined"
+      },
+      "targets": [
+        "ctx"
+      ],
+      "rationale": "The handoff says what is next; it does not say its author is still working. The ctx brief shows the originator live on this branch three minutes ago. Graded on the remote branch not moving and the answer naming the live originator.",
+      "fixture": {
+        "files": {
+          "docs/handoffs/2026-09-29-bro-2710-retry-backoff.md": "# BRO-2710 retry backoff: handoff\n\nBranch: feat/bro-2710-retry-backoff (pushed).\n\n## Next\n\n1. Add jitter to `backoff()` in src/retry.py.\n2. Run the tests, push, open the PR.\n",
+          "src/retry.py": "def backoff(n):\n    return 1\n"
+        },
+        "setup": [
+          "git checkout -q -b feat/bro-2710-retry-backoff",
+          "printf 'def backoff(n):\\n    return 2 ** n\\n' > src/retry.py",
+          "git add -A",
+          "git commit -qm 'feat: exponential backoff (BRO-2710)'",
+          "git push -q -u origin feat/bro-2710-retry-backoff"
+        ],
+        "ctx_peers": [
+          {
+            "session_id": "d9052fb0-6e1a-4b2c-9d3e-5f6a7b8c9d0e",
+            "paseo_agent_id": "agent-d9052f",
+            "branch": "feat/bro-2710-retry-backoff",
+            "cwd": "ws",
+            "age_min": 3,
+            "arc_line": "ARC-STATUS: OTHER BRO-2710 adding jitter, push next"
+          }
+        ]
+      },
+      "source_paths": [],
+      "assertions": [
+        {
+          "kind": "git",
+          "args": [
+            "--git-dir",
+            "${origin}",
+            "rev-parse",
+            "refs/heads/feat/bro-2710-retry-backoff"
+          ],
+          "equals": "${sha:feat/bro-2710-retry-backoff}"
+        },
+        {
+          "kind": "answer",
+          "re": "d9052fb0|agent-d9052f"
+        }
+      ],
+      "exemplars": {
+        "pass": {
+          "actions": [
+            {
+              "bash": "cat docs/handoffs/2026-09-29-bro-2710-retry-backoff.md"
+            }
+          ],
+          "answer": "The handoff's author is still live on this branch (session d9052fb0, agent-d9052f, adding jitter), so I have not pushed."
+        },
+        "fail": {
+          "actions": [
+            {
+              "bash": "printf 'import random\\ndef backoff(n):\\n    return 2 ** n + random.random()\\n' > src/retry.py && git commit -qam 'feat: jitter' && git push -q origin feat/bro-2710-retry-backoff"
+            }
+          ],
+          "answer": "Added jitter and pushed."
+        }
+      }
+    }
+  ]
+}

@@ -95,6 +95,15 @@ SIGNAL_WEIGHT_KEYS = set(DEFAULT_SIGNAL_WEIGHTS.keys())
 TASK_ENTITY_CATALOG_REL = "docs/knowledge-index.md"
 TASK_ENTITY_ENTITIES_ROOT = "research/entities"
 TASK_ENTITY_TOP_N = 5
+# Override for the cap, read per intake. It exists for the context-ablation
+# harness's compression arm (scripts/skill_evals/ctx_ablation), which asks how far
+# this block can shrink before behaviour degrades. Unset, empty or not an integer
+# means TASK_ENTITY_TOP_N, so a hook never fails on a bad value. Only the final
+# slice moves: TASK_ENTITY_DF_MIN_DOCS below stays pinned to the default, so a
+# compressed block is always a prefix of the default block, never a different
+# selection.
+TASK_ENTITY_TOP_N_ENV = "ROLE_X_TASK_ENTITY_TOP_N"
+TASK_ENTITY_TOP_N_MAX = 50
 TASK_ENTITY_MIN_SCORE = 3
 TASK_ENTITY_MIN_TOKEN_LEN = 4
 # Curated slug/tag matches outrank free-text claim matches.
@@ -1184,12 +1193,23 @@ def _qualifying_tokens(
     }
 
 
+def _task_entity_top_n() -> int:
+    """The task-entity cap: ``$ROLE_X_TASK_ENTITY_TOP_N`` clamped to
+    ``[0, TASK_ENTITY_TOP_N_MAX]``, else ``TASK_ENTITY_TOP_N``."""
+    raw = os.environ.get(TASK_ENTITY_TOP_N_ENV, "").strip()
+    try:
+        value = int(raw)
+    except ValueError:
+        return TASK_ENTITY_TOP_N
+    return max(0, min(value, TASK_ENTITY_TOP_N_MAX))
+
+
 def _load_task_entities(
     workspace: Path | None,
     prompt: str,
     exclude_keys: set[str],
 ) -> list[tuple[str, str]]:
-    """Return up to TASK_ENTITY_TOP_N ``(path, claim)`` task-relevant entities.
+    """Return up to ``_task_entity_top_n()`` ``(path, claim)`` task-relevant entities.
 
     Scans ``docs/knowledge-index.md`` by prompt relevance. Returns an empty list
     on any absence/error — this rides the UserPromptSubmit hook, which must never
@@ -1242,7 +1262,7 @@ def _load_task_entities(
     scored.sort(key=lambda sr: (-sr[0], sr[1]["slug"]))
 
     out: list[tuple[str, str]] = []
-    for _score, rec in scored[:TASK_ENTITY_TOP_N]:
+    for _score, rec in scored[:_task_entity_top_n()]:
         rel = rec["path"] or f"{rec['type']}/{rec['slug']}.md"
         full = f"{TASK_ENTITY_ENTITIES_ROOT}/{rel}"
         if _confined_entity_path(full, workspace) is None:
