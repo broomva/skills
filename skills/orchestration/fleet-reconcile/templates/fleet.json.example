@@ -1,0 +1,34 @@
+{
+  "v": 1,
+  "scopes": {
+    "broomva": {
+      "dispatch_enabled": 1,
+      "dry_run": 1,
+      "mode": "report",
+      "tracker": {"kind": "linear", "team": "BRO"},
+      "state_dir": "~/.local/state/fleet-reconcile/broomva",
+      "paseo_project": null,
+      "caps": {"fleet_sessions": 8, "active_sessions": 12, "active_window_min": 30, "research_spawns_per_day": 4},
+      "mail_interval_h": 6,
+      "adopted": [],
+      "listing_cap": 200,
+      "pr_list_cap": 200,
+      "gh_token_file": "~/.config/broomva/fleet/gh-token",
+      "actions_app_id": 15368,
+      "launchd_prefix": "com.broomva.",
+      "launchd_logs": {"com.broomva.moltbook-loop": "~/.config/moltbook/loop-runner.log"},
+      "bookkeeping_run_log": "~/.config/bookkeeping/run-log.jsonl",
+      "dream_run_log": null,
+      "ask_renotify_h": 6,
+      "tick_timeout_min": 15
+    },
+    "sri": {
+      "dispatch_enabled": 1,
+      "dry_run": 1,
+      "mode": "report",
+      "tracker": {"kind": "linear", "team": "STI"},
+      "state_dir": "~/.local/state/fleet-reconcile/sri",
+      "gh_token_file": null
+    }
+  }
+}

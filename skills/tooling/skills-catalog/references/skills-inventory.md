@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 104 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
+> 105 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
 ## Governance & control — `skills/governance/` (11)
 
@@ -18,7 +18,7 @@
 | `spec-contract` | The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked… |
 | `autoreview` | Unattended multi-lens review of a plan, launch plan, spec, strategy doc, ADR or proposal. The autonomous counterpart to grill-with-docs: instead of interviewing the human, the agent asks the grilling… |
 
-## Orchestration & autonomy — `skills/orchestration/` (12)
+## Orchestration & autonomy — `skills/orchestration/` (13)
 
 | Skill | What it does |
 |---|---|
@@ -34,6 +34,7 @@
 | `resume` | Restore an arc that was killed mid-flight by something external — API 529 / 500, ENOTFOUND, ConnectionRefused, an expired login, a laptop that slept, a Ctrl-C. The operator restarts, types `resume`… |
 | `provider-manager` | Autonomous AI provider and subscription management toolkit. Enables seamless account discovery, credential switching, automated zero-touch browser-session OAuth re-authentication, and proactive… |
 | `ctx-core` | The shared context core, phase 1: a read-only shared board. Hooks append each session's start, ARC-STATUS keyword and death to a per-scope log as structured fields only; SessionStart injects a factual brief of the other sessions on the same branch. Coordination only, not a security boundary |
+| `fleet-reconcile` | The hourly fleet coordinator, phase 1: observe and classify, report only. Each tick reads every Claude Code session (claude agents --json --all and the background job files), Paseo's agent records… |
 
 ## Skill & prompt tooling — `skills/tooling/` (9)
 
@@ -47,7 +48,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 104 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 105 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
 
@@ -225,8 +226,8 @@
 
 ## Aggregates
 
-- **Total skills**: 104
+- **Total skills**: 105
 - **Total category buckets**: 23
-- **Largest bucket**: Orchestration & autonomy (12)
+- **Largest bucket**: Orchestration & autonomy (13)
 - **Smallest buckets** (1): Science
 - Taxonomy = the 23 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.

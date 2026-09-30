@@ -1,0 +1,43 @@
+{
+ "id": "agent-0035",
+ "provider": "claude",
+ "cwd": "{HOME}/broomva",
+ "workspaceId": "ws-35",
+ "createdAt": "2026-09-30T21:11:03.592Z",
+ "updatedAt": "2026-09-30T21:13:28.042Z",
+ "lastActivityAt": "2026-09-30T21:13:28.042Z",
+ "lastUserMessageAt": "2026-09-30T21:11:09.219Z",
+ "title": "title 35",
+ "labels": {
+  "paseo.parent-agent-id": "v-17"
+ },
+ "lastStatus": "running",
+ "lastModeId": "bypassPermissions",
+ "config": {
+  "modeId": "bypassPermissions"
+ },
+ "runtimeInfo": {
+  "provider": "claude",
+  "sessionId": null
+ },
+ "features": [],
+ "persistence": {
+  "provider": "claude",
+  "sessionId": "00000076-f1ee-4000-8000-000000000076",
+  "metadata": {
+   "mcpServers": {
+    "paseo": {
+     "type": "http",
+     "url": "http://127.0.0.1:6767/mcp?fixture=1",
+     "headers": {
+      "Authorization": "Bearer FIXTURE-FAKE-BEARER-NOT-A-SECRET"
+     }
+    }
+   }
+  }
+ },
+ "requiresAttention": false,
+ "attentionReason": null,
+ "attentionTimestamp": null,
+ "internal": false
+}

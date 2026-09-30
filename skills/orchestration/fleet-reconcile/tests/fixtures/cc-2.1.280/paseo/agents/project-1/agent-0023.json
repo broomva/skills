@@ -1,0 +1,41 @@
+{
+ "id": "agent-0023",
+ "provider": "claude",
+ "cwd": "{HOME}/wt/sri-4",
+ "workspaceId": "ws-23",
+ "createdAt": "2026-09-28T18:16:06.375Z",
+ "updatedAt": "2026-09-30T02:04:10.276Z",
+ "lastActivityAt": "2026-09-30T02:04:10.276Z",
+ "lastUserMessageAt": "2026-09-30T02:02:13.917Z",
+ "title": "title 23",
+ "labels": {},
+ "lastStatus": "idle",
+ "lastModeId": "bypassPermissions",
+ "config": {
+  "modeId": "bypassPermissions"
+ },
+ "runtimeInfo": {
+  "provider": "claude",
+  "sessionId": "00000061-f1ee-4000-8000-000000000061"
+ },
+ "features": [],
+ "persistence": {
+  "provider": "claude",
+  "sessionId": "00000061-f1ee-4000-8000-000000000061",
+  "metadata": {
+   "mcpServers": {
+    "paseo": {
+     "type": "http",
+     "url": "http://127.0.0.1:6767/mcp?fixture=1",
+     "headers": {
+      "Authorization": "Bearer FIXTURE-FAKE-BEARER-NOT-A-SECRET"
+     }
+    }
+   }
+  }
+ },
+ "requiresAttention": false,
+ "attentionReason": null,
+ "attentionTimestamp": null,
+ "internal": false
+}

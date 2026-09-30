@@ -1,0 +1,25 @@
+{
+ "state": "blocked",
+ "detail": "You've hit your session limit \u00b7 resets 10am (America/Bogota)",
+ "tempo": "blocked",
+ "sessionId": "00000041-f1ee-4000-8000-000000000041",
+ "resumeSessionId": "00000041-f1ee-4000-8000-000000000041",
+ "cwd": "{HOME}/gone/13",
+ "createdAt": "2026-09-21T12:46:27.454Z",
+ "updatedAt": "2026-09-21T13:38:46.374Z",
+ "cliVersion": "2.1.258",
+ "output": null,
+ "providerEnv": {
+  "FIXTURE_ENV": "not-read"
+ },
+ "respawnFlags": [
+  "--name",
+  "bg-flag-name",
+  "--settings",
+  "{\"crossSessionInbound\":\"accept\"}"
+ ],
+ "needs": "You've hit your session limit \u00b7 resets 10am (America/Bogota)",
+ "worktreePath": "{HOME}/gone/16",
+ "worktreeBranch": "worktree-branch-4",
+ "name": "background-session-40"
+}

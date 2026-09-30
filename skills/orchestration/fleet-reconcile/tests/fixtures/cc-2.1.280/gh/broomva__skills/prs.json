@@ -1,0 +1,47 @@
+[
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "main",
+  "headRefName": "branch-1",
+  "isDraft": false,
+  "labels": [],
+  "mergeStateStatus": "CLEAN",
+  "number": 252,
+  "title": "PR title 1",
+  "updatedAt": "2026-09-30T21:11:50Z",
+  "url": "https://github.com/broomva/skills/pull/252"
+ },
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "main",
+  "headRefName": "branch-2",
+  "isDraft": true,
+  "labels": [],
+  "mergeStateStatus": "CLEAN",
+  "number": 250,
+  "title": "PR title 2",
+  "updatedAt": "2026-09-30T14:00:37Z",
+  "url": "https://github.com/broomva/skills/pull/250"
+ },
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "main",
+  "headRefName": "branch-3",
+  "isDraft": false,
+  "labels": [],
+  "mergeStateStatus": "BLOCKED",
+  "number": 245,
+  "title": "PR title 3",
+  "updatedAt": "2026-09-29T14:49:48Z",
+  "url": "https://github.com/broomva/skills/pull/245"
+ }
+]

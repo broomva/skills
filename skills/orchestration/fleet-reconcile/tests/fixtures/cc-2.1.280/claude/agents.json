@@ -1,0 +1,686 @@
+[
+ {
+  "id": "00000001",
+  "cwd": "{HOME}/broomva",
+  "kind": "background",
+  "startedAt": 1780089019987,
+  "sessionId": "00000001-f1ee-4000-8000-000000000001",
+  "name": "/cmd-1",
+  "state": "stopped"
+ },
+ {
+  "id": "00000002",
+  "cwd": "{HOME}/gone/1",
+  "kind": "background",
+  "startedAt": 1788577517648,
+  "sessionId": "00000002-f1ee-4000-8000-000000000002",
+  "name": "background-session-1",
+  "state": "blocked"
+ },
+ {
+  "id": "00000003",
+  "cwd": "{HOME}/gone/2",
+  "kind": "background",
+  "startedAt": 1788666952820,
+  "sessionId": "00000003-f1ee-4000-8000-000000000003",
+  "name": "background-session-2",
+  "state": "blocked"
+ },
+ {
+  "id": "00000004",
+  "cwd": "{HOME}/gone/3",
+  "kind": "background",
+  "startedAt": 1788740065455,
+  "sessionId": "00000004-f1ee-4000-8000-000000000004",
+  "name": "background-session-3",
+  "state": "blocked"
+ },
+ {
+  "id": "00000005",
+  "cwd": "{HOME}/gone/3",
+  "kind": "background",
+  "startedAt": 1788789293872,
+  "sessionId": "00000005-f1ee-4000-8000-000000000005",
+  "name": "background-session-4",
+  "state": "blocked"
+ },
+ {
+  "id": "00000006",
+  "cwd": "{HOME}/gone/3",
+  "kind": "background",
+  "startedAt": 1788789294662,
+  "sessionId": "00000006-f1ee-4000-8000-000000000006",
+  "name": "background-session-5",
+  "state": "blocked"
+ },
+ {
+  "id": "00000007",
+  "cwd": "{HOME}/gone/3",
+  "kind": "background",
+  "startedAt": 1788789295724,
+  "sessionId": "00000007-f1ee-4000-8000-000000000007",
+  "name": "background-session-6",
+  "state": "done"
+ },
+ {
+  "id": "00000008",
+  "cwd": "{HOME}/gone/3",
+  "kind": "background",
+  "startedAt": 1788789296757,
+  "sessionId": "00000008-f1ee-4000-8000-000000000008",
+  "name": "background-session-7",
+  "state": "done"
+ },
+ {
+  "id": "00000009",
+  "cwd": "{HOME}/gone/3",
+  "kind": "background",
+  "startedAt": 1788789298233,
+  "sessionId": "00000009-f1ee-4000-8000-000000000009",
+  "name": "background-session-8",
+  "state": "blocked"
+ },
+ {
+  "id": "00000010",
+  "cwd": "{HOME}/gone/4",
+  "kind": "background",
+  "startedAt": 1788833221450,
+  "sessionId": "00000010-f1ee-4000-8000-000000000010",
+  "name": "background-session-9",
+  "state": "done"
+ },
+ {
+  "id": "00000011",
+  "cwd": "{HOME}/gone/4",
+  "kind": "background",
+  "startedAt": 1788833222292,
+  "sessionId": "00000011-f1ee-4000-8000-000000000011",
+  "name": "background-session-10",
+  "state": "done"
+ },
+ {
+  "id": "00000012",
+  "cwd": "{HOME}/gone/4",
+  "kind": "background",
+  "startedAt": 1788833223088,
+  "sessionId": "00000012-f1ee-4000-8000-000000000012",
+  "name": "background-session-11",
+  "state": "done"
+ },
+ {
+  "id": "00000013",
+  "cwd": "{HOME}/gone/4",
+  "kind": "background",
+  "startedAt": 1788833223965,
+  "sessionId": "00000013-f1ee-4000-8000-000000000013",
+  "name": "background-session-12",
+  "state": "blocked"
+ },
+ {
+  "id": "00000014",
+  "cwd": "{HOME}/gone/5",
+  "kind": "background",
+  "startedAt": 1788877303894,
+  "sessionId": "00000014-f1ee-4000-8000-000000000014",
+  "name": "background-session-13",
+  "state": "done"
+ },
+ {
+  "id": "00000015",
+  "cwd": "{HOME}/client/sri",
+  "kind": "background",
+  "startedAt": 1788879904093,
+  "sessionId": "00000015-f1ee-4000-8000-000000000015",
+  "name": "background-session-14",
+  "state": "done"
+ },
+ {
+  "id": "00000016",
+  "cwd": "{HOME}/client/sri",
+  "kind": "background",
+  "startedAt": 1788879904915,
+  "sessionId": "00000016-f1ee-4000-8000-000000000016",
+  "name": "background-session-15",
+  "state": "failed"
+ },
+ {
+  "id": "00000017",
+  "cwd": "{HOME}/client/sri",
+  "kind": "background",
+  "startedAt": 1788879905816,
+  "sessionId": "00000017-f1ee-4000-8000-000000000017",
+  "name": "background-session-16",
+  "state": "done"
+ },
+ {
+  "id": "00000018",
+  "cwd": "{HOME}/client/sri",
+  "kind": "background",
+  "startedAt": 1788879906691,
+  "sessionId": "00000018-f1ee-4000-8000-000000000018",
+  "name": "background-session-17",
+  "state": "done"
+ },
+ {
+  "id": "00000019",
+  "cwd": "{HOME}/gone/6",
+  "kind": "background",
+  "startedAt": 1788884958640,
+  "sessionId": "00000019-f1ee-4000-8000-000000000019",
+  "name": "background-session-18",
+  "state": "stopped"
+ },
+ {
+  "id": "00000020",
+  "cwd": "{HOME}/gone/6",
+  "kind": "background",
+  "startedAt": 1788884959920,
+  "sessionId": "00000020-f1ee-4000-8000-000000000020",
+  "name": "background-session-19",
+  "state": "done"
+ },
+ {
+  "id": "00000021",
+  "cwd": "{HOME}/gone/6",
+  "kind": "background",
+  "startedAt": 1788884961731,
+  "sessionId": "00000021-f1ee-4000-8000-000000000021",
+  "name": "background-session-20",
+  "state": "done"
+ },
+ {
+  "id": "00000022",
+  "cwd": "{HOME}/broomva/sub",
+  "kind": "background",
+  "startedAt": 1788912464306,
+  "sessionId": "00000022-f1ee-4000-8000-000000000022",
+  "name": "background-session-21",
+  "state": "failed"
+ },
+ {
+  "id": "00000023",
+  "cwd": "{HOME}/gone/7",
+  "kind": "background",
+  "startedAt": 1788912468547,
+  "sessionId": "00000023-f1ee-4000-8000-000000000023",
+  "name": "background-session-22",
+  "state": "failed"
+ },
+ {
+  "id": "00000024",
+  "cwd": "{HOME}/gone/8",
+  "kind": "background",
+  "startedAt": 1788912469955,
+  "sessionId": "00000024-f1ee-4000-8000-000000000024",
+  "name": "background-session-23",
+  "state": "failed"
+ },
+ {
+  "id": "00000025",
+  "cwd": "{HOME}/gone/9",
+  "kind": "background",
+  "startedAt": 1788912471930,
+  "sessionId": "00000025-f1ee-4000-8000-000000000025",
+  "name": "background-session-24",
+  "state": "failed"
+ },
+ {
+  "id": "00000026",
+  "cwd": "{HOME}/gone/10",
+  "kind": "background",
+  "startedAt": 1788912962427,
+  "sessionId": "00000026-f1ee-4000-8000-000000000026",
+  "name": "background-session-25",
+  "state": "failed"
+ },
+ {
+  "id": "00000027",
+  "cwd": "{HOME}/gone/11",
+  "kind": "background",
+  "startedAt": 1788958524373,
+  "sessionId": "00000027-f1ee-4000-8000-000000000027",
+  "name": "background-session-26",
+  "state": "blocked"
+ },
+ {
+  "id": "00000028",
+  "cwd": "{HOME}/gone/11",
+  "kind": "background",
+  "startedAt": 1788958529099,
+  "sessionId": "00000028-f1ee-4000-8000-000000000028",
+  "name": "background-session-27",
+  "state": "done"
+ },
+ {
+  "id": "00000029",
+  "cwd": "{HOME}/gone/11",
+  "kind": "background",
+  "startedAt": 1788958533062,
+  "sessionId": "00000029-f1ee-4000-8000-000000000029",
+  "name": "background-session-28",
+  "state": "done"
+ },
+ {
+  "id": "00000030",
+  "cwd": "{HOME}/gone/11",
+  "kind": "background",
+  "startedAt": 1788958537270,
+  "sessionId": "00000030-f1ee-4000-8000-000000000030",
+  "name": "background-session-29",
+  "state": "done"
+ },
+ {
+  "id": "00000031",
+  "cwd": "{HOME}/gone/11",
+  "kind": "background",
+  "startedAt": 1788958541554,
+  "sessionId": "00000031-f1ee-4000-8000-000000000031",
+  "name": "background-session-30",
+  "state": "done"
+ },
+ {
+  "id": "00000032",
+  "cwd": "{HOME}/gone/12",
+  "kind": "background",
+  "startedAt": 1789485696241,
+  "sessionId": "00000032-f1ee-4000-8000-000000000032",
+  "name": "background-session-31",
+  "state": "done"
+ },
+ {
+  "id": "00000033",
+  "cwd": "{HOME}/gone/12",
+  "kind": "background",
+  "startedAt": 1789485697361,
+  "sessionId": "00000033-f1ee-4000-8000-000000000033",
+  "name": "background-session-32",
+  "state": "done"
+ },
+ {
+  "id": "00000034",
+  "cwd": "{HOME}/gone/12",
+  "kind": "background",
+  "startedAt": 1789500063118,
+  "sessionId": "00000034-f1ee-4000-8000-000000000034",
+  "name": "background-session-33",
+  "state": "done"
+ },
+ {
+  "id": "00000035",
+  "cwd": "{HOME}/gone/12",
+  "kind": "background",
+  "startedAt": 1789509124257,
+  "sessionId": "00000035-f1ee-4000-8000-000000000035",
+  "name": "background-session-34",
+  "state": "done"
+ },
+ {
+  "id": "00000036",
+  "cwd": "{HOME}/gone/12",
+  "kind": "background",
+  "startedAt": 1789525266652,
+  "sessionId": "00000036-f1ee-4000-8000-000000000036",
+  "name": "background-session-35",
+  "state": "done"
+ },
+ {
+  "id": "00000037",
+  "cwd": "{HOME}/gone/13",
+  "kind": "background",
+  "startedAt": 1789994783797,
+  "sessionId": "00000037-f1ee-4000-8000-000000000037",
+  "name": "background-session-36",
+  "state": "blocked"
+ },
+ {
+  "id": "00000038",
+  "cwd": "{HOME}/gone/13",
+  "kind": "background",
+  "startedAt": 1789994784946,
+  "sessionId": "00000038-f1ee-4000-8000-000000000038",
+  "name": "background-session-37",
+  "state": "done"
+ },
+ {
+  "id": "00000039",
+  "cwd": "{HOME}/gone/13",
+  "kind": "background",
+  "startedAt": 1789994785770,
+  "sessionId": "00000039-f1ee-4000-8000-000000000039",
+  "name": "background-session-38",
+  "state": "done"
+ },
+ {
+  "id": "00000040",
+  "cwd": "{HOME}/gone/13",
+  "kind": "background",
+  "startedAt": 1789994786591,
+  "sessionId": "00000040-f1ee-4000-8000-000000000040",
+  "name": "background-session-39",
+  "state": "done"
+ },
+ {
+  "id": "00000041",
+  "cwd": "{HOME}/gone/13",
+  "kind": "background",
+  "startedAt": 1789994787454,
+  "sessionId": "00000041-f1ee-4000-8000-000000000041",
+  "name": "background-session-40",
+  "state": "blocked"
+ },
+ {
+  "id": "00000042",
+  "cwd": "{HOME}/gone/13",
+  "kind": "background",
+  "startedAt": 1790029330172,
+  "sessionId": "00000042-f1ee-4000-8000-000000000042",
+  "name": "background-session-41",
+  "state": "done"
+ },
+ {
+  "pid": 10042,
+  "cwd": "{HOME}/wt/broomva-1",
+  "kind": "interactive",
+  "startedAt": 1790699043996,
+  "sessionId": "00000043-f1ee-4000-8000-000000000043",
+  "name": "auto-name-1-01",
+  "status": "idle"
+ },
+ {
+  "pid": 10043,
+  "cwd": "{HOME}/client/sri",
+  "kind": "interactive",
+  "startedAt": 1790699324632,
+  "sessionId": "00000044-f1ee-4000-8000-000000000044",
+  "name": "interactive-session-42",
+  "status": "idle"
+ },
+ {
+  "pid": 10044,
+  "cwd": "{HOME}/wt/broomva-2",
+  "kind": "interactive",
+  "startedAt": 1790699412055,
+  "sessionId": "00000045-f1ee-4000-8000-000000000045",
+  "name": "auto-name-2-02",
+  "status": "idle"
+ },
+ {
+  "pid": 10045,
+  "cwd": "{HOME}/wt/broomva-3",
+  "kind": "interactive",
+  "startedAt": 1790700608845,
+  "sessionId": "00000046-f1ee-4000-8000-000000000046",
+  "name": "auto-name-3-03",
+  "status": "idle"
+ },
+ {
+  "pid": 10046,
+  "cwd": "{HOME}/wt/broomva-4",
+  "kind": "interactive",
+  "startedAt": 1790702014448,
+  "sessionId": "00000047-f1ee-4000-8000-000000000047",
+  "name": "auto-name-4-04",
+  "status": "idle"
+ },
+ {
+  "pid": 10047,
+  "cwd": "{HOME}/wt/broomva-5",
+  "kind": "interactive",
+  "startedAt": 1790702705008,
+  "sessionId": "00000048-f1ee-4000-8000-000000000048",
+  "name": "auto-name-5-05",
+  "status": "idle"
+ },
+ {
+  "pid": 10048,
+  "cwd": "{HOME}/wt/broomva-6",
+  "kind": "interactive",
+  "startedAt": 1790711034237,
+  "sessionId": "00000049-f1ee-4000-8000-000000000049",
+  "name": "auto-name-6-06",
+  "status": "idle"
+ },
+ {
+  "pid": 10049,
+  "cwd": "{HOME}/wt/sri-1",
+  "kind": "interactive",
+  "startedAt": 1790712549152,
+  "sessionId": "00000050-f1ee-4000-8000-000000000050",
+  "name": "auto-name-7-07",
+  "status": "idle"
+ },
+ {
+  "pid": 10050,
+  "cwd": "{HOME}/wt/broomva-7",
+  "kind": "interactive",
+  "startedAt": 1790712842452,
+  "sessionId": "00000051-f1ee-4000-8000-000000000051",
+  "name": "auto-name-8-08",
+  "status": "idle"
+ },
+ {
+  "pid": 10051,
+  "cwd": "{HOME}/wt/broomva-8",
+  "kind": "interactive",
+  "startedAt": 1790712859372,
+  "sessionId": "00000052-f1ee-4000-8000-000000000052",
+  "name": "auto-name-9-09",
+  "status": "idle"
+ },
+ {
+  "pid": 10052,
+  "cwd": "{HOME}/wt/sri-2",
+  "kind": "interactive",
+  "startedAt": 1790714093034,
+  "sessionId": "00000053-f1ee-4000-8000-000000000053",
+  "name": "auto-name-10-0a",
+  "status": "idle"
+ },
+ {
+  "pid": 10053,
+  "cwd": "{HOME}/wt/broomva-9",
+  "kind": "interactive",
+  "startedAt": 1790714274861,
+  "sessionId": "00000054-f1ee-4000-8000-000000000054",
+  "name": "auto-name-11-0b",
+  "status": "idle"
+ },
+ {
+  "pid": 10054,
+  "cwd": "{HOME}/wt/sri-3",
+  "kind": "interactive",
+  "startedAt": 1790718270067,
+  "sessionId": "00000055-f1ee-4000-8000-000000000055",
+  "name": "auto-name-12-0c",
+  "status": "idle"
+ },
+ {
+  "pid": 10055,
+  "cwd": "{HOME}/wt/broomva-10",
+  "kind": "interactive",
+  "startedAt": 1790726714949,
+  "sessionId": "00000056-f1ee-4000-8000-000000000056",
+  "name": "auto-name-13-0d",
+  "status": "idle"
+ },
+ {
+  "pid": 10056,
+  "cwd": "{HOME}/wt/broomva-11",
+  "kind": "interactive",
+  "startedAt": 1790726792578,
+  "sessionId": "00000057-f1ee-4000-8000-000000000057",
+  "name": "auto-name-14-0e",
+  "status": "idle"
+ },
+ {
+  "pid": 10057,
+  "cwd": "{HOME}/broomva",
+  "kind": "interactive",
+  "startedAt": 1790731766170,
+  "sessionId": "00000058-f1ee-4000-8000-000000000058",
+  "name": "interactive-session-43",
+  "status": "idle"
+ },
+ {
+  "pid": 10058,
+  "cwd": "{HOME}/broomva",
+  "kind": "interactive",
+  "startedAt": 1790731786519,
+  "sessionId": "00000059-f1ee-4000-8000-000000000059",
+  "name": "interactive-session-44",
+  "status": "idle"
+ },
+ {
+  "pid": 10059,
+  "cwd": "{HOME}/wt/broomva-12",
+  "kind": "interactive",
+  "startedAt": 1790732087915,
+  "sessionId": "00000060-f1ee-4000-8000-000000000060",
+  "name": "auto-name-15-0f",
+  "status": "idle"
+ },
+ {
+  "pid": 10060,
+  "cwd": "{HOME}/wt/sri-4",
+  "kind": "interactive",
+  "startedAt": 1790733732851,
+  "sessionId": "00000061-f1ee-4000-8000-000000000061",
+  "name": "auto-name-16-10",
+  "status": "idle"
+ },
+ {
+  "pid": 10061,
+  "cwd": "{HOME}/wt/broomva-13",
+  "kind": "interactive",
+  "startedAt": 1790734217345,
+  "sessionId": "00000062-f1ee-4000-8000-000000000062",
+  "name": "auto-name-17-11",
+  "status": "idle"
+ },
+ {
+  "pid": 10062,
+  "cwd": "{HOME}/wt/broomva-14",
+  "kind": "interactive",
+  "startedAt": 1790734302864,
+  "sessionId": "00000063-f1ee-4000-8000-000000000063",
+  "name": "auto-name-18-12",
+  "status": "idle"
+ },
+ {
+  "pid": 10063,
+  "cwd": "{HOME}/wt/sri-5",
+  "kind": "interactive",
+  "startedAt": 1790735854809,
+  "sessionId": "00000064-f1ee-4000-8000-000000000064",
+  "name": "auto-name-19-13",
+  "status": "idle"
+ },
+ {
+  "pid": 10064,
+  "cwd": "{HOME}/wt/broomva-15",
+  "kind": "interactive",
+  "startedAt": 1790736552778,
+  "sessionId": "00000065-f1ee-4000-8000-000000000065",
+  "name": "auto-name-20-14",
+  "status": "idle"
+ },
+ {
+  "pid": 10065,
+  "cwd": "{HOME}/wt/broomva-16",
+  "kind": "interactive",
+  "startedAt": 1790781277653,
+  "sessionId": "00000066-f1ee-4000-8000-000000000066",
+  "name": "interactive-session-45",
+  "status": "busy"
+ },
+ {
+  "pid": 10066,
+  "cwd": "{HOME}/wt/broomva-17",
+  "kind": "interactive",
+  "startedAt": 1790781293936,
+  "sessionId": "00000067-f1ee-4000-8000-000000000067",
+  "name": "interactive-session-46",
+  "status": "busy"
+ },
+ {
+  "pid": 10067,
+  "cwd": "{HOME}/wt/broomva-18",
+  "kind": "interactive",
+  "startedAt": 1790797969518,
+  "sessionId": "00000068-f1ee-4000-8000-000000000068",
+  "name": "interactive-session-47",
+  "status": "busy"
+ },
+ {
+  "pid": 10068,
+  "cwd": "{HOME}/wt/broomva-19",
+  "kind": "interactive",
+  "startedAt": 1790798860209,
+  "sessionId": "00000069-f1ee-4000-8000-000000000069",
+  "name": "interactive-session-48",
+  "status": "busy"
+ },
+ {
+  "pid": 10069,
+  "cwd": "{HOME}/wt/broomva-20",
+  "kind": "interactive",
+  "startedAt": 1790799447183,
+  "sessionId": "00000070-f1ee-4000-8000-000000000070",
+  "name": "auto-name-21-15",
+  "status": "busy"
+ },
+ {
+  "pid": 10070,
+  "cwd": "{HOME}/wt/sri-6",
+  "kind": "interactive",
+  "startedAt": 1790799825907,
+  "sessionId": "00000071-f1ee-4000-8000-000000000071",
+  "name": "auto-name-22-16",
+  "status": "idle"
+ },
+ {
+  "pid": 10071,
+  "cwd": "{HOME}/wt/broomva-21",
+  "kind": "interactive",
+  "startedAt": 1790800304785,
+  "sessionId": "00000072-f1ee-4000-8000-000000000072",
+  "name": "interactive-session-49",
+  "status": "busy"
+ },
+ {
+  "pid": 10072,
+  "cwd": "{HOME}/wt/broomva-22",
+  "kind": "interactive",
+  "startedAt": 1790800565765,
+  "sessionId": "00000073-f1ee-4000-8000-000000000073",
+  "name": "interactive-session-50",
+  "status": "busy"
+ },
+ {
+  "pid": 10073,
+  "cwd": "{HOME}/wt/broomva-23",
+  "kind": "interactive",
+  "startedAt": 1790800598764,
+  "sessionId": "00000074-f1ee-4000-8000-000000000074",
+  "name": "interactive-session-51",
+  "status": "busy"
+ },
+ {
+  "pid": 10074,
+  "cwd": "{HOME}/broomva",
+  "kind": "interactive",
+  "startedAt": 1790801288160,
+  "sessionId": "00000075-f1ee-4000-8000-000000000075",
+  "name": "interactive-session-52",
+  "status": "idle"
+ },
+ {
+  "pid": 10075,
+  "cwd": "{HOME}/broomva",
+  "kind": "interactive",
+  "startedAt": 1790802664069,
+  "sessionId": "00000076-f1ee-4000-8000-000000000076",
+  "name": "interactive-session-53",
+  "status": "busy"
+ }
+]

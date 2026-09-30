@@ -3,7 +3,7 @@ name: ctx-core
 tier: D
 primitive: null
 category: orchestration
-version: 0.1.0
+version: 0.2.0
 description: |
   The shared context core, phase 1: a read-only shared board for every Claude
   Code session in a workspace scope. Hooks publish each session's start, the
@@ -214,6 +214,7 @@ $CTX board --json       # the board as JSON
 $CTX board --rebuild    # recompute the cache from byte 0; says whether the old cache matched
 $CTX doctor             # config, store, cache, hook activity, misses, board size, retention
 $CTX doctor --unscoped  # from anywhere: repos with Claude Code sessions (last 14 days) but no scope
+$CTX doctor --compare   # the phase-1 exit comparison: live board rows vs listed sessions, 6 h (ctx_compare.py)
 $CTX -C <dir> board     # as if run in <dir>
 ```
 
@@ -231,6 +232,16 @@ from any directory. `doctor` exits 1 in any of these cases:
 
 An idle scope is not a problem. A cache far behind the log is a warning: it
 catches up by itself.
+
+`doctor --compare [--hours 6] [--json]` is the phase-1 exit criterion (core
+spec §9): board rows that are live against in-scope sessions from `claude agents
+--json --all` whose transcript was modified in the same window, matched on the
+full session id. Every difference gets a reason from a fixed list; three of
+them (`no-transcript`, `ended`, `pre-registration`) describe what the comparator
+can see and are left out of the 95%. It rebuilds the board in memory and writes
+none of the store's files; it appends one summary line to
+`<store>/compare.jsonl` and exits 1 under 95%. fleet-reconcile's tick runs it
+once a day.
 
 ## Registration (owner step; an agent does not apply it)
 
@@ -322,7 +333,7 @@ computes it:
 cd skills/orchestration/ctx-core
 python3 -m pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py   # 25 protections removed in turn; the test pinning each must fail
+python3 tests/mutation_check.py   # 27 protections removed in turn; the test pinning each must fail
 ```
 
 | File | Pins |
@@ -333,4 +344,5 @@ python3 tests/mutation_check.py   # 25 protections removed in turn; the test pin
 | `test_rebuild_determinism.py` | Cache plus tail equals a full rebuild. Any split of the log folds the same. Hooks never write the board under the lock. A torn line is healed. A hand edit is detected and replaced. A replaced log is detected. SessionStart never reads the whole log, and catches a stale cache up across runs |
 | `test_fail_open.py` | A ctx module that fails to import, raises, prints, hangs, gets SIGTERM or exits non-zero: exit 0 and no output every time. Hostile stdin. An unwritable store. The miss breadcrumb and its rotation |
 | `test_hook_deadline.py` | The normal path, git never run (or bounded and killed on the `GIT_DIR` path), an 11 MB log, and a board over the cap: each under 200 ms of wall time |
+| `test_compare.py` | `doctor --compare`: every reason on the fixed list, the excluded reasons left out of the 95%, a run that leaves the store's files byte-identical and appends one summary, the exit codes, the CLI in and out of a scope |
 | `test_hooks.py` | Structured fields only. The strict ARC-STATUS shape. The error class only. The brief's relevance, cap, one-line fields, linear cost and factual register. Live after a resumed death. The CLI and doctor. The wrapper: exit 0 with the script or the interpreter gone, against a positive control where Python exits 2 |

@@ -1,0 +1,433 @@
+"""The tick report (markdown and JSON), the ask batch, and the owner's
+labelling sheet.
+
+Files, under the scope's state dir:
+    ticks/<tick>/snapshot.json   what observe read
+    ticks/<tick>/report.json     the classification and everything reported
+    ticks/<tick>/report.md       the same, for the owner
+    asks/<tick>.md               the ask batch, when there are asks
+    labelling/<name>.md, .csv    the stratified sample the owner labels
+
+Every sentence is a reading, not an instruction. Other sessions' words (names,
+job details, PR titles) pass common.safe_text first.
+"""
+from __future__ import annotations
+
+import csv
+import io
+import json
+import random
+import time
+from pathlib import Path
+from typing import Any, Dict, Iterable, List, Optional, Tuple
+
+from . import classify, common, ledger
+
+ASK_SUPPRESS_S = 24 * 3600  # an acked ask is not asked again for a day
+
+
+def tick_dir(state_dir: Path, tick: int) -> Path:
+    return Path(state_dir) / "ticks" / ("%05d" % tick)
+
+
+def short(sid: Optional[str]) -> str:
+    return (sid or "-")[:8]
+
+
+# --------------------------------------------------------------------------
+# Building the report
+
+def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
+          compare: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    now = snap["now"]
+    results = classify.classify_all(snap)
+    by_id = {s["session_id"]: s for s in snap["sessions"]}
+    rows = []
+    for r in results:
+        s = by_id[r["session_id"]]
+        a = classify.activity(s)
+        rows.append({
+            "session_id": s["session_id"], "short": short(s["session_id"]), "name": s["name"], "kind": s["kind"],
+            "class": r["class"], "class_name": r["name"], "evidence": common.safe_text(r["evidence"], 160),
+            "action": r["action"], "scope": s["scope"], "placement": s["placement"],
+            "cwd": common.tilde(s["cwd"]), "branch": s.get("branch"),
+            "state": s.get("state"), "status": s.get("status"), "pid": s.get("pid") is not None,
+            "activity_age_s": None if a is None else round(now - a), "fleet_key": s.get("fleet_key"),
+            "paseo_agent": (s.get("paseo") or {}).get("agent_id"),
+        })
+    rows.sort(key=lambda x: (classify.ORDER.index(x["class"]), x["session_id"]))
+    counts: Dict[str, int] = {}
+    for x in rows:
+        counts[x["class"]] = counts.get(x["class"], 0) + 1
+    rep = {
+        "v": common.SCHEMA_VERSION, "scope": snap["scope"], "tick": snap["tick"], "ts": snap["ts"],
+        "mode": "report", "phase": 1, "dry_run": dry_run,
+        "cc_version": snap.get("cc_version"), "pinned_cc_version": snap.get("pinned_cc_version"),
+        "surfaces": snap["surfaces"], "drift": snap.get("drift") or [],
+        "sessions": rows, "class_counts": {k: counts[k] for k in classify.ORDER if k in counts},
+        "count_check": classify.count_check(snap),
+        "overlap": dict(classify.overlap_pass(snap["sessions"], snap["claims"]["by_session"], snap["scope"]),
+                        claims_published=snap["claims"]["published"]),
+        "spawn_pause": classify.spawn_pause(snap, results),
+        "repos": [_repo_summary(r) for r in snap.get("repos") or []],
+        "scheduled": snap.get("scheduled") or {},
+        "core_compare": compare,
+    }
+    rep["asks"], rep["acked_still_open"] = make_asks(rep, records, now)
+    rep["unacked"] = [{"tick": b["tick"], "ts": b["ts"], "open": len(ledger.open_asks(b))}
+                      for b in ledger.unacked(records)]
+    return rep
+
+
+def _repo_summary(r: Dict[str, Any]) -> Dict[str, Any]:
+    out = {k: r.get(k) for k in ("repo", "slug", "ok", "error", "default_branch", "rules")}
+    prs = r.get("prs")
+    if prs is None:
+        out["prs"] = None
+        return out
+    held = [p for p in prs if any(lb.lower() == "hold" for lb in p["labels"])]
+    out["prs"] = {"open": len(prs), "drafts": sum(1 for p in prs if p["draft"]),
+                  "dependabot": sum(1 for p in prs if p["dependabot"]), "held": len(held),
+                  "list": [{"number": p["number"], "title": p["title"], "head": p["head"], "draft": p["draft"],
+                            "dependabot": p["dependabot"], "labels": p["labels"]} for p in prs if not p["dependabot"]]}
+    return out
+
+
+# --------------------------------------------------------------------------
+# Asks: everything that needs the owner, batched into one per tick (§3)
+
+def make_asks(rep: Dict[str, Any], records: List[Dict[str, Any]],
+              now: float) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]]]:
+    cands: List[Tuple[str, str, str]] = []  # (key, class, question)
+    for s in rep["sessions"]:
+        if s["scope"] != rep["scope"]:
+            continue
+        label = "%s (%s)" % (s["name"] or "-", s["short"])
+        if s["class"] == "3":
+            cands.append(("prompt:" + s["session_id"], "3", "Session %s is waiting at a prompt: %s. The fleet "
+                          "never approves prompts." % (label, s["evidence"])))
+        elif s["class"] == "7":
+            cands.append(("blocked:" + s["session_id"], "7", "Session %s is blocked on you: %s." % (label,
+                                                                                                s["evidence"])))
+    surf = rep["surfaces"]
+    if not surf.get("listing", {}).get("ok"):
+        cands.append(("listing", "observe", "The session listing was not read: %s. Nothing was classified."
+                      % surf.get("listing", {}).get("error", "?")))
+    for d in rep["drift"]:
+        cands.append(("drift:" + d, "observe", "Parser drift: %s. Recapture the fixtures (tests/"
+                      "capture_fixtures.py) and review the parsers." % d))
+    cc = rep["count_check"]
+    if cc.get("ran") and cc.get("records_without_process"):
+        n = len(cc["records_without_process"])
+        cands.append(("records-without-process", "count", "%d Paseo record(s) in this scope are not archived and "
+                      "have no live process in claude agents (listed in the report)." % n))
+    shaped = [u for u in cc.get("unmanaged") or [] if u.get("fleet_shaped")]
+    if shaped:
+        cands.append(("fleet-shaped-unledgered", "count", "%d session(s) carry a fleet-shaped name the ledger "
+                      "doesn't hold; they are treated as unmanaged." % len(shaped)))
+    for r in rep["repos"]:
+        name = r.get("slug") or common.tilde(r["repo"])
+        if not r["ok"]:
+            cands.append(("repo:" + name, "github", "Repo %s was not observed: %s." % (name, r.get("error"))))
+        elif r.get("rules") and r["rules"]["flags"]:
+            cands.append(("rules:%s:%s" % (name, ";".join(r["rules"]["flags"])), "github",
+                          "Repo %s: %s. Its PRs get no driver until it has a pull_request rule and pinned "
+                          "checks." % (name, "; ".join(r["rules"]["flags"]))))
+    for it in (rep["scheduled"].get("items") or []):
+        # A launchd job's staleness is read from a log's mtime, which a
+        # self-gated job leaves untouched for hours, so only a failing exit is
+        # asked about; staleness stays a reading in the table. A Paseo schedule
+        # has its own nextRunAt, so an overdue one is asked about.
+        failing = it["source"] == "launchd" and isinstance(it.get("last_result"), str) and \
+            it["last_result"].startswith("exit ") and it["last_result"][5:].lstrip("-").isdigit() and \
+            int(it["last_result"][5:]) != 0
+        overdue = it["source"] == "paseo" and it.get("stale")
+        if failing or overdue:
+            cands.append(("sched:%s:%s" % (it["source"], it["id"]), "scheduled",
+                          "Scheduled %s %s %s: last run %s, cadence %s." % (
+                              it["source"], it["name"], "last exited %s" % it["last_result"][5:] if failing
+                              else "is overdue", common.ts(it["last_run"])[:16] if it.get("last_run") else "never",
+                              it.get("cadence") or "-")))
+    acked_recent = _acked_keys(records, now)
+    open_before = {a.get("key") for b in ledger.unacked(records) for a in ledger.open_asks(b)}
+    asks, still = [], []
+    for key, cls, q in cands:
+        if key in acked_recent:
+            still.append({"key": key, "class": cls, "question": q})
+            continue
+        asks.append({"id": "", "key": key, "class": cls, "question": common.safe_text(q, 400),
+                     "new": key not in open_before})
+    for i, a in enumerate(asks, 1):
+        a["id"] = "a%d" % i
+    return asks, still
+
+
+def _acked_keys(records: List[Dict[str, Any]], now: float) -> set:
+    keys = set()
+    acks = {}
+    for r in records:
+        if r.get("kind") == "ack":
+            t = common.parse_iso(r.get("ts")) or 0.0
+            acks.setdefault((r.get("acks") or {}).get("tick"), []).append((t, r.get("acks") or {}))
+    for b in ledger.ask_batches(records):
+        for t, a in acks.get(b["tick"], []):
+            if now - t > ASK_SUPPRESS_S:
+                continue
+            for ask in b["asks"]:
+                if a.get("asks") == "all" or ask.get("id") in (a.get("asks") or []):
+                    keys.add(ask.get("key"))
+    return keys
+
+
+def should_notify(records: List[Dict[str, Any]], tick: int, renotify_h: int, now: float) -> Tuple[bool, str]:
+    """Notify for a batch with a new ask; otherwise re-notify the unacked
+    batches at most once per renotify_h."""
+    batches = ledger.ask_batches(records)
+    this = [b for b in batches if b["tick"] == tick]
+    if this and any(a.get("new") for a in ledger.open_asks(this[-1])):
+        return True, "new asks"
+    pending = [b for b in batches if ledger.open_asks(b)]
+    if not pending:
+        return False, "no open asks"
+    last = max((common.parse_iso(t) or 0.0 for b in pending for t in b["notified"]), default=0.0)
+    if now - last >= renotify_h * 3600:
+        return True, "unacknowledged for %s since the last notification" % common.age(now - last)
+    return False, "notified %s ago; re-notify after %dh" % (common.age(now - last), renotify_h)
+
+
+# --------------------------------------------------------------------------
+# Markdown
+
+def _cell(v: Any) -> str:
+    return str(v if v not in (None, "") else "-").replace("|", "/")
+
+
+def render_md(rep: Dict[str, Any]) -> str:
+    now = common.parse_iso(rep["ts"]) or time.time()
+    L: List[str] = []
+    L.append("# fleet-reconcile · %s · tick %d · %s" % (rep["scope"], rep["tick"], rep["ts"]))
+    L.append("")
+    L.append("Report only (phase 1). Nothing was sent, spawned, labelled or resumed. The \"would do\" column is "
+             "what phase 3 would do.")
+    L.append("")
+    un = rep["unacked"]
+    if un:
+        oldest = min(common.parse_iso(b["ts"]) or now for b in un)
+        L.append("**Unacknowledged ask batches: %d** (oldest %s). Read them with `fleet asks`, answer with "
+                 "`fleet ack <tick>`." % (len(un), common.age(now - oldest)))
+    else:
+        L.append("Unacknowledged ask batches: 0.")
+    L.append("")
+    L.append("## Observation")
+    L.append("")
+    L.append("| surface | read | detail |")
+    L.append("|---|---|---|")
+    for name, s in sorted(rep["surfaces"].items()):
+        if name == "board":
+            for sid, b in sorted(s.items()):
+                L.append("| board %s | %s | %s |" % (sid, "yes" if b.get("ok") else "NO", _cell(
+                    b.get("error") or "%s rows, %s events" % (b.get("rows"), b.get("events")))))
+            continue
+        detail = s.get("error") or ", ".join("%s %s" % (k, v) for k, v in sorted(s.items()) if k != "ok")
+        L.append("| %s | %s | %s |" % (name, "yes" if s.get("ok") else "**NO**", _cell(detail)))
+    L.append("")
+    L.append("Claude Code %s; parsers pinned on %s." % (rep.get("cc_version") or "?", rep["pinned_cc_version"]))
+    if rep["drift"]:
+        L.append("")
+        L.append("Drift: " + "; ".join(rep["drift"]))
+    L.append("")
+    L.append("## Classes")
+    L.append("")
+    L.append("| # | class | sessions |")
+    L.append("|---|---|---|")
+    for k, n in rep["class_counts"].items():
+        L.append("| %s | %s | %d |" % (k, classify.NAMES[k], n))
+    if rep.get("spawn_pause"):
+        sp = rep["spawn_pause"]
+        L.append("")
+        L.append("Spawn pause (class 2; the usage limit is shared): %s %s (%s), from %d session(s)." % (
+            "until" if sp["active"] else "ended at",
+            common.ts(sp["until"])[:16] + "Z" if sp.get("until") else "an unreadable reset time",
+            sp.get("how"), len(sp["sessions"])))
+    L.append("")
+    L.append("## Sessions in scope %s" % rep["scope"])
+    L.append("")
+    L.append("| # | session | name | kind | status | activity | where | evidence | would do |")
+    L.append("|---|---|---|---|---|---|---|---|---|")
+    inscope = [s for s in rep["sessions"] if s["class"] != "1"]
+    for s in inscope:
+        L.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
+            s["class"], s["short"], _cell(s["name"]), s["kind"], _cell(s["status"] or s["state"]),
+            common.age(s["activity_age_s"]) if s["activity_age_s"] is not None else "no transcript",
+            _cell(s["cwd"]), _cell(s["evidence"]), s["action"]))
+    out = [s for s in rep["sessions"] if s["class"] == "1"]
+    L.append("")
+    unplaced = [s for s in out if s["placement"] == "unplaced"]
+    L.append("Out of scope (class 1): %d session(s); %d of them unplaced (cwd gone, no board row), which could "
+             "belong to any scope:" % (len(out), len(unplaced)))
+    for s in unplaced[:60]:
+        L.append("- %s %s (%s, %s), cwd %s" % (s["short"], _cell(s["name"]), s["kind"], s["state"] or s["status"]
+                                             or "-", _cell(s["cwd"])))
+    L.append("")
+    L.append("## Count check")
+    L.append("")
+    cc = rep["count_check"]
+    if not cc.get("ran"):
+        L.append("Not run: %s." % cc.get("reason"))
+    else:
+        recs = cc.get("records_without_process")
+        if recs is None:
+            L.append("- Paseo records: %s." % cc.get("records_reason"))
+        else:
+            L.append("- Paseo records not archived and with no live process in claude agents: %d (plus %d whose "
+                     "cwd can't be placed in any scope)." % (len(recs), cc.get("records_unplaced", 0)))
+            for r in recs[:40]:
+                L.append("  - agent %s, session %s, status %s, %s: %s" % (
+                    short(r["agent_id"]), short(r["session_id"]), r["last_status"] or "-", _cell(r["title"]),
+                    r["why"]))
+        um = cc.get("unmanaged") or []
+        L.append("- In-scope sessions with neither a Paseo record nor a fleet name: %d (%d live)." % (
+            len(um), sum(1 for u in um if u["live"])))
+        for u in um[:40]:
+            L.append("  - %s %s (%s)%s%s" % (short(u["session_id"]), _cell(u["name"]), u["kind"],
+                                            ", live" if u["live"] else "",
+                                            ", fleet-shaped name not in the ledger" if u["fleet_shaped"] else ""))
+    L.append("")
+    L.append("## Overlap pass")
+    L.append("")
+    ov = rep["overlap"]
+    if not ov["claims_published"]:
+        L.append("No claims yet: the core publishes them in its phase 2. The pass runs on fixtures only.")
+    for o in ov["overlaps"]:
+        L.append("- %s and %s share %s in %s; would mail: %s" % (
+            short(o["sessions"][0]), short(o["sessions"][1]), ", ".join(o["paths"]), common.tilde(o["repo"]),
+            ", ".join(short(x) for x in o["would_mail"]) or "none (not fleet sessions)"))
+    L.append("")
+    L.append("## Repos, rules and PRs")
+    L.append("")
+    L.append("| repo | observed | rules | driver-eligible repo | open PRs | drafts | dependabot | held |")
+    L.append("|---|---|---|---|---|---|---|---|")
+    for r in rep["repos"]:
+        name = r.get("slug") or common.tilde(r["repo"])
+        if not r["ok"]:
+            L.append("| %s | **NO**: %s | - | - | - | - | - | - |" % (name, _cell(r.get("error"))))
+            continue
+        ru = r["rules"]
+        p = r["prs"]
+        L.append("| %s | yes | %s | %s | %d | %d | %d | %d |" % (
+            name, _cell(", ".join(ru["types"])), "yes" if ru["driver_eligible"] else "no: " + "; ".join(ru["flags"]),
+            p["open"], p["drafts"], p["dependabot"], p["held"]))
+    L.append("")
+    L.append("## Scheduled work (inventory, report-only)")
+    L.append("")
+    sch = rep["scheduled"]
+    for name, s in sorted((sch.get("surfaces") or {}).items()):
+        L.append("- %s: %s" % (name, "read" if s.get("ok") else "NOT read: %s" % s.get("error")) + (
+            " (%d in other scopes, not listed)" % s["other_scopes"] if s.get("other_scopes") else ""))
+    L.append("")
+    L.append("| source | id | name | cadence | status | last run | last result | next run | stale |")
+    L.append("|---|---|---|---|---|---|---|---|---|")
+    for it in sch.get("items") or []:
+        L.append("| %s | %s | %s | %s | %s | %s | %s | %s | %s |" % (
+            it["source"], _cell(it["id"]), _cell(it["name"]), _cell(it.get("cadence")), _cell(it.get("status")),
+            (common.ts(it["last_run"])[:16] + "Z (%s ago)" % common.age(now - it["last_run"])) if it.get("last_run")
+            else "-", _cell(it.get("last_result")),
+            common.ts(it["next_run"])[:16] + "Z" if it.get("next_run") else "-",
+            {True: "**yes**", False: "no", None: "-"}[it.get("stale")]))
+    L.append("")
+    if rep.get("core_compare"):
+        c = rep["core_compare"]
+        L.append("## Core comparison (ctx doctor --compare, latest)")
+        L.append("")
+        L.append("%s: board side %s, session side %s (raw %s / %s), %s." % (
+            c.get("ts", "?"), _pct(c.get("board_pct")), _pct(c.get("session_pct")), _pct(c.get("board_raw_pct")),
+            _pct(c.get("session_raw_pct")), "pass" if c.get("pass") else "FAIL"))
+        L.append("")
+    L.append("## Asks this tick")
+    L.append("")
+    if not rep["asks"]:
+        L.append("None.")
+    for a in rep["asks"]:
+        L.append("- [%s] %s%s" % (a["id"], a["question"], "" if a["new"] else " (asked before)"))
+    if rep["acked_still_open"]:
+        L.append("")
+        L.append("Acknowledged in the last 24 h and still open: %d." % len(rep["acked_still_open"]))
+    return "\n".join(L) + "\n"
+
+
+def _pct(v: Any) -> str:
+    return "%.0f%%" % (v * 100) if isinstance(v, (int, float)) else "-"
+
+
+def render_batch(rep: Dict[str, Any]) -> str:
+    L = ["# fleet asks · %s · tick %d · %s" % (rep["scope"], rep["tick"], rep["ts"]), "",
+         "Answer with `fleet ack %d` (all) or `fleet ack %d --ask <id>`." % (rep["tick"], rep["tick"]), ""]
+    for a in rep["asks"]:
+        L.append("- [%s] (%s) %s" % (a["id"], a["class"], a["question"]))
+    return "\n".join(L) + "\n"
+
+
+# --------------------------------------------------------------------------
+# The labelling sheet (§9 phase 1 exit)
+
+SHEET_COLUMNS = ("row", "tick", "session", "name", "kind", "class", "class_name", "evidence", "would_do",
+                 "owner_agree_or_disagree", "owner_note")
+
+
+def labelling_sheet(reports: Iterable[Dict[str, Any]], per_class: int = 3,
+                    seed: int = 0) -> Tuple[List[Dict[str, Any]], Dict[str, int]]:
+    """A stratified sample: per_class sessions for every class that occurs
+    (fewer only if fewer exist), distinct sessions first, drawn with a fixed
+    seed so the sheet is reproducible."""
+    pool: Dict[str, List[Tuple[int, Dict[str, Any]]]] = {}
+    for rep in reports:
+        for s in rep["sessions"]:
+            pool.setdefault(s["class"], []).append((rep["tick"], s))
+    rng = random.Random(seed)
+    rows, available = [], {}
+    for cls in classify.ORDER:
+        entries = pool.get(cls) or []
+        if not entries:
+            continue
+        seen, distinct, repeats = set(), [], []
+        shuffled = entries[:]
+        rng.shuffle(shuffled)
+        for tick, s in shuffled:
+            (repeats if s["session_id"] in seen else distinct).append((tick, s))
+            seen.add(s["session_id"])
+        available[cls] = len(seen)
+        for tick, s in (distinct + repeats)[:per_class]:
+            rows.append({"tick": tick, "session": s["short"], "name": s["name"], "kind": s["kind"],
+                         "class": cls, "class_name": classify.NAMES[cls], "evidence": s["evidence"],
+                         "would_do": s["action"], "owner_agree_or_disagree": "", "owner_note": ""})
+    for i, r in enumerate(rows, 1):
+        r["row"] = i
+    return rows, available
+
+
+def sheet_md(rows: List[Dict[str, Any]], available: Dict[str, int], ticks: List[int], scope: str) -> str:
+    L = ["# Owner labelling sheet · fleet-reconcile phase 1 · scope %s" % scope, "",
+         "Ticks %s. For each row, mark **agree** or **disagree** with the class, and add a note when you "
+         "disagree. The exit criterion (spec §9): ≥90%% agreement overall and no class below 2 of 3." %
+         ", ".join(str(t) for t in ticks), "",
+         "Distinct sessions available per class: %s." % ", ".join("%s: %d" % kv for kv in available.items()), "",
+         "| row | tick | session | name | kind | class | evidence | would do | agree / disagree | note |",
+         "|---|---|---|---|---|---|---|---|---|---|"]
+    for r in rows:
+        L.append("| %d | %d | %s | %s | %s | %s %s | %s | %s |  |  |" % (
+            r["row"], r["tick"], r["session"], _cell(r["name"]), r["kind"], r["class"], r["class_name"],
+            _cell(r["evidence"]), r["would_do"]))
+    return "\n".join(L) + "\n"
+
+
+def sheet_csv(rows: List[Dict[str, Any]]) -> str:
+    buf = io.StringIO()
+    w = csv.DictWriter(buf, fieldnames=list(SHEET_COLUMNS))
+    w.writeheader()
+    for r in rows:
+        w.writerow({k: r.get(k, "") for k in SHEET_COLUMNS})
+    return buf.getvalue()
+
+
+def load_report(state_dir: Path, tick: int) -> Dict[str, Any]:
+    return json.loads((tick_dir(state_dir, tick) / "report.json").read_text(encoding="utf-8"))

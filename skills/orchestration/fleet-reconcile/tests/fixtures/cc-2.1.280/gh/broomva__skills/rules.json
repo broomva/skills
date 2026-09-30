@@ -1,0 +1,30 @@
+[
+ {
+  "type": "deletion",
+  "ruleset_source_type": "Repository",
+  "ruleset_source": "broomva/skills",
+  "ruleset_id": 19946220
+ },
+ {
+  "type": "non_fast_forward",
+  "ruleset_source_type": "Repository",
+  "ruleset_source": "broomva/skills",
+  "ruleset_id": 19946220
+ },
+ {
+  "type": "required_status_checks",
+  "parameters": {
+   "strict_required_status_checks_policy": false,
+   "do_not_enforce_on_create": false,
+   "required_status_checks": [
+    {
+     "context": "Merge Gate",
+     "integration_id": 15368
+    }
+   ]
+  },
+  "ruleset_source_type": "Repository",
+  "ruleset_source": "broomva/skills",
+  "ruleset_id": 19946220
+ }
+]
