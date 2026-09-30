@@ -106,6 +106,7 @@ def test_copilots_quota_failure_does_not_block():
     code, out, _ = run_gate([GREEN + [check(COPILOT, "failure", run_id=7)]], {7: COPILOT_RUN})
     assert code == 0, out
     assert "its verdict is not gated" in out
+    assert "::warning::" not in out
 
 
 def test_a_running_copilot_review_is_waited_for_then_not_gated():
@@ -125,6 +126,8 @@ def test_copilots_run_is_looked_up_once():
                                  GREEN + [check(COPILOT, "failure", run_id=7)]], {7: COPILOT_RUN})
     assert code == 0, out
     assert sum(c.endswith("/actions/runs/7") for c in calls) == 1, calls
+    # Waited on polls 1 AND 2: a cached run id must not drop a still-running row.
+    assert out.count("1 still running") == 2, out
 
 
 def test_a_real_failure_still_blocks_beside_copilot():
@@ -157,6 +160,8 @@ def test_a_look_alike_still_blocks(label, kw, runs):
     assert blocked(out) == [COPILOT], out
     if kw.get("app") != "some-app":            # another app's check is never looked up
         assert "::warning::copilot-pull-request-reviewer gates as a normal check" in out
+    if label == "a run lookup that fails":     # the warning says what the lookup returned
+        assert "Not Found (HTTP 404)" in out, out
 
 
 def test_a_running_look_alike_is_waited_for_and_its_failure_blocks():
@@ -165,6 +170,22 @@ def test_a_running_look_alike_is_waited_for_and_its_failure_blocks():
                              GREEN + [check(COPILOT, "failure", run_id=8)]], look)
     assert code == 1, out
     assert blocked(out) == [COPILOT]
+
+
+def test_a_look_alike_is_warned_about_once_and_looked_up_each_poll():
+    look = {8: {"event": "pull_request", "path": ".github/workflows/x.yml", "head_sha": SHA}}
+    code, out, calls = run_gate([GREEN + [check(COPILOT, run_id=8, **RUNNING)]] * 3
+                                + [GREEN + [check(COPILOT, "success", run_id=8)]], look)
+    assert code == 0, out
+    assert out.count("::warning::") == 1, out
+    assert sum(c.endswith("/actions/runs/8") for c in calls) == 4, calls
+
+
+def test_a_hung_copilot_run_times_out_naming_it():
+    code, out, _ = run_gate([GREEN + [check(COPILOT, run_id=7, **RUNNING)]], {7: COPILOT_RUN})
+    assert code == 1, out
+    assert "Merge Gate timed out" in out
+    assert out.strip().splitlines()[-1].strip() == f"- {COPILOT} (in_progress)", out
 
 
 def test_the_job_requests_actions_read():

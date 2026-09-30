@@ -83,10 +83,14 @@ jobs:
           # same. The run behind it does: GitHub runs Copilot review as a dynamic
           # workflow, event "dynamic" and path dynamic/agents/copilot-pull-request-reviewer,
           # which no workflow file can produce. Only a row whose run, on this head,
-          # says so is advisory; any other row, a failed lookup included, gates as
-          # before, with a warning that names what the lookup returned.
+          # says so is advisory; any other github-actions row with that name, a
+          # failed lookup included, gates as before, with one warning per run that
+          # names what the lookup returned (a changed dynamic path shows up there).
+          # A Copilot run that hangs holds the gate like any running check, and the
+          # timeout names it: cancel that run and re-run the gate.
           COPILOT_ORIGIN="dynamic dynamic/agents/copilot-pull-request-reviewer $SHA"
-          advisory=" "   # run ids already verified as Copilot's, looked up once
+          advisory=" "   # run ids verified as Copilot's, looked up once
+          warned=" "     # run ids already warned about; their lookup is retried
           for i in $(seq 1 120); do   # up to ~60 min
             # All check-runs on this head SHA except this gate itself. Fields are
             # joined with \x1f, not a tab: tab is IFS whitespace, so `read` would
@@ -108,12 +112,15 @@ jobs:
                     echo "advisory: $name from Copilot's run $rid; its verdict is not gated"
                     advisory="$advisory$rid "
                   else
-                    echo "::warning::$name gates as a normal check: run ${rid:-none} is '$(printf '%s' "$origin" | head -c 200)', not Copilot's dynamic run on this head"
+                    case "$warned" in *" ${rid:-none} "*) ;; *)
+                      echo "::warning::$name gates as a normal check: run ${rid:-none} is '$(printf '%s' "$origin" | head -c 200)', not Copilot's dynamic run on this head"
+                      warned="$warned${rid:-none} " ;;
+                    esac
                   fi ;;
                 esac
-                if [ -n "$rid" ] && case "$advisory" in *" $rid "*) true ;; *) false ;; esac; then
-                  [ "$status" = "completed" ] && continue   # finished: its verdict is advisory
-                  concl=""                                  # still running: wait for it
+                # Verified: a finished run's verdict is advisory; a running one is waited for.
+                if [ -n "$rid" ] && [[ "$advisory" == *" $rid "* ]] && [ "$status" = "completed" ]; then
+                  continue
                 fi
               fi
               runs+="$name"$'\t'"$status"$'\t'"$concl"$'\n'
@@ -146,5 +153,6 @@ jobs:
             echo "waiting: $n check(s), $incomplete still running, commit status=$st_state (poll $i/120)…"
             sleep 30
           done
-          echo "::error::Merge Gate timed out waiting for checks to conclude."
+          echo "::error::Merge Gate timed out waiting for checks to conclude:"
+          printf '%s\n' "$runs" | awk -F'\t' 'NF>=2 && $2 != "completed"{print "  - " $1 " (" $2 ")"}'
           exit 1
