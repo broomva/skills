@@ -947,7 +947,22 @@ def test_a_calibration_from_another_task_file_is_refused(tmp_path, capsys, cal_s
     path = tmp_path / "calibration.json"
     path.write_text(json.dumps(cal))
     code = R.main(["run", "--out", str(tmp_path), "--calibration", str(path), "--dry-run"])
-    assert code == R.EXIT_USAGE and "recalibrate" in capsys.readouterr().err
+    assert code == R.EXIT_USAGE and "task file's digest" in capsys.readouterr().err
+
+
+def test_a_missing_bare_reference_is_not_written_back_so_a_resume_can_verify(tmp_path):
+    """Round-4 review: a budget-guard stop can leave a task's memory trials without
+    their bare trial. Persisting that as a void would make the resume skip them for
+    good; only evidence-based verdicts are written back."""
+    rows = [{**_rows_for("memory", "a", 28300), "run_key": "k"},
+            {**_rows_for("bare", "b", 18000), "run_key": "k"},
+            {**_rows_for("memory", "b", 18100), "run_key": "k", "trial": 1}]
+    (tmp_path / "results.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows))
+    written = R.write_back_memory_verdicts(tmp_path, {"bare": False, "memory": True}, 0)
+    assert written == 1  # task b: memory arm with no memory in its tokens
+    latest = R.latest_by_key(R.load_results(tmp_path))
+    assert latest[("a", "memory", 1)]["outcome"] == M.PASS  # unverified, NOT persisted as void
+    assert latest[("b", "memory", 1)]["outcome"] == M.INJECTION_MISSING
 
 
 def test_an_unreadable_trash_is_unchecked_not_clean(tmp_path):

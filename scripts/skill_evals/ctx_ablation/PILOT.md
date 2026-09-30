@@ -3,9 +3,13 @@
 How to run and extend the harness: README.md § "Does the context we inject earn its
 tokens?". This file records the pilot.
 
-**v3 is the result.** It ran on the final code of PR #248, after two review rounds.
-v1 and v2 ran the same design on earlier code, and are kept at the end of this
-file with the reason each was superseded. Their numbers are never pooled with v3's.
+**v3 is the result.** It ran on the code at 625e5e4, after two review rounds. The
+commits after it add checks: a calibration bound to its task file, the memory
+check voiding a task with no bare reference, and a Trash watch that says
+"unreadable" instead of 0. None of these would change a v3 outcome: every v3 task
+has bare trials, and no v3 trial flips under them. v1 and v2 ran the same design on
+earlier code, and are kept at the end of this file with the reason each was
+superseded. Their numbers are never pooled with v3's.
 
 ## Setup (v3)
 
@@ -15,7 +19,7 @@ file with the reason each was superseded. Their numbers are never pooled with v3
 | CLI | 2.1.280 |
 | corpus | real workspace snapshot: 1,863 files, 68 MB (sha256 `6132c3bcb0c3`), taken read-only at run time and not committed; absolute real-home paths rewritten to `~` |
 | candidates | 16 tasks (`tasks/pilot.json`): 5 retrieval, 8 reflex, 3 coordination |
-| calibration | bare arm, 3 trials per task: 48 trials, 0 void, $1.53 notional (`tasks/pilot.calibration.json`) |
+| calibration | bare arm, 3 trials per task: 48 trials, 0 void, $1.53 notional (`tasks/pilot.calibration.json`). That file is the record, not a reusable calibration: it predates the task-file digest, and the current code refuses it by design. Its `real_trash_new_entries: 0` came from a watch that may not have been able to read the Trash (see the next rows) |
 | pilot | 10 tasks × 6 arms × 3 trials = 180 trials, $8.43 notional; the rate-limit window peaked at 0.31 |
 | void trials | 2 of 180 (see below) |
 | real state | no new entries in the operator's real Trash. That was checked by listing it by hand before and after, outside the sandbox the harness ran in, where its own Trash watch may not have been able to read it. `~/.config/broomva` changed at 1 path during calibration, another session's harness budget file; no harness write was found there |

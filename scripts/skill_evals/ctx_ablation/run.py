@@ -210,7 +210,7 @@ class Settings:
         self.out = out
         #: Every record carries this; a run directory holds one key only.
         self.calibration = str(getattr(args, "calibration_sha", "") or "uncalibrated")
-        self.tasks_sha = hashlib.sha256(Path(args.tasks).read_bytes()).hexdigest() if getattr(args, "tasks", None) else "?"
+        self.tasks_sha = tasks_digest(args.tasks) if getattr(args, "tasks", None) else "?"
         self.run_key = "|".join([self.model, cli_version or "?", str(corpus.manifest.get("sha256", "?"))[:12],
                                  self.tasks_sha[:12], self.calibration[:12]])
 
@@ -390,7 +390,7 @@ def verify_memory_delivery(rows: Sequence[dict[str, Any]], arm_memory: dict[str,
             bare[r["task"]] = min(bare.get(r["task"], r["context_tokens"]), r["context_tokens"])
     if not bare:
         return list(rows), "memory delivery NOT verified: no bare arm in these results"
-    out, flipped = [], 0
+    out, flipped, unreferenced = [], 0, 0
     for r in rows:
         ref, ctx_tok = bare.get(r["task"]), r.get("context_tokens")
         if (r["outcome"] in m.NON_OUTCOMES or r["arm"] == "bare"
@@ -402,7 +402,7 @@ def verify_memory_delivery(rows: Sequence[dict[str, Any]], arm_memory: dict[str,
             # is unverified, so the trial carries no evidence rather than a silent pass.
             out.append({**r, "outcome": m.ERROR,
                         "detail": "memory delivery not verified: no bare trial of this task to compare with"})
-            flipped += 1
+            unreferenced += 1
             continue
         by_source = r.get("injected_chars_by_source") or {}
         own = (int(by_source.get("rolex") or 0) + int(by_source.get("session_start") or 0)) // HOOK_CHARS_PER_TOKEN
@@ -418,7 +418,34 @@ def verify_memory_delivery(rows: Sequence[dict[str, Any]], arm_memory: dict[str,
         out.append(r)
     return out, (f"memory delivery verified from tokens against bare: memory arms need {need} "
                  f"unexplained turn-one tokens, others under {MEMORY_LEAK_TOKENS} "
-                 f"({flipped} trial(s) voided)")
+                 f"({flipped} trial(s) voided on the evidence, {unreferenced} left unverified for "
+                 "want of a bare trial of their task)")
+
+
+def write_back_memory_verdicts(out: Path, arm_memory: dict[str, bool], memory_chars: int) -> int:
+    """Persist the memory check's EVIDENCE-BASED verdicts, so --retry-void re-runs them.
+
+    Only INJECTION_MISSING and LEAKED are written back: the tokens showed the
+    injection absent, or present where it must not be. "No bare trial of this task
+    to compare with" is not a verdict about the trial, only a missing reference: a
+    run stopped by the budget guard and resumed can still supply it. That case is
+    decided at report time, never persisted, or the resume would find the trial
+    already void and skip it for good.
+    """
+    rows = list(latest_by_key(load_results(out)).values())
+    checked, _note = verify_memory_delivery(rows, arm_memory, memory_chars)
+    evidence = [r for r, before in zip(checked, rows)
+                if r["outcome"] != before["outcome"] and r["outcome"] in (m.INJECTION_MISSING, m.LEAKED)]
+    if evidence:
+        with open(out / "results.jsonl", "a", encoding="utf-8") as fh:
+            for r in evidence:
+                fh.write(json.dumps({**r, "reclassified_by": "memory-token-check"}, sort_keys=True) + "\n")
+    return len(evidence)
+
+
+def tasks_digest(path: Path | str) -> str:
+    """The task file's sha256: part of the run key, and what a calibration is bound to."""
+    return hashlib.sha256(Path(path).read_bytes()).hexdigest()
 
 
 def load_results(out: Path) -> list[dict[str, Any]]:
@@ -900,8 +927,7 @@ def cmd_run(args) -> int:
                   "Which tasks fail without injection depends on the model; recalibrate.",
                   file=sys.stderr)
             return EXIT_USAGE
-        tasks_sha = hashlib.sha256(Path(args.tasks).read_bytes()).hexdigest()
-        if cal.get("tasks_sha256") != tasks_sha:
+        if cal.get("tasks_sha256") != tasks_digest(args.tasks):
             print("error: the calibration does not record this task file's digest (it was run on "
                   "another version of the tasks, or predates the check). A task edited under an old "
                   "id could inherit a stale 'retained'; recalibrate.", file=sys.stderr)
@@ -937,16 +963,8 @@ def cmd_run(args) -> int:
     info = run_suite(s, tasks, arms, args.trials, jobs=args.jobs, max_utilization=args.max_utilization,
                      retry_void=args.retry_void, seed=args.seed)
     info["real_trash_new_entries"] = trash.report(out)
-    # The memory check needs bare, so it runs after the suite. Its verdicts are
-    # written back as new rows, so --retry-void re-runs what it voided.
-    rows = list(latest_by_key(load_results(out)).values())
-    checked, _note = verify_memory_delivery(
-        rows, {a.id: a.memory for a in arms}, int(s.corpus.manifest.get("memory_index_chars") or 0))
-    flipped = [r for r, before in zip(checked, rows) if r["outcome"] != before["outcome"]]
-    if flipped:
-        with open(out / "results.jsonl", "a", encoding="utf-8") as fh:
-            for r in flipped:
-                fh.write(json.dumps({**r, "reclassified_by": "memory-token-check"}, sort_keys=True) + "\n")
+    info["memory_verdicts_written_back"] = write_back_memory_verdicts(
+        out, {a.id: a.memory for a in arms}, int(s.corpus.manifest.get("memory_index_chars") or 0))
     changes = watch.changes()
     if changes:
         print(f"[ctx-ablation] REAL STATE CHANGED under ~/.config/broomva during the run "

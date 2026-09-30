@@ -500,9 +500,12 @@ context adds nothing". So delivery is checked per trial, not assumed.
     wrote to.
   - The check needs bare and runs when the suite finishes. Its verdicts are written
     back to `results.jsonl`, so `--retry-void` sees them. Without a bare arm, the
-    report says the check was not done; a task with no graded bare trial voids its
-    other arms' trials.
-- **the case guard:** one guard log row per guarded tool call that ran (above).
+    report says the check was not done. A task with no bare trial that reached its
+    first model call leaves its other arms' trials unverified, and they are void in
+    the report. That is not written back, so a resumed run that adds the bare trial
+    verifies them.
+- **the case guard:** at least as many guard log rows as guarded tool calls that
+  ran (above; a count, not a per-call match).
 
 A trial that fails any of these checks is `INJECTION_MISSING`, and one that got an
 injection its arm lacks is `LEAKED`. Both are void: counted, never graded. role-x
