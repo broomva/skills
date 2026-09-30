@@ -17,10 +17,12 @@ Selection, per catalog clause, cheapest first; each stage only narrows:
    and is logged; it never takes the other reflexes down with it.
 3. **Narrowing, ``ROLE_X_JEV``.** The seam a typed classifier plugs into. v1 ships
    only ``off``. A narrower may drop candidates and never add one.
-Rank: state+prompt, then state alone, then prompt alone, then priority. At most
-``max_lines`` lines in ``max_chars`` characters, and an id goes out at most
-``REPEAT_CAP`` times per session (a per-session file, not the event log). No
-persona lines, no entity list, and nothing at all when nothing fires.
+Rank: a pinned entry (the p9 rule, spec I1) first, then state+prompt, state alone,
+prompt alone, then priority. When several clauses of one entry fire, their facts are
+merged. At most ``max_lines`` lines in ``max_chars`` characters, and a line goes out at
+most ``REPEAT_CAP`` times per session for the same fact, the pinned rule excepted (a
+per-session file, not the event log). No persona lines, no entity list, and nothing at
+all when nothing fires.
 
 Loaded by ``role-x.py`` by file path (the hooks run Python with ``-I``, which keeps
 this directory off ``sys.path``). Catalog and I/O failures raise; the caller prints
@@ -59,7 +61,7 @@ GIT_TIMEOUT_S = 1.0
 REFLOG_TAIL_BYTES = 4096
 #: A catalog line longer than this is refused when the catalog loads.
 LINE_MAX_CHARS = 200
-#: An id goes out at most this many times in one session (spec §5.3, row 8).
+#: A line goes out at most this many times per session per fact (spec §5.3, row 8).
 REPEAT_CAP = 2
 #: Per-session injection counts; one small file per session, pruned after a week.
 SESSIONS_DIR_REL = Path(".config") / "broomva" / "role" / "reflex-sessions"
@@ -713,7 +715,8 @@ class Fired:
     def repeat_key(self) -> str:
         """(id, fact key): a new fact (another branch, a new push) is a new line;
         digits are dropped so "pushed 2 min ago" and "3 min ago" are one fact."""
-        return self.reflex.id + "|" + re.sub(r"\d+", "#", "; ".join(self.facts))
+        # only counts and ages vary between prompts; a branch name's digits are the fact
+        return self.reflex.id + "|" + re.sub(r"\b\d+(?= (min|commit|staged))", "#", "; ".join(self.facts))
 
 
 @dataclass
@@ -773,14 +776,19 @@ def route_detail(prompt: str, state: State, catalog: Catalog,
                 kept.append(Candidate(f"{r.id}#{i}", r, c, tuple(facts)))
     t = time.monotonic()
     keep = narrower.narrow(text, kept) if kept else set()
-    kept = [c for c in kept if c.key in keep]
+    # the pin is applied after narrowing (spec §5.3): a narrower cannot drop p9
+    kept = [c for c in kept if c.key in keep or c.reflex.pinned]
     timing["narrow"] += time.monotonic() - t
     best: dict[str, Fired] = {}
     for c in kept:
         via = ("state+prompt" if c.clause.has_prompt else "state") if c.clause.state else "prompt"
         f = Fired(c.reflex, via, c.facts, int(c.key.rsplit("#", 1)[1]))
-        if c.reflex.id not in best or f.sort_key < best[c.reflex.id].sort_key:
-            best[c.reflex.id] = f
+        prev = best.get(c.reflex.id)
+        if prev is not None:
+            # one line per entry: the best-ranked clause, with every clause's facts
+            top, other = (f, prev) if f.sort_key < prev.sort_key else (prev, f)
+            f = Fired(top.reflex, top.via, tuple(dict.fromkeys(top.facts + other.facts)), top.clause)
+        best[c.reflex.id] = f
     return Routed(
         fired=sorted(best.values(), key=lambda f: f.sort_key),
         predicates_true=sorted(n for n, (ok, _) in held.items() if ok),

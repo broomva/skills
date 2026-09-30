@@ -5,11 +5,12 @@ corpus snapshot #251 used (`784d8bac1a7d`). The router is `ROLE_X_OUTPUT=reflex`
 `ROLE_X_MODE=reflex`) at commit 2534568. Design of record: broomva/workspace
 `docs/specs/2026-09-30-reflex-router-and-ontology-ranked-context.html` §5.
 
-**Measured vs shipped.** The router this PR ships differs from the measured one on 7 of
-the 14 eval tasks. P20 round 2 fixes landed after the run, and no line's text changed:
-- **5 tasks, order only:** the p9 rule is now pinned to the first slot (spec I1).
-- **1 task, a fact added:** the pilot p9 task now gets "`feat/ctx-client-reader` has no
-  upstream yet." in front of the same p9 line.
+**Measured vs shipped.** The router this PR ships differs from the measured one on 4 of
+the 14 eval tasks. P20 fixes landed after the run; no line's text changed. Each task's
+block was re-routed at both commits with the task's own fixture state, checked by me and
+by both round-3 reviewers:
+- **3 tasks, order only** (specs, open-the-PR, held-out branch-first): the p9 rule is now
+  pinned to the first slot (spec I1).
 - **1 task, nothing injected:** the worktree task, since that entry is now `listed`.
 
 The numbers below are the measured router's. After the run, the held-out file's `notes`
@@ -165,6 +166,8 @@ state-conditioned lines, does.
 
 - **The 11 ids that clear the bar:** `change_work`, p9 watch, branch-first, merge-pin, the
   worktree guard, p9 heal, trash, Paseo listing, P18 docs, janitor and checkit.
+  `change_work` clears the general 0.60 bar at 2/3, but not the spec's own bar for it:
+  ≥ 0.80 on ≥ 40 positives, since I1 rests on it.
 - **Routed:** those ids, less the worktree guard, which the ablation listed. A test fails
   the build if a routed entry drops below the bar on the sealed cases.
 - **The other 20 ids are `listed`,** with their numbers in `m3:`. They include 11 of the
@@ -221,8 +224,9 @@ catalog loads in 1.7 ms.
   - p9: 8/9 against qbar 0/9 and rolex 1/9 (#251 had rolex 2/3 the same morning);
   - branch-first: 6/6 against 0/6 and 0/6.
   With n=3 per cell, those counts are noisy.
-- **Task-level sign tests** give p ≈ 0.03 (pilot, 5 of 5 untied tasks) and p ≈ 0.016
-  (held-out, 6 of 6). The bootstrap CIs over 6 and 8 clusters are anti-conservative.
+- **Task-level sign tests, one-sided:** p = 1/32 ≈ 0.03 (pilot, 5 of 5 untied tasks) and
+  p = 1/64 ≈ 0.016 (held-out, 6 of 6). Two-sided: 0.0625 and 0.031. The bootstrap CIs over
+  6 and 8 clusters are anti-conservative.
 - **The catalog author chose the pilot tasks' lines.** The pilot tasks were known when
   the lines were written, so the pilot set is in-sample for wording.
   - The held-out set mitigates this: four real turns, one p9 golden prompt, three blind
@@ -269,16 +273,24 @@ It is not yet enough for a default every session gets. Before a flip:
 4. **A thicker routing gate.** At least 10 positives and 5 near-misses per routed id, and
    40 for `change_work`, re-sealed before any tuning.
 
-**The alternative, from the round-2 reviewer (stratum C).** Keep the qbar block, which
-retains the P14 template and P17 escalation. Append the p9 (pinned), merge-pin and specs
-lines to it. That keeps I1 by construction, still retires the entity list and persona
-lines, and rests on less routing. It is a legitimate middle step if the owner wants the
-measured gains before the four items above.
+**The alternative, from the round-2 reviewer (stratum C), never measured.** Keep the qbar
+block, which retains the P14 template and P17 escalation. Append the p9 (pinned),
+merge-pin and specs lines to it. That keeps I1 by construction, still retires the entity
+list and persona lines, and rests on less routing.
+
+It would need its own arm before anyone relies on it. qbar alone went 0/42 here, and its
+p9 line went 0/9 (the pilot task and both held-out p9 tasks), so the lines, not the block, carried the gains.
 
 **Spec §5.6 at this head:**
-- rows 1–3, 6, 7 and 10 met;
-- 5, 8 and 13 met in code (the `change_work` route, a per-fact cap, p9 pinned and exempt),
-  but with the thin gate above;
+- rows 1–3, 6 and 7 met;
+- 8 met: a per-fact cap, with p9 exempt;
+- 10 partial: the record has the clause index, but no route names, pinned marker or
+  abstention field;
+- 5 and 13 partial:
+  - p9 is pinned first and never capped, even past the narrower;
+  - but change work is detected only for the verbs and go-ahead phrases the regexes list
+    ("remove", "revert" or "sounds good, push the changes" miss);
+  - and `change_work` is below its own 0.80 bar;
 - 9 partial: 3/2 cases per id against 10/5;
 - 11 is workspace-side;
 - 12 has medians only;

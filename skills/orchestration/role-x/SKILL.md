@@ -68,7 +68,7 @@ The intake block's "Task-relevant knowledge" list holds at most 5 catalog entiti
 
 The reflex router (`scripts/reflex_router.py`) reads `references/reflexes.yaml`: each entry is trigger clauses → one line that names the command → the source that states the rule. Per clause it works cheapest first, and each stage only narrows:
 1. **The prompt:** the catalog's regexes, the phrases copied from each skill's description, and named routes such as `change_work`. Pure regex, no I/O.
-2. **State, only for clauses whose prompt side matched:** one `git status --porcelain=v2 --branch`, one reflog tail, and ctx-core's `board.json` cache (never its log). A failing source costs only its own predicate.
+2. **State:** for a clause with a prompt side, only once that matched; a state-only clause (a push the reflog shows, staged changes on `main`) reads it on every prompt. Sources: one `git status --porcelain=v2 --branch`, one reflog tail, and ctx-core's `board.json` cache (never its log), each read at most once. A failing source costs only its own predicate.
 3. **`ROLE_X_JEV`:** the seam for a typed classifier; `off` in v1.
 
 State still ranks first: state+prompt fires, then state, then prompt. The p9 rule is `pinned` (spec I1): on change work, or on a short go-ahead with unshipped work, it takes the first slot, and the repeat cap never drops it.

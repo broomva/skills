@@ -652,7 +652,9 @@ def test_the_stage_3_seam_narrows_and_defaults_to_off(monkeypatch):
     monkeypatch.setitem(rr.NARROWERS, "recording", Recording)
     monkeypatch.setenv(rr.JEV_ENV, "recording")
     prompt = "skillify it, then push this branch and open the PR"
-    assert [f.reflex.id for f in rr.route(prompt, feature_state(), CAT_ALL)] == ["skill.skillify"]
+    # the narrower kept only skillify; the pinned p9 rule survives it (spec §5.3)
+    assert [f.reflex.id for f in rr.route(prompt, feature_state(), CAT_ALL)] == ["p9.watch-after-push",
+                                                                                 "skill.skillify"]
     assert "skill.skillify#0" in seen[0] and "p9.watch-after-push#3" in seen[0]
     monkeypatch.setenv(rr.JEV_ENV, "no-such-narrower")
     assert rr.get_narrower().name == "off"
@@ -669,7 +671,8 @@ def test_stage_3_sees_only_what_stages_1_and_2_kept():
             Spy.keys = [c.key for c in candidates]
             return set()
 
-    assert rr.route("fix it", feature_state(), CAT, Spy()) == []  # abstaining drops everything
+    assert [f.reflex.id for f in rr.route("fix it", feature_state(), CAT, Spy())] == [
+        "p9.watch-after-push"]  # abstaining drops everything but the pin
     assert "p10.branch-first#1" not in Spy.keys  # prompt matched, but its gate on_default_branch is closed
     assert Spy.keys == ["p9.watch-after-push#1"]  # change_work, in a repo, carries the p9 rule
     Spy.keys = []
@@ -786,6 +789,43 @@ def test_the_pinned_p9_rule_is_never_capped_and_goes_first(repo, tmp_path, monke
     for p in prompts:
         meta = rr.run(p, repo, "sess-p", catalog=CAT, state=rr.State(cwd=repo, ctx_loader=no_board))[1]
         assert meta["selected"][0] == "p9.watch-after-push", (p, meta)
+
+
+def test_the_pin_puts_p9_first_even_over_a_state_line(repo):
+    """Without the pin, branch-first's state clause (staged on main) would rank above
+    p9's prompt clause; with it, p9 takes the first slot (spec I1)."""
+    (repo / "README.md").write_text("# changed\n", encoding="utf-8")
+    git(repo, "add", "README.md")
+    ids = [f.reflex.id for f in rr.route("open a PR for what I staged", rr.State(cwd=repo, ctx_loader=no_board), CAT)]
+    assert ids[:2] == ["p9.watch-after-push", "p10.branch-first"]
+
+
+def test_facts_from_every_firing_clause_are_kept(repo):
+    """change_work (gated by in_git_repo) outranks the push clause, but the push fact stays."""
+    pushed_feature(repo)
+    text, _ = rr.run("fix the typo in README", repo, catalog=CAT,
+                     state=rr.State(cwd=repo, ctx_loader=no_board), count=False)
+    assert "`feat/x` was pushed 0 min ago." in text
+
+
+@pytest.mark.parametrize("prompt,fires", [
+    ("ok", True), ("ok, ship it", True), ("sounds good, ship it", True), ("lgtm, push", True), ("go", True),
+    ("ok, what does this function do?", False), ("sure, what are the options?", False),
+    ("go through the logs and tell me what failed", False), ("ok don't push yet", False),
+])
+def test_the_go_ahead_clause_needs_a_go_ahead(repo, prompt, fires):
+    git(repo, "switch", "-q", "-c", "feat/y")
+    commit(repo, "y.txt")  # unshipped work: no upstream
+    got = "p9.watch-after-push" in fired_ids(prompt, rr.State(cwd=repo, ctx_loader=no_board))
+    assert got is fires, prompt
+
+
+def test_the_repeat_key_keeps_branch_digits_and_drops_ages():
+    r = BY_ID["p10.branch-first"]
+    key = lambda *facts: rr.Fired(r, "state", facts).repeat_key  # noqa: E731
+    assert key("`main` has 1 staged change(s)") == key("`main` has 4 staged change(s)")
+    assert key("`feat/x` was pushed 3 min ago") == key("`feat/x` was pushed 9 min ago")
+    assert key("`feat/bro-1858` has no upstream yet") != key("`feat/bro-2674` has no upstream yet")
 
 
 def test_the_cap_is_per_fact_so_a_new_fact_rearms_it(repo, tmp_path, monkeypatch):
