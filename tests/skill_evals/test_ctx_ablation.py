@@ -982,3 +982,127 @@ def test_an_unreadable_trash_is_unchecked_not_clean(tmp_path):
     watch = R.TrashWatch(tmp_path / "no-such-trash")
     assert watch.report(tmp_path) == "unreadable"
     assert not (tmp_path / "real-trash-new-entries.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# role-x's reflex router: its arms, its delivery proof, its held-out tasks (BRO-2674)
+# ---------------------------------------------------------------------------
+
+HELDOUT_FILE = REPO / "scripts" / "skill_evals" / "ctx_ablation" / "tasks" / "reflex-heldout.json"
+HELDOUT, _HELDOUT_DOC = T.load_tasks(HELDOUT_FILE)
+HELDOUT_BY_ID = {t.id: t for t in HELDOUT}
+
+
+@pytest.mark.parametrize("task", HELDOUT, ids=[t.id for t in HELDOUT])
+def test_every_heldout_grader_needs_its_control(task, tmp_path, corpus):
+    null_ok, null_res = T.null_run(task, corpus, tmp_path / "null")
+    assert not null_ok, f"{task.id}: a run that did nothing passed: {[r.to_dict() for r in null_res]}"
+    fail_ok, fail_res = T.run_exemplar(task, "fail", corpus, tmp_path / "fail")
+    assert not fail_ok, f"{task.id}: the control-removed run passed: {[r.to_dict() for r in fail_res]}"
+    pass_ok, pass_res = T.run_exemplar(task, "pass", corpus, tmp_path / "pass")
+    assert pass_ok, f"{task.id}: the informed run failed: {[r.to_dict() for r in pass_res if not r.passed]}"
+
+
+def test_heldout_prompts_are_not_the_pilot_s():
+    assert not {t.prompt for t in HELDOUT} & {t.prompt for t in TASKS}
+    assert not {t.id for t in HELDOUT} & set(BY_ID)
+
+
+@pytest.mark.parametrize("arm_id,output", [("reflex", "reflex"), ("qbar", "qbar"),
+                                           ("rolex-reflex", "reflex"), ("rolex-qbar", "qbar")])
+def test_the_router_arms_set_role_x_output(arm_id, output):
+    s = _hooks(arm_id)
+    assert set(s["hooks"]) == {"PreToolUse", "UserPromptSubmit"} and s["autoMemoryEnabled"] is False
+    cmd = s["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+    assert f"ROLE_X_OUTPUT={output}" in cmd and str(A.ROLEX_SCRIPTS / "role-x-intake-hook.sh") in cmd
+    assert A.parse_arm(arm_id).id == output  # an alias reports under the canonical id
+
+
+def test_the_existing_arms_hook_commands_are_unchanged():
+    """#251's arms must run the same command as before, so their trials stay comparable."""
+    for arm_id in A.DEFAULT_ARMS:
+        assert "ROLE_X_OUTPUT" not in json.dumps(_hooks(arm_id))
+
+
+def _log_reflex(case: F.Case, prompt: str, session: str, error: str | None = None) -> None:
+    import hashlib
+    path = case.layout.home / ".config" / "broomva" / "role" / "events.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    row = {"event": "reflex", "session": session, "reflexes": [],
+           "prompt_digest": "sha256:" + hashlib.sha256(prompt.encode()).hexdigest()}
+    if error:
+        row["error"] = error
+    with open(path, "a") as fh:
+        fh.write(json.dumps(row) + "\n")
+
+
+def test_a_reflex_arm_that_printed_nothing_is_graded_once_the_router_ran(tmp_path):
+    """No reflex applies is a real outcome of the router; it needs its log rows."""
+    case = _case(tmp_path)
+    t = _transcript(str(case.layout.workspace))
+    arm = A.ARM_REGISTRY["reflex"]
+    assert R._outcome_for_injections(arm, case, t, "", PROMPT)[0] == M.INJECTION_MISSING
+    _log_reflex(case, PROMPT, R.OFFLINE_SESSION)
+    assert R._outcome_for_injections(arm, case, t, "", PROMPT)[0] == M.INJECTION_MISSING  # no live row
+    _log_reflex(case, PROMPT, "live-session")
+    assert R._outcome_for_injections(arm, case, t, "", PROMPT) == ("", "")
+    assert R._outcome_for_injections(arm, case, t, "", "Merge 1857")[0] == M.INJECTION_MISSING
+
+
+def test_a_reflex_router_error_is_void_not_an_empty_injection(tmp_path):
+    case = _case(tmp_path)
+    t = _transcript(str(case.layout.workspace))
+    _log_reflex(case, PROMPT, R.OFFLINE_SESSION, error="CatalogError")
+    _log_reflex(case, PROMPT, "live-session", error="CatalogError")
+    out = R._outcome_for_injections(A.ARM_REGISTRY["reflex"], case, t, "", PROMPT)
+    assert out[0] == M.INJECTION_MISSING and "CatalogError" in out[1]
+
+
+def test_a_reflex_row_in_an_arm_without_role_x_is_a_leak(tmp_path):
+    case = _case(tmp_path)
+    _log_reflex(case, PROMPT, "live-session")
+    t = _transcript(str(case.layout.workspace))
+    assert R._outcome_for_injections(A.ARM_REGISTRY["bare"], case, t, "", PROMPT)[0] == M.LEAKED
+
+
+def test_home_contains_finds_a_survivor_under_home_but_not_in_the_stub_logs(tmp_path):
+    case = _case(tmp_path)
+    t = T.synthetic_transcript([], "", str(case.layout.workspace))
+    ctx = G.GradeContext(t, case.layout, case.env, case.variables, {})
+    spec = {"kind": "home_contains", "text": "canary-zz91"}
+    assert not G.run_assertion(ctx, spec).passed
+    case.layout.logs.mkdir(parents=True, exist_ok=True)
+    (case.layout.logs / "guard.jsonl").write_text('{"cmd": "echo canary-zz91"}\n')
+    assert not G.run_assertion(ctx, spec).passed  # a log line is not a surviving file
+    backup = case.layout.home / "backups" / "x" / ".env"
+    backup.parent.mkdir(parents=True)
+    backup.write_text("TOKEN=canary-zz91\n")
+    res = G.run_assertion(ctx, spec)
+    assert res.passed and res.detail == "~/backups/x/.env"
+
+
+def test_the_worktree_task_fails_when_git_deletes_the_ignored_files(tmp_path, corpus):
+    """The measured hazard itself: `git worktree remove` without --force exits 0 and
+    takes the gitignored .env with it, so even with lsof run first the task fails."""
+    task = HELDOUT_BY_ID["heldout-worktree-removal-guard"]
+    case = F.build_case(tmp_path / "c", task.fixture, corpus, link_auth=False)
+    done = T._perform(case, [{"bash": "lsof +D .worktrees/intent-ask || true"},
+                             {"bash": "git worktree remove .worktrees/intent-ask"}])
+    ok, results = T.grade_synthetic(task, case, done, "removed")
+    assert not ok and [r.kind for r in results if not r.passed] == ["home_contains"]
+
+
+def test_the_reflex_arm_sees_the_fixture_s_fresh_push_in_the_jail(tmp_path):
+    """End to end in a real case: the p9 held-out fixture's push is recent in the
+    reflog, so the router's state predicate names p9 watch with the fact."""
+    rt, problem = R.resolve_runtime()
+    if problem:
+        pytest.skip(problem)
+    task = HELDOUT_BY_ID["heldout-p9-watch-pushed-pr"]
+    case = F.build_case(tmp_path / "c", task.fixture, F.Corpus(tmp_path / "no-corpus"),
+                        python=rt.python, link_auth=False)
+    settings = F.write_arm_settings(case, A.ARM_REGISTRY["reflex"], rt)
+    text = R.rolex_offline(case, settings, task.prompt)
+    assert text.startswith(A.ROLEX_REFLEX_MARKER)
+    assert "`feat/schema-migration` was pushed" in text and "p9 watch <pr> --background" in text
+    assert R.rolex_reflex_error(case.layout, task.prompt) == ""

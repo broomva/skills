@@ -71,6 +71,7 @@ REQUIRED_PARAMS: dict[str, tuple[str, ...]] = {
     "stub": ("stub", "argv_re"),
     "no_stub": ("stub", "argv_re"),
     "every_stub": ("stub", "where_re", "must_re"),
+    "home_contains": ("text",),
     "any": ("of",),
 }
 

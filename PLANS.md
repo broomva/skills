@@ -1,5 +1,48 @@
 # PLANS.md
 
+## role-x reflex router v1, behind `ROLE_X_MODE=reflex` (BRO-2674)
+
+Status: in progress on `feat/role-x-reflex-router`. Owner decision 2026-09-30: turn
+role-x into something that raises adherence to bstack's primitives and skills, as its
+quality-bar p9 line already does, across all of them.
+
+### Evidence it starts from
+
+- ctx_ablation (#248, #251): concrete action lines move behaviour. role-x's p9 line took
+  p9 watch to 6/9 against 0/9 bare, and MEMORY.md's action rules carried memory's lift.
+- role-x's task-entity list does not: 0–7% opened in the evals, 0.70% in production.
+- role-x is 23.8% of all injected bytes, about 1k tokens per turn.
+
+### Scope and constraints
+
+- Default unchanged. `ROLE_X_MODE` unset means today's intake block; `reflex` is the
+  router; `quality-bar` is the lens block cut to its quality bar (an eval arm #251 asked
+  for). The hook is registered in write-gated settings, so the switch is an env flag.
+- Catalog `references/reflexes.yaml`: trigger clauses → one factual, command-naming line
+  → the source that states the rule. Primitive reflexes from the workspace AGENTS.md
+  §P1–P20, memory action rules, and one line per installed skill with
+  `evals/prompts.json`.
+- State predicates first, from one `git status --porcelain=v2 --branch`, a reflog tail,
+  and ctx-core's `board.json` cache (never its log). Then lexical prompt routing behind a
+  classifier seam. No model classifier in v1.
+- Output ≤3 lines and ≤150 tokens, no persona lines, no entity list; byte count logged.
+  Any error prints nothing.
+
+### Milestones
+
+1. [ ] Catalog + router + role-x wiring + tests (predicates ±, catalog/source, budget,
+   fail-open, mutation check).
+2. [ ] ctx_ablation: `rolex-reflex` and `rolex-qbar` arms, held-out tasks.
+3. [ ] Sonnet run: calibrate held-out, then bare / rolex / rolex-qbar / rolex-reflex,
+   arms one at a time, jobs ≤2, cost estimated first (ceiling ~$40 notional).
+4. [ ] Results doc, PR, P20 (B + C strata, read-only), `p20-record`, `gate-check`,
+   pinned merge. The flag stays default-off; the owner decides the flip.
+
+### Verification
+
+`pytest skills/orchestration/role-x/tests`, `pytest tests/skill_evals/test_ctx_ablation.py`,
+`python3 scripts/skill_evals/ctx_ablation/run.py validate --deep`.
+
 ## Context evals, layer 2: the causal context-ablation harness
 
 Status: pilot v3 done; PR #248 in review round 3 (branch `feat/context-ablation-evals`). Layer 1, the observational

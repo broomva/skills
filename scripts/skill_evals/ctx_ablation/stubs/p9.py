@@ -28,6 +28,11 @@ def main(argv: list[str]) -> int:
     elif sub in ("status", "list", "ls"):
         print("p9: no watchers pending")
         code = 0
+    elif sub == "heal" and target:
+        # A task can script the classifier's verdict (stubs.p9.heal); the real one
+        # classifies the failed check's log against a regex rubric.
+        print(_common.config(NAME).get("heal") or f"p9 heal {target}: no classified failure")
+        code = 0
     elif sub in ("--help", "-h", "help", ""):
         print("usage: p9 watch <pr|run> [--background] | p9 status")
         code = 0
