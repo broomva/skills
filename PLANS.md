@@ -1,6 +1,6 @@
 # PLANS.md
 
-## role-x reflex router v1, behind `ROLE_X_MODE=reflex` (BRO-2674)
+## role-x reflex router v1, behind `ROLE_X_OUTPUT=reflex` (BRO-2674)
 
 Status: in progress on `feat/role-x-reflex-router`; eval paused for the rate-limit window (resets 13:50 -05). Owner decision 2026-09-30: turn
 role-x into something that raises adherence to bstack's primitives and skills, as its
@@ -15,16 +15,17 @@ quality-bar p9 line already does, across all of them.
 
 ### Scope and constraints
 
-- Default unchanged. `ROLE_X_MODE` unset means today's intake block; `reflex` is the
-  router; `quality-bar` is the lens block cut to its quality bar (an eval arm #251 asked
-  for). The hook is registered in write-gated settings, so the switch is an env flag.
+- Default unchanged. `ROLE_X_OUTPUT` unset means today's intake block (`legacy`);
+  `reflex` is the router; `shadow` logs it without injecting; `qbar` is the lens block cut
+  to its quality bar (an eval arm #251 asked for). `ROLE_X_MODE`, the brief's name, is an
+  alias. The hook is registered in write-gated settings, so the switch is an env flag.
 - Catalog `references/reflexes.yaml`: trigger clauses → one factual, command-naming line
   → the source that states the rule. Primitive reflexes from the workspace AGENTS.md
   §P1–P20, memory action rules, and one line per installed skill with
   `evals/prompts.json`.
 - State predicates first, from one `git status --porcelain=v2 --branch`, a reflog tail,
-  and ctx-core's `board.json` cache (never its log). Then lexical prompt routing behind a
-  classifier seam. No model classifier in v1.
+  and ctx-core's `board.json` cache (never its log). Then lexical prompt routing, then a
+  `ROLE_X_JEV` narrowing seam, `off` in v1. No model classifier in v1.
 - Output ≤3 lines and ≤150 tokens, no persona lines, no entity list; byte count logged.
   Any error prints nothing.
 
