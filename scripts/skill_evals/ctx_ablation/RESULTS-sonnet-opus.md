@@ -6,9 +6,10 @@ The harness is a82e8ea, unchanged. Same 6 arms and 3 trials; each model recalibr
 pilot's 13 retained tasks in its own bare arm.
 
 **In short:**
-- **Stronger models, more lift.** On the 6 tasks all three models kept, every arm's pass
-  rate rises from haiku to sonnet to opus. That is descriptive: 17–18 trials per cell, no
-  CI.
+- **Stronger models, more lift.** On the 6 tasks all three models kept, every injected
+  arm's pass rate rises from haiku to sonnet to opus. That is descriptive: 17–18 trials per
+  cell, no CI, and haiku ran on another corpus. Across the full task sets, memory does not
+  rise (0.21 → 0.19 → 0.48).
 - **Opus and memory.** On opus, memory's lift is established: +0.48, task-clustered CI
   [+0.12, +0.85]. `all` is established on sonnet and opus.
 - **The ctx brief** is the most efficient per token on its targets: 6/6 on opus, for ~400
@@ -33,7 +34,7 @@ Each cell is passes / graded trials, with the task-clustered 95% CI of the lift 
 **Reading the table.** Compare within a column. Each model's task set is what it failed
 bare, so the first three columns are different task sets. The last column holds the 6 tasks
 all three models kept: 2 coordination, branch-first, p9, trash, higgsfield. On those, every
-arm rises from haiku to sonnet to opus. Across the full columns memory does not (0.21 →
+injected arm rises from haiku to sonnet to opus. Across the full columns memory does not (0.21 →
 0.19 → 0.48).
 
 ## Headline: each injection on the tasks it targets (passes; bare is 0 on every row)
@@ -69,7 +70,7 @@ Notional cost is ~$76 over 438 trials; the canary calls were not metered.
   `retrieval-ci-runner-pool` (2/3).
 
 list_agents was one of memory's two haiku wins. Opus does it unaided (3/3); sonnet did
-once in 3.
+it once in 3.
 
 **Delivery.** Every graded trial carries the pilot's four proofs. Memory was verified from
 tokens on every memory-arm trial, and no trial was flipped. Void trials:
@@ -93,8 +94,9 @@ That evidence is in this session's log, not the run directory.
 - **The ccprobe entries** match `./probe.sh` sessions driven from worktree
   `0t10n7id-sharp-moth`. The evidence is those sessions' own transcripts, not the run
   directory. No trial transcript names any of these entries.
-- **Later arrivals.** More `ccprobe*` entries arrived around 09:32, after the last trial
-  (09:14), when no harness was running.
+- **Later arrivals.** `ccprobe-ids.48558`, `ccprobe-CcnrMz` and `ccprobe2-gBKBqm` reached
+  the Trash at 09:19:56, 09:20:07 and 09:32:28 (status-change times). That is after the
+  last trial (09:14:01), when no harness was running.
 - **The check lines.** From 08:51, checks diffed against a baseline that included the 9
   `kin_*` files, and their "unchanged" line still printed the old baseline label.
 - **Mine, not a trial:** my own `trash` of an unused corpus copy, moved back out at once.
@@ -179,12 +181,12 @@ on sonnet, and 5.4%, 4.3% and 6.8% on opus.
 4. **Memory's lift stays concentrated in concrete rules on sonnet, and spreads on opus.**
    - The trash rule fires everywhere. The branch-first line is weaker: 0/3 on haiku, 1/3 on
      sonnet, 3/3 on opus.
-   - Rules no index line states fired 0/9 on sonnet and 7/9 on opus:
+   - Rules the index only hints at or omits fired 0/9 on sonnet and 7/9 on opus:
      - **specs (3/3) and open-the-PR (2/2 passes):** opus opened the topic file,
        `deliverables-land-in-workspace-not-artifacts.md` or `pr-ask-stall-measured.md`;
      - **merge-pin:** passed on opus in memory (2/3) and `all` (3/3) without opening any
-       memory file. It is 0/12 in every arm without memory, so the index line "(pinned
-       cmd posted)" carried it;
+       memory file. It is 0/12 in every arm without memory, so the memory injection
+       carried it, most plausibly the index line "(pinned cmd posted)";
      - **sonnet:** opened the wrong topic files, or none.
 
    These comparisons span different tasks, so the inline-vs-pointer gap is confounded with
@@ -218,8 +220,8 @@ that separates the two failure modes is in the failures below.
 ## Recommendations
 
 1. **Test inlining memory's missing rules before shipping it.**
-   - Inline rules scored 4/6 on sonnet, and rules no index line states scored 0/9. That is
-     the case for inlining.
+   - Inline rules scored 4/6 on sonnet, and rules the index only hints at or omits scored
+     0/9. That is the case for inlining.
    - The comparison spans different tasks, and the inline branch-first rule is itself weak
      on sonnet (1/3).
    - Candidate lines for MEMORY.md: deliverables go in the workspace's dated specs folder;
@@ -229,19 +231,20 @@ that separates the two failure modes is in the failures below.
      the three tasks. Otherwise the eval grades its own answer key.
    - Measured cost of the memory injection: 10.4k tokens (opus) to 13.7k (sonnet), about
      3.2k of it the CLI's auto-memory block, on different tokenizers.
-2. **Trim role-x to top-2, and test the quality bar alone.**
+2. **Consider trimming role-x to top-2, after testing the quality bar alone.**
    - `ROLE_X_TASK_ENTITY_TOP_N=2` saves ~140 tokens (13%). Entities are opened 0–7% of the
      time.
    - It showed no detectable loss at this n, except opus branch-first (2/3 → 0/3).
    - Run a quality-bar-only arm first, with no entity list. Ship the cut if p9 holds there
-     (now 6/9 rolex, 7/8 top-2, 0/9 bare).
+     (now 6/9 rolex, 7/8 top-2, 0/9 bare) and opus branch-first recovers at top-2 on a
+     re-run.
 3. **Keep the ctx brief, and change its label.**
    - Render the heartbeat as "last turn ended N min ago; session live", not `session.stop`.
      Sonnet misread it in the ctx arm, opus did not.
    - The label is not the whole story: sonnet's `all` arm scored 5/6 on the same tasks
      with the same label.
    - Test: sonnet on the two coordination tasks, where the ctx arm is currently 3/6. About
-     $2 per 18 trials.
+     $3 per 18 trials.
 4. **Rewrite the retrieval tasks.**
    - Ask questions whose answer is the fact, or grade on the concept rather than an exact
      ID.
