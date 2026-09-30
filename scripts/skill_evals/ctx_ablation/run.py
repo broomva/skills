@@ -80,6 +80,10 @@ OFFLINE_SESSION = "ctxabl-offline"
 #: intake block, in production as here.
 ROLEX_MIN_WORDS = 3
 
+def calibration_dir(out: Path) -> Path:
+    return Path(out) / "calibration"
+
+
 CALIBRATION_RETAINED = "retained"
 CALIBRATION_VACUOUS = "vacuous"
 CALIBRATION_NO_SIGNAL = "no-signal"
@@ -656,11 +660,18 @@ def cmd_calibrate(args) -> int:
     s, code = _live_setup(args, out)
     if s is None:
         return code
+    # Calibration trials live in their own directory. If they shared results.jsonl
+    # with `run`, the run would resume from them and reuse, as its bare arm, the very
+    # trials that selected the tasks for failing in bare: bare would score 0% on the
+    # retained set by construction. The run's bare arm is a fresh sample instead,
+    # which also shows how much of each calibration failure was luck.
+    s.out = calibration_dir(out)
+    s.out.mkdir(parents=True, exist_ok=True)
     watch = jail_mod.RealStateWatch()
     watch.snapshot()
     info = run_suite(s, tasks, [arms_mod.ARM_REGISTRY["bare"]], args.trials, jobs=args.jobs,
                      max_utilization=args.max_utilization, retry_void=args.retry_void, seed=args.seed)
-    rows = [r for r in latest_by_key(load_results(out)).values() if r["arm"] == "bare"]
+    rows = [r for r in latest_by_key(load_results(s.out)).values() if r["arm"] == "bare"]
     verdicts = calibration_verdicts(rows, [t.id for t in tasks], args.trials)
     costs = [r["cost_usd"] for r in rows if isinstance(r.get("cost_usd"), (int, float))]
     walls = [r["wall_ms"] / 1000 for r in rows if isinstance(r.get("wall_ms"), int)]
@@ -685,6 +696,23 @@ def cmd_calibrate(args) -> int:
     return EXIT_OK
 
 
+def select_round_robin(tasks: Sequence[tasks_mod.Task], limit: int) -> list[tasks_mod.Task]:
+    """The pre-registered rule for a pilot drawn from more retained tasks than it runs:
+    round-robin over each task's PRIMARY target (its first), in file order. Fixed before
+    any calibration result was seen, so the pilot cannot be chosen for its outcome, and
+    balanced so no one injection gets all the tasks."""
+    queues: dict[str, list[tasks_mod.Task]] = {}
+    for t in tasks:
+        queues.setdefault(t.targets[0] if t.targets else "", []).append(t)
+    picked: list[tasks_mod.Task] = []
+    while len(picked) < limit and any(queues.values()):
+        for key in list(queues):
+            if queues[key] and len(picked) < limit:
+                picked.append(queues[key].pop(0))
+    order = {t.id: i for i, t in enumerate(tasks)}
+    return sorted(picked, key=lambda t: order[t.id])
+
+
 def cmd_run(args) -> int:
     tasks = _load(args)
     arms = [arms_mod.parse_arm(a) for a in args.arms.split(",")]
@@ -707,6 +735,9 @@ def cmd_run(args) -> int:
     if not tasks:
         print("error: no tasks left to run", file=sys.stderr)
         return EXIT_USAGE
+    if args.limit:
+        tasks = select_round_robin(tasks, args.limit)
+        print(f"[ctx-ablation] --limit {args.limit}: {', '.join(t.id for t in tasks)}", file=sys.stderr)
     n = len(tasks) * len(arms) * args.trials
     print(f"[ctx-ablation] RUN: {len(tasks)} tasks x {len(arms)} arms ({','.join(a.id for a in arms)}) "
           f"x {args.trials} trials; {estimate(n, args.jobs, cal)}", file=sys.stderr)
@@ -801,6 +832,8 @@ def build_parser() -> argparse.ArgumentParser:
     r.add_argument("--arms", default=",".join(arms_mod.DEFAULT_ARMS))
     r.add_argument("--calibration", type=Path)
     r.add_argument("--allow-uncalibrated", action="store_true")
+    r.add_argument("--limit", type=int, default=0,
+                   help="run at most N retained tasks, chosen round-robin by primary target")
     r.set_defaults(fn=cmd_run)
 
     rp = sub.add_parser("report", help="re-render the tables from results.jsonl")

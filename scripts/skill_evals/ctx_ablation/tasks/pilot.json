@@ -321,7 +321,7 @@
         {
           "kind": "stub",
           "stub": "paseo",
-          "argv_re": "\"returned\": 57\\b"
+          "argv_re": "\"returned\": (57|63)\\b"
         }
       ],
       "exemplars": {

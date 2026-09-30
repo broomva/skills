@@ -312,6 +312,24 @@ def test_calibration_never_retains_a_task_it_could_not_grade():
     assert R.calibration_verdicts([], ["t"], 3)["t"]["verdict"] == R.CALIBRATION_NO_SIGNAL
 
 
+def test_calibration_trials_never_become_the_run_s_bare_arm(tmp_path):
+    """The run resumes from results.jsonl in its directory. Calibration writes
+    elsewhere, so the tasks it selected for failing in bare get a FRESH bare sample
+    in the run instead of inheriting 0/3 by construction."""
+    assert R.calibration_dir(tmp_path) != tmp_path
+    (R.calibration_dir(tmp_path)).mkdir()
+    (R.calibration_dir(tmp_path) / "results.jsonl").write_text(json.dumps(_row("t", M.FAIL)) + "\n")
+    assert R.load_results(tmp_path) == []
+
+
+def test_the_pilot_subset_is_round_robin_by_primary_target():
+    picked = R.select_round_robin(TASKS, 6)
+    firsts = [t.targets[0] for t in picked]
+    assert sorted(firsts) == ["ctx", "ctx", "memory", "memory", "rolex", "rolex"]
+    assert [t.id for t in picked] == [t.id for t in TASKS if t in picked]  # file order kept
+    assert R.select_round_robin(TASKS, 99) == list(TASKS)
+
+
 def test_run_refuses_without_a_calibration(tmp_path, capsys):
     code = R.main(["run", "--out", str(tmp_path), "--dry-run"])
     assert code == R.EXIT_USAGE
