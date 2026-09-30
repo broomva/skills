@@ -16,7 +16,8 @@ Selection, per catalog clause, cheapest first; each stage only narrows:
    ``board.json`` cache (never its log). A predicate that raises counts as false
    and is logged; it never takes the other reflexes down with it.
 3. **Narrowing, ``ROLE_X_JEV``.** The seam a typed classifier plugs into. v1 ships
-   only ``off``. A narrower may drop candidates and never add one.
+   only ``off``. A narrower may drop candidates and never add one, and it cannot drop
+   the pinned p9 rule once stages 1-2 kept it (spec §5.3).
 Rank: a pinned entry (the p9 rule, spec I1) first, then state+prompt, state alone,
 prompt alone, then priority. When several clauses of one entry fire, their facts are
 merged. At most ``max_lines`` lines in ``max_chars`` characters, and a line goes out at
@@ -624,7 +625,8 @@ class Narrower(Protocol):
     name: str
 
     def narrow(self, prompt: str, candidates: Sequence[Candidate]) -> set[str]:
-        """The keys to keep. Anything returned that was not offered is ignored."""
+        """The keys to keep. Anything returned that was not offered is ignored, and a
+        pinned candidate is kept whatever is returned."""
 
 
 class Off:

@@ -79,7 +79,7 @@ never its text.
 |---|---|
 | `selected` | Catalog ids injected, best first (at most `max_lines`) |
 | `via` | Per selected id: `state+prompt`, `state` or `prompt` — what made it fire |
-| `clause` | Per selected id: the index of the clause that fired it |
+| `clause` | Per selected id: the best-ranked clause that fired it (when several fire, the line carries all their facts; only this index is recorded) |
 | `cut` | Ids that fired but were not shown: over the line or character cap, or already injected twice this session for the same fact (never the pinned p9 rule) |
 | `predicates_true` | State predicates that held, of those a routed clause asked about |
 | `jev` | The stage-3 narrower (`ROLE_X_JEV`); `off` in v1 |

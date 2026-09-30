@@ -76,9 +76,9 @@ reflexes:
       # I1's state signal: work not yet shipped, and a short go-ahead or ship verb
       - state: [unshipped_work]
         prompt:
-          # a go-ahead on its own, or followed by a ship verb; never "ok, what is ...?"
-          - '^\W*(go|go ahead|continue|keep going|carry on|proceed|ship it|lgtm|looks good|do it|yes|yep|ok|okay|sure)\W*($|(,|\s)+(and\s+)?(ship it|go ahead|push|commit|merge|continue|do it|go)\b)'
-          - '(^|[\s,])(ship it|go ahead and (push|merge|commit))\b'
+          # the WHOLE prompt is a go-ahead ("ok", "yes please", "ok, proceed"): a prefix
+          # match with the rest ignored misfired on questions and refusals (P20 r3-r4)
+          - '^\W*(go|go ahead|go for it|continue|keep going|carry on|proceed|ship it|ship|lgtm|looks good|sounds good|do it|yes|yep|ok|okay|sure)(\W+(go|go ahead|go for it|continue|keep going|carry on|proceed|ship it|ship|do it|please|pls|push|push it|merge|merge it|commit))?\W*$'
           - '^\W*(commit|push|merge)(\s+(it|this|that|them|now|please|pls|the branch|and push|and merge|and open a pr))*\W*$'
       - prompt:
           - '\b(commit( this| it| that)? and push|push (it|this|that|the branch|to origin))\b'

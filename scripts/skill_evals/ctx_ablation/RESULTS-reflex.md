@@ -137,7 +137,8 @@ work.
 
 Which of those carried the change-work task cannot be recovered: its prompt ("…then open a
 pr for it") also matches the "open a PR" regex, added in the same commit, and the measured
-event log did not record the clause. It does now, in the `clause` field.
+event log did not record the clause. It now records the best-ranked clause in `clause`.
+When two clauses fire, as here, that still leaves the attribution ambiguous.
 
 ## quality bar only, vs today's block
 
@@ -279,17 +280,23 @@ merge-pin and specs lines to it. That keeps I1 by construction, still retires th
 list and persona lines, and rests on less routing.
 
 It would need its own arm before anyone relies on it. qbar alone went 0/42 here, and its
-p9 line went 0/9 (the pilot task and both held-out p9 tasks), so the lines, not the block, carried the gains.
+p9 line went 0/9 (the pilot p9 task and the two held-out p9-watch tasks), so the lines, not the block, carried the gains.
 
 **Spec §5.6 at this head:**
-- rows 1–3, 6 and 7 met;
-- 8 met: a per-fact cap, with p9 exempt;
+- rows 1–3 and 6 met;
+- 7 met while off: the seam is skipped when stages 1–2 keep nothing;
+- 8 partial: the cap is per fact with p9 exempt, but the key holds a line's merged facts,
+  so one state can recur twice per distinct fact combination;
 - 10 partial: the record has the clause index, but no route names, pinned marker or
   abstention field;
 - 5 and 13 partial:
   - p9 is pinned first and never capped, even past the narrower;
   - but change work is detected only for the verbs and go-ahead phrases the regexes list
     ("remove", "revert" or "sounds good, push the changes" miss);
+  - with unshipped work, the go-ahead signal counts only when the whole prompt is a
+    go-ahead ("ok", "yes please", "ok, proceed"). That is deliberate: rounds 3 and 4 showed
+    prefix matching firing on questions and refusals. "continue with the refactor" and
+    "proceed with the plan" miss;
   - and `change_work` is below its own 0.80 bar;
 - 9 partial: 3/2 cases per id against 10/5;
 - 11 is workspace-side;

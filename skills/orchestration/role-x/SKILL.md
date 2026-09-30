@@ -71,7 +71,7 @@ The reflex router (`scripts/reflex_router.py`) reads `references/reflexes.yaml`:
 2. **State:** for a clause with a prompt side, only once that matched; a state-only clause (a push the reflog shows, staged changes on `main`) reads it on every prompt. Sources: one `git status --porcelain=v2 --branch`, one reflog tail, and ctx-core's `board.json` cache (never its log), each read at most once. A failing source costs only its own predicate.
 3. **`ROLE_X_JEV`:** the seam for a typed classifier; `off` in v1.
 
-State still ranks first: state+prompt fires, then state, then prompt. The p9 rule is `pinned` (spec I1): on change work, or on a short go-ahead with unshipped work, it takes the first slot, and the repeat cap never drops it.
+State still ranks first: state+prompt fires, then state, then prompt. The p9 rule is `pinned` (spec I1): it fires on change work, on push or "open a PR" wording, after a fresh push, or when the whole prompt is a go-ahead ("ok", "yes please") with unshipped work; whenever it fires it takes the first slot, and neither the repeat cap nor a narrower drops it.
 
 No persona lines, no entity list. Lines state facts ("after a push, the stack runs `p9 watch <pr> --background`"), never orders. A line goes out at most twice per session for the same fact (a small per-session file under `~/.config/broomva/role/reflex-sessions/`; `shadow` counts too). Any error prints nothing and logs its class; a state source that fails costs only its own predicate.
 

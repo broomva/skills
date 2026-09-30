@@ -810,14 +810,37 @@ def test_facts_from_every_firing_clause_are_kept(repo):
 
 @pytest.mark.parametrize("prompt,fires", [
     ("ok", True), ("ok, ship it", True), ("sounds good, ship it", True), ("lgtm, push", True), ("go", True),
+    ("yes please", True), ("ok, proceed", True), ("go for it", True),
     ("ok, what does this function do?", False), ("sure, what are the options?", False),
     ("go through the logs and tell me what failed", False), ("ok don't push yet", False),
+    ("ok, go through the logs and tell me what failed", False), ("ok, don't ship it yet", False),
+    ("how do I ship it?", False), ("should I ship it?", False), ("yes, push notifications are broken, why?", False),
+    ("ok continue reading the spec and summarize it", False),
 ])
 def test_the_go_ahead_clause_needs_a_go_ahead(repo, prompt, fires):
     git(repo, "switch", "-q", "-c", "feat/y")
     commit(repo, "y.txt")  # unshipped work: no upstream
     got = "p9.watch-after-push" in fired_ids(prompt, rr.State(cwd=repo, ctx_loader=no_board))
     assert got is fires, prompt
+
+
+@pytest.mark.parametrize("prompt", ["ok" + ", " * 16000, "yes" + "," * 16000, "push" + " " * 16000 + "x",
+                                    "merge" + " it" * 8000 + "?x"])
+def test_no_catalog_regex_backtracks_on_long_prompts(prompt):
+    """Round 4 measured 34 s on 'ok' plus 16,000 ', ' with the old go-ahead regex."""
+    t0 = time.monotonic()
+    rr.route(prompt, feature_state(), CAT_ALL)
+    assert time.monotonic() - t0 < 0.5
+
+
+def test_the_pin_admits_nothing_the_prompt_did_not_match():
+    class Abstain:
+        name = "abstain"
+
+        def narrow(self, prompt, candidates):
+            return set()
+
+    assert rr.route("hmm, interesting", feature_state(), CAT, Abstain()) == []
 
 
 def test_the_repeat_key_keeps_branch_digits_and_drops_ages():
