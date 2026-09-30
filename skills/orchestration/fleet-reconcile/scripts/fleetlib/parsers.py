@@ -8,7 +8,8 @@ and the tick reports any other running version as drift. A missing or mistyped
 required field fails the whole surface; an unfamiliar enum value is kept and
 reported as drift.
 
-What each parser does NOT read is part of its contract:
+What each parser does NOT extract is part of its contract. json.loads reads a
+whole file; these fields are dropped before anything is kept:
 - a Paseo agent record's persistence.metadata, which holds the Paseo MCP
   bearer (spec §2a: 323 of 325 records);
 - a job file's providerEnv, output and the values of respawnFlags (an inline
@@ -183,7 +184,7 @@ def reset_epoch(reset_text: Optional[str], after: float) -> Optional[float]:
 
 
 # --------------------------------------------------------------------------
-# ~/.paseo/agents/<project>/<id>.json (read-only; the bearer is never read)
+# ~/.paseo/agents/<project>/<id>.json (read-only; the bearer's field is never extracted)
 
 #: Label keys whose values are ids or short tags, safe to keep.
 PASEO_LABEL_VALUES = ("coordinator", "source", "fleet", "paseo.schedule-id", "paseo.parent-agent-id", "probe")

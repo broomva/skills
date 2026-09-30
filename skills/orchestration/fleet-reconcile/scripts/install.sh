@@ -1,6 +1,6 @@
 #!/bin/bash
 # install.sh: install, or remove, the hourly fleet-reconcile tick for one scope.
-# The owner runs it; no session loads the job itself.
+# The owner runs it; nothing in this build loads the job on its own.
 #
 #   bash scripts/install.sh --scope broomva              install (or reinstall) and load
 #   bash scripts/install.sh --scope broomva --dry-run    print what it would do, change nothing

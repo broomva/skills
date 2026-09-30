@@ -160,7 +160,7 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
         transcripts = {}
         surf["transcripts"] = _surface(False, error=_err(exc))
 
-    # Paseo records (read-only; the bearer is never read) -------------------
+    # Paseo records (read-only; the bearer's field is never extracted) ------
     paseo: Dict[str, Dict[str, Any]] = {}
     records: List[Dict[str, Any]] = []
     bad_records = 0

@@ -134,7 +134,7 @@ def _records():
         yield str(p), p.read_text()
 
 
-def test_every_captured_record_parses_and_the_bearer_is_never_read():
+def test_every_captured_record_parses_and_the_bearer_is_never_extracted():
     assert FAKE_BEARER in "".join(t for _, t in _records()), "the fixture plants a fake bearer"
     parsed = [parsers.parse_paseo_record(t, w) for w, t in _records()]
     blob = json.dumps(parsed)

@@ -9,7 +9,7 @@ Observe and classify, report only; no session is acted on. Ticket BRO-2674.
 
 - **Parsers**, pinned to Claude Code 2.1.280 and tested against anonymized
   captures: the session listing, background job files, Paseo agent records and
-  schedules (read-only; the bearer's field is never parsed), `gh pr list`, the
+  schedules (read-only; the bearer's field is never extracted), `gh pr list`, the
   effective branch rules, `launchctl print`. Drift is reported and asked about.
 - **The class table** (§5.4), first match wins, with 9a and unknown, the spec's
   five ordering tests, 41 overlapping rule pairs and a grid proving the other

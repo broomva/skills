@@ -6,7 +6,7 @@
   The other pairs can't both match (test_classify.EXCLUSIVE, which a grid test
   checks), so swapping them is an equivalent mutant and is not run.
 - Each protection below is removed: the listing and PR-list caps, a failed
-  slug reading as zero, the bearer and env never parsed, activity read from
+  slug reading as zero, the bearer and env never extracted, activity read from
   transcripts only, the arc and death currency rules, the ask suppression and
   re-notify windows, the text guard, and in tick.sh the recursion guard, the
   kill switch, dry-falls-toward-dry and the token's export.
