@@ -68,21 +68,29 @@ The highest-engagement caption format. Each word appears as it's spoken, with th
 
 ### Remotion Implementation
 
+Placement follows content-engine's 9:16 layout contract
+(`content-engine/references/vertical-layout.md`). On a 1080x1920 canvas the caption box
+is the caption band: x 143-938, y 1288-1463, centred on 72% of the height. `bottom: 120`
+would put the words in the band the Reel UI covers with the username and caption (from
+y 1686 down). Keep groups to about 3 words so they stay on one line inside the band.
+
 ```tsx
+// 1080x1920 caption band from content-engine/layout/vertical-9x16.json
+const CAPTION_BAND = { left: 143, top: 1288, width: 795, height: 175 };
+
 const WordByWordCaption: React.FC<{
   words: string[];
   currentWordIndex: number;
 }> = ({ words, currentWordIndex }) => (
   <div style={{
     position: 'absolute',
-    bottom: 120,
-    left: '50%',
-    transform: 'translateX(-50%)',
+    ...CAPTION_BAND,
     display: 'flex',
     flexWrap: 'wrap',
+    alignItems: 'center',
+    alignContent: 'center',
     justifyContent: 'center',
     gap: 8,
-    maxWidth: '90%',
   }}>
     {words.map((word, i) => {
       const isActive = i === currentWordIndex;
@@ -91,10 +99,13 @@ const WordByWordCaption: React.FC<{
         <span key={i} style={{
           fontFamily: 'Montserrat, sans-serif',
           fontWeight: 800,
-          fontSize: 36,
+          fontSize: 72,
           textTransform: 'uppercase',
           color: isActive ? '#FFDD00' : isPast ? '#FFFFFF' : 'rgba(255,255,255,0.3)',
           transform: isActive ? 'scale(1.2)' : 'scale(1)',
+          // Stroke, not just a shadow: footage behind brainrot captions is busy.
+          WebkitTextStroke: '6px #000',
+          paintOrder: 'stroke fill',
           textShadow: isActive
             ? '0 0 20px rgba(255,221,0,0.5), 2px 2px 0 #000'
             : '2px 2px 0 #000',
@@ -218,6 +229,7 @@ SFX: Impact on every scene transition
 - [ ] Script has genuine substance (ethical test: plain text is still worth reading)
 - [ ] Hook captures in first 3 seconds (pattern interrupt, not just text)
 - [ ] Word-by-word captions present and synced
+- [ ] 9:16 layout gate passes: `python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video video.mp4 --expect-captions` → `VERDICT: PASS` (captions in the band at 72%, nothing on the action rail or the bottom band, stroke on busy footage)
 - [ ] Sound effect on every scene transition
 - [ ] No static shot longer than 4 seconds
 - [ ] Total duration 20-60 seconds

@@ -9,7 +9,7 @@ description: "Full-stack AI content studio — orchestrates visual DNA compilati
 Full-stack AI content studio: compile visual identity once, generate premium content at scale, distribute everywhere.
 
 ```
-COMPILE → GENERATE → POST-PRODUCE → DISTRIBUTE → MEASURE → REFINE
+COMPILE → GENERATE → POST-PRODUCE → LAYOUT GATE (9:16) → DISTRIBUTE → MEASURE → REFINE
 ```
 
 ## Commands
@@ -23,6 +23,7 @@ COMPILE → GENERATE → POST-PRODUCE → DISTRIBUTE → MEASURE → REFINE
 | `/content-engine autopilot run` | Batch generation via browser automation |
 | `/content-engine campaign {brief}` | Full pipeline: compile → generate → distribute |
 | `/content-engine loop` | Compound existing skills for distribution |
+| `/content-engine layout-check {video\|image\|spec}` | 9:16 layout gate: `python3 scripts/check_vertical_layout.py video final.mp4` (see Vertical Layout Gate) |
 
 ## Architecture
 
@@ -251,6 +252,56 @@ output/{campaign-slug}/
 ├── graded/       # After color grading
 └── manifest.json # Prompts, identity refs, tool used, timestamps
 ```
+
+## Vertical Layout Gate (9:16)
+
+Every 9:16 asset (Reels, TikTok, Shorts, Stories) passes this gate **before it is
+distributed**. The contract is `layout/vertical-9x16.json`, measured from a creator's
+layout-guide Reel; the rules, their source and the checker's limits are in
+`references/vertical-layout.md`. The Remotion `ContentEngineReel` composition draws its
+overlays from the same JSON, so the renderer and the gate cannot drift apart.
+
+| Rule | What must hold (1080x1920) |
+|------|---------------------------|
+| VL1 | Canvas 9:16, at least 1080 wide |
+| VL2 | Overlay text inside the safe zone x 143-938, y 277-1643 (title band excepted) |
+| VL3 | Nothing on the action rail (x ≥ 872, y ≥ 922) or the bottom band (y ≥ 1686) |
+| VL4 | Title hook in the top band, y 121-436, centred near y 278 |
+| VL5 | Captions in the band y 1288-1463, centred, one word or short chunk at a time |
+| VL6 | Eyes at 33-45% of the height (source Reel: 38-40%) |
+| VL7 | Eye line moves at most 58px across a punch-in |
+| VL8 | Face inside the safe zone |
+| VL9 | Text over a busy background has a stroke |
+
+**Run it:**
+
+```bash
+# rendered video with burned-in text (Remotion ContentEngineReel, CapCut export, ...)
+python3 scripts/check_vertical_layout.py video final.mp4 --expect-captions --expect-title
+# raw generated clip, before any text: checks framing (VL6-VL8)
+python3 scripts/check_vertical_layout.py video clip.mp4
+# overlay geometry you are about to draw (watermarks, CTAs: small text OCR skips)
+python3 scripts/check_vertical_layout.py spec overlays.json
+# paid placements: Meta's 14% top / 35% bottom / 6% sides
+python3 scripts/check_vertical_layout.py --profile meta-ads-9x16 video ad.mp4
+```
+
+`compose-video.py --aspect-ratio 9:16` runs the gate itself (framing on the stitched
+clips, the full gate on a `--remotion` render) and exits 1 on a FAIL.
+
+**Pass criteria** — the last line reads `VERDICT: PASS` (exit 0), and then:
+
+1. Every **FAIL** is fixed and the gate re-run. Never distribute on a FAIL.
+2. Every **UNCHECKED** rule is closed by looking at `<video>.layout-guide.png` (zones
+   painted on six frames). tesseract has no face detector, so VL6-VL8 are UNCHECKED off
+   macOS; use `--strict` where that must fail.
+3. Every **SKIP** is one you expected (a raw clip has no text; a b-roll has no face). A
+   render that burned in text must be run with `--expect-captions`/`--expect-title`,
+   because OCR sees unreadable text as no text.
+4. **WARN** on VL9 means low contrast around the glyph edges: add a stroke or a backing,
+   or confirm on the guide sheet that it is a fade frame.
+
+Record the verdict line and the report path with the asset (campaign manifest or PR).
 
 ## Extension Points
 

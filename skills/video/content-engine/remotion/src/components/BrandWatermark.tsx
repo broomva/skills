@@ -1,5 +1,6 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame, interpolate, spring, useVideoConfig } from "remotion";
+import { useVerticalLayout } from "../layout";
 
 interface BrandWatermarkProps {
   brandName: string;
@@ -12,13 +13,18 @@ interface BrandWatermarkProps {
  * Renders a semi-transparent pill with the brand name positioned at
  * bottom-right. Fades in with a spring animation on entry and remains
  * non-intrusive throughout the clip sequence.
+ *
+ * On a 9:16 canvas bottom-right is the platform's action rail and caption
+ * band ("avoid at all costs", check_vertical_layout.py VL3), so the pill moves
+ * to the safe zone's bottom-left corner instead.
  */
 export const BrandWatermark: React.FC<BrandWatermarkProps> = ({
   brandName,
   primaryColor,
 }) => {
   const frame = useCurrentFrame();
-  const { fps } = useVideoConfig();
+  const { fps, height } = useVideoConfig();
+  const vertical = useVerticalLayout();
 
   // Spring entrance animation
   const entrance = spring({
@@ -41,11 +47,20 @@ export const BrandWatermark: React.FC<BrandWatermarkProps> = ({
 
   return (
     <AbsoluteFill
-      style={{
-        justifyContent: "flex-end",
-        alignItems: "flex-end",
-        padding: 32,
-      }}
+      style={
+        vertical
+          ? {
+              justifyContent: "flex-end",
+              alignItems: "flex-start",
+              paddingLeft: vertical.safe.left,
+              paddingBottom: height - (vertical.safe.top + vertical.safe.height),
+            }
+          : {
+              justifyContent: "flex-end",
+              alignItems: "flex-end",
+              padding: 32,
+            }
+      }
     >
       <div
         style={{
@@ -62,7 +77,7 @@ export const BrandWatermark: React.FC<BrandWatermarkProps> = ({
         <span
           style={{
             color: "#ffffff",
-            fontSize: 16,
+            fontSize: vertical ? 28 : 16,
             fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
             fontWeight: 600,
             letterSpacing: 0.5,

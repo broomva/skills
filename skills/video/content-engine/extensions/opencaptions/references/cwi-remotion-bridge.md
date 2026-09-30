@@ -352,9 +352,15 @@ The caption background ensures readability against any video content.
 
 ### Safe Zones
 
-- Horizontal margin: 5% from each edge (90% usable width)
-- Vertical position: 8% from top or bottom edge (avoids platform UI overlaps)
-- For Instagram Reels: top position at 12% (below story bar), bottom position at 15% (above comments)
+On 9:16 the caption container is the caption band of the vertical layout contract
+(`layout/vertical-9x16.json`, `references/vertical-layout.md`): x 143-938, y 1288-1463
+at 1080x1920, i.e. centred on 72% of the height, inside a safe zone of 13.2-86.8% width.
+The `ContentEngineReel` composition places it there; do not use percentage margins
+of your own. The old guidance here (5% side margins, top 12% for Reels) put captions in
+the zones the Reel's UI covers.
+
+Verify a render: `python3 scripts/check_vertical_layout.py video out.mp4 --expect-captions`
+(VL5 caption band, VL3 action rail and bottom band, VL9 stroke).
 
 ### Multi-Speaker Layout
 

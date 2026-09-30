@@ -3,9 +3,9 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "dev": "remotion studio",
-    "render": "remotion render ContentEngineVideo",
-    "build": "remotion bundle"
+    "dev": "remotion studio src/index.ts",
+    "render": "remotion render src/index.ts ContentEngineVideo",
+    "build": "remotion bundle src/index.ts"
   },
   "dependencies": {
     "remotion": "^4.0.0",

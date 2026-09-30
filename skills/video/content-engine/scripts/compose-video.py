@@ -37,6 +37,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 COMPILED_DIR = REPO_ROOT / "knowledge" / "compiled"
 OUTPUT_DIR = REPO_ROOT / "knowledge" / "compiled" / "output"
+LAYOUT_CHECK = Path(__file__).resolve().parent / "check_vertical_layout.py"
 
 # ---------------------------------------------------------------------------
 # Storyboard Parsing
@@ -461,6 +462,28 @@ def write_manifest(output_dir: Path, storyboard: dict, clips: list, brand_slug: 
 
 
 # ---------------------------------------------------------------------------
+# 9:16 layout gate (references/vertical-layout.md)
+# ---------------------------------------------------------------------------
+
+def run_layout_gate(video: Path, expect_text: bool) -> bool:
+    """Run check_vertical_layout.py on a 9:16 artifact; True only on a PASS verdict.
+
+    `expect_text` marks a render that burned in captions and a title hook, so
+    OCR finding none of them FAILs instead of SKIPping (unreadable text and
+    missing text look the same to OCR). The report and guide sheet land next
+    to the video.
+    """
+    cmd = [sys.executable, str(LAYOUT_CHECK), "video", str(video)]
+    if expect_text:
+        cmd += ["--expect-captions", "--expect-title"]
+    print(f"Layout gate: {video.name}")
+    code = subprocess.run(cmd).returncode
+    if code == 2:
+        print("  Layout gate could not run (see the message above); the asset is UNVERIFIED.")
+    return code == 0
+
+
+# ---------------------------------------------------------------------------
 # Main
 # ---------------------------------------------------------------------------
 
@@ -585,6 +608,17 @@ def main():
         final_path = output_dir / f"{slug}-final.mp4"
         stitch_clips(successful_clips, final_path)
 
+    # render.sh reads manifest.json, so it has to exist before Remotion runs.
+    write_manifest(output_dir, storyboard, clips, args.brand)
+
+    vertical = args.aspect_ratio == "9:16"
+    gate_failures = []
+    if vertical and successful_clips and final_path.exists():
+        print()
+        # Raw clips carry no text yet: this checks framing (eye line, subject).
+        if not run_layout_gate(final_path, expect_text=False):
+            gate_failures.append(final_path)
+
     # OpenCaptions (optional)
     if args.captions and successful_clips:
         captions_dir = output_dir / "captions"
@@ -636,9 +670,10 @@ def main():
         if render_script.exists():
             print("Rendering with Remotion (transitions + captions + brand)...")
             rendered_path = output_dir / f"{slug}-rendered.mp4"
+            composition = "ContentEngineReel" if vertical else "ContentEngineVideo"
             try:
                 subprocess.run(
-                    ["bash", str(render_script), str(output_dir), str(rendered_path)],
+                    ["bash", str(render_script), str(output_dir), str(rendered_path), composition],
                     timeout=300,
                 )
                 if rendered_path.exists():
@@ -646,11 +681,12 @@ def main():
                     print(f"  Rendered: {rendered_path.name} ({size:,} bytes)")
             except (subprocess.TimeoutExpired, FileNotFoundError) as e:
                 print(f"  Remotion render error: {e}")
+            if vertical and rendered_path.exists():
+                # The reel composition always draws a title hook and captions.
+                if not run_layout_gate(rendered_path, expect_text=True):
+                    gate_failures.append(rendered_path)
         else:
             print("Remotion not set up. Run: cd remotion && bun install")
-
-    # Write manifest
-    write_manifest(output_dir, storyboard, clips, args.brand)
 
     # Summary
     print()
@@ -663,6 +699,11 @@ def main():
         print(f"Captions: {output_dir / 'captions'}")
     if args.remotion:
         print(f"Rendered: {output_dir / f'{slug}-rendered.mp4'}")
+    if gate_failures:
+        print()
+        print("LAYOUT GATE FAILED: do not distribute. See the .layout-report.json and")
+        print(".layout-guide.png beside: " + ", ".join(p.name for p in gate_failures))
+        sys.exit(1)
 
 
 if __name__ == "__main__":

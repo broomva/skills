@@ -157,7 +157,10 @@ word-by-word captions via Remotion. Background audio: ambient synth."}
 - FPS: 30
 - Codec: H.265 (CRF 18)
 - Audio: Gemini TTS narration + ambient music mix
-- Captions: Top-center (Instagram safe zone, 12% from top)
+- Captions: caption band, centred on y 1376 (72%), white bold + black stroke;
+  title hook centred on y 278 (14%). Top 12% is above the safe zone.
+  Contract: `references/vertical-layout.md`
+- Layout gate: `python3 scripts/check_vertical_layout.py video {reel}.mp4 --expect-captions --expect-title` → `VERDICT: PASS`
 - Export: `ffmpeg -movflags +faststart`
 
 ### Carousels (1:1)
@@ -224,7 +227,8 @@ word-by-word captions via Remotion. Background audio: ambient synth."}
 - Reels with word-by-word captions (Remotion composition)
 - Carousel posts with swipe-through narrative
 - Stories: behind-the-scenes of generation process (meta-content)
-- Caption positioning: top 12% (Instagram safe zone)
+- Caption positioning: caption band at 72% of the height, title hook at 14%
+  (`references/vertical-layout.md`); paid Reels use `--profile meta-ads-9x16`
 
 **LinkedIn:**
 - Professional framing of the same content
@@ -267,6 +271,8 @@ word-by-word captions via Remotion. Background audio: ambient synth."}
 - [ ] All assets color-graded with brand LUT
 - [ ] All assets exported at correct resolution/format
 - [ ] Captions added to video assets (OpenCaptions pipeline, when available)
+- [ ] Every 9:16 asset passes the layout gate (`check_vertical_layout.py`: `VERDICT: PASS`,
+      UNCHECKED rules closed on the guide sheet, report path recorded here)
 - [ ] Upscale pass completed (Real-ESRGAN for any sub-native assets)
 - [ ] Final quality review (run acceptance criteria on each scene)
 

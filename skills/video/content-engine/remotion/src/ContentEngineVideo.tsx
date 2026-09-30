@@ -6,12 +6,14 @@ import { ClipSequence } from "./components/ClipSequence";
 import { TitleCard } from "./components/TitleCard";
 import { BrandWatermark } from "./components/BrandWatermark";
 import { CaptionOverlay } from "./components/CaptionOverlay";
+import { TitleHook } from "./components/TitleHook";
 
 /**
  * ContentEngineVideo — main Remotion composition.
  *
  * Renders: TitleCard -> ClipSequence (with crossfade transitions) -> EndCard
- * Overlays: BrandWatermark + CaptionOverlay on top of clip sequence.
+ * Overlays: BrandWatermark + CaptionOverlay on top of clip sequence, plus a
+ * TitleHook in the title band on 9:16 canvases (ContentEngineReel).
  */
 export const ContentEngineVideo: React.FC<ManifestData> = (props) => {
   const layout = useManifestLayout(props);
@@ -56,6 +58,9 @@ export const ContentEngineVideo: React.FC<ManifestData> = (props) => {
             fps={layout.fps}
             crossfadeDurationSeconds={layout.crossfadeSeconds}
           />
+
+          {/* Title hook — 9:16 only; null on landscape */}
+          <TitleHook title={title} />
         </Sequence>
       )}
 

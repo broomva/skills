@@ -85,6 +85,25 @@ Persona Definition → Character Sheet → Scene Description → Face Swap → G
 4. **Face swap**: locks facial identity from character sheet onto scene output
 5. **Generate**: final render with all constraints applied
 
+### Framing for 9:16 (Reels, TikTok, Shorts)
+
+Text gets laid over a vertical clip later, and the platform UI covers its edges, so
+frame for the layout contract at generation time (`../../references/vertical-layout.md`):
+
+- Put this in the scene prompt: *"vertical 9:16 medium close-up, subject centred, eyes
+  on the upper-third line, clear space above the head and below the chest"*. The eyes
+  should land at 33-45% of the height (the source Reel sits at 38-40%). The face should
+  stay inside the middle 74% of the width and clear of the lower-right quarter, where
+  the like/comment/share rail sits.
+- Punch-ins scale about the eye line, not the frame centre, so the eyes stay put:
+  `crop=iw/1.2:ih/1.2:(iw-ow)/2:ih*0.39-oh*0.39,scale=1080:1920` in ffmpeg, or
+  `transform-origin: 50% 39%` in CSS/Remotion.
+- **Verify every raw clip before any text goes on:**
+  `python3 ../../scripts/check_vertical_layout.py video clip.mp4`. On macOS (Vision),
+  VL6 (eye line), VL7 (punch-in) and VL8 (face in the safe zone) come back PASS or
+  FAIL. With tesseract they are UNCHECKED, so read the guide sheet. A FAIL means
+  regenerate or reframe the clip; it cannot be fixed with a caption.
+
 ## Tool Priority Matrix
 
 Three tiers based on quality, speed, and cost. Always prefer the highest available tier.
