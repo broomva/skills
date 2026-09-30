@@ -32,6 +32,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 AUTH_HELPER_PATH = SCRIPT_DIR / "auth_helper.js"
 
 USAGE_CACHE_PATH = Path.home() / ".cache/broomva-provider-usage.json"
+PROVIDER_EVENTS_PATH = Path.home() / ".cache/broomva-provider-events.jsonl"
 USAGE_API_URL = "https://api.anthropic.com/api/oauth/usage"
 TOKEN_ENDPOINT_URL = "https://platform.claude.com/v1/oauth/token"
 CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
@@ -265,6 +266,44 @@ def save_usage_cache(data: Dict[str, Any]) -> bool:
             except OSError:
                 pass
         return False
+
+
+def log_provider_event(event_type: str, details: Dict[str, Any]) -> None:
+    """Append a structured JSON record of a provider rotation or switch event."""
+    event_path = Path(PROVIDER_EVENTS_PATH)
+    event = {
+        "timestamp": int(time.time()),
+        "iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "event": event_type,
+        **details
+    }
+    try:
+        if not event_path.parent.exists():
+            event_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(event_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event) + "\n")
+    except Exception:
+        pass
+
+
+def read_provider_events(limit: int = 20) -> List[Dict[str, Any]]:
+    """Read the latest provider rotation and switch events."""
+    event_path = Path(PROVIDER_EVENTS_PATH)
+    if not event_path.exists():
+        return []
+    events = []
+    try:
+        with open(event_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        events.append(json.loads(line))
+                    except Exception:
+                        pass
+    except Exception:
+        return []
+    return events[-limit:]
 
 
 def refresh_account_token(account_id: str) -> Optional[Dict[str, Any]]:
@@ -570,7 +609,16 @@ def balance_accounts(threshold: float = 85.0, dry_run: bool = False, verbose: bo
 
             if verbose:
                 sys.stdout.write(f"[*] Proactive balancing: rotating from {active_email} ({active_util}%) to {best_email} ({best_util}%)...\n")
-            switch_res = switch_account(best_standby["id"])
+            switch_res = switch_account(
+                best_standby["id"],
+                source="proactive_balance",
+                metadata={
+                    "fromAccount": active_email,
+                    "activeUtilization": active_util,
+                    "standbyUtilization": best_util,
+                    "reason": "active_rate_limited" if active_rate_limited else "active_exceeded_threshold"
+                }
+            )
             return {
                 "success": bool(switch_res.get("success", False)),
                 "action": "switched",
@@ -580,6 +628,17 @@ def balance_accounts(threshold: float = 85.0, dry_run: bool = False, verbose: bo
                 "standbyUtilization": best_util,
                 "reason": "active_rate_limited" if active_rate_limited else "active_exceeded_threshold",
                 "switchResult": switch_res
+            }
+        else:
+            return {
+                "success": True,
+                "action": "none",
+                "activeAccount": active_email,
+                "utilization": active_util,
+                "standbyAccount": best_email,
+                "standbyUtilization": best_util,
+                "reason": "standby_higher_utilization",
+                "message": f"Active account ({active_email} at {active_util}%) is healthier than standby ({best_email} at {best_util}%)."
             }
 
     return {
@@ -593,7 +652,7 @@ def balance_accounts(threshold: float = 85.0, dry_run: bool = False, verbose: bo
     }
 
 
-def switch_account(identifier: str) -> Dict[str, Any]:
+def switch_account(identifier: str, source: str = "manual", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Switch active credentials in both Claude Code and Orca to target email or UUID."""
     accounts = list_accounts()
     target = None
@@ -645,8 +704,19 @@ def switch_account(identifier: str) -> Dict[str, Any]:
 
     # 5. Verify status
     status = get_claude_auth_status()
+    success = status.get("loggedIn") is True
+    if success:
+        event_data = {
+            "toAccount": target_email,
+            "accountId": target_id,
+            "source": source
+        }
+        if metadata:
+            event_data.update(metadata)
+        log_provider_event("switch", event_data)
+
     return {
-        "success": status.get("loggedIn") is True,
+        "success": success,
         "switchedTo": target_email,
         "accountId": target_id,
         "authStatus": status
@@ -876,7 +946,14 @@ def rotate_account(reason: str = "rate_limit", dry_run: bool = False) -> Dict[st
 
     sys.stdout.write(f"[*] Rotating provider from {active['email'] if active else 'unknown'} to {chosen['email']} (reason: {reason})...\n")
     try:
-        switch_res = switch_account(chosen["id"])
+        switch_res = switch_account(
+            chosen["id"],
+            source="rate_limit_failover",
+            metadata={
+                "fromAccount": active["email"] if active else None,
+                "reason": reason
+            }
+        )
         return {
             "success": bool(switch_res.get("success", False)),
             "rotatedFrom": active["email"] if active else None,
@@ -929,6 +1006,10 @@ def main():
     rotate_parser = subparsers.add_parser("rotate", help="Rotate to next available account (rate limit failover)", parents=[common_parser])
     rotate_parser.add_argument("--reason", default="rate_limit", help="Reason for rotation (e.g. rate_limit, quota)")
     rotate_parser.add_argument("--dry-run", action="store_true", help="Preview rotation without applying")
+
+    # history
+    history_parser = subparsers.add_parser("history", help="Show recent provider rotation and balancing events", parents=[common_parser])
+    history_parser.add_argument("--limit", type=int, default=15, help="Number of recent events to display (default: 15)")
 
     args = parser.parse_args()
 
@@ -994,6 +1075,12 @@ def main():
                     util = res.get('utilization')
                     util_str = f"{util}%" if util is not None else "N/A"
                     print(f"Balanced: Active account ({active_acc}) utilization is within budget ({util_str} < {args.threshold}%). No switch needed.")
+                elif res.get("reason") == "standby_higher_utilization":
+                    active_acc = res.get('activeAccount', 'unknown')
+                    util = res.get('utilization')
+                    standby_acc = res.get('standbyAccount', 'unknown')
+                    standby_util = res.get('standbyUtilization')
+                    print(f"Balanced: Active account ({active_acc} at {util}%) is healthier than standby ({standby_acc} at {standby_util}%). No switch needed.")
                 elif not res.get("success", False):
                     print(f"Balance check: {res.get('error') or res.get('message') or 'Unable to balance accounts.'}")
                 else:
@@ -1026,6 +1113,29 @@ def main():
                     print(f"Successfully rotated provider: {res.get('rotatedFrom')} -> {res.get('rotatedTo')}")
                 else:
                     print(f"Rotation failed: {res.get('error')}")
+
+        elif args.command == "history":
+            events = read_provider_events(limit=args.limit)
+            if args.json:
+                print(json.dumps(events, indent=2))
+            else:
+                if not events:
+                    print("No provider balancing or rotation events recorded yet.")
+                else:
+                    print(f"{'TIMESTAMP (UTC)':<20} {'SOURCE':<22} {'FROM':<26} {'TO':<26} {'DETAILS'}")
+                    print("-" * 115)
+                    for ev in reversed(events):
+                        ts = ev.get("iso", "unknown")
+                        source = ev.get("source", ev.get("event", "unknown"))
+                        from_acc = ev.get("fromAccount") or "-"
+                        to_acc = ev.get("toAccount") or "-"
+                        reason = ev.get("reason", "")
+                        from_util = ev.get("activeUtilization")
+                        to_util = ev.get("standbyUtilization")
+                        detail = f"{reason}"
+                        if from_util is not None and to_util is not None:
+                            detail += f" ({from_util}% -> {to_util}%)"
+                        print(f"{ts:<20} {source:<22} {from_acc:<26} {to_acc:<26} {detail}")
 
     except Exception as e:
         if args.json:

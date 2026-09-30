@@ -14,6 +14,15 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import provider_manager as pm
 
 
+@pytest.fixture(autouse=True)
+def isolate_provider_manager_cache(tmp_path):
+    test_cache = tmp_path / "test-usage.json"
+    test_events = tmp_path / "test-events.jsonl"
+    with patch.object(pm, "USAGE_CACHE_PATH", test_cache), \
+         patch.object(pm, "PROVIDER_EVENTS_PATH", test_events):
+        yield
+
+
 @pytest.fixture
 def mock_orca_data():
     return {
@@ -393,7 +402,9 @@ def test_balance_accounts_over_threshold_triggers_switch(mock_orca_data):
         assert real_res["action"] == "switched"
         assert real_res["fromAccount"] == "primary@example.com"
         assert real_res["toAccount"] == "secondary@example.com"
-        mock_switch.assert_called_once_with("acc-2")
+        mock_switch.assert_called_once()
+        assert mock_switch.call_args[0][0] == "acc-2"
+        assert mock_switch.call_args[1]["source"] == "proactive_balance"
 
 
 def test_rotate_account_picks_lowest_utilization_standby(tmp_path, mock_orca_data, mock_claude_json):
@@ -422,7 +433,9 @@ def test_rotate_account_picks_lowest_utilization_standby(tmp_path, mock_orca_dat
         res = pm.rotate_account(reason="rate_limit_429", dry_run=False)
         assert res["success"] is True
         assert res["rotatedTo"] == "a3@example.com"
-        mock_switch.assert_called_once_with("acc-3")
+        mock_switch.assert_called_once()
+        assert mock_switch.call_args[0][0] == "acc-3"
+        assert mock_switch.call_args[1]["source"] == "rate_limit_failover"
 
 
 def test_hook_post_tool_use_detects_rate_limit():
@@ -433,5 +446,43 @@ def test_hook_post_tool_use_detects_rate_limit():
         payload = {"error": "Error: 429 Too Many Requests - rate_limit_error"}
         pmh.handle_post_tool_use(payload)
         mock_rotate.assert_called_once_with(reason="tool_rate_limit", dry_run=False)
+
+
+def test_balance_accounts_does_not_switch_if_standby_has_higher_utilization(mock_orca_data):
+    # Active account is at 86%, but standby is at 89%. Threshold is 85%.
+    # Should NOT switch because standby is more heavily loaded than active.
+    usage_list = [
+        {"id": "acc-1", "email": "primary@example.com", "isActive": True, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 86.0},
+        {"id": "acc-2", "email": "secondary@example.com", "isActive": False, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 89.0},
+    ]
+
+    with patch.object(pm, "list_accounts", return_value=mock_orca_data["settings"]["claudeManagedAccounts"]), \
+         patch.object(pm, "fetch_all_usage", return_value=usage_list), \
+         patch.object(pm, "switch_account") as mock_switch:
+
+        res = pm.balance_accounts(threshold=85.0, dry_run=False)
+        assert res["action"] == "none"
+        assert res["reason"] == "standby_higher_utilization"
+        assert res["activeAccount"] == "primary@example.com"
+        assert res["standbyAccount"] == "secondary@example.com"
+        mock_switch.assert_not_called()
+
+
+def test_provider_events_logging_and_history(tmp_path):
+    test_events_file = tmp_path / "events.jsonl"
+    with patch.object(pm, "PROVIDER_EVENTS_PATH", test_events_file):
+        pm.log_provider_event("switch", {
+            "fromAccount": "a1@example.com",
+            "toAccount": "a2@example.com",
+            "source": "proactive_balance",
+            "reason": "active_exceeded_threshold"
+        })
+        events = pm.read_provider_events()
+        assert len(events) == 1
+        assert events[0]["event"] == "switch"
+        assert events[0]["fromAccount"] == "a1@example.com"
+        assert events[0]["toAccount"] == "a2@example.com"
+        assert events[0]["source"] == "proactive_balance"
+
 
 
