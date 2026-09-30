@@ -55,7 +55,7 @@ Fields:
 | Field | Since | Purpose |
 |---|---|---|
 | `ts` | v0.2.0 | ISO-8601 UTC timestamp |
-| `event` | v0.2.0 | Always `"intake"` in this file; reserved for future event types |
+| `event` | v0.2.0 | `"intake"` for a lens intake; `"reflex"` for a reflex-router record (v0.7.0, below) |
 | `session` | v0.2.0 | Claude Code session id (or `"unknown"`) — same session can fire many intakes |
 | `prompt_digest` | v0.2.0 | `sha256:<hex>` of the raw prompt. Privacy-preserving fingerprint for deduplication. |
 | `prompt_word_count` | v0.2.0 | Length signal — informs the carve-out threshold check |
@@ -65,6 +65,27 @@ Fields:
 | `mode_escalation_reason` | v0.2.0 | Why we escalated beyond `augment` (or `null`) |
 | `signals_matched` | v0.2.0 | **Raw counts** (not weighted) — preserved for cross-version comparability |
 | `prompt_sanitized` | **v0.4.0** | **Optional**; absent unless config opts in. Two strategies — see below |
+| `render` | v0.7.0 | `"qbar"` when `ROLE_X_OUTPUT=qbar` cut the block to its quality bar; absent otherwise |
+
+### Reflex records (v0.7.0, `ROLE_X_OUTPUT=reflex` or `shadow`)
+
+One `event: reflex` row per non-empty prompt, beside (in `shadow`) or instead of (in
+`reflex`) the intake row. `suggest` and `coverage` count lens intakes only and skip
+these rows. Structured fields only; like intake rows they carry the prompt's digest,
+never its text.
+
+| Field | Purpose |
+|---|---|
+| `selected` | Catalog ids injected, best first (at most `max_lines`) |
+| `via` | Per selected id: `state+prompt`, `state` or `prompt` — what made it fire |
+| `cut` | Ids that fired but did not fit the line or character cap |
+| `predicates_true` | State predicates that held, of those a routed clause asked about |
+| `jev` | The stage-3 narrower (`ROLE_X_JEV`); `off` in v1 |
+| `bytes` | Size of the injected block; 0 when nothing fired |
+| `reads` | Sources read this prompt: `git` and `board`, each at most once |
+| `stage_ms`, `ms` | Stage timings (state, prompt, narrow) and the whole route |
+| `shadow` | `true` when logged by `ROLE_X_OUTPUT=shadow` and not injected |
+| `error` | The exception class when the router failed; nothing was printed |
 
 ## Sanitized prompt capture (v0.4.0, opt-in)
 

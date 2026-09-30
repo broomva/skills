@@ -2,7 +2,7 @@
 
 ## role-x reflex router v1, behind `ROLE_X_MODE=reflex` (BRO-2674)
 
-Status: in progress on `feat/role-x-reflex-router`. Owner decision 2026-09-30: turn
+Status: in progress on `feat/role-x-reflex-router`; eval paused for the rate-limit window (resets 13:50 -05). Owner decision 2026-09-30: turn
 role-x into something that raises adherence to bstack's primitives and skills, as its
 quality-bar p9 line already does, across all of them.
 
@@ -30,11 +30,18 @@ quality-bar p9 line already does, across all of them.
 
 ### Milestones
 
-1. [ ] Catalog + router + role-x wiring + tests (predicates ±, catalog/source, budget,
-   fail-open, mutation check).
-2. [ ] ctx_ablation: `rolex-reflex` and `rolex-qbar` arms, held-out tasks.
-3. [ ] Sonnet run: calibrate held-out, then bare / rolex / rolex-qbar / rolex-reflex,
-   arms one at a time, jobs ≤2, cost estimated first (ceiling ~$40 notional).
+1. [x] Catalog + router + role-x wiring + tests (predicates ±, catalog/source, budget,
+   fail-open, mutation check). Names aligned with the workspace spec
+   (`2026-09-30-reflex-router-and-ontology-ranked-context.html`, a74109b8f):
+   `ROLE_X_OUTPUT` (alias `ROLE_X_MODE`), `[bstack reflexes]`, dotted ids, `status`,
+   `signature`, `ROLE_X_JEV` seam, `role-x reflexes route --evals`.
+2. [x] ctx_ablation: `reflex` and `qbar` arms (aliases `rolex-reflex`, `rolex-qbar`),
+   `home_contains` grader, 7 held-out tasks (`tasks/reflex-heldout.json`).
+3. [ ] Sonnet run: calibrate held-out, then bare / rolex / qbar / reflex, arms one at a
+   time, jobs ≤2. Estimate ≈ $35 notional (pilot 132 trials ≈ $20 at #251's
+   $0.15/trial; held-out ≤ 21 + 84 trials ≈ $15). Checkpoint 11:21 -05: stopped by
+   the 0.85 budget guard at 2/21 calibration trials, five-hour window at 0.88 (fleet
+   load). It resets 13:50 -05 (18:50Z); resume with `~/.cache/ctx-ablation/reflex-chain.sh`.
 4. [ ] Results doc, PR, P20 (B + C strata, read-only), `p20-record`, `gate-check`,
    pinned merge. The flag stays default-off; the owner decides the flip.
 

@@ -35,6 +35,7 @@ description: |
    - `role-x suggest` (v0.4.0) — analyze events.jsonl; surface fire-rate + drift + emergent clusters
    - `role-x init <name>` (v0.4.0) — scaffold a `status: candidate` lens from CLI flags
    - `role-x coverage` (v0.4.1) — brief registry-health summary; silent when healthy (SessionStart hook entry point)
+   - `role-x reflexes route` (v0.7.0) — the reflex router offline: one prompt, or `--evals` over every skill's trigger-eval set
 5. **Hooks** (`scripts/*-hook.sh`):
    - `role-x-intake-hook.sh` (v0.2.0) — `UserPromptSubmit` wrapper
    - `role-x-coverage-hook.sh` (v0.4.1) — `SessionStart` wrapper with 24h cooldown
@@ -53,6 +54,24 @@ Always — at the start of every session, before responding to substantive user 
 Carve-outs (no role-x intake needed): single-line typo fixes, pure read questions ("what does this function do?"), conversation continuation without new substantive request.
 
 The intake block's "Task-relevant knowledge" list holds at most 5 catalog entities. `ROLE_X_TASK_ENTITY_TOP_N=<n>` (0–50) in the hook's environment changes that cap; a bad value means 5. It only shortens or lengthens the same ranked list, and it exists for the context-ablation evals' compression arm (`scripts/skill_evals/ctx_ablation/`).
+
+### Reflex output (`ROLE_X_OUTPUT`, v0.7.0, default off)
+
+`ROLE_X_OUTPUT` in the hook's environment chooses what the intake hook injects. Unset, empty or unknown is `legacy`, today's block, so nothing changes until it is set. `ROLE_X_MODE` is read as an alias when `ROLE_X_OUTPUT` is unset.
+
+| Value | Injects | Logs |
+|---|---|---|
+| `legacy` | the lens block (above) | the intake row |
+| `reflex` | at most 3 lines under `[bstack reflexes]`, ≤ 600 characters, or nothing | a `reflex` row |
+| `shadow` | the lens block | the intake row and the `reflex` row it would have injected |
+| `qbar` | the lens block cut to header, lenses, mode and quality bar | the intake row, `render: qbar` |
+
+The reflex router (`scripts/reflex_router.py`) reads `references/reflexes.yaml`: each entry is trigger clauses → one line that names the command → the source that states the rule. It routes in three stages, and each stage only narrows the set it is given:
+1. **State predicates:** one `git status --porcelain=v2 --branch`, one reflog tail, and ctx-core's `board.json` cache (never its log).
+2. **Lexical prompt match:** the catalog's regexes and the phrases copied from each skill's description.
+3. **`ROLE_X_JEV`:** the seam for a typed classifier; `off` in v1.
+
+No persona lines, no entity list. Lines state facts ("after a push, the stack runs `p9 watch <pr> --background`"), never orders. Entries whose trigger is a judgment call are `status: judgment`: listed, never injected. Any error prints nothing and logs its class. `role-x reflexes route --prompt "…"` shows what a prompt would get; `role-x reflexes route --evals` scores routing against every skill's `evals/prompts.json`. Design of record: [`broomva/workspace`](https://github.com/broomva/workspace)`/docs/specs/2026-09-30-reflex-router-and-ontology-ranked-context.html` §5 (BRO-2674). Eval: `scripts/skill_evals/ctx_ablation/RESULTS-reflex.md`.
 
 ### Meta-progression discipline (v0.4.1+)
 
@@ -130,7 +149,9 @@ Security contract (design §3 S0-result — enforced in `role-x.py`): **fd-based
 - `roles/<name>.md` — per-domain lenses. Live in the consuming workspace.
 - `roles/<name>.eval.yaml` — resolver-eval fixture (`should_fire` / `should_not_fire` intents) asserting the lens's trigger actually routes. Run via `role-x.py eval`; gate in CI. The skillify "resolver eval" step — a trigger that says "phrase X selects lens Y" is only trustworthy once a test proves it. Live in the consuming workspace alongside the lens.
 - `roles/_index.md` — auto-generated discovery index.
-- `scripts/role-x.py` — CLI helpers (`validate`, `list`, `index`, `intake`, `coverage`, `suggest`, `init`, `eval`).
+- `scripts/role-x.py` — CLI helpers (`validate`, `list`, `index`, `intake`, `coverage`, `suggest`, `init`, `eval`, `reflexes route`).
+- `scripts/reflex_router.py` — the reflex router (`ROLE_X_OUTPUT=reflex`), loaded by `role-x.py` by file path.
+- `references/reflexes.yaml` — the reflex catalog: P1–P20 reflexes, memory conventions, and one line per skill with `evals/prompts.json`, each citing its source.
 - `references/*.md` — schema + algorithm reference docs.
 - `~/.config/broomva/role/events.jsonl` — telemetry log (M2).
 - `~/.config/broomva/role/status.json` — per-lens stats cache (M2).
