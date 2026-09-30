@@ -66,6 +66,7 @@ Fields:
 | `signals_matched` | v0.2.0 | **Raw counts** (not weighted) — preserved for cross-version comparability |
 | `prompt_sanitized` | **v0.4.0** | **Optional**; absent unless config opts in. Two strategies — see below |
 | `render` | v0.7.0 | `"qbar"` when `ROLE_X_OUTPUT=qbar` cut the block to its quality bar; absent otherwise |
+| `output_ignored` | v0.7.0 | The `ROLE_X_OUTPUT`/`ROLE_X_MODE` value when it is not one the hook knows (it then runs `legacy`); absent otherwise |
 
 ### Reflex records (v0.7.0, `ROLE_X_OUTPUT=reflex` or `shadow`)
 
@@ -78,11 +79,12 @@ never its text.
 |---|---|
 | `selected` | Catalog ids injected, best first (at most `max_lines`) |
 | `via` | Per selected id: `state+prompt`, `state` or `prompt` — what made it fire |
-| `cut` | Ids that fired but did not fit the line or character cap |
+| `cut` | Ids that fired but were not shown: over the line or character cap, or already injected twice this session |
 | `predicates_true` | State predicates that held, of those a routed clause asked about |
 | `jev` | The stage-3 narrower (`ROLE_X_JEV`); `off` in v1 |
 | `bytes` | Size of the injected block; 0 when nothing fired |
-| `reads` | Sources read this prompt: `git` and `board`, each at most once |
+| `reads` | Sources read this prompt, each at most once, with the outcome: `git` (`ok`, `no-repo`, `timeout`, `error`) and `board` (`ok`, `no-ctx`, `no-scope`, `empty`, `too-big`) |
+| `predicate_errors` | Predicates that raised, by exception class; each counted as false, the rest still route |
 | `stage_ms`, `ms` | Stage timings (state, prompt, narrow) and the whole route |
 | `shadow` | `true` when logged by `ROLE_X_OUTPUT=shadow` and not injected |
 | `error` | The exception class when the router failed; nothing was printed |

@@ -51,6 +51,17 @@ CAT = rr.load_catalog(CATALOG)
 BY_ID = {r.id: r for r in CAT.reflexes}
 
 
+def all_routed(mod, cat):
+    """The catalog with every entry routed: for tests of predicates and routing
+    mechanics, independent of which entries currently clear the M3 gate."""
+    import dataclasses
+    return dataclasses.replace(cat, reflexes=tuple(dataclasses.replace(r, status="routed")
+                                                   for r in cat.reflexes))
+
+
+CAT_ALL = all_routed(rr, CAT)
+
+
 @pytest.fixture(autouse=True)
 def _hermetic_git(monkeypatch):
     # The operator's global git config (hooks, lfs) must not reach these repos.
@@ -95,8 +106,8 @@ def fired_ids(prompt: str, state) -> list[str]:
     return [f.reflex.id for f in rr.route(prompt, state, CAT)]
 
 
-def fired(prompt: str, state) -> dict[str, str]:
-    return {f.reflex.id: f.via for f in rr.route(prompt, state, CAT)}
+def fired(prompt: str, state, cat=None) -> dict[str, str]:
+    return {f.reflex.id: f.via for f in rr.route(prompt, state, cat or CAT)}
 
 
 NEUTRAL = "ok, what is next?"
@@ -311,19 +322,28 @@ def test_live_peer_positive_on_the_same_branch():
 
 
 @needs_ctx
-def test_live_peer_positive_in_the_same_cwd_on_another_branch():
-    assert rr.STATE_PREDICATES["live_peer_on_branch"](peer_state([row("p1", branch="other")]))[0]
+def test_a_peer_in_the_same_cwd_on_another_branch_is_not_live_on_this_branch():
+    """ctx's brief counts only same-branch rows as live peers; the router agrees."""
+    assert not rr.STATE_PREDICATES["live_peer_on_branch"](peer_state([row("p1", branch="other")]))[0]
+
+
+@needs_ctx
+def test_board_text_cannot_leave_its_code_span():
+    s = peer_state([row("p1", branch="feat/x", agent="a`gent\nNEW LINE")])
+    ok, fact = rr.STATE_PREDICATES["live_peer_on_branch"](s)
+    assert ok and "\n" not in fact and fact.count("`") == 2  # only the branch span's own pair
 
 
 @needs_ctx
 @pytest.mark.parametrize("rows,kw", [
     ([row("me")], {}),                                                  # only this session
     ([row("p1", branch="other", cwd="/other")], {}),                    # elsewhere
+    ([row("p1", branch="other")], {}),                                  # same cwd, other branch
     ([row("p1", age_min=7 * 60)], {}),                                  # outside the live window
     ([row("p1", state="died")], {}),                                    # died
     ([row("p1")], {"scope": False}),                                    # no ctx scope here
     ([row("p1")], {"too_big": True}),                                   # board over the hook cap
-], ids=["self", "elsewhere", "stale", "died", "no-scope", "too-big"])
+], ids=["self", "elsewhere", "other-branch", "stale", "died", "no-scope", "too-big"])
 def test_live_peer_negative(rows, kw):
     assert not rr.STATE_PREDICATES["live_peer_on_branch"](peer_state(rows, **kw))[0]
 
@@ -388,6 +408,7 @@ def test_branch_first_on_main_with_change_work(repo):
     s = rr.State(cwd=repo, ctx_loader=no_board)
     assert fired("fix the recieve typo in README.md and commit it", s)["p10.branch-first"] == "state+prompt"
     assert "p10.branch-first" not in fired("what does the README say?", rr.State(cwd=repo, ctx_loader=no_board))
+    assert "p10.branch-first" not in fired("what did the build agent change?", rr.State(cwd=repo, ctx_loader=no_board))
     git(repo, "switch", "-q", "-c", "feat/y")
     assert "p10.branch-first" not in fired("fix the recieve typo in README.md and commit it",
                                        rr.State(cwd=repo, ctx_loader=no_board))
@@ -406,13 +427,16 @@ def test_a_live_peer_fires_only_with_a_git_op_prompt():
     def on(branch, peers=True):
         rows = [row("p1", branch=branch)] if peers else []
         s = rr.State(cwd=Path("/w"), session_id="me", ctx_loader=lambda: fake_ctx(rows, branch=branch))
-        s._git = rr.GitState(ok=True, branch=branch)
+        s._git = rr.GitState("ok", branch=branch)
         return s
 
     for branch in ("feat/x", "main"):
-        assert "ctx.live-peer-before-git-op" not in fired(NEUTRAL, on(branch))
-        assert fired("pull origin/main into it", on(branch))["ctx.live-peer-before-git-op"] == "state+prompt"
-        assert "ctx.live-peer-before-git-op" not in fired("pull origin/main into it", on(branch, peers=False))
+        assert "ctx.live-peer-before-git-op" not in fired(NEUTRAL, on(branch), CAT_ALL)
+        assert fired("pull origin/main into it", on(branch), CAT_ALL)["ctx.live-peer-before-git-op"] == "state+prompt"
+        assert "ctx.live-peer-before-git-op" not in fired("pull origin/main into it", on(branch, peers=False), CAT_ALL)
+    # Listed until its sealed M3 clears the bar: the real catalog never injects it.
+    assert not BY_ID["ctx.live-peer-before-git-op"].routed
+    assert "ctx.live-peer-before-git-op" not in fired("pull origin/main into it", on("main"))
 
 
 def test_state_facts_lead_the_line(repo):
@@ -427,21 +451,28 @@ def test_state_facts_lead_the_line(repo):
 #: routed on a clean feature branch with no board, so only the prompt decides.
 EXAMPLES: dict[str, tuple[list[str], list[str]]] = {
     "p9.watch-after-push": (["push this branch, open the PR and let me know when CI is green",
-                             "ship it as a PR and ping me when the checks pass", "is the watcher running?"],
-                            ["what does ci.yml do?", "push notifications for the app"]),
+                             "ship it as a PR and ping me when the checks pass", "is the watcher running?",
+                             "add some random jitter to backoff(n) in src/retry.py, then open a pr for it",
+                             "fix the flaky test in tests/test_io.py"],
+                            ["what does ci.yml do?", "push notifications for the app",
+                             "what did the build agent change?"]),
     "p10.branch-first": (["switch to main and add a line to docs/RUNBOOK.md, then commit it",
                       "go back to master and commit the fix"],
                      ["switch to main and tell me what changed", "what is on main?"]),
-    "p4.merge-pinned-to-head": (["Merge 1857", "merge #812 once it's green", "land it"],
-                             ["merge sort is O(n log n)", "resolve the merge conflicts"]),
+    "p4.merge-pinned-to-head": (["Merge 1857", "merge #812 once it's green", "land it", "merge it please",
+                              "merge the PR", "merge, go"],
+                             ["merge sort is O(n log n)", "resolve the merge conflicts",
+                              "merge main into this branch", "resolve the merge conflicts on this branch",
+                              "merge the two configs so it works", "merge it into the release notes"]),
     "p10.worktree-removal-guard": (["that worktree for the lint branch is done, get rid of it",
                                 "clean up the old worktrees", "claude rm the bg session"],
                                ["create a worktree for the fix", "list the worktrees"]),
     "ctx.live-peer-before-git-op": (["is anyone else working in this checkout right now?"],
-                                ["pull origin/main into main", "who else is on the team?"]),
+                                ["who else is on the team?", "is anyone free for lunch?"]),
     "p9.heal-on-red": (["CI on #1903 went red, sort it out", "the checks are failing on my PR",
-                                "build failed again"],
-                               ["check the CI config", "red button styling"]),
+                                "build failed again", "please check PR #1192 why did it failed?"],
+                               ["check the CI config", "red button styling",
+                                "write a test that fails on empty input", "check the parser, it failed on me"]),
     "convention.trash-not-rm": (["Can't you drop those scratch folders?", "clear out the tmp dirs under ~/scratch",
                       "delete the old clones"],
                      ["drop the database index", "remove this function"]),
@@ -453,7 +484,7 @@ EXAMPLES: dict[str, tuple[list[str], list[str]]] = {
                             "write a report on the outage"],
                            ["document.getElementById returns null", "read the doc"]),
     "p15.snapshot": (["where do we stand?", "is everything pushed?", "what's the status of the arc?"],
-                       ["stand up the service", "status code 500"]),
+                       ["stand up the service", "status code 500", "Whats the status of the paseo sessions?"]),
     "skill.kg": (["what do we know about lago replication?", "kg load ctx-core"],
                      ["what do you know about python?", "load the page"]),
     "p8.janitor-branches": (["prune the merged branches", "clean up stale branches"],
@@ -499,8 +530,10 @@ EXAMPLES: dict[str, tuple[list[str], list[str]]] = {
                      ["continue with the next step after reading", "resume.pdf"]),
     "skill.handoff": (["write a handoff", "leave notes for the next agent"],
                       ["read docs/handoffs/2026-09-29.md", "hand off the keys"]),
-    "skill.checkit": (["check this out https://x.com/a", "wdyt?", "look into this"],
-                      ["check this box", "checkout the branch"]),
+    "skill.checkit": (["check this out https://x.com/a", "wdyt? https://arxiv.org/abs/2609.01",
+                       "look into this ~/Downloads/paper.pdf"],
+                      ["check this box", "checkout the branch", "look into this failing test",
+                       "I found this bug", "wdyt?"]),
     "skill.dogfood": (["dogfood this", "click through the app and prove it"],
                       ["dog food brands", "the app crashed"]),
     "skill.unslop": (["this site looks vibecoded", "unslop this landing page"],
@@ -518,7 +551,7 @@ EXAMPLES: dict[str, tuple[list[str], list[str]]] = {
 
 def feature_state() -> "rr.State":
     s = rr.State(cwd=Path("/nonexistent"), ctx_loader=no_board)
-    s._git = rr.GitState(ok=True, branch="feat/clean")
+    s._git = rr.GitState("ok", branch="feat/clean")
     return s
 
 
@@ -541,7 +574,7 @@ def test_prompt_routing(rid):
 
 
 @pytest.mark.parametrize("rid", sorted(r for r in EXAMPLES if not BY_ID[r].routed))
-def test_a_judgment_entry_is_listed_and_never_routed(rid):
+def test_a_listed_or_judgment_entry_matches_its_trigger_and_is_never_routed(rid):
     """Its trigger still matches what it was written for, so the gap is real and
     measurable, but the router never injects it."""
     positives, negatives = EXAMPLES[rid]
@@ -556,6 +589,30 @@ def test_routed_entries_cover_the_owner_s_initial_cases():
     routed = {r.id for r in CAT.reflexes if r.routed}
     assert {"p9.watch-after-push", "p10.branch-first", "p9.heal-on-red", "p10.worktree-removal-guard",
             "convention.trash-not-rm", "convention.paseo-fleet-listing", "p4.merge-pinned-to-head"} <= routed
+
+
+def test_a_listed_entry_records_its_m3_measurement():
+    raw = {e["id"]: e for e in yaml.safe_load(CATALOG.read_text(encoding="utf-8"))["reflexes"]}
+    for r in CAT.reflexes:
+        if r.status == "listed":
+            assert "recall" in str(raw[r.id].get("m3", "")), f"{r.id}: listed without its M3 numbers"
+
+
+def test_change_work_route_is_an_imperative_not_a_question():
+    cw = CAT.routes["change_work"]
+    hit = lambda p: any(x.search(rr.normalize_prompt(p)) for x in cw)  # noqa: E731
+    for p in ("fix the recieve typo in README.md and commit it", "can you add a --dry-run flag",
+              "switch to main and add a line", "please create a proper keynote", "refactor router.py"):
+        assert hit(p), p
+    for p in ("what did the build agent change?", "how does the fix work?", "is the update live?",
+              "delete the old clones"):
+        assert not hit(p), p
+
+
+def test_requires_needs_every_pattern():
+    rid = "skill.checkit"
+    assert rid in fired_ids("check this out https://github.com/x/y", feature_state())
+    assert rid not in fired_ids("check this out", feature_state())
 
 
 def test_a_dot_inside_a_path_is_not_a_sentence_end():
@@ -585,8 +642,8 @@ def test_the_stage_3_seam_narrows_and_defaults_to_off(monkeypatch):
     monkeypatch.setitem(rr.NARROWERS, "recording", Recording)
     monkeypatch.setenv(rr.JEV_ENV, "recording")
     prompt = "skillify it, then push this branch and open the PR"
-    assert [f.reflex.id for f in rr.route(prompt, feature_state(), CAT)] == ["skill.skillify"]
-    assert "skill.skillify#0" in seen[0] and "p9.watch-after-push#1" in seen[0]
+    assert [f.reflex.id for f in rr.route(prompt, feature_state(), CAT_ALL)] == ["skill.skillify"]
+    assert "skill.skillify#0" in seen[0] and "p9.watch-after-push#2" in seen[0]
     monkeypatch.setenv(rr.JEV_ENV, "no-such-narrower")
     assert rr.get_narrower().name == "off"
     monkeypatch.delenv(rr.JEV_ENV)
@@ -603,11 +660,13 @@ def test_stage_3_sees_only_what_stages_1_and_2_kept():
             return set()
 
     assert rr.route("fix it", feature_state(), CAT, Spy()) == []  # abstaining drops everything
-    assert "p10.branch-first#1" not in Spy.keys  # its gate is on_default_branch: closed
-    assert "p10.branch-first#2" not in Spy.keys  # its prompt did not match: stage 2 dropped it
-    assert Spy.keys == []
+    assert "p10.branch-first#1" not in Spy.keys  # prompt matched, but its gate on_default_branch is closed
+    assert Spy.keys == ["p9.watch-after-push#1"]  # change_work carries the p9 rule
+    Spy.keys = []
+    rr.route("hmm, interesting", feature_state(), CAT, Spy())
+    assert Spy.keys == []  # nothing matched, so stage 3 is never asked
     rr.route("switch to main and fix it, then commit", feature_state(), CAT, Spy())
-    assert Spy.keys == ["p10.branch-first#2"]
+    assert Spy.keys == ["p9.watch-after-push#1", "p10.branch-first#2"]
 
 
 # ------------------------------------------------------------------- budget
@@ -646,9 +705,36 @@ def test_one_git_call_and_one_board_read_per_route(repo):
     boards = []
     s = rr.State(cwd=repo, run=counting_run, ctx_loader=lambda: boards.append(1))
     git(repo, "switch", "-q", "-c", "feat/y")
-    rr.route(KITCHEN_SINK, s, CAT)
+    rr.route(KITCHEN_SINK, s, CAT_ALL)
     assert len(calls) == 1 and calls[0][3:5] == ["status", "--porcelain=v2"]
-    assert s.reads == {"git": 1, "board": 1} and len(boards) == 1
+    assert s.reads == {"git": "ok", "board": "no-ctx"} and len(boards) == 1
+
+
+def test_the_board_is_not_read_unless_a_git_op_prompt_needs_it(repo):
+    """Stage order: a clause's prompt is matched before its state is read."""
+    boards = []
+    s = rr.State(cwd=repo, ctx_loader=lambda: boards.append(1))
+    rr.route("drop the scratch folders", s, CAT_ALL)
+    assert boards == [] and "board" not in s.reads
+
+
+def test_a_raising_predicate_is_false_logged_and_spares_the_rest(monkeypatch, repo):
+    def boom(_s):
+        raise ValueError("bad board row")
+    monkeypatch.setitem(rr.STATE_PREDICATES, "live_peer_on_branch", boom)
+    text, meta = rr.run("pull origin/main and drop the scratch folders", repo, catalog=CAT_ALL,
+                        state=rr.State(cwd=repo, ctx_loader=no_board), count=False)
+    assert "convention.trash-not-rm" in meta["selected"]
+    assert meta["predicate_errors"] == {"live_peer_on_branch": "ValueError"}
+
+
+@pytest.mark.parametrize("exc,status", [(subprocess.TimeoutExpired(["git"], 1), "timeout"),
+                                        (ValueError("undecodable"), "error"), (OSError("no git"), "error")])
+def test_a_git_failure_is_named_not_mistaken_for_no_repo(exc, status):
+    def run(*_a, **_k):
+        raise exc
+    s = rr.State(cwd=Path("/tmp"), run=run)
+    assert s.git.status == status and s.reads["git"] == status and not s.git.ok
 
 
 def test_git_status_takes_no_optional_locks(repo):
@@ -660,6 +746,53 @@ def test_git_status_takes_no_optional_locks(repo):
 
     rr.State(cwd=repo, run=spy).git  # noqa: B018 - the property is the call
     assert envs[0].get("GIT_OPTIONAL_LOCKS") == "0"
+
+
+# ------------------------------------------------------------ repeat cap, signatures
+
+
+def test_an_id_goes_out_at_most_twice_per_session(repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "h"))
+    st = lambda: rr.State(cwd=repo, ctx_loader=no_board)  # noqa: E731
+    shown = [rr.run("Merge 1857", repo, "sess-1", catalog=CAT, state=st())[1]["selected"] for _ in range(3)]
+    assert shown == [["p4.merge-pinned-to-head"], ["p4.merge-pinned-to-head"], []]
+    assert rr.run("Merge 1857", repo, "sess-2", catalog=CAT, state=st())[1]["selected"]  # a new session
+    third = rr.run("Merge 1857", repo, "sess-1", catalog=CAT, state=st())[1]
+    assert third["cut"] == ["p4.merge-pinned-to-head"]
+
+
+def test_shadow_and_unknown_sessions_do_not_count(repo, tmp_path, monkeypatch):
+    monkeypatch.setenv("HOME", str(tmp_path / "h"))
+    for _ in range(3):
+        assert rr.run("Merge 1857", repo, "sess-s", catalog=CAT, count=False)[1]["selected"]
+        assert rr.run("Merge 1857", repo, "unknown", catalog=CAT)[1]["selected"]
+    assert not rr.sessions_dir(tmp_path / "h").exists() or not list(rr.sessions_dir(tmp_path / "h").glob("*.json"))
+
+
+def test_a_hostile_session_id_names_no_file(tmp_path):
+    assert rr._session_file("../../etc/passwd", tmp_path) is None
+    assert rr._session_file("", tmp_path) is None
+    assert rr._session_file("a" * 200, tmp_path) is None
+
+
+@pytest.mark.parametrize("command,sig,want", [
+    ("p9 watch 12 --background", {"tool": "Bash", "argv_prefix": ["p9", "watch"]}, True),
+    ("python3 ~/.claude/skills/p9/scripts/p9.py watch 12", {"tool": "Bash", "argv_prefix": ["p9", "watch"]}, True),
+    ("FOO=1 uv run p9 watch 12", {"tool": "Bash", "argv_prefix": ["p9", "watch"]}, True),
+    ("echo p9 watch", {"tool": "Bash", "argv_prefix": ["p9", "watch"]}, False),
+    ("p9 status", {"tool": "Bash", "argv_prefix": ["p9", "watch"]}, False),
+    ("gh pr merge 1 --squash --match-head-commit abc", {"tool": "Bash", "argv_prefix": ["gh", "pr", "merge"]}, True),
+])
+def test_signatures_match_canonical_invocations(command, sig, want):
+    assert rr.signature_matches(sig, "Bash", command=command) is want
+
+
+def test_a_write_signature_covers_edit_paths():
+    sig = BY_ID["p18.human-doc-in-specs"].signature[0]
+    for tool in ("Write", "Edit", "MultiEdit"):
+        assert rr.signature_matches(sig, tool, path="/w/docs/specs/2026-09-30-dns.html")
+    assert not rr.signature_matches(sig, "Read", path="/w/docs/specs/2026-09-30-dns.html")
+    assert not rr.signature_matches(sig, "Write", path="/w/docs/notes/dns.md")
 
 
 def test_route_is_fast_in_process(repo):
@@ -740,10 +873,11 @@ def test_route_evals_scores_every_skill_with_an_eval_set():
                         "--root", str(REPO)], capture_output=True, text=True, timeout=120)
     assert p.returncode == 0, p.stderr
     out = json.loads(p.stdout)
-    assert {r["skill"] for r in out["skills"]} == set(_skills_with_evals())
-    assert out["suite"]["should_trigger"] > 100 and out["suite"]["near_miss"] > 60
-    # A floor, not a goal: lexical routing on held-out eval prompts, measured 0.31
-    # recall / 0.09 false fire when v1 shipped. A drop below this is a regression.
+    assert {r["skill"] for r in out["ids"]} == set(_skills_with_evals())
+    assert out["suite"]["should_route"] > 100 and out["suite"]["near_miss"] > 60
+    # A floor, not a goal: lexical routing on the skills' own eval prompts (in-sample,
+    # since the phrases came from the same descriptions), 0.32 recall / 0.06 false
+    # fire when v1 shipped. A drop below this is a regression.
     assert out["suite"]["recall"] >= 0.25 and out["suite"]["false_fire"] <= 0.15
 
 
@@ -792,10 +926,14 @@ def test_no_git_on_path_still_routes_the_prompt(repo, tmp_path):
     assert p.returncode == 0 and "match-head-commit" in p.stdout and "error" not in ev
 
 
+@pytest.mark.parametrize("output", ["legacy", "reflex"])
 @pytest.mark.parametrize("payload", ["[1, 2]", "\"just a string\"", "{\"prompt\": 7}", ""])
-def test_odd_payloads_never_fail_the_hook(repo, tmp_path, usersite_env, payload):
-    p, _ = run_hook(None, repo, tmp_path / "h", payload=payload)
-    assert p.returncode == 0
+def test_odd_payloads_never_fail_role_x_itself(repo, tmp_path, payload, output):
+    """role-x.py's own exit code, not the hook wrapper's (which is always 0)."""
+    p = subprocess.run([sys.executable, str(ROLE_X_PY), "intake", "--workspace", str(repo)], input=payload,
+                       capture_output=True, text=True,
+                       env={**os.environ, "HOME": str(tmp_path / "h"), "ROLE_X_OUTPUT": output})
+    assert p.returncode == 0 and p.stdout == "", p.stderr
 
 
 def test_reflex_events_do_not_count_as_lens_intakes(repo, tmp_path, usersite_env):
@@ -851,6 +989,73 @@ def test_qbar_output_keeps_the_bar_and_drops_everything_else(tmp_path, usersite_
     assert rows[-1]["render"] == "qbar"
 
 
+def _lens_workspace(tmp_path) -> Path:
+    ws = tmp_path / "ws"
+    (ws / "roles").mkdir(parents=True)
+    (ws / "AGENTS.md").write_text("# a\n", encoding="utf-8")
+    (ws / "roles" / "_meta.md").write_text(META_WITH_ENTITIES, encoding="utf-8")
+    ent = ws / "research" / "entities" / "persona" / "toolchain-bun-biome.md"
+    ent.parent.mkdir(parents=True)
+    ent.write_text("---\ncore_claim: bun and biome\n---\n", encoding="utf-8")
+    return ws
+
+
+@pytest.mark.skipif(REPO is None, reason="needs the broomva/skills monorepo and its main branch")
+def test_the_legacy_block_is_byte_for_byte_main_s(tmp_path):
+    """Default output, pinned: this branch's role-x.py and main's print the same
+    block for the same workspace and prompt, with the flag unset."""
+    main_src = subprocess.run(["git", "-C", str(REPO), "show", "main:skills/orchestration/role-x/scripts/role-x.py"],
+                              capture_output=True, text=True)
+    if main_src.returncode != 0:
+        pytest.skip("main is not available in this checkout")
+    old = tmp_path / "main-scripts" / "role-x.py"
+    old.parent.mkdir()
+    old.write_text(main_src.stdout, encoding="utf-8")
+    ws = _lens_workspace(tmp_path)
+    outs = []
+    for script in (old, ROLE_X_PY):
+        env = {k: v for k, v in os.environ.items() if k not in ("ROLE_X_OUTPUT", "ROLE_X_MODE")}
+        env["HOME"] = str(tmp_path / f"h-{script.parent.name}")
+        p = subprocess.run([sys.executable, str(script), "intake", "--workspace", str(ws), "--prompt",
+                            "push this branch and open the PR, then let me know"], capture_output=True, text=True,
+                           env=env)
+        assert p.returncode == 0, p.stderr
+        outs.append(p.stdout)
+    assert outs[0] and outs[0] == outs[1]
+
+
+def test_an_unrecognised_output_value_is_recorded_not_silent(tmp_path, usersite_env):
+    ws = _lens_workspace(tmp_path)
+    p, rows = run_hook("push this branch and open the PR", ws, tmp_path / "h", mode="quality-bar")
+    assert p.stdout.startswith("[role-x intake")  # legacy, as documented
+    assert rows[-1]["output_ignored"] == "quality-bar"
+
+
+@pytest.mark.skipif(REPO is None, reason="needs the broomva/skills monorepo")
+def test_every_routed_entry_clears_the_sealed_held_out_m3_gate():
+    """Spec §5.5 M3, enforced: an entry routes only at held-out recall >= 0.60 with
+    <= 0.20 false fires, on the cases sealed at a272659 before any tuning."""
+    heldout = SKILL_DIR / "evals" / "reflex-routing-heldout.json"
+    p = subprocess.run([sys.executable, str(ROLE_X_PY), "reflexes", "route", "--heldout", "--json"],
+                       capture_output=True, text=True, timeout=120)
+    assert p.returncode == 0, p.stderr
+    rows = {r["id"]: r for r in json.loads(p.stdout)["ids"]}
+    cases = json.loads(heldout.read_text(encoding="utf-8"))["cases"]
+    assert set(cases) <= set(BY_ID) | set(CAT.routes)
+    for r in CAT.reflexes:
+        if r.routed:
+            assert r.id in rows, f"{r.id} is routed but has no sealed held-out cases"
+            assert rows[r.id]["passes_m3"], f"{r.id} is routed but fails M3: {rows[r.id]}"
+    assert rows["change_work"]["passes_m3"]
+
+
+def test_the_sealed_held_out_file_is_the_one_that_was_sealed():
+    import hashlib
+    heldout = SKILL_DIR / "evals" / "reflex-routing-heldout.json"
+    assert hashlib.sha256(heldout.read_bytes()).hexdigest() == (
+        "3628de8859624ac6f7f6d3fc01211cb9524f64fcd547c3fc5fe54f86bb3089d9")
+
+
 # ------------------------------------------------------------------ mutation
 
 #: For each state predicate: a scenario that fires a reflex ONLY through that
@@ -886,7 +1091,7 @@ SCENARIOS = {
 
 def _scenario_fires(mod, catalog_path, repo, name) -> bool:
     state, prompt, rid = SCENARIOS[name](repo, mod)
-    cat = mod.load_catalog(catalog_path)
+    cat = all_routed(mod, mod.load_catalog(catalog_path))
     return rid in [f.reflex.id for f in mod.route(prompt, state, cat)]
 
 

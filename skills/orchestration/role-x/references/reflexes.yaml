@@ -6,8 +6,12 @@
 #
 #   id:        <primitive or kind>.<slug>
 #   kind:      primitive | skill | convention (a rule from memory, no primitive of its own)
-#   status:    routed (the router may inject it) | judgment (listed so the gap is
-#              visible; its trigger is a judgment call no predicate or phrase decides)
+#   status:    routed (the router may inject it)
+#              | listed (a checkable trigger whose routing has not yet cleared the
+#                sealed held-out bar, spec §5.5 M3: recall >= 0.60, false fire <= 0.20;
+#                `m3:` records the measurement)
+#              | judgment (a judgment-call trigger no predicate or phrase decides)
+#              Only routed entries are injected; the others keep the gap visible.
 #   when:      a list of clauses; the entry fires when ANY clause holds. A clause holds
 #              when every predicate in `state` holds AND, if it has `prompt` or
 #              `phrases`, the prompt matches one of them.
@@ -16,10 +20,18 @@
 #                phrases: literal phrases, case-insensitive, on word boundaries (any).
 #                         A skill entry's phrases are copied from that skill's
 #                         description; a test checks they still are.
+#                routes:  names from `routes:` below; their regexes join `prompt`.
+#                requires: regexes that must ALL match as well (an artifact, say).
+#              In a regex, `[^.?!]` means "same sentence"; a dot followed by a
+#              non-space (`.worktrees/`, `README.md`) does not end one.
 #   line:      what the stack does, stated as a fact that names the command. Not an
 #              order: imperative hook text reads as prompt injection to the model.
 #   signature: what a follow-through looks like in a later tool call (for the ledger,
-#              spec §5.4 M1): a list of {tool, argv_prefix | name | path_re}.
+#              spec §5.5 M1): alternatives of {tool, argv_prefix | name | path_re}.
+#              reflex_router.signature_matches is the contract: argv_prefix skips
+#              env assignments and interpreters and compares basenames without
+#              .py/.sh, so `python3 …/p9.py watch` matches [p9, watch]; tool Write
+#              also matches Edit and MultiEdit.
 #   source:    where the rule is written down. `AGENTS.md` is broomva/workspace's.
 #              `memory:` is the operator's auto-memory file of that name.
 #   routing:   a skill's trigger-eval set, for `role-x reflexes route --evals`.
@@ -33,6 +45,14 @@ version: 1
 max_lines: 3
 max_chars: 600
 
+routes:
+  # The prompt asks for a change to be made (spec §5.3). Imperative at the start of
+  # the prompt or a clause, or asked for ("can you ..."); a question about code is not.
+  change_work:
+    - '^\W*(please\s+|pls\s+|now\s+|ok\s+|so\s+)?(add|fix|edit|change|update|write|implement|refactor|create|commit|bump|rename|scaffold|build|port|migrate|wire|rewrite|set up)\b'
+    - '\b(can|could|would) you\s+(please\s+)?(add|fix|edit|change|update|write|implement|refactor|create|commit|bump|rename|scaffold|build|port|migrate|wire|rewrite|set up)\b'
+    - '\b(let''?s|lets|go ahead and|and then|then|and)\s+(add|fix|edit|change|update|write|implement|refactor|create|commit|bump|rename|scaffold|build|port|migrate|wire|rewrite)\b'
+
 reflexes:
   # ------------------------------------------------------------ state predicates
   - id: p9.watch-after-push
@@ -45,7 +65,9 @@ reflexes:
     priority: 10
     when:
       - state: [branch_pushed_recently]
+      - routes: [change_work]
       - prompt:
+          - '\b(open|opening|create|raise|put up)\b[^.?!]{0,30}\b(a |the |an )?(pr|pull request)\b'
           - '\bpush(ed|ing)?\b[^.?!]{0,80}\b(pr|pull request|ci|checks?)\b'
           - '\b(open|opening|create|raise)\b[^.?!]{0,30}\b(pr|pull request)\b[^.?!]{0,80}\b(ci|checks?|green|pass(es|ing)?)\b'
           - '\b(let me know|tell me|notify me|ping me)\b[^.?!]{0,40}\b(ci|checks?|build|deploy)\b'
@@ -66,8 +88,7 @@ reflexes:
     when:
       - state: [staged_on_default_branch]
       - state: [on_default_branch]
-        prompt:
-          - '\b(add|fix|edit|change|update|write|implement|refactor|create|commit|bump|rename|scaffold|build)\b'
+        routes: [change_work]
       - prompt:
           - '\b(switch|checkout|check out|go back)\b[^.?!]{0,20}\b(main|master)\b[^.?!]{0,100}\b(add|fix|edit|change|update|write|commit)\b'
     line: "Change work starts on a branch: `git switch -c <type>/<slug>` before the first edit, also right after `git checkout main`; main moves only through PRs."
@@ -81,8 +102,10 @@ reflexes:
     priority: 12
     when:
       - prompt:
-          - '\bmerge\b[^.?!]{0,30}(#?\b\d{2,6}\b|\bprs?\b|\bpull request\b|\bit\b|\bbranch\b)'
-          - '\bland\b[^.?!]{0,20}(\bit\b|\bprs?\b|#?\b\d{2,6}\b)'
+          - '\bmerge\s+(#?\d{2,6}\b|(the |this |that |my )?(pr|pull request)\b)'
+          - '\b(merge|land) it\b(?!\s+(into|with|onto)\b)'
+          - '\bland\s+(#?\d{2,6}\b|(the |this |that |my )?(pr|pull request)\b)'
+          - '^\W*merge\W*($|,|and\b|now\b|please\b|pls\b|go\b)'
     line: "A merge is pinned to the reviewed head: `gh pr merge <pr> --squash --match-head-commit <head sha>`, or `p9 auto-merge <pr>`, which re-checks the gates and pins it."
     signature: [{tool: Bash, argv_prefix: [gh, pr, merge]}, {tool: Bash, argv_prefix: [p9, auto-merge]}]
     source: "AGENTS.md §P9 reflex 4 and §P4; memory: ci-and-p9-traps.md"
@@ -106,11 +129,12 @@ reflexes:
   - id: ctx.live-peer-before-git-op
     kind: primitive
     primitive: P5
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 1.0, false fire 0.5; routes again once it clears 0.60 / 0.20"
     priority: 14
-    # Narrow on purpose: the ctx SessionStart brief already names live peers (spec
-    # §5.2 defers the coordination line to it). This fires only at the moment of
-    # risk, a pull/push/commit prompt while a peer is live on this branch or cwd.
+    # Narrow on purpose: the ctx SessionStart brief already names live peers. This
+    # fires at the moment of risk only, a pull/push/commit prompt while a peer is
+    # live on this branch (ctx's own liveness rule), or a question about one.
     when:
       - state: [live_peer_on_branch]
         prompt:
@@ -129,8 +153,9 @@ reflexes:
     priority: 15
     when:
       - prompt:
-          - '\b(ci|checks?|build|pipeline|workflow|tests?)\b[^.?!]{0,40}\b(fail(ed|ing|s|ure)?|red|broke(n)?|errored)\b'
-          - '\b(fail(ed|ing|ure)?|red|broken)\b[^.?!]{0,25}\b(ci|checks?|build|pipeline|workflow)\b'
+          - '\b(ci|checks|build|pipeline|workflow|check runs?)\b[^.?!]{0,40}\b(fail(ed|ing|s|ure)?|red|broke(n)?|errored)\b'
+          - '\b(fail(ed|ing|ure)?|red|broken)\b[^.?!]{0,25}\b(ci|checks|build|pipeline|workflow)\b'
+          - '\b(pr|pull request|#\d{2,6})\b[^.?!]{0,40}\b(fail(ed|ing|s)?|red|broke(n)?)\b'
     line: "When a PR's checks fail, the stack runs `p9 heal <pr> --classify` before editing or asking, applies a classified heal inside the PR diff, then re-arms `p9 watch`."
     signature: [{tool: Bash, argv_prefix: [p9, heal]}]
     source: "AGENTS.md §P9 reflex 3"
@@ -168,12 +193,13 @@ reflexes:
   - id: p2.gate-destructive-git
     kind: primitive
     primitive: P2
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.33, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 25
     when:
       - prompt:
           - '\b(force[- ]?push|push (-f|--force)|reset --hard|git clean|branch -D|delete (the |that |this )?branch|rewrite (the )?history|filter-branch)\b'
-    line: "Force-pushes, `reset --hard` and branch deletions pass the hard gates in `.control/policy.yaml` (G1-G4); the stack reads `gates.hard` before one."
+    line: "Where a repo has `.control/policy.yaml`, force-pushes, `reset --hard` and branch deletions pass its hard gates (G1-G4); the stack reads `gates.hard` first."
     signature: [{tool: Read, path_re: '\.control/policy\.yaml$'}]
     source: "AGENTS.md §P2"
 
@@ -193,12 +219,13 @@ reflexes:
   - id: p15.snapshot
     kind: primitive
     primitive: P15
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.0, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 30
     when:
       - prompt:
           - '\bwhere (do |did )?we stand\b'
-          - '\b(what''?s|what is) the (state|status)\b'
+          - '\b(what''?s|what is) the (state|status)\b(?![^.?!]{0,30}\b(paseo|sessions?|agents?|server|service|api)\b)'
           - '\bis (everything|it|this|that) (committed|pushed|merged|green|deployed)\b'
           - '\bcatch me up\b'
     line: "A where-do-we-stand question is answered with a snapshot: `git status`, ahead/behind, `gh pr list`, CI state and open asks, not an essay."
@@ -211,7 +238,8 @@ reflexes:
     skill: kg
     skill_source: skills/knowledge/kg/SKILL.md
     routing: skills/knowledge/kg/evals/prompts.json
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.0, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 35
     when:
       - phrases: [kg load, load knowledge graph, load entities, what do we know about,
@@ -230,26 +258,28 @@ reflexes:
       - prompt:
           - '\b(stale|merged|old|dead|orphan(ed)?)\b[^.?!]{0,20}\bbranches\b'
           - '\b(prune|clean(\s|-)?up|delete)\b[^.?!]{0,20}\bbranches\b'
-    line: "Merged branches and dead worktrees are found by `make janitor`, which detects squash merges and is a dry run until `--apply`."
+    line: "Merged branches and dead worktrees are found by `make janitor`, a dry run that detects squash merges; `make janitor-apply` deletes them."
     signature: [{tool: Bash, argv_prefix: [make, janitor]}]
     source: "AGENTS.md §P8"
 
   - id: p11.bugfix-test-lock
     kind: primitive
     primitive: P11
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.33, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 35
     when:
       - prompt:
           - '\b(fix|repro(duce)?)\b[^.?!]{0,30}\b(bug|regression|crash)\b'
-    line: "A bug fix commits the failing test first (`bstack test-lock commit <test> -m <msg>`), then changes the code, not the test."
+    line: "A bug fix commits the failing test first (in bstack repos, `bstack test-lock commit <test> -m <msg>`), then changes the code, not the test."
     signature: [{tool: Bash, argv_prefix: [bstack, test-lock, commit]}]
     source: "AGENTS.md §P11 reflex 7"
 
   - id: p12.persist
     kind: primitive
     primitive: P12
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.67, false fire 0.5; routes again once it clears 0.60 / 0.20"
     priority: 35
     when:
       - prompt:
@@ -262,7 +292,8 @@ reflexes:
   - id: p7.freshness
     kind: primitive
     primitive: P7
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.0, false fire 0.5; routes again once it clears 0.60 / 0.20"
     priority: 40
     when:
       - prompt:
@@ -276,20 +307,22 @@ reflexes:
   - id: p10.cleanup-after-merge
     kind: primitive
     primitive: P10
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.33, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 40
     when:
       - prompt:
           - '\b(after|once|now that)\b[^.?!]{0,30}\bmerged\b'
           - '\bmerged\b[^.?!]{0,30}\bclean(\s|-)?up\b'
-    line: "After a merge, the PR's worktree and branch go (`make janitor`, or `git worktree remove` then `git branch -D`) before the next task starts."
-    signature: [{tool: Bash, argv_prefix: [make, janitor]}, {tool: Bash, argv_prefix: [git, worktree, remove]}]
+    line: "After a merge, the PR's worktree and branch go (`make janitor-apply`, or `git worktree remove` then `git branch -D`) before the next task starts."
+    signature: [{tool: Bash, argv_prefix: [make, janitor-apply]}, {tool: Bash, argv_prefix: [git, worktree, remove]}]
     source: "AGENTS.md §P10 reflex 3"
 
   - id: p20.cross-review
     kind: primitive
     primitive: P20
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.33, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 40
     when:
       - prompt:
@@ -302,7 +335,8 @@ reflexes:
   - id: p4.ship-not-ask
     kind: primitive
     primitive: P4
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.67, false fire 0.5; routes again once it clears 0.60 / 0.20"
     priority: 55
     when:
       - prompt:
@@ -437,7 +471,8 @@ reflexes:
     skill: arc
     skill_source: skills/orchestration/arc/SKILL.md
     routing: skills/orchestration/arc/evals/prompts.json
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.0, false fire 0.5; routes again once it clears 0.60 / 0.20"
     priority: 36
     when:
       - phrases: [off until morning, nobody is watching, "don't hand it back until",
@@ -452,7 +487,8 @@ reflexes:
     skill: autonomous
     skill_source: skills/orchestration/autonomous/SKILL.md
     routing: skills/orchestration/autonomous/evals/prompts.json
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.33, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 37
     when:
       - phrases: [/autonomous, full bstack, merge autonomously, automerge, be autonomous, let it run]
@@ -467,7 +503,8 @@ reflexes:
     skill: resume
     skill_source: skills/orchestration/resume/SKILL.md
     routing: skills/orchestration/resume/evals/prompts.json
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.33, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 37
     when:
       - phrases: [pick up where you left off, continue /autonomous, resume the loop]
@@ -482,7 +519,8 @@ reflexes:
     skill: handoff
     skill_source: skills/orchestration/handoff/SKILL.md
     routing: skills/orchestration/handoff/evals/prompts.json
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.67, false fire 0.5; routes again once it clears 0.60 / 0.20"
     priority: 38
     when:
       - phrases: [handoff, fresh-session, fresh session, for the next session, for the next agent,
@@ -501,6 +539,8 @@ reflexes:
     when:
       - phrases: [check this out, checkit, research this, look into this, dig into this, wdyt,
                   what do you think of this, found this]
+        # the description's "+ an artifact": a URL, a path, or a file name
+        requires: ['(https?://|www\.|(?:^|\s)[~./]?[\w.-]+/[\w./-]+|\b[\w-]+\.(pdf|md|html|png|jpg|txt|json|csv)\b)']
     line: "A shared link or file with a terse ask is the `checkit` skill: contextualize, research, document the finding, rank next steps."
     signature: [{tool: Skill, name: checkit}]
     source: "skills/research/checkit/SKILL.md"
@@ -510,7 +550,8 @@ reflexes:
     skill: dogfood
     skill_source: skills/governance/dogfood/SKILL.md
     routing: skills/governance/dogfood/evals/prompts.json
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.0, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 38
     when:
       - phrases: [dogfood, validate as user, exercise the change, click through the app, P11 receipt,
@@ -524,7 +565,8 @@ reflexes:
     skill: unslop
     skill_source: skills/design/unslop/SKILL.md
     routing: skills/design/unslop/evals/prompts.json
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.0, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 39
     when:
       - phrases: [looks vibecoded, looks AI-generated, looks like every other AI site, vibecoded test,
@@ -538,7 +580,8 @@ reflexes:
     skill: legal-readiness
     skill_source: skills/governance/legal-readiness/SKILL.md
     routing: skills/governance/legal-readiness/evals/prompts.json
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.0, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 39
     when:
       - phrases: [legal audit, legal shield, SaaS legal baseline, compliance gap analysis,
@@ -552,7 +595,8 @@ reflexes:
     skill: audit-harness-usage
     skill_source: skills/tooling/audit-harness-usage/SKILL.md
     routing: skills/tooling/audit-harness-usage/evals/prompts.json
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.0, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 39
     when:
       - phrases: [token usage, agent costs, CodexBar, ccusage, Claude usage, Gemini stats,
@@ -567,7 +611,8 @@ reflexes:
     skill: disambiguate
     skill_source: skills/tooling/disambiguate/SKILL.md
     routing: skills/tooling/disambiguate/evals/prompts.json
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.0, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 39
     when:
       - phrases: [disambiguate, improve this requirement, tighten this spec, make this unambiguous,
@@ -582,7 +627,8 @@ reflexes:
     skill: skillify
     skill_source: skills/tooling/skillify/SKILL.md
     routing: skills/tooling/skillify/evals/prompts.json
-    status: routed
+    status: listed
+    m3: "sealed held-out (a272659): recall 0.0, false fire 0.0; routes again once it clears 0.60 / 0.20"
     priority: 39
     when:
       - phrases: [skillify, package this as a skill, distill this into a skill, make this a skill,

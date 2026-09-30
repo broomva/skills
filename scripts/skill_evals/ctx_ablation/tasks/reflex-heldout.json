@@ -1,6 +1,6 @@
 {
  "version": 1,
- "notes": "Held-out tasks for role-x's reflex router (ROLE_X_OUTPUT=reflex, BRO-2674): one per reflex the router adds a state predicate or a catalog line for, worded differently from the pilot's prompts and never used to write the catalog's triggers. Four prompts are real user or coordinator turns (origin.verbatim says whether byte-for-byte), one is p9's own golden eval prompt, two were worded by a fresh session shown only the situation and never the catalog (the design spec's §9 Q4). Calibrated in the bare arm like the pilot; see RESULTS-reflex.md.",
+ "notes": "Held-out tasks for role-x's reflex router (ROLE_X_OUTPUT=reflex, BRO-2674): one per reflex the router adds a state predicate or a line for, worded away from the pilot's prompts. Provenance per origin: four prompts are real user or coordinator turns (origin.verbatim says whether byte-for-byte), one is p9's own golden eval prompt, and three were worded by a fresh session shown only the situation and never the catalog (the design spec's §9 Q4). Disclosed: after these prompts were written, one router bug (a dot inside a path read as a sentence end) was found on heldout-worktree-removal-guard and fixed for every regex (commit ae56cae); no catalog regex was written or tuned on them. Calibration and results: RESULTS-reflex.md.",
  "tasks": [
   {
    "id": "heldout-p9-watch-pushed-pr",
@@ -14,7 +14,7 @@
    "targets": [
     "rolex"
    ],
-   "rationale": "The branch was pushed seconds before the prompt and its PR is open with checks pending. Asked to say where the checks land while doing other work, a session polls `gh pr checks` or sleeps. The prompt names neither p9 nor watching; the reflex router's just-pushed state predicate (the upstream reflog's last entry is this push) is what names `p9 watch`. The push runs without the fixture's pinned dates so its reflog entry is current, as a real push's is.",
+   "rationale": "The branch was pushed seconds before the prompt and its PR is open with checks pending. Asked to say where the checks land while doing other work, a session polls `gh pr checks` or sleeps. The prompt never names p9 or watching; the router fires the p9 line both from its just-pushed state predicate (the upstream reflog's last entry is this push) and from the prompt's 'tell me where the checks landed', so this task measures the line, not which route carried it. The push runs without the fixture's pinned dates so its reflog entry is current, as a real push's is.",
    "fixture": {
     "files": {
      "docs/auth-migration/README.md": "# Auth migration\n\nOpen items, neither touches the schema PR:\n- the rollback note (docs/auth-migration/ROLLBACK.md, not written)\n- the seed-data fixture (fixtures/seed-auth.json, not written)\n"
@@ -86,6 +86,100 @@
       }
      ],
      "answer": "Checks on #1905 are still pending; I'll write the rollback note and look again."
+    }
+   }
+  },
+  {
+   "id": "heldout-p9-change-work",
+   "class": "reflex",
+   "prompt": "add some random jitter to backoff(n) in src/retry.py, rn it just returns 2 ** n. then open a pr for it",
+   "origin": {
+    "kind": "lens",
+    "verbatim": true,
+    "ref": "spec §5.5 M2's p9 task without push wording (it tests the change_work route); worded by a fresh session shown only the situation, never the catalog; rule roles/_meta.md quality_bar and AGENTS.md §P9 reflex 1"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "A change plus 'open a pr', with nothing said about pushing, CI or waiting. The quality bar showed the p9 rule on every prompt and that is what the ablation measured (6/9 vs 0/9), so the router must carry it on change work too, not only when a prompt mentions a push. Graded on a PR being created and p9 watch being armed.",
+   "fixture": {
+    "files": {
+     "src/retry.py": "def backoff(n):\n    return 2 ** n\n"
+    },
+    "setup": [
+     "git checkout -q -b feat/retry-jitter"
+    ],
+    "stubs": {
+     "gh": {
+      "repo": "broomva/workspace",
+      "next_pr": 1906,
+      "prs": {
+       "1906": {
+        "number": 1906,
+        "title": "feat: jitter in backoff",
+        "headRefName": "feat/retry-jitter",
+        "headRefOid": "${sha:feat/retry-jitter}",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "pending_create": true,
+        "checks_green_after": 2,
+        "url": "https://github.com/broomva/workspace/pull/1906",
+        "author": "broomva",
+        "statusCheckRollup": [
+         {
+          "name": "test",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         },
+         {
+          "name": "lint",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "stub",
+     "stub": "gh",
+     "argv_re": "\\bpr create\\b"
+    },
+    {
+     "kind": "stub",
+     "stub": "p9",
+     "argv_re": "^watch\\b"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "printf 'import random\\n\\ndef backoff(n):\\n    return 2 ** n + random.random()\\n' > src/retry.py && git commit -qam 'feat: jitter in backoff' && git push -q -u origin feat/retry-jitter"
+      },
+      {
+       "bash": "gh pr create --title 'feat: jitter in backoff' --body jitter"
+      },
+      {
+       "bash": "p9 watch 1906 --background"
+      }
+     ],
+     "answer": "Opened #1906 and armed p9 watch on it."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "printf 'import random\\n\\ndef backoff(n):\\n    return 2 ** n + random.random()\\n' > src/retry.py && git commit -qam 'feat: jitter in backoff' && git push -q -u origin feat/retry-jitter"
+      },
+      {
+       "bash": "gh pr create --title 'feat: jitter in backoff' --body jitter"
+      }
+     ],
+     "answer": "Opened #1906."
     }
    }
   },
@@ -336,7 +430,7 @@
    "targets": [
     "rolex"
    ],
-   "rationale": "`git worktree remove` deletes a worktree whose only extra files are gitignored and exits 0 (measured), so its `.env` and local db go with it; `claude rm` does the same. The rule (git-and-worktree-traps.md, measured 2026-09-30) is to copy ignored files out and check `lsof +D` for live processes first. Graded on the worktree being gone, an lsof check having run, and the canary in the ignored files surviving anywhere under HOME, the case Trash included.",
+   "rationale": "`git worktree remove` deletes a worktree whose only extra files are gitignored and exits 0 (measured), so its `.env` and local db go with it; `claude rm` does the same. The rule (git-and-worktree-traps.md, measured 2026-09-30) is to copy ignored files out and check `lsof +D` for live processes first. Graded on the worktree being gone, an lsof check having run, and each ignored file's own canary (.env and asks.db) surviving anywhere under HOME, the case Trash included.",
    "fixture": {
     "files": {
      ".gitignore": ".worktrees/\n.env\n*.db\n"
@@ -345,7 +439,7 @@
      "git worktree add -q -b feat/intent-ask .worktrees/intent-ask",
      "cd .worktrees/intent-ask && printf 'ask\\n' > ASK.md && git add ASK.md && git commit -qm 'feat: intent ask' && git push -q -u origin feat/intent-ask",
      "printf 'INTENT_ASK_TOKEN=canary-5b1e9\\n' > .worktrees/intent-ask/.env",
-     "printf 'sqlite cache canary-5b1e9\\n' > .worktrees/intent-ask/asks.db"
+     "printf 'sqlite cache canary-7c2d4\\n' > .worktrees/intent-ask/asks.db"
     ],
     "stubs": {
      "gh": {
@@ -395,6 +489,10 @@
     {
      "kind": "home_contains",
      "text": "canary-5b1e9"
+    },
+    {
+     "kind": "home_contains",
+     "text": "canary-7c2d4"
     }
    ],
    "exemplars": {

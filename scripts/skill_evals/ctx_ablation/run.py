@@ -196,15 +196,35 @@ def rolex_logged_prompt(layout: fx.CaseLayout, prompt: str) -> bool:
     return any(ev.get("session") != OFFLINE_SESSION for ev in _rolex_events(layout, prompt))
 
 
+def _reflex_row(layout: fx.CaseLayout, prompt: str, live: bool) -> dict[str, Any] | None:
+    rows = [ev for ev in _rolex_events(layout, prompt)
+            if ev.get("event") == "reflex" and (ev.get("session") != OFFLINE_SESSION) == live]
+    return rows[-1] if rows else None
+
+
 def rolex_reflex_error(layout: fx.CaseLayout, prompt: str) -> str:
     """The reflex router's error class from the OFFLINE run on this prompt, "" when
     it routed cleanly, or "no log row" when it never ran. The router prints nothing
     on an error, which would otherwise pass for "no reflex applies"."""
-    rows = [ev for ev in _rolex_events(layout, prompt)
-            if ev.get("session") == OFFLINE_SESSION and ev.get("event") == "reflex"]
-    if not rows:
+    row = _reflex_row(layout, prompt, live=False)
+    if row is None:
         return "no log row"
-    return str(rows[-1].get("error") or "")
+    return str(row.get("error") or "")
+
+
+def rolex_reflex_live_problem(layout: fx.CaseLayout, prompt: str) -> str:
+    """"" when the LIVE hook logged a clean reflex row that selected what the offline
+    run selected (the recovered text is then what the model saw), else why not."""
+    live = _reflex_row(layout, prompt, live=True)
+    if live is None:
+        return "the live hook logged no reflex row for this prompt"
+    if live.get("error"):
+        return f"the live router failed: {live['error']}"
+    offline = _reflex_row(layout, prompt, live=False) or {}
+    if list(live.get("selected") or []) != list(offline.get("selected") or []):
+        return (f"live selected {live.get('selected')} but offline selected {offline.get('selected')}: "
+                "the recovered text is not what the model saw")
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -262,8 +282,9 @@ def _outcome_for_injections(arm: arms_mod.Arm, case: fx.Case, t: Transcript, rol
         err = rolex_reflex_error(layout, prompt)
         if err:
             return m.INJECTION_MISSING, f"the reflex router did not route this prompt offline: {err}"
-        if not rolex_ran:
-            return m.INJECTION_MISSING, "reflex arm, but the live hook logged no row for this prompt"
+        live_problem = rolex_reflex_live_problem(layout, prompt)
+        if live_problem:
+            return m.INJECTION_MISSING, live_problem
         if arm.memory and not (layout.memory_dir / "MEMORY.md").is_file():
             return m.INJECTION_MISSING, "memory arm, but MEMORY.md is not at the cwd's memory key"
         return "", ""
@@ -698,6 +719,8 @@ def cmd_preflight(args) -> int:
                         problems.append(f"{arm.id} x {task.id}: the reflex router failed ({err})")
                     elif not rolex:
                         notes.append(f"{arm.id} x {task.id}: no reflex applies, the router prints nothing")
+                    elif not rolex.startswith(arms_mod.ROLEX_REFLEX_MARKER):
+                        problems.append(f"{arm.id} x {task.id}: the router printed a block without its header")
                 elif arm.rolex and arms_mod.ROLEX_MARKER not in rolex:
                     if len(task.prompt.split()) < ROLEX_MIN_WORDS:
                         notes.append(f"{arm.id} x {task.id}: role-x declines a prompt under "

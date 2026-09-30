@@ -773,11 +773,12 @@ def _emit_event(
     events_path: Path = EVENTS_PATH,
     config: dict | None = None,
     render: str | None = None,
+    output_ignored: str | None = None,
 ) -> None:
     """Append an intake event to events.jsonl (best-effort, never raises).
 
     v0.4.0: includes optional `prompt_sanitized` field when config opts in.
-    v0.7.0: `render` records a non-default block (``quality-bar``).
+    v0.7.0: `render` records a non-default block (``qbar``).
     """
     try:
         events_path.parent.mkdir(parents=True, exist_ok=True)
@@ -795,6 +796,8 @@ def _emit_event(
         }
         if render:
             event["render"] = render
+        if output_ignored:
+            event["output_ignored"] = output_ignored
         cfg = config if config is not None else _load_config()
         sanitized = _sanitize_prompt(prompt, cfg)
         if sanitized is not None:
@@ -1341,7 +1344,7 @@ def _format_intake_context(
     ``config`` (trusted user config; loaded on demand when ``None``) enables
     persona federation (F3′): persona-scoped entities resolve from the per-user
     store instead of the workspace, when active for this workspace.
-    ``quality_bar_only`` (``ROLE_X_MODE=quality-bar``) keeps the header, lens,
+    ``quality_bar_only`` (``ROLE_X_OUTPUT=qbar``) keeps the header, lens,
     mode, quality bar and closing line, and drops everything else.
     """
     cfg = config if config is not None else _load_config()
@@ -1568,6 +1571,8 @@ def cmd_intake(args: argparse.Namespace) -> int:
             except AttributeError:
                 prompt = ""  # valid JSON that is not an object: nothing to route
 
+    if not isinstance(prompt, str):
+        prompt = ""  # a payload whose prompt is not a string has nothing to route
     output = _intake_output()
     if output in ("reflex", "shadow"):
         # Its own carve-out: only an empty prompt. "Merge 1857" is two words and
@@ -1594,16 +1599,23 @@ def cmd_intake(args: argparse.Namespace) -> int:
     # v0.4.1: attach authoring nudge for _meta-only domain-rich prompts
     selection["authoring_nudge"] = _build_authoring_nudge(prompt, selection)
     quality_bar_only = output == "qbar"
+    raw_output = _output_raw()
     _emit_event(session_id, prompt, selection, config=config,
-                render="qbar" if quality_bar_only else None)
+                render="qbar" if quality_bar_only else None,
+                # a value that is not one of OUTPUTS falls back to legacy; say so
+                output_ignored=raw_output[:32] if raw_output and raw_output not in OUTPUTS else None)
     print(_format_intake_context(selection, workspace=workspace, config=config,
                                  quality_bar_only=quality_bar_only))
     return 0
 
 
-def _intake_output() -> str:
+def _output_raw() -> str:
     # Unset or empty ROLE_X_OUTPUT falls through to the alias.
-    raw = (os.environ.get(OUTPUT_ENV) or os.environ.get(OUTPUT_ENV_ALIAS) or "").strip().lower()
+    return (os.environ.get(OUTPUT_ENV) or os.environ.get(OUTPUT_ENV_ALIAS) or "").strip().lower()
+
+
+def _intake_output() -> str:
+    raw = _output_raw()
     return raw if raw in OUTPUTS else OUTPUT_DEFAULT
 
 
@@ -1641,7 +1653,7 @@ def _intake_reflex(prompt: str | None, session_id: str, workspace_arg: str | Non
             cwd = Path(workspace_arg).resolve()
         else:
             cwd = _find_workspace_root()
-        text, meta = _load_reflex_router().run(prompt, cwd, session_id)
+        text, meta = _load_reflex_router().run(prompt, cwd, session_id, count=not shadow)
     except Exception as exc:  # noqa: BLE001 — a hook error must mean no output
         text, meta = "", {"error": type(exc).__name__}
     if shadow:
@@ -2197,62 +2209,94 @@ def _eval_cases(path: Path) -> list[tuple[str, bool]]:
             + [(p, False) for p in doc.get("should_not_trigger") or [] if isinstance(p, str)])
 
 
+HELDOUT_ROUTING_REL = Path("evals") / "reflex-routing-heldout.json"
+#: Spec §5.5 M3: an entry routes only at held-out recall >= 0.60 with <= 0.20 false fires.
+M3_MIN_RECALL = 0.60
+M3_MAX_FALSE_FIRE = 0.20
+
+
+def _prompt_side_fires(router, catalog, key: str, prompt: str) -> bool:
+    """M3 scores the classifier, not the state: a catalog entry fires when any of
+    its clauses that asks the prompt anything matches it, whatever its state gate;
+    a route name (``change_work``) fires when one of its regexes matches."""
+    text = router.normalize_prompt(prompt)
+    if key in catalog.routes:
+        return any(p.search(text) for p in catalog.routes[key])
+    entry = next((r for r in catalog.reflexes if r.id == key), None)
+    return entry is not None and any(c.has_prompt and c.prompt_matches(text) for c in entry.clauses)
+
+
+def _score(router, catalog, key: str, cases: list[tuple[str, bool]]) -> dict:
+    hit = miss = false_fire = clean = 0
+    missed: list[str] = []
+    fired_near: list[str] = []
+    for prompt, want in cases:
+        got = _prompt_side_fires(router, catalog, key, prompt)
+        if want and got:
+            hit += 1
+        elif want:
+            miss += 1
+            missed.append(prompt[:80])
+        elif got:
+            false_fire += 1
+            fired_near.append(prompt[:80])
+        else:
+            clean += 1
+    recall = round(hit / (hit + miss), 2) if hit + miss else None
+    ff = round(false_fire / (false_fire + clean), 2) if false_fire + clean else None
+    return {"id": key, "should_route": hit + miss, "recall": recall, "near_miss": false_fire + clean,
+            "false_fire": ff, "passes_m3": recall is not None and recall >= M3_MIN_RECALL
+            and (ff or 0) <= M3_MAX_FALSE_FIRE, "missed": missed, "fired_on_near_miss": fired_near}
+
+
 def cmd_reflexes(args: argparse.Namespace) -> int:
-    """``role-x reflexes route``: the router offline, on one prompt or on every
-    skill's trigger-eval set (spec §5.4 M3). ``--evals`` routes with EMPTY state (no
-    git, no board), so it measures prompt routing alone, and logs nothing."""
+    """``role-x reflexes route``: the router offline. ``--prompt`` shows one prompt's
+    block. ``--evals`` scores each skill entry on its skill's evals/prompts.json
+    (in-sample: the phrases were copied from the same descriptions). ``--heldout``
+    scores every id in the sealed held-out file (spec §5.5 M3). Neither logs."""
     router = _load_reflex_router()
     catalog = router.load_catalog(Path(args.catalog) if args.catalog else None)
-    if not args.evals:
+    root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[4]
+    if not (args.evals or args.heldout):
         cwd = Path(args.cwd).resolve() if args.cwd else Path.cwd()
-        text, meta = router.run(args.prompt or "", cwd, "offline", catalog=catalog)
+        text, meta = router.run(args.prompt or "", cwd, "offline", catalog=catalog, count=False)
         print(json.dumps(meta, indent=2) if args.json else (text or "(no reflex applies)"))
         return 0
-    root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[4]
-    rows, tp, fn, fp, tn = [], 0, 0, 0, 0
-    for r in catalog.reflexes:
-        if not r.routing or not r.skill:
-            continue
-        path = root / r.routing
-        if not path.is_file():
-            rows.append({"skill": r.skill, "missing": str(r.routing)})
-            continue
-        hit = miss = false_fire = clean = 0
-        misses: list[str] = []
-        for prompt, want in _eval_cases(path):
-            state = router.State(cwd=root, ctx_loader=lambda: None)
-            state._git = router.GitState()  # empty state: routing alone
-            _, shown = router.render(router.route(prompt, state, catalog), catalog.max_lines,
-                                     catalog.max_chars)
-            got = r.id in {f.reflex.id for f in shown}
-            if want and got:
-                hit += 1
-            elif want:
-                miss += 1
-                misses.append(prompt[:80])
-            elif got:
-                false_fire += 1
-            else:
-                clean += 1
-        tp, fn, fp, tn = tp + hit, fn + miss, fp + false_fire, tn + clean
-        rows.append({"skill": r.skill, "id": r.id, "should_trigger": hit + miss, "recall":
-                     round(hit / (hit + miss), 2) if hit + miss else None, "near_miss": false_fire + clean,
-                     "false_fire": round(false_fire / (false_fire + clean), 2) if false_fire + clean else None,
-                     "missed": misses})
-    suite = {"should_trigger": tp + fn, "recall": round(tp / (tp + fn), 2) if tp + fn else None,
-             "near_miss": fp + tn, "false_fire": round(fp / (fp + tn), 2) if fp + tn else None}
+    rows = []
+    if args.heldout:
+        path = Path(args.heldout_file) if args.heldout_file else Path(__file__).resolve().parents[1] / HELDOUT_ROUTING_REL
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        for key, c in doc["cases"].items():
+            cases = [(p, True) for p in c.get("positive", [])] + [(p, False) for p in c.get("near_miss", [])]
+            rows.append(_score(router, catalog, key, cases))
+    else:
+        for r in catalog.reflexes:
+            if r.routing and r.skill:
+                path = root / r.routing
+                if path.is_file():
+                    rows.append({**_score(router, catalog, r.id, _eval_cases(path)), "skill": r.skill})
+                else:
+                    rows.append({"id": r.id, "skill": r.skill, "missing": str(r.routing)})
+    scored = [r for r in rows if "missing" not in r]
+    tp = sum(round((r["recall"] or 0) * r["should_route"]) for r in scored)
+    npos = sum(r["should_route"] for r in scored)
+    fp = sum(round((r["false_fire"] or 0) * r["near_miss"]) for r in scored)
+    nneg = sum(r["near_miss"] for r in scored)
+    suite = {"should_route": npos, "recall": round(tp / npos, 2) if npos else None, "near_miss": nneg,
+             "false_fire": round(fp / nneg, 2) if nneg else None,
+             "ids_passing_m3": sum(r["passes_m3"] for r in scored), "ids": len(scored)}
     if args.json:
-        print(json.dumps({"suite": suite, "skills": rows}, indent=2))
+        print(json.dumps({"suite": suite, "ids": rows}, indent=2))
         return 0
-    print("| skill | should-trigger | recall | near-miss | false fire |\n|---|---|---|---|---|")
+    print("| id | should-route | recall | near-miss | false fire | M3 |\n|---|---|---|---|---|---|")
     for row in rows:
         if "missing" in row:
-            print(f"| {row['skill']} | eval set missing: {row['missing']} | | | |")
+            print(f"| {row['id']} | eval set missing: {row['missing']} | | | | |")
             continue
-        print(f"| {row['skill']} | {row['should_trigger']} | {row['recall']} | "
-              f"{row['near_miss']} | {row['false_fire']} |")
-    print(f"| **suite** | {suite['should_trigger']} | {suite['recall']} | {suite['near_miss']} | "
-          f"{suite['false_fire']} |")
+        print(f"| {row['id']} | {row['should_route']} | {row['recall']} | {row['near_miss']} | "
+              f"{row['false_fire']} | {'pass' if row['passes_m3'] else 'fail'} |")
+    print(f"| **suite** | {suite['should_route']} | {suite['recall']} | {suite['near_miss']} | "
+          f"{suite['false_fire']} | {suite['ids_passing_m3']}/{suite['ids']} |")
     return 0
 
 
@@ -2305,7 +2349,10 @@ def build_parser() -> argparse.ArgumentParser:
     p_route.add_argument("--prompt", default=None, help="the prompt to route")
     p_route.add_argument("--cwd", default=None, help="where state is read (default: cwd)")
     p_route.add_argument("--evals", action="store_true",
-                         help="route every should-trigger and near-miss case of each skill's eval set")
+                         help="score each skill entry on its skill's evals/prompts.json (in-sample)")
+    p_route.add_argument("--heldout", action="store_true",
+                         help="score every id on the sealed held-out routing cases (spec M3)")
+    p_route.add_argument("--heldout-file", default=None, help="held-out cases (default: evals/reflex-routing-heldout.json)")
     p_route.add_argument("--root", default=None, help="repo root holding skills/ (default: this repo)")
     p_route.add_argument("--catalog", default=None, help="catalog path (default: references/reflexes.yaml)")
     p_route.add_argument("--json", action="store_true")

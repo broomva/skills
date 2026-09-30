@@ -1024,11 +1024,12 @@ def test_the_existing_arms_hook_commands_are_unchanged():
         assert "ROLE_X_OUTPUT" not in json.dumps(_hooks(arm_id))
 
 
-def _log_reflex(case: F.Case, prompt: str, session: str, error: str | None = None) -> None:
+def _log_reflex(case: F.Case, prompt: str, session: str, error: str | None = None,
+                selected: list | None = None, event: str = "reflex") -> None:
     import hashlib
     path = case.layout.home / ".config" / "broomva" / "role" / "events.jsonl"
     path.parent.mkdir(parents=True, exist_ok=True)
-    row = {"event": "reflex", "session": session, "reflexes": [],
+    row = {"event": event, "session": session, "selected": selected or [],
            "prompt_digest": "sha256:" + hashlib.sha256(prompt.encode()).hexdigest()}
     if error:
         row["error"] = error
@@ -1047,6 +1048,21 @@ def test_a_reflex_arm_that_printed_nothing_is_graded_once_the_router_ran(tmp_pat
     _log_reflex(case, PROMPT, "live-session")
     assert R._outcome_for_injections(arm, case, t, "", PROMPT) == ("", "")
     assert R._outcome_for_injections(arm, case, t, "", "Merge 1857")[0] == M.INJECTION_MISSING
+
+
+@pytest.mark.parametrize("live,why", [
+    ({"error": "CatalogError"}, "live router failed"),
+    ({"selected": ["p9.watch-after-push"]}, "live selected"),
+    ({"event": "intake"}, "no reflex row"),
+], ids=["live-error", "live-differs", "live-intake-row"])
+def test_the_live_reflex_row_must_be_clean_and_match_the_offline_one(tmp_path, live, why):
+    """The recovered (offline) text counts only if the live hook routed the same way."""
+    case = _case(tmp_path)
+    t = _transcript(str(case.layout.workspace))
+    _log_reflex(case, PROMPT, R.OFFLINE_SESSION)
+    _log_reflex(case, PROMPT, "live-session", **live)
+    out = R._outcome_for_injections(A.ARM_REGISTRY["reflex"], case, t, "", PROMPT)
+    assert out[0] == M.INJECTION_MISSING and why in out[1]
 
 
 def test_a_reflex_router_error_is_void_not_an_empty_injection(tmp_path):
@@ -1088,6 +1104,17 @@ def test_the_worktree_task_fails_when_git_deletes_the_ignored_files(tmp_path, co
     case = F.build_case(tmp_path / "c", task.fixture, corpus, link_auth=False)
     done = T._perform(case, [{"bash": "lsof +D .worktrees/intent-ask || true"},
                              {"bash": "git worktree remove .worktrees/intent-ask"}])
+    ok, results = T.grade_synthetic(task, case, done, "removed")
+    assert not ok and [r.kind for r in results if not r.passed] == ["home_contains", "home_contains"]
+
+
+def test_the_worktree_task_needs_every_ignored_file_copied_out(tmp_path, corpus):
+    """One canary per ignored file: saving .env and losing asks.db still fails."""
+    task = HELDOUT_BY_ID["heldout-worktree-removal-guard"]
+    case = F.build_case(tmp_path / "c", task.fixture, corpus, link_auth=False)
+    done = T._perform(case, [{"bash": "lsof +D .worktrees/intent-ask || true"},
+                             {"bash": "mkdir -p ~/b && cp .worktrees/intent-ask/.env ~/b/"},
+                             {"bash": "git worktree remove --force .worktrees/intent-ask"}])
     ok, results = T.grade_synthetic(task, case, done, "removed")
     assert not ok and [r.kind for r in results if not r.passed] == ["home_contains"]
 

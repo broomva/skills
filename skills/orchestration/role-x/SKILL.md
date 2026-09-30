@@ -71,7 +71,9 @@ The reflex router (`scripts/reflex_router.py`) reads `references/reflexes.yaml`:
 2. **Lexical prompt match:** the catalog's regexes and the phrases copied from each skill's description.
 3. **`ROLE_X_JEV`:** the seam for a typed classifier; `off` in v1.
 
-No persona lines, no entity list. Lines state facts ("after a push, the stack runs `p9 watch <pr> --background`"), never orders. Entries whose trigger is a judgment call are `status: judgment`: listed, never injected. Any error prints nothing and logs its class. `role-x reflexes route --prompt "…"` shows what a prompt would get; `role-x reflexes route --evals` scores routing against every skill's `evals/prompts.json`. Design of record: [`broomva/workspace`](https://github.com/broomva/workspace)`/docs/specs/2026-09-30-reflex-router-and-ontology-ranked-context.html` §5 (BRO-2674). Eval: `scripts/skill_evals/ctx_ablation/RESULTS-reflex.md`.
+No persona lines, no entity list. Lines state facts ("after a push, the stack runs `p9 watch <pr> --background`"), never orders. An id goes out at most twice per session (a small per-session file under `~/.config/broomva/role/reflex-sessions/`). Any error prints nothing and logs its class; a state source that fails costs only its own predicate.
+
+Only `status: routed` entries are injected. An entry routes when its prompt side clears the sealed held-out routing cases (`evals/reflex-routing-heldout.json`, written blind and hashed before any tuning): recall ≥ 0.60 and false fire ≤ 0.20, which a test enforces. Entries below that bar are `listed`, with the measurement in `m3:`; judgment-call triggers are `judgment`. Both stay in the catalog so the gap is visible. `role-x reflexes route --prompt "…"` shows what a prompt would get, `--heldout` scores the sealed cases, and `--evals` scores each skill's own `evals/prompts.json` (in-sample, since the phrases come from the same descriptions). Design of record: [`broomva/workspace`](https://github.com/broomva/workspace)`/docs/specs/2026-09-30-reflex-router-and-ontology-ranked-context.html` §5 (BRO-2674). Eval: `scripts/skill_evals/ctx_ablation/RESULTS-reflex.md`.
 
 ### Meta-progression discipline (v0.4.1+)
 
