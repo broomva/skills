@@ -387,6 +387,9 @@ python3 $CA run --out RUN --calibration RUN/calibration.json  # every arm, retai
 python3 $CA report --out RUN                                  # re-render the tables
 ```
 
+The first run, with its calibration, tables and findings, is in
+[`ctx_ablation/PILOT.md`](ctx_ablation/PILOT.md).
+
 `RUN` is a directory outside the repo. It gets a read-only snapshot of the
 knowledge graph and memory (`corpus/`, with a sha256 manifest), every transcript,
 `results.jsonl` (one line per trial, appended as it finishes, so an interrupted run
@@ -509,9 +512,10 @@ right-source-retrieved metric.
 
 ### Which model
 
-`haiku` by default, for two reasons. First, cost: the pilot is ~250 trials, and
-every one draws on the subscription's five-hour window, which the whole fleet
-shares (it stood at 0.89 when the pilot started). Second, haiku is the skill-evals
+`haiku` by default, for two reasons. First, cost: the pilot was 228 trials (48 to
+calibrate, 180 to run), and every one draws on the subscription's five-hour window,
+which the whole fleet shares (it reached its limit the evening the pilot ran).
+Measured, a haiku trial costs ~$0.047 notional. Second, haiku is the skill-evals
 default, so the numbers sit beside the trigger evals. But production sessions run
 larger models, so a haiku lift is evidence about haiku. The harness takes
 `--model`, and re-running the arms that moved on sonnet is the obvious next step.

@@ -2,7 +2,7 @@
 
 ## Context evals, layer 2: the causal context-ablation harness
 
-Status: pilot (branch `feat/context-ablation-evals`). Layer 1, the observational
+Status: pilot done; PR under review (branch `feat/context-ablation-evals`). Layer 1, the observational
 context ledger in bstack's leverage sensor, is a separate session's work. The owner
 decided on 2026-09-29 to build both layers.
 
@@ -35,10 +35,14 @@ the right retrieval reflexes, and how far it compresses.
    exemplar, and passes its informed exemplar.
 3. [x] Preflight on the real corpus. The live canary shows each of the six arms
    sees exactly its own injections.
-4. [ ] Calibrate 16 candidates × 3 trials in the bare arm.
-5. [ ] Pilot: 10 retained tasks × 6 arms × 3 trials, with the results table in the
-   PR.
-6. [ ] Scale to 30 tasks, only if the pilot is healthy.
+4. [x] Calibrate 16 candidates × 3 trials in the bare arm: 13 retained, 3
+   vacuous (`tasks/pilot.calibration.json`).
+5. [x] Pilot: 10 retained tasks × 6 arms × 3 trials, 180 trials, 0 void
+   (`ctx_ablation/PILOT.md`).
+6. [ ] Scale to 30 tasks: not run. The owner held this session to the pilot
+   because of the shared subscription limit, and the pilot is floor-limited on
+   haiku. The next measurement is sonnet on the 13 retained tasks; PILOT.md has
+   the estimate.
 
 ### Verification
 
