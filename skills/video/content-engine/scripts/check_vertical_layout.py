@@ -113,7 +113,7 @@ class Text:
     stroke: bool | None = None       # declared (spec mode)
     background: str | None = None    # declared (spec mode): busy | calm
     halo_share: float | None = None  # measured (video/image mode)
-    region: str = ""                 # title | caption | mid | other
+    region: str = ""                 # title | caption | other
 
 
 @dataclass
@@ -606,7 +606,10 @@ def probe(path: str) -> dict:
               "-of", "json", path], text=True)
     if p.returncode != 0:
         raise ToolError(f"ffprobe failed on {path}: {p.stderr.strip()}")
-    data = json.loads(p.stdout)
+    try:
+        data = json.loads(p.stdout)
+    except json.JSONDecodeError as exc:
+        raise ToolError(f"ffprobe returned unreadable output for {path}") from exc
     streams = data.get("streams") or []
     if not streams:
         raise ToolError(f"no video stream in {path}")
@@ -771,7 +774,10 @@ def _is_words(text: str) -> bool:
 def _cache_dir() -> Path:
     base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
     d = Path(base) / "content-engine"
-    d.mkdir(parents=True, exist_ok=True)
+    try:
+        d.mkdir(parents=True, exist_ok=True)
+    except OSError as exc:
+        raise ToolError(f"cannot create the cache dir {d}: {exc}") from exc
     return d
 
 
@@ -802,7 +808,10 @@ def detect_vision(binary: Path, frames: list[Frame]) -> None:
     for line in p.stdout.splitlines():
         if not line.startswith("{"):
             continue
-        d = json.loads(line)
+        try:
+            d = json.loads(line)
+        except json.JSONDecodeError as exc:
+            raise ToolError(f"vision_probe printed an unreadable line: {line[:120]!r}") from exc
         f = by_path.get(d.get("image"))
         if f is None:
             continue
@@ -1008,12 +1017,26 @@ def render_table(meta: dict, results: list[Result], v: str, counts: dict) -> str
     return "\n".join(lines)
 
 
+def sha256_of(path: Path) -> str:
+    h = hashlib.sha256()
+    try:
+        with open(path, "rb") as f:
+            for chunk in iter(lambda: f.read(1 << 20), b""):
+                h.update(chunk)
+    except OSError as exc:
+        raise ToolError(f"cannot read {path} to fingerprint it: {exc}") from exc
+    return h.hexdigest()
+
+
 def emit(args, meta: dict, results: list[Result]) -> int:
     v, counts = verdict(results, args.strict)
     payload = {**meta, "verdict": v, "counts": counts,
                "results": [r.__dict__ for r in results]}
     if args.report:
-        Path(args.report).write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+        try:
+            Path(args.report).write_text(json.dumps(payload, indent=2, ensure_ascii=False) + "\n")
+        except OSError as exc:
+            raise ToolError(f"cannot write the report {args.report}: {exc}") from exc
     print(json.dumps(payload, indent=2, ensure_ascii=False) if args.json else render_table(meta, results, v, counts))
     return 1 if v == "FAIL" else 0
 
@@ -1058,7 +1081,11 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
         args.report = _default_out(inputs[0], "layout-report.json")
     meta = {"input": inputs[0] if is_video else inputs, "mode": "video" if is_video else "image",
             "profile": pname, "detector": detector, "canvas": [W, H], "samples": len(frames),
-            "declared": sorted(expect), "report": args.report, "guide": guide}
+            "declared": sorted(expect), "report": args.report, "guide": guide,
+            # Which bytes this verdict is about: a report beside a re-rendered file
+            # describes the old render, and the sha says so.
+            "input_sha256": {i: sha256_of(Path(i)) for i in inputs},
+            "contract_sha256": sha256_of(Path(args.layout or DEFAULT_LAYOUT))}
     if detector_note:
         meta["detector_note"] = detector_note
     return emit(args, meta, results)
@@ -1072,7 +1099,9 @@ def cmd_spec(args, layout: dict, pname: str, profile: dict) -> int:
     W, H, frames = frames_from_spec(spec)
     results = evaluate(W, H, frames, profile, layout["classification"], layout["canvas"])
     meta = {"input": args.input, "mode": "spec", "profile": pname, "detector": "declared",
-            "canvas": [W, H], "samples": len(frames), "report": args.report}
+            "canvas": [W, H], "samples": len(frames), "report": args.report,
+            "input_sha256": {args.input: sha256_of(Path(args.input))},
+            "contract_sha256": sha256_of(Path(args.layout or DEFAULT_LAYOUT))}
     return emit(args, meta, results)
 
 
@@ -1163,6 +1192,8 @@ def main(argv: list[str] | None = None) -> int:
                 W, H = (int(v) for v in args.canvas.lower().split("x"))
             except ValueError as exc:
                 raise ToolError(f"--canvas wants WIDTHxHEIGHT, got {args.canvas!r}") from exc
+            if W < 1 or H < 1:
+                raise ToolError(f"--canvas needs positive sizes, got {args.canvas!r}")
             print(zones_table(profile, W, H))
             return 0
         return cmd_guide(args, layout, pname, profile)

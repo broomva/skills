@@ -1,14 +1,14 @@
 # Vertical layout contract (9:16)
 
-Every 9:16 asset content-engine produces (Reels, TikTok, Shorts, Stories) is checked
-against this contract before it is distributed. The numbers live in
+Every 9:16 asset content-engine produces (Reels, TikTok, Shorts, Stories) must be
+checked against this contract before it is distributed. The numbers live in
 `layout/vertical-9x16.json`. The Remotion overlays read them from there, and
 `scripts/check_vertical_layout.py` enforces them. This page explains the numbers and
 the checks. If this page and the JSON disagree, the JSON is right. Two tests guard
-against drift. `test_doc_embeds_the_generated_zone_tables` keeps the zone tables below
-identical to the checker's output. `test_skill_docs_quote_only_contract_pixels` fails
-when a pixel value in the gate sections of the skill docs cannot be derived from the
-JSON.
+against drift. `test_doc_embeds_the_generated_zone_tables` keeps each zone table below
+identical, row for row, to the checker's output. `test_skill_docs_quote_only_contract_pixels`
+fails when a pixel value in the gate sections of the skill docs cannot be derived from
+the JSON. It checks the value, not which zone the value belongs to.
 
 ## Source
 
@@ -38,7 +38,8 @@ Vision on every sample (see `scripts/vision_probe.swift`):
   why title-band text is exempt from VL2.
 
 `tests/test_check_vertical_layout.py::test_contract_reproduces_the_measured_reel_pixels`
-pins these pixels. Changing a fraction in the JSON is a re-measurement, not a tweak.
+pins the measured zone edges: the safe zone, the rail and the bottom band. Changing a
+fraction in the JSON is a re-measurement, not a tweak.
 
 ## Zones
 
@@ -79,7 +80,6 @@ Output of `python3 scripts/check_vertical_layout.py --profile meta-ads-9x16 zone
 | Zone (1080x1920) | x px | y px | x % | y % |
 |---|---|---|---|---|
 | Safe zone | 65-1015 | 269-1248 | 6.0-94.0 | 14.0-65.0 |
-| Eye-line band | 0-1080 | 634-864 | 0.0-100.0 | 33.0-45.0 |
 
 ## Rules
 
@@ -89,7 +89,7 @@ Output of `python3 scripts/check_vertical_layout.py --profile meta-ads-9x16 zone
 | VL2 | Overlay text stays inside the safe zone. Title-band text is exempt. | text boxes | Any overlay box leaves the zone. |
 | VL3 | No overlay text and no face touches an avoid zone | text + face boxes | Any overlay text box overlapping the action rail or the bottom band FAILs, and so does a shot whose median face overlaps it or whose face overlaps it in more than 34% of samples. Small (scene-sized) text there WARNs, because a handle or a "link in bio" that small looks the same as text inside the footage. |
 | VL4 | Top text (centre above 25% of height) sits in the title hook band | text boxes | A top box leaves the band. With `--expect-title`, finding no title also fails. |
-| VL5 | Captions sit in the caption band, centred | text boxes | Text centred in the band's rows must fit inside the band, with the median centre within ±54 px. With `--expect-captions`, an empty band FAILs. That catches captions moved wholly out of the band (to the top, across the eyes) and captions OCR cannot read. It does not catch a caption set that is only partly out of the band. |
+| VL5 | Captions sit in the caption band, centred | text boxes | Text centred in the band's rows must fit inside the band, with the median centre within ±54 px. With `--expect-captions`, an empty band FAILs. That catches captions moved wholly out of the band (to the top, across the eyes) and captions OCR can read in none of the samples. It does not catch captions only partly out of the band, captions readable in only some samples, or captions elsewhere while other text sits in the band. |
 | VL6 | Eyes sit in the eye-line band (33-45%) | face landmarks | For any shot, the median eye line is outside the band, or more than 34% of its samples are. |
 | VL7 | The eye line holds across punch-ins | face landmarks | WARN, never FAIL, when the median eye line moves more than 3% of the height (58 px) across a face-scale change of 12% or more that persists. Face geometry cannot tell a punch-in from a cut between two framings (two centred speakers look like a punch-in), so the reader decides: a punch-in is scaled about the eye line; a cut is fine. |
 | VL8 | The face stays inside the safe zone | face boxes | A shot's median face box leaves the zone, or its face does in more than 34% of samples. |
@@ -121,16 +121,22 @@ So the gate no longer guesses. A pipeline that burned captions in passes
 `--expect-captions`, and the gate then requires text in the caption band.
 
 **What that catches:**
-- captions moved wholly somewhere else (at the top, across the eyes);
-- captions OCR cannot read.
+- captions moved wholly somewhere else (at the top, across the eyes), with no other text
+  in the band;
+- captions OCR can read in none of the samples.
 
 **What it does not catch:**
 - A caption set that is only partly out of the band, for example some words across the
   eyes and some in the band. Measurement cannot tell a stray caption from a label.
+- Captions moved elsewhere while other text (a CTA, a label) sits in the band: that text
+  satisfies the expectation.
+- Captions readable in only some samples. VL5 counts the readable ones, and VL9 can only
+  measure the ones it read, so white unstroked captions over partly busy footage can
+  PASS both.
 - A caption outside the band when the flag is not passed. It is plain overlay text,
   held to VL2 and VL3 only.
 
-Look at the guide sheet for both. The report's `declared` field, and the `declared:`
+Look at the guide sheet for all four. The report's `declared` field, and the `declared:`
 line under the table header, record which flags were passed, so a verdict produced
 without them is visible as such. `--expect-title` does the same for the title band.
 
@@ -160,8 +166,9 @@ so `tail -1` reads it; the `report:` and `guide:` paths print just above it. Wit
 
 For a raw generated clip, before any text is added, the rules that matter are VL1 and
 VL6-VL8. VL2-VL5 and VL9 then describe text inside the footage (signage, a label), not
-an overlay. A FAIL there means text in the footage sits where overlays would go.
-Reframe or regenerate the clip if that text matters.
+an overlay. A FAIL there means text in the footage sits where overlays would go: reframe
+or regenerate the clip, or record why it does not matter next to the report (see the
+FAIL policy under "Statuses").
 
 A spec file lists boxes in pixels:
 
@@ -199,7 +206,16 @@ Any of the following exits 2 with the reason, and is never a verdict:
 | UNCHECKED | The detector cannot measure the rule here (tesseract has no face detector) | only with `--strict` |
 
 Exit code 0 means no FAIL, 1 means FAIL, 2 means a usage or tool error (no ffmpeg, no
-detector, unreadable input). An exit of 2 is not a verdict.
+detector, unreadable input, a report that cannot be written). An exit of 2 is not a
+verdict.
+
+**FAIL policy.** A FAIL is fixed and the gate re-run, or it is waived in writing next to
+the report with the reason it does not apply: text inside the footage, a b-roll face, a
+tesseract misread confirmed on the guide sheet. Never distribute on an unexplained FAIL.
+
+The report records `input_sha256` and `contract_sha256`. A report describes the bytes it
+was run on: re-run after any re-render, and compare the sha before relying on a report
+found beside a file.
 
 Read SKIP and UNCHECKED as "not checked", never as "passed". Each UNCHECKED rule has to
 be closed by looking at the guide sheet, and each SKIP has to be one you expected. For
@@ -230,8 +246,8 @@ Known limits, each measured while building this gate:
 - **tesseract reads texture as words and splits stroked words.** On busy footage it
   returned dozens of junk tokens. On the source Reel it read "nd" out of "background"
   and "St" out of "stroke". Single-glyph tokens under 85% confidence are dropped, and
-  caption centring is judged on the median box. Treat any tesseract FAIL as a lead, and
-  confirm it on the guide sheet or with Vision.
+  caption centring is judged on the median box. Confirm a tesseract FAIL on the guide
+  sheet or with Vision before acting on it or waiving it (see the FAIL policy).
 - **VL9 is a proxy.** Calibration on 1080x1920 fixtures, white bold 96 px text over
   pixel noise, Vision:
 
@@ -257,17 +273,29 @@ Known limits, each measured while building this gate:
 - **Position decides roles in a final render.** Text centred in the caption band's rows
   is judged as a caption, and text centred in the top 25% as a title. A lower-third
   name tag, a product label or a sign in the footage that sits in those rows is judged
-  the same way, and may FAIL VL4 or VL5. Keep such text out of those rows, or read the
-  FAIL against the guide sheet.
+  the same way, and may FAIL VL4 or VL5. Keep such text out of those rows, or waive the
+  FAIL with that reason (see the FAIL policy).
 - **The eye line needs a face.** Faceless content (product shots, b-roll) SKIPs VL6-VL8.
   Place key subjects inside the safe zone by eye, using the guide sheet.
+- **Only the largest face is judged.** VL3, VL6 and VL8 follow the largest face in each
+  sample. A second person (a guest, a duet) on the rail is not checked. The largest face
+  is judged at any size, so a small face in b-roll or a full-body shot can FAIL VL6: waive
+  it when the shot is not a talking head.
+- **Short overlays can fall between samples.** Video mode samples 2 frames per second
+  (`--fps`), capped at 120 samples (`--max-frames`; a 3-minute video is sampled at 0.67
+  fps). An overlay on screen for less than the sampling interval may never be seen. Raise
+  `--fps` for short flashes. The guide sheet shows six frames; `guide --frames N` shows
+  more.
+- **meta-ads-9x16 has no avoid zones.** Small text anywhere passes VL3 under it, and with
+  no bands, any overlay text satisfies `--expect-*`.
 
 ## Producing assets that pass
 
 - **Framing (generation prompts):** subject centred, eyes about 38-40% from the top,
   head and shoulders inside the middle 74% of the width, with headroom. Put the
   constraint in the prompt, e.g. "vertical 9:16 medium close-up, subject centred, eyes
-  on the upper-third line, clear space above the head and below the chest for text".
+  about 40% from the top, clear space above the head and below the chest for text". (The
+  upper-third line is at 33%, the edge of the band; aim a little lower.)
   Then run the gate on the raw clip: VL6-VL8 apply even before any text exists.
 - **Punch-ins:** scale about the eye line, not the frame centre. ffmpeg keeps y = 39% fixed with
   `crop=iw/1.2:ih/1.2:(iw-ow)/2:ih*0.39-oh*0.39,scale=1080:1920`. In CSS or Remotion, use

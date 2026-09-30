@@ -91,7 +91,8 @@ Text gets laid over a vertical clip later, and the platform UI covers its edges,
 frame for the layout contract at generation time (`../../references/vertical-layout.md`):
 
 - Put this in the scene prompt: *"vertical 9:16 medium close-up, subject centred, eyes
-  on the upper-third line, clear space above the head and below the chest"*. The eyes
+  about 40% from the top, clear space above the head and below the chest"* (the
+  upper-third line, at 33%, is the band's edge). The eyes
   should land at 33-45% of the height (the source Reel sits at 38-40%). The face should
   stay inside the middle 74% of the width and clear of the lower-right quarter, where
   the like/comment/share rail sits.
@@ -102,7 +103,8 @@ frame for the layout contract at generation time (`../../references/vertical-lay
   `python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video clip.mp4`.
   On macOS (Vision), VL6 (eye line) and VL8 (face in the safe zone) PASS or FAIL,
   VL7 (eye line across punch-ins) PASSes or WARNs, and all three SKIP when no face is
-  found. With tesseract they are UNCHECKED, so read the guide sheet. A FAIL means
+  found; VL6 is UNCHECKED when a face has no eye landmarks. With tesseract they are
+  UNCHECKED, so read the guide sheet. A FAIL means
   regenerate or reframe the clip; it cannot be fixed with a caption.
 
 ## Tool Priority Matrix

@@ -671,12 +671,15 @@ def main():
         # The gate is run by hand, not here: an in-process gate kept deciding which
         # files this run produced and whether that answer was honest, and got it
         # wrong three different ways (PR #250 review). The checker is the contract.
+        # The gate checks whatever file is at the path, so a file left by an earlier run
+        # in a reused --output dir would be checked instead; the report's input_sha256
+        # records which bytes a verdict is about.
+        rendered = output_dir / f"{slug}-rendered.mp4"
         print()
         print("9:16: run the layout gate before distributing (references/vertical-layout.md):")
-        print(f"  python3 {LAYOUT_CHECK} video {final_path}")
-        if args.remotion:
-            print(f"  python3 {LAYOUT_CHECK} video {output_dir / f'{slug}-rendered.mp4'} "
-                  f"--expect-captions --expect-title")
+        for path, flags in ((final_path, ""), (rendered, " --expect-captions --expect-title")):
+            if path.exists() and (path == final_path or args.remotion):
+                print(f"  python3 {LAYOUT_CHECK} video {path}{flags}")
 
 
 if __name__ == "__main__":

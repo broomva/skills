@@ -220,6 +220,7 @@ The top-level Remotion component that reads a CWI document and renders all capti
 ```typescript
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import type { CWIDocument, CaptionEvent, Speaker } from "@opencaptions/types";
+import { useVerticalLayout } from "./layout"; // content-engine remotion/src/layout.ts
 
 type CaptionStyle = "word-by-word" | "narrative" | "minimal";
 
@@ -243,6 +244,10 @@ function CaptionOverlay({
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const currentTime = frame / fps;
+  // Hooks before any early return (Rules of Hooks).
+  // 9:16: the caption band from layout/vertical-9x16.json (see Safe Zones below);
+  // 16:9: the lower third. Never percentage margins of your own on 9:16.
+  const vertical = useVerticalLayout();
 
   // Find active caption events at the current time
   const activeEvents = cwiDocument.captions.filter(
@@ -251,9 +256,6 @@ function CaptionOverlay({
 
   if (activeEvents.length === 0) return null;
 
-  // 9:16: the caption band from layout/vertical-9x16.json (see Safe Zones below);
-  // 16:9: the lower third. Never percentage margins of your own on 9:16.
-  const vertical = useVerticalLayout(); // content-engine remotion/src/layout.ts
   const positionStyle = vertical
     ? { ...vertical.captionBand, justifyContent: "center" }
     : {

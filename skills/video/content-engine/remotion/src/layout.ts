@@ -121,6 +121,15 @@ export function fitFontSize(
   return Math.max(24, Math.min(preferred, estimate));
 }
 
+/**
+ * Width for stroked text that wraps inside `rect`: the stroke and the line-clamp
+ * ellipsis draw past the text box, so leave a margin of twice the stroke per side.
+ * A long title wrapped to the full safe width measured 5-11px past its right edge.
+ */
+export function strokedTextWidth(rect: Rect, strokePx: number): number {
+  return rect.width - 4 * strokePx;
+}
+
 /** Outline style for white overlay text on footage. */
 export function strokeStyle(px: number): React.CSSProperties {
   return {

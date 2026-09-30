@@ -6,7 +6,7 @@ import {
   spring,
   interpolate,
 } from "remotion";
-import { strokeStyle, useVerticalLayout } from "../layout";
+import { strokedTextWidth, strokeStyle, useVerticalLayout } from "../layout";
 
 interface TitleCardProps {
   title: string;
@@ -122,8 +122,13 @@ export const TitleCard: React.FC<TitleCardProps> = ({
           fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
           fontWeight: 700,
           textAlign: "center",
-          maxWidth: vertical ? vertical.safe.width : "80%",
+          maxWidth: vertical ? strokedTextWidth(vertical.upper, vertical.strokePx) : "80%",
           lineHeight: 1.2,
+          // 9:16: three lines at most, so a long title cannot climb into the
+          // title region above the band (check_vertical_layout.py VL4).
+          ...(vertical
+            ? { display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as const, overflow: "hidden" }
+            : {}),
           margin: 0,
           transform: `translateY(${titleTranslateY}px) scale(${titleScale})`,
           textShadow: "0 4px 20px rgba(0,0,0,0.4)",

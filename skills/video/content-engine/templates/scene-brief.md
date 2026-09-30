@@ -155,7 +155,7 @@ the screen. Left hand may be transitioning from keyboard to mouse."}
 **FPS (video only):** {fps -- e.g., "24"}
 
 **9:16 layout (reel only; `references/vertical-layout.md`):**
-- Framing: {framing -- e.g., "medium close-up, subject centred, eyes on the upper-third line (~38% from top)"}
+- Framing: {framing -- e.g., "medium close-up, subject centred, eyes about 38-40% from the top"}
 - Title hook (top band, y 121-436): {title_hook -- e.g., "Why your captions get covered", or "none"}
 - Captions (caption band x 220-860, centred on y 1376, white + black stroke): {captions -- "word-by-word" | "none"}
 - Punch-ins: {punch_ins -- e.g., "1.2x at 0:08, scaled about the eye line"}

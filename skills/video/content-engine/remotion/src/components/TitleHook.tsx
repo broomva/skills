@@ -1,6 +1,6 @@
 import React from "react";
 import { AbsoluteFill, interpolate, spring, useCurrentFrame, useVideoConfig } from "remotion";
-import { strokeStyle, useVerticalLayout } from "../layout";
+import { strokedTextWidth, strokeStyle, useVerticalLayout } from "../layout";
 
 /**
  * TitleHook — the persistent hook line in the title band of a 9:16 video
@@ -38,7 +38,7 @@ export const TitleHook: React.FC<{ title: string }> = ({ title }) => {
             fontWeight: 800,
             fontSize: 64,
             lineHeight: 1.12,
-            maxWidth: vertical.safe.width,
+            maxWidth: strokedTextWidth(vertical.titleBand, vertical.strokePx),
             display: "-webkit-box",
             WebkitLineClamp: 2,
             WebkitBoxOrient: "vertical",

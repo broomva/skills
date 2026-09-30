@@ -267,7 +267,7 @@ because reading the right numbers does not guarantee that the pixels land inside
 | VL1 | Canvas 9:16, at least 1080 wide |
 | VL2 | Overlay text inside the safe zone x 143-938, y 277-1643 (title band excepted) |
 | VL3 | No overlay text or face on the action rail (x ≥ 872, y ≥ 922) or the bottom band (y ≥ 1686); small text there WARNs; a face counts if it is there in over a third of a shot |
-| VL4 | Title hook in the top band, y 121-436, centred near y 278 |
+| VL4 | Title hook inside the top band, y 121-436 (the source Reel's title centres near y 278) |
 | VL5 | Captions in the band x 220-860, y 1288-1463, centred; with `--expect-captions`, an empty band FAILs (captions moved wholly elsewhere, or unreadable) |
 | VL6 | Eyes at 33-45% of the height (source Reel: 38-40%) |
 | VL7 | Eye line moves at most 58px across a punch-in; WARN only (a cut to another framing looks the same to the detector) |
@@ -282,7 +282,8 @@ python3 scripts/check_vertical_layout.py video final.mp4 --expect-captions --exp
 # raw generated clip, before any text: read VL1 and VL6-VL8 (text rules describe
 # text inside the footage, not overlays)
 python3 scripts/check_vertical_layout.py video clip.mp4
-# overlay geometry you are about to draw (watermarks, CTAs: small text OCR skips)
+# overlay geometry you are about to draw (watermarks, CTAs: small text that video
+# mode classes as scene text)
 python3 scripts/check_vertical_layout.py spec overlays.json
 # paid placements: Meta's 14% top / 35% bottom / 6% sides. ContentEngineReel draws the
 # organic layout and FAILS this profile; place ad captions above 65% by hand
@@ -295,14 +296,17 @@ text is a caption (see "Why roles are declared" in the reference).
 Outside this skill's root, the script is at
 `~/.claude/skills/content-engine/scripts/check_vertical_layout.py`.
 
-`compose-video.py --aspect-ratio 9:16` renders `ContentEngineReel` and prints the
-gate commands to run on what it wrote. It does not gate in-process. Run them before
-distributing.
+`compose-video.py --aspect-ratio 9:16` (with `--remotion`, it renders `ContentEngineReel`)
+prints the gate commands for the files it wrote. It does not gate in-process. Run them
+before distributing. The report records `input_sha256`, so a report is tied to the
+bytes it checked; re-run the gate after any re-render.
 
 **Pass criteria.** The checker exits 0 and the last line of its table output reads
 `VERDICT: PASS`. Then:
 
-1. Every **FAIL** is fixed and the gate re-run. Never distribute on a FAIL.
+1. Every **FAIL** is fixed and the gate re-run, or waived in writing next to the report
+   with the reason it does not apply (text inside the footage, a b-roll face). Never
+   distribute on an unexplained FAIL.
 2. Every **UNCHECKED** rule is closed by looking at `<video>.layout-guide.png` (zones
    painted on six frames). tesseract has no face detector, so VL6-VL8 are UNCHECKED off
    macOS; use `--strict` where that must fail.

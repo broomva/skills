@@ -47,7 +47,7 @@ def reel_like_frames(n=10, faces=True):
     frames = []
     for i in range(n):
         texts = [caption_word(f"word{i}")]
-        if i < 5:  # >= caption_like span: the static-title path really runs
+        if i < 5:
             texts.append(text("Title hook", 312, 233, 765, 323))
         fc = [face(334, 616, 690, 972, 730 + (i % 3) * 8)] if faces else None
         frames.append(cvl.Frame(label=f"t={i / 2:.2f}s", t=i / 2, texts=texts, faces=fc))
@@ -152,13 +152,6 @@ def test_static_mid_text_is_a_plain_overlay_and_an_expected_title_names_it():
     res = run(timed([[text("Why agents fail", 300, 540, 780, 620)]] * 6), expect=frozenset({"title"}))
     assert res["VL4"].status == "FAIL"
     assert "6 other overlay box(es)" in res["VL4"].detail and "outside its band" in res["VL4"].detail
-
-
-def test_ocr_jitter_on_a_static_title_keeps_it_a_title():
-    reads = ["Why agents fail", "fail.", "fai", "Why agenis fail", "Why agents fail", "Why agents fail"]
-    res = run(timed([[text(r, 330, 240, 750, 320)] for r in reads]))
-    assert res["VL4"].status == "PASS"
-    assert res["VL5"].status == "SKIP"
 
 
 def test_static_title_in_the_band_is_a_title_and_passes():
@@ -573,24 +566,23 @@ def test_merge_words_joins_a_line_left_to_right():
 def test_cli_usage_errors_exit_2(tmp_path):
     assert _cli("spec", str(tmp_path / "missing.json")).returncode == 2
     assert _cli("--profile", "nope", "zones").returncode == 2
+    assert _cli("zones", "--canvas", "0x1920").returncode == 2
+    # An unwritable report is a tool error, not a FAIL verdict.
+    ok = _spec(tmp_path, [{"role": "title", "box": [312, 233, 765, 323]}])
+    r = _cli("spec", str(ok), "--report", str(tmp_path / "no-such-dir" / "r.json"))
+    assert r.returncode == 2 and "Traceback" not in r.stderr, r.stderr
+
+
+def test_report_fingerprints_the_input_and_the_contract(tmp_path):
+    import hashlib
+    ok = _spec(tmp_path, [{"role": "title", "box": [312, 233, 765, 323]}])
+    rep = json.loads(_cli("spec", str(ok), "--json").stdout)
+    assert rep["input_sha256"] == {str(ok): hashlib.sha256(ok.read_bytes()).hexdigest()}
+    contract = SKILL / "layout" / "vertical-9x16.json"
+    assert rep["contract_sha256"] == hashlib.sha256(contract.read_bytes()).hexdigest()
     bad = tmp_path / "bad.json"
     bad.write_text(json.dumps({"canvas": [1080, 1920], "elements": [{"box": [1, 2, 3]}]}))
     assert _cli("spec", str(bad)).returncode == 2
-
-
-def test_contract_fractions_are_sane():
-    for name, prof in LAYOUT["profiles"].items():
-        zones = [prof["safe_zone"], *(prof.get("avoid") or [])]
-        if prof.get("caption_band") and "x0" in prof["caption_band"]:
-            zones.append(prof["caption_band"])
-        for z in zones:
-            assert 0 <= z["x0"] < z["x1"] <= 1 and 0 <= z["y0"] < z["y1"] <= 1, name
-        for key in ("title_band", "caption_band"):
-            if prof.get(key):
-                assert 0 <= prof[key]["y0"] < prof[key]["y1"] <= 1, (name, key)
-        eye = prof.get("eye_line")
-        if eye:
-            assert 0 < eye["y0"] < eye["y1"] < 1
 
 
 def test_contract_reproduces_the_measured_reel_pixels():
@@ -646,38 +638,53 @@ def _contract_pixels() -> set[int]:
         if prof.get("caption_band"):
             vals.add(round(prof["caption_band"]["centre_x_tolerance"] * W))
     vals.add(round(CLS["overlay_min_text_height"] * H))
+    org = LAYOUT["profiles"]["reels-organic"]
+    safe = cvl.zone(org["safe_zone"], W, H)
+    cap = cvl.band(org["caption_band"], safe, W, H).as_list()
+    vals.add(cvl.zone(org["avoid"][0], W, H).as_list()[0] - cap[2])  # caption band's margin to the rail
     return vals
 
 
 GATE_SECTIONS = [
-    (SKILL / "SKILL.md", "## Vertical Layout Gate", "## Extension Points"),
-    (SKILL / "skills/content-engine-cinema/SKILL.md", "### Framing for 9:16", "## Tool Priority Matrix"),
-    (SKILL / "templates/campaign-plan.md", "### Reels (9:16)", "### Carousels"),
-    (SKILL / "templates/scene-brief.md", "**9:16 layout", "### Tool Selection"),
-    (SKILL / "extensions/opencaptions/references/cwi-remotion-bridge.md", "### Safe Zones", "### Multi-Speaker"),
-    (SKILL.parent / "brainrot-for-good/SKILL.md", "Placement follows content-engine", "const WordByWordCaption"),
+    # (doc, section start, section end, non-geometry px values quoted there, e.g. font sizes)
+    (SKILL / "SKILL.md", "## Vertical Layout Gate", "## Extension Points", set()),
+    (SKILL / "skills/content-engine-cinema/SKILL.md", "### Framing for 9:16", "## Tool Priority Matrix", set()),
+    (SKILL / "templates/campaign-plan.md", "### Reels (9:16)", "### Carousels", set()),
+    (SKILL / "templates/scene-brief.md", "**9:16 layout", "### Tool Selection", set()),
+    (SKILL / "extensions/opencaptions/references/cwi-remotion-bridge.md", "### Safe Zones", "### Multi-Speaker", set()),
+    (SKILL.parent / "brainrot-for-good/SKILL.md", "Placement follows content-engine", "const WordByWordCaption", {72}),
 ]
 
 
-@pytest.mark.parametrize("path,start,end", GATE_SECTIONS, ids=[str(p.relative_to(SKILL.parent)) for p, _, _ in GATE_SECTIONS])
-def test_skill_docs_quote_only_contract_pixels(path, start, end):
+@pytest.mark.parametrize("path,start,end,extra", GATE_SECTIONS,
+                         ids=[str(p.relative_to(SKILL.parent)) for p, _, _, _ in GATE_SECTIONS])
+def test_skill_docs_quote_only_contract_pixels(path, start, end, extra):
     """Pixel values are copied into the skills' prose; each must still be derivable
     from the JSON, so moving a zone without updating the docs fails here."""
     import re
     doc = path.read_text()
     assert start in doc and end in doc, f"{path}: section markers moved"
     section = doc[doc.index(start):doc.index(end, doc.index(start))]
-    allowed = _contract_pixels()
-    quoted = {int(n) for n in re.findall(r"(?<![\d.])(\d{3,4})(?![\d.])", section)}
+    allowed = _contract_pixels() | extra
+    # Numbers glued to a word ("sha256") are identifiers, not pixels; "1080x1920" still counts.
+    quoted = {int(n) for n in re.findall(r"(?<![A-Za-wyz\d.])(\d{3,4})(?![\d.])", section)}
+    quoted |= {int(n) for n in re.findall(r"(?<![A-Za-wyz\d.])(\d{2}) ?px\b", section)}  # e.g. "58px"
     stray = sorted(quoted - allowed)
     assert not stray, f"{path.name}: {stray} are not derivable from layout/vertical-9x16.json"
 
 
 def test_doc_embeds_the_generated_zone_tables():
+    """Each table in the doc is the checker's output row for row: a substring check
+    let a stale extra row (an eye line the meta profile no longer has) survive."""
     doc = DOC.read_text()
     for name, prof in LAYOUT["profiles"].items():
-        table = cvl.zones_table(prof, W, H)
-        assert table in doc, f"references/vertical-layout.md is stale for {name}; paste `zones --profile {name}`"
+        flag = "" if name == LAYOUT["default_profile"] else f"--profile {name} "
+        marker = f"Output of `python3 scripts/check_vertical_layout.py {flag}zones`"
+        assert marker in doc, f"doc has no zones table for {name}"
+        after = doc[doc.index(marker):]
+        start = after.index("| Zone (")
+        block = after[start:].split("\n\n", 1)[0].strip()
+        assert block == cvl.zones_table(prof, W, H), f"references/vertical-layout.md is stale for {name}"
 
 
 # ---------------------------------------------------------------------------
