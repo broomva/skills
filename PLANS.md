@@ -38,8 +38,10 @@ quality-bar p9 line already does, across all of them.
    `signature`, `ROLE_X_JEV` seam, `role-x reflexes route --evals`.
 2. [x] ctx_ablation: `reflex` and `qbar` arms (aliases `rolex-reflex`, `rolex-qbar`),
    `home_contains` grader, 7 held-out tasks (`tasks/reflex-heldout.json`).
-3. [ ] Sonnet run: calibrate held-out, then bare / rolex / qbar / reflex, arms one at a
-   time, jobs ≤2. Estimate ≈ $35 notional (pilot 132 trials ≈ $20 at #251's
+3. [x] Sonnet run, done 16:15 -05 after the 13:50 reset: pilot's 6 reflex tasks and 8
+   held-out tasks, bare / rolex / qbar / reflex, one arm at a time, jobs 2. reflex 15/18
+   and 14/24 against rolex 1/18 and 1/24; $20.11 notional for 196 trials
+   (`ctx_ablation/RESULTS-reflex.md`). The earlier estimate, for the record: Estimate ≈ $35 notional (pilot 132 trials ≈ $20 at #251's
    $0.15/trial; held-out ≤ 21 + 84 trials ≈ $15). Checkpoint 11:21 -05: stopped by
    the 0.85 budget guard at 2/21 calibration trials, five-hour window at 0.88 (fleet
    load). It resets 13:50 -05 (18:50Z); resume with `~/.cache/ctx-ablation/reflex-chain.sh`.

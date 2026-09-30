@@ -102,8 +102,8 @@ def pushed_feature(ws: Path, branch: str = "feat/x") -> None:
     git(ws, "push", "-q", "-u", "origin", branch)
 
 
-def fired_ids(prompt: str, state) -> list[str]:
-    return [f.reflex.id for f in rr.route(prompt, state, CAT)]
+def fired_ids(prompt: str, state, cat=None) -> list[str]:
+    return [f.reflex.id for f in rr.route(prompt, state, cat or CAT)]
 
 
 def fired(prompt: str, state, cat=None) -> dict[str, str]:
@@ -587,15 +587,18 @@ def test_a_listed_or_judgment_entry_matches_its_trigger_and_is_never_routed(rid)
 
 def test_routed_entries_cover_the_owner_s_initial_cases():
     routed = {r.id for r in CAT.reflexes if r.routed}
-    assert {"p9.watch-after-push", "p10.branch-first", "p9.heal-on-red", "p10.worktree-removal-guard",
+    assert {"p9.watch-after-push", "p10.branch-first", "p9.heal-on-red",
             "convention.trash-not-rm", "convention.paseo-fleet-listing", "p4.merge-pinned-to-head"} <= routed
+    # the worktree guard is listed: the ablation showed its line misread as automation
+    assert BY_ID["p10.worktree-removal-guard"].status == "listed"
 
 
-def test_a_listed_entry_records_its_m3_measurement():
+def test_a_listed_entry_records_why():
     raw = {e["id"]: e for e in yaml.safe_load(CATALOG.read_text(encoding="utf-8"))["reflexes"]}
     for r in CAT.reflexes:
         if r.status == "listed":
-            assert "recall" in str(raw[r.id].get("m3", "")), f"{r.id}: listed without its M3 numbers"
+            why = str(raw[r.id].get("m3", "")) + str(raw[r.id].get("m2", ""))
+            assert "recall" in why or "held-out" in why, f"{r.id}: listed without its measurement"
 
 
 def test_change_work_route_is_an_imperative_not_a_question():
@@ -618,9 +621,9 @@ def test_requires_needs_every_pattern():
 def test_a_dot_inside_a_path_is_not_a_sentence_end():
     """Found on a held-out prompt: `[^.?!]` stopped at the dot of `.worktrees/`."""
     rid = "p10.worktree-removal-guard"
-    assert rid in fired_ids("Remove the .worktrees/intent-ask worktree and your branch", feature_state())
-    assert rid in fired_ids("delete the worktree for v0.7.2 please", feature_state())
-    assert rid not in fired_ids("Remove it. The worktree list is long.", feature_state())
+    assert rid in fired_ids("Remove the .worktrees/intent-ask worktree and your branch", feature_state(), CAT_ALL)
+    assert rid in fired_ids("delete the worktree for v0.7.2 please", feature_state(), CAT_ALL)
+    assert rid not in fired_ids("Remove it. The worktree list is long.", feature_state(), CAT_ALL)
     assert "convention.trash-not-rm" not in fired_ids("delete this. folders are fine", feature_state())
 
 
