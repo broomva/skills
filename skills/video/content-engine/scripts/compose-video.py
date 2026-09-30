@@ -436,6 +436,17 @@ def stitch_clips(clip_paths: list[Path], output_path: Path,
 # Manifest
 # ---------------------------------------------------------------------------
 
+def gate_commands(stitched: Path | None, rendered: Path | None) -> list[str]:
+    """The layout-gate commands for what this run produced: `stitched` is what
+    stitch_clips returned, `rendered` the render target only if render.sh exited 0."""
+    cmds = []
+    if stitched:
+        cmds.append(f"python3 {LAYOUT_CHECK} video {stitched}")
+    if rendered:
+        cmds.append(f"python3 {LAYOUT_CHECK} video {rendered} --expect-captions --expect-title")
+    return cmds
+
+
 def write_manifest(output_dir: Path, storyboard: dict, clips: list, brand_slug: str | None):
     """Write manifest.json tracking what was generated."""
     manifest = {
@@ -581,10 +592,12 @@ def main():
     # Stitch clips
     successful_clips = [c for c in clips if c is not None]
     final_path = output_dir / f"{slug}-final.mp4"
+    stitched = None
+    rendered = None
     if successful_clips:
         print()
         print(f"Stitching {len(successful_clips)} clips...")
-        stitch_clips(successful_clips, final_path)
+        stitched = stitch_clips(successful_clips, final_path)
 
     # render.sh reads manifest.json, so it has to exist before Remotion runs.
     write_manifest(output_dir, storyboard, clips, args.brand)
@@ -644,10 +657,12 @@ def main():
             print("Rendering with Remotion (transitions + captions + brand)...")
             composition = "ContentEngineReel" if vertical else "ContentEngineVideo"
             try:
-                subprocess.run(
+                result = subprocess.run(
                     ["bash", str(render_script), str(output_dir), str(rendered_path), composition],
                     timeout=300,
                 )
+                if result.returncode == 0:
+                    rendered = rendered_path
                 if rendered_path.exists():
                     size = rendered_path.stat().st_size
                     print(f"  Rendered: {rendered_path.name} ({size:,} bytes)")
@@ -668,18 +683,17 @@ def main():
     if args.remotion:
         print(f"Rendered: {output_dir / f'{slug}-rendered.mp4'}")
     if vertical:
-        # The gate is run by hand, not here: an in-process gate kept deciding which
-        # files this run produced and whether that answer was honest, and got it
-        # wrong three different ways (PR #250 review). The checker is the contract.
-        # The gate checks whatever file is at the path, so a file left by an earlier run
-        # in a reused --output dir would be checked instead; the report's input_sha256
-        # records which bytes a verdict is about.
-        rendered = output_dir / f"{slug}-rendered.mp4"
+        # The gate is run by hand, not here: an in-process gate has to decide which
+        # files this run produced and whether that answer is honest, which is harder
+        # than the gate itself. The checker is the contract; this prints its commands.
+        cmds = gate_commands(stitched, rendered)
         print()
-        print("9:16: run the layout gate before distributing (references/vertical-layout.md):")
-        for path, flags in ((final_path, ""), (rendered, " --expect-captions --expect-title")):
-            if path.exists() and (path == final_path or args.remotion):
-                print(f"  python3 {LAYOUT_CHECK} video {path}{flags}")
+        if cmds:
+            print("9:16: run the layout gate before distributing (references/vertical-layout.md):")
+            for cmd in cmds:
+                print(f"  {cmd}")
+        else:
+            print("9:16: nothing was stitched or rendered this run, so there is nothing to gate.")
 
 
 if __name__ == "__main__":

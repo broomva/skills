@@ -110,8 +110,7 @@ video and image mode, position decides:
 
 **Why roles are declared, not inferred.** OCR cannot tell a caption from a label, a CTA
 or a title card. An earlier round of this gate inferred roles from behaviour: captions
-replace each other, a title stays. The adversarial review broke it with legitimate
-layouts:
+replace each other, a title stays. It failed on legitimate layouts:
 - rotating chapter titles read as captions and FAILed;
 - one repeated word read as a title;
 - a larger static label hid the captions under it;
@@ -204,14 +203,18 @@ Any of the following exits 2 with the reason, and is never a verdict:
 | SKIP | The input has nothing this rule applies to (no text, no face, no punch-in) | no |
 | N/A | The profile does not define the rule, or the canvas is not 9:16 | no |
 | UNCHECKED | The detector cannot measure the rule here (tesseract has no face detector) | only with `--strict` |
+| WAIVED | A FAIL the caller judged not to apply, via `--waive RULE="reason"`; the reason is in the report | no |
 
 Exit code 0 means no FAIL, 1 means FAIL, 2 means a usage or tool error (no ffmpeg, no
 detector, unreadable input, a report that cannot be written). An exit of 2 is not a
 verdict.
 
-**FAIL policy.** A FAIL is fixed and the gate re-run, or it is waived in writing next to
-the report with the reason it does not apply: text inside the footage, a b-roll face, a
-tesseract misread confirmed on the guide sheet. Never distribute on an unexplained FAIL.
+**FAIL policy.** A FAIL is fixed and the gate re-run. When the rule does not apply to
+the asset (text inside the footage, a b-roll face, a tesseract misread confirmed on the
+guide sheet), re-run with `--waive RULE="reason"`: the FAIL shows as WAIVED, the run
+passes, and the report keeps each waiver and its reason beside `input_sha256`. A waiver
+for one render therefore does not carry over to the next one. A `--waive` that matches
+no FAIL is noted in the output.
 
 The report records `input_sha256` and `contract_sha256`. A report describes the bytes it
 was run on: re-run after any re-render, and compare the sha before relying on a report
@@ -274,13 +277,14 @@ Known limits, each measured while building this gate:
   is judged as a caption, and text centred in the top 25% as a title. A lower-third
   name tag, a product label or a sign in the footage that sits in those rows is judged
   the same way, and may FAIL VL4 or VL5. Keep such text out of those rows, or waive the
-  FAIL with that reason (see the FAIL policy).
+  FAIL with `--waive` and that reason (see the FAIL policy).
 - **The eye line needs a face.** Faceless content (product shots, b-roll) SKIPs VL6-VL8.
   Place key subjects inside the safe zone by eye, using the guide sheet.
 - **Only the largest face is judged.** VL3, VL6 and VL8 follow the largest face in each
   sample. A second person (a guest, a duet) on the rail is not checked. The largest face
-  is judged at any size, so a small face in b-roll or a full-body shot can FAIL VL6: waive
-  it when the shot is not a talking head.
+  is judged at any size, so a small face in b-roll or a full-body shot can FAIL VL6:
+  `--waive VL6="..."` when the shot is not a talking head. A shot whose face has no eye
+  landmarks is left out of VL6 and VL7, and the VL6 detail counts it.
 - **Short overlays can fall between samples.** Video mode samples 2 frames per second
   (`--fps`), capped at 120 samples (`--max-frames`; a 3-minute video is sampled at 0.67
   fps). An overlay on screen for less than the sampling interval may never be seen. Raise

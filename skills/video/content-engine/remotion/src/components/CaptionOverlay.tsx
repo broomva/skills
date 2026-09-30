@@ -1,7 +1,7 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame, interpolate } from "remotion";
 import type { ShotEntry } from "../hooks/useManifest";
-import { fitFontSize, strokeStyle, useVerticalLayout, type VerticalLayout } from "../layout";
+import { fitFontSize, strokedTextWidth, strokeStyle, useVerticalLayout, type VerticalLayout } from "../layout";
 
 // ---------------------------------------------------------------------------
 // CWI (Contextual Word Intelligence) Types — from OpenCaptions
@@ -344,7 +344,7 @@ const FallbackCaptions: React.FC<{
             fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
             fontWeight: 700,
             lineHeight: 1.15,
-            maxWidth: vertical.captionBand.width,
+            maxWidth: strokedTextWidth(vertical.captionBand, vertical.strokePx),
             // Two lines at most, so the text cannot spill out of the band.
             display: "-webkit-box",
             WebkitLineClamp: 2,

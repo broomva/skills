@@ -43,8 +43,8 @@ CREATE
 LAYOUT GATE (every 9:16 asset; ../../references/vertical-layout.md)
   └─ python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video <asset>
        [--expect-captions] [--expect-title]    ← only for text the asset burned in
-     → pass criteria: content-engine SKILL.md "Vertical Layout Gate"
-       (VERDICT: PASS, UNCHECKED closed on the guide sheet, report path in the campaign)
+     → meets the pass criteria in content-engine SKILL.md "Vertical Layout Gate";
+       the report path goes in the campaign
   │
   ▼
 DISTRIBUTE

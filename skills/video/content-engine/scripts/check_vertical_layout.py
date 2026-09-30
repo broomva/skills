@@ -21,7 +21,8 @@ Rules
     VL9 legibility        stroke on busy backgrounds (declared) / halo contrast (measured)
 
 Statuses: PASS, FAIL, WARN, SKIP (nothing in the input for this rule), N/A (the
-profile does not define it), UNCHECKED (the detector cannot measure it). Only FAIL
+profile does not define it), UNCHECKED (the detector cannot measure it), WAIVED (a
+FAIL the caller waived with --waive RULE=REASON; recorded in the report). Only FAIL
 fails the run; --strict also fails on UNCHECKED. Exit: 0 ok, 1 FAIL, 2 usage or
 tool error.
 
@@ -504,6 +505,8 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
             ys = [face.eye_y for _, face in seg if face.eye_y is not None]
             if ys:
                 measured.append((seg, statistics.median(ys), sum(not lo <= y <= hi for y in ys) / len(ys)))
+        blind = len(segs) - len(measured)
+        blind_note = f"; {blind} shot(s) without eye landmarks not judged" if blind else ""
         span = f"y {lo:.0f}-{hi:.0f} ({pct(lo, H)}-{pct(hi, H)})"
         if not measured:
             add("VL6", "UNCHECKED", "faces found but no eye landmarks")
@@ -513,13 +516,15 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
                    for seg, y, out in measured if not lo <= y <= hi or out > limit_share]
             if bad:
                 add("VL6", "FAIL", f"{len(bad)}/{len(measured)} shot(s) put the eyes outside {span} "
-                                   f"(median, or more than {limit_share:.0%} of samples)", bad)
+                                   f"(median, or more than {limit_share:.0%} of samples){blind_note}", bad)
             else:
                 ys = [y for _, y, _ in measured]
                 add("VL6", "PASS", f"eye line {min(ys):.0f}-{max(ys):.0f}px ({pct(min(ys), H)}-{pct(max(ys), H)}) "
-                                   f"across {len(measured)} shot(s), inside {span}")
+                                   f"across {len(measured)} shot(s), inside {span}{blind_note}")
         if len(measured) < 2:
-            add("VL7", "SKIP", f"no punch-in or cut found (face-scale change >= {eye_cfg['punch_in_scale_jump']:.0%})")
+            why = ("fewer than two shots have eye landmarks" if len(segs) >= 2
+                   else f"no punch-in or cut found (face-scale change >= {eye_cfg['punch_in_scale_jump']:.0%})")
+            add("VL7", "SKIP", why)
         else:
             # WARN, never FAIL: a face-scale change is a punch-in or a cut to another
             # shot, and face geometry cannot tell them apart (two centred speakers look
@@ -988,6 +993,32 @@ def frames_from_spec(spec) -> tuple[int, int, list[Frame]]:
 # Report
 # ---------------------------------------------------------------------------
 
+def parse_waivers(specs: list[str] | None) -> dict[str, str]:
+    """--waive VL6="b-roll face": a FAIL the caller has judged not to apply. It is the
+    FAIL policy's mechanism: the waiver and its reason go into the report beside the
+    input's sha256, so a waiver cannot silently outlive the render it was about."""
+    known = {rule for rule, _ in RULES}
+    waivers: dict[str, str] = {}
+    for spec in specs or []:
+        rule, _, reason = spec.partition("=")
+        rule, reason = rule.strip().upper(), reason.strip()
+        if rule not in known or not reason:
+            raise ToolError(f"--waive wants RULE=REASON with RULE in {sorted(known)}, got {spec!r}")
+        waivers[rule] = reason
+    return waivers
+
+
+def apply_waivers(results: list[Result], waivers: dict[str, str]) -> list[str]:
+    """Turn waived FAILs into WAIVED; return the waivers that matched no FAIL."""
+    used = set()
+    for r in results:
+        if r.status == "FAIL" and r.rule in waivers:
+            r.status = "WAIVED"
+            r.detail = f"waived ({waivers[r.rule]}): {r.detail}"
+            used.add(r.rule)
+    return sorted(set(waivers) - used)
+
+
 def verdict(results: list[Result], strict: bool) -> tuple[str, dict]:
     counts: dict[str, int] = {}
     for r in results:
@@ -1009,7 +1040,10 @@ def render_table(meta: dict, results: list[Result], v: str, counts: dict) -> str
         lines.append(f"  {r.rule}  {r.name:<26} {r.status:<9} {r.detail}")
         for e in r.evidence:
             lines.append(f"        - {json.dumps(e, ensure_ascii=False)}")
-    tally = ", ".join(f"{counts[k]} {k}" for k in ("PASS", "FAIL", "WARN", "SKIP", "N/A", "UNCHECKED") if counts.get(k))
+    tally = ", ".join(f"{counts[k]} {k}" for k in ("PASS", "FAIL", "WAIVED", "WARN", "SKIP", "N/A", "UNCHECKED")
+                      if counts.get(k))
+    for rule in meta.get("waivers_unused") or []:
+        lines.append(f"  note: --waive {rule} matched no FAIL")
     for key in ("report", "guide"):
         if meta.get(key):
             lines.append(f"{key}: {meta[key]}")
@@ -1029,6 +1063,10 @@ def sha256_of(path: Path) -> str:
 
 
 def emit(args, meta: dict, results: list[Result]) -> int:
+    waivers = parse_waivers(getattr(args, "waive", None))
+    unused = apply_waivers(results, waivers)
+    meta = {**meta, "waivers": [{"rule": k, "reason": v} for k, v in sorted(waivers.items())],
+            "waivers_unused": unused}
     v, counts = verdict(results, args.strict)
     payload = {**meta, "verdict": v, "counts": counts,
                "results": [r.__dict__ for r in results]}
@@ -1055,6 +1093,10 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
     for i in inputs:
         if not Path(i).exists():
             raise ToolError(f"no such file: {i}")
+    parse_waivers(args.waive)  # reject a malformed --waive before any work
+    # Hash first: the verdict describes these bytes, even if the file is replaced
+    # while frames are being read.
+    input_sha = {i: sha256_of(Path(i)) for i in inputs}
     with tempfile.TemporaryDirectory(prefix="vlayout-") as tmp:
         if is_video:
             info = probe(args.input)
@@ -1084,7 +1126,7 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
             "declared": sorted(expect), "report": args.report, "guide": guide,
             # Which bytes this verdict is about: a report beside a re-rendered file
             # describes the old render, and the sha says so.
-            "input_sha256": {i: sha256_of(Path(i)) for i in inputs},
+            "input_sha256": input_sha,
             "contract_sha256": sha256_of(Path(args.layout or DEFAULT_LAYOUT))}
     if detector_note:
         meta["detector_note"] = detector_note
@@ -1146,6 +1188,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--report", default=None, help="write the JSON report here")
         p.add_argument("--json", action="store_true", help="print the JSON report instead of the table")
         p.add_argument("--strict", action="store_true", help="UNCHECKED rules fail the run too")
+        p.add_argument("--waive", action="append", metavar="RULE=REASON",
+                       help='record a FAIL that does not apply, e.g. --waive VL6="b-roll, not a talking head"; '
+                            "shown as WAIVED and kept in the report (repeatable)")
         if media:
             p.add_argument("--detector", default="auto", choices=["auto", "vision", "tesseract"])
             p.add_argument("--guide", default=None, help="guide sheet path (default: <input>.layout-guide.png)")

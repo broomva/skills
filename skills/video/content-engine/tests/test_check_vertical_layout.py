@@ -567,6 +567,9 @@ def test_cli_usage_errors_exit_2(tmp_path):
     assert _cli("spec", str(tmp_path / "missing.json")).returncode == 2
     assert _cli("--profile", "nope", "zones").returncode == 2
     assert _cli("zones", "--canvas", "0x1920").returncode == 2
+    bad = tmp_path / "bad.json"
+    bad.write_text(json.dumps({"canvas": [1080, 1920], "elements": [{"box": [1, 2, 3]}]}))
+    assert _cli("spec", str(bad)).returncode == 2
     # An unwritable report is a tool error, not a FAIL verdict.
     ok = _spec(tmp_path, [{"role": "title", "box": [312, 233, 765, 323]}])
     r = _cli("spec", str(ok), "--report", str(tmp_path / "no-such-dir" / "r.json"))
@@ -580,9 +583,64 @@ def test_report_fingerprints_the_input_and_the_contract(tmp_path):
     assert rep["input_sha256"] == {str(ok): hashlib.sha256(ok.read_bytes()).hexdigest()}
     contract = SKILL / "layout" / "vertical-9x16.json"
     assert rep["contract_sha256"] == hashlib.sha256(contract.read_bytes()).hexdigest()
-    bad = tmp_path / "bad.json"
-    bad.write_text(json.dumps({"canvas": [1080, 1920], "elements": [{"box": [1, 2, 3]}]}))
-    assert _cli("spec", str(bad)).returncode == 2
+    # --layout is what gets fingerprinted, not the default contract.
+    other = tmp_path / "layout.json"
+    other.write_text(contract.read_text() + "\n")
+    rep = json.loads(_cli("--layout", str(other), "spec", str(ok), "--json").stdout)
+    assert rep["contract_sha256"] == hashlib.sha256(other.read_bytes()).hexdigest()
+
+
+def test_waiver_turns_a_fail_into_waived_and_is_recorded(tmp_path):
+    # The pre-contract watermark on the rail FAILs VL3; a waiver records why it is
+    # acceptable and lets the run pass, with the reason kept in the report.
+    bad = _spec(tmp_path, [{"role": "watermark", "label": "brand", "box": [870, 1830, 1048, 1888]}])
+    assert _cli("spec", str(bad)).returncode == 1
+    # It FAILs VL2 (outside the safe zone) and VL3 (on the rail); each waiver names one rule.
+    assert _cli("spec", str(bad), "--waive", "VL3=client-approved end card").returncode == 1
+    r = _cli("spec", str(bad), "--json", "--waive", "VL3=client-approved end card",
+             "--waive", "VL2=client-approved end card", "--waive", "VL6=unused")
+    assert r.returncode == 0, r.stdout
+    rep = json.loads(r.stdout)
+    assert {x["rule"]: x["status"] for x in rep["results"]}["VL3"] == "WAIVED"
+    assert {"rule": "VL3", "reason": "client-approved end card"} in rep["waivers"]
+    assert rep["waivers_unused"] == ["VL6"]
+    table = _cli("spec", str(bad), "--waive", "VL3=ok", "--waive", "VL2=ok").stdout
+    assert table.rstrip().splitlines()[-1].startswith("VERDICT: PASS") and "2 WAIVED" in table
+    for bad_waiver in ("VL3", "VL99=x", "=reason"):
+        assert _cli("spec", str(bad), "--waive", bad_waiver).returncode == 2, bad_waiver
+
+
+def test_shots_without_eye_landmarks_are_counted_not_hidden():
+    a = [cvl.Frame(label=f"a{i}", faces=[face(334, 616, 690, 972, 730)]) for i in range(4)]
+    b = [cvl.Frame(label=f"b{i}", faces=[face(300, 1100, 800, 1500, None)]) for i in range(4)]
+    res = run(a + b)
+    assert res["VL6"].status == "PASS" and "1 shot(s) without eye landmarks" in res["VL6"].detail
+    assert "fewer than two shots have eye landmarks" in res["VL7"].detail
+
+
+def test_compose_prints_gate_commands_only_for_what_this_run_produced(tmp_path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("compose_video", SKILL / "scripts" / "compose-video.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    final, rendered = tmp_path / "x-final.mp4", tmp_path / "x-rendered.mp4"
+    assert mod.gate_commands(None, None) == []
+    cmds = mod.gate_commands(final, rendered)
+    assert len(cmds) == 2 and str(final) in cmds[0] and cmds[1].endswith("--expect-captions --expect-title")
+    assert mod.gate_commands(final, None) == [cmds[0]]
+
+
+def test_io_failures_are_tool_errors(monkeypatch, tmp_path):
+    def boom(*a, **k):
+        raise OSError("read-only file system")
+    monkeypatch.setattr(cvl.Path, "mkdir", boom)
+    with pytest.raises(cvl.ToolError):
+        cvl._cache_dir()
+    monkeypatch.undo()
+    monkeypatch.setattr(cvl, "_need", lambda tool: tool)
+    monkeypatch.setattr(cvl, "_run", lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout="not json", stderr=""))
+    with pytest.raises(cvl.ToolError):
+        cvl.probe(str(tmp_path / "x.mp4"))
 
 
 def test_contract_reproduces_the_measured_reel_pixels():
@@ -667,7 +725,8 @@ def test_skill_docs_quote_only_contract_pixels(path, start, end, extra):
     section = doc[doc.index(start):doc.index(end, doc.index(start))]
     allowed = _contract_pixels() | extra
     # Numbers glued to a word ("sha256") are identifiers, not pixels; "1080x1920" still counts.
-    quoted = {int(n) for n in re.findall(r"(?<![A-Za-wyz\d.])(\d{3,4})(?![\d.])", section)}
+    # A sentence-ending period is not a decimal point: "(?!\.\d)", not "(?!\.)".
+    quoted = {int(n) for n in re.findall(r"(?<![A-Za-wyz\d.])(\d{3,4})(?!\d|\.\d)", section)}
     quoted |= {int(n) for n in re.findall(r"(?<![A-Za-wyz\d.])(\d{2}) ?px\b", section)}  # e.g. "58px"
     stray = sorted(quoted - allowed)
     assert not stray, f"{path.name}: {stray} are not derivable from layout/vertical-9x16.json"
@@ -886,5 +945,8 @@ def test_report_records_the_declared_flags(videos, tmp_path):
         r = tmp_path / "r.json"
         p = _cli("video", str(videos["good"]), "--detector", DETECTORS[0], "--report", str(r), "--no-guide", *flags)
         assert p.returncode == 0, p.stdout + p.stderr
-        assert json.loads(r.read_text())["declared"] == declared
+        report = json.loads(r.read_text())
+        assert report["declared"] == declared
         assert "declared:" in p.stdout
+        import hashlib
+        assert report["input_sha256"] == {str(videos["good"]): hashlib.sha256(videos["good"].read_bytes()).hexdigest()}

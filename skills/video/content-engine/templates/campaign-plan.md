@@ -274,8 +274,7 @@ word-by-word captions via Remotion. Background audio: ambient synth."}
 - [ ] All assets exported at correct resolution/format
 - [ ] Captions added to video assets (OpenCaptions pipeline, when available)
 - [ ] Every 9:16 asset meets the layout gate's pass criteria (content-engine SKILL.md
-      "Vertical Layout Gate": `VERDICT: PASS`, UNCHECKED rules closed on the guide sheet,
-      report path recorded here)
+      "Vertical Layout Gate"); report path recorded here
 - [ ] Upscale pass completed (Real-ESRGAN for any sub-native assets)
 - [ ] Final quality review (run acceptance criteria on each scene)
 

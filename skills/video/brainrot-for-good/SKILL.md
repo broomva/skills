@@ -75,8 +75,10 @@ short of the like/comment/share rail (x 872). The old bottom-anchored placement 
 words in the band the Reel UI covers with the username and caption (from y 1686 down).
 Keep each group on one line within the band's 640 px, counting the active word's
 1.2x scale. At 72 px extra-bold Montserrat that is about 10 uppercase characters, so
-shrink the font or split the group. Run the gate with `--expect-captions`: that is what
-fails captions placed outside the band.
+shrink the font or split the group. Run the gate with `--expect-captions`: it fails
+captions moved wholly out of the band, but not captions only partly out of it, or
+captions elsewhere while other text (your end-card CTA) sits in the band. Check those
+on the guide sheet.
 
 ```tsx
 // 1080x1920 caption band from content-engine/layout/vertical-9x16.json
@@ -234,7 +236,7 @@ SFX: Impact on every scene transition
 - [ ] Script has genuine substance (ethical test: plain text is still worth reading)
 - [ ] Hook captures in first 3 seconds (pattern interrupt, not just text)
 - [ ] Word-by-word captions present and synced
-- [ ] 9:16 layout gate meets the pass criteria in content-engine SKILL.md "Vertical Layout Gate": `python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video video.mp4 --expect-captions` (captions in the band at 72%, nothing on the action rail or the bottom band, stroke on busy footage)
+- [ ] 9:16 layout gate meets the pass criteria in content-engine SKILL.md "Vertical Layout Gate": `python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video video.mp4 --expect-captions`
 - [ ] Sound effect on every scene transition
 - [ ] No static shot longer than 4 seconds
 - [ ] Total duration 20-60 seconds

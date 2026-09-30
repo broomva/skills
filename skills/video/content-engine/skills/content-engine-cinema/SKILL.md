@@ -103,9 +103,11 @@ frame for the layout contract at generation time (`../../references/vertical-lay
   `python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video clip.mp4`.
   On macOS (Vision), VL6 (eye line) and VL8 (face in the safe zone) PASS or FAIL,
   VL7 (eye line across punch-ins) PASSes or WARNs, and all three SKIP when no face is
-  found; VL6 is UNCHECKED when a face has no eye landmarks. With tesseract they are
-  UNCHECKED, so read the guide sheet. A FAIL means
-  regenerate or reframe the clip; it cannot be fixed with a caption.
+  found. A shot whose face has no eye landmarks is left out of VL6 (the detail counts
+  it), and VL6 is UNCHECKED only when no shot has them. With tesseract they are
+  UNCHECKED, so read the guide sheet. A FAIL means regenerate or reframe the clip (it
+  cannot be fixed with a caption), or waive it when the rule does not apply: pass
+  criteria in content-engine SKILL.md "Vertical Layout Gate".
 
 ## Tool Priority Matrix
 

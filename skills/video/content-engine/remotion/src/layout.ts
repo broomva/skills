@@ -122,9 +122,11 @@ export function fitFontSize(
 }
 
 /**
- * Width for stroked text that wraps inside `rect`: the stroke and the line-clamp
- * ellipsis draw past the text box, so leave a margin of twice the stroke per side.
- * A long title wrapped to the full safe width measured 5-11px past its right edge.
+ * Width for stroked text that wraps inside `rect`, leaving twice the stroke per side.
+ * Measured, not derived: a 120-character title wrapped to the full safe width read
+ * 5-11px past the zone edge in the gate's OCR boxes (the stroke and the detector's
+ * box padding are the likely sources; `overflow: hidden` clips what the element
+ * paints). The margin is what made that render pass.
  */
 export function strokedTextWidth(rect: Rect, strokePx: number): number {
   return rect.width - 4 * strokePx;
