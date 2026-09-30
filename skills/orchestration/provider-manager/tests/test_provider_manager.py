@@ -396,7 +396,8 @@ def test_balance_accounts_over_threshold_triggers_switch(mock_orca_data):
         mock_switch.assert_called_once_with("acc-2")
 
 
-def test_rotate_account_picks_lowest_utilization_standby(mock_orca_data, mock_claude_json):
+def test_rotate_account_picks_lowest_utilization_standby(tmp_path, mock_orca_data, mock_claude_json):
+    test_cache_file = str(tmp_path / "test-usage-cache.json")
     future_ms = int((time.time() + 3600) * 1000)
     fake_creds = {"claudeAiOauth": {"accessToken": "t", "expiresAt": future_ms}}
 
@@ -412,7 +413,8 @@ def test_rotate_account_picks_lowest_utilization_standby(mock_orca_data, mock_cl
         {"id": "acc-3", "email": "a3@example.com", "isActive": False, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 10.0},
     ]
 
-    with patch.object(pm, "list_accounts", return_value=three_accounts), \
+    with patch.object(pm, "USAGE_CACHE_PATH", test_cache_file), \
+         patch.object(pm, "list_accounts", return_value=three_accounts), \
          patch.object(pm, "fetch_all_usage", return_value=usage_list), \
          patch.object(pm, "read_keychain_generic_password", return_value=fake_creds), \
          patch.object(pm, "switch_account", return_value={"success": True}) as mock_switch:

@@ -236,25 +236,27 @@ def list_accounts() -> List[Dict[str, Any]]:
 
 
 def read_usage_cache() -> Dict[str, Any]:
-    if not USAGE_CACHE_PATH.exists():
+    cache_path = Path(USAGE_CACHE_PATH)
+    if not cache_path.exists():
         return {"updatedAt": 0, "accounts": {}}
     try:
-        with open(USAGE_CACHE_PATH, "r", encoding="utf-8") as f:
+        with open(cache_path, "r", encoding="utf-8") as f:
             return json.load(f)
     except Exception:
         return {"updatedAt": 0, "accounts": {}}
 
 
 def save_usage_cache(data: Dict[str, Any]) -> bool:
-    if not USAGE_CACHE_PATH.parent.exists():
-        USAGE_CACHE_PATH.parent.mkdir(parents=True, exist_ok=True)
-    tmp_path = USAGE_CACHE_PATH.with_suffix(f".tmp.{os.getpid()}")
+    cache_path = Path(USAGE_CACHE_PATH)
+    if not cache_path.parent.exists():
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_suffix(f".tmp.{os.getpid()}")
     try:
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
-        os.replace(tmp_path, USAGE_CACHE_PATH)
+        os.replace(tmp_path, cache_path)
         return True
     except Exception as e:
         if tmp_path.exists():
@@ -317,7 +319,9 @@ def refresh_account_token(account_id: str) -> Optional[Dict[str, Any]]:
     creds["claudeAiOauth"] = oauth
 
     # 1. Update Orca Keychain
-    write_keychain_generic_password(KEYCHAIN_ORCA_SERVICE, account_id, creds)
+    if not write_keychain_generic_password(KEYCHAIN_ORCA_SERVICE, account_id, creds):
+        sys.stderr.write(f"Error: Failed to persist refreshed OAuth credentials for {account_id}\n")
+        return None
 
     # 2. If this account is currently active, mirror to Claude Keychains
     orca_data = get_orca_data()
@@ -422,12 +426,14 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
     locked_reason = (data.get("five_hour") or {}).get("locked_reason")
     is_locked = bool(locked_reason or fh_util >= 99.0)
     prev_locked = acc_cache.get("isRateLimited", False) if acc_cache else False
+    locked_at = acc_cache.get("lockedAt", 0.0) if acc_cache else 0.0
+    locked_reason_prev = acc_cache.get("lockedReason") if acc_cache else None
+
     if prev_locked and not is_locked:
-        locked_at = acc_cache.get("lockedAt", 0) if acc_cache else 0
-        if (now - locked_at > 300.0) or (fh_util < 95.0 and locked_reason is None):
-            is_locked = False
-        else:
+        if (now - locked_at) < 300.0:
             is_locked = True
+            if not locked_reason:
+                locked_reason = locked_reason_prev or "rate_limit_lock"
 
     entry = {
         "id": account_id,
@@ -441,6 +447,8 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
             "resets_at": sd.get("resets_at")
         },
         "isRateLimited": is_locked,
+        "lockedReason": locked_reason if is_locked else None,
+        "lockedAt": (locked_at or now) if is_locked else None,
         "status": status,
         "raw": data
     }
@@ -499,10 +507,17 @@ def balance_accounts(threshold: float = 85.0, dry_run: bool = False, verbose: bo
         candidates = [a for a in accounts if a.get("hasStoredCredentials")]
         if candidates:
             best = min(candidates, key=lambda a: a.get("fiveHourUtil") if a.get("fiveHourUtil") is not None else 999.0)
-            if not dry_run:
-                switch_account(best["id"])
+            if dry_run:
+                return {
+                    "success": True,
+                    "action": "would_switch",
+                    "switchedTo": best["email"],
+                    "reason": "no_active_account",
+                    "dryRun": True
+                }
+            switch_res = switch_account(best["id"])
             return {
-                "success": True,
+                "success": bool(switch_res.get("success", False)),
                 "action": "switched",
                 "switchedTo": best["email"],
                 "reason": "no_active_account"
@@ -974,10 +989,15 @@ def main():
                     print(f"Utilizations: Previous {res.get('activeUtilization')}%, New {res.get('standbyUtilization')}%")
                 elif action == "would_switch":
                     print(f"Dry run: Would switch active account from {res.get('fromAccount')} ({res.get('activeUtilization')}%) to {res.get('toAccount')} ({res.get('standbyUtilization')}%)")
-                else:
+                elif res.get("reason") == "within_budget":
                     active_acc = res.get('activeAccount', 'unknown')
-                    util = res.get('utilization', 0.0)
-                    print(f"Balanced: Active account ({active_acc}) utilization is within budget ({util}% < {args.threshold}%). No switch needed.")
+                    util = res.get('utilization')
+                    util_str = f"{util}%" if util is not None else "N/A"
+                    print(f"Balanced: Active account ({active_acc}) utilization is within budget ({util_str} < {args.threshold}%). No switch needed.")
+                elif not res.get("success", False):
+                    print(f"Balance check: {res.get('error') or res.get('message') or 'Unable to balance accounts.'}")
+                else:
+                    print(f"Balance check: {res.get('message') or res.get('reason') or 'No switch performed.'}")
 
         elif args.command == "switch":
             res = switch_account(args.account)

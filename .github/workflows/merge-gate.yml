@@ -69,9 +69,9 @@ jobs:
           # kill wins, which is why the check read "failure" rather than saying
           # what it was waiting for. `bash smoke tests` measured 36m21s.
           for i in $(seq 1 120); do   # up to ~60 min
-            # All check-runs on this head SHA except this gate itself and advisory review bots.
+            # All check-runs on this head SHA except this gate itself.
             runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs" \
-                     --jq '.check_runs[] | select(.name != "Merge Gate" and .name != "copilot-pull-request-reviewer" and .name != "coderabbitai" and .name != "CodeRabbit") | [.name, .status, (.conclusion // "")] | @tsv' \
+                     --jq '.check_runs[] | select(.name != "Merge Gate") | [.name, .status, (.conclusion // "")] | @tsv' \
                    || echo "")
             # Legacy commit statuses (belt-and-suspenders; most checks are check-runs).
             st_state=$(gh api "repos/$REPO/commits/$SHA/status" --jq '.state' 2>/dev/null || echo "unknown")
