@@ -32,7 +32,8 @@ are the Reel's own drawn geometry. Eye, caption and title positions come from ma
 Vision on every sample (see `scripts/vision_probe.swift`):
 
 - **Eyes:** y 701-772 px in the wide shot (median 729; the 772 is t=8.0 s, the sample
-  before the punch-in) and 756-801 px after the punch-in (median 770). The punch-in moves the eye line 42-43 px, not 0.
+  before the punch-in) and 756-801 px after the punch-in (median 770). The punch-in
+  moves the eye line 42-43 px, not 0.
 - **Captions:** one word at a time, text boxes between y 1318 and 1426, centred.
 - **Title hook text:** y 233-323. It straddles the safe zone's top edge (277), which is
   why title-band text is exempt from VL2.
@@ -228,17 +229,20 @@ Owner policy. Each clause says whether the checker enforces it.
    declared-text-not-found FAIL is logged as `refused` while the FAIL stands.
 3. **A waiver is bound to one file.** It names the sha256 of the file it was granted for
    (`input_sha256` in that file's report) and applies to no other file, so a re-render,
-   a re-encode or an edited spec needs a new waiver. It covers every FAIL of its rule on
-   that file, so the owner grants it after reading the whole report. Enforced: a run
-   with `--waive` checks exactly one input, hashes it before and after reading it, and
-   exits 2 if it changed. A file swapped and put back between the two hashes is not
-   detected.
+   a re-encode or an edited spec needs a new waiver. Enforced: a run with `--waive`
+   checks exactly one input, hashes it before and after reading it, and exits 2 if it
+   changed. A file swapped and put back between the two hashes is not detected. The
+   binding is to the file, not to the run: the waiver covers every FAIL of its rule on
+   that file under any profile, contract, detector or `--expect-*` flag. Grant it from a
+   report made with the settings the pipeline uses.
 4. **Every waiver has a reason and a grantor.** Enforced: `reason` and `granted_by`
    must be non-empty strings, and a file with any other key is rejected.
-5. **Waivers are logged.** Enforced: the report lists each waiver in the file with its
-   outcome (`applied`, `refused`, `no-fail`, `other-input`) and records the waiver
-   file's path and sha256. Each WAIVED rule carries its reason and grantor. The table
-   output notes every waiver that was not applied.
+5. **Waivers are logged.** Enforced: a run with `--waive` always writes a report
+   (`--no-report` is refused, and `spec` defaults to `<spec>.layout-report.json`). The
+   report lists each waiver in the file with its outcome (`applied`, `refused`,
+   `no-fail`, `other-input`) and records the waiver file's path and sha256, and each
+   WAIVED rule carries its reason and grantor. The table output prints the waiver file
+   and notes every waiver that was not applied. `--waive` takes one file.
 
 A waiver file:
 

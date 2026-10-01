@@ -1019,8 +1019,8 @@ def load_waivers(path: str | None) -> tuple[list[dict], str | None]:
     try:
         raw = Path(path).read_bytes()
         doc = json.loads(raw)
-    except (OSError, ValueError) as exc:
-        raise ToolError(f"cannot read the waiver file {path}: {exc}") from exc
+    except (OSError, ValueError, RecursionError) as exc:
+        raise ToolError(f"cannot read the waiver file {path}: {exc!r}") from exc
     if not isinstance(doc, dict) or set(doc) != {"waivers"} or not isinstance(doc["waivers"], list):
         raise ToolError(f'{path}: a waiver file is {{"waivers": [...]}} and nothing else')
     known = {rule for rule, _ in RULES}
@@ -1094,6 +1094,8 @@ def render_table(meta: dict, results: list[Result], v: str, counts: dict) -> str
             lines.append(f"        - {json.dumps(e, ensure_ascii=False)}")
     tally = ", ".join(f"{counts[k]} {k}" for k in ("PASS", "FAIL", "WAIVED", "WARN", "SKIP", "N/A", "UNCHECKED")
                       if counts.get(k))
+    if meta.get("waiver_file"):
+        lines.append(f"  waivers: {meta['waiver_file']['path']} (sha256 {meta['waiver_file']['sha256']})")
     for w in meta.get("waivers") or []:
         if w["outcome"] != "applied":
             lines.append(f"  note: waiver {w['rule']} from {w['granted_by']} {WAIVER_OUTCOMES[w['outcome']]}")
@@ -1149,6 +1151,8 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
     waivers = load_waivers(args.waive)  # a bad waiver file is exit 2 before any work
     if args.waive and len(inputs) != 1:
         raise ToolError("a waiver binds to one file's sha256; check waived stills one at a time")
+    if args.waive and args.no_report:
+        raise ToolError("--waive needs the report: the report is where waivers are logged")
     # Hashed before and again after every read (sampling, detection, guide): a file
     # replaced mid-run is an error, not a verdict on a mix of two files. A file swapped
     # and put back between the two hashes is not seen.
@@ -1193,11 +1197,13 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
 
 def cmd_spec(args, layout: dict, pname: str, profile: dict) -> int:
     waivers = load_waivers(args.waive)
+    if args.waive and args.report is None:  # waivers are logged in the report, so write one
+        args.report = _default_out(args.input, "layout-report.json")
     try:
         raw = Path(args.input).read_bytes()  # hashed and parsed from the same bytes
         spec = json.loads(raw)
-    except (OSError, ValueError) as exc:
-        raise ToolError(f"cannot read spec {args.input}: {exc}") from exc
+    except (OSError, ValueError, RecursionError) as exc:
+        raise ToolError(f"cannot read spec {args.input}: {exc!r}") from exc
     input_sha = hashlib.sha256(raw).hexdigest()
     W, H, frames = frames_from_spec(spec)
     results = evaluate(W, H, frames, profile, layout["classification"], layout["canvas"])
@@ -1249,9 +1255,10 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--report", default=None, help="write the JSON report here")
         p.add_argument("--json", action="store_true", help="print the JSON report instead of the table")
         p.add_argument("--strict", action="store_true", help="UNCHECKED rules fail the run too")
-        p.add_argument("--waive", default=None, metavar="WAIVERS.json",
+        p.add_argument("--waive", action="append", metavar="WAIVERS.json",
                        help="the owner's waiver file: each entry binds one rule to one file's sha256, with "
-                            "a reason and who granted it; see references/vertical-layout.md, 'Waivers'")
+                            "a reason and who granted it; see references/vertical-layout.md, 'Waivers'. "
+                            "Implies a report")
         if media:
             p.add_argument("--detector", default="auto", choices=["auto", "vision", "tesseract"])
             p.add_argument("--guide", default=None, help="guide sheet path (default: <input>.layout-guide.png)")
@@ -1285,6 +1292,10 @@ def build_parser() -> argparse.ArgumentParser:
 def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     try:
+        if getattr(args, "waive", None) is not None:
+            if len(args.waive) > 1:
+                raise ToolError("--waive takes one file; put every waiver in it")
+            args.waive = args.waive[0]
         layout = load_layout(args.layout)
         pname, profile = get_profile(layout, args.profile)
         if args.cmd == "video":
