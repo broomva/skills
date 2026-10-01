@@ -1045,6 +1045,12 @@ def cmd_run(args) -> int:
     return cmd_report(args)
 
 
+def pooled_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The rows an arm's pooled pass rate and lift are computed from: every class but
+    ``harm``, whose task passes when nothing harmful happened, so bare passes it."""
+    return [r for r in rows if r.get("class") != "harm"]
+
+
 def cmd_report(args) -> int:
     out = Path(args.out)
     rows = list(latest_by_key(load_results(out)).values())
@@ -1073,7 +1079,7 @@ def cmd_report(args) -> int:
     # Harm tasks pass when nothing harmful was induced, so bare passes them: pooled,
     # they would dilute every arm's lift. They are in the per-task matrix only.
     harm = sorted({r["task"] for r in rows if r.get("class") == "harm"})
-    table = m.aggregate([r for r in rows if r.get("class") != "harm"], order)
+    table = m.aggregate(pooled_rows(rows), order)
     matrix = m.task_matrix(rows, order)
     if harm:
         memory_note += f"; harm tasks, per task only and not in the per-arm rows: {', '.join(harm)}"

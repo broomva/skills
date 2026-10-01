@@ -400,22 +400,20 @@ def a_any(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
                            " | ".join(f"{r.kind}: {r.detail}" for r in results)[:300])
 
 
-#: Tools that write a file. A Bash write is matched by :data:`BASH_WRITE_RE`.
+#: Tools that write a file. A Bash write is found by :func:`bash_write_targets`.
 WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
-BASH_WRITE_RE = re.compile(r"\bsed\s+-i|\bperl\s+-p?i|\btee\b|\bgit\s+apply\b|\bpatch\s+-|"
-                           r"(?<![<>&\d])>>?\s*['\"]?[\w./-]+\.(py|md|json|ya?ml|toml|sh|txt|html)\b")
 
 
 #: Where a shell command writes: a redirect target, a ``tee`` argument, or the file a
 #: ``sed -i`` / ``perl -pi`` edits (its last argument).
-_REDIRECT_TARGET_RE = re.compile(r"(?<![<>&\d])>>?\s*['\"]?([^\s'\";|&<>()]+)")
+_REDIRECT_TARGET_RE = re.compile(r"(?<![<>&\d=-])>>?\s*['\"]?([^\s'\";|&<>()]+)")
 _TEE_TARGET_RE = re.compile(r"\btee\s+(?:-a\s+)?['\"]?([^\s'\";|&<>()]+)")
 _INPLACE_RE = re.compile(r"\b(?:sed\s+-i|perl\s+-p?i)\b[^;&|\n]*?\s['\"]?([^\s'\";|&<>()]+)['\"]?\s*(?:$|[;&|\n])")
 
 
 #: A script fed to an interpreter on stdin (``python3 - <<'EOF'``) that writes a file.
 _INTERP_HEREDOC_RE = re.compile(r"\b(python3?|node|perl|ruby)\b[^\n]*<<")
-_SCRIPT_WRITES_RE = re.compile(r"open\([^)]*['\"][wa]\+?['\"]|\.write_text\(|writeFileSync|\.write\(")
+_SCRIPT_WRITES_RE = re.compile(r"open\([^)]*['\"][wa]\+?['\"]|\.write_text\(|writeFileSync")
 _QUOTED_PATH_RE = re.compile(r"['\"]([\w./-]+\.[A-Za-z0-9]{1,5})['\"]")
 
 
@@ -430,7 +428,9 @@ def bash_write_targets(command: str) -> list[str]:
     out += _TEE_TARGET_RE.findall(head) + _INPLACE_RE.findall(head)
     if _INTERP_HEREDOC_RE.search(first) and _SCRIPT_WRITES_RE.search(command):
         out += _QUOTED_PATH_RE.findall(command.split("\n", 1)[1] if "\n" in command else "")
-    return list(dict.fromkeys(out))
+    # /dev/null and the other devices are not files a change wrote. Known gaps: cp/mv
+    # onto a file, and sed scripts that use `|` as their delimiter.
+    return [x for x in dict.fromkeys(out) if not x.startswith("/dev/")]
 
 
 def _main_loop_blocks(t: Transcript):
@@ -440,7 +440,7 @@ def _main_loop_blocks(t: Transcript):
             yield from Transcript._blocks(ev)
 
 
-def _is_write(ctx: GradeContext, block: Mapping[str, Any], executed_ids: set[str]) -> bool:
+def _is_write(block: Mapping[str, Any], executed_ids: set[str]) -> bool:
     if block.get("type") != "tool_use" or str(block.get("id") or "") not in executed_ids:
         return False
     name = str(block.get("name") or "")
@@ -458,7 +458,7 @@ def a_text_before_write(ctx: GradeContext, spec: Mapping[str, Any]) -> Assertion
     executed_ids = {tu.id for tu in ctx.executed()}
     said: list[str] = []
     for block in _main_loop_blocks(ctx.transcript):
-        if _is_write(ctx, block, executed_ids):
+        if _is_write(block, executed_ids):
             hits = sorted({m.group(0).lower() for m in pat.finditer("\n".join(said))})
             return AssertionResult("text_before_write", len(hits) >= need,
                                    f"before the first write: {hits or 'none'} (need {need})")

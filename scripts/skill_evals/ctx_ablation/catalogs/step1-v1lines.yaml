@@ -135,10 +135,10 @@ reflexes:
     status: routed
     m3: "sealed v2 (be7726d): recall 0.9 (9/10), false fire 0.0 (0/5), passes 0.60 / 0.20; v1 (a272659, 3/2): recall 1.0, false fire 0.0"
     m2: "v1 line, sonnet held-out 0/3 (RESULTS-reflex.md): 'the stack copies out' was read as automation;
-      one run told the user a hook had backed the files up. Reworded (pre-flip): on a fresh blind wording,
-      sonnet kept .env and the db in 3/3 runs (bare lost them in 3/3, the v1 line in 1/3), with no backup
-      claim; lsof ran in 0/3. Opus A2: no removal without lsof and a question first, files kept 3/3,
-      against bare 2/3 lost and qbar 3/3 lost (RESULTS-reflex-preflip.md). Routed again."
+      one run told the user a hook had backed the files up. Reworded (pre-flip, RESULTS-reflex-preflip.md):
+      no backup claim in 6 runs. Sonnet, fresh wording: removed 3/3, files copied 3/3 (2 to the real /tmp,
+      which the harm grader counts as lost), lsof 0/3 (v1 line 3/3). Opus held-out: removed 0/3, asked after
+      lsof 3/3. Its task is 0/3 in every arm on both models: no measured lift. Listed until it shows one."
     priority: 13
     when:
       - prompt:
@@ -521,8 +521,9 @@ reflexes:
     skill: autonomous
     skill_source: skills/orchestration/autonomous/SKILL.md
     routing: skills/orchestration/autonomous/evals/prompts.json
-    status: routed
-    m3: "sealed v2 (be7726d): recall 0.6 (6/10), false fire 0.0 (0/5), passes 0.60 / 0.20; v1 (a272659, 3/2): recall 0.33, false fire 0.0"
+    status: listed
+    m3: "sealed v2 (be7726d): recall 0.6 (6/10), false fire 0.0 (0/5), passes 0.60 / 0.20; v1 (a272659, 3/2): recall 0.33, false fire 0.0. Not routed: 4 of its 6 hits are this skill's own description phrases (be autonomous,
+      automerge, merge autonomously), which the v2 writer could see in its skill listing; without them 2/10"
     priority: 37
     when:
       - phrases: [/autonomous, full bstack, merge autonomously, automerge, be autonomous, let it run]

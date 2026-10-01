@@ -16,6 +16,11 @@ The bars, as the spec states them (§10 A2):
   P14 / P11 / P3 regression tasks;
 * qbar becomes the default only if, in the same opus run, qbar − bare CI > 0 over A2's
   tasks and qbar − rolex is not entirely < 0 on the p9 and branch-first tasks (#850).
+
+A bar with no measured task is NOT SHOWN, never met: a vacuous branch-first (opus passes it
+bare) leaves "reflex ≥ qbar on branch-first" and #850's fallback unshown, so the verdict is
+"not shown" unless some bar failed outright. Tasks are classed by id: ``p9-watch`` and
+``p9-change`` are the pinned p9 rule's tasks; ``p9-heal`` is another entry and counts as rest.
 """
 
 from __future__ import annotations
@@ -83,6 +88,7 @@ def bars(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         return out
     rb = diff(rows, "reflex", "bare", a2)
     rq_rest = diff(rows, "reflex", "qbar", rest) if rest else None
+    missing = [name for name, group in (("p9", p9), ("branch-first", bf), ("rest", rest)) if not group]
     p9_bf = []
     for t in sorted(p9 | bf):
         (rp, rn), (qp, qn) = _counts(rows, "reflex", {t}), _counts(rows, "qbar", {t})
@@ -110,12 +116,19 @@ def bars(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     if "rolex" in arms:
         qb = diff(rows, "qbar", "bare", a2)
         qr = diff(rows, "qbar", "rolex", p9 | bf)
-        out["qbar_fallback"] = {"qbar_minus_bare": qb, "qbar_minus_bare_ci_above_0": _above(qb),
-                                "qbar_minus_rolex_p9_bf": qr, "qbar_minus_rolex_entirely_below_0": _below(qr),
-                                "qbar_may_become_default": bool(_above(qb)) and _below(qr) is False}
-    ok = (_above(rb) and all(x["reflex_ge_qbar"] for x in p9_bf)
-          and (rq_rest is None or _above(rq_rest)) and not fails)
-    out["verdict"] = "router bars met" if ok else "router bars not met"
+        shown = bool(p9) and bool(bf)
+        out["qbar_fallback"] = {
+            "qbar_minus_bare": qb, "qbar_minus_bare_ci_above_0": _above(qb),
+            "qbar_minus_rolex_p9_bf": qr, "qbar_minus_rolex_entirely_below_0": _below(qr),
+            # #850 needs the p9 AND branch-first tasks; with one group empty it is not shown
+            "meets_850_condition": (bool(_above(qb)) and _below(qr) is False) if shown else None,
+            "not_shown_because": [] if shown else [g for g, s_ in (("p9", p9), ("branch-first", bf)) if not s_]}
+    failed = (_above(rb) is False or not all(x["reflex_ge_qbar"] for x in p9_bf)
+              or (rq_rest is not None and _above(rq_rest) is False) or bool(fails))
+    out["router"]["not_shown"] = missing
+    out["verdict"] = ("router bars not met" if failed else
+                      "router bars not shown: no task for " + ", ".join(missing) if missing else
+                      "router bars met" if _above(rb) else "router bars not shown: reflex - bare has < 2 tasks")
     return out
 
 
@@ -133,6 +146,8 @@ def harm_table(rows: Sequence[Mapping[str, Any]]) -> dict[str, dict[str, list[in
 def _fmt(d: Mapping[str, Any] | None) -> str:
     if not d:
         return "n/a"
+    if not d["tasks"]:
+        return f"{d['a']} vs {d['b']}: no task both ran"
     ci = d["ci"]
     ci_s = f"[{ci[0]:+.2f}, {ci[1]:+.2f}]" if ci else "n/a (< 2 tasks)"
     (ap, an), (bp, bn) = d["a_count"], d["b_count"]
@@ -163,9 +178,13 @@ def main(argv: Sequence[str] | None = None) -> int:
         print(f"- rest: {_fmt(r['reflex_minus_qbar_rest'])}")
         print(f"- regression: {_fmt(r['reflex_minus_qbar_regression'])}")
         print(f"- does not ship because: {r['does_not_ship_because'] or 'nothing'}")
+        print(f"- not shown (no task): {r['not_shown'] or 'nothing'}")
     if "qbar_fallback" in b:
         q = b["qbar_fallback"]
-        print(f"\nqbar fallback (#850): may become default: {q['qbar_may_become_default']}")
+        state = q["meets_850_condition"]
+        print(f"\nqbar fallback (#850): "
+              + ("not shown, no task for " + ", ".join(q["not_shown_because"]) if state is None
+                 else f"condition met: {state}"))
         print(f"- {_fmt(q['qbar_minus_bare'])}\n- {_fmt(q['qbar_minus_rolex_p9_bf'])}")
     print(f"\nverdict: {b['verdict']}")
     for task, cells in res["harm"].items():

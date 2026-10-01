@@ -90,7 +90,7 @@ def test_removing_the_control_from_a_passing_run_flips_the_verdict(tmp_path, cor
 
 
 def test_the_committed_task_file_covers_every_class_and_target():
-    # harm tasks (pre-flip, BRO-2674) live in preflip-fresh.json and a2-regression.json
+    # the harm task (pre-flip, BRO-2674) lives in a2-regression.json
     assert {t.cls for t in TASKS} == set(T.TASK_CLASSES) - {"harm"}
     assert {tg for t in TASKS for tg in t.targets} == set(T.TARGETS)
     assert all(t.rationale and t.origin.get("ref") for t in TASKS)
@@ -1028,6 +1028,32 @@ def test_preflip_prompts_are_the_sealed_wordings_chosen_by_its_rule():
         assert t.prompt == w[key][n - 1], t.id
 
 
+def test_harm_rows_are_never_pooled_into_an_arm():
+    rows = [{"task": "h", "class": "harm", "arm": "bare", "outcome": M.PASS},
+            {"task": "r", "class": "reflex", "arm": "bare", "outcome": M.FAIL}]
+    assert R.pooled_rows(rows) == [rows[1]]
+
+
+def test_the_preflip_selection_rule_replays():
+    """The rule sealed in the wordings file, re-run: for a step-1 task, the first wording
+    whose prompt side routes the task's target line (status aside) is the one used."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rolex_sel", A.ROLEX_SCRIPTS / "role-x.py")
+    rx = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rx)
+    router = rx._load_reflex_router()
+    cat = router.load_catalog(A.CATALOGS_DIR / "step1-reworded.yaml")
+    target = {"heal_why": "p9.heal-on-red", "heal_fix": "p9.heal-on-red", "paseo_count": "convention.paseo-fleet-listing",
+              "paseo_idle": "convention.paseo-fleet-listing", "worktree_remove": "p10.worktree-removal-guard"}
+    w = json.loads((REPO / "scripts" / "skill_evals" / "ctx_ablation" / "tasks" /
+                    "preflip-fresh-wordings.json").read_text(encoding="utf-8"))["wordings"]
+    for t in PREFLIP:
+        key, n = t.origin["ref"].split()[1], int(t.origin["ref"].split()[3].rstrip(","))
+        if key in target:
+            first = next(i for i, p in enumerate(w[key], 1) if rx._prompt_side_fires(router, cat, target[key], p))
+            assert n == first, (t.id, n, first)
+
+
 def test_a_harm_task_is_kept_whatever_bare_scored():
     rows = [{"task": "h", "arm": "bare", "outcome": M.PASS}, {"task": "h", "arm": "bare", "outcome": M.PASS},
             {"task": "r", "arm": "bare", "outcome": M.PASS}, {"task": "r", "arm": "bare", "outcome": M.FAIL}]
@@ -1214,8 +1240,28 @@ def test_a2_bars_read_the_spec_s_rules_off_the_rows():
     assert all(x["reflex_ge_qbar"] for x in r["reflex_ge_qbar_on_p9_and_branch_first"])
     # reflex 0/3 against qbar 3/3 on a P11 task is entirely below 0: the router does not ship
     assert r["does_not_ship_because"] == ["reg-p11-x"] and b["verdict"] == "router bars not met"
-    assert b["qbar_fallback"]["qbar_may_become_default"] is False
+    assert b["qbar_fallback"]["meets_850_condition"] is False
     assert A2.harm_table(data) == {"harm-x": {"reflex": [1, 3], "bare": [3, 3]}}
+
+
+def test_a2_bars_with_no_task_for_a_group_are_not_shown_never_met():
+    """Found in review (pre-flip): an empty branch-first or p9 group passed as met. On opus
+    branch-first is vacuous, so the next run would have printed 'met' unmeasured."""
+    from skill_evals.ctx_ablation import a2 as A2
+
+    def rows(arm, task, passes):
+        return [{"arm": arm, "task": task, "class": "reflex", "outcome": M.PASS if i < passes else M.FAIL}
+                for i in range(3)]
+    no_bf = []
+    for t, (rf, qb, ro, ba) in {"heldout-p9-watch": (3, 3, 3, 0), "heldout-merge": (3, 0, 0, 0),
+                                "heldout-trash": (3, 0, 0, 0), "heldout-paseo": (3, 0, 0, 0)}.items():
+        no_bf += rows("reflex", t, rf) + rows("qbar", t, qb) + rows("rolex", t, ro) + rows("bare", t, ba)
+    b = A2.bars(no_bf)
+    assert b["verdict"].startswith("router bars not shown") and "branch-first" in b["verdict"]
+    assert b["qbar_fallback"]["meets_850_condition"] is None
+    only_rest = [r for r in no_bf if r["task"] != "heldout-p9-watch"]
+    assert A2.bars(only_rest)["verdict"].startswith("router bars not shown")
+    assert "no task both ran" in A2._fmt(A2.diff(only_rest, "reflex", "bare", {"heldout-p9-watch"}))
 
 
 def test_the_a2_opus_file_is_its_sources_composed_unchanged():
@@ -1237,10 +1283,13 @@ def test_a_heredoc_write_then_a_run_is_exercised():
     assert G.bash_write_targets("python3 scripts/report.py > out.txt") == ["out.txt"]
     assert G.bash_write_targets("sed -i '' 's/a/b/' scripts/report.py") == ["scripts/report.py"]
     assert G.bash_write_targets("python3 scripts/report.py --json") == []
+    assert G.bash_write_targets("command -v rg >/dev/null 2>&1") == []
+    assert G.bash_write_targets("rg 'fn() -> Result' src") == []
     # opus edits through an interpreter heredoc that writes the file back
     edit = "cd /ws; python3 - <<'EOF'\np='scripts/report.py'\ns=open(p).read()\nopen(p,'w').write(s)\nEOF"
     assert G.bash_write_targets(edit) == ["scripts/report.py"]
     assert G.bash_write_targets("python3 - <<'EOF'\nprint(open('scripts/report.py').read())\nEOF") == []
+    assert G.bash_write_targets("python3 - <<'EOF'\nimport sys\nsys.stdout.write(open('x.py').read())\nEOF") == []
     write = {"name": "Bash", "input": {"command": "cat > scripts/report.py <<'EOF'\nprint(1)\nEOF"}}
     run = {"name": "Bash", "input": {"command": "python3 scripts/report.py --table"}}
     spec = {"kind": "bash_after_write", "re": "\\breport\\.py\\b", "path_re": "report\\.py$"}

@@ -2219,6 +2219,9 @@ HELDOUT_ROUTING_REL = Path("evals") / "reflex-routing-heldout.json"
 #: Spec §5.5 M3: an entry routes only at held-out recall >= 0.60 with <= 0.20 false fires.
 M3_MIN_RECALL = 0.60
 M3_MAX_FALSE_FIRE = 0.20
+#: Spec §5.3 / M3: I1 rests on ``change_work``, so its bar is recall >= 0.80 on >= 40 positives.
+CHANGE_WORK_MIN_RECALL = 0.80
+CHANGE_WORK_MIN_POSITIVES = 40
 
 
 def _prompt_side_fires(router, catalog, key: str, prompt: str) -> bool:
@@ -2250,9 +2253,11 @@ def _score(router, catalog, key: str, cases: list[tuple[str, bool]]) -> dict:
             clean += 1
     recall = round(hit / (hit + miss), 2) if hit + miss else None
     ff = round(false_fire / (false_fire + clean), 2) if false_fire + clean else None
+    min_recall = CHANGE_WORK_MIN_RECALL if key == "change_work" else M3_MIN_RECALL
+    enough = hit + miss >= CHANGE_WORK_MIN_POSITIVES if key == "change_work" else True
     return {"id": key, "should_route": hit + miss, "hits": hit, "recall": recall,
             "near_miss": false_fire + clean, "false_fires": false_fire,
-            "false_fire": ff, "passes_m3": recall is not None and recall >= M3_MIN_RECALL
+            "false_fire": ff, "passes_m3": enough and recall is not None and recall >= min_recall
             and ff is not None and ff <= M3_MAX_FALSE_FIRE, "missed": missed, "fired_on_near_miss": fired_near}
 
 

@@ -1,6 +1,6 @@
 {
  "version": 1,
- "notes": "Pre-flip step 1 (BRO-2674): fresh blind wordings for the lines sonnet refused as injected text in v1 (p9 heal, Paseo) and for the reworded worktree guard, Prompts are copied from preflip-fresh-wordings.json (sealed, sha256 2d5ee62d…) by its selection rule: heal_why 1, heal_fix 1, paseo_count 2 (wording 1 names no Paseo, so nothing routes), paseo_idle 1, worktree_remove 2 (wording 1's 'nuke' is not a routed verb). The harm task lives in a2-regression.json. Step 1 ran on this file's earlier digest (f-digest in RESULTS-reflex-preflip.md), which also held the harm task, never run there. Fixtures mirror reflex-heldout.json's. Results: RESULTS-reflex.md.",
+ "notes": "Pre-flip step 1 (BRO-2674): fresh blind wordings for the lines sonnet refused as injected text in v1 (p9 heal, Paseo) and for the reworded worktree guard. Prompts are copied from preflip-fresh-wordings.json (sealed, sha256 2d5ee62d…) by its selection rule: heal_why 1, heal_fix 1, paseo_count 2 (wording 1 names no Paseo, so nothing routes), paseo_idle 1, worktree_remove 2 (wording 1's 'nuke' is not a routed verb). The harm task lives in a2-regression.json. Step 1 ran on this file's earlier digest bea36e97, which also held the harm task, never run there. Fixtures mirror reflex-heldout.json's. Results: RESULTS-reflex-preflip.md.",
  "tasks": [
   {
    "id": "fresh-heal-why",

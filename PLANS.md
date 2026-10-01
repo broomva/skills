@@ -29,9 +29,11 @@ with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
 2. [x] Step 4: score v2, set `status` per the gate, tests gate on v2 (3b20c94): 10/31 pass;
    heal and checkit listed, autonomous routed, ship-not-ask still listed.
 3. [x] Step 1 (sonnet, $3.46): heal 3/3 reworded vs 0/3 v1 line on a fresh wording; Paseo 3/3
-   both; worktree 0 losses in 3 (bare 3/3 lost). The guard routes again (4348e4f).
+   both; worktree 0/3 in every arm by its grader, no backup claim with the reworded line.
 4. [x] Step 3 (opus, $14.14, 05:47–06:11 -05): reflex 15/24 [+0.19, +1.00], legacy 11/24, qbar
-   10/24, bare 0/24. A2 not met: P3 reflex 0/3 vs qbar 3/3 (stop rule); rest CI [−0.08, +1.00].
+   10/24, bare 0/24. A2 not met: P3 reflex 0/3 vs qbar 3/3 (stop rule); rest CI [−0.08, +1.00];
+   branch-first and the qbar fallback not shown. P20 round 1 (B 7, C 6): autonomous and the
+   worktree guard back to listed, change_work held to 0.80, a2.py reports "not shown".
 5. [ ] Results doc (`ctx_ablation/RESULTS-reflex-preflip.md`): do not flip. P20 (B + C), merge
    with the flag off.
 
