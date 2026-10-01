@@ -16,6 +16,7 @@ import select
 import shlex
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -462,8 +463,12 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
     else:
         status = "ok"
 
-    locked_reason = (data.get("five_hour") or {}).get("locked_reason")
-    is_locked = bool(locked_reason or fh_util >= 99.0)
+    locked_reason = (data.get("five_hour") or {}).get("locked_reason") or (data.get("seven_day") or {}).get("locked_reason")
+    for lim in data.get("limits") or []:
+        if lim.get("is_active") and (lim.get("percent") or 0) >= 100:
+            locked_reason = locked_reason or f"{lim.get('group', 'usage')}_limit_reached"
+
+    is_locked = bool(locked_reason or fh_util >= 99.0 or sd_util >= 99.0)
     prev_locked = acc_cache.get("isRateLimited", False) if acc_cache else False
     locked_at = acc_cache.get("lockedAt", 0.0) if acc_cache else 0.0
     locked_reason_prev = acc_cache.get("lockedReason") if acc_cache else None
@@ -543,9 +548,18 @@ def balance_accounts(threshold: float = 85.0, dry_run: bool = False, verbose: bo
 
     active = next((a for a in accounts if a["isActive"]), None)
     if not active:
-        candidates = [a for a in accounts if a.get("hasStoredCredentials")]
+        candidates = [
+            a for a in accounts
+            if a.get("hasStoredCredentials")
+            and not a.get("isRateLimited")
+            and (a.get("sevenDayUtil") is None or a.get("sevenDayUtil") < 99.0)
+        ]
         if candidates:
-            best = min(candidates, key=lambda a: a.get("fiveHourUtil") if a.get("fiveHourUtil") is not None else 999.0)
+            def sort_key(a):
+                fh = a.get("fiveHourUtil")
+                sd = a.get("sevenDayUtil")
+                return (fh if fh is not None else 999.0, sd if sd is not None else 999.0)
+            best = min(candidates, key=sort_key)
             if dry_run:
                 return {
                     "success": True,
@@ -571,7 +585,10 @@ def balance_accounts(threshold: float = 85.0, dry_run: bool = False, verbose: bo
 
     standbys = [
         a for a in accounts
-        if not a["isActive"] and a.get("hasStoredCredentials") and not a.get("isRateLimited")
+        if not a["isActive"]
+        and a.get("hasStoredCredentials")
+        and not a.get("isRateLimited")
+        and (a.get("sevenDayUtil") is None or a.get("sevenDayUtil") < 99.0)
     ]
 
     if not standbys:
@@ -594,7 +611,7 @@ def balance_accounts(threshold: float = 85.0, dry_run: bool = False, verbose: bo
     best_email = best_standby.get("email")
 
     if needs_balancing:
-        if best_util is None or (active_util is None) or best_util < active_util:
+        if active_rate_limited or best_util is None or (active_util is None) or best_util < active_util:
             if dry_run:
                 return {
                     "success": True,
@@ -768,35 +785,35 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
         login_cmd,
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
-        stderr=subprocess.PIPE,
-        text=True
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1
     )
 
     auth_url = None
     output_lines = []
+    url_ready = threading.Event()
 
-    # Read output until the authorize URL is emitted
-    deadline = time.time() + 20
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            break
-        rlist, _, _ = select.select([proc.stdout], [], [], 0.5)
-        if proc.stdout in rlist:
-            line = proc.stdout.readline()
-            if not line:
-                break
+    def read_stdout():
+        nonlocal auth_url
+        for line in iter(proc.stdout.readline, ""):
             output_lines.append(line)
-            match = re.search(r"https://claude\.com/cai/oauth/authorize\S+", line)
-            if match:
-                auth_url = match.group(0).rstrip(".")
-                break
+            if not auth_url:
+                match = re.search(r"https://claude\.com/cai/oauth/authorize\S+", line)
+                if match:
+                    auth_url = match.group(0).rstrip(".")
+                    url_ready.set()
+
+    reader_thread = threading.Thread(target=read_stdout, daemon=True)
+    reader_thread.start()
+    url_ready.wait(timeout=15.0)
 
     if not auth_url:
         proc.kill()
-        proc.communicate()
+        reader_thread.join(timeout=2.0)
         raise RuntimeError("Failed to capture OAuth authorization URL from claude auth login output.")
 
-    sys.stdout.write(f"[*] Authorization URL generated. Requesting autonomous approval...\n")
+    sys.stdout.write("[*] Authorization URL generated. Requesting autonomous approval...\n")
 
     # 3. Call auth_helper to execute the authorization grant
     approve_cmd = ["node", str(AUTH_HELPER_PATH), "approve-oauth", auth_url, org_uuid, browser]
@@ -813,7 +830,7 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
             pass
 
     if formatted_code:
-        sys.stdout.write(f"[*] Authorization code obtained autonomously. Notifying login listener...\n")
+        sys.stdout.write("[*] Authorization code obtained autonomously. Notifying login listener...\n")
         try:
             if proc.stdin and not proc.stdin.closed:
                 proc.stdin.write(f"{formatted_code}\n")
@@ -823,17 +840,18 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
     else:
         err_msg = appr_res.stderr.strip() if appr_res else "No code returned"
         sys.stdout.write(f"[*] Autonomous grant approval unavailable ({err_msg}).\n")
-        sys.stdout.write(f"[*] Local listener active; waiting up to 90s for browser sign-in completion...\n")
+        sys.stdout.write("[*] Local listener active; waiting up to 90s for browser sign-in completion...\n")
 
     # 4. Wait for login process to complete (either via injected code or browser redirect callback)
     try:
-        stdout_rem, stderr_rem = proc.communicate(timeout=90)
+        proc.wait(timeout=90)
     except subprocess.TimeoutExpired:
         proc.kill()
-        proc.communicate()
         raise TimeoutError("claude auth login timed out waiting to complete authentication.")
+    finally:
+        reader_thread.join(timeout=5.0)
 
-    full_output = "".join(output_lines) + stdout_rem + stderr_rem
+    full_output = "".join(output_lines)
 
     if proc.returncode != 0 or "Login successful" not in full_output:
         raise RuntimeError(f"claude auth login did not report success (exit code {proc.returncode}): {full_output}")
@@ -900,14 +918,17 @@ def rotate_account(reason: str = "rate_limit", dry_run: bool = False) -> Dict[st
             "error": "Cannot rotate: only 1 account configured in managed accounts roster."
         }
 
-    active_idx = next((i for i, a in enumerate(accounts) if a["isActive"]), 0)
+    active_idx = next((i for i, a in enumerate(accounts) if a.get("isActive")), 0)
     active = accounts[active_idx] if accounts else None
 
     # Fetch usage telemetry to make an intelligent selection
     usage_list = fetch_all_usage()
     standby_candidates = [
         a for a in usage_list
-        if not a["isActive"] and a.get("hasStoredCredentials") and not a.get("isRateLimited")
+        if not a["isActive"]
+        and a.get("hasStoredCredentials")
+        and not a.get("isRateLimited")
+        and (a.get("sevenDayUtil") is None or a.get("sevenDayUtil") < 99.0)
     ]
 
     chosen = None
@@ -920,10 +941,25 @@ def rotate_account(reason: str = "rate_limit", dry_run: bool = False) -> Dict[st
 
     if not chosen:
         # Fallback to cyclic round-robin order of remaining candidates
+        usage_by_id = {a["id"]: a for a in usage_list}
         ordered_candidates = [accounts[(active_idx + i) % len(accounts)] for i in range(1, len(accounts))]
-        chosen = next((c for c in ordered_candidates if c.get("isTokenFresh")), None)
-        if not chosen:
-            chosen = next((c for c in ordered_candidates if c.get("hasStoredCredentials")), ordered_candidates[0])
+        eligible_candidates = [
+            c for c in ordered_candidates
+            if c.get("hasStoredCredentials")
+            and not usage_by_id.get(c["id"], {}).get("isRateLimited", False)
+            and (usage_by_id.get(c["id"], {}).get("sevenDayUtil") is None or usage_by_id.get(c["id"], {}).get("sevenDayUtil") < 99.0)
+        ]
+        chosen = next((c for c in eligible_candidates if c.get("isTokenFresh")), None)
+        if not chosen and eligible_candidates:
+            chosen = eligible_candidates[0]
+
+    if not chosen:
+        return {
+            "success": False,
+            "error": "No available standby accounts with valid quota or credentials.",
+            "reason": "no_available_standby",
+            "currentAccount": active["email"] if active else None
+        }
 
     if dry_run:
         return {
@@ -944,7 +980,7 @@ def rotate_account(reason: str = "rate_limit", dry_run: bool = False) -> Dict[st
         cache.setdefault("accounts", {})[active["id"]] = acc_cache
         save_usage_cache(cache)
 
-    sys.stdout.write(f"[*] Rotating provider from {active['email'] if active else 'unknown'} to {chosen['email']} (reason: {reason})...\n")
+    sys.stderr.write(f"[*] Rotating provider from {active['email'] if active else 'unknown'} to {chosen['email']} (reason: {reason})...\n")
     try:
         switch_res = switch_account(
             chosen["id"],

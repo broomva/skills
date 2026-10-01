@@ -163,6 +163,7 @@ def test_the_cli_reads_the_hook_from_stdin_and_exits_2_to_block(rig):
 
 def test_the_gate_fails_closed_when_it_fails(rig, tmp_path):
     import os
+    import sys
     import subprocess
     from conftest import FLEET
     m = rig.mail()
@@ -172,6 +173,10 @@ def test_the_gate_fails_closed_when_it_fails(rig, tmp_path):
         out = subprocess.run(["/bin/sh", str(FLEET), "send-gate", "pre"], input=hook, capture_output=True, text=True,
                              env=env, timeout=60)
         assert out.returncode == 2 and "fails closed" in out.stderr, out.stderr
+        # The Python entry fails closed by itself too, not only through the shim.
+        py = subprocess.run([sys.executable, "-I", str(FLEET.parent / "fleet_reconcile.py"), "send-gate", "pre"],
+                            input=hook, capture_output=True, text=True, env=env, timeout=60)
+        assert py.returncode == 2, py.stderr
 
 
 def test_a_ledger_it_cant_lock_still_refuses(rig, monkeypatch):
@@ -194,3 +199,24 @@ def test_a_send_that_reports_no_success_is_not_done(rig):
                                                      hook_event_name="PostToolUse",
                                                      tool_response={"success": False, "message": "held"}), 7, False)
     assert rec["kind"] == "failed" and rec["reason"] == "harness_refused"
+
+
+def test_a_corrupt_ledger_refuses_the_send(rig):
+    m = rig.mail()
+    with (rig.w.state["broomva"] / "ledger.jsonl").open("a") as fh:
+        fh.write('{"torn\n')
+    code, msg = rig.pre(rig.hook(m["send"]["to"], m["send"]["message"]))
+    assert code == 2 and "corrupt" in msg
+
+
+def test_the_shim_fails_closed_when_python_cant_start(rig):
+    import os
+    import subprocess
+    from conftest import FLEET
+    env = dict(os.environ, FLEET_TICK="7", FLEET_SCOPE="broomva", FLEET_PYTHON="/nonexistent/python3")
+    out = subprocess.run(["/bin/sh", str(FLEET), "send-gate", "pre"], input="{}", capture_output=True, text=True,
+                         env=env, timeout=60)
+    assert out.returncode == 2
+    other = subprocess.run(["/bin/sh", str(FLEET), "send-gate", "post"], input="{}", capture_output=True, text=True,
+                           env=env, timeout=60)
+    assert other.returncode != 2  # only pre blocks

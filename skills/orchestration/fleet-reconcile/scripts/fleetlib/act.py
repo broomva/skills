@@ -204,6 +204,12 @@ class Act:
                     self.sec["mail_interval_h"], prior["id"]))
             if template not in MAIL_TEMPLATES:
                 raise Refused("ineligible", "no mail template %r" % template)
+            if template == "overlap":
+                # An overlap comes from the core's published claims (§5.4's
+                # overlap pass); until they exist there is none to name, and
+                # its values would be the coordinator's own words.
+                raise Refused("ineligible", "the overlap template waits for the core's published claims (core "
+                                            "phase 2)")
             for k, v in values.items():
                 if k not in TEMPLATE_VARS or not TEMPLATE_VARS[k].match(v or ""):
                     raise Refused("ineligible", "template value %s is not one of the fixed shapes (other: a session "
@@ -304,8 +310,11 @@ class Act:
             except (SourceError, ValueError) as exc:
                 raise Refused("ineligible", "%s#%d's files weren't read, so the owner-merge rule can't be checked: "
                                             "%s" % (slug, number, common.safe_text(exc, 80)))
+            if not isinstance(files, list):
+                raise Refused("ineligible", "%s#%d's file list isn't a list, so the owner-merge rule can't be "
+                                            "checked" % (slug, number))
             owner = sorted(f for f in files if isinstance(f, str) and f.startswith(OWNER_MERGE_PREFIXES))
-            if owner or not isinstance(files, list):
+            if owner:
                 raise Refused("ineligible", "%s#%d touches %s: an owner-merge PR gets no driver (§5.2)" % (
                     slug, number, owner[0] if owner else "an unreadable file list"))
         except Refused as exc:
@@ -354,9 +363,10 @@ class Act:
         key = "%s#%d" % (slug, number)
         try:
             self.preflight("label", ["repo:%s" % slug])
-            if not LABEL_RE.match(name or "") or op not in ("add", "remove"):
-                raise Refused("ineligible", "a label is 1-50 plain characters and the op add or remove")
-            if name.lower() == HOLD_LABEL:
+            if not LABEL_RE.match(name or "") or name != name.strip() or op not in ("add", "remove"):
+                raise Refused("ineligible", "a label is 1-50 plain characters, no edge spaces, and the op add or "
+                                            "remove")
+            if name.strip().lower() == HOLD_LABEL:
                 raise Refused("ineligible", "the %s label is the owner's: fleet act neither adds nor removes it"
                               % HOLD_LABEL)
             if not self.dry and not profile.read_token(self.sec):
@@ -418,14 +428,26 @@ class Act:
         try:
             self._resumable(sid)  # re-checked just before
             self.src.run_claude(argv)
-            row = next((r for r in self.listing() if r["session_id"] == sid), None)
         except Refused as exc:
             return self._failed(it, exc.reason, exc.detail)
         except SourceError as exc:
             return self._failed(it, "harness_refused", common.safe_text(exc, 160))
-        if not row or row["pid"] is None:
-            return self._failed(it, "harness_refused", "claude agents shows no process for it after the resume")
-        return self._done(it, {"pid": row["pid"]})
+        pid = self._poll_pid(sid)  # the listing can lag the resume, as it lags a spawn
+        if pid is None:
+            return self._failed(it, "harness_refused", "claude agents showed no process for it within %ds of the "
+                                                       "resume" % LIVE_POLL_S)
+        return self._done(it, {"pid": pid})
+
+    def _poll_pid(self, sid: str) -> Optional[int]:
+        deadline = time.monotonic() + LIVE_POLL_S
+        while True:
+            try:
+                row = next((r for r in self.listing(10) if r["session_id"] == sid), None)
+            except Refused:
+                row = None
+            if (row is not None and row["pid"] is not None) or time.monotonic() > deadline:
+                return row["pid"] if row else None
+            time.sleep(1.0)
 
     def _resumable(self, sid: str) -> None:
         row = next((r for r in self.listing() if r["session_id"] == sid), None)

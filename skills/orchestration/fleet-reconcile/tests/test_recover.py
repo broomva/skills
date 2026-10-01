@@ -101,3 +101,14 @@ def test_closed_intents_and_asks_are_left_alone(world):
     ledger.append(world.state["broomva"], dict(BASE, kind="intent", verb="ask", key="scope:broomva",
                                                target={"batch": "x", "asks": []}))
     assert _run(world) == []
+
+
+def test_an_entry_that_only_quotes_the_text_is_not_a_delivery(world):
+    it = _intent(world, "mail", {"session_id": SID, "text": "queued one"})
+    later = common.ts(time.time() + 5)
+    _transcript(world, SID, [
+        {"type": "assistant", "timestamp": later, "message": {"content": [{"type": "text", "text": "queued one"}]}},
+        {"type": "user", "timestamp": later, "message": {"content": "queued one, and more"}},
+    ])
+    (rec,) = _run(world)
+    assert rec["of"] == it["id"] and rec["kind"] == "failed"

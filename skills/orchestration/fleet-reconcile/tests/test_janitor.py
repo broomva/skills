@@ -153,6 +153,12 @@ def test_the_backup_holds_the_diff_untracked_files_secrets_and_a_branch_for_unpu
     assert oct(os.stat(d).st_mode & 0o777) == "0o700"
 
 
+def test_two_backups_at_one_instant_both_land(world, wt):
+    a = janitor.backup(world.state["broomva"], str(wt), now=1_790_000_000.0)
+    b = janitor.backup(world.state["broomva"], str(wt), now=1_790_000_000.0)
+    assert a["dir"] != b["dir"] and os.path.isdir(a["dir"]) and os.path.isdir(b["dir"])
+
+
 def test_backups_older_than_fourteen_days_are_pruned(world, wt):
     res = janitor.backup(world.state["broomva"], str(wt))
     old = time.time() - 15 * 86400
@@ -213,3 +219,106 @@ def test_an_open_pr_on_the_worktrees_branch_fails_it(world, wt):
     assert _guard(world, wt).pr_closed() == ("fail", "PR #5 is open")
     (world.fixture / "gh" / "broomva__workspace" / "prs-head-feat__x.json").write_text('[{"number": 5, "state": "MERGED"}]')
     assert _guard(world, wt).pr_closed()[0] == "pass"
+
+
+def test_path_must_be_the_owners_worktree_not_a_directory_above_it(world, wt):
+    _listing(world, [_row(OWNER, wt)])
+    above = str(wt.parent)
+    res = janitor.run(config.scope("broomva"), FixtureSources(world.fixture), above, OWNER, True, lambda m: None)
+    assert res["aborted"] == "owner"
+
+
+def test_scratch_fails_closed(world, wt, tmp_path, monkeypatch):
+    assert janitor.scratch(str(wt))
+    broken = tmp_path / "broken"
+    (broken / ".git").mkdir(parents=True)  # a repo git can't read
+    assert not janitor.scratch(str(broken))
+    import ctx
+    common = os.path.realpath(subprocess.run(["git", "-C", str(wt), "rev-parse", "--git-common-dir"],
+                                             capture_output=True, text=True).stdout.strip())
+    real = ctx.load_scopes()
+    monkeypatch.setattr(ctx, "load_scopes", lambda: type("S", (), {"by_repo": dict(real.by_repo, **{common: None})}))
+    assert not janitor.scratch(str(wt))  # listed in two scopes (None): still a scope repo
+
+
+def test_secrets_in_ignored_dirs_are_found_but_dependency_dirs_are_skipped(world, wt):
+    (wt / ".gitignore").write_text(".env\nnode_modules/\ndata/\n")
+    for rel in ("data/app.db", "node_modules/pkg/cache.db"):
+        (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wt / rel).write_text("x")
+    found = janitor.secret_files(str(wt))
+    assert "data/app.db" in found and not any(f.startswith("node_modules") for f in found)
+
+
+def test_a_worktree_claude_rm_keeps_is_an_abort_and_a_removed_ones_profile_goes(world, wt):
+    _listing(world, [_row(OWNER, wt)])
+    sd = world.state["broomva"]
+    (sd / "profiles").mkdir(parents=True)
+    prof = sd / "profiles" / "broomva-x-pr1.json"  # keyed by the ledger's spawn of this session
+    prof.write_text("{}")
+    decoy = sd / "profiles" / "fleet-drill-1.json"  # the listing's name: never what decides
+    decoy.write_text("{}")
+    from fleetlib import ledger
+    it = ledger.append(sd, {"kind": "intent", "verb": "spawn", "key": "broomva-x-pr1", "target": {"name": "x"},
+                            "scope": "broomva", "tick": 1, "dry_run": False, "by": "act"})
+    ledger.append(sd, {"kind": "done", "verb": "spawn", "of": it["id"], "key": "broomva-x-pr1",
+                       "result": {"session_id": OWNER}, "scope": "broomva", "tick": 1, "dry_run": False, "by": "act"})
+    src = FixtureSources(world.fixture)
+    res = janitor.run(config.scope("broomva"), src, str(wt), OWNER, True, lambda m: None)
+    assert res["aborted"] == "rm kept the worktree" and prof.exists()  # the fixture's rm removes nothing
+
+    class Removes(FixtureSources):
+        def run_claude(self, args, cwd=None, timeout=120):
+            if args[0] == "rm":
+                subprocess.run(["git", "worktree", "remove", "--force", str(wt)], cwd=str(wt.parent / "scratch"),
+                               capture_output=True)
+            return "removed"
+    res = janitor.run(config.scope("broomva"), Removes(world.fixture), str(wt), OWNER, True, lambda m: None)
+    assert res["removed"] and not prof.exists() and decoy.exists(), res
+
+
+class _Removes(FixtureSources):
+    """claude rm removes the worktree."""
+    def __init__(self, fixture, world, wt):
+        super().__init__(fixture)
+        self.world, self.wt = world, wt
+
+    def run_claude(self, args, cwd=None, timeout=120):
+        if args[0] == "rm":
+            subprocess.run(["git", "worktree", "remove", "--force", str(self.wt)],
+                           cwd=str(self.wt.parent / "scratch"), capture_output=True)
+        return "ok"
+
+
+def _profile(world, spawned):
+    sd = world.state["broomva"]
+    (sd / "profiles").mkdir(parents=True)
+    prof = sd / "profiles" / "broomva-x-pr1.json"
+    prof.write_text("{}")
+    if spawned:
+        from fleetlib import ledger
+        it = ledger.append(sd, {"kind": "intent", "verb": "spawn", "key": "broomva-x-pr1", "target": {"name": "x"},
+                                "scope": "broomva", "tick": 1, "dry_run": False, "by": "act"})
+        ledger.append(sd, {"kind": "done", "verb": "spawn", "of": it["id"], "key": "broomva-x-pr1",
+                           "result": {"session_id": OWNER}, "scope": "broomva", "tick": 1, "dry_run": False,
+                           "by": "act"})
+    return prof
+
+
+def test_a_removed_owners_profile_goes_even_when_the_owner_left_the_listing_before_the_stop(world, wt):
+    _listing(world, [_row(OWNER, wt)])
+    prof = _profile(world, spawned=True)
+
+    def log(message):  # the owner leaves the listing once the first check has passed
+        if message.startswith("check:"):
+            _listing(world, [])
+    res = janitor.run(config.scope("broomva"), _Removes(world.fixture, world, wt), str(wt), OWNER, True, log)
+    assert res["removed"] and not prof.exists(), res
+
+
+def test_no_profile_is_deleted_for_an_owner_the_ledger_never_spawned(world, wt):
+    _listing(world, [_row(OWNER, wt)])
+    prof = _profile(world, spawned=False)
+    res = janitor.run(config.scope("broomva"), _Removes(world.fixture, world, wt), str(wt), OWNER, True,
+                      lambda m: None)
+    assert res["removed"] and prof.exists(), res

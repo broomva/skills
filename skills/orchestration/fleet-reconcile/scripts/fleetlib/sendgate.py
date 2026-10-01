@@ -49,7 +49,7 @@ def _matches(records: List[Dict[str, Any]], tick: int, to: str, text: str, open_
 def pre(sec: Dict[str, Any], src: Sources, hook: Dict[str, Any], tick: Optional[int], dry: bool,
         now: float) -> Tuple[int, str]:
     sd = config.state_dir(sec)
-    records, _ = ledger.read(sd)
+    records, corrupt = ledger.read(sd)
     ti = hook.get("tool_input") if isinstance(hook.get("tool_input"), dict) else {}
     to, text = ti.get("to"), ti.get("message")
     base = {"scope": sec["scope"], "tick": tick, "dry_run": dry, "by": "hook", "verb": "mail"}
@@ -65,6 +65,8 @@ def pre(sec: Dict[str, Any], src: Sources, hook: Dict[str, Any], tick: Optional[
 
     if tick is None:
         return refuse("no tick (FLEET_TICK is not set)")
+    if corrupt:  # a corrupt line can hide a prior mail or an outcome (§5.7)
+        return refuse("the ledger has %d corrupt line(s)" % corrupt)
     if not isinstance(to, str) or not isinstance(text, str):
         return refuse("no matching intent (the call has no to or message)")
     found = _matches(records, tick, to, text, open_only=True)

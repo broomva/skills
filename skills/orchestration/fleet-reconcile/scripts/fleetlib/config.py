@@ -45,12 +45,17 @@ SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     "launchd_logs": ("str_map", None),        # label -> the log that shows a real run, when stdout doesn't
     "bookkeeping_run_log": ("str_or_null", None),
     "dream_run_log": ("str_or_null", None),
-    "ask_renotify_h": ("int", 6),             # an unseen ask batch is shown again at most this often
+    "ask_renotify_h": ("int", 6),             # unused since 0.3.0 (the dialog's re-show); accepted, not read
     "tick_timeout_min": ("int", 15),
     "compare_hour": ("int", 18),              # the core comparison runs once a day from this local hour
     # phase 2
     "coordinator_model": ("str_or_null", None),  # the coordinator's --model; null: Claude Code's default
     "coordinator_budget_usd": ("num", 2),        # its --max-budget-usd per tick
+    # the owner channel on Paseo (fleetlib/paseo_ask.py); null: the defaults there
+    "maestro_cli": ("str_or_null", None),
+    "maestro_bun": ("str_or_null", None),
+    "ask_repo": ("str_or_null", None),
+    "ask_raise_after_min": ("int", 50),          # a batch reaches the owner once an ask in it is this old (0: at once)
 }
 CAP_KEYS = ("fleet_sessions", "active_sessions", "active_window_min", "research_spawns_per_day")
 CAP_DEFAULTS = {"fleet_sessions": 8, "active_sessions": 12, "active_window_min": 30, "research_spawns_per_day": 4}
@@ -108,8 +113,7 @@ def _check(kind: str, key: str, v: Any) -> None:
         "caps": lambda: isinstance(v, dict) and not (set(v) - set(CAP_KEYS))
         and all(type(x) is int and x >= 0 for x in v.values()),
         "paseo_tools": lambda: isinstance(v, dict) and not (set(v) - {"paseo_version", "read", "write"})
-        and all(isinstance(v.get(k, []), list) and all(isinstance(t, str) for t in v.get(k, []))
-                for k in ("read", "write")),
+        and all(isinstance(v.get(k), list) and all(isinstance(t, str) for t in v[k]) for k in ("read", "write")),
         "driver": lambda: isinstance(v, dict) and not (set(v) - set(DRIVER_KEYS))
         and (v.get("model") is None or isinstance(v.get("model"), str))
         and all(isinstance(v.get(k, []), list) and all(isinstance(t, str) and t for t in v.get(k, []))

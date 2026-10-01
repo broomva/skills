@@ -12,7 +12,7 @@ the user site stay off sys.path; this file puts its own directory and
     fleet config-check [<scope>]            exit 1 on any problem
     fleet observe --tick N                  write ticks/<N>/snapshot.json
     fleet report --tick N [--dry-run 0|1]   classify; write report.json, report.md and the ask batch
-    fleet act ask --show [--tick N]         show the owner a dialog of the open asks (Seen / Later)
+    fleet act ask --show [--tick N]         read answers back from Maestro; raise new batches there (Paseo)
     fleet act mail|spawn|label|resume       phase 2: re-check eligibility, intent, then dry or live (act.py)
     fleet recover [--tick N]                close intents a dead tick left open (recover.py)
     fleet send-gate pre|post                the coordinator's SendMessage hooks (sendgate.py)
@@ -35,8 +35,6 @@ from __future__ import annotations
 import argparse
 import json
 import os
-import re
-import shutil
 import subprocess
 import sys
 import time
@@ -53,7 +51,6 @@ from fleetlib import common, config, ledger, observe, report  # noqa: E402
 from fleetlib.sources import FixtureSources, Sources  # noqa: E402
 
 EXIT_REFUSED = 3
-DIALOG_GIVE_UP_S = 600  # §5.7: the dialog gives up after 10 minutes
 
 
 def _scope(args: argparse.Namespace) -> str:
@@ -110,7 +107,7 @@ def cmd_config_check(args: argparse.Namespace) -> int:
         if ev is None:
             print("fleet config-check --init: no system/init event in %s" % args.init, file=sys.stderr)
             return 1
-        probs = coordinator.posture_problems(ev.get("tools") or [], sec)
+        probs = coordinator.posture_problems(ev.get("tools"), sec)
         for p in probs:
             print("fleet config-check --init: %s" % p, file=sys.stderr)
         if probs:
@@ -196,42 +193,9 @@ def cmd_report(args: argparse.Namespace) -> int:
 
 
 # --------------------------------------------------------------------------
-# The ask channel (§5.7): a dialog, since banners are stored but not shown on
-# this Mac. A dialog that gave up was not seen; a Seen click is a statement,
-# not a proof (anything at the Mac can click it).
-
-def _aq(s: str) -> str:
-    return '"%s"' % s.replace("\\", "\\\\").replace('"', '\\"')
-
-
-def show_dialog(title: str, text: str) -> Dict[str, Any]:
-    """{button, gave_up} from a `display dialog` with Seen and Later, or
-    {error} when it couldn't be shown."""
-    osa = os.environ.get("FLEET_OSASCRIPT_BIN") or "osascript"
-    script = 'display dialog %s with title %s buttons {"Later", "Seen"} default button "Later" giving up after %d' % (
-        _aq(text), _aq(title), DIALOG_GIVE_UP_S)
-    try:
-        proc = subprocess.run([osa, "-e", script], stdin=subprocess.DEVNULL, capture_output=True, text=True,
-                              timeout=DIALOG_GIVE_UP_S + 60)
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return {"error": common.safe_text(str(exc), 120)}
-    m = re.search(r"button returned:([^,]*), gave up:(true|false)", proc.stdout or "")
-    if proc.returncode != 0 or not m:
-        return {"error": common.safe_text("osascript exited %d %s" % (proc.returncode, proc.stderr), 120)}
-    return {"button": m.group(1).strip() or None, "gave_up": m.group(2) == "true"}
-
-
-def p9_notify(title: str, body: str) -> Any:
-    """p9 may send off the machine (a phone channel), so it gets a count only."""
-    p9 = os.environ.get("FLEET_P9_BIN") or shutil.which("p9")
-    if not p9:
-        return "not on PATH"
-    try:
-        return subprocess.run([p9, "notify", title, "--body", body, "--kind", "fleet-ask"], stdin=subprocess.DEVNULL,
-                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, timeout=30).returncode
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return common.safe_text(str(exc), 80)
-
+# The ask channel, on Paseo (owner decision 2026-10-01; fleetlib/paseo_ask.py):
+# each new batch becomes a Maestro work item at Needs you, and the owner's
+# verdict there comes back as the answer. Never a desktop dialog.
 
 def _open_now(records: list) -> Dict[str, Dict]:
     """Open asks: each tick records the ones it found no longer true, so what
@@ -239,20 +203,137 @@ def _open_now(records: list) -> Dict[str, Dict]:
     return ledger.open_by_key(records)
 
 
-def due_batches(records: list, open_keys: Dict[str, Dict], now: float,
-                reshow_s: float = 6 * 3600) -> List[Dict[str, Any]]:
-    """Batches to show: holding an open ask, not clicked Seen, and never shown,
-    or shown once (the next tick shows it again), or last shown reshow_s ago
-    (ask_renotify_h, 6 h by default)."""
-    out = []
+#: How long a raised batch's item is read back: a note sent after its asks
+#: stopped being true is still the owner's answer.
+ASK_READ_DAYS = 14
+
+
+def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
+    """Read the owner's decisions back from every item raised in the last
+    ASK_READ_DAYS that isn't final, record each change of its state, and
+    dispatch one left queued while an ask in its batch is still open: (answers
+    recorded, failed reads and dispatches). Where an item stands is
+    ledger.maestro_phase's one rule. A dispatch refused at Maestro's run cap
+    is logged, not a failure; an item Maestro no longer has is recorded gone,
+    which frees its batch to be raised again if an ask in it is still open."""
+    from fleetlib import paseo_ask
+
+    answered = failed = 0
+    since = time.time() - ASK_READ_DAYS * 86400
+    open_of = {v["of"] for v in ledger.open_by_key(records).values()}
+
+    def seen(b: Dict[str, Any], state: str) -> None:
+        ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": sec["scope"], "tick": None, "dry_run": False,
+                           "by": "tick", "result": {"channel": "maestro", "item": b["item"], "state": state}})
+
     for b in ledger.ask_batches(records):
-        if b["seen"] or not any(v["of"] == b["id"] for v in open_keys.values()):
+        last = b.get("answer") or {}
+        if not b.get("item") or ledger.maestro_phase(last.get("state")) == "final" \
+                or (common.parse_iso(b["ts"]) or 0.0) < since:
             continue
-        shows = b["shown"]
-        last = max((common.parse_iso(x["ts"]) or 0.0) for x in shows) if shows else 0.0
-        if len(shows) <= 1 or now - last >= reshow_s:
-            out.append(b)
-    return out
+        try:
+            ans = paseo_ask.answer(sec, b["item"])
+        except paseo_ask.MaestroError as exc:
+            if paseo_ask.GONE in str(exc):
+                print("fleet act ask: Maestro no longer has item %s of tick %s; its batch is raised again while "
+                      "an ask in it is open" % (b["item"], b["tick"]), file=sys.stderr)
+                seen(b, "gone")
+                continue
+            print("fleet act ask: Maestro item %s of tick %s: %s" % (b["item"], b["tick"], exc), file=sys.stderr)
+            failed += 1
+            continue
+        state = ans["state"]
+        if ledger.maestro_phase(state) == "queued" and b["id"] in open_of:  # a cleared batch stays queued
+            try:
+                state = paseo_ask.start(sec, {"id": b["item"], "state": state}).get("state") or state
+                if ledger.maestro_phase(state) == "queued":
+                    print("fleet act ask: Maestro item %s of tick %s is queued at its run cap"
+                          % (b["item"], b["tick"]), file=sys.stderr)
+            except paseo_ask.MaestroError as exc:
+                print("fleet act ask: Maestro item %s of tick %s not dispatched: %s" % (b["item"], b["tick"], exc),
+                      file=sys.stderr)
+                failed += 1
+        if ledger.maestro_phase(state) and state != b.get("item_state"):  # however it moved: us, the owner, the loop
+            seen(b, state)
+        new = (ans["verdict"], ans["at"]) != (last.get("verdict"), last.get("at")) or \
+            (ledger.maestro_phase(ans["state"]) == "final" and ledger.maestro_phase(last.get("state")) != "final")
+        if ans["verdict"] and new:
+            ledger.append(sd, {"kind": "ack", "of": b["id"], "asks": "all", "scope": sec["scope"], "tick": None,
+                               "dry_run": False, "by": "owner:maestro",
+                               "result": dict(ans, channel="maestro", item=b["item"])})
+            answered += 1
+        elif ans["state"] == "blocked":
+            print("fleet act ask: Maestro item %s of tick %s is Stuck (its run failed); it shows there, and only "
+                  "the owner can unblock or cancel it" % (b["item"], b["tick"]), file=sys.stderr)
+    return answered, failed
+
+
+def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
+               open_now: Dict[str, Dict]) -> Tuple[int, int, int]:
+    """Raise each batch with no item (never raised, or its item gone) once an
+    ask in it has been open for ask_raise_after_min (by default past the next
+    hourly tick, so an ask a later tick found no longer true isn't raised):
+    (raised, failed, waiting). An open item Maestro made for the batch before
+    failing is found by its title's marker and adopted."""
+    from fleetlib import paseo_ask
+
+    raised = failed = waiting = 0
+    tick = args.tick if args.tick else None
+    now = time.time()
+    for b in ledger.ask_batches(records):
+        asks = [v["ask"] for v in open_now.values() if v["of"] == b["id"]]
+        if b.get("item") or not asks:
+            continue
+        asked = common.parse_iso(b["ts"])
+        if asked is not None and now - asked < sec.get("ask_raise_after_min", 50) * 60:
+            waiting += 1
+            continue
+        n = len(asks)
+        what = "%d fleet ask%s for scope %s (tick %s)" % (n, "" if n == 1 else "s", sec["scope"], b["tick"])
+        tag = paseo_ask.marker(sec["scope"], "batch %s" % b["id"])
+        title = "%d ask%s (tick %s) %s" % (n, "" if n == 1 else "s", b["tick"], tag)
+        text = paseo_ask.brief(
+            "fleet-reconcile has %s for the owner; `fleet asks --scope %s` lists them too." % (what, sec["scope"]),
+            ["[%s] (%s) %s" % (a.get("id"), a.get("class"), a.get("question")) for a in asks],
+            "%s are in this item's brief: approve to acknowledge them, send back a note to answer, cancel to "
+            "dismiss" % what)
+        try:
+            found = paseo_ask.find(sec, tag, since=asked)
+            item = paseo_ask.start(sec, found or paseo_ask.raise_item(sec, title, text))
+            if ledger.maestro_phase(item.get("state")) == "queued":
+                print("fleet act ask: batch of tick %s is queued at Maestro's run cap; a later tick dispatches it"
+                      % b["tick"], file=sys.stderr)
+        except (paseo_ask.MaestroError, OSError, subprocess.SubprocessError) as exc:
+            print("fleet act ask: batch of tick %s not raised: %s" % (b["tick"], common.safe_text(str(exc), 200)),
+                  file=sys.stderr)
+            failed += 1
+            continue
+        ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": sec["scope"], "tick": tick,
+                           "dry_run": _dry(args, sec), "by": "tick",
+                           "result": {"channel": "maestro", "item": item["id"], "state": item.get("state")}})
+        raised += 1
+    return raised, failed, waiting
+
+
+def cmd_alert(args: argparse.Namespace) -> int:
+    """tick.sh's alert, through Python so an open item of its kind is adopted
+    rather than a second raised. Exit 0: the item reached the owner (phase
+    owner); 4: queued at Maestro's run cap (not delivered); 5: Maestro failed
+    (not delivered). Any other exit (a config Python can't read) sends tick.sh
+    to its bash fallback."""
+    from fleetlib import paseo_ask
+
+    sec = _sec(args)
+    try:
+        item = paseo_ask.start(sec, paseo_ask.alert(sec, args.kind, args.message))
+    except (paseo_ask.MaestroError, OSError, subprocess.SubprocessError) as exc:
+        print("fleet alert: not raised: %s" % common.safe_text(str(exc), 200), file=sys.stderr)
+        return 5
+    print(json.dumps({"item": item.get("id"), "state": item.get("state"), "adopted": bool(item.get("adopted"))}))
+    if ledger.maestro_phase(item.get("state")) == "queued":
+        print("fleet alert: queued at Maestro's run cap", file=sys.stderr)
+        return 4
+    return 0
 
 
 def _tick(args: argparse.Namespace) -> Optional[int]:
@@ -304,41 +385,19 @@ def cmd_act(args: argparse.Namespace) -> int:
     records, _ = ledger.read(sd)
     open_now = _open_now(records)
     if not args.show:
-        print("fleet act ask: %d open ask(s); pass --show to show them" % len(open_now))
+        print("fleet act ask: %d open ask(s); pass --show to raise them in Paseo" % len(open_now))
         return 0
     # ask runs in every mode and under dry_run: it reaches only the owner (§5.7).
-    now = time.time()
-    due = due_batches(records, open_now, now, sec["ask_renotify_h"] * 3600)
-    if not due:
-        print("fleet act ask: nothing to show (%d open ask(s), each shown or seen)" % len(open_now))
-        return 0
+    answered, read_failed = _ask_sync(sec, sd, records)
+    records, _ = ledger.read(sd)
+    open_now = _open_now(records)
     if os.environ.get("FLEET_NOTIFY") == "0":
-        print("fleet act ask: %d batch(es) due; not shown (FLEET_NOTIFY=0)" % len(due))
-        return 0
-    n = len(open_now)
-    oldest = min((common.parse_iso(v["ts"]) or now) for v in open_now.values())
-    # §5.7: the first ask's line, from the newest batch due, so a new ask isn't
-    # hidden behind long-lived ones. Every due batch holds an open ask.
-    newest = due[-1]
-    open_ids = {v["ask"].get("id") for v in open_now.values() if v["of"] == newest["id"]}
-    first = next(a for a in newest["asks"] if a.get("id") in open_ids)
-    title = "fleet %s: %d open ask%s" % (sec["scope"], n, "" if n == 1 else "s")
-    text = "%s\n\nOldest %s. Read them: fleet asks --scope %s\nAnswer: fleet ack <tick> --scope %s" % (
-        common.safe_text(first.get("question"), 240), common.age(now - oldest), sec["scope"], sec["scope"])
-    res = show_dialog(title, text)
-    if res.get("error"):
-        # Not shown: no seen record, so the next tick tries again. The tick
-        # fails, and its alert (at most every 6 h) is what reaches p9.
-        print("fleet act ask: the dialog could not be shown: %s" % res["error"], file=sys.stderr)
-        return 1
-    res["p9"] = p9_notify(title, "%d open; read them on the Mac with fleet asks --scope %s" % (n, sec["scope"]))
-    tick = args.tick if args.tick else None
-    for b in due:
-        ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": sec["scope"], "tick": tick,
-                           "dry_run": _dry(args, sec), "by": "tick", "result": res})
-    print("fleet act ask: %s" % (("clicked %s" % res.get("button")) if res.get("button") and not res.get("gave_up")
-                                 else "gave up (not seen)"))
-    return 0
+        print("fleet act ask: %d answered; nothing raised (FLEET_NOTIFY=0)" % answered)
+        return 1 if read_failed else 0
+    raised, raise_failed, waiting = _ask_raise(args, sec, sd, records, open_now)
+    print("fleet act ask: %d answer(s) read back from Maestro, %d batch(es) raised, %d waiting to see if they last, "
+          "%d open ask(s)" % (answered, raised, waiting, len(_open_now(ledger.read(sd)[0]))))
+    return 1 if read_failed or raise_failed else 0
 
 
 def cmd_asks(args: argparse.Namespace) -> int:
@@ -606,7 +665,7 @@ def main(argv=None) -> int:
     p = scoped(sub.add_parser("act"))
     p.add_argument("verb", choices=("mail", "spawn", "label", "resume", "ask"))
     p.add_argument("--tick", type=int, default=0)
-    p.add_argument("--show", action="store_true", help="ask: show the owner a dialog of the open asks")
+    p.add_argument("--show", action="store_true", help="ask: read answers back from Maestro and raise new batches")
     p.add_argument("--dry-run", default=None, choices=("0", "1"))
     p.add_argument("--session", default=None, help="mail, resume: the target's session id")
     p.add_argument("--template", default=None, help="mail: stalled, hung or overlap")
@@ -617,6 +676,10 @@ def main(argv=None) -> int:
     p.add_argument("--label", default=None)
     p.add_argument("--remove", action="store_true", help="label: remove instead of add")
     p.set_defaults(func=cmd_act)
+    p = scoped(sub.add_parser("alert", help="tick.sh's alert to the owner in Maestro (exit 0 delivered)"))
+    p.add_argument("--kind", required=True)
+    p.add_argument("--message", required=True)
+    p.set_defaults(func=cmd_alert)
     p = scoped(sub.add_parser("recover"))
     p.add_argument("--tick", type=int, default=0)
     p.set_defaults(func=cmd_recover)

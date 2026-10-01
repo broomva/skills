@@ -13,7 +13,8 @@ tick), dry_run, by (act, recover, hook, tick, or owner:<tty>), kind:
 
     intent                      verb, key, target
     done / failed / unknown     of (the intent it closes), verb, key, result | reason, detail
-    seen                        of (the ask intent shown), result: {button, gave_up}
+    seen                        of (the ask intent raised), result: {channel: maestro, item, state}
+                                (a phase-1 dialog's: {button, gave_up})
     ack                         of (the ask intent answered), asks: "all" | [ask ids];
                                 or, by: tick, keys and resolved: true, when a tick
                                 finds asks no longer true (pending the spec)
@@ -171,24 +172,52 @@ def spawned(records: Iterable[Dict[str, Any]]) -> Dict[str, List[str]]:
     return out
 
 
+#: Where a Maestro item stands, by its state (maestro-paseo shared/states.ts):
+#: queued waits for a dispatch (isDispatchable) and hasn't reached the owner;
+#: owner is past the queue, so it shows in the Paseo app (running, Needs you,
+#: Stuck); final is closed (isTerminal); gone is the fleet's own record of an
+#: item Maestro no longer has. The one rule every ask path reads.
+MAESTRO_PHASES = {"proposed": "queued", "reviewing": "queued", "triggered": "queued",
+                  "running": "owner", "review": "owner", "blocked": "owner",
+                  "done": "final", "canceled": "final", "gone": "gone"}
+
+
+def maestro_phase(state: Any) -> Optional[str]:
+    """queued, owner, final or gone; None for a state Maestro doesn't define."""
+    return MAESTRO_PHASES.get(state) if isinstance(state, str) else None
+
+
 def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Every ask batch, oldest first: {id, tick, ts, batch, asks, shown: [{ts,
-    button, gave_up}], seen (a Seen click), acked (set of ask ids, or "all")}."""
+    button, gave_up}], seen (its Maestro item reached the owner, phase owner or
+    final; or a phase-1 dialog's Seen click), item (its Maestro work id; None
+    once Maestro no longer has it, so the batch is raised again), item_state
+    (as last recorded), answer (the last answer read back from Maestro, or
+    None), acked (set of ask ids, or "all")}."""
     batches: Dict[str, Dict[str, Any]] = {}
     for r in records:
         kind = r.get("kind")
         if kind == "intent" and r.get("verb") == "ask":
             t = r.get("target") or {}
             batches[r["id"]] = {"id": r["id"], "tick": r.get("tick"), "ts": r.get("ts"), "batch": t.get("batch"),
-                                "asks": t.get("asks") or [], "shown": [], "seen": False, "acked": set()}
+                                "asks": t.get("asks") or [], "shown": [], "seen": False, "acked": set(),
+                                "item": None, "item_state": None, "answer": None}
         elif r.get("of") in batches:
             b = batches[r["of"]]
             if kind == "seen":
                 res = r.get("result") or {}
                 b["shown"].append({"ts": r.get("ts"), "button": res.get("button"), "gave_up": res.get("gave_up")})
-                b["seen"] = b["seen"] or res.get("button") == "Seen"
-            elif kind == "ack" and not r.get("resolved") and b["acked"] != "all":
-                b["acked"] = "all" if r.get("asks") == "all" else b["acked"] | set(r.get("asks") or [])
+                # Raised in Paseo (a Maestro item past the queue), or a phase-1 dialog's Seen click.
+                maestro = res.get("channel") == "maestro"
+                phase = maestro_phase(res.get("state")) if maestro else None
+                b["seen"] = b["seen"] or res.get("button") == "Seen" or phase in ("owner", "final")
+                if maestro and isinstance(res.get("item"), str):
+                    b["item"], b["item_state"] = (None if phase == "gone" else res["item"]), res.get("state")
+            elif kind == "ack" and not r.get("resolved"):
+                if r.get("by") == "owner:maestro" and isinstance(r.get("result"), dict):
+                    b["answer"] = r["result"]
+                if b["acked"] != "all":
+                    b["acked"] = "all" if r.get("asks") == "all" else b["acked"] | set(r.get("asks") or [])
     return list(batches.values())
 
 

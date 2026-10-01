@@ -72,9 +72,10 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
         "scheduled": snap.get("scheduled") or {},
         "core_compare": _guarded(compare),
     }
-    # §5.7: a spawn recovered with two or more sessions under its name is an ask.
-    rep["spawn_duplicates"] = sorted({r.get("key") for r in records if r.get("kind") == "done"
-                                      and r.get("verb") == "spawn" and (r.get("result") or {}).get("duplicate")})
+    # §5.7: two or more sessions under one fleet name is an ask, while they are
+    # (read from this tick's listing, so it clears when one is removed).
+    names = [s["name"] for s in snap["sessions"] if s.get("fleet_shaped")]
+    rep["spawn_duplicates"] = sorted({n for n in names if names.count(n) > 1})
     rep["asks"], rep["asks_open"], rep["acked_still_open"] = make_asks(rep, records, now)
     rep["ask_keys_current"] = sorted(k for k, _, _ in candidates(rep))
     rep["resolved"] = resolved_keys(records, rep["ask_keys_current"], rep)
