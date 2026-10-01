@@ -59,7 +59,10 @@ jobs:
         run: pip install -r tests/requirements-dev.txt
       - name: TEMP diagnostic, fail-open timing (removed before merge)
         if: matrix.os == 'macos-latest'
-        run: python tests/diag_failopen_timing.py 200
+        run: python tests/diag_failopen_timing.py 50
+      - name: TEMP repeat the fail-open test 10x (removed before merge)
+        if: matrix.os == 'macos-latest'
+        run: for i in 1 2 3 4 5 6 7 8 9 10; do python -m pytest tests/test_fail_open.py -q -k never_escapes -p no:cacheprovider | tail -1; done
       - name: Tests
         run: python -m pytest tests/ -v
       - name: Mutation check (every mutant must be killed)

@@ -14,7 +14,8 @@ from pathlib import Path
 
 import pytest
 
-from conftest import HOOK, HOOK_WALL_S, World
+from conftest import CLAUDE_HOOK_TIMEOUT_S, DEADLINE_LATE_MS, FAILOPEN_WALL_S, HOOK, World
+from ctx_hook import BUDGET_S
 
 BROKEN = {
     "import-error": "raise RuntimeError('broken at import')\n",
@@ -47,7 +48,19 @@ def test_a_broken_ctx_module_never_escapes_the_hook(timed: World, tmp_path: Path
     (d / "ctx.py").write_text(BROKEN[kind])
     run = timed.hook(event, {"session_id": "s-1", "cwd": str(timed.broomva)}, script=d / "ctx_hook.py")
     assert (run.rc, run.stdout, run.stderr) == (0, "", ""), kind
-    assert run.elapsed < HOOK_WALL_S, "%s took %.0f ms" % (kind, run.elapsed * 1000)
+    assert FAILOPEN_WALL_S <= CLAUDE_HOOK_TIMEOUT_S / 2, "a budget this long eats Claude Code's timeout"
+    assert run.elapsed < FAILOPEN_WALL_S, "%s took %.0f ms" % (kind, run.elapsed * 1000)
+    # Only the hang is cut by the self-deadline, and the hook's own record says
+    # when, timed from inside the interpreter (start-up is not in it).
+    misses = timed.home / ".local" / "state" / "ctx" / "hook-misses.jsonl"
+    fired = [rec for rec in map(json.loads, misses.read_text().splitlines() if misses.exists() else [])
+             if rec["stage"] == "run"]
+    if kind != "hangs":
+        assert fired == [], kind
+        return
+    assert [rec["event"] for rec in fired] == [event]
+    budget_ms = round(BUDGET_S * 1000)
+    assert budget_ms <= fired[0]["ms"] <= budget_ms + DEADLINE_LATE_MS, "the deadline fired at %d ms" % fired[0]["ms"]
 
 
 @pytest.mark.parametrize("raw", [

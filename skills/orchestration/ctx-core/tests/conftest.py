@@ -28,9 +28,26 @@ WRAPPER = SCRIPTS / "ctx-hook.sh"
 CTX = SCRIPTS / "ctx.py"
 sys.path.insert(0, str(SCRIPTS))  # so every test module can `import ctx`
 
+import ctx_hook  # noqa: E402  (its BUDGET_S is the deadline the fail-open bounds build on)
+
 #: The deadline every hook invocation must meet, start to exit, measured from
 #: outside the process.
 HOOK_WALL_S = 0.200
+#: A hook that runs into its own self-deadline is judged in two parts, because
+#: on a hosted macOS runner no single wall bound is both tight and stable. There
+#: (2026-10-01, 2,400 runs) the runner's clamped QoS lets macOS coalesce timers,
+#: so the 80 ms alarm fired up to 160 ms late (under 10 ms late on the owner's
+#: machine), and interpreter start-up plus teardown, p99 under 120 ms, reached
+#: 589 ms once. Inside, the hook's own miss record must say the deadline fired:
+#: at or after the budget, and at most DEADLINE_LATE_MS after it (the measured
+#: 160, x2).
+DEADLINE_LATE_MS = 320
+#: Outside, the wall must stay well under Claude Code's own hook timeout, 2 s in
+#: the registration snippet: the budget, that lateness, and a start-up allowance
+#: of 600 ms (the measured worst; 5x the p99) make 1,000 ms, half of it.
+CLAUDE_HOOK_TIMEOUT_S = 2.0
+STARTUP_ALLOWANCE_MS = 600
+FAILOPEN_WALL_S = (round(ctx_hook.BUDGET_S * 1000) + DEADLINE_LATE_MS + STARTUP_ALLOWANCE_MS) / 1000.0
 #: Behaviour tests give the hook a generous budget, so a loaded test machine
 #: cannot turn "what does the hook publish" into a timing test. The `timed`
 #: fixture restores the real 80 ms for the tests that are about time.

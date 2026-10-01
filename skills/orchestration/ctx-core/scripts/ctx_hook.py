@@ -19,9 +19,13 @@ The contract holds for every event, whatever ctx.py does:
     failed or late hook injects nothing, and the session carries on.
   * A hard self-deadline of BUDGET_S of wall time inside the interpreter.
     Interpreter start-up and teardown are the rest of the 200 ms: about 20 ms
-    on the owner's machine, and about 110 ms on a macOS CI runner. The alarm fires between bytecodes, so one
-    long C call can delay it. The one such call that grows, the board.json
-    parse, is capped (ctx.HOOK_BOARD_CAP), so the deadline stays hard.
+    on the owner's machine. A hosted macOS CI runner is slower on both sides:
+    start-up p99 near 120 ms with rare spikes past 500 ms, and its clamped QoS
+    lets macOS fire the alarm up to 160 ms late (tests/conftest.py bounds a run
+    that hits the deadline from these numbers). The alarm fires between
+    bytecodes, so one long C call can delay it. The one such call that grows,
+    the board.json parse, is capped (ctx.HOOK_BOARD_CAP), so the deadline stays
+    hard.
   * A run that hits the deadline, or finishes but had to skip work (a busy
     lock, a board over its cap, a cache too far behind), appends one line to
     ~/.local/state/ctx/hook-misses.jsonl (time, event, stage, ms; no path),
