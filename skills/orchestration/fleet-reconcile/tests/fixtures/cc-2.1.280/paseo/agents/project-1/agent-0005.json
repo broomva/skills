@@ -4,14 +4,14 @@
  "cwd": "{HOME}/wt/broomva-18",
  "workspaceId": "ws-5",
  "createdAt": "2026-09-30T20:07:39.285Z",
- "updatedAt": "2026-09-30T22:48:02.162Z",
- "lastActivityAt": "2026-09-30T22:48:02.162Z",
- "lastUserMessageAt": "2026-09-30T20:41:40.658Z",
+ "updatedAt": "2026-09-30T23:53:20.920Z",
+ "lastActivityAt": "2026-09-30T23:53:20.920Z",
+ "lastUserMessageAt": "2026-09-30T23:51:58.970Z",
  "title": "title 5",
  "labels": {
   "paseo.parent-agent-id": "v-7"
  },
- "lastStatus": "idle",
+ "lastStatus": "running",
  "lastModeId": "bypassPermissions",
  "config": {
   "modeId": "bypassPermissions"

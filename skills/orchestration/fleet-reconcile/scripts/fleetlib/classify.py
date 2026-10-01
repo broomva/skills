@@ -4,9 +4,12 @@ Classes are tried in order and the first match wins. Each rule is one entry
 of RULES; tests/mutation_check.py deletes each entry and swaps each pair that
 can both match, and a test must fail every time.
 
-Activity is always a transcript's modification time (the session's own or a
-subagent's), never Paseo's updatedAt or lastActivityAt, which a label write
-moves (spike P8). Phase 1 only reports: `action` is what phase 3 would do.
+Activity is the session's last activity (spec §5.3): the latest timestamp
+among the assistant entries and tool results in its transcript and subagent
+transcripts. Never Paseo's updatedAt or lastActivityAt, which a label write
+moves (spike P8), and never a transcript's mtime, which Claude Code moves with
+untimestamped records long after a turn. Phase 1 only reports: `action` is what
+phase 3 would do.
 
 Choices the spec leaves open, pending the spec (broomva/workspace#842):
 - Class 2 also reads a background job file whose state is blocked and whose
@@ -73,19 +76,16 @@ class Env:
 # Readings shared by the rules
 
 def activity(s: Dict[str, Any]) -> Optional[float]:
-    t = s.get("transcript") or {}
-    vals = [v for v in (t.get("mtime"), t.get("sub")) if isinstance(v, (int, float))]
-    return max(vals) if vals else None
+    v = (s.get("transcript") or {}).get("activity")
+    return v if isinstance(v, (int, float)) else None
 
 
 def went_on_after(s: Dict[str, Any], t: Optional[float]) -> bool:
-    """Did the session record a timestamped entry more than GRACE_S after t?
-    Read from the transcript's last timestamped entry, never its mtime:
-    Claude Code appends untimestamped records (last-prompt, cost-state) about
-    an hour after a turn, which moved every captured limit death's mtime
-    ~3,650 s past its death. Unknown (no entry read) is not "went on"."""
-    last = (s.get("transcript") or {}).get("last_entry")
-    return t is not None and last is not None and last > t + GRACE_S
+    """Was there activity more than GRACE_S after t? Activity, not the mtime,
+    which Claude Code's untimestamped records moved ~3,650 s past every
+    captured limit death. No activity found is not "went on"."""
+    a = activity(s)
+    return t is not None and a is not None and a > t + GRACE_S
 
 
 def current_arc(s: Dict[str, Any]) -> Optional[str]:

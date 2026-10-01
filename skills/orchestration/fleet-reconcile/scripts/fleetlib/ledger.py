@@ -1,16 +1,24 @@
 """The write-ahead ledger: <state_dir>/ledger.jsonl (spec §5.7).
 
-Append-only JSON Lines, written by fleet_reconcile.py and tick.sh only. Each
-append takes fcntl.flock on ledger.lock and fsyncs before returning, so an
+Append-only JSON Lines, written only through fleet_reconcile.py (tick.sh uses
+`fleet ledger-append`, since the lock is fcntl.flock, which bash can't take).
+Each append takes fcntl.flock on ledger.lock and fsyncs before returning, so an
 intent is on disk before its action starts. Readers fold in write order; dry
 records never count toward live state. A corrupt line is counted, not skipped
 silently: phase 2's mail and spawn verbs refuse on it.
 
-Record fields (schema 1): v, ts, scope, tick, dry_run, kind, and per kind:
-    intent / done / failed / unknown   id, verb, key, target | result | reason, detail, recovered
-    ack                                acks: {tick, asks: "all" | [ids]} (the owner), or
-                                       {tick, keys, resolved: true} (a tick: those asks stopped being true)
-    tick_fire / runner_exit            detail (and exit_code)
+Every record (schema 1): v, id (unique per record: <tick>-<n>, or owner-<epoch
+ms> for a record written outside a tick), ts, scope, tick (null outside a
+tick), dry_run, by (act, recover, hook, tick, or owner:<tty>), kind:
+
+    intent                      verb, key, target
+    done / failed / unknown     of (the intent it closes), verb, key, result | reason, detail
+    seen                        of (the ask intent shown), result: {button, gave_up}
+    ack                         of (the ask intent answered), asks: "all" | [ask ids];
+                                or, by: tick, keys and resolved: true, when a tick
+                                finds asks no longer true (pending the spec)
+    adopt                       target: {session_id, paseo_agent_id}
+    tick_fire / b_step / runner_exit   detail, exit
 """
 from __future__ import annotations
 
@@ -24,7 +32,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import common
 
-KINDS = ("intent", "done", "failed", "unknown", "ack", "tick_fire", "runner_exit")
+KINDS = ("intent", "done", "failed", "unknown", "seen", "ack", "adopt", "tick_fire", "b_step", "runner_exit")
+OUTCOMES = ("done", "failed", "unknown")
 VERBS = ("mail", "spawn", "label", "resume", "ask")
 REASONS = ("not_live", "ambiguous_name", "harness_refused", "gate_refused", "unledgered_send", "name_taken",
            "ineligible", "spawn_error", "lost")
@@ -39,44 +48,70 @@ def ledger_path(state_dir: Path) -> Path:
     return Path(state_dir) / "ledger.jsonl"
 
 
+def owner_by() -> str:
+    """owner:<tty> for the owner's records (ack, adopt)."""
+    try:
+        tty = os.ttyname(0)
+    except OSError:
+        tty = "notty"
+    return "owner:" + common.safe_text(tty, 40)
+
+
+def _lock(state_dir: Path) -> int:
+    fd = os.open(str(state_dir / "ledger.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    deadline = time.monotonic() + LOCK_WAIT_S
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return fd
+        except OSError as exc:
+            if exc.errno not in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES) or time.monotonic() > deadline:
+                os.close(fd)
+                raise LedgerError("ledger lock not acquired")
+            time.sleep(0.02)
+
+
 def append(state_dir: Path, record: Dict[str, Any]) -> Dict[str, Any]:
-    """Validate, stamp and append one record; returns it as written."""
+    """Validate, stamp (v, ts, id) and append one record; returns it as written.
+    The id is taken under the lock: <tick>-<n> in a tick, owner-<epoch ms>
+    outside one."""
     rec = dict(record)
     rec.setdefault("v", common.SCHEMA_VERSION)
     rec.setdefault("ts", common.ts(time.time()))
-    if rec.get("kind") not in KINDS:
-        raise LedgerError("unknown kind %r" % rec.get("kind"))
-    for k in ("scope", "tick", "dry_run"):
+    kind = rec.get("kind")
+    if kind not in KINDS:
+        raise LedgerError("unknown kind %r" % kind)
+    for k in ("scope", "tick", "dry_run", "by"):
         if k not in rec:
             raise LedgerError("record without %s" % k)
-    if rec["kind"] in ("intent", "done", "failed", "unknown"):
-        if rec.get("verb") not in VERBS or not isinstance(rec.get("id"), str):
-            raise LedgerError("an intent or outcome needs verb and id")
-    if rec["kind"] in ("failed", "unknown") and rec.get("reason") not in REASONS:
+    if rec["tick"] is not None and type(rec["tick"]) is not int:
+        raise LedgerError("tick must be an integer or null")
+    if kind == "intent" and (rec.get("verb") not in VERBS or not rec.get("key")):
+        raise LedgerError("an intent needs a verb and a key")
+    if kind in OUTCOMES and rec.get("verb") not in VERBS:
+        raise LedgerError("an outcome needs its verb")
+    if kind in ("failed", "unknown") and rec.get("reason") not in REASONS:
         raise LedgerError("reason must be one of %s" % ", ".join(REASONS))
+    if kind in ("seen", "ack") and not rec.get("of") and not rec.get("resolved"):
+        raise LedgerError("%s needs of: the ask intent it answers" % kind)
     if isinstance(rec.get("detail"), str):
         rec["detail"] = common.safe_text(rec["detail"], 200)
-    line = (json.dumps(rec, sort_keys=True, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
     state_dir = common.ensure_dir(Path(state_dir))
-    lock_fd = os.open(str(state_dir / "ledger.lock"), os.O_RDWR | os.O_CREAT, 0o600)
+    lock_fd = _lock(state_dir)
     try:
-        deadline = time.monotonic() + LOCK_WAIT_S
-        while True:
-            try:
-                fcntl.flock(lock_fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                break
-            except OSError as exc:
-                if exc.errno not in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES) or time.monotonic() > deadline:
-                    raise LedgerError("ledger lock not acquired")
-                time.sleep(0.02)
-        fd = os.open(str(ledger_path(state_dir)), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        if "id" not in rec:
+            if rec["tick"] is None:
+                rec["id"] = "owner-%d" % int(time.time() * 1000)
+            else:
+                records, _ = read(state_dir)
+                n = sum(1 for r in records if r.get("tick") == rec["tick"])
+                rec["id"] = "%d-%d" % (rec["tick"], n + 1)
+        line = (json.dumps(rec, sort_keys=True, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
+        fd = os.open(str(ledger_path(state_dir)), os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
         try:
             size = os.fstat(fd).st_size
-            if size:
-                with open(str(ledger_path(state_dir)), "rb") as fh:
-                    fh.seek(size - 1)
-                    if fh.read(1) != b"\n":
-                        line = b"\n" + line
+            if size and os.pread(fd, 1, size - 1) != b"\n":
+                line = b"\n" + line
             view = memoryview(line)
             while view:
                 view = view[os.write(fd, view):]
@@ -110,64 +145,42 @@ def read(state_dir: Path) -> Tuple[List[Dict[str, Any]], int]:
     return records, corrupt
 
 
-def next_id(records: Iterable[Dict[str, Any]], tick: int) -> str:
-    n = sum(1 for r in records if r.get("kind") == "intent" and r.get("tick") == tick)
-    return "%d-%d" % (tick, n + 1)
-
-
 # --------------------------------------------------------------------------
 # Folds
 
 def spawned(records: Iterable[Dict[str, Any]]) -> Dict[str, List[str]]:
     """Live (never dry) spawns: {fleet key: [session ids]} from done records."""
+    records = list(records)
     intents = {r["id"]: r for r in records if r.get("kind") == "intent" and r.get("verb") == "spawn"
                and not r.get("dry_run")}
     out: Dict[str, List[str]] = {}
     for r in records:
-        if r.get("kind") == "done" and r.get("verb") == "spawn" and not r.get("dry_run") and r.get("id") in intents:
+        if r.get("kind") == "done" and r.get("verb") == "spawn" and not r.get("dry_run") and r.get("of") in intents:
             res = r.get("result") or {}
             ids = res.get("session_ids") or ([res["session_id"]] if res.get("session_id") else [])
-            out.setdefault(intents[r["id"]].get("key") or "", []).extend(i for i in ids if isinstance(i, str))
+            out.setdefault(intents[r["of"]].get("key") or "", []).extend(i for i in ids if isinstance(i, str))
     return out
 
 
 def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    """Every ask batch, oldest first: {tick, id, ts, batch, asks, notified: [ts],
-    acked: set of ask ids or "all", acked_ts: {ask id: ts}, dry_run}.
-
-    An ack of a whole tick (`fleet ack N`) acknowledges batch N and every
-    earlier batch: the owner answers what they have read, not one hour's
-    envelope. `fleet ack N --ask ID` acknowledges one ask of batch N."""
+    """Every ask batch, oldest first: {id, tick, ts, batch, asks, shown: [{ts,
+    button, gave_up}], seen (a Seen click), acked (set of ask ids, or "all")}."""
     batches: Dict[str, Dict[str, Any]] = {}
-    order: List[str] = []
     for r in records:
         kind = r.get("kind")
         if kind == "intent" and r.get("verb") == "ask":
             t = r.get("target") or {}
             batches[r["id"]] = {"id": r["id"], "tick": r.get("tick"), "ts": r.get("ts"), "batch": t.get("batch"),
-                                "asks": t.get("asks") or [], "notified": [], "acked": set(), "acked_ts": {},
-                                "dry_run": bool(r.get("dry_run"))}
-            order.append(r["id"])
-        elif kind == "done" and r.get("verb") == "ask" and r.get("id") in batches:
-            res = r.get("result") or {}
-            if res.get("notified"):
-                batches[r["id"]]["notified"].append(r.get("ts"))
-        elif kind == "ack":
-            a = r.get("acks") or {}
-            through = a.get("tick")
-            for bid in order:
-                b = batches[bid]
-                if not isinstance(through, int) or not isinstance(b["tick"], int):
-                    continue
-                if a.get("asks") == "all" and b["tick"] <= through:
-                    b["acked"] = "all"
-                    for ask in b["asks"]:
-                        b["acked_ts"].setdefault(ask.get("id"), r.get("ts"))
-                elif b["tick"] == through and b["acked"] != "all":
-                    for aid in a.get("asks") or []:
-                        b["acked"].add(aid)
-                        b["acked_ts"][aid] = r.get("ts")
-    return [batches[i] for i in order]
+                                "asks": t.get("asks") or [], "shown": [], "seen": False, "acked": set()}
+        elif r.get("of") in batches:
+            b = batches[r["of"]]
+            if kind == "seen":
+                res = r.get("result") or {}
+                b["shown"].append({"ts": r.get("ts"), "button": res.get("button"), "gave_up": res.get("gave_up")})
+                b["seen"] = b["seen"] or res.get("button") == "Seen"
+            elif kind == "ack" and not r.get("resolved") and b["acked"] != "all":
+                b["acked"] = "all" if r.get("asks") == "all" else b["acked"] | set(r.get("asks") or [])
+    return list(batches.values())
 
 
 def open_asks(batch: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -178,47 +191,36 @@ def open_asks(batch: Dict[str, Any]) -> List[Dict[str, Any]]:
 
 def key_states(records: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """Each ask key's state, folded in write order: {key: {"state", "tick",
-    "ask", "ts"}} where state is
+    "ask", "ts", "of"}}, where state is
 
-        open      asked, and neither acked nor resolved since;
-        acked     the owner acked it, and it has not stopped being true since;
-        resolved  it stopped being true at some tick (a resolution record).
+        open      asked, and neither answered nor resolved since;
+        acked     the owner answered it, and it has not stopped being true since;
+        resolved  a tick found it no longer true.
 
     An ask is per occurrence: a key asked again after a resolution is a new
-    ask. An owner's ack holds for as long as the condition does."""
+    ask, and an owner's answer holds for as long as the condition does."""
     st: Dict[str, Dict[str, Any]] = {}
     for r in records:
         kind = r.get("kind")
         if kind == "intent" and r.get("verb") == "ask":
             for a in (r.get("target") or {}).get("asks") or []:
-                st[a.get("key")] = {"state": "open", "tick": r.get("tick"), "ask": a, "ts": r.get("ts")}
+                st[a.get("key")] = {"state": "open", "tick": r.get("tick"), "ask": a, "ts": r.get("ts"),
+                                    "of": r.get("id")}
+        elif kind == "ack" and r.get("resolved"):
+            for k in r.get("keys") or []:
+                if k in st and st[k]["state"] in ("open", "acked"):
+                    st[k]["state"] = "resolved"
         elif kind == "ack":
-            a = r.get("acks") or {}
-            if a.get("resolved"):
-                for k in a.get("keys") or []:
-                    if k in st and st[k]["state"] in ("open", "acked"):
-                        st[k]["state"] = "resolved"
-                continue
-            through = a.get("tick")
-            if not isinstance(through, int):
-                continue
             for v in st.values():
-                if v["state"] != "open" or not isinstance(v["tick"], int):
-                    continue
-                if (a.get("asks") == "all" and v["tick"] <= through) or \
-                        (v["tick"] == through and v["ask"].get("id") in (a.get("asks") or [])):
+                if v["state"] == "open" and v["of"] == r.get("of") and \
+                        (r.get("asks") == "all" or v["ask"].get("id") in (r.get("asks") or [])):
                     v["state"] = "acked"
     return st
 
 
 def open_by_key(records: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
-    """{ask key: {"ask", "tick", "ts"}} for every open key."""
+    """{ask key: {"ask", "tick", "ts", "of"}} for every open key."""
     return {k: v for k, v in key_states(records).items() if v["state"] == "open"}
-
-
-def last_notified(records: Iterable[Dict[str, Any]]) -> Optional[str]:
-    stamps = [t for b in ask_batches(records) for t in b["notified"] if t]
-    return max(stamps) if stamps else None
 
 
 def last_tick(records: Iterable[Dict[str, Any]]) -> Optional[int]:

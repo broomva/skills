@@ -2,21 +2,24 @@
 
 ## [0.2.0] - 2026-09-30
 
-- **`ctx doctor --compare`**, the phase-1 exit comparison (core spec §9, named
-  in the 2026-09-30 build-readiness amendment, broomva/workspace#842). Live
-  board rows against in-scope `claude agents --json --all` sessions with a
-  transcript modified in the same window, matched on the full session id, each
-  difference with a reason from a fixed list. Three reasons beyond the spec's
-  five, pending the spec: `died`, `stale-event` (a listed session active in the
-  window whose latest event is older, a long turn) and `unexplained`. In
-  `scripts/ctx_compare.py`, dispatched from `ctx.py`'s doctor path only; no
-  hook imports it. Read-only on the store; appends `compare.jsonl`.
-- A death with nothing after it is `died` (excluded: the board is right), and
-  `died-then-continued` needs a transcript entry past the death's grace. No
-  evidence is not a pass: an unreadable transcript directory or an empty
-  listing fails, and so does a side with nothing left to count.
-- Not done here, left to the core: the spec's hook change that records a miss
-  (with the session id) on the early return at the scope stage.
+- **`ctx doctor --compare --registered <UTC time>`**, the phase-1 exit
+  comparison (core spec §9 as merged in broomva/workspace#842, 007f05a98).
+  Board rows that are live against in-scope `claude agents --json --all`
+  sessions with a timestamped transcript entry in the window (not the mtime,
+  which Claude Code moves with untimestamped records long after a turn),
+  matched on the full session id. The pass bar is ≥95% each way on the raw
+  sets; each difference gets one reason from the spec's ordered list
+  (no-transcript, ended, pre-registration, died, died-then-continued,
+  stale-in-turn, no-event, else unexplained), which explains it and removes
+  nothing; in-scope transcripts on neither side are listed, uncounted. The
+  registration time is passed once and kept in compare.jsonl's first line; a
+  later one that disagrees is refused. No evidence fails: an unreadable
+  transcript directory, an empty listing (both also written to the file, so
+  the latest line never shows an old pass), or an empty side.
+- In `scripts/ctx_compare.py`, dispatched from `ctx.py`'s doctor path only; no
+  hook imports it. Read-only on the store; it writes only `compare.jsonl`.
+- Not done here, left to the core: the hook change that records a miss (with
+  the session id) when run_hook returns at the scope stage for lack of time.
 
 ## [0.1.0] - 2026-09-29
 

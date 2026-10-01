@@ -35,7 +35,7 @@ def rig(fresh_world, tmp_path):
     _stub(bin_ / "claude", 'echo "${#GH_TOKEN}" >> "%s/claude-token-lengths"\n'
           'case "$1" in\n'
           '  --version) cat "%s/claude/version.txt" ;;\n'
-          '  agents) [ -n "${STUB_HANG:-}" ] && sleep 33; cat "%s/claude/agents.json" ;;\n'
+          '  agents) [ -n "${STUB_HANG:-}" ] && { (trap "" TERM; exec sleep 33) & wait; }; cat "%s/claude/agents.json" ;;\n'
           '  *) exit 2 ;;\nesac\n' % (calls_dir, fx, fx))
     _stub(bin_ / "gh", 'echo "${#GH_TOKEN}" >> "%s/gh-token-lengths"\n'
           'slug=""; for a in "$@"; do case "$a" in repos/*) slug=${a#repos/}; slug=${slug%%%%/rules*} ;; esac; done\n'
@@ -46,7 +46,8 @@ def rig(fresh_world, tmp_path):
           '  *default_branch*) cat "$d/default_branch.txt" ;;\n'
           '  "pr list"*) cat "$d/prs.json" ;;\n'
           '  *) exit 1 ;;\nesac\n' % (calls_dir, fx))
-    _stub(bin_ / "osascript", 'printf "%%s\\n" "$*" >> "%s/osascript"\n' % calls_dir)
+    _stub(bin_ / "osascript", 'printf "%%s\\n" "$*" >> "%s/osascript"\n'
+          'echo "button returned:${STUB_BUTTON:-Later}, gave up:false"\n' % calls_dir)
     _stub(bin_ / "p9", 'printf "%%s\\n" "$*" >> "%s/p9"\n' % calls_dir)
     (w.home / ".claude" / "projects").mkdir(parents=True)
     shutil.copytree(str(fx / "claude" / "jobs"), str(w.home / ".claude" / "jobs"))
@@ -67,11 +68,14 @@ def rig(fresh_world, tmp_path):
 
         def tick(self, **extra: str) -> subprocess.CompletedProcess:
             e = dict(os.environ, **env)
+            e.pop("CLAUDECODE", None)
             e.update(extra)
             return subprocess.run(["/bin/bash", str(TICK)], capture_output=True, text=True, env=e, timeout=180)
 
         def fleet(self, *args: str, **extra: str) -> subprocess.CompletedProcess:
-            return w.fleet(*args, env=dict(env, **extra))
+            e = dict(env, CLAUDECODE="", FLEET_CHILD="")  # the owner's terminal, not a session
+            e.update(extra)
+            return w.fleet(*args, env=e)
 
         def ledger(self, scope="broomva"):
             p = w.state[scope] / "ledger.jsonl"
@@ -97,13 +101,17 @@ def test_a_tick_observes_reports_asks_and_records_itself(rig):
     for f in ("snapshot.json", "report.json", "report.md"):
         assert (td / f).is_file(), rig.log()
     kinds = [x["kind"] for x in rig.ledger()]
-    assert kinds[0] == "tick_fire" and kinds[-1] == "runner_exit"
-    assert rig.ledger()[-1]["exit_code"] == 0, rig.log()
+    assert kinds[0] == "tick_fire" and "runner_exit" in kinds
+    assert [x for x in rig.ledger() if x["kind"] == "runner_exit"][0]["exit"] == 0, rig.log()
+    assert all(x["by"] for x in rig.ledger()) and len({x["id"] for x in rig.ledger()}) == len(rig.ledger())
     rep = json.loads((td / "report.json").read_text())
     assert rep["surfaces"]["listing"]["ok"] and rep["dry_run"] is True
     assert any(a["key"].startswith("rules:broomva/skills") for a in rep["asks"])
-    assert "intent" in kinds and len(rig.calls("osascript")) == 1 and len(rig.calls("p9")) == 1
-    assert "fleet broomva" in rig.calls("osascript")[0]
+    dialogs = [c for c in rig.calls("osascript") if "display dialog" in c]
+    assert "intent" in kinds and len(dialogs) == 1 and len(rig.calls("p9")) == 1
+    assert "fleet broomva" in "\n".join(rig.calls("osascript"))
+    seen = [x for x in rig.ledger() if x["kind"] == "seen"]
+    assert seen and seen[0]["result"]["button"] == "Later" and kinds.index("seen") > kinds.index("runner_exit")
     assert (sd / "asks" / "00001.md").is_file()
 
 
@@ -161,8 +169,8 @@ def test_a_failed_step_alerts_and_exits_1(rig):
     (sd / "ticks").write_text("a file where the ticks dir goes")  # observe can't write its snapshot
     r = rig.tick()
     assert r.returncode == 1
-    assert rig.ledger()[-1]["kind"] == "runner_exit" and rig.ledger()[-1]["exit_code"] == 1
-    assert any("failed at observe" in c for c in rig.calls("osascript"))
+    assert [x for x in rig.ledger() if x["kind"] == "runner_exit"][0]["exit"] == 1
+    assert any("failed at observe" in c and "display dialog" in c for c in rig.calls("osascript"))
 
 
 def test_a_lost_counter_does_not_reuse_a_tick_number(rig):
@@ -177,7 +185,7 @@ def test_a_lost_counter_does_not_reuse_a_tick_number(rig):
 def test_each_run_leaves_one_line_on_stdout_for_launchds_log(rig):
     r = rig.tick()
     lines = r.stdout.strip().splitlines()
-    assert len(lines) == 1 and re.search(r"fleet-reconcile broomva tick 1: observe=0 report=0 ask=0 compare=\d$",
+    assert len(lines) == 1 and re.search(r"fleet-reconcile broomva tick 1: observe=0 report=0 compare=\d ask=0$",
                                          lines[0]), r.stdout
     assert r.returncode == 0  # the core comparison's own verdict doesn't fail the tick
 
@@ -236,19 +244,24 @@ def test_a_hung_step_is_stopped_by_the_watchdog_children_included(rig):
     r = rig.tick(FLEET_TICK_TIMEOUT_S="3", STUB_HANG="1")
     assert time.monotonic() - t0 < 25 and r.returncode == 1
     assert "over the tick's budget: sent TERM to its process group" in rig.log()
-    assert rig.ledger()[-1]["kind"] == "runner_exit" and rig.ledger()[-1]["exit_code"] == 1
+    assert [x for x in rig.ledger() if x["kind"] == "runner_exit"][0]["exit"] == 1
     assert not (rig.world.state["broomva"] / ".tick.lock").exists()
     time.sleep(0.5)
     left = subprocess.run(["pgrep", "-f", "sleep 33"], capture_output=True, text=True).stdout.split()
     assert left == [], "the hung stub's child outlived the tick"
 
 
-def test_a_second_tick_does_not_renotify_an_unchanged_batch_within_six_hours(rig):
-    rig.tick()
-    first = len(rig.calls("osascript"))
-    rig.tick()
-    assert first == 1 and len(rig.calls("osascript")) == 1
-    assert "not notified" in rig.log()
+def test_an_unseen_batch_is_shown_again_at_the_next_tick_and_then_not_within_six_hours(rig):
+    for _ in range(3):
+        rig.tick()
+    dialogs = [c for c in rig.calls("osascript") if "display dialog" in c]
+    assert len(dialogs) == 2 and "nothing to show" in rig.log()
+
+
+def test_a_seen_click_stops_the_dialog(rig):
+    rig.tick(STUB_BUTTON="Seen")
+    rig.tick(STUB_BUTTON="Seen")
+    assert len([c for c in rig.calls("osascript") if "display dialog" in c]) == 1
 
 
 def test_the_owner_reads_and_acks_asks_and_other_verbs_refuse(rig):
@@ -257,6 +270,8 @@ def test_the_owner_reads_and_acks_asks_and_other_verbs_refuse(rig):
     assert asks.returncode == 0
     assert "[tick 1, a1]" in asks.stdout
     assert rig.fleet("ack", "1", "--ask", "zz").returncode == 1
+    inside = rig.fleet("ack", "1", CLAUDECODE="1")
+    assert inside.returncode == 3 and "refused" in inside.stderr  # a floor: an owner step, from a terminal
     assert rig.fleet("ack", "1").returncode == 0
     assert "no open asks" in rig.fleet("asks").stdout
     assert any(x["kind"] == "ack" for x in rig.ledger())

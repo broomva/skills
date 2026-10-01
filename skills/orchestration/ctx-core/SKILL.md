@@ -233,17 +233,17 @@ from any directory. `doctor` exits 1 in any of these cases:
 An idle scope is not a problem. A cache far behind the log is a warning: it
 catches up by itself.
 
-`doctor --compare [--hours 6] [--json]` is the phase-1 exit criterion (core
-spec §9): board rows that are live against in-scope sessions from `claude agents
---json --all` whose transcript was modified in the same window, matched on the
-full session id. Every difference gets a reason from a fixed list; four of
-them (`no-transcript`, `ended`, `pre-registration`, `died`) describe what the
-comparator can see and are left out of the 95%. No evidence is not a pass: an
-unreadable transcript directory, an empty listing, or a side with nothing left
-to count fails. It rebuilds the board in memory and writes none of the store's
-files; it appends one summary line to `<store>/compare.jsonl` and exits 1
-under 95%. fleet-reconcile's tick runs it
-once a day.
+`doctor --compare --registered <UTC time> [--hours 6] [--json]` is the phase-1
+exit criterion (core spec §9 as merged in workspace#842): board rows that are
+live against in-scope sessions from `claude agents --json --all` with a
+timestamped transcript entry in the same window (not the mtime), matched on the
+full session id. The pass bar is ≥95% each way on the raw sets; every
+difference gets one reason from an ordered list, which explains it and removes
+nothing, and in-scope transcripts on neither side are listed uncounted. The
+registration time is passed once and kept in `compare.jsonl`'s first line; a
+later one that disagrees is refused. It rebuilds the board in memory and writes
+only `compare.jsonl`. No evidence (an unreadable transcript directory, an empty
+listing, an empty side) fails. fleet-reconcile's tick runs it once a day.
 
 ## Registration (owner step; an agent does not apply it)
 
@@ -335,7 +335,7 @@ computes it:
 cd skills/orchestration/ctx-core
 python3 -m pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py   # 29 protections removed in turn; the test pinning each must fail
+python3 tests/mutation_check.py   # 31 protections removed in turn; the test pinning each must fail
 ```
 
 | File | Pins |

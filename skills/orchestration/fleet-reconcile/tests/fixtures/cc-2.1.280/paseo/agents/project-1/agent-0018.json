@@ -4,9 +4,9 @@
  "cwd": "{HOME}/wt/broomva-1",
  "workspaceId": "ws-18",
  "createdAt": "2026-09-29T15:05:23.591Z",
- "updatedAt": "2026-09-30T22:44:58.808Z",
- "lastActivityAt": "2026-09-30T22:44:58.808Z",
- "lastUserMessageAt": "2026-09-30T22:31:39.591Z",
+ "updatedAt": "2026-09-30T23:55:44.851Z",
+ "lastActivityAt": "2026-09-30T23:55:44.851Z",
+ "lastUserMessageAt": "2026-09-30T23:52:00.679Z",
  "title": "title 18",
  "labels": {},
  "lastStatus": "running",
@@ -34,8 +34,8 @@
    }
   }
  },
- "requiresAttention": false,
- "attentionReason": null,
+ "requiresAttention": true,
+ "attentionReason": "finished",
  "attentionTimestamp": null,
  "internal": false
 }

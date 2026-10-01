@@ -233,6 +233,7 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
     spawned = ledger.spawned(recs)
     fleet_ids = {sid: key for key, ids in spawned.items() for sid in ids}
     adopted = set(config.adopted_ids(sec))
+    adopted_agents = config.adopted_agents(sec)
 
     # Sessions ----------------------------------------------------------------
     sessions = []
@@ -242,17 +243,15 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
         brow = board.get(sid)
         scope, repo, branch, how = place(r["cwd"], brow, job, by_repo)
         tr = dict(transcripts.get(sid) or {})
-        # "Went on after" reads the last timestamped entry, not the mtime,
-        # which moves when Claude Code appends its untimestamped records
-        # (last-prompt, cost-state) about an hour after a turn. Read only
-        # where a class depends on it.
-        if tr.get("path") and ((brow and (brow.get("state") == "died" or brow.get("arc_status")))
-                               or (job and job.get("state") == "blocked")):
-            tr["last_entry"] = src.last_entry(tr)
+        tr["activity"] = src.activity(tr) if "mtime" in tr else None
         name_ok = common.safe_text(r["name"], 80)
         key = None
-        if sid in adopted:
-            key = "adopt:%s" % sid
+        p_rec = paseo.get(sid)
+        via_agent = p_rec is not None and p_rec["agent_id"] in adopted_agents
+        if sid in adopted or via_agent:
+            # A listed session matches an adoption by its session id, or
+            # through the Paseo agent whose record holds it (§5.4).
+            key = "adopt:%s" % (sid if sid in adopted else adopted_agents[p_rec["agent_id"]])
         elif sid in fleet_ids and fleet_ids[sid] == r["name"]:
             key = r["name"]
         p = paseo.get(sid)
@@ -270,11 +269,11 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
                                                                 "updated_at", "last_activity_at", "workspace_id",
                                                                 "session_id_from")},
             "transcript": {"found": "mtime" in tr, "mtime": tr.get("mtime"), "sub": tr.get("sub"),
-                           "last_entry": tr.get("last_entry")},
+                           "activity": tr.get("activity")},
             "limit_text": limit_line,
             "scope": scope, "repo": repo, "branch": common.safe_text(branch, 120) or None,
             "branch_id": branch_id(branch), "placement": how,
-            "fleet_key": key, "adopted": sid in adopted,
+            "fleet_key": key, "adopted": bool(key and key.startswith("adopt:")),
             "job_unread": r["kind"] == "background" and sid[:8] in bad_jobs,
             "fleet_shaped": fleet_shaped(r["name"], scope_id),
         })

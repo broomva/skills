@@ -9,7 +9,7 @@ repo is public, so everything is anonymized before it is written:
 
 - kept: every key, every type, the enum values (kind, state, status,
   waitingFor, lastStatus, archive state, label keys), timestamps, each
-  transcript's mtime and last timestamped entry, and Claude Code's usage-limit
+  transcript's mtime and its activity (§5.3), and Claude Code's usage-limit
   text verbatim;
 - replaced: session ids (fixed fake UUIDs), names, titles, job details and
   questions, prompts, run outputs, label values, and paths. A path is replaced
@@ -39,9 +39,8 @@ sys.path.insert(0, str(HERE.parent / "scripts"))
 sys.path.insert(0, str(HERE.parent.parent / "ctx-core" / "scripts"))
 
 import ctx  # noqa: E402
-import ctx_compare  # noqa: E402
 
-from fleetlib import parsers  # noqa: E402
+from fleetlib import parsers, sources  # noqa: E402
 
 FAKE_BEARER = "Bearer FIXTURE-FAKE-BEARER-NOT-A-SECRET"
 HOME = str(Path.home())
@@ -170,14 +169,18 @@ def capture(out: Path) -> None:
             t = pdir / (real + ".jsonl")
             if t.is_file() and t.stat().st_mtime >= idx.get(fake, {}).get("mtime", 0):
                 idx.setdefault(fake, {})["mtime"] = t.stat().st_mtime
-                # The last timestamped entry: Claude Code appends untimestamped
-                # records (last-prompt, cost-state) about an hour after a turn.
-                idx[fake]["last_entry"] = ctx_compare.last_entry_ts(str(t))
+                # Activity (§5.3), read as the tick reads it: the mtime moves
+                # with untimestamped records long after a turn.
+                idx[fake]["activity"] = sources.last_activity_ts(str(t))
             sub = pdir / real / "subagents"
             if sub.is_dir():
-                m = max((f.stat().st_mtime for f in sub.glob("*.jsonl")), default=None)
-                if m:
-                    idx.setdefault(fake, {})["sub"] = m
+                subs = sorted(sub.glob("*.jsonl"), key=lambda f: f.stat().st_mtime, reverse=True)
+                if subs:
+                    slot = idx.setdefault(fake, {})
+                    slot["sub"] = subs[0].stat().st_mtime
+                    acts = [a for a in (sources.last_activity_ts(str(f)) for f in subs[:3]) if a]
+                    if acts:
+                        slot["activity"] = max([slot.get("activity") or 0] + acts)
     files["claude/transcripts.json"] = json.dumps(idx, indent=1, sort_keys=True) + "\n"
 
     # Paseo: every not-archived record plus three archived ones

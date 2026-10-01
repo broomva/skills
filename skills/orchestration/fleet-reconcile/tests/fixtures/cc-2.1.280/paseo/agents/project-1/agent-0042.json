@@ -34,8 +34,8 @@
    }
   }
  },
- "requiresAttention": true,
- "attentionReason": "finished",
+ "requiresAttention": false,
+ "attentionReason": null,
  "attentionTimestamp": null,
  "internal": false
 }

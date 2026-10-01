@@ -73,7 +73,7 @@ def test_install_pins_a_copy_renders_the_plist_seeds_the_config_and_loads_the_jo
     p = _plist(inst)
     assert p["Label"] == LABEL
     assert p["ProgramArguments"] == ["/bin/bash", str(rel / "orchestration/fleet-reconcile/scripts/tick.sh")]
-    assert p["StartInterval"] == 3600 and p["RunAtLoad"] is False and "ProcessType" not in p
+    assert p["StartInterval"] == 3600 and p["RunAtLoad"] is False and p["ProcessType"] == "Standard"
     assert p["EnvironmentVariables"]["FLEET_SCOPE"] == "broomva"
     assert p["EnvironmentVariables"]["FLEET_CONFIG"] == str(inst.cfg)
     assert oct(inst.cfg.stat().st_mode & 0o777) == "0o600"

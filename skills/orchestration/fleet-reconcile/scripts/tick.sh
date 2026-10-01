@@ -14,8 +14,9 @@
 #
 # PHASE 1 runs deterministic code only; no model runs and no session is acted
 # on. Per tick: kill switch, config-check, lock, the tick number, the fleet
-# token, observe, report (classes, count check, asks), the ask notification,
-# the core comparison once a day, and the ledger's tick_fire and runner_exit.
+# token, observe, report (classes, count check, asks), the core comparison once
+# a day, the ledger's tick_fire and runner_exit, and, with the lock released,
+# the owner's dialog (fleet act ask --show).
 # Phase 2 adds `fleet recover` before the coordinator and the coordinator itself.
 #
 # A tick that fails (a bad config, observe or report failing) notifies the
@@ -41,6 +42,9 @@ case "$SCOPE" in
   ([a-z0-9]*) : ;;
   (*) echo "tick.sh: FLEET_SCOPE is unset or not a scope id" >&2; exit 2 ;;
 esac
+case "$SCOPE" in
+  (*[!a-z0-9_-]*) echo "tick.sh: FLEET_SCOPE is not a scope id" >&2; exit 2 ;;
+esac
 
 cfg() { "$FLEET" config-get "$SCOPE" "$1" 2>/dev/null; }
 
@@ -62,8 +66,10 @@ LOCK="$STATE_DIR/.tick.lock"
 log() { echo "[$(date -u +%FT%TZ)] $*" >> "$LOG"; }
 
 # alert KIND MESSAGE: tell the owner directly, from bash, so it works when
-# Python or the config is what broke. At most once per 6 h per kind. The
-# message is this script's own text, never another session's words.
+# Python or the config is what broke: a dialog, since notification banners are
+# stored but not shown on this Mac (spec §5.7). At most once per 6 h per kind.
+# The message is this script's own text, never another session's words. Call
+# it with the lock released: the dialog waits up to 10 minutes.
 alert() {
   local kind=$1 msg=$2 stamp="$STATE_DIR/.alert-$1" now last
   log "ALERT $kind: $msg"
@@ -74,7 +80,7 @@ alert() {
   [ "${FLEET_NOTIFY:-}" = "0" ] && return 0
   local title="fleet $SCOPE: tick failed" body="$msg | log: $LOG"
   body=${body//\\/\\\\}; body=${body//\"/\\\"}
-  "${FLEET_OSASCRIPT_BIN:-osascript}" -e "display notification \"$body\" with title \"$title\"" \
+  "${FLEET_OSASCRIPT_BIN:-osascript}" -e "display dialog \"$body\" with title \"$title\" buttons {\"OK\"} default button \"OK\" giving up after 600" \
     >/dev/null 2>&1 </dev/null
   local p9="${FLEET_P9_BIN:-$(command -v p9 2>/dev/null)}"
   [ -n "$p9" ] && "$p9" notify "$title" --body "$msg" --kind fleet-alert >/dev/null 2>&1 </dev/null
@@ -130,6 +136,12 @@ if ! mkdir "$LOCK" 2>/dev/null; then
      || [ $((NOW - MT)) -lt 120 ]; then
     rmdir "$RECLAIM" 2>/dev/null
     log "tick skipped: a tick holds the lock (tick ${HOLDER:-?}, step ${STEP:-?})"
+    # A lock held far past a tick's budget: a hung tick, or a pid reused after
+    # a crash. Not reclaimed (the pid is alive); the owner hears about it.
+    if [ $((NOW - MT)) -ge 7200 ]; then
+      alert lock "the tick lock has been held for $(( (NOW - MT) / 60 )) min by pid ${HOLDER:-?}; ticks are skipped until it goes ($LOCK)"
+      exit 1
+    fi
     exit 0
   fi
   rm -f "$LOCK/pid" "$LOCK/runner-pid"
@@ -155,6 +167,10 @@ case "$N" in
   (""|*[!0-9]*) alert tick "could not take a tick number for scope $SCOPE"; exit 1 ;;
 esac
 
+# The release this tick runs (install.sh pins a copy and writes RELEASE there).
+RELEASE=$(head -1 "$SCRIPT_DIR/../../../RELEASE" 2>/dev/null | sed 's/^release //')
+[ -n "$RELEASE" ] || RELEASE="checkout"
+
 # ── the fleet token: read from its 0600 file, never argv, never printed ───────
 # Exported for the observe step only (gh is the only reader); observe passes it
 # to gh and to nothing else.
@@ -164,16 +180,20 @@ TOKFILE=$(cfg gh_token_file)
 if [ -n "$TOKFILE" ]; then
   if [ -r "$TOKFILE" ]; then
     MODE=$(file_mode "$TOKFILE")
-    [ "$MODE" = "600" ] || [ "$MODE" = "400" ] || log "WARN: $TOKFILE has mode $MODE, not 600"
-    TOKEN=$(head -c 512 "$TOKFILE" | tr -d '[:space:]')
-    if [ -n "$TOKEN" ]; then GH_AUTH="fleet token file"; else GH_AUTH="keyring (token file $TOKFILE is empty)"; fi
+    if [ "$MODE" != "600" ] && [ "$MODE" != "400" ]; then
+      GH_AUTH="keyring (token file $TOKFILE has mode $MODE, not 600: not used)"
+    else
+      TOKEN=$(head -c 512 "$TOKFILE" | tr -d '[:space:]')
+      if [ -n "$TOKEN" ]; then GH_AUTH="fleet token file"; else GH_AUTH="keyring (token file $TOKFILE is empty)"; fi
+    fi
   else
     GH_AUTH="keyring (token file $TOKFILE unreadable)"
   fi
 fi
 
-"$FLEET" ledger-record fire --scope "$SCOPE" --tick "$N" --dry-run "$DRY" --detail "gh: $GH_AUTH" >> "$LOG" 2>&1
-log "tick $N scope $SCOPE (dry_run=$DRY, gh: $GH_AUTH)"
+"$FLEET" ledger-append fire --scope "$SCOPE" --tick "$N" --dry-run "$DRY" --detail "gh: $GH_AUTH; release: $RELEASE" \
+  >> "$LOG" 2>&1
+log "tick $N scope $SCOPE (dry_run=$DRY, gh: $GH_AUTH, release: $RELEASE)"
 
 # ── steps, each bounded by what is left of the tick's budget ─────────────────
 TIMEOUT_MIN=$(cfg tick_timeout_min)
@@ -210,6 +230,7 @@ step() {
   WD_PID=$!
   wait "$STEP_PID"
   RC=$?
+  kill -KILL -- "-$STEP_PID" 2>/dev/null  # children that outlived their leader, TERM-proof ones included
   STEP_PID=""
   kill "$WD_PID" 2>/dev/null
   wait "$WD_PID" 2>/dev/null
@@ -220,7 +241,7 @@ step() {
 RCS=""
 FAILED=""
 if [ -n "$TOKEN" ]; then export GH_TOKEN="$TOKEN"; fi
-export FLEET_GH_AUTH="$GH_AUTH"
+export FLEET_GH_AUTH="$GH_AUTH" FLEET_RELEASE="$RELEASE"
 step observe "$FLEET" observe --scope "$SCOPE" --tick "$N"; RCS="observe=$RC"
 unset GH_TOKEN TOKEN
 [ "$RC" = "0" ] || FAILED="observe"
@@ -228,15 +249,23 @@ if [ -z "$FAILED" ]; then
   step report "$FLEET" report --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS report=$RC"
   [ "$RC" = "0" ] || FAILED="report"
 fi
-step ask "$FLEET" act ask --notify --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS ask=$RC"
-[ "$RC" = "0" ] || FAILED="${FAILED:-ask}"
+# The core's comparison: a read-only step the kill switch stops with the tick,
+# which dry_run and mode don't govern (core §9). Its verdict isn't the tick's.
 step compare "$FLEET" core-compare --scope "$SCOPE"; RCS="$RCS compare=$RC"
 
 FINAL=0
 [ -n "$FAILED" ] && FINAL=1
-"$FLEET" ledger-record exit --scope "$SCOPE" --tick "$N" --dry-run "$DRY" --exit-code "$FINAL" \
+"$FLEET" ledger-append exit --scope "$SCOPE" --tick "$N" --dry-run "$DRY" --exit "$FINAL" \
   --detail "$RCS" >> "$LOG" 2>&1
 log "tick $N done: $RCS"
+
+# ── with the lock released: the owner's dialog, which can wait 10 minutes ────
+release
+trap - EXIT
+"$FLEET" act ask --show --scope "$SCOPE" --tick "$N" --dry-run "$DRY" < /dev/null >> "$LOG" 2>&1
+ASK_RC=$?
+RCS="$RCS ask=$ASK_RC"
+[ "$ASK_RC" = "0" ] || FAILED="${FAILED:-ask}"
 echo "[$(date -u +%FT%TZ)] fleet-reconcile $SCOPE tick $N: $RCS"   # launchd's log: one line per run
 if [ -n "$FAILED" ]; then
   alert tick "tick $N failed at $FAILED ($RCS)"

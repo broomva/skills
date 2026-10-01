@@ -4,8 +4,8 @@
  "cwd": "{HOME}/wt/broomva-16",
  "workspaceId": "ws-36",
  "createdAt": "2026-09-30T15:14:53.409Z",
- "updatedAt": "2026-09-30T22:49:49.236Z",
- "lastActivityAt": "2026-09-30T22:49:49.236Z",
+ "updatedAt": "2026-09-30T22:52:13.628Z",
+ "lastActivityAt": "2026-09-30T22:52:13.628Z",
  "lastUserMessageAt": "2026-09-30T19:50:55.117Z",
  "title": "title 36",
  "labels": {
@@ -13,7 +13,7 @@
   "fleet": "v-14",
   "paseo.parent-agent-id": "v-15"
  },
- "lastStatus": "running",
+ "lastStatus": "idle",
  "lastModeId": "bypassPermissions",
  "config": {
   "modeId": "bypassPermissions"

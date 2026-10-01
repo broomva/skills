@@ -39,3 +39,15 @@ Observe and classify, report only; no session is acted on. Ticket BRO-2674.
   kills the step's process group; the job runs a pinned copy of the code;
   bootstrap waits for bootout and retries; tick numbers come from the ledger
   too; snapshots are pruned after 7 days.
+- After round 2, and aligned with the spec as merged (workspace#842,
+  007f05a98): activity is the latest assistant entry or tool result (not the
+  mtime, which Claude Code moves with untimestamped records); the ask channel
+  is a dialog (`fleet act ask --show`, Seen/Later, a `seen` record, shown again
+  at the next tick then at most every 6 h) run with the lock released; ledger
+  records carry a unique id, `by` and `of`, owner records a null tick, and
+  tick.sh writes through `fleet ledger-append`; asks are per occurrence (a
+  tick records a resolution when one stops being true), keys are stable, and
+  an answer holds while the condition does; `fleet ack` answers one batch (or
+  `--all`) and refuses inside a session; adoption follows a Paseo agent across
+  a relaunch; class 8 joins on a hash of the raw branch; the plist sets
+  ProcessType Standard.

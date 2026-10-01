@@ -396,15 +396,17 @@ def test_a_blocked_job_whose_detail_asks_its_user_is_class_7():
 
 def test_a_late_untimestamped_write_does_not_revive_a_dead_session():
     # 2.1.280 appends last-prompt and cost-state records ~1 h after a turn:
-    # the mtime moves, the last timestamped entry doesn't (P20 round 2, N1).
-    late = dict(activity_ago=600, last_entry_ago=4200)
+    # the mtime moves, the activity (assistant entries, tool results) doesn't.
+    late = dict(activity_ago=4200, mtime_ago=600)
     assert cls(bg(state="blocked", job=dict(LIMIT_JOB, updated_at=NOW - 4200), **late))["class"] == "2"
     assert cls(S(board=died("rate_limit", ago=4200), **late))["class"] == "2"
     assert cls(S(board=arc("DONE", ago=4200), **late))["class"] == "8"
-    # Unknown last entry: nothing says it went on.
-    assert cls(S(board=died("rate_limit", ago=4200), activity_ago=60, last_entry_ago=None))["class"] == "2"
-    # A real later entry does.
+    # No activity found: nothing says it went on.
+    assert cls(S(board=died("rate_limit", ago=4200), activity_ago=None))["class"] == "2"
+    # Real activity afterwards does.
     assert cls(S(status="busy", board=died("rate_limit", ago=4200), activity_ago=60))["class"] == "5"
+    # And a late write alone doesn't make a busy session look recent (5 vs 6).
+    assert cls(S(status="busy", activity_ago=3 * H, mtime_ago=60))["class"] == "6"
 
 
 def test_a_withheld_branch_still_matches_its_open_pr():

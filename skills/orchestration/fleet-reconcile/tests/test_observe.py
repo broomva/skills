@@ -222,20 +222,37 @@ def test_an_existing_directory_outside_any_repo_is_placed_as_such(world, meta, t
 
 def test_the_captured_limit_deaths_classify_as_class_2_despite_their_late_transcript_writes(world, meta):
     # P20 round 2 (N1): every captured limit death's transcript mtime sits
-    # about an hour past its last timestamped entry (Claude Code's
-    # untimestamped last-prompt and cost-state records). Read from the last
-    # entry, each is still class 2 in its own scope.
+    # about an hour past its activity (Claude Code's untimestamped last-prompt
+    # and cost-state records). Read from activity (§5.3), each is still class 2
+    # in its own scope.
     snap = _observe(world, meta)
     limit = [s for s in snap["sessions"] if (s["job"] or {}).get("limit_text") and s["job"]["state"] == "blocked"]
     assert limit, "the capture holds usage-limit deaths"
     late = 0
     for s in limit:
         t = s["transcript"]
-        assert t["last_entry"] is not None
-        late += t["mtime"] - t["last_entry"] > 3000
+        assert t["activity"] is not None
+        late += t["mtime"] - t["activity"] > 3000
         env = classify.Env(s["scope"] or "none", meta["captured_at"], snap["repos"], snap["surfaces"])
         got = classify.classify(s, env)
         assert got["class"] in ("2", "1"), got
         if s["scope"]:
             assert got["class"] == "2", got
     assert late, "the capture shows the late untimestamped write"
+
+
+def test_an_adoption_follows_its_paseo_agent_to_a_relaunched_session(world, meta):
+    # A Paseo relaunch changes the session id; the agent record then holds the
+    # new one (§5.7). The adoption recorded the old id and the agent id.
+    recs = sorted((world.fixture / "paseo" / "agents").glob("*/*.json"))
+    live = {r["sessionId"] for r in json.loads((world.fixture / "claude" / "agents.json").read_text())}
+    for p in recs:
+        rec = json.loads(p.read_text())
+        if not rec.get("archivedAt") and (rec["runtimeInfo"] or {}).get("sessionId") in live:
+            break
+    else:
+        pytest.skip("no live Paseo session in the capture")
+    snap = _observe(world, meta, adopted=[{"session_id": "aaaaaaaa-0000-4000-8000-000000000000",
+                                           "paseo_agent_id": rec["id"], "adopted": "2026-09-30", "note": "t"}])
+    s = {x["session_id"]: x for x in snap["sessions"]}[rec["runtimeInfo"]["sessionId"]]
+    assert s["fleet_key"] == "adopt:aaaaaaaa-0000-4000-8000-000000000000" and s["adopted"]

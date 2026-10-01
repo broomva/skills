@@ -60,19 +60,15 @@ def test_other_sessions_words_are_withheld_when_they_carry_a_crm_path_or_a_token
     assert blob.count("[withheld]") >= 3
 
 
-def _batch_records(asks, tick=1, ts=None, notified=None):
-    recs = [{"v": 1, "ts": ts or common.ts(NOW - 2 * H), "scope": "broomva", "tick": tick, "dry_run": True,
-             "kind": "intent", "verb": "ask", "id": "%d-1" % tick, "key": "asks:%d" % tick,
+def _batch_records(asks, tick=1, ts=None):
+    return [{"v": 1, "ts": ts or common.ts(NOW - 2 * H), "scope": "broomva", "tick": tick, "dry_run": True,
+             "by": "tick", "kind": "intent", "verb": "ask", "id": "%d-1" % tick, "key": "scope:broomva",
              "target": {"batch": "/x", "asks": asks}}]
-    if notified:
-        recs.append({"v": 1, "ts": notified, "scope": "broomva", "tick": tick, "dry_run": True, "kind": "done",
-                     "verb": "ask", "id": "%d-1" % tick, "result": {"notified": True}})
-    return recs
 
 
 def _ack(tick, asks="all", ago=H):
-    return {"v": 1, "ts": common.ts(NOW - ago), "scope": "broomva", "tick": tick, "dry_run": False, "kind": "ack",
-            "acks": {"tick": tick, "asks": asks}}
+    return {"v": 1, "ts": common.ts(NOW - ago), "scope": "broomva", "tick": None, "dry_run": False,
+            "by": "owner:t", "id": "owner-%d" % tick, "kind": "ack", "of": "%d-1" % tick, "asks": asks}
 
 
 def test_an_open_ask_is_asked_once_and_then_carried_as_still_open():
@@ -94,8 +90,8 @@ def test_an_ack_holds_while_the_condition_lasts_and_a_recurrence_is_a_new_ask():
     # The prompt is answered: the next tick sees it gone and closes the key...
     gone = report.build(_snap([S(session_id=_sid(1))]), records, True)
     assert gone["resolved"] == [asks[0]["key"]]
-    records += [{"v": 1, "ts": common.ts(NOW), "scope": "broomva", "tick": 2, "dry_run": False, "kind": "ack",
-                 "acks": {"tick": 2, "keys": gone["resolved"], "resolved": True}}]
+    records += [{"v": 1, "ts": common.ts(NOW), "scope": "broomva", "tick": 2, "dry_run": False, "by": "tick",
+                 "id": "2-1", "kind": "ack", "keys": gone["resolved"], "resolved": True}]
     # ...so the same prompt coming back is a new ask, notified at once.
     again = report.build(_snap([s]), records, True)
     assert [a["key"] for a in again["asks"]] == [asks[0]["key"]]
@@ -110,25 +106,14 @@ def test_a_second_different_question_from_one_session_is_a_new_ask():
     assert len(second["asks"]) == 1 and second["asks"][0]["key"] != first[0]["key"]
 
 
-def test_acking_a_tick_acknowledges_every_earlier_batch():
+def test_an_ack_answers_its_own_batch_whole_or_per_ask():
     recs = []
     for t in (1, 2, 3):
-        recs += _batch_records([{"id": "a1", "key": "k%d" % t, "class": "3", "question": "q"}], tick=t)
-    assert set(ledger.open_by_key(recs)) == {"k1", "k2", "k3"}
-    assert set(ledger.open_by_key(recs + [_ack(2)])) == {"k3"}
-    assert set(ledger.open_by_key(recs + [_ack(3, ["a1"])])) == {"k1", "k2"}
-    assert ledger.open_by_key(recs + [_ack(3)]) == {}
-
-
-def test_notify_for_a_new_batch_else_at_most_once_per_renotify_window():
-    ask = [{"id": "a1", "key": "k", "class": "3", "question": "q"}]
-    assert report.should_notify(_batch_records(ask, tick=5), 5, ["k"], 6, NOW)[0] is True
-    recent = _batch_records(ask, tick=5, notified=common.ts(NOW - H))
-    assert report.should_notify(recent, 6, ["k"], 6, NOW) == (False, "notified 60m ago; re-notify after 6h")
-    stale = _batch_records(ask, tick=5, notified=common.ts(NOW - 7 * H))
-    assert report.should_notify(stale, 6, ["k"], 6, NOW)[0] is True
-    assert report.should_notify(stale, 6, [], 6, NOW) == (False, "no open asks")  # no longer true: resolved
-    assert report.should_notify(stale + [_ack(5)], 6, ["k"], 6, NOW) == (False, "no open asks")
+        recs += _batch_records([{"id": "a1", "key": "k%d" % t, "class": "3", "question": "q"},
+                                {"id": "a2", "key": "j%d" % t, "class": "3", "question": "q"}], tick=t)
+    assert len(ledger.open_by_key(recs)) == 6
+    assert set(ledger.open_by_key(recs + [_ack(2)])) == {"k1", "j1", "k3", "j3"}
+    assert set(ledger.open_by_key(recs + [_ack(3, ["a1"])])) == {"k1", "j1", "k2", "j2", "j3"}
 
 
 def test_a_count_ask_keeps_its_key_when_its_members_change():
@@ -204,3 +189,24 @@ def test_the_labelling_sheet_is_stratified_distinct_first_and_reproducible():
     assert parsed[0]["owner_agree_or_disagree"] == "" and list(parsed[0]) == list(report.SHEET_COLUMNS)
     md = report.sheet_md(rows, available, [1, 2, 3], "broomva")
     assert "agree / disagree" in md and "≥90%" in md
+
+
+def _seen(tick, button, ago):
+    return {"v": 1, "ts": common.ts(NOW - ago), "scope": "broomva", "tick": tick, "dry_run": True, "by": "tick",
+            "id": "%d-9%d" % (tick, int(ago)), "kind": "seen", "of": "1-1",
+            "result": {"button": button, "gave_up": button is None}}
+
+
+def test_an_unseen_batch_is_shown_now_again_next_tick_then_at_most_every_6_hours():
+    import fleet_reconcile as fr
+
+    recs = _batch_records([{"id": "a1", "key": "k", "class": "3", "question": "q"}])
+    due = lambda rs: [b["tick"] for b in fr.due_batches(rs, ledger.open_by_key(rs), NOW)]  # noqa: E731
+    assert due(recs) == [1]                                       # never shown
+    once = recs + [_seen(1, None, H)]
+    assert due(once) == [1]                                       # gave up: the next tick shows it again
+    twice = once + [_seen(2, "Later", 0.5 * H)]
+    assert due(twice) == []                                       # then at most once per 6 h
+    assert due(recs + [_seen(1, None, 8 * H), _seen(2, "Later", 7 * H)]) == [1]
+    assert due(recs + [_seen(1, "Seen", 0.1 * H)]) == []          # a Seen click: not shown again
+    assert due(recs + [_ack(1)]) == []                            # answered: nothing open

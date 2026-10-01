@@ -62,6 +62,38 @@ def _last_limit(text: str) -> Optional[str]:
     return found
 
 
+def last_activity_ts(path: str, max_bytes: int = 128 * 1024) -> Optional[float]:
+    """A transcript's last activity (spec §5.3): the latest timestamp among its
+    assistant entries and tool results. Not any entry: a queue-operation is
+    stamped when a message is delivered, so a mail to a hung session would read
+    as activity; and not the file's mtime, which Claude Code moves with
+    untimestamped records (last-prompt, cost-state) long after a turn. Reads
+    the tail only, and only type, content kinds and timestamp. None when no
+    such entry is in the tail."""
+    try:
+        tail = common.read_tail(Path(path), max_bytes)
+    except OSError:
+        return None
+    for raw in reversed(tail.split(b"\n")):
+        if b'"timestamp"' not in raw or (b'"assistant"' not in raw and b'"tool_result"' not in raw):
+            continue
+        try:
+            e = json.loads(raw.decode("utf-8"))
+        except (ValueError, UnicodeDecodeError):
+            continue
+        if not isinstance(e, dict):
+            continue
+        kind = e.get("type")
+        content = (e.get("message") or {}).get("content") if isinstance(e.get("message"), dict) else None
+        tool_result = kind == "user" and isinstance(content, list) and any(
+            isinstance(c, dict) and c.get("type") == "tool_result" for c in content)
+        if kind == "assistant" or tool_result:
+            t = common.parse_iso(e.get("timestamp"))
+            if t is not None:
+                return t
+    return None
+
+
 class Sources:
     """The machine: commands on PATH (FLEET_CLAUDE_BIN, FLEET_GH_BIN override)
     and files under $HOME."""
@@ -119,10 +151,11 @@ class Sources:
                     elif e.is_dir():
                         sub = Path(e.path) / "subagents"
                         if sub.is_dir():
-                            m = max((f.stat().st_mtime for f in sub.glob("*.jsonl")), default=None)
-                            if m is not None:
+                            subs = sorted(((f.stat().st_mtime, str(f)) for f in sub.glob("*.jsonl")), reverse=True)
+                            if subs:
                                 slot = out.setdefault(e.name, {})
-                                slot["sub"] = max(slot.get("sub", 0.0), m)
+                                slot["sub"] = max(slot.get("sub", 0.0), subs[0][0])
+                                slot["sub_paths"] = [p for _, p in subs[:3]]  # an entry is at or before its mtime
                 except OSError:
                     continue
         return out
@@ -140,12 +173,12 @@ class Sources:
             return None
         return _last_limit(tail)
 
-    def last_entry(self, info: Dict[str, Any]) -> Optional[float]:
-        """The time of the transcript's last timestamped entry (ctx-core's
-        reader, so the core's comparison and the classes agree)."""
-        import ctx_compare
-
-        return ctx_compare.last_entry_ts(info["path"]) if info.get("path") else None
+    def activity(self, info: Dict[str, Any]) -> Optional[float]:
+        """The session's last activity over its transcript and its newest
+        subagent transcripts (spec §5.3)."""
+        times = [last_activity_ts(p) for p in [info.get("path")] + list(info.get("sub_paths") or []) if p]
+        times = [t for t in times if t is not None]
+        return max(times) if times else None
 
     # Paseo (read-only, from disk) ----------------------------------------
     def paseo_dir(self) -> Path:
@@ -238,12 +271,12 @@ class FixtureSources(Sources):
         p = self.root / "claude" / "transcripts.json"
         if not p.is_file():
             raise SourceError("fixture claude/transcripts.json: missing")
-        return {k: {kk: (float(vv) if kk in ("mtime", "sub", "last_entry") and vv is not None else vv)
+        return {k: {kk: (float(vv) if kk in ("mtime", "sub", "activity") and vv is not None else vv)
                     for kk, vv in v.items()}
                 for k, v in json.loads(p.read_text()).items()}
 
-    def last_entry(self, info: Dict[str, Any]) -> Optional[float]:
-        v = info.get("last_entry")
+    def activity(self, info: Dict[str, Any]) -> Optional[float]:
+        v = info.get("activity")
         return float(v) if v is not None else None
 
     def limit_text(self, sid: str, info: Dict[str, Any]) -> Optional[str]:

@@ -75,6 +75,10 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
     rep["asks"], rep["asks_open"], rep["acked_still_open"] = make_asks(rep, records, now)
     rep["ask_keys_current"] = sorted(k for k, _, _ in candidates(rep))
     rep["resolved"] = resolved_keys(records, rep["ask_keys_current"])
+    open_of = {v["of"] for v in ledger.open_by_key(records).values()}
+    pending = [b for b in ledger.ask_batches(records) if b["id"] in open_of]
+    rep["batches"] = {"unanswered": len(pending), "unseen": sum(1 for b in pending if not b["seen"]),
+                      "oldest": min((b["ts"] for b in pending), default=None)}
     return rep
 
 
@@ -214,22 +218,6 @@ def resolved_keys(records: List[Dict[str, Any]], current: Iterable[str]) -> List
                   if v["state"] in ("open", "acked") and k not in now_true)
 
 
-def should_notify(records: List[Dict[str, Any]], tick: int, current: Iterable[str], renotify_h: int,
-                  now: float) -> Tuple[bool, str]:
-    """Notify for a tick that wrote a batch (it has a new ask); otherwise
-    re-notify at most once per renotify_h while an ask that is still true is
-    unacknowledged."""
-    if any(b["tick"] == tick for b in ledger.ask_batches(records)):
-        return True, "new asks"
-    open_now = set(ledger.open_by_key(records)) & set(current)
-    if not open_now:
-        return False, "no open asks"
-    last = common.parse_iso(ledger.last_notified(records) or "") or 0.0
-    if now - last >= renotify_h * 3600:
-        return True, "%d ask(s) unacknowledged; last notified %s ago" % (len(open_now), common.age(now - last))
-    return False, "notified %s ago; re-notify after %dh" % (common.age(now - last), renotify_h)
-
-
 # --------------------------------------------------------------------------
 # Markdown
 
@@ -244,6 +232,11 @@ def render_md(rep: Dict[str, Any]) -> str:
     L.append("")
     L.append("Report only (phase 1). Nothing was sent, spawned, labelled or resumed. The \"would do\" column is "
              "what phase 3 would do.")
+    L.append("")
+    bt = rep["batches"]
+    L.append("Ask batches unanswered: %d, of them not seen: %d%s." % (
+        bt["unanswered"], bt["unseen"], ", oldest %s ago" % common.age(now - (common.parse_iso(bt["oldest"]) or now))
+        if bt["oldest"] else ""))
     L.append("")
     still = rep["asks_open"]
     n_open = len(still) + len(rep["asks"])

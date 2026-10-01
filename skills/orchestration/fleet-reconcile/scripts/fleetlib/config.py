@@ -6,8 +6,8 @@ scopes.yaml, a wrong type or a parse error fails `config-check`, and the tick
 does not fire. `config-get` prints one value; tick.sh reads any error as off
 (dispatch_enabled) and dry (dry_run).
 
-Keys marked "phase 1" below are this build's additions, pending the spec
-(broomva/workspace#842 fixes the rest).
+The format is spec §5.7 (broomva/workspace#842, merged as 007f05a98). Keys
+under "phase 1" below are this build's additions, pending the spec.
 """
 from __future__ import annotations
 
@@ -35,6 +35,7 @@ SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     "paseo_tools": ("paseo_tools", None),
     "driver": ("dict", None),
     "adopted": ("adopted", []),
+    "b_step_timeout_min": ("int", 10),        # #840's step, once it ships (§5.7)
     # phase 1
     "listing_cap": ("int", 200),              # a session listing this long may be truncated: fail closed
     "pr_list_cap": ("int", 200),              # the same for `gh pr list` per repo
@@ -44,8 +45,9 @@ SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     "launchd_logs": ("str_map", None),        # label -> the log that shows a real run, when stdout doesn't
     "bookkeeping_run_log": ("str_or_null", None),
     "dream_run_log": ("str_or_null", None),
-    "ask_renotify_h": ("int", 6),
+    "ask_renotify_h": ("int", 6),             # an unseen ask batch is shown again at most this often
     "tick_timeout_min": ("int", 15),
+    "compare_hour": ("int", 18),              # the core comparison runs once a day from this local hour
 }
 CAP_KEYS = ("fleet_sessions", "active_sessions", "active_window_min", "research_spawns_per_day")
 CAP_DEFAULTS = {"fleet_sessions": 8, "active_sessions": 12, "active_window_min": 30, "research_spawns_per_day": 4}
@@ -77,7 +79,8 @@ def _check(kind: str, key: str, v: Any) -> None:
                 for k in ("read", "write")),
         "adopted": lambda: isinstance(v, list) and all(
             isinstance(e, dict) and isinstance(e.get("session_id"), str) and ctx.SESSION_ID_RE.match(e["session_id"])
-            and not (set(e) - {"session_id", "adopted", "note"}) for e in v),
+            and (e.get("paseo_agent_id") is None or isinstance(e.get("paseo_agent_id"), str))
+            and not (set(e) - {"session_id", "paseo_agent_id", "adopted", "note"}) for e in v),
     }[kind]()
     if not ok:
         raise ConfigError("%s: bad value for %s (%s)" % (key, key, kind))
@@ -140,6 +143,13 @@ def state_dir(sec: Dict[str, Any]) -> Path:
 
 def adopted_ids(sec: Dict[str, Any]) -> List[str]:
     return [e["session_id"] for e in sec.get("adopted") or []]
+
+
+def adopted_agents(sec: Dict[str, Any]) -> Dict[str, str]:
+    """{Paseo agent id: the adopted session id it was recorded with}: a Paseo
+    relaunch changes the session id, and the agent record then holds the new
+    one (§5.7)."""
+    return {e["paseo_agent_id"]: e["session_id"] for e in sec.get("adopted") or [] if e.get("paseo_agent_id")}
 
 
 def get(sid: str, key: str) -> Optional[str]:

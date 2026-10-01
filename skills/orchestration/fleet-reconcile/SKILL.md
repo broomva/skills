@@ -12,7 +12,7 @@ description: |
   branch rules of every repo in the scope). It classifies each session with the
   spec's class table, runs the count check, inventories scheduled work
   (Paseo schedules, com.broomva.* LaunchAgents, bookkeeping, Dream), and writes
-  a markdown and JSON report plus one batch of owner asks, notified on macOS.
+  a markdown and JSON report plus one batch of owner asks, shown in a dialog.
   It acts on no session: no mail, spawn, label or resume in phase 1. Runs
   hourly from launchd once the owner installs it. Coordination only; not a
   security boundary. USE WHEN installing or checking the fleet tick, reading a
@@ -35,7 +35,8 @@ The 09-26 → 09-29 run's coordinator reported 6 live sessions when there were
 first phase of its replacement, as the design of record specifies:
 `docs/specs/2026-09-29-fleet-reconcile-design.html` in broomva/workspace (§5.3
 observe, §5.4 classes, §9 row 1), with the formats of its 2026-09-30
-build-readiness amendment (§5.7, broomva/workspace#842). Ticket BRO-2674.
+build-readiness amendment (§5.7, broomva/workspace#842, merged as 007f05a98).
+Ticket BRO-2674.
 
 Phase 1 is report-only and runs deterministic code; no model reads or decides
 anything in a tick. It observes, classifies and reports, and asks the owner in
@@ -70,7 +71,7 @@ skill is refused unless `--force`. It seeds `~/.config/ctx/fleet.json` from
 `dry_run: 1`) and runs `config-check` (in `--dry-run` too), renders
 `templates/launchd.plist.template` into
 `~/Library/LaunchAgents/com.broomva.fleet-reconcile.<scope>.plist`
-(StartInterval 3600, no ProcessType, logs in `~/Library/Logs/`), then
+(StartInterval 3600, ProcessType Standard, logs in `~/Library/Logs/`), then
 `launchctl bootout`, waits for the job to go, and `bootstrap`s (retried three
 times), so a rerun reloads. `--uninstall` unloads and moves the plist to the
 Trash; the config, the releases and the state dir stay.
@@ -96,18 +97,19 @@ Trash; the config, the releases and the state dir stay.
    printed, and exported for the observe step only; observe passes it to `gh`
    and to no other child. An absent, unreadable or empty file means the
    keyring, which the report says. A mode other than 0600 is logged.
-6. `fleet observe`, `fleet report`, `fleet act ask --notify`, and
-   `fleet core-compare` (the core's comparison, once a day), each in its own
+6. `fleet observe`, `fleet report` and `fleet core-compare` (the core's
+   comparison, once a day from `compare_hour`), each in its own
    process group under a TERM-then-KILL watchdog bounded by
    `tick_timeout_min` (15), so a timeout also ends its `claude` and `gh`
    children.
-7. `tick_fire` and `runner_exit` records in the ledger, and one line on stdout
-   for launchd's log.
+7. `tick_fire` and `runner_exit` records in the ledger (through
+   `fleet ledger-append`), the lock released, then `fleet act ask --show` (a
+   dialog that can wait 10 minutes), and one line on stdout for launchd's log.
 
 **A failed tick is loud.** An unreadable config, a failed `config-check`, or
-observe or report failing posts a notification directly from bash (so it works
-when Python is what broke), at most once per 6 h per kind, and exits 1, so
-launchd's last exit shows it.
+observe or report failing, or a lock held for over 2 h, shows a dialog directly
+from bash (so it works when Python is what broke), at most once per 6 h per
+kind, and exits 1, so launchd's last exit shows it.
 
 By hand: `FLEET_SCOPE=broomva bash scripts/tick.sh`.
 
@@ -117,7 +119,7 @@ By hand: `FLEET_SCOPE=broomva bash scripts/tick.sh`.
 |---|---|---|
 | Sessions | `claude agents --json --all` | reported; nothing is classified. At `listing_cap` (200) rows or more the listing counts as complete only when every job file on disk appears in it (the listing has no limit parameter but lists every background job ever run); otherwise it **fails closed** the same way |
 | Background detail | `~/.claude/jobs/<id>/state.json` | the directory unread: every background session that would be 9, 9a or 10 reads unknown. One file that doesn't parse: only its session does |
-| Activity | transcript mtimes under `~/.claude/projects`, subagents included | reported |
+| Activity | the latest assistant entry or tool result in each session's transcript and its newest subagent transcripts (spec §5.3); not the mtime, which Claude Code moves with untimestamped records long after a turn (36 of 77 captured transcripts by over 10 min) | reported |
 | Paseo | `~/.paseo/agents/*/*.json`, `~/.paseo/schedules/*.json` (read-only) | reported; the count check says it could not run |
 | The board | ctx-core's `events.jsonl`, rebuilt in memory (no cache write) | reported and asked per scope; that scope's sessions that would be 9, 9a or 10 read unknown, since 2, 4, 7 and 8 couldn't be checked |
 | GitHub | per repo: slug from `origin`, `repos/<r>` default branch, `rules/branches/<b>`, `gh pr list` | **that repo** is reported as not observed. A slug that doesn't resolve, a gh error or a PR list at `pr_list_cap` never reads as zero PRs |
@@ -142,11 +144,11 @@ path is withheld.
 | 2 | dead: limit | a board `session.died` with `rate_limit`, or a background job blocked on Claude Code's limit text; the reset is read from the job or the transcript tail, else assumed 5 h after the death |
 | 3 | waiting at a prompt | listing `status: waiting` with a `waitingFor`, unless it is a background question to its user |
 | 4 | error | listing `state: failed`, or a board death with another error (transient: 5xx or network only) |
-| 5 | running | busy, a transcript or subagent transcript modified within 2 h |
-| 6 | hung | busy, nothing modified for over 2 h |
+| 5 | running | busy, activity within 2 h |
+| 6 | hung | busy, a transcript found, no activity for over 2 h |
 | 7 | blocked on the owner | a current `ARC-STATUS: BLOCKED`, or a background job blocked on a question (its needs, a suggested reply, or a detail that asks) |
 | 8 | closed | a current `MERGED`, `CLOSED` or `DONE`, a known branch, and no open PR on it; an unknown branch is unknown |
-| 9 / 9a | stalled / idle, recent | ours (a ledger spawn or adopted), idle, unmodified ≥ 1 h / < 1 h; 9's action is a mail with a live process, else a resume |
+| 9 / 9a | stalled / idle, recent | ours (a ledger spawn, or adopted by session id or through its Paseo agent), idle, no activity for ≥ 1 h / activity within 1 h; 9's action is a mail with a live process, else a resume |
 | 10 | unmanaged | in scope, not ours |
 | — | unknown | nothing matched (a missing transcript), or a terminal status on a repo whose PRs weren't read |
 
@@ -166,30 +168,37 @@ fleet name.
 
 ## The owner channel (spec §5.7, the ask channel)
 
-An ask is per-key state. Candidates: a session waiting at a prompt or blocked
-on the owner, a repo without a pull_request rule or with unpinned checks, a
-repo not observed, a surface not read, drift, a scheduled job exiting non-zero
-or overdue, records with no process. A key is asked once, stays open until the
-owner acks it or it stops being true, and comes back only if it is still true
-24 h after an ack. Count-type keys carry a hash of their members, so a newly
-stuck record is a new ask. A tick writes a batch (`<state_dir>/asks/<tick>.md`
-and an ask intent in the ledger) only when it has a new key. After the report,
-`fleet act ask --notify` posts one osascript notification and calls
-`p9 notify`, titled with the number of distinct open asks. A delivered
-notification can't prove it was seen, so an ask counts as seen only once acked:
+An ask is per occurrence of a condition. Candidates: a session waiting at a
+prompt or blocked on the owner, a repo without a pull_request rule or with
+unpinned checks, a repo not observed, a surface not read, drift, a scheduled
+job exiting non-zero or overdue, records with no process. A key is asked once,
+stays open until the owner answers it or a tick finds it no longer true (a
+resolution record), and an answer holds for as long as the condition does; a
+condition that ends and comes back is a new ask. Keys carry no counts or error
+text, so they don't change tick to tick. A tick writes a batch
+(`<state_dir>/asks/<tick>.md` and an ask intent in the ledger) only when it has
+a new key.
+
+With the tick's lock released, `fleet act ask --show` shows a dialog (banners
+are stored but not shown on this Mac, spec §5.7): the scope, the number of
+open asks and the newest one's line, with Seen and Later, giving up after 10
+minutes. The outcome is a `seen` record. A batch not clicked Seen is shown
+again at the next tick and then at most every `ask_renotify_h` (6) hours. It
+also calls `p9 notify` with the count only, since p9 may send off the machine.
+A Seen click is a statement, not a proof; only an answer closes an ask:
 
 ```bash
-F=~/broomva/skills/skills/orchestration/fleet-reconcile/scripts/fleet
+F=~/.local/share/fleet-reconcile/releases/<commit>/orchestration/fleet-reconcile/scripts/fleet
 $F asks --scope broomva            # the open asks, one line each, oldest first
-$F ack 12 --scope broomva          # tick 12's batch and every earlier one
+$F ack 12 --scope broomva          # answer tick 12's batch
 $F ack 12 --ask a3 --scope broomva # one ask of tick 12
+$F ack --all --scope broomva       # every batch with an open ask
 ```
 
-A new batch is notified at once; open asks again at most every
-`ask_renotify_h` (6) hours. Every report leads with the number of open asks.
-In report mode (phase 1) the ask channel notifies even when dry, since it
-talks to the owner and to no session; in act mode a dry tick logs it only, as
-§9 row 2 asks of every verb.
+`fleet ack` refuses when `FLEET_CHILD` or `CLAUDECODE` is set (a floor: the
+owner answers from a terminal). Every report leads with the number of
+unanswered and unseen batches and of open asks. `ask` runs in every mode and
+under dry run (§5.7): it reaches only the owner.
 
 ## Files
 
@@ -208,7 +217,8 @@ talks to the owner and to no session; in act mode a dry tick logs it only, as
 Config keys beyond §5.7's, pending the spec: `listing_cap`, `pr_list_cap`,
 `gh_token_file`, `actions_app_id` (15368, GitHub Actions), `launchd_prefix`,
 `launchd_logs` (a label's real log, when its stdout is silent),
-`bookkeeping_run_log`, `dream_run_log`, `ask_renotify_h`, `tick_timeout_min`.
+`bookkeeping_run_log`, `dream_run_log`, `ask_renotify_h`, `tick_timeout_min`, `compare_hour`.
+§5.7's `b_step_timeout_min` and an adoption's `paseo_agent_id` are accepted.
 
 ## Scheduled work (report-only; the seam for the Dream and heartbeat section)
 
@@ -230,7 +240,7 @@ $F label-sheet --scope broomva --ticks 1,2,3   # writes labelling/<name>.md and 
 ```
 
 ≥90% agreement overall and no class below 2 of 3. The owner also acks those
-ticks' ask batches from the notification, which shows the channel reached
+ticks' ask batches from the dialog, which shows the channel reached
 them.
 
 ## Commands
@@ -239,9 +249,9 @@ them.
 fleet config-get <scope> <key> | config-check [<scope>]
 fleet observe --tick N [--fixtures DIR]
 fleet report --tick N [--dry-run 0|1]
-fleet act ask --notify --tick N           (mail, spawn, label, resume: refused in phase 1, exit 3)
-fleet asks [--all] | ack <tick> [--ask ID ...]
-fleet next-tick | ledger-record fire|exit --tick N
+fleet act ask --show --tick N             (mail, spawn, label, resume: refused in phase 1, exit 3)
+fleet asks [--all] | ack <tick> [--ask ID ...] | ack --all
+fleet next-tick | ledger-append fire|exit --tick N
 fleet core-compare [--force]
 fleet label-sheet --ticks A,B,C [--per-class 3] [--seed 0]
 ```
@@ -264,9 +274,9 @@ python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (a
 | `test_parsers.py` | Every parser against the 2.1.280 capture; missing fields fail the surface; drift is reported; the bearer, env and prompts are never extracted; the slug rule; the ruleset check (skills flagged until its pull_request rule lands, unpinned checks flagged) |
 | `test_classify.py` | A positive case per class; the spec's five ordering tests; 41 rule pairs that can both match, the earlier winning; a grid proving the other 14 pairs can't; the arc and death currency rules; the spawn pause; the count check; the overlap pass |
 | `test_observe.py` | The pipeline over the capture in a scratch HOME; a 200-row listing fails closed unless the job files show it complete; one unparsed job file degrades only its session; an unresolvable slug, a gh error and a PR list at the cap fail only their repo; the bearer never reaches a snapshot or report |
-| `test_report.py` | Every section; withheld crm/ paths and tokens; per-key asks (once, then still open), ack-through, re-notify, member-hashed keys, failed-surface asks, the ruleset wording; the labelling sheet (distinct sessions only) |
+| `test_report.py` | Every section; withheld crm/ paths and tokens; per-occurrence asks (once, then still open; an answer holds while true; a recurrence is new; a different question is new), answers per batch, stable count keys, failed-surface asks, the ruleset wording, the dialog's re-show rule; the labelling sheet (distinct sessions only) |
 | `test_ledger.py` | Validation, corrupt-line counting, 4 processes × 50 appends lose nothing, the ask and spawn folds |
-| `test_tick.py` | tick.sh end to end with stub claude/gh/osascript/p9: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, the token reaching gh and not claude, an empty token file, tick numbers past a lost counter, re-notify, ack, refused verbs, the labelling sheet |
+| `test_tick.py` | tick.sh end to end with stub claude/gh/osascript/p9: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, the token reaching gh and not claude, an empty token file, tick numbers past a lost counter, the dialog shown again at the next tick and stopped by Seen, ack refused inside a session, refused verbs, the labelling sheet |
 | `test_install.py` | The pinned copy (runnable without the checkout), plist rendering, config seeded once at 0600, bootout-wait-bootstrap on every run, a retried bootstrap, uninstall to the Trash, dry run, a broken config, uncommitted changes refused without --force |
 
 ## Phase 2 and 3

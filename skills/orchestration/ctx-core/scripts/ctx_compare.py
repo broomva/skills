@@ -1,47 +1,38 @@
-"""ctx doctor --compare: the core's phase-1 exit comparison (core spec §9).
+"""ctx doctor --compare: the core's phase-1 exit comparison (core spec §9, as
+merged in broomva/workspace#842 at 007f05a98).
 
-Board rows that are live, against in-scope sessions from `claude agents --json
---all` whose top-level transcript was modified in the same window. At least 95%
-of each set must appear in the other, and every difference is listed with its
-reason. Read-only on the store: the board is rebuilt in memory, and none of
-events.jsonl, events.lock, board.json or board-snapshot.json is written. The
-one write is a summary line appended to <store>/compare.jsonl, so the three
-days of the criterion stay on disk.
+Board rows that are live (an event in the window, not session.died), against
+in-scope sessions from `claude agents --json --all` that have a timestamped
+transcript entry in the same window. The pass bar is ≥95% each way on the RAW
+sets; the reasons explain differences and remove none. Matching is on the full
+session id, never on counts.
 
-Matching is on the full session id, never on counts: a compaction and a resume
-each publish a session.start, so start counts overstate sessions.
+Read-only on the store: the board is rebuilt in memory, and the one write is a
+summary line appended to <store>/compare.jsonl. The registration time is
+passed once (--registered) and kept in that file's first line, because the
+log's first event can predate registration; a later --registered that
+disagrees with it is refused.
 
-Reasons, a fixed list (a new one is a code change with a test). The first four
-describe what the comparator can see, not the hooks, and are left out of the
-95%; the rest count against it because in them the board is wrong or the gap
-is unexplained:
+Transcript mtime isn't used anywhere: Claude Code moves it with untimestamped
+records (last-prompt, cost-state) long after a turn. "An entry" is a line
+with a timestamp.
 
-    no-transcript        board row; its session id has no transcript anywhere
-                         (a session started from another session's Bash saves
-                         none, while its hooks still fire)
-    ended                board row; a transcript exists, but claude agents no
-                         longer lists the session
-    pre-registration     listed session with no transcript entry after the
-                         hooks were registered
-    died                 the row's latest event is session.died and nothing
-                         came after it: the board is right, and the transcript
-                         counted on the session side is the death itself
-    died-then-continued  the row's latest event is session.died, but the
-                         session is listed with a timestamped transcript entry
-                         more than GRACE_S after it (see last_entry_ts)
-    no-event             no event at all for a listed session
-    stale-event          a listed session active in the window whose latest
-                         event is older than the window (a long turn: until
-                         phase 2 the board hears only at SessionStart, Stop and
-                         StopFailure)
-    unexplained          any other board-only row
+Reasons, tried in this order (a new one is a code change with a test):
 
-Three of these (died, stale-event, unexplained) are this build's additions to
-the spec's five, pending the spec (broomva/workspace#842).
+    board rows the session side lacks
+      no-transcript        no transcript for the session id anywhere
+      ended                a transcript, and claude agents no longer lists it
+    listed sessions the board lacks
+      pre-registration     no transcript entry after --registered
+      died                 latest event session.died, no entry after it (the board is right)
+      died-then-continued  latest event session.died, entries after it
+      stale-in-turn        latest event older than the window, entries after it (one long turn)
+      no-event             no event for the session id at all
+    anything else          unexplained
 
-No evidence is not a pass: an unreadable transcript directory or an empty
-listing is an error, and a side with nothing left to count after the
-exclusions reads as NO EVIDENCE, which fails.
+Plus, uncounted: in-scope transcripts with an entry in the window that are on
+neither side (a finished claude -p isn't listed, so a headless run that left no
+event never becomes a difference).
 
 Placed in `ctx_compare.py` rather than inside ctx.py (where the spec puts it)
 so ctx.py's diff stays to the doctor dispatch; it uses ctx.py's own readers.
@@ -57,51 +48,48 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import ctx
 
-EXCLUDED = ("no-transcript", "ended", "pre-registration", "died")
-COUNTED = ("died-then-continued", "no-event", "stale-event", "unexplained")
-REASONS = EXCLUDED + COUNTED
+BOARD_REASONS = ("no-transcript", "ended")
+SESSION_REASONS = ("pre-registration", "died", "died-then-continued", "stale-in-turn", "no-event")
+REASONS = BOARD_REASONS + SESSION_REASONS + ("unexplained",)
 THRESHOLD = 0.95
-#: Transcript writes this soon after a death belong to it (as in fleet-reconcile).
-GRACE_S = 120
+
+
+class CompareError(RuntimeError):
+    pass
 
 
 def load_listing(path: Optional[str] = None, timeout: float = 30.0) -> List[Dict[str, Any]]:
     """The session listing, from `claude agents --json --all` or a captured
-    file. Raises RuntimeError when it can't be read."""
-    if path:
-        text = Path(path).read_text(encoding="utf-8")
-    else:
-        claude = os.environ.get("CTX_CLAUDE_BIN") or "claude"
-        try:
+    file. Raises CompareError when it can't be read or is empty (it lists at
+    least the session asking)."""
+    try:
+        if path:
+            text = Path(path).read_text(encoding="utf-8")
+        else:
+            claude = os.environ.get("CTX_CLAUDE_BIN") or "claude"
             proc = subprocess.run([claude, "agents", "--json", "--all"], stdin=subprocess.DEVNULL,
                                   capture_output=True, timeout=timeout)
-        except (OSError, subprocess.TimeoutExpired) as exc:
-            raise RuntimeError("claude agents: %s" % exc)
-        if proc.returncode != 0:
-            raise RuntimeError("claude agents exited %d" % proc.returncode)
-        text = proc.stdout.decode("utf-8", "replace")
-    rows = json.loads(text)
+            if proc.returncode != 0:
+                raise CompareError("claude agents exited %d" % proc.returncode)
+            text = proc.stdout.decode("utf-8", "replace")
+        rows = json.loads(text)
+    except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+        raise CompareError("the session listing: %s" % exc)
     if not isinstance(rows, list):
-        raise RuntimeError("claude agents: not a JSON array")
+        raise CompareError("the session listing is not a JSON array")
     rows = [r for r in rows if isinstance(r, dict) and isinstance(r.get("sessionId"), str)]
     if not rows:
-        raise RuntimeError("claude agents listed no session (it lists at least the one asking)")
+        raise CompareError("claude agents listed no session")
     return rows
 
 
-def last_entry_ts(path: str, max_bytes: int = 64 * 1024) -> Optional[float]:
+def last_entry_ts(path: str, max_bytes: int = 128 * 1024) -> Optional[float]:
     """The time of a transcript's last entry that carries a timestamp, or None.
-
-    A transcript's mtime is not its last entry: on 2.1.280 Claude Code appends
-    `last-prompt` and `cost-state` records, with no timestamp, about an hour
-    after a session's last turn (measured on four usage-limit deaths). "A later
-    transcript entry" (core §9) means a timestamped one. Reads only the tail,
-    and only the `timestamp` field of each line."""
+    Reads only the tail, and only the `timestamp` field of each line."""
     try:
         with open(path, "rb") as fh:
             fh.seek(0, os.SEEK_END)
-            size = fh.tell()
-            fh.seek(max(0, size - max_bytes))
+            fh.seek(max(0, fh.tell() - max_bytes))
             tail = fh.read()
     except OSError:
         return None
@@ -112,22 +100,26 @@ def last_entry_ts(path: str, max_bytes: int = 64 * 1024) -> Optional[float]:
             ts = json.loads(raw.decode("utf-8")).get("timestamp")
         except (ValueError, UnicodeDecodeError, AttributeError):
             continue
-        if isinstance(ts, str) and len(ts) >= 19:
+        if isinstance(ts, str) and len(ts) >= 19 and ts[4:5] == "-" and ts[10:11] == "T":
+            frac = ts[20:23] if ts[19:20] == "." else "000"
             try:
-                return ctx.parse_ts(ts[:19] + ".000Z") + (float("0." + ts[20:23]) if ts[19:20] == "." else 0.0)
-            except (ValueError, IndexError):
+                return ctx.parse_ts("%s.%sZ" % (ts[:19], frac.ljust(3, "0")))
+            except ValueError:
                 continue
     return None
 
 
-def transcript_paths() -> Dict[str, str]:
-    """{session id: path of its newest top-level transcript}."""
+def transcripts() -> Dict[str, Tuple[float, str]]:
+    """{session id: (mtime, path)} of each session's newest top-level
+    transcript. Raises CompareError when the projects directory can't be read:
+    that is no evidence, not an empty set. The mtime is used only to skip files
+    last written before the window (an entry is never newer than its file)."""
     out: Dict[str, Tuple[float, str]] = {}
     root = ctx._claude_projects_dir()
     try:
         pdirs = [p for p in root.iterdir() if p.is_dir()]
     except OSError as exc:
-        raise RuntimeError("%s: %s" % (root, exc.strerror or exc))
+        raise CompareError("%s: %s" % (root, exc.strerror or exc))
     for pdir in pdirs:
         try:
             entries = list(os.scandir(pdir))
@@ -141,121 +133,91 @@ def transcript_paths() -> Dict[str, str]:
                     continue
                 if mt >= out.get(e.name[:-6], (0.0, ""))[0]:
                     out[e.name[:-6]] = (mt, e.path)
-    return {k: v[1] for k, v in out.items()}
-
-
-def transcript_times() -> Dict[str, float]:
-    """{session id: mtime of its top-level transcript}, across every project.
-    Raises RuntimeError when the projects directory can't be read: that is no
-    evidence, not an empty set."""
-    out: Dict[str, float] = {}
-    root = ctx._claude_projects_dir()
-    try:
-        pdirs = [p for p in root.iterdir() if p.is_dir()]
-    except OSError as exc:
-        raise RuntimeError("%s: %s" % (root, exc.strerror or exc))
-    for pdir in pdirs:
-        try:
-            entries = list(os.scandir(pdir))
-        except OSError:
-            continue
-        for e in entries:
-            if e.name.endswith(".jsonl"):
-                try:
-                    mt = e.stat().st_mtime
-                except OSError:
-                    continue
-                sid = e.name[:-6]
-                out[sid] = max(out.get(sid, 0.0), mt)
     return out
 
 
 def _live(row: Dict[str, Any], cut: str) -> bool:
-    """ctx.is_live with the window as a parameter: the latest event is within
-    the window and is not session.died."""
     return row.get("state") != "died" and str(row.get("last_ts") or "") >= cut
 
 
-def compare(scope_id: str, listing: List[Dict[str, Any]], transcripts: Dict[str, float], now: float,
-            hours: float = 6.0, registered: Optional[float] = None,
-            paths: Optional[Dict[str, str]] = None) -> Dict[str, Any]:
+def compare(scope_id: str, listing: List[Dict[str, Any]], files: Dict[str, Tuple[float, str]], now: float,
+            registered: float, hours: float = 6.0) -> Dict[str, Any]:
     scopes = ctx.load_scopes()
     repos = {r for r, s in scopes.by_repo.items() if s == scope_id}
     sc = ctx.Scope(id=scope_id, store=ctx.state_root() / scope_id, where=None)
-    board = ctx.rebuild(scope_id, ctx.read_log(sc))
-    rows = board["sessions"]
-    if registered is None:
-        firsts = [ctx.parse_ts(r["first_ts"]) for r in rows.values() if r.get("first_ts")]
-        registered = min(firsts) if firsts else now
+    rows = ctx.rebuild(scope_id, ctx.read_log(sc))["sessions"]
     window = now - hours * 3600
     cut = ctx.now_ts(window)
+    entry_cache: Dict[str, Optional[float]] = {}
+
+    def last(sid: str) -> Optional[float]:
+        if sid not in entry_cache:
+            f = files.get(sid)
+            entry_cache[sid] = last_entry_ts(f[1]) if f else None
+        return entry_cache[sid]
+
+    def placed(sid: str, cwd: str) -> Optional[str]:
+        exists = bool(cwd) and os.path.isdir(cwd)
+        where = ctx.locate(cwd, timeout=2.0) if exists else None
+        if where is not None:
+            return where.common_dir
+        if not exists and sid in rows:  # a worktree removed after merge: its row says where it was
+            return rows[sid].get("repo")
+        return None
 
     board_live = {sid for sid, r in rows.items() if _live(r, cut)}
     listed = {r["sessionId"]: r for r in listing}
     session_side, unplaced = set(), 0
     for sid, r in listed.items():
-        mt = transcripts.get(sid)
-        if mt is None or mt < window:
+        f = files.get(sid)
+        if not f or f[0] < window or (last(sid) or 0.0) < window:
             continue
-        cwd = r.get("cwd") if isinstance(r.get("cwd"), str) else ""
-        exists = bool(cwd) and os.path.isdir(cwd)
-        where = ctx.locate(cwd, timeout=2.0) if exists else None
-        if where is not None:
-            repo = where.common_dir
-        elif not exists and sid in rows:  # a worktree removed after merge: its row says where it was
-            repo = rows[sid].get("repo")
-        else:
+        repo = placed(sid, r.get("cwd") if isinstance(r.get("cwd"), str) else "")
+        if repo is None:
             unplaced += 1
-            continue
-        if repo in repos:
+        elif repo in repos:
             session_side.add(sid)
 
     both = board_live & session_side
     diffs: List[Dict[str, str]] = []
     for sid in sorted(board_live - session_side):
-        if sid not in transcripts:
-            reason = "no-transcript"
-        elif sid not in listed:
-            reason = "ended"
-        else:
-            reason = "unexplained"
+        reason = "no-transcript" if sid not in files else "ended" if sid not in listed else "unexplained"
         diffs.append({"session_id": sid, "side": "board", "reason": reason})
     for sid in sorted(session_side - board_live):
-        row = rows.get(sid)
-        if row is None:
-            reason = "pre-registration" if transcripts[sid] < registered else "no-event"
-        elif row.get("state") == "died":
+        row, entry = rows.get(sid), last(sid)
+        if entry is not None and entry < registered:
+            reason = "pre-registration"
+        elif row is not None and row.get("state") == "died":
             died = ctx.parse_ts(row["died_ts"]) if row.get("died_ts") else None
-            last = last_entry_ts((paths or {}).get(sid, "")) if (paths or {}).get(sid) else None
-            reason = "died-then-continued" if died is not None and last is not None and last > died + GRACE_S \
-                else "died"
+            reason = "died-then-continued" if died is not None and entry is not None and entry > died else "died"
+        elif row is not None and str(row.get("last_ts") or "") < cut:
+            reason = "stale-in-turn"
+        elif row is None:
+            reason = "no-event"
         else:
-            reason = "stale-event"
+            reason = "unexplained"
         diffs.append({"session_id": sid, "side": "sessions", "reason": reason})
 
-    def frac(side: str, total: int) -> Tuple[Optional[float], Optional[float]]:
-        """(raw, adjusted); None where there is nothing to count."""
-        excl = sum(1 for d in diffs if d["side"] == side and d["reason"] in EXCLUDED)
-        raw = len(both) / total if total else None
-        adj = len(both) / (total - excl) if total - excl > 0 else None
-        return raw, adj
+    # Uncounted: in-scope transcripts with an entry in the window, on neither side.
+    neither = []
+    for sid, (mt, path) in sorted(files.items()):
+        if mt < window or sid in listed or sid in board_live or (last(sid) or 0.0) < window:
+            continue
+        cwd = ctx._transcript_cwd(Path(path)) or ""
+        if placed(sid, cwd) in repos:
+            neither.append(sid)
 
-    b_raw, b_adj = frac("board", len(board_live))
-    s_raw, s_adj = frac("sessions", len(session_side))
-    evidence = b_adj is not None and s_adj is not None
-    counts = {r: sum(1 for d in diffs if d["reason"] == r) for r in REASONS}
+    b = len(both) / len(board_live) if board_live else None
+    s = len(both) / len(session_side) if session_side else None
+    evidence = b is not None and s is not None
     return {
-        "v": 1, "ts": ctx.now_ts(now), "scope": scope_id, "hours": hours,
-        "registered": ctx.now_ts(registered), "board_live": len(board_live), "sessions": len(session_side),
-        "both": len(both), "board_pct": _r(b_adj), "session_pct": _r(s_adj),
-        "board_raw_pct": _r(b_raw), "session_raw_pct": _r(s_raw), "reasons": counts,
-        "unplaced_listed": unplaced, "evidence": evidence,
-        "pass": evidence and b_adj >= THRESHOLD and s_adj >= THRESHOLD, "differences": diffs,
+        "v": 1, "ts": ctx.now_ts(now), "scope": scope_id, "hours": hours, "registered": ctx.now_ts(registered),
+        "board_live": len(board_live), "sessions": len(session_side), "both": len(both),
+        "board_pct": None if b is None else round(b, 4), "session_pct": None if s is None else round(s, 4),
+        "reasons": {r: sum(1 for d in diffs if d["reason"] == r) for r in REASONS},
+        "unplaced_listed": unplaced, "neither": len(neither), "evidence": evidence,
+        "pass": evidence and b >= THRESHOLD and s >= THRESHOLD, "differences": diffs, "neither_ids": neither,
     }
-
-
-def _r(v: Optional[float]) -> Optional[float]:
-    return None if v is None else round(v, 4)
 
 
 def render(res: Dict[str, Any]) -> str:
@@ -263,25 +225,38 @@ def render(res: Dict[str, Any]) -> str:
     lines = [
         "compare   scope %s, window %gh, hooks registered %s" % (res["scope"], res["hours"], res["registered"]),
         "  board     %d live rows (an event in the window, not session.died)" % res["board_live"],
-        "  sessions  %d listed sessions in scope with a transcript modified in the window (%d more could not "
-        "be placed)" % (res["sessions"], res["unplaced_listed"]),
+        "  sessions  %d listed sessions in scope with a timestamped transcript entry in the window (%d more "
+        "could not be placed)" % (res["sessions"], res["unplaced_listed"]),
         "  both      %d" % res["both"],
-        "  figures   board side %s, session side %s (raw %s, %s); %s of each set must appear in the other, "
-        "without the reasons %s" % (pct(res["board_pct"]), pct(res["session_pct"]), pct(res["board_raw_pct"]),
-                                    pct(res["session_raw_pct"]), pct(THRESHOLD), ", ".join(EXCLUDED)),
+        "  figures   board side %s, session side %s; %s of each set must appear in the other"
+        % (pct(res["board_pct"]), pct(res["session_pct"]), pct(THRESHOLD)),
         "  result    %s" % ("PASS" if res["pass"] else "FAIL" if res["evidence"] else
-                            "NO EVIDENCE (a side has nothing left to count), which fails"),
+                            "NO EVIDENCE (a side is empty), which fails"),
     ]
     for d in res["differences"]:
-        lines.append("  %-9s %s  %s%s" % (d["side"], d["session_id"], d["reason"],
-                                           " (not counted)" if d["reason"] in EXCLUDED else ""))
+        lines.append("  %-9s %s  %s" % (d["side"], d["session_id"], d["reason"]))
+    if res["neither_ids"]:
+        lines.append("  uncounted: %d in-scope transcript(s) with an entry in the window on neither side "
+                     "(a finished claude -p isn't listed): %s" % (res["neither"], ", ".join(res["neither_ids"][:10])))
     return "\n".join(lines)
 
 
-def append_summary(scope_id: str, res: Dict[str, Any]) -> Path:
-    path = ctx.state_root() / scope_id / "compare.jsonl"
+def _path(scope_id: str) -> Path:
+    return ctx.state_root() / scope_id / "compare.jsonl"
+
+
+def registered_on_file(scope_id: str) -> Optional[str]:
+    try:
+        with _path(scope_id).open(encoding="utf-8") as fh:
+            first = fh.readline()
+        return json.loads(first).get("registered") if first.strip() else None
+    except (OSError, ValueError, AttributeError):
+        return None
+
+
+def append_summary(scope_id: str, line: Dict[str, Any]) -> Path:
+    path = _path(scope_id)
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-    line = {k: v for k, v in res.items() if k != "differences"}
     fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
     try:
         os.write(fd, (json.dumps(line, sort_keys=True) + "\n").encode("utf-8"))
@@ -292,21 +267,36 @@ def append_summary(scope_id: str, res: Dict[str, Any]) -> Path:
 
 def run_for_scope(scope_id: str, hours: float = 6.0, as_json: bool = False, listing_file: Optional[str] = None,
                   registered: Optional[str] = None, now: Optional[float] = None) -> int:
-    """Print the comparison, append its summary line; exit 1 under 95% or when
-    the listing can't be read."""
+    """Print the comparison and append its summary line. Exit 1 under 95%, with
+    no evidence, or when the listing or transcripts can't be read (that too is
+    written, so the latest line never shows an old pass); exit 2 when there is
+    no registration time, or --registered disagrees with the file's."""
     now = time.time() if now is None else now
+    on_file = registered_on_file(scope_id)
+    if registered and on_file and registered != on_file:
+        print("compare   --registered %s disagrees with compare.jsonl's first line (%s); refused. Move the file "
+              "aside to start over." % (registered, on_file))
+        return 2
+    reg_text = on_file or registered
+    if not reg_text:
+        print("compare   no registration time: pass --registered <UTC YYYY-MM-DDTHH:MM:SS.mmmZ> once; it is "
+              "kept in %s" % _path(scope_id))
+        return 2
+    try:
+        reg = ctx.parse_ts(reg_text)
+    except (ValueError, IndexError):
+        print("compare   --registered %r is not UTC YYYY-MM-DDTHH:MM:SS.mmmZ" % reg_text)
+        return 2
     try:
         listing = load_listing(listing_file)
-        transcripts = transcript_times()
-        paths = transcript_paths()
-    except (RuntimeError, OSError, ValueError) as exc:
-        # The failure is on disk too, so the latest line never shows an old pass.
+        files = transcripts()
+    except CompareError as exc:
         append_summary(scope_id, {"v": 1, "ts": ctx.now_ts(now), "scope": scope_id, "hours": hours,
-                                  "evidence": False, "pass": False, "error": str(exc)[:200]})
-        print("compare   the session listing or the transcripts could not be read: %s" % exc)
+                                  "registered": reg_text, "evidence": False, "pass": False,
+                                  "error": str(exc)[:200]})
+        print("compare   could not be read: %s" % exc)
         return 1
-    reg = ctx.parse_ts(registered) if registered else None
-    res = compare(scope_id, listing, transcripts, now, hours, reg, paths)
-    append_summary(scope_id, res)
+    res = compare(scope_id, listing, files, now, reg, hours)
+    append_summary(scope_id, {k: v for k, v in res.items() if k not in ("differences", "neither_ids")})
     print(json.dumps(res, indent=1, sort_keys=True) if as_json else render(res))
     return 0 if res["pass"] else 1

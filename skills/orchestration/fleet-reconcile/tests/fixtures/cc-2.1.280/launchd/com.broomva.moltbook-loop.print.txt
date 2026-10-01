@@ -1,6 +1,6 @@
 gui/501/com.broomva.moltbook-loop = {
 	state = not running
-	runs = 119
+	runs = 124
 	last exit code = 0
 	spawn type = background (5)
 	run interval = 900 seconds

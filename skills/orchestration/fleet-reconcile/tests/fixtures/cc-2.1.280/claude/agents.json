@@ -591,7 +591,7 @@
   "startedAt": 1790781293936,
   "sessionId": "00000066-f1ee-4000-8000-000000000066",
   "name": "interactive-session-45",
-  "status": "busy"
+  "status": "idle"
  },
  {
   "pid": 10066,
@@ -609,7 +609,7 @@
   "startedAt": 1790798860209,
   "sessionId": "00000068-f1ee-4000-8000-000000000068",
   "name": "interactive-session-47",
-  "status": "idle"
+  "status": "busy"
  },
  {
   "pid": 10068,
@@ -636,7 +636,7 @@
   "startedAt": 1790800304785,
   "sessionId": "00000071-f1ee-4000-8000-000000000071",
   "name": "interactive-session-48",
-  "status": "busy"
+  "status": "idle"
  },
  {
   "pid": 10071,
@@ -663,8 +663,7 @@
   "startedAt": 1790801288160,
   "sessionId": "00000074-f1ee-4000-8000-000000000074",
   "name": "interactive-session-51",
-  "status": "waiting",
-  "waitingFor": "input needed"
+  "status": "idle"
  },
  {
   "pid": 10074,
@@ -673,31 +672,31 @@
   "startedAt": 1790803051966,
   "sessionId": "00000075-f1ee-4000-8000-000000000075",
   "name": "interactive-session-52",
-  "status": "busy"
+  "status": "idle"
  },
  {
   "pid": 10075,
-  "cwd": "{HOME}/client/sri",
+  "cwd": "{HOME}/wt/broomva-24",
   "kind": "interactive",
-  "startedAt": 1790806941507,
+  "startedAt": 1790807879803,
   "sessionId": "00000076-f1ee-4000-8000-000000000076",
   "name": "interactive-session-53",
-  "status": "busy"
+  "status": "idle"
  },
  {
   "pid": 10076,
   "cwd": "{HOME}/wt/sri-7",
   "kind": "interactive",
-  "startedAt": 1790807731065,
+  "startedAt": 1790812225414,
   "sessionId": "00000077-f1ee-4000-8000-000000000077",
   "name": "auto-name-23-17",
   "status": "idle"
  },
  {
   "pid": 10077,
-  "cwd": "{HOME}/wt/broomva-24",
+  "cwd": "{HOME}/client/sri",
   "kind": "interactive",
-  "startedAt": 1790807879803,
+  "startedAt": 1790812242374,
   "sessionId": "00000078-f1ee-4000-8000-000000000078",
   "name": "interactive-session-54",
   "status": "busy"

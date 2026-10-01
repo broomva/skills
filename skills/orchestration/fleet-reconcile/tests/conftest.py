@@ -202,29 +202,31 @@ H = 3600.0
 def make_session(**kw: Any) -> Dict[str, Any]:
     """A session as observe.py writes it, in scope broomva, idle, with a
     transcript 10 minutes old, unless the keywords say otherwise. Keyword
-    shortcuts: activity_ago (seconds; also the last timestamped entry, unless
-    last_entry_ago says otherwise), no_transcript, job={...}, board={...}."""
+    shortcuts: activity_ago (seconds; the mtime too, unless mtime_ago says
+    otherwise), no_transcript, job={...}, board={...}."""
     s: Dict[str, Any] = {
         "session_id": kw.pop("session_id", "11111111-0000-4000-8000-000000000001"),
         "name": kw.pop("name", "a-session"), "kind": kw.pop("kind", "interactive"),
         "cwd": "/w/broomva", "cwd_exists": True, "bg_id": None, "state": kw.pop("state", None),
         "pid": kw.pop("pid", 4242), "status": kw.pop("status", "idle"), "waiting_for": kw.pop("waiting_for", None),
         "started_at": NOW - 10 * H, "job": None, "board": None, "paseo": kw.pop("paseo", None),
-        "transcript": {"found": True, "mtime": NOW - 600, "sub": None, "last_entry": NOW - 600},
+        "transcript": {"found": True, "mtime": NOW - 600, "sub": None, "activity": NOW - 600},
         "limit_text": kw.pop("limit_text", None),
         "scope": kw.pop("scope", "broomva"), "repo": kw.pop("repo", "/w/broomva/.git"),
         "branch": kw.pop("branch", "feat/x"), "placement": kw.pop("placement", "cwd"),
         "fleet_key": kw.pop("fleet_key", None), "adopted": False, "fleet_shaped": kw.pop("fleet_shaped", False),
     }
     if "activity_ago" in kw:
-        s["transcript"]["mtime"] = s["transcript"]["last_entry"] = NOW - kw.pop("activity_ago")
-    if "last_entry_ago" in kw:
-        ago = kw.pop("last_entry_ago")
-        s["transcript"]["last_entry"] = None if ago is None else NOW - ago
+        ago = kw.pop("activity_ago")
+        s["transcript"]["mtime"] = NOW - (ago or 0)
+        s["transcript"]["activity"] = None if ago is None else NOW - ago
+    if "mtime_ago" in kw:
+        s["transcript"]["mtime"] = NOW - kw.pop("mtime_ago")
     if kw.pop("no_transcript", False):
-        s["transcript"] = {"found": False, "mtime": None, "sub": None, "last_entry": None}
-    if "sub_ago" in kw:
+        s["transcript"] = {"found": False, "mtime": None, "sub": None, "activity": None}
+    if "sub_ago" in kw:  # a subagent's later activity is the session's activity
         s["transcript"]["sub"] = NOW - kw.pop("sub_ago")
+        s["transcript"]["activity"] = max(s["transcript"]["activity"] or 0, s["transcript"]["sub"])
     if "job" in kw:
         j = {"job_id": s["session_id"][:8], "state": "done", "detail": "", "needs": "", "suggested_reply": False,
              "limit_text": False, "reset_text": None, "worktree_path": None, "worktree_branch": None,

@@ -1360,7 +1360,7 @@ def main(argv: Optional[List[str]] = None) -> int:
     d.add_argument("--json", action="store_true", help="--compare: print the result as JSON")
     d.add_argument("--agents-json", default=None, help="--compare: read the session listing from a file")
     d.add_argument("--registered", default=None, help="--compare: when the hooks were registered "
-                   "(YYYY-MM-DDTHH:MM:SS.mmmZ; default: the log's first event)")
+                   "(UTC YYYY-MM-DDTHH:MM:SS.mmmZ), passed once and kept in compare.jsonl's first line")
     args = ap.parse_args(argv)
     cwd = os.path.realpath(args.directory or os.getcwd())
     now = time.time()
