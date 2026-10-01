@@ -109,7 +109,7 @@ def main(argv=None):
                                      "for a shadow run); default: the shipped references/s1-params.json")
     ap.add_argument("--dry-run", action="store_true")
     args = ap.parse_args(argv)
-    stages = [s.strip() for s in args.stages.split(",") if s.strip()]
+    stages = list(dict.fromkeys(s.strip() for s in args.stages.split(",") if s.strip()))  # once each, in order
     unknown = [s for s in stages if s not in STAGES]
     if unknown:
         print("unknown stage(s): %s; known: %s" % (", ".join(unknown), ", ".join(STAGES)), file=sys.stderr)

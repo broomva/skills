@@ -500,3 +500,10 @@ def test_the_committed_reports_name_the_committed_proposal():
         rep = json.loads((REPORTS / name).read_text())
         assert rep["params"] == cand["version"] and rep["params_body"]["stages"] == cand["stages"], name
         assert rep["snapshot"]["sha256"] == cand["snapshot"], name
+
+
+def test_tune_never_runs_more_trials_than_asked(corpus):
+    _, _, snap, _ = corpus
+    for n in (0, 3):
+        res = E.tune(snap, dict(ctx_s1.DEFAULT_PARAMS), trials=n, seed=5, log=lambda *_: None)
+        assert len(res["history"]) <= n

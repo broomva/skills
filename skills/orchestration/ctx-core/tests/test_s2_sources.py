@@ -129,3 +129,13 @@ def test_the_stage_tables_agree():
     for st, cfg in ctx_s1.STAGES.items():
         event, matcher, _ = register_s1_hooks.STAGES[st]
         assert (event, matcher) == (cfg["event"], cfg.get("matcher"))
+
+
+def test_a_gh_call_that_exits_nonzero_is_a_failed_fetch(monkeypatch):
+    import subprocess
+
+    class Done:
+        returncode, stdout, stderr = 1, "[]", "HTTP 502"
+
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: Done())
+    assert ctx_s2.gh_prs("/", "o/r", NOW) is None  # not "no PRs"

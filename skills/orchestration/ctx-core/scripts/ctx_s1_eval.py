@@ -608,6 +608,8 @@ def tune(snap: Dict[str, Any], params: Dict[str, Any], trials: int = 42, seed: i
                 stages, obj_stage = [phase], phase
             _, cur_tr, cur_ho = score(cur, stages, obj_stage)
             for _ in range(per):
+                if t >= trials:
+                    break  # `trials` bounds the whole run, fewer trials than phases included
                 for _attempt in range(25):  # a no-op or an already-scored proposal is drawn again
                     cand, what = propose(cur, rng, None if phase == "weights" else phase)
                     sig = json.dumps(_canon(cand), sort_keys=True)

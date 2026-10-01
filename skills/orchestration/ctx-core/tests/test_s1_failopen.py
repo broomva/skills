@@ -131,6 +131,11 @@ def test_the_wrapper_exits_0_when_the_hook_or_interpreter_is_gone(gate, tmp_path
     env["CTX_PYTHON"] = "/nonexistent/python3"
     r = subprocess.run(["/bin/sh", str(S.S1_WRAPPER), "pre-edit"], input=data, env=env, capture_output=True)
     assert (r.returncode, r.stdout) == (0, b"")
+    not_exec = tmp_path / "python3-not-executable"
+    not_exec.write_text("#!/bin/sh\n")  # there, but not executable: exec would exit 126
+    env["CTX_PYTHON"] = str(not_exec)
+    r = subprocess.run(["/bin/sh", str(S.S1_WRAPPER), "pre-edit"], input=data, env=env, capture_output=True)
+    assert (r.returncode, r.stdout) == (0, b"")
     # positive control: without the wrapper's check, Python on a missing file exits 2
     r = subprocess.run([sys.executable, "-I", "-S", str(scripts / "ctx_s1_hook.py"), "pre-edit"], input=data,
                        capture_output=True)

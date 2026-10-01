@@ -282,8 +282,10 @@ def gh_prs(repo_root: str, slug: str, now: float, runner=None) -> Optional[List[
         if runner is not None:
             out = runner(argv)
         else:
-            out = subprocess.run(argv, capture_output=True, text=True, timeout=GH_TIMEOUT_S,
-                                 cwd=repo_root).stdout
+            proc = subprocess.run(argv, capture_output=True, text=True, timeout=GH_TIMEOUT_S, cwd=repo_root)
+            if proc.returncode != 0:
+                return None  # a failed call is a failed fetch, whatever it printed
+            out = proc.stdout
         rows = json.loads(out)
     except Exception:
         return None

@@ -23,7 +23,10 @@ here=${0%/*}
 hook="$here/ctx_s1_hook.py"
 py=${CTX_PYTHON:-python3}
 [ -f "$hook" ] || exit 0
-command -v "$py" >/dev/null 2>&1 || exit 0
+case $py in
+  */*) [ -f "$py" ] && [ -x "$py" ] || exit 0 ;;  # a path: exec on a non-executable file exits 126
+  *) command -v "$py" >/dev/null 2>&1 || exit 0 ;;
+esac
 exec "$py" -I -S -c '
 import sys
 p = sys.argv[1]

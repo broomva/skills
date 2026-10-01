@@ -111,3 +111,10 @@ def test_a_missing_interpreter_is_refused(settings):
     r = subprocess.run([sys.executable, str(SCRIPT), "--settings", str(settings), "--python", "/nonexistent/py",
                         "--stages", "prompt"], capture_output=True, text=True)
     assert r.returncode == 1 and settings.read_text() == before
+
+
+def test_a_stage_named_twice_is_registered_once(settings):
+    run(settings, "--stages", "prompt,prompt, prompt")
+    data = json.loads(settings.read_text())
+    cmds = [h["command"] for ev in data["hooks"].values() for g in ev for h in g["hooks"]]
+    assert sum("ctx-s1-hook.sh" in c for c in cmds) == 1

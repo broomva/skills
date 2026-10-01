@@ -264,6 +264,17 @@ MUTANTS = [
     ("a default-equal setting counts as a change", EVAL,
      '        p["stages"][st] = {k: v for k, v in cfg.items() if not (k in ("max", "budget") and base.get(k) == v)}',
      '        p["stages"][st] = dict(cfg)', [E + "test_tune_scores_strict_f05_and_skips_stages_that_only_reoffer"]),
+    # --- review threads on the PR (Copilot)
+    ("a non-executable CTX_PYTHON path is exec'd", SH, '  */*) [ -f "$py" ] && [ -x "$py" ] || exit 0 ;;',
+     '  */*) [ -f "$py" ] || exit 0 ;;', [F + "test_the_wrapper_exits_0_when_the_hook_or_interpreter_is_gone"]),
+    ("gh's exit status ignored", S2, "            if proc.returncode != 0:\n                return None",
+     "            if False:\n                return None", [T + "test_s2_sources.py::test_a_gh_call_that_exits_nonzero_is_a_failed_fetch"]),
+    ("tune runs past --trials", EVAL, "                if t >= trials:\n                    break  # `trials` bounds",
+     "                if False:\n                    break  # `trials` bounds", [E + "test_tune_never_runs_more_trials_than_asked"]),
+    ("a stage named twice is registered twice", "scripts/register_s1_hooks.py",
+     '    stages = list(dict.fromkeys(s.strip() for s in args.stages.split(",") if s.strip()))',
+     '    stages = [s.strip() for s in args.stages.split(",") if s.strip()]',
+     [T + "test_s1_register.py::test_a_stage_named_twice_is_registered_once"]),
 ]
 
 
