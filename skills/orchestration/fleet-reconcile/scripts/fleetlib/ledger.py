@@ -230,6 +230,47 @@ def open_by_key(records: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     return {k: v for k, v in key_states(records).items() if v["state"] == "open"}
 
 
+def closing(records: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """{intent id: the outcome (done, failed or unknown) that closed it}. The
+    first outcome closes an intent; a later one for the same id is a second
+    writer's and doesn't reopen or change it."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in records:
+        if r.get("kind") in OUTCOMES and r.get("of") and r["of"] not in out:
+            out[r["of"]] = r
+    return out
+
+
+def open_intents(records: Iterable[Dict[str, Any]], verb: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Intents with no outcome yet, in write order (ask intents excluded:
+    their answer is an ack, not an outcome)."""
+    records = list(records)
+    shut = closing(records)
+    return [r for r in records if r.get("kind") == "intent" and r.get("verb") != "ask" and r.get("id") not in shut
+            and (verb is None or r.get("verb") == verb)]
+
+
+def mail_recent(records: Iterable[Dict[str, Any]], recipient: str, now: float, hours: float, dry: bool,
+                exclude: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """The 6 h rule (§5.7): a mail intent to this recipient (its Paseo agent id,
+    else its session id) from the last `hours` that is unclosed, or closed done
+    or unknown; a failed one doesn't count. Live and dry are counted apart."""
+    records = list(records)
+    shut = closing(records)
+    since = now - hours * 3600
+    for r in records:
+        if r.get("kind") != "intent" or r.get("verb") != "mail" or r.get("id") == exclude:
+            continue
+        if bool(r.get("dry_run")) != dry or (r.get("target") or {}).get("recipient") != recipient:
+            continue
+        if (common.parse_iso(r.get("ts")) or 0.0) < since:
+            continue
+        out = shut.get(r["id"])
+        if out is None or out["kind"] in ("done", "unknown"):
+            return r
+    return None
+
+
 def last_tick(records: Iterable[Dict[str, Any]]) -> Optional[int]:
     ticks = [r.get("tick") for r in records if r.get("kind") == "tick_fire" and type(r.get("tick")) is int]
     return max(ticks) if ticks else None

@@ -1,0 +1,4 @@
+fleet-reconcile: {name}, no activity here for over an hour, and no terminal status on the board.
+If the work is done, or blocked, end with your ARC-STATUS line saying so.
+If it is waiting on something, say what in one line. Otherwise carry on with the task you were given.
+This is an automated note from the fleet's hourly tick; it is sent at most once every {hours} hours.

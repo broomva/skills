@@ -167,6 +167,8 @@ def test_an_ask_is_resolved_only_from_the_surfaces_that_raise_it():
     assert not _resolves(flagged, _snap([], repos=[{"repo": "/w/b/.git", "slug": None, "ok": False,
                                                     "error": "origin remote: timed out"}]))
     assert _resolves(flagged, _snap([], repos=[]))
+    gitlab = {"repo": "/w/g/.git", "slug": None, "ok": False, "error": "origin remote is not a GitHub slug"}
+    assert _resolves(flagged, _snap([], repos=[gitlab]))  # a reading, not a failed one
 
 
 def test_the_gates_hold_for_a_session_that_still_classifies():
@@ -206,9 +208,19 @@ def test_a_comparison_failing_three_runs_in_a_row_is_an_ask_and_its_error_is_gua
     assert "compare:failing" not in [a["key"] for a in rep(2)["asks"]]
     r = rep(3)
     assert "compare:failing" in [a["key"] for a in r["asks"]]
-    assert "ghp_" not in report.render_md(r) + json.dumps(r["asks"])
+    assert "ghp_" not in report.render_md(r) + json.dumps(r)  # report.json too
     refused = report.build(_snap([]), [], True, {"refused": "unregistered"})
-    assert [a["key"] for a in refused["asks"]] == ["compare:not-run"] and "Not run" in report.render_md(refused)
+    assert [a["key"] for a in refused["asks"]] == ["compare:register"] and "Not run" in report.render_md(refused)
+    # Moving the prototype aside and registering are two owner steps: a half-done one is a new ask.
+    moved = report.build(_snap([]), [], True, {"refused": "prototype"})
+    assert [a["key"] for a in moved["asks"]] == ["compare:move"]
+
+
+def test_the_failed_run_counter_counts_back_to_the_latest_run():
+    import fleet_reconcile as fr
+    ok, err = {"pass": True, "neither": 0}, {"pass": False, "error": "x"}
+    assert fr.failed_in_a_row([]) == 0 and fr.failed_in_a_row([ok]) == 0
+    assert fr.failed_in_a_row([err, ok, err, err]) == 2 and fr.failed_in_a_row([err, err, err]) == 3
 
 
 def test_the_ack_text_says_what_an_ack_answers():

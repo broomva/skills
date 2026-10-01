@@ -12,6 +12,7 @@ import json
 import os
 import re
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
@@ -37,8 +38,27 @@ def _take_token() -> None:
             _TOKEN[k] = os.environ.pop(k)
 
 
-def _run(argv: List[str], timeout: float, cwd: Optional[str] = None, token: bool = False) -> str:
-    env = dict(os.environ, **_TOKEN) if token else {k: v for k, v in os.environ.items() if k not in _TOKEN_VARS}
+#: What a session started from a session inherits and must not (evidence §1:
+#: an inherited CLAUDE_CODE_CHILD_SESSION turns transcript saving off).
+CHILD_DROP = ("CLAUDECODE", "CLAUDE_CODE_", "PASEO_")
+
+
+def child_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
+    """The environment for a session the fleet starts (spawn, resume, the
+    coordinator): without Claude Code's or Paseo's variables or the fleet
+    credential, and with FLEET_CHILD set to 1 (the recursion guard)."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith(CHILD_DROP)}
+    for k in _TOKEN_VARS:
+        env.pop(k, None)
+    env["FLEET_CHILD"] = "1"
+    env.update(extra or {})
+    return env
+
+
+def _run(argv: List[str], timeout: float, cwd: Optional[str] = None, token: bool = False,
+         env: Optional[Dict[str, str]] = None) -> str:
+    if env is None:
+        env = dict(os.environ, **_TOKEN) if token else {k: v for k, v in os.environ.items() if k not in _TOKEN_VARS}
     try:
         proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=timeout, cwd=cwd, env=env)
@@ -217,6 +237,40 @@ class Sources:
         return _run([self.gh, "pr", "list", "-R", slug, "--state", "open", "--limit", str(limit),
                      "--json", PR_FIELDS], 60, token=True)
 
+    def pr_files(self, slug: str, number: int) -> str:
+        """A JSON array of the PR's changed paths (the owner-merge check)."""
+        return _run([self.gh, "pr", "view", str(number), "-R", slug, "--json", "files", "--jq", "[.files[].path]"],
+                    60, token=True)
+
+    def pr_labels(self, slug: str, number: int) -> str:
+        """A JSON array of the PR's label names (recovering a label intent)."""
+        return _run([self.gh, "pr", "view", str(number), "-R", slug, "--json", "labels", "--jq",
+                     "[.labels[].name]"], 60, token=True)
+
+    def gh_api(self, method: str, path: str, fields: Optional[Dict[str, str]] = None) -> str:
+        argv = [self.gh, "api", "-X", method, path]
+        for k, v in (fields or {}).items():
+            argv += ["-f", "%s=%s" % (k, v)]
+        return _run(argv, 60, token=True)
+
+    def run_claude(self, args: List[str], cwd: Optional[str] = None, timeout: float = 120) -> str:
+        """`claude <args>` as a fleet child (spawn, resume, stop, rm)."""
+        return _run([self.claude] + args, timeout, cwd=cwd, env=child_env())
+
+    def pid_started(self, pid: int) -> Optional[float]:
+        """When a process started (epoch), from ps; None when it isn't running."""
+        try:
+            out = _run(["ps", "-o", "lstart=", "-p", str(int(pid))], 10).strip()
+        except SourceError:
+            return None
+        try:
+            return time.mktime(time.strptime(" ".join(out.split()), "%a %b %d %H:%M:%S %Y"))
+        except ValueError:
+            return None
+
+    def transcript_path(self, sid: str) -> Optional[str]:
+        return (self.transcript_index().get(sid) or {}).get("path")
+
     # launchd and run logs ------------------------------------------------
     def launch_agents(self, prefix: str) -> Iterator[Tuple[str, str]]:
         """(label, the plist as JSON text) for each LaunchAgent with the prefix."""
@@ -254,6 +308,7 @@ class FixtureSources(Sources):
     def __init__(self, root: Path, home: Optional[Path] = None) -> None:
         super().__init__()
         self.root = Path(root)
+        self.calls: List[List[str]] = []
 
     def _read(self, rel: str) -> str:
         p = self.root / rel
@@ -306,6 +361,31 @@ class FixtureSources(Sources):
 
     def open_prs(self, slug: str, limit: int) -> str:
         return self._gh(slug, "prs.json")
+
+    def pr_files(self, slug: str, number: int) -> str:
+        return self._gh(slug, "pr-%d-files.json" % number)
+
+    def gh_api(self, method: str, path: str, fields: Optional[Dict[str, str]] = None) -> str:
+        self.calls.append(["gh", "api", "-X", method, path] + ["%s=%s" % kv for kv in (fields or {}).items()])
+        return "{}"
+
+    def run_claude(self, args: List[str], cwd: Optional[str] = None, timeout: float = 120) -> str:
+        """Recorded, never run; the reply is claude/run-<verb>.txt when the fixture has one."""
+        self.calls.append(["claude"] + list(args))
+        p = self.root / "claude" / ("run-%s.txt" % args[0].lstrip("-"))
+        return p.read_text() if p.is_file() else ""
+
+    def pr_labels(self, slug: str, number: int) -> str:
+        return self._gh(slug, "pr-%d-labels.json" % number)
+
+    def pid_started(self, pid: int) -> Optional[float]:
+        p = self.root / "claude" / "pids.json"
+        v = json.loads(p.read_text()).get(str(pid)) if p.is_file() else None
+        return float(v) if v is not None else None
+
+    def transcript_path(self, sid: str) -> Optional[str]:
+        p = self.root / "claude" / "transcript-files" / (sid + ".jsonl")
+        return str(p) if p.is_file() else None
 
     def launch_agents(self, prefix: str) -> Iterator[Tuple[str, str]]:
         root = self.root / "launchd"

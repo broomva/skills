@@ -1,5 +1,47 @@
 # PLANS.md
 
+## fleet-reconcile phase 2: dry run through fleet act (BRO-2674)
+
+Status: in progress on `feat/fleet-reconcile-phase2` (from main d56061d, after #254).
+Spec: workspace `docs/specs/2026-09-29-fleet-reconcile-design.html` §5.3, §5.5, §5.7 and §9
+row 2, as merged in #842 (007f05a98).
+
+### Scope
+
+- `fleet act mail|spawn|label|resume` (ask exists): intent before, outcome after; dry run
+  closes spawn/label/resume at once with `would: true` and the argv or API call; mail's
+  dry intent is closed by the pre hook. Eligibility re-checked in code before every verb
+  (mode, corrupt ledger, an unanswered ask on the target, the recipient's fleet/adopted
+  status, the 6 h rule, name resolution, the driver rules of §5.5, caps, the spawn pause).
+- `fleet recover` (§5.7 recovery rules), `fleet send-gate pre|post` (the SendMessage hooks).
+- The coordinator: settings with the hooks, its argv (`--disallowedTools Agent Edit Write`
+  + the pinned Paseo write tools, `--` before the prompt), the runner prompt,
+  `fleet config-check --init` on the stream-json init event, a test that fails on an
+  unclassified Paseo tool; tick.sh runs recover, and the coordinator when mode is act.
+- The driver profile generator (0600, sandbox, allowlist, deny rules, GH_TOKEN from the
+  token file, an empty GH_CONFIG_DIR).
+- `fleet janitor-check <path>` failing closed; janitor runs stay report-only.
+- Phase-1 carry-overs from #254's arc-3 review (compare keys per owner action, the
+  failed-run counter test, report.json's compare error, non-GitHub origins, the ack count).
+
+### Not in scope
+
+- `fleet adopt` and `fleet audit` (owner side, phase 3). Spawning through bstack peer.py
+  (it takes no settings path; spec: a bstack PR adds one): the argv is built here.
+- The recovery drill (needs a live scratch coordinator per verb); listed as not run.
+
+### Drills (scratch repos and sessions only: `--name fleet-drill-<n>`, Haiku, /tmp)
+
+Tool-list posture; SendMessage refusals (each pre-hook check); the injected-text
+eligibility floor; the kill switch; the driver profile, fresh and resumed (blocked
+without `~/.config/broomva/fleet/gh-token`; also the REST update-branch probe under
+workflows:none); the janitor. Evidence under `~/.config/broomva/fleet/phase2-drills-*/`.
+
+### Verification
+
+`make`-free: `python -m pytest` in fleet-reconcile and ctx-core, `tests/mutation_check.py`
+in both, shellcheck, the claims grep, then P20 (B and C), p20-record, gate-check, merge.
+
 ## role-x reflex router v1, behind `ROLE_X_OUTPUT=reflex` (BRO-2674)
 
 Status: PR broomva/skills#253 open, P20 passed (5 rounds, B and C), flag default off; the owner decides the flip. Owner decision 2026-09-30: turn

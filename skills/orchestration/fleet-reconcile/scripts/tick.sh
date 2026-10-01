@@ -172,7 +172,7 @@ RELEASE=$(head -1 "$SCRIPT_DIR/../../../RELEASE" 2>/dev/null | sed 's/^release /
 [ -n "$RELEASE" ] || RELEASE="checkout"
 
 # ── the fleet token: read from its 0600 file, never argv, never printed ───────
-# Exported for the observe step only (gh is the only reader); observe passes it
+# Exported for the observe step and the coordinator only; observe passes it
 # to gh and to nothing else.
 GH_AUTH="keyring"
 TOKEN=""
@@ -240,15 +240,26 @@ step() {
 
 RCS=""
 FAILED=""
+# Intents a dead tick left open are closed first, from what happened (§5.7).
+step recover "$FLEET" recover --scope "$SCOPE" --tick "$N"; RCS="recover=$RC"
+[ "$RC" = "0" ] || FAILED="recover"
 if [ -n "$TOKEN" ]; then export GH_TOKEN="$TOKEN"; fi
 export FLEET_GH_AUTH="$GH_AUTH" FLEET_RELEASE="$RELEASE"
-step observe "$FLEET" observe --scope "$SCOPE" --tick "$N"; RCS="observe=$RC"
-unset GH_TOKEN TOKEN
-[ "$RC" = "0" ] || FAILED="observe"
-if [ -z "$FAILED" ]; then
+step observe "$FLEET" observe --scope "$SCOPE" --tick "$N"; RCS="$RCS observe=$RC"
+[ "$RC" = "0" ] || FAILED="${FAILED:-observe}"
+if [ "$RC" = "0" ]; then
   step report "$FLEET" report --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS report=$RC"
-  [ "$RC" = "0" ] || FAILED="report"
+  [ "$RC" = "0" ] || FAILED="${FAILED:-report}"
 fi
+# The coordinator, in act mode only, after a clean recover, observe and report;
+# it gets the fleet token too (§5.2) and acts only through fleet act. A tool
+# list that fails the posture check ends it with exit 4.
+MODE=$(cfg mode)
+if [ "$MODE" = "act" ] && [ -z "$FAILED" ]; then
+  step coordinator "$FLEET" coordinator --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS coordinator=$RC"
+  [ "$RC" = "0" ] || FAILED="coordinator"
+fi
+unset GH_TOKEN TOKEN
 # The core's comparison: a read-only step the kill switch stops with the tick,
 # which dry_run and mode don't govern (core §9). Its verdict isn't the tick's.
 step compare "$FLEET" core-compare --scope "$SCOPE"; RCS="$RCS compare=$RC"

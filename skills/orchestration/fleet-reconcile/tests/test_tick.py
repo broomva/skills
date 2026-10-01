@@ -36,7 +36,9 @@ def rig(fresh_world, tmp_path):
           'case "$1" in\n'
           '  --version) cat "%s/claude/version.txt" ;;\n'
           '  agents) [ -n "${STUB_HANG:-}" ] && { (trap "" TERM; exec sleep 33) & wait; }; cat "%s/claude/agents.json" ;;\n'
-          '  *) exit 2 ;;\nesac\n' % (calls_dir, fx, fx))
+          '  -p) env > "%s/coordinator-env"; printf "%%s\\n" "{\\"type\\": \\"system\\", \\"subtype\\": \\"init\\", '
+          '\\"tools\\": [${STUB_TOOLS:-\\"Bash\\"}]}"; echo "{\\"type\\": \\"result\\"}" ;;\n'
+          '  *) exit 2 ;;\nesac\n' % (calls_dir, fx, fx, calls_dir))
     _stub(bin_ / "gh", 'echo "${#GH_TOKEN}" >> "%s/gh-token-lengths"\n'
           'slug=""; for a in "$@"; do case "$a" in repos/*) slug=${a#repos/}; slug=${slug%%%%/rules*} ;; esac; done\n'
           'if [ "$1" = pr ]; then slug=$4; fi\n'
@@ -226,7 +228,7 @@ def test_a_dialog_that_cannot_be_shown_is_not_recorded_as_seen(rig):
 def test_each_run_leaves_one_line_on_stdout_for_launchds_log(rig):
     r = rig.tick()
     lines = r.stdout.strip().splitlines()
-    assert len(lines) == 1 and re.search(r"fleet-reconcile broomva tick 1: observe=0 report=0 compare=\d ask=0$",
+    assert len(lines) == 1 and re.search(r"fleet-reconcile broomva tick 1: recover=0 observe=0 report=0 compare=\d ask=0$",
                                          lines[0]), r.stdout
     assert r.returncode == 0  # the core comparison's own verdict doesn't fail the tick
 
@@ -334,7 +336,10 @@ def test_the_owner_reads_and_acks_asks_and_other_verbs_refuse(rig):
     assert rig.fleet("ack", "1", "--ask", "zz").returncode == 1
     inside = rig.fleet("ack", "1", CLAUDECODE="1")
     assert inside.returncode == 3 and "refused" in inside.stderr  # a floor: an owner step, from a terminal
-    assert rig.fleet("ack", "1").returncode == 0
+    acked = rig.fleet("ack", "1")
+    assert acked.returncode == 0 and re.search(r"[1-9]\d* open ask\(s\) answered in 1 batch", acked.stdout)
+    again = rig.fleet("ack", "1")
+    assert again.returncode == 0 and "0 open ask(s)" in again.stdout and "nothing there was open" in again.stdout
     assert "no open asks" in rig.fleet("asks").stdout
     assert any(x["kind"] == "ack" for x in rig.ledger())
     for verb in ("mail", "spawn", "label", "resume"):
@@ -354,13 +359,40 @@ def test_a_failed_compare_does_not_use_up_the_day_and_the_prototypes_line_is_ref
     assert out.returncode == 0 and "not run (prototype)" in out.stdout
     rig.tick()  # the report says so and asks the owner
     rep = json.loads((rig.world.state["broomva"] / "ticks" / "00001" / "report.json").read_text())
-    assert "compare:not-run" in [a["key"] for a in rep["asks"]] and rep["core_compare"] == {"refused": "prototype"}
+    assert "compare:move" in [a["key"] for a in rep["asks"]] and rep["core_compare"] == {"refused": "prototype"}
     path.write_text(json.dumps(dict(proto, neither=0)) + "\n"
                     + json.dumps({"ts": ts(time.time()), "registered": reg, "pass": False,
                                   "error": "CompareError: claude agents exited 1"}) + "\n")
     out = rig.fleet("core-compare")
     assert "not due" not in out.stdout, out.stdout + out.stderr
     assert len(path.read_text().splitlines()) == 3  # it ran, and wrote its line
+
+
+def test_in_act_mode_the_tick_recovers_then_runs_the_coordinator_with_the_send_gate(rig):
+    rig.world.write_config(mode="act", gh_token_file=str(rig.token_file))
+    r = rig.tick()
+    assert r.returncode == 0, rig.log()
+    assert re.search(r"recover=0 observe=0 report=0 coordinator=0 compare=\d ask=0$", r.stdout.strip())
+    sd = rig.world.state["broomva"]
+    assert '"subtype": "init"' in (sd / "ticks" / "00001" / "coordinator.jsonl").read_text()
+    hooks = json.loads((sd / "coordinator-settings.json").read_text())["hooks"]
+    assert "send-gate pre --scope broomva" in hooks["PreToolUse"][0]["hooks"][0]["command"]
+    env = dict(ln.split("=", 1) for ln in rig.calls("coordinator-env") if "=" in ln)
+    assert env["FLEET_TICK"] == "1" and env["DRY_RUN"] == "1" and env["FLEET_CHILD"] == "1"
+    assert len(env["GH_TOKEN"]) == len(TOKEN)  # the fleet token, for the coordinator's gh
+
+
+def test_a_coordinator_with_a_disallowed_tool_is_stopped_and_the_tick_fails(rig):
+    rig.world.write_config(mode="act")
+    r = rig.tick(STUB_TOOLS='"Bash", "mcp__paseo__create_agent"')
+    assert r.returncode == 1 and "coordinator=4" in r.stdout
+    assert "Paseo write tool create_agent" in rig.log()
+    assert any("failed at coordinator" in c for c in rig.calls("osascript"))
+
+
+def test_in_report_mode_no_coordinator_runs(rig):
+    rig.tick()
+    assert rig.calls("coordinator-env") == [] and "coordinator=" not in rig.log()
 
 
 def test_three_ticks_make_a_labelling_sheet(rig):
