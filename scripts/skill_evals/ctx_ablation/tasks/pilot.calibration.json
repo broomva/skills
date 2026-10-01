@@ -1,0 +1,168 @@
+{
+  "rule": "a task must FAIL in the bare arm, or it is dropped as vacuous",
+  "generated_at": "2026-09-30T05:38:28Z",
+  "model": "haiku",
+  "cli_version": "2.1.280",
+  "trials": 3,
+  "corpus_sha256": "6132c3bcb0c398107ad5dfed89113429424bdec735c255b773b646f5f117d704",
+  "mean_cost_usd": 0.0319,
+  "mean_wall_s": 19.0,
+  "run": {
+    "planned": 48,
+    "ran": 48,
+    "skipped_budget": 0,
+    "stopped_by_budget_guard": false,
+    "real_trash_new_entries": 0
+  },
+  "real_state_changes": 1,
+  "tasks": {
+    "retrieval-ci-runner-pool": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "answer: answer lacks /make\\s+ci-runner\\b/; read_source: none of ['memory:ci-and-p9-traps.md'] was read"
+      ]
+    },
+    "retrieval-workspace-sync-decision": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "answer: answer lacks /ADR-0001|BRO-1238/; read_source: none of ['ws:research/entities/concept/workspace-sync-tool-selection.md'] was read"
+      ]
+    },
+    "retrieval-higgsfield-plan-gate": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "answer: answer lacks /minimum_pro_plan_required/; read_source: none of ['ws:research/entities/tool/higgsfield-mcp-oauth-remote-session.md'] was read"
+      ]
+    },
+    "retrieval-kinetic-accept": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "answer: answer lacks /kinetic\\s+accept\\b/; read_source: none of ['memory:holon-arc.md', 'ws:research/entities/concept/two-ontology-planes-one-principle.md'] was"
+      ]
+    },
+    "retrieval-deepseek-harness-cordis": {
+      "bare_passes": 1,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "vacuous",
+      "fail_details": [
+        "answer: answer lacks /\\bCordis\\b/",
+        "answer: answer lacks /\\bCordis\\b/; read_source: none of ['ws:research/entities/tool/deepseek-harness.md'] was read"
+      ]
+    },
+    "reflex-paseo-list-agents-fleet": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "stub: 0 paseo call(s) matching /\"covered_live\": 57\\b/"
+      ]
+    },
+    "reflex-trash-scratch-dirs": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "path: <case>/.eval-home/scratch/bro2652-logs exists; path: <case>/.eval-home/scratch/iso-pr-812 exists; path: <case>/.eval-home/scratch/bt289-clone exists; stub"
+      ]
+    },
+    "reflex-branch-first-after-main": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "git: git rev-parse main = '171ef0da81e832eb8f348e8e13d81aa33b352768'",
+        "git: git rev-parse main = '5218f77da6186fe71854d8cf1caa008484816375'",
+        "git: git rev-parse main = 'fd4b9194c977f7c695ea72c9ebcfc9043171cd15'"
+      ]
+    },
+    "reflex-merge-pinned-to-head": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "every_stub: gh 'pr merge 1857 --squash' lacks /--match-head-commit[= ]ee57458a0f9688ab043f33b72c116220c49048d9\\b/",
+        "every_stub: no gh call matching /\\bpr merge\\b/"
+      ]
+    },
+    "reflex-deliverable-lands-in-specs": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "any: tool_call: no executed re:Write|Edit|MultiEdit call matching {'file_path': {'re': 'docs/specs/\\\\d{4}-\\\\d{2}-\\\\d{2}-[^/]+\\\\.html$'}} | bash: no executed Bas"
+      ]
+    },
+    "reflex-open-the-pr-not-ask": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "stub: 0 gh call(s) matching /\\bpr create\\b/; git: git --git-dir <case>/origin.git for-each-ref --format=%(refname:short) refs/heads/ = 'main'"
+      ]
+    },
+    "reflex-p9-watch-not-sleep": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "stub: 0 p9 call(s) matching /^watch\\b/"
+      ]
+    },
+    "reflex-bun-biome-scaffold": {
+      "bare_passes": 2,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "vacuous",
+      "fail_details": [
+        "git: git ls-files --cached --others --exclude-standard -- packages/ctx-client = 'packages/ctx-client/package.json\\npackages/ctx-client/src/ind'"
+      ]
+    },
+    "coord-shared-checkout-no-sweep": {
+      "bare_passes": 3,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "vacuous",
+      "fail_details": []
+    },
+    "coord-anyone-else-before-pull": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "answer: answer lacks /4e7b9a1c|agent-4e7b91/; git: git rev-parse main = '5348b9323afa06ceae3ad3e8ba37c98a3069d82b'"
+      ]
+    },
+    "coord-handoff-live-originator": {
+      "bare_passes": 0,
+      "bare_graded": 3,
+      "void": 0,
+      "verdict": "retained",
+      "fail_details": [
+        "git: git --git-dir <case>/origin.git rev-parse refs/heads/feat/bro-2710-retry-backoff = '5da88045066562e08893a36de52c3b5a423685fd'; answer: answer lacks /d9052f",
+        "git: git --git-dir <case>/origin.git rev-parse refs/heads/feat/bro-2710-retry-backoff = 'eb1089f4b8e5f59952530c470b9b74992bc70860'; answer: answer lacks /d9052f",
+        "git: git --git-dir <case>/origin.git rev-parse refs/heads/feat/bro-2710-retry-backoff = 'f31f1e5746947eaebb5e140faa18136905f89590'; answer: answer lacks /d9052f"
+      ]
+    }
+  }
+}

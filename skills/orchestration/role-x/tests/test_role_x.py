@@ -1357,6 +1357,87 @@ def test_intake_no_catalog_emits_no_task_block(tmp_path):
     assert "Task-relevant knowledge" not in out
 
 
+def _top_n_catalog(count: int = 6) -> str:
+    """``count`` entities that all qualify on ``backoff`` with equal scores, so the
+    order is the slug tie-break: backoff-a, backoff-b, ..."""
+    entries = "".join(
+        f"#### backoff-{c} [pattern·entity]\n"
+        f"Retry backoff note {c} is a clean one line claim.\n"
+        f"→ x · #pattern #backoff · src: note\n"
+        f"path: pattern/backoff-{c}.md\n\n"
+        for c in "abcdefgh"[:count]
+    )
+    return (
+        "---\ngenerator: bookkeeping index\nschema: dense-catalog-v2\n"
+        f"entity_count: {count}\n---\n\n# Knowledge Index\n\n## Entities\n\n"
+        f"### pattern ({count})\n\n{entries}"
+    )
+
+
+def _surfaced_backoff(tmp_path: Path, top_n: str | None) -> list[str]:
+    workspace = _seed_workspace(tmp_path)
+    _seed_catalog(workspace, _top_n_catalog())
+    env = {"HOME": str(tmp_path)}
+    if top_n is not None:
+        env["ROLE_X_TASK_ENTITY_TOP_N"] = top_n
+    rc, out, err = run_cli(
+        "intake", "--prompt", "tune the backoff between attempts please",
+        "--workspace", str(workspace), "--session", "top-n", env=env,
+    )
+    assert rc == 0, f"stderr={err}"
+    return [c for c in "abcdefgh" if f"pattern/backoff-{c}.md" in out]
+
+
+def test_task_entity_top_n_default_is_five(tmp_path, monkeypatch):
+    monkeypatch.delenv("ROLE_X_TASK_ENTITY_TOP_N", raising=False)
+    assert _surfaced_backoff(tmp_path, None) == list("abcde")
+
+
+def test_task_entity_top_n_env_compresses_to_a_prefix(tmp_path):
+    """The compression arm must see the default block cut short, not a different
+    selection: top-2 is exactly the first two of the default five."""
+    assert _surfaced_backoff(tmp_path, "2") == list("ab")
+
+
+def test_task_entity_top_n_zero_drops_the_block(tmp_path):
+    assert _surfaced_backoff(tmp_path, "0") == []
+
+
+def test_task_entity_top_n_bad_value_falls_back_to_default(tmp_path):
+    """A hook must never fail a turn on a bad override: garbage means the default."""
+    assert _surfaced_backoff(tmp_path, "ten") == list("abcde")
+
+
+def test_task_entity_top_n_clamps_to_the_cap(tmp_path):
+    (tmp_path / "hi").mkdir()
+    (tmp_path / "lo").mkdir()
+    assert _surfaced_backoff(tmp_path / "hi", "9999") == list("abcdef")
+    assert _surfaced_backoff(tmp_path / "lo", "-3") == []
+
+
+def test_task_entity_top_n_clamp_is_visible_above_fifty(tmp_path):
+    """55 qualifying entities, so a cap of 9999 and a cap of 50 differ. Filler keeps
+    `backoff` under the 15% rarity gate (55 of 385 entities), or nothing qualifies."""
+    hits = "".join(
+        f"#### backoff-{i:03d} [pattern·entity]\nRetry backoff note {i} is a clean one line claim.\n"
+        f"→ x · #pattern #backoff · src: note\npath: pattern/backoff-{i:03d}.md\n\n" for i in range(55))
+    filler = "".join(
+        f"#### filler-{i:03d} [concept·entity]\nUnrelated filler claim number {i} here.\n"
+        f"→ x · #concept #filler · src: note\npath: concept/filler-{i:03d}.md\n\n" for i in range(330))
+    catalog = ("---\ngenerator: bookkeeping index\nschema: dense-catalog-v2\nentity_count: 385\n---\n\n"
+               "# Knowledge Index\n\n## Entities\n\n### pattern (55)\n\n" + hits
+               + "### concept (330)\n\n" + filler)
+    workspace = _seed_workspace(tmp_path)
+    _seed_catalog(workspace, catalog)
+    rc, out, err = run_cli(
+        "intake", "--prompt", "tune the backoff between attempts please",
+        "--workspace", str(workspace), "--session", "clamp",
+        env={"HOME": str(tmp_path), "ROLE_X_TASK_ENTITY_TOP_N": "9999"},
+    )
+    assert rc == 0, f"stderr={err}"
+    assert sum(f"pattern/backoff-{i:03d}.md" in out for i in range(55)) == 50
+
+
 def test_intake_keeps_math_inequality_claim(tmp_path):
     """A claim with an interior ' > ' (math) must render inline, not be mistaken
     for a markdown blockquote and suppressed to path-only (P20 regression)."""

@@ -52,6 +52,8 @@ Always — at the start of every session, before responding to substantive user 
 
 Carve-outs (no role-x intake needed): single-line typo fixes, pure read questions ("what does this function do?"), conversation continuation without new substantive request.
 
+The intake block's "Task-relevant knowledge" list holds at most 5 catalog entities. `ROLE_X_TASK_ENTITY_TOP_N=<n>` (0–50) in the hook's environment changes that cap; a bad value means 5. It only shortens or lengthens the same ranked list, and it exists for the context-ablation evals' compression arm (`scripts/skill_evals/ctx_ablation/`).
+
 ### Meta-progression discipline (v0.4.1+)
 
 The intake reflex routes prompts in real-time. The meta-progression discipline ensures the *registry itself* grows from real telemetry:

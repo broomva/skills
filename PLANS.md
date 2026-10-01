@@ -1,5 +1,138 @@
 # PLANS.md
 
+## Context evals, layer 2: the causal context-ablation harness
+
+Status: pilot v3 done; PR #248 in review round 3 (branch `feat/context-ablation-evals`). Layer 1, the observational
+context ledger in bstack's leverage sensor, is a separate session's work. The owner
+decided on 2026-09-29 to build both layers.
+
+### Objective
+
+Measure whether the context we inject makes sessions behave better per token:
+role-x intake, the ctx-core brief, and MEMORY.md. Also measure whether it triggers
+the right retrieval reflexes, and how far it compresses.
+
+### Scope and constraints
+
+- `scripts/skill_evals/ctx_ablation/`, a sibling of `runner.py` that imports its
+  jail, argv contract, stream parser and interval math.
+- Arms are explicit `--settings` files under a jailed HOME:
+  `bare, memory, rolex, ctx, all, rolex-top2`. `~/.claude/settings.json` is never
+  touched.
+- State is constant across arms. Only the injection varies.
+- Tasks come from real turns and memory feedback files. Graders assert on tool
+  inputs, end state and fact tokens, never on narration.
+- Control-absent rule: every task must fail in the bare arm in a calibration run,
+  or it is dropped as vacuous.
+- role-x's cap was a constant, so the compression arm uses a new env override,
+  `ROLE_X_TASK_ENTITY_TOP_N`, with tests.
+
+### Milestones
+
+1. [x] Harness: arms, fixture, stubs (gh, trash, p9, paseo, Paseo MCP, case guard),
+   graders, metrics and CLI. 137 tests; the mutants of every guard are killed.
+2. [x] 16 candidate tasks. Each fails a null run and its control-removed
+   exemplar, and passes its informed exemplar.
+3. [x] Preflight on the real corpus. The live canary shows each of the six arms
+   sees exactly its own injections.
+4. [x] Calibrate 16 candidates × 3 trials in the bare arm: 13 retained, 3
+   vacuous (`tasks/pilot.calibration.json`).
+5. [x] Pilot: 10 retained tasks × 6 arms × 3 trials, 180 trials
+   (`ctx_ablation/PILOT.md`). v1 was superseded after P20 round 1 (false fails, a
+   real-Trash side effect), and v2 after round 2 (a vacuous check, a weak memory proof,
+   a guard that could not prove it ran). v3 is the result: 180 trials, 2 void, run on 8e8b5fa.
+   The later commits add checks that change no v3 outcome.
+6. [ ] Scale to 30 tasks: not run. The owner held this session to the pilot
+   because of the shared subscription limit, and the pilot is floor-limited on
+   haiku. The next measurement is sonnet on the 13 retained tasks; PILOT.md has
+   the estimate.
+
+### Verification
+
+`python3 scripts/skill_evals/ctx_ablation/run.py validate --deep`, and
+`pytest tests/skill_evals/test_ctx_ablation.py`.
+
+## ctx-core phase 1: the read-only shared board
+
+Status: final review (PR broomva/skills#246), narrowed by the owner after the
+fresh round (B 6/10, C 7/10).
+
+Branch: `feat/ctx-core-phase1`
+
+Design: broomva/workspace#825, `docs/specs/2026-09-29-shared-context-core.html`
+(round 7), revised by the phase-0 spike
+(`~/.config/broomva/fleet/ctx-spike-20260929/SPIKE-REPORT.md`).
+
+### Objective
+
+Ship `skills/orchestration/ctx-core/`:
+- `ctx.py`, the single writer and reader of a per-scope `events.jsonl`, with a
+  cached `board.json` fold, `ctx board [--json] [--rebuild]`, `ctx doctor` and
+  `ctx doctor --unscoped`;
+- the SessionStart, Stop and StopFailure hook entry, behind the `ctx-hook.sh`
+  missing-file guard.
+
+The hooks ship as scripts only. Registering them is an owner step.
+
+### Constraints
+
+- Coordination only, not a security boundary (owner decision 2026-09-29).
+- Hooks: under 200 ms of wall time, exit 0 always, no output on any failure,
+  and the lock held only for the append.
+- Structured fields only (the owner's narrowing). No free text is stored, and
+  one linear guard covers what is.
+- A repo with no scope is a silent no-op. Nothing under `crm/` is written. The
+  `sri` and `broomva` stores never cross.
+- Never edit `~/.claude/settings.json`, `~/broomva/.claude/settings.json` or
+  any `hooks.json`.
+
+### Definitions
+
+- **Live:** an event within the last 6 h and no `session.died` since the
+  session's last other event. The same text is in SKILL.md and in
+  `ctx.LIVE_DEFINITION`. `session.died` is the only terminal event; Stop fires
+  every turn.
+- **Board cap:** a hook will not parse a `board.json` over 2 MiB. At 550–720
+  bytes a row, that is about 2,900–3,800 sessions, roughly 4 weeks at ~117 a
+  day. The recovery path:
+  1. `ctx board --rebuild`, for a stale or hand-edited cache;
+  2. to shrink the board, move `events.jsonl` aside by hand, then run `ctx
+     board --rebuild`.
+
+  The scripted archive procedure is phase 2.
+
+### Out of scope
+
+- Phase 2 of the design:
+  - the mailbox, deltas and asyncRewake;
+  - retention and the archive procedure (`ctx doctor` says "no retention in
+    phase 1");
+  - splitting died from failed, and reset-time extraction.
+- The role gate and the owner CLI are **not** later work. The design cut them
+  (round 7). The boundary is GitHub rulesets and the server-side merge gate.
+
+### Exit criterion (phase 1)
+
+- One side is the board's live rows (the definition above).
+- The other side is the `list_agents(cwd:"/")` agents in scope whose
+  transcript was modified in the same 6 h.
+- It passes when at least 95% of each set appears in the other, and every
+  difference is listed with its reason.
+- One expected reason for a difference is a single turn longer than 6 h.
+
+### Milestones
+
+- [x] `ctx.py` + `ctx_hook.py` + `ctx-hook.sh`, stdlib only, Python 3.9+.
+- [x] Tests: scope isolation, lock contention (including the lock hold),
+  rebuild determinism, fail-open, the guard (free text, and linear time at
+  10 KB and 1 MB), the hook deadline, and the wrapper. Plus a mutation check.
+- [x] SKILL.md with the owner's registration snippet (via the wrapper); catalog
+  rows; CI workflow.
+- [ ] Cross-Review (P20), final round, then p9 gate-check and a merge pinned to
+  the head, or BLOCKED.
+- [x] Local dogfood: synthetic hook JSON into each script, and the board
+  rebuilds.
+
 ## Legal-readiness skill
 
 Status: in progress
