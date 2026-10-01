@@ -294,7 +294,7 @@ class Act:
         try:
             token = profile.read_token(self.sec)
             if not token:
-                return self._failed(it, "spawn_error", "no fleet token file: a live driver never runs on the keyring")
+                return self._failed(it, "spawn_error", "no fleet token file: a live spawn is refused without it")
             profile.write(prof, profile.driver_profile(self.sec, key, token, profile.gh_config_dir(self.sd, key)))
             out = self.src.run_claude(argv[1:], cwd=workdir)
             m = SPAWNED_RE.search(out)

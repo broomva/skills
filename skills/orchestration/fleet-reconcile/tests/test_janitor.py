@@ -157,4 +157,8 @@ def test_a_scratch_run_stops_rechecks_backs_up_rereads_and_removes(world, wt):
     src = FixtureSources(world.fixture)
     res = janitor.run(config.scope("broomva"), src, str(wt), OWNER, True, lambda m: None)
     assert [s["step"] for s in res["steps"]] == ["check", "stop", "re-check", "backup", "listing at removal", "rm"]
-    assert src.calls == [["claude", "stop", OWNER], ["claude", "rm", OWNER]]
+    assert src.calls == [["claude", "rm", OWNER]]  # a done owner with no process isn't stopped again
+    _listing(world, [dict(_row(OWNER, wt), pid=4242, status="idle")])
+    src = FixtureSources(world.fixture)
+    janitor.run(config.scope("broomva"), src, str(wt), OWNER, True, lambda m: None)
+    assert src.calls[0] == ["claude", "stop", OWNER]

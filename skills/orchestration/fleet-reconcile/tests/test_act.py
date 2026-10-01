@@ -301,6 +301,12 @@ def test_resume_is_refused_for_a_live_or_interactive_session_and_while_one_is_un
                                            "dry_run": True, "by": "act"})
     res = _act(world, adopted=[{"session_id": bg["sessionId"]}]).resume(bg["sessionId"])
     assert not res["ok"] and "unconfirmed" in res["detail"]
+    rows = _rows(world)
+    busy = next(r for r in rows if r["kind"] == "background" and r["sessionId"] != bg["sessionId"])
+    busy.update(pid=7777, status="idle")  # a background session that kept its process
+    _write_rows(world, rows)
+    res = _act(world, adopted=[{"session_id": busy["sessionId"]}]).resume(busy["sessionId"])
+    assert not res["ok"] and "live process" in res["detail"]  # it gets a mail instead
 
 
 def test_a_live_resume_runs_the_command_and_records_the_new_pid(world, live_ids):

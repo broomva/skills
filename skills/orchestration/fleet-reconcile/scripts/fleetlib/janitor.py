@@ -172,7 +172,7 @@ class Guard:
             ps = subprocess.run(["ps", "-axo", "pid="], stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
             listed = {int(x) for x in ps.stdout.split() if x.strip().isdigit()}
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
-            return "not run", "ps failed: %s" % common.safe_text(exc, 80)
+            return "not run", "ps failed: %s" % common.safe_text(str(exc) or type(exc).__name__, 80)
         if ps.returncode != 0 or not (listed - own - _children(listed)):
             return "not run", "the process listing shows nothing but the janitor's own processes"
         try:
@@ -271,7 +271,7 @@ def backup(state_dir: Path, path: str, now: Optional[float] = None) -> Dict[str,
 
 
 def secret_files(path: str) -> List[str]:
-    """Ignored files named like secrets (.env*, *.db): backed up, never left behind."""
+    """Ignored files named like secrets (.env*, *.db): backed up before any removal."""
     out = _git(path, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
     found = []
     for rel in (x for x in out.split("\0") if x):
@@ -328,12 +328,16 @@ def run(sec: Dict[str, Any], src: Sources, path: str, owner: str, remove: bool,
         res["aborted"] = "removal is refused for a scope repo's worktree until the janitor drill passes (§5.5)"
         return res
     try:
-        step("stop", src.run_claude(["stop", owner]).strip()[:200])
-    except SourceError as exc:
+        row = g.owner_row(g._rows())
+        if row is not None and row["pid"] is None:
+            step("stop", "no process: already stopped")
+        else:
+            step("stop", src.run_claude(["stop", owner]).strip()[:200])
+            time.sleep(1.0)
+    except (SourceError, parsers.ParseError) as exc:
         step("stop", "failed: %s" % exc)
         res["aborted"] = "stop"
         return res
-    time.sleep(1.0)
     again = g.run(skip=("owner_finished",))
     step("re-check", again)
     if not again["ok"]:

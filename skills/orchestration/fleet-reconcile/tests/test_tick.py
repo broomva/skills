@@ -390,6 +390,18 @@ def test_a_coordinator_with_a_disallowed_tool_is_stopped_and_the_tick_fails(rig)
     assert any("failed at coordinator" in c for c in rig.calls("osascript"))
 
 
+def test_a_tick_first_closes_the_intents_a_dead_tick_left_open(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    rec = {"v": 1, "id": "0-1", "ts": "2026-09-30T00:00:00.000Z", "scope": "broomva", "tick": 0, "dry_run": True,
+           "by": "act", "kind": "intent", "verb": "spawn", "key": "broomva-x-pr1", "target": {"name": "broomva-x-pr1"}}
+    (sd / "ledger.jsonl").write_text(json.dumps(rec) + "\n")
+    rig.tick()
+    out = [x for x in rig.ledger() if x.get("of") == "0-1"]
+    assert len(out) == 1 and out[0]["kind"] == "failed" and out[0]["by"] == "recover" and out[0]["tick"] == 1
+    assert "recover: 0-1 spawn broomva-x-pr1 -> failed" in rig.log()
+
+
 def test_in_report_mode_no_coordinator_runs(rig):
     rig.tick()
     assert rig.calls("coordinator-env") == [] and "coordinator=" not in rig.log()
