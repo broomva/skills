@@ -20,12 +20,12 @@ The contract holds for every event, whatever ctx.py does:
   * A hard self-deadline of BUDGET_S of wall time inside the interpreter.
     Interpreter start-up and teardown are the rest of the 200 ms: about 20 ms
     on the owner's machine. A hosted macOS CI runner is slower on both sides:
-    start-up p99 up to 150 ms with rare spikes past 500 ms, and its clamped QoS
-    lets macOS fire the alarm up to 160 ms late (tests/conftest.py bounds a run
-    that hits the deadline from these numbers). The alarm fires between
+    start-up and teardown run far longer, and its clamped QoS lets macOS fire
+    the alarm late (tests/conftest.py has the measured numbers, and bounds a
+    run that hits the deadline from them). The alarm also fires only between
     bytecodes, so one long C call can delay it. The one such call that grows,
-    the board.json parse, is capped (ctx.HOOK_BOARD_CAP), so the deadline stays
-    hard.
+    the board.json parse, is capped (ctx.HOOK_BOARD_CAP), so no parse holds the
+    deadline off.
   * A run that hits the deadline, or finishes but had to skip work (a busy
     lock, a board over its cap, a cache too far behind), appends one line to
     ~/.local/state/ctx/hook-misses.jsonl (time, event, stage, ms; no path),

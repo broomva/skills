@@ -156,7 +156,7 @@ def test_the_wrapper_exits_0_when_the_hook_or_interpreter_is_gone(gate, tmp_path
 
 # --------------------------------------------------------------------------
 # Latency, from outside the process. The owner's machine numbers are in the
-# PR; CI runners start Python slower (ctx_hook.py: p99 up to 150 ms on a macOS runner),
+# PR; CI runners start Python slower (tests/conftest.py has a macOS runner's numbers),
 # so these bounds are the ctx-core hooks' 200 ms wall, not the 100 ms budget.
 
 WALL_S = 0.200

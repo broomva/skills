@@ -74,6 +74,8 @@ MUTANTS = [
      "    except BaseException:\n        pass\n    os._exit(0)\n\n\nif __name__",
      "    except BaseException:\n        time.sleep(1)\n    os._exit(0)\n\n\nif __name__",
      [T + "test_fail_open.py", "-k", "raises and never_escapes"]),
+    ("a budget that eats Claude Code's timeout", HOOK, "BUDGET_S = 0.080\n", "BUDGET_S = 0.100\n",
+     [T + "test_fail_open.py::test_the_fail_open_wall_is_half_the_registered_timeout_or_less"]),
     ("stdout not guarded", HOOK, "        sys.stdout = sys.stderr = devnull\n", "",
      [T + "test_fail_open.py", "-k", "prints and never_escapes"]),
     ("no deadline-miss record", HOOK, "        _record_miss((", "        ((",

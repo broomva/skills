@@ -147,12 +147,14 @@ Invariants, each pinned by a test:
   session makes, and finds none under broomva's store.
 - **A hook never blocks a session:**
   - The lock covers the append and nothing else.
-  - The hook has a hard self-deadline of 80 ms inside the interpreter. A run
-    that finishes on its own takes under 200 ms of wall time measured from
-    outside. A run the deadline cuts records when it fired, and takes under 1 s,
-    half of Claude Code's timeout. macOS fires the alarm late in a process at a
-    clamped QoS: up to 160 ms late on a hosted CI runner, at most 10 ms in a
-    process a Claude Code session spawns on the owner's machine.
+  - The hook has a hard self-deadline of 80 ms inside the interpreter, and 200
+    ms of wall time measured from outside, on the owner's machine and on Linux.
+    A run the deadline cuts records when it fired (when
+    `~/.config/ctx/scopes.yaml` exists). A hosted macOS CI runner is slower:
+    its clamped QoS fires the alarm up to about 160 ms late (at most 10 ms in a
+    process a Claude Code session spawns on the owner's machine), and start-up
+    has reached 589 ms. There a hung ctx module is held to 1 s, half of Claude
+    Code's timeout.
   - A hook never parses a `board.json` over 2 MiB, because that parse is one C
     call the alarm cannot interrupt.
   - Every hook exits 0, including on SIGTERM and through the wrapper.
@@ -417,7 +419,7 @@ python3 scripts/register_s1_hooks.py --stages pre-edit,post-bash --shadow   # th
 cd skills/orchestration/ctx-core
 python3 -m pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py   # 38 protections removed in turn; the test pinning each must fail
+python3 tests/mutation_check.py   # 39 protections removed in turn; the test pinning each must fail
 python3 tests/mutation_check_s1.py   # the System 1 / System 2 / E1 protections, the same way
 ```
 
