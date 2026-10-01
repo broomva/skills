@@ -9,7 +9,7 @@ description: "Full-stack AI content studio — orchestrates visual DNA compilati
 Full-stack AI content studio: compile visual identity once, generate premium content at scale, distribute everywhere.
 
 ```
-COMPILE → GENERATE → POST-PRODUCE → DISTRIBUTE → MEASURE → REFINE
+COMPILE → GENERATE → POST-PRODUCE → LAYOUT GATE (9:16) → DISTRIBUTE → MEASURE → REFINE
 ```
 
 ## Commands
@@ -23,6 +23,7 @@ COMPILE → GENERATE → POST-PRODUCE → DISTRIBUTE → MEASURE → REFINE
 | `/content-engine autopilot run` | Batch generation via browser automation |
 | `/content-engine campaign {brief}` | Full pipeline: compile → generate → distribute |
 | `/content-engine loop` | Compound existing skills for distribution |
+| `/content-engine layout-check {video\|image\|spec}` | 9:16 layout gate: `python3 scripts/check_vertical_layout.py video final.mp4 --expect-captions --expect-title` for a render with captions and a title hook (see Vertical Layout Gate) |
 
 ## Architecture
 
@@ -251,6 +252,82 @@ output/{campaign-slug}/
 ├── graded/       # After color grading
 └── manifest.json # Prompts, identity refs, tool used, timestamps
 ```
+
+## Vertical Layout Gate (9:16)
+
+Every 9:16 asset (Reels, TikTok, Shorts, Stories) passes this gate **before it is
+distributed**. The contract is `layout/vertical-9x16.json`, measured from a creator's
+layout-guide Reel; the rules, their source and the checker's limits are in
+`references/vertical-layout.md`. The Remotion `ContentEngineReel` composition reads its
+overlay geometry from the same JSON. Its renders are still gated like any other video,
+because reading the right numbers does not guarantee that the pixels land inside them.
+
+| Rule | What must hold (1080x1920) |
+|------|---------------------------|
+| VL1 | Canvas 9:16, at least 1080 wide |
+| VL2 | Overlay text inside the safe zone x 143-938, y 277-1643 (title band excepted) |
+| VL3 | No overlay text or face on the action rail (x ≥ 872, y ≥ 922) or the bottom band (y ≥ 1686); small text there WARNs; a face counts if it is there in over a third of a shot |
+| VL4 | Title hook inside the top band, y 121-436 (the source Reel's title centres near y 278) |
+| VL5 | Captions in the band x 220-860, y 1288-1463, centred; with `--expect-captions`, a band with no readable text FAILs. It cannot see captions only partly out of the band, readable in only some frames, or elsewhere while other text sits in the band (reference: "What it does not catch") |
+| VL6 | Eyes at 33-45% of the height (source Reel: 38-40%) |
+| VL7 | Eye line moves at most 58px across a punch-in; WARN only (a cut to another framing looks the same to the detector) |
+| VL8 | Face inside the safe zone (median, and in two thirds of each shot's samples) |
+| VL9 | Text over a busy background has a stroke: FAIL when declared without one, WARN on measured low edge contrast |
+
+**Run it:**
+
+```bash
+# rendered video with burned-in text (Remotion ContentEngineReel, CapCut export, ...)
+python3 scripts/check_vertical_layout.py video final.mp4 --expect-captions --expect-title
+# raw generated clip, before any text: read VL1 and VL6-VL8 (text rules describe
+# text inside the footage, not overlays)
+python3 scripts/check_vertical_layout.py video clip.mp4
+# overlay geometry you are about to draw (watermarks, CTAs: small text that video
+# mode classes as scene text)
+python3 scripts/check_vertical_layout.py spec overlays.json
+# paid placements: Meta's 14% top / 35% bottom / 6% sides. ContentEngineReel draws the
+# organic layout and FAILS this profile; place ad captions above 65% by hand
+python3 scripts/check_vertical_layout.py --profile meta-ads-9x16 video ad.mp4
+```
+
+Pass `--expect-captions` / `--expect-title` for text the asset burned in, and only for
+that. The flags are how a misplaced caption is caught: the gate does not guess which
+text is a caption (see "Why roles are declared" in the reference).
+Outside this skill's root, the script is at
+`~/.claude/skills/content-engine/scripts/check_vertical_layout.py`.
+
+`compose-video.py --aspect-ratio 9:16` (with `--remotion`, it renders `ContentEngineReel`)
+prints the gate commands for what this run produced: the stitch `stitch_clips` returned,
+and the render only if `render.sh` exited 0. It does not gate in-process. Run them
+before distributing. The report records `input_sha256`, so a report is tied to the
+bytes it checked; re-run the gate after any re-render.
+
+**Pass criteria.** The checker exits 0 and the last line of its table output reads
+`VERDICT: PASS`. Then:
+
+1. Every **FAIL** is fixed and the gate re-run. When the rule does not apply to this
+   asset (a b-roll face, text that is part of the footage), send the owner the report
+   and the guide sheet. Only the owner grants a waiver: a file bound to this render's
+   sha256, with a reason, passed as `--waive waivers.json`. An agent never writes one.
+   VL1, VL9 and declared text that is not found are never waived. The policy is in
+   `references/vertical-layout.md`, "Waivers".
+2. Every **UNCHECKED** rule is closed by looking at `<video>.layout-guide.png` (zones
+   painted on six frames; `guide --frames N` paints more). tesseract has no face
+   detector, so VL6-VL8 are UNCHECKED off macOS; use `--strict` where that must fail.
+3. Every **SKIP** is one you expected (a raw clip has no text; a b-roll has no face). A
+   render that burned in text must be run with `--expect-captions`/`--expect-title`,
+   because OCR sees unreadable text as no text. The `declared:` line in the output
+   shows which flags were passed.
+4. The guide sheet is looked at for what the gate cannot see: every item under "What
+   it does not catch" and "Known limits" in `references/vertical-layout.md`.
+5. Every **WARN** is looked at:
+   - **VL9:** low contrast around the glyph edges. Add a stroke or a backing, or confirm
+     on the guide sheet that it is a fade frame.
+   - **VL7:** an eye-line jump. It is fine at a cut; a punch-in must be scaled about the
+     eye line.
+   - **VL3:** small text on the rail. A handle or link there gets covered.
+
+Record the verdict line and the report path with the asset (campaign manifest or PR).
 
 ## Extension Points
 

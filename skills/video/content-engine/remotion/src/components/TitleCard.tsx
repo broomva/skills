@@ -6,6 +6,7 @@ import {
   spring,
   interpolate,
 } from "remotion";
+import { strokedTextWidth, strokeStyle, useVerticalLayout } from "../layout";
 
 interface TitleCardProps {
   title: string;
@@ -32,6 +33,9 @@ export const TitleCard: React.FC<TitleCardProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const { fps, durationInFrames } = useVideoConfig();
+  // On 9:16 the text is centred in the safe zone above the action rail: mid-
+  // height at 1080 wide runs into the rail (check_vertical_layout.py VL3).
+  const vertical = useVerticalLayout();
 
   // Spring-driven entrance
   const entranceProgress = spring({
@@ -84,6 +88,20 @@ export const TitleCard: React.FC<TitleCardProps> = ({
         opacity,
       }}
     >
+      <div
+        style={
+          vertical
+            ? {
+                position: "absolute",
+                ...vertical.upper,
+                display: "flex",
+                flexDirection: "column",
+                justifyContent: "center",
+                alignItems: "center",
+              }
+            : { display: "contents" }
+        }
+      >
       {/* Decorative accent line above title */}
       <div
         style={{
@@ -104,12 +122,18 @@ export const TitleCard: React.FC<TitleCardProps> = ({
           fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
           fontWeight: 700,
           textAlign: "center",
-          maxWidth: "80%",
+          maxWidth: vertical ? strokedTextWidth(vertical.upper, vertical.strokePx) : "80%",
           lineHeight: 1.2,
+          // 9:16: three lines at most, so a long title cannot climb into the
+          // title region above the band (check_vertical_layout.py VL4).
+          ...(vertical
+            ? { display: "-webkit-box", WebkitLineClamp: 3, WebkitBoxOrient: "vertical" as const, overflow: "hidden" }
+            : {}),
           margin: 0,
           transform: `translateY(${titleTranslateY}px) scale(${titleScale})`,
           textShadow: "0 4px 20px rgba(0,0,0,0.4)",
           letterSpacing: -0.5,
+          ...(vertical ? strokeStyle(vertical.strokePx) : {}),
         }}
       >
         {title}
@@ -144,6 +168,7 @@ export const TitleCard: React.FC<TitleCardProps> = ({
           marginTop: isEndCard ? 32 : 24,
         }}
       />
+      </div>
     </AbsoluteFill>
   );
 };

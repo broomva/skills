@@ -1,0 +1,46 @@
+{
+  "schema": "content-engine/vertical-layout@1",
+  "doc": "references/vertical-layout.md",
+  "units": "Every coordinate is a fraction of the canvas: x of width, y of height, origin top-left. Pixel values for 1080x1920 are in the doc.",
+  "canvas": {
+    "aspect": [9, 16],
+    "aspect_tolerance": 0.01,
+    "min_width": 1080
+  },
+  "classification": {
+    "overlay_min_text_height": 0.015,
+    "title_region_max_centre_y": 0.25,
+    "max_share_outside": 0.34
+  },
+  "default_profile": "reels-organic",
+  "profiles": {
+    "reels-organic": {
+      "description": "Organic Reels / TikTok / Shorts talking-head layout.",
+      "source": "https://www.instagram.com/reel/Ddz3gW_x_tZ/ (jun_yuh, uploaded 2026-09-28), measured from its overlays on 2026-09-29",
+      "safe_zone": { "x0": 0.1324, "y0": 0.1443, "x1": 0.8685, "y1": 0.8557 },
+      "avoid": [
+        { "name": "right action rail", "x0": 0.807, "y0": 0.48, "x1": 1.0, "y1": 1.0 },
+        { "name": "bottom username/caption band", "x0": 0.0, "y0": 0.878, "x1": 1.0, "y1": 1.0 }
+      ],
+      "title_band": { "y0": 0.063, "y1": 0.227 },
+      "caption_band": { "x0": 0.204, "y0": 0.671, "x1": 0.796, "y1": 0.762, "centre_x_tolerance": 0.05 },
+      "eye_line": {
+        "y0": 0.33,
+        "y1": 0.45,
+        "max_shift_across_punch_in": 0.03,
+        "punch_in_scale_jump": 0.12
+      },
+      "legibility": { "contrast_ratio": 3.0, "min_halo_contrast_share": 0.6 }
+    },
+    "meta-ads-9x16": {
+      "description": "Paid 9:16 placements (Reels, Stories, Facebook Reels): Meta's text-free margins only. The organic caption band sits inside Meta's bottom 35%, and Meta specifies no eye line, so both are absent here. The Remotion ContentEngineReel composition draws the organic layout and does not pass this profile.",
+      "source": "Meta Ads Guide, Instagram Reels: leave at least 14% of the top, 35% of the bottom and 6% of each side free of text (fetched 2026-09-29). legibility is carried over from reels-organic.",
+      "safe_zone": { "x0": 0.06, "y0": 0.14, "x1": 0.94, "y1": 0.65 },
+      "avoid": [],
+      "title_band": null,
+      "caption_band": null,
+      "eye_line": null,
+      "legibility": { "contrast_ratio": 3.0, "min_halo_contrast_share": 0.6 }
+    }
+  }
+}

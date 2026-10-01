@@ -1,6 +1,7 @@
 import React from "react";
 import { AbsoluteFill, useCurrentFrame, interpolate } from "remotion";
 import type { ShotEntry } from "../hooks/useManifest";
+import { fitFontSize, strokedTextWidth, strokeStyle, useVerticalLayout, type VerticalLayout } from "../layout";
 
 // ---------------------------------------------------------------------------
 // CWI (Contextual Word Intelligence) Types — from OpenCaptions
@@ -57,6 +58,8 @@ const SPEAKER_COLORS = [
 ] as const;
 
 const BASE_FONT_SIZE = 48;
+/** 9:16 caption size; the contract's source reel sets ~60px-tall words at 1080 wide. */
+const VERTICAL_FONT_SIZE = 72;
 
 /**
  * CaptionOverlay — word-by-word caption renderer.
@@ -70,6 +73,11 @@ const BASE_FONT_SIZE = 48;
  *
  * When no CWI data is provided, falls back to displaying the current
  * shot's brief text as a simple subtitle.
+ *
+ * On a 9:16 canvas both renderers switch to the vertical layout contract
+ * (layout/vertical-9x16.json): captions sit in the caption band inside the
+ * safe zone, CWI captions show one word at a time, and the text carries a
+ * black stroke instead of a backing box. check_vertical_layout.py VL5/VL9.
  */
 export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({
   captions,
@@ -79,9 +87,16 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({
 }) => {
   const frame = useCurrentFrame();
   const currentTime = frame / fps;
+  const vertical = useVerticalLayout();
 
   if (captions && captions.length > 0) {
-    return (
+    return vertical ? (
+      <VerticalWordCaption
+        captions={captions}
+        currentTime={currentTime}
+        layout={vertical}
+      />
+    ) : (
       <CWICaptions
         captions={captions}
         currentTime={currentTime}
@@ -95,6 +110,7 @@ export const CaptionOverlay: React.FC<CaptionOverlayProps> = ({
       currentTime={currentTime}
       fps={fps}
       crossfadeDurationSeconds={crossfadeDurationSeconds}
+      vertical={vertical}
     />
   );
 };
@@ -198,6 +214,85 @@ const CWIWordSpan: React.FC<{
 };
 
 // ---------------------------------------------------------------------------
+// Vertical (9:16) word-by-word renderer
+// ---------------------------------------------------------------------------
+
+/** Positions its child in the caption band, centred (VL5). */
+const CaptionBand: React.FC<{ layout: VerticalLayout; children: React.ReactNode }> = ({
+  layout,
+  children,
+}) => (
+  <AbsoluteFill>
+    <div
+      style={{
+        position: "absolute",
+        ...layout.captionBand,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        textAlign: "center",
+      }}
+    >
+      {children}
+    </div>
+  </AbsoluteFill>
+);
+
+const VerticalWordCaption: React.FC<{
+  captions: CaptionEvent[];
+  currentTime: number;
+  layout: VerticalLayout;
+}> = ({ captions, currentTime, layout }) => {
+  const activeEvent = captions.find(
+    (evt) => currentTime >= evt.startTime && currentTime <= evt.endTime
+  );
+  // One word at a time: the latest word that has started.
+  const word = activeEvent?.words
+    .filter((w) => currentTime >= w.startTime)
+    .at(-1);
+  if (!word) {
+    return null;
+  }
+  // White for every word, as in the contract's source reel; emphasis is size,
+  // not colour, so the stroke reads the same on every word.
+  const emphasis = word.emphasis ? 1.15 : 1.0;
+  const timeSinceAppear = currentTime - word.startTime;
+  const scale = interpolate(timeSinceAppear, [0, 0.08], [1.12, 1.0], {
+    extrapolateLeft: "clamp",
+    extrapolateRight: "clamp",
+  });
+
+  return (
+    <CaptionBand layout={layout}>
+      <span
+        style={{
+          color: "#ffffff",
+          fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
+          fontWeight: Math.max(700, word.weight ?? 700),
+          // Shrink long words to the band: past its right edge is the action rail.
+          fontSize: fitFontSize(
+            word.text,
+            layout.captionBand.width,
+            Math.round(VERTICAL_FONT_SIZE * Math.min(word.size ?? 1.0, 1.2) * emphasis),
+            1.12, // the pop-in scale below
+            layout.strokePx
+          ),
+          lineHeight: 1.1,
+          display: "inline-block",
+          transform: `scale(${scale})`,
+          // No maxWidth: on a nowrap span it pins the left edge and pushes any
+          // overflow right, onto the action rail. Centred, overflow is symmetric.
+          whiteSpace: "nowrap",
+          ...strokeStyle(layout.strokePx),
+        }}
+      >
+        {word.text}
+      </span>
+    </CaptionBand>
+  );
+};
+
+// ---------------------------------------------------------------------------
 // Fallback Caption Renderer (scene brief text)
 // ---------------------------------------------------------------------------
 
@@ -206,7 +301,8 @@ const FallbackCaptions: React.FC<{
   currentTime: number;
   fps: number;
   crossfadeDurationSeconds: number;
-}> = ({ shots, currentTime, fps, crossfadeDurationSeconds }) => {
+  vertical: VerticalLayout | null;
+}> = ({ shots, currentTime, fps, crossfadeDurationSeconds, vertical }) => {
   // Determine which shot is currently active
   let elapsed = 0;
   let activeShotIndex = -1;
@@ -236,6 +332,31 @@ const FallbackCaptions: React.FC<{
 
   if (!briefText) {
     return null;
+  }
+
+  if (vertical) {
+    return (
+      <CaptionBand layout={vertical}>
+        <span
+          style={{
+            color: "#ffffff",
+            fontSize: 56,
+            fontFamily: "'Inter', 'SF Pro Display', system-ui, sans-serif",
+            fontWeight: 700,
+            lineHeight: 1.15,
+            maxWidth: strokedTextWidth(vertical.captionBand, vertical.strokePx),
+            // Two lines at most, so the text cannot spill out of the band.
+            display: "-webkit-box",
+            WebkitLineClamp: 2,
+            WebkitBoxOrient: "vertical",
+            overflow: "hidden",
+            ...strokeStyle(vertical.strokePx),
+          }}
+        >
+          {briefText}
+        </span>
+      </CaptionBand>
+    );
   }
 
   return (

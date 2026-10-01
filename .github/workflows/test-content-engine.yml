@@ -1,0 +1,55 @@
+# skills/video/content-engine ships the 9:16 layout gate (scripts/check_vertical_layout.py).
+# ffmpeg + tesseract + a bold font are installed so the drawtext video fixtures run here,
+# not only the pure rule-engine tests; macOS Vision (faces, VL6-VL8) is not available on
+# this runner, and those tests skip with a reason rather than pass.
+name: test-content-engine
+
+on:
+  pull_request:
+    paths:
+      - 'skills/video/content-engine/**'
+      - 'skills/video/brainrot-for-good/**'   # its CAPTION_BAND is drift-tested here
+      - '.github/workflows/test-content-engine.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/video/content-engine/**'
+      - 'skills/video/brainrot-for-good/**'   # its CAPTION_BAND is drift-tested here
+      - '.github/workflows/test-content-engine.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-content-engine-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/video/content-engine
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install media tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq ffmpeg tesseract-ocr fonts-dejavu-core
+          ffmpeg -version | head -1
+          tesseract --version | head -1
+      - name: Install deps
+        run: pip install pytest
+      - name: Tests
+        # -rs lists every skip with its reason, so a missing tool shows in the log.
+        run: python -m pytest tests/ -q -rs

@@ -220,6 +220,7 @@ The top-level Remotion component that reads a CWI document and renders all capti
 ```typescript
 import { AbsoluteFill, useCurrentFrame, useVideoConfig } from "remotion";
 import type { CWIDocument, CaptionEvent, Speaker } from "@opencaptions/types";
+import { useVerticalLayout } from "./layout"; // content-engine remotion/src/layout.ts
 
 type CaptionStyle = "word-by-word" | "narrative" | "minimal";
 
@@ -229,7 +230,7 @@ interface CaptionOverlayProps {
   baseFontSize?: number;
   background?: "pill" | "shadow" | "gradient" | "none";
   backgroundOpacity?: number;
-  position?: "top" | "center" | "bottom";
+  position?: "top" | "center" | "bottom"; // 16:9 only: 9:16 always uses the caption band
 }
 
 function CaptionOverlay({
@@ -243,6 +244,10 @@ function CaptionOverlay({
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
   const currentTime = frame / fps;
+  // Hooks before any early return (Rules of Hooks).
+  // 9:16: the caption band from layout/vertical-9x16.json (see Safe Zones below);
+  // 16:9: the lower third. Never percentage margins of your own on 9:16.
+  const vertical = useVerticalLayout();
 
   // Find active caption events at the current time
   const activeEvents = cwiDocument.captions.filter(
@@ -251,19 +256,19 @@ function CaptionOverlay({
 
   if (activeEvents.length === 0) return null;
 
-  const positionStyle = {
-    top: { top: "8%", bottom: "auto" },
-    center: { top: "40%", bottom: "auto" },
-    bottom: { top: "auto", bottom: "8%" },
-  }[position];
+  const positionStyle = vertical
+    ? { ...vertical.captionBand, justifyContent: "center" }
+    : {
+        left: "5%",
+        right: "5%",
+        ...{ top: { top: "8%" }, center: { top: "40%" }, bottom: { bottom: "8%" } }[position],
+      };
 
   return (
     <AbsoluteFill>
       <div
         style={{
           position: "absolute",
-          left: "5%",
-          right: "5%",
           display: "flex",
           flexDirection: "column",
           alignItems: "center",
@@ -352,9 +357,15 @@ The caption background ensures readability against any video content.
 
 ### Safe Zones
 
-- Horizontal margin: 5% from each edge (90% usable width)
-- Vertical position: 8% from top or bottom edge (avoids platform UI overlaps)
-- For Instagram Reels: top position at 12% (below story bar), bottom position at 15% (above comments)
+On 9:16 the caption container is the caption band of the vertical layout contract
+(`layout/vertical-9x16.json`, `references/vertical-layout.md`): x 220-860, y 1288-1463
+at 1080x1920, i.e. centred on 72% of the height and ending short of the action rail (x 872).
+The `ContentEngineReel` composition places it there; do not use percentage margins
+of your own. The old guidance here (5% side margins, top 12% for Reels) put captions in
+the zones the Reel's UI covers.
+
+Verify a render: `python3 scripts/check_vertical_layout.py video out.mp4 --expect-captions`
+(VL5 caption band, VL3 action rail and bottom band, VL9 stroke).
 
 ### Multi-Speaker Layout
 
@@ -455,5 +466,5 @@ When wiring the CaptionOverlay into a Content Engine Remotion composition:
 2. Load Roboto Flex variable font (via `@fontsource-variable/roboto-flex` or CDN)
 3. Add `<CaptionOverlay cwiDocument={doc} />` as the last layer in the composition (on top of video)
 4. Match the composition fps and duration to the source video
-5. Set `background` and `position` based on the content type (reels = no background + top, editorial = pill + bottom)
+5. Set `background` and `position` based on the content type: reels (9:16) use no background, a black stroke and the caption band (`position` is ignored); editorial (16:9) uses a pill at the bottom
 6. Render: `npx remotion render CaptionedVideo --props='{"cwiPath":"captions.cwi.json"}'`

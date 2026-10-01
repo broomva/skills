@@ -187,7 +187,10 @@ When `--captions` is passed, after all clips are generated and stitched, the pip
 
 1. Runs `npx opencaptions generate {final-video}.mp4 --output {output-dir}/captions.cwi.json`
 2. Validates the CWI document (warns if score < 80 but does not block)
-3. If `--remotion` is also passed, injects the CWI JSON into the Remotion composition as `<CaptionOverlay>` props
+3. If `--remotion` is also passed, the render does **not** yet receive the CWI JSON: `write_manifest` leaves
+   the manifest's `captions` field empty, so `ContentEngineVideo`/`ContentEngineReel` fall back to shot names.
+   To render word-by-word CWI captions today, add the events to `manifest.json` under `captions` and run
+   `remotion/render.sh` yourself
 4. Otherwise, generates WebVTT as a sidecar file alongside the final video
 
 If OpenCaptions is not installed (`npx opencaptions doctor` fails), the pipeline degrades gracefully:
@@ -257,7 +260,7 @@ opencaptions:
   # Visual parameters
   font_family: "Roboto Flex"      # Variable font for weight axis
   base_font_size: 48              # Pixels at 1080p
-  position: "bottom"              # top | center | bottom
+  position: "bottom"              # caption_band (9:16, layout/vertical-9x16.json) | top | center | bottom
   max_chars_per_line: 42          # FCC compliance
   background: "pill"              # pill | shadow | gradient | none
   background_opacity: 0.6         # 0.0 - 1.0

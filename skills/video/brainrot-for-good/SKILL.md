@@ -68,21 +68,36 @@ The highest-engagement caption format. Each word appears as it's spoken, with th
 
 ### Remotion Implementation
 
+Placement follows content-engine's 9:16 layout contract
+(`content-engine/references/vertical-layout.md`). On a 1080x1920 canvas the caption box
+is the caption band: x 220-860, y 1288-1463, centred on 72% of the height and ending
+short of the like/comment/share rail (x 872). The old bottom-anchored placement put the
+words in the band the Reel UI covers with the username and caption (from y 1686 down).
+Keep each group on one line within the band's 640 px, counting the active word's
+1.2x scale. At 72 px extra-bold Montserrat that is about 10 uppercase characters, so
+shrink the font or split the group. Run the gate with `--expect-captions`: it fails
+captions moved wholly out of the band, but not captions only partly out of it, or
+captions elsewhere while other text (your end-card CTA) sits in the band. Check those
+on the guide sheet.
+
 ```tsx
+// 1080x1920 caption band from content-engine/layout/vertical-9x16.json
+const CAPTION_BAND = { left: 220, top: 1288, width: 640, height: 175 };
+
 const WordByWordCaption: React.FC<{
   words: string[];
   currentWordIndex: number;
 }> = ({ words, currentWordIndex }) => (
   <div style={{
     position: 'absolute',
-    bottom: 120,
-    left: '50%',
-    transform: 'translateX(-50%)',
+    ...CAPTION_BAND,
     display: 'flex',
     flexWrap: 'wrap',
+    alignItems: 'center',
+    alignContent: 'center',
     justifyContent: 'center',
     gap: 8,
-    maxWidth: '90%',
+    lineHeight: 1.1, // two lines of 72px fit the 175px band; keep groups to one
   }}>
     {words.map((word, i) => {
       const isActive = i === currentWordIndex;
@@ -91,10 +106,13 @@ const WordByWordCaption: React.FC<{
         <span key={i} style={{
           fontFamily: 'Montserrat, sans-serif',
           fontWeight: 800,
-          fontSize: 36,
+          fontSize: 72,
           textTransform: 'uppercase',
           color: isActive ? '#FFDD00' : isPast ? '#FFFFFF' : 'rgba(255,255,255,0.3)',
           transform: isActive ? 'scale(1.2)' : 'scale(1)',
+          // Stroke, not just a shadow: footage behind brainrot captions is busy.
+          WebkitTextStroke: '6px #000',
+          paintOrder: 'stroke fill',
           textShadow: isActive
             ? '0 0 20px rgba(255,221,0,0.5), 2px 2px 0 #000'
             : '2px 2px 0 #000',
@@ -218,6 +236,7 @@ SFX: Impact on every scene transition
 - [ ] Script has genuine substance (ethical test: plain text is still worth reading)
 - [ ] Hook captures in first 3 seconds (pattern interrupt, not just text)
 - [ ] Word-by-word captions present and synced
+- [ ] 9:16 layout gate meets the pass criteria in content-engine SKILL.md "Vertical Layout Gate": `python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video video.mp4 --expect-captions`
 - [ ] Sound effect on every scene transition
 - [ ] No static shot longer than 4 seconds
 - [ ] Total duration 20-60 seconds

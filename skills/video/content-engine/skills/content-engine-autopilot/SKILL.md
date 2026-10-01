@@ -230,6 +230,12 @@ Batch mode processes a list of prompts from a JSONL file or a campaign brief. It
 }
 ```
 
+With `"aspect_ratio": "9:16"`, write the framing into each prompt: eyes about 40% from the
+top, subject centred, clear of the lower-right quarter. Run each generated clip through
+the layout gate before it goes further
+(`python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video <clip>`;
+see the content-engine-cinema "Framing for 9:16" section and `references/vertical-layout.md`).
+
 ### Running a Batch
 
 ```bash

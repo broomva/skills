@@ -5,6 +5,28 @@ import { type ManifestData, manifestSchema } from "./hooks/useManifest";
 const FPS = 24;
 const WIDTH = 1920;
 const HEIGHT = 1080;
+/** 9:16 for Reels / TikTok / Shorts; overlays follow layout/vertical-9x16.json. */
+const REEL_WIDTH = 1080;
+const REEL_HEIGHT = 1920;
+
+const DEFAULT_PROPS: ManifestData = {
+  title: "Content Engine Video",
+  brand: null,
+  generated: new Date().toISOString(),
+  backend: "veo-3.0",
+  shots: [],
+  brandDna: null,
+  captions: null,
+};
+
+const calculateMetadata = async ({ props }: { props: ManifestData }) => {
+  if (props.shots && props.shots.length > 0) {
+    return {
+      durationInFrames: calculateDuration(props),
+    };
+  }
+  return {};
+};
 
 /**
  * Default duration when no manifest is provided (10 seconds).
@@ -46,23 +68,19 @@ export const RemotionRoot: React.FC = () => {
         width={WIDTH}
         height={HEIGHT}
         schema={manifestSchema}
-        calculateMetadata={async ({ props }) => {
-          if (props.shots && props.shots.length > 0) {
-            return {
-              durationInFrames: calculateDuration(props as ManifestData),
-            };
-          }
-          return {};
-        }}
-        defaultProps={{
-          title: "Content Engine Video",
-          brand: null,
-          generated: new Date().toISOString(),
-          backend: "veo-3.0",
-          shots: [],
-          brandDna: null,
-          captions: null,
-        }}
+        calculateMetadata={calculateMetadata}
+        defaultProps={DEFAULT_PROPS}
+      />
+      <Composition
+        id="ContentEngineReel"
+        component={ContentEngineVideo}
+        durationInFrames={DEFAULT_DURATION_FRAMES}
+        fps={FPS}
+        width={REEL_WIDTH}
+        height={REEL_HEIGHT}
+        schema={manifestSchema}
+        calculateMetadata={calculateMetadata}
+        defaultProps={DEFAULT_PROPS}
       />
     </>
   );

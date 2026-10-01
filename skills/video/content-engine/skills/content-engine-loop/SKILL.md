@@ -40,6 +40,13 @@ CREATE
   └─ /content-engine-autopilot → Avatar video (Higgsfield), motion card (Weavy)
   │
   ▼
+LAYOUT GATE (every 9:16 asset; ../../references/vertical-layout.md)
+  └─ python3 ~/.claude/skills/content-engine/scripts/check_vertical_layout.py video <asset>
+       [--expect-captions] [--expect-title]    ← only for text the asset burned in
+     → meets the pass criteria in content-engine SKILL.md "Vertical Layout Gate";
+       the report path goes in the campaign
+  │
+  ▼
 DISTRIBUTE
   ├─ Blog: broomva.tech via PR merge + Vercel deploy
   ├─ X: thread via xurl or X MCP
@@ -261,7 +268,7 @@ Week N: Identity is now a distilled, performance-proven visual language
 |---------|---------|-------------|
 | `/loop plan` | "plan a campaign", "content calendar" | Create or update a campaign with content pieces and schedule |
 | `/loop create` | "create campaign content", "generate batch" | Run compounded skill pipeline for all planned pieces |
-| `/loop distribute` | "publish campaign", "distribute content" | Deploy content per calendar schedule |
+| `/loop distribute` | "publish campaign", "distribute content" | Deploy content per calendar schedule. A 9:16 asset is not distributed without a layout report that meets the gate's pass criteria. Paid placements are checked with `--profile meta-ads-9x16`, which the Remotion reel layout fails (its captions sit below 65%) |
 | `/loop measure` | "track performance", "check metrics" | Pull and aggregate metrics for active campaigns |
 | `/loop refine` | "refine identity", "what worked" | Run feedback synthesis and update compiled identity |
 | `/loop status` | "campaign status", "loop status" | Show active campaigns, scheduled posts, recent metrics |
