@@ -1,7 +1,8 @@
 # Context-ablation pilot, 2026-09-29/30
 
 How to run and extend the harness: README.md § "Does the context we inject earn its
-tokens?". This file records the pilot.
+tokens?". This file records the pilot. The sonnet-5 and opus-5-5 runs are in
+[RESULTS-sonnet-opus.md](RESULTS-sonnet-opus.md).
 
 **v3 is the result.** It ran on the code at 8e8b5fa, after two review rounds; its
 calibration started a minute after that commit. The commits after it change

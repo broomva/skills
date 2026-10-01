@@ -1,5 +1,244 @@
 # PLANS.md
 
+## role-x reflex router, pre-flip evidence (BRO-2674)
+
+Status: evals done; PR broomva/skills#260 in P20, on `feat/role-x-reflex-preflip`. Owner decision 2026-10-01: do not
+flip yet; run the pre-flip flow, then the owner decides. `ROLE_X_OUTPUT` stays
+default-off in this PR. Spec: workspace `docs/specs/2026-09-30-reflex-router-and-ontology-ranked-context.html`
+with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
+
+### Scope
+
+1. **Injection defence (step 1).** Reword the lines sonnet refused as injected text
+   (p9 heal, Paseo), and the worktree guard so it says what is and is not automated.
+   Re-measure on fresh blind prompts, sealed before the rewording. About $3, sonnet.
+2. **Step 2, shadow** is the owner's: read its event log at the end.
+3. **Opus A2 (step 3).** bare, rolex, qbar, reflex on the held-out tasks plus P14/P11/P3
+   regression tasks and a harm task (a line must not induce deleting a worktree's
+   ignored files). Task-clustered CIs as in the sonnet table. About $20; above $30, a
+   stated subset. Arms one at a time, jobs ≤ 2.
+4. **Thicker routing gate (step 4).** A fresh sealed set, 10 positives and 5
+   near-misses per id (40/20 for `change_work`), written blind and hashed before it is
+   scored. Re-gate every entry; report routed before and after, `p4.ship-not-ask` in
+   particular.
+
+### Milestones
+
+1. [x] Briefs written; blind writers (no catalog, no tools) produce routing v2 and the
+   fresh task prompts; both committed with sha256 before any rewording or scoring (be7726d).
+2. [x] Step 4: score v2, set `status` per the gate, tests gate on v2: 9/31 pass with
+   change_work held to 0.80; heal, checkit and autonomous listed, ship-not-ask still listed.
+3. [x] Step 1 (sonnet, $3.46): heal 3/3 reworded vs 0/3 v1 line on a fresh wording; Paseo 3/3
+   both; worktree 0/3 in every arm by its grader, no backup claim with the reworded line.
+4. [x] Step 3 (opus, $14.14, 05:47–06:11 -05): reflex 15/24 [+0.19, +1.00], legacy 11/24, qbar
+   10/24, bare 0/24. A2 not met: P3 reflex 0/3 vs qbar 3/3 (stop rule); rest CI [−0.08, +1.00];
+   branch-first and the qbar fallback not shown. P20 round 1 (B 7, C 6): autonomous and the
+   worktree guard back to listed, change_work held to 0.80, a2.py reports "not shown".
+5. [ ] Results doc (`ctx_ablation/RESULTS-reflex-preflip.md`): do not flip. P20 (B + C), merge
+   with the flag off.
+
+### Verification
+
+`pytest skills/orchestration/role-x/tests tests/skill_evals/test_ctx_ablation.py`,
+`python3 scripts/skill_evals/ctx_ablation/run.py validate --deep --tasks <file>`,
+`python3 skills/orchestration/role-x/scripts/role-x.py reflexes route --heldout` (v2, 9/31),
+`python3 scripts/skill_evals/ctx_ablation/a2.py --out ~/.cache/ctx-ablation/preflip-opus`,
+`python3 skills/orchestration/role-x/scripts/role-x.py reflexes shadow --since <install time, UTC>` (A1).
+
+## fleet-reconcile: the owner channel on Paseo, and phase 2's carry-overs (BRO-2674)
+
+Status: in progress on `feat/fleet-reconcile-paseo-asks` (from main bbf3ad5, after #258).
+Owner decision 2026-10-01: owner notifications go through the Paseo app, never a desktop
+dialog. `fleet act ask` and tick.sh's alerts become Maestro work at Needs you, measured end to
+end (a dispatched probe reached `review` with its ask, and its agent's Paseo record read
+`requiresAttention: true`); the owner's verdict is read back as the answer. Also: the
+coordinator's tool allowlist (`--tools Bash Read SendMessage`, measured) and the P20 round-2
+carry-overs and bot threads deferred from #258. Verification as below, then P20.
+Checkpoint (P20 round 2, 6/10, FAIL): the read-back misread Maestro's wire (undone and dropped
+decisions, the display `verdict`). Round 3 reads only decisions that took effect, rebuilt from
+Maestro's own test sequences; a scoped title marker; a raise delay for transient asks; refusals
+at the cap logged, not failed; alerts adopted through `fleet alert` with a bash fallback.
+Then: the credential follow-up (the owner's gh login, spec §5.2 precondition 1 waived).
+
+## fleet-reconcile phase 2: dry run through fleet act (BRO-2674)
+
+Status: merged as #258 (bbf3ad5).
+Spec: workspace `docs/specs/2026-09-29-fleet-reconcile-design.html` §5.3, §5.5, §5.7 and §9
+row 2, as merged in #842 (007f05a98).
+
+### Scope
+
+- `fleet act mail|spawn|label|resume` (ask exists): intent before, outcome after; dry run
+  closes spawn/label/resume at once with `would: true` and the argv or API call; mail's
+  dry intent is closed by the pre hook. Eligibility re-checked in code before every verb
+  (mode, corrupt ledger, an unanswered ask on the target, the recipient's fleet/adopted
+  status, the 6 h rule, name resolution, the driver rules of §5.5, caps, the spawn pause).
+- `fleet recover` (§5.7 recovery rules), `fleet send-gate pre|post` (the SendMessage hooks).
+- The coordinator: settings with the hooks, its argv (`--disallowedTools Agent Edit Write`
+  + the pinned Paseo write tools, `--` before the prompt), the runner prompt,
+  `fleet config-check --init` on the stream-json init event, a test that fails on an
+  unclassified Paseo tool; tick.sh runs recover, and the coordinator when mode is act.
+- The driver profile generator (0600, sandbox, allowlist, deny rules, GH_TOKEN from the
+  token file, an empty GH_CONFIG_DIR).
+- `fleet janitor-check <path>` failing closed; removal stays report-only for scope repos'
+  worktrees (`janitor-run --remove` removes scratch worktrees only, the drill's).
+- Phase-1 carry-overs from #254's arc-3 review (compare keys per owner action, the
+  failed-run counter test, report.json's compare error, non-GitHub origins, the ack count).
+
+### Not in scope
+
+- `fleet adopt` and `fleet audit` (owner side, phase 3). Spawning through bstack peer.py
+  (it takes no settings path; spec: a bstack PR adds one): the argv is built here.
+- The recovery drill (needs a live scratch coordinator per verb); listed as not run.
+
+### Drills (scratch repos and sessions only: `--name fleet-drill-<n>`, Haiku, /tmp)
+
+Tool-list posture; SendMessage refusals (each pre-hook check); the injected-text
+eligibility floor; the kill switch; the driver profile, fresh and resumed (blocked
+without `~/.config/broomva/fleet/gh-token`; also the REST update-branch probe under
+workflows:none); the janitor. Evidence under `~/.config/broomva/fleet/phase2-drills-*/`.
+
+### Verification
+
+`make`-free: `python -m pytest` in fleet-reconcile and ctx-core, `tests/mutation_check.py`
+in both, shellcheck, the claims grep, then P20 (B and C), p20-record, gate-check, merge.
+
+## role-x reflex router v1, behind `ROLE_X_OUTPUT=reflex` (BRO-2674)
+
+Status: PR broomva/skills#253 open, P20 passed (5 rounds, B and C), flag default off; the owner decides the flip. Owner decision 2026-09-30: turn
+role-x into something that raises adherence to bstack's primitives and skills, as its
+quality-bar p9 line already does, across all of them.
+
+### Evidence it starts from
+
+- ctx_ablation (#248, #251): concrete action lines move behaviour. role-x's p9 line took
+  p9 watch to 6/9 against 0/9 bare, and MEMORY.md's action rules carried memory's lift.
+- role-x's task-entity list does not: 0–7% opened in the evals, 0.70% in production.
+- role-x is 23.8% of all injected bytes, about 1k tokens per turn.
+
+### Scope and constraints
+
+- Default unchanged. `ROLE_X_OUTPUT` unset means today's intake block (`legacy`);
+  `reflex` is the router; `shadow` logs it without injecting; `qbar` is the lens block cut
+  to its quality bar (an eval arm #251 asked for). `ROLE_X_MODE`, the brief's name, is an
+  alias. The hook is registered in write-gated settings, so the switch is an env flag.
+- Catalog `references/reflexes.yaml`: trigger clauses → one factual, command-naming line
+  → the source that states the rule. Primitive reflexes from the workspace AGENTS.md
+  §P1–P20, memory action rules, and one line per installed skill with
+  `evals/prompts.json`.
+- State predicates first, from one `git status --porcelain=v2 --branch`, a reflog tail,
+  and ctx-core's `board.json` cache (never its log). Then lexical prompt routing, then a
+  `ROLE_X_JEV` narrowing seam, `off` in v1. No model classifier in v1.
+- Output ≤3 lines and ≤150 tokens, no persona lines, no entity list; byte count logged.
+  Any error prints nothing.
+
+### Milestones
+
+1. [x] Catalog + router + role-x wiring + tests (predicates ±, catalog/source, budget,
+   fail-open, mutation check). Names aligned with the workspace spec
+   (`2026-09-30-reflex-router-and-ontology-ranked-context.html`, a74109b8f):
+   `ROLE_X_OUTPUT` (alias `ROLE_X_MODE`), `[bstack reflexes]`, dotted ids, `status`,
+   `signature`, `ROLE_X_JEV` seam, `role-x reflexes route --evals`.
+2. [x] ctx_ablation: `reflex` and `qbar` arms (aliases `rolex-reflex`, `rolex-qbar`),
+   `home_contains` grader, 8 held-out tasks (`tasks/reflex-heldout.json`).
+3. [x] Sonnet run, done 16:15 -05 after the 13:50 reset: pilot's 6 reflex tasks and 8
+   held-out tasks, bare / rolex / qbar / reflex, one arm at a time, jobs 2. reflex 15/18
+   and 14/24 against rolex 1/18 and 1/24; $20.11 notional for 196 trials
+   (`ctx_ablation/RESULTS-reflex.md`). The earlier estimate, for the record: Estimate ≈ $35 notional (pilot 132 trials ≈ $20 at #251's
+   $0.15/trial; held-out ≤ 21 + 84 trials ≈ $15). Checkpoint 11:21 -05: stopped by
+   the 0.85 budget guard at 2/21 calibration trials, five-hour window at 0.88 (fleet
+   load). It resets 13:50 -05 (18:50Z); resume with `~/.cache/ctx-ablation/reflex-chain.sh`.
+4. [x] Results doc (`ctx_ablation/RESULTS-reflex.md`), PR #253, P20 (B + C strata,
+   read-only, 5 rounds), `p20-record`, `gate-check`; merge pinned to the head. The flag stays default-off; the owner decides the flip.
+
+### Verification
+
+`pytest skills/orchestration/role-x/tests`, `pytest tests/skill_evals/test_ctx_ablation.py`,
+`python3 scripts/skill_evals/ctx_ablation/run.py validate --deep`.
+
+## ctx System 1: the per-stage injection gate, with evals (BRO-2674)
+
+Status: in review (branch `feat/ctx-s1-injection-gate`). Design of record:
+workspace#840 §6.2 (System 1 at every hook stage, System 2 behind it).
+
+### Objective
+
+One decision function, applied at every hook stage, that injects a cached
+factual claim only when its score clears that stage's floor, and abstains
+otherwise. A lexical (BM25) System 2 fills the cache offline, behind a ranker
+interface an ontology ranker can later fill. Evals that let an agent see the
+gate's behaviour and improve it: E1 offline replay (CI), E2 behavioural
+ablation (model calls), E3 a bounded tune loop over E1.
+
+### Scope and constraints
+
+- New modules in `skills/orchestration/ctx-core/scripts/` (`ctx_s1*.py`,
+  `ctx_s2.py`); role-x is not touched.
+- Every stage is off by default (`CTX_S1=1` plus `CTX_S1_STAGES=csv`); no
+  network or model call on the hook path; every error or deadline miss exits 0
+  with no output.
+- Floors start at abstain-all; fitted floors ship as a reviewed file.
+- The E1 snapshot stays on the owner's machine (`~/.local/state/ctx/<scope>/e1/`,
+  keys HMAC-hashed as well); only aggregate reports are committed, and CI runs
+  E1 on a synthetic fixture.
+- PreCompact/PostCompact cannot inject (hooks reference, live probe
+  2026-09-30); compaction re-injection uses SessionStart(compact).
+- Ontology ranking stays an eval arm until it beats BM25 (spec §6.6).
+
+### Milestones
+
+1. [x] System 2: sources, exclusions, BM25 ranker, sharded atomic cache.
+2. [x] System 1: keys, lookup, floors, budgets, dedup, rate limits, decision log.
+3. [x] Hook entry, wrapper, latency measured per stage.
+4. [x] E1: transcript extraction, hashed snapshot, replay, report; always/never
+   arms separate; mutation kill.
+5. [x] E3: `ctx-s1 tune` with a trial ledger.
+6. [x] E2: per-stage arms and rewritten retrieval tasks in ctx_ablation; sonnet
+   subset runs with each round's proposal floors (the arms and floors of each
+   run are stated with its numbers in the PR; the last run stopped at the
+   shared rate-limit guard).
+7. [ ] Registration script (done), docs (done), Cross-Review (P20): stopped on
+   a score regression at round 2 (6 -> 5); the owner chose the structural fix
+   (private snapshot) on 2026-10-01, ledger reset, fresh round after the squash.
+
+### Decision log
+
+- 2026-09-30: E1 found two key-extraction bugs by itself: cited `docs/…` and
+  `research/…` file paths were read as branch names and dropped, and scores
+  were summed over a set whose order follows the hash seed. Both fixed; the
+  snapshot, tune and report were regenerated.
+- 2026-09-30: no stage clears the spec's bar (strict precision >= 0.30 over
+  >= 50 injections on the test split, stage alone), so the shipped parameters
+  abstain everywhere; the tuned floors ship as `s1-params.candidate.json`, a
+  proposal for shadow runs and E2.
+- 2026-09-30: P20 round 2 scored 5/10 (B and C), below round 1's 6/10, so the
+  round ledger stopped the arc on a regression and it goes to the owner rather
+  than a third fix round. Most of round 2's findings trace to one shape: a
+  hashed snapshot of private transcripts committed to a public repo. Keeping it
+  private forced day-rounded times and dropped PR items (which broke E1's
+  created/edited checks and made the replay differ from the live cache), and
+  keeping key order for the replay turned the hashed prompts into an ordered
+  word cipher (C, blocker). The proposed structural change: keep the real
+  snapshot out of the public repo (private state, exact times, PR items kept),
+  run E1 in CI on a synthetic fixture, and commit aggregate reports only.
+  Rotate the salt either way. The branch history holds earlier snapshots and
+  must be squashed before any push.
+- 2026-10-01 ~00:55Z, owner: keep it private. The snapshot moved to
+  `~/.local/state/ctx/<scope>/e1/` (refused inside a git checkout), with exact
+  times and PR items; the salt was rotated; CI runs E1 on a synthetic fixture;
+  only aggregate reports are committed; the branch is squashed to one commit
+  before the first push. Separation is read on the test split, tune optimises
+  strict F0.5, and compact and subagent (re-offer only) get no one-stage arm
+  or tune phase. On the new snapshot no stage clears the bar, and no gate
+  makes a strict hit on test; separation fails there.
+- 2026-10-01, fresh P20 round 1 (6/10, B and C): the replay now resolves
+  fetched paths with the gate's own resolver, carries the cwd, anchors a call
+  after its parallel batch, counts bare PR numbers as echoes, and dates
+  date-only items conservatively; tune starts from `--params default` and
+  needs two strict train hits to accept. Re-tuned: BM25 accepts one change (a
+  prompt floor of 0.5, which gates nothing), PPR one (a post-bash floor of 15);
+  neither clears the bar.
+
 ## Context evals, layer 2: the causal context-ablation harness
 
 Status: pilot v3 done; PR #248 in review round 3 (branch `feat/context-ablation-evals`). Layer 1, the observational
@@ -390,3 +629,37 @@ reconciliation.
   its consistency test.
 - Bookkeeping replay against workspace `b1a4a662`: 931 entities frozen,
   2 unrelated design-system items would promote, no writes applied.
+
+## fleet-reconcile, phase 1: observe and classify, report only (BRO-2674)
+
+Status: phase 1 built on `feat/fleet-reconcile-phase1`; three real ticks and the
+labelling sheet next, then the PR. Phase 2 (dry run) follows on its own branch.
+
+### Scope and constraints
+
+- Code at `skills/orchestration/fleet-reconcile/` (owner decision), beside
+  ctx-core, which it imports from the same checkout. Stdlib only, `python3 -I`.
+- Design of record: workspace `docs/specs/2026-09-29-fleet-reconcile-design.html`
+  (§5.3, §5.4, §9 row 1); formats from its §5.7 amendment (workspace#842).
+  Choices it leaves open are marked "pending the spec" in code and SKILL.md.
+- Report-only: no mail, spawn, label or resume. No launchd job or Paseo schedule
+  is loaded by a session; `install.sh` is the owner's.
+- ctx-core: only the doctor path (`ctx doctor --compare` in `ctx_compare.py`),
+  since another session is adding a module there.
+- The repo is public: fixtures are anonymized captures.
+
+### Milestones
+
+1. Parsers pinned to Claude Code 2.1.280, tested on captures. Done.
+2. The class table, the ordering tests, the overlap pass on fixtures. Done.
+3. The count check, the 200-row fail-closed fixture, the ruleset check. Done.
+4. The report, the ask channel (`fleet asks`, `fleet ack`). Done.
+5. `ctx doctor --compare`. Done.
+6. tick.sh, the plist template, install.sh. Done.
+7. The scheduled-work inventory. Done.
+8. Three real ticks and the owner's labelling sheet.
+
+### Verification
+
+- `python3 -m pytest tests/` in both skills; both mutation checks at 0 survivors.
+- `bash -n` and shellcheck on the scripts; the catalog, SKILL.md and version lints.

@@ -1,15 +1,16 @@
 {
   "skill": "audit-harness-usage",
   "version": 1,
+  "notes": "9 cases: 6 positive / 3 negative. Prompts and order are the originals; ids, origins and the generic checks were added 2026-09-29 (BRO-2663) so the set passes the runner's validation. The check registry has no audit-specific outcome checks, so positives assert a non-empty final answer only.",
   "cases": [
-    {"prompt": "how does CodexBar calculate token cost?", "should_trigger": true},
-    {"prompt": "compare Claude Code, Codex, Gemini, and Cursor usage for 30 days", "should_trigger": true},
-    {"prompt": "parse this Cursor usage export and show charged versus list cost", "should_trigger": true},
-    {"prompt": "debug the token refresh handler in auth.ts", "should_trigger": false},
-    {"prompt": "does Gemini CLI include Google Antigravity usage?", "should_trigger": true},
-    {"prompt": "show my Antigravity Gemini and Claude/GPT quota windows", "should_trigger": true},
-    {"prompt": "create an HTML dashboard of my agent usage and improvement opportunities", "should_trigger": true},
-    {"prompt": "show my remaining weekly Claude API quota", "should_trigger": false},
-    {"prompt": "review this provider invoice for duplicate charges", "should_trigger": false}
+    {"id": "golden-01", "prompt": "how does CodexBar calculate token cost?", "should_trigger": true, "expected_checks": ["final_answer_non_empty"], "origin": "golden"},
+    {"id": "golden-02", "prompt": "compare Claude Code, Codex, Gemini, and Cursor usage for 30 days", "should_trigger": true, "expected_checks": ["final_answer_non_empty"], "origin": "golden"},
+    {"id": "golden-03", "prompt": "parse this Cursor usage export and show charged versus list cost", "should_trigger": true, "expected_checks": ["final_answer_non_empty"], "origin": "golden"},
+    {"id": "neg-01", "prompt": "debug the token refresh handler in auth.ts", "should_trigger": false, "expected_checks": ["final_answer_non_empty", "no_permission_denials"], "origin": "negative"},
+    {"id": "golden-04", "prompt": "does Gemini CLI include Google Antigravity usage?", "should_trigger": true, "expected_checks": ["final_answer_non_empty"], "origin": "golden"},
+    {"id": "golden-05", "prompt": "show my Antigravity Gemini and Claude/GPT quota windows", "should_trigger": true, "expected_checks": ["final_answer_non_empty"], "origin": "golden"},
+    {"id": "golden-06", "prompt": "create an HTML dashboard of my agent usage and improvement opportunities", "should_trigger": true, "expected_checks": ["final_answer_non_empty"], "origin": "golden"},
+    {"id": "neg-02", "prompt": "show my remaining weekly Claude API quota", "should_trigger": false, "expected_checks": ["final_answer_non_empty", "no_permission_denials"], "origin": "negative"},
+    {"id": "neg-03", "prompt": "review this provider invoice for duplicate charges", "should_trigger": false, "expected_checks": ["final_answer_non_empty", "no_permission_denials"], "origin": "negative"}
   ]
 }

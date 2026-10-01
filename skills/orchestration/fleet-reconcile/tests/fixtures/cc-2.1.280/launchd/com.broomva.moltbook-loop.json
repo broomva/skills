@@ -1,0 +1,11 @@
+{
+ "Label": "com.broomva.moltbook-loop",
+ "StartInterval": 900,
+ "RunAtLoad": true,
+ "StandardOutPath": "/tmp/broomva-moltbook-loop.log",
+ "StandardErrorPath": "/tmp/broomva-moltbook-loop.log",
+ "ProgramArguments": [
+  "/bin/bash",
+  "{HOME}/job.sh"
+ ]
+}

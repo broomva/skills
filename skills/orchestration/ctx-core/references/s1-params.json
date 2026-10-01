@@ -1,0 +1,22 @@
+{
+ "channel_weights": {
+  "b": 0.5,
+  "d": 0.4,
+  "f": 0.6,
+  "p": 1.0,
+  "pr": 1.0,
+  "s": 1.0,
+  "t": 1.0,
+  "w": 1.0
+ },
+ "note": "E3 tune, spec bar applied: a stage below strict precision 0.30 over 50 injections on the test split has no floor",
+ "snapshot": "b4f8d7973941f46bc1388cf5b123fe6126d50e2d4e472fa2c7b0736762e9b3dc",
+ "stages": {
+  "prompt": {
+   "floor": null
+  }
+ },
+ "tuned_from": "default",
+ "type_weights": {},
+ "version": "bar-b4f8d797-s1-t84"
+}

@@ -20,12 +20,15 @@ import argparse
 import errno
 import fnmatch
 import hashlib
+import importlib.util
 import json
+import math
 import os
 import re
 import stat
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -394,6 +397,26 @@ def cmd_index(args: argparse.Namespace) -> int:
 
 CARVE_OUT_MIN_WORDS = 3  # prompts shorter than this skip the intake reflex
 
+# v0.7.0 — what `intake` injects, read per intake from the hook's environment
+# (BRO-2674; design of record: workspace docs/specs/2026-09-30-reflex-router-and-
+# ontology-ranked-context.html §5). The hook is registered in write-gated settings,
+# so the switch is an env flag, and unset keeps today's block. An unknown value
+# also means "legacy".
+#   legacy   the lens block (default, unchanged)
+#   reflex   scripts/reflex_router.py: ≤3 factual lines from references/reflexes.yaml,
+#            chosen from git/board state and the prompt. No persona, no entities.
+#   shadow   the lens block, plus the router's record logged and not injected
+#            (the spec's A1 phase: a base rate before anything changes)
+#   qbar     the lens block cut to its quality bar: no context files, no persona
+#            constraints, no task-relevant entities (a context-ablation arm, #251)
+# ROLE_X_MODE is read as an alias when ROLE_X_OUTPUT is unset (the name the owner's
+# brief used; the spec's is ROLE_X_OUTPUT).
+OUTPUT_ENV = "ROLE_X_OUTPUT"
+OUTPUT_ENV_ALIAS = "ROLE_X_MODE"
+OUTPUT_DEFAULT = "legacy"
+OUTPUTS = frozenset({"legacy", "reflex", "shadow", "qbar"})
+REFLEX_ROUTER_PY = Path(__file__).resolve().parent / "reflex_router.py"
+
 # v0.4.1 — "domain-rich" heuristic. When intake routes to _meta-only AND the
 # prompt is non-trivial AND has enough distinct meaningful tokens, surface a
 # one-line nudge: "consider role-x init <slug>". Closes the gap where agents
@@ -751,10 +774,13 @@ def _emit_event(
     selection: dict,
     events_path: Path = EVENTS_PATH,
     config: dict | None = None,
+    render: str | None = None,
+    output_ignored: str | None = None,
 ) -> None:
     """Append an intake event to events.jsonl (best-effort, never raises).
 
     v0.4.0: includes optional `prompt_sanitized` field when config opts in.
+    v0.7.0: `render` records a non-default block (``qbar``).
     """
     try:
         events_path.parent.mkdir(parents=True, exist_ok=True)
@@ -770,6 +796,10 @@ def _emit_event(
             "mode_escalation_reason": selection["mode_escalation_reason"],
             "signals_matched": selection["signals_matched"],
         }
+        if render:
+            event["render"] = render
+        if output_ignored:
+            event["output_ignored"] = output_ignored
         cfg = config if config is not None else _load_config()
         sanitized = _sanitize_prompt(prompt, cfg)
         if sanitized is not None:
@@ -1298,8 +1328,15 @@ def _clean_claim_or_none(claim: str) -> str | None:
     return c
 
 
+INTAKE_CLOSING_LINE = (
+    "Agents: apply the quality_bar entries as the P14 enumeration template for this response. "
+    "If mode != augment, surface the rewrite/decompose proposal to the user before proceeding."
+)
+
+
 def _format_intake_context(
-    selection: dict, workspace: Path | None = None, config: dict | None = None
+    selection: dict, workspace: Path | None = None, config: dict | None = None,
+    quality_bar_only: bool = False,
 ) -> str:
     """Render the selection as a markdown block that becomes agent context.
 
@@ -1309,6 +1346,8 @@ def _format_intake_context(
     ``config`` (trusted user config; loaded on demand when ``None``) enables
     persona federation (F3′): persona-scoped entities resolve from the per-user
     store instead of the workspace, when active for this workspace.
+    ``quality_bar_only`` (``ROLE_X_OUTPUT=qbar``) keeps the header, lens,
+    mode, quality bar and closing line, and drops everything else.
     """
     cfg = config if config is not None else _load_config()
     persona_fed = _resolve_persona_federation(workspace, cfg)
@@ -1372,6 +1411,8 @@ def _format_intake_context(
         lines.append("Quality bar (P14 dep-chain template):")
         for entry in quality_bar:
             lines.append(f"  - {entry}")
+    if quality_bar_only:
+        return "\n".join([*lines, "", INTAKE_CLOSING_LINE])
     if context_files:
         lines.append("Context files to surface:")
         for f in context_files:
@@ -1453,10 +1494,7 @@ def _format_intake_context(
             if sig and text:
                 lines.append(f"  - if {sig!r}: {text}")
     lines.append("")
-    lines.append(
-        "Agents: apply the quality_bar entries as the P14 enumeration template for this response. "
-        "If mode != augment, surface the rewrite/decompose proposal to the user before proceeding."
-    )
+    lines.append(INTAKE_CLOSING_LINE)
     # v0.4.1: when no domain lens fired AND the prompt is domain-rich enough
     # to plausibly merit one, surface a one-line "consider authoring a lens"
     # nudge. Pure suggestion — agent decides whether to act on it.
@@ -1517,6 +1555,7 @@ def cmd_intake(args: argparse.Namespace) -> int:
     # Resolve prompt + session id from flags first, then stdin fallback.
     prompt = args.prompt
     session_id = args.session or os.environ.get("CLAUDE_SESSION_ID") or "unknown"
+    payload_cwd = None
 
     if prompt is None:
         try:
@@ -1528,8 +1567,24 @@ def cmd_intake(args: argparse.Namespace) -> int:
                 payload = json.loads(stdin_data)
                 prompt = payload.get("prompt") or payload.get("user_prompt") or ""
                 session_id = payload.get("session_id") or session_id
+                payload_cwd = payload.get("cwd")
             except json.JSONDecodeError:
                 prompt = stdin_data  # accept raw prompt text as fallback
+            except AttributeError:
+                prompt = ""  # valid JSON that is not an object: nothing to route
+
+    if not isinstance(prompt, str):
+        prompt = ""  # a payload whose prompt is not a string has nothing to route
+    output = _intake_output()
+    if output in ("reflex", "shadow"):
+        # Its own carve-out: only an empty prompt. "Merge 1857" is two words and
+        # exactly the moment a reflex exists for; the triggers decide, not a count.
+        text = _intake_reflex(prompt, str(session_id), args.workspace, payload_cwd,
+                              shadow=output == "shadow")
+        if output == "reflex":
+            if text:
+                print(text)
+            return 0
 
     if not prompt or len(prompt.split()) < CARVE_OUT_MIN_WORDS:
         return 0  # carve-out: trivial/short prompts skip intake
@@ -1545,9 +1600,95 @@ def cmd_intake(args: argparse.Namespace) -> int:
     selection["prompt"] = prompt  # v0.5.0 — enables task-entity catalog scan
     # v0.4.1: attach authoring nudge for _meta-only domain-rich prompts
     selection["authoring_nudge"] = _build_authoring_nudge(prompt, selection)
-    _emit_event(session_id, prompt, selection, config=config)
-    print(_format_intake_context(selection, workspace=workspace, config=config))
+    quality_bar_only = output == "qbar"
+    raw_output = _output_raw()
+    _emit_event(session_id, prompt, selection, config=config,
+                render="qbar" if quality_bar_only else None,
+                # a value that is not one of OUTPUTS falls back to legacy; say so
+                output_ignored=raw_output[:32] if raw_output and raw_output not in OUTPUTS else None)
+    print(_format_intake_context(selection, workspace=workspace, config=config,
+                                 quality_bar_only=quality_bar_only))
     return 0
+
+
+def _output_raw() -> str:
+    # Unset or empty ROLE_X_OUTPUT falls through to the alias.
+    return (os.environ.get(OUTPUT_ENV) or os.environ.get(OUTPUT_ENV_ALIAS) or "").strip().lower()
+
+
+def _intake_output() -> str:
+    raw = _output_raw()
+    return raw if raw in OUTPUTS else OUTPUT_DEFAULT
+
+
+def _load_reflex_router():
+    """scripts/reflex_router.py by file path: under ``python -I`` this directory is
+    not on sys.path, and it must not be put there (a planted module would win)."""
+    name = "role_x_reflex_router"
+    spec = importlib.util.spec_from_file_location(name, REFLEX_ROUTER_PY)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {REFLEX_ROUTER_PY}")
+    module = importlib.util.module_from_spec(spec)
+    # dataclasses resolve string annotations through sys.modules[__module__].
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return module
+
+
+def _intake_reflex(prompt: str | None, session_id: str, workspace_arg: str | None,
+                   payload_cwd: object, shadow: bool = False) -> str:
+    """Route the prompt, log the reflex record, and return the block to print.
+    Fail-open: any error in the router returns "", and the record carries the error
+    class, so a broken router is visible in telemetry instead of passing for "no
+    reflex applied". In shadow the block is logged as would-be and never returned."""
+    if not isinstance(prompt, str) or not prompt.strip():
+        return ""
+    text, meta = "", {}
+    # workspace#850 (A1, M4): the gated time is the router's own, from before its
+    # import to just before its event write; ``ms`` (catalog load to render) leaves
+    # the import out.
+    started = time.monotonic()
+    try:
+        if isinstance(payload_cwd, str) and payload_cwd and Path(payload_cwd).is_dir():
+            cwd = Path(payload_cwd).resolve()
+        elif workspace_arg:
+            cwd = Path(workspace_arg).resolve()
+        else:
+            cwd = _find_workspace_root()
+        text, meta = _load_reflex_router().run(prompt, cwd, session_id)
+    except Exception as exc:  # noqa: BLE001 — a hook error must mean no output
+        text, meta = "", {"error": type(exc).__name__}
+    if shadow:
+        meta = {**meta, "shadow": True}
+    meta = {**meta, "router_ms": round((time.monotonic() - started) * 1000, 1)}
+    _emit_reflex_event(session_id, prompt, meta)
+    return "" if shadow else text
+
+
+def _emit_reflex_event(session_id: str, prompt: str, meta: dict,
+                       events_path: Path | None = None) -> None:
+    """One ``event: reflex`` row per routed prompt (best-effort, never raises).
+    ``bytes`` is the injected block's size; the readers behind ``suggest`` and
+    ``coverage`` count lens intakes only and skip these rows."""
+    try:
+        path = events_path or EVENTS_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        event = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": "reflex",
+            "session": session_id,
+            "prompt_digest": "sha256:" + hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "prompt_word_count": len(prompt.split()),
+            **meta,
+        }
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError):
+        pass  # never fail the hook
 
 
 ### suggest subcommand (v0.4.0 — observability for organic lens growth) ###
@@ -1584,6 +1725,8 @@ def _read_events_since(events_path: Path, since_seconds: int) -> list[dict]:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(event, dict) or event.get("event", "intake") != "intake":
+                continue  # reflex-mode rows (v0.7.0) are not lens intakes
             ts = event.get("ts", "")
             try:
                 event_time = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
@@ -2061,6 +2204,413 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _eval_cases(path: Path) -> list[tuple[str, bool]]:
+    """(prompt, should_trigger) pairs from a skill's evals/prompts.json, in either
+    schema: ``cases`` (id/prompt/should_trigger), or the older
+    ``should_trigger`` / ``should_not_trigger`` string lists."""
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(doc.get("cases"), list):
+        return [(c["prompt"], bool(c["should_trigger"])) for c in doc["cases"]
+                if isinstance(c, dict) and isinstance(c.get("prompt"), str)]
+    return ([(p, True) for p in doc.get("should_trigger") or [] if isinstance(p, str)]
+            + [(p, False) for p in doc.get("should_not_trigger") or [] if isinstance(p, str)])
+
+
+HELDOUT_ROUTING_REL = Path("evals") / "reflex-routing-heldout-v2.json"
+#: Spec §5.5 M3: an entry routes only at held-out recall >= 0.60 with <= 0.20 false fires.
+M3_MIN_RECALL = 0.60
+M3_MAX_FALSE_FIRE = 0.20
+#: Spec §5.3 / M3: I1 rests on ``change_work``, so its bar is recall >= 0.80 on >= 40 positives.
+CHANGE_WORK_MIN_RECALL = 0.80
+CHANGE_WORK_MIN_POSITIVES = 40
+
+
+def _prompt_side_fires(router, catalog, key: str, prompt: str) -> bool:
+    """M3 scores the classifier, not the state: a catalog entry fires when any of
+    its clauses that asks the prompt anything matches it, whatever its state gate;
+    a route name (``change_work``) fires when one of its regexes matches."""
+    text = router.normalize_prompt(prompt)
+    if key in catalog.routes:
+        return any(p.search(text) for p in catalog.routes[key])
+    entry = next((r for r in catalog.reflexes if r.id == key), None)
+    return entry is not None and any(c.has_prompt and c.prompt_matches(text) for c in entry.clauses)
+
+
+def _score(router, catalog, key: str, cases: list[tuple[str, bool]]) -> dict:
+    hit = miss = false_fire = clean = 0
+    missed: list[str] = []
+    fired_near: list[str] = []
+    for prompt, want in cases:
+        got = _prompt_side_fires(router, catalog, key, prompt)
+        if want and got:
+            hit += 1
+        elif want:
+            miss += 1
+            missed.append(prompt[:80])
+        elif got:
+            false_fire += 1
+            fired_near.append(prompt[:80])
+        else:
+            clean += 1
+    recall = round(hit / (hit + miss), 2) if hit + miss else None
+    ff = round(false_fire / (false_fire + clean), 2) if false_fire + clean else None
+    min_recall = CHANGE_WORK_MIN_RECALL if key == "change_work" else M3_MIN_RECALL
+    enough = hit + miss >= CHANGE_WORK_MIN_POSITIVES if key == "change_work" else True
+    # compared unrounded: 35/44 = 0.795 must not round up past a 0.80 bar
+    passes = (enough and hit + miss > 0 and hit / (hit + miss) >= min_recall
+              and false_fire + clean > 0 and false_fire / (false_fire + clean) <= M3_MAX_FALSE_FIRE)
+    return {"id": key, "should_route": hit + miss, "hits": hit, "recall": recall,
+            "near_miss": false_fire + clean, "false_fires": false_fire,
+            "false_fire": ff, "passes_m3": passes, "missed": missed, "fired_on_near_miss": fired_near}
+
+
+#: A1's bars (spec §10, #850): router time p99 <= 100 ms; p9 on ship turns, Wilson lower bound >= 0.70.
+A1_MAX_P99_MS = 100.0
+A1_MIN_P9_LOWER = 0.70
+A1_MIN_SHIP_TURNS = 9
+#: A shell segment that ships: ``git push`` or ``gh pr create``, behind env assignments,
+#: ``timeout N``, ``env``, ``nohup``, ``command``, a subshell or ``$(``, and git's global
+#: ``-C dir`` / ``-c key=value``. A push that deletes, dry-runs or pushes ``:ref`` is not.
+_SHIP_SEGMENT_RE = re.compile(
+    r"^\s*(?:[$({`]+\s*)*(?:(?:\w+=\S*|if|then|do|else|time|sudo|nohup|command|env(?:\s+-u\s+\S+)*|timeout\s+\S+)\s+)*"
+    r"(?:git(?:\s+(?:-[Cc]\s+\S+|--no-pager|--\S+=\S+))*\s+push\b(?![^\n]*\s(?:-d|--delete\S*|--dry-run|--help|-n|:\S+)(?:\s|$))"
+    r"|gh\s+pr\s+create\b(?![^\n]*\s(?:--dry-run|--help)(?:\s|$)))")
+
+
+def _ships(command: str) -> bool:
+    """Does a Bash command run ``git push`` or ``gh pr create``? Each ``&&``/``;``/``|``/
+    ``$(`` segment is checked from its start, and a heredoc's body is not read, so a
+    script that only mentions ``git push`` is not a ship. Quotes are not parsed: a quoted
+    ``a && gh pr create`` counts (a known over-count)."""
+    kept, mark = [], None
+    for line in command.split("\n"):
+        if mark is not None:
+            if line.strip() == mark:
+                mark = None
+            continue
+        m = re.search(r"(?<!<)<<(?!<)-?\s*['\"]?([A-Za-z_]\w*)['\"]?", line)
+        kept.append(line)
+        if m:
+            mark = m.group(1)
+    return any(_SHIP_SEGMENT_RE.match(seg) for seg in re.split(r"&&|\|\||;|\||\$\(|`|\n", "\n".join(kept)))
+
+
+def _wilson_lower(k: int, n: int, z: float = 1.96) -> float | None:
+    if n <= 0:
+        return None
+    p = k / n
+    centre = p + z * z / (2 * n)
+    margin = z * ((p * (1 - p) + z * z / (4 * n)) / n) ** 0.5
+    return (centre - margin) / (1 + z * z / n)
+
+
+def _p50(xs: list[float]) -> float | None:
+    return sorted(xs)[(len(xs) - 1) // 2] if xs else None
+
+
+def _p99(xs: list[float]) -> float | None:
+    """Nearest-rank p99: the smallest value with at least 99% of the values at or below it."""
+    if not xs:
+        return None
+    xs = sorted(xs)
+    return xs[max(0, math.ceil(0.99 * len(xs)) - 1)]
+
+
+def _transcript_facts(transcript: Path) -> tuple[list[float], list[dict]]:
+    """From one Claude Code transcript: the times of Bash commands that ran ``git push`` or
+    ``gh pr create``, and the role-x UserPromptSubmit hook runs Claude Code recorded
+    (``{"ts", "duration_ms", "timed_out", "cancelled"}``; a run that printed nothing is not
+    recorded). Lines copied from a forked session's history (``forkedFrom``) are skipped:
+    they belong to the session they were copied from."""
+    ships: list[float] = []
+    runs: list[dict] = []
+    try:
+        lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return ships, runs
+    for line in lines:
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(ev, dict) or ev.get("forkedFrom"):
+            continue
+        att = ev.get("attachment")
+        if (isinstance(att, dict) and att.get("hookEvent") == "UserPromptSubmit"
+                and "role-x" in str(att.get("command") or "")):
+            try:
+                dur = float(att.get("durationMs"))
+            except (TypeError, ValueError):
+                dur = None
+            runs.append({"ts": _ts(ev.get("timestamp")),
+                         "duration_ms": dur if dur is not None and math.isfinite(dur) else None,
+                         "cancelled": att.get("type") == "hook_cancelled", "timed_out": bool(att.get("timedOut")),
+                         "failed": att.get("type") != "hook_success"})
+            continue
+        msg = ev.get("message") if isinstance(ev.get("message"), dict) else {}
+        content = msg.get("content")
+        if ev.get("type") == "assistant" and isinstance(content, list):
+            t = _ts(ev.get("timestamp"))
+            if t is not None and any(isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Bash"
+                                     and _ships(str((b.get("input") or {}).get("command") or "")) for b in content):
+                ships.append(t)
+    return ships, runs
+
+
+def _ts(value: object) -> float | None:
+    try:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (ValueError, TypeError):
+        return None
+
+
+def _since(spec: str) -> float:
+    """``--since``: a duration (``3d``, ``72h``, ``90m``) back from now, or an ISO date or
+    time (``2026-10-03``, ``2026-10-03T14:00Z``) to start an A1 window at an install. A
+    time without a zone is UTC. Anything else is an error, never a silent default."""
+    if re.fullmatch(r"\d+[smhdw]", spec.strip()):
+        return datetime.now(timezone.utc).timestamp() - _parse_duration(spec.strip())
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?", spec.strip()):
+        try:
+            at = datetime.fromisoformat(spec.strip().replace("Z", "+00:00"))
+        except ValueError:
+            at = None
+        if at is not None:
+            return (at if at.tzinfo else at.replace(tzinfo=timezone.utc)).timestamp()
+    raise ValueError(f"--since {spec!r}: give a duration like 3d or an ISO date/time like 2026-10-03T14:00Z")
+
+
+
+
+
+def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
+    """``role-x reflexes shadow``: spec A1's instrument (workspace#850) over the
+    ``ROLE_X_OUTPUT=shadow`` rows in events.jsonl. Exit 0 met, 1 not met, 3 not shown,
+    2 for a ``--since`` it cannot read, 4 when the reader itself failed.
+
+    * Router time is ``router_ms`` (from before the router's import to just before the
+      row is written), gated at p99 <= 100 ms. The hook's own wall clock, timeouts and
+      interrupts are reported from the transcripts' hook records, not gated (spec Q10).
+    * A turn starts at a shadow row (shadow writes one per non-empty prompt, once the
+      router has run) or at a prompt that left none: a hook run Claude Code recorded as
+      failed or timed out with no row, or a row of the hook outside shadow mode. A ship
+      (a Bash ``git push`` or ``gh pr create`` in the session transcript, timestamped,
+      fork copies skipped) belongs to the latest turn start at or before it. A ship turn
+      is a row in the window whose turn shipped; the p9 bar is a Wilson lower bound >=
+      0.70 on how many of those selected p9. A turn that shipped from a prompt with no
+      row, or before the session's first row, is unsure: met needs the worst case (each a
+      p9 miss) at >= 0.70, not met is the best case (each a hit) below it, and between
+      them or under 9 turns the bar is not shown.
+    * Every row in the window counts for errors and router time. Rows from a session with
+      no transcript (probes, tests, a moved config dir) have no turns to read and are
+      reported. A line that cannot be read after the window opens keeps it from met.
+      Pushes inside subagents (other files) are not counted. A push typed while an
+      injected prompt (a task notification) is mid-loop is credited to that prompt's row,
+      which leans the bar toward not met."""
+    events = Path(args.events) if args.events else EVENTS_PATH
+    projects = Path(args.projects) if args.projects else Path.home() / ".claude" / "projects"
+    try:
+        since = _since(args.since)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    try:
+        return _shadow_report(events, projects, since, args)
+    except Exception as exc:  # noqa: BLE001 — a crash must not read as "not met"
+        print(f"error: the reader failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 4
+
+
+def _shadow_report(events: Path, projects: Path, since: float, args: argparse.Namespace) -> int:
+    rows_by_session: dict[str, list[dict]] = {}
+    others_by_session: dict[str, list[float]] = {}  # the same hook's rows outside shadow mode
+    malformed = 0
+    opened = False  # the log is append-only: once a line inside the window is seen, it is open
+    text = events.read_text(encoding="utf-8", errors="replace") if events.is_file() else ""
+    for line in text.splitlines():
+        try:
+            r = json.loads(line)
+        except ValueError:
+            r = None
+        if not isinstance(r, dict):
+            if opened and "reflex" in line:
+                malformed += 1  # torn or edited inside the window: it may hide an error
+            continue
+        rts = _ts(r.get("ts"))
+        if rts is not None and rts >= since:
+            opened = True
+        if r.get("event") in ("intake", "reflex") and not r.get("shadow") and rts is not None:
+            others_by_session.setdefault(str(r.get("session") or ""), []).append(rts)
+        if r.get("event") != "reflex" or not r.get("shadow"):
+            continue
+        if rts is None:
+            malformed += opened
+            continue
+        rows_by_session.setdefault(str(r.get("session") or ""), []).append({**r, "_ts": rts})
+    rows: list[dict] = []
+    no_transcript = ship = with_p9 = orphan = 0
+    hook_ms: list[float] = []
+    timeouts = interrupts = 0
+    for sid, srows in rows_by_session.items():
+        found = sorted(projects.glob(f"*/{sid}.jsonl")) if sid else []
+        window = [r for r in srows if r["_ts"] >= since]
+        if not window:
+            continue
+        rows += window  # every row counts for errors and router time, transcript or not
+        if not found:
+            no_transcript += len(window)
+            continue
+        ships, runs = [], []
+        for f in found:
+            sh, ru = _transcript_facts(f)
+            ships += sh
+            runs += ru
+        for h in runs:
+            if h["ts"] is not None and h["ts"] >= since:
+                if h["duration_ms"] is not None:
+                    hook_ms.append(h["duration_ms"])
+                timeouts += h["cancelled"] and h["timed_out"]
+                interrupts += h["cancelled"] and not h["timed_out"]
+        # Turn starts: the shadow rows, and prompts that left no shadow row (a hook run
+        # that failed or timed out before writing one, or a row of the hook outside shadow
+        # mode). A push in a turn of the second kind is unsure, never another prompt's.
+        row_ts = [r["_ts"] for r in srows]
+        bounds = [(r["_ts"], r) for r in srows]
+        for h in runs:
+            if h["failed"] and h["ts"] is not None:
+                start = h["ts"] - (h["duration_ms"] or 15000.0) / 1000.0
+                if not any(start - 2 <= x <= h["ts"] + 2 for x in row_ts):
+                    bounds.append((start, None))
+        for x in others_by_session.get(sid, []):
+            if not any(abs(x - y) <= 30 for y in row_ts):
+                bounds.append((x, None))
+        bounds.sort(key=lambda b: b[0])
+        shipped: set[int] = set()
+        unsure: set[int] = set()
+        for t in ships:
+            if t < since:
+                continue
+            owner = None
+            for k, (bts, _r) in enumerate(bounds):
+                if bts <= t:
+                    owner = k
+                else:
+                    break
+            if owner is None or bounds[owner][1] is None:
+                unsure.add(-1 if owner is None else owner)  # one unsure turn per start, not per push
+            else:
+                shipped.add(owner)
+        orphan += len(unsure)
+        for k in shipped:
+            if bounds[k][0] >= since:  # a turn that began before the window is not in it
+                ship += 1
+                with_p9 += "p9.watch-after-push" in (bounds[k][1].get("selected") or [])
+    timed = [float(r["router_ms"]) for r in rows
+             if isinstance(r.get("router_ms"), (int, float)) and math.isfinite(float(r["router_ms"]))]
+    errors: dict[str, int] = {}
+    selected: dict[str, int] = {}
+    for r in rows:
+        if r.get("error"):
+            errors[str(r["error"])] = errors.get(str(r["error"]), 0) + 1
+        for rid in r.get("selected") or []:
+            selected[rid] = selected.get(rid, 0) + 1
+    p99 = _p99(timed)
+    lower = _wilson_lower(with_p9, ship)
+    worst = _wilson_lower(with_p9, ship + orphan)
+    best = _wilson_lower(with_p9 + orphan, ship + orphan)
+    time_shown = bool(rows) and len(timed) == len(rows)
+    enough = ship + orphan >= A1_MIN_SHIP_TURNS
+    failed = (bool(errors) or (time_shown and p99 > A1_MAX_P99_MS)
+              or (enough and best is not None and best < A1_MIN_P9_LOWER))
+    met = time_shown and not malformed and enough and worst is not None and worst >= A1_MIN_P9_LOWER
+    verdict = "not met" if failed else "met" if met else "not shown"
+    report = {
+        "rows": len(rows), "sessions": len({str(r.get("session")) for r in rows}),
+        "malformed_lines_in_window": malformed,
+        "router_ms": {"rows_timed": len(timed), "p99": p99, "max": max(timed) if timed else None},
+        "hook_wall_ms_reported_not_gated": {"runs_recorded": len(hook_ms), "p50": _p50(hook_ms), "p99": _p99(hook_ms),
+                                            "max": max(hook_ms) if hook_ms else None,
+                                            "timeouts": timeouts, "interrupts": interrupts},
+        "errors": errors,
+        "ship_turns": {"turns": ship, "p9_selected": with_p9, "unsure_turns": orphan,
+                       "wilson_lower": None if lower is None else round(lower, 4),
+                       "wilson_lower_worst_case": None if worst is None else round(worst, 4),
+                       "wilson_lower_best_case": None if best is None else round(best, 4),
+
+                       "rows_in_sessions_without_a_transcript": no_transcript},
+        "selected": dict(sorted(selected.items(), key=lambda kv: -kv[1])),
+        "verdict": verdict,
+        "not_covered_here": "M3 (change_work and branch-first): role-x reflexes route --heldout --heldout-file <file>",
+    }
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        st, hw = report["ship_turns"], report["hook_wall_ms_reported_not_gated"]
+        print(f"shadow rows {report['rows']} in {report['sessions']} sessions since {args.since}; "
+              f"unreadable lines in the window {malformed}; rows in sessions without a transcript {no_transcript}")
+        print(f"router_ms p99 {p99} over {len(timed)} of {len(rows)} rows (bar {A1_MAX_P99_MS:g}); hook wall clock "
+              f"p50 {hw['p50']} p99 {hw['p99']} max {hw['max']} over {hw['runs_recorded']} recorded runs, "
+              f"{timeouts} timeouts, {interrupts} interrupts (reported only)")
+        print(f"error rows {sum(errors.values())} {errors or ''}")
+        print(f"ship turns {ship}: p9 selected {with_p9}, Wilson lower {st['wilson_lower']}, worst case "
+              f"{st['wilson_lower_worst_case']}, best case {st['wilson_lower_best_case']} (bar {A1_MIN_P9_LOWER}, "
+              f"at least {A1_MIN_SHIP_TURNS} turns); unsure ship turns (no row for their prompt) {orphan}")
+        print(f"selected per id {report['selected']}")
+        print(f"A1 router bars: {verdict} ({report['not_covered_here']})")
+    return {"met": 0, "not met": 1}.get(verdict, 3)
+
+
+def cmd_reflexes(args: argparse.Namespace) -> int:
+    """``role-x reflexes route``: the router offline. ``--prompt`` shows one prompt's
+    block. ``--evals`` scores each skill entry on its skill's evals/prompts.json
+    (in-sample: the phrases were copied from the same descriptions). ``--heldout``
+    scores every id in the sealed held-out file (spec §5.5 M3). Neither logs."""
+    router = _load_reflex_router()
+    catalog = router.load_catalog(Path(args.catalog) if args.catalog else None)
+    root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[4]
+    if not (args.evals or args.heldout):
+        cwd = Path(args.cwd).resolve() if args.cwd else Path.cwd()
+        text, meta = router.run(args.prompt or "", cwd, "offline", catalog=catalog, count=False)
+        print(json.dumps(meta, indent=2) if args.json else (text or "(no reflex applies)"))
+        return 0
+    rows = []
+    if args.heldout:
+        path = Path(args.heldout_file) if args.heldout_file else Path(__file__).resolve().parents[1] / HELDOUT_ROUTING_REL
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        for key, c in doc["cases"].items():
+            cases = [(p, True) for p in c.get("positive", [])] + [(p, False) for p in c.get("near_miss", [])]
+            rows.append(_score(router, catalog, key, cases))
+    else:
+        for r in catalog.reflexes:
+            if r.routing and r.skill:
+                path = root / r.routing
+                if path.is_file():
+                    rows.append({**_score(router, catalog, r.id, _eval_cases(path)), "skill": r.skill})
+                else:
+                    rows.append({"id": r.id, "skill": r.skill, "missing": str(r.routing)})
+    scored = [r for r in rows if "missing" not in r]
+    tp = sum(r["hits"] for r in scored)  # raw counts, never rebuilt from rounded rates
+    npos = sum(r["should_route"] for r in scored)
+    fp = sum(r["false_fires"] for r in scored)
+    nneg = sum(r["near_miss"] for r in scored)
+    suite = {"should_route": npos, "recall": round(tp / npos, 2) if npos else None, "near_miss": nneg,
+             "false_fire": round(fp / nneg, 2) if nneg else None,
+             "ids_passing_m3": sum(r["passes_m3"] for r in scored), "ids": len(scored)}
+    if args.json:
+        print(json.dumps({"suite": suite, "ids": rows}, indent=2))
+        return 0
+    print("| id | should-route | recall | near-miss | false fire | M3 |\n|---|---|---|---|---|---|")
+    for row in rows:
+        if "missing" in row:
+            print(f"| {row['id']} | eval set missing: {row['missing']} | | | | |")
+            continue
+        print(f"| {row['id']} | {row['should_route']} | {row['recall']} | {row['near_miss']} | "
+              f"{row['false_fire']} | {'pass' if row['passes_m3'] else 'fail'} |")
+    print(f"| **suite** | {suite['should_route']} | {suite['recall']} | {suite['near_miss']} | "
+          f"{suite['false_fire']} | {suite['ids_passing_m3']}/{suite['ids']} |")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="role-x",
@@ -2100,6 +2650,32 @@ def build_parser() -> argparse.ArgumentParser:
         help="session id (default: $CLAUDE_SESSION_ID env or 'unknown')",
     )
     p_intake.set_defaults(func=cmd_intake)
+
+    p_reflexes = sub.add_parser(
+        "reflexes",
+        help="the reflex router offline (ROLE_X_OUTPUT=reflex): one prompt, or every skill's evals",
+    )
+    rsub = p_reflexes.add_subparsers(dest="reflexes_cmd", required=True)
+    p_route = rsub.add_parser("route", help="route a prompt, or with --evals score routing per skill")
+    p_route.add_argument("--prompt", default=None, help="the prompt to route")
+    p_route.add_argument("--cwd", default=None, help="where state is read (default: cwd)")
+    p_route.add_argument("--evals", action="store_true",
+                         help="score each skill entry on its skill's evals/prompts.json (in-sample)")
+    p_route.add_argument("--heldout", action="store_true",
+                         help="score every id on the sealed held-out routing cases (spec M3)")
+    p_route.add_argument("--heldout-file", default=None,
+                         help="held-out cases (default: evals/reflex-routing-heldout-v2.json, the gate)")
+    p_route.add_argument("--root", default=None, help="repo root holding skills/ (default: this repo)")
+    p_route.add_argument("--catalog", default=None, help="catalog path (default: references/reflexes.yaml)")
+    p_route.add_argument("--json", action="store_true")
+    p_route.set_defaults(func=cmd_reflexes)
+    p_shadow = rsub.add_parser("shadow", help="spec A1's instrument over ROLE_X_OUTPUT=shadow rows")
+    p_shadow.add_argument("--since", required=True,
+                          help="window start: a duration (3d) or the install time in UTC (2026-10-03T14:00Z)")
+    p_shadow.add_argument("--events", default=None, help="events.jsonl (default: ~/.config/broomva/role/events.jsonl)")
+    p_shadow.add_argument("--projects", default=None, help="transcripts root (default: ~/.claude/projects)")
+    p_shadow.add_argument("--json", action="store_true")
+    p_shadow.set_defaults(func=cmd_reflexes_shadow)
 
     p_coverage = sub.add_parser(
         "coverage",

@@ -1,0 +1,6 @@
+gui/501/com.broomva.kg-compile = {
+	state = not running
+	runs = 2
+	last exit code = 0
+	spawn type = daemon (3)
+}

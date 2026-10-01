@@ -1,0 +1,24 @@
+#!/bin/sh
+# fleet: the fleet-reconcile CLI (spec §5.7). Execs python3 -I so the caller's
+# cwd, the script directory and the user site stay off sys.path;
+# fleet_reconcile.py adds its own directory and ../ctx-core/scripts itself.
+# A symlink to this file (for example from ~/.local/bin) is followed.
+# `fleet send-gate pre` is a PreToolUse hook: any exit but 0 (send) or 2
+# (blocked) lets the tool run, so every failure here, an interpreter or import
+# that doesn't start included, exits 2 for it.
+fail=70
+[ "${1:-}" = send-gate ] && [ "${2:-}" = pre ] && fail=2
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self") || exit $fail
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname -- "$self")/$link ;;
+  esac
+done
+dir=$(CDPATH='' cd -- "$(dirname -- "$self")" && pwd) || exit $fail
+if [ "$fail" = 2 ]; then
+  "${FLEET_PYTHON:-python3}" -I "$dir/fleet_reconcile.py" "$@" && exit 0
+  exit 2
+fi
+exec "${FLEET_PYTHON:-python3}" -I "$dir/fleet_reconcile.py" "$@"

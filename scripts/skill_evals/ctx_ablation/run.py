@@ -97,6 +97,10 @@ def calibration_dir(out: Path) -> Path:
 
 
 CALIBRATION_RETAINED = "retained"
+#: A harm task (class ``harm``) passes when no line induced a harmful action, so a
+#: bare pass is expected, not vacuous: it is kept whatever bare scored, and never
+#: pooled into an arm's lift (``report``).
+CALIBRATION_HARM = "harm"
 CALIBRATION_VACUOUS = "vacuous"
 CALIBRATION_NO_SIGNAL = "no-signal"
 
@@ -171,23 +175,78 @@ def session_start_offline(case: fx.Case, settings: dict[str, Any]) -> str:
     return "\n".join(o for o in out if o)
 
 
-def rolex_logged_prompt(layout: fx.CaseLayout, prompt: str) -> bool:
-    """Did the LIVE intake hook run on this prompt? role-x logs every intake with the
-    prompt's sha256 under the (jailed) HOME, just before it prints the block."""
+def s1_prompt_offline(case: fx.Case, settings: dict[str, Any], prompt: str) -> str:
+    """What the System 1 prompt stage injects for *prompt*, for preflight only
+    (running it records a decision and session state in the case's store)."""
+    out = []
+    for group in settings.get("hooks", {}).get("UserPromptSubmit", []):
+        for hook in group.get("hooks", []):
+            if "ctx-s1-hook.sh" not in hook.get("command", ""):
+                continue
+            raw = run_hook_offline(hook["command"], {
+                "session_id": "ctxabl-preflight-s1", "hook_event_name": "UserPromptSubmit",
+                "prompt": prompt, "cwd": str(case.layout.workspace)}, case)
+            try:
+                out.append(json.loads(raw)["hookSpecificOutput"]["additionalContext"])
+            except (ValueError, KeyError, TypeError):
+                pass
+    return "\n".join(out)
+
+
+def _rolex_events(layout: fx.CaseLayout, prompt: str) -> list[dict[str, Any]]:
+    """role-x's log rows for *prompt* under the (jailed) HOME: it logs every intake
+    with the prompt's sha256, just before it prints the block."""
     path = layout.home / ".config" / "broomva" / "role" / "events.jsonl"
     digest = "sha256:" + hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return False
+        return []
+    out = []
     for line in lines:
         try:
             ev = json.loads(line)
         except ValueError:
             continue
-        if ev.get("prompt_digest") == digest and ev.get("session") != OFFLINE_SESSION:
-            return True
-    return False
+        if isinstance(ev, dict) and ev.get("prompt_digest") == digest:
+            out.append(ev)
+    return out
+
+
+def rolex_logged_prompt(layout: fx.CaseLayout, prompt: str) -> bool:
+    """Did the LIVE intake hook run on this prompt?"""
+    return any(ev.get("session") != OFFLINE_SESSION for ev in _rolex_events(layout, prompt))
+
+
+def _reflex_row(layout: fx.CaseLayout, prompt: str, live: bool) -> dict[str, Any] | None:
+    rows = [ev for ev in _rolex_events(layout, prompt)
+            if ev.get("event") == "reflex" and (ev.get("session") != OFFLINE_SESSION) == live]
+    return rows[-1] if rows else None
+
+
+def rolex_reflex_error(layout: fx.CaseLayout, prompt: str) -> str:
+    """The reflex router's error class from the OFFLINE run on this prompt, "" when
+    it routed cleanly, or "no log row" when it never ran. The router prints nothing
+    on an error, which would otherwise pass for "no reflex applies"."""
+    row = _reflex_row(layout, prompt, live=False)
+    if row is None:
+        return "no log row"
+    return str(row.get("error") or "")
+
+
+def rolex_reflex_live_problem(layout: fx.CaseLayout, prompt: str) -> str:
+    """"" when the LIVE hook logged a clean reflex row that selected what the offline
+    run selected (the recovered text is then what the model saw), else why not."""
+    live = _reflex_row(layout, prompt, live=True)
+    if live is None:
+        return "the live hook logged no reflex row for this prompt"
+    if live.get("error"):
+        return f"the live router failed: {live['error']}"
+    offline = _reflex_row(layout, prompt, live=False) or {}
+    if list(live.get("selected") or []) != list(offline.get("selected") or []):
+        return (f"live selected {live.get('selected')} but offline selected {offline.get('selected')}: "
+                "the recovered text is not what the model saw")
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +298,18 @@ def _outcome_for_injections(arm: arms_mod.Arm, case: fx.Case, t: Transcript, rol
     if not arm.ctx and ctx_seen:
         return m.LEAKED, "the board brief reached an arm without ctx"
     rolex_ran = rolex_logged_prompt(layout, prompt)
+    if arm.is_reflex:
+        # The router may rightly print nothing (no reflex applies), so its proof is
+        # the log: the offline run routed without error, and the live hook ran.
+        err = rolex_reflex_error(layout, prompt)
+        if err:
+            return m.INJECTION_MISSING, f"the reflex router did not route this prompt offline: {err}"
+        live_problem = rolex_reflex_live_problem(layout, prompt)
+        if live_problem:
+            return m.INJECTION_MISSING, live_problem
+        if arm.memory and not (layout.memory_dir / "MEMORY.md").is_file():
+            return m.INJECTION_MISSING, "memory arm, but MEMORY.md is not at the cwd's memory key"
+        return "", ""
     # role-x itself declines some prompts (fewer than three words, among others),
     # and then prints nothing in production too. The offline run on the same prompt
     # and workspace says whether this is one; PyYAML being unreachable, the other
@@ -254,7 +325,89 @@ def _outcome_for_injections(arm: arms_mod.Arm, case: fx.Case, t: Transcript, rol
         return m.LEAKED, "role-x ran in an arm without it"
     if arm.memory and not (layout.memory_dir / "MEMORY.md").is_file():
         return m.INJECTION_MISSING, "memory arm, but MEMORY.md is not at the cwd's memory key"
+    decisions = s1_decisions(layout)
+    if not arm.s1_stages and decisions:
+        return m.LEAKED, "the System 1 gate ran in an arm without it"
+    ran = {d.get("stage") for d in decisions}
+    # The gate may abstain (that is its behaviour), but a stage whose hook event
+    # happened must have logged a decision, or the hook did not run.
+    for st in arm.s1_stages:
+        if st in ran:
+            continue
+        if st in ("session-start", "prompt"):
+            return m.INJECTION_MISSING, f"s1 arm, but the {st} hook logged no decision"
+        tools = S1_STAGE_TOOLS.get(st, ())
+        if any(tu.name in tools for tu in t.tool_uses()):
+            return m.INJECTION_MISSING, f"s1 arm, but the {st} hook logged no decision for its tool calls"
     return "", ""
+
+
+#: The tools whose calls fire each tool stage (the stage matchers), and the
+#: Agent tool, whose call starts a subagent.
+S1_STAGE_TOOLS = {st: tuple((m or "").split("|")) for st, (_, m) in arms_mod.S1_EVENTS.items()
+                  if st in ("pre-edit", "post-read", "post-bash")}
+S1_STAGE_TOOLS["subagent"] = ("Agent", "Task")
+
+
+def s1_decisions(layout: fx.CaseLayout) -> list[dict[str, Any]]:
+    """The System 1 decisions log of the case's scope (empty when none ran)."""
+    log = layout.ctx_store / "s1-decisions.jsonl"
+    out = []
+    try:
+        for line in log.read_text(encoding="utf-8").splitlines():
+            try:
+                out.append(json.loads(line))
+            except ValueError:
+                continue
+    except OSError:
+        return []
+    return out
+
+
+def s1_summary(case: fx.Case, t: Transcript) -> dict[str, Any]:
+    """What the gate injected in a trial, per stage, and whether the session then
+    opened an injected item's object itself (follow-through: a Read or shell read
+    of its file, `kg load`, `gh pr view`, after the injection; ctx_s1_replay's
+    notion of a use, the same as bstack's context_ledger)."""
+    decisions = [d for d in s1_decisions(case.layout) if d.get("mode") == "inject"]
+    by_stage: dict[str, dict[str, int]] = {}
+    injected: list[tuple[str, int]] = []   # (item id, index of the first tool call after it)
+    tool_uses = t.tool_uses()
+    index = {tu.id: i for i, tu in enumerate(tool_uses)}
+    for d in decisions:
+        b = by_stage.setdefault(d.get("stage") or "?", {"decisions": 0, "injections": 0, "claims": 0, "bytes": 0})
+        b["decisions"] += 1
+        if d.get("outcome") != "inject":
+            continue
+        b["injections"] += 1
+        b["claims"] += len(d.get("injected") or [])
+        b["bytes"] += int(d.get("bytes") or 0)
+        if d.get("stage") == "subagent":
+            continue  # its claims went into the subagent's context: the parent's calls do not follow them
+        after = index.get(d.get("tool_use_id"), -1) + 1 if d.get("tool_use_id") else 0
+        injected += [(iid, after) for iid in d.get("injected") or []]
+    objs = _case_item_objs(case) if injected else {}
+    from skill_evals.ctx_ablation import s1_follow
+    followed = s1_follow.followed(injected, objs, tool_uses, case.layout.workspace,
+                                  ran=[t.executed(tu) for tu in tool_uses])
+    mid = sum(b["bytes"] for st, b in by_stage.items() if st not in ("session-start", "compact", "prompt"))
+    # SessionStart output is already in the trial's session_start chars
+    not_counted = sum(b["bytes"] for st, b in by_stage.items() if st not in ("session-start", "compact"))
+    return {"by_stage": by_stage, "claims": len(injected), "bytes": sum(b["bytes"] for b in by_stage.values()),
+            "bytes_not_in_session_start": not_counted, "mid_turn_bytes": mid, "followed": followed,
+            "injected_ids": [i for i, _ in injected]}
+
+
+def _case_item_objs(case: fx.Case) -> dict[str, list[str]]:
+    items_dir = case.layout.ctx_store / "rank-current" / "items"
+    out: dict[str, list[str]] = {}
+    try:
+        for f in sorted(items_dir.iterdir()):
+            for rec in json.loads(f.read_text(encoding="utf-8")).values():
+                out[rec["id"]] = list(rec.get("obj") or [])
+    except (OSError, ValueError):
+        pass
+    return out
 
 
 def _guard_ran(case: fx.Case, t: Transcript) -> tuple[str, str]:
@@ -304,6 +457,10 @@ def run_trial(s: Settings, task: tasks_mod.Task, arm: arms_mod.Arm, trial: int) 
         (tdir / f"trial-{trial:02d}.jsonl").write_text(stdout, encoding="utf-8")
         t = Transcript.from_ndjson(stdout, exit_code=code, stderr=stderr, wall_ms=wall_ms)
         record.update(_measure(s, task, arm, case, t, rolex_text, wall_ms))
+        if arm.s1_stages:  # other arms register no System 1 hook: no section for them in the report
+            record["s1"] = s1_summary(case, t)
+            record["injected_chars"] = (record.get("injected_chars") or 0) + record["s1"]["bytes_not_in_session_start"]
+            record["injected_chars_by_source"]["s1"] = record["s1"]["bytes_not_in_session_start"]
         if not t.events or t.is_error:
             record.update(outcome=m.ERROR, detail=(t.error_reason or stderr or f"exit {code}")[:300])
             return record
@@ -661,10 +818,19 @@ def cmd_preflight(args) -> int:
                 case = fx.build_case(Path(tmp), task.fixture, corpus, python=rt.python, link_auth=False)
                 settings = fx.write_arm_settings(case, arm, rt)
                 rolex = rolex_offline(case, settings, task.prompt) if arm.rolex else ""
+                s1_prompt = s1_prompt_offline(case, settings, task.prompt) if "prompt" in arm.s1_stages else ""
                 session = session_start_offline(case, settings)
                 memory = ((case.layout.memory_dir / "MEMORY.md").read_text(encoding="utf-8")
                           if arm.memory and (case.layout.memory_dir / "MEMORY.md").is_file() else "")
-                if arm.rolex and arms_mod.ROLEX_MARKER not in rolex:
+                if arm.is_reflex:
+                    err = rolex_reflex_error(case.layout, task.prompt)
+                    if err:
+                        problems.append(f"{arm.id} x {task.id}: the reflex router failed ({err})")
+                    elif not rolex:
+                        notes.append(f"{arm.id} x {task.id}: no reflex applies, the router prints nothing")
+                    elif not rolex.startswith(arms_mod.ROLEX_REFLEX_MARKER):
+                        problems.append(f"{arm.id} x {task.id}: the router printed a block without its header")
+                elif arm.rolex and arms_mod.ROLEX_MARKER not in rolex:
                     if len(task.prompt.split()) < ROLEX_MIN_WORDS:
                         notes.append(f"{arm.id} x {task.id}: role-x declines a prompt under "
                                      f"{ROLEX_MIN_WORDS} words, as it does in production")
@@ -674,11 +840,12 @@ def cmd_preflight(args) -> int:
                     problems.append(f"{arm.id} x {task.id}: ctx printed no board brief")
                 if arm.memory and not memory:
                     problems.append(f"{arm.id} x {task.id}: no MEMORY.md at the memory key")
-                injected = "\n".join([rolex, session, memory])
+                injected = "\n".join([rolex, session, memory, s1_prompt])
                 in_context = [a["re"] for a in task.assertions if a.get("kind") == "answer"
                               and g._rx(fx.expand(a["re"], case.variables)).search(injected)]
                 table[task.id][arm.id] = {"rolex": len(rolex), "session_start": len(session),
-                                          "memory": len(memory), "answer_in_context": in_context}
+                                          "memory": len(memory), "s1_prompt": len(s1_prompt),
+                                          "answer_in_context": in_context}
     (out / "preflight.json").write_text(json.dumps({"tasks": table, "problems": problems, "notes": notes},
                                                    indent=2), encoding="utf-8")
     print("| task | " + " | ".join(a.id for a in arms) + " |\n|" + "---|" * (len(arms) + 1))
@@ -686,7 +853,7 @@ def cmd_preflight(args) -> int:
         cells = []
         for a in arms:
             c = row[a.id]
-            total = c["rolex"] + c["session_start"] + c["memory"]
+            total = c["rolex"] + c["session_start"] + c["memory"] + c.get("s1_prompt", 0)
             cells.append(f"{total:,}" + (" *" if c["answer_in_context"] else ""))
         print(f"| {tid} | " + " | ".join(cells) + " |")
     print("\n(injected characters per task x arm. * = the answer's fact is IN the injected text: "
@@ -747,7 +914,9 @@ def live_canary(args, arms: Sequence[arms_mod.Arm], rt: arms_mod.HookRuntime, co
             answer = Transcript.from_ndjson(proc.stdout).final_text()
             seen = {"memory": CANARY_MEMORY in answer, "ctx": CANARY_CTX in answer,
                     "rolex": CANARY_ROLEX in answer.lower()}
-            want = {"memory": arm.memory, "ctx": arm.ctx, "rolex": arm.rolex}
+            # The reflex router has nothing to say to the canary question, so its
+            # arm must see no quality bar: seeing one would be the lens block leaking.
+            want = {"memory": arm.memory, "ctx": arm.ctx, "rolex": arm.rolex and not arm.is_reflex}
             ok = seen == want
             failures += not ok
             print(f"  canary {arm.id:<11} saw {seen}  want {want}  {'ok' if ok else 'MISMATCH'}")
@@ -811,7 +980,7 @@ def _live_setup(args, out: Path) -> tuple[Settings | None, int]:
 
 
 def calibration_verdicts(bare_rows: Sequence[dict[str, Any]], task_ids: Sequence[str],
-                         trials: int) -> dict[str, dict[str, Any]]:
+                         trials: int, harm_ids: frozenset[str] = frozenset()) -> dict[str, dict[str, Any]]:
     """The control-absent rule, applied. A task is RETAINED only if the bare arm
     produced graded trials and passed none of them. One bare pass makes it VACUOUS:
     the grader can pass without the injection, so a pass under an injection says
@@ -825,6 +994,8 @@ def calibration_verdicts(bare_rows: Sequence[dict[str, Any]], task_ids: Sequence
         passes = sum(1 for r in graded if r["outcome"] == m.PASS)
         if len(graded) < min(2, trials):
             verdict = CALIBRATION_NO_SIGNAL
+        elif tid in harm_ids:
+            verdict = CALIBRATION_HARM
         elif passes:
             verdict = CALIBRATION_VACUOUS
         else:
@@ -863,7 +1034,8 @@ def cmd_calibrate(args) -> int:
                      max_utilization=args.max_utilization, retry_void=args.retry_void, seed=args.seed)
     info["real_trash_new_entries"] = trash.report(out)
     rows = [r for r in latest_by_key(load_results(s.out)).values() if r["arm"] == "bare"]
-    verdicts = calibration_verdicts(rows, [t.id for t in tasks], args.trials)
+    verdicts = calibration_verdicts(rows, [t.id for t in tasks], args.trials,
+                                    frozenset(t.id for t in tasks if t.cls == "harm"))
     changes = watch.changes()
     (out / "real-state-changes.json").write_text(json.dumps(changes, indent=2), encoding="utf-8")
     costs = [r["cost_usd"] for r in rows if isinstance(r.get("cost_usd"), (int, float))]
@@ -934,7 +1106,8 @@ def cmd_run(args) -> int:
                   "id could inherit a stale 'retained'; recalibrate.", file=sys.stderr)
             return EXIT_USAGE
         verdicts = cal.get("tasks") or {}
-        dropped = [t.id for t in tasks if (verdicts.get(t.id) or {}).get("verdict") != CALIBRATION_RETAINED]
+        dropped = [t.id for t in tasks if (verdicts.get(t.id) or {}).get("verdict")
+                   not in (CALIBRATION_RETAINED, CALIBRATION_HARM)]
         for tid in dropped:
             v = (verdicts.get(tid) or {}).get("verdict", "uncalibrated")
             print(f"[ctx-ablation] dropping {tid}: calibration verdict {v}", file=sys.stderr)
@@ -978,6 +1151,12 @@ def cmd_run(args) -> int:
     return cmd_report(args)
 
 
+def pooled_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The rows an arm's pooled pass rate and lift are computed from: every class but
+    ``harm``, whose task passes when nothing harmful happened, so bare passes it."""
+    return [r for r in rows if r.get("class") != "harm"]
+
+
 def cmd_report(args) -> int:
     out = Path(args.out)
     rows = list(latest_by_key(load_results(out)).values())
@@ -999,18 +1178,24 @@ def cmd_report(args) -> int:
     resolved = sorted({str(r.get("model_resolved")) for r in rows if r.get("model_resolved")})
     if len(resolved) > 1:
         memory_note += f"; WARNING: {len(resolved)} resolved model ids in one run ({', '.join(resolved)})"
-    order = [a for a in arms_mod.DEFAULT_ARMS if any(r["arm"] == a for r in rows)]
+    order = [a for a in arms_mod.DEFAULT_ARMS + arms_mod.S1_ARMS + ("ctx+s1",) if any(r["arm"] == a for r in rows)]
+    order = list(dict.fromkeys(order))
     order += sorted({r["arm"] for r in rows} - set(order))
     if getattr(args, "task", None):
         rows = [r for r in rows if r["task"] in set(args.task)]
-    table = m.aggregate(rows, order)
+    # Harm tasks pass when nothing harmful was induced, so bare passes them: pooled,
+    # they would dilute every arm's lift. They are in the per-task matrix only.
+    harm = sorted({r["task"] for r in rows if r.get("class") == "harm"})
+    table = m.aggregate(pooled_rows(rows), order)
     matrix = m.task_matrix(rows, order)
+    if harm:
+        memory_note += f"; harm tasks, per task only and not in the per-arm rows: {', '.join(harm)}"
     text = "\n\n".join([
         f"_{memory_note}._",
         "### Per arm\n\n" + m.format_table(table),
         "### Per task (passes / graded trials)\n\n" + m.format_matrix(matrix, order),
         "### Retrieval reflexes (share of graded trials)\n\n" + m.format_reflexes(table),
-    ])
+    ] + (["### System 1 arms\n\n" + m.format_s1(table)] if any(r.s1_claims is not None for r in table) else []))
     (out / "report.md").write_text(text + "\n", encoding="utf-8")
     (out / "report.json").write_text(json.dumps({"arms": [r.to_dict() for r in table], "matrix": matrix},
                                                 indent=2), encoding="utf-8")

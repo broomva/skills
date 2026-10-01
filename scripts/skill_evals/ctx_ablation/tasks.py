@@ -4,7 +4,7 @@ A task file is ``{"version": 1, "notes": ..., "tasks": [...]}``. One task::
 
     {
       "id": "reflex-list-agents-fleet-count",
-      "class": "reflex",                       # retrieval | reflex | coordination
+      "class": "reflex",                       # retrieval | reflex | coordination | harm
       "prompt": "how many paseo agents ...",   # a real turn, or the closest real one
       "origin": {"kind": "memory-feedback", "ref": "paseo-sidebar-lists-...md"},
       "targets": ["memory"],                   # the injection expected to carry what it needs
@@ -49,8 +49,8 @@ from skill_evals.ctx_ablation.stubs import guard as guard_mod
 from skill_evals.transcript import REFUSAL_MARKER, Transcript
 
 TASKS_VERSION = 1
-TASK_CLASSES = ("retrieval", "reflex", "coordination")
-TARGETS = ("memory", "rolex", "ctx")
+TASK_CLASSES = ("retrieval", "reflex", "coordination", "harm")
+TARGETS = ("memory", "rolex", "ctx", "s1")
 #: Where a task comes from: a real session turn, a memory feedback file, a
 #: knowledge-graph entity, a spec, or a role-x lens rule (its quality bar).
 ORIGIN_KINDS = ("real-trace", "memory-feedback", "kg-entity", "spec", "lens")
@@ -71,7 +71,10 @@ REQUIRED_PARAMS: dict[str, tuple[str, ...]] = {
     "stub": ("stub", "argv_re"),
     "no_stub": ("stub", "argv_re"),
     "every_stub": ("stub", "where_re", "must_re"),
+    "home_contains": ("text",),
     "any": ("of",),
+    "text_before_write": ("re",),
+    "bash_after_write": ("re", "path_re"),
 }
 
 
@@ -103,7 +106,7 @@ class Task:
 
 
 def _regex_fields(kind: str, spec: Mapping[str, Any]) -> list[tuple[str, str]]:
-    names = ["re", "not_re", "argv_re", "where_re", "must_re"]
+    names = ["re", "not_re", "argv_re", "where_re", "must_re", "path_re"]
     out = [(n, spec[n]) for n in names if isinstance(spec.get(n), str)]
     for key, want in (spec.get("input") or {}).items():
         if isinstance(want, dict) and isinstance(want.get("re"), str):
@@ -245,6 +248,9 @@ def synthetic_transcript(calls: list[dict[str, Any]], answer: str, cwd: str) -> 
     """A stream-json transcript with the shape the CLI emits, for grading offline."""
     events: list[dict[str, Any]] = [{"type": "system", "subtype": "init", "cwd": cwd, "skills": []}]
     for i, call in enumerate(calls):
+        if "say" in call:  # assistant text between tool calls (``text_before_write``)
+            events.append({"type": "assistant", "message": {"content": [{"type": "text", "text": call["say"]}]}})
+            continue
         tid = f"toolu_synthetic_{i:03d}"
         events.append({"type": "assistant", "message": {"content": [
             {"type": "tool_use", "id": tid, "name": call["name"], "input": call.get("input", {})}]}})
@@ -273,6 +279,9 @@ def _perform(case: Case, actions: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """
     calls: list[dict[str, Any]] = []
     for action in actions:
+        if "say" in action:
+            calls.append({"say": expand(str(action["say"]), case.variables)})
+            continue
         if "mcp" in action:
             calls.append(_call_mcp(case, action))
             continue

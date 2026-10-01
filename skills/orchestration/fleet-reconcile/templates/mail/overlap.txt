@@ -1,0 +1,3 @@
+fleet-reconcile: {name}, another session ({other}) has claimed the same paths in this repo: {paths}.
+Coordinate before editing them: check the board, and leave the paths to whichever session claimed them first.
+This is an automated note from the fleet's hourly tick; it is sent at most once every {hours} hours.

@@ -1,0 +1,170 @@
+{
+ "id": "sch00001",
+ "name": "schedule 1",
+ "prompt": "prompt (not read)",
+ "cadence": {
+  "type": "cron",
+  "expression": "0 * * * *",
+  "timezone": "America/Bogota"
+ },
+ "target": {
+  "type": "new-agent",
+  "config": {
+   "provider": "claude",
+   "cwd": "{HOME}/client/sri"
+  }
+ },
+ "status": "paused",
+ "createdAt": "2026-09-08T01:03:40.108Z",
+ "updatedAt": "2026-09-09T00:22:13.068Z",
+ "nextRunAt": null,
+ "lastRunAt": "2026-09-09T00:22:13.068Z",
+ "pausedAt": "2026-09-09T00:00:58.278Z",
+ "expiresAt": null,
+ "maxRuns": null,
+ "runs": [
+  {
+   "id": "run-1",
+   "scheduledFor": "2026-09-08T01:03:54.817Z",
+   "startedAt": "2026-09-08T01:03:54.817Z",
+   "endedAt": "2026-09-08T01:50:46.233Z",
+   "status": "succeeded",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-2",
+   "scheduledFor": "2026-09-08T02:00:00.000Z",
+   "startedAt": "2026-09-08T02:00:01.682Z",
+   "endedAt": "2026-09-08T02:14:24.300Z",
+   "status": "succeeded",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-3",
+   "scheduledFor": "2026-09-08T03:00:00.000Z",
+   "startedAt": "2026-09-08T03:00:01.710Z",
+   "endedAt": "2026-09-08T14:45:20.114Z",
+   "status": "failed",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-4",
+   "scheduledFor": "2026-09-08T15:00:00.000Z",
+   "startedAt": "2026-09-08T15:00:01.587Z",
+   "endedAt": "2026-09-08T15:07:53.407Z",
+   "status": "failed",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-5",
+   "scheduledFor": "2026-09-08T16:00:00.000Z",
+   "startedAt": "2026-09-08T16:00:01.485Z",
+   "endedAt": "2026-09-08T16:39:02.444Z",
+   "status": "succeeded",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-6",
+   "scheduledFor": "2026-09-08T17:00:00.000Z",
+   "startedAt": "2026-09-08T17:00:01.645Z",
+   "endedAt": "2026-09-08T17:06:46.416Z",
+   "status": "failed",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-7",
+   "scheduledFor": "2026-09-08T18:00:00.000Z",
+   "startedAt": "2026-09-08T18:00:14.504Z",
+   "endedAt": "2026-09-08T18:19:39.571Z",
+   "status": "failed",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-8",
+   "scheduledFor": "2026-09-08T19:00:00.000Z",
+   "startedAt": "2026-09-08T19:00:01.860Z",
+   "endedAt": "2026-09-08T19:10:59.730Z",
+   "status": "succeeded",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-9",
+   "scheduledFor": "2026-09-08T19:00:00.000Z",
+   "startedAt": "2026-09-08T19:00:00.860Z",
+   "endedAt": "2026-09-08T19:11:29.224Z",
+   "status": "succeeded",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-10",
+   "scheduledFor": "2026-09-08T21:00:00.000Z",
+   "startedAt": "2026-09-08T21:00:01.146Z",
+   "endedAt": "2026-09-08T21:20:15.101Z",
+   "status": "failed",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-11",
+   "scheduledFor": "2026-09-08T22:00:00.000Z",
+   "startedAt": "2026-09-08T22:00:01.952Z",
+   "endedAt": "2026-09-08T22:35:49.274Z",
+   "status": "succeeded",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-12",
+   "scheduledFor": "2026-09-08T23:00:00.000Z",
+   "startedAt": "2026-09-08T23:00:01.008Z",
+   "endedAt": "2026-09-08T23:17:27.611Z",
+   "status": "failed",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  },
+  {
+   "id": "run-13",
+   "scheduledFor": "2026-09-09T00:00:00.000Z",
+   "startedAt": "2026-09-09T00:00:01.994Z",
+   "endedAt": "2026-09-09T00:22:13.068Z",
+   "status": "failed",
+   "agentId": "agent-x",
+   "workspaceId": "ws-x",
+   "output": "output (not read)",
+   "error": null
+  }
+ ]
+}

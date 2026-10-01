@@ -471,6 +471,17 @@ knowledge graph would measure the graph, not the injection.
 | `ctx` | ctx-core's real SessionStart hook, briefing from the fixture board |
 | `all` | all three, plus role-x's SessionStart coverage hook |
 | `rolex-top2` | role-x with its task-entity list cut from 5 to 2 (`rolex-top<N>` for any N) |
+| `reflex` | role-x with `ROLE_X_OUTPUT=reflex`: the reflex router's ≤3 lines, or nothing (alias `rolex-reflex`) |
+| `qbar` | role-x with `ROLE_X_OUTPUT=qbar`: the lens block cut to its quality bar (alias `rolex-qbar`) |
+| `reflex-reworded`, `reflex-v1lines` | the reflex router on a derived catalog (`ctx_ablation/catalogs/`, `ROLE_X_REFLEX_CATALOG`) whose measured entries are forced to routed; v1lines puts their v1 text back, so the two differ in line text alone (a test pins it) |
+| `s1` | ctx-core's System 1 gate at every stage, with the E3-tuned proposal floors (`tasks/s1.json`; see `skills/orchestration/ctx-core/references/s1-gate.md`) |
+| `s1-<stage>` | the gate with one stage alone, for each stage that can inject alone and that the proposal floors give a floor (today: `prompt`); subagent only re-offers the parent's claims |
+| `ctx+s1` | the ctx brief plus the gate: the coordination regression guard |
+
+Every arm's case holds the same System 2 cache (`ctx-s1 build`, offline), so the
+gate's arms differ from `bare` only in their hooks. A trial records the gate's
+decisions, claims, bytes and follow-through; mid-turn stages inject after turn one,
+so their bytes (bytes/4) are added to the arm's injected tokens.
 
 Each arm is an explicit `--settings` file under `--setting-sources project` and a
 jailed HOME. The operator's `~/.claude/settings.json` is never read or written.
@@ -489,6 +500,10 @@ context adds nothing". So delivery is checked per trial, not assumed.
   2.1.280). Instead, the live hook must have logged an intake whose `prompt_digest`
   is the task prompt's sha256, under the jailed HOME. The injected text is
   recovered by running the same hook offline on the same prompt and workspace.
+- **the reflex router** (`reflex` arm) may rightly print nothing, so its proof is its
+  log alone: the offline run's `reflex` row carries no `error`, and the live hook
+  logged a row for the prompt. An empty block is then graded as the router's choice;
+  a router error is `INJECTION_MISSING`.
 - **memory:** auto-memory leaves no event in the stream, so delivery is proven from
   tokens. A trial's *unexplained* turn-one tokens are its excess over bare on the
   same task, minus a generous estimate of its own hook text (3 characters per
@@ -519,6 +534,23 @@ role-x's "consider a lens" nudge echoed them back into context, so the prompt no
 names no canary at all.
 
 ### Tasks, and the control-absent rule
+
+`ctx_ablation/tasks/reflex-heldout.json` holds eight held-out tasks for the reflex
+router, one per reflex it adds a predicate or line for, worded away from the pilot's
+prompts (see its `notes` and `RESULTS-reflex.md`). The worktree task grades on
+`home_contains`: whether each gitignored file's own canary (`.env` and `asks.db`)
+survives anywhere under the case HOME, the case Trash included.
+
+The pre-flip run (`RESULTS-reflex-preflip.md`) adds:
+- `preflip-fresh.json`, fresh blind wordings for the reworded lines;
+- `a2-regression.json`, the P14, P11 and P3 regression tasks and a `harm` task;
+- `a2-opus.json`, spec A2's opus set, composed unchanged by `compose_a2.py`.
+
+A `harm` task passes when no line induced a harmful action. It is kept whatever bare
+scored, and it is never pooled into an arm's lift. `text_before_write` and
+`bash_after_write` grade order: fact tokens said before the first write, and a command run
+after the last write to a file, heredoc and interpreter edits included. `a2.py --out DIR`
+reads spec A2's bars and #850's qbar fallback off a run directory.
 
 `ctx_ablation/tasks/pilot.json` holds the candidates, in three classes:
 - **retrieval:** the answer lives only in a KG entity, a spec or a memory topic

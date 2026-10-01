@@ -28,9 +28,39 @@ WRAPPER = SCRIPTS / "ctx-hook.sh"
 CTX = SCRIPTS / "ctx.py"
 sys.path.insert(0, str(SCRIPTS))  # so every test module can `import ctx`
 
+import ctx_hook  # noqa: E402  (its BUDGET_S is the deadline the fail-open bounds build on)
+
 #: The deadline every hook invocation must meet, start to exit, measured from
 #: outside the process.
 HOOK_WALL_S = 0.200
+#: A hook that runs into its own self-deadline is judged in two parts, because
+#: on a hosted macOS runner no single wall bound is both tight and stable.
+#: Measured on 2026-10-01 in CI (3,900 hook runs on macOS over four runs, 4,800
+#: over four ubuntu jobs):
+#:   * macOS: the runner's clamped QoS lets the kernel coalesce timers, so a bare
+#:     80 ms alarm fired up to 161 ms late, and the hook's deadline record landed
+#:     up to 160 ms after the budget (at most 10 ms on the owner's machine).
+#:     Start-up plus teardown had a p99 of up to 152 ms, and one run that never
+#:     reached the deadline took 589 ms in all.
+#:   * ubuntu: the record read exactly 80 ms every time, and the whole run
+#:     outside the interpreter took at most 27 ms.
+#: Inside, the hook's own miss record must say the deadline fired: at or after
+#: the budget, and at most DEADLINE_LATE_MS after it. Outside, the wall is the
+#: budget plus that lateness plus a start-up allowance:
+#:   * macOS: 160 x2 and 600 ms (the worst run; about 4x the worst p99) make
+#:     1,000 ms, half of Claude Code's own hook timeout (the registration
+#:     snippet's `"timeout": 2`), which a test pins.
+#:   * elsewhere: 40 and 80 ms (not measured under load; 3x the worst measured
+#:     start-up) make 200 ms, the HOOK_WALL_S every other hook test holds.
+BUDGET_MS = round(ctx_hook.BUDGET_S * 1000)
+CLAUDE_HOOK_TIMEOUT_S = 2.0
+MACOS_LATE_MS, MACOS_STARTUP_MS = 320, 600
+MACOS_WALL_S = (BUDGET_MS + MACOS_LATE_MS + MACOS_STARTUP_MS) / 1000.0
+if sys.platform == "darwin":
+    DEADLINE_LATE_MS, FAILOPEN_WALL_S = MACOS_LATE_MS, MACOS_WALL_S
+else:
+    DEADLINE_LATE_MS = 40
+    FAILOPEN_WALL_S = (BUDGET_MS + DEADLINE_LATE_MS + 80) / 1000.0
 #: Behaviour tests give the hook a generous budget, so a loaded test machine
 #: cannot turn "what does the hook publish" into a timing test. The `timed`
 #: fixture restores the real 80 ms for the tests that are about time.
@@ -117,6 +147,12 @@ class World:
 
 @pytest.fixture
 def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> World:
+    return make_world(tmp_path, monkeypatch)
+
+
+def make_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> World:
+    """The scratch world under tmp_path, with HOME and git's environment set
+    through `monkeypatch` (a module-scoped fixture passes a MonkeyPatch.context())."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))

@@ -1,0 +1,206 @@
+"""The fleet config: ~/.config/ctx/fleet.json, one section per scope (spec §5.7).
+
+JSON because fleet_reconcile.py runs under `python3 -I` with no YAML parser.
+The owner edits it. An unknown key, a scope missing from the core's
+scopes.yaml, a wrong type or a parse error fails `config-check`, and the tick
+does not fire. `config-get` prints one value; tick.sh reads any error as off
+(dispatch_enabled) and dry (dry_run).
+
+The format is spec §5.7 (broomva/workspace#842, merged as 007f05a98). Keys
+under "phase 1" below are this build's additions, pending the spec.
+"""
+from __future__ import annotations
+
+import json
+import os
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
+
+import ctx
+
+from . import common
+
+DEFAULT_PATH = "~/.config/ctx/fleet.json"
+
+#: key -> (type check, default). A default of None means "absent is fine".
+SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
+    "dispatch_enabled": ("int01", 0),         # the kill switch: the tick fires only on exactly 1
+    "dry_run": ("int01", 1),                  # live only on exactly 0
+    "mode": ("mode", "report"),               # report: observe, classify and ask; every other verb refuses
+    "tracker": ("dict", None),
+    "state_dir": ("str", None),               # default ~/.local/state/fleet-reconcile/<scope>
+    "paseo_project": ("str_or_null", None),   # reported against the scope rule, never used to decide
+    "caps": ("caps", None),
+    "mail_interval_h": ("int", 6),
+    "paseo_tools": ("paseo_tools", None),
+    "driver": ("driver", None),
+    "adopted": ("adopted", []),
+    "b_step_timeout_min": ("int", 10),        # #840's step, once it ships (§5.7)
+    # phase 1
+    "listing_cap": ("int", 200),              # a session listing this long may be truncated: fail closed
+    "pr_list_cap": ("int", 200),              # the same for `gh pr list` per repo
+    "gh_token_file": ("str_or_null", None),   # tick.sh exports it as GH_TOKEN when present
+    "actions_app_id": ("int", 15368),         # the app a required check must be pinned to (GitHub Actions)
+    "launchd_prefix": ("str_or_null", None),  # scheduled-work inventory: which LaunchAgents to list
+    "launchd_logs": ("str_map", None),        # label -> the log that shows a real run, when stdout doesn't
+    "bookkeeping_run_log": ("str_or_null", None),
+    "dream_run_log": ("str_or_null", None),
+    "ask_renotify_h": ("int", 6),             # unused since 0.3.0 (the dialog's re-show); accepted, not read
+    "tick_timeout_min": ("int", 15),
+    "compare_hour": ("int", 18),              # the core comparison runs once a day from this local hour
+    # phase 2
+    "coordinator_model": ("str_or_null", None),  # the coordinator's --model; null: Claude Code's default
+    "coordinator_budget_usd": ("num", 2),        # its --max-budget-usd per tick
+    # the owner channel on Paseo (fleetlib/paseo_ask.py); null: the defaults there
+    "maestro_cli": ("str_or_null", None),
+    "maestro_bun": ("str_or_null", None),
+    "ask_repo": ("str_or_null", None),
+    "ask_raise_after_min": ("int", 50),          # a batch reaches the owner once an ask in it is this old (0: at once)
+}
+CAP_KEYS = ("fleet_sessions", "active_sessions", "active_window_min", "research_spawns_per_day")
+CAP_DEFAULTS = {"fleet_sessions": 8, "active_sessions": 12, "active_window_min": 30, "research_spawns_per_day": 4}
+
+#: The pinned classification of Paseo's MCP tools (spec §5.7; evidence §5, Paseo
+#: 0.9.2): 19 without side effects and 42 writes. tick.sh disallows every write
+#: for the coordinator, and a tool in neither list stops it (and fails
+#: tests/test_coordinator.py against the captured tool list). A scope's
+#: `paseo_tools` replaces it.
+PASEO_TOOLS = {
+    "paseo_version": "0.9.2",
+    "read": ["browser_list_tabs", "browser_logs", "browser_screenshot", "browser_snapshot", "capture_terminal",
+             "get_agent_activity", "get_agent_status", "inspect_provider", "inspect_schedule", "list_agents",
+             "list_models", "list_pending_permissions", "list_profiles", "list_providers", "list_schedules",
+             "list_terminals", "list_workspace_scripts", "list_workspaces", "schedule_logs"],
+    "write": ["archive_agent", "archive_workspace", "cancel_agent", "create_agent", "create_heartbeat",
+              "create_schedule", "create_terminal", "create_workspace", "delete_heartbeat", "delete_schedule",
+              "kill_agent", "kill_terminal", "pause_schedule", "rename_workspace", "respond_to_permission",
+              "resume_schedule", "run_schedule_once", "send_agent_prompt", "send_terminal_keys", "set_agent_mode",
+              "start_workspace_script", "stop_workspace_script", "update_agent", "update_schedule",
+              "browser_back", "browser_click", "browser_close_tab", "browser_drag", "browser_evaluate",
+              "browser_fill", "browser_forward", "browser_hover", "browser_keypress", "browser_navigate",
+              "browser_new_tab", "browser_reload", "browser_resize", "browser_scroll", "browser_select",
+              "browser_type", "browser_upload", "browser_wait"],
+}
+
+#: The driver profile's defaults (spec §5.5, §5.7; probe 6's GitHub entries).
+#: Package registries and toolchain caches start empty: the driver-profile
+#: drill adds what a scope's build needs.
+DRIVER_DEFAULTS = {"model": None, "allowed_domains": ["api.github.com", "github.com", "*.githubusercontent.com"],
+                   "allow_write": []}
+DRIVER_KEYS = ("model", "allowed_domains", "allow_write")
+
+
+class ConfigError(ValueError):
+    pass
+
+
+def path() -> Path:
+    raw = os.environ.get("FLEET_CONFIG")
+    return Path(raw) if raw else common.expand(DEFAULT_PATH)
+
+
+def _check(kind: str, key: str, v: Any) -> None:
+    ok = {
+        "int01": lambda: type(v) is int and v in (0, 1),
+        "int": lambda: type(v) is int and v >= 0,
+        "num": lambda: type(v) in (int, float) and v > 0,
+        "str": lambda: isinstance(v, str) and bool(v),
+        "str_or_null": lambda: v is None or isinstance(v, str),
+        "mode": lambda: v in ("report", "act"),
+        "dict": lambda: isinstance(v, dict),
+        "str_map": lambda: v is None or (isinstance(v, dict) and all(
+            isinstance(k, str) and isinstance(x, str) for k, x in v.items())),
+        "caps": lambda: isinstance(v, dict) and not (set(v) - set(CAP_KEYS))
+        and all(type(x) is int and x >= 0 for x in v.values()),
+        "paseo_tools": lambda: isinstance(v, dict) and not (set(v) - {"paseo_version", "read", "write"})
+        and all(isinstance(v.get(k), list) and all(isinstance(t, str) for t in v[k]) for k in ("read", "write")),
+        "driver": lambda: isinstance(v, dict) and not (set(v) - set(DRIVER_KEYS))
+        and (v.get("model") is None or isinstance(v.get("model"), str))
+        and all(isinstance(v.get(k, []), list) and all(isinstance(t, str) and t for t in v.get(k, []))
+                for k in ("allowed_domains", "allow_write")),
+        "adopted": lambda: isinstance(v, list) and all(
+            isinstance(e, dict) and isinstance(e.get("session_id"), str) and ctx.SESSION_ID_RE.match(e["session_id"])
+            and (e.get("paseo_agent_id") is None or isinstance(e.get("paseo_agent_id"), str))
+            and not (set(e) - {"session_id", "paseo_agent_id", "adopted", "note"}) for e in v),
+    }[kind]()
+    if not ok:
+        raise ConfigError("%s: bad value for %s (%s)" % (key, key, kind))
+
+
+def load(check_scopes: bool = True) -> Dict[str, Any]:
+    """The whole config, validated. Raises ConfigError."""
+    p = path()
+    try:
+        raw = json.loads(p.read_text(encoding="utf-8"))
+    except FileNotFoundError:
+        raise ConfigError("%s: missing" % p)
+    except (OSError, ValueError, UnicodeDecodeError) as exc:
+        raise ConfigError("%s: %s" % (p, exc))
+    if not isinstance(raw, dict) or raw.get("v") != 1 or not isinstance(raw.get("scopes"), dict):
+        raise ConfigError("%s: want {\"v\": 1, \"scopes\": {...}}" % p)
+    unknown = set(raw) - {"v", "scopes"}
+    if unknown:
+        raise ConfigError("%s: unknown top-level key(s) %s" % (p, ", ".join(sorted(unknown))))
+    known_scopes = None
+    if check_scopes:
+        try:
+            known_scopes = {s for s in ctx.load_scopes().by_repo.values() if s}
+        except ctx.ConfigError as exc:
+            raise ConfigError("scopes.yaml: %s" % exc)
+    for sid, sec in raw["scopes"].items():
+        if not isinstance(sec, dict):
+            raise ConfigError("scope %s: not an object" % sid)
+        if not ctx.SCOPE_ID_RE.match(sid):
+            raise ConfigError("scope %s: invalid id" % sid)
+        if known_scopes is not None and sid not in known_scopes:
+            raise ConfigError("scope %s: not in scopes.yaml" % sid)
+        bad = set(sec) - set(SCOPE_KEYS)
+        if bad:
+            raise ConfigError("scope %s: unknown key(s) %s" % (sid, ", ".join(sorted(bad))))
+        for key, value in sec.items():
+            _check(SCOPE_KEYS[key][0], "%s.%s" % (sid, key), value)
+    return raw
+
+
+def scope(sid: str, check_scopes: bool = True) -> Dict[str, Any]:
+    """One scope's section with defaults filled in. Raises ConfigError."""
+    raw = load(check_scopes)
+    if sid not in raw["scopes"]:
+        raise ConfigError("scope %s: not in %s" % (sid, path()))
+    sec = dict(raw["scopes"][sid])
+    for key, (_, default) in SCOPE_KEYS.items():
+        sec.setdefault(key, default)
+    sec["caps"] = dict(CAP_DEFAULTS, **(sec.get("caps") or {}))
+    sec["paseo_tools"] = sec.get("paseo_tools") or PASEO_TOOLS
+    sec["driver"] = dict(DRIVER_DEFAULTS, **(sec.get("driver") or {}))
+    sec["state_dir"] = str(common.expand(sec.get("state_dir") or "~/.local/state/fleet-reconcile/%s" % sid))
+    if sec.get("gh_token_file"):
+        sec["gh_token_file"] = str(common.expand(sec["gh_token_file"]))
+    sec["scope"] = sid
+    return sec
+
+
+def state_dir(sec: Dict[str, Any]) -> Path:
+    return Path(sec["state_dir"])
+
+
+def adopted_ids(sec: Dict[str, Any]) -> List[str]:
+    return [e["session_id"] for e in sec.get("adopted") or []]
+
+
+def adopted_agents(sec: Dict[str, Any]) -> Dict[str, str]:
+    """{Paseo agent id: the adopted session id it was recorded with}: a Paseo
+    relaunch changes the session id, and the agent record then holds the new
+    one (§5.7)."""
+    return {e["paseo_agent_id"]: e["session_id"] for e in sec.get("adopted") or [] if e.get("paseo_agent_id")}
+
+
+def get(sid: str, key: str) -> Optional[str]:
+    """What `fleet config-get` prints: a scalar as text, anything else as JSON."""
+    sec = scope(sid)
+    if key not in sec:
+        raise ConfigError("unknown key %s" % key)
+    v = sec[key]
+    if v is None:
+        return ""
+    return str(v) if isinstance(v, (str, int)) and not isinstance(v, bool) else json.dumps(v, sort_keys=True)
