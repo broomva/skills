@@ -406,6 +406,33 @@ BASH_WRITE_RE = re.compile(r"\bsed\s+-i|\bperl\s+-p?i|\btee\b|\bgit\s+apply\b|\b
                            r"(?<![<>&\d])>>?\s*['\"]?[\w./-]+\.(py|md|json|ya?ml|toml|sh|txt|html)\b")
 
 
+#: Where a shell command writes: a redirect target, a ``tee`` argument, or the file a
+#: ``sed -i`` / ``perl -pi`` edits (its last argument).
+_REDIRECT_TARGET_RE = re.compile(r"(?<![<>&\d])>>?\s*['\"]?([^\s'\";|&<>()]+)")
+_TEE_TARGET_RE = re.compile(r"\btee\s+(?:-a\s+)?['\"]?([^\s'\";|&<>()]+)")
+_INPLACE_RE = re.compile(r"\b(?:sed\s+-i|perl\s+-p?i)\b[^;&|\n]*?\s['\"]?([^\s'\";|&<>()]+)['\"]?\s*(?:$|[;&|\n])")
+
+
+#: A script fed to an interpreter on stdin (``python3 - <<'EOF'``) that writes a file.
+_INTERP_HEREDOC_RE = re.compile(r"\b(python3?|node|perl|ruby)\b[^\n]*<<")
+_SCRIPT_WRITES_RE = re.compile(r"open\([^)]*['\"][wa]\+?['\"]|\.write_text\(|writeFileSync|\.write\(")
+_QUOTED_PATH_RE = re.compile(r"['\"]([\w./-]+\.[A-Za-z0-9]{1,5})['\"]")
+
+
+def bash_write_targets(command: str) -> list[str]:
+    """The files a shell command writes, as far as its text says: redirect, ``tee`` and
+    in-place targets (a ``cat > f <<'EOF'`` body is not searched, only its first line),
+    and, for a script fed to an interpreter on stdin that writes a file, every quoted
+    file path in that script."""
+    head = command.split("<<", 1)[0] if "<<" in command else command
+    first = command.split("\n", 1)[0]
+    out = _REDIRECT_TARGET_RE.findall(head) + _REDIRECT_TARGET_RE.findall(first)
+    out += _TEE_TARGET_RE.findall(head) + _INPLACE_RE.findall(head)
+    if _INTERP_HEREDOC_RE.search(first) and _SCRIPT_WRITES_RE.search(command):
+        out += _QUOTED_PATH_RE.findall(command.split("\n", 1)[1] if "\n" in command else "")
+    return list(dict.fromkeys(out))
+
+
 def _main_loop_blocks(t: Transcript):
     """The main loop's assistant blocks in order: text and tool_use interleaved."""
     for ev in t.events:
@@ -418,7 +445,7 @@ def _is_write(ctx: GradeContext, block: Mapping[str, Any], executed_ids: set[str
         return False
     name = str(block.get("name") or "")
     inp = block.get("input") if isinstance(block.get("input"), dict) else {}
-    return name in WRITE_TOOLS or (name == "Bash" and bool(BASH_WRITE_RE.search(str(inp.get("command") or ""))))
+    return name in WRITE_TOOLS or (name == "Bash" and bool(bash_write_targets(str(inp.get("command") or ""))))
 
 
 def a_text_before_write(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
@@ -440,6 +467,26 @@ def a_text_before_write(ctx: GradeContext, spec: Mapping[str, Any]) -> Assertion
     return AssertionResult("text_before_write", False, "no executed file write")
 
 
+_HEREDOC_MARK_RE = re.compile(r"<<-?\s*['\"]?(\w+)['\"]?")
+
+
+def _after_the_write(command: str, path_pat: re.Pattern[str]) -> str:
+    """The part of a writing command that runs after its write: the lines after a
+    heredoc's terminator, or the ``&&`` / ``;`` segments after the one that writes."""
+    m = _HEREDOC_MARK_RE.search(command.split("\n", 1)[0])
+    if m:
+        lines = command.split("\n")
+        for i, line in enumerate(lines[1:], 1):
+            if line.strip() == m.group(1):
+                return "\n".join(lines[i + 1:])
+        return ""
+    segs = re.split(r"&&|\|\||;|\n", command)
+    for i, seg in enumerate(segs):
+        if any(path_pat.search(x) for x in bash_write_targets(seg)):
+            return " ; ".join(segs[i + 1:])
+    return ""
+
+
 def a_bash_after_write(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
     """An executed Bash command matching ``re`` comes after the LAST executed write to
     a file matching ``path_re`` (P11: the change was exercised, not only made)."""
@@ -449,11 +496,14 @@ def a_bash_after_write(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionR
     for i, tu in enumerate(executed):
         target = str(tu.input.get("file_path") or tu.input.get("notebook_path") or "")
         if (tu.name in WRITE_TOOLS and path_pat.search(target)) or (
-                tu.name == "Bash" and BASH_WRITE_RE.search(str(tu.input.get("command") or ""))
-                and path_pat.search(str(tu.input.get("command") or ""))):
+                tu.name == "Bash" and any(path_pat.search(x)
+                                          for x in bash_write_targets(str(tu.input.get("command") or "")))):
             last_write = i
     if last_write is None:
         return AssertionResult("bash_after_write", False, f"no executed write to /{path_pat.pattern}/")
+    lw = executed[last_write]
+    if lw.name == "Bash" and pat.search(_after_the_write(str(lw.input.get("command") or ""), path_pat)):
+        return AssertionResult("bash_after_write", True, "run in the writing command, after the write")
     hit = next((tu for tu in executed[last_write + 1:] if tu.name == "Bash"
                 and pat.search(str(tu.input.get("command") or ""))), None)
     return AssertionResult("bash_after_write", hit is not None,

@@ -1227,3 +1227,27 @@ def test_the_a2_opus_file_is_its_sources_composed_unchanged():
     committed = json.loads((path.parent / "a2-opus.json").read_text(encoding="utf-8"))
     assert committed == c.compose()
     T.load_tasks(path.parent / "a2-opus.json")  # and it validates
+
+
+def test_a_heredoc_write_then_a_run_is_exercised():
+    """Found on opus calibration (pre-flip): `cat > scripts/report.py <<'EOF' ...` is a
+    write to report.py; the path pattern is matched against the write's target, not the
+    whole command, whose heredoc body follows the file name."""
+    assert G.bash_write_targets("cat > scripts/report.py <<'EOF'\nx = 1 > 0\nEOF") == ["scripts/report.py"]
+    assert G.bash_write_targets("python3 scripts/report.py > out.txt") == ["out.txt"]
+    assert G.bash_write_targets("sed -i '' 's/a/b/' scripts/report.py") == ["scripts/report.py"]
+    assert G.bash_write_targets("python3 scripts/report.py --json") == []
+    # opus edits through an interpreter heredoc that writes the file back
+    edit = "cd /ws; python3 - <<'EOF'\np='scripts/report.py'\ns=open(p).read()\nopen(p,'w').write(s)\nEOF"
+    assert G.bash_write_targets(edit) == ["scripts/report.py"]
+    assert G.bash_write_targets("python3 - <<'EOF'\nprint(open('scripts/report.py').read())\nEOF") == []
+    write = {"name": "Bash", "input": {"command": "cat > scripts/report.py <<'EOF'\nprint(1)\nEOF"}}
+    run = {"name": "Bash", "input": {"command": "python3 scripts/report.py --table"}}
+    spec = {"kind": "bash_after_write", "re": "\\breport\\.py\\b", "path_re": "report\\.py$"}
+    both = {"name": "Bash", "input": {"command": "python3 - <<'EOF'\np='scripts/report.py'\nopen(p,'w').write('x')\n"
+                                                "EOF\npython3 scripts/report.py --table; git diff --stat"}}
+    before = {"name": "Bash", "input": {"command": "python3 scripts/report.py && sed -i '' 's/a/b/' scripts/report.py"}}
+    for calls, want in (([write, run], True), ([run, write], False), ([run], False), ([both], True),
+                        ([before], False)):
+        ctx = G.GradeContext(transcript=T.synthetic_transcript(calls, "", "/ws"), layout=None, env={}, variables={})
+        assert G.a_bash_after_write(ctx, spec).passed is want, calls
