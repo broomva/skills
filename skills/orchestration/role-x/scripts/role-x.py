@@ -2304,6 +2304,10 @@ def _wilson_lower(k: int, n: int, z: float = 1.96) -> float | None:
     return (centre - margin) / (1 + z * z / n)
 
 
+def _p50(xs: list[float]) -> float | None:
+    return sorted(xs)[(len(xs) - 1) // 2] if xs else None
+
+
 def _p99(xs: list[float]) -> float | None:
     """Nearest-rank p99: the smallest value with at least 99% of the values at or below it."""
     if not xs:
@@ -2312,42 +2316,13 @@ def _p99(xs: list[float]) -> float | None:
     return xs[max(0, math.ceil(0.99 * len(xs)) - 1)]
 
 
-def _prompt_text(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        return "\n".join(b.get("text", "") for b in content if isinstance(b, dict) and b.get("type") == "text")
-    return ""
-
-
-_COMMAND_TAGS_RE = re.compile(r"<command-name>\s*(/?[^<\s]+)\s*</command-name>(?:.*?<command-args>(.*?)</command-args>)?", re.S)
-
-
-def _as_typed(ev: dict, text: str) -> str | None:
-    """The prompt as the hook saw it, or None when this entry is not a prompt.
-
-    A skill's expansion (``sourceToolUseID``), a turn companion, an image placeholder or a
-    local-command caveat is not a turn. Other ``isMeta`` entries are kept as turns: cron and
-    ``/loop`` firings reach the hook, while some (peer messages, resume nudges) do not and
-    show as turns without a row. A slash command is stored as ``<command-name>`` (and
-    ``<command-args>``) tags; the hook saw ``/name args``."""
-    if ev.get("isCompactSummary"):
-        return None
-    if ev.get("isMeta") and (ev.get("sourceToolUseID") or ev.get("turnCompanion")
-                             or text.lstrip().startswith(("[Image", "<local-command", "Base directory for this skill"))):
-        return None
-    m = _COMMAND_TAGS_RE.search(text)
-    if m:
-        name = m.group(1) if m.group(1).startswith("/") else "/" + m.group(1)
-        return f"{name} {(m.group(2) or '').strip()}".strip()
-    return text
-
-
-def _turns(transcript: Path) -> list[dict]:
-    """The prompts of one Claude Code transcript in order, each ``{"digest", "ts",
-    "ships"}``: did that turn run ``git push`` or ``gh pr create`` before the next prompt
-    (``_as_typed`` says what a prompt is; a queued command typed mid-turn is one).
-    Subagent transcripts are not read: a push a subagent makes is not counted."""
+def _hook_runs(transcript: Path) -> list[dict]:
+    """Every run of the role-x UserPromptSubmit hook in one Claude Code transcript, in
+    order, each ``{"ts", "ships", "killed", "duration_ms"}``. Claude Code records each hook
+    run as an attachment (``hook_success``, ``hook_cancelled``, ...) with its time and
+    ``durationMs``. A run's turn lasts until the next run, and ``ships`` says whether a
+    Bash ``git push`` or ``gh pr create`` ran in it. Pushes made inside subagents are in
+    other files and are not counted."""
     out: list[dict] = []
     try:
         lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -2360,26 +2335,19 @@ def _turns(transcript: Path) -> list[dict]:
             continue
         if not isinstance(ev, dict):
             continue
-        msg = ev.get("message") if isinstance(ev.get("message"), dict) else {}
-        content = msg.get("content")
-        typed = None
-        if ev.get("type") == "user":
-            blocks = content if isinstance(content, list) else []
-            if not any(isinstance(b, dict) and b.get("type") == "tool_result" for b in blocks):
-                text = _prompt_text(content)
-                typed = _as_typed(ev, text) if text else None
-        elif ev.get("type") == "attachment" and isinstance(ev.get("attachment"), dict) \
-                and ev["attachment"].get("type") == "queued_command":
-            typed = _prompt_text(ev["attachment"].get("prompt")) or None
-        elif (ev.get("type") == "attachment" and isinstance(ev.get("attachment"), dict) and out
-              and ev["attachment"].get("type") == "hook_cancelled"
-              and ev["attachment"].get("hookEvent") == "UserPromptSubmit"
-              and "role-x" in str(ev["attachment"].get("command") or "")):
-            out[-1]["hook_killed"] = True  # the router's hook was killed on this prompt: no row
-        if typed:
-            out.append({"digest": "sha256:" + hashlib.sha256(typed.encode("utf-8")).hexdigest(),
-                        "ts": _ts(ev.get("timestamp")), "ships": False, "hook_killed": False})
-        elif ev.get("type") == "assistant" and out and isinstance(content, list):
+        att = ev.get("attachment")
+        if (isinstance(att, dict) and att.get("hookEvent") == "UserPromptSubmit"
+                and "role-x" in str(att.get("command") or "")):
+            try:
+                dur = float(att.get("durationMs"))
+            except (TypeError, ValueError):
+                dur = None
+            out.append({"ts": _ts(ev.get("timestamp")), "ships": False,
+                        "killed": att.get("type") == "hook_cancelled",
+                        "duration_ms": dur if dur is not None and math.isfinite(dur) else None})
+            continue
+        content = (ev.get("message") or {}).get("content") if isinstance(ev.get("message"), dict) else None
+        if ev.get("type") == "assistant" and out and isinstance(content, list):
             for b in content:
                 if (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Bash"
                         and _ships(str((b.get("input") or {}).get("command") or ""))):
@@ -2410,32 +2378,29 @@ def _since(spec: str) -> float:
     raise ValueError(f"--since {spec!r}: give a duration like 3d or an ISO date/time like 2026-10-03T14:00Z")
 
 
-#: How far apart a row's ``ts`` (the hook) and its prompt's transcript entry may be.
-PAIR_WINDOW_S = 300.0
-#: A row and a turn this close in time, both left unpaired by their digests, are one prompt
-#: whose stored text differs from what the hook saw: paired, so it is not counted twice.
-PAIR_BY_TIME_S = 60.0
+#: A row is written inside its hook run, and the run's attachment is stamped as it ends:
+#: 917 of 917 rows in a 3-day replay paired within 3.1 s (p99 1.2 s). The hook times out at 15 s.
+HOOK_PAIR_S = 30.0
 
 
 def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
     """``role-x reflexes shadow``: spec A1's instrument (workspace#850) over the
-    ``ROLE_X_OUTPUT=shadow`` rows in events.jsonl. Exit 0 met, 1 not met, 3 not shown.
+    ``ROLE_X_OUTPUT=shadow`` rows in events.jsonl. Exit 0 met, 1 not met, 3 not shown,
+    2 for a ``--since`` it cannot read.
 
     * Router time is ``router_ms`` (from before the router's import to just before the
-      row is written). A row without a finite one (an older install) makes it not shown.
-    * The p9 bar counts every turn that ran ``git push`` or ``gh pr create`` in a session
-      with shadow rows (``_turns``). A row pairs with the unpaired turn of the same prompt
-      nearest in time, within ``PAIR_WINDOW_S``; a hook that was killed wrote no row, so
-      its turn stays unpaired. Rows a digest did not pair then pair with a turn within
-      ``PAIR_BY_TIME_S`` (one prompt whose stored text differs), so one mismatch is not
-      counted twice. What the join cannot settle (ship turns without a row, rows
-      without a turn) is bounded both ways: met needs the worst case (all of it p9 misses)
-      at >= 0.70, not met is the best case (all of it hits) below 0.70, and between them
-      the bar is not shown. Under 9 such turns the bar is not shown, since even 9/9 is
-      needed to reach 0.70. A killed hook's prompt shows only if its turn shipped; its
-      wall clock is reported by Claude Code, not gated here (spec Q10).
-    * Rows from a session whose transcript is not found (probes, tests, deleted logs) are
-      reported and left out of the join."""
+      row is written), gated at p99 <= 100 ms. The hook's own wall clock is reported from
+      the transcripts' ``durationMs``, not gated (spec Q10), with its kills.
+    * The p9 bar counts every turn that ran ``git push`` or ``gh pr create``, where a turn
+      is one run of the role-x hook (``_hook_runs``). Each row pairs one-to-one with the
+      hook run nearest in time, within ``HOOK_PAIR_S``; no prompt text is compared.
+    * What the join cannot settle (ship turns whose run has no row, rows with no run) is
+      bounded: met needs the worst case (all of it p9 misses) at >= 0.70, not met is the
+      best case (all of it hits) below 0.70, and between them the bar is not shown. Under
+      9 such turns it is not shown either: even 9/9 is needed to reach 0.70.
+    * A line that cannot be read, after the window's first row, keeps the result from
+      met (the log is append-only, so it is in the window). Rows from a session whose
+      transcript is not found (probes, tests) are reported and left out."""
     events = Path(args.events) if args.events else EVENTS_PATH
     projects = Path(args.projects) if args.projects else Path.home() / ".claude" / "projects"
     try:
@@ -2450,13 +2415,13 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
         try:
             r = json.loads(line)
         except ValueError:
+            r = None
+        if r is None or (isinstance(r, dict) and r.get("event") == "reflex" and r.get("shadow")
+                         and _ts(r.get("ts")) is None):
+            if rows and ("reflex" in line or r is not None):
+                malformed += 1  # torn or edited, inside the window: it may hide an error
             continue
-        if not (isinstance(r, dict) and r.get("event") == "reflex" and r.get("shadow")):
-            continue
-        rts = _ts(r.get("ts"))
-        if rts is None:
-            malformed += 1  # a torn or edited line: it might carry an error; never read as met
-        elif rts >= since:
+        if isinstance(r, dict) and r.get("event") == "reflex" and r.get("shadow") and _ts(r.get("ts")) >= since:
             rows.append(r)
     timed = [float(r["router_ms"]) for r in rows
              if isinstance(r.get("router_ms"), (int, float)) and math.isfinite(float(r["router_ms"]))]
@@ -2467,7 +2432,8 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
             errors[str(r["error"])] = errors.get(str(r["error"]), 0) + 1
         for rid in r.get("selected") or []:
             selected[rid] = selected.get(rid, 0) + 1
-    ship = with_p9 = ship_unpaired = rows_unpaired = no_transcript = by_time = killed = 0
+    ship = with_p9 = ship_unpaired = rows_unpaired = no_transcript = killed = 0
+    hook_ms: list[float] = []
     by_session: dict[str, list[dict]] = {}
     for r in rows:
         by_session.setdefault(str(r.get("session") or ""), []).append(r)
@@ -2476,34 +2442,25 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
         if not found:
             no_transcript += len(srows)
             continue
-        turns = [t for f in found for t in _turns(f) if t["ts"] is None or t["ts"] >= since - PAIR_WINDOW_S]
-        free = list(range(len(turns)))
+        runs = [h for f in found for h in _hook_runs(f) if h["ts"] is not None and h["ts"] >= since - HOOK_PAIR_S]
+        free = list(range(len(runs)))
         paired: dict[int, dict] = {}
-        left: list[dict] = []
-        for r in sorted(srows, key=lambda x: _ts(x.get("ts")) or 0):
+        for r in sorted(srows, key=lambda x: _ts(x.get("ts"))):
             rts = _ts(r.get("ts"))
-            cands = [k for k in free if turns[k]["digest"] == r.get("prompt_digest") and turns[k]["ts"] is not None
-                     and abs(turns[k]["ts"] - rts) <= PAIR_WINDOW_S]
-            if not cands:
-                left.append(r)
-                continue
-            k = min(cands, key=lambda c: abs(turns[c]["ts"] - rts))
-            free.remove(k)
-            paired[k] = r
-        for r in left:  # second pass: same moment, different stored text (one prompt, not two)
-            rts = _ts(r.get("ts"))
-            cands = [k for k in free if turns[k]["ts"] is not None and not turns[k]["hook_killed"]
-                     and abs(turns[k]["ts"] - rts) <= PAIR_BY_TIME_S]
+            cands = [k for k in free if abs(runs[k]["ts"] - rts) <= HOOK_PAIR_S]
             if not cands:
                 rows_unpaired += 1
                 continue
-            k = min(cands, key=lambda c: abs(turns[c]["ts"] - rts))
+            k = min(cands, key=lambda c: abs(runs[c]["ts"] - rts))
             free.remove(k)
             paired[k] = r
-            by_time += 1
-        killed += sum(1 for t in turns if t["hook_killed"] and (t["ts"] is None or t["ts"] >= since))
-        for k, t in enumerate(turns):
-            if not t["ships"] or (t["ts"] is not None and t["ts"] < since):
+        for k, h in enumerate(runs):
+            if h["ts"] < since:
+                continue
+            killed += h["killed"]
+            if h["duration_ms"] is not None:
+                hook_ms.append(h["duration_ms"])
+            if not h["ships"]:
                 continue
             if k in paired:
                 ship += 1
@@ -2512,48 +2469,44 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
                 ship_unpaired += 1
     p99 = _p99(timed)
     lower = _wilson_lower(with_p9, ship)
-    # Bounds over what the join could not settle. Worst: every unpaired ship turn, and every
-    # row whose turn was not found (it may have shipped), is a p9 miss. Best: every one is a hit.
     unsure = ship_unpaired + rows_unpaired
     worst = _wilson_lower(with_p9, ship + unsure)
     best = _wilson_lower(with_p9 + unsure, ship + unsure)
-    time_shown = bool(rows) and len(timed) == len(rows) and not malformed
-    # n/n has a Wilson lower bound >= 0.70 only from n = 9: below that the bar is unreachable
+    time_shown = bool(rows) and len(timed) == len(rows)
     enough = ship + unsure >= A1_MIN_SHIP_TURNS
     failed = (bool(errors) or (time_shown and p99 > A1_MAX_P99_MS)
               or (enough and best is not None and best < A1_MIN_P9_LOWER))
-    met = time_shown and enough and worst is not None and worst >= A1_MIN_P9_LOWER
+    met = time_shown and not malformed and enough and worst is not None and worst >= A1_MIN_P9_LOWER
     verdict = "not met" if failed else "met" if met else "not shown"
     report = {
-        "rows": len(rows), "sessions": len(by_session),
-        "router_ms": {"rows_timed": len(timed), "p99": p99, "max": max(timed) if timed else None,
-                      "hook_kills_reported_not_gated": killed},
-        "malformed_rows": malformed,
+        "rows": len(rows), "sessions": len(by_session), "malformed_lines_in_window": malformed,
+        "router_ms": {"rows_timed": len(timed), "p99": p99, "max": max(timed) if timed else None},
+        "hook_wall_ms_reported_not_gated": {"runs": len(hook_ms), "p50": _p50(hook_ms), "p99": _p99(hook_ms),
+                                            "max": max(hook_ms) if hook_ms else None, "killed": killed},
         "errors": errors,
         "ship_turns": {"paired": ship, "p9_selected": with_p9,
                        "wilson_lower": None if lower is None else round(lower, 4),
                        "wilson_lower_worst_case": None if worst is None else round(worst, 4),
                        "wilson_lower_best_case": None if best is None else round(best, 4),
-                       "ship_turns_without_a_row": ship_unpaired, "rows_without_a_turn": rows_unpaired,
-                       "paired_by_time_only": by_time,
+                       "ship_turns_without_a_row": ship_unpaired, "rows_without_a_hook_run": rows_unpaired,
                        "rows_in_sessions_without_a_transcript": no_transcript},
         "selected": dict(sorted(selected.items(), key=lambda kv: -kv[1])),
         "verdict": verdict,
-        "not_covered_here": "M3 (change_work and branch-first): role-x reflexes route --heldout [--heldout-file <v3>]",
+        "not_covered_here": "M3 (change_work and branch-first): role-x reflexes route --heldout --heldout-file <file>",
     }
     if args.json:
         print(json.dumps(report, indent=2))
     else:
-        st = report["ship_turns"]
-        print(f"shadow rows {report['rows']} in {report['sessions']} sessions since {args.since}")
-        print(f"router_ms p99 {p99} over {len(timed)} of {len(rows)} rows (bar {A1_MAX_P99_MS:g}); malformed rows "
-              f"{malformed}; role-x hook kills {killed} (reported, not gated: spec Q10)")
+        st, hw = report["ship_turns"], report["hook_wall_ms_reported_not_gated"]
+        print(f"shadow rows {report['rows']} in {report['sessions']} sessions since {args.since}; "
+              f"unreadable lines in the window {malformed}")
+        print(f"router_ms p99 {p99} over {len(timed)} of {len(rows)} rows (bar {A1_MAX_P99_MS:g}); hook wall clock "
+              f"p50 {hw['p50']} p99 {hw['p99']} max {hw['max']} over {hw['runs']} runs, {killed} killed (reported only)")
         print(f"error rows {sum(errors.values())} {errors or ''}")
         print(f"ship turns paired {ship}: p9 selected {with_p9}, Wilson lower {st['wilson_lower']}, worst case "
               f"{st['wilson_lower_worst_case']}, best case {st['wilson_lower_best_case']} (bar {A1_MIN_P9_LOWER}, "
-              f"at least {A1_MIN_SHIP_TURNS} turns); ship turns without a row {ship_unpaired}; "
-              f"rows without a turn {rows_unpaired}; paired by time only {by_time}; rows in sessions without a "
-              f"transcript {no_transcript}")
+              f"at least {A1_MIN_SHIP_TURNS} turns); ship turns without a row {ship_unpaired}; rows without a hook "
+              f"run {rows_unpaired}; rows in sessions without a transcript {no_transcript}")
         print(f"selected per id {report['selected']}")
         print(f"A1 router bars: {verdict} ({report['not_covered_here']})")
     return {"met": 0, "not met": 1}.get(verdict, 3)

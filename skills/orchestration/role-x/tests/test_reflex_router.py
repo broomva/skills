@@ -1357,11 +1357,11 @@ def _shadow(tmp_path, rows, transcript, name="role_x_under_test_shadow", since="
     proj.mkdir(parents=True, exist_ok=True)
     (proj / "s1.jsonl").write_text("".join((e if isinstance(e, str) else json.dumps(e)) + "\n" for e in transcript),
                                    encoding="utf-8")
-    buf = io.StringIO()
-    with contextlib.redirect_stdout(buf):
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
         code = rx.cmd_reflexes_shadow(_ap.Namespace(events=str(events), projects=str(tmp_path / "projects"),
                                                     since=since, json=True))
-    return code, json.loads(buf.getvalue())
+    return code, (json.loads(out.getvalue()) if out.getvalue() else {"stderr": err.getvalue()})
 
 
 def _at(offset_s=0.0):
@@ -1369,147 +1369,116 @@ def _at(offset_s=0.0):
     return (datetime.now(timezone.utc) - timedelta(hours=1) + timedelta(seconds=offset_s)).isoformat()
 
 
-def _row(prompt, selected=(), ms=40.0, at=0.0, session="s1", **extra):
-    import hashlib
-    r = {"ts": _at(at), "event": "reflex", "shadow": True, "session": session,
-         "prompt_digest": "sha256:" + hashlib.sha256(prompt.encode()).hexdigest(), "selected": list(selected)}
+def _row(selected=(), ms=40.0, at=0.0, session="s1", **extra):
+    r = {"ts": _at(at), "event": "reflex", "shadow": True, "session": session, "prompt_digest": "sha256:x",
+         "selected": list(selected)}
     if ms is not None:
         r["router_ms"] = ms
-        r["ms"] = ms / 2 if isinstance(ms, float) and ms == ms else 1.0
     return {**r, **extra}
 
 
-def _user(text, at=0.0, **extra):
-    return {"type": "user", "timestamp": _at(at), "message": {"role": "user", "content": text}, **extra}
+def _hook(at=0.0, kind="hook_success", ms=200, command="/x/role-x-intake-hook.sh"):
+    """Claude Code's record of one role-x UserPromptSubmit hook run."""
+    return {"type": "attachment", "timestamp": _at(at + 0.03), "attachment": {
+        "type": kind, "hookEvent": "UserPromptSubmit", "command": command, "durationMs": ms}}
 
 
 def _bash(cmd):
     return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": cmd}}]}}
 
 
-def _ships12():
-    rows = [_row(f"fix and push {i}", ["p9.watch-after-push"], at=i * 10) for i in range(12)]
-    t = [e for i in range(12) for e in (_user(f"fix and push {i}", at=i * 10), _bash("git push"))]
+P9 = ["p9.watch-after-push"]
+
+
+def _ships(n, p9=True, at0=0.0, step=10.0):
+    """n turns that each run the hook (with a shadow row) and then push."""
+    rows = [_row(P9 if p9 else [], at=at0 + i * step) for i in range(n)]
+    t = [e for i in range(n) for e in (_hook(at=at0 + i * step), _bash("git push"))]
     return rows, t
 
 
-def test_the_shadow_reader_meets_a1_only_on_a_full_join(tmp_path):
-    """spec A1's instrument (workspace#850): a full join, every row timed, no error, p99 <=
-    100 ms and p9's Wilson bound >= 0.70 is met (partial joins: the bounds test below)."""
-    rows, t = [], []
-    for i in range(12):
-        rows.append(_row(f"fix and push {i}", ["p9.watch-after-push"], at=i * 10))
-        t += [_user(f"fix and push {i}", at=i * 10), _bash(f"git -C /ws push -u origin b{i}"),
-              {"type": "user", "message": {"content": [{"type": "tool_result", "content": "ok"}]}}]
-    rows.append(_row("what is this", at=200))
-    t.append(_user("what is this", at=200))
-    rows.append(_row("probe", session="no-transcript", at=210))  # reported, left out of the join
-    code, rep = _shadow(tmp_path, rows + ["[1]", "not json"], t + ["[2]"])
+def test_the_shadow_reader_reads_a1_off_hook_runs(tmp_path):
+    """spec A1's instrument (workspace#850): each row pairs with its hook run in the
+    transcript by time; a turn is one hook run; met needs every row timed, no error,
+    p99 <= 100 ms and p9's Wilson bound >= 0.70 (the worst case, below)."""
+    rows, t = _ships(12)
+    rows.append(_row([], at=200))
+    t += [_hook(at=200), {"type": "user", "message": {"content": "what is this"}}]
+    rows.append(_row(P9, session="no-transcript", at=210))  # reported, left out of the join
+    code, rep = _shadow(tmp_path, rows + ["[1]"], t + ["not json", "[2]"])
     assert (code, rep["verdict"]) == (0, "met"), rep
     assert rep["ship_turns"]["paired"] == 12 and rep["ship_turns"]["p9_selected"] == 12
     assert rep["ship_turns"]["rows_in_sessions_without_a_transcript"] == 1
-
-
-def test_the_shadow_reader_keeps_a_small_partial_join_unshown(tmp_path):
-    rows, t = _ships12()
-    # a queued prompt (typed mid-turn) is its own turn: its push is not the turn before's
-    queued = {"type": "attachment", "timestamp": _at(130), "attachment": {"type": "queued_command", "prompt": "push it now"}}
-    code, rep = _shadow(tmp_path / "a", rows + [_row("push it now", at=130)], t + [queued, _bash("git push")])
-    assert rep["ship_turns"]["paired"] == 13 and rep["ship_turns"]["p9_selected"] == 12
-    # an isMeta prompt (a /loop firing) is its own turn; with no row it is unpaired
-    code, rep = _shadow(tmp_path / "b", rows, t + [_user("loop tick", at=140, isMeta=True), _bash("gh pr create --fill")])
-    assert (code, rep["verdict"]) == (3, "not shown") and rep["ship_turns"]["ship_turns_without_a_row"] == 1
-    # a skill's expansion and a compaction summary are not prompts: the push stays with its turn
-    expansion = _user("Base directory for this skill: /x", at=151, isMeta=True, sourceToolUseID="toolu_1")
-    code, rep = _shadow(tmp_path / "c", rows + [_row("last one", ["p9.watch-after-push"], at=150)],
-                        t + [_user("last one", at=150), expansion, _bash("git push"),
-                             _user("summary of the conversation", at=152, isCompactSummary=True), _bash("git push")])
-    assert rep["ship_turns"]["paired"] == 13 and rep["verdict"] == "met", rep
-    # a row without a router time (an older install), or a NaN one: time is not shown
-    for k, ms in (("d", None), ("d2", float("nan"))):
-        code, rep = _shadow(tmp_path / k, rows[:-1] + [_row("fix and push 11", ["p9.watch-after-push"], ms=ms, at=110)], t)
-        assert rep["verdict"] == "not shown", ms
-    # a row with no turn
-    code, rep = _shadow(tmp_path / "e", rows + [_row("never typed", at=160)], t)
-    assert rep["verdict"] == "not shown" and rep["ship_turns"]["rows_without_a_turn"] == 1
-    # an error row fails A1 whatever else holds
-    code, rep = _shadow(tmp_path / "f", rows + [_row("x", error="KeyError", at=170)], t + [_user("x", at=170)])
-    assert (code, rep["verdict"]) == (1, "not met")
-
-
-def test_a_killed_hook_s_turn_does_not_take_a_later_row(tmp_path):
-    """Found in review: a 'continue' whose hook was killed (no row) pushed; a later
-    'continue' did not, and has a row. The row is the later turn's, by time."""
-    rows, t = _ships12()
-    code, rep = _shadow(tmp_path, rows + [_row("continue", ["p9.watch-after-push"], at=1000)],
-                        t + [_user("continue", at=400), _bash("git push"), _user("continue", at=1000)])
-    assert rep["ship_turns"]["ship_turns_without_a_row"] == 1 and rep["verdict"] == "not shown"
-
-
-def test_the_shadow_reader_can_fail_while_the_join_is_partial(tmp_path):
-    """Even counting every unpaired ship turn as p9, 2 of 22 is below the bar: not met."""
-    rows = [_row(f"ship {i}", at=i * 10) for i in range(20)]
-    t = [e for i in range(20) for e in (_user(f"ship {i}", at=i * 10), _bash("git push"))]
-    t += [_user("/arc go", at=300, isMeta=True), _bash("git push"), _user("orphan", at=310), _bash("git push")]
-    code, rep = _shadow(tmp_path, rows, t)
-    assert (code, rep["verdict"]) == (1, "not met") and rep["ship_turns"]["wilson_lower_best_case"] < 0.70
+    assert rep["hook_wall_ms_reported_not_gated"]["runs"] == 13
 
 
 def test_the_shadow_reader_bounds_what_the_join_cannot_settle(tmp_path):
     """Met reads the worst case, not met the best case, and under 9 ship turns neither."""
-    def ships(n, p9=True, at0=0):
-        return ([_row(f"ship {i}", ["p9.watch-after-push"] if p9 else [], at=at0 + i * 10) for i in range(n)],
-                [e for i in range(n) for e in (_user(f"ship {i}", at=at0 + i * 10), _bash("git push"))])
-    rows, t = ships(30)
-    code, rep = _shadow(tmp_path / "a", rows, t + [_user("orphan", at=900), _bash("git push")])
+    rows, t = _ships(30)
+    code, rep = _shadow(tmp_path / "a", rows, t + [_hook(at=900), _bash("git push")])  # a run with no row
     assert (code, rep["verdict"]) == (0, "met") and rep["ship_turns"]["ship_turns_without_a_row"] == 1
-    # best case: 9 of 10 paired with p9 and 10 unpaired ship turns could be 19/20, so not shown, not "not met"
-    rows, t = ships(10)
-    rows[0]["selected"] = []
-    extra = [e for i in range(10) for e in (_user(f"unrowed {i}", at=1000 + i * 100), _bash("git push"))]
-    code, rep = _shadow(tmp_path / "g", rows, t + extra)
-    assert (code, rep["verdict"]) == (3, "not shown") and rep["ship_turns"]["wilson_lower_best_case"] >= 0.70
-    rows, t = ships(5)
-    code, rep = _shadow(tmp_path / "b", rows, t)
+    rows, t = _ships(12)
+    code, rep = _shadow(tmp_path / "b", rows, t + [_hook(at=900), _bash("gh pr create --fill")])
+    assert (code, rep["verdict"]) == (3, "not shown")  # worst W(12, 13) < 0.70 <= best
+    rows, t = _ships(5)
+    code, rep = _shadow(tmp_path / "c", rows, t)
     assert (code, rep["verdict"]) == (3, "not shown")  # 5/5 cannot reach 0.70 yet
-    rows, t = ships(12)
-    slow = [dict(r, router_ms=150.0) for r in rows]
-    code, rep = _shadow(tmp_path / "c", slow, t)
+    rows, t = _ships(10)
+    rows[0]["selected"] = []
+    extra = [e for i in range(10) for e in (_hook(at=1000 + i * 100), _bash("git push"))]
+    code, rep = _shadow(tmp_path / "d", rows, t + extra)  # could be 19/20: not shown, not "not met"
+    assert (code, rep["verdict"]) == (3, "not shown") and rep["ship_turns"]["wilson_lower_best_case"] >= 0.70
+    rows, t = _ships(20, p9=False)
+    code, rep = _shadow(tmp_path / "e", rows, t + [_hook(at=900), _bash("git push"), _hook(at=950), _bash("git push")])
+    assert (code, rep["verdict"]) == (1, "not met") and rep["ship_turns"]["wilson_lower_best_case"] < 0.70
+    rows, t = _ships(12)
+    code, rep = _shadow(tmp_path / "f", rows + [_row(P9, at=5000)], t)  # a row with no hook run
+    assert rep["ship_turns"]["rows_without_a_hook_run"] == 1 and rep["verdict"] == "not shown"
+
+
+def test_the_shadow_reader_fails_or_withholds_on_time_errors_and_unreadable_rows(tmp_path):
+    rows, t = _ships(12)
+    code, rep = _shadow(tmp_path / "a", [dict(r, router_ms=150.0) for r in rows], t)
     assert (code, rep["verdict"]) == (1, "not met") and rep["router_ms"]["p99"] == 150.0
-    # a ship turn with no timestamp cannot be paired: it is unsure, not dropped
-    code, rep = _shadow(tmp_path / "d", rows, t + [{"type": "user", "message": {"content": "undated"}}, _bash("git push")])
-    assert rep["ship_turns"]["ship_turns_without_a_row"] == 1
-    # a ship turn before the window is outside it, row or not: far before, and just before
-    # (inside the pairing slack, which reads turns 300 s early so a row at the edge can pair)
-    for k, off in (("e", -4 * 86400), ("e2", -3 * 86400 + 3600 - 100)):
-        code, rep = _shadow(tmp_path / k, rows, [_user("before", at=off), _bash("git push")] + t)
-        assert rep["verdict"] == "met" and rep["ship_turns"]["ship_turns_without_a_row"] == 0, k
-    # an image placeholder is not a prompt: the push stays with its turn
-    code, rep = _shadow(tmp_path / "f", rows + [_row("last", ["p9.watch-after-push"], at=500)],
-                        t + [_user("last", at=500), _user("[Image #1]", at=501, isMeta=True), _bash("git push")])
-    assert rep["ship_turns"]["paired"] == 13 and rep["verdict"] == "met"
+    for k, ms in (("b", None), ("c", float("nan"))):  # an older install, or a NaN: time not shown
+        code, rep = _shadow(tmp_path / k, rows[:-1] + [_row(P9, ms=ms, at=110)], t)
+        assert rep["verdict"] == "not shown", ms
+    code, rep = _shadow(tmp_path / "d", rows + [_row(at=170, error="KeyError")], t + [_hook(at=170)])
+    assert (code, rep["verdict"]) == (1, "not met")
+    torn = '{"event": "reflex", "shadow": true, "error": "Key'
+    code, rep = _shadow(tmp_path / "e", rows[:6] + [torn] + rows[6:], t)  # inside the window
+    assert rep["malformed_lines_in_window"] == 1 and rep["verdict"] == "not shown"
+    code, rep = _shadow(tmp_path / "f", [torn] + rows, t)  # before the window's first row
+    assert rep["malformed_lines_in_window"] == 0 and rep["verdict"] == "met"
 
 
-def test_one_prompt_stored_with_other_text_is_one_pair_not_two(tmp_path):
-    """The hook saw 'fix it'; the transcript stored 'fix it\n(pasted)'. Same moment, so one
-    pair (by time), not a row without a turn plus a ship turn without a row."""
-    rows, t = _ships12()
-    code, rep = _shadow(tmp_path, rows + [_row("fix it", ["p9.watch-after-push"], at=500)],
-                        t + [_user("fix it\n(pasted)", at=502), _bash("git push")])
-    st = rep["ship_turns"]
-    assert st["paired_by_time_only"] == 1 and st["paired"] == 13 and st["rows_without_a_turn"] == 0
-    assert rep["verdict"] == "met"
+def test_a_hook_run_pairs_one_row_and_belongs_to_its_session_s_window(tmp_path):
+    # every row nearest to the same run: each still takes its own
+    crowded = [_row(P9, at=12) for _ in range(9)]
+    near = [e for i in range(9) for e in (_hook(at=i * 3), _bash("git push"))]
+    code, rep = _shadow(tmp_path / "a", crowded, near)
+    assert rep["ship_turns"]["paired"] == 9 and rep["ship_turns"]["ship_turns_without_a_row"] == 0
+    # a row and a run further apart than HOOK_PAIR_S do not pair
+    rows, t = _ships(12)
+    code, rep = _shadow(tmp_path / "b", rows + [_row(P9, at=2000)], t + [_hook(at=2040), _bash("git push")])
+    assert rep["ship_turns"]["rows_without_a_hook_run"] == 1 and rep["ship_turns"]["ship_turns_without_a_row"] == 1
+    # runs and rows before the window are outside it; a run just before it (inside the
+    # pairing slack) is read for pairing but its ship is not counted
+    old = [_hook(at=-4 * 86400), _bash("git push"), _hook(at=-3 * 86400 + 3600 - 10), _bash("git push")]
+    code, rep = _shadow(tmp_path / "c", [_row(P9, at=-4 * 86400)] + rows, old + t)
+    assert rep["verdict"] == "met" and rep["ship_turns"]["ship_turns_without_a_row"] == 0 and rep["rows"] == 12
+    # other hooks, and other events, are not role-x runs
+    other = [_hook(at=600, command="/x/other-hook.sh"), dict(_hook(at=601), attachment={
+        **_hook(at=601)["attachment"], "hookEvent": "SessionStart"})]
+    code, rep = _shadow(tmp_path / "d", rows, t + other)
+    assert rep["hook_wall_ms_reported_not_gated"]["runs"] == 12
 
 
-def test_hook_kills_and_malformed_rows_are_reported(tmp_path):
-    rows, t = _ships12()
-    kill = {"type": "attachment", "timestamp": _at(601), "attachment": {
-        "type": "hook_cancelled", "hookEvent": "UserPromptSubmit", "command": "/x/role-x-intake-hook.sh", "timedOut": True}}
-    code, rep = _shadow(tmp_path / "a", rows, t + [_user("slow one", at=600), kill])
-    assert rep["router_ms"]["hook_kills_reported_not_gated"] == 1 and rep["verdict"] == "met"
-    torn = {"event": "reflex", "shadow": True, "error": "KeyError", "ts": "x"}
-    code, rep = _shadow(tmp_path / "b", rows + [torn], t)
-    assert rep["malformed_rows"] == 1 and rep["verdict"] == "not shown"
+def test_hook_kills_and_wall_clock_are_reported_not_gated(tmp_path):
+    rows, t = _ships(12)
+    code, rep = _shadow(tmp_path, rows + [_row(at=600)], t + [_hook(at=600, kind="hook_cancelled", ms=15002)])
+    hw = rep["hook_wall_ms_reported_not_gated"]
+    assert hw["killed"] == 1 and hw["max"] == 15002 and rep["verdict"] == "met"
 
 
 def test_p99_is_nearest_rank():
@@ -1519,10 +1488,11 @@ def test_p99_is_nearest_rank():
 
 
 def test_the_shadow_reader_rejects_a_since_it_cannot_read(tmp_path, monkeypatch):
-    rows, t = _ships12()
+    rows, t = _ships(12)
     for bad in ("yesterday", "2026-13-40", "2026/10/03", "3x"):
-        code, _ = _shadow_raw(tmp_path / bad.replace("/", "_"), rows, t, since=bad)
-        assert code == 2, bad
+        code, rep = _shadow(tmp_path / bad.replace("/", "_"), rows, t, since=bad)
+        assert code == 2 and "since" in rep["stderr"], bad
+    old_tz = os.environ.get("TZ")
     monkeypatch.setenv("TZ", "America/Bogota")  # a zoneless time must not be read as local
     time.tzset()
     try:
@@ -1530,55 +1500,11 @@ def test_the_shadow_reader_rejects_a_since_it_cannot_read(tmp_path, monkeypatch)
         from datetime import datetime, timezone
         assert rx._since("2026-10-03T14:00") == datetime(2026, 10, 3, 14, tzinfo=timezone.utc).timestamp()
     finally:
-        monkeypatch.delenv("TZ")
+        if old_tz is None:
+            monkeypatch.delenv("TZ")
+        else:
+            monkeypatch.setenv("TZ", old_tz)
         time.tzset()
-
-
-def _shadow_raw(tmp_path, rows, transcript, since):
-    import argparse as _ap
-    import contextlib
-    rx = load_module(ROLE_X_PY, "role_x_under_test_shadow_raw")
-    tmp_path.mkdir(parents=True, exist_ok=True)
-    (tmp_path / "events.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
-    err = io.StringIO()
-    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
-        code = rx.cmd_reflexes_shadow(_ap.Namespace(events=str(tmp_path / "events.jsonl"),
-                                                    projects=str(tmp_path / "projects"), since=since, json=True))
-    return code, err.getvalue()
-
-
-def test_the_shadow_reader_pairs_repeated_prompts_one_to_one(tmp_path):
-    """Nine turns of one prompt, each shipping, nine rows: nine pairs, not one."""
-    rows = [_row("go", ["p9.watch-after-push"], at=i * 60) for i in range(9)]
-    t = [e for i in range(9) for e in (_user("go", at=i * 60), _bash("git push"))]
-    code, rep = _shadow(tmp_path / "all", rows, t)
-    assert rep["ship_turns"]["paired"] == 9 and (code, rep["verdict"]) == (0, "met")
-    # every row nearest to the same turn: each still takes its own
-    crowded = [_row("go", ["p9.watch-after-push"], at=120) for _ in range(9)]
-    near = [e for i in range(9) for e in (_user("go", at=i * 30), _bash("git push"))]
-    code, rep = _shadow(tmp_path / "crowded", crowded, near)
-    assert rep["ship_turns"]["paired"] == 9 and rep["ship_turns"]["ship_turns_without_a_row"] == 0
-    rows = [_row("push and watch ci", ["p9.watch-after-push"], at=i * 20) for i in range(9)]
-    t = []
-    for i in range(9):
-        t.append(_user("push and watch ci", at=i * 20))
-        if i == 8:
-            t.append(_bash("git push"))
-    code, rep = _shadow(tmp_path, rows, t)
-    assert rep["ship_turns"]["paired"] == 1 and rep["ship_turns"]["wilson_lower"] < 0.70
-
-
-def test_the_shadow_window_and_slash_commands(tmp_path):
-    rx = load_module(ROLE_X_PY, "role_x_under_test_window")
-    old_rows, old_t = [_row("old", ["p9.watch-after-push"], at=-5 * 86400)], [_user("old", at=-5 * 86400), _bash("git push")]
-    rows, t = _ships12()
-    code, rep = _shadow(tmp_path, old_rows + rows, old_t + t)
-    assert rep["rows"] == 12 and rep["verdict"] == "met"  # the 5-day-old turn and row are outside 3d
-    from datetime import datetime, timezone
-    assert rx._since("2026-10-03") == datetime(2026, 10, 3, tzinfo=timezone.utc).timestamp()
-    typed = rx._as_typed({}, "<command-message>arc</command-message>\n<command-name>/arc</command-name>\n<command-args>go</command-args>")
-    assert typed == "/arc go"
-    assert rx._as_typed({}, "<command-message>resume</command-message>\n<command-name>/resume</command-name>") == "/resume"
 
 
 def test_a_ship_is_a_command_segment_not_a_mention():

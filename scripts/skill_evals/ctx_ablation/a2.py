@@ -121,10 +121,10 @@ def bars(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         qb = diff(rows, "qbar", "bare", a2)
         qr = diff(rows, "qbar", "rolex", p9 | bf)
         # a p9 or branch-first task legacy has no graded trial on leaves the comparison unshown
-        rolex_holes = sorted(f"{t} (no graded trial for rolex)" for t in p9 | bf if not _counts(rows, "rolex", {t})[1])
-        rolex_holes += sorted(f"{t} (no graded trial for {arm})" for t in a2 for arm in ("qbar", "bare")
+        fallback_holes = sorted(f"{t} (no graded trial for rolex)" for t in p9 | bf if not _counts(rows, "rolex", {t})[1])
+        fallback_holes += sorted(f"{t} (no graded trial for {arm})" for t in a2 for arm in ("qbar", "bare")
                               if not _counts(rows, arm, {t})[1])
-        shown = bool(p9) and bool(bf) and not rolex_holes
+        shown = bool(p9) and bool(bf) and not fallback_holes
         out["qbar_fallback"] = {
             "qbar_minus_bare": qb, "qbar_minus_bare_ci_above_0": _above(qb),
             "qbar_minus_rolex_p9_bf": qr, "qbar_minus_rolex_entirely_below_0": _below(qr),
@@ -132,7 +132,7 @@ def bars(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             "meets_850_condition": (None if not shown or qb["ci"] is None or qr["ci"] is None
                                     else bool(_above(qb)) and _below(qr) is False),
             "not_shown_because": [] if shown else [g for g, s_ in (("p9", p9), ("branch-first", bf)) if not s_]
-            + rolex_holes}
+            + fallback_holes}
     failed = (_above(rb) is False or any(x["reflex_ge_qbar"] is False for x in p9_bf)
               or (rq_rest is not None and _above(rq_rest) is False) or bool(fails))
     # a task an arm has no graded trial on drops out of every comparison silently: name it
