@@ -17,6 +17,8 @@ import shlex
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -28,6 +30,13 @@ KEYCHAIN_CLAUDE_SCOPED = "Claude Code-credentials-d098dafb"
 KEYCHAIN_CLAUDE_UNSCOPED = "Claude Code-credentials"
 SCRIPT_DIR = Path(__file__).resolve().parent
 AUTH_HELPER_PATH = SCRIPT_DIR / "auth_helper.js"
+
+USAGE_CACHE_PATH = Path.home() / ".cache/broomva-provider-usage.json"
+PROVIDER_EVENTS_PATH = Path.home() / ".cache/broomva-provider-events.jsonl"
+USAGE_API_URL = "https://api.anthropic.com/api/oauth/usage"
+TOKEN_ENDPOINT_URL = "https://platform.claude.com/v1/oauth/token"
+CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e"
+CACHE_TTL_SECONDS = 60.0
 
 
 def run_cmd(cmd: List[str], input_str: Optional[str] = None, check: bool = True, timeout: Optional[float] = 30.0) -> subprocess.CompletedProcess:
@@ -227,7 +236,423 @@ def list_accounts() -> List[Dict[str, Any]]:
     return accounts
 
 
-def switch_account(identifier: str) -> Dict[str, Any]:
+def read_usage_cache() -> Dict[str, Any]:
+    cache_path = Path(USAGE_CACHE_PATH)
+    if not cache_path.exists():
+        return {"updatedAt": 0, "accounts": {}}
+    try:
+        with open(cache_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return {"updatedAt": 0, "accounts": {}}
+
+
+def save_usage_cache(data: Dict[str, Any]) -> bool:
+    cache_path = Path(USAGE_CACHE_PATH)
+    if not cache_path.parent.exists():
+        cache_path.parent.mkdir(parents=True, exist_ok=True)
+    tmp_path = cache_path.with_suffix(f".tmp.{os.getpid()}")
+    try:
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(tmp_path, cache_path)
+        return True
+    except Exception as e:
+        if tmp_path.exists():
+            try:
+                tmp_path.unlink()
+            except OSError:
+                pass
+        return False
+
+
+def log_provider_event(event_type: str, details: Dict[str, Any]) -> None:
+    """Append a structured JSON record of a provider rotation or switch event."""
+    event_path = Path(PROVIDER_EVENTS_PATH)
+    event = {
+        "timestamp": int(time.time()),
+        "iso": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        "event": event_type,
+        **details
+    }
+    try:
+        if not event_path.parent.exists():
+            event_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(event_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(event) + "\n")
+    except Exception:
+        pass
+
+
+def read_provider_events(limit: int = 20) -> List[Dict[str, Any]]:
+    """Read the latest provider rotation and switch events."""
+    event_path = Path(PROVIDER_EVENTS_PATH)
+    if not event_path.exists():
+        return []
+    events = []
+    try:
+        with open(event_path, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        events.append(json.loads(line))
+                    except Exception:
+                        pass
+    except Exception:
+        return []
+    return events[-limit:]
+
+
+def refresh_account_token(account_id: str) -> Optional[Dict[str, Any]]:
+    """Refresh expired OAuth credentials for account_id via RFC 6749 refresh grant.
+    
+    Persists rotated refresh_token and new access_token to Keychain and orca-data.json.
+    """
+    creds = read_keychain_generic_password(KEYCHAIN_ORCA_SERVICE, account_id)
+    if not creds or "claudeAiOauth" not in creds:
+        return None
+
+    oauth = creds.get("claudeAiOauth", {})
+    refresh_token = oauth.get("refreshToken")
+    if not refresh_token:
+        return None
+
+    payload = json.dumps({
+        "client_id": CLIENT_ID,
+        "grant_type": "refresh_token",
+        "refresh_token": refresh_token,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        TOKEN_ENDPOINT_URL,
+        data=payload,
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json",
+            "User-Agent": "Claude-Code/2.1.280",
+        },
+        method="POST"
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=10.0) as resp:
+            token_data = json.loads(resp.read().decode("utf-8"))
+    except Exception as e:
+        sys.stderr.write(f"Warning: Failed to refresh OAuth token for {account_id}: {e}\n")
+        return None
+
+    new_access_token = token_data.get("access_token")
+    if not new_access_token:
+        return None
+
+    new_refresh_token = token_data.get("refresh_token") or refresh_token
+    expires_in = token_data.get("expires_in", 3600)
+    new_expires_at = int((time.time() + expires_in) * 1000)
+
+    oauth["accessToken"] = new_access_token
+    oauth["refreshToken"] = new_refresh_token
+    oauth["expiresAt"] = new_expires_at
+    creds["claudeAiOauth"] = oauth
+
+    # 1. Update Orca Keychain
+    if not write_keychain_generic_password(KEYCHAIN_ORCA_SERVICE, account_id, creds):
+        sys.stderr.write(f"Error: Failed to persist refreshed OAuth credentials for {account_id}\n")
+        return None
+
+    # 2. If this account is currently active, mirror to Claude Keychains
+    orca_data = get_orca_data()
+    active_id = orca_data.get("settings", {}).get("activeClaudeManagedAccountId")
+    username = get_current_username()
+    if active_id == account_id:
+        write_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED, username, creds)
+        write_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED, username, creds)
+
+    # 3. Update updatedAt in orca-data.json
+    for acc in orca_data.get("settings", {}).get("claudeManagedAccounts", []):
+        if acc.get("id") == account_id:
+            acc["updatedAt"] = int(time.time() * 1000)
+            break
+    save_orca_data(orca_data)
+
+    return creds
+
+
+def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retries: int = 1) -> Optional[Dict[str, Any]]:
+    """Fetch 5-hour and 7-day usage telemetry for a specific account.
+    
+    Reads from local cache if within TTL (60s), or queries https://api.anthropic.com/api/oauth/usage.
+    Automatically handles 401 token expiration by invoking refresh_account_token.
+    """
+    now = time.time()
+    cache = read_usage_cache()
+    acc_cache = cache.get("accounts", {}).get(account_id)
+
+    if not force_refresh and acc_cache:
+        cached_at = acc_cache.get("cachedAt", 0)
+        if (now - cached_at) < CACHE_TTL_SECONDS:
+            return acc_cache
+
+    creds = read_keychain_generic_password(KEYCHAIN_ORCA_SERVICE, account_id)
+    if not creds or "claudeAiOauth" not in creds:
+        return None
+
+    oauth = creds.get("claudeAiOauth", {})
+    token = oauth.get("accessToken")
+    expires_at = oauth.get("expiresAt")
+
+    # If token is locally known to be expired, refresh before calling
+    if token and expires_at and expires_at <= (now * 1000):
+        refreshed = refresh_account_token(account_id)
+        if refreshed:
+            token = refreshed.get("claudeAiOauth", {}).get("accessToken")
+
+    if not token:
+        return None
+
+    req = urllib.request.Request(
+        USAGE_API_URL,
+        headers={
+            "Authorization": f"Bearer {token}",
+            "User-Agent": "Claude-Code/2.1.280",
+            "anthropic-version": "2023-06-01",
+            "Accept": "application/json"
+        }
+    )
+
+    try:
+        with urllib.request.urlopen(req, timeout=5.0) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+    except urllib.error.HTTPError as e:
+        if e.code == 401 and max_retries > 0:
+            refreshed = refresh_account_token(account_id)
+            if refreshed:
+                return fetch_account_usage(account_id, force_refresh=True, max_retries=max_retries - 1)
+        elif e.code == 429:
+            entry = {
+                "id": account_id,
+                "cachedAt": now,
+                "isRateLimited": True,
+                "status": "rate_limited",
+                "error": "HTTP 429 Rate Limit"
+            }
+            cache.setdefault("accounts", {})[account_id] = entry
+            cache["updatedAt"] = now
+            save_usage_cache(cache)
+            return entry
+        return None
+    except Exception:
+        if acc_cache:
+            acc_cache["stale"] = True
+            return acc_cache
+        return None
+
+    fh = data.get("five_hour") or {}
+    sd = data.get("seven_day") or {}
+
+    fh_util = float(fh.get("utilization", fh.get("used_percentage", 0.0)) or 0.0)
+    sd_util = float(sd.get("utilization", sd.get("used_percentage", 0.0)) or 0.0)
+
+    if fh_util >= 95.0 or sd_util >= 98.0:
+        status = "critical"
+    elif fh_util >= 80.0 or sd_util >= 85.0:
+        status = "warning"
+    else:
+        status = "ok"
+
+    locked_reason = (data.get("five_hour") or {}).get("locked_reason")
+    is_locked = bool(locked_reason or fh_util >= 99.0)
+    prev_locked = acc_cache.get("isRateLimited", False) if acc_cache else False
+    locked_at = acc_cache.get("lockedAt", 0.0) if acc_cache else 0.0
+    locked_reason_prev = acc_cache.get("lockedReason") if acc_cache else None
+
+    if prev_locked and not is_locked:
+        if (now - locked_at) < 300.0:
+            is_locked = True
+            if not locked_reason:
+                locked_reason = locked_reason_prev or "rate_limit_lock"
+
+    entry = {
+        "id": account_id,
+        "cachedAt": now,
+        "five_hour": {
+            "utilization": round(fh_util, 1),
+            "resets_at": fh.get("resets_at")
+        },
+        "seven_day": {
+            "utilization": round(sd_util, 1),
+            "resets_at": sd.get("resets_at")
+        },
+        "isRateLimited": is_locked,
+        "lockedReason": locked_reason if is_locked else None,
+        "lockedAt": (locked_at or now) if is_locked else None,
+        "status": status,
+        "raw": data
+    }
+
+    cache.setdefault("accounts", {})[account_id] = entry
+    cache["updatedAt"] = now
+    save_usage_cache(cache)
+    return entry
+
+
+def fetch_all_usage(force_refresh: bool = False) -> List[Dict[str, Any]]:
+    """Fetch usage telemetry for all accounts configured in the roster."""
+    accounts = list_accounts()
+    results = []
+    for acc in accounts:
+        acc_id = acc["id"]
+        usage = fetch_account_usage(acc_id, force_refresh=force_refresh)
+        acc_info = dict(acc)
+        if usage:
+            acc_info["usage"] = usage
+            acc_info["fiveHourUtil"] = usage.get("five_hour", {}).get("utilization")
+            acc_info["sevenDayUtil"] = usage.get("seven_day", {}).get("utilization")
+            acc_info["fiveHourResetsAt"] = usage.get("five_hour", {}).get("resets_at")
+            acc_info["sevenDayResetsAt"] = usage.get("seven_day", {}).get("resets_at")
+            acc_info["usageStatus"] = usage.get("status", "unknown")
+            acc_info["isRateLimited"] = usage.get("isRateLimited", False)
+        else:
+            acc_info["usage"] = None
+            acc_info["fiveHourUtil"] = None
+            acc_info["sevenDayUtil"] = None
+            acc_info["fiveHourResetsAt"] = None
+            acc_info["sevenDayResetsAt"] = None
+            acc_info["usageStatus"] = "unavailable"
+            acc_info["isRateLimited"] = False
+        results.append(acc_info)
+    return results
+
+
+def balance_accounts(threshold: float = 85.0, dry_run: bool = False, verbose: bool = False) -> Dict[str, Any]:
+    """Proactively balance accounts when active account exceeds threshold.
+    
+    If active account's 5-hour utilization >= threshold, automatically switches
+    to the standby account with the lowest utilization.
+    """
+    accounts = fetch_all_usage()
+    if len(accounts) < 2:
+        return {
+            "success": True,
+            "action": "none",
+            "reason": "single_account",
+            "message": "Only 1 account configured in roster."
+        }
+
+    active = next((a for a in accounts if a["isActive"]), None)
+    if not active:
+        candidates = [a for a in accounts if a.get("hasStoredCredentials")]
+        if candidates:
+            best = min(candidates, key=lambda a: a.get("fiveHourUtil") if a.get("fiveHourUtil") is not None else 999.0)
+            if dry_run:
+                return {
+                    "success": True,
+                    "action": "would_switch",
+                    "switchedTo": best["email"],
+                    "reason": "no_active_account",
+                    "dryRun": True
+                }
+            switch_res = switch_account(best["id"])
+            return {
+                "success": bool(switch_res.get("success", False)),
+                "action": "switched",
+                "switchedTo": best["email"],
+                "reason": "no_active_account"
+            }
+        return {"success": False, "error": "No accounts with stored credentials available."}
+
+    active_util = active.get("fiveHourUtil")
+    active_email = active.get("email")
+    active_rate_limited = active.get("isRateLimited", False)
+
+    needs_balancing = active_rate_limited or (active_util is not None and active_util >= threshold)
+
+    standbys = [
+        a for a in accounts
+        if not a["isActive"] and a.get("hasStoredCredentials") and not a.get("isRateLimited")
+    ]
+
+    if not standbys:
+        return {
+            "success": True,
+            "action": "none",
+            "activeAccount": active_email,
+            "utilization": active_util,
+            "reason": "no_available_standby",
+            "message": "No alternative standby account with stored credentials available."
+        }
+
+    def standby_sort_key(a):
+        fh = a.get("fiveHourUtil")
+        sd = a.get("sevenDayUtil")
+        return (fh if fh is not None else 999.0, sd if sd is not None else 999.0)
+
+    best_standby = min(standbys, key=standby_sort_key)
+    best_util = best_standby.get("fiveHourUtil")
+    best_email = best_standby.get("email")
+
+    if needs_balancing:
+        if best_util is None or (active_util is None) or best_util < active_util:
+            if dry_run:
+                return {
+                    "success": True,
+                    "action": "would_switch",
+                    "dryRun": True,
+                    "fromAccount": active_email,
+                    "toAccount": best_email,
+                    "activeUtilization": active_util,
+                    "standbyUtilization": best_util,
+                    "reason": "active_rate_limited" if active_rate_limited else "active_exceeded_threshold"
+                }
+
+            if verbose:
+                sys.stdout.write(f"[*] Proactive balancing: rotating from {active_email} ({active_util}%) to {best_email} ({best_util}%)...\n")
+            switch_res = switch_account(
+                best_standby["id"],
+                source="proactive_balance",
+                metadata={
+                    "fromAccount": active_email,
+                    "activeUtilization": active_util,
+                    "standbyUtilization": best_util,
+                    "reason": "active_rate_limited" if active_rate_limited else "active_exceeded_threshold"
+                }
+            )
+            return {
+                "success": bool(switch_res.get("success", False)),
+                "action": "switched",
+                "fromAccount": active_email,
+                "toAccount": best_email,
+                "activeUtilization": active_util,
+                "standbyUtilization": best_util,
+                "reason": "active_rate_limited" if active_rate_limited else "active_exceeded_threshold",
+                "switchResult": switch_res
+            }
+        else:
+            return {
+                "success": True,
+                "action": "none",
+                "activeAccount": active_email,
+                "utilization": active_util,
+                "standbyAccount": best_email,
+                "standbyUtilization": best_util,
+                "reason": "standby_higher_utilization",
+                "message": f"Active account ({active_email} at {active_util}%) is healthier than standby ({best_email} at {best_util}%)."
+            }
+
+    return {
+        "success": True,
+        "action": "none",
+        "activeAccount": active_email,
+        "utilization": active_util,
+        "standbyAccount": best_email,
+        "standbyUtilization": best_util,
+        "reason": "within_budget"
+    }
+
+
+def switch_account(identifier: str, source: str = "manual", metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
     """Switch active credentials in both Claude Code and Orca to target email or UUID."""
     accounts = list_accounts()
     target = None
@@ -279,8 +704,19 @@ def switch_account(identifier: str) -> Dict[str, Any]:
 
     # 5. Verify status
     status = get_claude_auth_status()
+    success = status.get("loggedIn") is True
+    if success:
+        event_data = {
+            "toAccount": target_email,
+            "accountId": target_id,
+            "source": source
+        }
+        if metadata:
+            event_data.update(metadata)
+        log_provider_event("switch", event_data)
+
     return {
-        "success": status.get("loggedIn") is True,
+        "success": success,
         "switchedTo": target_email,
         "accountId": target_id,
         "authStatus": status
@@ -453,7 +889,10 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
 
 
 def rotate_account(reason: str = "rate_limit", dry_run: bool = False) -> Dict[str, Any]:
-    """Rotate to the next available configured account when a rate limit occurs."""
+    """Rotate to the next available configured account when a rate limit occurs.
+    
+    Uses live usage telemetry when available to pick the standby account with lowest utilization.
+    """
     accounts = list_accounts()
     if len(accounts) < 2:
         return {
@@ -464,14 +903,27 @@ def rotate_account(reason: str = "rate_limit", dry_run: bool = False) -> Dict[st
     active_idx = next((i for i, a in enumerate(accounts) if a["isActive"]), 0)
     active = accounts[active_idx] if accounts else None
 
-    # Cyclic round-robin order of remaining candidates
-    ordered_candidates = [accounts[(active_idx + i) % len(accounts)] for i in range(1, len(accounts))]
+    # Fetch usage telemetry to make an intelligent selection
+    usage_list = fetch_all_usage()
+    standby_candidates = [
+        a for a in usage_list
+        if not a["isActive"] and a.get("hasStoredCredentials") and not a.get("isRateLimited")
+    ]
 
-    # 1. Prefer candidate with fresh token
-    chosen = next((c for c in ordered_candidates if c.get("isTokenFresh")), None)
-    # 2. Otherwise candidate with stored credentials
+    chosen = None
+    if standby_candidates:
+        def sort_key(a):
+            fh = a.get("fiveHourUtil")
+            sd = a.get("sevenDayUtil")
+            return (fh if fh is not None else 999.0, sd if sd is not None else 999.0)
+        chosen = min(standby_candidates, key=sort_key)
+
     if not chosen:
-        chosen = next((c for c in ordered_candidates if c.get("hasStoredCredentials")), ordered_candidates[0])
+        # Fallback to cyclic round-robin order of remaining candidates
+        ordered_candidates = [accounts[(active_idx + i) % len(accounts)] for i in range(1, len(accounts))]
+        chosen = next((c for c in ordered_candidates if c.get("isTokenFresh")), None)
+        if not chosen:
+            chosen = next((c for c in ordered_candidates if c.get("hasStoredCredentials")), ordered_candidates[0])
 
     if dry_run:
         return {
@@ -482,9 +934,26 @@ def rotate_account(reason: str = "rate_limit", dry_run: bool = False) -> Dict[st
             "reason": reason
         }
 
+    # Mark active account as rate-limited in usage cache when performing actual rotation
+    if active:
+        cache = read_usage_cache()
+        acc_cache = cache.get("accounts", {}).get(active["id"], {})
+        acc_cache["isRateLimited"] = True
+        acc_cache["lockedReason"] = reason
+        acc_cache["lockedAt"] = time.time()
+        cache.setdefault("accounts", {})[active["id"]] = acc_cache
+        save_usage_cache(cache)
+
     sys.stdout.write(f"[*] Rotating provider from {active['email'] if active else 'unknown'} to {chosen['email']} (reason: {reason})...\n")
     try:
-        switch_res = switch_account(chosen["id"])
+        switch_res = switch_account(
+            chosen["id"],
+            source="rate_limit_failover",
+            metadata={
+                "fromAccount": active["email"] if active else None,
+                "reason": reason
+            }
+        )
         return {
             "success": bool(switch_res.get("success", False)),
             "rotatedFrom": active["email"] if active else None,
@@ -514,6 +983,15 @@ def main():
     # status
     subparsers.add_parser("status", help="Show active provider and auth status", parents=[common_parser])
 
+    # usage
+    usage_parser = subparsers.add_parser("usage", help="Show usage telemetry and rate limit status for all accounts", parents=[common_parser])
+    usage_parser.add_argument("--force", action="store_true", help="Bypass cache and force fresh API fetch")
+
+    # balance
+    balance_parser = subparsers.add_parser("balance", help="Proactively balance accounts based on usage utilization", parents=[common_parser])
+    balance_parser.add_argument("--threshold", type=float, default=85.0, help="5-hour utilization threshold to trigger rotation (default: 85.0)")
+    balance_parser.add_argument("--dry-run", action="store_true", help="Preview balancing action without switching")
+
     # switch
     switch_parser = subparsers.add_parser("switch", help="Switch active credentials to an account", parents=[common_parser])
     switch_parser.add_argument("account", help="Account email or UUID")
@@ -528,6 +1006,10 @@ def main():
     rotate_parser = subparsers.add_parser("rotate", help="Rotate to next available account (rate limit failover)", parents=[common_parser])
     rotate_parser.add_argument("--reason", default="rate_limit", help="Reason for rotation (e.g. rate_limit, quota)")
     rotate_parser.add_argument("--dry-run", action="store_true", help="Preview rotation without applying")
+
+    # history
+    history_parser = subparsers.add_parser("history", help="Show recent provider rotation and balancing events", parents=[common_parser])
+    history_parser.add_argument("--limit", type=int, default=15, help="Number of recent events to display (default: 15)")
 
     args = parser.parse_args()
 
@@ -554,6 +1036,55 @@ def main():
                 print(f"Active Email:  {status.get('email')}")
                 print(f"Organization:  {status.get('orgName')} ({status.get('orgId')})")
                 print(f"Subscription:  {status.get('subscriptionType')}")
+
+        elif args.command == "usage":
+            accounts = fetch_all_usage(force_refresh=args.force)
+            if args.json:
+                print(json.dumps(accounts, indent=2))
+            else:
+                print(f"{'ACTIVE':<8} {'EMAIL':<28} {'5-HOUR UTIL':<22} {'7-DAY UTIL':<22} {'STATUS'}")
+                print("-" * 92)
+                for a in accounts:
+                    active_marker = " * " if a["isActive"] else "   "
+                    fh_str = f"{a['fiveHourUtil']}%" if a['fiveHourUtil'] is not None else "-"
+                    if a.get('fiveHourResetsAt'):
+                        fh_reset = a['fiveHourResetsAt'].split('T')[-1][:5]
+                        fh_str += f" ({fh_reset})"
+                    sd_str = f"{a['sevenDayUtil']}%" if a['sevenDayUtil'] is not None else "-"
+                    if a.get('sevenDayResetsAt'):
+                        sd_reset = a['sevenDayResetsAt'].split('T')[0]
+                        sd_str += f" ({sd_reset})"
+                    status = a.get("usageStatus", "unknown").upper()
+                    if a.get("isRateLimited"):
+                        status = "RATE_LIMITED"
+                    print(f"{active_marker:<8} {a['email']:<28} {fh_str:<22} {sd_str:<22} {status}")
+
+        elif args.command == "balance":
+            res = balance_accounts(threshold=args.threshold, dry_run=args.dry_run, verbose=True)
+            if args.json:
+                print(json.dumps(res, indent=2))
+            else:
+                action = res.get("action")
+                if action == "switched":
+                    print(f"Balanced: Switched active account from {res.get('fromAccount')} to {res.get('toAccount')}")
+                    print(f"Utilizations: Previous {res.get('activeUtilization')}%, New {res.get('standbyUtilization')}%")
+                elif action == "would_switch":
+                    print(f"Dry run: Would switch active account from {res.get('fromAccount')} ({res.get('activeUtilization')}%) to {res.get('toAccount')} ({res.get('standbyUtilization')}%)")
+                elif res.get("reason") == "within_budget":
+                    active_acc = res.get('activeAccount', 'unknown')
+                    util = res.get('utilization')
+                    util_str = f"{util}%" if util is not None else "N/A"
+                    print(f"Balanced: Active account ({active_acc}) utilization is within budget ({util_str} < {args.threshold}%). No switch needed.")
+                elif res.get("reason") == "standby_higher_utilization":
+                    active_acc = res.get('activeAccount', 'unknown')
+                    util = res.get('utilization')
+                    standby_acc = res.get('standbyAccount', 'unknown')
+                    standby_util = res.get('standbyUtilization')
+                    print(f"Balanced: Active account ({active_acc} at {util}%) is healthier than standby ({standby_acc} at {standby_util}%). No switch needed.")
+                elif not res.get("success", False):
+                    print(f"Balance check: {res.get('error') or res.get('message') or 'Unable to balance accounts.'}")
+                else:
+                    print(f"Balance check: {res.get('message') or res.get('reason') or 'No switch performed.'}")
 
         elif args.command == "switch":
             res = switch_account(args.account)
@@ -582,6 +1113,29 @@ def main():
                     print(f"Successfully rotated provider: {res.get('rotatedFrom')} -> {res.get('rotatedTo')}")
                 else:
                     print(f"Rotation failed: {res.get('error')}")
+
+        elif args.command == "history":
+            events = read_provider_events(limit=args.limit)
+            if args.json:
+                print(json.dumps(events, indent=2))
+            else:
+                if not events:
+                    print("No provider balancing or rotation events recorded yet.")
+                else:
+                    print(f"{'TIMESTAMP (UTC)':<20} {'SOURCE':<22} {'FROM':<26} {'TO':<26} {'DETAILS'}")
+                    print("-" * 115)
+                    for ev in reversed(events):
+                        ts = ev.get("iso", "unknown")
+                        source = ev.get("source", ev.get("event", "unknown"))
+                        from_acc = ev.get("fromAccount") or "-"
+                        to_acc = ev.get("toAccount") or "-"
+                        reason = ev.get("reason", "")
+                        from_util = ev.get("activeUtilization")
+                        to_util = ev.get("standbyUtilization")
+                        detail = f"{reason}"
+                        if from_util is not None and to_util is not None:
+                            detail += f" ({from_util}% -> {to_util}%)"
+                        print(f"{ts:<20} {source:<22} {from_acc:<26} {to_acc:<26} {detail}")
 
     except Exception as e:
         if args.json:

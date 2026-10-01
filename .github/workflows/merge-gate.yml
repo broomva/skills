@@ -36,6 +36,9 @@ permissions:
   contents: read
   checks: read
   statuses: read
+  # Reading the run behind the Copilot check (actions/runs/<id>). Without it the
+  # lookup answers 403, the row is kept, and Copilot blocks as before.
+  actions: read
 
 jobs:
   gate:
@@ -68,18 +71,69 @@ jobs:
           # exact moment the loop would have reported its own timeout -- and the
           # kill wins, which is why the check read "failure" rather than saying
           # what it was waiting for. `bash smoke tests` measured 36m21s.
+          #
+          # Copilot code review is advisory (BRO-2678), as p9's gate-check already
+          # treats every review bot: its findings arrive as review threads, and its
+          # check fails on the reviewer's own quota ("You have exceeded your monthly
+          # quota") while saying nothing about the code. Its verdict never blocks,
+          # but the gate still waits for it to FINISH, so its threads exist before a
+          # green gate invites a merge (a quota failure finishes in under a minute).
+          # The check is published by the github-actions app, like every workflow
+          # here, so neither its name nor its app tells it from a PR job named the
+          # same. The run behind it does: GitHub runs Copilot review as a dynamic
+          # workflow, event "dynamic" and path dynamic/agents/copilot-pull-request-reviewer,
+          # which no workflow file can produce. Only a row whose run, on this head,
+          # says so is advisory; any other github-actions row with that name, a
+          # failed lookup included, gates as before, with one warning per run that
+          # names what the lookup returned (a changed dynamic path shows up there).
+          # A Copilot run that hangs holds the gate like any running check, and the
+          # timeout names it: cancel that run and re-run the gate.
+          COPILOT_ORIGIN="dynamic dynamic/agents/copilot-pull-request-reviewer $SHA"
+          advisory=" "   # run ids verified as Copilot's, looked up once
+          warned=" "     # run ids already warned about; their lookup is retried
           for i in $(seq 1 120); do   # up to ~60 min
-            # All check-runs on this head SHA except this gate itself.
-            runs=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs" \
-                     --jq '.check_runs[] | select(.name != "Merge Gate") | [.name, .status, (.conclusion // "")] | @tsv' \
-                   || echo "")
+            # All check-runs on this head SHA except this gate itself. Fields are
+            # joined with \x1f, not a tab: tab is IFS whitespace, so `read` would
+            # collapse a running check's empty conclusion and shift every field.
+            all=$(gh api --paginate "repos/$REPO/commits/$SHA/check-runs" \
+                    --jq '.check_runs[] | select(.name != "Merge Gate") | [.name, .status, (.conclusion // ""), (.app.slug // ""), (.details_url // "")] | join("\u001f")' \
+                  || echo "")
+            runs=""
+            while IFS=$'\x1f' read -r name status concl app url; do
+              [ -n "$name" ] || continue
+              if [ "$name" = "copilot-pull-request-reviewer" ] && [ "$app" = "github-actions" ]; then
+                rid=$(printf '%s' "$url" | sed -n 's#.*/actions/runs/\([0-9][0-9]*\)/.*#\1#p')
+                case "$advisory" in *" ${rid:-none} "*) ;; *)
+                  origin="no run in details_url"
+                  if [ -n "$rid" ]; then
+                    origin=$(gh api "repos/$REPO/actions/runs/$rid" --jq '.event + " " + .path + " " + .head_sha' 2>&1) || true
+                  fi
+                  if [ -n "$rid" ] && [ "$origin" = "$COPILOT_ORIGIN" ]; then
+                    echo "advisory: $name from Copilot's run $rid; its verdict is not gated"
+                    advisory="$advisory$rid "
+                  else
+                    case "$warned" in *" ${rid:-none} "*) ;; *)
+                      echo "::warning::$name gates as a normal check: run ${rid:-none} is '$(printf '%s' "$origin" | head -c 200)', not Copilot's dynamic run on this head"
+                      warned="$warned${rid:-none} " ;;
+                    esac
+                  fi ;;
+                esac
+                # Verified: a finished run's verdict is advisory; a running one is waited for.
+                if [ -n "$rid" ] && [[ "$advisory" == *" $rid "* ]] && [ "$status" = "completed" ]; then
+                  continue
+                fi
+              fi
+              runs+="$name"$'\t'"$status"$'\t'"$concl"$'\n'
+            done <<< "$all"
             # Legacy commit statuses (belt-and-suspenders; most checks are check-runs).
             st_state=$(gh api "repos/$REPO/commits/$SHA/status" --jq '.state' 2>/dev/null || echo "unknown")
 
             failed=$(printf '%s\n' "$runs" | awk -F'\t' -v b="$BLOCKING" 'NF>=3 && $3 ~ ("^(" b ")$"){print $1}')
             if [ -n "$failed" ] || [ "$st_state" = "failure" ] || [ "$st_state" = "error" ]; then
               echo "::error::Merge Gate FAILED — blocking checks:"
-              [ -n "$failed" ] && printf '  - %s\n' $failed
+              # Quoted: check names carry spaces, and unquoted "pytest (Python 3.12)"
+              # was reported as three checks that do not exist (SC2086).
+              [ -n "$failed" ] && printf '%s\n' "$failed" | sed 's/^/  - /'
               [ "$st_state" = "failure" ] || [ "$st_state" = "error" ] && echo "  - (legacy commit status: $st_state)"
               exit 1
             fi
@@ -99,5 +153,6 @@ jobs:
             echo "waiting: $n check(s), $incomplete still running, commit status=$st_state (poll $i/120)…"
             sleep 30
           done
-          echo "::error::Merge Gate timed out waiting for checks to conclude."
+          echo "::error::Merge Gate timed out waiting for checks to conclude:"
+          printf '%s\n' "$runs" | awk -F'\t' 'NF>=2 && $2 != "completed"{print "  - " $1 " (" $2 ")"}'
           exit 1
