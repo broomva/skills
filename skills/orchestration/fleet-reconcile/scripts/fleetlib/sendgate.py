@@ -32,6 +32,11 @@ from .act import Act, Refused
 from .sources import Sources
 
 _ID_RE = re.compile(r'"(?:msg_?id|message_?id)"\s*:\s*"([^"]{1,80})"', re.IGNORECASE)
+#: Inside the hook's 10 s: a ledger lock or a listing that takes longer fails
+#: the gate closed here, rather than the harness killing the hook (which lets
+#: the tool run, spike P6).
+LOCK_WAIT_S = 3.0
+LISTING_TIMEOUT_S = 5.0
 
 
 def _matches(records: List[Dict[str, Any]], tick: int, to: str, text: str, open_only: bool) -> List[Dict[str, Any]]:
@@ -50,9 +55,12 @@ def pre(sec: Dict[str, Any], src: Sources, hook: Dict[str, Any], tick: Optional[
     base = {"scope": sec["scope"], "tick": tick, "dry_run": dry, "by": "hook", "verb": "mail"}
 
     def refuse(check: str, it: Optional[Dict[str, Any]] = None) -> Tuple[int, str]:
-        ledger.append(sd, dict(base, kind="failed", of=it["id"] if it else None,
-                               key=it["key"] if it else "to:%s" % common.safe_text(to, 80),
-                               reason="gate_refused", detail="send gate: %s" % check))
+        try:
+            ledger.append(sd, dict(base, kind="failed", of=it["id"] if it else None,
+                                   key=it["key"] if it else "to:%s" % common.safe_text(to, 80),
+                                   reason="gate_refused", detail="send gate: %s" % check), wait=LOCK_WAIT_S)
+        except (ledger.LedgerError, OSError) as exc:  # still refused: the record is what's lost
+            check += " (and the refusal couldn't be recorded: %s)" % exc
         return 2, "fleet send gate refused this SendMessage: %s" % check
 
     if tick is None:
@@ -75,7 +83,7 @@ def pre(sec: Dict[str, Any], src: Sources, hook: Dict[str, Any], tick: Optional[
         return refuse("a second mail to this recipient within %d h (intent %s)" % (sec["mail_interval_h"],
                                                                                     prior["id"]), it)
     try:
-        rows = act.listing()
+        rows = act.listing(LISTING_TIMEOUT_S)
     except Refused as exc:
         return refuse(exc.detail, it)
     live = [r for r in rows if r["pid"] is not None and r["name"] == to]
@@ -84,7 +92,11 @@ def pre(sec: Dict[str, Any], src: Sources, hook: Dict[str, Any], tick: Optional[
             len(live), "" if not live or live[0]["session_id"] == t["session_id"] else ", not session %s"
             % t["session_id"][:8]), it)
     if dry:
-        ledger.append(sd, dict(base, kind="done", of=it["id"], key=it["key"], result={"would": True}))
+        try:
+            ledger.append(sd, dict(base, kind="done", of=it["id"], key=it["key"], result={"would": True}),
+                          wait=LOCK_WAIT_S)
+        except (ledger.LedgerError, OSError) as exc:
+            return 2, "dry run: not sent (DRY_RUN=1); closing intent %s failed: %s" % (it["id"], exc)
         return 2, ("dry run: not sent (DRY_RUN=1). The send gate passed every check and closed intent %s as would."
                    % it["id"])
     return 0, ""
@@ -110,7 +122,7 @@ def post(sec: Dict[str, Any], hook: Dict[str, Any], tick: Optional[int], dry: bo
     resp = hook.get("tool_response", hook.get("error"))
     blob = resp if isinstance(resp, str) else json.dumps(resp, default=str)
     failed = hook.get("hook_event_name") == "PostToolUseFailure" or (
-        isinstance(resp, dict) and bool(resp.get("is_error") or resp.get("error")))
+        isinstance(resp, dict) and bool(resp.get("is_error") or resp.get("error") or resp.get("success") is False))
     if failed:
         return ledger.append(sd, dict(base, kind="failed", of=it["id"], key=it["key"], reason="harness_refused",
                                       detail=common.safe_text(blob, 200)))

@@ -44,6 +44,14 @@ HOLD_LABEL = "hold"
 SPAWNED_RE = re.compile(r"backgrounded\s*\S\s*([0-9a-f]{8})\b")
 LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,49}$")
 MAIL_TEMPLATES = ("stalled", "hung", "overlap")
+#: The only values a template takes from the caller, each a shape and never
+#: free text: §5.5's fixed templates "never name a merge or a removal", and a
+#: value is text the coordinator chose. `hours` comes from the config.
+TEMPLATE_VARS = {"other": re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$"),
+                 "paths": re.compile(r"^[A-Za-z0-9._/-]{1,120}(?:, [A-Za-z0-9._/-]{1,120}){0,4}$")}
+#: Surfaces the driver rules read: a rule whose surface wasn't read can't pass.
+SPAWN_SURFACES = ("listing", "jobs", "transcripts")
+LIVE_POLL_S = 10.0
 
 
 class Refused(Exception):
@@ -124,9 +132,9 @@ class Act:
                                             "fleet ack first" % common.safe_text(k, 80))
 
     # -- sessions ------------------------------------------------------------
-    def listing(self) -> List[Dict[str, Any]]:
+    def listing(self, timeout: float = 30) -> List[Dict[str, Any]]:
         try:
-            rows, _ = parsers.parse_listing(self.src.agents_listing())
+            rows, _ = parsers.parse_listing(self.src.agents_listing(timeout))
         except (SourceError, parsers.ParseError) as exc:
             raise Refused("not_live", "the session listing couldn't be read: %s" % common.safe_text(exc, 120))
         return rows
@@ -137,7 +145,7 @@ class Act:
         reach (§5.3)."""
         out: Dict[str, Dict[str, Any]] = {}
         for key, ids in ledger.spawned(self.records).items():
-            for sid in ids:
+            for sid in ids:  # a session id, or a job id when the listing lagged the spawn
                 out[sid] = {"key": key, "paseo_agent_id": None}
         for e in self.sec.get("adopted") or []:
             out[e["session_id"]] = {"key": "adopt:%s" % e["session_id"], "paseo_agent_id": e.get("paseo_agent_id")}
@@ -174,8 +182,12 @@ class Act:
         return row
 
     # -- mail ----------------------------------------------------------------
+    def whose(self, sid: str) -> Optional[Dict[str, Any]]:
+        ours = self.ours()
+        return ours.get(sid) or ours.get(sid[:8])
+
     def mail(self, sid: str, template: str, values: Dict[str, str]) -> Dict[str, Any]:
-        who = self.ours().get(sid)
+        who = self.whose(sid)
         key = who["key"] if who else "session:%s" % sid
         try:
             self.preflight("mail", [sid])
@@ -192,8 +204,13 @@ class Act:
                     self.sec["mail_interval_h"], prior["id"]))
             if template not in MAIL_TEMPLATES:
                 raise Refused("ineligible", "no mail template %r" % template)
+            for k, v in values.items():
+                if k not in TEMPLATE_VARS or not TEMPLATE_VARS[k].match(v or ""):
+                    raise Refused("ineligible", "template value %s is not one of the fixed shapes (other: a session "
+                                                "name; paths: up to 5 plain paths)" % common.safe_text(k, 20))
             try:
-                text = render_template("mail/%s.txt" % template, dict(values, name=row["name"]))
+                text = render_template("mail/%s.txt" % template, dict(values, name=row["name"],
+                                                                       hours=str(self.sec["mail_interval_h"])))
             except KeyError as exc:
                 raise Refused("ineligible", "template %s needs --var %s" % (template, exc.args[0]))
         except Refused as exc:
@@ -207,10 +224,18 @@ class Act:
 
     # -- spawn ---------------------------------------------------------------
     def driver_check(self, snap: Dict[str, Any], results: List[Dict[str, Any]], slug: str, number: int,
-                     key: str) -> Tuple[Dict[str, Any], Dict[str, Any]]:
-        """§5.5's rules for a driver, from a fresh observation. Raises Refused."""
-        if not snap["surfaces"]["listing"]["ok"]:
-            raise Refused("ineligible", "the session listing wasn't read: %s" % snap["surfaces"]["listing"].get("error"))
+                     key: str, rows: Optional[List[Dict[str, Any]]] = None) -> Tuple[Dict[str, Any], Dict[str, Any]]:
+        """§5.5's rules for a driver, from a fresh observation (and the raw
+        listing rows, for names). Raises Refused. A rule whose surface wasn't
+        read refuses: the caps need transcripts, the pause needs the boards
+        and job files, and nothing stands without the listing."""
+        surf = snap["surfaces"]
+        for name in SPAWN_SURFACES:
+            if not (surf.get(name) or {}).get("ok"):
+                raise Refused("ineligible", "the %s surface wasn't read: %s" % (name, (surf.get(name) or {}).get("error")))
+        bad = sorted(s for s, b in (surf.get("board") or {}).items() if not b.get("ok"))
+        if bad:
+            raise Refused("ineligible", "the board of %s wasn't read" % ", ".join(bad))
         repo = next((r for r in snap["repos"] if r.get("slug") == slug), None)
         if repo is None:
             raise Refused("ineligible", "%s is not a repo of scope %s" % (slug, self.sec["scope"]))
@@ -228,7 +253,9 @@ class Act:
             raise Refused("ineligible", "%s#%d is Dependabot's (batched separately)" % (slug, number))
         if any(lb.lower() == HOLD_LABEL for lb in pr["labels"]):
             raise Refused("ineligible", "%s#%d is held (label %s)" % (slug, number, HOLD_LABEL))
-        taken = sorted(s["session_id"][:8] for s in snap["sessions"] if s["name"] == key)
+        # Raw names: a snapshot's are guarded for display (clipped or withheld).
+        named = rows if rows is not None else snap["sessions"]
+        taken = sorted(s["session_id"][:8] for s in named if s["name"] == key)
         if taken:
             raise Refused("name_taken", "%s is already carried by %s (a stopped driver is resumed, not spawned "
                                         "again)" % (key, ", ".join(taken)))
@@ -266,8 +293,12 @@ class Act:
             if role != "driver":
                 raise Refused("ineligible", "janitor runs are report-only until the phase-2 janitor drill passes "
                                             "(§5.5); research spawns aren't built")
+            pending = [r["id"] for r in ledger.open_intents(self.records, "spawn")
+                       if r.get("key") == key and bool(r.get("dry_run")) == self.dry]
+            if pending:
+                raise Refused("ineligible", "a spawn of %s is still unconfirmed (intent %s)" % (key, pending[0]))
             snap = observe.observe(self.sec, self.src, self.tick or 0, now=self.now)
-            repo, pr = self.driver_check(snap, classify.classify_all(snap), slug, number, key)
+            repo, pr = self.driver_check(snap, classify.classify_all(snap), slug, number, key, self.listing())
             try:
                 files = json.loads(self.src.pr_files(slug, number))
             except (SourceError, ValueError) as exc:
@@ -297,14 +328,26 @@ class Act:
                 return self._failed(it, "spawn_error", "no fleet token file: a live spawn is refused without it")
             profile.write(prof, profile.driver_profile(self.sec, key, token, profile.gh_config_dir(self.sd, key)))
             out = self.src.run_claude(argv[1:], cwd=workdir)
-            m = SPAWNED_RE.search(out)
-            if not m:
-                return self._failed(it, "spawn_error", "claude --bg printed no background id: %s"
-                                    % common.safe_text(out, 80))
-            row = next((r for r in self.listing() if r["bg_id"] == m.group(1)), None)
-            return self._done(it, {"session_id": row["session_id"] if row else None, "job_id": m.group(1)})
-        except (SourceError, OSError, Refused) as exc:
+        except (SourceError, OSError) as exc:
             return self._failed(it, "spawn_error", common.safe_text(exc, 160))
+        m = SPAWNED_RE.search(out)
+        if not m:
+            return self._failed(it, "spawn_error", "claude --bg printed no background id: %s" % common.safe_text(out, 80))
+        # It spawned: whatever the listing says next, this is done. The job id
+        # (the session id's first 8 hex) keys it until the listing shows it.
+        sid = self._poll_session(m.group(1))
+        return self._done(it, dict({"job_id": m.group(1)}, **({"session_id": sid} if sid else {})))
+
+    def _poll_session(self, job_id: str) -> Optional[str]:
+        deadline = time.monotonic() + LIVE_POLL_S
+        while True:
+            try:
+                row = next((r for r in self.listing(10) if r["bg_id"] == job_id), None)
+            except Refused:
+                row = None
+            if row is not None or time.monotonic() > deadline:
+                return row["session_id"] if row else None
+            time.sleep(1.0)
 
     # -- label ---------------------------------------------------------------
     def label(self, slug: str, number: int, name: str, op: str) -> Dict[str, Any]:
@@ -313,6 +356,11 @@ class Act:
             self.preflight("label", ["repo:%s" % slug])
             if not LABEL_RE.match(name or "") or op not in ("add", "remove"):
                 raise Refused("ineligible", "a label is 1-50 plain characters and the op add or remove")
+            if name.lower() == HOLD_LABEL:
+                raise Refused("ineligible", "the %s label is the owner's: fleet act neither adds nor removes it"
+                              % HOLD_LABEL)
+            if not self.dry and not profile.read_token(self.sec):
+                raise Refused("ineligible", "a live label needs the fleet token file (never the keyring)")
             repo = self._repo(slug)
             if not any(p["number"] == number for p in repo["prs"]):
                 raise Refused("ineligible", "#%d is not an open PR of %s" % (number, slug))
@@ -327,6 +375,7 @@ class Act:
             return self._done(it, {"would": True, "call": "gh api -X %s %s%s" % (
                 call[0], call[1], "".join(" -f %s=%s" % kv for kv in call[2].items()))})
         try:
+            self.src.use_token(profile.read_token(self.sec) or "")
             self.src.gh_api(call[0], call[1], call[2])
         except SourceError as exc:
             return self._failed(it, "harness_refused", common.safe_text(exc, 160))
@@ -349,7 +398,7 @@ class Act:
 
     # -- resume --------------------------------------------------------------
     def resume(self, sid: str) -> Dict[str, Any]:
-        who = self.ours().get(sid)
+        who = self.whose(sid)
         key = who["key"] if who else "session:%s" % sid
         try:
             self.preflight("resume", [sid])

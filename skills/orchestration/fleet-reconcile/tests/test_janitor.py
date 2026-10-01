@@ -91,20 +91,43 @@ def test_an_ignored_secret_it_cant_read_fails_the_backup_check(world, wt):
         (wt / ".env").chmod(0o600)
 
 
+def _detached_holder(cwd):
+    """A process in the worktree that isn't the janitor's child (here the test
+    process plays the janitor): its shell exits, so launchd adopts it."""
+    out = subprocess.run(["/bin/sh", "-c", "sleep 30 >/dev/null 2>&1 & echo $!"], cwd=str(cwd), capture_output=True,
+                         text=True, start_new_session=True)
+    return int(out.stdout.strip())
+
+
 def test_a_process_holding_the_worktree_fails_it(world, wt):
-    holder = subprocess.Popen(["sleep", "30"], cwd=str(wt))
+    pid = _detached_holder(wt)
     try:
         time.sleep(0.3)
         verdict, detail = _guard(world, wt).no_holder()
-        assert verdict == "fail" and str(holder.pid) in detail
+        assert verdict == "fail" and str(pid) in detail
     finally:
-        holder.kill()
-        holder.wait()
+        os.kill(pid, 9)
+    time.sleep(0.2)
     assert _guard(world, wt).no_holder()[0] == "pass"
 
 
+def test_the_janitors_own_ancestors_and_children_dont_count_as_holders_or_as_a_listing(world, wt, monkeypatch):
+    me, parent = os.getpid(), os.getppid()
+    child = subprocess.Popen(["sleep", "30"], cwd=str(wt))  # the janitor's own child, like its lsof
+    try:
+        time.sleep(0.3)
+        assert _guard(world, wt).no_holder()[0] == "pass"
+    finally:
+        child.kill()
+        child.wait()
+    # A sandbox shows the janitor, its shell and the session above it: still blind.
+    monkeypatch.setattr(janitor, "_ps", lambda: {me: parent, parent: 4242, 4242: 1, child.pid: me})
+    assert janitor._own(janitor._ps()) == {me, parent, 4242, child.pid}
+    assert _guard(world, wt).no_holder()[0] == "not run"
+
+
 def test_a_process_listing_that_shows_only_the_janitors_own_is_a_check_that_didnt_run(world, wt, monkeypatch):
-    monkeypatch.setattr(janitor, "_children", lambda listed: set(listed))  # as a sandbox shows it: only itself
+    monkeypatch.setattr(janitor, "_ps", lambda: {os.getpid(): os.getppid()})  # as a sandbox shows it: only itself
     verdict, detail = _guard(world, wt).no_holder()
     assert verdict == "not run" and "nothing but the janitor's own" in detail
     _listing(world, [_row(OWNER, wt)])
@@ -148,8 +171,28 @@ def test_the_run_reports_only_without_remove_and_never_removes_a_scope_repos_wor
     monkeypatch.setattr(janitor.Guard, "quiet_24h", lambda self: ("pass", "stubbed"))  # the shared repos stay untouched
     assert janitor.scratch(str(wt)) and not janitor.scratch(str(target))
     res = janitor.run(config.scope("broomva"), src, str(target), OWNER, True, lambda m: None)
+    # A scope repo's owner needs a terminal status on the board; the listing's "done" isn't one.
+    assert res["aborted"] == "check" and "no board row for the owner" in json.dumps(res["steps"])
+    monkeypatch.setattr(janitor.Guard, "owner_finished", lambda self: ("pass", "stubbed"))
+    res = janitor.run(config.scope("broomva"), src, str(target), OWNER, True, lambda m: None)
     assert "refused for a scope repo" in res.get("aborted", ""), res
     assert src.calls == []
+
+
+def test_the_owner_must_own_the_worktree_it_removes(world, wt, tmp_path):
+    elsewhere = tmp_path / "another-worktree"
+    elsewhere.mkdir()
+    _listing(world, [_row(OWNER, elsewhere)])
+    src = FixtureSources(world.fixture)
+    res = janitor.run(config.scope("broomva"), src, str(wt), OWNER, True, lambda m: None)
+    assert res["aborted"] == "owner" and "not in this worktree" in res["steps"][-1]["out"] and src.calls == []
+
+
+def test_a_secret_inside_an_ignored_directory_is_found(world, wt):
+    (wt / ".gitignore").write_text(".env\nnode_modules/\ndata/\n")
+    (wt / "data").mkdir()
+    (wt / "data" / "app.db").write_text("rows")
+    assert "data/app.db" in janitor.secret_files(str(wt))
 
 
 def test_a_scratch_run_stops_rechecks_backs_up_rereads_and_removes(world, wt):

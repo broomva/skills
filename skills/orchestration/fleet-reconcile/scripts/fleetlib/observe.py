@@ -252,7 +252,7 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
             # A listed session matches an adoption by its session id, or
             # through the Paseo agent whose record holds it (§5.4).
             key = "adopt:%s" % (sid if sid in adopted else adopted_agents[p_rec["agent_id"]])
-        elif sid in fleet_ids and fleet_ids[sid] == r["name"]:
+        elif fleet_ids.get(sid, fleet_ids.get(sid[:8])) == r["name"]:  # a spawn known by its job id too
             key = r["name"]
         p = paseo.get(sid)
         limit_line = None

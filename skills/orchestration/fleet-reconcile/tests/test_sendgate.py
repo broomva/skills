@@ -34,7 +34,7 @@ def rig(world):
 
         def mail(self, tick=7, dry=True, **kw):
             a = act.Act(self.cfg(**kw), FixtureSources(world.fixture), tick, dry)
-            return a.mail(self.sid, "stalled", {"hours": "6"})
+            return a.mail(self.sid, "stalled", {})
 
         def hook(self, to=None, message=None, **extra):
             return dict({"hook_event_name": "PreToolUse", "tool_name": "SendMessage",

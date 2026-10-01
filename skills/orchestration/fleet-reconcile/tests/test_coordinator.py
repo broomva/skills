@@ -34,8 +34,9 @@ def test_the_argv_disallows_agent_edit_write_and_every_paseo_write_with_the_prom
     i = av.index("--disallowedTools")
     assert av[-2:] == ["--", "the prompt"]
     banned = av[i + 1:av.index("--")]
-    assert banned[:3] == ["Agent", "Edit", "Write"] and len(banned) == 3 + 42
-    assert all(t.startswith("mcp__paseo__") for t in banned[3:])
+    assert banned[:4] == ["Agent", "Edit", "Write", "NotebookEdit"] and len(banned) == 4 + 42
+    assert all(t.startswith("mcp__paseo__") for t in banned[4:])
+    assert "--strict-mcp-config" in av and av[av.index("--max-budget-usd") + 1] == "2"
     assert av[av.index("--name") + 1] == "fleet-coordinator-broomva" and "--model" in av
     assert av[av.index("--output-format") + 1] == "stream-json" and "--verbose" in av
 

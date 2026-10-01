@@ -240,11 +240,12 @@ step() {
 
 RCS=""
 FAILED=""
+# §5.7's order: the fleet token, then recover (its label check reads GitHub).
+if [ -n "$TOKEN" ]; then export GH_TOKEN="$TOKEN"; fi
+export FLEET_GH_AUTH="$GH_AUTH" FLEET_RELEASE="$RELEASE"
 # Intents a dead tick left open are closed first, from what happened (§5.7).
 step recover "$FLEET" recover --scope "$SCOPE" --tick "$N"; RCS="recover=$RC"
 [ "$RC" = "0" ] || FAILED="recover"
-if [ -n "$TOKEN" ]; then export GH_TOKEN="$TOKEN"; fi
-export FLEET_GH_AUTH="$GH_AUTH" FLEET_RELEASE="$RELEASE"
 step observe "$FLEET" observe --scope "$SCOPE" --tick "$N"; RCS="$RCS observe=$RC"
 [ "$RC" = "0" ] || FAILED="${FAILED:-observe}"
 if [ "$RC" = "0" ]; then
@@ -255,7 +256,12 @@ fi
 # it gets the fleet token too (§5.2) and acts only through fleet act. A tool
 # list that fails the posture check ends it with exit 4.
 MODE=$(cfg mode)
-if [ "$MODE" = "act" ] && [ -z "$FAILED" ]; then
+# Live acts on the fleet token only (§5.2); without it, no live coordinator.
+if [ "$MODE" = "act" ] && [ "$DRY" = "0" ] && [ -z "$TOKEN" ]; then
+  log "no coordinator: live mode (dry_run 0) needs the fleet token file, and gh is on the $GH_AUTH"
+  RCS="$RCS coordinator=skipped"
+  FAILED="${FAILED:-token}"
+elif [ "$MODE" = "act" ] && [ -z "$FAILED" ]; then
   step coordinator "$FLEET" coordinator --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS coordinator=$RC"
   [ "$RC" = "0" ] || FAILED="coordinator"
 fi

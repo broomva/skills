@@ -126,12 +126,17 @@ class Sources:
         self.claude = os.environ.get("FLEET_CLAUDE_BIN") or "claude"
         self.gh = os.environ.get("FLEET_GH_BIN") or "gh"
 
+    def use_token(self, token: str) -> None:
+        """gh runs with this token (the fleet's, from its file), not the environment's."""
+        _TOKEN["GH_TOKEN"] = token
+        _TOKEN.pop("GITHUB_TOKEN", None)
+
     # Claude Code ---------------------------------------------------------
     def claude_version(self) -> str:
         return _run([self.claude, "--version"], 20)
 
-    def agents_listing(self) -> str:
-        return _run([self.claude, "agents", "--json", "--all"], 30)
+    def agents_listing(self, timeout: float = 30) -> str:
+        return _run([self.claude, "agents", "--json", "--all"], timeout)
 
     def claude_dir(self) -> Path:
         base = os.environ.get("CLAUDE_CONFIG_DIR")
@@ -238,8 +243,15 @@ class Sources:
                      "--json", PR_FIELDS], 60, token=True)
 
     def pr_files(self, slug: str, number: int) -> str:
-        """A JSON array of the PR's changed paths (the owner-merge check)."""
-        return _run([self.gh, "pr", "view", str(number), "-R", slug, "--json", "files", "--jq", "[.files[].path]"],
+        """A JSON array of every changed path of the PR (the owner-merge check),
+        through REST with --paginate: `gh pr view --json files` stops at 100."""
+        out = _run([self.gh, "api", "--paginate", "repos/%s/pulls/%d/files?per_page=100" % (slug, number),
+                    "--jq", ".[].filename"], 120, token=True)
+        return json.dumps([ln for ln in out.splitlines() if ln])
+
+    def pr_heads(self, slug: str, branch: str) -> str:
+        """A JSON array of {number, state} for PRs from this head branch (the janitor)."""
+        return _run([self.gh, "pr", "list", "-R", slug, "--head", branch, "--state", "all", "--json", "number,state"],
                     60, token=True)
 
     def pr_labels(self, slug: str, number: int) -> str:
@@ -319,7 +331,7 @@ class FixtureSources(Sources):
     def claude_version(self) -> str:
         return self._read("claude/version.txt")
 
-    def agents_listing(self) -> str:
+    def agents_listing(self, timeout: float = 30) -> str:
         return self._read("claude/agents.json")
 
     def claude_dir(self) -> Path:
@@ -364,6 +376,9 @@ class FixtureSources(Sources):
 
     def pr_files(self, slug: str, number: int) -> str:
         return self._gh(slug, "pr-%d-files.json" % number)
+
+    def pr_heads(self, slug: str, branch: str) -> str:
+        return self._gh(slug, "prs-head-%s.json" % branch.replace("/", "__"))
 
     def gh_api(self, method: str, path: str, fields: Optional[Dict[str, str]] = None) -> str:
         self.calls.append(["gh", "api", "-X", method, path] + ["%s=%s" % kv for kv in (fields or {}).items()])

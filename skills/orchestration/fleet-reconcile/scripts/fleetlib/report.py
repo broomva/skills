@@ -72,6 +72,9 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
         "scheduled": snap.get("scheduled") or {},
         "core_compare": _guarded(compare),
     }
+    # §5.7: a spawn recovered with two or more sessions under its name is an ask.
+    rep["spawn_duplicates"] = sorted({r.get("key") for r in records if r.get("kind") == "done"
+                                      and r.get("verb") == "spawn" and (r.get("result") or {}).get("duplicate")})
     rep["asks"], rep["asks_open"], rep["acked_still_open"] = make_asks(rep, records, now)
     rep["ask_keys_current"] = sorted(k for k, _, _ in candidates(rep))
     rep["resolved"] = resolved_keys(records, rep["ask_keys_current"], rep)
@@ -193,6 +196,9 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
                 name, "; ".join(ru["flags"]),
                 " Its PRs get no driver until it has a pull_request rule and checks pinned to GitHub Actions."
                 if not ru["driver_eligible"] else "")))
+    for key in rep.get("spawn_duplicates") or []:
+        cands.append(("spawn-duplicate:%s" % key, "count", "Spawn %s left two or more sessions under its name "
+                      "(fleet recover found them); one should be stopped by the owner." % key))
     cmp_ = rep.get("core_compare") or {}
     if cmp_.get("refused"):
         # Keyed on the owner's action still owed: moving the file aside and

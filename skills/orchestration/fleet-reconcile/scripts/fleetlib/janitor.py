@@ -4,9 +4,9 @@
 removal when any of them fails or can't run:
 
   owner_finished    the owning session finished: a terminal status on the board
-                    (MERGED, CLOSED, DONE), or, for a session the board doesn't
-                    hold, a background job the listing shows done (pending the
-                    spec: scratch worktrees are in no scope);
+                    (MERGED, CLOSED, DONE); for a scratch worktree only (of no
+                    scope repo, so no board holds it), a background job the
+                    listing shows done (pending the spec);
   no_live_session   no other session has a live process with its cwd in the
                     worktree, re-read from claude agents at that moment;
   pr_closed         the branch's PR, if any, is merged or closed;
@@ -40,7 +40,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 import ctx
 
 from . import common, observe, parsers
-from .sources import SourceError, Sources, _run
+from .sources import SourceError, Sources
 
 QUIET_S = 24 * 3600
 BACKUP_DAYS = 14
@@ -72,9 +72,31 @@ def _inside(cwd: Optional[str], path: str) -> bool:
     return c == path or c.startswith(path.rstrip("/") + "/")
 
 
-def _own_pids() -> Set[int]:
-    """This process, its parent, and its children (the lsof and ps it runs)."""
-    return {os.getpid(), os.getppid()}
+def _own(parents: Dict[int, int]) -> Set[int]:
+    """The janitor's own processes in a ps reading {pid: ppid}: itself, its
+    ancestors (the shell and session that started it) and its children (the
+    ps and lsof it runs)."""
+    me = os.getpid()
+    own = {me}
+    p = parents.get(me, os.getppid())
+    while p and p != 1 and p not in own:
+        own.add(p)
+        p = parents.get(p, 0)
+    own.add(os.getppid())
+    own |= {pid for pid, pp in parents.items() if pp == me}
+    return own
+
+
+def _ps() -> Dict[int, int]:
+    proc = subprocess.run(["ps", "-axo", "pid=,ppid="], stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
+    if proc.returncode != 0:
+        raise OSError("ps exited %d" % proc.returncode)
+    out = {}
+    for line in proc.stdout.decode().splitlines():
+        parts = line.split()
+        if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+            out[int(parts[0])] = int(parts[1])
+    return out
 
 
 class Guard:
@@ -109,8 +131,10 @@ class Guard:
             if b.get("arc_status") in TERMINAL:
                 return "pass", "board: ARC-STATUS %s" % b["arc_status"]
             return "fail", "board: no terminal status (%s, last %s)" % (b.get("state"), b.get("last_event"))
+        if not scratch(self.path):
+            return "fail", "no board row for the owner of a scope repo's worktree (a terminal status is needed)"
         if row["kind"] == "background" and row["state"] == "done":
-            return "pass", "no board row; the listing shows the job done"
+            return "pass", "no board row (a scratch worktree); the listing shows the job done"
         return "fail", "no board row, and the listing shows %s" % (row["state"] or row["status"] or "it live")
 
     def no_live_session(self, exclude_owner: bool = True) -> Verdict:
@@ -137,8 +161,7 @@ class Guard:
         if not slug:
             return "pass", "no GitHub origin, so no PR"
         try:
-            prs = json.loads(_run([self.src.gh, "pr", "list", "-R", slug, "--head", branch, "--state", "all",
-                                   "--json", "number,state"], 60, token=True))
+            prs = json.loads(self.src.pr_heads(slug, branch))
         except (SourceError, ValueError) as exc:
             return "not run", "gh pr list failed: %s" % common.safe_text(exc, 80)
         open_ = [p["number"] for p in prs if p.get("state") == "OPEN"]
@@ -167,13 +190,12 @@ class Guard:
         return "pass", "%d files, none modified in 24 h" % n
 
     def no_holder(self) -> Verdict:
-        own = _own_pids()
         try:
-            ps = subprocess.run(["ps", "-axo", "pid="], stdin=subprocess.DEVNULL, capture_output=True, timeout=20)
-            listed = {int(x) for x in ps.stdout.split() if x.strip().isdigit()}
+            parents = _ps()
         except (OSError, subprocess.SubprocessError, ValueError) as exc:
             return "not run", "ps failed: %s" % common.safe_text(str(exc) or type(exc).__name__, 80)
-        if ps.returncode != 0 or not (listed - own - _children(listed)):
+        own = _own(parents)
+        if not set(parents) - own:
             return "not run", "the process listing shows nothing but the janitor's own processes"
         try:
             lsof = subprocess.run(["lsof", "-w", "-n", "-F", "p", "+D", self.path], stdin=subprocess.DEVNULL,
@@ -213,22 +235,6 @@ class Guard:
 
 def _raise(exc: OSError) -> None:
     raise exc
-
-
-def _children(listed: Set[int]) -> Set[int]:
-    """The janitor's own children among listed pids (ps itself, mostly)."""
-    try:
-        out = subprocess.run(["ps", "-axo", "pid=,ppid="], stdin=subprocess.DEVNULL, capture_output=True,
-                             timeout=20).stdout.decode().split("\n")
-    except (OSError, subprocess.SubprocessError):
-        return set()
-    me = os.getpid()
-    kids = set()
-    for line in out:
-        parts = line.split()
-        if len(parts) == 2 and parts[1].isdigit() and int(parts[1]) == me and parts[0].isdigit():
-            kids.add(int(parts[0]))
-    return kids
 
 
 # --------------------------------------------------------------------------
@@ -272,7 +278,9 @@ def backup(state_dir: Path, path: str, now: Optional[float] = None) -> Dict[str,
 
 def secret_files(path: str) -> List[str]:
     """Ignored files named like secrets (.env*, *.db): backed up before any removal."""
-    out = _git(path, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
+    # Every ignored file, not --directory: that collapses data/ to one entry and
+    # hides data/app.db from the name match.
+    out = _git(path, "ls-files", "-z", "--others", "--ignored", "--exclude-standard")
     found = []
     for rel in (x for x in out.split("\0") if x):
         name = os.path.basename(rel.rstrip("/"))
@@ -314,6 +322,24 @@ def run(sec: Dict[str, Any], src: Sources, path: str, owner: str, remove: bool,
     def step(name: str, out: Any) -> None:
         res["steps"].append({"step": name, "out": out})
         log("%s: %s" % (name, json.dumps(out, default=str)[:400]))
+
+    pruned = prune(Path(sec["state_dir"]))
+    if pruned:
+        step("prune", "%d backup(s) older than %d days deleted" % (pruned, BACKUP_DAYS))
+    # The owner must own this worktree: stop and rm act on the owner, the
+    # checks and the backup on the path, so a mismatch would remove an
+    # unchecked worktree.
+    try:
+        row = g.owner_row(g._rows())
+    except (SourceError, parsers.ParseError) as exc:
+        row, why = None, "the listing couldn't be read: %s" % exc
+    else:
+        why = "claude agents doesn't list %s" % owner if row is None else (
+            "%s's cwd (%s) is not in this worktree" % (owner, common.safe_path(row["cwd"])))
+    if row is None or not _inside(row["cwd"], g.path):
+        step("owner", why)
+        res["aborted"] = "owner"
+        return res
 
     first = g.run(skip=("no_holder",))  # the owner's own process holds it until it is stopped
     step("check", first)

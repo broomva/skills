@@ -50,6 +50,7 @@ SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     "compare_hour": ("int", 18),              # the core comparison runs once a day from this local hour
     # phase 2
     "coordinator_model": ("str_or_null", None),  # the coordinator's --model; null: Claude Code's default
+    "coordinator_budget_usd": ("num", 2),        # its --max-budget-usd per tick
 }
 CAP_KEYS = ("fleet_sessions", "active_sessions", "active_window_min", "research_spawns_per_day")
 CAP_DEFAULTS = {"fleet_sessions": 8, "active_sessions": 12, "active_window_min": 30, "research_spawns_per_day": 4}
@@ -97,6 +98,7 @@ def _check(kind: str, key: str, v: Any) -> None:
     ok = {
         "int01": lambda: type(v) is int and v in (0, 1),
         "int": lambda: type(v) is int and v >= 0,
+        "num": lambda: type(v) in (int, float) and v > 0,
         "str": lambda: isinstance(v, str) and bool(v),
         "str_or_null": lambda: v is None or isinstance(v, str),
         "mode": lambda: v in ("report", "act"),

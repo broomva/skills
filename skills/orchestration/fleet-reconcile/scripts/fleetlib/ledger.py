@@ -57,9 +57,9 @@ def owner_by() -> str:
     return "owner:" + common.safe_text(tty, 40)
 
 
-def _lock(state_dir: Path) -> int:
+def _lock(state_dir: Path, wait: float = LOCK_WAIT_S) -> int:
     fd = os.open(str(state_dir / "ledger.lock"), os.O_RDWR | os.O_CREAT, 0o600)
-    deadline = time.monotonic() + LOCK_WAIT_S
+    deadline = time.monotonic() + wait
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -71,7 +71,7 @@ def _lock(state_dir: Path) -> int:
             time.sleep(0.02)
 
 
-def append(state_dir: Path, record: Dict[str, Any]) -> Dict[str, Any]:
+def append(state_dir: Path, record: Dict[str, Any], wait: float = LOCK_WAIT_S) -> Dict[str, Any]:
     """Validate, stamp (v, ts, id) and append one record; returns it as written.
     The id is taken under the lock: <tick>-<n> in a tick, owner-<epoch ms>
     outside one."""
@@ -97,7 +97,7 @@ def append(state_dir: Path, record: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(rec.get("detail"), str):
         rec["detail"] = common.safe_text(rec["detail"], 200)
     state_dir = common.ensure_dir(Path(state_dir))
-    lock_fd = _lock(state_dir)
+    lock_fd = _lock(state_dir, wait)
     try:
         if "id" not in rec:
             records, _ = read(state_dir)
@@ -156,7 +156,8 @@ def read(state_dir: Path) -> Tuple[List[Dict[str, Any]], int]:
 # Folds
 
 def spawned(records: Iterable[Dict[str, Any]]) -> Dict[str, List[str]]:
-    """Live (never dry) spawns: {fleet key: [session ids]} from done records."""
+    """Live (never dry) spawns: {fleet key: [session ids, and the background
+    job id (a session id's first 8 hex) when the listing lagged the spawn]}."""
     records = list(records)
     intents = {r["id"]: r for r in records if r.get("kind") == "intent" and r.get("verb") == "spawn"
                and not r.get("dry_run")}
@@ -165,6 +166,7 @@ def spawned(records: Iterable[Dict[str, Any]]) -> Dict[str, List[str]]:
         if r.get("kind") == "done" and r.get("verb") == "spawn" and not r.get("dry_run") and r.get("of") in intents:
             res = r.get("result") or {}
             ids = res.get("session_ids") or ([res["session_id"]] if res.get("session_id") else [])
+            ids = list(ids) + ([res["job_id"]] if isinstance(res.get("job_id"), str) and not ids else [])
             out.setdefault(intents[r["of"]].get("key") or "", []).extend(i for i in ids if isinstance(i, str))
     return out
 

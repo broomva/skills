@@ -276,7 +276,6 @@ def cmd_act_verb(args: argparse.Namespace, sec: dict) -> int:
             if not args.session:
                 raise SystemExit("fleet act mail: --session is required")
             values = dict(v.split("=", 1) for v in args.var or [] if "=" in v)
-            values.setdefault("hours", str(sec["mail_interval_h"]))
             res = run.mail(args.session, args.template or "", values)
         elif args.verb == "spawn":
             if not (args.repo and args.pr):
@@ -426,19 +425,29 @@ def cmd_send_gate(args: argparse.Namespace) -> int:
     nothing it can't attribute (post)."""
     from fleetlib import sendgate
 
-    sec = _sec(args)
+    # pre fails closed: any error, a config that can't be read included, is
+    # exit 2, which blocks the send; any other exit lets the tool run.
     try:
-        hook = json.loads(sys.stdin.read() or "{}")
-    except ValueError:
-        hook = {}
-    hook = hook if isinstance(hook, dict) else {}
-    if args.which == "pre":
-        code, msg = sendgate.pre(sec, Sources(), hook, _tick(args), _dry(args, sec), time.time())
-        if msg:
-            print(msg, file=sys.stderr)
-        return code
-    sendgate.post(sec, hook, _tick(args), _dry(args, sec))
-    return 0
+        sec = _sec(args)
+        try:
+            hook = json.loads(sys.stdin.read() or "{}")
+        except ValueError:
+            hook = {}
+        hook = hook if isinstance(hook, dict) else {}
+        if args.which == "pre":
+            code, msg = sendgate.pre(sec, Sources(), hook, _tick(args), _dry(args, sec), time.time())
+            if msg:
+                print(msg, file=sys.stderr)
+            return code
+        sendgate.post(sec, hook, _tick(args), _dry(args, sec))
+        return 0
+    except BaseException as exc:  # noqa: B036 - SystemExit from the config read too
+        if args.which != "pre":
+            print("fleet send-gate post: %s" % common.safe_text(exc, 160), file=sys.stderr)
+            return 0
+        print("fleet send gate refused this SendMessage: the gate failed (%s: %s), so it fails closed" % (
+            type(exc).__name__, common.safe_text(exc, 120)), file=sys.stderr)
+        return 2
 
 
 def cmd_coordinator(args: argparse.Namespace) -> int:

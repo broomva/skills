@@ -2,12 +2,17 @@
 
 Its settings file registers the send gate on SendMessage (PreToolUse, and
 PostToolUse plus PostToolUseFailure, 10 s each). Its argv disallows Agent,
-Edit, Write and every pinned Paseo write tool, with `--` before the prompt,
-since --disallowedTools takes every following word (evidence §1: without it the
-prompt was read as a tool name and the run never replied). The stream-json
-init event carries the session's tool list; a coordinator whose list holds
-one of those tools, or a Paseo tool in neither pinned list, is terminated
-before its first turn ends and the tick reports it.
+Edit, Write, NotebookEdit and every pinned Paseo write tool, with `--` before
+the prompt, since --disallowedTools takes every following word (evidence §1:
+without it the prompt was read as a tool name and the run never replied); it
+loads no MCP server (--strict-mcp-config, pending the spec, which names only
+the Paseo writes: fleet act is its route, and the user-scope servers would be
+238 tools of reach) and spends at most `coordinator_budget_usd`. The
+stream-json init event carries the session's tool list; a coordinator whose
+list holds a disallowed tool or a Paseo tool in neither pinned list, that acts
+before its init event, or whose init event doesn't come within INIT_S, is
+terminated and the tick reports it. claude stays in this process's group, so
+tick.sh's watchdog (TERM, then KILL, to the step's group) reaches it.
 
 The tool list is a posture, not a boundary: the coordinator runs unsandboxed,
 and its Bash reaches git, gh and the Paseo CLI (§5.3).
@@ -17,15 +22,16 @@ from __future__ import annotations
 import json
 import os
 import shlex
-import signal
 import subprocess
+import threading
 from pathlib import Path
 from typing import Any, Dict, IO, Iterable, List, Optional
 
 from . import common
 from .sources import child_env
 
-DISALLOWED = ("Agent", "Edit", "Write")
+DISALLOWED = ("Agent", "Edit", "Write", "NotebookEdit")
+INIT_S = 60.0
 PASEO_PREFIX = "mcp__paseo__"
 SKILL = Path(__file__).resolve().parents[2]
 EXIT_POSTURE = 4
@@ -40,7 +46,8 @@ def settings(fleet_bin: str, scope_id: str) -> Dict[str, Any]:
 
 def argv(sec: Dict[str, Any], settings_path: Path, prompt: str, claude: str = "claude") -> List[str]:
     out = [claude, "-p", "--name", "fleet-coordinator-%s" % sec["scope"], "--settings", str(settings_path),
-           "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions"]
+           "--output-format", "stream-json", "--verbose", "--permission-mode", "bypassPermissions",
+           "--strict-mcp-config", "--max-budget-usd", str(sec["coordinator_budget_usd"])]
     if sec.get("coordinator_model"):
         out += ["--model", sec["coordinator_model"]]
     out += ["--disallowedTools"] + list(DISALLOWED) + [PASEO_PREFIX + t for t in sec["paseo_tools"]["write"]]
@@ -81,7 +88,9 @@ def posture_problems(tools: Iterable[str], sec: Dict[str, Any]) -> List[str]:
 def prompt(sec: Dict[str, Any], tick: int, report_json: Path, dry: bool, fleet_bin: str) -> str:
     text = (SKILL / "templates" / "runner-prompt.md").read_text(encoding="utf-8")
     return text.format(scope=sec["scope"], tick=tick, report=str(report_json), fleet=fleet_bin,
-                       dry="dry run: every verb but ask logs only" if dry else "LIVE").strip()
+                       hours=sec["mail_interval_h"],
+                       dry="DRY RUN: spawn, label and resume only log what they would do, and a mail's "
+                           "SendMessage is checked, recorded and blocked" if dry else "LIVE").strip()
 
 
 def run(sec: Dict[str, Any], tick: int, fleet_bin: str, out_path: Path, dry: bool,
@@ -100,24 +109,57 @@ def run(sec: Dict[str, Any], tick: int, fleet_bin: str, out_path: Path, dry: boo
     res: Dict[str, Any] = {"exit": None, "posture": [], "init": False}
     with out_path.open("w", encoding="utf-8") as out, out_path.with_suffix(".err").open("w") as err:
         proc = subprocess.Popen(av, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, text=True,
-                                env=child_env(extra), start_new_session=True)
+                                env=child_env(extra))
         res["exit"] = _pump(proc, out, sec, res)
     return res
 
 
-def _pump(proc: "subprocess.Popen[str]", out: IO[str], sec: Dict[str, Any], res: Dict[str, Any]) -> int:
+def _stop(proc: "subprocess.Popen[str]") -> None:
+    try:
+        proc.terminate()
+        proc.wait(timeout=10)
+    except subprocess.TimeoutExpired:
+        proc.kill()
+    except OSError:
+        pass
+
+
+def _pump(proc: "subprocess.Popen[str]", out: IO[str], sec: Dict[str, Any], res: Dict[str, Any],
+          init_s: float = INIT_S) -> int:
+    """Copy the stream; stop the coordinator on a failed posture, on an event
+    before the init event (it acted unchecked), or when no init event came."""
     assert proc.stdout is not None
-    for line in proc.stdout:
-        out.write(line)
+
+    def late() -> None:
         if not res["init"]:
+            res["posture"] = ["no init event within %ds: the tool list was never checked" % init_s]
+            _stop(proc)
+    timer = threading.Timer(init_s, late)
+    timer.daemon = True
+    timer.start()
+    try:
+        for line in proc.stdout:
+            out.write(line)
+            if res["init"] or res["posture"]:
+                continue
             ev = init_event([line])
             if ev is not None:
                 res["init"] = True
                 res["posture"] = posture_problems(ev.get("tools") or [], sec)
-                if res["posture"]:
-                    try:
-                        os.killpg(proc.pid, signal.SIGTERM)
-                    except OSError:
-                        pass
+            elif _acts(line):
+                res["posture"] = ["it acted before its init event: the tool list was never checked"]
+            if res["posture"]:
+                _stop(proc)
+                break  # its stream is no longer read: a child still holding it can't delay the stop
+    finally:
+        timer.cancel()
     proc.wait()
     return EXIT_POSTURE if res["posture"] else proc.returncode
+
+
+def _acts(line: str) -> bool:
+    try:
+        ev = json.loads(line)
+    except ValueError:
+        return False
+    return isinstance(ev, dict) and ev.get("type") in ("assistant", "user", "result")
