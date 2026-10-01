@@ -111,7 +111,10 @@ jobs:
       # informed exemplar, on a real fixture. The pytest step runs the same check
       # per task; this step keeps the CLI a user runs honest too.
       - name: Context-ablation tasks tell their control from its absence
-        run: python3 scripts/skill_evals/ctx_ablation/run.py validate --deep
+        run: |
+          python3 scripts/skill_evals/ctx_ablation/run.py validate --deep
+          python3 scripts/skill_evals/ctx_ablation/run.py validate --deep \
+            --tasks scripts/skill_evals/ctx_ablation/tasks/s1.json
 
       - name: Pilot prompt set validates against CHECK_REGISTRY
         run: |

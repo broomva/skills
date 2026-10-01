@@ -1,0 +1,63 @@
+name: test-fleet-reconcile
+
+# Python and shell test gate for the `fleet-reconcile` skill
+# (skills/orchestration/fleet-reconcile/). fleet_reconcile.py imports ctx-core
+# from the same checkout, so a ctx-core change runs this too. The mutation
+# check proves the suite goes red when a class rule is deleted, when two rules
+# that can both match are swapped, and when a protection is removed (the
+# listing cap, a failed slug reading as zero, the bearer never parsed, the kill
+# switch, dry-falls-toward-dry, the token's export).
+
+on:
+  pull_request:
+    paths:
+      - 'skills/orchestration/fleet-reconcile/**'
+      - 'skills/orchestration/ctx-core/**'
+      - '.github/workflows/test-fleet-reconcile.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/orchestration/fleet-reconcile/**'
+      - 'skills/orchestration/ctx-core/**'
+      - '.github/workflows/test-fleet-reconcile.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-fleet-reconcile-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/orchestration/fleet-reconcile
+
+jobs:
+  test:
+    name: pytest (${{ matrix.os }}, Python ${{ matrix.python }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.9 is the floor (macOS's /usr/bin/python3); macOS is where the tick runs.
+        include:
+          - {os: ubuntu-22.04, python: "3.9"}
+          - {os: ubuntu-latest, python: "3.12"}
+          - {os: macos-latest, python: "3.14"}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Shell syntax
+        run: bash -n scripts/tick.sh && bash -n scripts/install.sh && sh -n scripts/fleet
+      - name: Tests
+        run: python -m pytest tests/ -v
+      - name: Mutation check (every mutant must be killed)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: python tests/mutation_check.py

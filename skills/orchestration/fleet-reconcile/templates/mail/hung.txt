@@ -1,0 +1,3 @@
+fleet-reconcile: {name}, this session has shown busy with no activity for over two hours.
+If a command is stuck, stop it and report what happened in one line; if the work is done, end with your ARC-STATUS line.
+This is an automated note from the fleet's hourly tick; it is sent at most once every {hours} hours.

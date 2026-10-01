@@ -9,12 +9,15 @@ timeout). Then the real module against hostile input.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 from pathlib import Path
 
 import pytest
 
-from conftest import HOOK, HOOK_WALL_S, World
+from conftest import BUDGET_MS, CLAUDE_HOOK_TIMEOUT_S, DEADLINE_LATE_MS, FAILOPEN_WALL_S, HOOK, MACOS_WALL_S, World
+
+SKILL_MD = HOOK.parent.parent / "SKILL.md"
 
 BROKEN = {
     "import-error": "raise RuntimeError('broken at import')\n",
@@ -47,7 +50,26 @@ def test_a_broken_ctx_module_never_escapes_the_hook(timed: World, tmp_path: Path
     (d / "ctx.py").write_text(BROKEN[kind])
     run = timed.hook(event, {"session_id": "s-1", "cwd": str(timed.broomva)}, script=d / "ctx_hook.py")
     assert (run.rc, run.stdout, run.stderr) == (0, "", ""), kind
-    assert run.elapsed < HOOK_WALL_S, "%s took %.0f ms" % (kind, run.elapsed * 1000)
+    assert run.elapsed < FAILOPEN_WALL_S, "%s took %.0f ms" % (kind, run.elapsed * 1000)
+    # Only the hang is cut by the self-deadline, and the hook's own record says
+    # when, timed from inside the interpreter (start-up is not in it). SIGTERM
+    # leaves its own record, by design.
+    misses = timed.home / ".local" / "state" / "ctx" / "hook-misses.jsonl"
+    fired = [rec for rec in map(json.loads, misses.read_text().splitlines() if misses.exists() else [])
+             if not rec["stage"].startswith("sigterm:")]
+    if kind != "hangs":
+        assert fired == [], kind
+        return
+    assert [(rec["event"], rec["stage"]) for rec in fired] == [(event, "run")]
+    assert BUDGET_MS <= fired[0]["ms"] <= BUDGET_MS + DEADLINE_LATE_MS, "the deadline fired at %d ms" % fired[0]["ms"]
+
+
+def test_the_fail_open_wall_is_half_the_registered_timeout_or_less() -> None:
+    """The wall above is built on BUDGET_S and on the timeout the owner registers;
+    a longer budget, or a shorter timeout in the snippet, must be a decision."""
+    timeouts = re.findall(r'"timeout"\s*:\s*([0-9.]+)', SKILL_MD.read_text())
+    assert timeouts and {float(t) for t in timeouts} == {CLAUDE_HOOK_TIMEOUT_S}
+    assert MACOS_WALL_S <= CLAUDE_HOOK_TIMEOUT_S / 2, "budget + allowances exceed half of Claude Code's timeout"
 
 
 @pytest.mark.parametrize("raw", [

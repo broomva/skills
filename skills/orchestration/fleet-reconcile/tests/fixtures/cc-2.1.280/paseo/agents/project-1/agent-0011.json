@@ -1,0 +1,41 @@
+{
+ "id": "agent-0011",
+ "provider": "claude",
+ "cwd": "{HOME}/wt/broomva-19",
+ "workspaceId": "ws-11",
+ "createdAt": "2026-09-30T20:17:25.980Z",
+ "updatedAt": "2026-09-30T22:04:40.564Z",
+ "lastActivityAt": "2026-09-30T22:04:40.564Z",
+ "lastUserMessageAt": "2026-09-30T21:10:21.315Z",
+ "title": "title 11",
+ "labels": {},
+ "lastStatus": "idle",
+ "lastModeId": "bypassPermissions",
+ "config": {
+  "modeId": "bypassPermissions"
+ },
+ "runtimeInfo": {
+  "provider": "claude",
+  "sessionId": "00000069-f1ee-4000-8000-000000000069"
+ },
+ "features": [],
+ "persistence": {
+  "provider": "claude",
+  "sessionId": "00000069-f1ee-4000-8000-000000000069",
+  "metadata": {
+   "mcpServers": {
+    "paseo": {
+     "type": "http",
+     "url": "http://127.0.0.1:6767/mcp?fixture=1",
+     "headers": {
+      "Authorization": "Bearer FIXTURE-FAKE-BEARER-NOT-A-SECRET"
+     }
+    }
+   }
+  }
+ },
+ "requiresAttention": true,
+ "attentionReason": "finished",
+ "attentionTimestamp": null,
+ "internal": false
+}

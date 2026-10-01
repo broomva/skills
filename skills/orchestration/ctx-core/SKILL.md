@@ -3,7 +3,7 @@ name: ctx-core
 tier: D
 primitive: null
 category: orchestration
-version: 0.1.0
+version: 0.3.1
 description: |
   The shared context core, phase 1: a read-only shared board for every Claude
   Code session in a workspace scope. Hooks publish each session's start, the
@@ -17,14 +17,21 @@ description: |
   Coordination only; not a security boundary. USE WHEN setting up or checking
   the shared board, asking "which sessions are on this branch", "what is every
   session doing", "is anyone else working here", reading or debugging the ctx
-  store, registering the ctx hooks, or adding a repo to a scope. NOT FOR
-  messaging a session or waking an idle one (phase 2, not built), enforcing
-  what a session may do (no local hook is a boundary), or waiting on CI (use
-  p9).
+  store, registering the ctx hooks, or adding a repo to a scope. Also holds
+  the System 1 injection gate (off by default): at each hook stage it looks
+  the event's keys up in a cache System 2 builds offline (`ctx-s1 build`, BM25
+  over specs, entities, PRs, memory rules and board sessions) and injects a
+  cached factual claim only when it clears that stage's floor, else abstains;
+  with its evals (`ctx-s1 eval`: offline replay; `ctx-s1 tune`: the bounded
+  tune loop) and the owner's registration script. NOT FOR messaging a session
+  or waking an idle one (phase 2, not built), enforcing what a session may do
+  (no local hook is a boundary), or waiting on CI (use p9).
 when_to_use: |
   Triggers on "ctx board", "ctx doctor", "shared board", "shared context core",
   "who else is on this branch", "which sessions are live", "register the ctx
-  hooks", "add a scope", "unscoped repos", "board.json", "events.jsonl".
+  hooks", "add a scope", "unscoped repos", "board.json", "events.jsonl",
+  "ctx s1", "ctx s2", "System 1 gate", "injection gate", "[ctx claims]",
+  "s1-decisions.jsonl", "which stage injected this", "tune the gate's floors".
 ---
 
 # ctx-core: the shared board (phase 1)
@@ -141,7 +148,13 @@ Invariants, each pinned by a test:
 - **A hook never blocks a session:**
   - The lock covers the append and nothing else.
   - The hook has a hard self-deadline of 80 ms inside the interpreter, and 200
-    ms of wall time measured from outside.
+    ms of wall time measured from outside, on the owner's machine and on Linux.
+    A run the deadline cuts records when it fired (when
+    `~/.config/ctx/scopes.yaml` exists). A hosted macOS CI runner is slower:
+    its clamped QoS fires the alarm up to about 160 ms late (at most 10 ms in a
+    process a Claude Code session spawns on the owner's machine), and start-up
+    has reached 589 ms. There a hung ctx module is held to 1 s, half of Claude
+    Code's timeout.
   - A hook never parses a `board.json` over 2 MiB, because that parse is one C
     call the alarm cannot interrupt.
   - Every hook exits 0, including on SIGTERM and through the wrapper.
@@ -214,6 +227,7 @@ $CTX board --json       # the board as JSON
 $CTX board --rebuild    # recompute the cache from byte 0; says whether the old cache matched
 $CTX doctor             # config, store, cache, hook activity, misses, board size, retention
 $CTX doctor --unscoped  # from anywhere: repos with Claude Code sessions (last 14 days) but no scope
+$CTX doctor --compare   # the phase-1 exit comparison: live board rows vs listed sessions, 6 h (ctx_compare.py)
 $CTX -C <dir> board     # as if run in <dir>
 ```
 
@@ -231,6 +245,35 @@ from any directory. `doctor` exits 1 in any of these cases:
 
 An idle scope is not a problem. A cache far behind the log is a warning: it
 catches up by itself.
+
+`doctor --compare --registered <UTC time> [--hours 6] [--json]` is the phase-1
+exit criterion (core spec §9 as merged in workspace#842): board rows that are
+live against in-scope sessions from `claude agents --json --all` with a
+timestamped transcript entry in the same window (not the mtime), matched on the
+full session id. The pass bar is ≥95% each way on the raw sets; every
+difference gets one reason from an ordered list, which explains it and removes
+nothing, and in-scope transcripts on neither side are listed uncounted. The
+registration time is passed once and kept in `compare.jsonl`'s first line; a
+later one that disagrees is refused. It rebuilds the board in memory and writes
+only `compare.jsonl`. No evidence (an unreadable transcript directory, an empty
+listing, an empty side) fails. fleet-reconcile's tick runs it once a day.
+The last entry is read from the transcript's tail, widening from 128 KiB to
+2 MiB and 16 MiB when the last line is larger (`last_in_tail`, which
+fleet-reconcile reads activity through). A comparison that raises is written
+as an error line too.
+
+The first run is the owner's. A `compare.jsonl` written by the pre-spec
+prototype (its first line has no `neither` field; its registration time was a
+guess, not the hooks' registration that §9 wants), or one whose first line
+can't be read, is refused until it is moved aside, once per scope. The loop
+moves only such a file and never overwrites an earlier move:
+
+```bash
+for s in broomva sri; do f=~/.local/state/ctx/$s/compare.jsonl
+  [ -f "$f" ] && ! head -1 "$f" | grep -q -e '"neither"' -e '"error"' && mv -n "$f" "${f%.jsonl}.prototype.jsonl"; done
+cd ~/broomva && python3 <ctx-core>/scripts/ctx.py doctor --compare --registered <UTC time the hooks were registered>
+cd ~/broomva/work/stimulus/sri && python3 <ctx-core>/scripts/ctx.py doctor --compare --registered <same, or sri's own>
+```
 
 ## Registration (owner step; an agent does not apply it)
 
@@ -316,13 +359,68 @@ computes it:
 **Rollback:** delete the three entries from `settings.json`. The store under
 `~/.local/state/ctx/` is inert without them.
 
+## System 1: the per-stage injection gate (off by default)
+
+Design of record: workspace#840 §6.2. Full reference, with the telemetry
+schema and the eval method: [`references/s1-gate.md`](references/s1-gate.md).
+
+- **System 2** (`ctx_s2.py`, `ctx-s1 build`) runs offline: a tick, a person,
+  never a synchronous hook. It indexes the scope's specs, ADRs, KG entities
+  (not person, persona or org ones), memory rules (not `user` ones), open and
+  recent PRs (not fork PRs, nor any touching `crm/`), and live board sessions;
+  skips anything under `crm/` and anything the guard rejects; ranks with BM25 behind a ranker interface; and writes one
+  sharded cache per scope, swapped in by one atomic rename.
+- **System 1** (`ctx_s1.py`) runs in the hook. Per event it builds keys (the
+  path in `tool_input`, the branch, prompt words, a PR number, the words a
+  shell command searches for), sums the cached scores, and injects the best
+  claims only when they clear the stage's floor, within the stage's budget,
+  once per session. Otherwise it abstains, and abstaining is the default. Each
+  claim is one line copied from its source (an entity's core_claim, a spec's
+  lede, a PR's title and state, a memory rule quoted) with its source id,
+  under a `[ctx claims]` header. Every decision is logged to
+  `s1-decisions.jsonl` with its top candidates and why.
+- **Stages:** `session-start`, `compact` (SessionStart), `prompt`, `pre-edit`,
+  `post-read`, `post-bash`, `subagent`, and `post-compact` (measurement only).
+  PreCompact and PostCompact could not inject on CLI 2.1.280
+  (`references/s1-stage-probe.md`).
+- **Off unless named:** `CTX_S1=1` and the stage in `CTX_S1_STAGES`;
+  `CTX_S1_SHADOW=1` logs and injects nothing; `~/.config/ctx/s1-off` stops
+  every stage. The shipped floors (`references/s1-params.json`) abstain on
+  everything: in E1 today no stage clears the spec's bar (strict
+  precision >= 0.30 over >= 50 injections on the test split, stage alone; no
+  stage makes a single strict hit there). The tune's proposal,
+  `references/s1-params.candidate.json`, is a prompt floor below every
+  candidate's score: it gates nothing, so in shadow it logs what the top three
+  claims at every prompt would be, the live follow-through a real floor needs.
+  It is not for injection.
+- **What it never offers:** person, persona and org entities, `user` memory,
+  anything under `crm/` (and a PR touching it), fork PRs, session and PR
+  claims older than 6 h and 24 h (from the cache or re-offered), the event's
+  own file or one the session already opened, a path in another scope's or an
+  unscoped repo (a nested checkout included), and to a reviewer subagent
+  (`Explore` included: P20's Stratum B runs as one) nothing at all. A
+  subagent only ever gets claims its parent received.
+- **Fails open:** every error or deadline miss exits 0 with no output; a stage
+  that is off costs one `/bin/sh` and no Python.
+
+```bash
+S1="python3 -I ~/broomva/skills/skills/orchestration/ctx-core/scripts/ctx_s1_cli.py"   # the `ctx-s1` command (ctx.py's CLI is the core's)
+$S1 build [--no-network]          # System 2: build this scope's cache
+$S1 snapshot                      # E1's snapshot, private: ~/.local/state/ctx/<scope>/e1/
+$S1 eval --params P --out DIR     # E1: replay, every arm, the aggregate report
+$S1 tune --params P --ledger L --write-candidate C   # E3
+$S1 follow                        # follow-through of live injections
+python3 scripts/register_s1_hooks.py --stages pre-edit,post-bash --shadow   # the owner, by hand
+```
+
 ## Tests
 
 ```bash
 cd skills/orchestration/ctx-core
 python3 -m pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py   # 25 protections removed in turn; the test pinning each must fail
+python3 tests/mutation_check.py   # 39 protections removed in turn; the test pinning each must fail
+python3 tests/mutation_check_s1.py   # the System 1 / System 2 / E1 protections, the same way
 ```
 
 | File | Pins |
@@ -331,6 +429,14 @@ python3 tests/mutation_check.py   # 25 protections removed in turn; the test pin
 | `test_scope_isolation.py` | Unscoped is a silent no-op. A worktree shares its main checkout's scope. The filesystem resolver agrees with `git rev-parse`. sri never reads broomva. Per-repo ambiguity. Malformed configs. crm/ and token-shaped cwds. `doctor --unscoped` |
 | `test_lock_contention.py` | A held lock: the hook returns under 200 ms, skips the append, and records the skip. Two concurrent writers: neither blocks, and no line tears. The lock is held under 5 ms with a 10,000-session board |
 | `test_rebuild_determinism.py` | Cache plus tail equals a full rebuild. Any split of the log folds the same. Hooks never write the board under the lock. A torn line is healed. A hand edit is detected and replaced. A replaced log is detected. SessionStart never reads the whole log, and catches a stale cache up across runs |
-| `test_fail_open.py` | A ctx module that fails to import, raises, prints, hangs, gets SIGTERM or exits non-zero: exit 0 and no output every time. Hostile stdin. An unwritable store. The miss breadcrumb and its rotation |
+| `test_fail_open.py` | A ctx module that fails to import, raises, prints, hangs, gets SIGTERM or exits non-zero: exit 0 and no output every time, under half of Claude Code's 2 s timeout. Only the hang is cut by the self-deadline, and its own record says when. The wall bound against the registered timeout. Hostile stdin. An unwritable store. The miss breadcrumb and its rotation |
 | `test_hook_deadline.py` | The normal path, git never run (or bounded and killed on the `GIT_DIR` path), an 11 MB log, and a board over the cap: each under 200 ms of wall time |
+| `test_compare.py` | `doctor --compare`: every reason on the fixed list, the pass bar on the raw sets, a last entry past a large last line, the prototype's line refused, a run that leaves the store's files byte-identical and appends one summary, the exit codes, the CLI in and out of a scope |
+| `test_s1_gate.py` | Each stage's positive and negative case, the flags and the kill file, shadow, dedup, path-once, the stage, session and budget caps, compaction and subagent stages, person/crm/credential exclusion, what the decisions log holds, scope isolation |
+| `test_s1_failopen.py` | A broken module, a raising decision, hostile stdin, a corrupt or missing cache, a held session lock, the self-deadline, SIGTERM, the wrapper's guards; the off path starts no interpreter; the wall bound per stage |
+| `test_s2_cache.py` | The atomic swap, a reader pinned to its build, a build that dies midway, collection never following a symlink, byte-identical rebuilds, private files, the ranker seam |
+| `test_s1_eval.py` | E1's counterfactual truth and its masks, the hashed snapshot, where it may be written and its integrity check, exact times, determinism, E3's bounds, ledger, strict objective and acceptance rules; with `CTX_S1_FROZEN` set, the private snapshot's reproduction of the committed report and the spec's bar on the shipped parameters |
+| `test_s1_e1_synthetic.py` | E1 end to end on a synthetic world (`s1_synthetic.py`) where a working gate exists: separation on the test split, strict hits, the mutant arms below the gate. CI's E1 step |
+| `test_s1_boundaries.py` | A nested repo's or an unscoped repo's path is not keyed; `gh -R` and PR URLs key their own repo; re-offered claims age out; housekeeping never removes a held or recently used lock; the output is emitted before the log line |
+| `test_s1_register.py` | The registration script: off unless named, backup, idempotent, only its own entries, `--remove` |
 | `test_hooks.py` | Structured fields only. The strict ARC-STATUS shape. The error class only. The brief's relevance, cap, one-line fields, linear cost and factual register. Live after a resumed death. The CLI and doctor. The wrapper: exit 0 with the script or the interpreter gone, against a positive control where Python exits 2 |

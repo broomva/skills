@@ -1,5 +1,6 @@
 # PLANS.md
 
+<<<<<<< HEAD
 ## role-x reflex router, pre-flip evidence (BRO-2674)
 
 Status: evals done; PR broomva/skills#260 in P20, on `feat/role-x-reflex-preflip`. Owner decision 2026-10-01: do not
@@ -44,6 +45,49 @@ with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
 `python3 skills/orchestration/role-x/scripts/role-x.py reflexes route --heldout` (v2, 9/31),
 `python3 scripts/skill_evals/ctx_ablation/a2.py --out ~/.cache/ctx-ablation/preflip-opus`,
 `python3 skills/orchestration/role-x/scripts/role-x.py reflexes shadow --since 3d` (A1).
+=======
+## fleet-reconcile phase 2: dry run through fleet act (BRO-2674)
+
+Status: in progress on `feat/fleet-reconcile-phase2` (from main d56061d, after #254).
+Spec: workspace `docs/specs/2026-09-29-fleet-reconcile-design.html` §5.3, §5.5, §5.7 and §9
+row 2, as merged in #842 (007f05a98).
+
+### Scope
+
+- `fleet act mail|spawn|label|resume` (ask exists): intent before, outcome after; dry run
+  closes spawn/label/resume at once with `would: true` and the argv or API call; mail's
+  dry intent is closed by the pre hook. Eligibility re-checked in code before every verb
+  (mode, corrupt ledger, an unanswered ask on the target, the recipient's fleet/adopted
+  status, the 6 h rule, name resolution, the driver rules of §5.5, caps, the spawn pause).
+- `fleet recover` (§5.7 recovery rules), `fleet send-gate pre|post` (the SendMessage hooks).
+- The coordinator: settings with the hooks, its argv (`--disallowedTools Agent Edit Write`
+  + the pinned Paseo write tools, `--` before the prompt), the runner prompt,
+  `fleet config-check --init` on the stream-json init event, a test that fails on an
+  unclassified Paseo tool; tick.sh runs recover, and the coordinator when mode is act.
+- The driver profile generator (0600, sandbox, allowlist, deny rules, GH_TOKEN from the
+  token file, an empty GH_CONFIG_DIR).
+- `fleet janitor-check <path>` failing closed; janitor runs stay report-only.
+- Phase-1 carry-overs from #254's arc-3 review (compare keys per owner action, the
+  failed-run counter test, report.json's compare error, non-GitHub origins, the ack count).
+
+### Not in scope
+
+- `fleet adopt` and `fleet audit` (owner side, phase 3). Spawning through bstack peer.py
+  (it takes no settings path; spec: a bstack PR adds one): the argv is built here.
+- The recovery drill (needs a live scratch coordinator per verb); listed as not run.
+
+### Drills (scratch repos and sessions only: `--name fleet-drill-<n>`, Haiku, /tmp)
+
+Tool-list posture; SendMessage refusals (each pre-hook check); the injected-text
+eligibility floor; the kill switch; the driver profile, fresh and resumed (blocked
+without `~/.config/broomva/fleet/gh-token`; also the REST update-branch probe under
+workflows:none); the janitor. Evidence under `~/.config/broomva/fleet/phase2-drills-*/`.
+
+### Verification
+
+`make`-free: `python -m pytest` in fleet-reconcile and ctx-core, `tests/mutation_check.py`
+in both, shellcheck, the claims grep, then P20 (B and C), p20-record, gate-check, merge.
+>>>>>>> origin/main
 
 ## role-x reflex router v1, behind `ROLE_X_OUTPUT=reflex` (BRO-2674)
 
@@ -97,6 +141,89 @@ quality-bar p9 line already does, across all of them.
 
 `pytest skills/orchestration/role-x/tests`, `pytest tests/skill_evals/test_ctx_ablation.py`,
 `python3 scripts/skill_evals/ctx_ablation/run.py validate --deep`.
+
+## ctx System 1: the per-stage injection gate, with evals (BRO-2674)
+
+Status: in review (branch `feat/ctx-s1-injection-gate`). Design of record:
+workspace#840 §6.2 (System 1 at every hook stage, System 2 behind it).
+
+### Objective
+
+One decision function, applied at every hook stage, that injects a cached
+factual claim only when its score clears that stage's floor, and abstains
+otherwise. A lexical (BM25) System 2 fills the cache offline, behind a ranker
+interface an ontology ranker can later fill. Evals that let an agent see the
+gate's behaviour and improve it: E1 offline replay (CI), E2 behavioural
+ablation (model calls), E3 a bounded tune loop over E1.
+
+### Scope and constraints
+
+- New modules in `skills/orchestration/ctx-core/scripts/` (`ctx_s1*.py`,
+  `ctx_s2.py`); role-x is not touched.
+- Every stage is off by default (`CTX_S1=1` plus `CTX_S1_STAGES=csv`); no
+  network or model call on the hook path; every error or deadline miss exits 0
+  with no output.
+- Floors start at abstain-all; fitted floors ship as a reviewed file.
+- The E1 snapshot stays on the owner's machine (`~/.local/state/ctx/<scope>/e1/`,
+  keys HMAC-hashed as well); only aggregate reports are committed, and CI runs
+  E1 on a synthetic fixture.
+- PreCompact/PostCompact cannot inject (hooks reference, live probe
+  2026-09-30); compaction re-injection uses SessionStart(compact).
+- Ontology ranking stays an eval arm until it beats BM25 (spec §6.6).
+
+### Milestones
+
+1. [x] System 2: sources, exclusions, BM25 ranker, sharded atomic cache.
+2. [x] System 1: keys, lookup, floors, budgets, dedup, rate limits, decision log.
+3. [x] Hook entry, wrapper, latency measured per stage.
+4. [x] E1: transcript extraction, hashed snapshot, replay, report; always/never
+   arms separate; mutation kill.
+5. [x] E3: `ctx-s1 tune` with a trial ledger.
+6. [x] E2: per-stage arms and rewritten retrieval tasks in ctx_ablation; sonnet
+   subset runs with each round's proposal floors (the arms and floors of each
+   run are stated with its numbers in the PR; the last run stopped at the
+   shared rate-limit guard).
+7. [ ] Registration script (done), docs (done), Cross-Review (P20): stopped on
+   a score regression at round 2 (6 -> 5); the owner chose the structural fix
+   (private snapshot) on 2026-10-01, ledger reset, fresh round after the squash.
+
+### Decision log
+
+- 2026-09-30: E1 found two key-extraction bugs by itself: cited `docs/…` and
+  `research/…` file paths were read as branch names and dropped, and scores
+  were summed over a set whose order follows the hash seed. Both fixed; the
+  snapshot, tune and report were regenerated.
+- 2026-09-30: no stage clears the spec's bar (strict precision >= 0.30 over
+  >= 50 injections on the test split, stage alone), so the shipped parameters
+  abstain everywhere; the tuned floors ship as `s1-params.candidate.json`, a
+  proposal for shadow runs and E2.
+- 2026-09-30: P20 round 2 scored 5/10 (B and C), below round 1's 6/10, so the
+  round ledger stopped the arc on a regression and it goes to the owner rather
+  than a third fix round. Most of round 2's findings trace to one shape: a
+  hashed snapshot of private transcripts committed to a public repo. Keeping it
+  private forced day-rounded times and dropped PR items (which broke E1's
+  created/edited checks and made the replay differ from the live cache), and
+  keeping key order for the replay turned the hashed prompts into an ordered
+  word cipher (C, blocker). The proposed structural change: keep the real
+  snapshot out of the public repo (private state, exact times, PR items kept),
+  run E1 in CI on a synthetic fixture, and commit aggregate reports only.
+  Rotate the salt either way. The branch history holds earlier snapshots and
+  must be squashed before any push.
+- 2026-10-01 ~00:55Z, owner: keep it private. The snapshot moved to
+  `~/.local/state/ctx/<scope>/e1/` (refused inside a git checkout), with exact
+  times and PR items; the salt was rotated; CI runs E1 on a synthetic fixture;
+  only aggregate reports are committed; the branch is squashed to one commit
+  before the first push. Separation is read on the test split, tune optimises
+  strict F0.5, and compact and subagent (re-offer only) get no one-stage arm
+  or tune phase. On the new snapshot no stage clears the bar, and no gate
+  makes a strict hit on test; separation fails there.
+- 2026-10-01, fresh P20 round 1 (6/10, B and C): the replay now resolves
+  fetched paths with the gate's own resolver, carries the cwd, anchors a call
+  after its parallel batch, counts bare PR numbers as echoes, and dates
+  date-only items conservatively; tune starts from `--params default` and
+  needs two strict train hits to accept. Re-tuned: BM25 accepts one change (a
+  prompt floor of 0.5, which gates nothing), PPR one (a post-bash floor of 15);
+  neither clears the bar.
 
 ## Context evals, layer 2: the causal context-ablation harness
 
@@ -488,3 +615,37 @@ reconciliation.
   its consistency test.
 - Bookkeeping replay against workspace `b1a4a662`: 931 entities frozen,
   2 unrelated design-system items would promote, no writes applied.
+
+## fleet-reconcile, phase 1: observe and classify, report only (BRO-2674)
+
+Status: phase 1 built on `feat/fleet-reconcile-phase1`; three real ticks and the
+labelling sheet next, then the PR. Phase 2 (dry run) follows on its own branch.
+
+### Scope and constraints
+
+- Code at `skills/orchestration/fleet-reconcile/` (owner decision), beside
+  ctx-core, which it imports from the same checkout. Stdlib only, `python3 -I`.
+- Design of record: workspace `docs/specs/2026-09-29-fleet-reconcile-design.html`
+  (§5.3, §5.4, §9 row 1); formats from its §5.7 amendment (workspace#842).
+  Choices it leaves open are marked "pending the spec" in code and SKILL.md.
+- Report-only: no mail, spawn, label or resume. No launchd job or Paseo schedule
+  is loaded by a session; `install.sh` is the owner's.
+- ctx-core: only the doctor path (`ctx doctor --compare` in `ctx_compare.py`),
+  since another session is adding a module there.
+- The repo is public: fixtures are anonymized captures.
+
+### Milestones
+
+1. Parsers pinned to Claude Code 2.1.280, tested on captures. Done.
+2. The class table, the ordering tests, the overlap pass on fixtures. Done.
+3. The count check, the 200-row fail-closed fixture, the ruleset check. Done.
+4. The report, the ask channel (`fleet asks`, `fleet ack`). Done.
+5. `ctx doctor --compare`. Done.
+6. tick.sh, the plist template, install.sh. Done.
+7. The scheduled-work inventory. Done.
+8. Three real ticks and the owner's labelling sheet.
+
+### Verification
+
+- `python3 -m pytest tests/` in both skills; both mutation checks at 0 survivors.
+- `bash -n` and shellcheck on the scripts; the catalog, SKILL.md and version lints.

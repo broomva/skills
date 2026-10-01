@@ -39,3 +39,8 @@ tests/skill_evals/fixtures/live/*
 !tests/skill_evals/fixtures/live/README.md
 !tests/skill_evals/fixtures/live/MANIFEST.json
 !tests/skill_evals/fixtures/live/BASELINE.json
+
+# ctx-core System 1: the E1 snapshot is derived from private transcripts and
+# lives under ~/.local/state/ctx/<scope>/e1/; never commit one (or the salt).
+snapshot.jsonl.gz
+s1-eval-salt

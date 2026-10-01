@@ -1,0 +1,14 @@
+{
+ "Label": "com.broomva.kg-compile",
+ "StartCalendarInterval": {
+  "Hour": 2,
+  "Minute": 0
+ },
+ "RunAtLoad": true,
+ "StandardOutPath": "/tmp/broomva-kg-compile.log",
+ "StandardErrorPath": "/tmp/broomva-kg-compile.log",
+ "ProgramArguments": [
+  "/bin/bash",
+  "{HOME}/job.sh"
+ ]
+}
