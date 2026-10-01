@@ -12,6 +12,12 @@ changes only what is PUSHED into the model's context:
                be found; nothing points at them.
 * ``rolex``    role-x's UserPromptSubmit intake hook, the real script from this
                branch, reading the workspace's ``roles/`` and catalog.
+* ``reflex``   the same hook with ``ROLE_X_OUTPUT=reflex``: role-x's reflex router,
+               at most three factual lines chosen from git and board state and the
+               prompt, no persona lines, no entity list (BRO-2674; ``rolex-reflex``
+               is an alias).
+* ``qbar``     the same hook with ``ROLE_X_OUTPUT=qbar``: the lens block cut to its
+               quality bar, #251's recommended arm (``rolex-qbar`` is an alias).
 * ``ctx``      ctx-core's SessionStart hook, the real script, briefing from the
                fixture ctx store.
 * ``rolex_coverage``  role-x's SessionStart coverage nudge (``all`` only). It reads
@@ -61,6 +67,9 @@ GUARDED_TOOLS = frozenset(GUARD_MATCHER.split("|"))
 
 #: Markers a hook's output must carry for the arm to count as delivered.
 ROLEX_MARKER = "[role-x intake"
+#: The reflex router's block. It may legitimately print nothing (no reflex
+#: applies), so its delivery proof is the live hook's log row, not this marker.
+ROLEX_REFLEX_MARKER = "[bstack reflexes"
 CTX_MARKER = "Shared board facts"
 
 
@@ -74,6 +83,9 @@ class Arm:
     #: ``None`` leaves role-x at its default cap (5); an int sets
     #: ``ROLE_X_TASK_ENTITY_TOP_N`` for the intake hook.
     rolex_top_n: int | None = None
+    #: ``None`` leaves role-x's output at its default (the hook command is
+    #: unchanged); a string sets ``ROLE_X_OUTPUT`` ("reflex", "qbar").
+    rolex_output: str | None = None
     description: str = ""
 
     @property
@@ -89,6 +101,10 @@ class Arm:
         return tuple(out)
 
     @property
+    def is_reflex(self) -> bool:
+        return self.rolex and self.rolex_output == "reflex"
+
+    @property
     def is_bare(self) -> bool:
         return not (self.memory or self.rolex or self.ctx or self.rolex_coverage)
 
@@ -102,7 +118,15 @@ ARM_REGISTRY: dict[str, Arm] = {
                description="memory + role-x intake + ctx brief + role-x coverage"),
     "rolex-top2": Arm("rolex-top2", rolex=True, rolex_top_n=2,
                       description="role-x intake with the task-entity list cut to 2"),
+    "reflex": Arm("reflex", rolex=True, rolex_output="reflex",
+                  description="role-x reflex router (ROLE_X_OUTPUT=reflex)"),
+    "qbar": Arm("qbar", rolex=True, rolex_output="qbar",
+                description="role-x intake cut to its quality bar (ROLE_X_OUTPUT=qbar)"),
 }
+
+#: Other names for registry arms: the owner's brief called them rolex-reflex and
+#: rolex-qbar; the design of record (workspace spec, §5.4) calls them reflex and qbar.
+ARM_ALIASES = {"rolex-reflex": "reflex", "rolex-qbar": "qbar"}
 
 DEFAULT_ARMS = ("bare", "memory", "rolex", "ctx", "all", "rolex-top2")
 
@@ -111,6 +135,7 @@ _TOPN_RE = re.compile(r"^rolex-top(\d{1,2})$")
 
 def parse_arm(spec: str) -> Arm:
     """An arm id from the registry, or ``rolex-top<N>`` for any N in 0..50."""
+    spec = ARM_ALIASES.get(spec, spec)
     if spec in ARM_REGISTRY:
         return ARM_REGISTRY[spec]
     m = _TOPN_RE.match(spec)
@@ -170,6 +195,8 @@ def hook_commands(arm: Arm, case_root: Path, rt: HookRuntime) -> dict[str, list[
         env = dict(rolex_env)
         if arm.rolex_top_n is not None:
             env["ROLE_X_TASK_ENTITY_TOP_N"] = str(arm.rolex_top_n)
+        if arm.rolex_output is not None:
+            env["ROLE_X_OUTPUT"] = arm.rolex_output
         hooks["UserPromptSubmit"] = [{"hooks": [{"type": "command", "timeout": 20, "command": _cmd(
             env, ["/bin/bash", str(ROLEX_SCRIPTS / "role-x-intake-hook.sh")])}]}]
     return hooks
@@ -192,6 +219,7 @@ __all__ = [
     "DEFAULT_ARMS",
     "HookRuntime",
     "ROLEX_MARKER",
+    "ROLEX_REFLEX_MARKER",
     "build_settings",
     "hook_commands",
     "parse_arm",

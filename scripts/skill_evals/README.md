@@ -471,6 +471,8 @@ knowledge graph would measure the graph, not the injection.
 | `ctx` | ctx-core's real SessionStart hook, briefing from the fixture board |
 | `all` | all three, plus role-x's SessionStart coverage hook |
 | `rolex-top2` | role-x with its task-entity list cut from 5 to 2 (`rolex-top<N>` for any N) |
+| `reflex` | role-x with `ROLE_X_OUTPUT=reflex`: the reflex router's ≤3 lines, or nothing (alias `rolex-reflex`) |
+| `qbar` | role-x with `ROLE_X_OUTPUT=qbar`: the lens block cut to its quality bar (alias `rolex-qbar`) |
 
 Each arm is an explicit `--settings` file under `--setting-sources project` and a
 jailed HOME. The operator's `~/.claude/settings.json` is never read or written.
@@ -489,6 +491,10 @@ context adds nothing". So delivery is checked per trial, not assumed.
   2.1.280). Instead, the live hook must have logged an intake whose `prompt_digest`
   is the task prompt's sha256, under the jailed HOME. The injected text is
   recovered by running the same hook offline on the same prompt and workspace.
+- **the reflex router** (`reflex` arm) may rightly print nothing, so its proof is its
+  log alone: the offline run's `reflex` row carries no `error`, and the live hook
+  logged a row for the prompt. An empty block is then graded as the router's choice;
+  a router error is `INJECTION_MISSING`.
 - **memory:** auto-memory leaves no event in the stream, so delivery is proven from
   tokens. A trial's *unexplained* turn-one tokens are its excess over bare on the
   same task, minus a generous estimate of its own hook text (3 characters per
@@ -519,6 +525,12 @@ role-x's "consider a lens" nudge echoed them back into context, so the prompt no
 names no canary at all.
 
 ### Tasks, and the control-absent rule
+
+`ctx_ablation/tasks/reflex-heldout.json` holds eight held-out tasks for the reflex
+router, one per reflex it adds a predicate or line for, worded away from the pilot's
+prompts (see its `notes` and `RESULTS-reflex.md`). The worktree task grades on
+`home_contains`: whether each gitignored file's own canary (`.env` and `asks.db`)
+survives anywhere under the case HOME, the case Trash included.
 
 `ctx_ablation/tasks/pilot.json` holds the candidates, in three classes:
 - **retrieval:** the answer lives only in a KG entity, a spec or a memory topic

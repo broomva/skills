@@ -171,23 +171,60 @@ def session_start_offline(case: fx.Case, settings: dict[str, Any]) -> str:
     return "\n".join(o for o in out if o)
 
 
-def rolex_logged_prompt(layout: fx.CaseLayout, prompt: str) -> bool:
-    """Did the LIVE intake hook run on this prompt? role-x logs every intake with the
-    prompt's sha256 under the (jailed) HOME, just before it prints the block."""
+def _rolex_events(layout: fx.CaseLayout, prompt: str) -> list[dict[str, Any]]:
+    """role-x's log rows for *prompt* under the (jailed) HOME: it logs every intake
+    with the prompt's sha256, just before it prints the block."""
     path = layout.home / ".config" / "broomva" / "role" / "events.jsonl"
     digest = "sha256:" + hashlib.sha256(prompt.encode("utf-8")).hexdigest()
     try:
         lines = path.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return False
+        return []
+    out = []
     for line in lines:
         try:
             ev = json.loads(line)
         except ValueError:
             continue
-        if ev.get("prompt_digest") == digest and ev.get("session") != OFFLINE_SESSION:
-            return True
-    return False
+        if isinstance(ev, dict) and ev.get("prompt_digest") == digest:
+            out.append(ev)
+    return out
+
+
+def rolex_logged_prompt(layout: fx.CaseLayout, prompt: str) -> bool:
+    """Did the LIVE intake hook run on this prompt?"""
+    return any(ev.get("session") != OFFLINE_SESSION for ev in _rolex_events(layout, prompt))
+
+
+def _reflex_row(layout: fx.CaseLayout, prompt: str, live: bool) -> dict[str, Any] | None:
+    rows = [ev for ev in _rolex_events(layout, prompt)
+            if ev.get("event") == "reflex" and (ev.get("session") != OFFLINE_SESSION) == live]
+    return rows[-1] if rows else None
+
+
+def rolex_reflex_error(layout: fx.CaseLayout, prompt: str) -> str:
+    """The reflex router's error class from the OFFLINE run on this prompt, "" when
+    it routed cleanly, or "no log row" when it never ran. The router prints nothing
+    on an error, which would otherwise pass for "no reflex applies"."""
+    row = _reflex_row(layout, prompt, live=False)
+    if row is None:
+        return "no log row"
+    return str(row.get("error") or "")
+
+
+def rolex_reflex_live_problem(layout: fx.CaseLayout, prompt: str) -> str:
+    """"" when the LIVE hook logged a clean reflex row that selected what the offline
+    run selected (the recovered text is then what the model saw), else why not."""
+    live = _reflex_row(layout, prompt, live=True)
+    if live is None:
+        return "the live hook logged no reflex row for this prompt"
+    if live.get("error"):
+        return f"the live router failed: {live['error']}"
+    offline = _reflex_row(layout, prompt, live=False) or {}
+    if list(live.get("selected") or []) != list(offline.get("selected") or []):
+        return (f"live selected {live.get('selected')} but offline selected {offline.get('selected')}: "
+                "the recovered text is not what the model saw")
+    return ""
 
 
 # ---------------------------------------------------------------------------
@@ -239,6 +276,18 @@ def _outcome_for_injections(arm: arms_mod.Arm, case: fx.Case, t: Transcript, rol
     if not arm.ctx and ctx_seen:
         return m.LEAKED, "the board brief reached an arm without ctx"
     rolex_ran = rolex_logged_prompt(layout, prompt)
+    if arm.is_reflex:
+        # The router may rightly print nothing (no reflex applies), so its proof is
+        # the log: the offline run routed without error, and the live hook ran.
+        err = rolex_reflex_error(layout, prompt)
+        if err:
+            return m.INJECTION_MISSING, f"the reflex router did not route this prompt offline: {err}"
+        live_problem = rolex_reflex_live_problem(layout, prompt)
+        if live_problem:
+            return m.INJECTION_MISSING, live_problem
+        if arm.memory and not (layout.memory_dir / "MEMORY.md").is_file():
+            return m.INJECTION_MISSING, "memory arm, but MEMORY.md is not at the cwd's memory key"
+        return "", ""
     # role-x itself declines some prompts (fewer than three words, among others),
     # and then prints nothing in production too. The offline run on the same prompt
     # and workspace says whether this is one; PyYAML being unreachable, the other
@@ -664,7 +713,15 @@ def cmd_preflight(args) -> int:
                 session = session_start_offline(case, settings)
                 memory = ((case.layout.memory_dir / "MEMORY.md").read_text(encoding="utf-8")
                           if arm.memory and (case.layout.memory_dir / "MEMORY.md").is_file() else "")
-                if arm.rolex and arms_mod.ROLEX_MARKER not in rolex:
+                if arm.is_reflex:
+                    err = rolex_reflex_error(case.layout, task.prompt)
+                    if err:
+                        problems.append(f"{arm.id} x {task.id}: the reflex router failed ({err})")
+                    elif not rolex:
+                        notes.append(f"{arm.id} x {task.id}: no reflex applies, the router prints nothing")
+                    elif not rolex.startswith(arms_mod.ROLEX_REFLEX_MARKER):
+                        problems.append(f"{arm.id} x {task.id}: the router printed a block without its header")
+                elif arm.rolex and arms_mod.ROLEX_MARKER not in rolex:
                     if len(task.prompt.split()) < ROLEX_MIN_WORDS:
                         notes.append(f"{arm.id} x {task.id}: role-x declines a prompt under "
                                      f"{ROLEX_MIN_WORDS} words, as it does in production")
@@ -747,7 +804,9 @@ def live_canary(args, arms: Sequence[arms_mod.Arm], rt: arms_mod.HookRuntime, co
             answer = Transcript.from_ndjson(proc.stdout).final_text()
             seen = {"memory": CANARY_MEMORY in answer, "ctx": CANARY_CTX in answer,
                     "rolex": CANARY_ROLEX in answer.lower()}
-            want = {"memory": arm.memory, "ctx": arm.ctx, "rolex": arm.rolex}
+            # The reflex router has nothing to say to the canary question, so its
+            # arm must see no quality bar: seeing one would be the lens block leaking.
+            want = {"memory": arm.memory, "ctx": arm.ctx, "rolex": arm.rolex and not arm.is_reflex}
             ok = seen == want
             failures += not ok
             print(f"  canary {arm.id:<11} saw {seen}  want {want}  {'ok' if ok else 'MISMATCH'}")

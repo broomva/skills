@@ -35,6 +35,7 @@ description: |
    - `role-x suggest` (v0.4.0) — analyze events.jsonl; surface fire-rate + drift + emergent clusters
    - `role-x init <name>` (v0.4.0) — scaffold a `status: candidate` lens from CLI flags
    - `role-x coverage` (v0.4.1) — brief registry-health summary; silent when healthy (SessionStart hook entry point)
+   - `role-x reflexes route` (v0.7.0) — the reflex router offline: one prompt, or `--evals` over every skill's trigger-eval set
 5. **Hooks** (`scripts/*-hook.sh`):
    - `role-x-intake-hook.sh` (v0.2.0) — `UserPromptSubmit` wrapper
    - `role-x-coverage-hook.sh` (v0.4.1) — `SessionStart` wrapper with 24h cooldown
@@ -53,6 +54,28 @@ Always — at the start of every session, before responding to substantive user 
 Carve-outs (no role-x intake needed): single-line typo fixes, pure read questions ("what does this function do?"), conversation continuation without new substantive request.
 
 The intake block's "Task-relevant knowledge" list holds at most 5 catalog entities. `ROLE_X_TASK_ENTITY_TOP_N=<n>` (0–50) in the hook's environment changes that cap; a bad value means 5. It only shortens or lengthens the same ranked list, and it exists for the context-ablation evals' compression arm (`scripts/skill_evals/ctx_ablation/`).
+
+### Reflex output (`ROLE_X_OUTPUT`, v0.7.0, default off)
+
+`ROLE_X_OUTPUT` in the hook's environment chooses what the intake hook injects. Unset, empty or unknown is `legacy`, today's block, so nothing changes until it is set. `ROLE_X_MODE` is read as an alias when `ROLE_X_OUTPUT` is unset.
+
+| Value | Injects | Logs |
+|---|---|---|
+| `legacy` | the lens block (above) | the intake row |
+| `reflex` | at most 3 lines under `[bstack reflexes]`, ≤ 600 characters, or nothing | a `reflex` row |
+| `shadow` | the lens block | the intake row and the `reflex` row it would have injected |
+| `qbar` | the lens block cut to header, lenses, mode and quality bar | the intake row, `render: qbar` |
+
+The reflex router (`scripts/reflex_router.py`) reads `references/reflexes.yaml`: each entry is trigger clauses → one line that names the command → the source that states the rule. Per clause it works cheapest first, and each stage only narrows:
+1. **The prompt:** the catalog's regexes, the phrases copied from each skill's description, and named routes such as `change_work`. Pure regex, no I/O.
+2. **State:** for a clause with a prompt side, only once that matched; a state-only clause (a push the reflog shows, staged changes on `main`) reads it on every prompt. Sources: one `git status --porcelain=v2 --branch`, one reflog tail, and ctx-core's `board.json` cache (never its log), each read at most once. A failing source costs only its own predicate.
+3. **`ROLE_X_JEV`:** the seam for a typed classifier; `off` in v1.
+
+State still ranks first: state+prompt fires, then state, then prompt. The p9 rule is `pinned` (spec I1): it fires on change work, on push or "open a PR" wording, after a fresh push, or when the whole prompt is a go-ahead ("ok", "yes please") with unshipped work; whenever it fires it takes the first slot, and neither the repeat cap nor a narrower drops it.
+
+No persona lines, no entity list. Lines state facts ("after a push, the stack runs `p9 watch <pr> --background`"), never orders. A line goes out at most twice per session for the same fact (a small per-session file under `~/.config/broomva/role/reflex-sessions/`; `shadow` counts too). Any error prints nothing and logs its class; a state source that fails costs only its own predicate.
+
+Only `status: routed` entries are injected. An entry routes when its prompt side clears the sealed held-out routing cases (`evals/reflex-routing-heldout.json`, written blind and hashed before any tuning): recall ≥ 0.60 and false fire ≤ 0.20, which a test enforces. Entries below that bar are `listed`, with the measurement in `m3:`; judgment-call triggers are `judgment`. Both stay in the catalog so the gap is visible. `role-x reflexes route --prompt "…"` shows what a prompt would get, `--heldout` scores the sealed cases, and `--evals` scores each skill's own `evals/prompts.json` (in-sample, since the phrases come from the same descriptions). Design of record: [`broomva/workspace`](https://github.com/broomva/workspace)`/docs/specs/2026-09-30-reflex-router-and-ontology-ranked-context.html` §5 (BRO-2674). Eval: `scripts/skill_evals/ctx_ablation/RESULTS-reflex.md`.
 
 ### Meta-progression discipline (v0.4.1+)
 
@@ -130,7 +153,9 @@ Security contract (design §3 S0-result — enforced in `role-x.py`): **fd-based
 - `roles/<name>.md` — per-domain lenses. Live in the consuming workspace.
 - `roles/<name>.eval.yaml` — resolver-eval fixture (`should_fire` / `should_not_fire` intents) asserting the lens's trigger actually routes. Run via `role-x.py eval`; gate in CI. The skillify "resolver eval" step — a trigger that says "phrase X selects lens Y" is only trustworthy once a test proves it. Live in the consuming workspace alongside the lens.
 - `roles/_index.md` — auto-generated discovery index.
-- `scripts/role-x.py` — CLI helpers (`validate`, `list`, `index`, `intake`, `coverage`, `suggest`, `init`, `eval`).
+- `scripts/role-x.py` — CLI helpers (`validate`, `list`, `index`, `intake`, `coverage`, `suggest`, `init`, `eval`, `reflexes route`).
+- `scripts/reflex_router.py` — the reflex router (`ROLE_X_OUTPUT=reflex`), loaded by `role-x.py` by file path.
+- `references/reflexes.yaml` — the reflex catalog: P1–P20 reflexes, memory conventions, and one line per skill with `evals/prompts.json`, each citing its source.
 - `references/*.md` — schema + algorithm reference docs.
 - `~/.config/broomva/role/events.jsonl` — telemetry log (M2).
 - `~/.config/broomva/role/status.json` — per-lens stats cache (M2).
