@@ -1346,7 +1346,7 @@ def test_mutating_a_predicate_fails_its_scenario(repo, tmp_path, name, how):
         assert not _scenario_fires(mod, CATALOG, repo, name)
 
 
-def _shadow(tmp_path, rows, transcript, name="role_x_under_test_shadow", since="3d"):
+def _shadow(tmp_path, rows, transcript, name="role_x_under_test_shadow", since="3d", events_path=None):
     import argparse as _ap
     import contextlib
     rx = load_module(ROLE_X_PY, name)
@@ -1359,8 +1359,8 @@ def _shadow(tmp_path, rows, transcript, name="role_x_under_test_shadow", since="
                                    encoding="utf-8")
     out, err = io.StringIO(), io.StringIO()
     with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
-        code = rx.cmd_reflexes_shadow(_ap.Namespace(events=str(events), projects=str(tmp_path / "projects"),
-                                                    since=since, json=True))
+        code = rx.cmd_reflexes_shadow(_ap.Namespace(events=str(events_path or events),
+                                                    projects=str(tmp_path / "projects"), since=since, json=True))
     return code, (json.loads(out.getvalue()) if out.getvalue() else {"stderr": err.getvalue()})
 
 
@@ -1377,108 +1377,126 @@ def _row(selected=(), ms=40.0, at=0.0, session="s1", **extra):
     return {**r, **extra}
 
 
-def _hook(at=0.0, kind="hook_success", ms=200, command="/x/role-x-intake-hook.sh"):
-    """Claude Code's record of one role-x UserPromptSubmit hook run."""
-    return {"type": "attachment", "timestamp": _at(at + 0.03), "attachment": {
-        "type": kind, "hookEvent": "UserPromptSubmit", "command": command, "durationMs": ms}}
+def _bash(cmd, at, **extra):
+    return {"type": "assistant", "timestamp": _at(at), **extra,
+            "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": cmd}}]}}
 
 
-def _bash(cmd):
-    return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": cmd}}]}}
+def _hook(at, kind="hook_success", ms=200, timed_out=None, command="/x/role-x-intake-hook.sh"):
+    a = {"type": kind, "hookEvent": "UserPromptSubmit", "command": command, "durationMs": ms}
+    if timed_out is not None:
+        a["timedOut"] = timed_out
+    return {"type": "attachment", "timestamp": _at(at), "attachment": a}
 
 
 P9 = ["p9.watch-after-push"]
 
 
 def _ships(n, p9=True, at0=0.0, step=10.0):
-    """n turns that each run the hook (with a shadow row) and then push."""
+    """n prompts (shadow rows), each followed by a push in its turn."""
     rows = [_row(P9 if p9 else [], at=at0 + i * step) for i in range(n)]
-    t = [e for i in range(n) for e in (_hook(at=at0 + i * step), _bash("git push"))]
+    t = [_bash("git push", at=at0 + i * step + 5) for i in range(n)]
     return rows, t
 
 
-def test_the_shadow_reader_reads_a1_off_hook_runs(tmp_path):
-    """spec A1's instrument (workspace#850): each row pairs with its hook run in the
-    transcript by time; a turn is one hook run; met needs every row timed, no error,
-    p99 <= 100 ms and p9's Wilson bound >= 0.70 (the worst case, below)."""
+def test_the_shadow_reader_reads_a1_off_rows_and_their_pushes(tmp_path):
+    """spec A1's instrument (workspace#850): a turn is one shadow row (shadow writes one per
+    prompt), a push belongs to the latest row before it; met needs every row timed, no
+    error, p99 <= 100 ms and p9's Wilson bound >= 0.70 (the worst case, below)."""
     rows, t = _ships(12)
-    rows.append(_row([], at=200))
-    t += [_hook(at=200), {"type": "user", "message": {"content": "what is this"}}]
-    rows.append(_row(P9, session="no-transcript", at=210))  # reported, left out of the join
-    code, rep = _shadow(tmp_path, rows + ["[1]"], t + ["not json", "[2]"])
+    rows.append(_row([], at=200))  # a prompt that did not ship
+    probe = _row(P9, session="no-transcript", at=210, error="KeyError", router_ms=None)  # left out of everything
+    code, rep = _shadow(tmp_path, rows + [probe, "[1]"], t + ["not json", "[2]", _hook(at=1)])
     assert (code, rep["verdict"]) == (0, "met"), rep
-    assert rep["ship_turns"]["paired"] == 12 and rep["ship_turns"]["p9_selected"] == 12
-    assert rep["ship_turns"]["rows_in_sessions_without_a_transcript"] == 1
-    assert rep["hook_wall_ms_reported_not_gated"]["runs"] == 13
+    st = rep["ship_turns"]
+    assert (st["turns"], st["p9_selected"], st["rows_in_sessions_without_a_transcript"]) == (12, 12, 1)
 
 
-def test_the_shadow_reader_bounds_what_the_join_cannot_settle(tmp_path):
-    """Met reads the worst case, not met the best case, and under 9 ship turns neither."""
+def test_a_short_prompt_s_push_is_its_own_turn(tmp_path):
+    """Found in review: a short 'go' leaves no hook record in the transcript, so a reader
+    keyed on those records credited its push to the prompt before it. Rows are the turns."""
+    rows, t = _ships(13)
+    rows += [_row(P9, at=300), _row([], at=400)]  # a p9 prompt that does not ship, then "go" without p9
+    t += [_bash("gh pr create --fill", at=405)]
+    code, rep = _shadow(tmp_path, rows, t)
+    st = rep["ship_turns"]
+    assert (st["turns"], st["p9_selected"]) == (14, 13) and (code, rep["verdict"]) == (1, "not met")  # W(13,14) < 0.70
+
+
+def test_the_shadow_reader_bounds_pushes_it_cannot_place(tmp_path):
+    """A push with no row before it in its session is unsure: met reads the worst case, not
+    met the best case, and under 9 ship turns neither."""
+    orphan = [_bash("git push", at=-30)]  # before the session's first row
     rows, t = _ships(30)
-    code, rep = _shadow(tmp_path / "a", rows, t + [_hook(at=900), _bash("git push")])  # a run with no row
-    assert (code, rep["verdict"]) == (0, "met") and rep["ship_turns"]["ship_turns_without_a_row"] == 1
+    code, rep = _shadow(tmp_path / "a", rows, orphan + t)
+    assert (code, rep["verdict"]) == (0, "met") and rep["ship_turns"]["ships_with_no_row_before_them"] == 1
     rows, t = _ships(12)
-    code, rep = _shadow(tmp_path / "b", rows, t + [_hook(at=900), _bash("gh pr create --fill")])
+    code, rep = _shadow(tmp_path / "b", rows, orphan + t)
     assert (code, rep["verdict"]) == (3, "not shown")  # worst W(12, 13) < 0.70 <= best
     rows, t = _ships(5)
     code, rep = _shadow(tmp_path / "c", rows, t)
     assert (code, rep["verdict"]) == (3, "not shown")  # 5/5 cannot reach 0.70 yet
     rows, t = _ships(10)
     rows[0]["selected"] = []
-    extra = [e for i in range(10) for e in (_hook(at=1000 + i * 100), _bash("git push"))]
-    code, rep = _shadow(tmp_path / "d", rows, t + extra)  # could be 19/20: not shown, not "not met"
+    many = [_bash("git push", at=-300 + i) for i in range(10)]
+    code, rep = _shadow(tmp_path / "d", rows, many + t)  # could be 19/20: not shown, not "not met"
     assert (code, rep["verdict"]) == (3, "not shown") and rep["ship_turns"]["wilson_lower_best_case"] >= 0.70
     rows, t = _ships(20, p9=False)
-    code, rep = _shadow(tmp_path / "e", rows, t + [_hook(at=900), _bash("git push"), _hook(at=950), _bash("git push")])
+    code, rep = _shadow(tmp_path / "e", rows, many[:2] + t)
     assert (code, rep["verdict"]) == (1, "not met") and rep["ship_turns"]["wilson_lower_best_case"] < 0.70
+
+
+def test_the_shadow_window_and_forked_copies(tmp_path):
     rows, t = _ships(12)
-    code, rep = _shadow(tmp_path / "f", rows + [_row(P9, at=5000)], t)  # a row with no hook run
-    assert rep["ship_turns"]["rows_without_a_hook_run"] == 1 and rep["verdict"] == "not shown"
+    # a push copied from a forked session's history is that session's, not this one's
+    rows.append(_row([], at=200))  # a prompt that did not ship ...
+    copied = _bash("git push", at=205, forkedFrom={"sessionId": "other"})  # ... but a copied push lands in it
+    # a turn that began before the window pushes inside it: not this window's turn
+    before = [_row([], at=-3 * 86400 + 3600 - 20)]
+    late = [_bash("git push", at=-3 * 86400 + 3600 + 1), _bash("git push", at=-4 * 86400)]
+    code, rep = _shadow(tmp_path, before + rows, late + [copied] + t)
+    st = rep["ship_turns"]
+    assert (st["turns"], st["ships_with_no_row_before_them"], rep["rows"]) == (12, 0, 13)
+    assert rep["verdict"] == "met"
 
 
-def test_the_shadow_reader_fails_or_withholds_on_time_errors_and_unreadable_rows(tmp_path):
+def test_the_shadow_reader_fails_or_withholds_on_time_errors_and_unreadable_lines(tmp_path):
     rows, t = _ships(12)
     code, rep = _shadow(tmp_path / "a", [dict(r, router_ms=150.0) for r in rows], t)
     assert (code, rep["verdict"]) == (1, "not met") and rep["router_ms"]["p99"] == 150.0
     for k, ms in (("b", None), ("c", float("nan"))):  # an older install, or a NaN: time not shown
         code, rep = _shadow(tmp_path / k, rows[:-1] + [_row(P9, ms=ms, at=110)], t)
         assert rep["verdict"] == "not shown", ms
-    code, rep = _shadow(tmp_path / "d", rows + [_row(at=170, error="KeyError")], t + [_hook(at=170)])
+    code, rep = _shadow(tmp_path / "d", rows + [_row(at=170, error="KeyError")], t)
     assert (code, rep["verdict"]) == (1, "not met")
     torn = '{"event": "reflex", "shadow": true, "error": "Key'
-    code, rep = _shadow(tmp_path / "e", rows[:6] + [torn] + rows[6:], t)  # inside the window
+    code, rep = _shadow(tmp_path / "e", rows[:6] + [torn] + rows[6:], t)
     assert rep["malformed_lines_in_window"] == 1 and rep["verdict"] == "not shown"
-    code, rep = _shadow(tmp_path / "f", [torn] + rows, t)  # before the window's first row
+    legacy = {"ts": _at(-5), "event": "intake", "session": "s1"}  # any line inside the window opens it
+    code, rep = _shadow(tmp_path / "f", [legacy, torn] + rows, t)
+    assert rep["malformed_lines_in_window"] == 1
+    old = {"ts": _at(-5 * 86400), "event": "intake"}
+    code, rep = _shadow(tmp_path / "g", [old, torn] + rows, t)  # before the window opens
     assert rep["malformed_lines_in_window"] == 0 and rep["verdict"] == "met"
+    locked = tmp_path / "locked.jsonl"
+    locked.write_text(json.dumps(rows[0]) + "\n", encoding="utf-8")
+    locked.chmod(0)  # unreadable: the reader fails, and says so, rather than reading "not met"
+    try:
+        code, rep = _shadow(tmp_path / "h", rows, t, events_path=locked)
+    finally:
+        locked.chmod(0o600)
+    assert code == 4 and "reader failed" in rep["stderr"]
 
 
-def test_a_hook_run_pairs_one_row_and_belongs_to_its_session_s_window(tmp_path):
-    # every row nearest to the same run: each still takes its own
-    crowded = [_row(P9, at=12) for _ in range(9)]
-    near = [e for i in range(9) for e in (_hook(at=i * 3), _bash("git push"))]
-    code, rep = _shadow(tmp_path / "a", crowded, near)
-    assert rep["ship_turns"]["paired"] == 9 and rep["ship_turns"]["ship_turns_without_a_row"] == 0
-    # a row and a run further apart than HOOK_PAIR_S do not pair
+def test_the_hook_s_wall_clock_is_reported_not_gated(tmp_path):
     rows, t = _ships(12)
-    code, rep = _shadow(tmp_path / "b", rows + [_row(P9, at=2000)], t + [_hook(at=2040), _bash("git push")])
-    assert rep["ship_turns"]["rows_without_a_hook_run"] == 1 and rep["ship_turns"]["ship_turns_without_a_row"] == 1
-    # runs and rows before the window are outside it; a run just before it (inside the
-    # pairing slack) is read for pairing but its ship is not counted
-    old = [_hook(at=-4 * 86400), _bash("git push"), _hook(at=-3 * 86400 + 3600 - 10), _bash("git push")]
-    code, rep = _shadow(tmp_path / "c", [_row(P9, at=-4 * 86400)] + rows, old + t)
-    assert rep["verdict"] == "met" and rep["ship_turns"]["ship_turns_without_a_row"] == 0 and rep["rows"] == 12
-    # other hooks, and other events, are not role-x runs
-    other = [_hook(at=600, command="/x/other-hook.sh"), dict(_hook(at=601), attachment={
-        **_hook(at=601)["attachment"], "hookEvent": "SessionStart"})]
-    code, rep = _shadow(tmp_path / "d", rows, t + other)
-    assert rep["hook_wall_ms_reported_not_gated"]["runs"] == 12
-
-
-def test_hook_kills_and_wall_clock_are_reported_not_gated(tmp_path):
-    rows, t = _ships(12)
-    code, rep = _shadow(tmp_path, rows + [_row(at=600)], t + [_hook(at=600, kind="hook_cancelled", ms=15002)])
+    runs = [_hook(at=1, ms=200), _hook(at=2, ms=float("nan")), _hook(at=3, kind="hook_cancelled", ms=15002, timed_out=True),
+            _hook(at=4, kind="hook_cancelled", ms=900, timed_out=False), _hook(at=5, command="/x/other.sh", ms=99999),
+            dict(_hook(at=6), attachment={**_hook(at=6)["attachment"], "hookEvent": "SessionStart"})]
+    code, rep = _shadow(tmp_path, rows, t + runs)
     hw = rep["hook_wall_ms_reported_not_gated"]
-    assert hw["killed"] == 1 and hw["max"] == 15002 and rep["verdict"] == "met"
+    assert (hw["runs_recorded"], hw["max"], hw["timeouts"], hw["interrupts"]) == (3, 15002, 1, 1)
+    assert rep["verdict"] == "met"
 
 
 def test_p99_is_nearest_rank():

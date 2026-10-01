@@ -14,8 +14,11 @@ round-7 follow-ups (merged f9af7883b).
 1. **A1 has not run.** Spec §10: if A1 (three days of shadow) fails or has not run, "A2
    does not start". Shadow is not on in production yet (0 router rows). So no A2 result,
    good or bad, can ship the router today. This alone decides the flip.
-   - A1 can also not pass as the router stands: it requires `change_work` to clear M3, and
+   - A1 can also not pass as the router stands. It requires `change_work` to clear M3, and
      `change_work` is at 0.70 of its 0.80.
+   - Its p9 bar is out of reach too. On three days of real ship turns, half start from a
+     task notification, and the router's prompt side reaches at most 43% of them against
+     a bar of 0.70.
 2. **On opus, A2 as graded is not met** (`ctx_ablation/a2.py`).
    - **The P3 stop rule fires.** Reflex 0/3, qbar 3/3 on the P3 regression task: Newcombe
      [−1.00, −0.21], entirely below 0. This cell is weak (see *P3*): one prompt, a
@@ -305,13 +308,22 @@ production. Its four rows (01:40–01:43Z) are test runs. Shadow is not on yet.
 ## What would change the recommendation
 
 In the spec's order:
-0. **Fix `change_work` first.** Tune its regexes for short go-aheads and ship verbs, then
-   seal a v3 set in the jail, with no skill listing, before scoring it with
-   `python3 ~/.agents/skills/role-x/scripts/role-x.py reflexes route --heldout
-   --heldout-file <v3>` (the default file is v2).
-   - This comes before the three days of shadow: A1 requires `change_work` to clear M3,
-     and the fix changes p9's coverage too.
-   - Rows carry no router version, so the window starts at the install that carries both
+0. **Fix `change_work` first, and give p9 a trigger for the turns that ship.**
+   - Tune `change_work`'s regexes for short go-aheads and ship verbs, then seal a v3 set in
+     the jail, with no skill listing, before scoring it.
+   - Score from the branch that carries the fix: `python3
+     skills/orchestration/role-x/scripts/role-x.py reflexes route --heldout --heldout-file
+     <v3>` (the default file is v2).
+   - **The prompt side cannot carry A1's p9 bar.** A replay of three days of real ship
+     turns (175 turns in hook-covered sessions) found:
+     - Half start from a `<task-notification>` (86), not a typed prompt.
+     - p9's prompt clauses plus `change_work` fire on at most 43% of them (Wilson lower
+       bound 0.36). Review measured 21% with no state at all.
+     - The state clauses (`branch_pushed_recently`; `unshipped_work` with a whole-prompt
+       go-ahead) are unmeasured offline.
+     - So before shadow, p9 needs a clause for turns that ship after a task notification,
+       for example `unshipped_work` alone. Measure it on that replay first.
+   - Rows carry no router version, so the A1 window starts at the install that carries
      this PR and the fix. Shadow rows from before then are base rates only.
 1. **A1, shadow, three days.**
    - **Install.** The installed role-x (`~/.agents/skills/role-x`) is a link into the
@@ -339,37 +351,39 @@ In the spec's order:
        more turns. An earlier `--since` would pull in rows from before the install. If
        `malformed_lines_in_window` is above 0, look at those lines first.
      - **2:** a `--since` it cannot read.
+     - **4:** the reader itself failed (it says why).
      - A2 does not start until A1 is met.
    - **What it measures:**
      - `router_ms` (from before the router's import to just before the row is written, a
        field this PR adds) at p99 ≤ 100 ms, gated.
-     - The hook's own wall clock, from the transcripts' `durationMs`, with its kills:
-       reported, not gated (spec Q10).
+     - The hook's own wall clock, timeouts and interrupts, from Claude Code's hook records
+       in the transcripts: reported, not gated (spec Q10). The three-day replay: p50
+       238 ms, p99 15.7 s, 18 timeouts and 1 interrupt in 930 recorded runs. The spec's
+       §2.3 baseline was p99 3.9 s.
      - No row with an `error`.
      - p9 on the turns that ran `git push` or `gh pr create`: the p9 id in `selected`, with
        a Wilson 95% lower bound ≥ 0.70.
-   - **How it joins rows to turns.**
-     - Claude Code records each run of the role-x hook as an attachment in the session
-       transcript. A turn is one hook run, up to the next one.
-     - Each row pairs one-to-one with the run nearest in time, within 30 s. No prompt
-       text is compared.
-     - In a replay of three days of the same hook's legacy rows, all 917 rows in sessions
-       with a transcript paired, 3.1 s apart at most.
-   - **The bounds.** What the join cannot settle (ship turns whose run has no row, rows
-     with no run) is bounded both ways:
-     - met needs the worst case, all of it counted as p9 misses, at ≥ 0.70;
-     - not met is the best case, all of it counted as hits, below 0.70;
-     - between them, or under 9 ship turns, the result is not shown.
+   - **How it finds turns.**
+     - Shadow writes a row for every non-empty prompt, first thing in the hook, so a turn
+       is one row.
+     - A push (a Bash command, timestamped in the session transcript) belongs to the
+       latest row of its session at or before it. No prompt text is compared.
+     - Lines a forked session copied from its parent (`forkedFrom`) are skipped.
+     - A push with no row before it in its session is unsure, and is bounded:
+       - met needs the worst case (each such push a p9 miss) at ≥ 0.70;
+       - not met is the best case (each a hit) below 0.70;
+       - between them, or under 9 ship turns, the result is not shown.
    - **Expected numbers.**
-     - The same replay, relabelled as a router selecting p9 on every prompt, reads **met**:
-       175 of 175 paired ship turns, 21 ship turns without a row, worst case 0.84.
-     - The 21 are short prompts that legacy does not log and shadow will.
-     - So met needs about 85% of paired ship turns to carry p9 now, falling toward the
-       spec's ~77% as those gaps close.
-     - Expect about 190 ship turns in three days of hook-covered sessions, fewer while
+     - The three-day replay of the same hook's legacy rows, relabelled as a router that
+       selects p9 on every prompt, reads **met**: 175 ship turns, 2 pushes with no row,
+       worst case 0.96.
+     - Legacy logs no prompt under three words. In that replay a short prompt's push went
+       to the prompt before it; shadow logs every prompt, so it does not.
+     - Expect about 175 ship turns in three days of hook-covered sessions, fewer while
        worktrees catch up.
-   - **Not counted:** pushes made inside subagents. A quoted `git push` is counted.
-     Rows from sessions with no transcript (probes, tests) are reported and left out.
+   - **Not counted:** pushes made inside subagents (in other files). A quoted `git push`
+     is counted. Rows from sessions with no transcript (probes, tests) are reported and
+     left out of everything.
 2. **Spec §5.6 row 14** (and §5.3's router-error row). On a router error the hook must still print the p9 line.
    `role-x.py` prints nothing on an error today, so one bad catalog edit would drop p9
    fleet-wide.
@@ -387,7 +401,7 @@ In the spec's order:
 | option | evidence for | evidence against | verdict |
 |---|---|---|---|
 | **keep legacy (default)** | 11/24 on opus [+0.10, +0.82]; p9 5/6 on opus; carries P3 | 1,185 tokens; 1/24 on sonnet; does not move merge or Paseo; on the worktree prompt it stopped to ask rather than do the task (0/3 lost) | **recommended until 0–5 hold** |
-| flip to reflex | highest point estimate on both models (15/24, 14/24), 88 tokens; p9 6/6 on opus and 5/6 on sonnet (qbar 0/6 there); merge 3/3 vs 0/3 on opus | A1 not run; the P3 stop rule as graded; rest bar unmet; `change_work` 0.70 and an I1 miss on `reg-p14`; no error fallback; shipped reflex injects nothing on the worktree prompt (like bare there, 2/3 lost) | no, not yet |
+| flip to reflex | highest point estimate on both models (15/24, 14/24), 88 tokens; p9 6/6 on opus and 5/6 on sonnet (qbar 0/6 there); merge 3/3 vs 0/3 on opus | A1 not run; the P3 stop rule as graded; rest bar unmet; `change_work` 0.70 and an I1 miss on `reg-p14`; p9's prompt side reaches at most 43% of real ship turns (half start from task notifications); no error fallback; shipped reflex injects nothing on the worktree prompt (like bare there, 2/3 lost) | no, not yet |
 | flip to qbar | not distinguishable from legacy (CI [−0.27, +0.19]) at 22% of its tokens; p9 6/6 on opus; carries P3 | #850 condition not shown (no branch-first); lower bound rests on one trial and on P3; 0/24 held-out on sonnet; removed and lost the worktree files 3/3 | no |
 | qbar + pinned p9, merge and specs lines (v1's stratum-C alternative) | would carry P3 and P14 by construction | never measured | measure before relying on it |
 

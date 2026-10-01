@@ -2316,24 +2316,24 @@ def _p99(xs: list[float]) -> float | None:
     return xs[max(0, math.ceil(0.99 * len(xs)) - 1)]
 
 
-def _hook_runs(transcript: Path) -> list[dict]:
-    """Every run of the role-x UserPromptSubmit hook in one Claude Code transcript, in
-    order, each ``{"ts", "ships", "killed", "duration_ms"}``. Claude Code records each hook
-    run as an attachment (``hook_success``, ``hook_cancelled``, ...) with its time and
-    ``durationMs``. A run's turn lasts until the next run, and ``ships`` says whether a
-    Bash ``git push`` or ``gh pr create`` ran in it. Pushes made inside subagents are in
-    other files and are not counted."""
-    out: list[dict] = []
+def _transcript_facts(transcript: Path) -> tuple[list[float], list[dict]]:
+    """From one Claude Code transcript: the times of Bash commands that ran ``git push`` or
+    ``gh pr create``, and the role-x UserPromptSubmit hook runs Claude Code recorded
+    (``{"ts", "duration_ms", "timed_out", "cancelled"}``; a run that printed nothing is not
+    recorded). Lines copied from a forked session's history (``forkedFrom``) are skipped:
+    they belong to the session they were copied from."""
+    ships: list[float] = []
+    runs: list[dict] = []
     try:
         lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
     except OSError:
-        return out
+        return ships, runs
     for line in lines:
         try:
             ev = json.loads(line)
         except ValueError:
             continue
-        if not isinstance(ev, dict):
+        if not isinstance(ev, dict) or ev.get("forkedFrom"):
             continue
         att = ev.get("attachment")
         if (isinstance(att, dict) and att.get("hookEvent") == "UserPromptSubmit"
@@ -2342,17 +2342,18 @@ def _hook_runs(transcript: Path) -> list[dict]:
                 dur = float(att.get("durationMs"))
             except (TypeError, ValueError):
                 dur = None
-            out.append({"ts": _ts(ev.get("timestamp")), "ships": False,
-                        "killed": att.get("type") == "hook_cancelled",
-                        "duration_ms": dur if dur is not None and math.isfinite(dur) else None})
+            runs.append({"ts": _ts(ev.get("timestamp")),
+                         "duration_ms": dur if dur is not None and math.isfinite(dur) else None,
+                         "cancelled": att.get("type") == "hook_cancelled", "timed_out": bool(att.get("timedOut"))})
             continue
-        content = (ev.get("message") or {}).get("content") if isinstance(ev.get("message"), dict) else None
-        if ev.get("type") == "assistant" and out and isinstance(content, list):
-            for b in content:
-                if (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Bash"
-                        and _ships(str((b.get("input") or {}).get("command") or ""))):
-                    out[-1]["ships"] = True
-    return out
+        msg = ev.get("message") if isinstance(ev.get("message"), dict) else {}
+        content = msg.get("content")
+        if ev.get("type") == "assistant" and isinstance(content, list):
+            t = _ts(ev.get("timestamp"))
+            if t is not None and any(isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Bash"
+                                     and _ships(str((b.get("input") or {}).get("command") or "")) for b in content):
+                ships.append(t)
+    return ships, runs
 
 
 def _ts(value: object) -> float | None:
@@ -2378,29 +2379,26 @@ def _since(spec: str) -> float:
     raise ValueError(f"--since {spec!r}: give a duration like 3d or an ISO date/time like 2026-10-03T14:00Z")
 
 
-#: A row is written inside its hook run, and the run's attachment is stamped as it ends:
-#: 917 of 917 rows in a 3-day replay paired within 3.1 s (p99 1.2 s). The hook times out at 15 s.
-HOOK_PAIR_S = 30.0
+
 
 
 def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
     """``role-x reflexes shadow``: spec A1's instrument (workspace#850) over the
     ``ROLE_X_OUTPUT=shadow`` rows in events.jsonl. Exit 0 met, 1 not met, 3 not shown,
-    2 for a ``--since`` it cannot read.
+    2 for a ``--since`` it cannot read, 4 when the reader itself failed.
 
     * Router time is ``router_ms`` (from before the router's import to just before the
-      row is written), gated at p99 <= 100 ms. The hook's own wall clock is reported from
-      the transcripts' ``durationMs``, not gated (spec Q10), with its kills.
-    * The p9 bar counts every turn that ran ``git push`` or ``gh pr create``, where a turn
-      is one run of the role-x hook (``_hook_runs``). Each row pairs one-to-one with the
-      hook run nearest in time, within ``HOOK_PAIR_S``; no prompt text is compared.
-    * What the join cannot settle (ship turns whose run has no row, rows with no run) is
-      bounded: met needs the worst case (all of it p9 misses) at >= 0.70, not met is the
-      best case (all of it hits) below 0.70, and between them the bar is not shown. Under
-      9 such turns it is not shown either: even 9/9 is needed to reach 0.70.
-    * A line that cannot be read, after the window's first row, keeps the result from
-      met (the log is append-only, so it is in the window). Rows from a session whose
-      transcript is not found (probes, tests) are reported and left out."""
+      row is written), gated at p99 <= 100 ms. The hook's own wall clock, timeouts and
+      interrupts are reported from the transcripts' hook records, not gated (spec Q10).
+    * A turn is one shadow row: shadow writes a row for every non-empty prompt, first
+      thing in the hook. A ship (a Bash ``git push`` or ``gh pr create``, from the session
+      transcript) belongs to the latest row of its session at or before it. A ship turn is
+      a row in the window whose turn shipped; the p9 bar is a Wilson lower bound >= 0.70
+      on how many of those selected p9. A ship with no row before it in its session is
+      unsure: met needs the worst case (each such ship a p9 miss) at >= 0.70, not met is
+      the best case (each a hit) below it, between them or under 9 turns it is not shown.
+    * Rows from a session with no transcript (probes, tests) are reported and left out of
+      everything. A line that cannot be read after the window opens keeps it from met."""
     events = Path(args.events) if args.events else EVENTS_PATH
     projects = Path(args.projects) if args.projects else Path.home() / ".claude" / "projects"
     try:
@@ -2408,21 +2406,79 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
     except ValueError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
-    rows: list[dict] = []
+    try:
+        return _shadow_report(events, projects, since, args)
+    except Exception as exc:  # noqa: BLE001 — a crash must not read as "not met"
+        print(f"error: the reader failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 4
+
+
+def _shadow_report(events: Path, projects: Path, since: float, args: argparse.Namespace) -> int:
+    rows_by_session: dict[str, list[dict]] = {}
     malformed = 0
+    opened = False  # the log is append-only: once a line inside the window is seen, it is open
     text = events.read_text(encoding="utf-8", errors="replace") if events.is_file() else ""
     for line in text.splitlines():
         try:
             r = json.loads(line)
         except ValueError:
             r = None
-        if r is None or (isinstance(r, dict) and r.get("event") == "reflex" and r.get("shadow")
-                         and _ts(r.get("ts")) is None):
-            if rows and ("reflex" in line or r is not None):
-                malformed += 1  # torn or edited, inside the window: it may hide an error
+        if not isinstance(r, dict):
+            if opened and "reflex" in line:
+                malformed += 1  # torn or edited inside the window: it may hide an error
             continue
-        if isinstance(r, dict) and r.get("event") == "reflex" and r.get("shadow") and _ts(r.get("ts")) >= since:
-            rows.append(r)
+        rts = _ts(r.get("ts"))
+        if rts is not None and rts >= since:
+            opened = True
+        if r.get("event") != "reflex" or not r.get("shadow"):
+            continue
+        if rts is None:
+            malformed += opened
+            continue
+        rows_by_session.setdefault(str(r.get("session") or ""), []).append({**r, "_ts": rts})
+    rows: list[dict] = []
+    no_transcript = ship = with_p9 = orphan = 0
+    hook_ms: list[float] = []
+    timeouts = interrupts = 0
+    for sid, srows in rows_by_session.items():
+        found = sorted(projects.glob(f"*/{sid}.jsonl")) if sid else []
+        window = [r for r in srows if r["_ts"] >= since]
+        if not window:
+            continue
+        if not found:
+            no_transcript += len(window)
+            continue
+        rows += window
+        ships, runs = [], []
+        for f in found:
+            sh, ru = _transcript_facts(f)
+            ships += sh
+            runs += ru
+        for h in runs:
+            if h["ts"] is not None and h["ts"] >= since:
+                if h["duration_ms"] is not None:
+                    hook_ms.append(h["duration_ms"])
+                timeouts += h["cancelled"] and h["timed_out"]
+                interrupts += h["cancelled"] and not h["timed_out"]
+        bounds = sorted(srows, key=lambda r: r["_ts"])
+        shipped: set[int] = set()
+        for t in ships:
+            if t < since:
+                continue
+            owner = None
+            for k, r in enumerate(bounds):
+                if r["_ts"] <= t:
+                    owner = k
+                else:
+                    break
+            if owner is None:
+                orphan += 1
+            else:
+                shipped.add(owner)
+        for k in shipped:
+            if bounds[k]["_ts"] >= since:  # a turn that began before the window is not in it
+                ship += 1
+                with_p9 += "p9.watch-after-push" in (bounds[k].get("selected") or [])
     timed = [float(r["router_ms"]) for r in rows
              if isinstance(r.get("router_ms"), (int, float)) and math.isfinite(float(r["router_ms"]))]
     errors: dict[str, int] = {}
@@ -2432,63 +2488,29 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
             errors[str(r["error"])] = errors.get(str(r["error"]), 0) + 1
         for rid in r.get("selected") or []:
             selected[rid] = selected.get(rid, 0) + 1
-    ship = with_p9 = ship_unpaired = rows_unpaired = no_transcript = killed = 0
-    hook_ms: list[float] = []
-    by_session: dict[str, list[dict]] = {}
-    for r in rows:
-        by_session.setdefault(str(r.get("session") or ""), []).append(r)
-    for sid, srows in by_session.items():
-        found = sorted(projects.glob(f"*/{sid}.jsonl")) if sid else []
-        if not found:
-            no_transcript += len(srows)
-            continue
-        runs = [h for f in found for h in _hook_runs(f) if h["ts"] is not None and h["ts"] >= since - HOOK_PAIR_S]
-        free = list(range(len(runs)))
-        paired: dict[int, dict] = {}
-        for r in sorted(srows, key=lambda x: _ts(x.get("ts"))):
-            rts = _ts(r.get("ts"))
-            cands = [k for k in free if abs(runs[k]["ts"] - rts) <= HOOK_PAIR_S]
-            if not cands:
-                rows_unpaired += 1
-                continue
-            k = min(cands, key=lambda c: abs(runs[c]["ts"] - rts))
-            free.remove(k)
-            paired[k] = r
-        for k, h in enumerate(runs):
-            if h["ts"] < since:
-                continue
-            killed += h["killed"]
-            if h["duration_ms"] is not None:
-                hook_ms.append(h["duration_ms"])
-            if not h["ships"]:
-                continue
-            if k in paired:
-                ship += 1
-                with_p9 += "p9.watch-after-push" in (paired[k].get("selected") or [])
-            else:
-                ship_unpaired += 1
     p99 = _p99(timed)
     lower = _wilson_lower(with_p9, ship)
-    unsure = ship_unpaired + rows_unpaired
-    worst = _wilson_lower(with_p9, ship + unsure)
-    best = _wilson_lower(with_p9 + unsure, ship + unsure)
+    worst = _wilson_lower(with_p9, ship + orphan)
+    best = _wilson_lower(with_p9 + orphan, ship + orphan)
     time_shown = bool(rows) and len(timed) == len(rows)
-    enough = ship + unsure >= A1_MIN_SHIP_TURNS
+    enough = ship + orphan >= A1_MIN_SHIP_TURNS
     failed = (bool(errors) or (time_shown and p99 > A1_MAX_P99_MS)
               or (enough and best is not None and best < A1_MIN_P9_LOWER))
     met = time_shown and not malformed and enough and worst is not None and worst >= A1_MIN_P9_LOWER
     verdict = "not met" if failed else "met" if met else "not shown"
     report = {
-        "rows": len(rows), "sessions": len(by_session), "malformed_lines_in_window": malformed,
+        "rows": len(rows), "sessions": len({str(r.get("session")) for r in rows}),
+        "malformed_lines_in_window": malformed,
         "router_ms": {"rows_timed": len(timed), "p99": p99, "max": max(timed) if timed else None},
-        "hook_wall_ms_reported_not_gated": {"runs": len(hook_ms), "p50": _p50(hook_ms), "p99": _p99(hook_ms),
-                                            "max": max(hook_ms) if hook_ms else None, "killed": killed},
+        "hook_wall_ms_reported_not_gated": {"runs_recorded": len(hook_ms), "p50": _p50(hook_ms), "p99": _p99(hook_ms),
+                                            "max": max(hook_ms) if hook_ms else None,
+                                            "timeouts": timeouts, "interrupts": interrupts},
         "errors": errors,
-        "ship_turns": {"paired": ship, "p9_selected": with_p9,
+        "ship_turns": {"turns": ship, "p9_selected": with_p9,
                        "wilson_lower": None if lower is None else round(lower, 4),
                        "wilson_lower_worst_case": None if worst is None else round(worst, 4),
                        "wilson_lower_best_case": None if best is None else round(best, 4),
-                       "ship_turns_without_a_row": ship_unpaired, "rows_without_a_hook_run": rows_unpaired,
+                       "ships_with_no_row_before_them": orphan,
                        "rows_in_sessions_without_a_transcript": no_transcript},
         "selected": dict(sorted(selected.items(), key=lambda kv: -kv[1])),
         "verdict": verdict,
@@ -2499,14 +2521,14 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
     else:
         st, hw = report["ship_turns"], report["hook_wall_ms_reported_not_gated"]
         print(f"shadow rows {report['rows']} in {report['sessions']} sessions since {args.since}; "
-              f"unreadable lines in the window {malformed}")
+              f"unreadable lines in the window {malformed}; rows in sessions without a transcript {no_transcript}")
         print(f"router_ms p99 {p99} over {len(timed)} of {len(rows)} rows (bar {A1_MAX_P99_MS:g}); hook wall clock "
-              f"p50 {hw['p50']} p99 {hw['p99']} max {hw['max']} over {hw['runs']} runs, {killed} killed (reported only)")
+              f"p50 {hw['p50']} p99 {hw['p99']} max {hw['max']} over {hw['runs_recorded']} recorded runs, "
+              f"{timeouts} timeouts, {interrupts} interrupts (reported only)")
         print(f"error rows {sum(errors.values())} {errors or ''}")
-        print(f"ship turns paired {ship}: p9 selected {with_p9}, Wilson lower {st['wilson_lower']}, worst case "
+        print(f"ship turns {ship}: p9 selected {with_p9}, Wilson lower {st['wilson_lower']}, worst case "
               f"{st['wilson_lower_worst_case']}, best case {st['wilson_lower_best_case']} (bar {A1_MIN_P9_LOWER}, "
-              f"at least {A1_MIN_SHIP_TURNS} turns); ship turns without a row {ship_unpaired}; rows without a hook "
-              f"run {rows_unpaired}; rows in sessions without a transcript {no_transcript}")
+              f"at least {A1_MIN_SHIP_TURNS} turns); ships with no row before them {orphan}")
         print(f"selected per id {report['selected']}")
         print(f"A1 router bars: {verdict} ({report['not_covered_here']})")
     return {"met": 0, "not met": 1}.get(verdict, 3)
