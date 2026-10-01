@@ -1,0 +1,702 @@
+{
+ "version": 2,
+ "notes": "Sealed held-out routing cases v2 for role-x's reflex router (spec §5.5 M3 and §5.6 row 9; BRO-2674 pre-flip step 4). Written 2026-09-30 by a fresh subagent given only reflex-routing-heldout-v2.brief.md (a one-line situation per id, written by the pre-flip session), told not to read any file or use any tool, never shown the catalog's lines, regexes or phrases, nor the v1 cases. 10 positives and 5 near-misses per id, 40 and 20 for change_work. Copied verbatim from the subagent's reply. Committed and hashed before the router was run on them; no regex is tuned on them. v1 (reflex-routing-heldout.json, a272659) is kept and reported, and no longer gates.",
+ "cases": {
+  "change_work": {
+   "positive": [
+    "fix the typo",
+    "ship it",
+    "commit this",
+    "push it now",
+    "rename this file",
+    "add a test",
+    "just do it",
+    "go ahead",
+    "merge it",
+    "do it",
+    "refactor this fn",
+    "write the docs",
+    "can you implement the retry logic we talked about in the provider manager",
+    "add a null check before we dereference that pointer in parser.go",
+    "rewrite the onboarding flow to use the new auth hook",
+    "rename UserCtx to UserContext everywhere in the repo",
+    "please refactor the billing module, it's a mess",
+    "write a migration script to backfill the new column",
+    "fix the flaky retry logic in provider_manager.py",
+    "add error handling around the stripe webhook call",
+    "go ahead and push that to the branch",
+    "commit what you have with a decent message",
+    "yeah that looks right, ship it",
+    "ok go ahead and make that change",
+    "implement BRO-2674 the way we discussed",
+    "can you add a feature flag for the new reflex router",
+    "update the README to mention the new env var",
+    "squash those commits and push",
+    "add pagination to the /agents endpoint",
+    "write the integration test for the worktree cleanup path",
+    "fix that off-by-one in the pagination loop",
+    "add the missing import in role_x.py",
+    "merge main into this branch and resolve conflicts",
+    "please commit and push these changes",
+    "go ahead, implement it",
+    "add a changelog entry for this fix",
+    "refactor the auth middleware to drop the deprecated cookie check",
+    "write a quick script to migrate the old config format",
+    "add retries with exponential backoff to the webhook sender",
+    "fix the race condition in the scheduler"
+   ],
+   "near_miss": [
+    "what would it take to implement the retry logic here?",
+    "can you explain how the auth middleware works?",
+    "review this diff before I merge it",
+    "what does this function do exactly?",
+    "walk me through the provider manager's failover logic",
+    "should we refactor the billing module or leave it?",
+    "what's the plan for the reflex router rollout?",
+    "how would you approach renaming this without breaking imports?",
+    "summarize what changed in the last three commits",
+    "is this the right place to add a null check?",
+    "what's your take on this PR, any concerns?",
+    "read through parser.go and tell me what's weird",
+    "thinking about rewriting the onboarding flow, worth it?",
+    "how many places reference UserCtx?",
+    "what tests exist for the scheduler already?",
+    "any idea why the webhook call doesn't retry?",
+    "let's discuss the design before we touch any code",
+    "could you outline options for the migration script?",
+    "does this change look safe to you?",
+    "what's the diff between main and this branch?"
+   ]
+  },
+  "p9.watch-after-push": {
+   "positive": [
+    "just pushed to #1192, let me know when CI's done",
+    "ping me when the deploy finishes",
+    "opened the PR, keep an eye on checks and tell me if it goes red",
+    "watch this build and ping me when it's green",
+    "pushed, watching CI now",
+    "let me know how the deploy to staging turns out",
+    "I'm pushing this up, can you tell me when it merges clean",
+    "kicked off the release build, buzz me when it's done",
+    "just opened a PR for BRO-2674, let me know when checks pass",
+    "pushed the fix, waiting on CI to go green"
+   ],
+   "near_miss": [
+    "how long does the CI pipeline usually take?",
+    "what does the deploy workflow actually do?",
+    "why do we run the integration tests twice in CI?",
+    "can you explain our GitHub Actions matrix setup?",
+    "what triggers the nightly build workflow?"
+   ]
+  },
+  "p10.branch-first": {
+   "positive": [
+    "I'm on main, can you fix the typo in the readme and commit it",
+    "switched to main, go ahead and add the new env var",
+    "on main right now, just patch the bug and commit",
+    "still on main, add that missing null check and commit it",
+    "checked out main, update the version string and commit",
+    "I'm on main — bump the dependency and commit the lockfile",
+    "on main, quick fix: rename the config key and commit",
+    "git checkout main && now add the license header please",
+    "we're on main, go ahead and tweak the copy and commit",
+    "on the default branch, add a .gitignore entry and commit it"
+   ],
+   "near_miss": [
+    "what's the last commit on main?",
+    "is main ahead of or behind release/1.4?",
+    "how many commits has main gotten this week?",
+    "who merged into main yesterday?",
+    "what's the diff between main and develop?"
+   ]
+  },
+  "p4.merge-pinned-to-head": {
+   "positive": [
+    "merge #1192",
+    "go ahead and squash-merge the PR",
+    "approved, merge it",
+    "merge pr 253 now",
+    "can you merge #2678 for me",
+    "LGTM, squash and merge",
+    "merge the PR once you're done reading it",
+    "merge #256 into main",
+    "that approval just landed, go merge it",
+    "please merge pull request #245"
+   ],
+   "near_miss": [
+    "can #1192 even merge right now, or is it blocked?",
+    "what merge strategy do we use on this repo, squash or rebase?",
+    "is squash-merge required for this branch?",
+    "merge these two config files into one",
+    "can you merge these two lists and dedupe them?"
+   ]
+  },
+  "p10.worktree-removal-guard": {
+   "positive": [
+    "remove the worktree at 20g6lz69, I'm done with it",
+    "can you tear down the feat-role-x-reflex-preflip worktree",
+    "delete this worktree, done with the branch",
+    "clean up the old worktrees under .paseo/worktrees",
+    "nuke the worktree for BRO-2663, it's merged",
+    "get rid of this worktree when you're done",
+    "remove all the stale worktrees I'm not using anymore",
+    "tear down the worktree once the PR lands",
+    "delete the worktree for feat/x, no longer need it",
+    "please prune the worktree at that path"
+   ],
+   "near_miss": [
+    "what's a git worktree even for?",
+    "can you create a new worktree for the hotfix branch?",
+    "list all the worktrees we currently have",
+    "how do I check out a branch into a new worktree?",
+    "what worktrees exist under .paseo right now?"
+   ]
+  },
+  "ctx.live-peer-before-git-op": {
+   "positive": [
+    "is another agent touching this branch right now before I push?",
+    "anyone else working in this checkout at the moment?",
+    "before I pull, is there another session active on this worktree?",
+    "wait, is there a peer agent already running here?",
+    "check if another claude session is in this repo before we push",
+    "is someone else editing this branch concurrently?",
+    "I don't want to clobber another agent's work, is one active here?",
+    "before I force anything, confirm no other session is in this checkout",
+    "is there a live session on feat/role-x-reflex-preflip right now?",
+    "double check nobody else is working this worktree before I push"
+   ],
+   "near_miss": [
+    "what's the current status of this branch?",
+    "can you pull the latest changes?",
+    "what changed since my last pull?",
+    "push these commits up",
+    "why did the pull fail, merge conflict?"
+   ]
+  },
+  "p9.heal-on-red": {
+   "positive": [
+    "#1192 is red, why?",
+    "CI failed on the provider-manager PR, can you fix it",
+    "checks are failing on #253, what broke",
+    "why is the build red on this PR",
+    "the lint check failed, go fix it",
+    "pipeline's failing on my branch, figure out why and patch it",
+    "CI went red after my last push, what happened",
+    "fix whatever's failing in the test suite on this PR",
+    "the merge gate is red, can you sort it out",
+    "tests are failing on BRO-2678, dig in and fix them"
+   ],
+   "near_miss": [
+    "what checks are required to merge on this repo?",
+    "how is our CI pipeline configured?",
+    "all checks are green on #245, nice right?",
+    "what does the merge gate actually check for?",
+    "which jobs run on every PR?"
+   ]
+  },
+  "convention.trash-not-rm": {
+   "positive": [
+    "clean up the /tmp/scratch dir",
+    "delete the leftover build artifacts in dist/",
+    "trash the old .cache folder",
+    "remove the scratch files under /tmp/role-x-eval",
+    "clean out the temp directory, it's full of junk",
+    "delete everything in /var/tmp/paseo-runs",
+    "get rid of those leftover log files in logs/old",
+    "clean up the stray node_modules in the test fixtures",
+    "remove the temp scripts in scripts/skill_evals/ctx_ablation/tasks",
+    "clear out ./tmp, it's cluttered with old runs"
+   ],
+   "near_miss": [
+    "why does the /tmp/scratch folder keep filling up?",
+    "is .cache in our gitignore?",
+    "how much disk space is the temp dir using?",
+    "delete the stale feature-branch from the remote",
+    "close and delete that old Linear issue"
+   ]
+  },
+  "convention.paseo-fleet-listing": {
+   "positive": [
+    "how many agents are running in paseo right now?",
+    "what's the state of the fleet?",
+    "which sessions are idle in paseo?",
+    "show me what's running across my paseo workspaces",
+    "list all active agents in paseo",
+    "how many of my paseo agents are still going?",
+    "give me a fleet status on paseo",
+    "which paseo agents are stuck or idle right now?",
+    "what's running in paseo at the moment?",
+    "check how many sessions I have active in paseo"
+   ],
+   "near_miss": [
+    "how do I install paseo?",
+    "what's the config for paseo's heartbeat feature?",
+    "how do schedules work in paseo?",
+    "what does the browser automation feature in paseo do?",
+    "how many docker containers are running on this box?"
+   ]
+  },
+  "p2.gate-destructive-git": {
+   "positive": [
+    "force push this branch",
+    "git reset --hard to origin/main",
+    "clean out all untracked files with git clean -fdx",
+    "delete the feat/old-router branch",
+    "rewrite history to drop that secret commit",
+    "hard reset to three commits ago",
+    "force push over the remote, I don't care about the history",
+    "git push --force to fix the diverged branch",
+    "wipe untracked files and reset hard",
+    "rebase and force push to clean up the commit history"
+   ],
+   "near_miss": [
+    "what does git reset --hard actually do?",
+    "is force-pushing dangerous on a shared branch?",
+    "what's the difference between git clean -f and -fdx?",
+    "can you explain rebasing vs merging?",
+    "pull the latest and fast-forward my branch"
+   ]
+  },
+  "p18.human-doc-in-specs": {
+   "positive": [
+    "write a runbook for the on-call rotation",
+    "draft a proposal for the reflex router rollout",
+    "can you put together a guide for onboarding new devs",
+    "write an explainer doc on how the provider manager picks a backend",
+    "I need a write-up of what we shipped this sprint",
+    "draft a spec for the worktree removal guard",
+    "write up an incident report for the outage last night",
+    "put together a one-pager explaining the new auth flow",
+    "draft a design doc for the cross-review gate",
+    "write a migration guide for teams moving off the old API"
+   ],
+   "near_miss": [
+    "fix the typo in this docstring",
+    "update the comment above this function",
+    "add one line to the README about the new flag",
+    "what does the runbook say about rollback steps?",
+    "where's the existing design doc for this feature?"
+   ]
+  },
+  "p15.snapshot": {
+   "positive": [
+    "where do things stand on this branch?",
+    "catch me up, what's done and what's left?",
+    "is everything committed and pushed?",
+    "give me the status, is this all merged yet?",
+    "what's the state of my work right now?",
+    "did everything land, is CI green across the board?",
+    "quick status check, what have we shipped so far today?",
+    "what's outstanding before I can call this done?",
+    "is the BRO-2674 work fully merged or still in flight?",
+    "give me a snapshot of where all my PRs are"
+   ],
+   "near_miss": [
+    "what status code does this endpoint return on failure?",
+    "is Anthropic's status page showing any incidents?",
+    "what was the exit status of that script?",
+    "can you explain how the retry backoff works?",
+    "check if the vercel status page shows an outage"
+   ]
+  },
+  "skill.kg": {
+   "positive": [
+    "what does our knowledge graph say about the reflex router?",
+    "load whatever's in the kg about provider failover",
+    "browse the knowledge graph for anything on worktree cleanup",
+    "what do we already know about the cross-review gate, check the kg",
+    "pull up the kg entries on paseo scheduling",
+    "is there anything in the knowledge graph about p9 watchers",
+    "check the kg for prior notes on the merge gate",
+    "what's already captured about role-x in our knowledge graph?",
+    "search the knowledge graph for context on BRO-2674",
+    "load the kg nodes related to context ablation testing"
+   ],
+   "near_miss": [
+    "what's the difference between a knowledge graph and a vector database?",
+    "how do knowledge graphs model relationships generally?",
+    "edit kg/role-x-notes.md to fix the heading",
+    "what's a good open-source knowledge graph engine?",
+    "how would you build a knowledge graph from scratch?"
+   ]
+  },
+  "p8.janitor-branches": {
+   "positive": [
+    "clean up all the merged branches",
+    "delete the stale feature branches nobody's touched in months",
+    "go through and prune dead branches plus their worktrees",
+    "janitor pass: kill anything already merged",
+    "sweep out old branches that are just sitting there",
+    "clean up branches that merged last sprint",
+    "remove all the dead feature branches and their worktrees",
+    "do a branch cleanup, anything merged into main can go",
+    "tidy up the repo, delete merged and stale branches",
+    "clear out the old branches left over from last month's experiments"
+   ],
+   "near_miss": [
+    "how many branches do we have right now?",
+    "list all branches that haven't been touched in 30 days",
+    "rename feat/old-name to feat/new-name",
+    "is main branch-protected against force pushes?",
+    "what branch protection rules are set on this repo?"
+   ]
+  },
+  "p11.bugfix-test-lock": {
+   "positive": [
+    "the login form crashes when the email field is empty, fix it",
+    "this throws a null pointer whenever the cache is cold, fix it",
+    "pagination is off by one, broke sometime last week, fix it",
+    "the scheduler double-fires jobs, that's a regression, please fix",
+    "webhook retries are stuck in an infinite loop, fix that",
+    "the app crashes on startup if the config file is missing",
+    "fix the bug where the worktree cleanup deletes the wrong path",
+    "something broke the retry backoff, it's not working, fix it",
+    "the dashboard throws a 500 whenever filters are empty, fix it",
+    "users are reporting the export button silently fails, please fix"
+   ],
+   "near_miss": [
+    "is this actually a bug or expected behavior?",
+    "can you triage these open issues by severity?",
+    "write tests for the new pagination feature",
+    "label this issue as a bug if it looks like one",
+    "I think there might be a regression here, not sure though"
+   ]
+  },
+  "p12.persist": {
+   "positive": [
+    "keep working on this overnight, I'll check in the morning",
+    "run this for the next few hours until it's done",
+    "persist on this across sessions until all the tests pass",
+    "don't stop until every PR in the queue is merged",
+    "let this run for hours in the background",
+    "keep iterating on this until CI is green, however long it takes",
+    "I want this going all night, come back to it in the morning",
+    "loop on this until the eval score clears the bar",
+    "keep grinding through the backlog across multiple sessions",
+    "run this continuously until the migration finishes, could be hours"
+   ],
+   "near_miss": [
+    "how long did the last deploy take?",
+    "schedule a meeting with the team for tomorrow at 10",
+    "just do this one quick thing real fast",
+    "how long has this job been running?",
+    "can you block an hour on my calendar for review?"
+   ]
+  },
+  "p7.freshness": {
+   "positive": [
+    "the cli is rejecting --context even though the docs show it",
+    "this skill seems stale, can you update it",
+    "paseo cli says unknown flag but it's right there in the docs",
+    "update all my installed skills to the latest version",
+    "the flag documented for role-x isn't recognized locally, weird",
+    "my claude code install seems behind, can you refresh the skills",
+    "this plugin is throwing 'unrecognized option' for something that's documented",
+    "pull the latest skill definitions, mine look outdated",
+    "the installed version of bstack doesn't have the flag from the changelog",
+    "something's off, the CLI doesn't know about a flag that shipped last week"
+   ],
+   "near_miss": [
+    "edit the role-x skill's README to fix a typo",
+    "which skill handles worktree cleanup?",
+    "update the source code in skills/orchestration/role-x",
+    "what does the dogfood skill actually do?",
+    "fix the wording in this skill's frontmatter description"
+   ]
+  },
+  "p10.cleanup-after-merge": {
+   "positive": [
+    "#253 just merged, clean up the branch and worktree",
+    "that PR landed, go ahead and remove the local branch",
+    "merged, so tear down the worktree for it now",
+    "it's in, delete the feature branch and any leftover files",
+    "just got merged, can you clean up after it",
+    "now that it's merged, prune the branch locally and remotely",
+    "PR's merged, clear out the worktree we used for it",
+    "that landed in main, remove the stale local checkout",
+    "merged successfully, go clean up the leftovers from this branch",
+    "since it's merged now, delete the branch and close out the worktree"
+   ],
+   "near_miss": [
+    "clean up the commit messages before we merge this",
+    "squash these commits before merging",
+    "did #253 merge yet?",
+    "is this PR merged into main already?",
+    "tidy up the diff before I open the PR"
+   ]
+  },
+  "p20.cross-review": {
+   "positive": [
+    "get a second opinion on this PR before we merge it",
+    "run an adversarial review on this change",
+    "have another model cross-review this before it ships",
+    "I want an independent reviewer to poke holes in this before merge",
+    "can you do a devil's advocate pass on this diff",
+    "cross-review this change, I don't trust my own read on it",
+    "before this merges, get a fresh pair of eyes that didn't write it",
+    "run the adversarial gate on #253",
+    "get an independent review from a different model on this PR",
+    "do a skeptical second-opinion review before we ship this"
+   ],
+   "near_miss": [
+    "reply to the comments left on this PR",
+    "address the review feedback from yesterday",
+    "can you ask Carlos to review this PR?",
+    "what did the reviewer say about the auth changes?",
+    "assign this PR to the backend team for review"
+   ]
+  },
+  "p4.ship-not-ask": {
+   "positive": [
+    "build a settings page for managing api keys",
+    "put together a script that exports usage data to csv",
+    "build out the notifications component for the dashboard",
+    "make a deck summarizing this quarter's agent usage",
+    "build the rate-limit hook into the provider manager",
+    "put together a landing page for the new feature",
+    "build a CLI command that lists idle agents",
+    "make the onboarding wizard, three steps, same as the mock",
+    "build a script to reconcile billing records nightly",
+    "put together the admin dashboard for fleet status"
+   ],
+   "near_miss": [
+    "should we even build a settings page for this?",
+    "how long would it take to build the notifications component?",
+    "brainstorm a few ideas for the admin dashboard",
+    "what are our options for the rate-limit hook design?",
+    "what would it take to build a CLI for listing agents?"
+   ]
+  },
+  "skill.arc": {
+   "positive": [
+    "heading to bed, run this overnight and leave it clean when it's done",
+    "I'm off to catch a flight, finish this up and don't leave a mess",
+    "going dark for the weekend, take this to done and tidy up after",
+    "I'm out, nobody's watching this tonight, carry it through to merged",
+    "logging off now, keep going until it's finished and clean up behind you",
+    "I'll be asleep, don't hand it back until it's fully merged and tidy",
+    "stepping away for the night, finish the arc and leave nothing behind",
+    "I'm done for today, run it unattended till it's green and clean",
+    "off to sleep, decide what you need to without me and wrap it up clean",
+    "heading out for the weekend, take this to a finished, clean state"
+   ],
+   "near_miss": [
+    "I'm going to bed soon, just wanted to say good work today",
+    "heading out for lunch, back in an hour",
+    "what's left to do before I can call it a day?",
+    "I'm exhausted, might sleep in tomorrow",
+    "taking the weekend off, see you monday"
+   ]
+  },
+  "skill.autonomous": {
+   "positive": [
+    "go",
+    "proceed",
+    "ship it, be autonomous",
+    "all green, automerge",
+    "do it autonomously, don't check in with me",
+    "run with the plan, no more check-ins needed",
+    "merge autonomously once it's ready",
+    "execute the plan, I trust it",
+    "just go, don't wait on me",
+    "full send, be autonomous about it"
+   ],
+   "near_miss": [
+    "can you go through the plan with me first?",
+    "let's go over the risks before deciding",
+    "where should we go from here, any ideas?",
+    "can we proceed to the next ticket after this one?",
+    "go back and check what the last commit changed"
+   ]
+  },
+  "skill.resume": {
+   "positive": [
+    "that errored out, resume where you left off",
+    "connection dropped mid-task, continue from where you were",
+    "looks like you got interrupted, pick back up",
+    "resume, the API call must have timed out",
+    "continue, I think my laptop slept and killed the session",
+    "you got cut off, carry on from there",
+    "resume the loop, it died on a 529",
+    "pick up where you left off, that crashed",
+    "keep going, looks like ctrl-c hit the wrong window",
+    "continue as though nothing happened, it just disconnected"
+   ],
+   "near_miss": [
+    "resume the paused schedule for the nightly digest",
+    "can you resume my download, it stalled",
+    "resume my subscription, I paused it last month",
+    "unpause the cron job we stopped earlier",
+    "resume the paseo workspace script that's stopped"
+   ]
+  },
+  "skill.handoff": {
+   "positive": [
+    "write a handoff doc before I close this session",
+    "draft a handoff so the next session can pick this up",
+    "I need a fresh-session handoff for tomorrow",
+    "put together a handoff doc for whoever picks this up next",
+    "before you stop, write up a handoff with where things stand",
+    "generate a handoff so another agent can continue this cold",
+    "write a pickup doc, I'm closing this tab",
+    "draft the handoff with the PR table and first next action",
+    "I want a handoff doc in docs/handoffs for this arc",
+    "write up a handoff before we clear context"
+   ],
+   "near_miss": [
+    "read the handoff doc and continue from where it left off",
+    "pick up from yesterday's handoff file",
+    "can you hand this ticket off to Maria to finish?",
+    "I'll let Jordan take over this part tomorrow",
+    "what does the handoff doc say about the next step?"
+   ]
+  },
+  "skill.checkit": {
+   "positive": [
+    "check this out https://github.com/foo/bar",
+    "lets research this paper, thoughts?",
+    "look into this repo real quick",
+    "found this, wdyt https://arxiv.org/abs/1234.5678",
+    "take a look at this file I just dropped in",
+    "check this out, might be relevant",
+    "dig into this, not sure what to make of it",
+    "here's a link, check it out",
+    "look into this, curious what you think",
+    "found this article, take a peek"
+   ],
+   "near_miss": [
+    "summarize this paper in three bullets https://arxiv.org/abs/1234.5678",
+    "fix the bug in this file I'm attaching",
+    "cite this source in the doc we're writing",
+    "pull the key numbers out of this report",
+    "extract the API examples from this doc and add them to our README"
+   ]
+  },
+  "skill.dogfood": {
+   "positive": [
+    "actually click through the signup flow and prove it works",
+    "exercise this like a real user would before we call it done",
+    "walk through the checkout flow end to end and confirm it works",
+    "dogfood this, don't just tell me the tests pass",
+    "go through the UI yourself and verify the new button works",
+    "prove this works for a real user, not just unit tests",
+    "click through the app and show me it actually functions",
+    "run through the whole onboarding flow as a user would",
+    "I want end-to-end proof this works, not just green CI",
+    "exercise the new feature in the running app before shipping"
+   ],
+   "near_miss": [
+    "write unit tests for the new signup flow",
+    "review the code for the checkout feature",
+    "add test coverage for the onboarding wizard",
+    "look over the diff for this change",
+    "write some integration tests around the new button handler"
+   ]
+  },
+  "skill.unslop": {
+   "positive": [
+    "this page looks like every other AI-generated landing page, fix it",
+    "the dashboard feels super generic and templated, can you make it less so",
+    "this UI screams bootstrap-default, give it some character",
+    "it looks like a ChatGPT mockup, needs real design",
+    "this looks like every SaaS template ever, fix the vibe",
+    "the hero section feels so AI-slop, redo it with actual taste",
+    "this component looks default and boring, make it feel designed",
+    "it has that generic gradient-and-rounded-corners AI look, fix it",
+    "this screen looks templated, nothing feels intentional, fix it",
+    "the UI looks like stock shadcn with no thought, give it personality"
+   ],
+   "near_miss": [
+    "this page is really slow to load, can you fix the performance",
+    "the screen reader can't navigate this form, fix the accessibility",
+    "the layout breaks on iPhone SE specifically, fix that",
+    "this button has terrible contrast for color blind users",
+    "the page janks badly when scrolling on mobile"
+   ]
+  },
+  "skill.legal-readiness": {
+   "positive": [
+    "are we legally ready to launch this, terms and privacy squared away?",
+    "do we have proper privacy policy coverage before we go live?",
+    "is our compliance story solid enough to launch in the EU?",
+    "can we legally make this health claim on the landing page?",
+    "are we covered on GDPR before this ships to users?",
+    "do we need updated terms of service before launch?",
+    "is this marketing claim going to get us in legal trouble?",
+    "are we good on data privacy compliance for this release?",
+    "do we have the right disclaimers before we launch this feature?",
+    "is the product legally cleared to ship to EU customers?"
+   ],
+   "near_miss": [
+    "link the terms of service page in the footer",
+    "update the copyright year in the footer to 2026",
+    "what's the difference between GDPR and CCPA generally?",
+    "fix the broken link to the privacy policy",
+    "what does 'fair use' mean in copyright law?"
+   ]
+  },
+  "skill.audit-harness-usage": {
+   "positive": [
+    "how many tokens did claude code burn through this week?",
+    "what's my total spend on codex this month?",
+    "how much usage did my agent harnesses rack up in september?",
+    "check how many tokens I've used across all my sessions today",
+    "what did my claude code usage cost me yesterday?",
+    "how much have I spent running agents this quarter?",
+    "give me a breakdown of token usage across claude code and codex",
+    "how many tokens has this harness consumed since launch?",
+    "what's my total API cost across all agent sessions this month?",
+    "audit my harness usage for the last 30 days"
+   ],
+   "near_miss": [
+    "can you shorten this prompt so it uses fewer tokens?",
+    "trim this file down, it's eating too many tokens in context",
+    "what does sonnet cost per million tokens?",
+    "how much does opus cost compared to haiku?",
+    "reduce the token footprint of this system prompt"
+   ]
+  },
+  "skill.disambiguate": {
+   "positive": [
+    "this acceptance criterion is vague, tighten it up",
+    "BRO-2674's description could mean two different things, disambiguate it",
+    "make this ticket read one way only, it's ambiguous right now",
+    "tighten up the spec so there's no room for misreading",
+    "this requirement is fuzzy, pin it down to one interpretation",
+    "the ticket says 'improve performance' which is way too vague, clarify it",
+    "sharpen the acceptance criteria so QA can't misread it",
+    "this user story is open to interpretation, nail it down",
+    "disambiguate this requirement before we start building against it",
+    "rewrite this criterion so it can't be read two different ways"
+   ],
+   "near_miss": [
+    "what's BRO-2674 actually about?",
+    "can you summarize what this ticket is asking for?",
+    "write a new ticket for the worktree cleanup bug",
+    "file a ticket describing the regression we just found",
+    "what's the context behind this acceptance criterion?"
+   ]
+  },
+  "skill.skillify": {
+   "positive": [
+    "turn what we just did into a reusable skill",
+    "skillify this workflow, it worked great and we'll need it again",
+    "package this up as a tested skill for next time",
+    "distill this whole session into a permanent skill",
+    "can you make this a skill so future sessions get it for free",
+    "let's skillify the cross-review process we just ran",
+    "this worked well, turn it into a proper skill with tests",
+    "make this a reusable skill, not just a one-off script",
+    "skillify it, this is worth keeping around",
+    "wrap this procedure into a skill and give it tests"
+   ],
+   "near_miss": [
+    "which skill handles cross-model review already?",
+    "is there already a skill for this kind of cleanup?",
+    "fix the typo in the skillify skill's description",
+    "edit the frontmatter on the dogfood skill",
+    "what skill should I use for handoff docs?"
+   ]
+  }
+ }
+}
