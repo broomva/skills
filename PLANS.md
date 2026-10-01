@@ -2,7 +2,7 @@
 
 ## role-x reflex router, pre-flip evidence (BRO-2674)
 
-Status: in progress on `feat/role-x-reflex-preflip`. Owner decision 2026-10-01: do not
+Status: evals done, PR next, on `feat/role-x-reflex-preflip`. Owner decision 2026-10-01: do not
 flip yet; run the pre-flip flow, then the owner decides. `ROLE_X_OUTPUT` stays
 default-off in this PR. Spec: workspace `docs/specs/2026-09-30-reflex-router-and-ontology-ranked-context.html`
 with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
@@ -28,15 +28,12 @@ with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
    fresh task prompts; both committed with sha256 before any rewording or scoring (be7726d).
 2. [x] Step 4: score v2, set `status` per the gate, tests gate on v2 (3b20c94): 10/31 pass;
    heal and checkit listed, autonomous routed, ship-not-ask still listed.
-3. [ ] Step 1: lines reworded (3b20c94). Sonnet calibrate, then `reflex-reworded` and
-   `reflex-v1lines` on the same five fresh tasks. Checkpoint 2026-09-30 22:35 -05: PAUSED,
-   not started. devteam is at 99% of its 7-day window (resets 2026-10-05 07:00 -05) and the
-   guard stops at 85%; `~/.cache/ctx-ablation/wait-quota.sh` exits when the active account
-   is under 85% on both windows (team@'s 5h resets 23:49 -05). Resume:
-   `~/.cache/ctx-ablation/preflip-drive.sh ~/.cache/ctx-ablation/preflip-s1 <repo>/scripts/skill_evals/ctx_ablation/tasks/preflip-fresh.json ~/.cache/ctx-ablation/preflip-s1/calibration.json calibrate --task fresh-heal-why --task fresh-heal-fix --task fresh-paseo-count --task fresh-paseo-idle --task fresh-worktree-remove`,
-   then the same with `reflex-reworded`, then `reflex-v1lines` in place of `calibrate`.
-4. [ ] Step 3: opus calibrate, then bare, reflex, qbar, rolex one at a time.
-5. [ ] Results doc, recommendation table, P20 (B + C), merge with the flag off.
+3. [x] Step 1 (sonnet, $3.46): heal 3/3 reworded vs 0/3 v1 line on a fresh wording; Paseo 3/3
+   both; worktree 0 losses in 3 (bare 3/3 lost). The guard routes again (4348e4f).
+4. [x] Step 3 (opus, $14.14, 05:47–06:11 -05): reflex 15/24 [+0.19, +1.00], legacy 11/24, qbar
+   10/24, bare 0/24. A2 not met: P3 reflex 0/3 vs qbar 3/3 (stop rule); rest CI [−0.08, +1.00].
+5. [ ] Results doc (`ctx_ablation/RESULTS-reflex-preflip.md`): do not flip. P20 (B + C), merge
+   with the flag off.
 
 ### Verification
 
