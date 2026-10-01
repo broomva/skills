@@ -1343,6 +1343,12 @@ def test_a2_bars_met_only_when_every_bar_is_measured_and_cleared():
         holed = [r for r in data if not (r["arm"] == arm and r["task"] == task)]
         holed += rows(arm, task, 0, outcome="ERROR")
         assert A2.bars(holed)["verdict"].startswith("router bars not shown"), (task, arm)
+    # a p9 or branch-first task legacy has no graded trial on leaves #850's condition unshown,
+    # and does not touch the router's own verdict
+    holed = [r for r in data if not (r["arm"] == "rolex" and r["task"] == "heldout-branch-first")]
+    holed += rows("rolex", "heldout-branch-first", 0, outcome="ERROR")
+    hb = A2.bars(holed)
+    assert hb["qbar_fallback"]["meets_850_condition"] is None and hb["verdict"] == "router bars met"
     # a task no arm graded is named too
     dead = [r for r in data if r["task"] != "heldout-trash"] + [
         r for arm in ("reflex", "qbar", "rolex", "bare") for r in rows(arm, "heldout-trash", 0, outcome="ERROR")]

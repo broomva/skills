@@ -37,11 +37,11 @@ round-7 follow-ups (merged f9af7883b).
     11/24 [+0.10, +0.82] for 1,185 tokens.
   - Sonnet (v1): 14/24 against legacy's 1/24.
 - **On opus, reflex's margin over legacy is not shown:** +0.17, CI [−0.33, +0.66].
-  - The quality bar's p9 line works on opus by itself: on the two held-out p9 tasks, qbar
-    6/6 and legacy 5/6. On sonnet's same two tasks: qbar 0/6, legacy 0/6.
+  - On opus, the quality bar alone reached the p9 behaviour on the two held-out p9
+    prompts: qbar 6/6, legacy 5/6. On sonnet's same two tasks: qbar 0/6, legacy 0/6.
 - **Per task, at n=3:**
-  - Reflex beats legacy clearly only on merge (3/3 vs 0/3). Paseo (3/3 vs 1/3) and trash
-    (3/3 vs 2/3) have Newcombe intervals that include 0.
+  - Only on merge (3/3 vs 0/3, one prompt) does reflex's per-task interval against legacy
+    exclude 0. Paseo (3/3 vs 1/3) and trash (3/3 vs 2/3) include 0.
   - It loses P3 (0/3 vs 3/3).
   - On `reg-p14-depchain`, a change-work prompt, reflex injected nothing: the
     `change_work` route missed it. The p9 rule's I1 guarantee has a measured gap.
@@ -248,7 +248,7 @@ held-out run: old lines, its own 8 tasks and run directory, not pooled.
 | reflex − bare CI > 0 over A2's tasks | +0.62, [+0.19, +1.00] | met |
 | reflex ≥ qbar on the p9 tasks | 6/6 vs 6/6 | met |
 | reflex ≥ qbar on branch-first | vacuous on opus | **not shown** |
-| reflex − qbar CI > 0 on the rest (merge, trash, Paseo, worktree) | 9/12 vs 1/12, [−0.08, +1.00]; without the all-fail worktree task about [+0.41, +1.00] | **not met** |
+| reflex − qbar CI > 0 on the rest (merge, trash, Paseo, worktree) | 9/12 vs 1/12, [−0.08, +1.00] (post hoc, without the all-fail worktree task: about [+0.41, +1.00]) | **not met** |
 | no reflex − qbar entirely < 0 on a p9 task or P14/P11/P3 | P3: 0/3 vs 3/3, [−1.00, −0.21] | **not met (stop rule)** |
 | #850 fallback: qbar − bare CI > 0, and qbar − legacy not entirely < 0 on p9 and branch-first | [+0.002, +0.83]; branch-first vacuous | **not shown** |
 
@@ -280,8 +280,9 @@ edit, so reflex loses nothing there.
 
 - **For reflex.**
   - It has the highest point estimate on both models: 15/24 opus, 14/24 sonnet.
-  - It costs 7% of legacy's tokens (88 against 1,185) and 34% of qbar's, with fewer tool
-    calls (3.8 against 5.6).
+  - It costs 7% of legacy's tokens (88 against 1,185) and 34% of qbar's. It also makes
+    fewer tool calls (3.8, against legacy's 5.6 and bare's 5.2), which may mean less
+    checking as well as less wandering.
   - The stop rule fires on one mention-graded prompt, and in production CLAUDE.md carries
     the same P3 rule.
   - The rest bar fails partly because a task every arm fails sits in the group (a
@@ -313,16 +314,19 @@ In the spec's order:
      installed and read it with `--since` set to that window. Shadow rows from before then
      are base rates only.
 1. **A1, shadow, three days.**
-   - **Install first.** The installed role-x (`~/.agents/skills/role-x`, a link into the
-     `~/broomva/skills` checkout) must include this PR, or rows carry no `router_ms`, the
-     reader does not exist, and three days are lost.
-   - **Turn it on.** The owner sets `ROLE_X_OUTPUT=shadow` in the role-x intake hook's
-     command in the workspace's write-gated `.claude/settings.json`. Not in a shell
-     environment: that also reaches test and probe runs.
-   - **Read it** with `python3 skills/orchestration/role-x/scripts/role-x.py reflexes shadow
-     --since <the install time, e.g. 2026-10-03T14:00Z>`, added here as A1's instrument. It
-     exits 0 when met, 1 when not met and 3 when not shown, and never reads a partial join
-     as met. Its report should show:
+   - **Install first.** The installed role-x (`~/.agents/skills/role-x`) is a link into the
+     `~/broomva/skills` checkout, which is at 9d24559 today. Run `git -C ~/broomva/skills
+     pull --ff-only` after this PR merges, or rows carry no `router_ms`, the reader does not
+     exist, and three days are lost.
+   - **Turn it on.** The owner adds `ROLE_X_OUTPUT=shadow` to the role-x intake hook's
+     command in the workspace's write-gated `.claude/settings.json`, and commits it to
+     workspace main. Paseo worktrees carry their own committed copy of that file, and most
+     ship turns happen in them, so they pick it up only as they update from main.
+     - Not in a shell environment: that also reaches test and probe runs.
+   - **Read it** with `python3 ~/.agents/skills/role-x/scripts/role-x.py reflexes shadow
+     --since <the install time in UTC, e.g. 2026-10-03T14:00Z>`, added here as A1's
+     instrument. It exits 0 when met, 1 when not met, 3 when not shown, and 2 on a
+     `--since` it cannot read. Its report should show:
    - `router_ms` (from before the router's import to just before the row is written, a
      field this PR adds) at p99 ≤ 100 ms;
    - no row with an `error`;
@@ -332,11 +336,21 @@ In the spec's order:
      often pushes more than once.
      - Each row pairs with the same prompt's turn nearest in time (within 300 s) in the
        session transcript. A killed hook writes no row, so its turn stays unpaired.
-     - Queued, `/loop` and peer prompts are turns; skill expansions, image placeholders
-       and compaction summaries are not; a slash command is read as `/name args`.
-     - In a sample of recent transcripts, 94% of prompts matched a hook digest.
-     - "Not met" is read off the best case: every unpaired ship turn counted as having p9.
-       So the bar can fail on a partial join, and only "met" needs a full one.
+     - Queued and `/loop` prompts are turns. Skill expansions, image placeholders and
+       compaction summaries are not. A slash command is read as `/name args`.
+     - The join is partial. Over three days of the same hook's legacy rows, about 94% of
+       rows paired with a typed prompt, and about 75% of typed prompts of three or more
+       words had a row. Peer messages and resume nudges reach the transcript but not the
+       hook.
+     - So what the join cannot settle is bounded: ship turns without a row, and rows
+       without a turn.
+       - **Met** needs the worst case (all of it counted as p9 misses) at ≥ 0.70.
+       - **Not met** is the best case (all of it hits) below 0.70.
+       - Between the two, the result is **not shown**.
+       - Under 9 such turns it is not shown either, since even 9/9 is needed to reach 0.70.
+     - **On "not shown":** extend the window (`--since` earlier, the same install) and read
+       again. A2 does not start until A1 is met.
+     - Rows from sessions with no transcript (probes, tests) are reported and left out.
      - Pushes made inside subagents are not counted, and a quoted `git push` is.
    - no id firing on most prompts (`selected` per id).
    - For M3, `role-x reflexes route --heldout --heldout-file <v3>` once step 0 has sealed

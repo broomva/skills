@@ -1,6 +1,5 @@
 # PLANS.md
 
-<<<<<<< HEAD
 ## role-x reflex router, pre-flip evidence (BRO-2674)
 
 Status: evals done; PR broomva/skills#260 in P20, on `feat/role-x-reflex-preflip`. Owner decision 2026-10-01: do not
@@ -44,8 +43,8 @@ with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
 `python3 scripts/skill_evals/ctx_ablation/run.py validate --deep --tasks <file>`,
 `python3 skills/orchestration/role-x/scripts/role-x.py reflexes route --heldout` (v2, 9/31),
 `python3 scripts/skill_evals/ctx_ablation/a2.py --out ~/.cache/ctx-ablation/preflip-opus`,
-`python3 skills/orchestration/role-x/scripts/role-x.py reflexes shadow --since 3d` (A1).
-=======
+`python3 skills/orchestration/role-x/scripts/role-x.py reflexes shadow --since <install time, UTC>` (A1).
+
 ## fleet-reconcile phase 2: dry run through fleet act (BRO-2674)
 
 Status: in progress on `feat/fleet-reconcile-phase2` (from main d56061d, after #254).
@@ -87,7 +86,6 @@ workflows:none); the janitor. Evidence under `~/.config/broomva/fleet/phase2-dri
 
 `make`-free: `python -m pytest` in fleet-reconcile and ctx-core, `tests/mutation_check.py`
 in both, shellcheck, the claims grep, then P20 (B and C), p20-record, gate-check, merge.
->>>>>>> origin/main
 
 ## role-x reflex router v1, behind `ROLE_X_OUTPUT=reflex` (BRO-2674)
 

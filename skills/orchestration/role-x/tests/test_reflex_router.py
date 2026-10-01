@@ -1455,7 +1455,69 @@ def test_the_shadow_reader_can_fail_while_the_join_is_partial(tmp_path):
     assert (code, rep["verdict"]) == (1, "not met") and rep["ship_turns"]["wilson_lower_best_case"] < 0.70
 
 
+def test_the_shadow_reader_bounds_what_the_join_cannot_settle(tmp_path):
+    """Met reads the worst case, not met the best case, and under 9 ship turns neither."""
+    def ships(n, p9=True, at0=0):
+        return ([_row(f"ship {i}", ["p9.watch-after-push"] if p9 else [], at=at0 + i * 10) for i in range(n)],
+                [e for i in range(n) for e in (_user(f"ship {i}", at=at0 + i * 10), _bash("git push"))])
+    rows, t = ships(30)
+    code, rep = _shadow(tmp_path / "a", rows, t + [_user("orphan", at=900), _bash("git push")])
+    assert (code, rep["verdict"]) == (0, "met") and rep["ship_turns"]["ship_turns_without_a_row"] == 1
+    rows, t = ships(5)
+    code, rep = _shadow(tmp_path / "b", rows, t)
+    assert (code, rep["verdict"]) == (3, "not shown")  # 5/5 cannot reach 0.70 yet
+    rows, t = ships(12)
+    slow = [dict(r, router_ms=150.0) for r in rows]
+    code, rep = _shadow(tmp_path / "c", slow, t)
+    assert (code, rep["verdict"]) == (1, "not met") and rep["router_ms"]["p99"] == 150.0
+    # a ship turn with no timestamp cannot be paired: it is unsure, not dropped
+    code, rep = _shadow(tmp_path / "d", rows, t + [{"type": "user", "message": {"content": "undated"}}, _bash("git push")])
+    assert rep["ship_turns"]["ship_turns_without_a_row"] == 1
+    # a ship turn before the window is outside it, row or not: far before, and just before
+    # (inside the pairing slack, which reads turns 300 s early so a row at the edge can pair)
+    for k, off in (("e", -4 * 86400), ("e2", -3 * 86400 + 3600 - 100)):
+        code, rep = _shadow(tmp_path / k, rows, [_user("before", at=off), _bash("git push")] + t)
+        assert rep["verdict"] == "met" and rep["ship_turns"]["ship_turns_without_a_row"] == 0, k
+    # an image placeholder is not a prompt: the push stays with its turn
+    code, rep = _shadow(tmp_path / "f", rows + [_row("last", ["p9.watch-after-push"], at=500)],
+                        t + [_user("last", at=500), _user("[Image #1]", at=501, isMeta=True), _bash("git push")])
+    assert rep["ship_turns"]["paired"] == 13 and rep["verdict"] == "met"
+
+
+def test_the_shadow_reader_rejects_a_since_it_cannot_read(tmp_path):
+    rows, t = _ships12()
+    for bad in ("yesterday", "2026-13-40", "2026/10/03", "3x"):
+        code, _ = _shadow_raw(tmp_path / bad.replace("/", "_"), rows, t, since=bad)
+        assert code == 2, bad
+    rx = load_module(ROLE_X_PY, "role_x_under_test_since")
+    from datetime import datetime, timezone
+    assert rx._since("2026-10-03T14:00") == datetime(2026, 10, 3, 14, tzinfo=timezone.utc).timestamp()
+
+
+def _shadow_raw(tmp_path, rows, transcript, since):
+    import argparse as _ap
+    import contextlib
+    rx = load_module(ROLE_X_PY, "role_x_under_test_shadow_raw")
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    (tmp_path / "events.jsonl").write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    err = io.StringIO()
+    with contextlib.redirect_stderr(err), contextlib.redirect_stdout(io.StringIO()):
+        code = rx.cmd_reflexes_shadow(_ap.Namespace(events=str(tmp_path / "events.jsonl"),
+                                                    projects=str(tmp_path / "projects"), since=since, json=True))
+    return code, err.getvalue()
+
+
 def test_the_shadow_reader_pairs_repeated_prompts_one_to_one(tmp_path):
+    """Nine turns of one prompt, each shipping, nine rows: nine pairs, not one."""
+    rows = [_row("go", ["p9.watch-after-push"], at=i * 60) for i in range(9)]
+    t = [e for i in range(9) for e in (_user("go", at=i * 60), _bash("git push"))]
+    code, rep = _shadow(tmp_path / "all", rows, t)
+    assert rep["ship_turns"]["paired"] == 9 and (code, rep["verdict"]) == (0, "met")
+    # every row nearest to the same turn: each still takes its own
+    crowded = [_row("go", ["p9.watch-after-push"], at=120) for _ in range(9)]
+    near = [e for i in range(9) for e in (_user("go", at=i * 30), _bash("git push"))]
+    code, rep = _shadow(tmp_path / "crowded", crowded, near)
+    assert rep["ship_turns"]["paired"] == 9 and rep["ship_turns"]["ship_turns_without_a_row"] == 0
     rows = [_row("push and watch ci", ["p9.watch-after-push"], at=i * 20) for i in range(9)]
     t = []
     for i in range(9):
@@ -1476,6 +1538,7 @@ def test_the_shadow_window_and_slash_commands(tmp_path):
     assert rx._since("2026-10-03") == datetime(2026, 10, 3, tzinfo=timezone.utc).timestamp()
     typed = rx._as_typed({}, "<command-message>arc</command-message>\n<command-name>/arc</command-name>\n<command-args>go</command-args>")
     assert typed == "/arc go"
+    assert rx._as_typed({}, "<command-message>resume</command-message>\n<command-name>/resume</command-name>") == "/resume"
 
 
 def test_a_ship_is_a_command_segment_not_a_mention():
@@ -1483,9 +1546,11 @@ def test_a_ship_is_a_command_segment_not_a_mention():
     for cmd in ("git push -u origin x", "cd /ws && git -C /ws push", "GIT_X=1 git push", "gh pr create --fill",
                 "make test; git push", "timeout 900 git push", "git -c core.hooksPath=/dev/null push -q origin b",
                 "SRI_SKIP_PREPUSH=1 timeout 300 git push", "(git push)", "URL=$(gh pr create --fill)",
-                "cat > x <<'EOF'\nhello\nEOF\ngit push"):
+                "cat > x <<'EOF'\nhello\nEOF\ngit push", "if git push -q; then echo ok; fi", "{ git push; }",
+                "time git push", "git --no-pager push", "echo $((1<<3)); git push"):
         assert rx._ships(cmd), cmd
     for cmd in ("git push origin --delete old", "git push -d origin x", "git push origin :old", "git push --dry-run",
-                "python3 - <<'EOF'\ngit push\nEOF", "echo 'run git push later'", "grep -rn 'gh pr create' docs"):
+                "python3 - <<'EOF'\ngit push\nEOF", "echo 'run git push later'", "grep -rn 'gh pr create' docs",
+                "gh pr create --help", "git push --help", "gh pr create --dry-run", "git push origin --delete=x"):
         assert not rx._ships(cmd), cmd
     assert rx._wilson_lower(116, 150) < 0.70  # 0.69999..., compared unrounded

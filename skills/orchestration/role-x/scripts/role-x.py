@@ -2267,12 +2267,14 @@ def _score(router, catalog, key: str, cases: list[tuple[str, bool]]) -> dict:
 #: A1's bars (spec §10, #850): router time p99 <= 100 ms; p9 on ship turns, Wilson lower bound >= 0.70.
 A1_MAX_P99_MS = 100.0
 A1_MIN_P9_LOWER = 0.70
+A1_MIN_SHIP_TURNS = 9
 #: A shell segment that ships: ``git push`` or ``gh pr create``, behind env assignments,
 #: ``timeout N``, ``env``, ``nohup``, ``command``, a subshell or ``$(``, and git's global
 #: ``-C dir`` / ``-c key=value``. A push that deletes, dry-runs or pushes ``:ref`` is not.
 _SHIP_SEGMENT_RE = re.compile(
-    r"^\s*(?:\$?\(\s*)*(?:(?:\w+=\S*|env|nohup|command|timeout\s+\S+)\s+)*"
-    r"(?:git(?:\s+-[Cc]\s+\S+)*\s+push\b(?![^\n]*\s(?:-d|--delete|--dry-run|-n|:\S+)(?:\s|$))|gh\s+pr\s+create\b)")
+    r"^\s*(?:[$({`]+\s*)*(?:(?:\w+=\S*|if|then|do|else|time|sudo|nohup|command|env(?:\s+-u\s+\S+)*|timeout\s+\S+)\s+)*"
+    r"(?:git(?:\s+(?:-[Cc]\s+\S+|--no-pager|--\S+=\S+))*\s+push\b(?![^\n]*\s(?:-d|--delete\S*|--dry-run|--help|-n|:\S+)(?:\s|$))"
+    r"|gh\s+pr\s+create\b(?![^\n]*\s(?:--dry-run|--help)(?:\s|$)))")
 
 
 def _ships(command: str) -> bool:
@@ -2286,11 +2288,11 @@ def _ships(command: str) -> bool:
             if line.strip() == mark:
                 mark = None
             continue
-        m = re.search(r"<<-?\s*['\"]?(\w+)['\"]?", line)
+        m = re.search(r"(?<!<)<<(?!<)-?\s*['\"]?([A-Za-z_]\w*)['\"]?", line)
         kept.append(line)
         if m:
             mark = m.group(1)
-    return any(_SHIP_SEGMENT_RE.match(seg) for seg in re.split(r"&&|\|\||;|\||\$\(|\n", "\n".join(kept)))
+    return any(_SHIP_SEGMENT_RE.match(seg) for seg in re.split(r"&&|\|\||;|\||\$\(|`|\n", "\n".join(kept)))
 
 
 def _wilson_lower(k: int, n: int, z: float = 1.96) -> float | None:
@@ -2317,17 +2319,17 @@ def _prompt_text(content: object) -> str:
     return ""
 
 
-_COMMAND_TAGS_RE = re.compile(r"<command-name>\s*(/?[^<\s]+)\s*</command-name>.*?<command-args>(.*?)</command-args>", re.S)
+_COMMAND_TAGS_RE = re.compile(r"<command-name>\s*(/?[^<\s]+)\s*</command-name>(?:.*?<command-args>(.*?)</command-args>)?", re.S)
 
 
 def _as_typed(ev: dict, text: str) -> str | None:
     """The prompt as the hook saw it, or None when this entry is not a prompt.
 
-    ``isMeta`` user entries reach the hook only when they are standalone messages (cron,
-    ``/loop``, peer messages); a skill's expansion (``sourceToolUseID``), a turn companion,
-    an image placeholder or a local-command caveat do not, and are not turns. A slash
-    command is stored as ``<command-name>``/``<command-args>`` tags; the hook saw
-    ``/name args``."""
+    A skill's expansion (``sourceToolUseID``), a turn companion, an image placeholder or a
+    local-command caveat is not a turn. Other ``isMeta`` entries are kept as turns: cron and
+    ``/loop`` firings reach the hook, while some (peer messages, resume nudges) do not and
+    show as turns without a row. A slash command is stored as ``<command-name>`` (and
+    ``<command-args>``) tags; the hook saw ``/name args``."""
     if ev.get("isCompactSummary"):
         return None
     if ev.get("isMeta") and (ev.get("sourceToolUseID") or ev.get("turnCompanion")
@@ -2336,7 +2338,7 @@ def _as_typed(ev: dict, text: str) -> str | None:
     m = _COMMAND_TAGS_RE.search(text)
     if m:
         name = m.group(1) if m.group(1).startswith("/") else "/" + m.group(1)
-        return f"{name} {m.group(2).strip()}".strip()
+        return f"{name} {(m.group(2) or '').strip()}".strip()
     return text
 
 
@@ -2387,12 +2389,19 @@ def _ts(value: object) -> float | None:
 
 
 def _since(spec: str) -> float:
-    """``--since``: a duration (``3d``, ``72h``) back from now, or an ISO date or time
-    (``2026-10-03``, ``2026-10-03T14:00Z``) to start an A1 window at a fix's install."""
-    at = _ts(spec if "T" in spec or ":" in spec else spec + "T00:00:00+00:00") if spec[:1].isdigit() and "-" in spec else None
-    if at is not None:
-        return at
-    return datetime.now(timezone.utc).timestamp() - _parse_duration(spec)
+    """``--since``: a duration (``3d``, ``72h``, ``90m``) back from now, or an ISO date or
+    time (``2026-10-03``, ``2026-10-03T14:00Z``) to start an A1 window at an install. A
+    time without a zone is UTC. Anything else is an error, never a silent default."""
+    if re.fullmatch(r"\d+[smhdw]", spec.strip()):
+        return datetime.now(timezone.utc).timestamp() - _parse_duration(spec.strip())
+    if re.fullmatch(r"\d{4}-\d{2}-\d{2}([T ]\d{2}:\d{2}(:\d{2})?(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?", spec.strip()):
+        try:
+            at = datetime.fromisoformat(spec.strip().replace("Z", "+00:00"))
+        except ValueError:
+            at = None
+        if at is not None:
+            return (at if at.tzinfo else at.replace(tzinfo=timezone.utc)).timestamp()
+    raise ValueError(f"--since {spec!r}: give a duration like 3d or an ISO date/time like 2026-10-03T14:00Z")
 
 
 #: How far apart a row's ``ts`` (the hook) and its prompt's transcript entry may be.
@@ -2408,14 +2417,21 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
     * The p9 bar counts every turn that ran ``git push`` or ``gh pr create`` in a session
       with shadow rows (``_turns``). A row pairs with the unpaired turn of the same prompt
       nearest in time, within ``PAIR_WINDOW_S``; a hook that was killed wrote no row, so
-      its turn stays unpaired. Met needs every ship turn paired. Not met is read off the
-      best case, every unpaired ship turn counted as having p9, so the bar can fail
-      even while the join is partial.
+      its turn stays unpaired. What the join cannot settle (ship turns without a row, rows
+      without a turn) is bounded both ways: met needs the worst case (all of it p9 misses)
+      at >= 0.70, not met is the best case (all of it hits) below 0.70, and between them
+      the bar is not shown. Under 9 such turns the bar is not shown, since even 9/9 is
+      needed to reach 0.70. A killed hook's prompt shows only if its turn shipped; its
+      wall clock is reported by Claude Code, not gated here (spec Q10).
     * Rows from a session whose transcript is not found (probes, tests, deleted logs) are
       reported and left out of the join."""
     events = Path(args.events) if args.events else EVENTS_PATH
     projects = Path(args.projects) if args.projects else Path.home() / ".claude" / "projects"
-    since = _since(args.since)
+    try:
+        since = _since(args.since)
+    except ValueError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
     rows: list[dict] = []
     text = events.read_text(encoding="utf-8", errors="replace") if events.is_file() else ""
     for line in text.splitlines():
@@ -2466,18 +2482,25 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
                 ship_unpaired += 1
     p99 = _p99(timed)
     lower = _wilson_lower(with_p9, ship)
-    best = _wilson_lower(with_p9 + ship_unpaired, ship + ship_unpaired)
+    # Bounds over what the join could not settle. Worst: every unpaired ship turn, and every
+    # row whose turn was not found (it may have shipped), is a p9 miss. Best: every one is a hit.
+    unsure = ship_unpaired + rows_unpaired
+    worst = _wilson_lower(with_p9, ship + unsure)
+    best = _wilson_lower(with_p9 + unsure, ship + unsure)
     time_shown = bool(rows) and len(timed) == len(rows)
-    p9_shown = ship > 0 and ship_unpaired == 0 and rows_unpaired == 0
+    # n/n has a Wilson lower bound >= 0.70 only from n = 9: below that the bar is unreachable
+    enough = ship + unsure >= A1_MIN_SHIP_TURNS
     failed = (bool(errors) or (time_shown and p99 > A1_MAX_P99_MS)
-              or (best is not None and best < A1_MIN_P9_LOWER))
-    verdict = "not met" if failed else "met" if time_shown and p9_shown and lower >= A1_MIN_P9_LOWER else "not shown"
+              or (enough and best is not None and best < A1_MIN_P9_LOWER))
+    met = time_shown and enough and ship > 0 and worst is not None and worst >= A1_MIN_P9_LOWER
+    verdict = "not met" if failed else "met" if met else "not shown"
     report = {
         "rows": len(rows), "sessions": len(by_session),
         "router_ms": {"rows_timed": len(timed), "p99": p99, "max": max(timed) if timed else None},
         "errors": errors,
         "ship_turns": {"paired": ship, "p9_selected": with_p9,
                        "wilson_lower": None if lower is None else round(lower, 4),
+                       "wilson_lower_worst_case": None if worst is None else round(worst, 4),
                        "wilson_lower_best_case": None if best is None else round(best, 4),
                        "ship_turns_without_a_row": ship_unpaired, "rows_without_a_turn": rows_unpaired,
                        "rows_in_sessions_without_a_transcript": no_transcript},
@@ -2492,8 +2515,9 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
         print(f"shadow rows {report['rows']} in {report['sessions']} sessions since {args.since}")
         print(f"router_ms p99 {p99} over {len(timed)} of {len(rows)} rows (bar {A1_MAX_P99_MS:g})")
         print(f"error rows {sum(errors.values())} {errors or ''}")
-        print(f"ship turns paired {ship}: p9 selected {with_p9}, Wilson lower {st['wilson_lower']}, best case "
-              f"{st['wilson_lower_best_case']} (bar {A1_MIN_P9_LOWER}); ship turns without a row {ship_unpaired}; "
+        print(f"ship turns paired {ship}: p9 selected {with_p9}, Wilson lower {st['wilson_lower']}, worst case "
+              f"{st['wilson_lower_worst_case']}, best case {st['wilson_lower_best_case']} (bar {A1_MIN_P9_LOWER}, "
+              f"at least {A1_MIN_SHIP_TURNS} turns); ship turns without a row {ship_unpaired}; "
               f"rows without a turn {rows_unpaired}; rows in sessions without a transcript {no_transcript}")
         print(f"selected per id {report['selected']}")
         print(f"A1 router bars: {verdict} ({report['not_covered_here']})")
