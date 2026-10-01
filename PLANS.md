@@ -95,6 +95,89 @@ quality-bar p9 line already does, across all of them.
 `pytest skills/orchestration/role-x/tests`, `pytest tests/skill_evals/test_ctx_ablation.py`,
 `python3 scripts/skill_evals/ctx_ablation/run.py validate --deep`.
 
+## ctx System 1: the per-stage injection gate, with evals (BRO-2674)
+
+Status: in review (branch `feat/ctx-s1-injection-gate`). Design of record:
+workspace#840 §6.2 (System 1 at every hook stage, System 2 behind it).
+
+### Objective
+
+One decision function, applied at every hook stage, that injects a cached
+factual claim only when its score clears that stage's floor, and abstains
+otherwise. A lexical (BM25) System 2 fills the cache offline, behind a ranker
+interface an ontology ranker can later fill. Evals that let an agent see the
+gate's behaviour and improve it: E1 offline replay (CI), E2 behavioural
+ablation (model calls), E3 a bounded tune loop over E1.
+
+### Scope and constraints
+
+- New modules in `skills/orchestration/ctx-core/scripts/` (`ctx_s1*.py`,
+  `ctx_s2.py`); role-x is not touched.
+- Every stage is off by default (`CTX_S1=1` plus `CTX_S1_STAGES=csv`); no
+  network or model call on the hook path; every error or deadline miss exits 0
+  with no output.
+- Floors start at abstain-all; fitted floors ship as a reviewed file.
+- The E1 snapshot stays on the owner's machine (`~/.local/state/ctx/<scope>/e1/`,
+  keys HMAC-hashed as well); only aggregate reports are committed, and CI runs
+  E1 on a synthetic fixture.
+- PreCompact/PostCompact cannot inject (hooks reference, live probe
+  2026-09-30); compaction re-injection uses SessionStart(compact).
+- Ontology ranking stays an eval arm until it beats BM25 (spec §6.6).
+
+### Milestones
+
+1. [x] System 2: sources, exclusions, BM25 ranker, sharded atomic cache.
+2. [x] System 1: keys, lookup, floors, budgets, dedup, rate limits, decision log.
+3. [x] Hook entry, wrapper, latency measured per stage.
+4. [x] E1: transcript extraction, hashed snapshot, replay, report; always/never
+   arms separate; mutation kill.
+5. [x] E3: `ctx-s1 tune` with a trial ledger.
+6. [x] E2: per-stage arms and rewritten retrieval tasks in ctx_ablation; sonnet
+   subset runs with each round's proposal floors (the arms and floors of each
+   run are stated with its numbers in the PR; the last run stopped at the
+   shared rate-limit guard).
+7. [ ] Registration script (done), docs (done), Cross-Review (P20): stopped on
+   a score regression at round 2 (6 -> 5); the owner chose the structural fix
+   (private snapshot) on 2026-10-01, ledger reset, fresh round after the squash.
+
+### Decision log
+
+- 2026-09-30: E1 found two key-extraction bugs by itself: cited `docs/…` and
+  `research/…` file paths were read as branch names and dropped, and scores
+  were summed over a set whose order follows the hash seed. Both fixed; the
+  snapshot, tune and report were regenerated.
+- 2026-09-30: no stage clears the spec's bar (strict precision >= 0.30 over
+  >= 50 injections on the test split, stage alone), so the shipped parameters
+  abstain everywhere; the tuned floors ship as `s1-params.candidate.json`, a
+  proposal for shadow runs and E2.
+- 2026-09-30: P20 round 2 scored 5/10 (B and C), below round 1's 6/10, so the
+  round ledger stopped the arc on a regression and it goes to the owner rather
+  than a third fix round. Most of round 2's findings trace to one shape: a
+  hashed snapshot of private transcripts committed to a public repo. Keeping it
+  private forced day-rounded times and dropped PR items (which broke E1's
+  created/edited checks and made the replay differ from the live cache), and
+  keeping key order for the replay turned the hashed prompts into an ordered
+  word cipher (C, blocker). The proposed structural change: keep the real
+  snapshot out of the public repo (private state, exact times, PR items kept),
+  run E1 in CI on a synthetic fixture, and commit aggregate reports only.
+  Rotate the salt either way. The branch history holds earlier snapshots and
+  must be squashed before any push.
+- 2026-10-01 ~00:55Z, owner: keep it private. The snapshot moved to
+  `~/.local/state/ctx/<scope>/e1/` (refused inside a git checkout), with exact
+  times and PR items; the salt was rotated; CI runs E1 on a synthetic fixture;
+  only aggregate reports are committed; the branch is squashed to one commit
+  before the first push. Separation is read on the test split, tune optimises
+  strict F0.5, and compact and subagent (re-offer only) get no one-stage arm
+  or tune phase. On the new snapshot no stage clears the bar, and no gate
+  makes a strict hit on test; separation fails there.
+- 2026-10-01, fresh P20 round 1 (6/10, B and C): the replay now resolves
+  fetched paths with the gate's own resolver, carries the cwd, anchors a call
+  after its parallel batch, counts bare PR numbers as echoes, and dates
+  date-only items conservatively; tune starts from `--params default` and
+  needs two strict train hits to accept. Re-tuned: BM25 accepts one change (a
+  prompt floor of 0.5, which gates nothing), PPR one (a post-bash floor of 15);
+  neither clears the bar.
+
 ## Context evals, layer 2: the causal context-ablation harness
 
 Status: pilot v3 done; PR #248 in review round 3 (branch `feat/context-ablation-evals`). Layer 1, the observational

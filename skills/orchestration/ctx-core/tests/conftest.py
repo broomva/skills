@@ -117,6 +117,12 @@ class World:
 
 @pytest.fixture
 def world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> World:
+    return make_world(tmp_path, monkeypatch)
+
+
+def make_world(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> World:
+    """The scratch world under tmp_path, with HOME and git's environment set
+    through `monkeypatch` (a module-scoped fixture passes a MonkeyPatch.context())."""
     home = tmp_path / "home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))

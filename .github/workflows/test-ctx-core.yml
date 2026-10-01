@@ -3,17 +3,23 @@ name: test-ctx-core
 # Python test gate for the `ctx-core` skill (skills/orchestration/ctx-core/).
 # Path-filtered so it runs ONLY when the skill or this workflow changes. The
 # mutation check proves the suite goes red when a protection is removed (the
-# lock, redaction, the self-deadline, SessionStart's cached-board read).
+# lock, redaction, the self-deadline, SessionStart's cached-board read), and
+# mutation_check_s1.py does the same for the System 1 gate and its evals. The
+# E1 step replays a synthetic fixture: the real snapshot is derived from the
+# owner's private transcripts and is kept on their machine, out of git; its aggregate
+# report is committed in scripts/skill_evals/ctx_s1_replay.
 
 on:
   pull_request:
     paths:
       - 'skills/orchestration/ctx-core/**'
+      - 'scripts/skill_evals/ctx_s1_replay/**'
       - '.github/workflows/test-ctx-core.yml'
   push:
     branches: [main]
     paths:
       - 'skills/orchestration/ctx-core/**'
+      - 'scripts/skill_evals/ctx_s1_replay/**'
       - '.github/workflows/test-ctx-core.yml'
   workflow_dispatch:
 
@@ -56,3 +62,12 @@ jobs:
       - name: Mutation check (every mutant must be killed)
         if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
         run: python tests/mutation_check.py
+      # E1 on the synthetic fixture: extraction, hashing, the replay
+      # cache and every arm. Fails when the harness stops telling a working gate
+      # from always-inject, wrong-key and never on the test split, strict hits.
+      - name: E1 replay separates the arms (synthetic fixture)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: CTX_S1_E1_SUMMARY="$GITHUB_STEP_SUMMARY" python -m pytest tests/test_s1_e1_synthetic.py -v
+      - name: Mutation check, System 1 (every mutant must be killed)
+        if: matrix.os == 'ubuntu-latest' && matrix.python == '3.12'
+        run: python tests/mutation_check_s1.py

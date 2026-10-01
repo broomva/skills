@@ -20,6 +20,12 @@ changes only what is PUSHED into the model's context:
                quality bar, #251's recommended arm (``rolex-qbar`` is an alias).
 * ``ctx``      ctx-core's SessionStart hook, the real script, briefing from the
                fixture ctx store.
+* ``s1``       ctx-core's System 1 gate (ctx_s1.py), one registration per stage it
+               names, each through the real wrapper, with the E3-tuned candidate
+               floors (``references/s1-params.candidate.json``: the shipped params
+               abstain everywhere, so an arm on them would be bare). Its cache is
+               built in EVERY arm by the fixture (state constant); only the hooks
+               differ.
 * ``rolex_coverage``  role-x's SessionStart coverage nudge (``all`` only). It reads
                the last 7 days of intake events, and a fresh jail has one, so it is
                silent in every trial: registered for fidelity, it injects nothing.
@@ -43,6 +49,7 @@ something is wrong, and two of them probe the network. See the README.
 
 from __future__ import annotations
 
+import json
 import re
 import shlex
 from dataclasses import dataclass
@@ -71,6 +78,47 @@ ROLEX_MARKER = "[role-x intake"
 #: applies), so its delivery proof is the live hook's log row, not this marker.
 ROLEX_REFLEX_MARKER = "[bstack reflexes"
 CTX_MARKER = "Shared board facts"
+S1_MARKER = "[ctx claims]"
+
+def _ctx_s1():
+    import sys
+
+    if str(CTX_SCRIPTS) not in sys.path:
+        sys.path.insert(0, str(CTX_SCRIPTS))
+    import ctx_s1
+
+    return ctx_s1
+
+
+def _s1_stages() -> dict[str, tuple[str, str | None]]:
+    """The System 1 stages an arm can turn on, with the hook event and matcher
+    each registers on, read from ctx-core's one stage table (ctx_s1.STAGES).
+    compact needs a compaction, which a short trial never reaches, and
+    post-compact only measures."""
+    return {st: (cfg["event"], cfg.get("matcher")) for st, cfg in _ctx_s1().STAGES.items()
+            if st not in ("compact", "post-compact")}
+
+
+S1_EVENTS = _s1_stages()
+S1_ALL = tuple(S1_EVENTS)
+S1_PARAMS = CTX_SCRIPTS.parent / "references" / "s1-params.candidate.json"
+
+
+def _floored(path: Path) -> set[str]:
+    try:
+        stages = json.loads(path.read_text(encoding="utf-8")).get("stages") or {}
+    except (OSError, ValueError):
+        return set()
+    return {st for st, cfg in stages.items() if isinstance(cfg, dict) and cfg.get("floor") is not None}
+
+
+#: One-stage arms only for stages that can inject alone (subagent, like
+#: compact, only re-offers claims another stage injected) AND that the
+#: proposal floors give a floor: any other one-stage arm would be `bare`.
+S1_ALONE = tuple(st for st in S1_ALL if st in _ctx_s1().ALONE_STAGES and st in _floored(S1_PARAMS))
+#: As for the ctx hook: a generous in-process deadline, so a loaded eval machine
+#: does not turn a stage into a timeout. The decision it makes is the same.
+S1_HOOK_BUDGET_MS = 1500
 
 
 @dataclass(frozen=True)
@@ -86,6 +134,8 @@ class Arm:
     #: ``None`` leaves role-x's output at its default (the hook command is
     #: unchanged); a string sets ``ROLE_X_OUTPUT`` ("reflex", "qbar").
     rolex_output: str | None = None
+    #: System 1 stages this arm registers (empty: none).
+    s1_stages: tuple[str, ...] = ()
     description: str = ""
 
     @property
@@ -98,6 +148,8 @@ class Arm:
             out.append("rolex")
         if self.ctx:
             out.append("ctx")
+        if self.s1_stages:
+            out.append("s1")
         return tuple(out)
 
     @property
@@ -106,7 +158,7 @@ class Arm:
 
     @property
     def is_bare(self) -> bool:
-        return not (self.memory or self.rolex or self.ctx or self.rolex_coverage)
+        return not (self.memory or self.rolex or self.ctx or self.rolex_coverage or self.s1_stages)
 
 
 ARM_REGISTRY: dict[str, Arm] = {
@@ -122,7 +174,13 @@ ARM_REGISTRY: dict[str, Arm] = {
                   description="role-x reflex router (ROLE_X_OUTPUT=reflex)"),
     "qbar": Arm("qbar", rolex=True, rolex_output="qbar",
                 description="role-x intake cut to its quality bar (ROLE_X_OUTPUT=qbar)"),
+    "s1": Arm("s1", s1_stages=S1_ALL, description="ctx System 1 gate, every stage"),
+    "ctx+s1": Arm("ctx+s1", ctx=True, s1_stages=S1_ALL,
+                  description="ctx brief plus the System 1 gate (the coordination regression guard)"),
+    **{"s1-" + st: Arm("s1-" + st, s1_stages=(st,), description="ctx System 1 gate, %s stage alone" % st)
+       for st in S1_ALONE},
 }
+S1_ARMS = ("bare", "s1") + tuple("s1-" + st for st in S1_ALONE)
 
 #: Other names for registry arms: the owner's brief called them rolex-reflex and
 #: rolex-qbar; the design of record (workspace spec, §5.4) calls them reflex and qbar.
@@ -178,6 +236,15 @@ def hook_commands(arm: Arm, case_root: Path, rt: HookRuntime) -> dict[str, list[
                        "command": _cmd(case, [rt.python, "-I", str(STUBS_DIR / "guard.py")])}],
         }],
     }
+    for st in arm.s1_stages:
+        event, matcher = S1_EVENTS[st]
+        group: dict[str, Any] = {"hooks": [{"type": "command", "timeout": 10, "command": _cmd(
+            {"CTX_S1": "1", "CTX_S1_STAGES": st, "CTX_S1_PARAMS": str(S1_PARAMS),
+             "CTX_S1_BUDGET_MS": str(S1_HOOK_BUDGET_MS), "CTX_PYTHON": rt.python},
+            ["/bin/sh", str(CTX_SCRIPTS / "ctx-s1-hook.sh"), st])}]}
+        if matcher:
+            group = {"matcher": matcher, **group}
+        hooks.setdefault(event, []).append(group)
     rolex_env = {"ROLE_X_PYTHON": rt.python}
     if rt.pythonuserbase:
         rolex_env["PYTHONUSERBASE"] = rt.pythonuserbase
@@ -190,15 +257,16 @@ def hook_commands(arm: Arm, case_root: Path, rt: HookRuntime) -> dict[str, list[
         session_start.append({"type": "command", "timeout": 10, "command": _cmd(
             rolex_env, ["/bin/bash", str(ROLEX_SCRIPTS / "role-x-coverage-hook.sh")])})
     if session_start:
-        hooks["SessionStart"] = [{"hooks": session_start}]
+        hooks.setdefault("SessionStart", []).insert(0, {"hooks": session_start})
     if arm.rolex:
         env = dict(rolex_env)
         if arm.rolex_top_n is not None:
             env["ROLE_X_TASK_ENTITY_TOP_N"] = str(arm.rolex_top_n)
         if arm.rolex_output is not None:
             env["ROLE_X_OUTPUT"] = arm.rolex_output
-        hooks["UserPromptSubmit"] = [{"hooks": [{"type": "command", "timeout": 20, "command": _cmd(
-            env, ["/bin/bash", str(ROLEX_SCRIPTS / "role-x-intake-hook.sh")])}]}]
+        hooks.setdefault("UserPromptSubmit", []).insert(0, {"hooks": [{"type": "command", "timeout": 20,
+                                                                    "command": _cmd(
+            env, ["/bin/bash", str(ROLEX_SCRIPTS / "role-x-intake-hook.sh")])}]})
     return hooks
 
 
@@ -217,6 +285,10 @@ __all__ = [
     "Arm",
     "CTX_MARKER",
     "DEFAULT_ARMS",
+    "S1_ALL",
+    "S1_ARMS",
+    "S1_EVENTS",
+    "S1_MARKER",
     "HookRuntime",
     "ROLEX_MARKER",
     "ROLEX_REFLEX_MARKER",

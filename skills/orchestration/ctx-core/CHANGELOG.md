@@ -1,5 +1,65 @@
 # Changelog: ctx-core
 
+## [0.3.0] - 2026-10-01
+
+The System 1 injection gate, System 2 cache, and their evals (workspace#840
+§6.2, BRO-2674). Every stage is off by default, and the shipped floors abstain
+on everything.
+
+- **System 2** (`ctx-s1 build`): specs, ADRs, KG entities, memory rules, open
+  and recent PRs and live board sessions become one-line claims with their
+  source ids, keyed by path, directory, branch, PR, ticket and word; person,
+  persona, `user` memory, `crm/` and credential-shaped items are excluded at
+  the source. BM25 per channel behind a ranker interface; a sharded cache per
+  scope, swapped in atomically. A one-hop PPR prototype (`ctx_s2_ppr.py`) fills
+  the same interface as an eval arm only.
+- **System 1** (`ctx_s1.py`, `ctx-s1-hook.sh`): one decision function at
+  eight stages (SessionStart startup and compact, UserPromptSubmit, PreToolUse
+  on edits, PostToolUse on reads and Bash, SubagentStart, PostCompact as
+  measurement). Floors, budgets, per-event and per-session caps, dedup, no
+  offer of the event's own file or of a file already opened, tool stages silent
+  inside subagents, reviewer subagents excluded. Fails open; flags checked in
+  shell before Python. Every decision logged with its top candidates.
+- **E1** (`ctx-s1 eval`): a replay of 14 days of the scope's transcripts with
+  counterfactual ground truth (pointer and self-authored masks); arms gate,
+  always, never, wrong-key and each stage that can inject alone; separation on
+  the test split, on strict hits. The snapshot stays on the owner's machine
+  (`~/.local/state/ctx/<scope>/e1/`, refused inside a git checkout); only its
+  aggregate report is committed. CI runs E1 on a synthetic fixture.
+- **E3** (`ctx-s1 tune`): bounded per-stage coordinate search on strict F0.5
+  with a ledger of full parameters, validation acceptance, and the spec's bar
+  (strict precision on the test split, which no trial reads) before a floor
+  ships. E1 fails the bar today at every stage, so nothing injects.
+- **Its own command,** `ctx-s1` (`ctx_s1_cli.py`): `build`, `eval`, `tune`,
+  `snapshot`, `follow`. `ctx.py`'s CLI stays the core's (core §5.5).
+- **What it never offers:** person, persona and org entities; `user` memory;
+  anything under `crm/` and any PR touching it; PRs by anyone outside the repo;
+  session and PR claims from a cache older than 6 h / 24 h; the event's own
+  file or one already opened; to a reviewer subagent (`Explore` included),
+  nothing. A subagent gets only claims its parent received.
+- **Hardening from Cross-Review round 1:** session state is replaced whole
+  under a lock file (never torn); an injection that misses the deadline is
+  decided before anything is recorded; the wrapper execs a loader that exits 0
+  if the hook script vanished (no exit 2 from PreToolUse); a hook that raises
+  leaves an `error:` breadcrumb; the registration script quotes paths, keeps
+  others' hooks in a shared group and the file's mode.
+- **From round 2:** the snapshot left the repo and the salt was rotated; a path
+  in a nested or another scope's repo is not keyed; `gh -R` and PR URLs key
+  their own repo; re-offered session and PR claims age out; the session lock
+  is touched on use, checked against its path after locking, and removed by
+  housekeeping only while held; the hook prints before it logs.
+- **E1 fidelity (fresh round, rounds 1 and 2):** fetched paths resolve with the
+  gate's own resolver; the replay carries the cwd and, for Bash, the output;
+  after a `cd` an event is the new repo's; parallel calls anchor after their
+  message; bare PR numbers are echoes; a fetch made before a later pointer
+  stays a hit; date-only creation counts from late that day. Tune starts from
+  `--params default`, needs two strict train hits, and never scores a no-op.
+- **E2** (skills `scripts/skill_evals/ctx_ablation`): `s1`, `s1-<stage>` and
+  `ctx+s1` arms, and rewritten retrieval tasks (`tasks/s1.json`).
+- `register_s1_hooks.py`: the owner's registration script (backup, idempotent,
+  `--remove`, nothing registered unless a stage is named).
+- The live probe of which hook stages can inject: `references/s1-stage-probe.md`.
+
 ## [0.2.0] - 2026-09-30
 
 - **`ctx doctor --compare --registered <UTC time>`**, the phase-1 exit
