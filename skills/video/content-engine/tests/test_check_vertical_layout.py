@@ -597,7 +597,7 @@ def _waivers(tmp_path, *entries, name="waivers.json"):
     return p
 
 
-def _waiver(rule, target, reason="client-approved end card", granted_by="owner"):
+def _waiver(rule, target, reason="test fixture: exercises the mechanism, not a real judgement", granted_by="owner"):
     sha = target if isinstance(target, str) else hashlib.sha256(target.read_bytes()).hexdigest()
     return {"rule": rule, "input_sha256": sha, "reason": reason, "granted_by": granted_by}
 
@@ -616,7 +616,7 @@ def test_waiver_applies_only_to_the_file_it_names_and_is_logged(tmp_path):
     rep = json.loads(r.stdout)
     res = {x["rule"]: x for x in rep["results"]}
     assert res["VL3"]["status"] == "WAIVED"
-    assert res["VL3"]["waiver"] == {"reason": "client-approved end card", "granted_by": "owner"}
+    assert res["VL3"]["waiver"] == {"reason": "test fixture: exercises the mechanism, not a real judgement", "granted_by": "owner"}
     assert rep["waiver_file"] == {"path": str(both), "sha256": hashlib.sha256(both.read_bytes()).hexdigest()}
     assert [(w["rule"], w["outcome"]) for w in rep["waivers"]] == [
         ("VL3", "applied"), ("VL2", "applied"), ("VL6", "no-fail"), ("VL8", "other-input")]
