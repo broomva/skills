@@ -650,6 +650,7 @@ def test_waiver_file_that_breaks_the_policy_is_a_usage_error(tmp_path):
         "extra key": [{**ok, "expires": "never"}],
         "sha not 64 hex": [{**ok, "input_sha256": "abc"}],
         "uppercase sha": [{**ok, "input_sha256": ok["input_sha256"].upper()}],
+        "sha with a tail": [{**ok, "input_sha256": ok["input_sha256"] + "00"}],
         "non-string": [{**ok, "reason": 1}],
         "duplicate": [ok, {**ok, "reason": "again"}],
     }
@@ -662,8 +663,17 @@ def test_waiver_file_that_breaks_the_policy_is_a_usage_error(tmp_path):
     (tmp_path / "list.json").write_text("[]")
     (tmp_path / "extra.json").write_text(json.dumps({"waivers": [], "note": "x"}))
     (tmp_path / "deep.json").write_text('{"waivers": ' + "[" * 100000 + "]" * 100000 + "}")
-    for arg in ("VL3=ok", str(tmp_path / "list.json"), str(tmp_path / "extra.json"), str(tmp_path / "deep.json")):
-        assert _cli("spec", str(bad), "--waive", arg).returncode == 2, arg
+    (tmp_path / "null.json").write_text('{"waivers": null}')
+    (tmp_path / "dict.json").write_text('{"waivers": {}}')
+    (tmp_path / "latin1.json").write_bytes(b'{"waivers": ["\xff"]}')
+    for name in ("list", "extra", "deep", "null", "dict", "latin1"):
+        assert _cli("spec", str(bad), "--waive", str(tmp_path / f"{name}.json")).returncode == 2, name
+    assert _cli("spec", str(bad), "--waive", "VL3=ok").returncode == 2
+    # A deeply nested or undecodable spec or contract is a tool error too, never exit 1.
+    (tmp_path / "deep-spec.json").write_text("[" * 100000 + "]" * 100000)
+    assert _cli("spec", str(tmp_path / "deep-spec.json")).returncode == 2
+    for name in ("deep", "latin1"):
+        assert _cli("--layout", str(tmp_path / f"{name}.json"), "spec", str(bad)).returncode == 2, name
     # One waiver file per run: a second --waive is an error, not a silently dropped file.
     one = _waivers(tmp_path, ok)
     r = _cli("spec", str(bad), "--waive", str(one), "--waive", str(one))
@@ -673,9 +683,16 @@ def test_waiver_file_that_breaks_the_policy_is_a_usage_error(tmp_path):
     a.write_bytes(b"x"), b.write_bytes(b"y")
     r = _cli("image", str(a), str(b), "--waive", str(_waivers(tmp_path, ok)))
     assert r.returncode == 2 and "one at a time" in r.stderr
-    # Waivers are logged in the report, so a waiving run cannot skip it.
-    r = _cli("image", str(a), "--no-report", "--waive", str(_waivers(tmp_path, ok)))
-    assert r.returncode == 2 and "needs the report" in r.stderr
+    # Waivers are logged in the report, so a waiving run cannot skip it, write it to an
+    # empty path (an unset "$REPORT"), or write it over a file the run reads.
+    w = _waivers(tmp_path, ok)
+    for mode, extra in (("image", [str(a), "--no-report"]), ("image", [str(a), "--report", ""]),
+                        ("spec", [str(bad), "--report", " "])):
+        r = _cli(mode, *extra, "--waive", str(w))
+        assert r.returncode == 2 and "needs the report" in r.stderr, (mode, extra)
+    for target in (w, bad, cvl.DEFAULT_LAYOUT):
+        r = _cli("spec", str(bad), "--report", str(target), "--waive", str(w))
+        assert r.returncode == 2 and "would overwrite" in r.stderr, target
 
 
 def test_declared_text_not_found_is_never_waived():
@@ -707,6 +724,12 @@ def test_declared_text_not_found_is_never_waived():
     land = cvl.evaluate(1920, 1080, [], ORGANIC, CLS, CANVAS)
     assert land[0].rule == "VL1" and land[0].status == "FAIL" and not land[0].waivable
     assert cvl.apply_waivers(land, [_waiver("VL1", sha)], sha)[0]["outcome"] == "refused"
+    busy = [cvl.Frame(label="spec", texts=[text("word", 440, 1345, 640, 1405, role="caption",
+                                                  background="busy", stroke=False)])]
+    res = cvl.evaluate(W, H, busy, ORGANIC, CLS, CANVAS)
+    vl9 = next(x for x in res if x.rule == "VL9")
+    assert vl9.status == "FAIL" and not vl9.waivable
+    assert cvl.apply_waivers(res, [_waiver("VL9", sha)], sha)[0]["outcome"] == "refused"
 
 
 def test_spec_waiver_binds_to_the_bytes_parsed_not_the_file_after(tmp_path, monkeypatch):
@@ -1127,4 +1150,16 @@ def test_waivers_apply_in_video_mode_and_declared_text_is_still_refused(videos, 
     assert p.returncode == 1, p.stdout + p.stderr
     rep = json.loads(report.read_text())
     assert {x["rule"]: x["outcome"] for x in rep["waivers"]}["VL5"] == "refused"
+    # The same in image mode, on one still taken from that video.
+    still = tmp_path / "rail.png"
+    subprocess.run(["ffmpeg", "-v", "error", "-i", str(rail), "-frames:v", "1", str(still)], check=True)
+    code = _cli("image", str(still), "--detector", detector, "--no-guide", "--no-report").returncode
+    failing = sorted(r["rule"] for r in json.loads(_cli("image", str(still), "--detector", detector, "--json",
+                                                        "--no-guide", "--no-report").stdout)["results"]
+                     if r["status"] == "FAIL")
+    assert code == 1 and failing
+    w = _waivers(tmp_path, *[_waiver(rule, still) for rule in failing], name="still.json")
+    p = _cli("image", str(still), "--detector", detector, "--no-guide", "--report", str(report), "--waive", str(w))
+    assert p.returncode == 0, p.stdout + p.stderr
+    assert {x["outcome"] for x in json.loads(report.read_text())["waivers"]} == {"applied"}
 

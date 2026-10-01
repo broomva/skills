@@ -229,20 +229,24 @@ Owner policy. Each clause says whether the checker enforces it.
    declared-text-not-found FAIL is logged as `refused` while the FAIL stands.
 3. **A waiver is bound to one file.** It names the sha256 of the file it was granted for
    (`input_sha256` in that file's report) and applies to no other file, so a re-render,
-   a re-encode or an edited spec needs a new waiver. Enforced: a run with `--waive`
-   checks exactly one input, hashes it before and after reading it, and exits 2 if it
-   changed. A file swapped and put back between the two hashes is not detected. The
-   binding is to the file, not to the run: the waiver covers every FAIL of its rule on
-   that file under any profile, contract, detector or `--expect-*` flag. Grant it from a
-   report made with the settings the pipeline uses.
+   a re-encode or an edited spec needs a new waiver. Enforced: a waiver applies only
+   when its sha256 equals the input's, and a run with `--waive` checks exactly one
+   input. `video` and `image` hash the input before and after reading it and exit 2 if
+   it changed (a file swapped and put back between the two hashes is not detected);
+   `spec` hashes the same bytes it parses. The binding is to the file, not to the run:
+   the waiver covers every waivable FAIL of its rule on that file under any profile,
+   contract, detector or `--expect-*` flag. Grant it from a report made with the
+   settings the pipeline uses.
 4. **Every waiver has a reason and a grantor.** Enforced: `reason` and `granted_by`
    must be non-empty strings, and a file with any other key is rejected.
-5. **Waivers are logged.** Enforced: a run with `--waive` always writes a report
-   (`--no-report` is refused, and `spec` defaults to `<spec>.layout-report.json`). The
-   report lists each waiver in the file with its outcome (`applied`, `refused`,
-   `no-fail`, `other-input`) and records the waiver file's path and sha256, and each
-   WAIVED rule carries its reason and grantor. The table output prints the waiver file
-   and notes every waiver that was not applied. `--waive` takes one file.
+5. **Waivers are logged.** Enforced: a run with `--waive` always writes a report.
+   `--no-report` and an empty `--report` are refused, the default is
+   `<input>.layout-report.json` (in `spec` mode too), and a report path that is the
+   input, the waiver file or the contract is refused. The report lists each waiver in
+   the file with its outcome (`applied`, `refused`, `no-fail`, `other-input`) and
+   records the waiver file's path and sha256, and each WAIVED rule carries its reason
+   and grantor. The table output prints the waiver file and notes every waiver that was
+   not applied. `--waive` takes one file.
 
 A waiver file:
 

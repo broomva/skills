@@ -176,9 +176,9 @@ def load_layout(path: Path | None = None) -> dict:
     never a verdict: a KeyError halfway through `evaluate` would exit 1, the FAIL code."""
     path = path or DEFAULT_LAYOUT
     try:
-        layout = json.loads(Path(path).read_text())
-    except (OSError, json.JSONDecodeError) as exc:
-        raise ToolError(f"cannot read layout contract {path}: {exc}") from exc
+        layout = json.loads(Path(path).read_bytes())
+    except (OSError, ValueError, RecursionError) as exc:
+        raise ToolError(f"cannot read layout contract {path}: {exc!r}") from exc
     try:
         canvas, cls, profiles = layout["canvas"], layout["classification"], layout["profiles"]
         if layout["default_profile"] not in profiles:
@@ -1051,6 +1051,21 @@ WAIVER_OUTCOMES = {
 }
 
 
+def require_waiver_report(args, inputs: list[str]) -> None:
+    """With --waive the report is the waiver log, so the run writes one: --no-report
+    and an empty --report (an unset "$REPORT") are refused, the default path is used
+    otherwise, and the report may not overwrite a file this run reads."""
+    if not args.waive:
+        return
+    if getattr(args, "no_report", False) or (args.report is not None and not args.report.strip()):
+        raise ToolError("--waive needs the report: the report is where waivers are logged")
+    if args.report is None:
+        args.report = _default_out(inputs[0], "layout-report.json")
+    read = {Path(f).resolve() for f in (args.waive, args.layout or DEFAULT_LAYOUT, *inputs)}
+    if Path(args.report).resolve() in read:
+        raise ToolError(f"--report {args.report} would overwrite a file this run reads")
+
+
 def apply_waivers(results: list[Result], waivers: list[dict], input_sha: str | None) -> list[dict]:
     """Apply the waivers bound to this input's sha256; return each with its outcome
     (a key of WAIVER_OUTCOMES). A waiver covers its rule's FAIL on that one file."""
@@ -1151,8 +1166,7 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
     waivers = load_waivers(args.waive)  # a bad waiver file is exit 2 before any work
     if args.waive and len(inputs) != 1:
         raise ToolError("a waiver binds to one file's sha256; check waived stills one at a time")
-    if args.waive and args.no_report:
-        raise ToolError("--waive needs the report: the report is where waivers are logged")
+    require_waiver_report(args, inputs)
     # Hashed before and again after every read (sampling, detection, guide): a file
     # replaced mid-run is an error, not a verdict on a mix of two files. A file swapped
     # and put back between the two hashes is not seen.
@@ -1197,8 +1211,7 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
 
 def cmd_spec(args, layout: dict, pname: str, profile: dict) -> int:
     waivers = load_waivers(args.waive)
-    if args.waive and args.report is None:  # waivers are logged in the report, so write one
-        args.report = _default_out(args.input, "layout-report.json")
+    require_waiver_report(args, [args.input])
     try:
         raw = Path(args.input).read_bytes()  # hashed and parsed from the same bytes
         spec = json.loads(raw)
