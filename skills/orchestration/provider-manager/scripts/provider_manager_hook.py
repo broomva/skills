@@ -34,7 +34,7 @@ RATE_LIMIT_PATTERNS = [
     r"too many requests",
     r"billing limit",
     r"quota exceeded",
-    r"credit balance",
+    r"credit balance is too low",
 ]
 
 RATE_LIMIT_RE = re.compile("|".join(RATE_LIMIT_PATTERNS), re.IGNORECASE)
