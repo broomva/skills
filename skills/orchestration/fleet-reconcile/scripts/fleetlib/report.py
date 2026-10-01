@@ -70,8 +70,11 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
         "spawn_pause": classify.spawn_pause(snap, results),
         "repos": [_repo_summary(r) for r in snap.get("repos") or []],
         "scheduled": snap.get("scheduled") or {},
-        "core_compare": compare,
+        "core_compare": _guarded(compare),
     }
+    # §5.7: a spawn recovered with two or more sessions under its name is an ask.
+    rep["spawn_duplicates"] = sorted({r.get("key") for r in records if r.get("kind") == "done"
+                                      and r.get("verb") == "spawn" and (r.get("result") or {}).get("duplicate")})
     rep["asks"], rep["asks_open"], rep["acked_still_open"] = make_asks(rep, records, now)
     rep["ask_keys_current"] = sorted(k for k, _, _ in candidates(rep))
     rep["resolved"] = resolved_keys(records, rep["ask_keys_current"], rep)
@@ -89,6 +92,14 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
                       "unseen": sum(1 for b in pending if not b["seen"]) + new_batch,
                       "oldest": min((b["ts"] for b in pending), default=None) or (snap["ts"] if new_batch else None)}
     return rep
+
+
+def _guarded(compare: Optional[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The latest compare line, its error text through the guard: an exception's
+    message can carry anything (report.json is read like report.md)."""
+    if compare and isinstance(compare.get("error"), str):
+        return dict(compare, error=common.safe_text(compare["error"], 200))
+    return compare
 
 
 def _repo_summary(r: Dict[str, Any]) -> Dict[str, Any]:
@@ -185,13 +196,18 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
                 name, "; ".join(ru["flags"]),
                 " Its PRs get no driver until it has a pull_request rule and checks pinned to GitHub Actions."
                 if not ru["driver_eligible"] else "")))
+    for key in rep.get("spawn_duplicates") or []:
+        cands.append(("spawn-duplicate:%s" % key, "count", "Spawn %s left two or more sessions under its name "
+                      "(fleet recover found them); one should be stopped by the owner." % key))
     cmp_ = rep.get("core_compare") or {}
-    if cmp_.get("refused"):  # one key for every reason, so the owner's one step answers one ask
-        cands.append(("compare:not-run", "observe", "The core comparison (ctx doctor --compare) is not run in "
-                      "scope %s: %s. The owner's step is in ctx-core SKILL.md." % (
-                          rep["scope"], COMPARE_REFUSALS[cmp_["refused"]])))
+    if cmp_.get("refused"):
+        # Keyed on the owner's action still owed: moving the file aside and
+        # registering are two steps, and a half-done one is a new ask.
+        cands.append(("compare:%s" % COMPARE_ACTIONS[cmp_["refused"]], "observe", "The core comparison "
+                      "(ctx doctor --compare) is not run in scope %s: %s. The owner's step is in ctx-core SKILL.md."
+                      % (rep["scope"], COMPARE_REFUSALS[cmp_["refused"]])))
     elif "error" in cmp_ and (cmp_.get("failed_in_a_row") or 0) >= COMPARE_FAILS_TO_ASK:
-        cands.append(("compare:failing", "observe", "The core comparison has failed its last %d runs in scope "
+        cands.append(("compare:failing", "observe", "The core comparison couldn't run its last %d attempts in scope "
                       "%s, latest: %s. tick.log has the detail." % (
                           cmp_["failed_in_a_row"], rep["scope"], common.safe_text(cmp_["error"], 160))))
     # Scheduled work is an inventory, report-only in phase 1: its readings
@@ -199,8 +215,13 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
     return cands
 
 
+#: observe.py's error for an origin that isn't a GitHub slug: a reading that won't change.
+NOT_GITHUB = "origin remote is not a GitHub slug"
+
 #: A failed comparison is retried at the next tick; this many in a row is an ask.
 COMPARE_FAILS_TO_ASK = 3
+
+COMPARE_ACTIONS = {"unregistered": "register", "prototype": "move", "unreadable": "move"}
 
 COMPARE_REFUSALS = {
     "unregistered": "it has no registration time yet; run it once with --registered",
@@ -262,8 +283,9 @@ def observed(key: str, rep: Dict[str, Any]) -> bool:
         mine = [r for r in rep["repos"] if (r.get("slug") or common.tilde(r["repo"])) == slug]
         if mine:
             return any(r.get("ok") for r in mine)
-        # Left the scope, unless a repo's slug couldn't be read (it may be this one).
-        return all(r.get("slug") for r in rep["repos"])
+        # Left the scope, unless a repo's slug couldn't be read (it may be this
+        # one); an origin that isn't GitHub is a reading, and never this one.
+        return all(r.get("slug") or (r.get("error") or "").startswith(NOT_GITHUB) for r in rep["repos"])
     return True  # listing, surface:*, repo:* and compare:* keys are about reading itself
 
 

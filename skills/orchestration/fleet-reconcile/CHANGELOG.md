@@ -1,5 +1,62 @@
 # Changelog: fleet-reconcile
 
+## [0.2.0] - 2026-10-01
+
+Phase 2 (spec §9 row 2): the coordinator and its verbs under dry run. Ticket BRO-2674.
+
+- **fleet act mail|spawn|label|resume** (`fleetlib/act.py`): refused in report
+  mode, on a corrupt ledger (mail, spawn) and on an unanswered ask about the
+  target; each re-observes and re-checks eligibility in code (§5.5's driver
+  rules, the caps, the spawn pause; mail only to fleet spawns and adopted
+  sessions, resolved by session id or the Paseo agent's current session, the
+  6 h rule; resume only a background session with no process, no flags);
+  intent before, outcome after; under dry run spawn, label and resume close at
+  once with the argv or call they would have made.
+- **The send gate** (`fleet send-gate pre|post`): the coordinator's SendMessage
+  hooks, every §5.7 check named in its refusal; dry run closes the intent and
+  still blocks.
+- **fleet recover**, run first in every tick: §5.7's recovery rules per verb.
+- **The coordinator** (`fleet coordinator`, act mode only): settings with the
+  hooks, `--disallowedTools Agent Edit Write` plus the pinned Paseo writes,
+  `--` before the prompt, the child environment, and the init event's tool
+  list checked as it starts (a disallowed or unclassified Paseo tool ends it).
+  The pinned Paseo 0.9.2 classification ships as the default, with a test that
+  fails on a tool it doesn't classify.
+- **The driver profile** (`fleet driver-profile`): probe 6's shape, 0600, the
+  token from `gh_token_file` and never printed.
+- **The janitor** (`fleet janitor-check`, `fleet janitor-run`): six checks,
+  failing closed when one can't run; the backup; removal of scratch worktrees
+  only until the owner accepts the drill.
+- Phase-1 carry-overs from #254's review: the compare asks keyed on the
+  owner's action owed; the failed-run counter tested; report.json's compare
+  error guarded; a non-GitHub origin no longer blocks a departed repo's
+  resolution; `fleet ack` says how many asks it answered, tested.
+- After Cross-Review (P20) round 1:
+  - the send gate fails closed on its own errors, inside the hook's time;
+  - mail templates take only fixed shapes (no free text), and hours come from
+    the config;
+  - the hold label is the owner's; a live label needs the fleet token;
+  - spawn refuses when the listing, job files, transcripts or a board weren't
+    read, reads names raw, refuses while a spawn of the key is unconfirmed,
+    records a spawn whose session the listing lags by its job id, and reads
+    every PR file (paginated);
+  - the coordinator loads no MCP server, has NotebookEdit disallowed and a
+    budget, is stopped on an event before its init event or none within 60 s,
+    and stays in the watchdog's process group;
+  - the janitor refuses an owner that doesn't own the path, needs the board
+    for a scope repo's owner, counts its ancestors as its own, finds secrets
+    in ignored directories, and prunes;
+  - tick.sh exports the fleet token before recover and runs no live
+    coordinator without it;
+  - a duplicate spawn is an ask.
+- Drills on scratch sessions (evidence under
+  `~/.config/broomva/fleet/phase2-drills-20261001/`):
+  - PASS: kill switch, tool-list posture, SendMessage refusals 5/5, the
+    injected-text floor, the janitor;
+  - driver profile: the sandbox half passed, fresh and resumed; the credential
+    half is blocked on the token file;
+  - not run: the recovery drill.
+
 ## [0.1.0] - 2026-09-30
 
 Phase 1 of fleet-reconcile (broomva/workspace

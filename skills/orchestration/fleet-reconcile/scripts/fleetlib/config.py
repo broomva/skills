@@ -33,7 +33,7 @@ SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     "caps": ("caps", None),
     "mail_interval_h": ("int", 6),
     "paseo_tools": ("paseo_tools", None),
-    "driver": ("dict", None),
+    "driver": ("driver", None),
     "adopted": ("adopted", []),
     "b_step_timeout_min": ("int", 10),        # #840's step, once it ships (§5.7)
     # phase 1
@@ -48,9 +48,41 @@ SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     "ask_renotify_h": ("int", 6),             # an unseen ask batch is shown again at most this often
     "tick_timeout_min": ("int", 15),
     "compare_hour": ("int", 18),              # the core comparison runs once a day from this local hour
+    # phase 2
+    "coordinator_model": ("str_or_null", None),  # the coordinator's --model; null: Claude Code's default
+    "coordinator_budget_usd": ("num", 2),        # its --max-budget-usd per tick
 }
 CAP_KEYS = ("fleet_sessions", "active_sessions", "active_window_min", "research_spawns_per_day")
 CAP_DEFAULTS = {"fleet_sessions": 8, "active_sessions": 12, "active_window_min": 30, "research_spawns_per_day": 4}
+
+#: The pinned classification of Paseo's MCP tools (spec §5.7; evidence §5, Paseo
+#: 0.9.2): 19 without side effects and 42 writes. tick.sh disallows every write
+#: for the coordinator, and a tool in neither list stops it (and fails
+#: tests/test_coordinator.py against the captured tool list). A scope's
+#: `paseo_tools` replaces it.
+PASEO_TOOLS = {
+    "paseo_version": "0.9.2",
+    "read": ["browser_list_tabs", "browser_logs", "browser_screenshot", "browser_snapshot", "capture_terminal",
+             "get_agent_activity", "get_agent_status", "inspect_provider", "inspect_schedule", "list_agents",
+             "list_models", "list_pending_permissions", "list_profiles", "list_providers", "list_schedules",
+             "list_terminals", "list_workspace_scripts", "list_workspaces", "schedule_logs"],
+    "write": ["archive_agent", "archive_workspace", "cancel_agent", "create_agent", "create_heartbeat",
+              "create_schedule", "create_terminal", "create_workspace", "delete_heartbeat", "delete_schedule",
+              "kill_agent", "kill_terminal", "pause_schedule", "rename_workspace", "respond_to_permission",
+              "resume_schedule", "run_schedule_once", "send_agent_prompt", "send_terminal_keys", "set_agent_mode",
+              "start_workspace_script", "stop_workspace_script", "update_agent", "update_schedule",
+              "browser_back", "browser_click", "browser_close_tab", "browser_drag", "browser_evaluate",
+              "browser_fill", "browser_forward", "browser_hover", "browser_keypress", "browser_navigate",
+              "browser_new_tab", "browser_reload", "browser_resize", "browser_scroll", "browser_select",
+              "browser_type", "browser_upload", "browser_wait"],
+}
+
+#: The driver profile's defaults (spec §5.5, §5.7; probe 6's GitHub entries).
+#: Package registries and toolchain caches start empty: the driver-profile
+#: drill adds what a scope's build needs.
+DRIVER_DEFAULTS = {"model": None, "allowed_domains": ["api.github.com", "github.com", "*.githubusercontent.com"],
+                   "allow_write": []}
+DRIVER_KEYS = ("model", "allowed_domains", "allow_write")
 
 
 class ConfigError(ValueError):
@@ -66,6 +98,7 @@ def _check(kind: str, key: str, v: Any) -> None:
     ok = {
         "int01": lambda: type(v) is int and v in (0, 1),
         "int": lambda: type(v) is int and v >= 0,
+        "num": lambda: type(v) in (int, float) and v > 0,
         "str": lambda: isinstance(v, str) and bool(v),
         "str_or_null": lambda: v is None or isinstance(v, str),
         "mode": lambda: v in ("report", "act"),
@@ -77,6 +110,10 @@ def _check(kind: str, key: str, v: Any) -> None:
         "paseo_tools": lambda: isinstance(v, dict) and not (set(v) - {"paseo_version", "read", "write"})
         and all(isinstance(v.get(k, []), list) and all(isinstance(t, str) for t in v.get(k, []))
                 for k in ("read", "write")),
+        "driver": lambda: isinstance(v, dict) and not (set(v) - set(DRIVER_KEYS))
+        and (v.get("model") is None or isinstance(v.get("model"), str))
+        and all(isinstance(v.get(k, []), list) and all(isinstance(t, str) and t for t in v.get(k, []))
+                for k in ("allowed_domains", "allow_write")),
         "adopted": lambda: isinstance(v, list) and all(
             isinstance(e, dict) and isinstance(e.get("session_id"), str) and ctx.SESSION_ID_RE.match(e["session_id"])
             and (e.get("paseo_agent_id") is None or isinstance(e.get("paseo_agent_id"), str))
@@ -130,6 +167,8 @@ def scope(sid: str, check_scopes: bool = True) -> Dict[str, Any]:
     for key, (_, default) in SCOPE_KEYS.items():
         sec.setdefault(key, default)
     sec["caps"] = dict(CAP_DEFAULTS, **(sec.get("caps") or {}))
+    sec["paseo_tools"] = sec.get("paseo_tools") or PASEO_TOOLS
+    sec["driver"] = dict(DRIVER_DEFAULTS, **(sec.get("driver") or {}))
     sec["state_dir"] = str(common.expand(sec.get("state_dir") or "~/.local/state/fleet-reconcile/%s" % sid))
     if sec.get("gh_token_file"):
         sec["gh_token_file"] = str(common.expand(sec["gh_token_file"]))

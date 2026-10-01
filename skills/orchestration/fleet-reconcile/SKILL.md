@@ -3,9 +3,10 @@ name: fleet-reconcile
 tier: D
 primitive: null
 category: orchestration
-version: 0.1.0
+version: 0.2.0
 description: |
-  The hourly fleet coordinator, phase 1: observe and classify, report only.
+  The hourly fleet coordinator. Phase 1 observes and classifies, report only;
+  phase 2 adds the coordinator and its verbs under dry run.
   Each tick reads every Claude Code session (claude agents --json --all and the
   background job files), Paseo's agent records and schedules from disk, the
   ctx-core board, transcript times, and GitHub (open PRs and the effective
@@ -13,22 +14,26 @@ description: |
   spec's class table, runs the count check, inventories scheduled work
   (Paseo schedules, com.broomva.* LaunchAgents, bookkeeping, Dream), and writes
   a markdown and JSON report plus one batch of owner asks, shown in a dialog.
-  It acts on no session: no mail, spawn, label or resume in phase 1. Runs
+  In act mode (phase 2) a headless coordinator acts only through fleet act
+  (mail, spawn, label, resume), which re-checks eligibility in code and, under
+  dry run, logs what it would do; a send gate hooks its SendMessage. Runs
   hourly from launchd once the owner installs it. Coordination only; not a
   security boundary. USE WHEN installing or checking the fleet tick, reading a
   tick report, answering the fleet's asks (fleet asks, fleet ack), asking
   "which sessions are live / stalled / waiting on me", "which repos can get a
   driver", "what runs on a schedule and is it keeping time", or producing the
-  phase-1 labelling sheet. NOT FOR messaging, spawning or resuming sessions
-  (phase 2 dry run, phase 3 live), merging PRs, or waiting on CI (use p9).
+  phase-1 labelling sheet, rendering a driver profile, checking a worktree
+  before a janitor removes it. NOT FOR live actions (phase 3, after the spec's
+  §5.2 preconditions), merging PRs, or waiting on CI (use p9).
 when_to_use: |
   Triggers on "fleet tick", "fleet reconcile", "fleet-reconcile", "fleet asks",
   "fleet ack", "class table", "which sessions are stalled", "count check",
   "labelling sheet", "install the tick", "is the fleet running", "scheduled
-  work inventory".
+  work inventory", "fleet act", "send gate", "driver profile", "janitor-check",
+  "fleet recover".
 ---
 
-# fleet-reconcile: the hourly coordinator (phase 1: observe and classify)
+# fleet-reconcile: the hourly coordinator (phase 1 observe and classify; phase 2 dry run)
 
 The 09-26 → 09-29 run's coordinator reported 6 live sessions when there were
 30, lost state to compaction, and kept its ledgers by hand. This skill is the
@@ -38,10 +43,13 @@ observe, §5.4 classes, §9 row 1), with the formats of its 2026-09-30
 build-readiness amendment (§5.7, broomva/workspace#842, merged as 007f05a98).
 Ticket BRO-2674.
 
-Phase 1 is report-only and runs deterministic code; no model reads or decides
-anything in a tick. It observes, classifies and reports, and asks the owner in
-one batch per tick. The `would do` column of a report says what phase 3 would
-do; nothing is done.
+Phase 1 (`mode: report`, the installed default) is report-only and runs
+deterministic code; no model reads or decides anything in a tick. It observes,
+classifies and reports, and asks the owner in one batch per tick. The `would
+do` column of a report says what phase 3 would do; nothing is done. Phase 2
+(`mode: act`, `dry_run: 1`) adds one headless coordinator per tick, which acts
+only through `fleet act`; under dry run every verb but ask logs what it would
+do (see "Phase 2" below).
 
 **Not a boundary.** Nothing here constrains any session. The tick's reads are
 the owner's own reads (claude agents, gh with the fleet token or the keyring,
@@ -98,9 +106,11 @@ Trash; the config, the releases and the state dir stay.
    and to no other child. An absent, unreadable or empty file means the
    keyring, which the report says. A file whose mode isn't 0600 or 0400 is not
    used (the keyring is), and the `tick_fire` record says why.
-6. `fleet observe`, `fleet report` and `fleet core-compare` (the core's
-   comparison, once a day from `compare_hour`), each in its own
-   process group under a TERM-then-KILL watchdog bounded by
+6. `fleet recover` (closes intents a dead tick left open), `fleet observe`,
+   `fleet report`, in act mode `fleet coordinator` (only after the three
+   before it succeeded; it also gets the fleet token), and `fleet
+   core-compare` (the core's comparison, once a day from `compare_hour`),
+   each in its own process group under a TERM-then-KILL watchdog bounded by
    `tick_timeout_min` (15), so a timeout also ends its `claude` and `gh`
    children.
 7. `tick_fire` and `runner_exit` records in the ledger (through
@@ -184,10 +194,11 @@ unless some repo's slug couldn't be read). A key left open because its surface
 wasn't read is still listed and counted, as not re-checked. Keys carry no counts or error text, so they don't change tick to
 tick. A prompt's key is the session and what it waits for: the first tick that
 sees it not waiting resolves it, so the next wait is a new ask (two waits
-between ticks read as one). The core comparison asks when it can't run (no
-registration time, the prototype's `compare.jsonl`, a first line that can't be
-read: one key, so the owner's one step answers one ask), and when it has
-failed three runs in a row; a failed run is retried at the next tick. A tick writes a batch
+between ticks read as one). The core comparison asks when it can't run, keyed
+on the owner's action still owed (`compare:move` for the prototype's
+`compare.jsonl` or a first line that can't be read, `compare:register` for no
+registration time), and when it couldn't run three attempts in a row; a failed
+attempt is retried at the next tick. A tick writes a batch
 (`<state_dir>/asks/<tick>.md` and an ask intent in the ledger) only when it has
 a new key.
 
@@ -224,6 +235,10 @@ under dry run (§5.7): it reaches only the owner.
   ticks/<NNNNN>/snapshot.json, report.json, report.md   (snapshots pruned after 7 days)
   asks/<NNNNN>.md                                one ask batch per tick
   labelling/<name>.md, .csv                      the owner's labelling sheet
+  ticks/<NNNNN>/coordinator.jsonl, .err          the coordinator's stream (act mode)
+  coordinator-settings.json                      its send-gate hooks, 0600
+  profiles/<fleet key>.json, ghcfg/<fleet key>/  a live driver's 0600 profile and empty gh dir
+  backups/<path hash>/<UTC>/                     the janitor's backups, deleted after 14 days
   tick.log, tick-counter, .tick.lock, .alert-<kind>
 ~/.local/share/fleet-reconcile/releases/<commit>/  the pinned copy the job runs
 ~/Library/Logs/com.broomva.fleet-reconcile.<scope>.log
@@ -232,7 +247,10 @@ under dry run (§5.7): it reaches only the owner.
 Config keys beyond §5.7's, pending the spec: `listing_cap`, `pr_list_cap`,
 `gh_token_file`, `actions_app_id` (15368, GitHub Actions), `launchd_prefix`,
 `launchd_logs` (a label's real log, when its stdout is silent),
-`bookkeeping_run_log`, `dream_run_log`, `ask_renotify_h`, `tick_timeout_min`, `compare_hour`.
+`bookkeeping_run_log`, `dream_run_log`, `ask_renotify_h`, `tick_timeout_min`, `compare_hour`,
+`coordinator_model` (phase 2; null is Claude Code's default), `coordinator_budget_usd` (2). §5.7's `paseo_tools` defaults to
+the pinned 0.9.2 classification (19 read, 42 write) and `driver` to probe 6's GitHub
+allowlist with no registries.
 §5.7's `b_step_timeout_min` and an adoption's `paseo_agent_id` are accepted.
 
 ## Scheduled work (report-only; the seam for the Dream and heartbeat section)
@@ -266,7 +284,13 @@ the spec.
 fleet config-get <scope> <key> | config-check [<scope>]
 fleet observe --tick N [--fixtures DIR]
 fleet report --tick N [--dry-run 0|1]
-fleet act ask --show --tick N             (mail, spawn, label, resume: refused in phase 1, exit 3)
+fleet act ask --show --tick N
+fleet act mail --session SID --template stalled|hung|overlap [--var k=v ...]
+fleet act spawn --repo OWNER/NAME --pr N | label --repo R --pr N --label L [--remove] | resume --session SID
+fleet recover | send-gate pre|post (stdin: the hook JSON) | coordinator --tick N
+fleet config-check <scope> --init <stream-json file>
+fleet driver-profile --key K [--write]       (the token is never printed)
+fleet janitor-check PATH --owner ID | janitor-run PATH --owner ID [--remove]
 fleet asks [--all] | ack <tick> [--ask ID ...] | ack --all
 fleet next-tick | ledger-append fire|exit --tick N
 fleet core-compare [--force]
@@ -282,7 +306,7 @@ the caller's cwd and user site stay off `sys.path`; it imports ctx-core from
 ```bash
 cd skills/orchestration/fleet-reconcile
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py      # every rule deleted, every overlapping pair swapped, 55 protections removed
+python3 tests/mutation_check.py      # every rule deleted, every overlapping pair swapped, 141 protections removed
 python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (anonymized; public repo)
 ```
 
@@ -294,13 +318,114 @@ python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (a
 | `test_report.py` | Every section; withheld crm/ paths and tokens; per-occurrence asks (once, then still open; an answer holds while true; a recurrence is new; a different question is new), answers per batch, stable count keys, failed-surface asks, a resolution only from the surfaces that raise the key (for a session that still classifies, too), open asks not re-checked still listed, a wait's key holding while its subagents write, a failing comparison asked after three runs with its error guarded, the ack wording, the ruleset wording, the dialog's re-show rule, scheduled work as inventory only; the labelling sheet (distinct sessions only) |
 | `test_ledger.py` | Validation, distinct owner ids within one millisecond, corrupt-line counting, 4 processes × 50 appends lose nothing, the ask and spawn folds |
 | `test_tick.py` | tick.sh end to end with stub claude/gh/osascript/p9: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, the token reaching gh and not claude, an empty token file, a token file open to others not used, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, the dialog shown again at the next tick and stopped by Seen, a dialog that can't be shown not recorded as seen, a failed compare not using up the day and the prototype's compare line refused and asked about, the dialog's default button and line, no p9 when the dialog fails, ack refused inside a session, refused verbs, the labelling sheet |
+| `test_act.py` | Every verb refused in report mode and on a corrupt ledger or an open ask on its target; spawn's floor (held, draft, Dependabot, owner-merge, unread files, unruled repo, closed PR, taken name, a branch checked out, the caps, unknown claims, the spawn pause) against text that says otherwise; dry spawn, label and resume closed with the argv or call; mail only to fleet or adopted sessions, the 6 h rule (failed doesn't count, live and dry apart), not_live, ambiguous_name, a Paseo relaunch followed, template values guarded, no template names a merge or removal |
+| `test_sendgate.py` | Each pre check refusing with its own name; dry run closing the intent and still blocking; a live send passing and post closing it with the msg_id; harness_refused and unledgered_send; the CLI failing closed |
+| `test_recover.py` | Mail found in either delivery shape only after the intent, else lost or unknown; spawn's one, none or duplicate rows; resume by process start; label by the PR's labels |
+| `test_coordinator.py` | Every Paseo tool the captured 0.9.2 list holds is classified (fails when Paseo adds one); the argv's disallowed list and `--`; the settings' hooks; the posture check; a coordinator whose tool list fails it terminated; the child environment; the driver profile's shape, 0600 file, the token file's mode rule, the token never printed |
+| `test_janitor.py` | Each check passing, failing, or not running (a process listing showing only the janitor); the backup; pruning; report-only without --remove; no removal of a scope repo's worktree; the scratch run's order |
 | `test_install.py` | The pinned copy (runnable without the checkout), plist rendering, config seeded once at 0600, bootout-wait-bootstrap on every run, a retried bootstrap, uninstall to the Trash, dry run, a broken config, uncommitted changes refused without --force |
 
-## Phase 2 and 3
+## Phase 2: acting under dry run (spec §5.3, §5.5, §5.7, §9 row 2)
 
-Phase 2 (dry run, spec §9 row 2) adds `fleet act mail|spawn|label|resume`
-writing intent before and outcome after, `fleet recover`, the coordinator's
-settings (disallowedTools from the pinned Paseo classification, the
-SendMessage hooks), the driver profile generator and `fleet janitor-check`,
-all under `DRY_RUN=1`, with the drills. Phase 3 needs the three preconditions
-in spec §5.2.
+Switch a scope with `"mode": "act"` and `"dry_run": 1` in `~/.config/ctx/fleet.json`
+(sri stays at report in every phase, §5.6). Each tick then runs one coordinator
+after the report: `claude -p --name fleet-coordinator-<scope> --settings
+<state>/coordinator-settings.json --output-format stream-json --verbose
+--permission-mode bypassPermissions --strict-mcp-config --max-budget-usd
+<coordinator_budget_usd, 2> --disallowedTools Agent Edit Write NotebookEdit
+mcp__paseo__<each pinned write tool> -- "<runner prompt>"`, with the Claude and
+Paseo variables unset and `FLEET_CHILD=1`, `FLEET_TICK`, `DRY_RUN` set; no MCP
+server loads (pending the spec, which names only the Paseo writes). Its init
+event's tool list is checked as it starts: a disallowed tool, a Paseo tool in
+neither pinned list, an event before the init event, or no init event within
+60 s stops it (exit 4; the tick fails loudly). It stays in the step's process
+group, so tick.sh's TERM-then-KILL reaches it. A live tick (`dry_run: 0`)
+without a usable fleet token file runs no coordinator and alerts. The tool
+list is a posture: the coordinator runs unsandboxed and its Bash reaches git,
+gh and the Paseo CLI.
+
+**fleet act** (`scripts/fleetlib/act.py`) is its named route. Each verb refuses
+in report mode, on a corrupt ledger (mail, spawn) and on an unanswered ask about
+its target, then re-observes and re-checks in code:
+
+- `spawn --repo R --pr N` (drivers only; janitor runs are report-only): §5.5's
+  rules from a fresh observation (ruleset, open, not draft or Dependabot, no
+  `hold` label, no `research/entities/**` file among all its files, no live
+  session on its branch, no unknown claim, the name unused live or stopped in
+  the raw listing, ≤ 8 live fleet sessions, ≤ 12 active in 30 min, no
+  usage-limit pause), refusing when the listing, job files, transcripts or any
+  board weren't read, or while a spawn of the same key is unconfirmed. The
+  argv is §5.3's: `claude --bg -w <key> --name <key> --strict-mcp-config
+  --dangerously-skip-permissions --settings <0600 profile> "<brief>"`. A live
+  spawn is refused without the fleet token file; one whose session the
+  listing doesn't show yet is done with its job id, which keys it until then.
+- `mail --session SID --template ...`: only a fleet spawn in the ledger or an
+  adopted session; resolved to the live row by session id, else through its
+  Paseo agent's current session; refused when no row has a process
+  (`not_live`) or another live row carries its name (`ambiguous_name`); one per
+  recipient (the Paseo agent id, else the session id) per `mail_interval_h`,
+  live and dry counted apart, a failed mail not counted. It prints the exact
+  `to` and `message` for SendMessage. The templates never name a merge or a
+  removal, and take no free text: `other` must be a session name and `paths`
+  up to five plain paths; `hours` comes from the config.
+- `resume --session SID`: only a fleet or adopted background session with no
+  process, never twice while one is unconfirmed; `claude --bg --resume <id>`
+  with no other flag (a flag starts a copy; so does a session that still holds
+  its process, which the drill measured).
+- `label --repo R --pr N --label L [--remove]`: an open PR of a scope repo;
+  never the `hold` label (the owner's); live only on the fleet token.
+
+Each writes its intent (fsynced) before acting; under dry run spawn, label and
+resume are closed at once with `done` and `would: true` plus the argv or API
+call. **The send gate** (`sendgate.py`) is mail's other half: the coordinator's
+PreToolUse hook on SendMessage refuses unless an unclosed mail intent from this
+tick matches `to` exactly (no `[ref]`) and `message`, the recipient is still
+fleet or adopted, the 6 h rule holds, and a fresh listing shows exactly one
+live row with that name and the intent's session id; under dry run a send that
+passes is closed `done (would)` and still blocked. The gate fails closed: an
+error of its own (a config it can't read included) exits 2, and it bounds its
+ledger lock (3 s) and listing (5 s) inside the hook's 10 s, since a hook the
+harness kills lets the tool run. PostToolUse and
+PostToolUseFailure close a live send, and a send with no intent is recorded as
+`unledgered_send`. **fleet recover** closes every intent a dead tick left open
+from what happened (§5.7's rules).
+
+**The driver profile** (`profile.py`, `fleet driver-profile`): probe 6's shape,
+written 0600 per spawn under `profiles/`, with GH_TOKEN from `gh_token_file`
+(mode 600 or 400 only) and an empty per-spawn `GH_CONFIG_DIR`.
+
+**The janitor** (`janitor.py`): `fleet janitor-check PATH --owner ID` exits 0
+only when every check passes, 1 on a failure and 2 when a check couldn't run;
+`fleet janitor-run` refuses unless the owner's cwd is in PATH, prunes backups
+older than 14 days, checks, stops the owner, re-checks, backs up, re-reads the
+listing and runs `claude rm`, and removes nothing but scratch worktrees (of no
+scope repo) until the owner accepts the janitor drill. A scope repo's owner
+needs a terminal status on the board; the listing's `done` counts only for a
+scratch worktree.
+
+Not built in phase 2: `fleet adopt` and `fleet audit` (the owner's side), the
+recovery drill, spawning through bstack's peer.py (it takes no settings path;
+the argv is built here), research spawns.
+
+**Drills** (scratch sessions and repos, 2026-10-01; evidence in
+`~/.config/broomva/fleet/phase2-drills-20261001/`):
+
+- PASS: the kill switch; the tool-list posture; SendMessage refusals (5 of 5);
+  the injected-text eligibility floor; the janitor.
+- Driver profile:
+  - the sandbox half passed on a fake token, fresh and after a resume;
+  - the credential half is BLOCKED on the fleet token file;
+  - the update-branch probe is BLOCKED on the same file.
+- NOT RUN: the recovery drill.
+
+**The ask channel moves to Paseo.** Owner decision, 2026-10-01: owner
+notifications go through the Paseo app (a needs-attention ask, the paseo-asks
+plugin, or a Maestro "Needs you" item), never a macOS dialog. This replaces the
+dialog that workspace#842 chose for `fleet act ask`; a follow-up PR builds it.
+
+## Phase 3
+
+Needs the three preconditions of spec §5.2: the fleet token, the Merge Gate
+judged by the base's copy, and the Hold and owner-merge checks. It also needs
+the blocked and unrun drills above, and the owner's review of the dry run's
+proposals. Then `dry_run: 0`.

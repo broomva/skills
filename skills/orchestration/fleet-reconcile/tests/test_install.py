@@ -67,6 +67,9 @@ def test_install_pins_a_copy_renders_the_plist_seeds_the_config_and_loads_the_jo
     assert rel.name.startswith(commit)
     for f in ("orchestration/fleet-reconcile/scripts/tick.sh", "orchestration/fleet-reconcile/scripts/fleet",
               "orchestration/fleet-reconcile/templates/fleet.json.example",
+              "orchestration/fleet-reconcile/templates/mail/stalled.txt",
+              "orchestration/fleet-reconcile/templates/runner-prompt.md",
+              "orchestration/fleet-reconcile/templates/driver-brief.md",
               "orchestration/ctx-core/scripts/ctx.py", "RELEASE"):
         assert (rel / f).is_file(), f
     assert not list(rel.rglob("__pycache__")) and not (rel / "orchestration/fleet-reconcile/tests").exists()

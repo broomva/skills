@@ -57,9 +57,9 @@ def owner_by() -> str:
     return "owner:" + common.safe_text(tty, 40)
 
 
-def _lock(state_dir: Path) -> int:
+def _lock(state_dir: Path, wait: float = LOCK_WAIT_S) -> int:
     fd = os.open(str(state_dir / "ledger.lock"), os.O_RDWR | os.O_CREAT, 0o600)
-    deadline = time.monotonic() + LOCK_WAIT_S
+    deadline = time.monotonic() + wait
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
@@ -71,7 +71,7 @@ def _lock(state_dir: Path) -> int:
             time.sleep(0.02)
 
 
-def append(state_dir: Path, record: Dict[str, Any]) -> Dict[str, Any]:
+def append(state_dir: Path, record: Dict[str, Any], wait: float = LOCK_WAIT_S) -> Dict[str, Any]:
     """Validate, stamp (v, ts, id) and append one record; returns it as written.
     The id is taken under the lock: <tick>-<n> in a tick, owner-<epoch ms>
     outside one."""
@@ -97,7 +97,7 @@ def append(state_dir: Path, record: Dict[str, Any]) -> Dict[str, Any]:
     if isinstance(rec.get("detail"), str):
         rec["detail"] = common.safe_text(rec["detail"], 200)
     state_dir = common.ensure_dir(Path(state_dir))
-    lock_fd = _lock(state_dir)
+    lock_fd = _lock(state_dir, wait)
     try:
         if "id" not in rec:
             records, _ = read(state_dir)
@@ -156,7 +156,8 @@ def read(state_dir: Path) -> Tuple[List[Dict[str, Any]], int]:
 # Folds
 
 def spawned(records: Iterable[Dict[str, Any]]) -> Dict[str, List[str]]:
-    """Live (never dry) spawns: {fleet key: [session ids]} from done records."""
+    """Live (never dry) spawns: {fleet key: [session ids, and the background
+    job id (a session id's first 8 hex) when the listing lagged the spawn]}."""
     records = list(records)
     intents = {r["id"]: r for r in records if r.get("kind") == "intent" and r.get("verb") == "spawn"
                and not r.get("dry_run")}
@@ -165,6 +166,7 @@ def spawned(records: Iterable[Dict[str, Any]]) -> Dict[str, List[str]]:
         if r.get("kind") == "done" and r.get("verb") == "spawn" and not r.get("dry_run") and r.get("of") in intents:
             res = r.get("result") or {}
             ids = res.get("session_ids") or ([res["session_id"]] if res.get("session_id") else [])
+            ids = list(ids) + ([res["job_id"]] if isinstance(res.get("job_id"), str) and not ids else [])
             out.setdefault(intents[r["of"]].get("key") or "", []).extend(i for i in ids if isinstance(i, str))
     return out
 
@@ -228,6 +230,47 @@ def key_states(records: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
 def open_by_key(records: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
     """{ask key: {"ask", "tick", "ts", "of"}} for every open key."""
     return {k: v for k, v in key_states(records).items() if v["state"] == "open"}
+
+
+def closing(records: Iterable[Dict[str, Any]]) -> Dict[str, Dict[str, Any]]:
+    """{intent id: the outcome (done, failed or unknown) that closed it}. The
+    first outcome closes an intent; a later one for the same id is a second
+    writer's and doesn't reopen or change it."""
+    out: Dict[str, Dict[str, Any]] = {}
+    for r in records:
+        if r.get("kind") in OUTCOMES and r.get("of") and r["of"] not in out:
+            out[r["of"]] = r
+    return out
+
+
+def open_intents(records: Iterable[Dict[str, Any]], verb: Optional[str] = None) -> List[Dict[str, Any]]:
+    """Intents with no outcome yet, in write order (ask intents excluded:
+    their answer is an ack, not an outcome)."""
+    records = list(records)
+    shut = closing(records)
+    return [r for r in records if r.get("kind") == "intent" and r.get("verb") != "ask" and r.get("id") not in shut
+            and (verb is None or r.get("verb") == verb)]
+
+
+def mail_recent(records: Iterable[Dict[str, Any]], recipient: str, now: float, hours: float, dry: bool,
+                exclude: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """The 6 h rule (§5.7): a mail intent to this recipient (its Paseo agent id,
+    else its session id) from the last `hours` that is unclosed, or closed done
+    or unknown; a failed one doesn't count. Live and dry are counted apart."""
+    records = list(records)
+    shut = closing(records)
+    since = now - hours * 3600
+    for r in records:
+        if r.get("kind") != "intent" or r.get("verb") != "mail" or r.get("id") == exclude:
+            continue
+        if bool(r.get("dry_run")) != dry or (r.get("target") or {}).get("recipient") != recipient:
+            continue
+        if (common.parse_iso(r.get("ts")) or 0.0) < since:
+            continue
+        out = shut.get(r["id"])
+        if out is None or out["kind"] in ("done", "unknown"):
+            return r
+    return None
 
 
 def last_tick(records: Iterable[Dict[str, Any]]) -> Optional[int]:

@@ -2,7 +2,8 @@
 """fleet: the fleet-reconcile CLI (broomva/workspace
 docs/specs/2026-09-29-fleet-reconcile-design.html, §5.7).
 
-Phase 1 observes and classifies and reports; it acts on no session. Stdlib
+Phase 1 observes, classifies and reports; phase 2 adds the verbs under dry
+run (mode act, dry_run 1); phase 3 runs them live. Stdlib
 only. Run through scripts/fleet, which execs `python3 -I` so the tick's cwd and
 the user site stay off sys.path; this file puts its own directory and
 ../ctx-core/scripts (the same checkout) there itself.
@@ -12,7 +13,13 @@ the user site stay off sys.path; this file puts its own directory and
     fleet observe --tick N                  write ticks/<N>/snapshot.json
     fleet report --tick N [--dry-run 0|1]   classify; write report.json, report.md and the ask batch
     fleet act ask --show [--tick N]         show the owner a dialog of the open asks (Seen / Later)
-    fleet act mail|spawn|label|resume       phase 2: refuses in this build
+    fleet act mail|spawn|label|resume       phase 2: re-check eligibility, intent, then dry or live (act.py)
+    fleet recover [--tick N]                close intents a dead tick left open (recover.py)
+    fleet send-gate pre|post                the coordinator's SendMessage hooks (sendgate.py)
+    fleet coordinator --tick N              the coordinator's claude -p, in act mode (coordinator.py)
+    fleet driver-profile --key K [--write]  a driver's 0600 settings file (profile.py)
+    fleet janitor-check <path> --owner ID   the janitor's guard, failing closed (janitor.py)
+    fleet janitor-run <path> --owner ID     check, stop, re-check, back up, remove (scratch only, for now)
     fleet asks [--all]                      the owner's open asks
     fleet ack <tick> [--ask ID ...] | --all answer a batch, whole or per ask; or every open batch
     fleet ledger-append fire|exit --tick N  tick.sh's tick_fire and runner_exit records
@@ -90,6 +97,25 @@ def cmd_config_check(args: argparse.Namespace) -> int:
     except config.ConfigError as exc:
         print("fleet config-check: %s" % exc, file=sys.stderr)
         return 1
+    if args.init:
+        # §5.7: the coordinator's stream-json init event against the pinned tool lists.
+        from fleetlib import coordinator
+
+        sec = config.scope(args.scope_id or os.environ.get("FLEET_SCOPE") or sorted(raw["scopes"])[0])
+        try:
+            ev = coordinator.init_event(Path(args.init).read_text(encoding="utf-8").splitlines())
+        except OSError as exc:
+            print("fleet config-check --init: %s" % exc, file=sys.stderr)
+            return 1
+        if ev is None:
+            print("fleet config-check --init: no system/init event in %s" % args.init, file=sys.stderr)
+            return 1
+        probs = coordinator.posture_problems(ev.get("tools") or [], sec)
+        for p in probs:
+            print("fleet config-check --init: %s" % p, file=sys.stderr)
+        if probs:
+            return 1
+        print("fleet config-check --init: %d tools, none disallowed or unclassified" % len(ev.get("tools") or []))
     print("fleet config-check: ok (%s)" % config.path())
     return 0
 
@@ -120,6 +146,14 @@ def _compare_state(scope_id: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
     return None, lines
 
 
+def failed_in_a_row(lines: List[Dict[str, Any]]) -> int:
+    """How many of compare.jsonl's last lines are errors, back to the latest run."""
+    n = 0
+    while n < len(lines) and "error" in lines[-1 - n]:
+        n += 1
+    return n
+
+
 def _compare_lines(scope_id: str) -> List[Dict[str, Any]]:
     import ctx
 
@@ -144,12 +178,7 @@ def cmd_report(args: argparse.Namespace) -> int:
     records, _ = ledger.read(sd)
     dry = _dry(args, sec)
     refused, lines = _compare_state(sec["scope"])
-    latest = None
-    if not refused:
-        n = 0
-        while n < len(lines) and "error" in lines[-1 - n]:
-            n += 1
-        latest = dict(lines[-1], failed_in_a_row=n)
+    latest = None if refused else dict(lines[-1], failed_in_a_row=failed_in_a_row(lines))
     rep = report.build(snap, records, dry, {"refused": refused} if refused else latest)
     common.write_json(td / "report.json", rep)
     common.write_atomic(td / "report.md", report.render_md(rep).encode("utf-8"))
@@ -226,12 +255,51 @@ def due_batches(records: list, open_keys: Dict[str, Dict], now: float,
     return out
 
 
+def _tick(args: argparse.Namespace) -> Optional[int]:
+    if getattr(args, "tick", None):
+        return args.tick
+    t = os.environ.get("FLEET_TICK", "")
+    return int(t) if t.isdigit() else None
+
+
+def cmd_act_verb(args: argparse.Namespace, sec: dict) -> int:
+    """mail, spawn, label, resume (fleetlib/act.py): one JSON line; exit 3 on a refusal."""
+    from fleetlib import act
+
+    if sec["mode"] != "act":  # before anything else, arguments included
+        print("fleet act %s: refused: scope %s is in report mode (observe, classify and ask); every other verb "
+              "waits for mode: act (§5.7)" % (args.verb, sec["scope"]), file=sys.stderr)
+        return EXIT_REFUSED
+    run = act.Act(sec, Sources(), _tick(args), _dry(args, sec))
+    try:
+        if args.verb == "mail":
+            if not args.session:
+                raise SystemExit("fleet act mail: --session is required")
+            values = dict(v.split("=", 1) for v in args.var or [] if "=" in v)
+            res = run.mail(args.session, args.template or "", values)
+        elif args.verb == "spawn":
+            if not (args.repo and args.pr):
+                raise SystemExit("fleet act spawn: --repo and --pr are required")
+            res = run.spawn(args.repo, args.pr, args.role)
+        elif args.verb == "label":
+            if not (args.repo and args.pr and args.label):
+                raise SystemExit("fleet act label: --repo, --pr and --label are required")
+            res = run.label(args.repo, args.pr, args.label, "remove" if args.remove else "add")
+        else:
+            if not args.session:
+                raise SystemExit("fleet act resume: --session is required")
+            res = run.resume(args.session)
+    except act.ModeRefused as exc:
+        print(str(exc), file=sys.stderr)
+        return EXIT_REFUSED
+    print(json.dumps(res, sort_keys=True))
+    return 0 if res["ok"] else EXIT_REFUSED
+
+
 def cmd_act(args: argparse.Namespace) -> int:
     sec = _sec(args)
     if args.verb != "ask":
-        print("fleet act %s: refused: phase 1 is report-only; the verb lands in phase 2 (DRY_RUN) and acts only "
-              "in phase 3" % args.verb, file=sys.stderr)
-        return EXIT_REFUSED
+        return cmd_act_verb(args, sec)
     sd = config.state_dir(sec)
     records, _ = ledger.read(sd)
     open_now = _open_now(records)
@@ -339,6 +407,109 @@ def cmd_ack(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_recover(args: argparse.Namespace) -> int:
+    from fleetlib import recover
+
+    sec = _sec(args)
+    out = recover.recover(sec, Sources(), _tick(args))
+    for r in out:
+        print("fleet recover: %s %s %s -> %s%s" % (r["of"], r["verb"], r["key"], r["kind"],
+                                                  " (%s)" % r["reason"] if r.get("reason") else ""))
+    print("fleet recover: %d open intent(s) closed" % len(out))
+    return 0
+
+
+def cmd_send_gate(args: argparse.Namespace) -> int:
+    """The coordinator's SendMessage hooks: the hook JSON on stdin; pre exits 2
+    to block. A gate that can't read its input blocks too (pre) and records
+    nothing it can't attribute (post)."""
+    from fleetlib import sendgate
+
+    # pre fails closed: any error, a config that can't be read included, is
+    # exit 2, which blocks the send; any other exit lets the tool run.
+    try:
+        sec = _sec(args)
+        try:
+            hook = json.loads(sys.stdin.read() or "{}")
+        except ValueError:
+            hook = {}
+        hook = hook if isinstance(hook, dict) else {}
+        if args.which == "pre":
+            code, msg = sendgate.pre(sec, Sources(), hook, _tick(args), _dry(args, sec), time.time())
+            if msg:
+                print(msg, file=sys.stderr)
+            return code
+        sendgate.post(sec, hook, _tick(args), _dry(args, sec))
+        return 0
+    except BaseException as exc:  # noqa: B036 - SystemExit from the config read too
+        if args.which != "pre":
+            print("fleet send-gate post: %s" % common.safe_text(exc, 160), file=sys.stderr)
+            return 0
+        print("fleet send gate refused this SendMessage: the gate failed (%s: %s), so it fails closed" % (
+            type(exc).__name__, common.safe_text(exc, 120)), file=sys.stderr)
+        return 2
+
+
+def cmd_coordinator(args: argparse.Namespace) -> int:
+    from fleetlib import coordinator
+
+    sec = _sec(args)
+    if sec["mode"] != "act":
+        print("fleet coordinator: scope %s is in report mode; no coordinator runs" % sec["scope"])
+        return 0
+    td = report.tick_dir(config.state_dir(sec), args.tick)
+    fleet_bin = str(HERE / "fleet")
+    res = coordinator.run(sec, args.tick, fleet_bin, td / "coordinator.jsonl", _dry(args, sec),
+                          claude=os.environ.get("FLEET_CLAUDE_BIN") or "claude")
+    if res["posture"]:
+        print("fleet coordinator: terminated: %s" % "; ".join(res["posture"]), file=sys.stderr)
+    elif not res["init"]:
+        print("fleet coordinator: no init event (exit %s)" % res["exit"], file=sys.stderr)
+    print("fleet coordinator: exit %s, init %s" % (res["exit"], "checked" if res["init"] else "missing"))
+    return res["exit"] if res["exit"] else (0 if res["init"] else 1)
+
+
+def cmd_driver_profile(args: argparse.Namespace) -> int:
+    """Render a driver's profile. Printed with the token withheld; --write
+    writes the real one 0600 (the token from gh_token_file, never printed)."""
+    from fleetlib import profile
+
+    sec = _sec(args)
+    sd = config.state_dir(sec)
+    token = profile.read_token(sec)
+    gh_cfg = profile.gh_config_dir(sd, args.key) if args.write else str(sd / "ghcfg" / args.key)
+    prof = profile.driver_profile(sec, args.key, token or "", gh_cfg)
+    if args.write:
+        if not token:
+            print("fleet driver-profile: no usable token file (%s): not written" % sec.get("gh_token_file"),
+                  file=sys.stderr)
+            return 1
+        print(str(profile.write(profile.path_for(sd, args.key), prof)))
+    shown = json.loads(json.dumps(prof))
+    shown["env"]["GH_TOKEN"] = "[withheld: %s]" % ("from the token file" if token else "no token file")
+    print(json.dumps(shown, indent=1, sort_keys=True))
+    return 0
+
+
+def cmd_janitor_check(args: argparse.Namespace) -> int:
+    from fleetlib import janitor
+
+    sec = _sec(args)
+    res = janitor.Guard(sec, Sources(), args.path, args.owner).run()
+    print(json.dumps(res, indent=1))
+    return res["exit"]
+
+
+def cmd_janitor_run(args: argparse.Namespace) -> int:
+    from fleetlib import janitor
+
+    sec = _sec(args)
+    res = janitor.run(sec, Sources(), args.path, args.owner, args.remove,
+                      lambda m: print("fleet janitor: %s" % m, file=sys.stderr))
+    print(json.dumps(res, indent=1, default=str))
+    return 0 if res.get("removed") or (not args.remove and not res.get("aborted")) else 1
+
+
 def cmd_next_tick(args: argparse.Namespace) -> int:
     """The next tick number: one past both the counter file and the ledger's
     last tick_fire, so a lost counter can't reuse a number. Writes the counter.
@@ -422,6 +593,7 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_config_get)
     p = sub.add_parser("config-check")
     p.add_argument("scope_id", nargs="?")
+    p.add_argument("--init", default=None, help="check a coordinator's stream-json init event (a file)")
     p.set_defaults(func=cmd_config_check)
     p = scoped(sub.add_parser("observe"))
     p.add_argument("--tick", type=int, required=True)
@@ -436,7 +608,40 @@ def main(argv=None) -> int:
     p.add_argument("--tick", type=int, default=0)
     p.add_argument("--show", action="store_true", help="ask: show the owner a dialog of the open asks")
     p.add_argument("--dry-run", default=None, choices=("0", "1"))
+    p.add_argument("--session", default=None, help="mail, resume: the target's session id")
+    p.add_argument("--template", default=None, help="mail: stalled, hung or overlap")
+    p.add_argument("--var", action="append", help="mail: a template value, k=v (repeatable)")
+    p.add_argument("--repo", default=None, help="spawn, label: owner/name")
+    p.add_argument("--pr", type=int, default=None)
+    p.add_argument("--role", default="driver", choices=("driver", "janitor", "research"))
+    p.add_argument("--label", default=None)
+    p.add_argument("--remove", action="store_true", help="label: remove instead of add")
     p.set_defaults(func=cmd_act)
+    p = scoped(sub.add_parser("recover"))
+    p.add_argument("--tick", type=int, default=0)
+    p.set_defaults(func=cmd_recover)
+    p = scoped(sub.add_parser("send-gate"))
+    p.add_argument("which", choices=("pre", "post"))
+    p.add_argument("--tick", type=int, default=0)
+    p.add_argument("--dry-run", default=None, choices=("0", "1"))
+    p.set_defaults(func=cmd_send_gate)
+    p = scoped(sub.add_parser("coordinator"))
+    p.add_argument("--tick", type=int, required=True)
+    p.add_argument("--dry-run", default=None, choices=("0", "1"))
+    p.set_defaults(func=cmd_coordinator)
+    p = scoped(sub.add_parser("driver-profile"))
+    p.add_argument("--key", required=True)
+    p.add_argument("--write", action="store_true", help="write the 0600 file with the token")
+    p.set_defaults(func=cmd_driver_profile)
+    p = scoped(sub.add_parser("janitor-check"))
+    p.add_argument("path")
+    p.add_argument("--owner", required=True, help="the owning background session's id")
+    p.set_defaults(func=cmd_janitor_check)
+    p = scoped(sub.add_parser("janitor-run"))
+    p.add_argument("path")
+    p.add_argument("--owner", required=True)
+    p.add_argument("--remove", action="store_true", help="remove (scratch worktrees only until the drill passes)")
+    p.set_defaults(func=cmd_janitor_run)
     p = scoped(sub.add_parser("asks"))
     p.add_argument("--all", action="store_true", help="every batch, answered ones included")
     p.set_defaults(func=cmd_asks)
