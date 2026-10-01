@@ -153,6 +153,12 @@ def test_the_backup_holds_the_diff_untracked_files_secrets_and_a_branch_for_unpu
     assert oct(os.stat(d).st_mode & 0o777) == "0o700"
 
 
+def test_two_backups_at_one_instant_both_land(world, wt):
+    a = janitor.backup(world.state["broomva"], str(wt), now=1_790_000_000.0)
+    b = janitor.backup(world.state["broomva"], str(wt), now=1_790_000_000.0)
+    assert a["dir"] != b["dir"] and os.path.isdir(a["dir"]) and os.path.isdir(b["dir"])
+
+
 def test_backups_older_than_fourteen_days_are_pruned(world, wt):
     res = janitor.backup(world.state["broomva"], str(wt))
     old = time.time() - 15 * 86400
@@ -213,3 +219,52 @@ def test_an_open_pr_on_the_worktrees_branch_fails_it(world, wt):
     assert _guard(world, wt).pr_closed() == ("fail", "PR #5 is open")
     (world.fixture / "gh" / "broomva__workspace" / "prs-head-feat__x.json").write_text('[{"number": 5, "state": "MERGED"}]')
     assert _guard(world, wt).pr_closed()[0] == "pass"
+
+
+def test_path_must_be_the_owners_worktree_not_a_directory_above_it(world, wt):
+    _listing(world, [_row(OWNER, wt)])
+    above = str(wt.parent)
+    res = janitor.run(config.scope("broomva"), FixtureSources(world.fixture), above, OWNER, True, lambda m: None)
+    assert res["aborted"] == "owner"
+
+
+def test_scratch_fails_closed(world, wt, tmp_path, monkeypatch):
+    assert janitor.scratch(str(wt))
+    broken = tmp_path / "broken"
+    (broken / ".git").mkdir(parents=True)  # a repo git can't read
+    assert not janitor.scratch(str(broken))
+    import ctx
+    common = os.path.realpath(subprocess.run(["git", "-C", str(wt), "rev-parse", "--git-common-dir"],
+                                             capture_output=True, text=True).stdout.strip())
+    real = ctx.load_scopes()
+    monkeypatch.setattr(ctx, "load_scopes", lambda: type("S", (), {"by_repo": dict(real.by_repo, **{common: None})}))
+    assert not janitor.scratch(str(wt))  # listed in two scopes (None): still a scope repo
+
+
+def test_secrets_in_ignored_dirs_are_found_but_dependency_dirs_are_skipped(world, wt):
+    (wt / ".gitignore").write_text(".env\nnode_modules/\ndata/\n")
+    for rel in ("data/app.db", "node_modules/pkg/cache.db"):
+        (wt / rel).parent.mkdir(parents=True, exist_ok=True)
+        (wt / rel).write_text("x")
+    found = janitor.secret_files(str(wt))
+    assert "data/app.db" in found and not any(f.startswith("node_modules") for f in found)
+
+
+def test_a_worktree_claude_rm_keeps_is_an_abort_and_a_removed_ones_profile_goes(world, wt):
+    _listing(world, [_row(OWNER, wt)])
+    sd = world.state["broomva"]
+    (sd / "profiles").mkdir(parents=True)
+    prof = sd / "profiles" / "fleet-drill-1.json"
+    prof.write_text("{}")
+    src = FixtureSources(world.fixture)
+    res = janitor.run(config.scope("broomva"), src, str(wt), OWNER, True, lambda m: None)
+    assert res["aborted"] == "rm kept the worktree" and prof.exists()  # the fixture's rm removes nothing
+
+    class Removes(FixtureSources):
+        def run_claude(self, args, cwd=None, timeout=120):
+            if args[0] == "rm":
+                subprocess.run(["git", "worktree", "remove", "--force", str(wt)], cwd=str(wt.parent / "scratch"),
+                               capture_output=True)
+            return "removed"
+    res = janitor.run(config.scope("broomva"), Removes(world.fixture), str(wt), OWNER, True, lambda m: None)
+    assert res["removed"] and not prof.exists(), res

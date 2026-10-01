@@ -1,5 +1,5 @@
 """tick.sh end to end, and the CLI verbs around it, in an isolated HOME with
-stub `claude`, `gh`, `osascript` and `p9` that serve the captured fixture and
+stub `claude`, `gh` and `maestro` that serve the captured fixture and
 record how they were called (the fleet token's length only, never its value)."""
 from __future__ import annotations
 
@@ -48,11 +48,16 @@ def rig(fresh_world, tmp_path):
           '  *default_branch*) cat "$d/default_branch.txt" ;;\n'
           '  "pr list"*) cat "$d/prs.json" ;;\n'
           '  *) exit 1 ;;\nesac\n' % (calls_dir, fx))
-    _stub(bin_ / "osascript", 'printf "%%s\\n" "$*" >> "%s/osascript"\n'
-          '[ -n "${STUB_LOCK:-}" ] && [ -d "$STUB_LOCK" ] && echo held >> "%s/lock-during-dialog"\n'
-          'case "$*" in *"display dialog"*"Seen"*) [ -n "${STUB_DIALOG_FAIL:-}" ] && exit 1 ;; esac\n'
-          'echo "button returned:${STUB_BUTTON:-Later}, gave up:false"\n' % (calls_dir, calls_dir))
-    _stub(bin_ / "p9", 'printf "%%s\\n" "$*" >> "%s/p9"\n' % calls_dir)
+    # maestro: `new` makes item itm-<n>; `show <id>` serves calls/maestro-show-<id>.json, else review.
+    _stub(bin_ / "maestro", 'printf "%%s\\n" "$*" | head -1 >> "%s/maestro"\n'
+          '[ -n "${STUB_LOCK:-}" ] && [ -d "$STUB_LOCK" ] && echo held >> "%s/lock-during-alert"\n'
+          '[ -n "${STUB_MAESTRO_DOWN:-}" ] && { echo "Maestro is not listening" >&2; exit 2; }\n'
+          'case "$1" in\n'
+          '  new) n=$(( $(cat "%s/maestro-n" 2>/dev/null || echo 0) + 1 )); echo $n > "%s/maestro-n";'
+          ' printf "%%s\\n" "$*" > "%s/maestro-new-itm-$n"; echo "{\\"item\\": {\\"id\\": \\"itm-$n\\", \\"state\\": \\"running\\"}}" ;;\n'
+          '  show) f="%s/maestro-show-$2.json"; if [ -f "$f" ]; then cat "$f"; else'
+          ' echo "{\\"item\\": {\\"state\\": \\"review\\"}, \\"events\\": []}"; fi ;;\n'
+          '  *) exit 2 ;;\nesac\n' % (calls_dir, calls_dir, calls_dir, calls_dir, calls_dir, calls_dir))
     (w.home / ".claude" / "projects").mkdir(parents=True)
     shutil.copytree(str(fx / "claude" / "jobs"), str(w.home / ".claude" / "jobs"))
     shutil.copytree(str(fx / "paseo"), str(w.home / ".paseo"))
@@ -63,8 +68,8 @@ def rig(fresh_world, tmp_path):
     tok.write_text(TOKEN + "\n")
     tok.chmod(0o600)
     env = {"FLEET_CLAUDE_BIN": str(bin_ / "claude"), "FLEET_GH_BIN": str(bin_ / "gh"),
-           "CTX_CLAUDE_BIN": str(bin_ / "claude"), "FLEET_OSASCRIPT_BIN": str(bin_ / "osascript"),
-           "FLEET_P9_BIN": str(bin_ / "p9"), "FLEET_NOTIFY": "1", "FLEET_SCOPE": "broomva"}
+           "CTX_CLAUDE_BIN": str(bin_ / "claude"), "FLEET_MAESTRO_BIN": str(bin_ / "maestro"),
+           "FLEET_ASK_REPO": str(tmp_path / "ask-repo"), "FLEET_NOTIFY": "1", "FLEET_SCOPE": "broomva"}
     w.write_config(gh_token_file=str(tok))
 
     class Rig:
@@ -93,6 +98,18 @@ def rig(fresh_world, tmp_path):
             p = calls_dir / name
             return p.read_text().splitlines() if p.exists() else []
 
+        def raised(self, title_part=""):
+            """The Maestro items raised (`new` calls), by title."""
+            return [c for c in self.calls("maestro") if c.startswith("new ") and title_part in c]
+
+        def answer(self, item, verdict="approve", note=None, state="done"):
+            ev = {"ts": "2026-10-01T12:00:00.000Z", "type": "gate", "actor": "human", "verdict": verdict, "note": note}
+            (calls_dir / ("maestro-show-%s.json" % item)).write_text(json.dumps(
+                {"item": {"state": state}, "events": [ev] if verdict != "cancel" else []}))
+
+        def brief(self, item):
+            return (calls_dir / ("maestro-new-%s" % item)).read_text()
+
     return Rig()
 
 
@@ -111,11 +128,12 @@ def test_a_tick_observes_reports_asks_and_records_itself(rig):
     rep = json.loads((td / "report.json").read_text())
     assert rep["surfaces"]["listing"]["ok"] and rep["dry_run"] is True
     assert any(a["key"].startswith("rules:broomva/skills") for a in rep["asks"])
-    dialogs = [c for c in rig.calls("osascript") if "display dialog" in c]
-    assert "intent" in kinds and len(dialogs) == 1 and len(rig.calls("p9")) == 1
-    assert "fleet broomva" in "\n".join(rig.calls("osascript"))
+    # The owner channel is Paseo: one Maestro item at Needs you for the new batch, nothing on the desktop.
+    assert "intent" in kinds and len(rig.raised("fleet broomva: ")) == 1, rig.calls("maestro")
+    assert "--dispatch" in rig.brief("itm-1") and "--initiative fleet-reconcile-broomva" in rig.brief("itm-1")
     seen = [x for x in rig.ledger() if x["kind"] == "seen"]
-    assert seen and seen[0]["result"]["button"] == "Later" and kinds.index("seen") > kinds.index("runner_exit")
+    assert seen and seen[0]["result"] == {"channel": "maestro", "item": "itm-1", "state": "running"}
+    assert kinds.index("seen") > kinds.index("runner_exit")
     assert (sd / "asks" / "00001.md").is_file()
 
 
@@ -160,7 +178,7 @@ def test_the_kill_switch_stops_the_tick_before_anything_fires(rig):
     rig.tick()
     sd = rig.world.state["broomva"]
     assert not (sd / "tick-counter").exists() and rig.ledger() == []
-    assert rig.calls("gh-token-lengths") == [] and rig.calls("osascript") == []
+    assert rig.calls("gh-token-lengths") == [] and rig.calls("maestro") == []
     assert rig.log().count("DISABLED") == 1  # noted once, not every hour
 
 
@@ -171,8 +189,7 @@ def test_an_unreadable_or_invalid_config_stops_the_tick_and_alerts_once(rig, bad
     first, second = rig.tick(), rig.tick()
     assert first.returncode == 1 and second.returncode == 1
     assert rig.ledger() == [] and rig.calls("gh-token-lengths") == []
-    alerts = [c for c in rig.calls("osascript") if "tick failed" in c]
-    assert len(alerts) == 1  # at most once per 6 h per kind
+    assert len(rig.raised("fleet broomva: config")) == 1  # at most once per 6 h per kind
 
 
 def test_a_failed_step_alerts_and_exits_1(rig):
@@ -182,7 +199,8 @@ def test_a_failed_step_alerts_and_exits_1(rig):
     r = rig.tick()
     assert r.returncode == 1
     assert [x for x in rig.ledger() if x["kind"] == "runner_exit"][0]["exit"] == 1
-    assert any("failed at observe" in c and "display dialog" in c for c in rig.calls("osascript"))
+    alerts = rig.raised("fleet broomva: tick-observe")
+    assert len(alerts) == 1 and "failed at observe" in rig.brief("itm-%d" % len(rig.raised()))
 
 
 def test_a_lost_counter_does_not_reuse_a_tick_number(rig):
@@ -199,8 +217,8 @@ def test_no_tick_number_releases_the_lock_before_the_alert(rig):
     sd.mkdir(parents=True, exist_ok=True)
     (sd / "tick-counter").mkdir()  # next-tick can't write its counter
     r = rig.tick(STUB_LOCK=str(sd / ".tick.lock"))
-    assert r.returncode == 1 and any("tick number" in c for c in rig.calls("osascript"))
-    assert rig.calls("lock-during-dialog") == [] and not (sd / ".tick.lock").exists()
+    assert r.returncode == 1 and rig.raised("fleet broomva: tick") and "tick number" in rig.brief("itm-1")
+    assert rig.calls("lock-during-alert") == [] and not (sd / ".tick.lock").exists()
 
 
 def test_a_lock_held_past_two_hours_alerts_the_owner(rig):
@@ -212,17 +230,16 @@ def test_a_lock_held_past_two_hours_alerts_the_owner(rig):
     old = time.time() - 3 * 3600
     os.utime(lock, (old, old))
     assert rig.tick().returncode == 1
-    assert any("held for" in c for c in rig.calls("osascript")) and lock.exists()
+    assert rig.raised("fleet broomva: lock") and "held for" in rig.brief("itm-1") and lock.exists()
 
 
-def test_a_dialog_that_cannot_be_shown_is_not_recorded_as_seen(rig):
-    r = rig.tick(STUB_DIALOG_FAIL="1")
+def test_an_ask_maestro_doesnt_take_isnt_recorded_and_is_raised_at_the_next_tick(rig):
+    r = rig.tick(STUB_MAESTRO_DOWN="1")
     assert r.returncode == 1
     assert not [x for x in rig.ledger() if x["kind"] == "seen"]
-    assert "could not be shown" in rig.log()
-    assert not [c for c in rig.calls("p9") if "fleet-ask" in c]  # the tick's alert (6 h limit) reaches p9 instead
-    rig.tick()  # shown at the next tick, as an unseen batch is
-    assert [x for x in rig.ledger() if x["kind"] == "seen"]
+    assert "not raised" in rig.log() and "NOT delivered" in rig.log()  # the alert is logged, never a dialog
+    rig.tick()
+    assert [x for x in rig.ledger() if x["kind"] == "seen"] and rig.raised("fleet broomva: ")
 
 
 def test_each_run_leaves_one_line_on_stdout_for_launchds_log(rig):
@@ -274,7 +291,7 @@ def test_a_reclaim_in_progress_keeps_a_second_tick_out(rig):
 
 def test_the_kill_switch_off_is_not_a_failure(rig):
     rig.world.write_config(dispatch_enabled=0)
-    assert rig.tick().returncode == 0 and rig.calls("osascript") == []
+    assert rig.tick().returncode == 0 and rig.calls("maestro") == []
 
 
 def test_the_recursion_guard_exits_before_anything(rig):
@@ -294,38 +311,26 @@ def test_a_hung_step_is_stopped_by_the_watchdog_children_included(rig):
     assert left == [], "the hung stub's child outlived the tick"
 
 
-def test_an_unseen_batch_is_shown_again_at_the_next_tick_and_then_not_within_six_hours(rig):
-    for _ in range(3):
-        rig.tick()
-    dialogs = [c for c in rig.calls("osascript") if "display dialog" in c]
-    assert len(dialogs) == 2 and "nothing to show" in rig.log()
-
-
-def test_the_dialog_defaults_to_later_and_leads_with_the_newest_batchs_first_open_ask(rig):
+def test_a_batch_is_raised_once_and_the_owners_verdict_comes_back_as_the_answer(rig):
     rig.tick()
-    rig.fleet("ack", "1", "--ask", "a1")
-    sd = rig.world.state["broomva"]
-    # A second batch with a new ask, the way a tick writes one.
-    out = rig.fleet("ledger-append", "fire", "--scope", "broomva", "--tick", "2", "--dry-run", "1")
-    assert out.returncode == 0, out.stderr
-    rec = {"v": 1, "scope": "broomva", "tick": 2, "dry_run": True, "by": "tick", "kind": "intent", "verb": "ask",
-           "key": "scope:broomva", "id": "2-9", "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
-           "target": {"batch": "x", "asks": [{"id": "a1", "key": "newest-key", "class": "observe",
-                                               "question": "THE NEWEST QUESTION"}]}}
-    with (sd / "ledger.jsonl").open("a") as fh:
-        fh.write(json.dumps(rec) + "\n")
-    records = rig.ledger()
-    assert sum(len(r["target"]["asks"]) for r in records
-               if r["kind"] == "intent" and r["tick"] == 1) >= 2  # so batch 1 is still due after a1's answer
-    assert rig.fleet("act", "ask", "--show", "--tick", "2").returncode == 0
-    last = "\n".join(rig.calls("osascript")).rsplit("display dialog", 1)[1]  # the text spans lines
-    assert 'default button "Later"' in last and "THE NEWEST QUESTION" in last
+    rig.tick()
+    assert len(rig.raised("fleet broomva: ")) == 1  # the item stays at Needs you; never raised twice
+    assert "[a1]" in rig.brief("itm-1") and "## Ask" in rig.brief("itm-1")
+    rig.answer("itm-1", "revise", note="skills gets its pull_request rule this week")
+    rig.tick()
+    (ack,) = [x for x in rig.ledger() if x["kind"] == "ack" and x.get("by") == "owner:maestro"]
+    batch = [x for x in rig.ledger() if x["kind"] == "intent" and x.get("verb") == "ask"][0]
+    assert ack["of"] == batch["id"] and ack["asks"] == "all"
+    assert ack["result"]["verdict"] == "revise" and ack["result"]["note"].startswith("skills gets")
+    assert "[tick 1, a1]" not in rig.fleet("asks").stdout
 
 
-def test_a_seen_click_stops_the_dialog(rig):
-    rig.tick(STUB_BUTTON="Seen")
-    rig.tick(STUB_BUTTON="Seen")
-    assert len([c for c in rig.calls("osascript") if "display dialog" in c]) == 1
+def test_a_canceled_item_dismisses_its_batch(rig):
+    rig.tick()
+    rig.answer("itm-1", "cancel", state="canceled")
+    rig.tick()
+    acks = [x for x in rig.ledger() if x["kind"] == "ack" and x.get("by") == "owner:maestro"]
+    assert acks and acks[0]["result"]["verdict"] == "cancel"
 
 
 def test_the_owner_reads_and_acks_asks_and_other_verbs_refuse(rig):
@@ -387,7 +392,7 @@ def test_a_coordinator_with_a_disallowed_tool_is_stopped_and_the_tick_fails(rig)
     r = rig.tick(STUB_TOOLS='"Bash", "mcp__paseo__create_agent"')
     assert r.returncode == 1 and "coordinator=4" in r.stdout
     assert "Paseo write tool create_agent" in rig.log()
-    assert any("failed at coordinator" in c for c in rig.calls("osascript"))
+    assert rig.raised("fleet broomva: tick-coordinator")
 
 
 def test_a_tick_first_closes_the_intents_a_dead_tick_left_open(rig):
@@ -418,7 +423,7 @@ def test_a_live_tick_without_the_fleet_token_runs_no_coordinator_and_says_so(rig
     rig.world.write_config(mode="act", dry_run=0)
     r = rig.tick()
     assert r.returncode == 1 and "coordinator=skipped" in r.stdout and rig.calls("coordinator-env") == []
-    assert any("failed at token" in c for c in rig.calls("osascript"))
+    assert rig.raised("fleet broomva: tick-token")
 
 
 def test_in_report_mode_no_coordinator_runs(rig):

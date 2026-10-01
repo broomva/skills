@@ -19,14 +19,14 @@
 # the owner's dialog (fleet act ask --show).
 # Phase 2 adds `fleet recover` before the coordinator and the coordinator itself.
 #
-# A tick that fails (a bad config, observe or report failing) notifies the
-# owner directly, at most once per 6 h per kind, and exits 1 so launchd's last
-# exit shows it. The kill switch set to off is not a failure: exit 0.
+# A tick that fails (a bad config, observe or report failing) raises a Maestro
+# item at Needs you in the Paseo app, at most once per 6 h per kind of failure,
+# and exits 1 so launchd's last exit shows it. The kill switch set to off is not a failure: exit 0.
 #
 # Env: FLEET_SCOPE (required); FLEET_CONFIG (default ~/.config/ctx/fleet.json);
 # DRY_RUN (any value but 0 forces dry; no value makes a tick live, only the
 # config's dry_run 0 does); FLEET_PYTHON. Test seams: FLEET_TICK_TIMEOUT_S,
-# FLEET_NOTIFY=0, FLEET_OSASCRIPT_BIN, FLEET_P9_BIN.
+# FLEET_NOTIFY=0, FLEET_MAESTRO_BIN (or FLEET_MAESTRO_BUN and FLEET_MAESTRO_CLI), FLEET_ASK_REPO.
 set -uo pipefail
 
 # ── recursion guard ──────────────────────────────────────────────────────────
@@ -78,13 +78,31 @@ alert() {
   [ $((now - last)) -ge 21600 ] || return 0
   touch "$stamp"
   [ "${FLEET_NOTIFY:-}" = "0" ] && return 0
-  local title="fleet $SCOPE: tick failed" body="$msg | log: $LOG"
-  body=${body//\\/\\\\}; body=${body//\"/\\\"}
-  "${FLEET_OSASCRIPT_BIN:-osascript}" -e "display dialog \"$body\" with title \"$title\" buttons {\"OK\"} default button \"OK\" giving up after 600" \
-    >/dev/null 2>&1 </dev/null
-  local p9="${FLEET_P9_BIN:-$(command -v p9 2>/dev/null)}"
-  [ -n "$p9" ] && "$p9" notify "$title" --body "$msg" --kind fleet-alert >/dev/null 2>&1 </dev/null
+  if ! maestro_alert "fleet $SCOPE: $kind" "$msg (tick.log: $LOG)"; then
+    log "ALERT $kind NOT delivered: Maestro didn't take it; it's in this log only"
+  fi
   return 0
+}
+
+# maestro_alert TITLE TEXT: a Maestro work item at Needs you in the Paseo app
+# (owner decision 2026-10-01: never a desktop dialog), run in the fleet's own
+# scratch repo. From bash, so it works when Python is what broke.
+maestro_alert() {
+  local title=$1 text=$2 repo="${FLEET_ASK_REPO:-$HOME/.local/state/fleet-reconcile/maestro-asks}"
+  if [ ! -d "$repo/.git" ]; then
+    mkdir -p "$repo" && git -C "$repo" init -q -b main &&
+      git -C "$repo" -c user.name=fleet -c user.email=fleet@localhost commit -q --allow-empty -m "fleet-reconcile ask runs" ||
+      return 1
+  fi
+  local brief="fleet-reconcile alert for scope $SCOPE: $text
+
+Change nothing and run no tools. End your turn at once with exactly two sections: '## Decided' with one bullet, 'nothing', and '## Ask' with two bullets, word for word: the alert above, and 'Approve to dismiss; the tick log has the detail.'"
+  if [ -n "${FLEET_MAESTRO_BIN:-}" ]; then
+    set -- "$FLEET_MAESTRO_BIN"
+  else
+    set -- "${FLEET_MAESTRO_BUN:-$HOME/.bun/bin/bun}" "${FLEET_MAESTRO_CLI:-$HOME/broomva/apps/maestro-paseo/bin/maestro.ts}"
+  fi
+  "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch </dev/null >> "$LOG" 2>&1
 }
 
 # ── kill switch: read before anything fires; an unreadable value is off ──────
@@ -287,7 +305,7 @@ RCS="$RCS ask=$ASK_RC"
 [ "$ASK_RC" = "0" ] || FAILED="${FAILED:-ask}"
 echo "[$(date -u +%FT%TZ)] fleet-reconcile $SCOPE tick $N: $RCS"   # launchd's log: one line per run
 if [ -n "$FAILED" ]; then
-  alert tick "tick $N failed at $FAILED ($RCS)"
+  alert "tick-$FAILED" "tick $N failed at $FAILED ($RCS)"
   exit 1
 fi
 exit 0

@@ -69,14 +69,29 @@ def _mail(src: Sources, t: Dict[str, Any], since: float) -> Tuple[str, Dict[str,
                 if not any(n in line for n in needles):
                     continue
                 try:
-                    ts = common.parse_iso(json.loads(line).get("timestamp"))
+                    e = json.loads(line)
+                    ts = common.parse_iso(e.get("timestamp"))
                 except (ValueError, AttributeError):
                     continue
-                if ts is not None and ts >= since:
+                if ts is not None and ts >= since and text in _delivered(e):
                     return "done", {"result": {"delivered": True, "at": common.ts(ts)}}
     except OSError as exc:
         return "unknown", {"reason": "lost", "detail": "the transcript couldn't be read: %s" % (exc.strerror or exc)}
     return "failed", {"reason": "lost", "detail": "the text isn't in the recipient's transcript after the intent"}
+
+
+def _delivered(e: Dict[str, Any]) -> List[str]:
+    """The texts a transcript entry delivered, in §5.7's two shapes: a user
+    entry's message (a string, or its text parts), or a queue-operation's
+    enqueued content. Anything else (an assistant entry quoting it) is none."""
+    if e.get("type") == "queue-operation":
+        return [e["content"]] if isinstance(e.get("content"), str) else []
+    if e.get("type") != "user":
+        return []
+    content = (e.get("message") or {}).get("content") if isinstance(e.get("message"), dict) else None
+    if isinstance(content, str):
+        return [content]
+    return [c.get("text") for c in content or [] if isinstance(c, dict) and isinstance(c.get("text"), str)]
 
 
 def _spawn(src: Sources, rows: List[Dict[str, Any]], t: Dict[str, Any], since: float) -> Tuple[str, Dict[str, Any]]:

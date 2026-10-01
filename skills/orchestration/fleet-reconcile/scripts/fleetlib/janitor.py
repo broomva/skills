@@ -46,6 +46,8 @@ QUIET_S = 24 * 3600
 BACKUP_DAYS = 14
 SECRET_GLOBS = (".env*", "*.db")
 SKIP_DIRS = {".git"}
+#: Dependency and build output: not backed up, not searched for secrets (§5.5).
+HEAVY_DIRS = {"node_modules", "target", "build", "dist", ".venv", "__pycache__", ".next"}
 TERMINAL = ("MERGED", "CLOSED", "DONE")
 MAX_FILES = 200000
 CHECKS = ("owner_finished", "no_live_session", "pr_closed", "quiet_24h", "no_holder", "backup_possible")
@@ -155,9 +157,11 @@ class Guard:
         except SourceError:
             return "pass", "detached HEAD: no PR branch"
         try:
-            slug = parsers.parse_remote_slug(_git(self.path, "remote", "get-url", "origin").strip())
-        except SourceError:
-            slug = None
+            remotes = _git(self.path, "remote").split()
+            url = _git(self.path, "remote", "get-url", "origin").strip() if "origin" in remotes else ""
+        except SourceError as exc:
+            return "not run", "git couldn't read the remotes: %s" % common.safe_text(exc, 80)
+        slug = parsers.parse_remote_slug(url) if url else None
         if not slug:
             return "pass", "no GitHub origin, so no PR"
         try:
@@ -250,7 +254,11 @@ def backup(state_dir: Path, path: str, now: Optional[float] = None) -> Dict[str,
     secrets). Raises SourceError or OSError: no backup, no removal."""
     now = time.time() if now is None else now
     path = os.path.realpath(path)
-    dest = backup_dir(state_dir, path) / time.strftime("%Y%m%dT%H%M%SZ", time.gmtime(now))
+    stamp = time.strftime("%Y%m%dT%H%M%S", time.gmtime(now)) + ".%03dZ" % int((now % 1) * 1000)
+    dest, n = backup_dir(state_dir, path) / stamp, 1
+    while dest.exists():  # two backups in one millisecond: never one over another
+        n += 1
+        dest = backup_dir(state_dir, path) / ("%s-%d" % (stamp, n))
     dest.mkdir(parents=True, mode=0o700)
     diff = _git(path, "diff", "HEAD", "--binary")
     (dest / "diff.patch").write_text(diff, encoding="utf-8")
@@ -278,14 +286,22 @@ def backup(state_dir: Path, path: str, now: Optional[float] = None) -> Dict[str,
 
 def secret_files(path: str) -> List[str]:
     """Ignored files named like secrets (.env*, *.db): backed up before any removal."""
-    # Every ignored file, not --directory: that collapses data/ to one entry and
-    # hides data/app.db from the name match.
-    out = _git(path, "ls-files", "-z", "--others", "--ignored", "--exclude-standard")
+    # --directory lists an ignored directory as one entry; each is walked for
+    # secrets (data/app.db), except dependency and build output (§5.5).
+    out = _git(path, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
     found = []
     for rel in (x for x in out.split("\0") if x):
-        name = os.path.basename(rel.rstrip("/"))
-        if any(fnmatch.fnmatch(name, g) for g in SECRET_GLOBS):
-            found.append(rel.rstrip("/"))
+        rel = rel.rstrip("/")
+        full = os.path.join(path, rel)
+        if os.path.isdir(full) and not os.path.islink(full):
+            if os.path.basename(rel) in HEAVY_DIRS:
+                continue
+            for root, dirs, files in os.walk(full):
+                dirs[:] = [d for d in dirs if d not in HEAVY_DIRS]
+                found += [os.path.relpath(os.path.join(root, f), path) for f in files
+                          if any(fnmatch.fnmatch(f, g) for g in SECRET_GLOBS)]
+        elif any(fnmatch.fnmatch(os.path.basename(rel), g) for g in SECRET_GLOBS):
+            found.append(rel)
     return sorted(found)
 
 
@@ -305,11 +321,13 @@ def prune(state_dir: Path, now: Optional[float] = None) -> int:
 
 
 def scratch(path: str) -> bool:
-    """A worktree of no scope repo: the only kind removed before the drill passes."""
+    """A worktree of no scope repo: the only kind removed before the drill
+    passes. Fails closed: a repo git can't read, or one listed in any scope
+    (an ambiguous one included), is not scratch."""
     where = ctx.locate(path, timeout=5.0)
     if where is None:
-        return True
-    return ctx.load_scopes().by_repo.get(where.common_dir) is None
+        return not os.path.exists(os.path.join(path, ".git"))
+    return where.common_dir not in ctx.load_scopes().by_repo
 
 
 def run(sec: Dict[str, Any], src: Sources, path: str, owner: str, remove: bool,
@@ -336,6 +354,15 @@ def run(sec: Dict[str, Any], src: Sources, path: str, owner: str, remove: bool,
     else:
         why = "claude agents doesn't list %s" % owner if row is None else (
             "%s's cwd (%s) is not in this worktree" % (owner, common.safe_path(row["cwd"])))
+    if row is not None and _inside(row["cwd"], g.path):
+        try:  # and PATH is the owner's worktree itself, not a directory above it
+            top = os.path.realpath(_git(row["cwd"], "rev-parse", "--show-toplevel").strip())
+        except SourceError as exc:
+            top, why = None, "git couldn't read the owner's worktree: %s" % exc
+        else:
+            why = "PATH is not the owner's worktree (that is %s)" % common.safe_path(top)
+        if top != g.path:
+            row = None
     if row is None or not _inside(row["cwd"], g.path):
         step("owner", why)
         res["aborted"] = "owner"
@@ -381,10 +408,21 @@ def run(sec: Dict[str, Any], src: Sources, path: str, owner: str, remove: bool,
         res["aborted"] = "listing at removal"
         return res
     try:
-        step("rm", src.run_claude(["rm", owner]).strip()[:400])
+        out = src.run_claude(["rm", owner]).strip()
+        step("rm", out[:400])
     except SourceError as exc:
         step("rm", "failed: %s" % exc)
         res["aborted"] = "rm"
         return res
     res["removed"] = not os.path.exists(g.path)
+    if not res["removed"]:  # claude rm keeps a worktree with changes or unpushed commits
+        res["aborted"] = "rm kept the worktree"
+        return res
+    # The driver's profile holds the fleet token; it goes with the worktree (§5.3).
+    sd = Path(sec["state_dir"])
+    for p in (sd / "profiles" / ("%s.json" % row["name"]), sd / "ghcfg" / row["name"]):
+        try:
+            shutil.rmtree(str(p)) if p.is_dir() else (p.unlink() if p.exists() else None)
+        except OSError as exc:
+            step("profile", "not removed: %s" % exc)
     return res

@@ -39,8 +39,11 @@ def _take_token() -> None:
 
 
 #: What a session started from a session inherits and must not (evidence §1:
-#: an inherited CLAUDE_CODE_CHILD_SESSION turns transcript saving off).
-CHILD_DROP = ("CLAUDECODE", "CLAUDE_CODE_", "PASEO_")
+#: an inherited CLAUDE_CODE_CHILD_SESSION turns transcript saving off): the
+#: session's own markers and Paseo's, by name, so auth and provider settings
+#: (CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK, ...) still pass.
+CHILD_DROP = ("CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET",
+              "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "PASEO_")
 
 
 def child_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
@@ -243,10 +246,11 @@ class Sources:
                      "--json", PR_FIELDS], 60, token=True)
 
     def pr_files(self, slug: str, number: int) -> str:
-        """A JSON array of every changed path of the PR (the owner-merge check),
-        through REST with --paginate: `gh pr view --json files` stops at 100."""
+        """A JSON array of every changed path of the PR, a rename's old path
+        too (the owner-merge check), through REST with --paginate: `gh pr view
+        --json files` stops at 100. GitHub lists at most 3000 files."""
         out = _run([self.gh, "api", "--paginate", "repos/%s/pulls/%d/files?per_page=100" % (slug, number),
-                    "--jq", ".[].filename"], 120, token=True)
+                    "--jq", ".[] | .filename, (.previous_filename // empty)"], 120, token=True)
         return json.dumps([ln for ln in out.splitlines() if ln])
 
     def pr_heads(self, slug: str, branch: str) -> str:

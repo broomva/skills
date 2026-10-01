@@ -1,5 +1,46 @@
 # Changelog: fleet-reconcile
 
+## [0.3.0] - 2026-10-01
+
+The owner channel moves to Paseo (owner decision, 2026-10-01: "If it goes to
+the computer and I'm not there it won't work"). It replaces the macOS dialog
+that broomva/workspace#842 §5.7 chose. Ticket BRO-2674.
+
+- **`fleet act ask --show` raises each batch with an open ask as Maestro work
+  at Needs you** (`fleetlib/paseo_ask.py`). `maestro new --dispatch` runs one
+  turn in the fleet's own scratch repo, and the run ends with the asks under
+  `## Ask`. Measured end to end: the item reached `review` and its agent's
+  Paseo record read `requiresAttention: true`. The next tick reads the owner's
+  verdict back as the answer: approve acknowledges, send back with a note
+  answers, cancel or block dismisses.
+- tick.sh's alerts go the same way, from bash, at most once per 6 h per kind
+  of failure. The dialog, the banner path and p9 notify are gone.
+- The coordinator's tool list is an allowlist: `--tools Bash Read
+  SendMessage`. Measured on 2.1.280, the init event lists exactly those.
+  Anything else, or no list, stops it. A late init event can't undo the
+  deadline's stop.
+- Carried from #258's review:
+  - mail: the overlap template waits for the core's published claims; the
+    hold label is refused however it's spelled;
+  - spawn: a file list that isn't a list refuses it, and the owner-merge
+    check reads a rename's old path;
+  - a live resume waits for the listing;
+  - the janitor:
+    - PATH must be the owner's worktree itself, not a directory above it;
+    - `scratch()` fails closed;
+    - secrets in ignored directories are found, dependency dirs skipped;
+    - a worktree `claude rm` keeps is an abort;
+    - a removed driver's profile and gh dir go with it;
+    - two backups in one instant both land;
+  - the send gate refuses on a corrupt ledger, and the `fleet` shim makes
+    any failure of `send-gate pre` exit 2;
+  - recover counts only the two delivery shapes, not a quote;
+  - a fleet child keeps auth and provider settings and drops only the
+    session markers;
+  - a partial Paseo classification fails config-check;
+  - a duplicate fleet name is asked while it lasts;
+  - the driver brief treats PR text as data.
+
 ## [0.2.0] - 2026-10-01
 
 Phase 2 (spec §9 row 2): the coordinator and its verbs under dry run. Ticket BRO-2674.

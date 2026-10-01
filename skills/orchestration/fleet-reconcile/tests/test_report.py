@@ -314,24 +314,10 @@ def _seen(tick, button, ago):
             "result": {"button": button, "gave_up": button is None}}
 
 
-def test_an_unseen_batch_is_shown_now_again_next_tick_then_at_most_every_6_hours():
-    import fleet_reconcile as fr
-
-    recs = _batch_records([{"id": "a1", "key": "k", "class": "3", "question": "q"}])
-    due = lambda rs: [b["tick"] for b in fr.due_batches(rs, ledger.open_by_key(rs), NOW)]  # noqa: E731
-    assert due(recs) == [1]                                       # never shown
-    once = recs + [_seen(1, None, H)]
-    assert due(once) == [1]                                       # gave up: the next tick shows it again
-    twice = once + [_seen(2, "Later", 0.5 * H)]
-    assert due(twice) == []                                       # then at most once per 6 h
-    assert due(recs + [_seen(1, None, 8 * H), _seen(2, "Later", 7 * H)]) == [1]
-    assert due(recs + [_seen(1, "Seen", 0.1 * H)]) == []          # a Seen click: not shown again
-    assert due(recs + [_ack(1)]) == []                            # answered: nothing open
-
-
-def test_a_duplicate_spawn_is_an_ask():
-    recs = [{"v": 1, "id": "5-2", "ts": "t", "scope": "broomva", "tick": 5, "dry_run": False, "by": "recover",
-             "kind": "done", "verb": "spawn", "of": "4-1", "key": "broomva-x-pr7",
-             "result": {"session_ids": ["a", "b"], "duplicate": True}}]
-    rep = report.build(_snap([]), recs, True)
-    assert "spawn-duplicate:broomva-x-pr7" in [a["key"] for a in rep["asks"]]
+def test_a_duplicate_fleet_name_is_an_ask_while_it_lasts():
+    two = [S(session_id=_sid(i), name="broomva-x-pr7", fleet_shaped=True) for i in (1, 2)]
+    rep = report.build(_snap(two), [], True)
+    (key,) = [a["key"] for a in rep["asks"] if a["key"].startswith("spawn-duplicate:")]
+    assert key == "spawn-duplicate:broomva-x-pr7"
+    one = report.build(_snap(two[:1]), _batch_records(rep["asks"]), True)
+    assert key in one["resolved"]  # one was removed: the ask clears

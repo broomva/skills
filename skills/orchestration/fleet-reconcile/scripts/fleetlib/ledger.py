@@ -173,20 +173,25 @@ def spawned(records: Iterable[Dict[str, Any]]) -> Dict[str, List[str]]:
 
 def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Every ask batch, oldest first: {id, tick, ts, batch, asks, shown: [{ts,
-    button, gave_up}], seen (a Seen click), acked (set of ask ids, or "all")}."""
+    button, gave_up}], seen (raised in Paseo, or a phase-1 dialog's Seen
+    click), item (its Maestro work id), acked (set of ask ids, or "all")}."""
     batches: Dict[str, Dict[str, Any]] = {}
     for r in records:
         kind = r.get("kind")
         if kind == "intent" and r.get("verb") == "ask":
             t = r.get("target") or {}
             batches[r["id"]] = {"id": r["id"], "tick": r.get("tick"), "ts": r.get("ts"), "batch": t.get("batch"),
-                                "asks": t.get("asks") or [], "shown": [], "seen": False, "acked": set()}
+                                "asks": t.get("asks") or [], "shown": [], "seen": False, "acked": set(),
+                                "item": None}
         elif r.get("of") in batches:
             b = batches[r["of"]]
             if kind == "seen":
                 res = r.get("result") or {}
                 b["shown"].append({"ts": r.get("ts"), "button": res.get("button"), "gave_up": res.get("gave_up")})
-                b["seen"] = b["seen"] or res.get("button") == "Seen"
+                # Raised in Paseo (a Maestro item at Needs you), or a phase-1 dialog's Seen click.
+                b["seen"] = b["seen"] or res.get("button") == "Seen" or res.get("channel") == "maestro"
+                if res.get("channel") == "maestro" and isinstance(res.get("item"), str):
+                    b["item"] = res["item"]
             elif kind == "ack" and not r.get("resolved") and b["acked"] != "all":
                 b["acked"] = "all" if r.get("asks") == "all" else b["acked"] | set(r.get("asks") or [])
     return list(batches.values())

@@ -30,6 +30,11 @@ from typing import Any, Dict, IO, Iterable, List, Optional
 from . import common
 from .sources import child_env
 
+#: Its whole tool list (--tools; measured on 2.1.280: the init event lists
+#: exactly these): fleet act through Bash, the report through Read, and the
+#: mail fleet act prepared through SendMessage. Anything else in its init
+#: event stops it.
+ALLOWED = ("Bash", "Read", "SendMessage")
 DISALLOWED = ("Agent", "Edit", "Write", "NotebookEdit")
 INIT_S = 60.0
 PASEO_PREFIX = "mcp__paseo__"
@@ -50,6 +55,7 @@ def argv(sec: Dict[str, Any], settings_path: Path, prompt: str, claude: str = "c
            "--strict-mcp-config", "--max-budget-usd", str(sec["coordinator_budget_usd"])]
     if sec.get("coordinator_model"):
         out += ["--model", sec["coordinator_model"]]
+    out += ["--tools"] + list(ALLOWED)
     out += ["--disallowedTools"] + list(DISALLOWED) + [PASEO_PREFIX + t for t in sec["paseo_tools"]["write"]]
     return out + ["--", prompt]
 
@@ -65,14 +71,18 @@ def init_event(lines: Iterable[str]) -> Optional[Dict[str, Any]]:
     return None
 
 
-def posture_problems(tools: Iterable[str], sec: Dict[str, Any]) -> List[str]:
-    """What's wrong with the coordinator's tool list: a disallowed tool present,
-    a pinned Paseo write tool present, or a Paseo tool in neither pinned list
-    (Paseo registered one after the classification was pinned)."""
+def posture_problems(tools: Any, sec: Dict[str, Any]) -> List[str]:
+    """What's wrong with the coordinator's tool list: no list at all, a tool
+    outside ALLOWED (a disallowed one named as such), a pinned Paseo write
+    tool, or a Paseo tool in neither pinned list (Paseo registered one after
+    the classification was pinned)."""
+    if not isinstance(tools, list) or not all(isinstance(t, str) for t in tools):
+        return ["the init event carries no tool list, so it can't be checked"]
     pins = sec["paseo_tools"]
     read, write = set(pins.get("read") or []), set(pins.get("write") or [])
-    tools = list(tools)
     out = ["%s is in the tool list" % t for t in DISALLOWED if t in tools]
+    out += ["%s is outside the allowlist" % t for t in tools
+            if t not in ALLOWED and t not in DISALLOWED and not t.startswith(PASEO_PREFIX)]
     for t in tools:
         if not t.startswith(PASEO_PREFIX):
             continue
@@ -131,24 +141,29 @@ def _pump(proc: "subprocess.Popen[str]", out: IO[str], sec: Dict[str, Any], res:
     assert proc.stdout is not None
     init_s = INIT_S if init_s is None else init_s
 
+    lock = threading.Lock()
+
     def late() -> None:
-        if not res["init"]:
+        with lock:
+            if res["init"] or res["posture"]:
+                return
             res["posture"] = ["no init event within %ds: the tool list was never checked" % init_s]
-            _stop(proc)
+        _stop(proc)
     timer = threading.Timer(init_s, late)
     timer.daemon = True
     timer.start()
     try:
         for line in proc.stdout:
             out.write(line)
-            if res["init"] or res["posture"]:
-                continue
-            ev = init_event([line])
-            if ev is not None:
-                res["init"] = True
-                res["posture"] = posture_problems(ev.get("tools") or [], sec)
-            elif _acts(line):
-                res["posture"] = ["it acted before its init event: the tool list was never checked"]
+            with lock:
+                if res["init"] or res["posture"]:
+                    continue  # decided (a late init can't undo the deadline's stop)
+                ev = init_event([line])
+                if ev is not None:
+                    res["init"] = True
+                    res["posture"] = posture_problems(ev.get("tools"), sec)
+                elif _acts(line):
+                    res["posture"] = ["it acted before its init event: the tool list was never checked"]
             if res["posture"]:
                 _stop(proc)
                 break  # its stream is no longer read: a child still holding it can't delay the stop
