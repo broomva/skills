@@ -25,6 +25,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from datetime import datetime, timezone
 import yaml
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -148,6 +149,25 @@ def test_every_line_names_a_command_and_is_not_an_order():
         assert "`" in r.line, f"{r.id}: the line names no command"
         assert not orders.search(r.line), f"{r.id}: the line reads as an order: {r.line!r}"
         assert len(r.line) <= rr.LINE_MAX_CHARS
+
+
+def test_no_line_says_the_stack_backs_files_up():
+    """v1's worktree line ("the stack copies out its ignored files") was read as automation:
+    one run removed a worktree and told the user a hook had backed its `.env` up. No line
+    may claim that the stack copies, backs up or preserves files for the agent."""
+    actor = r"(the stack|stack|a hook|the hook|hook|automatic(ally)?)"
+    act = (r"(copies|copy|copied|backs? up|backed up|saves|saved|preserves|preserved|keeps|kept|"
+           r"stashes|stashed|moves|moved)")
+    claim = re.compile(rf"\b{actor}\b[^.;]{{0,60}}\b{act}\b|\b{act}\b[^.;]{{0,60}}\b{actor}\b", re.IGNORECASE)
+    for bad in ("the stack copies out its ignored files", "they are backed up by the stack",
+                "a pre-remove hook stashes them", "the stack moves them to ~/.trash"):
+        assert claim.search(bad), bad
+    passive = re.compile(r"\b(get|gets|are|is)\s+(backed up|copied( out)?|saved|preserved|stashed)\b", re.IGNORECASE)
+    assert passive.search("they get backed up before removal")
+    for r in CAT.reflexes:
+        assert not claim.search(r.line), f"{r.id}: the line claims automation: {r.line!r}"
+        assert not passive.search(r.line), f"{r.id}: the line claims files are kept for the agent: {r.line!r}"
+    assert "nothing backs them up" in BY_ID["p10.worktree-removal-guard"].line
 
 
 def test_every_state_predicate_is_used_and_every_used_one_exists():
@@ -568,8 +588,9 @@ def test_every_entry_has_routing_examples():
 
 
 def _matches(reflex, prompt: str) -> bool:
+    """The entry's prompt side, as M3 scores it: a clause's patterns and its requires."""
     text = rr.normalize_prompt(prompt)
-    return any(p.search(text) for c in reflex.clauses for p in c.patterns)
+    return any(c.has_prompt and c.prompt_matches(text) for c in reflex.clauses)
 
 
 @pytest.mark.parametrize("rid", sorted(r for r in EXAMPLES if BY_ID[r].routed))
@@ -595,10 +616,12 @@ def test_a_listed_or_judgment_entry_matches_its_trigger_and_is_never_routed(rid)
 
 def test_routed_entries_cover_the_owner_s_initial_cases():
     routed = {r.id for r in CAT.reflexes if r.routed}
-    assert {"p9.watch-after-push", "p10.branch-first", "p9.heal-on-red",
+    assert {"p9.watch-after-push", "p10.branch-first",
             "convention.trash-not-rm", "convention.paseo-fleet-listing", "p4.merge-pinned-to-head"} <= routed
-    # the worktree guard is listed: the ablation showed its line misread as automation
-    assert BY_ID["p10.worktree-removal-guard"].status == "listed"
+    # heal and checkit cleared v1's 3/2 cases and miss the v2 gate (recall 0.5 and 0.2);
+    # autonomous clears it only on its own description's phrases, which the v2 writer
+    # could see; the reworded worktree guard shows no lift on its task yet
+    assert not ({"p9.heal-on-red", "skill.checkit", "skill.autonomous", "p10.worktree-removal-guard"} & routed)
 
 
 def test_a_listed_entry_records_why():
@@ -623,8 +646,8 @@ def test_change_work_route_is_an_imperative_not_a_question():
 
 def test_requires_needs_every_pattern():
     rid = "skill.checkit"
-    assert rid in fired_ids("check this out https://github.com/x/y", feature_state())
-    assert rid not in fired_ids("check this out", feature_state())
+    assert rid in fired_ids("check this out https://github.com/x/y", feature_state(), CAT_ALL)
+    assert rid not in fired_ids("check this out", feature_state(), CAT_ALL)
 
 
 def test_a_dot_inside_a_path_is_not_a_sentence_end():
@@ -687,7 +710,8 @@ def test_stage_3_sees_only_what_stages_1_and_2_kept():
 # ------------------------------------------------------------------- budget
 
 KITCHEN_SINK = ("push this branch and open the PR, merge 812, drop the scratch folders, the paseo "
-                "sessions look stale, CI failed, get rid of the worktree, force push, where do we stand")
+                "sessions look stale, CI failed, get rid of the worktree, force push, where do we stand, "
+                "write a runbook doc for it")
 
 
 def test_output_stays_inside_the_line_and_char_budget():
@@ -982,6 +1006,28 @@ def test_shadow_logs_the_router_and_injects_only_the_legacy_block(repo, tmp_path
     assert "[bstack reflexes]" not in p.stdout
     shadow = [r for r in rows if r.get("event") == "reflex"]
     assert shadow and shadow[-1]["shadow"] is True and shadow[-1]["selected"] == ["p4.merge-pinned-to-head"]
+    # workspace#850: the gated router time includes the import, so it covers the route's own
+    assert shadow[-1]["router_ms"] >= shadow[-1]["ms"] > 0
+
+
+def test_router_ms_starts_before_the_router_is_imported(tmp_path, monkeypatch):
+    """workspace#850 (A1, M4): the time the shadow gate reads runs from before the router's
+    import. A slow import must show in ``router_ms``."""
+    import time as _time
+    rx = load_module(ROLE_X_PY, "role_x_under_test_router_ms")
+    real = rx._load_reflex_router
+
+    def slow():
+        _time.sleep(0.2)
+        return real()
+    rows = []
+    monkeypatch.setenv("HOME", str(tmp_path))  # the router's per-session repeat file lives under HOME
+    monkeypatch.setattr(rx, "_load_reflex_router", slow)
+    monkeypatch.setattr(rx, "_emit_reflex_event", lambda sid, prompt, meta, events_path=None: rows.append(meta))
+    rx._intake_reflex("merge 1857 please", "s1", str(tmp_path), str(tmp_path), shadow=True)
+    assert rows and "error" not in rows[-1], rows
+    assert rows[-1]["router_ms"] >= 200 > rows[-1]["ms"]
+    assert list((tmp_path / ".config" / "broomva" / "role").rglob("*.json"))  # it wrote there, not to ~
 
 
 @pytest.mark.skipif(REPO is None, reason="needs the broomva/skills monorepo")
@@ -1167,10 +1213,11 @@ def test_an_unrecognised_output_value_is_recorded_not_silent(tmp_path, usersite_
 @pytest.mark.skipif(REPO is None, reason="needs the broomva/skills monorepo")
 def test_every_routed_entry_clears_the_sealed_held_out_m3_gate():
     """Spec §5.5 M3, enforced: an entry routes only at held-out recall >= 0.60 with
-    <= 0.20 false fires, on the cases sealed at a272659 before any tuning."""
-    heldout = SKILL_DIR / "evals" / "reflex-routing-heldout.json"
-    p = subprocess.run([sys.executable, str(ROLE_X_PY), "reflexes", "route", "--heldout", "--json"],
-                       capture_output=True, text=True, timeout=120)
+    <= 0.20 false fires, on the v2 cases (10 positives and 5 near-misses per id, 40 and
+    20 for change_work) sealed at be7726d before any scoring or tuning."""
+    heldout = SKILL_DIR / "evals" / "reflex-routing-heldout-v2.json"
+    p = subprocess.run([sys.executable, str(ROLE_X_PY), "reflexes", "route", "--heldout", "--json",
+                        "--heldout-file", str(heldout)], capture_output=True, text=True, timeout=120)
     assert p.returncode == 0, p.stderr
     rows = {r["id"]: r for r in json.loads(p.stdout)["ids"]}
     cases = json.loads(heldout.read_text(encoding="utf-8"))["cases"]
@@ -1179,14 +1226,37 @@ def test_every_routed_entry_clears_the_sealed_held_out_m3_gate():
         if r.routed:
             assert r.id in rows, f"{r.id} is routed but has no sealed held-out cases"
             assert rows[r.id]["passes_m3"], f"{r.id} is routed but fails M3: {rows[r.id]}"
-    assert rows["change_work"]["passes_m3"]
+    # change_work's own bar (spec §5.3): >= 0.80 on >= 40 positives. On v2 it is 0.70 and
+    # fails; it gates nothing (the p9 pin stays until M2), but the gate must say so.
+    cw = rows["change_work"]
+    assert cw["should_route"] >= 40
+    assert cw["passes_m3"] == (cw["hits"] / cw["should_route"] >= 0.80 and cw["false_fire"] <= 0.20)
+    # the default --heldout file is the gate's (v2), not v1's
+    d = subprocess.run([sys.executable, str(ROLE_X_PY), "reflexes", "route", "--heldout", "--json"],
+                       capture_output=True, text=True, timeout=120)
+    assert {r["id"]: r["hits"] for r in json.loads(d.stdout)["ids"]} == {k: v["hits"] for k, v in rows.items()}
 
 
-def test_the_sealed_held_out_file_is_the_one_that_was_sealed():
+def test_change_work_s_bar_needs_40_positives_and_is_not_rounded_up():
+    rx = load_module(ROLE_X_PY, "role_x_under_test_cw_bar")
+    router = rx._load_reflex_router()
+    cw = CAT.routes["change_work"]
+    hit = "fix the typo in README.md"
+    assert any(p.search(rr.normalize_prompt(hit)) for p in cw)
+    miss, near = "ship it", "what does this do?"
+    few = [(hit, True)] * 39 + [(near, False)] * 20
+    assert not rx._score(router, CAT, "change_work", few)["passes_m3"]  # 39/39, but under 40
+    edge = [(hit, True)] * 35 + [(miss, True)] * 9 + [(near, False)] * 20  # 35/44 = 0.795
+    row = rx._score(router, CAT, "change_work", edge)
+    assert row["recall"] == 0.8 and not row["passes_m3"]
+
+
+def test_the_sealed_held_out_files_are_the_ones_that_were_sealed():
     import hashlib
-    heldout = SKILL_DIR / "evals" / "reflex-routing-heldout.json"
-    assert hashlib.sha256(heldout.read_bytes()).hexdigest() == (
-        "3628de8859624ac6f7f6d3fc01211cb9524f64fcd547c3fc5fe54f86bb3089d9")
+    for name, digest in (
+            ("reflex-routing-heldout.json", "3628de8859624ac6f7f6d3fc01211cb9524f64fcd547c3fc5fe54f86bb3089d9"),
+            ("reflex-routing-heldout-v2.json", "74d40b5edf11e5f01db405b3e4cb5b4702d7286813ccf7ebaa4282852d4bd39a")):
+        assert hashlib.sha256((SKILL_DIR / "evals" / name).read_bytes()).hexdigest() == digest, name
 
 
 # ------------------------------------------------------------------ mutation
@@ -1274,3 +1344,229 @@ def test_mutating_a_predicate_fails_its_scenario(repo, tmp_path, name, how):
             _scenario_fires(mod, CATALOG, repo, name)
     else:
         assert not _scenario_fires(mod, CATALOG, repo, name)
+
+
+def _shadow(tmp_path, rows, transcript, name="role_x_under_test_shadow", since="3d", events_path=None):
+    import argparse as _ap
+    import contextlib
+    rx = load_module(ROLE_X_PY, name)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    events = tmp_path / "events.jsonl"
+    events.write_text("".join((r if isinstance(r, str) else json.dumps(r)) + "\n" for r in rows), encoding="utf-8")
+    proj = tmp_path / "projects" / "-ws"
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / "s1.jsonl").write_text("".join((e if isinstance(e, str) else json.dumps(e)) + "\n" for e in transcript),
+                                   encoding="utf-8")
+    out, err = io.StringIO(), io.StringIO()
+    with contextlib.redirect_stdout(out), contextlib.redirect_stderr(err):
+        code = rx.cmd_reflexes_shadow(_ap.Namespace(events=str(events_path or events),
+                                                    projects=str(tmp_path / "projects"), since=since, json=True))
+    return code, (json.loads(out.getvalue()) if out.getvalue() else {"stderr": err.getvalue()})
+
+
+def _at(offset_s=0.0):
+    from datetime import datetime, timedelta, timezone
+    return (datetime.now(timezone.utc) - timedelta(hours=1) + timedelta(seconds=offset_s)).isoformat()
+
+
+def _row(selected=(), ms=40.0, at=0.0, session="s1", **extra):
+    r = {"ts": _at(at), "event": "reflex", "shadow": True, "session": session, "prompt_digest": "sha256:x",
+         "selected": list(selected)}
+    if ms is not None:
+        r["router_ms"] = ms
+    return {**r, **extra}
+
+
+def _bash(cmd, at, **extra):
+    return {"type": "assistant", "timestamp": _at(at), **extra,
+            "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": cmd}}]}}
+
+
+def _hook(at, kind="hook_success", ms=200, timed_out=None, command="/x/role-x-intake-hook.sh"):
+    a = {"type": kind, "hookEvent": "UserPromptSubmit", "command": command, "durationMs": ms}
+    if timed_out is not None:
+        a["timedOut"] = timed_out
+    return {"type": "attachment", "timestamp": _at(at), "attachment": a}
+
+
+P9 = ["p9.watch-after-push"]
+
+
+def _ships(n, p9=True, at0=0.0, step=10.0):
+    """n prompts (shadow rows), each followed by a push in its turn."""
+    rows = [_row(P9 if p9 else [], at=at0 + i * step) for i in range(n)]
+    t = [_bash("git push", at=at0 + i * step + 5) for i in range(n)]
+    return rows, t
+
+
+def test_the_shadow_reader_reads_a1_off_rows_and_their_pushes(tmp_path):
+    """spec A1's instrument (workspace#850): a turn is one shadow row (shadow writes one per
+    prompt), a push belongs to the latest row before it; met needs every row timed, no
+    error, p99 <= 100 ms and p9's Wilson bound >= 0.70 (the worst case, below)."""
+    rows, t = _ships(12)
+    rows.append(_row([], at=200))  # a prompt that did not ship
+    probe = _row(P9, session="no-transcript", at=210)  # no turns to read, but its time and errors count
+    code, rep = _shadow(tmp_path, rows + [probe, "[1]"], t + ["not json", "[2]", _hook(at=1)])
+    assert (code, rep["verdict"]) == (0, "met"), rep
+    code, rep = _shadow(tmp_path / "err", rows + [dict(probe, error="CatalogError")], t)
+    assert (code, rep["verdict"]) == (1, "not met")
+    st = rep["ship_turns"]
+    assert (st["turns"], st["p9_selected"], st["rows_in_sessions_without_a_transcript"]) == (12, 12, 1)
+
+
+def test_a_short_prompt_s_push_is_its_own_turn(tmp_path):
+    """Found in review: a short 'go' leaves no hook record in the transcript, so a reader
+    keyed on those records credited its push to the prompt before it. Rows are the turns."""
+    rows, t = _ships(13)
+    rows += [_row(P9, at=300), _row([], at=400)]  # a p9 prompt that does not ship, then "go" without p9
+    t += [_bash("gh pr create --fill", at=405)]
+    code, rep = _shadow(tmp_path, rows, t)
+    st = rep["ship_turns"]
+    assert (st["turns"], st["p9_selected"]) == (14, 13) and (code, rep["verdict"]) == (1, "not met")  # W(13,14) < 0.70
+
+
+def test_a_prompt_that_left_no_shadow_row_is_an_unsure_turn(tmp_path):
+    """Found in review: a hook run that timed out or failed before writing its row, or a
+    row of the hook outside shadow mode, starts a turn; its pushes are unsure, never
+    credited to the prompt before it."""
+    rows, t = _ships(13, step=100.0)
+    killed = [_hook(at=350, kind="hook_cancelled", ms=15000, timed_out=True), _bash("git push", at=360),
+              _hook(at=750, kind="hook_non_blocking_error", ms=40), _bash("git push", at=751)]
+    code, rep = _shadow(tmp_path / "a", rows, t + killed)
+    st = rep["ship_turns"]
+    assert (st["turns"], st["unsure_turns"]) == (13, 2) and (code, rep["verdict"]) == (3, "not shown"), rep
+    # a failed run that did write its row is that row's turn, not an unsure one
+    code, rep = _shadow(tmp_path / "b", rows, t + [_hook(at=100.5, kind="hook_cancelled", ms=15000, timed_out=True)])
+    assert rep["ship_turns"]["unsure_turns"] == 0 and rep["verdict"] == "met"
+    # a row of the hook outside shadow mode starts a turn; one beside a shadow row does not
+    legacy = {"ts": _at(1250), "event": "intake", "session": "s1"}
+    beside = {"ts": _at(100.2), "event": "intake", "session": "s1"}
+    code, rep = _shadow(tmp_path / "c", rows + [legacy, beside], t + [_bash("git push", at=1255)])
+    assert rep["ship_turns"]["unsure_turns"] == 1 and rep["ship_turns"]["turns"] == 13
+
+
+def test_unsure_and_ship_turns_count_turns_not_pushes(tmp_path):
+    rows = [_row([], at=100)]
+    t = [_bash("git push", at=-50 + i) for i in range(8)] + [_bash("git push", at=105), _bash("gh pr create", at=106)]
+    code, rep = _shadow(tmp_path, rows, t)
+    st = rep["ship_turns"]
+    assert (st["turns"], st["unsure_turns"]) == (1, 1) and (code, rep["verdict"]) == (3, "not shown")
+
+
+def test_the_shadow_reader_bounds_pushes_it_cannot_place(tmp_path):
+    """A push with no row before it in its session is unsure: met reads the worst case, not
+    met the best case, and under 9 ship turns neither."""
+    orphan = [_bash("git push", at=-30)]  # before the session's first row
+    rows, t = _ships(30)
+    code, rep = _shadow(tmp_path / "a", rows, orphan + t)
+    assert (code, rep["verdict"]) == (0, "met") and rep["ship_turns"]["unsure_turns"] == 1
+    rows, t = _ships(12)
+    code, rep = _shadow(tmp_path / "b", rows, orphan + t)
+    assert (code, rep["verdict"]) == (3, "not shown")  # worst W(12, 13) < 0.70 <= best
+    rows, t = _ships(5)
+    code, rep = _shadow(tmp_path / "c", rows, t)
+    assert (code, rep["verdict"]) == (3, "not shown")  # 5/5 cannot reach 0.70 yet
+    rows, t = _ships(10, step=100.0)
+    rows[0]["selected"] = []
+    fails = [e for i in range(10) for e in (_hook(at=1050 + i * 100, kind="hook_cancelled", ms=15000, timed_out=True),
+                                            _bash("git push", at=1052 + i * 100))]
+    code, rep = _shadow(tmp_path / "d", rows, t + fails)  # could be 19/20: not shown, not "not met"
+    assert (code, rep["verdict"]) == (3, "not shown") and rep["ship_turns"]["wilson_lower_best_case"] >= 0.70
+    rows, t = _ships(20, p9=False)
+    code, rep = _shadow(tmp_path / "e", rows, orphan + t)
+    assert (code, rep["verdict"]) == (1, "not met") and rep["ship_turns"]["wilson_lower_best_case"] < 0.70
+
+
+def test_the_shadow_window_and_forked_copies(tmp_path):
+    rows, t = _ships(12)
+    # a push copied from a forked session's history is that session's, not this one's
+    rows.append(_row([], at=200))  # a prompt that did not ship ...
+    copied = _bash("git push", at=205, forkedFrom={"sessionId": "other"})  # ... but a copied push lands in it
+    # a turn that began before the window pushes inside it: not this window's turn
+    before = [_row([], at=-3 * 86400 + 3600 - 20)]
+    late = [_bash("git push", at=-3 * 86400 + 3600 + 1), _bash("git push", at=-4 * 86400)]
+    code, rep = _shadow(tmp_path, before + rows, late + [copied] + t)
+    st = rep["ship_turns"]
+    assert (st["turns"], st["unsure_turns"], rep["rows"]) == (12, 0, 13)
+    assert rep["verdict"] == "met"
+
+
+def test_the_shadow_reader_fails_or_withholds_on_time_errors_and_unreadable_lines(tmp_path):
+    rows, t = _ships(12)
+    code, rep = _shadow(tmp_path / "a", [dict(r, router_ms=150.0) for r in rows], t)
+    assert (code, rep["verdict"]) == (1, "not met") and rep["router_ms"]["p99"] == 150.0
+    for k, ms in (("b", None), ("c", float("nan"))):  # an older install, or a NaN: time not shown
+        code, rep = _shadow(tmp_path / k, rows[:-1] + [_row(P9, ms=ms, at=110)], t)
+        assert rep["verdict"] == "not shown", ms
+    code, rep = _shadow(tmp_path / "d", rows + [_row(at=170, error="KeyError")], t)
+    assert (code, rep["verdict"]) == (1, "not met")
+    torn = '{"event": "reflex", "shadow": true, "error": "Key'
+    code, rep = _shadow(tmp_path / "e", rows[:6] + [torn] + rows[6:], t)
+    assert rep["malformed_lines_in_window"] == 1 and rep["verdict"] == "not shown"
+    legacy = {"ts": _at(-5), "event": "intake", "session": "s1"}  # any line inside the window opens it
+    code, rep = _shadow(tmp_path / "f", [legacy, torn] + rows, t)
+    assert rep["malformed_lines_in_window"] == 1
+    old = {"ts": _at(-5 * 86400), "event": "intake"}
+    code, rep = _shadow(tmp_path / "g", [old, torn] + rows, t)  # before the window opens
+    assert rep["malformed_lines_in_window"] == 0 and rep["verdict"] == "met"
+    locked = tmp_path / "locked.jsonl"
+    locked.write_text(json.dumps(rows[0]) + "\n", encoding="utf-8")
+    locked.chmod(0)  # unreadable: the reader fails, and says so, rather than reading "not met"
+    try:
+        code, rep = _shadow(tmp_path / "h", rows, t, events_path=locked)
+    finally:
+        locked.chmod(0o600)
+    assert code == 4 and "reader failed" in rep["stderr"]
+
+
+def test_the_hook_s_wall_clock_is_reported_not_gated(tmp_path):
+    rows, t = _ships(12)
+    # each failed run ends just after its own row, which it wrote: no unsure turn
+    runs = [_hook(at=1, ms=200), _hook(at=2, ms=float("nan")), _hook(at=10.5, kind="hook_cancelled", ms=15002, timed_out=True),
+            _hook(at=20.5, kind="hook_cancelled", ms=900, timed_out=False), _hook(at=5, command="/x/other.sh", ms=99999),
+            dict(_hook(at=6), attachment={**_hook(at=6)["attachment"], "hookEvent": "SessionStart"})]
+    code, rep = _shadow(tmp_path, rows, t + runs)
+    hw = rep["hook_wall_ms_reported_not_gated"]
+    assert (hw["runs_recorded"], hw["max"], hw["timeouts"], hw["interrupts"]) == (3, 15002, 1, 1)
+    assert rep["verdict"] == "met"
+
+
+def test_p99_is_nearest_rank():
+    rx = load_module(ROLE_X_PY, "role_x_under_test_p99")
+    assert rx._p99([40.0] * 198 + [101.0] * 2) == 40.0  # exactly 1% above: p99 is still 40
+    assert rx._p99([40.0] * 197 + [101.0] * 3) == 101.0
+
+
+def test_the_shadow_reader_rejects_a_since_it_cannot_read(tmp_path, monkeypatch):
+    rows, t = _ships(12)
+    for bad in ("yesterday", "2026-13-40", "2026/10/03", "3x"):
+        code, rep = _shadow(tmp_path / bad.replace("/", "_"), rows, t, since=bad)
+        assert code == 2 and "since" in rep["stderr"], bad
+    old_tz = os.environ.get("TZ")
+    monkeypatch.setenv("TZ", "America/Bogota")  # a zoneless time must not be read as local
+    time.tzset()
+    try:
+        rx = load_module(ROLE_X_PY, "role_x_under_test_since")
+        from datetime import datetime, timezone
+        assert rx._since("2026-10-03T14:00") == datetime(2026, 10, 3, 14, tzinfo=timezone.utc).timestamp()
+    finally:
+        if old_tz is None:
+            monkeypatch.delenv("TZ")
+        else:
+            monkeypatch.setenv("TZ", old_tz)
+        time.tzset()
+
+
+def test_a_ship_is_a_command_segment_not_a_mention():
+    rx = load_module(ROLE_X_PY, "role_x_under_test_ships")
+    for cmd in ("git push -u origin x", "cd /ws && git -C /ws push", "GIT_X=1 git push", "gh pr create --fill",
+                "make test; git push", "timeout 900 git push", "git -c core.hooksPath=/dev/null push -q origin b",
+                "SRI_SKIP_PREPUSH=1 timeout 300 git push", "(git push)", "URL=$(gh pr create --fill)",
+                "cat > x <<'EOF'\nhello\nEOF\ngit push", "if git push -q; then echo ok; fi", "{ git push; }",
+                "time git push", "git --no-pager push", "echo $((1<<3)); git push"):
+        assert rx._ships(cmd), cmd
+    for cmd in ("git push origin --delete old", "git push -d origin x", "git push origin :old", "git push --dry-run",
+                "python3 - <<'EOF'\ngit push\nEOF", "echo 'run git push later'", "grep -rn 'gh pr create' docs",
+                "gh pr create --help", "git push --help", "gh pr create --dry-run", "git push origin --delete=x"):
+        assert not rx._ships(cmd), cmd
+    assert rx._wilson_lower(116, 150) < 0.70  # 0.69999..., compared unrounded

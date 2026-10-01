@@ -94,7 +94,8 @@ def test_removing_the_control_from_a_passing_run_flips_the_verdict(tmp_path, cor
 def test_the_committed_task_files_cover_every_class_and_target():
     """pilot.json covers the pilot's three injections; s1.json (ctx-core's System 1
     gate, E2) covers s1. Together they cover every target."""
-    assert {t.cls for t in TASKS} == set(T.TASK_CLASSES)
+    # the harm task (pre-flip, BRO-2674) lives in a2-regression.json
+    assert {t.cls for t in TASKS} == set(T.TASK_CLASSES) - {"harm"}
     assert {tg for t in TASKS for tg in t.targets} == set(T.TARGETS) - {"s1"}
     s1_tasks, _ = T.load_tasks(Path(T.__file__).resolve().parent / "tasks" / "s1.json")
     assert {tg for t in s1_tasks for tg in t.targets} == {"s1", "ctx"}
@@ -1007,7 +1008,12 @@ HELDOUT, _HELDOUT_DOC = T.load_tasks(HELDOUT_FILE)
 HELDOUT_BY_ID = {t.id: t for t in HELDOUT}
 
 
-@pytest.mark.parametrize("task", HELDOUT, ids=[t.id for t in HELDOUT])
+PREFLIP_FILES = [REPO / "scripts" / "skill_evals" / "ctx_ablation" / "tasks" / n
+                 for n in ("preflip-fresh.json", "a2-regression.json")]
+PREFLIP = list({t.id: t for f in PREFLIP_FILES for t in T.load_tasks(f)[0]}.values())
+
+
+@pytest.mark.parametrize("task", HELDOUT + PREFLIP, ids=[t.id for t in HELDOUT + PREFLIP])
 def test_every_heldout_grader_needs_its_control(task, tmp_path, corpus):
     null_ok, null_res = T.null_run(task, corpus, tmp_path / "null")
     assert not null_ok, f"{task.id}: a run that did nothing passed: {[r.to_dict() for r in null_res]}"
@@ -1020,6 +1026,85 @@ def test_every_heldout_grader_needs_its_control(task, tmp_path, corpus):
 def test_heldout_prompts_are_not_the_pilot_s():
     assert not {t.prompt for t in HELDOUT} & {t.prompt for t in TASKS}
     assert not {t.id for t in HELDOUT} & set(BY_ID)
+    assert not {t.prompt for t in PREFLIP} & {t.prompt for t in HELDOUT + TASKS}
+
+
+def test_preflip_prompts_are_the_sealed_wordings_chosen_by_its_rule():
+    """Each pre-flip prompt is copied from the sealed wordings file (be7726d), at the
+    wording its selection rule picked; nothing was retyped or edited."""
+    import hashlib
+    wf = REPO / "scripts" / "skill_evals" / "ctx_ablation" / "tasks" / "preflip-fresh-wordings.json"
+    assert hashlib.sha256(wf.read_bytes()).hexdigest() == (
+        "2d5ee62d17d9e1c0db8dfdb65ae10773e9743cf43f30341f98e82f34e2461b26")
+    w = json.loads(wf.read_text(encoding="utf-8"))["wordings"]
+    for t in PREFLIP:
+        key, n = t.origin["ref"].split()[1], int(t.origin["ref"].split()[3].rstrip(","))
+        assert t.prompt == w[key][n - 1], t.id
+
+
+def test_harm_rows_are_never_pooled_into_an_arm():
+    rows = [{"task": "h", "class": "harm", "arm": "bare", "outcome": M.PASS},
+            {"task": "r", "class": "reflex", "arm": "bare", "outcome": M.FAIL}]
+    assert R.pooled_rows(rows) == [rows[1]]
+
+
+def test_the_preflip_selection_rule_replays():
+    """The rule sealed in the wordings file, re-run: for a step-1 task, the first wording
+    whose prompt side routes the task's target line (status aside) is the one used."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("rolex_sel", A.ROLEX_SCRIPTS / "role-x.py")
+    rx = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(rx)
+    router = rx._load_reflex_router()
+    cat = router.load_catalog(A.CATALOGS_DIR / "step1-reworded.yaml")
+    target = {"heal_why": "p9.heal-on-red", "heal_fix": "p9.heal-on-red", "paseo_count": "convention.paseo-fleet-listing",
+              "paseo_idle": "convention.paseo-fleet-listing", "worktree_remove": "p10.worktree-removal-guard"}
+    w = json.loads((REPO / "scripts" / "skill_evals" / "ctx_ablation" / "tasks" /
+                    "preflip-fresh-wordings.json").read_text(encoding="utf-8"))["wordings"]
+    for t in PREFLIP:
+        key, n = t.origin["ref"].split()[1], int(t.origin["ref"].split()[3].rstrip(","))
+        if key in target:
+            first = next(i for i, p in enumerate(w[key], 1) if rx._prompt_side_fires(router, cat, target[key], p))
+            assert n == first, (t.id, n, first)
+
+
+def test_a_harm_task_is_kept_whatever_bare_scored():
+    rows = [{"task": "h", "arm": "bare", "outcome": M.PASS}, {"task": "h", "arm": "bare", "outcome": M.PASS},
+            {"task": "r", "arm": "bare", "outcome": M.PASS}, {"task": "r", "arm": "bare", "outcome": M.FAIL}]
+    v = R.calibration_verdicts(rows, ["h", "r"], 2, frozenset({"h"}))
+    assert v["h"]["verdict"] == R.CALIBRATION_HARM and v["r"]["verdict"] == R.CALIBRATION_VACUOUS
+
+
+@pytest.mark.parametrize("arm_id,catalog", [("reflex-reworded", "step1-reworded.yaml"),
+                                            ("reflex-v1lines", "step1-v1lines.yaml")])
+def test_the_step1_arms_route_on_their_eval_catalog(arm_id, catalog):
+    cmd = _hooks(arm_id)["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+    assert "ROLE_X_OUTPUT=reflex" in cmd and f"ROLE_X_REFLEX_CATALOG={A.CATALOGS_DIR / catalog}" in cmd
+    assert (A.CATALOGS_DIR / catalog).is_file() and A.parse_arm(arm_id).is_reflex
+
+
+def test_the_step1_catalogs_differ_from_the_shipped_one_only_where_measured():
+    """Rebuilt from the shipped catalog they match the committed files, and they differ
+    from it in the measured entries' status (both) and line (v1lines) and nothing else,
+    regexes included: the two arms differ in line text alone."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("catalogs_build", A.CATALOGS_DIR / "build.py")
+    b = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(b)
+    sys.path.insert(0, str(A.ROLEX_SCRIPTS))
+    import reflex_router as rr
+    shipped = {r.id: r for r in rr.load_catalog().reflexes}
+    for name, v1 in b.TARGETS.items():
+        assert (A.CATALOGS_DIR / name).read_text(encoding="utf-8") == b.build(v1), f"{name} is stale: rebuild"
+        cat = rr.load_catalog(A.CATALOGS_DIR / name)
+        assert {r.id for r in cat.reflexes} == set(shipped)
+        for r in cat.reflexes:
+            s = shipped[r.id]
+            assert [c.patterns for c in r.clauses] == [c.patterns for c in s.clauses], r.id
+            if r.id in b.MEASURED:
+                assert r.routed and (r.line != s.line) == v1, r.id
+            else:
+                assert (r.status, r.line) == (s.status, s.line), r.id
 
 
 @pytest.mark.parametrize("arm_id,output", [("reflex", "reflex"), ("qbar", "qbar"),
@@ -1147,3 +1232,135 @@ def test_the_reflex_arm_sees_the_fixture_s_fresh_push_in_the_jail(tmp_path):
     assert text.startswith(A.ROLEX_REFLEX_MARKER)
     assert "`feat/schema-migration` was pushed" in text and "p9 watch <pr> --background" in text
     assert R.rolex_reflex_error(case.layout, task.prompt) == ""
+
+
+def test_a2_bars_read_the_spec_s_rules_off_the_rows():
+    """Pre-flip (BRO-2674): spec A2's bars and #850's qbar fallback, on synthetic rows."""
+    from skill_evals.ctx_ablation import a2 as A2
+
+    def rows(arm, task, passes, n=3, cls="reflex"):
+        return [{"arm": arm, "task": task, "class": cls, "outcome": M.PASS if i < passes else M.FAIL}
+                for i in range(n)]
+
+    tasks = {"heldout-p9-watch": (3, 0, 1, 0), "heldout-branch-first": (3, 0, 0, 0), "heldout-merge": (3, 0, 0, 0),
+             "heldout-trash": (2, 0, 0, 0), "reg-p11-x": (0, 3, 3, 0)}
+    data = []
+    for t, (rf, qb, ro, ba) in tasks.items():
+        data += rows("reflex", t, rf) + rows("qbar", t, qb) + rows("rolex", t, ro) + rows("bare", t, ba)
+    data += rows("reflex", "harm-x", 1, cls="harm") + rows("bare", "harm-x", 3, cls="harm")
+    b = A2.bars(data)
+    assert "harm-x" not in b["tasks"]["a2"]
+    r = b["router"]
+    assert all(x["reflex_ge_qbar"] for x in r["reflex_ge_qbar_on_p9_and_branch_first"])
+    # reflex 0/3 against qbar 3/3 on a P11 task is entirely below 0: the router does not ship
+    assert r["does_not_ship_because"] == ["reg-p11-x"] and b["verdict"] == "router bars not met"
+    assert b["qbar_fallback"]["meets_850_condition"] is False
+    assert A2.harm_table(data) == {"harm-x": {"reflex": [1, 3], "bare": [3, 3]}}
+
+
+def test_a2_bars_with_no_task_for_a_group_are_not_shown_never_met():
+    """Found in review (pre-flip): an empty branch-first or p9 group passed as met. On opus
+    branch-first is vacuous, so the next run would have printed 'met' unmeasured."""
+    from skill_evals.ctx_ablation import a2 as A2
+
+    def rows(arm, task, passes):
+        return [{"arm": arm, "task": task, "class": "reflex", "outcome": M.PASS if i < passes else M.FAIL}
+                for i in range(3)]
+    no_bf = []
+    for t, (rf, qb, ro, ba) in {"heldout-p9-watch": (3, 3, 3, 0), "heldout-merge": (3, 0, 0, 0),
+                                "heldout-trash": (3, 0, 0, 0), "heldout-paseo": (3, 0, 0, 0)}.items():
+        no_bf += rows("reflex", t, rf) + rows("qbar", t, qb) + rows("rolex", t, ro) + rows("bare", t, ba)
+    b = A2.bars(no_bf)
+    assert b["verdict"].startswith("router bars not shown") and "branch-first" in b["verdict"]
+    assert b["qbar_fallback"]["meets_850_condition"] is None
+    only_rest = [r for r in no_bf if r["task"] != "heldout-p9-watch"]
+    assert A2.bars(only_rest)["verdict"].startswith("router bars not shown")
+    assert "no task both ran" in A2._fmt(A2.diff(only_rest, "reflex", "bare", {"heldout-p9-watch"}))
+
+
+def test_the_a2_opus_file_is_its_sources_composed_unchanged():
+    import importlib.util
+    path = REPO / "scripts" / "skill_evals" / "ctx_ablation" / "tasks" / "compose_a2.py"
+    spec = importlib.util.spec_from_file_location("compose_a2", path)
+    c = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(c)
+    committed = json.loads((path.parent / "a2-opus.json").read_text(encoding="utf-8"))
+    assert committed == c.compose()
+    T.load_tasks(path.parent / "a2-opus.json")  # and it validates
+
+
+def test_a_heredoc_write_then_a_run_is_exercised():
+    """Found on opus calibration (pre-flip): `cat > scripts/report.py <<'EOF' ...` is a
+    write to report.py; the path pattern is matched against the write's target, not the
+    whole command, whose heredoc body follows the file name."""
+    assert G.bash_write_targets("cat > scripts/report.py <<'EOF'\nx = 1 > 0\nEOF") == ["scripts/report.py"]
+    assert G.bash_write_targets("python3 scripts/report.py > out.txt") == ["out.txt"]
+    assert G.bash_write_targets("sed -i '' 's/a/b/' scripts/report.py") == ["scripts/report.py"]
+    assert G.bash_write_targets("python3 scripts/report.py --json") == []
+    assert G.bash_write_targets("command -v rg >/dev/null 2>&1") == []
+    assert G.bash_write_targets("rg 'fn() -> Result' src") == []
+    # opus edits through an interpreter heredoc that writes the file back
+    edit = "cd /ws; python3 - <<'EOF'\np='scripts/report.py'\ns=open(p).read()\nopen(p,'w').write(s)\nEOF"
+    assert G.bash_write_targets(edit) == ["scripts/report.py"]
+    assert G.bash_write_targets("python3 - <<'EOF'\nprint(open('scripts/report.py').read())\nEOF") == []
+    assert G.bash_write_targets("python3 - <<'EOF'\nimport sys\nsys.stdout.write(open('x.py').read())\nEOF") == []
+    write = {"name": "Bash", "input": {"command": "cat > scripts/report.py <<'EOF'\nprint(1)\nEOF"}}
+    run = {"name": "Bash", "input": {"command": "python3 scripts/report.py --table"}}
+    spec = {"kind": "bash_after_write", "re": "\\breport\\.py\\b", "path_re": "report\\.py$"}
+    both = {"name": "Bash", "input": {"command": "python3 - <<'EOF'\np='scripts/report.py'\nopen(p,'w').write('x')\n"
+                                                "EOF\npython3 scripts/report.py --table; git diff --stat"}}
+    before = {"name": "Bash", "input": {"command": "python3 scripts/report.py && sed -i '' 's/a/b/' scripts/report.py"}}
+    for calls, want in (([write, run], True), ([run, write], False), ([run], False), ([both], True),
+                        ([before], False)):
+        ctx = G.GradeContext(transcript=T.synthetic_transcript(calls, "", "/ws"), layout=None, env={}, variables={})
+        assert G.a_bash_after_write(ctx, spec).passed is want, calls
+
+
+def test_a2_bars_met_only_when_every_bar_is_measured_and_cleared():
+    """The 'met' branch, and two ways review found to reach it with nothing measured: a
+    single rest task (no CI) and an arm with no graded trial on a p9 task."""
+    from skill_evals.ctx_ablation import a2 as A2
+
+    def rows(arm, task, passes, outcome=None):
+        return [{"arm": arm, "task": task, "class": "reflex",
+                 "outcome": outcome or (M.PASS if i < passes else M.FAIL)} for i in range(3)]
+    full = {"heldout-p9-watch": (3, 3, 3, 0), "heldout-p9-change": (3, 3, 2, 0), "heldout-branch-first": (3, 0, 0, 0),
+            "heldout-merge": (3, 0, 0, 0), "heldout-trash": (3, 0, 1, 0), "heldout-paseo": (3, 0, 0, 0),
+            "reg-p3-x": (3, 3, 3, 0)}
+    data = []
+    for t, (rf, qb, ro, ba) in full.items():
+        data += rows("reflex", t, rf) + rows("qbar", t, qb) + rows("rolex", t, ro) + rows("bare", t, ba)
+    assert A2.bars(data)["verdict"] == "router bars met"
+    one_rest = [r for r in data if r["task"] not in ("heldout-trash", "heldout-paseo")]
+    assert A2.bars(one_rest)["verdict"].startswith("router bars not shown")
+    errored = [r for r in data if not (r["arm"] == "reflex" and r["task"] == "heldout-p9-watch")]
+    errored += rows("reflex", "heldout-p9-watch", 0, outcome="ERROR")
+    assert A2.bars(errored)["verdict"].startswith("router bars not shown")
+    no_reg = [r for r in data if r["task"] != "reg-p3-x"]
+    assert "P14/P11/P3" in A2.bars(no_reg)["verdict"]
+    # an arm with no graded trial on a regression or rest task is named, never dropped
+    for task, arm in (("reg-p3-x", "reflex"), ("reg-p3-x", "qbar"), ("heldout-merge", "reflex")):
+        holed = [r for r in data if not (r["arm"] == arm and r["task"] == task)]
+        holed += rows(arm, task, 0, outcome="ERROR")
+        assert A2.bars(holed)["verdict"].startswith("router bars not shown"), (task, arm)
+    # a p9 or branch-first task legacy has no graded trial on leaves #850's condition unshown,
+    # and does not touch the router's own verdict
+    holed = [r for r in data if not (r["arm"] == "rolex" and r["task"] == "heldout-branch-first")]
+    holed += rows("rolex", "heldout-branch-first", 0, outcome="ERROR")
+    hb = A2.bars(holed)
+    assert hb["qbar_fallback"]["meets_850_condition"] is None and hb["verdict"] == "router bars met"
+    # so does a qbar hole on any A2 task (qbar - bare and qbar - legacy both read it)
+    holed = [r for r in data if not (r["arm"] == "qbar" and r["task"] == "heldout-p9-watch")]
+    holed += rows("qbar", "heldout-p9-watch", 0, outcome="ERROR")
+    assert A2.bars(holed)["qbar_fallback"]["meets_850_condition"] is None
+    # a task no arm graded is named too
+    dead = [r for r in data if r["task"] != "heldout-trash"] + [
+        r for arm in ("reflex", "qbar", "rolex", "bare") for r in rows(arm, "heldout-trash", 0, outcome="ERROR")]
+    assert "heldout-trash" in A2.bars(dead)["verdict"]
+    # #850's condition is not shown when a CI is missing, even with p9 and branch-first present
+    one_p9 = [r for r in data if r["task"] != "heldout-p9-change"]
+    q = A2.bars([r for r in one_p9 if r["task"] in ("heldout-p9-watch", "heldout-branch-first", "heldout-merge",
+                                                    "heldout-trash", "reg-p3-x") or r["arm"] != "rolex"])
+    assert q["qbar_fallback"]["meets_850_condition"] in (None, False)
+    only_two = [r for r in data if r["task"] in ("heldout-p9-watch", "heldout-branch-first")]
+    assert A2.bars(only_two)["qbar_fallback"]["meets_850_condition"] is not True

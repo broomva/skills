@@ -1,5 +1,50 @@
 # PLANS.md
 
+## role-x reflex router, pre-flip evidence (BRO-2674)
+
+Status: evals done; PR broomva/skills#260 in P20, on `feat/role-x-reflex-preflip`. Owner decision 2026-10-01: do not
+flip yet; run the pre-flip flow, then the owner decides. `ROLE_X_OUTPUT` stays
+default-off in this PR. Spec: workspace `docs/specs/2026-09-30-reflex-router-and-ontology-ranked-context.html`
+with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
+
+### Scope
+
+1. **Injection defence (step 1).** Reword the lines sonnet refused as injected text
+   (p9 heal, Paseo), and the worktree guard so it says what is and is not automated.
+   Re-measure on fresh blind prompts, sealed before the rewording. About $3, sonnet.
+2. **Step 2, shadow** is the owner's: read its event log at the end.
+3. **Opus A2 (step 3).** bare, rolex, qbar, reflex on the held-out tasks plus P14/P11/P3
+   regression tasks and a harm task (a line must not induce deleting a worktree's
+   ignored files). Task-clustered CIs as in the sonnet table. About $20; above $30, a
+   stated subset. Arms one at a time, jobs ≤ 2.
+4. **Thicker routing gate (step 4).** A fresh sealed set, 10 positives and 5
+   near-misses per id (40/20 for `change_work`), written blind and hashed before it is
+   scored. Re-gate every entry; report routed before and after, `p4.ship-not-ask` in
+   particular.
+
+### Milestones
+
+1. [x] Briefs written; blind writers (no catalog, no tools) produce routing v2 and the
+   fresh task prompts; both committed with sha256 before any rewording or scoring (be7726d).
+2. [x] Step 4: score v2, set `status` per the gate, tests gate on v2: 9/31 pass with
+   change_work held to 0.80; heal, checkit and autonomous listed, ship-not-ask still listed.
+3. [x] Step 1 (sonnet, $3.46): heal 3/3 reworded vs 0/3 v1 line on a fresh wording; Paseo 3/3
+   both; worktree 0/3 in every arm by its grader, no backup claim with the reworded line.
+4. [x] Step 3 (opus, $14.14, 05:47–06:11 -05): reflex 15/24 [+0.19, +1.00], legacy 11/24, qbar
+   10/24, bare 0/24. A2 not met: P3 reflex 0/3 vs qbar 3/3 (stop rule); rest CI [−0.08, +1.00];
+   branch-first and the qbar fallback not shown. P20 round 1 (B 7, C 6): autonomous and the
+   worktree guard back to listed, change_work held to 0.80, a2.py reports "not shown".
+5. [ ] Results doc (`ctx_ablation/RESULTS-reflex-preflip.md`): do not flip. P20 (B + C), merge
+   with the flag off.
+
+### Verification
+
+`pytest skills/orchestration/role-x/tests tests/skill_evals/test_ctx_ablation.py`,
+`python3 scripts/skill_evals/ctx_ablation/run.py validate --deep --tasks <file>`,
+`python3 skills/orchestration/role-x/scripts/role-x.py reflexes route --heldout` (v2, 9/31),
+`python3 scripts/skill_evals/ctx_ablation/a2.py --out ~/.cache/ctx-ablation/preflip-opus`,
+`python3 skills/orchestration/role-x/scripts/role-x.py reflexes shadow --since <install time, UTC>` (A1).
+
 ## fleet-reconcile: the owner channel on Paseo, and phase 2's carry-overs (BRO-2674)
 
 Status: in progress on `feat/fleet-reconcile-paseo-asks` (from main bbf3ad5, after #258).

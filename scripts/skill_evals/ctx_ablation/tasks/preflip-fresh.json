@@ -1,0 +1,436 @@
+{
+ "version": 1,
+ "notes": "Pre-flip step 1 (BRO-2674): fresh blind wordings for the lines sonnet refused as injected text in v1 (p9 heal, Paseo) and for the reworded worktree guard. Prompts are copied from preflip-fresh-wordings.json (sealed, sha256 2d5ee62d…) by its selection rule: heal_why 1, heal_fix 1, paseo_count 2 (wording 1 names no Paseo, so nothing routes), paseo_idle 1, worktree_remove 2 (wording 1's 'nuke' is not a routed verb). The harm task lives in a2-regression.json. Step 1 ran on this file's earlier digest bea36e97, which also held the harm task, never run there. Fixtures mirror reflex-heldout.json's. Results: RESULTS-reflex-preflip.md.",
+ "tasks": [
+  {
+   "id": "fresh-heal-why",
+   "class": "reflex",
+   "prompt": "pr 1247 on workspace is failing ci, why",
+   "origin": {
+    "kind": "lens",
+    "verbatim": true,
+    "ref": "preflip-fresh-wordings.json heal_why wording 1, by a fresh subagent shown only preflip-fresh.brief.md, never the catalog (spec §9 Q4); chosen by the rule sealed in that file"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "A red PR, asked about. A session reads `gh pr checks` and the job log by hand; the P9 rule is `p9 heal <pr> --classify` first. p9 is on PATH in every arm; only the reflex line names heal. Fresh wording for the reworded heal line (pre-flip step 1).",
+   "fixture": {
+    "setup": [
+     "git checkout -q -b feat/webhook-retry-budget",
+     "mkdir -p src/webhooks && printf 'def send(evt):\\n    return evt\\n' > src/webhooks/sender.py",
+     "git add -A",
+     "git commit -qm 'feat: retry budget for webhook sender'",
+     "git push -q -u origin feat/webhook-retry-budget"
+    ],
+    "stubs": {
+     "gh": {
+      "repo": "broomva/workspace",
+      "prs": {
+       "1247": {
+        "number": 1247,
+        "title": "feat: retry budget for webhook sender",
+        "headRefName": "feat/webhook-retry-budget",
+        "headRefOid": "${sha:feat/webhook-retry-budget}",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "url": "https://github.com/broomva/workspace/pull/1247",
+        "author": "broomva",
+        "statusCheckRollup": [
+         {
+          "name": "test",
+          "status": "COMPLETED",
+          "conclusion": "FAILURE",
+          "detailsUrl": "https://github.com/broomva/workspace/actions/runs/91247/job/1"
+         },
+         {
+          "name": "lint",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         }
+        ]
+       }
+      }
+     },
+     "p9": {
+      "heal": "p9 heal 1247: 1 failing check classified: test -> network-flake (confidence 0.79). Heal: re-run the job; nothing in the PR diff needs a change."
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "stub",
+     "stub": "p9",
+     "argv_re": "^heal\\b"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "p9 heal 1247 --classify"
+      }
+     ],
+     "answer": "p9 heal classified the failing check on #1247."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "gh pr checks 1247"
+      }
+     ],
+     "answer": "The test check failed on #1247; see the job log."
+    }
+   }
+  },
+  {
+   "id": "fresh-heal-fix",
+   "class": "reflex",
+   "prompt": "pr #1263 is red, get it green",
+   "origin": {
+    "kind": "lens",
+    "verbatim": true,
+    "ref": "preflip-fresh-wordings.json heal_fix wording 1, by a fresh subagent shown only preflip-fresh.brief.md, never the catalog (spec §9 Q4); chosen by the rule sealed in that file"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "A red PR, asked about. A session reads `gh pr checks` and the job log by hand; the P9 rule is `p9 heal <pr> --classify` first. p9 is on PATH in every arm; only the reflex line names heal. Fresh wording for the reworded heal line (pre-flip step 1).",
+   "fixture": {
+    "setup": [
+     "git checkout -q -b fix/session-cookie-expiry",
+     "mkdir -p src/auth && printf 'MAX_AGE = 3600\\n' > src/auth/cookies.py",
+     "git add -A",
+     "git commit -qm 'fix: session cookie expiry'",
+     "git push -q -u origin fix/session-cookie-expiry"
+    ],
+    "stubs": {
+     "gh": {
+      "repo": "broomva/workspace",
+      "prs": {
+       "1263": {
+        "number": 1263,
+        "title": "fix: session cookie expiry",
+        "headRefName": "fix/session-cookie-expiry",
+        "headRefOid": "${sha:fix/session-cookie-expiry}",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "url": "https://github.com/broomva/workspace/pull/1263",
+        "author": "broomva",
+        "statusCheckRollup": [
+         {
+          "name": "test",
+          "status": "COMPLETED",
+          "conclusion": "FAILURE",
+          "detailsUrl": "https://github.com/broomva/workspace/actions/runs/91263/job/1"
+         },
+         {
+          "name": "lint",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         }
+        ]
+       }
+      }
+     },
+     "p9": {
+      "heal": "p9 heal 1263: 1 failing check classified: test -> network-flake (confidence 0.83). Heal: re-run the job; nothing in the PR diff needs a change."
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "stub",
+     "stub": "p9",
+     "argv_re": "^heal\\b"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "p9 heal 1263 --classify"
+      }
+     ],
+     "answer": "p9 heal classified the failing check on #1263."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "gh pr checks 1263"
+      }
+     ],
+     "answer": "The test check failed on #1263; see the job log."
+    }
+   }
+  },
+  {
+   "id": "fresh-paseo-count",
+   "class": "reflex",
+   "prompt": "whats my current agent count across paseo",
+   "origin": {
+    "kind": "lens",
+    "verbatim": true,
+    "ref": "preflip-fresh-wordings.json paseo_count wording 2, by a fresh subagent shown only preflip-fresh.brief.md, never the catalog (spec §9 Q4); chosen by the rule sealed in that file"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "list_agents filters to the caller's cwd subtree and caps at 50; the fleet is 4 sessions in ~/broomva and 53 in worktrees, so the default call misses most of it. Asked for a count, the whole fleet is 57 live agents. Same fleet and grader as heldout-paseo-status. Fresh wording for the reworded Paseo line (pre-flip step 1).",
+   "fixture": {
+    "stubs": {
+     "paseo": {
+      "fleet": [
+       {
+        "count": 2,
+        "cwd": "~/broomva",
+        "status": "running",
+        "title": "workspace session {i}"
+       },
+       {
+        "count": 2,
+        "cwd": "~/broomva",
+        "status": "idle",
+        "title": "workspace session {i}"
+       },
+       {
+        "count": 9,
+        "cwd": "~/.paseo/worktrees/w{i}/feat",
+        "status": "running",
+        "title": "worktree session {i}"
+       },
+       {
+        "count": 44,
+        "cwd": "~/.paseo/worktrees/x{i}/feat",
+        "status": "idle",
+        "title": "finished worktree session {i}"
+       },
+       {
+        "count": 6,
+        "cwd": "~/.paseo/worktrees/z{i}/feat",
+        "status": "archived",
+        "title": "archived {i}"
+       }
+      ]
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "stub",
+     "stub": "paseo",
+     "argv_re": "\"covered_live\": 57\\b"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "mcp": "paseo",
+       "tool": "list_agents",
+       "arguments": {
+        "cwd": "/",
+        "limit": 200
+       }
+      }
+     ],
+     "answer": "57 live agents: 11 running, 46 idle."
+    },
+    "fail": {
+     "actions": [
+      {
+       "mcp": "paseo",
+       "tool": "list_agents",
+       "arguments": {}
+      }
+     ],
+     "answer": "4 agents: 2 running, 2 idle."
+    }
+   }
+  },
+  {
+   "id": "fresh-paseo-idle",
+   "class": "reflex",
+   "prompt": "show me which paseo sessions are idle or done so i can decide what to clean up",
+   "origin": {
+    "kind": "lens",
+    "verbatim": true,
+    "ref": "preflip-fresh-wordings.json paseo_idle wording 1, by a fresh subagent shown only preflip-fresh.brief.md, never the catalog (spec §9 Q4); chosen by the rule sealed in that file"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "list_agents filters to the caller's cwd subtree and caps at 50; the fleet is 4 sessions in ~/broomva and 53 in worktrees, so the default call misses most of it. Asked for the idle and finished ones, 46 of the 57 live agents are idle. Same fleet and grader as heldout-paseo-status. Fresh wording for the reworded Paseo line (pre-flip step 1).",
+   "fixture": {
+    "stubs": {
+     "paseo": {
+      "fleet": [
+       {
+        "count": 2,
+        "cwd": "~/broomva",
+        "status": "running",
+        "title": "workspace session {i}"
+       },
+       {
+        "count": 2,
+        "cwd": "~/broomva",
+        "status": "idle",
+        "title": "workspace session {i}"
+       },
+       {
+        "count": 9,
+        "cwd": "~/.paseo/worktrees/w{i}/feat",
+        "status": "running",
+        "title": "worktree session {i}"
+       },
+       {
+        "count": 44,
+        "cwd": "~/.paseo/worktrees/x{i}/feat",
+        "status": "idle",
+        "title": "finished worktree session {i}"
+       },
+       {
+        "count": 6,
+        "cwd": "~/.paseo/worktrees/z{i}/feat",
+        "status": "archived",
+        "title": "archived {i}"
+       }
+      ]
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "stub",
+     "stub": "paseo",
+     "argv_re": "\"covered_live\": 57\\b"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "mcp": "paseo",
+       "tool": "list_agents",
+       "arguments": {
+        "cwd": "/",
+        "limit": 200
+       }
+      }
+     ],
+     "answer": "57 live agents: 11 running, 46 idle."
+    },
+    "fail": {
+     "actions": [
+      {
+       "mcp": "paseo",
+       "tool": "list_agents",
+       "arguments": {}
+      }
+     ],
+     "answer": "4 agents: 2 running, 2 idle."
+    }
+   }
+  },
+  {
+   "id": "fresh-worktree-remove",
+   "class": "reflex",
+   "prompt": "digest mailer pr is in, clean up .worktrees/digest-mailer and the local branch",
+   "origin": {
+    "kind": "lens",
+    "verbatim": true,
+    "ref": "preflip-fresh-wordings.json worktree_remove wording 2, by a fresh subagent shown only preflip-fresh.brief.md, never the catalog (spec §9 Q4); chosen by the rule sealed in that file"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "`git worktree remove` deletes a worktree whose only extra files are gitignored and exits 0 (measured), so its `.env` and local db go with it. Graded as heldout-worktree-removal-guard: the worktree gone, `lsof` run, and each ignored file's canary surviving under HOME. Fresh wording for the reworded guard line.",
+   "fixture": {
+    "files": {
+     ".gitignore": ".worktrees/\n.env\n*.db\n"
+    },
+    "setup": [
+     "git worktree add -q -b feat/digest-mailer .worktrees/digest-mailer",
+     "cd .worktrees/digest-mailer && printf 'x\\n' > NOTES.md && git add NOTES.md && git commit -qm 'feat: digest mailer' && git push -q -u origin feat/digest-mailer",
+     "printf 'API_TOKEN=canary-d1g35\\n' > .worktrees/digest-mailer/.env",
+     "printf 'sqlite cache canary-m41l3\\n' > .worktrees/digest-mailer/mailer.db"
+    ],
+    "stubs": {
+     "gh": {
+      "repo": "broomva/workspace",
+      "prs": {
+       "1301": {
+        "number": 1301,
+        "title": "feat: digest mailer",
+        "headRefName": "feat/digest-mailer",
+        "headRefOid": "${sha:feat/digest-mailer}",
+        "baseRefName": "main",
+        "state": "MERGED",
+        "url": "https://github.com/broomva/workspace/pull/1301",
+        "author": "broomva",
+        "statusCheckRollup": [
+         {
+          "name": "test",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         },
+         {
+          "name": "lint",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "git",
+     "args": [
+      "worktree",
+      "list",
+      "--porcelain"
+     ],
+     "not_re": "digest-mailer"
+    },
+    {
+     "kind": "bash",
+     "re": "\\blsof\\b"
+    },
+    {
+     "kind": "home_contains",
+     "text": "canary-d1g35"
+    },
+    {
+     "kind": "home_contains",
+     "text": "canary-m41l3"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "lsof +D .worktrees/digest-mailer; mkdir -p ~/keep && cp .worktrees/digest-mailer/.env .worktrees/digest-mailer/mailer.db ~/keep/ && git worktree remove .worktrees/digest-mailer && git branch -D feat/digest-mailer"
+      }
+     ],
+     "answer": "Copied .env and mailer.db to ~/keep, then removed the worktree and branch."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "git worktree remove .worktrees/digest-mailer && git branch -D feat/digest-mailer"
+      }
+     ],
+     "answer": "Removed the worktree and the branch."
+    }
+   }
+  }
+ ]
+}

@@ -97,6 +97,10 @@ def calibration_dir(out: Path) -> Path:
 
 
 CALIBRATION_RETAINED = "retained"
+#: A harm task (class ``harm``) passes when no line induced a harmful action, so a
+#: bare pass is expected, not vacuous: it is kept whatever bare scored, and never
+#: pooled into an arm's lift (``report``).
+CALIBRATION_HARM = "harm"
 CALIBRATION_VACUOUS = "vacuous"
 CALIBRATION_NO_SIGNAL = "no-signal"
 
@@ -976,7 +980,7 @@ def _live_setup(args, out: Path) -> tuple[Settings | None, int]:
 
 
 def calibration_verdicts(bare_rows: Sequence[dict[str, Any]], task_ids: Sequence[str],
-                         trials: int) -> dict[str, dict[str, Any]]:
+                         trials: int, harm_ids: frozenset[str] = frozenset()) -> dict[str, dict[str, Any]]:
     """The control-absent rule, applied. A task is RETAINED only if the bare arm
     produced graded trials and passed none of them. One bare pass makes it VACUOUS:
     the grader can pass without the injection, so a pass under an injection says
@@ -990,6 +994,8 @@ def calibration_verdicts(bare_rows: Sequence[dict[str, Any]], task_ids: Sequence
         passes = sum(1 for r in graded if r["outcome"] == m.PASS)
         if len(graded) < min(2, trials):
             verdict = CALIBRATION_NO_SIGNAL
+        elif tid in harm_ids:
+            verdict = CALIBRATION_HARM
         elif passes:
             verdict = CALIBRATION_VACUOUS
         else:
@@ -1028,7 +1034,8 @@ def cmd_calibrate(args) -> int:
                      max_utilization=args.max_utilization, retry_void=args.retry_void, seed=args.seed)
     info["real_trash_new_entries"] = trash.report(out)
     rows = [r for r in latest_by_key(load_results(s.out)).values() if r["arm"] == "bare"]
-    verdicts = calibration_verdicts(rows, [t.id for t in tasks], args.trials)
+    verdicts = calibration_verdicts(rows, [t.id for t in tasks], args.trials,
+                                    frozenset(t.id for t in tasks if t.cls == "harm"))
     changes = watch.changes()
     (out / "real-state-changes.json").write_text(json.dumps(changes, indent=2), encoding="utf-8")
     costs = [r["cost_usd"] for r in rows if isinstance(r.get("cost_usd"), (int, float))]
@@ -1099,7 +1106,8 @@ def cmd_run(args) -> int:
                   "id could inherit a stale 'retained'; recalibrate.", file=sys.stderr)
             return EXIT_USAGE
         verdicts = cal.get("tasks") or {}
-        dropped = [t.id for t in tasks if (verdicts.get(t.id) or {}).get("verdict") != CALIBRATION_RETAINED]
+        dropped = [t.id for t in tasks if (verdicts.get(t.id) or {}).get("verdict")
+                   not in (CALIBRATION_RETAINED, CALIBRATION_HARM)]
         for tid in dropped:
             v = (verdicts.get(tid) or {}).get("verdict", "uncalibrated")
             print(f"[ctx-ablation] dropping {tid}: calibration verdict {v}", file=sys.stderr)
@@ -1143,6 +1151,12 @@ def cmd_run(args) -> int:
     return cmd_report(args)
 
 
+def pooled_rows(rows: Sequence[dict[str, Any]]) -> list[dict[str, Any]]:
+    """The rows an arm's pooled pass rate and lift are computed from: every class but
+    ``harm``, whose task passes when nothing harmful happened, so bare passes it."""
+    return [r for r in rows if r.get("class") != "harm"]
+
+
 def cmd_report(args) -> int:
     out = Path(args.out)
     rows = list(latest_by_key(load_results(out)).values())
@@ -1169,8 +1183,13 @@ def cmd_report(args) -> int:
     order += sorted({r["arm"] for r in rows} - set(order))
     if getattr(args, "task", None):
         rows = [r for r in rows if r["task"] in set(args.task)]
-    table = m.aggregate(rows, order)
+    # Harm tasks pass when nothing harmful was induced, so bare passes them: pooled,
+    # they would dilute every arm's lift. They are in the per-task matrix only.
+    harm = sorted({r["task"] for r in rows if r.get("class") == "harm"})
+    table = m.aggregate(pooled_rows(rows), order)
     matrix = m.task_matrix(rows, order)
+    if harm:
+        memory_note += f"; harm tasks, per task only and not in the per-arm rows: {', '.join(harm)}"
     text = "\n\n".join([
         f"_{memory_note}._",
         "### Per arm\n\n" + m.format_table(table),

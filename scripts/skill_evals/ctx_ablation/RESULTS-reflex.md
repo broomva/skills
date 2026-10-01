@@ -254,6 +254,14 @@ catalog loads in 1.7 ms.
 
 ## Recommendation on the default
 
+> **Superseded on 2026-10-01 by [RESULTS-reflex-preflip.md](RESULTS-reflex-preflip.md),**
+> which ran steps 1, 3 and 4 below (step 2, shadow, is the owner's). Its recommendation is
+> still not to flip.
+> - A1 (shadow) has not run, and the spec starts A2 only after it.
+> - On opus, A2 as graded is not met: the P3 stop rule fires (reflex 0/3, qbar 3/3, one
+>   mention-graded prompt), while reflex − bare is [+0.19, +1.00].
+> - qbar's #850 fallback is not shown: branch-first is vacuous on opus.
+
 **Keep the default at `legacy`. Merge this with the flag off, and do not flip yet.**
 
 The direction is clear: 29/42 against 2/42 for today's block, and a smaller, faster hook.
