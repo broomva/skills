@@ -76,7 +76,7 @@ STATUSES = frozenset({"routed", "listed", "judgment"})
 SIGNATURE_TOOLS = frozenset({"Bash", "Skill", "Read", "Write", "mcp"})
 #: Interpreters and wrappers skipped before a Bash signature's argv_prefix is
 #: compared, so `python3 …/p9.py watch` matches [p9, watch] (spec §5.6, row 3).
-ARGV_WRAPPERS = frozenset({"python", "python3", "bash", "sh", "zsh", "node", "env", "uv", "run", "npx", "exec"})
+ARGV_WRAPPERS = frozenset({"python", "python3", "bash", "sh", "zsh", "node", "env", "uv", "run", "exec"})
 
 
 class CatalogError(ValueError):
@@ -226,7 +226,10 @@ def _parse_signature(value: Any, rid: str) -> tuple[dict[str, Any], ...]:
         if len(keys) != 1 or not keys <= {"argv_prefix", "name", "path_re"}:
             raise CatalogError(f"{rid}: a signature has exactly one of argv_prefix, name, path_re")
         if "argv_prefix" in sig:
-            _str_list(sig["argv_prefix"], f"{rid}: signature argv_prefix")
+            words = _str_list(sig["argv_prefix"], f"{rid}: signature argv_prefix")
+            if words and words[0] in ARGV_WRAPPERS:
+                # the matcher skips wrappers, so such a prefix could never match
+                raise CatalogError(f"{rid}: argv_prefix starts with the wrapper {words[0]!r}")
         elif not isinstance(sig.get("name", sig.get("path_re")), str):
             raise CatalogError(f"{rid}: signature name/path_re must be a string")
         if "path_re" in sig:

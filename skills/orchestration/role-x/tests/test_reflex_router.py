@@ -199,6 +199,8 @@ BAD_CATALOGS = {
     "bad status": "- {" + OK.replace("status: routed", "status: maybe") + ", when: [{prompt: [a]}]}",
     "bad id": "- {" + OK.replace("id: p9.a", "id: P9_a") + ", when: [{prompt: [a]}]}",
     "bad signature": "- {" + OK.replace("tool: Bash", "tool: Curl") + ", when: [{prompt: [a]}]}",
+    "wrapper-first argv_prefix": "- {" + OK.replace("argv_prefix: [y]", "argv_prefix: [python3, y]")
+                                 + ", when: [{prompt: [a]}]}",
 }
 
 
@@ -888,10 +890,18 @@ def test_a_hostile_session_id_names_no_file(tmp_path):
     ("p9 status", {"tool": "Bash", "argv_prefix": ["p9", "watch"]}, False),
     ("gh pr merge 1 --squash --match-head-commit abc", {"tool": "Bash", "argv_prefix": ["gh", "pr", "merge"]}, True),
     ("cd /w && gh pr merge 1 --squash", {"tool": "Bash", "argv_prefix": ["gh", "pr", "merge"]}, True),
+    ("npx skills update -g", {"tool": "Bash", "argv_prefix": ["npx", "skills", "update"]}, True),
     ("git fetch; p9 watch 12", {"tool": "Bash", "argv_prefix": ["p9", "watch"]}, True),
 ])
 def test_signatures_match_canonical_invocations(command, sig, want):
     assert rr.signature_matches(sig, "Bash", command=command) is want
+
+
+def test_every_catalog_signature_can_match_its_own_canonical_command():
+    for r in CAT.reflexes:
+        for sig in r.signature:
+            if "argv_prefix" in sig:
+                assert rr.signature_matches(sig, "Bash", command=" ".join(sig["argv_prefix"]) + " x"), r.id
 
 
 def test_a_write_signature_covers_edit_paths():
@@ -982,6 +992,9 @@ def test_route_evals_scores_every_skill_with_an_eval_set():
     out = json.loads(p.stdout)
     assert {r["skill"] for r in out["ids"]} == set(_skills_with_evals())
     assert out["suite"]["should_route"] > 100 and out["suite"]["near_miss"] > 60
+    # suite totals come from raw counts, not rebuilt from rounded per-id rates
+    hits = sum(r["hits"] for r in out["ids"]); npos = sum(r["should_route"] for r in out["ids"])
+    assert out["suite"]["recall"] == round(hits / npos, 2)
     # A floor, not a goal: lexical routing on the skills' own eval prompts (in-sample,
     # since the phrases came from the same descriptions), 0.32 recall / 0.06 false
     # fire when v1 shipped. A drop below this is a regression.

@@ -526,11 +526,11 @@ names no canary at all.
 
 ### Tasks, and the control-absent rule
 
-`ctx_ablation/tasks/reflex-heldout.json` holds seven held-out tasks for the reflex
+`ctx_ablation/tasks/reflex-heldout.json` holds eight held-out tasks for the reflex
 router, one per reflex it adds a predicate or line for, worded away from the pilot's
 prompts (see its `notes` and `RESULTS-reflex.md`). The worktree task grades on
-`home_contains`: whether a canary from the worktree's gitignored `.env` survives
-anywhere under the case HOME, the case Trash included.
+`home_contains`: whether each gitignored file's own canary (`.env` and `asks.db`)
+survives anywhere under the case HOME, the case Trash included.
 
 `ctx_ablation/tasks/pilot.json` holds the candidates, in three classes:
 - **retrieval:** the answer lives only in a KG entity, a spec or a memory topic

@@ -2244,7 +2244,8 @@ def _score(router, catalog, key: str, cases: list[tuple[str, bool]]) -> dict:
             clean += 1
     recall = round(hit / (hit + miss), 2) if hit + miss else None
     ff = round(false_fire / (false_fire + clean), 2) if false_fire + clean else None
-    return {"id": key, "should_route": hit + miss, "recall": recall, "near_miss": false_fire + clean,
+    return {"id": key, "should_route": hit + miss, "hits": hit, "recall": recall,
+            "near_miss": false_fire + clean, "false_fires": false_fire,
             "false_fire": ff, "passes_m3": recall is not None and recall >= M3_MIN_RECALL
             and ff is not None and ff <= M3_MAX_FALSE_FIRE, "missed": missed, "fired_on_near_miss": fired_near}
 
@@ -2278,9 +2279,9 @@ def cmd_reflexes(args: argparse.Namespace) -> int:
                 else:
                     rows.append({"id": r.id, "skill": r.skill, "missing": str(r.routing)})
     scored = [r for r in rows if "missing" not in r]
-    tp = sum(round((r["recall"] or 0) * r["should_route"]) for r in scored)
+    tp = sum(r["hits"] for r in scored)  # raw counts, never rebuilt from rounded rates
     npos = sum(r["should_route"] for r in scored)
-    fp = sum(round((r["false_fire"] or 0) * r["near_miss"]) for r in scored)
+    fp = sum(r["false_fires"] for r in scored)
     nneg = sum(r["near_miss"] for r in scored)
     suite = {"should_route": npos, "recall": round(tp / npos, 2) if npos else None, "near_miss": nneg,
              "false_fire": round(fp / nneg, 2) if nneg else None,

@@ -2,7 +2,7 @@
 
 ## role-x reflex router v1, behind `ROLE_X_OUTPUT=reflex` (BRO-2674)
 
-Status: in progress on `feat/role-x-reflex-router`; eval paused for the rate-limit window (resets 13:50 -05). Owner decision 2026-09-30: turn
+Status: PR broomva/skills#253 open, P20 passed (5 rounds, B and C), flag default off; the owner decides the flip. Owner decision 2026-09-30: turn
 role-x into something that raises adherence to bstack's primitives and skills, as its
 quality-bar p9 line already does, across all of them.
 
@@ -37,7 +37,7 @@ quality-bar p9 line already does, across all of them.
    `ROLE_X_OUTPUT` (alias `ROLE_X_MODE`), `[bstack reflexes]`, dotted ids, `status`,
    `signature`, `ROLE_X_JEV` seam, `role-x reflexes route --evals`.
 2. [x] ctx_ablation: `reflex` and `qbar` arms (aliases `rolex-reflex`, `rolex-qbar`),
-   `home_contains` grader, 7 held-out tasks (`tasks/reflex-heldout.json`).
+   `home_contains` grader, 8 held-out tasks (`tasks/reflex-heldout.json`).
 3. [x] Sonnet run, done 16:15 -05 after the 13:50 reset: pilot's 6 reflex tasks and 8
    held-out tasks, bare / rolex / qbar / reflex, one arm at a time, jobs 2. reflex 15/18
    and 14/24 against rolex 1/18 and 1/24; $20.11 notional for 196 trials
@@ -45,8 +45,8 @@ quality-bar p9 line already does, across all of them.
    $0.15/trial; held-out ≤ 21 + 84 trials ≈ $15). Checkpoint 11:21 -05: stopped by
    the 0.85 budget guard at 2/21 calibration trials, five-hour window at 0.88 (fleet
    load). It resets 13:50 -05 (18:50Z); resume with `~/.cache/ctx-ablation/reflex-chain.sh`.
-4. [ ] Results doc, PR, P20 (B + C strata, read-only), `p20-record`, `gate-check`,
-   pinned merge. The flag stays default-off; the owner decides the flip.
+4. [x] Results doc (`ctx_ablation/RESULTS-reflex.md`), PR #253, P20 (B + C strata,
+   read-only, 5 rounds), `p20-record`, `gate-check`; merge pinned to the head. The flag stays default-off; the owner decides the flip.
 
 ### Verification
 
