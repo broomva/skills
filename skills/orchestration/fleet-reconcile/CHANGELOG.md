@@ -13,7 +13,7 @@ that broomva/workspace#842 §5.7 chose. Ticket BRO-2674.
   summary. Measured end to end: the item reached `review` and its agent's
   Paseo record read `requiresAttention: true`.
   - A batch is raised once an ask in it has lasted `ask_raise_after_min` (50),
-    so an ask that clears by the next tick never reaches the owner.
+    so an ask a later tick found no longer true isn't raised.
   - Raising is idempotent: an open item Maestro made before failing is found
     by its title's scope and batch marker, and one queued at the cap is
     dispatched later (a refusal there is logged, not a failed tick).
@@ -22,13 +22,17 @@ that broomva/workspace#842 §5.7 chose. Ticket BRO-2674.
     display `verdict`, from items raised in the last 14 days until one is
     final, keeping every note: approve acknowledges, send back with a note
     answers, cancel dismisses. Chat replies are not read.
+- Where a Maestro item stands is one rule (`ledger.maestro_phase`: queued,
+  owner, final, gone) that the ledger's `seen`, raising, reading back, alerts
+  and dispatching all read. Only "At capacity" is a wait; an item Maestro no
+  longer has frees its batch to be raised again.
 - tick.sh's alerts go the same way, at most once per 6 h per kind of failure,
   stamped only once past Maestro's queue; `fleet alert` adopts an open item of
   the kind, with a bash fallback when Python or the config broke. The dialog, the banner path and p9
   notify are gone.
 - The coordinator's tool list is an allowlist: `--tools Bash Read
   SendMessage`. Measured on 2.1.280, the init event lists exactly those.
-  Anything else, or no list, stops it. A late init event can't undo the
+  Any other tool (Paseo's pinned read tools aside), or no list, stops it. A late init event can't undo the
   deadline's stop.
 - Carried from #258's review:
   - mail: the overlap template waits for the core's published claims; the

@@ -66,7 +66,7 @@ def rig(fresh_world, tmp_path):
           ' [ -n "${STUB_NEW_EXIT:-}" ] && { echo "Maestro gave no clear answer" >&2; exit "$STUB_NEW_EXIT"; };'
           ' echo "{\\"item\\": {\\"id\\": \\"itm-$n\\", \\"state\\": \\"${STUB_NEW_STATE:-running}\\"}}" ;;\n'
           '  ls) printf \'{"items": [\'; [ -f "$c/maestro-items" ] && paste -sd, "$c/maestro-items" | tr -d \'\\n\'; echo "]}" ;;\n'
-          '  dispatch) [ -n "${STUB_DISPATCH_EXIT:-}" ] && { echo "at the concurrency cap" >&2; exit 1; };'
+          '  dispatch) [ -n "${STUB_DISPATCH_EXIT:-}" ] && { echo "At capacity: 3 running. It stays queued." >&2; exit 1; };'
           ' echo "$2" >> "$c/maestro-dispatched"; echo "{\\"item\\": {\\"id\\": \\"$2\\", \\"state\\": \\"running\\"}}" ;;\n'
           '  show) f="$c/maestro-show-$2.json"; if [ -f "$f" ]; then cat "$f"; else'
           ' echo "{\\"item\\": {\\"state\\": \\"review\\", \\"verdict\\": null, \\"pending\\": null}, \\"events\\": []}"; fi ;;\n'
@@ -357,7 +357,8 @@ def test_a_batch_is_raised_once_and_the_owners_verdict_comes_back_as_the_answer(
     rig.tick()
     rig.tick()
     assert len(rig.raised(BATCH)) == 1  # the item stays at Needs you; never raised twice
-    assert len([x for x in rig.ledger() if x["kind"] == "seen"]) == 1  # nor looked up and re-recorded
+    # nor raised again: the second tick only records the item's move to Needs you (review)
+    assert [x["result"]["state"] for x in rig.ledger() if x["kind"] == "seen"] == ["running", "review"]
     assert "[a1]" in rig.brief("itm-1") and "## Ask" in rig.brief("itm-1")
     rig.answer("itm-1", "revise", note="skills gets its pull_request rule this week", state="running")
     rig.tick()
@@ -430,17 +431,30 @@ def test_an_alert_queued_at_the_cap_is_not_delivered(rig):
     sd.mkdir(parents=True, exist_ok=True)
     (sd / "ticks").write_text("a file where the ticks dir goes")
     rig.tick(STUB_NEW_STATE="proposed", STUB_DISPATCH_EXIT="1")
-    assert "concurrency cap" in rig.log() and not (sd / ".alert-tick-observe").exists()
+    assert "run cap" in rig.log() and not (sd / ".alert-tick-observe").exists()
     rig.tick()  # the open, queued item is adopted and dispatched: delivered now
     assert len(rig.raised("fleet broomva: tick-observe")) == 1 and (sd / ".alert-tick-observe").exists()
 
 
-def test_the_bash_fallback_treats_a_queued_alert_as_not_delivered(rig):
+@pytest.mark.parametrize("extra", [{"STUB_NEW_STATE": "proposed"}, {"STUB_NEW_EXIT": "3"}])
+def test_the_bash_fallback_raises_at_most_one_alert_per_6_h_even_queued_or_unconfirmed(rig, extra):
+    # It can't adopt an open item, so one it raised counts (else one more every tick at the cap).
     rig.world.config.write_text("not json")
-    rig.tick(STUB_NEW_STATE="proposed")
+    rig.tick(**extra)
+    rig.tick(**extra)
     sd = rig.world.state["broomva"]
-    assert rig.raised("fleet broomva: config [fleet-reconcile broomva alert config]")
-    assert "NOT delivered" in rig.log() and not (sd / ".alert-config").exists()
+    assert len(rig.raised("fleet broomva: config [fleet-reconcile broomva alert config]")) == 1
+    assert (sd / ".alert-config").exists()
+
+
+def test_an_alert_maestro_may_have_made_is_adopted_not_raised_twice(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    (sd / "ticks").write_text("a file where the ticks dir goes")  # observe fails every tick
+    rig.tick(STUB_NEW_EXIT="3")  # made, then "no clear answer": not delivered, and no bash fallback
+    assert len(rig.raised("fleet broomva: tick-observe")) == 1 and not (sd / ".alert-tick-observe").exists()
+    rig.tick()
+    assert len(rig.raised("fleet broomva: tick-observe")) == 1 and (sd / ".alert-tick-observe").exists()
 
 
 def test_the_owner_reads_and_acks_asks_and_other_verbs_refuse(rig):

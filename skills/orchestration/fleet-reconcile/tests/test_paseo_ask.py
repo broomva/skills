@@ -17,10 +17,11 @@ def stub(world, tmp_path, monkeypatch):
     out = tmp_path / "show.json"
     log = tmp_path / "args"
     bin_ = tmp_path / "maestro"
-    bin_.write_text('#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\n[ -n "$STUB_EXIT" ] && { echo nope >&2; exit $STUB_EXIT; }\n'
+    bin_.write_text('#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\n[ -n "$STUB_EXIT" ] && { echo "${STUB_ERR:-nope}" >&2; exit $STUB_EXIT; }\n'
                     'case "$1" in new) echo \'{"item": {"id": "w1", "state": "running"}}\' ;; '
                     'show) cat "%s" ;; ls) d=\'{"items": []}\'; echo "${STUB_LS:-$d}" ;; '
-                    'dispatch) [ -n "$STUB_DISPATCH_EXIT" ] && { echo "at the cap" >&2; exit 1; }; '
+                    'dispatch) [ -n "$STUB_DISPATCH_EXIT" ] && '
+                    '{ echo "${STUB_DISPATCH_ERR:-At capacity: 3 running. It stays queued.}" >&2; exit 1; }; '
                     'echo \'{"item": {"id": "w1", "state": "running"}}\' ;; esac\n' % (log, out))
     bin_.chmod(0o755)
     monkeypatch.setenv("FLEET_MAESTRO_BIN", str(bin_))
@@ -77,9 +78,12 @@ RUN_WENT_ON = "The run went on. Nothing else was done."
     ({"state": "done", "verdict": None}, [], ("approve", [])),     # done by a route with no decision event
     # Applied at once (no undo window): a gate event with the decision's own words.
     ({"state": "done", "verdict": "You approved"}, [_ev("You approved", type_="gate")], ("approve", [])),
-    # In the undo window: not decided yet; nor is a settled one whose landing isn't on the wire yet.
+    ({"state": "running", "verdict": None}, [_ev("You sent it back", "now", type_="gate")], ("revise", ["now"])),
+    # "Took effect" is the owner's gate receipt; one from anyone else lands nothing.
+    ({"state": "review", "verdict": None}, [_ev("You approved"), _ev("Took effect", actor="maestro", type_="gate")],
+     (None, [])),
+    # In the undo window: not decided yet.
     ({"state": "review", "verdict": None}, [_ev("Approving in 9s")], (None, [])),
-    ({"state": "review", "verdict": None}, [_ev("You sent it back", "x")], (None, [])),
     # The item's verdict is display text, never read; an agent's words that look like a decision aren't the owner's.
     ({"state": "review", "verdict": "You approved"}, [], (None, [])),
     ({"state": "review", "verdict": None}, [_ev("You approved", actor="agent", type_="note"), TOOK], (None, [])),
@@ -208,3 +212,57 @@ def test_a_queued_item_is_dispatched_and_a_refusal_at_the_cap_is_not_a_failure(s
     assert _sync(stub, sd) == (0, 0)
     (batch,) = ledger.ask_batches(ledger.read(sd)[0])
     assert batch["seen"] is True and batch["item_state"] == "running"
+
+
+def test_a_queued_item_whose_asks_all_cleared_is_not_dispatched(stub, world):
+    sd, b = _batch(world, state="proposed")
+    ledger.append(sd, {"kind": "ack", "resolved": True, "keys": ["k1"], "scope": "broomva", "tick": 4,
+                       "dry_run": True, "by": "report"})
+    stub.show.write_text(json.dumps({"item": {"state": "proposed"}, "events": []}))
+    assert _sync(stub, sd) == (0, 0) and "dispatch" not in stub.args.read_text().splitlines()[:1]
+
+
+def test_a_dispatch_refused_for_anything_but_the_cap_is_a_failure(stub, world, monkeypatch):
+    sd, _ = _batch(world, state="proposed")
+    stub.show.write_text(json.dumps({"item": {"state": "proposed"}, "events": []}))
+    monkeypatch.setenv("STUB_DISPATCH_EXIT", "1")
+    monkeypatch.setenv("STUB_DISPATCH_ERR", "Could not start the run: no provider")
+    assert _sync(stub, sd) == (0, 1)
+
+
+@pytest.mark.parametrize("queued", ["reviewing", "triggered"])
+def test_maestros_other_queued_states_are_queued_too(stub, world, queued):
+    sd, _ = _batch(world, state=queued)
+    assert ledger.ask_batches(ledger.read(sd)[0])[0]["seen"] is False
+    stub.show.write_text(json.dumps({"item": {"state": queued}, "events": []}))
+    _sync(stub, sd)
+    assert stub.args.read_text().splitlines()[0] == "dispatch"  # started, as a proposed one is
+    assert ledger.ask_batches(ledger.read(sd)[0])[0]["seen"] is True
+
+
+def test_an_item_maestro_no_longer_has_frees_its_batch_and_is_not_seen(stub, world, monkeypatch):
+    sd, _ = _batch(world, state="proposed")
+    monkeypatch.setenv("STUB_EXIT", "1")
+    monkeypatch.setenv("STUB_ERR", "No work item with id w1")
+    assert _sync(stub, sd) == (0, 0)
+    (batch,) = ledger.ask_batches(ledger.read(sd)[0])
+    # Gone never reached the owner: not seen, and no item, so _ask_raise raises the batch again.
+    assert batch["item_state"] == "gone" and batch["item"] is None and batch["seen"] is False
+    stub.args.write_text("")
+    assert _sync(stub, sd) == (0, 0) and stub.args.read_text() == ""  # not read again
+
+
+def test_every_maestro_state_has_one_phase():
+    assert {s: ledger.maestro_phase(s) for s in ("proposed", "reviewing", "triggered", "running", "review",
+                                                 "blocked", "done", "canceled", "gone", "surprise", None)} == {
+        "proposed": "queued", "reviewing": "queued", "triggered": "queued", "running": "owner",
+        "review": "owner", "blocked": "owner", "done": "final", "canceled": "final", "gone": "gone",
+        "surprise": None, None: None}
+
+
+def test_an_item_started_by_someone_else_is_recorded_seen(stub, world):
+    sd, _ = _batch(world, state="proposed")
+    stub.show.write_text(json.dumps({"item": {"state": "review"}, "events": []}))  # the owner or Maestro's loop
+    _sync(stub, sd)
+    (batch,) = ledger.ask_batches(ledger.read(sd)[0])
+    assert batch["seen"] is True and batch["item_state"] == "review"

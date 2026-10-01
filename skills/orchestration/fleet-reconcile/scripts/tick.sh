@@ -76,10 +76,12 @@ for pair in "maestro_cli:FLEET_MAESTRO_CLI" "maestro_bun:FLEET_MAESTRO_BUN" "ask
 done
 
 # alert KIND MESSAGE: tell the owner in the Paseo app. At most once per 6 h
-# per kind, the stamp touched only once the item is past Maestro's queue.
-# `fleet alert` adopts an open item of the same kind rather than raising a
-# second; when it can't run at all (the config or Python is what broke), the
-# bash fallback raises one. The message is this script's own text, never
+# per kind. `fleet alert` adopts an open item of the same kind rather than
+# raising a second, and the stamp is touched once the item reached the owner
+# (ledger.maestro_phase: one queued at the run cap is dispatched by the next
+# alert of its kind). When it can't run at all (the config or Python is what
+# broke), the bash fallback raises one; it can't adopt or classify, so an item
+# it raised is stamped, queued or not, which keeps it to one per 6 h. The message is this script's own text, never
 # another session's words. When Maestro itself is down, the alert reaches no
 # one but this log: that is the channel's one blind spot.
 alert() {
@@ -99,7 +101,7 @@ alert() {
       if maestro_alert "fleet $SCOPE: $kind [fleet-reconcile $SCOPE alert $kind]" "$msg (tick.log: $LOG)"; then
         touch "$stamp"
       else
-        log "ALERT $kind NOT delivered: Maestro didn't take it or queued it; it's in this log only"
+        log "ALERT $kind NOT delivered: Maestro didn't take it; it's in this log only"
       fi ;;
   esac
   return 0
@@ -107,8 +109,8 @@ alert() {
 
 # maestro_alert TITLE TEXT: the bash fallback, a Maestro work item at Needs you
 # in the Paseo app (owner decision 2026-10-01: never a desktop dialog), run in
-# the fleet's own scratch repo. Fails when Maestro doesn't take it or queues
-# it at its cap.
+# the fleet's own scratch repo. Fails when Maestro doesn't take it (an item it
+# queued at its run cap counts as raised: Maestro's loop starts it later).
 maestro_alert() {
   local title=$1 text=$2 repo="${FLEET_ASK_REPO:-$HOME/.local/state/fleet-reconcile/maestro-asks}"
   if [ ! -d "$repo/.git" ]; then
@@ -128,9 +130,9 @@ Change nothing and run no tools. End your turn at once with exactly two sections
   out=$("$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json </dev/null 2>&1)
   rc=$?
   printf '%s\n' "$out" >> "$LOG"
-  [ "$rc" = "0" ] || return 1
-  case "$out" in (*'"state":"proposed"'*|*'"state": "proposed"'*) return 1 ;; esac
-  return 0
+  # Raised also when Maestro may have made it (exit 3) or made it and couldn't
+  # start it ("Created <id>, but it cannot be dispatched yet"): the item exists.
+  [ "$rc" = "0" ] || [ "$rc" = "3" ] || case "$out" in (*"Created "*", but it cannot be dispatched"*) true ;; (*) false ;; esac
 }
 
 # ── kill switch: read before anything fires; an unreadable value is off ──────

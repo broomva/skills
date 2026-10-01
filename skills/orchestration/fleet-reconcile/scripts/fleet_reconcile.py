@@ -206,42 +206,57 @@ def _open_now(records: list) -> Dict[str, Dict]:
 #: How long a raised batch's item is read back: a note sent after its asks
 #: stopped being true is still the owner's answer.
 ASK_READ_DAYS = 14
-FINAL = ("done", "canceled")
 
 
 def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
     """Read the owner's decisions back from every item raised in the last
-    ASK_READ_DAYS whose last answer wasn't final, and dispatch one left queued
-    at Maestro's concurrency cap: (answers recorded, failed reads). A dispatch
-    Maestro refuses (still at the cap) is logged, not a failure: Maestro is up
-    and the item waits in its queue."""
+    ASK_READ_DAYS that isn't final, record each change of its state, and
+    dispatch one left queued while an ask in its batch is still open: (answers
+    recorded, failed reads and dispatches). Where an item stands is
+    ledger.maestro_phase's one rule. A dispatch refused at Maestro's run cap
+    is logged, not a failure; an item Maestro no longer has is recorded gone,
+    which frees its batch to be raised again if an ask in it is still open."""
     from fleetlib import paseo_ask
 
     answered = failed = 0
     since = time.time() - ASK_READ_DAYS * 86400
+    open_of = {v["of"] for v in ledger.open_by_key(records).values()}
+
+    def seen(b: Dict[str, Any], state: str) -> None:
+        ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": sec["scope"], "tick": None, "dry_run": False,
+                           "by": "tick", "result": {"channel": "maestro", "item": b["item"], "state": state}})
+
     for b in ledger.ask_batches(records):
         last = b.get("answer") or {}
-        if not b.get("item") or last.get("state") in FINAL or (common.parse_iso(b["ts"]) or 0.0) < since:
+        if not b.get("item") or ledger.maestro_phase(last.get("state")) == "final" \
+                or (common.parse_iso(b["ts"]) or 0.0) < since:
             continue
         try:
             ans = paseo_ask.answer(sec, b["item"])
         except paseo_ask.MaestroError as exc:
+            if paseo_ask.GONE in str(exc):
+                print("fleet act ask: Maestro no longer has item %s of tick %s; its batch is raised again while "
+                      "an ask in it is open" % (b["item"], b["tick"]), file=sys.stderr)
+                seen(b, "gone")
+                continue
             print("fleet act ask: Maestro item %s of tick %s: %s" % (b["item"], b["tick"], exc), file=sys.stderr)
             failed += 1
             continue
-        if ans["state"] == "proposed":
+        state = ans["state"]
+        if ledger.maestro_phase(state) == "queued" and b["id"] in open_of:  # a cleared batch stays queued
             try:
-                item = paseo_ask.dispatch(sec, b["item"])
+                state = paseo_ask.start(sec, {"id": b["item"], "state": state}).get("state") or state
+                if ledger.maestro_phase(state) == "queued":
+                    print("fleet act ask: Maestro item %s of tick %s is queued at its run cap"
+                          % (b["item"], b["tick"]), file=sys.stderr)
             except paseo_ask.MaestroError as exc:
-                print("fleet act ask: Maestro item %s of tick %s is still queued: %s" % (b["item"], b["tick"], exc),
+                print("fleet act ask: Maestro item %s of tick %s not dispatched: %s" % (b["item"], b["tick"], exc),
                       file=sys.stderr)
-            else:
-                if item.get("state") not in (None, "proposed"):
-                    ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": sec["scope"], "tick": None,
-                                       "dry_run": False, "by": "tick",
-                                       "result": {"channel": "maestro", "item": b["item"], "state": item["state"]}})
+                failed += 1
+        if ledger.maestro_phase(state) and state != b.get("item_state"):  # however it moved: us, the owner, the loop
+            seen(b, state)
         new = (ans["verdict"], ans["at"]) != (last.get("verdict"), last.get("at")) or \
-            (ans["state"] in FINAL and last.get("state") not in FINAL)
+            (ledger.maestro_phase(ans["state"]) == "final" and ledger.maestro_phase(last.get("state")) != "final")
         if ans["verdict"] and new:
             ledger.append(sd, {"kind": "ack", "of": b["id"], "asks": "all", "scope": sec["scope"], "tick": None,
                                "dry_run": False, "by": "owner:maestro",
@@ -255,11 +270,11 @@ def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
 
 def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
                open_now: Dict[str, Dict]) -> Tuple[int, int, int]:
-    """Raise each batch with no item yet once an ask in it has been open for
-    ask_raise_after_min (by default past the next hourly tick, so an ask that
-    cleared by then never reaches the owner): (raised, failed, waiting). An
-    open item Maestro made for the batch before failing is found by its title's
-    marker and adopted."""
+    """Raise each batch with no item (never raised, or its item gone) once an
+    ask in it has been open for ask_raise_after_min (by default past the next
+    hourly tick, so an ask a later tick found no longer true isn't raised):
+    (raised, failed, waiting). An open item Maestro made for the batch before
+    failing is found by its title's marker and adopted."""
     from fleetlib import paseo_ask
 
     raised = failed = waiting = 0
@@ -283,13 +298,11 @@ def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
             "%s are in this item's brief: approve to acknowledge them, send back a note to answer, cancel to "
             "dismiss" % what)
         try:
-            item = paseo_ask.find(sec, tag, since=asked) or paseo_ask.raise_item(sec, title, text)
-            if item.get("state") == "proposed":  # queued at Maestro's cap: started now or at a later tick
-                try:
-                    item = paseo_ask.dispatch(sec, item["id"]) or item
-                except paseo_ask.MaestroError as exc:
-                    print("fleet act ask: batch of tick %s is queued in Maestro: %s" % (b["tick"], exc),
-                          file=sys.stderr)
+            found = paseo_ask.find(sec, tag, since=asked)
+            item = paseo_ask.start(sec, found or paseo_ask.raise_item(sec, title, text))
+            if ledger.maestro_phase(item.get("state")) == "queued":
+                print("fleet act ask: batch of tick %s is queued at Maestro's run cap; a later tick dispatches it"
+                      % b["tick"], file=sys.stderr)
         except (paseo_ask.MaestroError, OSError, subprocess.SubprocessError) as exc:
             print("fleet act ask: batch of tick %s not raised: %s" % (b["tick"], common.safe_text(str(exc), 200)),
                   file=sys.stderr)
@@ -304,24 +317,23 @@ def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
 
 def cmd_alert(args: argparse.Namespace) -> int:
     """tick.sh's alert, through Python so an open item of its kind is adopted
-    rather than a second raised. Exit 0: the item is past Maestro's queue; 4: queued at
-    its cap (not delivered); 5: Maestro failed (not delivered). Any other exit
-    (a config Python can't read) sends tick.sh to its bash fallback."""
+    rather than a second raised. Exit 0: the item reached the owner (phase
+    owner); 4: queued at Maestro's run cap (not delivered); 5: Maestro failed
+    (not delivered). Any other exit (a config Python can't read) sends tick.sh
+    to its bash fallback."""
     from fleetlib import paseo_ask
 
     sec = _sec(args)
     try:
-        item = paseo_ask.alert(sec, args.kind, args.message)
+        item = paseo_ask.start(sec, paseo_ask.alert(sec, args.kind, args.message))
     except (paseo_ask.MaestroError, OSError, subprocess.SubprocessError) as exc:
         print("fleet alert: not raised: %s" % common.safe_text(str(exc), 200), file=sys.stderr)
         return 5
-    if item.get("state") == "proposed":
-        try:
-            item = dict(item, **paseo_ask.dispatch(sec, item["id"]))
-        except paseo_ask.MaestroError as exc:
-            print("fleet alert: queued in Maestro: %s" % exc, file=sys.stderr)
     print(json.dumps({"item": item.get("id"), "state": item.get("state"), "adopted": bool(item.get("adopted"))}))
-    return 4 if item.get("state") == "proposed" else 0
+    if ledger.maestro_phase(item.get("state")) == "queued":
+        print("fleet alert: queued at Maestro's run cap", file=sys.stderr)
+        return 4
+    return 0
 
 
 def _tick(args: argparse.Namespace) -> Optional[int]:

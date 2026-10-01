@@ -47,6 +47,7 @@ import subprocess
 from typing import Any, Dict, List, Optional
 
 from . import common
+from .ledger import maestro_phase
 from .sources import child_env
 
 MAESTRO_CLI = "~/broomva/apps/maestro-paseo/bin/maestro.ts"
@@ -58,8 +59,12 @@ EXITS = {1: "Maestro refused", 2: "Maestro is not listening", 3: "Maestro gave n
 #: A settled decision's event text, by verdict (maestro-paseo server/events.ts DECISION_WORDS).
 DECIDED = {"You approved": "approve", "You sent it back": "revise", "You canceled it": "block"}
 TOOK_EFFECT = "Took effect"
-#: Open states: an item in one of these can still reach the owner.
-OPEN_STATES = ("proposed", "reviewing", "triggered", "running", "review", "blocked")
+#: The start of Maestro's refusals that mean "wait", not "broken" (server/engine.ts
+#: checkCapacity; server/store.ts NotFound): at the run cap an item stays queued,
+#: and an item Maestro no longer has is gone.
+AT_CAP = "At capacity"
+GONE = "No work item"
+NOTE_CHARS = 1000
 FENCE = "`" * 3
 
 
@@ -138,7 +143,7 @@ def find(sec: Dict[str, Any], tag: str, since: Optional[float] = None) -> Option
         if not isinstance(it, dict) or not isinstance(it.get("title"), str) or not it["title"].endswith(tag):
             continue
         made = common.parse_iso(it.get("createdAt"))
-        if it.get("state") in OPEN_STATES and (since is None or (made or 0.0) >= since - 60):
+        if maestro_phase(it.get("state")) in ("queued", "owner") and (since is None or (made or 0.0) >= since - 60):
             return it
     return None
 
@@ -160,6 +165,20 @@ def dispatch(sec: Dict[str, Any], item_id: str) -> Dict[str, Any]:
     return out.get("item") if isinstance(out.get("item"), dict) else {}
 
 
+def start(sec: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
+    """Dispatch an item that is still queued; returns it with its new state.
+    At Maestro's run cap it stays queued and is returned as it is; any other
+    refusal raises MaestroError."""
+    if maestro_phase(item.get("state")) != "queued":
+        return item
+    try:
+        return dict(item, **dispatch(sec, item["id"]))
+    except MaestroError as exc:
+        if AT_CAP in str(exc):
+            return item
+        raise
+
+
 def decisions(events: List[Any]) -> List[Dict[str, Any]]:
     """The owner's decisions that took effect, oldest first: {verdict, note,
     at}. Maestro writes "Took effect" only for the decision whose undo window
@@ -177,7 +196,7 @@ def decisions(events: List[Any]) -> List[Dict[str, Any]]:
         elif kind == "gate" and e.get("actor") == "human" and text == TOOK_EFFECT and made:
             out.append(made)
             made = None
-        elif kind == "gate" and e.get("actor") == "human" and text in DECIDED:  # applied at once, no undo window
+        elif kind == "gate" and e.get("actor") == "human" and text in DECIDED:  # a decision made with no undo window
             out.append({"verdict": DECIDED[text], "note": note, "at": e.get("ts")})
             made = None
     return out
@@ -192,11 +211,10 @@ def answer(sec: Dict[str, Any], item_id: str) -> Dict[str, Any]:
     item = out.get("item") if isinstance(out.get("item"), dict) else {}
     made = decisions(out.get("events") if isinstance(out.get("events"), list) else [])
     res: Dict[str, Any] = {"state": item.get("state"), "verdict": None, "at": None,
-                           "notes": [common.safe_text(d["note"], 200) for d in made if d["note"]]}
-    if item.get("state") == "done":
-        res.update(verdict="approve", at=made[-1]["at"] if made else item.get("updatedAt"))
-    elif item.get("state") == "canceled":
-        res.update(verdict="block", at=made[-1]["at"] if made else item.get("updatedAt"))
+                           "notes": [common.safe_text(d["note"], NOTE_CHARS) for d in made if d["note"]]}
+    if maestro_phase(item.get("state")) == "final":  # done approves, canceled dismisses
+        res.update(verdict="approve" if item["state"] == "done" else "block",
+                   at=made[-1]["at"] if made else item.get("updatedAt"))
     elif made:
         res.update(verdict=made[-1]["verdict"], at=made[-1]["at"])
     return res
@@ -204,8 +222,9 @@ def answer(sec: Dict[str, Any], item_id: str) -> Dict[str, Any]:
 
 def alert(sec: Dict[str, Any], kind: str, message: str) -> Dict[str, Any]:
     """A tick alert as an item at Needs you. An open item of its kind is
-    adopted and returned rather than a second raised; two alerts of a kind at
-    the same instant, or tick.sh's bash fallback, can still raise two."""
+    adopted and returned rather than a second raised, so it stands for the
+    later alerts of its kind (tick.log has each one's words); two alerts of a
+    kind at the same instant, or tick.sh's bash fallback, can still raise two."""
     tag = marker(sec["scope"], "alert %s" % common.safe_text(kind, 40))
     open_one = find(sec, tag)
     if open_one is not None:

@@ -209,7 +209,7 @@ the dialog that workspace#842 chose). Inside the tick's lock and budget, `fleet
 act ask --show` turns each batch with an open ask into one Maestro work item
 (`scripts/fleetlib/paseo_ask.py`) once an ask in it has been open for
 `ask_raise_after_min` (50 by default: past the next hourly tick, so an ask
-that cleared by then never reaches the owner; 0 raises at once).
+that a later tick found no longer true isn't raised; 0 raises at once).
 - `maestro new --dispatch` runs one turn of a Paseo agent in the fleet's own
   scratch repo (`ask_repo`, by default
   `~/.local/state/fleet-reconcile/maestro-asks`, not a scope repo).
@@ -226,9 +226,17 @@ Raising is idempotent. The title ends with a marker carrying the scope and
 the batch id (`[fleet-reconcile <scope> batch <id>]`), so an open item Maestro
 created for the batch before failing (it creates, then dispatches) is found
 with `ls` and adopted; a done or canceled one, or one older than the batch, is
-not. An item queued at Maestro's concurrency cap is dispatched at a later
-tick; a dispatch refused there is logged, not a failed tick, and the batch
-doesn't count as seen until its item is past the queue.
+not. Where an item stands is one rule, `ledger.maestro_phase`, which every
+ask path reads: queued (`proposed`, `reviewing`, `triggered`: waiting for a
+dispatch), owner (`running`, `review`, `blocked`: in the Paseo app), final
+(`done`, `canceled`), or gone (Maestro no longer has it). A batch counts as
+seen only once its item reached the owner, whoever started it; each tick
+records the item's state when it changes. A queued item is dispatched at a
+later tick while an ask in its batch is still open; a dispatch refused at the
+run cap ("At capacity") is logged, not a failed tick, and any other refusal
+fails the ask step. An item Maestro no longer has ("No work item") is
+recorded gone, which frees its batch to be raised again while an ask in it is
+open.
 
 Each tick reads the owner's decisions back from every item raised in the last
 14 days until one is final, following Maestro's wire (server/events.ts
@@ -238,9 +246,9 @@ applied at once. One undone (`Undone`) or dropped (`… did not take effect`) is
 not the owner's answer. The item's `verdict` field is display text and isn't
 read. Each new decision is an `ack` by `owner:maestro`:
 - Approve acknowledges;
-- Send back with a note answers (every note is kept, even after a later
-  approve, and a note sent after the asks stopped being true is still
-  recorded);
+- Send back with a note answers (every note is kept, up to 1000 characters
+  each, flattened to one line, even after a later approve; a note sent after
+  the asks stopped being true is still recorded);
 - Cancel dismisses.
 
 Only Send back's note is read. A reply typed in the run's chat is not a
@@ -257,8 +265,11 @@ Limits, by design:
 tick.sh's own alerts (a bad config, a failed step, a held lock) are Maestro
 items too, at most once per 6 h per kind, stamped only once the item is past
 Maestro's queue. `fleet alert` adopts an open item of the same kind rather
-than raising a second; when Python or the config is what broke, a bash
-fallback raises one. When Maestro itself is down, they reach only `tick.log`:
+than raising a second, so that item stands for the later alerts of its kind
+(`tick.log` has each one's words). When Python or the config is what broke, a
+bash fallback raises one; it can't adopt or classify, so an item it raised
+counts even when Maestro queued it or gave no clear answer, which keeps it to
+one per 6 h. When Maestro itself is down, they reach only `tick.log`:
 the channel's blind spot. There is no dialog, banner, ntfy or p9 notify. The
 owner can also answer from a terminal:
 
@@ -355,7 +366,7 @@ the caller's cwd and user site stay off `sys.path`; it imports ctx-core from
 ```bash
 cd skills/orchestration/fleet-reconcile
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py      # every rule deleted, every overlapping pair swapped, 171 protections removed
+python3 tests/mutation_check.py      # every rule deleted, every overlapping pair swapped, every listed protection removed
 python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (anonymized; public repo)
 ```
 
