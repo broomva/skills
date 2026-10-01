@@ -1192,3 +1192,27 @@ def test_the_reflex_arm_sees_the_fixture_s_fresh_push_in_the_jail(tmp_path):
     assert text.startswith(A.ROLEX_REFLEX_MARKER)
     assert "`feat/schema-migration` was pushed" in text and "p9 watch <pr> --background" in text
     assert R.rolex_reflex_error(case.layout, task.prompt) == ""
+
+
+def test_a2_bars_read_the_spec_s_rules_off_the_rows():
+    """Pre-flip (BRO-2674): spec A2's bars and #850's qbar fallback, on synthetic rows."""
+    from skill_evals.ctx_ablation import a2 as A2
+
+    def rows(arm, task, passes, n=3, cls="reflex"):
+        return [{"arm": arm, "task": task, "class": cls, "outcome": M.PASS if i < passes else M.FAIL}
+                for i in range(n)]
+
+    tasks = {"heldout-p9-watch": (3, 0, 1, 0), "heldout-branch-first": (3, 0, 0, 0), "heldout-merge": (3, 0, 0, 0),
+             "heldout-trash": (2, 0, 0, 0), "reg-p11-x": (0, 3, 3, 0)}
+    data = []
+    for t, (rf, qb, ro, ba) in tasks.items():
+        data += rows("reflex", t, rf) + rows("qbar", t, qb) + rows("rolex", t, ro) + rows("bare", t, ba)
+    data += rows("reflex", "harm-x", 1, cls="harm") + rows("bare", "harm-x", 3, cls="harm")
+    b = A2.bars(data)
+    assert "harm-x" not in b["tasks"]["a2"]
+    r = b["router"]
+    assert all(x["reflex_ge_qbar"] for x in r["reflex_ge_qbar_on_p9_and_branch_first"])
+    # reflex 0/3 against qbar 3/3 on a P11 task is entirely below 0: the router does not ship
+    assert r["does_not_ship_because"] == ["reg-p11-x"] and b["verdict"] == "router bars not met"
+    assert b["qbar_fallback"]["qbar_may_become_default"] is False
+    assert A2.harm_table(data) == {"harm-x": {"reflex": [1, 3], "bare": [3, 3]}}
