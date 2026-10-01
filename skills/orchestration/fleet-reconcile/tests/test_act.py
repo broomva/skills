@@ -293,17 +293,22 @@ def test_a_paseo_relaunch_is_followed_through_the_agents_current_session(world, 
 ])
 def test_a_template_takes_only_fixed_shapes_never_free_text(world, live_ids, values):
     sid = live_ids[0]["sessionId"]
-    res = _act(world, adopted=[{"session_id": sid}]).mail(sid, "overlap", values)
+    res = _act(world, adopted=[{"session_id": sid}]).mail(sid, "stalled", values)
     assert not res["ok"] and "fixed shapes" in res["detail"]
 
 
 def test_a_rendered_mail_names_no_merge_or_removal_and_hours_come_from_the_config(world, live_ids):
     sid = live_ids[0]["sessionId"]
-    res = _act(world, adopted=[{"session_id": sid}], mail_interval_h=4).mail(
-        sid, "overlap", {"other": "drv-b", "paths": "src/a.py, docs/b.md"})
+    res = _act(world, adopted=[{"session_id": sid}], mail_interval_h=4).mail(sid, "stalled", {})
     msg = res["send"]["message"]
-    assert res["ok"] and "every 4 hours" in msg and "drv-b" in msg and "src/a.py, docs/b.md" in msg
+    assert res["ok"] and "every 4 hours" in msg
     assert not any(w in msg.lower() for w in ("merge", "remov", "delete"))
+
+
+def test_the_overlap_template_waits_for_published_claims(world, live_ids):
+    sid = live_ids[0]["sessionId"]
+    res = _act(world, adopted=[{"session_id": sid}]).mail(sid, "overlap", {"other": "drv-b", "paths": "src/a.py"})
+    assert not res["ok"] and "published claims" in res["detail"]
 
 
 # --------------------------------------------------------------------------
@@ -420,8 +425,39 @@ def test_a_live_spawn_whose_listing_lags_is_done_with_its_job_id_and_still_ours(
     assert ledger.spawned(_records(world)) == {"broomva-workspace-pr849": ["abcd1234"]}
 
 
-def test_a_shaped_value_still_passes_the_text_guard(world, live_ids):
-    sid = live_ids[0]["sessionId"]
+def test_a_shaped_value_still_passes_the_text_guard():
     tokenish = "a" * 40 + ".md"  # a path shape, but a token-like run
-    res = _act(world, adopted=[{"session_id": sid}]).mail(sid, "overlap", {"other": "drv-b", "paths": tokenish})
-    assert res["ok"] and tokenish not in res["send"]["message"] and "[withheld]" in res["send"]["message"]
+    text = act.render_template("mail/overlap.txt", {"name": "n", "other": "drv-b", "paths": tokenish, "hours": "6"})
+    assert tokenish not in text and "[withheld]" in text
+
+
+@pytest.mark.parametrize("name", ["hold ", " Hold", "HOLD"])
+def test_the_hold_label_is_refused_however_it_is_spelled(world, name):
+    assert not _act(world).label(WS, 849, name, "remove")["ok"]
+
+
+def test_a_file_list_that_isnt_a_list_refuses_the_spawn(world):
+    (world.fixture / "gh" / "broomva__workspace" / "pr-849-files.json").write_text("null")
+    res = _act(world, now=LATER).spawn(WS, 849)
+    assert not res["ok"] and "isn't a list" in res["detail"]
+
+
+def test_a_live_resume_waits_for_the_listing_to_show_its_process(world, live_ids, monkeypatch):
+    bg = live_ids[1]
+    a = _act(world, dry=False, dry_run=0, adopted=[{"session_id": bg["sessionId"]}])
+    rows = _rows(world)
+    monkeypatch.setattr(act, "LIVE_POLL_S", 5.0)
+    calls = {"n": 0}
+    orig = a.listing
+
+    def lagging(timeout=30):
+        calls["n"] += 1
+        if calls["n"] == 4:  # two reads to check it, one right after the resume, then the poll's
+            for r in rows:
+                if r["sessionId"] == bg["sessionId"]:
+                    r["pid"] = 5151
+            _write_rows(world, rows)
+        return orig(timeout)
+    a.listing = lagging
+    res = a.resume(bg["sessionId"])
+    assert res["ok"] and res["result"] == {"pid": 5151}

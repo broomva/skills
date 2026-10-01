@@ -39,15 +39,20 @@ def _take_token() -> None:
 
 
 #: What a session started from a session inherits and must not (evidence §1:
-#: an inherited CLAUDE_CODE_CHILD_SESSION turns transcript saving off).
+#: an inherited CLAUDE_CODE_CHILD_SESSION turns transcript saving off): every
+#: CLAUDE_CODE_* (the session's markers, its messaging token and socket) and
+#: PASEO_* variable, but the auth and provider settings a headless run needs.
 CHILD_DROP = ("CLAUDECODE", "CLAUDE_CODE_", "PASEO_")
+CHILD_KEEP = ("CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+              "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_SKIP_BEDROCK_AUTH", "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+              "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_API_KEY_HELPER_TTL_MS")
 
 
 def child_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """The environment for a session the fleet starts (spawn, resume, the
     coordinator): without Claude Code's or Paseo's variables or the fleet
     credential, and with FLEET_CHILD set to 1 (the recursion guard)."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(CHILD_DROP)}
+    env = {k: v for k, v in os.environ.items() if k in CHILD_KEEP or not k.startswith(CHILD_DROP)}
     for k in _TOKEN_VARS:
         env.pop(k, None)
     env["FLEET_CHILD"] = "1"
@@ -243,10 +248,11 @@ class Sources:
                      "--json", PR_FIELDS], 60, token=True)
 
     def pr_files(self, slug: str, number: int) -> str:
-        """A JSON array of every changed path of the PR (the owner-merge check),
-        through REST with --paginate: `gh pr view --json files` stops at 100."""
+        """A JSON array of every changed path of the PR, a rename's old path
+        too (the owner-merge check), through REST with --paginate: `gh pr view
+        --json files` stops at 100. GitHub lists at most 3000 files."""
         out = _run([self.gh, "api", "--paginate", "repos/%s/pulls/%d/files?per_page=100" % (slug, number),
-                    "--jq", ".[].filename"], 120, token=True)
+                    "--jq", ".[] | .filename, (.previous_filename // empty)"], 120, token=True)
         return json.dumps([ln for ln in out.splitlines() if ln])
 
     def pr_heads(self, slug: str, branch: str) -> str:

@@ -1,8 +1,23 @@
 # PLANS.md
 
+## fleet-reconcile: the owner channel on Paseo, and phase 2's carry-overs (BRO-2674)
+
+Status: in progress on `feat/fleet-reconcile-paseo-asks` (from main bbf3ad5, after #258).
+Owner decision 2026-10-01: owner notifications go through the Paseo app, never a desktop
+dialog. `fleet act ask` and tick.sh's alerts become Maestro work at Needs you, measured end to
+end (a dispatched probe reached `review` with its ask, and its agent's Paseo record read
+`requiresAttention: true`); the owner's verdict is read back as the answer. Also: the
+coordinator's tool allowlist (`--tools Bash Read SendMessage`, measured) and the P20 round-2
+carry-overs and bot threads deferred from #258. Verification as below, then P20.
+Checkpoint (P20 round 2, 6/10, FAIL): the read-back misread Maestro's wire (undone and dropped
+decisions, the display `verdict`). Round 3 reads only decisions that took effect, rebuilt from
+Maestro's own test sequences; a scoped title marker; a raise delay for transient asks; refusals
+at the cap logged, not failed; alerts adopted through `fleet alert` with a bash fallback.
+Then: the credential follow-up (the owner's gh login, spec §5.2 precondition 1 waived).
+
 ## fleet-reconcile phase 2: dry run through fleet act (BRO-2674)
 
-Status: in progress on `feat/fleet-reconcile-phase2` (from main d56061d, after #254).
+Status: merged as #258 (bbf3ad5).
 Spec: workspace `docs/specs/2026-09-29-fleet-reconcile-design.html` §5.3, §5.5, §5.7 and §9
 row 2, as merged in #842 (007f05a98).
 
@@ -20,7 +35,8 @@ row 2, as merged in #842 (007f05a98).
   unclassified Paseo tool; tick.sh runs recover, and the coordinator when mode is act.
 - The driver profile generator (0600, sandbox, allowlist, deny rules, GH_TOKEN from the
   token file, an empty GH_CONFIG_DIR).
-- `fleet janitor-check <path>` failing closed; janitor runs stay report-only.
+- `fleet janitor-check <path>` failing closed; removal stays report-only for scope repos'
+  worktrees (`janitor-run --remove` removes scratch worktrees only, the drill's).
 - Phase-1 carry-overs from #254's arc-3 review (compare keys per owner action, the
   failed-run counter test, report.json's compare error, non-GitHub origins, the ack count).
 

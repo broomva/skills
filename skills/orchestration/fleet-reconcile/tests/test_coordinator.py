@@ -243,3 +243,41 @@ def test_the_tick_watchdogs_term_to_the_step_group_reaches_the_coordinators_clau
         except OSError:
             pass
     assert alive == [], "the coordinator's claude outlived the group TERM"
+
+
+def test_the_tool_list_is_an_allowlist(world):
+    sec = config.scope("broomva")
+    av = coordinator.argv(sec, Path("/s.json"), "p")
+    assert av[av.index("--tools") + 1:av.index("--disallowedTools")] == ["Bash", "Read", "SendMessage"]
+    assert coordinator.posture_problems(["Bash", "Read", "SendMessage"], sec) == []
+    assert coordinator.posture_problems(["Bash", "Workflow"], sec) == ["Workflow is outside the allowlist"]
+    for bad in (None, "Bash", [1]):
+        assert "no tool list" in coordinator.posture_problems(bad, sec)[0]
+
+
+def test_a_late_init_event_doesnt_undo_the_deadline(world, tmp_path, monkeypatch):
+    world.write_config(mode="act")
+    monkeypatch.setattr(coordinator, "INIT_S", 0.5)
+    res = coordinator.run(config.scope("broomva"), 3, "/x/fleet", tmp_path / "c.jsonl", True, claude=_stub(
+        # TERM ignored, so the init line still comes after the deadline's stop began
+        tmp_path, "trap '' TERM\nsleep 1.5\necho '%s'\nsleep 3\n" % json.dumps({"type": "system", "subtype": "init",
+                                                                                 "tools": ["Bash"]})))
+    assert res["exit"] == coordinator.EXIT_POSTURE and "no init event" in res["posture"][0]
+
+
+def test_a_fleet_child_keeps_auth_and_provider_settings(monkeypatch):
+    from fleetlib import sources
+    for k, v in (("CLAUDE_CODE_OAUTH_TOKEN", "x"), ("CLAUDE_CODE_USE_BEDROCK", "1"), ("CLAUDE_CODE_SESSION_ID", "s"),
+                 ("CLAUDE_CODE_MESSAGING_TOKEN", "m"), ("CLAUDE_CODE_SESSION_ATTENDED", "1"), ("CLAUDECODE", "1"),
+                 ("PASEO_AGENT_ID", "a")):
+        monkeypatch.setenv(k, v)
+    env = sources.child_env()
+    assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "x" and env["CLAUDE_CODE_USE_BEDROCK"] == "1"
+    assert not {"CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDECODE",
+                "PASEO_AGENT_ID"} & set(env)  # a parent session's messaging token never reaches a child
+
+
+def test_a_partial_paseo_classification_fails_config_check(world):
+    world.write_config(paseo_tools={"paseo_version": "0.9.3", "read": ["list_agents"]})
+    with pytest.raises(config.ConfigError):
+        config.scope("broomva")

@@ -1,5 +1,63 @@
 # Changelog: fleet-reconcile
 
+## [0.3.0] - 2026-10-01
+
+The owner channel moves to Paseo (owner decision, 2026-10-01: "If it goes to
+the computer and I'm not there it won't work"). It replaces the macOS dialog
+that broomva/workspace#842 §5.7 chose. Ticket BRO-2674.
+
+- **`fleet act ask --show` raises each batch with an open ask as Maestro work
+  at Needs you** (`fleetlib/paseo_ask.py`). It runs inside the tick's lock.
+  `maestro new --dispatch` runs one turn in the fleet's own scratch repo; the
+  asks are fenced as data in the brief, and the look is the fleet's own
+  summary. Measured end to end: the item reached `review` and its agent's
+  Paseo record read `requiresAttention: true`.
+  - A batch is raised once an ask in it has lasted `ask_raise_after_min` (50),
+    so an ask a later tick found no longer true isn't raised.
+  - Raising is idempotent: an open item Maestro made before failing is found
+    by its title's scope and batch marker, and one queued at the cap is
+    dispatched later (a refusal there is logged, not a failed tick).
+  - Each tick reads back only decisions that took effect (Maestro's
+    `Took effect` receipt), never an undone or dropped one, nor the item's
+    display `verdict`, from items raised in the last 14 days until one is
+    final, keeping every note: approve acknowledges, send back with a note
+    answers, cancel dismisses. Chat replies are not read.
+- Where a Maestro item stands is one rule (`ledger.maestro_phase`: queued,
+  owner, final, gone) that the ledger's `seen`, raising, reading back, alerts
+  and dispatching all read. Only "At capacity" is a wait; an item Maestro no
+  longer has frees its batch to be raised again.
+- tick.sh's alerts go the same way, at most once per 6 h per kind of failure,
+  stamped only once past Maestro's queue; `fleet alert` adopts an open item of
+  the kind, with a bash fallback when Python or the config broke. The dialog, the banner path and p9
+  notify are gone.
+- The coordinator's tool list is an allowlist: `--tools Bash Read
+  SendMessage`. Measured on 2.1.280, the init event lists exactly those.
+  Any other tool (Paseo's pinned read tools aside), or no list, stops it. A late init event can't undo the
+  deadline's stop.
+- Carried from #258's review:
+  - mail: the overlap template waits for the core's published claims; the
+    hold label is refused however it's spelled;
+  - spawn: a file list that isn't a list refuses it, and the owner-merge
+    check reads a rename's old path;
+  - a live resume waits for the listing;
+  - the janitor:
+    - PATH must be the owner's worktree itself, not a directory above it;
+    - `scratch()` fails closed;
+    - secrets in ignored directories are found, dependency dirs skipped;
+    - a worktree `claude rm` keeps is an abort;
+    - a removed driver's profile and gh dir go with it;
+    - two backups in one instant both land;
+  - the send gate refuses on a corrupt ledger, and the `fleet` shim makes
+    any failure of `send-gate pre` exit 2;
+  - recover counts only the two delivery shapes, not a quote;
+  - a fleet child drops every session and Paseo variable (a parent's
+    messaging token included) but keeps auth and provider settings;
+  - a removed driver's profile is found through the ledger's spawn, never a
+    listing name;
+  - a partial Paseo classification fails config-check;
+  - a duplicate fleet name is asked while it lasts;
+  - the driver brief treats PR text as data.
+
 ## [0.2.0] - 2026-10-01
 
 Phase 2 (spec §9 row 2): the coordinator and its verbs under dry run. Ticket BRO-2674.
