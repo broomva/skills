@@ -384,7 +384,8 @@ def s1_summary(case: fx.Case, t: Transcript) -> dict[str, Any]:
         injected += [(iid, after) for iid in d.get("injected") or []]
     objs = _case_item_objs(case) if injected else {}
     from skill_evals.ctx_ablation import s1_follow
-    followed = s1_follow.followed(injected, objs, tool_uses, case.layout.workspace)
+    followed = s1_follow.followed(injected, objs, tool_uses, case.layout.workspace,
+                                  ran=[t.executed(tu) for tu in tool_uses])
     mid = sum(b["bytes"] for st, b in by_stage.items() if st not in ("session-start", "compact", "prompt"))
     # SessionStart output is already in the trial's session_start chars
     not_counted = sum(b["bytes"] for st, b in by_stage.items() if st not in ("session-start", "compact"))

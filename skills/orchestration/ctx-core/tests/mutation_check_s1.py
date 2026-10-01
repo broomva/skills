@@ -275,6 +275,9 @@ MUTANTS = [
      '    stages = list(dict.fromkeys(s.strip() for s in args.stages.split(",") if s.strip()))',
      '    stages = [s.strip() for s in args.stages.split(",") if s.strip()]',
      [T + "test_s1_register.py::test_a_stage_named_twice_is_registered_once"]),
+    ("a bad --params file falls back to the defaults", EVAL,
+     '            raise ValueError("cannot read --params %s: %s" % (path, exc))', "            body = {}",
+     [E + "test_a_params_file_that_cannot_be_read_is_an_error_not_the_defaults"]),
 ]
 
 

@@ -255,8 +255,11 @@ def aggregate(results: Sequence[Mapping[str, Any]], arm_order: Sequence[str]) ->
                     deltas.append(m - bare_ctx[task])
             injected = _mean(deltas) if arm != "bare" else 0.0
         # System 1's mid-turn stages inject after turn one, so turn-one context
-        # cannot see them: add their bytes (bytes/4, the context ledger's estimate).
-        mid = _mean([(r.get("s1") or {}).get("mid_turn_bytes") for r in graded if r.get("s1")])
+        # cannot see them: add their bytes (bytes/4, the context ledger's estimate),
+        # averaged per task and then over the tasks the turn-one delta uses, so both
+        # measurements weigh tasks the same.
+        mid = _mean([_mean([(r.get("s1") or {}).get("mid_turn_bytes") for r in trs if r.get("s1")])
+                     for task, trs in _group(graded, "task").items() if not bare_ctx or task in bare_ctx])
         if injected is not None and mid:
             injected += mid / 4.0
         s1_rows = [r.get("s1") for r in graded if r.get("s1")]

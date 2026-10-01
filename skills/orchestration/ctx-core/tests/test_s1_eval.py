@@ -507,3 +507,15 @@ def test_tune_never_runs_more_trials_than_asked(corpus):
     for n in (0, 3):
         res = E.tune(snap, dict(ctx_s1.DEFAULT_PARAMS), trials=n, seed=5, log=lambda *_: None)
         assert len(res["history"]) <= n
+
+
+def test_a_params_file_that_cannot_be_read_is_an_error_not_the_defaults(corpus, tmp_path):
+    _, _, _, d = corpus
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    out = tmp_path / "out"
+    for p in (str(tmp_path / "missing.json"), str(bad)):
+        with pytest.raises(ValueError, match="--params"):
+            E._load_params(p)
+        assert E.main(["eval", "--snapshot", str(d), "--params", p, "--out", str(out), "--no-timing"]) == 2
+    assert not out.exists()  # no report written for parameters nobody asked for

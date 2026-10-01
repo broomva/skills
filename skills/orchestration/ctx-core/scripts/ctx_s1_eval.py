@@ -741,6 +741,14 @@ def _load_params(path: Optional[str]) -> Dict[str, Any]:
     if path == "default":
         return dict(json.loads(json.dumps(ctx_s1.DEFAULT_PARAMS)), version="default")
     if path:
+        # the hook falls back to abstain-all on a bad file; an eval must not, or a
+        # typo would write a report (or a tune's floors) for the defaults
+        try:
+            body = json.loads(Path(path).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            raise ValueError("cannot read --params %s: %s" % (path, exc))
+        if not isinstance(body, dict):
+            raise ValueError("--params %s is not a JSON object" % path)
         os.environ["CTX_S1_PARAMS"] = path
     return ctx_s1.load_params()
 
@@ -807,7 +815,11 @@ def main(argv: Optional[List[str]] = None) -> int:
             return 1
         snap_dir = str(R.default_dir(scope.id))
     snap = R.load_snapshot(Path(snap_dir) / "snapshot.jsonl.gz")
-    params = _load_params(args.params)
+    try:
+        params = _load_params(args.params)
+    except ValueError as exc:
+        print("ctx-s1 %s: %s" % (args.cmd, exc), file=sys.stderr)
+        return 2
     if args.cmd == "eval":
         arms = args.arms.split(",") if args.arms else None
         rep = evaluate(snap, params, window=args.window, ranker=args.ranker, arms=arms,

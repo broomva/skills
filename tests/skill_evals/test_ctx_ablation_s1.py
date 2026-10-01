@@ -44,3 +44,29 @@ def test_the_summary_leaves_subagent_claims_out_and_counts_session_start_once(tm
     assert out["bytes"] == 220                                  # shadow decisions never reach the model
     assert out["bytes_not_in_session_start"] == 170             # session-start is in the SessionStart chars
     assert out["by_stage"]["subagent"]["claims"] == 1
+
+
+def test_a_call_that_did_not_run_is_no_follow_through(tmp_path):
+    from skill_evals.ctx_ablation import s1_follow
+
+    f = tmp_path / "docs" / "specs" / "a.html"
+    read = SimpleNamespace(name="Read", input={"file_path": str(f)})
+    objs = {"spec:a": ["o:docs/specs/a.html"]}
+    assert s1_follow.followed([("spec:a", 0)], objs, [read], tmp_path, ran=[True]) == 1
+    assert s1_follow.followed([("spec:a", 0)], objs, [read], tmp_path, ran=[False]) == 0
+
+
+def test_mid_turn_bytes_weigh_tasks_as_the_turn_one_delta_does():
+    from skill_evals.ctx_ablation import metrics as M
+
+    def row(arm, task, trial, ctx, mid=None):
+        r = {"arm": arm, "task": task, "trial": trial, "outcome": M.PASS, "context_tokens": ctx}
+        if mid is not None:
+            r["s1"] = {"mid_turn_bytes": mid, "by_stage": {}, "claims": 0, "followed": 0}
+        return r
+
+    rows = [row("bare", "a", 1, 1000), row("bare", "b", 1, 1000),
+            row("s1", "a", 1, 1000, mid=1000),                                    # one trial of task a
+            row("s1", "b", 1, 1000, mid=0), row("s1", "b", 2, 1000, mid=0), row("s1", "b", 3, 1000, mid=0)]
+    s1 = {r.arm: r for r in M.aggregate(rows, ["bare", "s1"])}["s1"]
+    assert s1.injected_tokens == 125.0  # (1000 + 0) / 2 tasks / 4, not 1000 / 4 trials / 4
