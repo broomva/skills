@@ -144,7 +144,13 @@ def cmd_report(args: argparse.Namespace) -> int:
     records, _ = ledger.read(sd)
     dry = _dry(args, sec)
     refused, lines = _compare_state(sec["scope"])
-    rep = report.build(snap, records, dry, {"refused": refused} if refused else lines[-1])
+    latest = None
+    if not refused:
+        n = 0
+        while n < len(lines) and "error" in lines[-1 - n]:
+            n += 1
+        latest = dict(lines[-1], failed_in_a_row=n)
+    rep = report.build(snap, records, dry, {"refused": refused} if refused else latest)
     common.write_json(td / "report.json", rep)
     common.write_atomic(td / "report.md", report.render_md(rep).encode("utf-8"))
     report.prune(sd, time.time())
@@ -263,7 +269,7 @@ def cmd_act(args: argparse.Namespace) -> int:
         ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": sec["scope"], "tick": tick,
                            "dry_run": _dry(args, sec), "by": "tick", "result": res})
     print("fleet act ask: %s" % (("clicked %s" % res.get("button")) if res.get("button") and not res.get("gave_up")
-                                 else "gave up (not seen)" if res.get("gave_up") else "not shown: %s" % res.get("error")))
+                                 else "gave up (not seen)"))
     return 0
 
 
@@ -321,10 +327,15 @@ def cmd_ack(args: argparse.Namespace) -> int:
             print("fleet ack: tick %d has no ask %s" % (args.tick, ", ".join(unknown)), file=sys.stderr)
             return 1
         targets = [(b, args.ask or "all") for b in mine]
+    opened = ledger.open_by_key(records).values()
+    n = sum(1 for b, asks in targets for v in opened
+            if v["of"] == b["id"] and (asks == "all" or v["ask"].get("id") in asks))
     for b, asks in targets:
         ledger.append(sd, {"kind": "ack", "of": b["id"], "asks": asks, "scope": sec["scope"], "tick": None,
                            "dry_run": False, "by": ledger.owner_by()})
-    print("fleet ack: %d batch(es) answered" % len(targets))
+    print("fleet ack: %d open ask(s) answered in %d batch(es)%s" % (
+        n, len(targets), "" if n else "; nothing there was open (answered, no longer true, or asked again in a "
+                                      "later batch: see fleet asks)"))
     return 0
 
 

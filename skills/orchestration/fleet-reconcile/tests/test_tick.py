@@ -312,6 +312,9 @@ def test_the_dialog_defaults_to_later_and_leads_with_the_newest_batchs_first_ope
                                                "question": "THE NEWEST QUESTION"}]}}
     with (sd / "ledger.jsonl").open("a") as fh:
         fh.write(json.dumps(rec) + "\n")
+    records = rig.ledger()
+    assert sum(len(r["target"]["asks"]) for r in records
+               if r["kind"] == "intent" and r["tick"] == 1) >= 2  # so batch 1 is still due after a1's answer
     assert rig.fleet("act", "ask", "--show", "--tick", "2").returncode == 0
     last = "\n".join(rig.calls("osascript")).rsplit("display dialog", 1)[1]  # the text spans lines
     assert 'default button "Later"' in last and "THE NEWEST QUESTION" in last
@@ -351,7 +354,7 @@ def test_a_failed_compare_does_not_use_up_the_day_and_the_prototypes_line_is_ref
     assert out.returncode == 0 and "not run (prototype)" in out.stdout
     rig.tick()  # the report says so and asks the owner
     rep = json.loads((rig.world.state["broomva"] / "ticks" / "00001" / "report.json").read_text())
-    assert "compare:prototype" in [a["key"] for a in rep["asks"]] and rep["core_compare"] == {"refused": "prototype"}
+    assert "compare:not-run" in [a["key"] for a in rep["asks"]] and rep["core_compare"] == {"refused": "prototype"}
     path.write_text(json.dumps(dict(proto, neither=0)) + "\n"
                     + json.dumps({"ts": ts(time.time()), "registered": reg, "pass": False,
                                   "error": "CompareError: claude agents exited 1"}) + "\n")

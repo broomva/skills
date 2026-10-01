@@ -63,6 +63,9 @@ Observe and classify, report only; no session is acted on. Ticket BRO-2674.
   ask, and one that can't be shown records nothing, sends no p9 and fails the
   tick; owner ids stay distinct within a millisecond; the core comparison
   asks when it can't run (no registration, the prototype's file, a torn
-  first line) and a failed run doesn't use up the day; the trap is cleared
+  first line; one key) and after three failed runs in a row, and a failed
+  run doesn't use up the day; open asks whose surface wasn't read are listed
+  as not re-checked; `fleet ack` says how many open asks it answered; a tail
+  keeps a line its window starts on; the trap is cleared
   before the lock is released; scheduled work raises no asks; a token file
   open to others is not used.

@@ -125,12 +125,30 @@ PROTECTIONS = [
      'k not in now_true and observed(k, rep))', "k not in now_true)",
      [T + "test_report.py", "-k", "surfaces_that_raise"]),
     ("an unknown session's asks resolved", REP,
-     ' or any(s["session_id"] == sid and s["class"] == "unknown" for s in rep["sessions"]):', ":",
+     ' or (row is not None and row["class"] == "unknown"):', ":",
      [T + "test_report.py", "-k", "surfaces_that_raise"]),
     ("drift resolved from the listing alone", REP, 'return ok("claude_version", "jobs", "listing")',
      'return ok("listing")', [T + "test_report.py", "-k", "surfaces_that_raise"]),
-    ("a repo that left the scope keeps its ask", REP, "return not mine or any(", "return any(",
-     [T + "test_report.py", "-k", "surfaces_that_raise"]),
+    ("a repo that left the scope keeps its ask", REP, "        return all(r.get(\"slug\") for r in rep[\"repos\"])",
+     "        return False", [T + "test_report.py", "-k", "surfaces_that_raise"]),
+    ("a repo with no slug read counts as gone", REP, "        return all(r.get(\"slug\") for r in rep[\"repos\"])",
+     "        return True", [T + "test_report.py", "-k", "surfaces_that_raise"]),
+    ("a blocked key resolved with the board unread", REP, "        return board and (", "        return True or (",
+     [T + "test_report.py", "-k", "still_classifies"]),
+    ("an interactive blocked key waits on the job files", REP, 'return board and (row["kind"] != "background" or ok("jobs"))',
+     'return board and ok("jobs")', [T + "test_report.py", "-k", "still_classifies"]),
+    ("a prompt resolved with the listing unread", REP,
+     '        if not ok("listing") or (row is not None', '        if (row is not None',
+     [T + "test_report.py", "-k", "still_classifies"]),
+    ("records resolved with the Paseo records unread", REP, 'return ok("listing", "paseo_records")',
+     'return ok("listing")', [T + "test_report.py", "-k", "still_classifies"]),
+    ("an unchecked open ask goes unlisted", REP, "if k not in skip]", "if False]",
+     [T + "test_report.py", "-k", "still_listed"]),
+    ("a failing comparison is never asked about", REP,
+     '    elif "error" in cmp_ and (cmp_.get("failed_in_a_row") or 0) >= COMPARE_FAILS_TO_ASK:', "    elif False:",
+     [T + "test_report.py", "-k", "three_runs"]),
+    ("a tail drops a line it starts on", COM, "fh.seek(max(0, start - 1))", "fh.seek(start)",
+     [T + "test_observe.py", "-k", "starts_exactly"]),
     ("a wait's key moved by activity", REP,
      '_tag(s["evidence"])), "3",', '_tag("%s|%s" % (s["evidence"], s["activity_age_s"]))), "3",',
      [T + "test_report.py", "-k", "subagents_keep_writing"]),
@@ -147,7 +165,7 @@ PROTECTIONS = [
      [T + "test_tick.py", "-k", "defaults_to_later"]),
     ("the dialog leads with the oldest batch", "scripts/fleet_reconcile.py", "    newest = due[-1]\n",
      "    newest = due[0]\n", [T + "test_tick.py", "-k", "defaults_to_later"]),
-    ("a refused compare is silent", REP, '    if cmp_.get("refused"):\n', "    if False:\n",
+    ("a refused compare is silent", REP, '    if cmp_.get("refused"):  # one key', "    if False:  # one key",
      [T + "test_tick.py", "-k", "failed_compare"]),
     ("the tick-number alert holds the lock", TICK,
      '(""|*[!0-9]*) trap - EXIT; release; alert tick', '(""|*[!0-9]*) alert tick',
@@ -212,8 +230,8 @@ def main() -> int:
         for name, rel, old, new, args in mutants:
             path = root / "fleet-reconcile" / rel
             orig = path.read_text()
-            if old not in orig:
-                print("STALE     %s (anchor not found in %s)" % (name, rel))
+            if orig.count(old) != 1:
+                print("STALE     %s (anchor found %d times in %s)" % (name, orig.count(old), rel))
                 bad += 1
                 continue
             path.write_text(orig.replace(old, new, 1))

@@ -41,6 +41,14 @@ def test_activity_is_found_past_a_last_line_larger_than_the_first_window(tmp_pat
     assert sources.last_activity_ts(str(tmp_path / "missing.jsonl")) is None
 
 
+def test_a_tail_that_starts_exactly_on_a_line_keeps_it(tmp_path):
+    p = tmp_path / "t.log"
+    last = b"You've hit your session limit \xc2\xb7 resets 10am\n"
+    p.write_bytes(b"x" * 50 + b"\n" + last)
+    assert common.read_tail(p, len(last)) == last
+    assert common.read_tail(p, len(last) - 1) == b""
+
+
 def test_sources_take_the_token_out_of_the_environment_and_hand_it_to_gh_alone(monkeypatch):
     monkeypatch.setattr(sources, "_TOKEN", {})
     monkeypatch.setenv("GH_TOKEN", "t" * 20)

@@ -164,7 +164,51 @@ def test_an_ask_is_resolved_only_from_the_surfaces_that_raise_it():
                                           "unpinned": [], "driver_eligible": False, "flags": ["no pull_request rule"]},
                                 "prs": []}])
     assert not _resolves(flagged, _snap([], repos=[{"repo": "/w/b/.git", "slug": "o/b", "ok": False, "error": "gh"}]))
+    assert not _resolves(flagged, _snap([], repos=[{"repo": "/w/b/.git", "slug": None, "ok": False,
+                                                    "error": "origin remote: timed out"}]))
     assert _resolves(flagged, _snap([], repos=[]))
+
+
+def test_the_gates_hold_for_a_session_that_still_classifies():
+    # An interactive session blocked by its ARC-STATUS: the scope's board must be read, the job files needn't be.
+    asked = _snap([S(session_id=_sid(1), board=arc("BLOCKED"), activity_ago=900)])
+    # Busy now (class 5, which needs no board), so it isn't unknown when the board isn't read.
+    moved_on = lambda **surf: _surf(_snap([S(session_id=_sid(1), status="busy", activity_ago=60)]), **surf)  # noqa: E731
+    blind = moved_on(board={"broomva": {"ok": False, "error": "EIO"}})
+    assert [s["class"] for s in report.build(blind, [], True)["sessions"]] == ["5"]
+    assert not _resolves(asked, blind)
+    assert _resolves(asked, moved_on(jobs={"ok": False, "error": "x"}))
+    # A prompt needs the listing; records with no process need the Paseo records too.
+    waiting = _snap([S(session_id=_sid(1), status="waiting", waiting_for="dialog open")])
+    assert not _resolves(waiting, _surf(_snap([]), listing={"ok": False, "error": "timed out"}))
+    assert _resolves(waiting, _snap([S(session_id=_sid(1))]))
+    rec = {"agent_id": "p1", "session_id": None, "title": "t", "last_status": "idle", "scope": "broomva",
+           "placement": "cwd"}
+    orphan = _snap([S(session_id=_sid(9))], paseo_open=[rec])
+    assert not _resolves(orphan, _surf(_snap([S(session_id=_sid(9))]), paseo_records={"ok": False, "error": "x"}))
+    assert _resolves(orphan, _snap([S(session_id=_sid(9))]))
+
+
+def test_an_open_ask_whose_surface_was_not_read_is_still_listed_and_counted():
+    waiting = _snap([S(session_id=_sid(1), status="waiting", waiting_for="dialog open")])
+    asks = report.build(waiting, [], True)["asks"]
+    blind = _surf(_snap([]), listing={"ok": False, "error": "timed out"})
+    rep = report.build(blind, _batch_records(asks), True)
+    assert [a["key"] for a in rep["asks_unchecked"]] == [asks[0]["key"]]
+    md = report.render_md(rep)
+    assert "**Open asks: 2**" in md and "not re-checked this tick" in md  # the listing ask, and this one
+
+
+def test_a_comparison_failing_three_runs_in_a_row_is_an_ask_and_its_error_is_guarded():
+    def rep(n):
+        return report.build(_snap([]), [], True, {"ts": "t", "pass": False, "error": "ghp_" + "c" * 36,
+                                                  "failed_in_a_row": n})
+    assert "compare:failing" not in [a["key"] for a in rep(2)["asks"]]
+    r = rep(3)
+    assert "compare:failing" in [a["key"] for a in r["asks"]]
+    assert "ghp_" not in report.render_md(r) + json.dumps(r["asks"])
+    refused = report.build(_snap([]), [], True, {"refused": "unregistered"})
+    assert [a["key"] for a in refused["asks"]] == ["compare:not-run"] and "Not run" in report.render_md(refused)
 
 
 def test_the_ack_text_says_what_an_ack_answers():

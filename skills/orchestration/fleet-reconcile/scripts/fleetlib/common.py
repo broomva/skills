@@ -126,12 +126,13 @@ def write_json(path: Path, obj: Any) -> None:
 
 
 def read_tail(path: Path, max_bytes: int = 256 * 1024) -> bytes:
-    """The last `max_bytes` of a file, from the start of a whole line."""
+    """The last `max_bytes` of a file, from the start of a whole line (one it
+    starts exactly on included)."""
     with path.open("rb") as fh:
         fh.seek(0, os.SEEK_END)
         size = fh.tell()
         start = max(0, size - max_bytes)
-        fh.seek(start)
+        fh.seek(max(0, start - 1))  # one byte early: a newline there means the window starts a line
         data = fh.read()
     if start:
         cut = data.find(b"\n")

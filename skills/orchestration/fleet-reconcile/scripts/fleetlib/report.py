@@ -75,6 +75,12 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
     rep["asks"], rep["asks_open"], rep["acked_still_open"] = make_asks(rep, records, now)
     rep["ask_keys_current"] = sorted(k for k, _, _ in candidates(rep))
     rep["resolved"] = resolved_keys(records, rep["ask_keys_current"], rep)
+    # Open, but not re-checked: their surface wasn't read this tick, so they
+    # are neither current nor resolved. Still open, and counted as open.
+    skip = set(rep["ask_keys_current"]) | set(rep["resolved"])
+    rep["asks_unchecked"] = [{"key": k, "class": v["ask"].get("class"), "first_tick": v["tick"],
+                              "id": v["ask"].get("id"), "question": v["ask"].get("question")}
+                             for k, v in sorted(ledger.open_by_key(records).items()) if k not in skip]
     gone = set(rep["resolved"])  # resolved by this tick, recorded after the report
     open_of = {v["of"] for k, v in ledger.open_by_key(records).items() if k not in gone}
     pending = [b for b in ledger.ask_batches(records) if b["id"] in open_of]
@@ -180,14 +186,21 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
                 " Its PRs get no driver until it has a pull_request rule and checks pinned to GitHub Actions."
                 if not ru["driver_eligible"] else "")))
     cmp_ = rep.get("core_compare") or {}
-    if cmp_.get("refused"):
-        cands.append(("compare:" + cmp_["refused"], "observe", "The core comparison (ctx doctor --compare) is "
-                      "not run in scope %s: %s. The owner's step is in ctx-core SKILL.md." % (
+    if cmp_.get("refused"):  # one key for every reason, so the owner's one step answers one ask
+        cands.append(("compare:not-run", "observe", "The core comparison (ctx doctor --compare) is not run in "
+                      "scope %s: %s. The owner's step is in ctx-core SKILL.md." % (
                           rep["scope"], COMPARE_REFUSALS[cmp_["refused"]])))
+    elif "error" in cmp_ and (cmp_.get("failed_in_a_row") or 0) >= COMPARE_FAILS_TO_ASK:
+        cands.append(("compare:failing", "observe", "The core comparison has failed its last %d runs in scope "
+                      "%s, latest: %s. tick.log has the detail." % (
+                          cmp_["failed_in_a_row"], rep["scope"], common.safe_text(cmp_["error"], 160))))
     # Scheduled work is an inventory, report-only in phase 1: its readings
     # (staleness, exit codes) are in the report's table, not the owner's dialog.
     return cands
 
+
+#: A failed comparison is retried at the next tick; this many in a row is an ask.
+COMPARE_FAILS_TO_ASK = 3
 
 COMPARE_REFUSALS = {
     "unregistered": "it has no registration time yet; run it once with --registered",
@@ -228,10 +241,14 @@ def observed(key: str, rep: Dict[str, Any]) -> bool:
     kind, _, rest = key.partition(":")
     if kind in ("prompt", "blocked"):
         sid = rest.split(":", 1)[0]
-        if not ok("listing") or any(s["session_id"] == sid and s["class"] == "unknown" for s in rep["sessions"]):
-            return False  # unknown: its job file, board or transcript was not read
-        # blocked: an ARC-STATUS on this scope's board, or a job file's question
-        return kind == "prompt" or (ok("jobs") and bool(((surf.get("board") or {}).get(rep["scope"]) or {}).get("ok")))
+        row = next((s for s in rep["sessions"] if s["session_id"] == sid), None)
+        if not ok("listing") or (row is not None and row["class"] == "unknown"):
+            return False  # unknown: a surface its class needed was not read
+        if row is None or kind == "prompt":
+            return True  # listed no more (it ended), or the listing says it isn't waiting
+        # blocked: an ARC-STATUS on this scope's board, or a background job's question
+        board = bool(((surf.get("board") or {}).get(rep["scope"]) or {}).get("ok"))
+        return board and (row["kind"] != "background" or ok("jobs"))
     if kind == "drift":
         return ok("claude_version", "jobs", "listing")  # where drift is found
     if key == "surface:jobs-unparsed":
@@ -243,7 +260,10 @@ def observed(key: str, rep: Dict[str, Any]) -> bool:
     if kind == "rules":
         slug = rest.split(":", 1)[0]
         mine = [r for r in rep["repos"] if (r.get("slug") or common.tilde(r["repo"])) == slug]
-        return not mine or any(r.get("ok") for r in mine)  # a repo that left the scope resolves
+        if mine:
+            return any(r.get("ok") for r in mine)
+        # Left the scope, unless a repo's slug couldn't be read (it may be this one).
+        return all(r.get("slug") for r in rep["repos"])
     return True  # listing, surface:*, repo:* and compare:* keys are about reading itself
 
 
@@ -277,9 +297,9 @@ def render_md(rep: Dict[str, Any]) -> str:
         if bt["oldest"] else ""))
     L.append("")
     still = rep["asks_open"]
-    n_open = len(still) + len(rep["asks"])
+    n_open = len(still) + len(rep["asks"]) + len(rep["asks_unchecked"])
     if n_open:
-        first = min([a["first_tick"] for a in still] or [rep["tick"]])
+        first = min([a["first_tick"] for a in still + rep["asks_unchecked"]] or [rep["tick"]])
         L.append("**Open asks: %d** (%d new this tick; the oldest first asked in tick %d). Read them with "
                  "`fleet asks`; answer with `fleet ack <tick>` (that tick's batch) or `fleet ack --all`."
                  % (n_open, len(rep["asks"]), first))
@@ -413,7 +433,8 @@ def render_md(rep: Dict[str, Any]) -> str:
         if c.get("refused"):
             L.append("Not run: %s." % COMPARE_REFUSALS[c["refused"]])
         else:
-            L.append("%s: %s" % (c.get("ts", "?"), ("could not run: %s" % c["error"]) if "error" in c else
+            L.append("%s: %s" % (c.get("ts", "?"), ("could not run (%d in a row): %s" % (
+                c.get("failed_in_a_row") or 1, common.safe_text(c["error"], 200))) if "error" in c else
                                  "board side %s, session side %s, %s." % (_pct(c.get("board_pct")),
                                                                          _pct(c.get("session_pct")),
                                                                          "pass" if c.get("pass") else "FAIL")))
@@ -427,6 +448,12 @@ def render_md(rep: Dict[str, Any]) -> str:
         L.append("")
         L.append("Still open from earlier ticks: %d." % len(still))
         for a in still:
+            L.append("- [tick %s, %s] %s" % (a["first_tick"], a["id"], a["question"]))
+    if rep["asks_unchecked"]:
+        L.append("")
+        L.append("Open, not re-checked this tick (the surface that raised each wasn't read): %d."
+                 % len(rep["asks_unchecked"]))
+        for a in rep["asks_unchecked"]:
             L.append("- [tick %s, %s] %s" % (a["first_tick"], a["id"], a["question"]))
     if rep["acked_still_open"]:
         L.append("")
@@ -448,8 +475,9 @@ def render_batch(rep: Dict[str, Any]) -> str:
          "every open batch." % (rep["tick"], rep["tick"]), ""]
     for a in rep["asks"]:
         L.append("- [%s] (%s) %s" % (a["id"], a["class"], a["question"]))
-    if rep["asks_open"]:
-        L += ["", "Also still open from earlier ticks: %d (`fleet asks`)." % len(rep["asks_open"])]
+    if rep["asks_open"] or rep["asks_unchecked"]:
+        L += ["", "Also still open from earlier ticks: %d (`fleet asks`)."
+              % (len(rep["asks_open"]) + len(rep["asks_unchecked"]))]
     return "\n".join(L) + "\n"
 
 

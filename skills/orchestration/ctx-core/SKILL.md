@@ -257,7 +257,7 @@ moves only such a file and never overwrites an earlier move:
 
 ```bash
 for s in broomva sri; do f=~/.local/state/ctx/$s/compare.jsonl
-  [ -f "$f" ] && ! head -1 "$f" | grep -q '"neither"' && mv -n "$f" "${f%.jsonl}.prototype.jsonl"; done
+  [ -f "$f" ] && ! head -1 "$f" | grep -q -e '"neither"' -e '"error"' && mv -n "$f" "${f%.jsonl}.prototype.jsonl"; done
 cd ~/broomva && python3 <ctx-core>/scripts/ctx.py doctor --compare --registered <UTC time the hooks were registered>
 cd ~/broomva/work/stimulus/sri && python3 <ctx-core>/scripts/ctx.py doctor --compare --registered <same, or sri's own>
 ```
