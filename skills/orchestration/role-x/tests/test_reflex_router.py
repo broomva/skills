@@ -150,6 +150,17 @@ def test_every_line_names_a_command_and_is_not_an_order():
         assert len(r.line) <= rr.LINE_MAX_CHARS
 
 
+def test_no_line_says_the_stack_backs_files_up():
+    """v1's worktree line ("the stack copies out its ignored files") was read as automation:
+    one run removed a worktree and told the user a hook had backed its `.env` up. No line
+    may claim that the stack copies, backs up or preserves files for the agent."""
+    claim = re.compile(r"\b(the stack|a hook|the hook|automatically)\b[^.;]{0,40}"
+                       r"\b(copies|copy|backs? up|backed up|saves|preserves|keeps)\b", re.IGNORECASE)
+    for r in CAT.reflexes:
+        assert not claim.search(r.line), f"{r.id}: the line claims automation: {r.line!r}"
+    assert "nothing backs them up" in BY_ID["p10.worktree-removal-guard"].line
+
+
 def test_every_state_predicate_is_used_and_every_used_one_exists():
     used = {n for r in CAT.reflexes for c in r.clauses for n in c.state}
     assert used == set(rr.STATE_PREDICATES)
@@ -568,8 +579,9 @@ def test_every_entry_has_routing_examples():
 
 
 def _matches(reflex, prompt: str) -> bool:
+    """The entry's prompt side, as M3 scores it: a clause's patterns and its requires."""
     text = rr.normalize_prompt(prompt)
-    return any(p.search(text) for c in reflex.clauses for p in c.patterns)
+    return any(c.has_prompt and c.prompt_matches(text) for c in reflex.clauses)
 
 
 @pytest.mark.parametrize("rid", sorted(r for r in EXAMPLES if BY_ID[r].routed))
@@ -595,10 +607,10 @@ def test_a_listed_or_judgment_entry_matches_its_trigger_and_is_never_routed(rid)
 
 def test_routed_entries_cover_the_owner_s_initial_cases():
     routed = {r.id for r in CAT.reflexes if r.routed}
-    assert {"p9.watch-after-push", "p10.branch-first", "p9.heal-on-red",
+    assert {"p9.watch-after-push", "p10.branch-first",
             "convention.trash-not-rm", "convention.paseo-fleet-listing", "p4.merge-pinned-to-head"} <= routed
-    # the worktree guard is listed: the ablation showed its line misread as automation
-    assert BY_ID["p10.worktree-removal-guard"].status == "listed"
+    # heal and checkit cleared v1's 3/2 cases and miss the v2 gate (recall 0.5 and 0.2)
+    assert not ({"p9.heal-on-red", "skill.checkit"} & routed)
 
 
 def test_a_listed_entry_records_why():
@@ -623,8 +635,8 @@ def test_change_work_route_is_an_imperative_not_a_question():
 
 def test_requires_needs_every_pattern():
     rid = "skill.checkit"
-    assert rid in fired_ids("check this out https://github.com/x/y", feature_state())
-    assert rid not in fired_ids("check this out", feature_state())
+    assert rid in fired_ids("check this out https://github.com/x/y", feature_state(), CAT_ALL)
+    assert rid not in fired_ids("check this out", feature_state(), CAT_ALL)
 
 
 def test_a_dot_inside_a_path_is_not_a_sentence_end():
@@ -687,7 +699,8 @@ def test_stage_3_sees_only_what_stages_1_and_2_kept():
 # ------------------------------------------------------------------- budget
 
 KITCHEN_SINK = ("push this branch and open the PR, merge 812, drop the scratch folders, the paseo "
-                "sessions look stale, CI failed, get rid of the worktree, force push, where do we stand")
+                "sessions look stale, CI failed, get rid of the worktree, force push, where do we stand, "
+                "write a runbook doc for it")
 
 
 def test_output_stays_inside_the_line_and_char_budget():
@@ -982,6 +995,8 @@ def test_shadow_logs_the_router_and_injects_only_the_legacy_block(repo, tmp_path
     assert "[bstack reflexes]" not in p.stdout
     shadow = [r for r in rows if r.get("event") == "reflex"]
     assert shadow and shadow[-1]["shadow"] is True and shadow[-1]["selected"] == ["p4.merge-pinned-to-head"]
+    # workspace#850: the gated router time includes the import, so it covers the route's own
+    assert shadow[-1]["router_ms"] >= shadow[-1]["ms"] > 0
 
 
 @pytest.mark.skipif(REPO is None, reason="needs the broomva/skills monorepo")
@@ -1167,10 +1182,11 @@ def test_an_unrecognised_output_value_is_recorded_not_silent(tmp_path, usersite_
 @pytest.mark.skipif(REPO is None, reason="needs the broomva/skills monorepo")
 def test_every_routed_entry_clears_the_sealed_held_out_m3_gate():
     """Spec §5.5 M3, enforced: an entry routes only at held-out recall >= 0.60 with
-    <= 0.20 false fires, on the cases sealed at a272659 before any tuning."""
-    heldout = SKILL_DIR / "evals" / "reflex-routing-heldout.json"
-    p = subprocess.run([sys.executable, str(ROLE_X_PY), "reflexes", "route", "--heldout", "--json"],
-                       capture_output=True, text=True, timeout=120)
+    <= 0.20 false fires, on the v2 cases (10 positives and 5 near-misses per id, 40 and
+    20 for change_work) sealed at be7726d before any scoring or tuning."""
+    heldout = SKILL_DIR / "evals" / "reflex-routing-heldout-v2.json"
+    p = subprocess.run([sys.executable, str(ROLE_X_PY), "reflexes", "route", "--heldout", "--json",
+                        "--heldout-file", str(heldout)], capture_output=True, text=True, timeout=120)
     assert p.returncode == 0, p.stderr
     rows = {r["id"]: r for r in json.loads(p.stdout)["ids"]}
     cases = json.loads(heldout.read_text(encoding="utf-8"))["cases"]
@@ -1182,11 +1198,12 @@ def test_every_routed_entry_clears_the_sealed_held_out_m3_gate():
     assert rows["change_work"]["passes_m3"]
 
 
-def test_the_sealed_held_out_file_is_the_one_that_was_sealed():
+def test_the_sealed_held_out_files_are_the_ones_that_were_sealed():
     import hashlib
-    heldout = SKILL_DIR / "evals" / "reflex-routing-heldout.json"
-    assert hashlib.sha256(heldout.read_bytes()).hexdigest() == (
-        "3628de8859624ac6f7f6d3fc01211cb9524f64fcd547c3fc5fe54f86bb3089d9")
+    for name, digest in (
+            ("reflex-routing-heldout.json", "3628de8859624ac6f7f6d3fc01211cb9524f64fcd547c3fc5fe54f86bb3089d9"),
+            ("reflex-routing-heldout-v2.json", "74d40b5edf11e5f01db405b3e4cb5b4702d7286813ccf7ebaa4282852d4bd39a")):
+        assert hashlib.sha256((SKILL_DIR / "evals" / name).read_bytes()).hexdigest() == digest, name
 
 
 # ------------------------------------------------------------------ mutation

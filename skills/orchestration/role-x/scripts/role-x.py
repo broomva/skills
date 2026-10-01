@@ -27,6 +27,7 @@ import re
 import stat
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -1646,6 +1647,10 @@ def _intake_reflex(prompt: str | None, session_id: str, workspace_arg: str | Non
     if not isinstance(prompt, str) or not prompt.strip():
         return ""
     text, meta = "", {}
+    # workspace#850 (A1, M4): the gated time is the router's own, from before its
+    # import to just before its event write; ``ms`` (catalog load to render) leaves
+    # the import out.
+    started = time.monotonic()
     try:
         if isinstance(payload_cwd, str) and payload_cwd and Path(payload_cwd).is_dir():
             cwd = Path(payload_cwd).resolve()
@@ -1658,6 +1663,7 @@ def _intake_reflex(prompt: str | None, session_id: str, workspace_arg: str | Non
         text, meta = "", {"error": type(exc).__name__}
     if shadow:
         meta = {**meta, "shadow": True}
+    meta = {**meta, "router_ms": round((time.monotonic() - started) * 1000, 1)}
     _emit_reflex_event(session_id, prompt, meta)
     return "" if shadow else text
 

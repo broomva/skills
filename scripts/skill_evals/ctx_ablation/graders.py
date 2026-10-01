@@ -12,7 +12,11 @@ kinds in :data:`ASSERTION_KINDS`, and each looks at one of three things:
   gone, the argv the ``gh`` stub recorded;
 * **a short fact in the final answer** (``answer``) — the count, flag, path or id a
   retrieval question asks for. A token, not a judgement of the prose: never "did
-  it explain", only "does the answer carry 57".
+  it explain", only "does the answer carry 57";
+* **order** (``text_before_write``, ``bash_after_write``) — fact tokens said before
+  the first file write (the dependents' paths, for P14's dep-chain), or a command run
+  after the last write to a file (P11: the change was exercised). Still tokens and
+  argv, placed in time; never a judgement of the prose.
 
 There is no assertion about narration, and no LLM judge.
 
@@ -396,6 +400,66 @@ def a_any(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
                            " | ".join(f"{r.kind}: {r.detail}" for r in results)[:300])
 
 
+#: Tools that write a file. A Bash write is matched by :data:`BASH_WRITE_RE`.
+WRITE_TOOLS = frozenset({"Write", "Edit", "MultiEdit", "NotebookEdit"})
+BASH_WRITE_RE = re.compile(r"\bsed\s+-i|\bperl\s+-p?i|\btee\b|\bgit\s+apply\b|\bpatch\s+-|"
+                           r"(?<![<>&\d])>>?\s*['\"]?[\w./-]+\.(py|md|json|ya?ml|toml|sh|txt|html)\b")
+
+
+def _main_loop_blocks(t: Transcript):
+    """The main loop's assistant blocks in order: text and tool_use interleaved."""
+    for ev in t.events:
+        if ev.get("type") == "assistant" and not ev.get("parent_tool_use_id"):
+            yield from Transcript._blocks(ev)
+
+
+def _is_write(ctx: GradeContext, block: Mapping[str, Any], executed_ids: set[str]) -> bool:
+    if block.get("type") != "tool_use" or str(block.get("id") or "") not in executed_ids:
+        return False
+    name = str(block.get("name") or "")
+    inp = block.get("input") if isinstance(block.get("input"), dict) else {}
+    return name in WRITE_TOOLS or (name == "Bash" and bool(BASH_WRITE_RE.search(str(inp.get("command") or ""))))
+
+
+def a_text_before_write(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
+    """What the run said before its first executed file write carries ``distinct``
+    different matches of ``re`` (default 1): P14's dep-chain names the dependents'
+    paths before the first edit. A run that never writes fails: the task asked for a
+    change, and a run that only describes one has not made it."""
+    pat = ctx.rx(spec["re"])
+    need = int(spec.get("distinct", 1))
+    executed_ids = {tu.id for tu in ctx.executed()}
+    said: list[str] = []
+    for block in _main_loop_blocks(ctx.transcript):
+        if _is_write(ctx, block, executed_ids):
+            hits = sorted({m.group(0).lower() for m in pat.finditer("\n".join(said))})
+            return AssertionResult("text_before_write", len(hits) >= need,
+                                   f"before the first write: {hits or 'none'} (need {need})")
+        if block.get("type") == "text" and isinstance(block.get("text"), str):
+            said.append(block["text"])
+    return AssertionResult("text_before_write", False, "no executed file write")
+
+
+def a_bash_after_write(ctx: GradeContext, spec: Mapping[str, Any]) -> AssertionResult:
+    """An executed Bash command matching ``re`` comes after the LAST executed write to
+    a file matching ``path_re`` (P11: the change was exercised, not only made)."""
+    pat, path_pat = ctx.rx(spec["re"]), ctx.rx(spec["path_re"])
+    last_write: int | None = None
+    executed = ctx.executed()
+    for i, tu in enumerate(executed):
+        target = str(tu.input.get("file_path") or tu.input.get("notebook_path") or "")
+        if (tu.name in WRITE_TOOLS and path_pat.search(target)) or (
+                tu.name == "Bash" and BASH_WRITE_RE.search(str(tu.input.get("command") or ""))
+                and path_pat.search(str(tu.input.get("command") or ""))):
+            last_write = i
+    if last_write is None:
+        return AssertionResult("bash_after_write", False, f"no executed write to /{path_pat.pattern}/")
+    hit = next((tu for tu in executed[last_write + 1:] if tu.name == "Bash"
+                and pat.search(str(tu.input.get("command") or ""))), None)
+    return AssertionResult("bash_after_write", hit is not None,
+                           _describe(hit) if hit else f"no Bash /{pat.pattern}/ after the last write")
+
+
 AssertionFn = Callable[[GradeContext, Mapping[str, Any]], AssertionResult]
 
 ASSERTION_KINDS: dict[str, AssertionFn] = {
@@ -414,6 +478,8 @@ ASSERTION_KINDS: dict[str, AssertionFn] = {
     "every_stub": a_every_stub,
     "home_contains": a_home_contains,
     "any": a_any,
+    "text_before_write": a_text_before_write,
+    "bash_after_write": a_bash_after_write,
 }
 
 #: The regex fields of each kind that must NOT match the empty string: in these a
@@ -425,6 +491,8 @@ POSITIVE_REGEX_FIELDS: dict[str, tuple[str, ...]] = {
     "every_stub": ("where_re", "must_re"),
     "file": ("re",),
     "git": ("re",),
+    "text_before_write": ("re",),
+    "bash_after_write": ("re", "path_re"),
 }
 
 

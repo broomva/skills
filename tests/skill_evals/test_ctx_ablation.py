@@ -90,7 +90,8 @@ def test_removing_the_control_from_a_passing_run_flips_the_verdict(tmp_path, cor
 
 
 def test_the_committed_task_file_covers_every_class_and_target():
-    assert {t.cls for t in TASKS} == set(T.TASK_CLASSES)
+    # harm tasks (pre-flip, BRO-2674) live in preflip-fresh.json and a2-regression.json
+    assert {t.cls for t in TASKS} == set(T.TASK_CLASSES) - {"harm"}
     assert {tg for t in TASKS for tg in t.targets} == set(T.TARGETS)
     assert all(t.rationale and t.origin.get("ref") for t in TASKS)
 
@@ -993,7 +994,12 @@ HELDOUT, _HELDOUT_DOC = T.load_tasks(HELDOUT_FILE)
 HELDOUT_BY_ID = {t.id: t for t in HELDOUT}
 
 
-@pytest.mark.parametrize("task", HELDOUT, ids=[t.id for t in HELDOUT])
+PREFLIP_FILES = [REPO / "scripts" / "skill_evals" / "ctx_ablation" / "tasks" / n
+                 for n in ("preflip-fresh.json", "a2-regression.json")]
+PREFLIP = list({t.id: t for f in PREFLIP_FILES for t in T.load_tasks(f)[0]}.values())
+
+
+@pytest.mark.parametrize("task", HELDOUT + PREFLIP, ids=[t.id for t in HELDOUT + PREFLIP])
 def test_every_heldout_grader_needs_its_control(task, tmp_path, corpus):
     null_ok, null_res = T.null_run(task, corpus, tmp_path / "null")
     assert not null_ok, f"{task.id}: a run that did nothing passed: {[r.to_dict() for r in null_res]}"
@@ -1006,6 +1012,59 @@ def test_every_heldout_grader_needs_its_control(task, tmp_path, corpus):
 def test_heldout_prompts_are_not_the_pilot_s():
     assert not {t.prompt for t in HELDOUT} & {t.prompt for t in TASKS}
     assert not {t.id for t in HELDOUT} & set(BY_ID)
+    assert not {t.prompt for t in PREFLIP} & {t.prompt for t in HELDOUT + TASKS}
+
+
+def test_preflip_prompts_are_the_sealed_wordings_chosen_by_its_rule():
+    """Each pre-flip prompt is copied from the sealed wordings file (be7726d), at the
+    wording its selection rule picked; nothing was retyped or edited."""
+    import hashlib
+    wf = REPO / "scripts" / "skill_evals" / "ctx_ablation" / "tasks" / "preflip-fresh-wordings.json"
+    assert hashlib.sha256(wf.read_bytes()).hexdigest() == (
+        "2d5ee62d17d9e1c0db8dfdb65ae10773e9743cf43f30341f98e82f34e2461b26")
+    w = json.loads(wf.read_text(encoding="utf-8"))["wordings"]
+    for t in PREFLIP:
+        key, n = t.origin["ref"].split()[1], int(t.origin["ref"].split()[3].rstrip(","))
+        assert t.prompt == w[key][n - 1], t.id
+
+
+def test_a_harm_task_is_kept_whatever_bare_scored():
+    rows = [{"task": "h", "arm": "bare", "outcome": M.PASS}, {"task": "h", "arm": "bare", "outcome": M.PASS},
+            {"task": "r", "arm": "bare", "outcome": M.PASS}, {"task": "r", "arm": "bare", "outcome": M.FAIL}]
+    v = R.calibration_verdicts(rows, ["h", "r"], 2, frozenset({"h"}))
+    assert v["h"]["verdict"] == R.CALIBRATION_HARM and v["r"]["verdict"] == R.CALIBRATION_VACUOUS
+
+
+@pytest.mark.parametrize("arm_id,catalog", [("reflex-reworded", "step1-reworded.yaml"),
+                                            ("reflex-v1lines", "step1-v1lines.yaml")])
+def test_the_step1_arms_route_on_their_eval_catalog(arm_id, catalog):
+    cmd = _hooks(arm_id)["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"]
+    assert "ROLE_X_OUTPUT=reflex" in cmd and f"ROLE_X_REFLEX_CATALOG={A.CATALOGS_DIR / catalog}" in cmd
+    assert (A.CATALOGS_DIR / catalog).is_file() and A.parse_arm(arm_id).is_reflex
+
+
+def test_the_step1_catalogs_differ_from_the_shipped_one_only_where_measured():
+    """Rebuilt from the shipped catalog they match the committed files, and they differ
+    from it in the measured entries' status (both) and line (v1lines) and nothing else,
+    regexes included: the two arms differ in line text alone."""
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("catalogs_build", A.CATALOGS_DIR / "build.py")
+    b = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(b)
+    sys.path.insert(0, str(A.ROLEX_SCRIPTS))
+    import reflex_router as rr
+    shipped = {r.id: r for r in rr.load_catalog().reflexes}
+    for name, v1 in b.TARGETS.items():
+        assert (A.CATALOGS_DIR / name).read_text(encoding="utf-8") == b.build(v1), f"{name} is stale: rebuild"
+        cat = rr.load_catalog(A.CATALOGS_DIR / name)
+        assert {r.id for r in cat.reflexes} == set(shipped)
+        for r in cat.reflexes:
+            s = shipped[r.id]
+            assert [c.patterns for c in r.clauses] == [c.patterns for c in s.clauses], r.id
+            if r.id in b.MEASURED:
+                assert r.routed and (r.line != s.line) == v1, r.id
+            else:
+                assert (r.status, r.line) == (s.status, s.line), r.id
 
 
 @pytest.mark.parametrize("arm_id,output", [("reflex", "reflex"), ("qbar", "qbar"),

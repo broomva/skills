@@ -18,6 +18,10 @@ changes only what is PUSHED into the model's context:
                is an alias).
 * ``qbar``     the same hook with ``ROLE_X_OUTPUT=qbar``: the lens block cut to its
                quality bar, #251's recommended arm (``rolex-qbar`` is an alias).
+* ``reflex-reworded``, ``reflex-v1lines``  the reflex arm on an eval catalog
+               (``catalogs/``, ``ROLE_X_REFLEX_CATALOG``): the shipped catalog with the
+               entries pre-flip step 1 measures forced to routed, and in v1lines their
+               lines put back to v1's text, so the two differ in line text alone.
 * ``ctx``      ctx-core's SessionStart hook, the real script, briefing from the
                fixture ctx store.
 * ``rolex_coverage``  role-x's SessionStart coverage nudge (``all`` only). It reads
@@ -52,6 +56,7 @@ from typing import Any
 #: Repo layout: <repo>/scripts/skill_evals/ctx_ablation/arms.py
 REPO_ROOT = Path(__file__).resolve().parents[3]
 STUBS_DIR = Path(__file__).resolve().parent / "stubs"
+CATALOGS_DIR = Path(__file__).resolve().parent / "catalogs"
 ROLEX_SCRIPTS = REPO_ROOT / "skills" / "orchestration" / "role-x" / "scripts"
 CTX_SCRIPTS = REPO_ROOT / "skills" / "orchestration" / "ctx-core" / "scripts"
 
@@ -86,6 +91,9 @@ class Arm:
     #: ``None`` leaves role-x's output at its default (the hook command is
     #: unchanged); a string sets ``ROLE_X_OUTPUT`` ("reflex", "qbar").
     rolex_output: str | None = None
+    #: ``None`` leaves the reflex router on its shipped catalog; a file name under
+    #: ``catalogs/`` sets ``ROLE_X_REFLEX_CATALOG`` to it.
+    rolex_catalog: str | None = None
     description: str = ""
 
     @property
@@ -122,6 +130,12 @@ ARM_REGISTRY: dict[str, Arm] = {
                   description="role-x reflex router (ROLE_X_OUTPUT=reflex)"),
     "qbar": Arm("qbar", rolex=True, rolex_output="qbar",
                 description="role-x intake cut to its quality bar (ROLE_X_OUTPUT=qbar)"),
+    "reflex-reworded": Arm("reflex-reworded", rolex=True, rolex_output="reflex",
+                           rolex_catalog="step1-reworded.yaml",
+                           description="reflex router, step-1 entries forced routed, reworded lines"),
+    "reflex-v1lines": Arm("reflex-v1lines", rolex=True, rolex_output="reflex",
+                          rolex_catalog="step1-v1lines.yaml",
+                          description="reflex router, step-1 entries forced routed, v1's lines"),
 }
 
 #: Other names for registry arms: the owner's brief called them rolex-reflex and
@@ -197,6 +211,8 @@ def hook_commands(arm: Arm, case_root: Path, rt: HookRuntime) -> dict[str, list[
             env["ROLE_X_TASK_ENTITY_TOP_N"] = str(arm.rolex_top_n)
         if arm.rolex_output is not None:
             env["ROLE_X_OUTPUT"] = arm.rolex_output
+        if arm.rolex_catalog is not None:
+            env["ROLE_X_REFLEX_CATALOG"] = str(CATALOGS_DIR / arm.rolex_catalog)
         hooks["UserPromptSubmit"] = [{"hooks": [{"type": "command", "timeout": 20, "command": _cmd(
             env, ["/bin/bash", str(ROLEX_SCRIPTS / "role-x-intake-hook.sh")])}]}]
     return hooks

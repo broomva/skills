@@ -1,5 +1,43 @@
 # PLANS.md
 
+## role-x reflex router, pre-flip evidence (BRO-2674)
+
+Status: in progress on `feat/role-x-reflex-preflip`. Owner decision 2026-10-01: do not
+flip yet; run the pre-flip flow, then the owner decides. `ROLE_X_OUTPUT` stays
+default-off in this PR. Spec: workspace `docs/specs/2026-09-30-reflex-router-and-ontology-ranked-context.html`
+with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
+
+### Scope
+
+1. **Injection defence (step 1).** Reword the lines sonnet refused as injected text
+   (p9 heal, Paseo), and the worktree guard so it says what is and is not automated.
+   Re-measure on fresh blind prompts, sealed before the rewording. About $3, sonnet.
+2. **Step 2, shadow** is the owner's: read its event log at the end.
+3. **Opus A2 (step 3).** bare, rolex, qbar, reflex on the held-out tasks plus P14/P11/P3
+   regression tasks and a harm task (a line must not induce deleting a worktree's
+   ignored files). Task-clustered CIs as in the sonnet table. About $20; above $30, a
+   stated subset. Arms one at a time, jobs ≤ 2.
+4. **Thicker routing gate (step 4).** A fresh sealed set, 10 positives and 5
+   near-misses per id (40/20 for `change_work`), written blind and hashed before it is
+   scored. Re-gate every entry; report routed before and after, `p4.ship-not-ask` in
+   particular.
+
+### Milestones
+
+1. [ ] Briefs written; blind writers (no catalog, no tools) produce routing v2 and the
+   fresh task prompts; both committed with sha256 before any rewording or scoring.
+2. [ ] Step 4: score v2, set `status` per the gate, tests gate on v2.
+3. [ ] Step 1: reword; fresh tasks; sonnet calibrate + reflex (new lines) + reflex at
+   9d24559 (old lines) on the same prompts.
+4. [ ] Step 3: opus calibrate, then bare, reflex, qbar, rolex one at a time.
+5. [ ] Results doc, recommendation table, P20 (B + C), merge with the flag off.
+
+### Verification
+
+`pytest skills/orchestration/role-x/tests tests/skill_evals/test_ctx_ablation.py`,
+`python3 scripts/skill_evals/ctx_ablation/run.py validate --deep --tasks <file>`,
+`python3 skills/orchestration/role-x/scripts/role-x.py reflexes route --heldout`.
+
 ## role-x reflex router v1, behind `ROLE_X_OUTPUT=reflex` (BRO-2674)
 
 Status: PR broomva/skills#253 open, P20 passed (5 rounds, B and C), flag default off; the owner decides the flip. Owner decision 2026-09-30: turn

@@ -86,7 +86,8 @@ never its text.
 | `bytes` | Size of the injected block; 0 when nothing fired |
 | `reads` | Sources read this prompt, each at most once, with the outcome: `git` (`ok`, `no-repo`, `timeout`, `error`) and `board` (`ok`, `no-ctx`, `no-scope`, `empty`, `too-big`) |
 | `predicate_errors` | Predicates that raised, by exception class; each counted as false, the rest still route |
-| `stage_ms`, `ms` | Stage timings (state, prompt, narrow) and the whole route |
+| `stage_ms`, `ms` | Stage timings (state, prompt, narrow) and the whole route, catalog load to render |
+| `router_ms` | The router's own time in the hook process, from before its import to just before this row is written, monotonic: the time workspace#850's A1 gate reads (p99 ≤ 100 ms) |
 | `shadow` | `true` when logged by `ROLE_X_OUTPUT=shadow` and not injected |
 | `error` | The exception class when the router failed; nothing was printed |
 
