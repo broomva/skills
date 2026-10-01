@@ -2344,7 +2344,8 @@ def _transcript_facts(transcript: Path) -> tuple[list[float], list[dict]]:
                 dur = None
             runs.append({"ts": _ts(ev.get("timestamp")),
                          "duration_ms": dur if dur is not None and math.isfinite(dur) else None,
-                         "cancelled": att.get("type") == "hook_cancelled", "timed_out": bool(att.get("timedOut"))})
+                         "cancelled": att.get("type") == "hook_cancelled", "timed_out": bool(att.get("timedOut")),
+                         "failed": att.get("type") != "hook_success"})
             continue
         msg = ev.get("message") if isinstance(ev.get("message"), dict) else {}
         content = msg.get("content")
@@ -2390,15 +2391,22 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
     * Router time is ``router_ms`` (from before the router's import to just before the
       row is written), gated at p99 <= 100 ms. The hook's own wall clock, timeouts and
       interrupts are reported from the transcripts' hook records, not gated (spec Q10).
-    * A turn is one shadow row: shadow writes a row for every non-empty prompt, first
-      thing in the hook. A ship (a Bash ``git push`` or ``gh pr create``, from the session
-      transcript) belongs to the latest row of its session at or before it. A ship turn is
-      a row in the window whose turn shipped; the p9 bar is a Wilson lower bound >= 0.70
-      on how many of those selected p9. A ship with no row before it in its session is
-      unsure: met needs the worst case (each such ship a p9 miss) at >= 0.70, not met is
-      the best case (each a hit) below it, between them or under 9 turns it is not shown.
-    * Rows from a session with no transcript (probes, tests) are reported and left out of
-      everything. A line that cannot be read after the window opens keeps it from met."""
+    * A turn starts at a shadow row (shadow writes one per non-empty prompt, once the
+      router has run) or at a prompt that left none: a hook run Claude Code recorded as
+      failed or timed out with no row, or a row of the hook outside shadow mode. A ship
+      (a Bash ``git push`` or ``gh pr create`` in the session transcript, timestamped,
+      fork copies skipped) belongs to the latest turn start at or before it. A ship turn
+      is a row in the window whose turn shipped; the p9 bar is a Wilson lower bound >=
+      0.70 on how many of those selected p9. A turn that shipped from a prompt with no
+      row, or before the session's first row, is unsure: met needs the worst case (each a
+      p9 miss) at >= 0.70, not met is the best case (each a hit) below it, and between
+      them or under 9 turns the bar is not shown.
+    * Every row in the window counts for errors and router time. Rows from a session with
+      no transcript (probes, tests, a moved config dir) have no turns to read and are
+      reported. A line that cannot be read after the window opens keeps it from met.
+      Pushes inside subagents (other files) are not counted. A push typed while an
+      injected prompt (a task notification) is mid-loop is credited to that prompt's row,
+      which leans the bar toward not met."""
     events = Path(args.events) if args.events else EVENTS_PATH
     projects = Path(args.projects) if args.projects else Path.home() / ".claude" / "projects"
     try:
@@ -2415,6 +2423,7 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
 
 def _shadow_report(events: Path, projects: Path, since: float, args: argparse.Namespace) -> int:
     rows_by_session: dict[str, list[dict]] = {}
+    others_by_session: dict[str, list[float]] = {}  # the same hook's rows outside shadow mode
     malformed = 0
     opened = False  # the log is append-only: once a line inside the window is seen, it is open
     text = events.read_text(encoding="utf-8", errors="replace") if events.is_file() else ""
@@ -2430,6 +2439,8 @@ def _shadow_report(events: Path, projects: Path, since: float, args: argparse.Na
         rts = _ts(r.get("ts"))
         if rts is not None and rts >= since:
             opened = True
+        if r.get("event") in ("intake", "reflex") and not r.get("shadow") and rts is not None:
+            others_by_session.setdefault(str(r.get("session") or ""), []).append(rts)
         if r.get("event") != "reflex" or not r.get("shadow"):
             continue
         if rts is None:
@@ -2445,10 +2456,10 @@ def _shadow_report(events: Path, projects: Path, since: float, args: argparse.Na
         window = [r for r in srows if r["_ts"] >= since]
         if not window:
             continue
+        rows += window  # every row counts for errors and router time, transcript or not
         if not found:
             no_transcript += len(window)
             continue
-        rows += window
         ships, runs = [], []
         for f in found:
             sh, ru = _transcript_facts(f)
@@ -2460,25 +2471,40 @@ def _shadow_report(events: Path, projects: Path, since: float, args: argparse.Na
                     hook_ms.append(h["duration_ms"])
                 timeouts += h["cancelled"] and h["timed_out"]
                 interrupts += h["cancelled"] and not h["timed_out"]
-        bounds = sorted(srows, key=lambda r: r["_ts"])
+        # Turn starts: the shadow rows, and prompts that left no shadow row (a hook run
+        # that failed or timed out before writing one, or a row of the hook outside shadow
+        # mode). A push in a turn of the second kind is unsure, never another prompt's.
+        row_ts = [r["_ts"] for r in srows]
+        bounds = [(r["_ts"], r) for r in srows]
+        for h in runs:
+            if h["failed"] and h["ts"] is not None:
+                start = h["ts"] - (h["duration_ms"] or 15000.0) / 1000.0
+                if not any(start - 2 <= x <= h["ts"] + 2 for x in row_ts):
+                    bounds.append((start, None))
+        for x in others_by_session.get(sid, []):
+            if not any(abs(x - y) <= 30 for y in row_ts):
+                bounds.append((x, None))
+        bounds.sort(key=lambda b: b[0])
         shipped: set[int] = set()
+        unsure: set[int] = set()
         for t in ships:
             if t < since:
                 continue
             owner = None
-            for k, r in enumerate(bounds):
-                if r["_ts"] <= t:
+            for k, (bts, _r) in enumerate(bounds):
+                if bts <= t:
                     owner = k
                 else:
                     break
-            if owner is None:
-                orphan += 1
+            if owner is None or bounds[owner][1] is None:
+                unsure.add(-1 if owner is None else owner)  # one unsure turn per start, not per push
             else:
                 shipped.add(owner)
+        orphan += len(unsure)
         for k in shipped:
-            if bounds[k]["_ts"] >= since:  # a turn that began before the window is not in it
+            if bounds[k][0] >= since:  # a turn that began before the window is not in it
                 ship += 1
-                with_p9 += "p9.watch-after-push" in (bounds[k].get("selected") or [])
+                with_p9 += "p9.watch-after-push" in (bounds[k][1].get("selected") or [])
     timed = [float(r["router_ms"]) for r in rows
              if isinstance(r.get("router_ms"), (int, float)) and math.isfinite(float(r["router_ms"]))]
     errors: dict[str, int] = {}
@@ -2506,11 +2532,11 @@ def _shadow_report(events: Path, projects: Path, since: float, args: argparse.Na
                                             "max": max(hook_ms) if hook_ms else None,
                                             "timeouts": timeouts, "interrupts": interrupts},
         "errors": errors,
-        "ship_turns": {"turns": ship, "p9_selected": with_p9,
+        "ship_turns": {"turns": ship, "p9_selected": with_p9, "unsure_turns": orphan,
                        "wilson_lower": None if lower is None else round(lower, 4),
                        "wilson_lower_worst_case": None if worst is None else round(worst, 4),
                        "wilson_lower_best_case": None if best is None else round(best, 4),
-                       "ships_with_no_row_before_them": orphan,
+
                        "rows_in_sessions_without_a_transcript": no_transcript},
         "selected": dict(sorted(selected.items(), key=lambda kv: -kv[1])),
         "verdict": verdict,
@@ -2528,7 +2554,7 @@ def _shadow_report(events: Path, projects: Path, since: float, args: argparse.Na
         print(f"error rows {sum(errors.values())} {errors or ''}")
         print(f"ship turns {ship}: p9 selected {with_p9}, Wilson lower {st['wilson_lower']}, worst case "
               f"{st['wilson_lower_worst_case']}, best case {st['wilson_lower_best_case']} (bar {A1_MIN_P9_LOWER}, "
-              f"at least {A1_MIN_SHIP_TURNS} turns); ships with no row before them {orphan}")
+              f"at least {A1_MIN_SHIP_TURNS} turns); unsure ship turns (no row for their prompt) {orphan}")
         print(f"selected per id {report['selected']}")
         print(f"A1 router bars: {verdict} ({report['not_covered_here']})")
     return {"met": 0, "not met": 1}.get(verdict, 3)

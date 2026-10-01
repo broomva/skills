@@ -1405,9 +1405,11 @@ def test_the_shadow_reader_reads_a1_off_rows_and_their_pushes(tmp_path):
     error, p99 <= 100 ms and p9's Wilson bound >= 0.70 (the worst case, below)."""
     rows, t = _ships(12)
     rows.append(_row([], at=200))  # a prompt that did not ship
-    probe = _row(P9, session="no-transcript", at=210, error="KeyError", router_ms=None)  # left out of everything
+    probe = _row(P9, session="no-transcript", at=210)  # no turns to read, but its time and errors count
     code, rep = _shadow(tmp_path, rows + [probe, "[1]"], t + ["not json", "[2]", _hook(at=1)])
     assert (code, rep["verdict"]) == (0, "met"), rep
+    code, rep = _shadow(tmp_path / "err", rows + [dict(probe, error="CatalogError")], t)
+    assert (code, rep["verdict"]) == (1, "not met")
     st = rep["ship_turns"]
     assert (st["turns"], st["p9_selected"], st["rows_in_sessions_without_a_transcript"]) == (12, 12, 1)
 
@@ -1423,26 +1425,55 @@ def test_a_short_prompt_s_push_is_its_own_turn(tmp_path):
     assert (st["turns"], st["p9_selected"]) == (14, 13) and (code, rep["verdict"]) == (1, "not met")  # W(13,14) < 0.70
 
 
+def test_a_prompt_that_left_no_shadow_row_is_an_unsure_turn(tmp_path):
+    """Found in review: a hook run that timed out or failed before writing its row, or a
+    row of the hook outside shadow mode, starts a turn; its pushes are unsure, never
+    credited to the prompt before it."""
+    rows, t = _ships(13, step=100.0)
+    killed = [_hook(at=350, kind="hook_cancelled", ms=15000, timed_out=True), _bash("git push", at=360),
+              _hook(at=750, kind="hook_non_blocking_error", ms=40), _bash("git push", at=751)]
+    code, rep = _shadow(tmp_path / "a", rows, t + killed)
+    st = rep["ship_turns"]
+    assert (st["turns"], st["unsure_turns"]) == (13, 2) and (code, rep["verdict"]) == (3, "not shown"), rep
+    # a failed run that did write its row is that row's turn, not an unsure one
+    code, rep = _shadow(tmp_path / "b", rows, t + [_hook(at=100.5, kind="hook_cancelled", ms=15000, timed_out=True)])
+    assert rep["ship_turns"]["unsure_turns"] == 0 and rep["verdict"] == "met"
+    # a row of the hook outside shadow mode starts a turn; one beside a shadow row does not
+    legacy = {"ts": _at(1250), "event": "intake", "session": "s1"}
+    beside = {"ts": _at(100.2), "event": "intake", "session": "s1"}
+    code, rep = _shadow(tmp_path / "c", rows + [legacy, beside], t + [_bash("git push", at=1255)])
+    assert rep["ship_turns"]["unsure_turns"] == 1 and rep["ship_turns"]["turns"] == 13
+
+
+def test_unsure_and_ship_turns_count_turns_not_pushes(tmp_path):
+    rows = [_row([], at=100)]
+    t = [_bash("git push", at=-50 + i) for i in range(8)] + [_bash("git push", at=105), _bash("gh pr create", at=106)]
+    code, rep = _shadow(tmp_path, rows, t)
+    st = rep["ship_turns"]
+    assert (st["turns"], st["unsure_turns"]) == (1, 1) and (code, rep["verdict"]) == (3, "not shown")
+
+
 def test_the_shadow_reader_bounds_pushes_it_cannot_place(tmp_path):
     """A push with no row before it in its session is unsure: met reads the worst case, not
     met the best case, and under 9 ship turns neither."""
     orphan = [_bash("git push", at=-30)]  # before the session's first row
     rows, t = _ships(30)
     code, rep = _shadow(tmp_path / "a", rows, orphan + t)
-    assert (code, rep["verdict"]) == (0, "met") and rep["ship_turns"]["ships_with_no_row_before_them"] == 1
+    assert (code, rep["verdict"]) == (0, "met") and rep["ship_turns"]["unsure_turns"] == 1
     rows, t = _ships(12)
     code, rep = _shadow(tmp_path / "b", rows, orphan + t)
     assert (code, rep["verdict"]) == (3, "not shown")  # worst W(12, 13) < 0.70 <= best
     rows, t = _ships(5)
     code, rep = _shadow(tmp_path / "c", rows, t)
     assert (code, rep["verdict"]) == (3, "not shown")  # 5/5 cannot reach 0.70 yet
-    rows, t = _ships(10)
+    rows, t = _ships(10, step=100.0)
     rows[0]["selected"] = []
-    many = [_bash("git push", at=-300 + i) for i in range(10)]
-    code, rep = _shadow(tmp_path / "d", rows, many + t)  # could be 19/20: not shown, not "not met"
+    fails = [e for i in range(10) for e in (_hook(at=1050 + i * 100, kind="hook_cancelled", ms=15000, timed_out=True),
+                                            _bash("git push", at=1052 + i * 100))]
+    code, rep = _shadow(tmp_path / "d", rows, t + fails)  # could be 19/20: not shown, not "not met"
     assert (code, rep["verdict"]) == (3, "not shown") and rep["ship_turns"]["wilson_lower_best_case"] >= 0.70
     rows, t = _ships(20, p9=False)
-    code, rep = _shadow(tmp_path / "e", rows, many[:2] + t)
+    code, rep = _shadow(tmp_path / "e", rows, orphan + t)
     assert (code, rep["verdict"]) == (1, "not met") and rep["ship_turns"]["wilson_lower_best_case"] < 0.70
 
 
@@ -1456,7 +1487,7 @@ def test_the_shadow_window_and_forked_copies(tmp_path):
     late = [_bash("git push", at=-3 * 86400 + 3600 + 1), _bash("git push", at=-4 * 86400)]
     code, rep = _shadow(tmp_path, before + rows, late + [copied] + t)
     st = rep["ship_turns"]
-    assert (st["turns"], st["ships_with_no_row_before_them"], rep["rows"]) == (12, 0, 13)
+    assert (st["turns"], st["unsure_turns"], rep["rows"]) == (12, 0, 13)
     assert rep["verdict"] == "met"
 
 
@@ -1490,8 +1521,9 @@ def test_the_shadow_reader_fails_or_withholds_on_time_errors_and_unreadable_line
 
 def test_the_hook_s_wall_clock_is_reported_not_gated(tmp_path):
     rows, t = _ships(12)
-    runs = [_hook(at=1, ms=200), _hook(at=2, ms=float("nan")), _hook(at=3, kind="hook_cancelled", ms=15002, timed_out=True),
-            _hook(at=4, kind="hook_cancelled", ms=900, timed_out=False), _hook(at=5, command="/x/other.sh", ms=99999),
+    # each failed run ends just after its own row, which it wrote: no unsure turn
+    runs = [_hook(at=1, ms=200), _hook(at=2, ms=float("nan")), _hook(at=10.5, kind="hook_cancelled", ms=15002, timed_out=True),
+            _hook(at=20.5, kind="hook_cancelled", ms=900, timed_out=False), _hook(at=5, command="/x/other.sh", ms=99999),
             dict(_hook(at=6), attachment={**_hook(at=6)["attachment"], "hookEvent": "SessionStart"})]
     code, rep = _shadow(tmp_path, rows, t + runs)
     hw = rep["hook_wall_ms_reported_not_gated"]
