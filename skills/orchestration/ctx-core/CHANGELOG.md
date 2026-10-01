@@ -1,5 +1,26 @@
 # Changelog: ctx-core
 
+## [0.3.1] - 2026-10-01
+
+- **The fail-open test of a hung ctx module no longer fails on hosted macOS's
+  timing** (BRO-2674). It failed at 204-243 ms against a 200 ms wall on two
+  `main` commits. Measured on the macOS runner: the 80 ms alarm fires up to
+  about 160 ms late (the runner's clamped QoS lets the kernel coalesce timers; at most
+  10 ms late in a process a Claude Code session spawns on the owner's machine).
+  Start-up plus teardown has a p99 up to 152 ms, and one run reached 589 ms. On
+  ubuntu the alarm is under 1 ms late. The test now asserts three things:
+  - from the hook's own miss record, that the self-deadline cut the hang, at
+    most 320 ms after the budget on macOS and 40 ms elsewhere;
+  - that every case, hung or not, exits within 1 s on macOS: the budget, plus
+    320 ms of lateness, plus 600 ms of start-up. That is half of the 2 s timeout
+    in the registration snippet, which a test now pins. Elsewhere the bound
+    stays 200 ms (80 + 40 + 80);
+  - that cases that do not hang leave no deadline record, at any stage.
+
+  Four new mutants: an alarm armed 500 ms past the deadline, a bail that hangs
+  past the wall, an error path that waits for the deadline, and a budget that
+  eats Claude Code's timeout.
+
 ## [0.3.0] - 2026-10-01
 
 The System 1 injection gate, System 2 cache, and their evals (workspace#840
