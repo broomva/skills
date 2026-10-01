@@ -44,6 +44,14 @@ def main(n):
         subprocess.run([sys.executable, "-I", "-S", "-c", "import os, signal, sys, time"], env=env)
         bare.append(time.monotonic() - t0)
     lines.append(summary("bare -I -S start+exit", bare))
+    probe = tmp / "alarm_probe.py"
+    probe.write_text("import os, signal, sys, time\nT0 = time.monotonic()\n"
+                     "def h(*a):\n    sys.stdout.write('%.4f' % (time.monotonic() - T0)); sys.stdout.flush(); os._exit(0)\n"
+                     "signal.signal(signal.SIGALRM, h)\nsignal.setitimer(signal.ITIMER_REAL, 0.080)\ntime.sleep(30)\n")
+    for pre in ([], ["taskpolicy", "-c", "utility"]):
+        fired = [float(subprocess.run(pre + [sys.executable, "-I", "-S", str(probe)], capture_output=True,
+                                      env=env).stdout) for _ in range(n)]
+        lines.append(summary("80ms alarm fired at %s" % (" ".join(pre) or "default"), fired))
     for kind, src in KINDS.items():
         d = tmp / kind
         d.mkdir()
