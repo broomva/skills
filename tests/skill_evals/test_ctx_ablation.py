@@ -1349,6 +1349,10 @@ def test_a2_bars_met_only_when_every_bar_is_measured_and_cleared():
     holed += rows("rolex", "heldout-branch-first", 0, outcome="ERROR")
     hb = A2.bars(holed)
     assert hb["qbar_fallback"]["meets_850_condition"] is None and hb["verdict"] == "router bars met"
+    # so does a qbar hole on any A2 task (qbar - bare and qbar - legacy both read it)
+    holed = [r for r in data if not (r["arm"] == "qbar" and r["task"] == "heldout-p9-watch")]
+    holed += rows("qbar", "heldout-p9-watch", 0, outcome="ERROR")
+    assert A2.bars(holed)["qbar_fallback"]["meets_850_condition"] is None
     # a task no arm graded is named too
     dead = [r for r in data if r["task"] != "heldout-trash"] + [
         r for arm in ("reflex", "qbar", "rolex", "bare") for r in rows(arm, "heldout-trash", 0, outcome="ERROR")]

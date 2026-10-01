@@ -315,27 +315,46 @@ In the spec's order:
      are base rates only.
 1. **A1, shadow, three days.**
    - **Install first.** The installed role-x (`~/.agents/skills/role-x`) is a link into the
-     `~/broomva/skills` checkout, which is at 9d24559 today. Run `git -C ~/broomva/skills
-     pull --ff-only` after this PR merges, or rows carry no `router_ms`, the reader does not
-     exist, and three days are lost.
+     `~/broomva/skills` checkout, which is at 9d24559 today.
+     - Run `git -C ~/broomva/skills pull --ff-only` once this PR and step 0's fix have both
+       merged. If it aborts on local edits in that checkout, those are the owner's to
+       settle first.
+     - Check it: `python3 ~/.agents/skills/role-x/scripts/role-x.py reflexes shadow --help`
+       must print usage.
+     - Note the time in UTC: that install is what `--since` marks.
+     - Without it, rows carry no `router_ms`, the reader does not exist, and three days are
+       lost.
    - **Turn it on.** The owner adds `ROLE_X_OUTPUT=shadow` to the role-x intake hook's
      command in the workspace's write-gated `.claude/settings.json`, and commits it to
      workspace main. Paseo worktrees carry their own committed copy of that file, and most
      ship turns happen in them, so they pick it up only as they update from main.
      - Not in a shell environment: that also reaches test and probe runs.
    - **Read it** with `python3 ~/.agents/skills/role-x/scripts/role-x.py reflexes shadow
-     --since <the install time in UTC, e.g. 2026-10-03T14:00Z>`, added here as A1's
-     instrument. It exits 0 when met, 1 when not met, 3 when not shown, and 2 on a
-     `--since` it cannot read. Its report should show:
+     --since <the install time in UTC, e.g. 2026-10-03T14:00Z>` (required), added here as
+     A1's instrument. Exit codes:
+     - **0, router bars met.** Still check M3 (below) and that no id fires on most prompts
+       (`selected` per id) before reading A1 as met.
+     - **1, not met.** The report shows which bar failed (errors, p99, or p9 even in the
+       best case). Fix it, then restart the window from the new install.
+     - **3, not shown.** Extend the window (an earlier `--since`, the same install) and read
+       again.
+     - **2:** a `--since` it cannot read.
+     - A2 does not start until A1 is met.
+     The report should show:
    - `router_ms` (from before the router's import to just before the row is written, a
      field this PR adds) at p99 ≤ 100 ms;
    - no row with an `error`;
    - on turns that ran `git push` or `gh pr create`, the p9 id in `selected`, with a Wilson
-     95% lower bound ≥ 0.70. The spec's figure is about 560 pushes in three days. By this
-     reader's definition, recent transcripts give about 300 ship turns, since a turn
-     often pushes more than once.
+     95% lower bound ≥ 0.70. The spec's figure is about 560 pushes in three days. A turn
+     often pushes more than once, and the reader counts only sessions the hook covers, so
+     expect about 190 ship turns in three days (review's replay of recent transcripts).
      - Each row pairs with the same prompt's turn nearest in time (within 300 s) in the
-       session transcript. A killed hook writes no row, so its turn stays unpaired.
+       session transcript. A row its digest leaves unpaired then pairs with any unpaired
+       turn within 60 s: one prompt whose stored text differs, counted once, not as a row
+       without a turn plus a turn without a row.
+     - A killed hook writes no row, so its turn stays unpaired. The count of role-x hook
+       kills is reported, not gated (spec Q10).
+     - A row with an unreadable time keeps the result at not shown.
      - Queued and `/loop` prompts are turns. Skill expansions, image placeholders and
        compaction summaries are not. A slash command is read as `/name args`.
      - The join is partial. Over three days of the same hook's legacy rows, about 94% of
@@ -348,13 +367,11 @@ In the spec's order:
        - **Not met** is the best case (all of it hits) below 0.70.
        - Between the two, the result is **not shown**.
        - Under 9 such turns it is not shown either, since even 9/9 is needed to reach 0.70.
-     - **On "not shown":** extend the window (`--since` earlier, the same install) and read
-       again. A2 does not start until A1 is met.
      - Rows from sessions with no transcript (probes, tests) are reported and left out.
      - Pushes made inside subagents are not counted, and a quoted `git push` is.
    - no id firing on most prompts (`selected` per id).
-   - For M3, `role-x reflexes route --heldout --heldout-file <v3>` once step 0 has sealed
-     it (the default file is v2).
+   - For M3: `python3 ~/.agents/skills/role-x/scripts/role-x.py reflexes route --heldout
+     --heldout-file <v3>`, once step 0 has sealed it (the default file is v2).
 2. **Spec §5.6 row 14** (and §5.3's router-error row). On a router error the hook must still print the p9 line.
    `role-x.py` prints nothing on an error today, so one bad catalog edit would drop p9
    fleet-wide.
@@ -371,8 +388,8 @@ In the spec's order:
 
 | option | evidence for | evidence against | verdict |
 |---|---|---|---|
-| **keep legacy (default)** | 11/24 on opus [+0.10, +0.82]; carries P3 | 1,185 tokens; 1/24 on sonnet; does not move merge or Paseo; on the worktree prompt it stopped to ask rather than do the task (0/3 lost) | **recommended until 0–5 hold** |
-| flip to reflex | highest point estimate on both models (15/24, 14/24), 88 tokens; merge 3/3 vs 0/3 on opus | A1 not run; the P3 stop rule as graded; rest bar unmet; `change_work` 0.70 and an I1 miss on `reg-p14`; no error fallback; shipped reflex injects nothing on the worktree prompt (like bare there, 2/3 lost) | no, not yet |
+| **keep legacy (default)** | 11/24 on opus [+0.10, +0.82]; p9 5/6 on opus; carries P3 | 1,185 tokens; 1/24 on sonnet; does not move merge or Paseo; on the worktree prompt it stopped to ask rather than do the task (0/3 lost) | **recommended until 0–5 hold** |
+| flip to reflex | highest point estimate on both models (15/24, 14/24), 88 tokens; p9 6/6 on opus and 5/6 on sonnet (qbar 0/6 there); merge 3/3 vs 0/3 on opus | A1 not run; the P3 stop rule as graded; rest bar unmet; `change_work` 0.70 and an I1 miss on `reg-p14`; no error fallback; shipped reflex injects nothing on the worktree prompt (like bare there, 2/3 lost) | no, not yet |
 | flip to qbar | not distinguishable from legacy (CI [−0.27, +0.19]) at 22% of its tokens; p9 6/6 on opus; carries P3 | #850 condition not shown (no branch-first); lower bound rests on one trial and on P3; 0/24 held-out on sonnet; removed and lost the worktree files 3/3 | no |
 | qbar + pinned p9, merge and specs lines (v1's stratum-C alternative) | would carry P3 and P14 by construction | never measured | measure before relying on it |
 

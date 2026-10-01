@@ -1394,8 +1394,8 @@ def _ships12():
 
 
 def test_the_shadow_reader_meets_a1_only_on_a_full_join(tmp_path):
-    """spec A1's instrument (workspace#850): met only when every row is timed and paired,
-    every ship turn has a row, no row errored, p99 <= 100 ms and p9's Wilson bound >= 0.70."""
+    """spec A1's instrument (workspace#850): a full join, every row timed, no error, p99 <=
+    100 ms and p9's Wilson bound >= 0.70 is met (partial joins: the bounds test below)."""
     rows, t = [], []
     for i in range(12):
         rows.append(_row(f"fix and push {i}", ["p9.watch-after-push"], at=i * 10))
@@ -1410,7 +1410,7 @@ def test_the_shadow_reader_meets_a1_only_on_a_full_join(tmp_path):
     assert rep["ship_turns"]["rows_in_sessions_without_a_transcript"] == 1
 
 
-def test_the_shadow_reader_never_reads_a_partial_join_as_met(tmp_path):
+def test_the_shadow_reader_keeps_a_small_partial_join_unshown(tmp_path):
     rows, t = _ships12()
     # a queued prompt (typed mid-turn) is its own turn: its push is not the turn before's
     queued = {"type": "attachment", "timestamp": _at(130), "attachment": {"type": "queued_command", "prompt": "push it now"}}
@@ -1463,6 +1463,12 @@ def test_the_shadow_reader_bounds_what_the_join_cannot_settle(tmp_path):
     rows, t = ships(30)
     code, rep = _shadow(tmp_path / "a", rows, t + [_user("orphan", at=900), _bash("git push")])
     assert (code, rep["verdict"]) == (0, "met") and rep["ship_turns"]["ship_turns_without_a_row"] == 1
+    # best case: 9 of 10 paired with p9 and 10 unpaired ship turns could be 19/20, so not shown, not "not met"
+    rows, t = ships(10)
+    rows[0]["selected"] = []
+    extra = [e for i in range(10) for e in (_user(f"unrowed {i}", at=1000 + i * 100), _bash("git push"))]
+    code, rep = _shadow(tmp_path / "g", rows, t + extra)
+    assert (code, rep["verdict"]) == (3, "not shown") and rep["ship_turns"]["wilson_lower_best_case"] >= 0.70
     rows, t = ships(5)
     code, rep = _shadow(tmp_path / "b", rows, t)
     assert (code, rep["verdict"]) == (3, "not shown")  # 5/5 cannot reach 0.70 yet
@@ -1484,14 +1490,48 @@ def test_the_shadow_reader_bounds_what_the_join_cannot_settle(tmp_path):
     assert rep["ship_turns"]["paired"] == 13 and rep["verdict"] == "met"
 
 
-def test_the_shadow_reader_rejects_a_since_it_cannot_read(tmp_path):
+def test_one_prompt_stored_with_other_text_is_one_pair_not_two(tmp_path):
+    """The hook saw 'fix it'; the transcript stored 'fix it\n(pasted)'. Same moment, so one
+    pair (by time), not a row without a turn plus a ship turn without a row."""
+    rows, t = _ships12()
+    code, rep = _shadow(tmp_path, rows + [_row("fix it", ["p9.watch-after-push"], at=500)],
+                        t + [_user("fix it\n(pasted)", at=502), _bash("git push")])
+    st = rep["ship_turns"]
+    assert st["paired_by_time_only"] == 1 and st["paired"] == 13 and st["rows_without_a_turn"] == 0
+    assert rep["verdict"] == "met"
+
+
+def test_hook_kills_and_malformed_rows_are_reported(tmp_path):
+    rows, t = _ships12()
+    kill = {"type": "attachment", "timestamp": _at(601), "attachment": {
+        "type": "hook_cancelled", "hookEvent": "UserPromptSubmit", "command": "/x/role-x-intake-hook.sh", "timedOut": True}}
+    code, rep = _shadow(tmp_path / "a", rows, t + [_user("slow one", at=600), kill])
+    assert rep["router_ms"]["hook_kills_reported_not_gated"] == 1 and rep["verdict"] == "met"
+    torn = {"event": "reflex", "shadow": True, "error": "KeyError", "ts": "x"}
+    code, rep = _shadow(tmp_path / "b", rows + [torn], t)
+    assert rep["malformed_rows"] == 1 and rep["verdict"] == "not shown"
+
+
+def test_p99_is_nearest_rank():
+    rx = load_module(ROLE_X_PY, "role_x_under_test_p99")
+    assert rx._p99([40.0] * 198 + [101.0] * 2) == 40.0  # exactly 1% above: p99 is still 40
+    assert rx._p99([40.0] * 197 + [101.0] * 3) == 101.0
+
+
+def test_the_shadow_reader_rejects_a_since_it_cannot_read(tmp_path, monkeypatch):
     rows, t = _ships12()
     for bad in ("yesterday", "2026-13-40", "2026/10/03", "3x"):
         code, _ = _shadow_raw(tmp_path / bad.replace("/", "_"), rows, t, since=bad)
         assert code == 2, bad
-    rx = load_module(ROLE_X_PY, "role_x_under_test_since")
-    from datetime import datetime, timezone
-    assert rx._since("2026-10-03T14:00") == datetime(2026, 10, 3, 14, tzinfo=timezone.utc).timestamp()
+    monkeypatch.setenv("TZ", "America/Bogota")  # a zoneless time must not be read as local
+    time.tzset()
+    try:
+        rx = load_module(ROLE_X_PY, "role_x_under_test_since")
+        from datetime import datetime, timezone
+        assert rx._since("2026-10-03T14:00") == datetime(2026, 10, 3, 14, tzinfo=timezone.utc).timestamp()
+    finally:
+        monkeypatch.delenv("TZ")
+        time.tzset()
 
 
 def _shadow_raw(tmp_path, rows, transcript, since):
