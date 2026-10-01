@@ -473,6 +473,14 @@ knowledge graph would measure the graph, not the injection.
 | `rolex-top2` | role-x with its task-entity list cut from 5 to 2 (`rolex-top<N>` for any N) |
 | `reflex` | role-x with `ROLE_X_OUTPUT=reflex`: the reflex router's ≤3 lines, or nothing (alias `rolex-reflex`) |
 | `qbar` | role-x with `ROLE_X_OUTPUT=qbar`: the lens block cut to its quality bar (alias `rolex-qbar`) |
+| `s1` | ctx-core's System 1 gate at every stage, with the E3-tuned proposal floors (`tasks/s1.json`; see `skills/orchestration/ctx-core/references/s1-gate.md`) |
+| `s1-<stage>` | the gate with one stage alone, for each stage that can inject alone and that the proposal floors give a floor (today: `prompt`); subagent only re-offers the parent's claims |
+| `ctx+s1` | the ctx brief plus the gate: the coordination regression guard |
+
+Every arm's case holds the same System 2 cache (`ctx-s1 build`, offline), so the
+gate's arms differ from `bare` only in their hooks. A trial records the gate's
+decisions, claims, bytes and follow-through; mid-turn stages inject after turn one,
+so their bytes (bytes/4) are added to the arm's injected tokens.
 
 Each arm is an explicit `--settings` file under `--setting-sources project` and a
 jailed HOME. The operator's `~/.claude/settings.json` is never read or written.

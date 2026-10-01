@@ -18,6 +18,8 @@ one of those holes opens:
 
 from __future__ import annotations
 
+import re
+
 import json
 import subprocess
 import sys
@@ -89,10 +91,22 @@ def test_removing_the_control_from_a_passing_run_flips_the_verdict(tmp_path, cor
         assert not T.grade_synthetic(task, case, without, "57 agents")[0], args
 
 
-def test_the_committed_task_file_covers_every_class_and_target():
+def test_the_committed_task_files_cover_every_class_and_target():
+    """pilot.json covers the pilot's three injections; s1.json (ctx-core's System 1
+    gate, E2) covers s1. Together they cover every target."""
     assert {t.cls for t in TASKS} == set(T.TASK_CLASSES)
-    assert {tg for t in TASKS for tg in t.targets} == set(T.TARGETS)
-    assert all(t.rationale and t.origin.get("ref") for t in TASKS)
+    assert {tg for t in TASKS for tg in t.targets} == set(T.TARGETS) - {"s1"}
+    s1_tasks, _ = T.load_tasks(Path(T.__file__).resolve().parent / "tasks" / "s1.json")
+    assert {tg for t in s1_tasks for tg in t.targets} == {"s1", "ctx"}
+    assert all(t.rationale and t.origin.get("ref") for t in TASKS + s1_tasks)
+    # every s1 retrieval task grades the concept, and no prompt shares a token with its grader
+    for t in s1_tasks:
+        if t.cls != "retrieval":
+            continue
+        assert [a["kind"] for a in t.assertions] == ["answer"], t.id
+        words = set(re.findall(r"[a-z0-9]{4,}", t.prompt.lower()))
+        pattern = t.assertions[0]["re"].lower()
+        assert not [w for w in words if re.search(r"(?<![a-z])" + re.escape(w) + r"(?![a-z])", pattern)], t.id
 
 
 # ---------------------------------------------------------------------------

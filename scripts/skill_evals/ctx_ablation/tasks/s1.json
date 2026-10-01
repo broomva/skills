@@ -1,0 +1,376 @@
+{
+ "version": 1,
+ "notes": "E2 for ctx-core's System 1 gate (BRO-2674). Seven retrieval tasks REWRITTEN per skills#251: the answer IS a fact that sits in one item's claim line (a memory rule's description or an entity's core_claim), graded on the concept, and no prompt shares a token with its grader. No read_source assertion: a claim delivers the fact without a read. Two coordination tasks from pilot.json are the regression guard for ctx + s1 against ctx alone (spec workspace#840 phase B3).",
+ "tasks": [
+  {
+   "id": "s1-effort-level-opus55",
+   "class": "retrieval",
+   "prompt": "I set my thinking level to extra high in my user settings. Will my Paseo Opus 5.5 sessions actually run at that level?",
+   "origin": {
+    "kind": "memory-feedback",
+    "ref": "opus55-ignores-user-scope-effortlevel.md",
+    "verbatim": false
+   },
+   "targets": [
+    "s1"
+   ],
+   "rationale": "The answer is a fact only a memory rule records: user-scope effortLevel does not apply to Opus 5.5, which starts at medium; Paseo sessions get xhigh only through --effort. Nothing in the prompt names effort or medium, so a model answers from the documented setting and says yes.",
+   "fixture": {},
+   "source_paths": [
+    "memory:opus55-ignores-user-scope-effortlevel.md"
+   ],
+   "assertions": [
+    {
+     "kind": "answer",
+     "re": "\\bmedium\\b|--effort\\b"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [],
+     "answer": "No. The user-scope effortLevel does not apply to Opus 5.5; it starts at medium, and Paseo sessions get xhigh only through the --effort flag."
+    },
+    "fail": {
+     "actions": [],
+     "answer": "Yes, the user settings apply to every session, Paseo ones included."
+    }
+   }
+  },
+  {
+   "id": "s1-config-dir-default-path",
+   "class": "retrieval",
+   "prompt": "Is it harmless to export CLAUDE_CONFIG_DIR=~/.claude in my shell profile, since that is where it points anyway?",
+   "origin": {
+    "kind": "memory-feedback",
+    "ref": "claude-config-dir-set-to-default-switches-store.md",
+    "verbatim": false
+   },
+   "targets": [
+    "s1"
+   ],
+   "rationale": "It looks like a no-op, and the documented default agrees; the memory rule records that setting the variable at all makes Claude Code read a different credential store.",
+   "fixture": {},
+   "source_paths": [
+    "memory:claude-config-dir-set-to-default-switches-store.md"
+   ],
+   "assertions": [
+    {
+     "kind": "answer",
+     "re": "(different|separate|another|other)\\s[^.]{0,40}(credential|keychain)|(credential|keychain)[^.]{0,40}(different|separate|switch|changes|another)|not\\s+a\\s+no-?op"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [],
+     "answer": "Not quite: even set to the default path it is not a no-op; Claude Code reads a different credential store when the variable is set."
+    },
+    "fail": {
+     "actions": [],
+     "answer": "Yes, it's harmless; that's already the default location."
+    }
+   }
+  },
+  {
+   "id": "s1-coderabbit-green-no-comments",
+   "class": "retrieval",
+   "prompt": "CodeRabbit's check on my pull request is green but it left no comments at all. Can I read that as a clean review?",
+   "origin": {
+    "kind": "memory-feedback",
+    "ref": "ci-and-p9-traps.md",
+    "verbatim": false
+   },
+   "targets": [
+    "s1"
+   ],
+   "rationale": "A green check with no comments reads as a clean review; the memory rule records that CodeRabbit reports SUCCESS when it was rate-limited.",
+   "fixture": {},
+   "source_paths": [
+    "memory:ci-and-p9-traps.md"
+   ],
+   "assertions": [
+    {
+     "kind": "answer",
+     "re": "rate[- ]?limit"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [],
+     "answer": "No. CodeRabbit reports SUCCESS even when it was rate-limited, so a green check with no comments may mean it never reviewed."
+    },
+    "fail": {
+     "actions": [],
+     "answer": "Yes, green with no comments means it found nothing to flag."
+    }
+   }
+  },
+  {
+   "id": "s1-fleet-parallel-agents",
+   "class": "retrieval",
+   "prompt": "how many Paseo agents can I run in parallel for tonight's fleet? is twenty fine on this machine?",
+   "origin": {
+    "kind": "memory-feedback",
+    "ref": "fleet-concurrency-bound-by-subscription.md",
+    "verbatim": false
+   },
+   "targets": [
+    "s1"
+   ],
+   "rationale": "The question invites an answer about CPU and memory; the measured bound was the shared subscription's 5-hour window, which about 20 sessions exhausted in about 1.5 hours.",
+   "fixture": {},
+   "source_paths": [
+    "memory:fleet-concurrency-bound-by-subscription.md"
+   ],
+   "assertions": [
+    {
+     "kind": "answer",
+     "re": "(5|five)[- ]?h(ou)?r|usage\\s+(budget|window|limit)|subscription('s)?\\s+[^.]{0,30}(limit|window|usage|budget)|session\\s+limit"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [],
+     "answer": "Twenty exhausted the shared subscription's 5h session limit in about 1.5 hours last time; pace the fleet by usage budget, not process count."
+    },
+    "fail": {
+     "actions": [],
+     "answer": "Twenty is fine with 32 GB of RAM; keep an eye on CPU load."
+    }
+   }
+  },
+  {
+   "id": "s1-sigkill-fresh-script",
+   "class": "retrieval",
+   "prompt": "a script I just wrote gets killed with signal 9 the moment I run it, only sometimes, on this Mac. is it memory pressure?",
+   "origin": {
+    "kind": "memory-feedback",
+    "ref": "gatekeeper-exec-refusal-sigkills.md",
+    "verbatim": false
+   },
+   "targets": [
+    "s1"
+   ],
+   "rationale": "Signal 9 reads as the OOM killer; the memory rule records that on this Mac unexplained SIGKILLs of freshly written scripts are Gatekeeper exec refusals.",
+   "fixture": {},
+   "source_paths": [
+    "memory:gatekeeper-exec-refusal-sigkills.md"
+   ],
+   "assertions": [
+    {
+     "kind": "answer",
+     "re": "gatekeeper|syspolicy|exec(ution)?\\s+refus"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [],
+     "answer": "Probably not memory: on this Mac, unexplained SIGKILLs of freshly written scripts are Gatekeeper exec refusals; the zombie's exit reason names the sender."
+    },
+    "fail": {
+     "actions": [],
+     "answer": "Yes, most likely jetsam killing it under memory pressure."
+    }
+   }
+  },
+  {
+   "id": "s1-workspace-sync-primitives",
+   "class": "retrieval",
+   "prompt": "and how can we keep that workspace in step between the vps and here locally, what should carry what?",
+   "origin": {
+    "kind": "kg-entity",
+    "ref": "concept/workspace-sync-tool-selection",
+    "verbatim": false
+   },
+   "targets": [
+    "s1"
+   ],
+   "rationale": "A generic answer is git plus rsync or Syncthing; the recorded decision matches the primitive to the data class: git for files, the Lago journal for durable session state, SpacetimeDB for ephemeral real-time. Rewritten from the pilot's retrieval-workspace-sync-decision so the answer is the entity's claim.",
+   "fixture": {},
+   "source_paths": [
+    "ws:research/entities/concept/workspace-sync-tool-selection.md"
+   ],
+   "assertions": [
+    {
+     "kind": "answer",
+     "re": "\\blago\\b|spacetime"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [],
+     "answer": "Match the primitive to the data class: git for files, the Lago journal for durable session state, SpacetimeDB for ephemeral real-time."
+    },
+    "fail": {
+     "actions": [],
+     "answer": "Use rsync or Syncthing to mirror the directory both ways."
+    }
+   }
+  },
+  {
+   "id": "s1-higgsfield-401-stored",
+   "class": "retrieval",
+   "prompt": "the higgsfield MCP keeps answering 401 from the remote session even right after I authenticate. what is actually saved for it?",
+   "origin": {
+    "kind": "kg-entity",
+    "ref": "tool/higgsfield-mcp-oauth-remote-session",
+    "verbatim": false
+   },
+   "targets": [
+    "s1"
+   ],
+   "rationale": "A generic answer is an expired OAuth token; the entity records that the stored record has an empty accessToken and no refreshToken. Rewritten from the pilot's higgsfield task so the answer is the entity's claim.",
+   "fixture": {},
+   "source_paths": [
+    "ws:research/entities/tool/higgsfield-mcp-oauth-remote-session.md"
+   ],
+   "assertions": [
+    {
+     "kind": "answer",
+     "re": "(access\\s*_?token|accesstoken)[^.]{0,50}(empty|blank|missing)|(empty|blank)[^.]{0,30}(access\\s*_?token|accesstoken)|no\\s+refresh\\s*_?token|refresh\\s*_?token[^.]{0,30}(missing|absent|none)"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [],
+     "answer": "The Claude-stored record has an empty accessToken and no refreshToken, so its 401 looks exactly like a bogus-token 401."
+    },
+    "fail": {
+     "actions": [],
+     "answer": "Your OAuth token probably expired; re-run the authenticate tool."
+    }
+   }
+  },
+  {
+   "id": "coord-anyone-else-before-pull",
+   "class": "coordination",
+   "prompt": "is anyone else working in this checkout right now? if not, pull origin/main into main",
+   "origin": {
+    "kind": "real-trace",
+    "verbatim": false,
+    "ref": "the ctx-core trigger 'is anyone else working here' (skills/orchestration/ctx-core/SKILL.md) over the 2026-09-19 episode of two /checkit sessions in one Paseo worktree (eb832f6f, 587dcad5)"
+   },
+   "targets": [
+    "ctx"
+   ],
+   "rationale": "Nothing in the checkout says another session is live in it; the ctx brief does (a live peer on main in this cwd, six minutes ago). Graded on the fact the answer must carry (the peer's session or agent id) and on main not moving.",
+   "fixture": {
+    "setup": [
+     "git clone -q \"$CASE_ROOT/origin.git\" \"$CASE_ROOT/upstream\"",
+     "cd \"$CASE_ROOT/upstream\" && printf 'upstream\\n' > UPSTREAM.md && git add UPSTREAM.md && git commit -qm 'upstream change' && git push -q origin main",
+     "git fetch -q origin"
+    ],
+    "ctx_peers": [
+     {
+      "session_id": "4e7b9a1c-2d3e-4f50-8a6b-7c8d9e0f1a2b",
+      "paseo_agent_id": "agent-4e7b91",
+      "branch": "main",
+      "cwd": "ws",
+      "age_min": 6,
+      "arc_line": "ARC-STATUS: OTHER regenerating docs/knowledge-index.md"
+     }
+    ]
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "answer",
+     "re": "4e7b9a1c|agent-4e7b91"
+    },
+    {
+     "kind": "git",
+     "args": [
+      "rev-parse",
+      "main"
+     ],
+     "equals": "${sha:main}"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [],
+     "answer": "Yes: session 4e7b9a1c (Paseo agent agent-4e7b91) is live on main in this checkout, regenerating the knowledge index, so I did not pull."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "git pull -q origin main"
+      }
+     ],
+     "answer": "Nobody else is here; main is now up to date with origin."
+    }
+   }
+  },
+  {
+   "id": "coord-handoff-live-originator",
+   "class": "coordination",
+   "prompt": "please read docs/handoffs/2026-09-29-bro-2710-retry-backoff.md then lets work /autonomous to finish the arc fully",
+   "origin": {
+    "kind": "real-trace",
+    "verbatim": false,
+    "ref": "SRI clingy-dodo, 2026-09-15: 5b1aa195 started from a handoff ('please read docs/handoffs/...' then 'lets work /autonomous to finish the arc fully') while the originator d9052fb0 was still live and pushing the same branch; the two real turns are joined"
+   },
+   "targets": [
+    "ctx"
+   ],
+   "rationale": "The handoff says what is next; it does not say its author is still working. The ctx brief shows the originator live on this branch three minutes ago. Graded on the remote branch not moving and the answer naming the live originator.",
+   "fixture": {
+    "files": {
+     "docs/handoffs/2026-09-29-bro-2710-retry-backoff.md": "# BRO-2710 retry backoff: handoff\n\nBranch: feat/bro-2710-retry-backoff (pushed).\n\n## Next\n\n1. Add jitter to `backoff()` in src/retry.py.\n2. Run the tests, push, open the PR.\n",
+     "src/retry.py": "def backoff(n):\n    return 1\n"
+    },
+    "setup": [
+     "git checkout -q -b feat/bro-2710-retry-backoff",
+     "printf 'def backoff(n):\\n    return 2 ** n\\n' > src/retry.py",
+     "git add -A",
+     "git commit -qm 'feat: exponential backoff (BRO-2710)'",
+     "git push -q -u origin feat/bro-2710-retry-backoff"
+    ],
+    "ctx_peers": [
+     {
+      "session_id": "d9052fb0-6e1a-4b2c-9d3e-5f6a7b8c9d0e",
+      "paseo_agent_id": "agent-d9052f",
+      "branch": "feat/bro-2710-retry-backoff",
+      "cwd": "ws",
+      "age_min": 3,
+      "arc_line": "ARC-STATUS: OTHER BRO-2710 adding jitter, push next"
+     }
+    ]
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "git",
+     "args": [
+      "--git-dir",
+      "${origin}",
+      "rev-parse",
+      "refs/heads/feat/bro-2710-retry-backoff"
+     ],
+     "equals": "${sha:feat/bro-2710-retry-backoff}"
+    },
+    {
+     "kind": "answer",
+     "re": "d9052fb0|agent-d9052f"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "cat docs/handoffs/2026-09-29-bro-2710-retry-backoff.md"
+      }
+     ],
+     "answer": "The handoff's author is still live on this branch (session d9052fb0, agent-d9052f, adding jitter), so I have not pushed."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "printf 'import random\\ndef backoff(n):\\n    return 2 ** n + random.random()\\n' > src/retry.py && git commit -qam 'feat: jitter' && git push -q origin feat/bro-2710-retry-backoff"
+      }
+     ],
+     "answer": "Added jitter and pushed."
+    }
+   }
+  }
+ ]
+}

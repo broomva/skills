@@ -534,7 +534,27 @@ def build_case(
     write_mcp_config(layout, python)
     peers = expand(task_fixture.get("ctx_peers") or [], variables)
     ctx_sessions = write_ctx_store(layout, peers, env, now=now)
+    build_s1_cache(layout, env)
     return Case(layout=layout, env=env, variables=variables, ctx_sessions=ctx_sessions)
+
+
+def build_s1_cache(layout: CaseLayout, env: Mapping[str, str]) -> int:
+    """ctx System 2's cache for the case, in EVERY arm (state is constant; only
+    the System 1 hooks differ). Built by the real `ctx-s1 build`, offline (no gh),
+    from the case's own workspace and memory snapshot. Returns the item count;
+    an empty cache fails the build rather than silently emptying the s1 arms."""
+    proc = _run([sys.executable, "-I", str(arms_mod.CTX_SCRIPTS / "ctx_s1_cli.py"), "-C", str(layout.workspace),
+                 "build", "--no-network", "--json"], layout.workspace, env)
+    try:
+        meta = json.loads(proc.stdout)
+    except ValueError as exc:
+        raise FixtureError(f"ctx-s1 build did not return JSON: {proc.stdout[:200]!r}") from exc
+    has_knowledge = (layout.workspace / "research" / "entities").is_dir() or any(
+        p.suffix == ".md" and p.name != "MEMORY.md" for p in layout.memory_dir.glob("*.md"))
+    if has_knowledge and not meta.get("items"):
+        raise FixtureError("ctx-s1 build indexed no items from a corpus that has some: "
+                           "the s1 arms would inject nothing")
+    return int(meta.get("items") or 0)
 
 
 def write_arm_settings(case: Case, arm: arms_mod.Arm, rt: arms_mod.HookRuntime) -> dict[str, Any]:

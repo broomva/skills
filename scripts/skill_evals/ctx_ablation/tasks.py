@@ -50,7 +50,7 @@ from skill_evals.transcript import REFUSAL_MARKER, Transcript
 
 TASKS_VERSION = 1
 TASK_CLASSES = ("retrieval", "reflex", "coordination")
-TARGETS = ("memory", "rolex", "ctx")
+TARGETS = ("memory", "rolex", "ctx", "s1")
 #: Where a task comes from: a real session turn, a memory feedback file, a
 #: knowledge-graph entity, a spec, or a role-x lens rule (its quality bar).
 ORIGIN_KINDS = ("real-trace", "memory-feedback", "kg-entity", "spec", "lens")
