@@ -548,9 +548,18 @@ def balance_accounts(threshold: float = 85.0, dry_run: bool = False, verbose: bo
 
     active = next((a for a in accounts if a["isActive"]), None)
     if not active:
-        candidates = [a for a in accounts if a.get("hasStoredCredentials")]
+        candidates = [
+            a for a in accounts
+            if a.get("hasStoredCredentials")
+            and not a.get("isRateLimited")
+            and (a.get("sevenDayUtil") is None or a.get("sevenDayUtil") < 99.0)
+        ]
         if candidates:
-            best = min(candidates, key=lambda a: a.get("fiveHourUtil") if a.get("fiveHourUtil") is not None else 999.0)
+            def sort_key(a):
+                fh = a.get("fiveHourUtil")
+                sd = a.get("sevenDayUtil")
+                return (fh if fh is not None else 999.0, sd if sd is not None else 999.0)
+            best = min(candidates, key=sort_key)
             if dry_run:
                 return {
                     "success": True,

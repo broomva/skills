@@ -303,6 +303,49 @@ def test_fetch_account_usage_api_call(tmp_path):
         assert usage["isRateLimited"] is False
 
 
+def test_fetch_account_usage_seven_day_locked_reason(tmp_path):
+    test_cache_file = tmp_path / "test-usage.json"
+    fake_creds = {"claudeAiOauth": {"accessToken": "t", "expiresAt": int((time.time() + 3600) * 1000)}}
+    api_payload = {
+        "five_hour": {"utilization": 20.0, "resets_at": "2026-10-01T00:00:00Z"},
+        "seven_day": {"utilization": 85.0, "resets_at": "2026-10-05T00:00:00Z", "locked_reason": "weekly_quota_exceeded"}
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(api_payload).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch.object(pm, "USAGE_CACHE_PATH", test_cache_file), \
+         patch.object(pm, "read_usage_cache", return_value={"accounts": {}}), \
+         patch.object(pm, "read_keychain_generic_password", return_value=fake_creds), \
+         patch.object(pm.urllib.request, "urlopen", return_value=mock_resp):
+        usage = pm.fetch_account_usage("acc-1", force_refresh=True)
+        assert usage is not None
+        assert usage["isRateLimited"] is True
+        assert usage["lockedReason"] == "weekly_quota_exceeded"
+
+
+def test_fetch_account_usage_limits_active_100_percent(tmp_path):
+    test_cache_file = tmp_path / "test-usage.json"
+    fake_creds = {"claudeAiOauth": {"accessToken": "t", "expiresAt": int((time.time() + 3600) * 1000)}}
+    api_payload = {
+        "five_hour": {"utilization": 50.0, "resets_at": "2026-10-01T00:00:00Z"},
+        "seven_day": {"utilization": 60.0, "resets_at": "2026-10-05T00:00:00Z"},
+        "limits": [{"is_active": True, "percent": 100, "group": "custom_quota"}]
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(api_payload).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch.object(pm, "USAGE_CACHE_PATH", test_cache_file), \
+         patch.object(pm, "read_usage_cache", return_value={"accounts": {}}), \
+         patch.object(pm, "read_keychain_generic_password", return_value=fake_creds), \
+         patch.object(pm.urllib.request, "urlopen", return_value=mock_resp):
+        usage = pm.fetch_account_usage("acc-1", force_refresh=True)
+        assert usage is not None
+        assert usage["isRateLimited"] is True
+        assert usage["lockedReason"] == "custom_quota_limit_reached"
+
+
 def test_refresh_account_token_persists_rotated_token(mock_orca_data):
     fake_creds = {
         "claudeAiOauth": {
