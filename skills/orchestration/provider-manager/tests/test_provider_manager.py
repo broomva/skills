@@ -485,4 +485,52 @@ def test_provider_events_logging_and_history(tmp_path):
         assert events[0]["source"] == "proactive_balance"
 
 
+def test_balance_accounts_ignores_weekly_limited_standby(mock_orca_data):
+    # Active account is at 91% 5h, but standby is at 100% 7d (weekly limited).
+    # Standby must NOT be chosen.
+    usage_list = [
+        {"id": "acc-1", "email": "primary@example.com", "isActive": True, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 91.0, "sevenDayUtil": 80.0},
+        {"id": "acc-2", "email": "secondary@example.com", "isActive": False, "hasStoredCredentials": True, "isRateLimited": True, "fiveHourUtil": 0.0, "sevenDayUtil": 100.0},
+    ]
+
+    with patch.object(pm, "list_accounts", return_value=mock_orca_data["settings"]["claudeManagedAccounts"]), \
+         patch.object(pm, "fetch_all_usage", return_value=usage_list), \
+         patch.object(pm, "switch_account") as mock_switch:
+
+        res = pm.balance_accounts(threshold=85.0, dry_run=False)
+        assert res["action"] == "none"
+        assert res["reason"] == "no_available_standby"
+        mock_switch.assert_not_called()
+
+
+def test_balance_accounts_switches_when_active_rate_limited(mock_orca_data):
+    # Active account is rate limited (even if its numerical 5h is 0%), standby has 91% 5h.
+    # Must switch because active is rate-limited.
+    usage_list = [
+        {"id": "acc-1", "email": "primary@example.com", "isActive": True, "hasStoredCredentials": True, "isRateLimited": True, "fiveHourUtil": 0.0, "sevenDayUtil": 100.0},
+        {"id": "acc-2", "email": "secondary@example.com", "isActive": False, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 91.0, "sevenDayUtil": 80.0},
+    ]
+
+    with patch.object(pm, "list_accounts", return_value=mock_orca_data["settings"]["claudeManagedAccounts"]), \
+         patch.object(pm, "fetch_all_usage", return_value=usage_list), \
+         patch.object(pm, "switch_account", return_value={"success": True}) as mock_switch:
+
+        res = pm.balance_accounts(threshold=85.0, dry_run=False)
+        assert res["action"] == "switched"
+        assert res["fromAccount"] == "primary@example.com"
+        assert res["toAccount"] == "secondary@example.com"
+        assert res["reason"] == "active_rate_limited"
+        mock_switch.assert_called_once_with(
+            "acc-2",
+            source="proactive_balance",
+            metadata={
+                "fromAccount": "primary@example.com",
+                "activeUtilization": 0.0,
+                "standbyUtilization": 91.0,
+                "reason": "active_rate_limited"
+            }
+        )
+
+
+
 

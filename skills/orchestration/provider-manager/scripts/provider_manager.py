@@ -16,6 +16,7 @@ import select
 import shlex
 import subprocess
 import sys
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -462,8 +463,12 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
     else:
         status = "ok"
 
-    locked_reason = (data.get("five_hour") or {}).get("locked_reason")
-    is_locked = bool(locked_reason or fh_util >= 99.0)
+    locked_reason = (data.get("five_hour") or {}).get("locked_reason") or (data.get("seven_day") or {}).get("locked_reason")
+    for lim in data.get("limits") or []:
+        if lim.get("is_active") and lim.get("percent", 0) >= 100:
+            locked_reason = locked_reason or f"{lim.get('group', 'usage')}_limit_reached"
+
+    is_locked = bool(locked_reason or fh_util >= 99.0 or sd_util >= 99.0)
     prev_locked = acc_cache.get("isRateLimited", False) if acc_cache else False
     locked_at = acc_cache.get("lockedAt", 0.0) if acc_cache else 0.0
     locked_reason_prev = acc_cache.get("lockedReason") if acc_cache else None
@@ -571,7 +576,10 @@ def balance_accounts(threshold: float = 85.0, dry_run: bool = False, verbose: bo
 
     standbys = [
         a for a in accounts
-        if not a["isActive"] and a.get("hasStoredCredentials") and not a.get("isRateLimited")
+        if not a["isActive"]
+        and a.get("hasStoredCredentials")
+        and not a.get("isRateLimited")
+        and (a.get("sevenDayUtil") is None or a.get("sevenDayUtil") < 99.0)
     ]
 
     if not standbys:
@@ -594,7 +602,7 @@ def balance_accounts(threshold: float = 85.0, dry_run: bool = False, verbose: bo
     best_email = best_standby.get("email")
 
     if needs_balancing:
-        if best_util is None or (active_util is None) or best_util < active_util:
+        if active_rate_limited or best_util is None or (active_util is None) or best_util < active_util:
             if dry_run:
                 return {
                     "success": True,
@@ -769,27 +777,25 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
         stdin=subprocess.PIPE,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
-        text=True
+        text=True,
+        bufsize=1
     )
 
     auth_url = None
     output_lines = []
 
-    # Read output until the authorize URL is emitted
-    deadline = time.time() + 20
-    while time.time() < deadline:
-        if proc.poll() is not None:
-            break
-        rlist, _, _ = select.select([proc.stdout], [], [], 0.5)
-        if proc.stdout in rlist:
-            line = proc.stdout.readline()
-            if not line:
-                break
+    def read_stdout():
+        nonlocal auth_url
+        for line in iter(proc.stdout.readline, ""):
             output_lines.append(line)
             match = re.search(r"https://claude\.com/cai/oauth/authorize\S+", line)
             if match:
                 auth_url = match.group(0).rstrip(".")
                 break
+
+    reader_thread = threading.Thread(target=read_stdout, daemon=True)
+    reader_thread.start()
+    reader_thread.join(timeout=15.0)
 
     if not auth_url:
         proc.kill()
@@ -907,7 +913,10 @@ def rotate_account(reason: str = "rate_limit", dry_run: bool = False) -> Dict[st
     usage_list = fetch_all_usage()
     standby_candidates = [
         a for a in usage_list
-        if not a["isActive"] and a.get("hasStoredCredentials") and not a.get("isRateLimited")
+        if not a["isActive"]
+        and a.get("hasStoredCredentials")
+        and not a.get("isRateLimited")
+        and (a.get("sevenDayUtil") is None or a.get("sevenDayUtil") < 99.0)
     ]
 
     chosen = None
