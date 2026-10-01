@@ -147,10 +147,12 @@ Invariants, each pinned by a test:
   session makes, and finds none under broomva's store.
 - **A hook never blocks a session:**
   - The lock covers the append and nothing else.
-  - The hook has a hard self-deadline of 80 ms inside the interpreter, and 200
-    ms of wall time measured from outside. macOS fires that alarm late in a
-    process at a clamped QoS: up to 160 ms late on a hosted CI runner, under
-    10 ms in a process a Claude Code session spawns.
+  - The hook has a hard self-deadline of 80 ms inside the interpreter. A run
+    that finishes on its own takes under 200 ms of wall time measured from
+    outside. A run the deadline cuts records when it fired, and takes under 1 s,
+    half of Claude Code's timeout. macOS fires the alarm late in a process at a
+    clamped QoS: up to 160 ms late on a hosted CI runner, at most 10 ms in a
+    process a Claude Code session spawns on the owner's machine.
   - A hook never parses a `board.json` over 2 MiB, because that parse is one C
     call the alarm cannot interrupt.
   - Every hook exits 0, including on SIGTERM and through the wrapper.
@@ -415,7 +417,7 @@ python3 scripts/register_s1_hooks.py --stages pre-edit,post-bash --shadow   # th
 cd skills/orchestration/ctx-core
 python3 -m pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py   # 37 protections removed in turn; the test pinning each must fail
+python3 tests/mutation_check.py   # 38 protections removed in turn; the test pinning each must fail
 python3 tests/mutation_check_s1.py   # the System 1 / System 2 / E1 protections, the same way
 ```
 
@@ -425,7 +427,7 @@ python3 tests/mutation_check_s1.py   # the System 1 / System 2 / E1 protections,
 | `test_scope_isolation.py` | Unscoped is a silent no-op. A worktree shares its main checkout's scope. The filesystem resolver agrees with `git rev-parse`. sri never reads broomva. Per-repo ambiguity. Malformed configs. crm/ and token-shaped cwds. `doctor --unscoped` |
 | `test_lock_contention.py` | A held lock: the hook returns under 200 ms, skips the append, and records the skip. Two concurrent writers: neither blocks, and no line tears. The lock is held under 5 ms with a 10,000-session board |
 | `test_rebuild_determinism.py` | Cache plus tail equals a full rebuild. Any split of the log folds the same. Hooks never write the board under the lock. A torn line is healed. A hand edit is detected and replaced. A replaced log is detected. SessionStart never reads the whole log, and catches a stale cache up across runs |
-| `test_fail_open.py` | A ctx module that fails to import, raises, prints, hangs, gets SIGTERM or exits non-zero: exit 0 and no output every time, under half of Claude Code's 2 s timeout. Only the hang is cut by the self-deadline, and its own record says when. Hostile stdin. An unwritable store. The miss breadcrumb and its rotation |
+| `test_fail_open.py` | A ctx module that fails to import, raises, prints, hangs, gets SIGTERM or exits non-zero: exit 0 and no output every time, under half of Claude Code's 2 s timeout. Only the hang is cut by the self-deadline, and its own record says when. The wall bound against the registered timeout. Hostile stdin. An unwritable store. The miss breadcrumb and its rotation |
 | `test_hook_deadline.py` | The normal path, git never run (or bounded and killed on the `GIT_DIR` path), an 11 MB log, and a board over the cap: each under 200 ms of wall time |
 | `test_compare.py` | `doctor --compare`: every reason on the fixed list, the pass bar on the raw sets, a last entry past a large last line, the prototype's line refused, a run that leaves the store's files byte-identical and appends one summary, the exit codes, the CLI in and out of a scope |
 | `test_s1_gate.py` | Each stage's positive and negative case, the flags and the kill file, shadow, dedup, path-once, the stage, session and budget caps, compaction and subagent stages, person/crm/credential exclusion, what the decisions log holds, scope isolation |

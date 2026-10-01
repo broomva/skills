@@ -20,7 +20,7 @@ The contract holds for every event, whatever ctx.py does:
   * A hard self-deadline of BUDGET_S of wall time inside the interpreter.
     Interpreter start-up and teardown are the rest of the 200 ms: about 20 ms
     on the owner's machine. A hosted macOS CI runner is slower on both sides:
-    start-up p99 near 120 ms with rare spikes past 500 ms, and its clamped QoS
+    start-up p99 up to 150 ms with rare spikes past 500 ms, and its clamped QoS
     lets macOS fire the alarm up to 160 ms late (tests/conftest.py bounds a run
     that hits the deadline from these numbers). The alarm fires between
     bytecodes, so one long C call can delay it. The one such call that grows,
@@ -51,7 +51,7 @@ import time
 
 _T0 = time.monotonic()
 #: 80 ms inside the interpreter leaves 120 ms of the 200 ms wall for start-up
-#: and teardown.
+#: and teardown, on the owner's machine (see the docstring for a CI runner).
 BUDGET_S = 0.080
 STDIN_CAP = 1 << 20
 MISS_LOG_CAP = 1 << 20

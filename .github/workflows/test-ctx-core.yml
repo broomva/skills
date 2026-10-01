@@ -57,8 +57,6 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install dev deps
         run: pip install -r tests/requirements-dev.txt
-      - name: TEMP diagnostic, fail-open timing (removed before merge)
-        run: python tests/diag_failopen_timing.py 200
       - name: Tests
         run: python -m pytest tests/ -v
       - name: Mutation check (every mutant must be killed)

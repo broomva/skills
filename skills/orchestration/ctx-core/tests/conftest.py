@@ -34,20 +34,28 @@ import ctx_hook  # noqa: E402  (its BUDGET_S is the deadline the fail-open bound
 #: outside the process.
 HOOK_WALL_S = 0.200
 #: A hook that runs into its own self-deadline is judged in two parts, because
-#: on a hosted macOS runner no single wall bound is both tight and stable. There
-#: (2026-10-01, 2,400 runs) the runner's clamped QoS lets macOS coalesce timers,
-#: so the 80 ms alarm fired up to 160 ms late (under 10 ms late on the owner's
-#: machine), and interpreter start-up plus teardown, p99 under 120 ms, reached
-#: 589 ms once. Inside, the hook's own miss record must say the deadline fired:
-#: at or after the budget, and at most DEADLINE_LATE_MS after it (the measured
-#: 160, x2).
-DEADLINE_LATE_MS = 320
-#: Outside, the wall must stay well under Claude Code's own hook timeout, 2 s in
-#: the registration snippet: the budget, that lateness, and a start-up allowance
-#: of 600 ms (the measured worst; 5x the p99) make 1,000 ms, half of it.
-CLAUDE_HOOK_TIMEOUT_S = 2.0
+#: on a hosted macOS runner no single wall bound is both tight and stable.
+#: Measured on 2026-10-01 in CI (3,900 hook runs on macOS over four runs, 3,600
+#: on the ubuntu jobs):
+#:   * macOS: the runner's clamped QoS lets the kernel coalesce timers, so a bare
+#:     80 ms alarm fired up to 161 ms late, and the hook's deadline record landed
+#:     up to 160 ms after the budget (at most 10 ms on the owner's machine).
+#:     Start-up plus teardown had a p99 of up to 152 ms, and one run that never
+#:     reached the deadline took 589 ms in all.
+#:   * ubuntu: the record read exactly 80 ms every time, and the whole run
+#:     outside the interpreter took at most 27 ms.
+#: Inside, the hook's own miss record must say the deadline fired: at or after
+#: the budget, and at most DEADLINE_LATE_MS after it (macOS: the measured 160,
+#: x2; elsewhere 40 ms, which leaves room for a loaded machine's scheduler).
+MACOS_LATE_MS = 320
+DEADLINE_LATE_MS = MACOS_LATE_MS if sys.platform == "darwin" else 40
+#: Outside, the wall must stay well under Claude Code's own hook timeout (the
+#: registration snippet's `"timeout": 2`): the budget, macOS's lateness, and a
+#: start-up allowance of 600 ms (the measured worst; about 4x the worst p99)
+#: make 1,000 ms, half of it, on every platform.
+CLAUDE_HOOK_TIMEOUT_S = 2
 STARTUP_ALLOWANCE_MS = 600
-FAILOPEN_WALL_S = (round(ctx_hook.BUDGET_S * 1000) + DEADLINE_LATE_MS + STARTUP_ALLOWANCE_MS) / 1000.0
+FAILOPEN_WALL_S = (round(ctx_hook.BUDGET_S * 1000) + MACOS_LATE_MS + STARTUP_ALLOWANCE_MS) / 1000.0
 #: Behaviour tests give the hook a generous budget, so a loaded test machine
 #: cannot turn "what does the hook publish" into a timing test. The `timed`
 #: fixture restores the real 80 ms for the tests that are about time.
