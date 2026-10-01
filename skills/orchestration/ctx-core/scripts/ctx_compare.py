@@ -83,16 +83,32 @@ def load_listing(path: Optional[str] = None, timeout: float = 30.0) -> List[Dict
     return rows
 
 
-def last_entry_ts(path: str, max_bytes: int = 128 * 1024) -> Optional[float]:
-    """The time of a transcript's last entry that carries a timestamp, or None.
-    Reads only the tail, and only the `timestamp` field of each line."""
-    try:
-        with open(path, "rb") as fh:
-            fh.seek(0, os.SEEK_END)
-            fh.seek(max(0, fh.tell() - max_bytes))
-            tail = fh.read()
-    except OSError:
-        return None
+#: Tail windows tried in turn: a window that starts inside a large last line
+#: (a screenshot, a big tool result) holds no whole entry.
+TAIL_WINDOWS = (128 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024)
+
+
+def last_entry_ts(path: str) -> Optional[float]:
+    """The time of a transcript's last entry that carries a timestamp, or None
+    when there is none in its last 16 MiB. Reads only the `timestamp` field."""
+    for window in TAIL_WINDOWS:
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                size = fh.tell()
+                fh.seek(max(0, size - window))
+                tail = fh.read()
+        except OSError:
+            return None
+        if size > window:
+            tail = tail[tail.find(b"\n") + 1:] if b"\n" in tail else b""
+        t = _entry_in(tail)
+        if t is not None or size <= window:
+            return t
+    return None
+
+
+def _entry_in(tail: bytes) -> Optional[float]:
     for raw in reversed(tail.split(b"\n")):
         if b'"timestamp"' not in raw:
             continue
@@ -245,6 +261,13 @@ def _path(scope_id: str) -> Path:
     return ctx.state_root() / scope_id / "compare.jsonl"
 
 
+def is_prototype(first: Dict[str, Any]) -> bool:
+    """The line the pre-spec prototype wrote (no `neither` field): its
+    registration time was the 2026-09-29T23:05Z dogfood event, which core §9
+    rejects. It is moved aside once, by the owner."""
+    return "error" not in first and "neither" not in first
+
+
 def registered_on_file(scope_id: str) -> Optional[str]:
     try:
         with _path(scope_id).open(encoding="utf-8") as fh:
@@ -272,6 +295,17 @@ def run_for_scope(scope_id: str, hours: float = 6.0, as_json: bool = False, list
     written, so the latest line never shows an old pass); exit 2 when there is
     no registration time, or --registered disagrees with the file's."""
     now = time.time() if now is None else now
+    try:
+        with _path(scope_id).open(encoding="utf-8") as fh:
+            first = json.loads(fh.readline() or "{}")
+    except (OSError, ValueError):
+        first = {}
+    if first and is_prototype(first):
+        print("compare   %s starts with the prototype's line (registered %s, the dogfood time core §9 rejects); "
+              "move it aside once (mv %s %s), then pass --registered" % (
+                  _path(scope_id), first.get("registered"), _path(scope_id),
+                  _path(scope_id).with_name("compare.prototype.jsonl")))
+        return 2
     on_file = registered_on_file(scope_id)
     if registered and on_file and registered != on_file:
         print("compare   --registered %s disagrees with compare.jsonl's first line (%s); refused. Move the file "
@@ -290,13 +324,13 @@ def run_for_scope(scope_id: str, hours: float = 6.0, as_json: bool = False, list
     try:
         listing = load_listing(listing_file)
         files = transcripts()
-    except CompareError as exc:
+        res = compare(scope_id, listing, files, now, reg, hours)
+    except (CompareError, OSError, ValueError) as exc:  # ValueError includes ctx.ConfigError
         append_summary(scope_id, {"v": 1, "ts": ctx.now_ts(now), "scope": scope_id, "hours": hours,
                                   "registered": reg_text, "evidence": False, "pass": False,
                                   "error": str(exc)[:200]})
         print("compare   could not be read: %s" % exc)
         return 1
-    res = compare(scope_id, listing, files, now, reg, hours)
     append_summary(scope_id, {k: v for k, v in res.items() if k not in ("differences", "neither_ids")})
     print(json.dumps(res, indent=1, sort_keys=True) if as_json else render(res))
     return 0 if res["pass"] else 1

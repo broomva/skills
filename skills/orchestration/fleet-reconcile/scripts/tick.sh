@@ -164,7 +164,7 @@ trap release EXIT
 # ── tick number: past both the counter and the ledger's last tick ─────────────
 N=$("$FLEET" next-tick --scope "$SCOPE" 2>>"$LOG")
 case "$N" in
-  (""|*[!0-9]*) alert tick "could not take a tick number for scope $SCOPE"; exit 1 ;;
+  (""|*[!0-9]*) release; trap - EXIT; alert tick "could not take a tick number for scope $SCOPE"; exit 1 ;;
 esac
 
 # The release this tick runs (install.sh pins a copy and writes RELEASE there).
@@ -181,17 +181,17 @@ if [ -n "$TOKFILE" ]; then
   if [ -r "$TOKFILE" ]; then
     MODE=$(file_mode "$TOKFILE")
     if [ "$MODE" != "600" ] && [ "$MODE" != "400" ]; then
-      GH_AUTH="keyring (token file $TOKFILE has mode $MODE, not 600: not used)"
+      GH_AUTH="keyring (the token file has mode $MODE, not 600: not used)"
     else
       TOKEN=$(head -c 512 "$TOKFILE" | tr -d '[:space:]')
-      if [ -n "$TOKEN" ]; then GH_AUTH="fleet token file"; else GH_AUTH="keyring (token file $TOKFILE is empty)"; fi
+      if [ -n "$TOKEN" ]; then GH_AUTH="fleet token file"; else GH_AUTH="keyring (the token file is empty)"; fi
     fi
   else
-    GH_AUTH="keyring (token file $TOKFILE unreadable)"
+    GH_AUTH="keyring (the token file is unreadable)"
   fi
 fi
 
-"$FLEET" ledger-append fire --scope "$SCOPE" --tick "$N" --dry-run "$DRY" --detail "gh: $GH_AUTH; release: $RELEASE" \
+"$FLEET" ledger-append fire --scope "$SCOPE" --tick "$N" --dry-run "$DRY" --detail "release: $RELEASE; gh: $GH_AUTH" \
   >> "$LOG" 2>&1
 log "tick $N scope $SCOPE (dry_run=$DRY, gh: $GH_AUTH, release: $RELEASE)"
 

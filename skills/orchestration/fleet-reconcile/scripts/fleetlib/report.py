@@ -51,7 +51,8 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
             "action": r["action"], "scope": s["scope"], "placement": s["placement"],
             "cwd": common.tilde(s["cwd"]), "branch": s.get("branch"),
             "state": s.get("state"), "status": s.get("status"), "pid": s.get("pid") is not None,
-            "activity_age_s": None if a is None else round(now - a), "fleet_key": s.get("fleet_key"),
+            "activity_age_s": None if a is None else round(now - a), "activity_ts": a,
+            "fleet_key": s.get("fleet_key"),
             "paseo_agent": (s.get("paseo") or {}).get("agent_id"),
         })
     rows.sort(key=lambda x: (classify.ORDER.index(x["class"]), x["session_id"]))
@@ -74,11 +75,13 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
     }
     rep["asks"], rep["asks_open"], rep["acked_still_open"] = make_asks(rep, records, now)
     rep["ask_keys_current"] = sorted(k for k, _, _ in candidates(rep))
-    rep["resolved"] = resolved_keys(records, rep["ask_keys_current"])
+    rep["resolved"] = resolved_keys(records, rep["ask_keys_current"], rep)
     open_of = {v["of"] for v in ledger.open_by_key(records).values()}
     pending = [b for b in ledger.ask_batches(records) if b["id"] in open_of]
-    rep["batches"] = {"unanswered": len(pending), "unseen": sum(1 for b in pending if not b["seen"]),
-                      "oldest": min((b["ts"] for b in pending), default=None)}
+    new_batch = 1 if rep["asks"] else 0  # this tick's, written after the report
+    rep["batches"] = {"unanswered": len(pending) + new_batch,
+                      "unseen": sum(1 for b in pending if not b["seen"]) + new_batch,
+                      "oldest": min((b["ts"] for b in pending), default=None) or (snap["ts"] if new_batch else None)}
     return rep
 
 
@@ -121,7 +124,10 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
             continue
         label = "%s (%s)" % (s["name"] or "-", s["short"])
         if s["class"] == "3":
-            cands.append(("prompt:%s:%s" % (s["session_id"], _tag(s["evidence"])), "3",
+            # One waiting episode: the activity time holds while it waits, and a
+            # later prompt follows new activity, so it is a new ask.
+            cands.append(("prompt:%s:%s" % (s["session_id"], _tag("%s|%s" % (s["evidence"], s.get("activity_ts")))),
+                          "3",
                           "Session %s is waiting at a prompt: %s. The fleet never approves prompts."
                           % (label, s["evidence"])))
         elif s["class"] == "7":
@@ -173,21 +179,8 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
                 name, "; ".join(ru["flags"]),
                 " Its PRs get no driver until it has a pull_request rule and checks pinned to GitHub Actions."
                 if not ru["driver_eligible"] else "")))
-    for it in (rep["scheduled"].get("items") or []):
-        # A launchd job's staleness is read from a log's mtime, which a
-        # self-gated job leaves untouched for hours, so only a failing exit is
-        # asked about; staleness stays a reading in the table. A Paseo schedule
-        # has its own nextRunAt, so an overdue one is asked about.
-        failing = it["source"] == "launchd" and isinstance(it.get("last_result"), str) and \
-            it["last_result"].startswith("exit ") and it["last_result"][5:].lstrip("-").isdigit() and \
-            int(it["last_result"][5:]) != 0
-        overdue = it["source"] == "paseo" and it.get("stale")
-        if failing or overdue:
-            cands.append(("sched:%s:%s:%s" % (it["source"], it["id"], it.get("last_result")), "scheduled",
-                          "Scheduled %s %s %s: last run %s, cadence %s." % (
-                              it["source"], it["name"], "last exited %s" % it["last_result"][5:] if failing
-                              else "is overdue", common.ts(it["last_run"])[:16] if it.get("last_run") else "never",
-                              it.get("cadence") or "-")))
+    # Scheduled work is an inventory, report-only in phase 1: its readings
+    # (staleness, exit codes) are in the report's table, not the owner's dialog.
     return cands
 
 
@@ -210,12 +203,33 @@ def make_asks(rep: Dict[str, Any], records: List[Dict[str, Any]],
     return new, still, acked_open
 
 
-def resolved_keys(records: List[Dict[str, Any]], current: Iterable[str]) -> List[str]:
-    """Open or acked keys that are no longer true: the tick records their
-    resolution, so the same condition coming back is a new ask."""
+def observed(key: str, rep: Dict[str, Any]) -> bool:
+    """Was the surface that would raise this key read this tick? A key is
+    resolved only from a reading: a listing, a board or a repo that couldn't be
+    read says nothing about whether its asks are still true (a tick right after
+    wake, before the network is up, reads no repo at all)."""
+    surf = rep["surfaces"]
+    ok = lambda name: bool(surf.get(name, {}).get("ok"))  # noqa: E731
+    boards = all(b.get("ok") for b in (surf.get("board") or {}).values())
+    if key.startswith(("prompt:", "fleet-shaped-unledgered", "drift:")):
+        return ok("listing")
+    if key.startswith("blocked:"):
+        return ok("listing") and ok("jobs") and boards
+    if key.startswith("records-without-process"):
+        return ok("listing") and ok("paseo_records")
+    if key.startswith("rules:"):
+        slug = key.split(":", 2)[1]
+        return any((r.get("slug") or common.tilde(r["repo"])) == slug and r.get("ok") for r in rep["repos"])
+    return True  # listing, surface:* and repo:* keys are about reading itself
+
+
+def resolved_keys(records: List[Dict[str, Any]], current: Iterable[str], rep: Dict[str, Any]) -> List[str]:
+    """Open or acked keys that are no longer true, judged only from surfaces
+    read this tick: the tick records their resolution, so the same condition
+    coming back is a new ask."""
     now_true = set(current)
     return sorted(k for k, v in ledger.key_states(records).items()
-                  if v["state"] in ("open", "acked") and k not in now_true)
+                  if v["state"] in ("open", "acked") and k not in now_true and observed(k, rep))
 
 
 # --------------------------------------------------------------------------
@@ -243,7 +257,7 @@ def render_md(rep: Dict[str, Any]) -> str:
     if n_open:
         first = min([a["first_tick"] for a in still] or [rep["tick"]])
         L.append("**Open asks: %d** (%d new this tick; the oldest first asked in tick %d). Read them with "
-                 "`fleet asks`; `fleet ack <tick>` acknowledges that tick's batch and every earlier one."
+                 "`fleet asks`; answer with `fleet ack <tick>` (that tick's batch) or `fleet ack --all`."
                  % (n_open, len(rep["asks"]), first))
     else:
         L.append("Open asks: 0.")
@@ -372,9 +386,10 @@ def render_md(rep: Dict[str, Any]) -> str:
         c = rep["core_compare"]
         L.append("## Core comparison (ctx doctor --compare, latest)")
         L.append("")
-        L.append("%s: board side %s, session side %s (raw %s / %s), %s." % (
-            c.get("ts", "?"), _pct(c.get("board_pct")), _pct(c.get("session_pct")), _pct(c.get("board_raw_pct")),
-            _pct(c.get("session_raw_pct")), "pass" if c.get("pass") else "FAIL"))
+        L.append("%s: %s" % (c.get("ts", "?"), ("could not run: %s" % c["error"]) if c.get("error") else
+                             "board side %s, session side %s, %s." % (_pct(c.get("board_pct")),
+                                                                     _pct(c.get("session_pct")),
+                                                                     "pass" if c.get("pass") else "FAIL")))
         L.append("")
     L.append("## Asks")
     L.append("")
@@ -402,8 +417,8 @@ def _pct(v: Any) -> str:
 
 def render_batch(rep: Dict[str, Any]) -> str:
     L = ["# fleet asks · %s · tick %d · %s" % (rep["scope"], rep["tick"], rep["ts"]), "",
-         "New asks. `fleet ack %d` acknowledges them and every earlier batch; `fleet ack %d --ask <id>` one ask."
-         % (rep["tick"], rep["tick"]), ""]
+         "New asks. `fleet ack %d` answers this batch; `fleet ack %d --ask <id>` one ask; `fleet ack --all` "
+         "every open batch." % (rep["tick"], rep["tick"]), ""]
     for a in rep["asks"]:
         L.append("- [%s] (%s) %s" % (a["id"], a["class"], a["question"]))
     if rep["asks_open"]:

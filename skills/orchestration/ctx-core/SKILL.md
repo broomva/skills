@@ -244,6 +244,20 @@ registration time is passed once and kept in `compare.jsonl`'s first line; a
 later one that disagrees is refused. It rebuilds the board in memory and writes
 only `compare.jsonl`. No evidence (an unreadable transcript directory, an empty
 listing, an empty side) fails. fleet-reconcile's tick runs it once a day.
+The last entry is read from the transcript's tail, widening from 128 KiB to
+2 MiB and 16 MiB when the last line is larger.
+
+The first run is the owner's. A `compare.jsonl` written by the pre-spec
+prototype (its first line has no `neither` field, and its registration time is
+the dogfood event §9 rejects) is refused until it is moved aside, once per
+scope:
+
+```bash
+for s in broomva sri; do f=~/.local/state/ctx/$s/compare.jsonl
+  [ -f "$f" ] && mv "$f" "${f%.jsonl}.prototype.jsonl"; done
+cd ~/broomva && python3 <ctx-core>/scripts/ctx.py doctor --compare --registered <UTC time the hooks were registered>
+cd ~/broomva/work/stimulus/sri && python3 <ctx-core>/scripts/ctx.py doctor --compare --registered <same, or sri's own>
+```
 
 ## Registration (owner step; an agent does not apply it)
 
@@ -346,5 +360,5 @@ python3 tests/mutation_check.py   # 31 protections removed in turn; the test pin
 | `test_rebuild_determinism.py` | Cache plus tail equals a full rebuild. Any split of the log folds the same. Hooks never write the board under the lock. A torn line is healed. A hand edit is detected and replaced. A replaced log is detected. SessionStart never reads the whole log, and catches a stale cache up across runs |
 | `test_fail_open.py` | A ctx module that fails to import, raises, prints, hangs, gets SIGTERM or exits non-zero: exit 0 and no output every time. Hostile stdin. An unwritable store. The miss breadcrumb and its rotation |
 | `test_hook_deadline.py` | The normal path, git never run (or bounded and killed on the `GIT_DIR` path), an 11 MB log, and a board over the cap: each under 200 ms of wall time |
-| `test_compare.py` | `doctor --compare`: every reason on the fixed list, the excluded reasons left out of the 95%, a run that leaves the store's files byte-identical and appends one summary, the exit codes, the CLI in and out of a scope |
+| `test_compare.py` | `doctor --compare`: every reason on the fixed list, the pass bar on the raw sets, a last entry past a large last line, the prototype's line refused, a run that leaves the store's files byte-identical and appends one summary, the exit codes, the CLI in and out of a scope |
 | `test_hooks.py` | Structured fields only. The strict ARC-STATUS shape. The error class only. The brief's relevance, cap, one-line fields, linear cost and factual register. Live after a resumed death. The CLI and doctor. The wrapper: exit 0 with the script or the interpreter gone, against a positive control where Python exits 2 |

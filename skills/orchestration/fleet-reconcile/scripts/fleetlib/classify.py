@@ -187,14 +187,14 @@ def _error(s: Dict[str, Any], env: Env) -> Match:
 def _running(s: Dict[str, Any], env: Env) -> Match:
     a = activity(s)
     if s.get("status") == "busy" and a is not None and env.now - a <= RUNNING_S:
-        return "busy; transcript modified %s ago" % common.age(env.now - a)
+        return "busy; last activity %s ago" % common.age(env.now - a)
     return None
 
 
 def _hung(s: Dict[str, Any], env: Env) -> Match:
     a = activity(s)
     if s.get("status") == "busy" and a is not None and env.now - a > RUNNING_S:
-        return "busy; nothing modified for %s" % common.age(env.now - a)
+        return "busy; no activity for %s" % common.age(env.now - a)
     return None
 
 
@@ -224,14 +224,14 @@ def _closed(s: Dict[str, Any], env: Env) -> Match:
 def _stalled(s: Dict[str, Any], env: Env) -> Match:
     a = activity(s)
     if ours(s) and idle(s) and current_arc(s) not in TERMINAL and a is not None and env.now - a >= STALL_S:
-        return "ours (%s), idle, transcript unmodified for %s" % (s["fleet_key"], common.age(env.now - a))
+        return "ours (%s), idle, no activity for %s" % (s["fleet_key"], common.age(env.now - a))
     return None
 
 
 def _idle_recent(s: Dict[str, Any], env: Env) -> Match:
     a = activity(s)
     if ours(s) and idle(s) and current_arc(s) not in TERMINAL and a is not None and env.now - a < STALL_S:
-        return "ours (%s), idle, transcript modified %s ago" % (s["fleet_key"], common.age(env.now - a))
+        return "ours (%s), idle, last activity %s ago" % (s["fleet_key"], common.age(env.now - a))
     return None
 
 

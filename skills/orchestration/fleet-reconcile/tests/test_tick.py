@@ -47,7 +47,9 @@ def rig(fresh_world, tmp_path):
           '  "pr list"*) cat "$d/prs.json" ;;\n'
           '  *) exit 1 ;;\nesac\n' % (calls_dir, fx))
     _stub(bin_ / "osascript", 'printf "%%s\\n" "$*" >> "%s/osascript"\n'
-          'echo "button returned:${STUB_BUTTON:-Later}, gave up:false"\n' % calls_dir)
+          '[ -n "${STUB_LOCK:-}" ] && [ -d "$STUB_LOCK" ] && echo held >> "%s/lock-during-dialog"\n'
+          'case "$*" in *"display dialog"*"Seen"*) [ -n "${STUB_DIALOG_FAIL:-}" ] && exit 1 ;; esac\n'
+          'echo "button returned:${STUB_BUTTON:-Later}, gave up:false"\n' % (calls_dir, calls_dir))
     _stub(bin_ / "p9", 'printf "%%s\\n" "$*" >> "%s/p9"\n' % calls_dir)
     (w.home / ".claude" / "projects").mkdir(parents=True)
     shutil.copytree(str(fx / "claude" / "jobs"), str(w.home / ".claude" / "jobs"))
@@ -142,6 +144,14 @@ def test_an_empty_token_file_is_not_a_token(rig):
     assert set(rig.calls("gh-token-lengths")) == {"0"} and "is empty" in rig.log()
 
 
+def test_a_token_file_open_to_others_is_not_used(rig):
+    rig.token_file.chmod(0o644)
+    rig.tick()
+    assert set(rig.calls("gh-token-lengths")) == {"0"} and "not used" in rig.log()
+    fire = [x for x in rig.ledger() if x["kind"] == "tick_fire"][0]
+    assert "mode 644" in fire["detail"] and fire["detail"].startswith("release: checkout; gh: keyring")
+
+
 def test_the_kill_switch_stops_the_tick_before_anything_fires(rig):
     rig.world.write_config(dispatch_enabled=0)
     rig.tick()
@@ -180,6 +190,36 @@ def test_a_lost_counter_does_not_reuse_a_tick_number(rig):
     rig.tick()
     fires = [x["tick"] for x in rig.ledger() if x["kind"] == "tick_fire"]
     assert fires == [1, 2, 3]
+
+
+def test_no_tick_number_releases_the_lock_before_the_alert(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    (sd / "tick-counter").mkdir()  # next-tick can't write its counter
+    r = rig.tick(STUB_LOCK=str(sd / ".tick.lock"))
+    assert r.returncode == 1 and any("tick number" in c for c in rig.calls("osascript"))
+    assert rig.calls("lock-during-dialog") == [] and not (sd / ".tick.lock").exists()
+
+
+def test_a_lock_held_past_two_hours_alerts_the_owner(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    lock = sd / ".tick.lock"
+    lock.mkdir()
+    (lock / "pid").write_text(str(os.getpid()))  # alive: not reclaimed
+    old = time.time() - 3 * 3600
+    os.utime(lock, (old, old))
+    assert rig.tick().returncode == 1
+    assert any("held for" in c for c in rig.calls("osascript")) and lock.exists()
+
+
+def test_a_dialog_that_cannot_be_shown_is_not_recorded_as_seen(rig):
+    r = rig.tick(STUB_DIALOG_FAIL="1")
+    assert r.returncode == 1
+    assert not [x for x in rig.ledger() if x["kind"] == "seen"]
+    assert "could not be shown" in rig.log()
+    rig.tick()  # shown at the next tick, as an unseen batch is
+    assert [x for x in rig.ledger() if x["kind"] == "seen"]
 
 
 def test_each_run_leaves_one_line_on_stdout_for_launchds_log(rig):
@@ -278,6 +318,24 @@ def test_the_owner_reads_and_acks_asks_and_other_verbs_refuse(rig):
     for verb in ("mail", "spawn", "label", "resume"):
         out = rig.fleet("act", verb)
         assert out.returncode == 3 and "refused" in out.stderr
+
+
+def test_a_failed_compare_does_not_use_up_the_day_and_the_prototypes_line_is_refused(rig):
+    rig.world.write_config(compare_hour=0)
+    path = rig.world.home / ".local" / "state" / "ctx" / "broomva" / "compare.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    ts = lambda t: time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime(t))  # noqa: E731
+    reg = ts(time.time() - 40 * 3600)
+    proto = {"ts": ts(time.time() - 30 * 3600), "registered": reg, "pass": True}
+    path.write_text(json.dumps(proto) + "\n")
+    out = rig.fleet("core-compare")
+    assert out.returncode == 0 and "prototype" in out.stdout
+    path.write_text(json.dumps(dict(proto, neither=0)) + "\n"
+                    + json.dumps({"ts": ts(time.time() - 60), "registered": reg, "pass": False,
+                                  "error": "claude agents exited 1"}) + "\n")
+    out = rig.fleet("core-compare")
+    assert "not due" not in out.stdout and "compare" in out.stdout, out.stdout + out.stderr
+    assert len(path.read_text().splitlines()) == 3  # it ran, and wrote its line
 
 
 def test_three_ticks_make_a_labelling_sheet(rig):

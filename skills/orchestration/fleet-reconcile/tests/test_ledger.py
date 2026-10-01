@@ -40,6 +40,13 @@ def test_invalid_records_are_refused(tmp_path, bad):
         ledger.append(tmp_path, {"kind": "tick_fire", "scope": "broomva", "tick": 1, "dry_run": True})  # no by
 
 
+def test_owner_records_in_one_millisecond_get_distinct_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(ledger.time, "time", lambda: 1_790_000_000.0)
+    ids = [ledger.append(tmp_path, dict(BASE, tick=None, by="owner:t", kind="ack", of="1-1", asks="all"))["id"]
+           for _ in range(3)]
+    assert len(set(ids)) == 3 and ids[0] == "owner-1790000000000"
+
+
 def test_a_corrupt_line_is_counted_not_silently_skipped(tmp_path):
     ledger.append(tmp_path, dict(BASE, kind="tick_fire"))
     with (tmp_path / "ledger.jsonl").open("a") as fh:

@@ -4,12 +4,13 @@ from __future__ import annotations
 
 import collections
 import json
+import os
 import shutil
 
 import pytest
 from conftest import FAKE_BEARER
 
-from fleetlib import classify, config, observe, report
+from fleetlib import classify, common, config, observe, report, sources
 from fleetlib.sources import FixtureSources, SourceError
 
 
@@ -17,6 +18,36 @@ def _observe(world, meta, scope="broomva", src=None, **cfg):
     world.write_config(**cfg)
     sec = config.scope(scope)
     return observe.observe(sec, src or FixtureSources(world.fixture), 1, now=meta["captured_at"])
+
+
+def _tline(kind, at, **kw):
+    e = {"type": kind, "timestamp": common.ts(at)}
+    if kind == "user":
+        e["message"] = {"content": [{"type": "tool_result", "content": "ok"}]}
+    e.update(kw)
+    return json.dumps(e)
+
+
+def test_activity_is_found_past_a_last_line_larger_than_the_first_window(tmp_path):
+    p = tmp_path / "s.jsonl"
+    p.write_text("\n".join([_tline("assistant", 1_790_000_000.0),
+                             _tline("user", 1_790_000_100.0, pad="x" * (300 * 1024)),
+                             '{"type": "queue-operation", "timestamp": "2026-09-30T00:00:00.000Z"}',
+                             '{"type": "last-prompt"}']) + "\n")
+    assert sources.last_activity_ts(str(p)) == pytest.approx(1_790_000_100.0, abs=0.01)
+    none = tmp_path / "none.jsonl"
+    none.write_text('{"type": "last-prompt", "pad": "%s"}\n' % ("y" * (200 * 1024)))
+    assert sources.last_activity_ts(str(none)) is None
+    assert sources.last_activity_ts(str(tmp_path / "missing.jsonl")) is None
+
+
+def test_sources_take_the_token_out_of_the_environment_and_hand_it_to_gh_alone(monkeypatch):
+    monkeypatch.setattr(sources, "_TOKEN", {})
+    monkeypatch.setenv("GH_TOKEN", "t" * 20)
+    sources.Sources()
+    assert "GH_TOKEN" not in os.environ  # a child started any other way (git, under ctx) doesn't inherit it
+    probe = ["/bin/sh", "-c", "printf %s ${#GH_TOKEN}"]
+    assert sources._run(probe, 10, token=True) == "20" and sources._run(probe, 10) == "0"
 
 
 def test_every_surface_of_the_capture_is_read(world, meta):

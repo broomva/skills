@@ -18,6 +18,10 @@
   the latest line never shows an old pass), or an empty side.
 - In `scripts/ctx_compare.py`, dispatched from `ctx.py`'s doctor path only; no
   hook imports it. Read-only on the store; it writes only `compare.jsonl`.
+- The last entry is read from a tail that widens (128 KiB, 2 MiB, 16 MiB)
+  past a large last line. A `compare.jsonl` whose first line is the pre-spec
+  prototype's (no `neither` field) is refused, exit 2, with the `mv` that
+  moves it aside; a comparison that raises is written as an error line.
 - Not done here, left to the core: the hook change that records a miss (with
   the session id) when run_hook returns at the scope stage for lack of time.
 

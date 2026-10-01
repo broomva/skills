@@ -116,6 +116,49 @@ def test_an_ack_answers_its_own_batch_whole_or_per_ask():
     assert set(ledger.open_by_key(recs + [_ack(3, ["a1"])])) == {"k1", "j1", "k2", "j2", "j3"}
 
 
+def test_a_new_waiting_episode_from_the_same_session_is_a_new_ask():
+    # Same prompt text, but the session worked in between: its activity moved.
+    first = report.build(_snap([S(session_id=_sid(1), status="waiting", waiting_for="dialog open",
+                                  activity_ago=2 * H)]), [], True)["asks"]
+    records = _batch_records(first) + [_ack(1)]
+    later = report.build(_snap([S(session_id=_sid(1), status="waiting", waiting_for="dialog open",
+                                  activity_ago=600)]), records, True)
+    assert len(later["asks"]) == 1 and later["asks"][0]["key"] != first[0]["key"]
+
+
+def test_an_ask_is_resolved_only_from_a_surface_read_this_tick():
+    blocked = bg(session_id=_sid(1), state="blocked", job=dict(QUESTION_JOB))
+    asks = report.build(_snap([blocked]), [], True)["asks"]
+    (key,) = [a["key"] for a in asks if a["key"].startswith("blocked:")]
+    records = _batch_records(asks)
+    # The job files weren't read: the session reads as unknown and its key is
+    # absent, but that says nothing about the question, so it stays open.
+    blind = _snap([bg(session_id=_sid(1), state="blocked")])
+    blind["surfaces"]["jobs"] = {"ok": False, "error": "EACCES"}
+    rep = report.build(blind, records, True)
+    assert rep["resolved"] == []  # stays open in the ledger (`fleet asks` lists it)
+    # A repo that wasn't observed doesn't resolve its rules ask either.
+    flagged = _snap([], repos=[{"repo": "/w/b/.git", "slug": "o/b", "ok": True, "default_branch": "main",
+                                "rules": {"types": [], "pull_request": False, "approvals": 0, "checks": [],
+                                          "unpinned": [], "driver_eligible": False, "flags": ["no pull_request rule"]},
+                                "prs": []}])
+    rasks = report.build(flagged, [], True)["asks"]
+    (rkey,) = [a["key"] for a in rasks if a["key"].startswith("rules:")]
+    unread = _snap([], repos=[{"repo": "/w/b/.git", "slug": "o/b", "ok": False, "error": "gh exited 1"}])
+    assert rkey not in report.build(unread, _batch_records(rasks), True)["resolved"]
+    # Read and gone: resolved.
+    jobs_read = _snap([bg(session_id=_sid(1), state="done", job=dict(QUESTION_JOB, state="done", needs=""))])
+    jobs_read["surfaces"]["jobs"] = {"ok": True}
+    assert key in report.build(jobs_read, records, True)["resolved"]
+
+
+def test_the_ack_text_says_what_an_ack_answers():
+    rep = report.build(_snap([S(session_id=_sid(1), status="waiting", waiting_for="dialog open")]), [], True)
+    text = report.render_md(rep) + report.render_batch(rep)
+    assert "every earlier" not in text and "`fleet ack --all`" in text
+    assert rep["batches"]["unanswered"] == 1 and rep["batches"]["unseen"] == 1  # this tick's own batch
+
+
 def test_a_count_ask_keeps_its_key_when_its_members_change():
     # Churn in the set (a session ends, another starts) must not mint a new
     # ask every tick; the question carries the current count.
@@ -150,7 +193,7 @@ def test_a_rules_flag_says_no_driver_only_when_the_repo_is_not_eligible():
     assert "no driver" in asks["o/a"] and "no driver" not in asks["o/b"]
 
 
-def test_scheduled_asks_come_from_a_failing_exit_or_an_overdue_schedule_only():
+def test_scheduled_work_is_inventoried_in_the_report_and_raises_no_ask():
     items = [
         {"source": "launchd", "id": "com.x.a", "name": "com.x.a", "cadence": "every 900s", "status": "loaded",
          "last_run": NOW - 30 * H, "last_result": "exit 0", "next_run": None, "stale": True, "detail": ""},
@@ -162,7 +205,10 @@ def test_scheduled_asks_come_from_a_failing_exit_or_an_overdue_schedule_only():
          "last_run": None, "last_result": None, "next_run": NOW - 2 * H, "stale": True, "detail": ""},
     ]
     rep = report.build(_snap([], scheduled={"items": items, "surfaces": {}}), [], True)
-    assert sorted(a["key"].rsplit(":", 1)[0] for a in rep["asks"]) == ["sched:launchd:com.x.b", "sched:paseo:s1"]
+    assert not [a for a in rep["asks"] if a["key"].startswith("sched")]  # report-only in phase 1
+    md = report.render_md(rep)
+    assert "| launchd | com.x.b | com.x.b | every 900s | loaded |" in md and "exit 78" in md
+    assert "| paseo | s1 | pickup | cron | active | - | - |" in md and "**yes**" in md
 
 
 def _rep(tick, classes):

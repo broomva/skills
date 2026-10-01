@@ -157,7 +157,7 @@ def show_dialog(title: str, text: str) -> Dict[str, Any]:
     """{button, gave_up} from a `display dialog` with Seen and Later, or
     {error} when it couldn't be shown."""
     osa = os.environ.get("FLEET_OSASCRIPT_BIN") or "osascript"
-    script = 'display dialog %s with title %s buttons {"Later", "Seen"} default button "Seen" giving up after %d' % (
+    script = 'display dialog %s with title %s buttons {"Later", "Seen"} default button "Later" giving up after %d' % (
         _aq(text), _aq(title), DIALOG_GIVE_UP_S)
     try:
         proc = subprocess.run([osa, "-e", script], stdin=subprocess.DEVNULL, capture_output=True, text=True,
@@ -233,12 +233,16 @@ def cmd_act(args: argparse.Namespace) -> int:
         return 0
     n = len(open_now)
     oldest = min((common.parse_iso(v["ts"]) or now) for v in open_now.values())
-    first = sorted(open_now.values(), key=lambda v: (v["ts"] or "", v["ask"].get("id") or ""))[-1]["ask"]
+    # §5.7: the dialog shows the first ask's line (the oldest open one).
+    first = sorted(open_now.values(), key=lambda v: (v["tick"] or 0, int((v["ask"].get("id") or "a0")[1:] or 0)))[0]["ask"]
     title = "fleet %s: %d open ask%s" % (sec["scope"], n, "" if n == 1 else "s")
     text = "%s\n\nOldest %s. Read them: fleet asks --scope %s\nAnswer: fleet ack <tick> --scope %s" % (
         common.safe_text(first.get("question"), 240), common.age(now - oldest), sec["scope"], sec["scope"])
     res = show_dialog(title, text)
     res["p9"] = p9_notify(title, "%d open; read them on the Mac with fleet asks --scope %s" % (n, sec["scope"]))
+    if res.get("error"):  # not shown: no seen record, and the tick hears about it
+        print("fleet act ask: the dialog could not be shown: %s" % res["error"], file=sys.stderr)
+        return 1
     tick = args.tick if args.tick else None
     for b in due:
         ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": sec["scope"], "tick": tick,
@@ -254,10 +258,11 @@ def cmd_asks(args: argparse.Namespace) -> int:
     records, corrupt = ledger.read(sd)
     now = time.time()
     if args.all:
+        states = ledger.key_states(records)
         for b in ledger.ask_batches(records):
-            print("tick %s · %s · %s" % (b["tick"], b["ts"], "answered" if not ledger.open_asks(b)
-                                         else "%d open, %s" % (len(ledger.open_asks(b)),
-                                                               "seen" if b["seen"] else "not seen")))
+            n = sum(1 for v in states.values() if v["of"] == b["id"] and v["state"] == "open")
+            print("tick %s · %s · %s" % (b["tick"], b["ts"], "%d open, %s" % (n, "seen" if b["seen"] else "not seen")
+                                         if n else "nothing open (answered or no longer true)"))
             for a in b["asks"]:
                 print("  [%s] (%s) %s" % (a.get("id"), a.get("class"), a.get("question")))
     else:
@@ -344,18 +349,21 @@ def cmd_core_compare(args: argparse.Namespace) -> int:
     until compare.jsonl holds it, this step says so and does nothing."""
     sec = _sec(args)
     lines = _compare_lines(sec["scope"])
-    if not lines or not lines[0].get("registered"):
-        print("fleet core-compare: no registration time yet; the owner runs `ctx doctor --compare --registered "
-              "<UTC time>` once in the scope")
+    import ctx_compare
+
+    if not lines or not lines[0].get("registered") or ctx_compare.is_prototype(lines[0]):
+        print("fleet core-compare: no registration time yet (or compare.jsonl is the prototype's); the owner "
+              "runs `ctx doctor --compare --registered <UTC time>` once in the scope (ctx-core SKILL.md)")
         return 0
     now = time.time()
     if not args.force:
-        last = common.parse_iso(lines[-1].get("ts")) or 0.0
+        ran = [ln for ln in lines if not ln.get("error")]  # a failed run doesn't use up the day
+        last = common.parse_iso(ran[-1].get("ts")) if ran else 0.0
+        last = last or 0.0
         if time.localtime(last)[:3] == time.localtime(now)[:3] or time.localtime(now).tm_hour < sec["compare_hour"]:
             print("fleet core-compare: not due (last %s ago; runs once a day from %02d:00)"
                   % (common.age(now - last), sec["compare_hour"]))
             return 0
-    import ctx_compare
 
     return ctx_compare.run_for_scope(sec["scope"], hours=6.0, as_json=False, now=now)
 

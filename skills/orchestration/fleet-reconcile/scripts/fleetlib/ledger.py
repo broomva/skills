@@ -100,12 +100,19 @@ def append(state_dir: Path, record: Dict[str, Any]) -> Dict[str, Any]:
     lock_fd = _lock(state_dir)
     try:
         if "id" not in rec:
+            records, _ = read(state_dir)
+            taken = {r.get("id") for r in records}
             if rec["tick"] is None:
-                rec["id"] = "owner-%d" % int(time.time() * 1000)
+                base, n = "owner-%d" % int(time.time() * 1000), 1
+                rec["id"] = base
+                while rec["id"] in taken:  # two owner records in one millisecond
+                    n += 1
+                    rec["id"] = "%s-%d" % (base, n)
             else:
-                records, _ = read(state_dir)
-                n = sum(1 for r in records if r.get("tick") == rec["tick"])
-                rec["id"] = "%d-%d" % (rec["tick"], n + 1)
+                n = sum(1 for r in records if r.get("tick") == rec["tick"]) + 1
+                while "%d-%d" % (rec["tick"], n) in taken:
+                    n += 1
+                rec["id"] = "%d-%d" % (rec["tick"], n)
         line = (json.dumps(rec, sort_keys=True, ensure_ascii=False, separators=(",", ":")) + "\n").encode("utf-8")
         fd = os.open(str(ledger_path(state_dir)), os.O_RDWR | os.O_APPEND | os.O_CREAT, 0o600)
         try:

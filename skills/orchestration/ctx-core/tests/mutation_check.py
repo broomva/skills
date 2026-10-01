@@ -119,6 +119,12 @@ MUTANTS = [
     ("compare accepts a second registration time", "scripts/ctx_compare.py",
      "    if registered and on_file and registered != on_file:", "    if False:",
      [T + "test_compare.py::test_the_registration_time_is_kept_in_the_first_line"]),
+    ("compare reads the first tail window only", "scripts/ctx_compare.py",
+     "TAIL_WINDOWS = (128 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024)", "TAIL_WINDOWS = (128 * 1024,)",
+     [T + "test_compare.py::test_a_last_entry_larger_than_the_first_window_is_still_found"]),
+    ("compare runs on the prototype's line", "scripts/ctx_compare.py",
+     "    if first and is_prototype(first):", "    if False:",
+     [T + "test_compare.py::test_the_prototypes_first_line_is_refused_until_the_owner_moves_it"]),
 ]
 
 

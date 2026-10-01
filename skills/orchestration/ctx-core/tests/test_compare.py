@@ -190,6 +190,29 @@ def test_the_last_timestamped_entry_is_read_past_untimestamped_records(world):
     assert ctx_compare.last_entry_ts(str(p) + ".missing") is None
 
 
+def test_a_last_entry_larger_than_the_first_window_is_still_found(world):
+    p = _transcript(world, _sid(1), T - 2 * H)
+    big = json.dumps({"type": "assistant", "timestamp": ctx.now_ts(T - 1 * H), "pad": "x" * (300 * 1024)})
+    with p.open("a") as fh:
+        fh.write(big + '\n{"type": "last-prompt"}\n')
+    assert ctx_compare.last_entry_ts(str(p)) == pytest.approx(T - 1 * H, abs=0.01)
+    bare = p.with_name("bare.jsonl")
+    bare.write_text('{"type": "last-prompt", "pad": "%s"}\n' % ("y" * (200 * 1024)))
+    assert ctx_compare.last_entry_ts(str(bare)) is None
+
+
+def test_the_prototypes_first_line_is_refused_until_the_owner_moves_it(world, scene, capsys):
+    s, lf = scene
+    store = world.store("broomva")
+    store.mkdir(parents=True, exist_ok=True)
+    (store / "compare.jsonl").write_text(json.dumps({"ts": ctx.now_ts(T - H), "registered": REG, "pass": True,
+                                                     "board_pct": 1.0, "session_pct": 1.0}) + "\n")
+    assert ctx_compare.run_for_scope("broomva", listing_file=str(lf), registered=REG, now=T) == 2
+    out = capsys.readouterr().out
+    assert "prototype" in out and "compare.prototype.jsonl" in out
+    assert len((store / "compare.jsonl").read_text().splitlines()) == 1  # nothing appended
+
+
 def test_the_cli_runs_it_from_a_scoped_directory(world, scene):
     s, lf = scene
     proc = world.cli("doctor", "--compare", "--agents-json", str(lf), "--registered", REG, "--json",
