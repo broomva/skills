@@ -275,3 +275,50 @@ def test_a_worktree_claude_rm_keeps_is_an_abort_and_a_removed_ones_profile_goes(
             return "removed"
     res = janitor.run(config.scope("broomva"), Removes(world.fixture), str(wt), OWNER, True, lambda m: None)
     assert res["removed"] and not prof.exists() and decoy.exists(), res
+
+
+class _Removes(FixtureSources):
+    """claude rm removes the worktree."""
+    def __init__(self, fixture, world, wt):
+        super().__init__(fixture)
+        self.world, self.wt = world, wt
+
+    def run_claude(self, args, cwd=None, timeout=120):
+        if args[0] == "rm":
+            subprocess.run(["git", "worktree", "remove", "--force", str(self.wt)],
+                           cwd=str(self.wt.parent / "scratch"), capture_output=True)
+        return "ok"
+
+
+def _profile(world, spawned):
+    sd = world.state["broomva"]
+    (sd / "profiles").mkdir(parents=True)
+    prof = sd / "profiles" / "broomva-x-pr1.json"
+    prof.write_text("{}")
+    if spawned:
+        from fleetlib import ledger
+        it = ledger.append(sd, {"kind": "intent", "verb": "spawn", "key": "broomva-x-pr1", "target": {"name": "x"},
+                                "scope": "broomva", "tick": 1, "dry_run": False, "by": "act"})
+        ledger.append(sd, {"kind": "done", "verb": "spawn", "of": it["id"], "key": "broomva-x-pr1",
+                           "result": {"session_id": OWNER}, "scope": "broomva", "tick": 1, "dry_run": False,
+                           "by": "act"})
+    return prof
+
+
+def test_a_removed_owners_profile_goes_even_when_the_owner_left_the_listing_before_the_stop(world, wt):
+    _listing(world, [_row(OWNER, wt)])
+    prof = _profile(world, spawned=True)
+
+    def log(message):  # the owner leaves the listing once the first check has passed
+        if message.startswith("check:"):
+            _listing(world, [])
+    res = janitor.run(config.scope("broomva"), _Removes(world.fixture, world, wt), str(wt), OWNER, True, log)
+    assert res["removed"] and not prof.exists(), res
+
+
+def test_no_profile_is_deleted_for_an_owner_the_ledger_never_spawned(world, wt):
+    _listing(world, [_row(OWNER, wt)])
+    prof = _profile(world, spawned=False)
+    res = janitor.run(config.scope("broomva"), _Removes(world.fixture, world, wt), str(wt), OWNER, True,
+                      lambda m: None)
+    assert res["removed"] and prof.exists(), res

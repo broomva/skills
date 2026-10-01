@@ -174,8 +174,10 @@ def spawned(records: Iterable[Dict[str, Any]]) -> Dict[str, List[str]]:
 
 def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Every ask batch, oldest first: {id, tick, ts, batch, asks, shown: [{ts,
-    button, gave_up}], seen (raised in Paseo, or a phase-1 dialog's Seen
-    click), item (its Maestro work id), acked (set of ask ids, or "all")}."""
+    button, gave_up}], seen (at Needs you or on its way there in Paseo, not
+    queued at Maestro's cap; or a phase-1 dialog's Seen click), item (its
+    Maestro work id), item_state (as last recorded), answer (the last answer
+    read back from Maestro, or None), acked (set of ask ids, or "all")}."""
     batches: Dict[str, Dict[str, Any]] = {}
     for r in records:
         kind = r.get("kind")
@@ -183,18 +185,22 @@ def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
             t = r.get("target") or {}
             batches[r["id"]] = {"id": r["id"], "tick": r.get("tick"), "ts": r.get("ts"), "batch": t.get("batch"),
                                 "asks": t.get("asks") or [], "shown": [], "seen": False, "acked": set(),
-                                "item": None}
+                                "item": None, "item_state": None, "answer": None}
         elif r.get("of") in batches:
             b = batches[r["of"]]
             if kind == "seen":
                 res = r.get("result") or {}
                 b["shown"].append({"ts": r.get("ts"), "button": res.get("button"), "gave_up": res.get("gave_up")})
-                # Raised in Paseo (a Maestro item at Needs you), or a phase-1 dialog's Seen click.
-                b["seen"] = b["seen"] or res.get("button") == "Seen" or res.get("channel") == "maestro"
-                if res.get("channel") == "maestro" and isinstance(res.get("item"), str):
-                    b["item"] = res["item"]
-            elif kind == "ack" and not r.get("resolved") and b["acked"] != "all":
-                b["acked"] = "all" if r.get("asks") == "all" else b["acked"] | set(r.get("asks") or [])
+                # Raised in Paseo (a Maestro item past the queue), or a phase-1 dialog's Seen click.
+                maestro = res.get("channel") == "maestro"
+                b["seen"] = b["seen"] or res.get("button") == "Seen" or (maestro and res.get("state") != "proposed")
+                if maestro and isinstance(res.get("item"), str):
+                    b["item"], b["item_state"] = res["item"], res.get("state")
+            elif kind == "ack" and not r.get("resolved"):
+                if r.get("by") == "owner:maestro" and isinstance(r.get("result"), dict):
+                    b["answer"] = r["result"]
+                if b["acked"] != "all":
+                    b["acked"] = "all" if r.get("asks") == "all" else b["acked"] | set(r.get("asks") or [])
     return list(batches.values())
 
 

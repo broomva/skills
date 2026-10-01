@@ -55,6 +55,7 @@ SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     "maestro_cli": ("str_or_null", None),
     "maestro_bun": ("str_or_null", None),
     "ask_repo": ("str_or_null", None),
+    "ask_raise_after_min": ("int", 50),          # a batch reaches the owner once an ask in it is this old (0: at once)
 }
 CAP_KEYS = ("fleet_sessions", "active_sessions", "active_window_min", "research_spawns_per_day")
 CAP_DEFAULTS = {"fleet_sessions": 8, "active_sessions": 12, "active_window_min": 30, "research_spawns_per_day": 4}

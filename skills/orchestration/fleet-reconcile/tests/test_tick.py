@@ -13,8 +13,10 @@ from pathlib import Path
 
 import pytest
 from conftest import SCRIPTS, _git
+from fleetlib import common
 
 TICK = SCRIPTS / "tick.sh"
+BATCH = "[fleet-reconcile broomva batch "
 TOKEN = "github_pat_" + "Z" * 40  # a fake, shaped like the real thing
 
 
@@ -50,7 +52,7 @@ def rig(fresh_world, tmp_path):
           '  *) exit 1 ;;\nesac\n' % (calls_dir, fx))
     # maestro: `new` makes item itm-<n> (listed by `ls`); STUB_NEW_STATE sets its state, STUB_NEW_EXIT
     # makes `new` fail after creating it (Maestro creates, then dispatches); `show <id>` serves
-    # calls/maestro-show-<id>.json, else review; `dispatch` starts it.
+    # calls/maestro-show-<id>.json, else review; `dispatch` starts it, or STUB_DISPATCH_EXIT refuses (the cap).
     _stub(bin_ / "maestro", '[ -n "${STUB_MAESTRO_DOWN:-}" ] && { echo "Maestro is not listening" >&2; exit 2; }\n'
           'printf "%%s\\n" "$*" | head -1 >> "%s/maestro"\n'
           '[ -n "${STUB_LOCK:-}" ] && [ -d "$STUB_LOCK" ] && echo held >> "%s/lock-during-alert"\n'
@@ -59,12 +61,13 @@ def rig(fresh_world, tmp_path):
           '  new) n=$(( $(cat "$c/maestro-n" 2>/dev/null || echo 0) + 1 )); echo $n > "$c/maestro-n";'
           ' printf "%%s\\n" "$*" > "$c/maestro-new-itm-$n";'
           ' title=$(printf "%%s" "$2" | tr -d \'"\'); init=""; prev=""; for a in "$@"; do [ "$prev" = --initiative ] && init=$a; prev=$a; done;'
-          ' printf \'{"id": "itm-%%s", "title": "%%s", "initiative": "%%s", "state": "%%s"}\\n\' "$n" "$title" "$init"'
-          ' "${STUB_NEW_STATE:-running}" >> "$c/maestro-items";'
+          ' printf \'{"id": "itm-%%s", "title": "%%s", "initiative": "%%s", "state": "%%s", "createdAt": "%%s"}\\n\''
+          ' "$n" "$title" "$init" "${STUB_NEW_STATE:-running}" "$(date -u +%%FT%%TZ)" >> "$c/maestro-items";'
           ' [ -n "${STUB_NEW_EXIT:-}" ] && { echo "Maestro gave no clear answer" >&2; exit "$STUB_NEW_EXIT"; };'
           ' echo "{\\"item\\": {\\"id\\": \\"itm-$n\\", \\"state\\": \\"${STUB_NEW_STATE:-running}\\"}}" ;;\n'
           '  ls) printf \'{"items": [\'; [ -f "$c/maestro-items" ] && paste -sd, "$c/maestro-items" | tr -d \'\\n\'; echo "]}" ;;\n'
-          '  dispatch) echo "$2" >> "$c/maestro-dispatched"; echo "{\\"item\\": {\\"id\\": \\"$2\\", \\"state\\": \\"running\\"}}" ;;\n'
+          '  dispatch) [ -n "${STUB_DISPATCH_EXIT:-}" ] && { echo "at the concurrency cap" >&2; exit 1; };'
+          ' echo "$2" >> "$c/maestro-dispatched"; echo "{\\"item\\": {\\"id\\": \\"$2\\", \\"state\\": \\"running\\"}}" ;;\n'
           '  show) f="$c/maestro-show-$2.json"; if [ -f "$f" ]; then cat "$f"; else'
           ' echo "{\\"item\\": {\\"state\\": \\"review\\", \\"verdict\\": null, \\"pending\\": null}, \\"events\\": []}"; fi ;;\n'
           '  *) exit 2 ;;\nesac\n' % (calls_dir, calls_dir, calls_dir))
@@ -80,6 +83,13 @@ def rig(fresh_world, tmp_path):
     env = {"FLEET_CLAUDE_BIN": str(bin_ / "claude"), "FLEET_GH_BIN": str(bin_ / "gh"),
            "CTX_CLAUDE_BIN": str(bin_ / "claude"), "FLEET_MAESTRO_BIN": str(bin_ / "maestro"),
            "FLEET_ASK_REPO": str(tmp_path / "ask-repo"), "FLEET_NOTIFY": "1", "FLEET_SCOPE": "broomva"}
+    base_config = w.write_config
+
+    def write_config(**kw):
+        kw.setdefault("ask_raise_after_min", 0)  # a batch reaches the owner at its own tick; the delay has its test
+        return base_config(**kw)
+
+    w.write_config = write_config
     w.write_config(gh_token_file=str(tok))
 
     class Rig:
@@ -113,13 +123,19 @@ def rig(fresh_world, tmp_path):
             return [c for c in self.calls("maestro") if c.startswith("new ") and title_part in c]
 
         def answer(self, item, verdict="approve", note=None, state="done"):
-            """Maestro's wire shape: the item's verdict, and the settled decision's event text and note."""
+            """Maestro's wire for a decision that took effect (server/events.ts toWireEvents): the
+            settled decision's words and note, then "Took effect". The item's verdict is display text."""
             words = {"approve": "You approved", "revise": "You sent it back", "block": "You canceled it"}
             ev = {"ts": "2026-10-01T12:00:00.000Z", "type": "gate.pending", "actor": "human",
-                  "text": words.get(verdict, ""), "detail": note}
+                  "text": words[verdict], "detail": note}
+            took = dict(ev, type="gate", text="Took effect", detail=None)
             (calls_dir / ("maestro-show-%s.json" % item)).write_text(json.dumps(
-                {"item": {"state": state, "verdict": verdict if verdict in words else None, "pending": None},
-                 "events": [ev] if verdict in words else []}))
+                {"item": {"state": state, "verdict": words[verdict] if state in ("done", "canceled") else None,
+                          "pending": None}, "events": [ev, took]}))
+
+        def item(self, item, state, events=()):
+            (calls_dir / ("maestro-show-%s.json" % item)).write_text(json.dumps(
+                {"item": {"state": state, "verdict": None, "pending": None}, "events": list(events)}))
 
         def brief(self, item):
             return (calls_dir / ("maestro-new-%s" % item)).read_text()
@@ -143,7 +159,7 @@ def test_a_tick_observes_reports_asks_and_records_itself(rig):
     assert rep["surfaces"]["listing"]["ok"] and rep["dry_run"] is True
     assert any(a["key"].startswith("rules:broomva/skills") for a in rep["asks"])
     # The owner channel is Paseo: one Maestro item at Needs you for the new batch, nothing on the desktop.
-    assert "intent" in kinds and len(rig.raised("fleet broomva: ")) == 1, rig.calls("maestro")
+    assert "intent" in kinds and len(rig.raised(BATCH)) == 1, rig.calls("maestro")
     assert "--dispatch" in rig.brief("itm-1") and "--initiative fleet-reconcile-broomva" in rig.brief("itm-1")
     seen = [x for x in rig.ledger() if x["kind"] == "seen"]
     assert seen and seen[0]["result"] == {"channel": "maestro", "item": "itm-1", "state": "running"}
@@ -265,7 +281,7 @@ def test_an_ask_maestro_doesnt_take_isnt_recorded_and_is_raised_at_the_next_tick
     assert not [x for x in rig.ledger() if x["kind"] == "seen"]
     assert "not raised" in rig.log() and "NOT delivered" in rig.log()  # the alert is logged, never a dialog
     rig.tick()
-    assert [x for x in rig.ledger() if x["kind"] == "seen"] and rig.raised("fleet broomva: ")
+    assert [x for x in rig.ledger() if x["kind"] == "seen"] and rig.raised(BATCH)
 
 
 def test_each_run_leaves_one_line_on_stdout_for_launchds_log(rig):
@@ -340,10 +356,10 @@ def test_a_hung_step_is_stopped_by_the_watchdog_children_included(rig):
 def test_a_batch_is_raised_once_and_the_owners_verdict_comes_back_as_the_answer(rig):
     rig.tick()
     rig.tick()
-    assert len(rig.raised("fleet broomva: ")) == 1  # the item stays at Needs you; never raised twice
+    assert len(rig.raised(BATCH)) == 1  # the item stays at Needs you; never raised twice
     assert len([x for x in rig.ledger() if x["kind"] == "seen"]) == 1  # nor looked up and re-recorded
     assert "[a1]" in rig.brief("itm-1") and "## Ask" in rig.brief("itm-1")
-    rig.answer("itm-1", "revise", note="skills gets its pull_request rule this week")
+    rig.answer("itm-1", "revise", note="skills gets its pull_request rule this week", state="running")
     rig.tick()
     (ack,) = [x for x in rig.ledger() if x["kind"] == "ack" and x.get("by") == "owner:maestro"]
     batch = [x for x in rig.ledger() if x["kind"] == "intent" and x.get("verb") == "ask"][0]
@@ -364,7 +380,7 @@ def test_an_item_maestro_made_before_failing_is_adopted_not_raised_again(rig):
     r = rig.tick(STUB_NEW_EXIT="3")  # created, then "no clear answer"
     assert r.returncode == 1 and not [x for x in rig.ledger() if x["kind"] == "seen"]
     rig.tick()
-    assert len(rig.raised("[batch ")) == 1  # found by its [batch ...] title, not created twice
+    assert len(rig.raised(BATCH)) == 1  # found by its title's marker, not created twice
     assert rig.raised("fleet broomva: tick-ask")  # the failed tick's own alert
     (seen,) = [x for x in rig.ledger() if x["kind"] == "seen"]
     assert seen["result"]["item"] == "itm-1"
@@ -373,6 +389,58 @@ def test_an_item_maestro_made_before_failing_is_adopted_not_raised_again(rig):
 def test_an_item_queued_at_maestros_cap_is_dispatched(rig):
     rig.tick(STUB_NEW_STATE="proposed")
     assert rig.calls("maestro-dispatched") == ["itm-1"]
+
+
+def test_a_batch_still_queued_at_the_cap_is_neither_a_failure_nor_seen_and_is_dispatched_later(rig):
+    r = rig.tick(STUB_NEW_STATE="proposed", STUB_DISPATCH_EXIT="1")
+    assert r.returncode == 0 and "ask=0" in r.stdout and "queued" in rig.log()
+    states = [x["result"]["state"] for x in rig.ledger() if x["kind"] == "seen"]
+    assert states == ["proposed"] and "not seen" in rig.fleet("asks", "--all").stdout
+    rig.item("itm-1", "proposed")  # still queued at the next tick
+    rig.tick()
+    assert rig.calls("maestro-dispatched") == ["itm-1"] and len(rig.raised(BATCH)) == 1
+    assert [x["result"]["state"] for x in rig.ledger() if x["kind"] == "seen"] == ["proposed", "running"]
+
+
+def test_a_batch_reaches_the_owner_only_once_its_asks_have_lasted(rig):
+    rig.world.write_config(gh_token_file=str(rig.token_file), ask_raise_after_min=50)
+    r = rig.tick()
+    assert r.returncode == 0 and rig.raised(BATCH) == [] and "1 waiting" in rig.log()
+    # An hour on, the asks are still open: the batch is raised.
+    lines = (rig.world.state["broomva"] / "ledger.jsonl").read_text().splitlines()
+    old = common.ts(time.time() - 3600)
+    (rig.world.state["broomva"] / "ledger.jsonl").write_text("\n".join(
+        json.dumps(dict(json.loads(x), ts=old)) for x in lines) + "\n")
+    rig.tick()
+    assert len(rig.raised(BATCH)) == 1
+
+
+def test_an_alert_of_a_kind_already_open_in_maestro_is_adopted_not_raised_again(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    (sd / "ticks").write_text("a file where the ticks dir goes")  # observe fails every tick
+    rig.tick()
+    (sd / ".alert-tick-observe").unlink()  # as if 6 h had passed
+    rig.tick()
+    assert len(rig.raised("fleet broomva: tick-observe")) == 1 and (sd / ".alert-tick-observe").exists()
+
+
+def test_an_alert_queued_at_the_cap_is_not_delivered(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    (sd / "ticks").write_text("a file where the ticks dir goes")
+    rig.tick(STUB_NEW_STATE="proposed", STUB_DISPATCH_EXIT="1")
+    assert "concurrency cap" in rig.log() and not (sd / ".alert-tick-observe").exists()
+    rig.tick()  # the open, queued item is adopted and dispatched: delivered now
+    assert len(rig.raised("fleet broomva: tick-observe")) == 1 and (sd / ".alert-tick-observe").exists()
+
+
+def test_the_bash_fallback_treats_a_queued_alert_as_not_delivered(rig):
+    rig.world.config.write_text("not json")
+    rig.tick(STUB_NEW_STATE="proposed")
+    sd = rig.world.state["broomva"]
+    assert rig.raised("fleet broomva: config [fleet-reconcile broomva alert config]")
+    assert "NOT delivered" in rig.log() and not (sd / ".alert-config").exists()
 
 
 def test_the_owner_reads_and_acks_asks_and_other_verbs_refuse(rig):

@@ -207,7 +207,9 @@ a new key.
 "If it goes to the computer and I'm not there it won't work"; this replaces
 the dialog that workspace#842 chose). Inside the tick's lock and budget, `fleet
 act ask --show` turns each batch with an open ask into one Maestro work item
-(`scripts/fleetlib/paseo_ask.py`).
+(`scripts/fleetlib/paseo_ask.py`) once an ask in it has been open for
+`ask_raise_after_min` (50 by default: past the next hourly tick, so an ask
+that cleared by then never reaches the owner; 0 raises at once).
 - `maestro new --dispatch` runs one turn of a Paseo agent in the fleet's own
   scratch repo (`ask_repo`, by default
   `~/.local/state/fleet-reconcile/maestro-asks`, not a scope repo).
@@ -220,18 +222,29 @@ Measured end to end on 2026-10-01, at the daemon state the app renders: the
 item reached `review` and the agent read `requiresAttention: true`. A phone
 push was not measured.
 
-Raising is idempotent. The title carries the batch id, so an item Maestro
-created before failing (it creates, then dispatches) is found with `ls` and
-adopted. An item queued at Maestro's concurrency cap is dispatched at a later
-tick.
+Raising is idempotent. The title ends with a marker carrying the scope and
+the batch id (`[fleet-reconcile <scope> batch <id>]`), so an open item Maestro
+created for the batch before failing (it creates, then dispatches) is found
+with `ls` and adopted; a done or canceled one, or one older than the batch, is
+not. An item queued at Maestro's concurrency cap is dispatched at a later
+tick; a dispatch refused there is logged, not a failed tick, and the batch
+doesn't count as seen until its item is past the queue.
 
-The next tick reads the owner's verdict back, following Maestro's wire
-contract (the item's `verdict`; a settled decision's event and its note). It
-records an `ack` by `owner:maestro`, waiting out the undo window:
+Each tick reads the owner's decisions back from every item raised in the last
+14 days until one is final, following Maestro's wire (server/events.ts
+`toWireEvents`). There every settled decision reads as made, so only one that
+**took effect** counts: its words followed by `Took effect`, or a decision
+applied at once. One undone (`Undone`) or dropped (`… did not take effect`) is
+not the owner's answer. The item's `verdict` field is display text and isn't
+read. Each new decision is an `ack` by `owner:maestro`:
 - Approve acknowledges;
 - Send back with a note answers (every note is kept, even after a later
-  approve);
+  approve, and a note sent after the asks stopped being true is still
+  recorded);
 - Cancel dismisses.
+
+Only Send back's note is read. A reply typed in the run's chat is not a
+decision, and the run answers one by saying so.
 
 Limits, by design:
 - A session can't cancel an item, so one whose batch resolved first, or was
@@ -242,8 +255,10 @@ Limits, by design:
   send-back costs a second.
 
 tick.sh's own alerts (a bad config, a failed step, a held lock) are Maestro
-items too, sent from bash, at most once per 6 h per kind, stamped only once
-Maestro took one. When Maestro itself is down, they reach only `tick.log`:
+items too, at most once per 6 h per kind, stamped only once the item is past
+Maestro's queue. `fleet alert` adopts an open item of the same kind rather
+than raising a second; when Python or the config is what broke, a bash
+fallback raises one. When Maestro itself is down, they reach only `tick.log`:
 the channel's blind spot. There is no dialog, banner, ntfy or p9 notify. The
 owner can also answer from a terminal:
 
@@ -282,7 +297,8 @@ Config keys beyond §5.7's, pending the spec: `listing_cap`, `pr_list_cap`,
 `gh_token_file`, `actions_app_id` (15368, GitHub Actions), `launchd_prefix`,
 `launchd_logs` (a label's real log, when its stdout is silent),
 `bookkeeping_run_log`, `dream_run_log`, `ask_renotify_h`, `tick_timeout_min`, `compare_hour`,
-`coordinator_model` (phase 2; null is Claude Code's default), `coordinator_budget_usd` (2). §5.7's `paseo_tools` defaults to
+`coordinator_model` (phase 2; null is Claude Code's default), `coordinator_budget_usd` (2),
+`maestro_cli`, `maestro_bun`, `ask_repo`, `ask_raise_after_min` (50; the owner channel). §5.7's `paseo_tools` defaults to
 the pinned 0.9.2 classification (19 read, 42 write) and `driver` to probe 6's GitHub
 allowlist with no registries.
 §5.7's `b_step_timeout_min` and an adoption's `paseo_agent_id` are accepted.
@@ -350,8 +366,8 @@ python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (a
 | `test_observe.py` | The pipeline over the capture in a scratch HOME; a 200-row listing fails closed unless the job files show it complete; one unparsed job file degrades only its session; an unresolvable slug, a gh error and a PR list at the cap fail only their repo; the bearer never reaches a snapshot or report; activity found past a last line larger than the first tail window (ctx-core's reader); the token taken out of the environment and handed to gh alone |
 | `test_report.py` | Every section; withheld crm/ paths and tokens; per-occurrence asks (once, then still open; an answer holds while true; a recurrence is new; a different question is new), answers per batch, stable count keys, failed-surface asks, a resolution only from the surfaces that raise the key (for a session that still classifies, too), open asks not re-checked still listed, a wait's key holding while its subagents write, a failing comparison asked after three runs with its error guarded, the ack wording, the ruleset wording, scheduled work as inventory only, a duplicate fleet name asked while it lasts; the labelling sheet (distinct sessions only) |
 | `test_ledger.py` | Validation, distinct owner ids within one millisecond, corrupt-line counting, 4 processes × 50 appends lose nothing, the ask and spawn folds |
-| `test_paseo_ask.py` | A batch raised as dispatched Maestro work in the fleet's own repo; the owner's verdict (approve, send back with a note, cancel) read back, an agent's gate event not; the note through the guard; Maestro's exit codes as errors |
-| `test_tick.py` | tick.sh end to end with stub claude/gh/maestro: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, the token reaching gh and not claude, an empty token file, a token file open to others not used, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, a batch raised once at Needs you and the owner's verdict read back as the answer, a cancel dismissing, an ask Maestro doesn't take not recorded and raised at the next tick, alerts as Maestro work, a failed compare not using up the day and the prototype's compare line refused and asked about, ack refused inside a session, refused verbs, the labelling sheet |
+| `test_paseo_ask.py` | A batch raised as dispatched Maestro work in the fleet's own repo; only decisions that took effect read back, on Maestro's own wire sequences (undone, dropped, a torn cancel, the undo window, the display verdict, an agent's words); the note through the guard; Maestro's exit codes as errors; `find` adopting only an open item of this scope's batch made after it; an alert adopting its kind's open item; the sync recording each new decision once, a note after the asks resolved, nothing past 14 days or a final answer, and a refusal at the cap as no failure |
+| `test_tick.py` | tick.sh end to end with stub claude/gh/maestro: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, the token reaching gh and not claude, an empty token file, a token file open to others not used, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, a batch raised once at Needs you and the owner's verdict read back as the answer, a cancel dismissing, a batch raised only once its asks lasted, a batch queued at the cap neither failing the tick nor seen until dispatched, an open alert of its kind adopted, an alert queued at the cap (or by the bash fallback) not delivered, an ask Maestro doesn't take not recorded and raised at the next tick, alerts as Maestro work, a failed compare not using up the day and the prototype's compare line refused and asked about, ack refused inside a session, refused verbs, the labelling sheet |
 | `test_act.py` | Every verb refused in report mode and on a corrupt ledger or an open ask on its target; spawn's floor (held, draft, Dependabot, owner-merge, unread files, unruled repo, closed PR, taken name, a branch checked out, the caps, unknown claims, the spawn pause) against text that says otherwise; dry spawn, label and resume closed with the argv or call; mail only to fleet or adopted sessions, the 6 h rule (failed doesn't count, live and dry apart), not_live, ambiguous_name, a Paseo relaunch followed, template values guarded, no template names a merge or removal |
 | `test_sendgate.py` | Each pre check refusing with its own name; dry run closing the intent and still blocking; a live send passing and post closing it with the msg_id; harness_refused and unledgered_send; the CLI failing closed |
 | `test_recover.py` | Mail found in either delivery shape only after the intent, else lost or unknown; spawn's one, none or duplicate rows; resume by process start; label by the PR's labels |

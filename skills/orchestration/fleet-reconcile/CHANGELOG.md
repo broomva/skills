@@ -12,13 +12,19 @@ that broomva/workspace#842 §5.7 chose. Ticket BRO-2674.
   asks are fenced as data in the brief, and the look is the fleet's own
   summary. Measured end to end: the item reached `review` and its agent's
   Paseo record read `requiresAttention: true`.
-  - Raising is idempotent: an item Maestro made before failing is found by
-    its title's batch id, and one queued at the cap is dispatched later.
-  - The next tick reads the owner's verdict back on Maestro's wire contract
-    (the item's `verdict`, a settled decision's note), keeping every note:
-    approve acknowledges, send back with a note answers, cancel dismisses.
-- tick.sh's alerts go the same way, from bash, at most once per 6 h per kind
-  of failure, stamped only once delivered. The dialog, the banner path and p9
+  - A batch is raised once an ask in it has lasted `ask_raise_after_min` (50),
+    so an ask that clears by the next tick never reaches the owner.
+  - Raising is idempotent: an open item Maestro made before failing is found
+    by its title's scope and batch marker, and one queued at the cap is
+    dispatched later (a refusal there is logged, not a failed tick).
+  - Each tick reads back only decisions that took effect (Maestro's
+    `Took effect` receipt), never an undone or dropped one, nor the item's
+    display `verdict`, from items raised in the last 14 days until one is
+    final, keeping every note: approve acknowledges, send back with a note
+    answers, cancel dismisses. Chat replies are not read.
+- tick.sh's alerts go the same way, at most once per 6 h per kind of failure,
+  stamped only once past Maestro's queue; `fleet alert` adopts an open item of
+  the kind, with a bash fallback when Python or the config broke. The dialog, the banner path and p9
   notify are gone.
 - The coordinator's tool list is an allowlist: `--tools Bash Read
   SendMessage`. Measured on 2.1.280, the init event lists exactly those.

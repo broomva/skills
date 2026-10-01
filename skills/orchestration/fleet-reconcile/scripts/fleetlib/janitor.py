@@ -367,6 +367,7 @@ def run(sec: Dict[str, Any], src: Sources, path: str, owner: str, remove: bool,
         step("owner", why)
         res["aborted"] = "owner"
         return res
+    owner_sid = row["session_id"]  # the stop step re-reads the listing, where a stopped owner may be gone
 
     first = g.run(skip=("no_holder",))  # the owner's own process holds it until it is stopped
     step("check", first)
@@ -423,7 +424,7 @@ def run(sec: Dict[str, Any], src: Sources, path: str, owner: str, remove: bool,
     # from the listing (a duplicate name, or one like "..", must delete nothing).
     sd = Path(sec["state_dir"])
     key = next((k for k, ids in ledger.spawned(ledger.read(sd)[0]).items()
-                if row["session_id"] in ids or row["session_id"][:8] in ids), None)
+                if owner_sid in ids or owner_sid[:8] in ids), None)
     if not key or not observe.fleet_shaped(key, sec["scope"]):
         return res
     for p in (sd / "profiles" / ("%s.json" % key), sd / "ghcfg" / key):

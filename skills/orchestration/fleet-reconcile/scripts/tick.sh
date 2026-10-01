@@ -66,29 +66,49 @@ NOTICE="$STATE_DIR/.disabled-notice"
 LOCK="$STATE_DIR/.tick.lock"
 log() { echo "[$(date -u +%FT%TZ)] $*" >> "$LOG"; }
 
-# alert KIND MESSAGE: tell the owner in the Paseo app, from bash, so it works
-# when Python or the config is what broke. At most once per 6 h per kind, the
-# stamp touched only once Maestro took it. The message is this script's own
-# text, never another session's words. When Maestro itself is down, the alert
-# reaches no one but this log: that is the channel's one blind spot.
+# The owner channel's paths from the config, before any alert can fire (an
+# unreadable config leaves the defaults).
+for pair in "maestro_cli:FLEET_MAESTRO_CLI" "maestro_bun:FLEET_MAESTRO_BUN" "ask_repo:FLEET_ASK_REPO"; do
+  v=$(cfg "${pair%%:*}")
+  # shellcheck disable=SC2088  # a literal ~/ from the config, expanded here
+  case "$v" in ("~/"*) v="$HOME/${v#\~/}" ;; esac
+  [ -n "$v" ] && export "${pair#*:}=$v"
+done
+
+# alert KIND MESSAGE: tell the owner in the Paseo app. At most once per 6 h
+# per kind, the stamp touched only once the item is past Maestro's queue.
+# `fleet alert` adopts an open item of the same kind rather than raising a
+# second; when it can't run at all (the config or Python is what broke), the
+# bash fallback raises one. The message is this script's own text, never
+# another session's words. When Maestro itself is down, the alert reaches no
+# one but this log: that is the channel's one blind spot.
 alert() {
-  local kind=$1 msg=$2 stamp="$STATE_DIR/.alert-$1" now last
+  local kind=$1 msg=$2 stamp="$STATE_DIR/.alert-$1" now last rc
   log "ALERT $kind: $msg"
   now=$(date +%s)
   last=$(file_mtime "$stamp"); case "$last" in (""|*[!0-9]*) last=0 ;; esac
   [ $((now - last)) -ge 21600 ] || return 0
   [ "${FLEET_NOTIFY:-}" = "0" ] && return 0
-  if maestro_alert "fleet $SCOPE: $kind" "$msg (tick.log: $LOG)"; then
-    touch "$stamp"
-  else
-    log "ALERT $kind NOT delivered: Maestro didn't take it; it's in this log only"
-  fi
+  "$FLEET" alert --scope "$SCOPE" --kind "$kind" --message "$msg (tick.log: $LOG)" </dev/null >> "$LOG" 2>&1
+  rc=$?
+  case "$rc" in
+    (0) touch "$stamp" ;;
+    (4) log "ALERT $kind NOT delivered: queued at Maestro's concurrency cap; the next alert of its kind dispatches it" ;;
+    (5) log "ALERT $kind NOT delivered: Maestro didn't take it; it's in this log only" ;;
+    (*)
+      if maestro_alert "fleet $SCOPE: $kind [fleet-reconcile $SCOPE alert $kind]" "$msg (tick.log: $LOG)"; then
+        touch "$stamp"
+      else
+        log "ALERT $kind NOT delivered: Maestro didn't take it or queued it; it's in this log only"
+      fi ;;
+  esac
   return 0
 }
 
-# maestro_alert TITLE TEXT: a Maestro work item at Needs you in the Paseo app
-# (owner decision 2026-10-01: never a desktop dialog), run in the fleet's own
-# scratch repo. From bash, so it works when Python is what broke.
+# maestro_alert TITLE TEXT: the bash fallback, a Maestro work item at Needs you
+# in the Paseo app (owner decision 2026-10-01: never a desktop dialog), run in
+# the fleet's own scratch repo. Fails when Maestro doesn't take it or queues
+# it at its cap.
 maestro_alert() {
   local title=$1 text=$2 repo="${FLEET_ASK_REPO:-$HOME/.local/state/fleet-reconcile/maestro-asks}"
   if [ ! -d "$repo/.git" ]; then
@@ -104,7 +124,13 @@ Change nothing and run no tools. End your turn at once with exactly two sections
   else
     set -- "${FLEET_MAESTRO_BUN:-$HOME/.bun/bin/bun}" "${FLEET_MAESTRO_CLI:-$HOME/broomva/apps/maestro-paseo/bin/maestro.ts}"
   fi
-  "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch </dev/null >> "$LOG" 2>&1
+  local out rc
+  out=$("$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json </dev/null 2>&1)
+  rc=$?
+  printf '%s\n' "$out" >> "$LOG"
+  [ "$rc" = "0" ] || return 1
+  case "$out" in (*'"state":"proposed"'*|*'"state": "proposed"'*) return 1 ;; esac
+  return 0
 }
 
 # ── kill switch: read before anything fires; an unreadable value is off ──────
@@ -180,14 +206,6 @@ release() {
   rmdir "$LOCK" 2>/dev/null
 }
 trap release EXIT
-
-# The owner channel's paths from the config, for alert() from bash too.
-for pair in "maestro_cli:FLEET_MAESTRO_CLI" "maestro_bun:FLEET_MAESTRO_BUN" "ask_repo:FLEET_ASK_REPO"; do
-  v=$(cfg "${pair%%:*}")
-  # shellcheck disable=SC2088  # a literal ~/ from the config, expanded here
-  case "$v" in ("~/"*) v="$HOME/${v#\~/}" ;; esac
-  [ -n "$v" ] && export "${pair#*:}=$v"
-done
 
 # ── tick number: past both the counter and the ledger's last tick ─────────────
 N=$("$FLEET" next-tick --scope "$SCOPE" 2>>"$LOG")
