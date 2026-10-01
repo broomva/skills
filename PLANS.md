@@ -26,8 +26,8 @@ with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
 
 1. [x] Briefs written; blind writers (no catalog, no tools) produce routing v2 and the
    fresh task prompts; both committed with sha256 before any rewording or scoring (be7726d).
-2. [x] Step 4: score v2, set `status` per the gate, tests gate on v2 (3b20c94): 10/31 pass;
-   heal and checkit listed, autonomous routed, ship-not-ask still listed.
+2. [x] Step 4: score v2, set `status` per the gate, tests gate on v2: 9/31 pass with
+   change_work held to 0.80; heal, checkit and autonomous listed, ship-not-ask still listed.
 3. [x] Step 1 (sonnet, $3.46): heal 3/3 reworded vs 0/3 v1 line on a fresh wording; Paseo 3/3
    both; worktree 0/3 in every arm by its grader, no backup claim with the reworded line.
 4. [x] Step 3 (opus, $14.14, 05:47–06:11 -05): reflex 15/24 [+0.19, +1.00], legacy 11/24, qbar
@@ -41,7 +41,9 @@ with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
 
 `pytest skills/orchestration/role-x/tests tests/skill_evals/test_ctx_ablation.py`,
 `python3 scripts/skill_evals/ctx_ablation/run.py validate --deep --tasks <file>`,
-`python3 skills/orchestration/role-x/scripts/role-x.py reflexes route --heldout`.
+`python3 skills/orchestration/role-x/scripts/role-x.py reflexes route --heldout` (v2, 9/31),
+`python3 scripts/skill_evals/ctx_ablation/a2.py --out ~/.cache/ctx-ablation/preflip-opus`,
+`python3 skills/orchestration/role-x/scripts/role-x.py reflexes shadow --since 3d` (A1).
 
 ## role-x reflex router v1, behind `ROLE_X_OUTPUT=reflex` (BRO-2674)
 

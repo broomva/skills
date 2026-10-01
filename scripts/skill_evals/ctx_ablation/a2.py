@@ -88,11 +88,14 @@ def bars(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
         return out
     rb = diff(rows, "reflex", "bare", a2)
     rq_rest = diff(rows, "reflex", "qbar", rest) if rest else None
-    missing = [name for name, group in (("p9", p9), ("branch-first", bf), ("rest", rest)) if not group]
+    missing = [name for name, group in (("p9", p9), ("branch-first", bf), ("rest", rest),
+                                        ("P14/P11/P3", reg)) if not group]
     p9_bf = []
     for t in sorted(p9 | bf):
         (rp, rn), (qp, qn) = _counts(rows, "reflex", {t}), _counts(rows, "qbar", {t})
-        p9_bf.append({"task": t, "reflex": [rp, rn], "qbar": [qp, qn], "reflex_ge_qbar": rp * qn >= qp * rn})
+        # an arm with no graded trial on the task has not been compared at all
+        p9_bf.append({"task": t, "reflex": [rp, rn], "qbar": [qp, qn],
+                      "reflex_ge_qbar": rp * qn >= qp * rn if rn and qn else None})
     per_task_rq = []
     for t in sorted(p9 | reg):
         (rp, rn), (qp, qn) = _counts(rows, "reflex", {t}), _counts(rows, "qbar", {t})
@@ -121,10 +124,14 @@ def bars(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             "qbar_minus_bare": qb, "qbar_minus_bare_ci_above_0": _above(qb),
             "qbar_minus_rolex_p9_bf": qr, "qbar_minus_rolex_entirely_below_0": _below(qr),
             # #850 needs the p9 AND branch-first tasks; with one group empty it is not shown
-            "meets_850_condition": (bool(_above(qb)) and _below(qr) is False) if shown else None,
+            "meets_850_condition": (None if not shown or qb["ci"] is None or qr["ci"] is None
+                                    else bool(_above(qb)) and _below(qr) is False),
             "not_shown_because": [] if shown else [g for g, s_ in (("p9", p9), ("branch-first", bf)) if not s_]}
-    failed = (_above(rb) is False or not all(x["reflex_ge_qbar"] for x in p9_bf)
+    failed = (_above(rb) is False or any(x["reflex_ge_qbar"] is False for x in p9_bf)
               or (rq_rest is not None and _above(rq_rest) is False) or bool(fails))
+    missing += [f"{x['task']} (no graded trial in an arm)" for x in p9_bf if x["reflex_ge_qbar"] is None]
+    if rq_rest is not None and rq_rest["ci"] is None:
+        missing.append("rest (fewer than 2 tasks for a CI)")
     out["router"]["not_shown"] = missing
     out["verdict"] = ("router bars not met" if failed else
                       "router bars not shown: no task for " + ", ".join(missing) if missing else

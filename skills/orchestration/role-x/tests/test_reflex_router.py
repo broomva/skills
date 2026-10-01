@@ -25,6 +25,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
+from datetime import datetime, timezone
 import yaml
 
 SKILL_DIR = Path(__file__).resolve().parent.parent
@@ -161,10 +162,11 @@ def test_no_line_says_the_stack_backs_files_up():
     for bad in ("the stack copies out its ignored files", "they are backed up by the stack",
                 "a pre-remove hook stashes them", "the stack moves them to ~/.trash"):
         assert claim.search(bad), bad
+    passive = re.compile(r"\b(get|gets|are|is)\s+(backed up|copied( out)?|saved|preserved|stashed)\b", re.IGNORECASE)
+    assert passive.search("they get backed up before removal")
     for r in CAT.reflexes:
-        if r.id == "p10.worktree-removal-guard":
-            continue  # it names what is NOT automated; checked by the next assertion
         assert not claim.search(r.line), f"{r.id}: the line claims automation: {r.line!r}"
+        assert not passive.search(r.line), f"{r.id}: the line claims files are kept for the agent: {r.line!r}"
     assert "nothing backs them up" in BY_ID["p10.worktree-removal-guard"].line
 
 
@@ -1019,10 +1021,13 @@ def test_router_ms_starts_before_the_router_is_imported(tmp_path, monkeypatch):
         _time.sleep(0.2)
         return real()
     rows = []
+    monkeypatch.setenv("HOME", str(tmp_path))  # the router's per-session repeat file lives under HOME
     monkeypatch.setattr(rx, "_load_reflex_router", slow)
     monkeypatch.setattr(rx, "_emit_reflex_event", lambda sid, prompt, meta, events_path=None: rows.append(meta))
     rx._intake_reflex("merge 1857 please", "s1", str(tmp_path), str(tmp_path), shadow=True)
-    assert rows and rows[-1]["router_ms"] >= 200 > rows[-1].get("ms", 0)
+    assert rows and "error" not in rows[-1], rows
+    assert rows[-1]["router_ms"] >= 200 > rows[-1]["ms"]
+    assert list((tmp_path / ".config" / "broomva" / "role").rglob("*.json"))  # it wrote there, not to ~
 
 
 @pytest.mark.skipif(REPO is None, reason="needs the broomva/skills monorepo")
@@ -1225,7 +1230,25 @@ def test_every_routed_entry_clears_the_sealed_held_out_m3_gate():
     # fails; it gates nothing (the p9 pin stays until M2), but the gate must say so.
     cw = rows["change_work"]
     assert cw["should_route"] >= 40
-    assert cw["passes_m3"] == (cw["recall"] >= 0.80 and cw["false_fire"] <= 0.20)
+    assert cw["passes_m3"] == (cw["hits"] / cw["should_route"] >= 0.80 and cw["false_fire"] <= 0.20)
+    # the default --heldout file is the gate's (v2), not v1's
+    d = subprocess.run([sys.executable, str(ROLE_X_PY), "reflexes", "route", "--heldout", "--json"],
+                       capture_output=True, text=True, timeout=120)
+    assert {r["id"]: r["hits"] for r in json.loads(d.stdout)["ids"]} == {k: v["hits"] for k, v in rows.items()}
+
+
+def test_change_work_s_bar_needs_40_positives_and_is_not_rounded_up():
+    rx = load_module(ROLE_X_PY, "role_x_under_test_cw_bar")
+    router = rx._load_reflex_router()
+    cw = CAT.routes["change_work"]
+    hit = "fix the typo in README.md"
+    assert any(p.search(rr.normalize_prompt(hit)) for p in cw)
+    miss, near = "ship it", "what does this do?"
+    few = [(hit, True)] * 39 + [(near, False)] * 20
+    assert not rx._score(router, CAT, "change_work", few)["passes_m3"]  # 39/39, but under 40
+    edge = [(hit, True)] * 35 + [(miss, True)] * 9 + [(near, False)] * 20  # 35/44 = 0.795
+    row = rx._score(router, CAT, "change_work", edge)
+    assert row["recall"] == 0.8 and not row["passes_m3"]
 
 
 def test_the_sealed_held_out_files_are_the_ones_that_were_sealed():
@@ -1321,3 +1344,44 @@ def test_mutating_a_predicate_fails_its_scenario(repo, tmp_path, name, how):
             _scenario_fires(mod, CATALOG, repo, name)
     else:
         assert not _scenario_fires(mod, CATALOG, repo, name)
+
+
+def test_the_shadow_reader_joins_rows_to_ship_turns(tmp_path):
+    """spec A1's instrument (workspace#850): router time, errors, and p9 on the turns that
+    ran git push or gh pr create, found through each row's prompt digest."""
+    import hashlib
+    rx = load_module(ROLE_X_PY, "role_x_under_test_shadow")
+    now = datetime.now(timezone.utc).isoformat()
+    dig = lambda p: "sha256:" + hashlib.sha256(p.encode()).hexdigest()  # noqa: E731
+    rows = [
+        {"ts": now, "event": "reflex", "shadow": True, "session": "s1", "prompt_digest": dig("push it and open a pr"),
+         "selected": ["p9.watch-after-push"], "router_ms": 40.0, "ms": 20.0},
+        {"ts": now, "event": "reflex", "shadow": True, "session": "s1", "prompt_digest": dig("ok go"),
+         "selected": [], "router_ms": 90.0, "ms": 30.0},
+        {"ts": now, "event": "reflex", "shadow": True, "session": "s1", "prompt_digest": dig("what is this"),
+         "error": "KeyError", "router_ms": 5.0},
+        {"ts": now, "event": "reflex", "session": "s1", "prompt_digest": dig("not shadow")},
+    ]
+    events = tmp_path / "events.jsonl"
+    events.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
+    proj = tmp_path / "projects" / "-ws"
+    proj.mkdir(parents=True)
+    t = [{"type": "user", "message": {"role": "user", "content": "push it and open a pr"}},
+         {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "git push -u origin x"}}]}},
+         {"type": "user", "message": {"content": [{"type": "tool_result", "content": "ok"}]}},
+         {"type": "user", "message": {"role": "user", "content": "ok go"}},
+         {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "gh pr create --fill"}}]}},
+         {"type": "user", "message": {"role": "user", "content": "what is this"}}]
+    (proj / "s1.jsonl").write_text("".join(json.dumps(e) + "\n" for e in t), encoding="utf-8")
+    import argparse as _ap
+    import contextlib
+    import io
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        rx.cmd_reflexes_shadow(_ap.Namespace(events=str(events), projects=str(tmp_path / "projects"),
+                                             since="3d", json=True))
+    rep = json.loads(buf.getvalue())
+    assert rep["rows"] == 3 and rep["errors"] == {"KeyError": 1}
+    assert rep["ship_turns"]["turns"] == 2 and rep["ship_turns"]["p9_selected"] == 1
+    assert rep["ship_turns"]["rows_without_a_found_turn"] == 0
+    assert rep["router_ms"]["p99"] == 90.0 and rep["verdict"].startswith("A1 router bars not met")

@@ -2215,7 +2215,7 @@ def _eval_cases(path: Path) -> list[tuple[str, bool]]:
             + [(p, False) for p in doc.get("should_not_trigger") or [] if isinstance(p, str)])
 
 
-HELDOUT_ROUTING_REL = Path("evals") / "reflex-routing-heldout.json"
+HELDOUT_ROUTING_REL = Path("evals") / "reflex-routing-heldout-v2.json"
 #: Spec §5.5 M3: an entry routes only at held-out recall >= 0.60 with <= 0.20 false fires.
 M3_MIN_RECALL = 0.60
 M3_MAX_FALSE_FIRE = 0.20
@@ -2255,10 +2255,133 @@ def _score(router, catalog, key: str, cases: list[tuple[str, bool]]) -> dict:
     ff = round(false_fire / (false_fire + clean), 2) if false_fire + clean else None
     min_recall = CHANGE_WORK_MIN_RECALL if key == "change_work" else M3_MIN_RECALL
     enough = hit + miss >= CHANGE_WORK_MIN_POSITIVES if key == "change_work" else True
+    # compared unrounded: 35/44 = 0.795 must not round up past a 0.80 bar
+    passes = (enough and hit + miss > 0 and hit / (hit + miss) >= min_recall
+              and false_fire + clean > 0 and false_fire / (false_fire + clean) <= M3_MAX_FALSE_FIRE)
     return {"id": key, "should_route": hit + miss, "hits": hit, "recall": recall,
             "near_miss": false_fire + clean, "false_fires": false_fire,
-            "false_fire": ff, "passes_m3": enough and recall is not None and recall >= min_recall
-            and ff is not None and ff <= M3_MAX_FALSE_FIRE, "missed": missed, "fired_on_near_miss": fired_near}
+            "false_fire": ff, "passes_m3": passes, "missed": missed, "fired_on_near_miss": fired_near}
+
+
+#: A turn that ships: what spec A1 counts the p9 rule on (workspace#850).
+SHIP_COMMAND_RE = re.compile(r"\bgit\s+push\b|\bgh\s+pr\s+create\b")
+#: A1's bars (spec §10, #850): router time p99 <= 100 ms; p9 on ship turns, Wilson lower bound >= 0.70.
+A1_MAX_P99_MS = 100.0
+A1_MIN_P9_LOWER = 0.70
+
+
+def _wilson_lower(k: int, n: int, z: float = 1.96) -> float | None:
+    if n <= 0:
+        return None
+    p = k / n
+    centre = p + z * z / (2 * n)
+    margin = z * ((p * (1 - p) + z * z / (4 * n)) / n) ** 0.5
+    return round((centre - margin) / (1 + z * z / n), 4)
+
+
+def _p99(xs: list[float]) -> float | None:
+    if not xs:
+        return None
+    xs = sorted(xs)
+    return xs[min(len(xs) - 1, int(0.99 * len(xs)))]
+
+
+def _turns(transcript: Path) -> dict[str, bool]:
+    """prompt sha256 -> did that turn run ``git push`` or ``gh pr create`` before the next
+    user prompt. Reads one Claude Code transcript (JSONL); tool results are not prompts."""
+    out: dict[str, bool] = {}
+    current = None
+    try:
+        lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
+    except OSError:
+        return out
+    for line in lines:
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        msg = ev.get("message") if isinstance(ev, dict) else None
+        content = msg.get("content") if isinstance(msg, dict) else None
+        if ev.get("type") == "user" and not ev.get("isMeta"):
+            text = content if isinstance(content, str) else "".join(
+                b.get("text", "") for b in content or [] if isinstance(b, dict) and b.get("type") == "text")
+            if text and not any(isinstance(b, dict) and b.get("type") == "tool_result" for b in
+                                (content if isinstance(content, list) else [])):
+                current = "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest()
+                out.setdefault(current, False)
+        elif ev.get("type") == "assistant" and current and isinstance(content, list):
+            for b in content:
+                if (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Bash"
+                        and SHIP_COMMAND_RE.search(str((b.get("input") or {}).get("command") or ""))):
+                    out[current] = True
+    return out
+
+
+def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
+    """``role-x reflexes shadow``: spec A1's instrument (workspace#850) over the shadow
+    rows in events.jsonl. Router time is ``router_ms``, from before the router's import to
+    just before the row is written. The p9 bar counts turns that ran ``git push`` or
+    ``gh pr create``, found by joining each row's prompt digest to its session transcript
+    under ``--projects``; rows whose turn cannot be found are counted, not guessed."""
+    events = Path(args.events) if args.events else EVENTS_PATH
+    projects = Path(args.projects) if args.projects else Path.home() / ".claude" / "projects"
+    since = datetime.now(timezone.utc).timestamp() - _parse_duration(args.since)
+    rows = []
+    for line in events.read_text(encoding="utf-8").splitlines() if events.is_file() else []:
+        try:
+            r = json.loads(line)
+            ts = datetime.fromisoformat(str(r.get("ts"))).timestamp()
+        except (ValueError, TypeError):
+            continue
+        if r.get("event") == "reflex" and r.get("shadow") and ts >= since:
+            rows.append(r)
+    timed = [float(r["router_ms"]) for r in rows if isinstance(r.get("router_ms"), (int, float))]
+    errors: dict[str, int] = {}
+    for r in rows:
+        if r.get("error"):
+            errors[str(r["error"])] = errors.get(str(r["error"]), 0) + 1
+    selected: dict[str, int] = {}
+    for r in rows:
+        for rid in r.get("selected") or []:
+            selected[rid] = selected.get(rid, 0) + 1
+    turns: dict[str, dict[str, bool]] = {}
+    ship = with_p9 = unmatched = 0
+    for r in rows:
+        sid = str(r.get("session") or "")
+        if sid not in turns:
+            found = next(iter(sorted(projects.glob(f"*/{sid}.jsonl"))), None) if sid else None
+            turns[sid] = _turns(found) if found else {}
+        shipped = turns[sid].get(str(r.get("prompt_digest")))
+        if shipped is None:
+            unmatched += 1
+        elif shipped:
+            ship += 1
+            with_p9 += "p9.watch-after-push" in (r.get("selected") or [])
+    p99, lower = _p99(timed), _wilson_lower(with_p9, ship)
+    report = {
+        "rows": len(rows), "sessions": len({r.get("session") for r in rows}),
+        "router_ms": {"rows_timed": len(timed), "p99": p99, "max": max(timed) if timed else None,
+                      "passes": p99 is not None and p99 <= A1_MAX_P99_MS},
+        "errors": errors,
+        "ship_turns": {"turns": ship, "p9_selected": with_p9, "wilson_lower": lower,
+                       "rows_without_a_found_turn": unmatched,
+                       "passes": lower is not None and lower >= A1_MIN_P9_LOWER},
+        "selected": dict(sorted(selected.items(), key=lambda kv: -kv[1])),
+        "verdict": ("A1 router bars met" if rows and not errors and p99 is not None and p99 <= A1_MAX_P99_MS
+                    and lower is not None and lower >= A1_MIN_P9_LOWER else "A1 router bars not met or not shown"),
+        "not_covered_here": "M3 (change_work and branch-first): role-x reflexes route --heldout",
+    }
+    if args.json:
+        print(json.dumps(report, indent=2))
+    else:
+        print(f"shadow rows {report['rows']} in {report['sessions']} sessions since {args.since}")
+        print(f"router_ms p99 {p99} over {len(timed)} timed rows (<= {A1_MAX_P99_MS:g}: {report['router_ms']['passes']})")
+        print(f"error rows {sum(errors.values())} {errors or ''}")
+        print(f"ship turns {ship}: p9 selected {with_p9}, Wilson lower {lower} (>= {A1_MIN_P9_LOWER}: "
+              f"{report['ship_turns']['passes']}); rows whose turn was not found {unmatched}")
+        print(f"selected per id {report['selected']}")
+        print(f"verdict: {report['verdict']} ({report['not_covered_here']})")
+    return 0
 
 
 def cmd_reflexes(args: argparse.Namespace) -> int:
@@ -2364,11 +2487,18 @@ def build_parser() -> argparse.ArgumentParser:
                          help="score each skill entry on its skill's evals/prompts.json (in-sample)")
     p_route.add_argument("--heldout", action="store_true",
                          help="score every id on the sealed held-out routing cases (spec M3)")
-    p_route.add_argument("--heldout-file", default=None, help="held-out cases (default: evals/reflex-routing-heldout.json)")
+    p_route.add_argument("--heldout-file", default=None,
+                         help="held-out cases (default: evals/reflex-routing-heldout-v2.json, the gate)")
     p_route.add_argument("--root", default=None, help="repo root holding skills/ (default: this repo)")
     p_route.add_argument("--catalog", default=None, help="catalog path (default: references/reflexes.yaml)")
     p_route.add_argument("--json", action="store_true")
     p_route.set_defaults(func=cmd_reflexes)
+    p_shadow = rsub.add_parser("shadow", help="spec A1's instrument over ROLE_X_OUTPUT=shadow rows")
+    p_shadow.add_argument("--since", default="3d", help="window (default 3d)")
+    p_shadow.add_argument("--events", default=None, help="events.jsonl (default: ~/.config/broomva/role/events.jsonl)")
+    p_shadow.add_argument("--projects", default=None, help="transcripts root (default: ~/.claude/projects)")
+    p_shadow.add_argument("--json", action="store_true")
+    p_shadow.set_defaults(func=cmd_reflexes_shadow)
 
     p_coverage = sub.add_parser(
         "coverage",

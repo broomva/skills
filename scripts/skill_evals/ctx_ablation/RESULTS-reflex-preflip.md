@@ -14,6 +14,8 @@ round-7 follow-ups (merged f9af7883b).
 1. **A1 has not run.** Spec §10: if A1 (three days of shadow) fails or has not run, "A2
    does not start". Shadow is not on in production yet (0 router rows). So no A2 result,
    good or bad, can ship the router today. This alone decides the flip.
+   - A1 can also not pass as the router stands: it requires `change_work` to clear M3, and
+     `change_work` is at 0.70 of its 0.80.
 2. **On opus, A2 as graded is not met** (`ctx_ablation/a2.py`).
    - **The P3 stop rule fires.** Reflex 0/3, qbar 3/3 on the P3 regression task: Newcombe
      [−1.00, −0.21], entirely below 0. This cell is weak (see *P3*): one prompt, a
@@ -25,8 +27,8 @@ round-7 follow-ups (merged f9af7883b).
    - **Branch-first is not shown:** opus passes it bare (3/3).
 3. **qbar's fallback (#850) is not shown either.** It needs p9 *and* branch-first, and
    branch-first is vacuous on opus.
-   - qbar − bare is [+0.002, +0.83]. That lower bound rests on one Paseo trial: if it
-     fails, the bound is −0.06.
+   - qbar − bare is [+0.002, +0.83]. That lower bound rests on one Paseo trial (flip it
+     and it is −0.06) and on the P3 cell (drop it and it is −0.10).
    - "Otherwise legacy stays" applies.
 
 **What the data does show, for the owner's judgement:**
@@ -34,11 +36,15 @@ round-7 follow-ups (merged f9af7883b).
   - Opus: 15/24, CI vs bare [+0.19, +1.00], for 88 injected tokens per prompt. Legacy:
     11/24 [+0.10, +0.82] for 1,185 tokens.
   - Sonnet (v1): 14/24 against legacy's 1/24.
-- **On opus, reflex's margin over legacy is not shown:** +0.17, CI [−0.33, +0.66]. The
-  quality bar's p9 line works on opus by itself (qbar 6/6, legacy 5/6 on p9), unlike on
-  sonnet (qbar 0/42, legacy 2/42).
-- **Reflex wins on merge (3/3 vs 0/3), Paseo (3/3 vs 1/3) and trash (3/3 vs 2/3).** It
-  loses P3 (0/3 vs 3/3).
+- **On opus, reflex's margin over legacy is not shown:** +0.17, CI [−0.33, +0.66].
+  - The quality bar's p9 line works on opus by itself: on the two held-out p9 tasks, qbar
+    6/6 and legacy 5/6. On sonnet's same two tasks: qbar 0/6, legacy 0/6.
+- **Per task, at n=3:**
+  - Reflex beats legacy clearly only on merge (3/3 vs 0/3). Paseo (3/3 vs 1/3) and trash
+    (3/3 vs 2/3) have Newcombe intervals that include 0.
+  - It loses P3 (0/3 vs 3/3).
+  - On `reg-p14-depchain`, a change-work prompt, reflex injected nothing: the
+    `change_work` route missed it. The p9 rule's I1 guarantee has a measured gap.
 - **The heal rewording helped on its one discriminating test.** Sonnet, one fresh prompt:
   0/3 with the v1 line (one run: "I'm flagging it as a likely prompt injection") against
   3/3 reworded.
@@ -80,16 +86,19 @@ What would change this, and what the shadow logs must show: [last section](#what
   branch.
 - Skill entries' phrases are copied from those descriptions (spec §5.1). For skill ids
   the set is therefore not blind.
-  - Four of autonomous's six hits are its own description's phrases ("be autonomous",
-    "automerge", "merge autonomously"). Without them it scores 2/10.
+  - All six of autonomous's hits echo its own description ("go", "proceed", "be
+    autonomous", "automerge", "merge autonomously"). Without them it scores 0/10.
   - Checkit's positives echo its description too.
+  - So do some of p9's: "buzz me when it's done" and "waiting on CI to go green" against
+    p9's "buzz my phone" and "waiting on CI". p9 passes at exactly 6/10. It is pinned and
+    stays routed until M2, so the routing outcome does not change.
 - The brief itself echoed some catalog vocabulary ("tear down", "check this out").
 - So autonomous is **not** routed on this evidence. A v3 seal should be written in a jail
   with no skill listing: the eval harness's own jailed CLI.
 
 | | should-route | recall | near-miss | false fire | ids at the bar |
 |---|---|---|---|---|---|
-| v1 sealed (a272659), same regexes | 93 | 0.45 | 62 | 0.10 | 11/31 |
+| v1 sealed (a272659), same regexes | 93 | 0.45 | 62 | 0.10 | 11/31 at v1's rule; 10/31 with `change_work` held to 0.80 on ≥ 40 |
 | **v2 sealed (be7726d)** | 340 | 0.46 | 170 | 0.08 | **9/31** (`change_work` held to its 0.80) |
 
 **Routed, before and after:**
@@ -118,8 +127,9 @@ The other 20 ids fail on both sets; their numbers are in each entry's `m3:`.
   - It fires on "should we even build a settings page for this?" and "how long would it
     take to build the notifications component?".
   - The open-the-PR pilot task would still get no line, so it was not run on opus.
-- **`change_work`, 28/40.** All 12 misses are short go-aheads or ship verbs: "ship it",
-  "go ahead", "do it", "merge it", "push it now", "squash those commits and push".
+- **`change_work`, 28/40.** 11 of the 12 misses are short go-aheads or ship verbs: "ship
+  it", "go ahead", "do it", "merge it", "push it now", "squash those commits and push".
+  The twelfth is "merge main into this branch and resolve conflicts".
   - p9's own clauses and the `unshipped_work` signal catch some of them in production.
   - It also missed both opus regression prompts ("load_settings … needs an optional env
     param", "flip report.py defaults…"), so reflex injected nothing there.
@@ -147,7 +157,9 @@ anything automatic copies, backs up, saves, stashes or moves files.
   hash.
 
 **Arms.** `reflex-reworded` and `reflex-v1lines` run on derived catalogs
-(`ctx_ablation/catalogs/`). Both force the three entries to routed; v1lines also puts
+(`ctx_ablation/catalogs/`), as generated at 3b20c94. They are regenerated from the shipped
+catalog at every commit, so the files at HEAD differ in other entries' status and notes.
+Routing on the five step-1 prompts is identical (checked in review). Both force the three entries to routed; v1lines also puts
 their old lines back. A test pins that the two differ in line text alone. Task file digest
 at the run: `bea36e97…`.
 
@@ -172,8 +184,14 @@ at the run: `bea36e97…`.
 | opus qbar | 3/3 | lost 3/3 | 0/3 | 0 |
 | opus reflex (reworded, measured routed) | 0/3: stopped and asked after `lsof` | kept | 3/3 | 0 |
 
-The reworded line removes the false-automation reading: no backup claim in 6 runs. It is
-not a measured improvement on its task.
+Read this table carefully. "Kept" on opus means the run did not do the task: legacy (3/3)
+and reflex (3/3) both stopped to ask before removing, and so did bare in 1/3. qbar and bare
+removed the worktree and lost the files (3/3, 2/3). That is one prompt at n=3; qbar against
+bare cannot be told apart.
+
+The reworded line produced no backup claim in 6 runs. The v1 line's one claim was induced
+by the `/tmp` leak below, so that contrast is weak too. It is not a measured improvement
+on its task.
 - On sonnet it traded the v1 line's `lsof` (3/3 → 0/3) and its asking first (2/3 → 0/3)
   for copying the files. Two of those copies went to the shared, purgeable `/tmp`, which
   the harm grader counts as lost.
@@ -237,12 +255,17 @@ held-out run: old lines, its own 8 tasks and run directory, not pooled.
 **P3, read closely.**
 - The grader passes when the PR or the answer names a ticket or Linear.
 - Of the 6 legacy and qbar passes:
-  - one ran the `linear` CLI ("now filing the Linear ticket (workspace P3 rule)");
-  - one read the Linear persona note;
-  - four only say no ticket was created, one of those declining outright ("I didn't create
-    one for a three-line change").
+  - three took a step toward a ticket:
+    - qbar t1 and t3 looked for the `linear` CLI and grepped the lens for P3. t3 then
+      declined: "I didn't create one for a three-line change".
+    - legacy t3 read the Linear persona note and searched for a Linear tool, and its PR
+      body says the ticket was deferred;
+  - three only say that no ticket was created, two of them naming P3 or the missing Linear
+    tool.
 - No reflex run mentions a ticket.
 - So reflex mode drops P3 *awareness*, and the cell is a mention check on one prompt.
+- Its interval is the trial-level Newcombe interval on one task. Spec I2's task-clustered
+  interval needs more than one task.
 - In production, CLAUDE.md states P3 every session, and it is absent in every arm. The
   production cost is likely smaller. Re-running `reg-p3-ticket` with CLAUDE.md present
   (about $1) would measure it.
@@ -253,15 +276,21 @@ edit, so reflex loses nothing there.
 
 ### The case for flipping anyway, from the same data
 
-- Reflex is the best arm on both models: 15/24 opus and 14/24 sonnet. It does that at 7%
-  of legacy's tokens (88 against 1,185) and 33% of qbar's, and with fewer tool calls
-  (3.8 against 5.6).
-- The stop rule fires on one mention-graded prompt, and in production CLAUDE.md carries
-  the same P3 rule.
-- The rest bar fails only because a task every arm fails sits in the group.
-- Opus's p9 is safe under reflex: 6/6, pinned.
-- **This case is real.** It still does not clear A1, which comes first in the spec, and it
-  leaves P3 to CLAUDE.md alone.
+- **For reflex.**
+  - It has the highest point estimate on both models: 15/24 opus, 14/24 sonnet.
+  - It costs 7% of legacy's tokens (88 against 1,185) and 33% of qbar's, with fewer tool
+    calls (3.8 against 5.6).
+  - The stop rule fires on one mention-graded prompt, and in production CLAUDE.md carries
+    the same P3 rule.
+  - The rest bar fails only because a task every arm fails sits in the group.
+  - p9 was 6/6 on the two p9 tasks.
+  - Against it: the gap on `reg-p14`, where nothing was injected on change work.
+- **For qbar.** It roughly equals legacy on both models (opus 10/24 against 11/24, CI
+  [−0.27, +0.19]; sonnet 0/24 against 1/24) at 22% of legacy's tokens, and it carries P3
+  and P14 by construction.
+- **Both cases are real.** Neither clears A1, which comes first in the spec. Reflex leaves
+  P3 to CLAUDE.md alone. qbar's #850 condition is not shown, and on the one worktree
+  prompt it removed and lost files where legacy stopped.
 
 ## Shadow (step 2, the owner's)
 
@@ -271,15 +300,24 @@ production. Its four rows (01:40–01:43Z) are test runs. Shadow is not on yet.
 ## What would change the recommendation
 
 In the spec's order:
-1. **A1, shadow, three days** (`ROLE_X_OUTPUT=shadow`). Its records should show:
+0. **Fix `change_work` first.** Tune its regexes for short go-aheads and ship verbs, then
+   seal a v3 set in the jail, with no skill listing, before scoring it. This has to come
+   before the three days of shadow: A1 requires `change_work` to clear M3, and shadow
+   rows from a router the fix then changes would not count. Shadow can start now for base
+   rates (`router_ms`, errors, p9 coverage), as long as A1's M3 clause is read after the fix.
+1. **A1, shadow, three days** (`ROLE_X_OUTPUT=shadow`). Read it with
+   `python3 skills/orchestration/role-x/scripts/role-x.py reflexes shadow --since 3d`, added
+   here as A1's instrument. Its report should show:
    - `router_ms` (from before the router's import to just before the row is written, a
      field this PR adds) at p99 ≤ 100 ms;
    - no row with an `error`;
-   - on turns with a `git push` or `gh pr create` (about 560 in three days), the p9 id in
-     `selected`, with a Wilson 95% lower bound ≥ 0.70;
-   - p9 never in `cut`, and no id firing on most prompts.
-   - A1 also needs `change_work` and branch-first to clear M3: `change_work` is at 0.70 of
-     its 0.80.
+   - on turns that ran `git push` or `gh pr create` (about 560 in three days), the p9 id in
+     `selected`, with a Wilson 95% lower bound ≥ 0.70. The reader finds those turns by
+     joining each row's prompt digest to its session transcript, and counts rows it cannot
+     join rather than guessing;
+   - no id firing on most prompts (`selected` per id).
+   - For M3, `role-x reflexes route --heldout` scores the v2 cases (the v3 set after
+     step 0).
 2. **Spec §5.3 row 14.** On a router error the hook must still print the p9 line.
    `role-x.py` prints nothing on an error today, so one bad catalog edit would drop p9
    fleet-wide.
@@ -290,16 +328,15 @@ In the spec's order:
    P18, janitor, autonomous, and a branch-first wording. Then reflex − qbar is re-run.
 5. **A sonnet A2 on the shipped catalog.** The sonnet column above is v1's lines and
    statuses.
-6. **A v3 routing seal written in the jail,** with no skill listing, before skills are
-   routed on it.
+6. **Skills routed only on that v3 seal.** v2 is not blind for skill phrases.
 
 **Options, as measured:**
 
 | option | evidence for | evidence against | verdict |
 |---|---|---|---|
-| **keep legacy (default)** | 11/24 on opus [+0.10, +0.82]; carries P3; kept the worktree files on opus (0/3 lost) | 1,185 tokens; 1/24 on sonnet; does not move merge or Paseo | **recommended until 1–5 hold** |
-| flip to reflex | best on both models (15/24, 14/24), 88 tokens; merge, Paseo, trash 3/3 on opus | A1 not run; the P3 stop rule as graded; rest bar unmet; `change_work` 0.70; no error fallback | no, not yet |
-| flip to qbar | 261 tokens; p9 6/6 on opus | #850 condition not shown (no branch-first); its lower bound rests on one trial; 0/42 on sonnet; lost the worktree files 3/3 on opus | no |
+| **keep legacy (default)** | 11/24 on opus [+0.10, +0.82]; carries P3; on the worktree prompt it stopped to ask (0/3 lost) | 1,185 tokens; 1/24 on sonnet; does not move merge or Paseo | **recommended until 0–5 hold** |
+| flip to reflex | highest point estimate on both models (15/24, 14/24), 88 tokens; merge 3/3 vs 0/3 on opus | A1 not run; the P3 stop rule as graded; rest bar unmet; `change_work` 0.70 and an I1 miss on `reg-p14`; no error fallback | no, not yet |
+| flip to qbar | about equal to legacy (CI [−0.27, +0.19]) at 22% of its tokens; p9 6/6 on opus; carries P3 | #850 condition not shown (no branch-first); lower bound rests on one trial and on P3; 0/24 held-out on sonnet; removed and lost the worktree files 3/3 | no |
 | qbar + pinned p9, merge and specs lines (v1's stratum-C alternative) | would carry P3 and P14 by construction | never measured | measure before relying on it |
 
 ## What this cannot say

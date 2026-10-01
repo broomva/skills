@@ -521,8 +521,8 @@ reflexes:
     skill_source: skills/orchestration/autonomous/SKILL.md
     routing: skills/orchestration/autonomous/evals/prompts.json
     status: listed
-    m3: "sealed v2 (be7726d): recall 0.6 (6/10), false fire 0.0 (0/5), passes 0.60 / 0.20; v1 (a272659, 3/2): recall 0.33, false fire 0.0. Not routed: 4 of its 6 hits are this skill's own description phrases (be autonomous,
-      automerge, merge autonomously), which the v2 writer could see in its skill listing; without them 2/10"
+    m3: "sealed v2 (be7726d): recall 0.6 (6/10), false fire 0.0 (0/5), passes 0.60 / 0.20; v1 (a272659, 3/2): recall 0.33, false fire 0.0. Not routed: all 6 hits echo this skill's own description (go, proceed, be autonomous,
+      automerge, merge autonomously), which the v2 writer could see in its skill listing; without them 0/10"
     priority: 37
     when:
       - phrases: [/autonomous, full bstack, merge autonomously, automerge, be autonomous, let it run]

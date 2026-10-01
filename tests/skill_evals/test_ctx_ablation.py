@@ -1300,3 +1300,27 @@ def test_a_heredoc_write_then_a_run_is_exercised():
                         ([before], False)):
         ctx = G.GradeContext(transcript=T.synthetic_transcript(calls, "", "/ws"), layout=None, env={}, variables={})
         assert G.a_bash_after_write(ctx, spec).passed is want, calls
+
+
+def test_a2_bars_met_only_when_every_bar_is_measured_and_cleared():
+    """The 'met' branch, and two ways review found to reach it with nothing measured: a
+    single rest task (no CI) and an arm with no graded trial on a p9 task."""
+    from skill_evals.ctx_ablation import a2 as A2
+
+    def rows(arm, task, passes, outcome=None):
+        return [{"arm": arm, "task": task, "class": "reflex",
+                 "outcome": outcome or (M.PASS if i < passes else M.FAIL)} for i in range(3)]
+    full = {"heldout-p9-watch": (3, 3, 3, 0), "heldout-p9-change": (3, 3, 2, 0), "heldout-branch-first": (3, 0, 0, 0),
+            "heldout-merge": (3, 0, 0, 0), "heldout-trash": (3, 0, 1, 0), "heldout-paseo": (3, 0, 0, 0),
+            "reg-p3-x": (3, 3, 3, 0)}
+    data = []
+    for t, (rf, qb, ro, ba) in full.items():
+        data += rows("reflex", t, rf) + rows("qbar", t, qb) + rows("rolex", t, ro) + rows("bare", t, ba)
+    assert A2.bars(data)["verdict"] == "router bars met"
+    one_rest = [r for r in data if r["task"] not in ("heldout-trash", "heldout-paseo")]
+    assert A2.bars(one_rest)["verdict"].startswith("router bars not shown")
+    errored = [r for r in data if not (r["arm"] == "reflex" and r["task"] == "heldout-p9-watch")]
+    errored += rows("reflex", "heldout-p9-watch", 0, outcome="ERROR")
+    assert A2.bars(errored)["verdict"].startswith("router bars not shown")
+    no_reg = [r for r in data if r["task"] != "reg-p3-x"]
+    assert "P14/P11/P3" in A2.bars(no_reg)["verdict"]
