@@ -114,8 +114,6 @@ def run(sec: Dict[str, Any], tick: int, fleet_bin: str, out_path: Path, dry: boo
     report_json = out_path.parent / "report.json"
     av = argv(sec, sp, prompt(sec, tick, report_json, dry, fleet_bin), claude)
     extra = {"FLEET_TICK": str(tick), "FLEET_SCOPE": sec["scope"], "DRY_RUN": "1" if dry else "0"}
-    if os.environ.get("GH_TOKEN"):
-        extra["GH_TOKEN"] = os.environ["GH_TOKEN"]  # tick.sh exports the fleet token for this step
     res: Dict[str, Any] = {"exit": None, "posture": [], "init": False}
     with out_path.open("w", encoding="utf-8") as out, out_path.with_suffix(".err").open("w") as err:
         proc = subprocess.Popen(av, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, text=True,

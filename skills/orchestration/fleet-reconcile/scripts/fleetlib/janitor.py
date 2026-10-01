@@ -419,9 +419,10 @@ def run(sec: Dict[str, Any], src: Sources, path: str, owner: str, remove: bool,
     if not res["removed"]:  # claude rm keeps a worktree with changes or unpushed commits
         res["aborted"] = "rm kept the worktree"
         return res
-    # The driver's profile holds the fleet token; it goes with the worktree
-    # (§5.3). It is keyed by the ledger's spawn of this session, not by a name
-    # from the listing (a duplicate name, or one like "..", must delete nothing).
+    # The driver's profile goes with the worktree (§5.3), and a gh config dir
+    # a spawn before 0.4.0 made. Keyed by the ledger's spawn of this session,
+    # not by a name from the listing (a duplicate name, or one like "..", must
+    # delete nothing).
     sd = Path(sec["state_dir"])
     key = next((k for k, ids in ledger.spawned(ledger.read(sd)[0]).items()
                 if owner_sid in ids or owner_sid[:8] in ids), None)

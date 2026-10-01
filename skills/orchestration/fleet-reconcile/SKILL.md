@@ -3,7 +3,7 @@ name: fleet-reconcile
 tier: D
 primitive: null
 category: orchestration
-version: 0.3.0
+version: 0.4.0
 description: |
   The hourly fleet coordinator. Phase 1 observes and classifies, report only;
   phase 2 adds the coordinator and its verbs under dry run.
@@ -53,8 +53,8 @@ only through `fleet act`; under dry run every verb but ask logs what it would
 do (see "Phase 2" below).
 
 **Not a boundary.** Nothing here constrains any session. The tick's reads are
-the owner's own reads (claude agents, gh with the fleet token or the keyring,
-files under $HOME). What bounds a merge is the repo's ruleset on GitHub (spec
+the owner's own reads (claude agents, gh on the owner's login, files under
+$HOME). What bounds a merge is the repo's ruleset on GitHub (spec
 §5.1); the report's ruleset check says which repos have one.
 
 ## Install (the owner runs this)
@@ -101,15 +101,15 @@ Trash; the config, the releases and the state dir stay.
    ticks can't both reclaim it.
 4. The tick number from `fleet next-tick`: one past both the counter file and
    the ledger's last `tick_fire`, so a lost counter can't reuse a number.
-5. The fleet token: `gh_token_file` (the example config sets
-   `~/.config/broomva/fleet/gh-token`) is read from its file, never argv, never
-   printed, and exported for the observe step only; observe passes it to `gh`
-   and to no other child. An absent, unreadable or empty file means the
-   keyring, which the report says. A file whose mode isn't 0600 or 0400 is not
-   used (the keyring is), and the `tick_fire` record says why.
+5. GitHub is read and written on the owner's gh login (the keyring). Owner
+   decision 2026-10-01: no fleet token or GitHub App, and spec §5.2's
+   non-admin credential precondition is waived; the accepted residual is that
+   the fleet acts with admin rights, and the repos' gates still judge every
+   merge. tick.sh drops a `GH_TOKEN` or `GITHUB_TOKEN` it inherits, so every
+   step reads GitHub as that login. `gh_token_file` is accepted and not read.
 6. `fleet recover` (closes intents a dead tick left open), `fleet observe`,
    `fleet report`, in act mode `fleet coordinator` (only after the three
-   before it succeeded; it also gets the fleet token), and `fleet
+   before it succeeded), and `fleet
    core-compare` (the core's comparison, once a day from `compare_hour`),
    each in its own process group under a TERM-then-KILL watchdog bounded by
    `tick_timeout_min` (15), so a timeout also ends its `claude` and `gh`
@@ -305,9 +305,9 @@ under dry run (§5.7): it reaches only the owner.
 ```
 
 Config keys beyond §5.7's, pending the spec: `listing_cap`, `pr_list_cap`,
-`gh_token_file`, `actions_app_id` (15368, GitHub Actions), `launchd_prefix`,
+`actions_app_id` (15368, GitHub Actions), `launchd_prefix`,
 `launchd_logs` (a label's real log, when its stdout is silent),
-`bookkeeping_run_log`, `dream_run_log`, `ask_renotify_h`, `tick_timeout_min`, `compare_hour`,
+`bookkeeping_run_log`, `dream_run_log`, `tick_timeout_min`, `compare_hour`,
 `coordinator_model` (phase 2; null is Claude Code's default), `coordinator_budget_usd` (2),
 `maestro_cli`, `maestro_bun`, `ask_repo`, `ask_raise_after_min` (50; the owner channel). §5.7's `paseo_tools` defaults to
 the pinned 0.9.2 classification (19 read, 42 write) and `driver` to probe 6's GitHub
@@ -401,8 +401,7 @@ event's tool list is checked as it starts: any tool outside the allowlist
 (measured: with `--tools` the init event lists exactly those three), a Paseo
 tool in neither pinned list, no list at all, an event before the init event,
 or no init event within 60 s stops it (exit 4; the tick fails loudly). It stays in the step's process
-group, so tick.sh's TERM-then-KILL reaches it. A live tick (`dry_run: 0`)
-without a usable fleet token file runs no coordinator and alerts. The tool
+group, so tick.sh's TERM-then-KILL reaches it. The tool
 list is a posture: the coordinator runs unsandboxed and its Bash reaches git,
 gh and the Paseo CLI.
 
@@ -419,8 +418,8 @@ its target, then re-observes and re-checks in code:
   board weren't read, or while a spawn of the same key is unconfirmed. The
   argv is §5.3's: `claude --bg -w <key> --name <key> --strict-mcp-config
   --dangerously-skip-permissions --settings <0600 profile> "<brief>"`. A live
-  spawn is refused without the fleet token file; one whose session the
-  listing doesn't show yet is done with its job id, which keys it until then.
+  spawn whose session the listing doesn't show yet is done with its job id,
+  which keys it until then.
 - `mail --session SID --template ...`: only a fleet spawn in the ledger or an
   adopted session; resolved to the live row by session id, else through its
   Paseo agent's current session; refused when no row has a process
@@ -435,7 +434,7 @@ its target, then re-observes and re-checks in code:
   with no other flag (a flag starts a copy; so does a session that still holds
   its process, which the drill measured).
 - `label --repo R --pr N --label L [--remove]`: an open PR of a scope repo;
-  never the `hold` label (the owner's); live only on the fleet token.
+  never the `hold` label (the owner's).
 
 Each writes its intent (fsynced) before acting; under dry run spawn, label and
 resume are closed at once with `done` and `would: true` plus the argv or API
@@ -453,8 +452,18 @@ PostToolUseFailure close a live send, and a send with no intent is recorded as
 from what happened (§5.7's rules).
 
 **The driver profile** (`profile.py`, `fleet driver-profile`): probe 6's shape,
-written 0600 per spawn under `profiles/`, with GH_TOKEN from `gh_token_file`
-(mode 600 or 400 only) and an empty per-spawn `GH_CONFIG_DIR`.
+written 0600 per spawn under `profiles/`, with no token (since 0.4.0). The
+denyRead on gh's config and the login keychain is gone, so a driver reads the
+owner's login inside the sandbox with `gh auth token`, which needs no network;
+the ~/.paseo, ~/.claude and settings-file denies stay. gh's own network calls
+fail TLS inside the sandbox (OSStatus -26276; a CA file doesn't help), and
+`sandbox.excludedCommands` didn't take gh out of it while
+`allowUnsandboxedCommands` is false, so drivers push with git (hooks
+bypassed: the global pre-push hook's git-lfs fails the same way, so a driver
+can't push LFS objects) and call the REST API with curl. Measured in the
+credential drill (`~/.config/broomva/fleet/credential-drill-20261001/`):
+push, a REST PR, update-branch and a squash merge on a private scratch repo,
+with ~/.paseo reads and $HOME writes still refused.
 
 **The janitor** (`janitor.py`): `fleet janitor-check PATH --owner ID` exits 0
 only when every check passes, 1 on a failure and 2 when a check couldn't run;
@@ -476,8 +485,9 @@ the argv is built here), research spawns.
   the injected-text eligibility floor; the janitor.
 - Driver profile:
   - the sandbox half passed on a fake token, fresh and after a resume;
-  - the credential half is BLOCKED on the fleet token file;
-  - the update-branch probe is BLOCKED on the same file.
+  - the credential half and the update-branch probe passed on the owner's
+    login in the 2026-10-01 credential drill (above), after the owner waived
+    the fleet token.
 - NOT RUN: the recovery drill.
 
 **The ask channel is on Paseo** (owner decision 2026-10-01; see "The owner
@@ -485,7 +495,7 @@ channel" above): Maestro work at Needs you, never a macOS dialog.
 
 ## Phase 3
 
-Needs the three preconditions of spec §5.2: the fleet token, the Merge Gate
-judged by the base's copy, and the Hold and owner-merge checks. It also needs
-the blocked and unrun drills above, and the owner's review of the dry run's
-proposals. Then `dry_run: 0`.
+Needs the two remaining preconditions of spec §5.2 (the owner waived the
+first, the fleet token): the Merge Gate judged by the base's copy, and the
+Hold and owner-merge checks. It also needs the unrun recovery drill and the
+owner's review of the dry run's proposals. Then `dry_run: 0`.

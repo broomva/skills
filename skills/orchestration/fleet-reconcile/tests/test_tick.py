@@ -1,6 +1,6 @@
 """tick.sh end to end, and the CLI verbs around it, in an isolated HOME with
 stub `claude`, `gh` and `maestro` that serve the captured fixture and
-record how they were called (the fleet token's length only, never its value)."""
+record how they were called (a GH_TOKEN's length only, never its value)."""
 from __future__ import annotations
 
 import json
@@ -167,39 +167,17 @@ def test_a_tick_observes_reports_asks_and_records_itself(rig):
     assert (sd / "asks" / "00001.md").is_file()
 
 
-def test_the_fleet_token_reaches_gh_through_the_environment_and_nowhere_else(rig):
-    rig.tick()
-    lengths = set(rig.calls("gh-token-lengths"))
-    assert lengths == {str(len(TOKEN))}
-    assert set(rig.calls("claude-token-lengths")) == {"0"}  # claude runs without it
+def test_no_token_reaches_any_step_even_one_configured_or_inherited(rig):
+    # Owner decision 2026-10-01: GitHub on the owner's gh login. gh_token_file is set (accepted, not read),
+    # and a token inherited from the shell is dropped.
+    r = rig.tick(GH_TOKEN=TOKEN, GITHUB_TOKEN=TOKEN)
+    assert r.returncode == 0, rig.log()
+    assert set(rig.calls("gh-token-lengths")) == {"0"} and set(rig.calls("claude-token-lengths")) == {"0"}
     sd = rig.world.state["broomva"]
     for p in sd.rglob("*"):
         if p.is_file():
             assert TOKEN not in p.read_text(errors="replace"), p
-    assert "gh: fleet token file" in rig.log()
-
-
-def test_without_a_token_file_gh_falls_back_to_the_keyring_and_the_report_says_so(rig):
-    rig.token_file.unlink()
-    rig.tick()
-    assert set(rig.calls("gh-token-lengths")) == {"0"}
-    assert "token file" in rig.log() and "unreadable" in rig.log()
-    md = (rig.world.state["broomva"] / "ticks" / "00001" / "report.md").read_text()
-    assert "read with the keyring token" in md
-
-
-def test_an_empty_token_file_is_not_a_token(rig):
-    rig.token_file.write_text("\n")
-    rig.tick()
-    assert set(rig.calls("gh-token-lengths")) == {"0"} and "is empty" in rig.log()
-
-
-def test_a_token_file_open_to_others_is_not_used(rig):
-    rig.token_file.chmod(0o644)
-    rig.tick()
-    assert set(rig.calls("gh-token-lengths")) == {"0"} and "not used" in rig.log()
-    fire = [x for x in rig.ledger() if x["kind"] == "tick_fire"][0]
-    assert "mode 644" in fire["detail"] and fire["detail"].startswith("release: checkout; gh: keyring")
+    assert "gh: keyring (the owner's gh login)" in rig.log()
 
 
 def test_the_kill_switch_stops_the_tick_before_anything_fires(rig):
@@ -295,7 +273,7 @@ def test_each_run_leaves_one_line_on_stdout_for_launchds_log(rig):
 @pytest.mark.parametrize("cfg_dry,env_dry,expected", [(1, None, True), (0, None, False), (0, "1", True),
                                                       (1, "0", True), (0, "yes", True)])
 def test_dry_run_falls_toward_dry(rig, cfg_dry, env_dry, expected):
-    rig.world.write_config(dry_run=cfg_dry, gh_token_file=str(rig.token_file))
+    rig.world.write_config(dry_run=cfg_dry)
     rig.tick(**({"DRY_RUN": env_dry} if env_dry is not None else {}))
     fire = [x for x in rig.ledger() if x["kind"] == "tick_fire"][0]
     assert fire["dry_run"] is expected
@@ -404,7 +382,7 @@ def test_a_batch_still_queued_at_the_cap_is_neither_a_failure_nor_seen_and_is_di
 
 
 def test_a_batch_reaches_the_owner_only_once_its_asks_have_lasted(rig):
-    rig.world.write_config(gh_token_file=str(rig.token_file), ask_raise_after_min=50)
+    rig.world.write_config(ask_raise_after_min=50)
     r = rig.tick()
     assert r.returncode == 0 and rig.raised(BATCH) == [] and "1 waiting" in rig.log()
     # An hour on, the asks are still open: the batch is raised.
@@ -498,7 +476,7 @@ def test_a_failed_compare_does_not_use_up_the_day_and_the_prototypes_line_is_ref
 
 
 def test_in_act_mode_the_tick_recovers_then_runs_the_coordinator_with_the_send_gate(rig):
-    rig.world.write_config(mode="act", gh_token_file=str(rig.token_file))
+    rig.world.write_config(mode="act")
     r = rig.tick()
     assert r.returncode == 0, rig.log()
     assert re.search(r"recover=0 observe=0 report=0 coordinator=0 compare=\d ask=0$", r.stdout.strip())
@@ -508,7 +486,7 @@ def test_in_act_mode_the_tick_recovers_then_runs_the_coordinator_with_the_send_g
     assert "send-gate pre --scope broomva" in hooks["PreToolUse"][0]["hooks"][0]["command"]
     env = dict(ln.split("=", 1) for ln in rig.calls("coordinator-env") if "=" in ln)
     assert env["FLEET_TICK"] == "1" and env["DRY_RUN"] == "1" and env["FLEET_CHILD"] == "1"
-    assert len(env["GH_TOKEN"]) == len(TOKEN)  # the fleet token, for the coordinator's gh
+    assert "GH_TOKEN" not in env  # the coordinator's gh uses the owner's login
 
 
 def test_a_coordinator_with_a_disallowed_tool_is_stopped_and_the_tick_fails(rig):
@@ -531,7 +509,7 @@ def test_a_tick_first_closes_the_intents_a_dead_tick_left_open(rig):
     assert "recover: 0-1 spawn broomva-x-pr1 -> failed" in rig.log()
 
 
-def test_recover_reads_github_with_the_fleet_token(rig):
+def test_recover_reads_github_on_the_owners_login(rig):
     sd = rig.world.state["broomva"]
     sd.mkdir(parents=True, exist_ok=True)
     rec = {"v": 1, "id": "0-1", "ts": "2026-09-30T00:00:00.000Z", "scope": "broomva", "tick": 0, "dry_run": False,
@@ -540,14 +518,15 @@ def test_recover_reads_github_with_the_fleet_token(rig):
     (sd / "ledger.jsonl").write_text(json.dumps(rec) + "\n")
     rig.tick()
     assert [x["by"] for x in rig.ledger() if x.get("of") == "0-1"] == ["recover"]
-    assert set(rig.calls("gh-token-lengths")) == {str(len(TOKEN))}  # recover's gh call included
+    assert set(rig.calls("gh-token-lengths")) == {"0"}  # recover's gh call included: no token
 
 
-def test_a_live_tick_without_the_fleet_token_runs_no_coordinator_and_says_so(rig):
+def test_a_live_tick_runs_the_coordinator_on_the_owners_login(rig):
+    # The fleet token is waived (spec §5.2 precondition 1): a live tick needs none.
     rig.world.write_config(mode="act", dry_run=0)
     r = rig.tick()
-    assert r.returncode == 1 and "coordinator=skipped" in r.stdout and rig.calls("coordinator-env") == []
-    assert rig.raised("fleet broomva: tick-token")
+    assert r.returncode == 0 and "coordinator=0" in r.stdout and rig.calls("coordinator-env") != [], rig.log()
+    assert not rig.raised("tick-token")
 
 
 def test_in_report_mode_no_coordinator_runs(rig):

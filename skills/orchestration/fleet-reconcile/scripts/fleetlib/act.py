@@ -332,10 +332,7 @@ class Act:
                                    "cwd": workdir, "claims": "checked" if snap["claims"]["published"]
                                    else "not published yet (core phase 2)"})
         try:
-            token = profile.read_token(self.sec)
-            if not token:
-                return self._failed(it, "spawn_error", "no fleet token file: a live spawn is refused without it")
-            profile.write(prof, profile.driver_profile(self.sec, key, token, profile.gh_config_dir(self.sd, key)))
+            profile.write(prof, profile.driver_profile(self.sec, key))
             out = self.src.run_claude(argv[1:], cwd=workdir)
         except (SourceError, OSError) as exc:
             return self._failed(it, "spawn_error", common.safe_text(exc, 160))
@@ -369,8 +366,6 @@ class Act:
             if name.strip().lower() == HOLD_LABEL:
                 raise Refused("ineligible", "the %s label is the owner's: fleet act neither adds nor removes it"
                               % HOLD_LABEL)
-            if not self.dry and not profile.read_token(self.sec):
-                raise Refused("ineligible", "a live label needs the fleet token file (never the keyring)")
             repo = self._repo(slug)
             if not any(p["number"] == number for p in repo["prs"]):
                 raise Refused("ineligible", "#%d is not an open PR of %s" % (number, slug))
@@ -385,7 +380,6 @@ class Act:
             return self._done(it, {"would": True, "call": "gh api -X %s %s%s" % (
                 call[0], call[1], "".join(" -f %s=%s" % kv for kv in call[2].items()))})
         try:
-            self.src.use_token(profile.read_token(self.sec) or "")
             self.src.gh_api(call[0], call[1], call[2])
         except SourceError as exc:
             return self._failed(it, "harness_refused", common.safe_text(exc, 160))

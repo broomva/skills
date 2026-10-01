@@ -39,7 +39,7 @@ SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     # phase 1
     "listing_cap": ("int", 200),              # a session listing this long may be truncated: fail closed
     "pr_list_cap": ("int", 200),              # the same for `gh pr list` per repo
-    "gh_token_file": ("str_or_null", None),   # tick.sh exports it as GH_TOKEN when present
+    "gh_token_file": ("str_or_null", None),   # unused since 0.4.0 (the owner's gh login); accepted, not read
     "actions_app_id": ("int", 15368),         # the app a required check must be pinned to (GitHub Actions)
     "launchd_prefix": ("str_or_null", None),  # scheduled-work inventory: which LaunchAgents to list
     "launchd_logs": ("str_map", None),        # label -> the log that shows a real run, when stdout doesn't

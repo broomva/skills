@@ -1,5 +1,31 @@
 # Changelog: fleet-reconcile
 
+## [0.4.0] - 2026-10-01
+
+The fleet uses the owner's gh login. Owner decision, 2026-10-01: no fleet
+token or GitHub App ("it's fine that it goes as me"), and spec §5.2's
+non-admin credential precondition is waived; the accepted residual is that
+the fleet acts with admin rights while the repos' gates still judge every
+merge. Ticket BRO-2674.
+
+- **No token anywhere.** tick.sh no longer reads `gh_token_file` (accepted,
+  not read) and drops a `GH_TOKEN` or `GITHUB_TOKEN` it inherits; the
+  coordinator gets none; a live spawn and a live label no longer need one; a
+  live tick runs its coordinator without one.
+- **The driver profile carries no token** and no longer denies reading gh's
+  config or the login keychain; the ~/.paseo, ~/.claude and settings-file
+  denies stay. Measured in a credential drill on a private scratch repo
+  (`~/.config/broomva/fleet/credential-drill-20261001/`): inside the sandbox
+  `gh auth token` reads the owner's login without the network, git pushes
+  through gh's credential helper, and curl opens a PR, updates a branch and
+  squash-merges through REST. gh's own network calls fail TLS there (OSStatus
+  -26276; a CA file doesn't help), and `sandbox.excludedCommands` didn't take
+  gh out of the sandbox while `allowUnsandboxedCommands` is false. The global
+  pre-push hook's git-lfs fails the same way, so the driver brief says to push
+  with hooks bypassed and to stop on a change that adds LFS objects.
+- The phase-2 drills left blocked on the token (the driver credential half,
+  update-branch) passed in that drill.
+
 ## [0.3.0] - 2026-10-01
 
 The owner channel moves to Paseo (owner decision, 2026-10-01: "If it goes to

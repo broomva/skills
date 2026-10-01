@@ -14,7 +14,7 @@
 #
 # PHASE 1 runs deterministic code only and acts on no session; the owner
 # channel's Maestro items each run one model turn. Per tick: kill switch,
-# config-check, lock, the tick number, the fleet token, observe, report
+# config-check, lock, the tick number, observe, report
 # (classes, count check, asks), the core comparison once a day, the owner's
 # asks (fleet act ask --show, Maestro work in the Paseo app), and the ledger's
 # tick_fire and runner_exit.
@@ -52,10 +52,8 @@ cfg() { "$FLEET" config-get "$SCOPE" "$1" 2>/dev/null; }
 # BSD (macOS) or GNU stat, detected once by behaviour, as governed-autonomy-loop does.
 if stat -c %Y / >/dev/null 2>&1; then
   file_mtime() { stat -c %Y "$1" 2>/dev/null; }
-  file_mode() { stat -c %a "$1" 2>/dev/null; }
 else
   file_mtime() { stat -f %m "$1" 2>/dev/null; }
-  file_mode() { stat -f %Lp "$1" 2>/dev/null; }
 fi
 
 STATE_DIR=$(cfg state_dir)
@@ -219,25 +217,12 @@ esac
 RELEASE=$(head -1 "$SCRIPT_DIR/../../../RELEASE" 2>/dev/null | sed 's/^release //')
 [ -n "$RELEASE" ] || RELEASE="checkout"
 
-# ── the fleet token: read from its 0600 file, never argv, never printed ───────
-# Exported for the observe step and the coordinator only; observe passes it
-# to gh and to nothing else.
-GH_AUTH="keyring"
-TOKEN=""
-TOKFILE=$(cfg gh_token_file)
-if [ -n "$TOKFILE" ]; then
-  if [ -r "$TOKFILE" ]; then
-    MODE=$(file_mode "$TOKFILE")
-    if [ "$MODE" != "600" ] && [ "$MODE" != "400" ]; then
-      GH_AUTH="keyring (the token file has mode $MODE, not 600: not used)"
-    else
-      TOKEN=$(head -c 512 "$TOKFILE" | tr -d '[:space:]')
-      if [ -n "$TOKEN" ]; then GH_AUTH="fleet token file"; else GH_AUTH="keyring (the token file is empty)"; fi
-    fi
-  else
-    GH_AUTH="keyring (the token file is unreadable)"
-  fi
-fi
+# ── GitHub: the owner's gh login (owner decision 2026-10-01) ──────────────────
+# No fleet token: spec §5.2's non-admin credential is waived, and gh uses the
+# owner's keyring login. A token inherited from a shell is dropped, so every
+# step reads GitHub as the same login.
+unset GH_TOKEN GITHUB_TOKEN
+GH_AUTH="keyring (the owner's gh login)"
 
 "$FLEET" ledger-append fire --scope "$SCOPE" --tick "$N" --dry-run "$DRY" --detail "release: $RELEASE; gh: $GH_AUTH" \
   >> "$LOG" 2>&1
@@ -288,8 +273,6 @@ step() {
 
 RCS=""
 FAILED=""
-# §5.7's order: the fleet token, then recover (its label check reads GitHub).
-if [ -n "$TOKEN" ]; then export GH_TOKEN="$TOKEN"; fi
 export FLEET_GH_AUTH="$GH_AUTH" FLEET_RELEASE="$RELEASE"
 # Intents a dead tick left open are closed first, from what happened (§5.7).
 step recover "$FLEET" recover --scope "$SCOPE" --tick "$N"; RCS="recover=$RC"
@@ -301,19 +284,13 @@ if [ "$RC" = "0" ]; then
   [ "$RC" = "0" ] || FAILED="${FAILED:-report}"
 fi
 # The coordinator, in act mode only, after a clean recover, observe and report;
-# it gets the fleet token too (§5.2) and acts only through fleet act. A tool
-# list that fails the posture check ends it with exit 4.
+# it acts only through fleet act. A tool list that fails the posture check
+# ends it with exit 4.
 MODE=$(cfg mode)
-# Live acts on the fleet token only (§5.2); without it, no live coordinator.
-if [ "$MODE" = "act" ] && [ "$DRY" = "0" ] && [ -z "$TOKEN" ]; then
-  log "no coordinator: live mode (dry_run 0) needs the fleet token file, and gh is on the $GH_AUTH"
-  RCS="$RCS coordinator=skipped"
-  FAILED="${FAILED:-token}"
-elif [ "$MODE" = "act" ] && [ -z "$FAILED" ]; then
+if [ "$MODE" = "act" ] && [ -z "$FAILED" ]; then
   step coordinator "$FLEET" coordinator --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS coordinator=$RC"
   [ "$RC" = "0" ] || FAILED="coordinator"
 fi
-unset GH_TOKEN TOKEN
 # The core's comparison: a read-only step the kill switch stops with the tick,
 # which dry_run and mode don't govern (core §9). Its verdict isn't the tick's.
 step compare "$FLEET" core-compare --scope "$SCOPE"; RCS="$RCS compare=$RC"

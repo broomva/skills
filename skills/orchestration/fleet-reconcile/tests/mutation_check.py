@@ -9,12 +9,12 @@
   slug reading as zero, the bearer and env never extracted, activity read from
   transcripts only, the arc and death currency rules, the ask suppression and
   re-notify windows, the text guard, and in tick.sh the recursion guard, the
-  kill switch, dry-falls-toward-dry and the token's export; plus one per P20
+  kill switch, dry-falls-toward-dry and the inherited token dropped; plus one per P20
   round-1 finding (the job time, the cap cross-check, degraded surfaces, the
   unknown branch, ack-through, per-key asks, token scoping, a failed tick's
   exit, the process-group kill, tick numbering) and per round-3 fix (where a
   key may resolve, the wait's key, the tail windows, the dialog's default,
-  line and failure, the lock before an alert, the token file's mode, the held
+  line and failure, the lock before an alert, the held
   lock, the compare's day and refusal, owner ids).
 
 Each mutant edits a scratch copy of this skill (and ctx-core beside it) and
@@ -85,8 +85,8 @@ PROTECTIONS = [
     ("no kill switch", TICK, 'if [ "$KILL" != "1" ]; then', "if false; then", [T + "test_tick.py", "-k", "kill_switch"]),
     ("an env value makes a tick live", TICK, "  (*) DRY=1 ;;", "  (*) DRY=0 ;;",
      [T + "test_tick.py", "-k", "falls_toward_dry"]),
-    ("the token not exported", TICK, 'if [ -n "$TOKEN" ]; then export GH_TOKEN="$TOKEN"; fi', ":",
-     [T + "test_tick.py", "-k", "token_reaches"]),
+    ("an inherited token reaches the steps", TICK, "unset GH_TOKEN GITHUB_TOKEN\n", "",
+     [T + "test_tick.py", "-k", "no_token_reaches"]),
     # P20 round 1 findings, each pinned
     ("a job's time read as epoch ms only", PAR, '        "updated_at": _epoch(d.get("updatedAt")),',
      '        "updated_at": (d["updatedAt"] / 1000.0) if type(d.get("updatedAt")) is int else None,',
@@ -249,22 +249,14 @@ PROTECTIONS = [
      "    env = {k: v for k, v in os.environ.items() if k in CHILD_KEEP or not k.startswith(CHILD_DROP)}",
      "    env = dict(os.environ)",
      [T + "test_coordinator.py", "-k", "no_session_variables"]),
-    ("the profile doesn't hide gh's config", "scripts/fleetlib/profile.py",
-     'DENY_READ = ["~/.config/gh", "~/.paseo", KEYCHAIN]', 'DENY_READ = ["~/.paseo", KEYCHAIN]',
-     [T + "test_coordinator.py", "-k", "probe_6"]),
+    ("the profile doesn't hide Paseo's directory", "scripts/fleetlib/profile.py",
+     'DENY_READ = ["~/.paseo"]', "DENY_READ = []", [T + "test_coordinator.py", "-k", "probe_6"]),
     ("the profile allows settings edits", "scripts/fleetlib/profile.py", ', "Edit(**/.claude/settings*.json)"]', "]",
      [T + "test_coordinator.py", "-k", "probe_6"]),
     ("the allowlist isn't strict", "scripts/fleetlib/profile.py", '"strictAllowlist": True', '"strictAllowlist": False',
      [T + "test_coordinator.py", "-k", "probe_6"]),
-    ("a driver uses a token file open to others", "scripts/fleetlib/profile.py",
-     "        if stat.S_IMODE(st.st_mode) not in (0o600, 0o400):", "        if False:",
-     [T + "test_coordinator.py", "-k", "0600"]),
     ("the profile is written readable by others", "scripts/fleetlib/profile.py", "        os.fchmod(fd, 0o600)",
      "        os.fchmod(fd, 0o644)", [T + "test_coordinator.py", "-k", "0600"]),
-    ("the CLI prints the token", "scripts/fleet_reconcile.py",
-     '    shown["env"]["GH_TOKEN"] = "[withheld: %s]" % (',
-     '    shown["env"]["GH_TOKEN"] = (token or "") + "[withheld: %s]" % (',
-     [T + "test_coordinator.py", "-k", "never_prints"]),
     ("a listing showing only the janitor counts as read", "scripts/fleetlib/janitor.py",
      "        if not set(parents) - own:", "        if False:",
      [T + "test_janitor.py", "-k", "only_the_janitors"]),
@@ -297,8 +289,6 @@ PROTECTIONS = [
      [T + "test_sendgate.py", "-k", "no_success"]),
     ("template values are free text", ACT, '                if k not in TEMPLATE_VARS or not TEMPLATE_VARS[k].match(v or ""):',
      "                if False:", [T + "test_act.py", "-k", "fixed_shapes"]),
-    ("a live label runs on the keyring", ACT, "            if not self.dry and not profile.read_token(self.sec):",
-     "            if False:", [T + "test_act.py", "-k", "live_label"]),
     ("a spawn while one is unconfirmed", ACT, '            if pending:\n                raise Refused("ineligible", "a spawn of',
      '            if False:\n                raise Refused("ineligible", "a spawn of',
      [T + "test_act.py", "-k", "spawn_is_refused_while"]),
@@ -334,18 +324,12 @@ PROTECTIONS = [
      "    while p and p != 1 and p not in own:", "    while False:", [T + "test_janitor.py", "-k", "ancestors"]),
     ("an open PR on the branch passes", "scripts/fleetlib/janitor.py", "        if open_:\n", "        if False:\n",
      [T + "test_janitor.py", "-k", "open_pr"]),
-    ("a live tick runs without the fleet token", TICK,
-     'if [ "$MODE" = "act" ] && [ "$DRY" = "0" ] && [ -z "$TOKEN" ]; then', "if false; then",
-     [T + "test_tick.py", "-k", "without_the_fleet_token"]),
-    ("recover runs on the keyring", TICK,
-     '# §5.7\'s order: the fleet token, then recover (its label check reads GitHub).\nif [ -n "$TOKEN" ]; then export GH_TOKEN="$TOKEN"; fi\n'
-     'export FLEET_GH_AUTH="$GH_AUTH" FLEET_RELEASE="$RELEASE"\n'
-     '# Intents a dead tick left open are closed first, from what happened (§5.7).\n'
-     'step recover "$FLEET" recover --scope "$SCOPE" --tick "$N"; RCS="recover=$RC"\n',
-     'step recover "$FLEET" recover --scope "$SCOPE" --tick "$N"; RCS="recover=$RC"\n'
-     'if [ -n "$TOKEN" ]; then export GH_TOKEN="$TOKEN"; fi\n'
-     'export FLEET_GH_AUTH="$GH_AUTH" FLEET_RELEASE="$RELEASE"\n',
-     [T + "test_tick.py", "-k", "github_with_the_fleet_token"]),
+    ("a live tick needs a token again", TICK, '  step coordinator "$FLEET" coordinator', '  false && step coordinator "$FLEET" coordinator',
+     [T + "test_tick.py", "-k", "coordinator_on_the_owners_login"]),
+    ("a driver profile carries a token again", "scripts/fleetlib/profile.py",
+     '        "permissions": {"deny": list(DENY)},\n    }',
+     '        "permissions": {"deny": list(DENY)},\n        "env": {"GH_TOKEN": os.environ.get("GH_TOKEN", "")},\n    }',
+     [T + "test_coordinator.py", "-k", "probe_6"]),
     ("a failed tick exits 0", TICK, '  alert "tick-$FAILED" "tick $N failed at $FAILED ($RCS)"\n  exit 1',
      '  alert "tick-$FAILED" "tick $N failed at $FAILED ($RCS)"\n  exit 0', [T + "test_tick.py", "-k", "failed_step"]),
     ("an owner-merge PR gets a driver", ACT, "            if owner:\n                raise Refused",
@@ -586,9 +570,6 @@ PROTECTIONS = [
     ("the tick-number alert holds the lock", TICK,
      '(""|*[!0-9]*) trap - EXIT; release; alert tick', '(""|*[!0-9]*) alert tick',
      [T + "test_tick.py", "-k", "tick_number"]),
-    ("a token file open to others is used", TICK,
-     'if [ "$MODE" != "600" ] && [ "$MODE" != "400" ]; then', "if false; then",
-     [T + "test_tick.py", "-k", "open_to_others"]),
     ("a lock held for hours is silent", TICK, "if [ $((NOW - MT)) -ge 7200 ]; then", "if false; then",
      [T + "test_tick.py", "-k", "two_hours"]),
     ("a failed compare uses up the day", "scripts/fleet_reconcile.py",

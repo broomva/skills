@@ -1,15 +1,21 @@
 """The driver profile (spec §5.5, §5.7): the settings file a driver runs under.
 
-A 0600 file rather than inline JSON, so the fleet token never sits in argv;
-`claude --bg --settings <file>`. Its shape is probe 6's (2.1.280), the one the
-spec measured: crossSessionInbound accept; the sandbox on with no unsandboxed
-escape and a strict domain allowlist; denyRead on gh's config, Paseo's
-directory and the login keychain; permission denies for reading those and for
-editing ~/.claude/** and any .claude/settings*.json (not .claude/**, since a
-driver's own worktree sits under .claude/worktrees/); and env with the fleet
-GH_TOKEN and an empty per-spawn GH_CONFIG_DIR. Drivers run in
-bypassPermissions (--dangerously-skip-permissions in the argv), the mode in
-which probe 2's deny rules held.
+A 0600 file, `claude --bg --settings <file>`. Its shape is probe 6's
+(2.1.280), the one the spec measured: crossSessionInbound accept; the sandbox
+on with no unsandboxed escape and a strict domain allowlist; denyRead on
+Paseo's directory; permission denies for reading it and for editing
+~/.claude/** and any .claude/settings*.json (not .claude/**, since a driver's
+own worktree sits under .claude/worktrees/). Drivers run in bypassPermissions
+(--dangerously-skip-permissions in the argv), the mode in which probe 2's deny
+rules held.
+
+No token. Owner decision 2026-10-01: the fleet uses the owner's gh login, and
+spec §5.2's non-admin fleet credential is waived. A driver reads that login
+inside the sandbox with `gh auth token` (no network), git pushes through the
+configured gh credential helper, and pull-request calls go to the REST API
+with curl: gh's own network calls fail TLS inside the sandbox (OSStatus
+-26276), and taking gh out of it needs allowUnsandboxedCommands, the escape
+this profile refuses. Measured 2026-10-01 (credential drill, profile D).
 
 It changes what a driver reaches by default and is not a boundary (§5.1). The
 file stays at its path until the driver's worktree goes: a resume reads the
@@ -19,16 +25,14 @@ from __future__ import annotations
 
 import json
 import os
-import stat
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List
 
-KEYCHAIN = "~/Library/Keychains/login.keychain-db"
-DENY_READ = ["~/.config/gh", "~/.paseo", KEYCHAIN]
-DENY = ["Read(~/.paseo/**)", "Read(~/.config/gh/**)", "Edit(~/.claude/**)", "Edit(**/.claude/settings*.json)"]
+DENY_READ = ["~/.paseo"]
+DENY = ["Read(~/.paseo/**)", "Edit(~/.claude/**)", "Edit(**/.claude/settings*.json)"]
 
 
-def driver_profile(sec: Dict[str, Any], key: str, token: str, gh_config_dir: str) -> Dict[str, Any]:
+def driver_profile(sec: Dict[str, Any], key: str) -> Dict[str, Any]:
     drv = sec["driver"]
     fs: Dict[str, Any] = {"denyRead": list(DENY_READ)}
     if drv["allow_write"]:
@@ -39,7 +43,6 @@ def driver_profile(sec: Dict[str, Any], key: str, token: str, gh_config_dir: str
                     "network": {"strictAllowlist": True, "allowedDomains": list(drv["allowed_domains"])},
                     "filesystem": fs},
         "permissions": {"deny": list(DENY)},
-        "env": {"GH_TOKEN": token, "GH_CONFIG_DIR": gh_config_dir},
     }
 
 
@@ -58,17 +61,10 @@ def path_for(state_dir: Path, key: str) -> Path:
     return Path(state_dir) / "profiles" / ("%s.json" % key)
 
 
-def gh_config_dir(state_dir: Path, key: str) -> str:
-    """An empty GH_CONFIG_DIR per spawn, so gh in the driver finds no hosts
-    file and only the token in its environment."""
-    d = Path(state_dir) / "ghcfg" / key
-    d.mkdir(parents=True, exist_ok=True, mode=0o700)
-    return str(d)
-
-
 def write(path: Path, profile: Dict[str, Any]) -> Path:
     """Write the profile 0600 (created so; never world- or group-readable on
-    the way), fsynced."""
+    the way), fsynced. It holds no secret since 0.4.0; 0600 stays, since
+    nothing else needs to read it."""
     path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
     tmp = path.with_name(path.name + ".tmp")
     fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
@@ -80,20 +76,3 @@ def write(path: Path, profile: Dict[str, Any]) -> Path:
         os.close(fd)
     os.replace(str(tmp), str(path))
     return path
-
-
-def read_token(sec: Dict[str, Any]) -> Optional[str]:
-    """The fleet token from gh_token_file, under tick.sh's rule: mode 600 or
-    400, else not used; empty is none. Never printed."""
-    p = sec.get("gh_token_file")
-    if not p:
-        return None
-    try:
-        st = os.stat(p)
-        if stat.S_IMODE(st.st_mode) not in (0o600, 0o400):
-            return None
-        with open(p, "rb") as fh:
-            tok = fh.read(512).decode("utf-8", "replace").strip()
-    except OSError:
-        return None
-    return tok or None

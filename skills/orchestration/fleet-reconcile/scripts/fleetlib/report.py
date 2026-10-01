@@ -328,9 +328,6 @@ def render_md(rep: Dict[str, Any]) -> str:
                  % (n_open, len(rep["asks"]), first))
     else:
         L.append("Open asks: 0.")
-    if rep.get("surfaces", {}).get("gh_auth", {}).get("mode", "").startswith("keyring"):
-        L.append("")
-        L.append("GitHub was read with the keyring token (%s), not the fleet token." % rep["surfaces"]["gh_auth"]["mode"])
     L.append("")
     L.append("## Observation")
     L.append("")

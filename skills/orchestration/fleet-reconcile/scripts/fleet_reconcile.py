@@ -529,24 +529,16 @@ def cmd_coordinator(args: argparse.Namespace) -> int:
 
 
 def cmd_driver_profile(args: argparse.Namespace) -> int:
-    """Render a driver's profile. Printed with the token withheld; --write
-    writes the real one 0600 (the token from gh_token_file, never printed)."""
+    """Render a driver's profile; --write writes it 0600. It holds no token:
+    a driver uses the owner's gh login (owner decision 2026-10-01)."""
     from fleetlib import profile
 
     sec = _sec(args)
     sd = config.state_dir(sec)
-    token = profile.read_token(sec)
-    gh_cfg = profile.gh_config_dir(sd, args.key) if args.write else str(sd / "ghcfg" / args.key)
-    prof = profile.driver_profile(sec, args.key, token or "", gh_cfg)
+    prof = profile.driver_profile(sec, args.key)
     if args.write:
-        if not token:
-            print("fleet driver-profile: no usable token file (%s): not written" % sec.get("gh_token_file"),
-                  file=sys.stderr)
-            return 1
         print(str(profile.write(profile.path_for(sd, args.key), prof)))
-    shown = json.loads(json.dumps(prof))
-    shown["env"]["GH_TOKEN"] = "[withheld: %s]" % ("from the token file" if token else "no token file")
-    print(json.dumps(shown, indent=1, sort_keys=True))
+    print(json.dumps(prof, indent=1, sort_keys=True))
     return 0
 
 
@@ -694,7 +686,7 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_coordinator)
     p = scoped(sub.add_parser("driver-profile"))
     p.add_argument("--key", required=True)
-    p.add_argument("--write", action="store_true", help="write the 0600 file with the token")
+    p.add_argument("--write", action="store_true", help="write the 0600 file")
     p.set_defaults(func=cmd_driver_profile)
     p = scoped(sub.add_parser("janitor-check"))
     p.add_argument("path")

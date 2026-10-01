@@ -25,9 +25,9 @@ class SourceError(RuntimeError):
     pass
 
 
-#: Only gh needs the fleet token. Sources takes it out of the process
-#: environment when it starts, so no child inherits it (git run by ctx, say),
-#: and hands it to gh alone.
+#: A token in the environment goes to gh alone (since 0.4.0 tick.sh sets none:
+#: gh uses the owner's keyring login). Sources takes it out of the process
+#: environment when it starts, so no child inherits it (git run by ctx, say).
 _TOKEN_VARS = ("GH_TOKEN", "GITHUB_TOKEN")
 _TOKEN: Dict[str, str] = {}
 
@@ -130,11 +130,6 @@ class Sources:
         _take_token()
         self.claude = os.environ.get("FLEET_CLAUDE_BIN") or "claude"
         self.gh = os.environ.get("FLEET_GH_BIN") or "gh"
-
-    def use_token(self, token: str) -> None:
-        """gh runs with this token (the fleet's, from its file), not the environment's."""
-        _TOKEN["GH_TOKEN"] = token
-        _TOKEN.pop("GITHUB_TOKEN", None)
 
     # Claude Code ---------------------------------------------------------
     def claude_version(self) -> str:

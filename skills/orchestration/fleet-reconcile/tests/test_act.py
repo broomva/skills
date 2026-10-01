@@ -102,7 +102,7 @@ def test_a_dry_spawn_writes_the_intent_then_closes_it_with_the_argv_it_would_run
     intent, done = _records(world)[-2:]
     assert intent["kind"] == "intent" and intent["target"]["argv_sha256"] and done["of"] == intent["id"]
     assert done["result"]["would"] is True and done["dry_run"] is True
-    assert a.src.calls == [] and not (world.state["broomva"] / "profiles").exists()  # nothing run, no token written
+    assert a.src.calls == [] and not (world.state["broomva"] / "profiles").exists()  # nothing run, nothing written
 
 
 @pytest.mark.parametrize("change, why", [
@@ -371,22 +371,11 @@ def test_the_hold_label_is_the_owners(world, op):
     assert not res["ok"] and "owner's" in res["detail"]
 
 
-def _token(world, tmp_path):
-    tok = tmp_path / "gh-token"
-    tok.write_text("github_pat_" + "T" * 40)
-    tok.chmod(0o600)
-    return str(tok)
-
-
-def test_a_live_label_needs_the_token_file_and_runs_on_it(world, tmp_path, monkeypatch):
-    res = _act(world, dry=False, dry_run=0).label(WS, 849, "ci-heal-escalation", "add")
-    assert not res["ok"] and "token file" in res["detail"]
-    from fleetlib import sources
-    monkeypatch.setattr(sources, "_TOKEN", {})
-    a = _act(world, dry=False, dry_run=0, gh_token_file=_token(world, tmp_path))
+def test_a_live_label_runs_on_the_owners_gh_login(world):
+    # Owner decision 2026-10-01: no fleet token; gh uses the keyring login, so no token file is needed.
+    a = _act(world, dry=False, dry_run=0)
     res = a.label(WS, 849, "ci-heal-escalation", "add")
     assert res["ok"] and a.src.calls[0][:5] == ["gh", "api", "-X", "POST", "repos/broomva/workspace/issues/849/labels"]
-    assert sources._TOKEN["GH_TOKEN"] == "github_pat_" + "T" * 40
 
 
 def test_a_spawn_is_refused_while_one_for_the_key_is_unconfirmed(world):
@@ -414,12 +403,12 @@ def test_a_live_spawn_whose_listing_lags_is_done_with_its_job_id_and_still_ours(
     _files(world, 849, [])
     (world.fixture / "claude" / "run-bg.txt").write_text("backgrounded · abcd1234 · broomva-workspace-pr849\n")
     monkeypatch.setattr(act, "LIVE_POLL_S", 0.0)
-    a = _act(world, dry=False, now=LATER, dry_run=0, gh_token_file=_token(world, tmp_path))
+    a = _act(world, dry=False, now=LATER, dry_run=0)
     res = a.spawn(WS, 849)
     assert res["ok"] and res["result"] == {"job_id": "abcd1234"}, res
     assert a.src.calls[0][:2] == ["claude", "--bg"]
     prof = world.state["broomva"] / "profiles" / "broomva-workspace-pr849.json"
-    assert oct(prof.stat().st_mode & 0o777) == "0o600" and "github_pat_" in prof.read_text()
+    assert oct(prof.stat().st_mode & 0o777) == "0o600" and "env" not in json.loads(prof.read_text())
     later = _act(world, dry=False, dry_run=0)
     assert later.whose("abcd1234-0000-4000-8000-000000000000")["key"] == "broomva-workspace-pr849"
     assert ledger.spawned(_records(world)) == {"broomva-workspace-pr849": ["abcd1234"]}
