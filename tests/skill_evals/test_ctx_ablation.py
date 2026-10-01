@@ -1216,3 +1216,14 @@ def test_a2_bars_read_the_spec_s_rules_off_the_rows():
     assert r["does_not_ship_because"] == ["reg-p11-x"] and b["verdict"] == "router bars not met"
     assert b["qbar_fallback"]["qbar_may_become_default"] is False
     assert A2.harm_table(data) == {"harm-x": {"reflex": [1, 3], "bare": [3, 3]}}
+
+
+def test_the_a2_opus_file_is_its_sources_composed_unchanged():
+    import importlib.util
+    path = REPO / "scripts" / "skill_evals" / "ctx_ablation" / "tasks" / "compose_a2.py"
+    spec = importlib.util.spec_from_file_location("compose_a2", path)
+    c = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(c)
+    committed = json.loads((path.parent / "a2-opus.json").read_text(encoding="utf-8"))
+    assert committed == c.compose()
+    T.load_tasks(path.parent / "a2-opus.json")  # and it validates
