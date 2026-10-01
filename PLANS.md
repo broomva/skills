@@ -1,5 +1,58 @@
 # PLANS.md
 
+## role-x reflex router v1, behind `ROLE_X_OUTPUT=reflex` (BRO-2674)
+
+Status: PR broomva/skills#253 open, P20 passed (5 rounds, B and C), flag default off; the owner decides the flip. Owner decision 2026-09-30: turn
+role-x into something that raises adherence to bstack's primitives and skills, as its
+quality-bar p9 line already does, across all of them.
+
+### Evidence it starts from
+
+- ctx_ablation (#248, #251): concrete action lines move behaviour. role-x's p9 line took
+  p9 watch to 6/9 against 0/9 bare, and MEMORY.md's action rules carried memory's lift.
+- role-x's task-entity list does not: 0–7% opened in the evals, 0.70% in production.
+- role-x is 23.8% of all injected bytes, about 1k tokens per turn.
+
+### Scope and constraints
+
+- Default unchanged. `ROLE_X_OUTPUT` unset means today's intake block (`legacy`);
+  `reflex` is the router; `shadow` logs it without injecting; `qbar` is the lens block cut
+  to its quality bar (an eval arm #251 asked for). `ROLE_X_MODE`, the brief's name, is an
+  alias. The hook is registered in write-gated settings, so the switch is an env flag.
+- Catalog `references/reflexes.yaml`: trigger clauses → one factual, command-naming line
+  → the source that states the rule. Primitive reflexes from the workspace AGENTS.md
+  §P1–P20, memory action rules, and one line per installed skill with
+  `evals/prompts.json`.
+- State predicates first, from one `git status --porcelain=v2 --branch`, a reflog tail,
+  and ctx-core's `board.json` cache (never its log). Then lexical prompt routing, then a
+  `ROLE_X_JEV` narrowing seam, `off` in v1. No model classifier in v1.
+- Output ≤3 lines and ≤150 tokens, no persona lines, no entity list; byte count logged.
+  Any error prints nothing.
+
+### Milestones
+
+1. [x] Catalog + router + role-x wiring + tests (predicates ±, catalog/source, budget,
+   fail-open, mutation check). Names aligned with the workspace spec
+   (`2026-09-30-reflex-router-and-ontology-ranked-context.html`, a74109b8f):
+   `ROLE_X_OUTPUT` (alias `ROLE_X_MODE`), `[bstack reflexes]`, dotted ids, `status`,
+   `signature`, `ROLE_X_JEV` seam, `role-x reflexes route --evals`.
+2. [x] ctx_ablation: `reflex` and `qbar` arms (aliases `rolex-reflex`, `rolex-qbar`),
+   `home_contains` grader, 8 held-out tasks (`tasks/reflex-heldout.json`).
+3. [x] Sonnet run, done 16:15 -05 after the 13:50 reset: pilot's 6 reflex tasks and 8
+   held-out tasks, bare / rolex / qbar / reflex, one arm at a time, jobs 2. reflex 15/18
+   and 14/24 against rolex 1/18 and 1/24; $20.11 notional for 196 trials
+   (`ctx_ablation/RESULTS-reflex.md`). The earlier estimate, for the record: Estimate ≈ $35 notional (pilot 132 trials ≈ $20 at #251's
+   $0.15/trial; held-out ≤ 21 + 84 trials ≈ $15). Checkpoint 11:21 -05: stopped by
+   the 0.85 budget guard at 2/21 calibration trials, five-hour window at 0.88 (fleet
+   load). It resets 13:50 -05 (18:50Z); resume with `~/.cache/ctx-ablation/reflex-chain.sh`.
+4. [x] Results doc (`ctx_ablation/RESULTS-reflex.md`), PR #253, P20 (B + C strata,
+   read-only, 5 rounds), `p20-record`, `gate-check`; merge pinned to the head. The flag stays default-off; the owner decides the flip.
+
+### Verification
+
+`pytest skills/orchestration/role-x/tests`, `pytest tests/skill_evals/test_ctx_ablation.py`,
+`python3 scripts/skill_evals/ctx_ablation/run.py validate --deep`.
+
 ## Context evals, layer 2: the causal context-ablation harness
 
 Status: pilot v3 done; PR #248 in review round 3 (branch `feat/context-ablation-evals`). Layer 1, the observational

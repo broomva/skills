@@ -20,6 +20,7 @@ import argparse
 import errno
 import fnmatch
 import hashlib
+import importlib.util
 import json
 import os
 import re
@@ -394,6 +395,26 @@ def cmd_index(args: argparse.Namespace) -> int:
 
 CARVE_OUT_MIN_WORDS = 3  # prompts shorter than this skip the intake reflex
 
+# v0.7.0 — what `intake` injects, read per intake from the hook's environment
+# (BRO-2674; design of record: workspace docs/specs/2026-09-30-reflex-router-and-
+# ontology-ranked-context.html §5). The hook is registered in write-gated settings,
+# so the switch is an env flag, and unset keeps today's block. An unknown value
+# also means "legacy".
+#   legacy   the lens block (default, unchanged)
+#   reflex   scripts/reflex_router.py: ≤3 factual lines from references/reflexes.yaml,
+#            chosen from git/board state and the prompt. No persona, no entities.
+#   shadow   the lens block, plus the router's record logged and not injected
+#            (the spec's A1 phase: a base rate before anything changes)
+#   qbar     the lens block cut to its quality bar: no context files, no persona
+#            constraints, no task-relevant entities (a context-ablation arm, #251)
+# ROLE_X_MODE is read as an alias when ROLE_X_OUTPUT is unset (the name the owner's
+# brief used; the spec's is ROLE_X_OUTPUT).
+OUTPUT_ENV = "ROLE_X_OUTPUT"
+OUTPUT_ENV_ALIAS = "ROLE_X_MODE"
+OUTPUT_DEFAULT = "legacy"
+OUTPUTS = frozenset({"legacy", "reflex", "shadow", "qbar"})
+REFLEX_ROUTER_PY = Path(__file__).resolve().parent / "reflex_router.py"
+
 # v0.4.1 — "domain-rich" heuristic. When intake routes to _meta-only AND the
 # prompt is non-trivial AND has enough distinct meaningful tokens, surface a
 # one-line nudge: "consider role-x init <slug>". Closes the gap where agents
@@ -751,10 +772,13 @@ def _emit_event(
     selection: dict,
     events_path: Path = EVENTS_PATH,
     config: dict | None = None,
+    render: str | None = None,
+    output_ignored: str | None = None,
 ) -> None:
     """Append an intake event to events.jsonl (best-effort, never raises).
 
     v0.4.0: includes optional `prompt_sanitized` field when config opts in.
+    v0.7.0: `render` records a non-default block (``qbar``).
     """
     try:
         events_path.parent.mkdir(parents=True, exist_ok=True)
@@ -770,6 +794,10 @@ def _emit_event(
             "mode_escalation_reason": selection["mode_escalation_reason"],
             "signals_matched": selection["signals_matched"],
         }
+        if render:
+            event["render"] = render
+        if output_ignored:
+            event["output_ignored"] = output_ignored
         cfg = config if config is not None else _load_config()
         sanitized = _sanitize_prompt(prompt, cfg)
         if sanitized is not None:
@@ -1298,8 +1326,15 @@ def _clean_claim_or_none(claim: str) -> str | None:
     return c
 
 
+INTAKE_CLOSING_LINE = (
+    "Agents: apply the quality_bar entries as the P14 enumeration template for this response. "
+    "If mode != augment, surface the rewrite/decompose proposal to the user before proceeding."
+)
+
+
 def _format_intake_context(
-    selection: dict, workspace: Path | None = None, config: dict | None = None
+    selection: dict, workspace: Path | None = None, config: dict | None = None,
+    quality_bar_only: bool = False,
 ) -> str:
     """Render the selection as a markdown block that becomes agent context.
 
@@ -1309,6 +1344,8 @@ def _format_intake_context(
     ``config`` (trusted user config; loaded on demand when ``None``) enables
     persona federation (F3′): persona-scoped entities resolve from the per-user
     store instead of the workspace, when active for this workspace.
+    ``quality_bar_only`` (``ROLE_X_OUTPUT=qbar``) keeps the header, lens,
+    mode, quality bar and closing line, and drops everything else.
     """
     cfg = config if config is not None else _load_config()
     persona_fed = _resolve_persona_federation(workspace, cfg)
@@ -1372,6 +1409,8 @@ def _format_intake_context(
         lines.append("Quality bar (P14 dep-chain template):")
         for entry in quality_bar:
             lines.append(f"  - {entry}")
+    if quality_bar_only:
+        return "\n".join([*lines, "", INTAKE_CLOSING_LINE])
     if context_files:
         lines.append("Context files to surface:")
         for f in context_files:
@@ -1453,10 +1492,7 @@ def _format_intake_context(
             if sig and text:
                 lines.append(f"  - if {sig!r}: {text}")
     lines.append("")
-    lines.append(
-        "Agents: apply the quality_bar entries as the P14 enumeration template for this response. "
-        "If mode != augment, surface the rewrite/decompose proposal to the user before proceeding."
-    )
+    lines.append(INTAKE_CLOSING_LINE)
     # v0.4.1: when no domain lens fired AND the prompt is domain-rich enough
     # to plausibly merit one, surface a one-line "consider authoring a lens"
     # nudge. Pure suggestion — agent decides whether to act on it.
@@ -1517,6 +1553,7 @@ def cmd_intake(args: argparse.Namespace) -> int:
     # Resolve prompt + session id from flags first, then stdin fallback.
     prompt = args.prompt
     session_id = args.session or os.environ.get("CLAUDE_SESSION_ID") or "unknown"
+    payload_cwd = None
 
     if prompt is None:
         try:
@@ -1528,8 +1565,24 @@ def cmd_intake(args: argparse.Namespace) -> int:
                 payload = json.loads(stdin_data)
                 prompt = payload.get("prompt") or payload.get("user_prompt") or ""
                 session_id = payload.get("session_id") or session_id
+                payload_cwd = payload.get("cwd")
             except json.JSONDecodeError:
                 prompt = stdin_data  # accept raw prompt text as fallback
+            except AttributeError:
+                prompt = ""  # valid JSON that is not an object: nothing to route
+
+    if not isinstance(prompt, str):
+        prompt = ""  # a payload whose prompt is not a string has nothing to route
+    output = _intake_output()
+    if output in ("reflex", "shadow"):
+        # Its own carve-out: only an empty prompt. "Merge 1857" is two words and
+        # exactly the moment a reflex exists for; the triggers decide, not a count.
+        text = _intake_reflex(prompt, str(session_id), args.workspace, payload_cwd,
+                              shadow=output == "shadow")
+        if output == "reflex":
+            if text:
+                print(text)
+            return 0
 
     if not prompt or len(prompt.split()) < CARVE_OUT_MIN_WORDS:
         return 0  # carve-out: trivial/short prompts skip intake
@@ -1545,9 +1598,90 @@ def cmd_intake(args: argparse.Namespace) -> int:
     selection["prompt"] = prompt  # v0.5.0 — enables task-entity catalog scan
     # v0.4.1: attach authoring nudge for _meta-only domain-rich prompts
     selection["authoring_nudge"] = _build_authoring_nudge(prompt, selection)
-    _emit_event(session_id, prompt, selection, config=config)
-    print(_format_intake_context(selection, workspace=workspace, config=config))
+    quality_bar_only = output == "qbar"
+    raw_output = _output_raw()
+    _emit_event(session_id, prompt, selection, config=config,
+                render="qbar" if quality_bar_only else None,
+                # a value that is not one of OUTPUTS falls back to legacy; say so
+                output_ignored=raw_output[:32] if raw_output and raw_output not in OUTPUTS else None)
+    print(_format_intake_context(selection, workspace=workspace, config=config,
+                                 quality_bar_only=quality_bar_only))
     return 0
+
+
+def _output_raw() -> str:
+    # Unset or empty ROLE_X_OUTPUT falls through to the alias.
+    return (os.environ.get(OUTPUT_ENV) or os.environ.get(OUTPUT_ENV_ALIAS) or "").strip().lower()
+
+
+def _intake_output() -> str:
+    raw = _output_raw()
+    return raw if raw in OUTPUTS else OUTPUT_DEFAULT
+
+
+def _load_reflex_router():
+    """scripts/reflex_router.py by file path: under ``python -I`` this directory is
+    not on sys.path, and it must not be put there (a planted module would win)."""
+    name = "role_x_reflex_router"
+    spec = importlib.util.spec_from_file_location(name, REFLEX_ROUTER_PY)
+    if spec is None or spec.loader is None:
+        raise ImportError(f"cannot load {REFLEX_ROUTER_PY}")
+    module = importlib.util.module_from_spec(spec)
+    # dataclasses resolve string annotations through sys.modules[__module__].
+    sys.modules[name] = module
+    try:
+        spec.loader.exec_module(module)
+    except BaseException:
+        sys.modules.pop(name, None)
+        raise
+    return module
+
+
+def _intake_reflex(prompt: str | None, session_id: str, workspace_arg: str | None,
+                   payload_cwd: object, shadow: bool = False) -> str:
+    """Route the prompt, log the reflex record, and return the block to print.
+    Fail-open: any error in the router returns "", and the record carries the error
+    class, so a broken router is visible in telemetry instead of passing for "no
+    reflex applied". In shadow the block is logged as would-be and never returned."""
+    if not isinstance(prompt, str) or not prompt.strip():
+        return ""
+    text, meta = "", {}
+    try:
+        if isinstance(payload_cwd, str) and payload_cwd and Path(payload_cwd).is_dir():
+            cwd = Path(payload_cwd).resolve()
+        elif workspace_arg:
+            cwd = Path(workspace_arg).resolve()
+        else:
+            cwd = _find_workspace_root()
+        text, meta = _load_reflex_router().run(prompt, cwd, session_id)
+    except Exception as exc:  # noqa: BLE001 — a hook error must mean no output
+        text, meta = "", {"error": type(exc).__name__}
+    if shadow:
+        meta = {**meta, "shadow": True}
+    _emit_reflex_event(session_id, prompt, meta)
+    return "" if shadow else text
+
+
+def _emit_reflex_event(session_id: str, prompt: str, meta: dict,
+                       events_path: Path | None = None) -> None:
+    """One ``event: reflex`` row per routed prompt (best-effort, never raises).
+    ``bytes`` is the injected block's size; the readers behind ``suggest`` and
+    ``coverage`` count lens intakes only and skip these rows."""
+    try:
+        path = events_path or EVENTS_PATH
+        path.parent.mkdir(parents=True, exist_ok=True)
+        event = {
+            "ts": datetime.now(timezone.utc).isoformat(),
+            "event": "reflex",
+            "session": session_id,
+            "prompt_digest": "sha256:" + hashlib.sha256(prompt.encode("utf-8")).hexdigest(),
+            "prompt_word_count": len(prompt.split()),
+            **meta,
+        }
+        with path.open("a", encoding="utf-8") as fh:
+            fh.write(json.dumps(event, ensure_ascii=False) + "\n")
+    except (OSError, TypeError, ValueError):
+        pass  # never fail the hook
 
 
 ### suggest subcommand (v0.4.0 — observability for organic lens growth) ###
@@ -1584,6 +1718,8 @@ def _read_events_since(events_path: Path, since_seconds: int) -> list[dict]:
                 event = json.loads(line)
             except json.JSONDecodeError:
                 continue
+            if not isinstance(event, dict) or event.get("event", "intake") != "intake":
+                continue  # reflex-mode rows (v0.7.0) are not lens intakes
             ts = event.get("ts", "")
             try:
                 event_time = datetime.fromisoformat(ts.replace("Z", "+00:00")).timestamp()
@@ -2061,6 +2197,110 @@ def cmd_eval(args: argparse.Namespace) -> int:
     return 1 if failed else 0
 
 
+def _eval_cases(path: Path) -> list[tuple[str, bool]]:
+    """(prompt, should_trigger) pairs from a skill's evals/prompts.json, in either
+    schema: ``cases`` (id/prompt/should_trigger), or the older
+    ``should_trigger`` / ``should_not_trigger`` string lists."""
+    doc = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(doc.get("cases"), list):
+        return [(c["prompt"], bool(c["should_trigger"])) for c in doc["cases"]
+                if isinstance(c, dict) and isinstance(c.get("prompt"), str)]
+    return ([(p, True) for p in doc.get("should_trigger") or [] if isinstance(p, str)]
+            + [(p, False) for p in doc.get("should_not_trigger") or [] if isinstance(p, str)])
+
+
+HELDOUT_ROUTING_REL = Path("evals") / "reflex-routing-heldout.json"
+#: Spec §5.5 M3: an entry routes only at held-out recall >= 0.60 with <= 0.20 false fires.
+M3_MIN_RECALL = 0.60
+M3_MAX_FALSE_FIRE = 0.20
+
+
+def _prompt_side_fires(router, catalog, key: str, prompt: str) -> bool:
+    """M3 scores the classifier, not the state: a catalog entry fires when any of
+    its clauses that asks the prompt anything matches it, whatever its state gate;
+    a route name (``change_work``) fires when one of its regexes matches."""
+    text = router.normalize_prompt(prompt)
+    if key in catalog.routes:
+        return any(p.search(text) for p in catalog.routes[key])
+    entry = next((r for r in catalog.reflexes if r.id == key), None)
+    return entry is not None and any(c.has_prompt and c.prompt_matches(text) for c in entry.clauses)
+
+
+def _score(router, catalog, key: str, cases: list[tuple[str, bool]]) -> dict:
+    hit = miss = false_fire = clean = 0
+    missed: list[str] = []
+    fired_near: list[str] = []
+    for prompt, want in cases:
+        got = _prompt_side_fires(router, catalog, key, prompt)
+        if want and got:
+            hit += 1
+        elif want:
+            miss += 1
+            missed.append(prompt[:80])
+        elif got:
+            false_fire += 1
+            fired_near.append(prompt[:80])
+        else:
+            clean += 1
+    recall = round(hit / (hit + miss), 2) if hit + miss else None
+    ff = round(false_fire / (false_fire + clean), 2) if false_fire + clean else None
+    return {"id": key, "should_route": hit + miss, "hits": hit, "recall": recall,
+            "near_miss": false_fire + clean, "false_fires": false_fire,
+            "false_fire": ff, "passes_m3": recall is not None and recall >= M3_MIN_RECALL
+            and ff is not None and ff <= M3_MAX_FALSE_FIRE, "missed": missed, "fired_on_near_miss": fired_near}
+
+
+def cmd_reflexes(args: argparse.Namespace) -> int:
+    """``role-x reflexes route``: the router offline. ``--prompt`` shows one prompt's
+    block. ``--evals`` scores each skill entry on its skill's evals/prompts.json
+    (in-sample: the phrases were copied from the same descriptions). ``--heldout``
+    scores every id in the sealed held-out file (spec §5.5 M3). Neither logs."""
+    router = _load_reflex_router()
+    catalog = router.load_catalog(Path(args.catalog) if args.catalog else None)
+    root = Path(args.root).resolve() if args.root else Path(__file__).resolve().parents[4]
+    if not (args.evals or args.heldout):
+        cwd = Path(args.cwd).resolve() if args.cwd else Path.cwd()
+        text, meta = router.run(args.prompt or "", cwd, "offline", catalog=catalog, count=False)
+        print(json.dumps(meta, indent=2) if args.json else (text or "(no reflex applies)"))
+        return 0
+    rows = []
+    if args.heldout:
+        path = Path(args.heldout_file) if args.heldout_file else Path(__file__).resolve().parents[1] / HELDOUT_ROUTING_REL
+        doc = json.loads(path.read_text(encoding="utf-8"))
+        for key, c in doc["cases"].items():
+            cases = [(p, True) for p in c.get("positive", [])] + [(p, False) for p in c.get("near_miss", [])]
+            rows.append(_score(router, catalog, key, cases))
+    else:
+        for r in catalog.reflexes:
+            if r.routing and r.skill:
+                path = root / r.routing
+                if path.is_file():
+                    rows.append({**_score(router, catalog, r.id, _eval_cases(path)), "skill": r.skill})
+                else:
+                    rows.append({"id": r.id, "skill": r.skill, "missing": str(r.routing)})
+    scored = [r for r in rows if "missing" not in r]
+    tp = sum(r["hits"] for r in scored)  # raw counts, never rebuilt from rounded rates
+    npos = sum(r["should_route"] for r in scored)
+    fp = sum(r["false_fires"] for r in scored)
+    nneg = sum(r["near_miss"] for r in scored)
+    suite = {"should_route": npos, "recall": round(tp / npos, 2) if npos else None, "near_miss": nneg,
+             "false_fire": round(fp / nneg, 2) if nneg else None,
+             "ids_passing_m3": sum(r["passes_m3"] for r in scored), "ids": len(scored)}
+    if args.json:
+        print(json.dumps({"suite": suite, "ids": rows}, indent=2))
+        return 0
+    print("| id | should-route | recall | near-miss | false fire | M3 |\n|---|---|---|---|---|---|")
+    for row in rows:
+        if "missing" in row:
+            print(f"| {row['id']} | eval set missing: {row['missing']} | | | | |")
+            continue
+        print(f"| {row['id']} | {row['should_route']} | {row['recall']} | {row['near_miss']} | "
+              f"{row['false_fire']} | {'pass' if row['passes_m3'] else 'fail'} |")
+    print(f"| **suite** | {suite['should_route']} | {suite['recall']} | {suite['near_miss']} | "
+          f"{suite['false_fire']} | {suite['ids_passing_m3']}/{suite['ids']} |")
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="role-x",
@@ -2100,6 +2340,24 @@ def build_parser() -> argparse.ArgumentParser:
         help="session id (default: $CLAUDE_SESSION_ID env or 'unknown')",
     )
     p_intake.set_defaults(func=cmd_intake)
+
+    p_reflexes = sub.add_parser(
+        "reflexes",
+        help="the reflex router offline (ROLE_X_OUTPUT=reflex): one prompt, or every skill's evals",
+    )
+    rsub = p_reflexes.add_subparsers(dest="reflexes_cmd", required=True)
+    p_route = rsub.add_parser("route", help="route a prompt, or with --evals score routing per skill")
+    p_route.add_argument("--prompt", default=None, help="the prompt to route")
+    p_route.add_argument("--cwd", default=None, help="where state is read (default: cwd)")
+    p_route.add_argument("--evals", action="store_true",
+                         help="score each skill entry on its skill's evals/prompts.json (in-sample)")
+    p_route.add_argument("--heldout", action="store_true",
+                         help="score every id on the sealed held-out routing cases (spec M3)")
+    p_route.add_argument("--heldout-file", default=None, help="held-out cases (default: evals/reflex-routing-heldout.json)")
+    p_route.add_argument("--root", default=None, help="repo root holding skills/ (default: this repo)")
+    p_route.add_argument("--catalog", default=None, help="catalog path (default: references/reflexes.yaml)")
+    p_route.add_argument("--json", action="store_true")
+    p_route.set_defaults(func=cmd_reflexes)
 
     p_coverage = sub.add_parser(
         "coverage",

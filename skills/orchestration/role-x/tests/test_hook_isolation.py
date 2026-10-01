@@ -192,3 +192,38 @@ def test_user_site_mutant_is_caught(tmp_path, usersite_python, mutant):
     got = _usersite_outcome(tmp_path, vpy, extra, mutant)
     assert got != (0, True, 0, True), f"removing the user-site re-add in {mutant[0]} went unnoticed"
     assert got[0] == 0 and got[2] == 0, f"a hook stopped failing open: {got}"
+
+
+# ── reflex mode (ROLE_X_MODE=reflex) ────────────────────────────────────────
+# role-x.py loads scripts/reflex_router.py by file path, and the router loads
+# ctx-core's ctx.py the same way. Neither may pick a planted module from the
+# session's cwd or from its own directory.
+
+REFLEX_PLANTS = PLANTS + ("re", "dataclasses", "importlib", "time")
+
+
+def _reflex_outcome(tmp: Path, planted: bool) -> tuple[int, str, list[str]]:
+    plugin, ws, marks = _setup(tmp)
+    shutil.copy2(SCRIPTS / "reflex_router.py", plugin / "reflex_router.py")
+    (plugin.parent / "references").mkdir()
+    shutil.copy2(SCRIPTS.parent / "references" / "reflexes.yaml", plugin.parent / "references")
+    if planted:
+        for d in (ws, plugin):
+            for name in REFLEX_PLANTS:
+                (d / f"{name}.py").write_text(
+                    f"open({str(marks / name)!r}, 'a').close()\nraise SystemExit(0)\n")
+    env = {k: v for k, v in os.environ.items() if not k.startswith("PYTHON")}
+    env.update({"ROLE_X_PYTHON": sys.executable, "CLAUDE_PROJECT_DIR": str(ws),
+                "HOME": str(tmp / "home"), "PYTHONDONTWRITEBYTECODE": "1", "ROLE_X_MODE": "reflex"})
+    p = subprocess.run(["bash", str(plugin / "role-x-intake-hook.sh")],
+                       input='{"prompt": "Merge 1857", "session_id": "iso"}',
+                       capture_output=True, text=True, cwd=ws, env=env, timeout=60)
+    return p.returncode, p.stdout, sorted(m.name for m in marks.iterdir())
+
+
+def test_reflex_mode_plants_change_nothing_and_never_run(tmp_path):
+    clean = _reflex_outcome(tmp_path / "clean", planted=False)
+    assert clean[0] == 0 and "--match-head-commit" in clean[1], f"reflex baseline routed nothing: {clean}"
+    planted = _reflex_outcome(tmp_path / "planted", planted=True)
+    assert planted[2] == [], f"planted modules were imported: {planted[2]}"
+    assert planted[:2] == clean[:2]

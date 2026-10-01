@@ -1,0 +1,676 @@
+{
+ "version": 1,
+ "notes": "Held-out tasks for role-x's reflex router (ROLE_X_OUTPUT=reflex, BRO-2674): one per reflex the router adds a state predicate or a line for, worded away from the pilot's prompts. Provenance per origin: four prompts are real user or coordinator turns (origin.verbatim says whether byte-for-byte), one is p9's own golden eval prompt, and three were worded by a fresh session shown only the situation and never the catalog (the design spec's §9 Q4). Disclosed: after these prompts were written, one router bug (a dot inside a path read as a sentence end) was found on heldout-worktree-removal-guard and fixed for every regex (commit ae56cae). Also disclosed: in 2534568, after reviewers' false-fire reports, the p9 heal regex was rewritten and heldout-p9-heal-red-pr's prompt was added as a unit-test positive; and heldout-p9-change-work was added in the same commit as the p9 'open a PR' regex its prompt matches. Calibration and results: RESULTS-reflex.md.",
+ "tasks": [
+  {
+   "id": "heldout-p9-watch-pushed-pr",
+   "class": "reflex",
+   "prompt": "schema PR is up and pushed. our required checks take about nine minutes on a cold cache and i'm not spending that watching a spinner. two things are still open on the auth migration and neither one touches this diff: the rollback note, and the seed-data fixture nobody has written yet. take one of them, and tell me where the checks landed once they land.",
+   "origin": {
+    "kind": "spec",
+    "verbatim": true,
+    "ref": "skills/orchestration/p9/evals/prompts.json golden-01: authored for p9's trigger evals so that no positive leads with a when_to_use phrase; not used to write the reflex catalog"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "The branch was pushed seconds before the prompt and its PR is open with checks pending. Asked to say where the checks land while doing other work, a session polls `gh pr checks` or sleeps. The prompt never names p9 or watching; the router fires the p9 line both from its just-pushed state predicate (the upstream reflog's last entry is this push) and from the prompt's 'tell me where the checks landed', so this task measures the line, not which route carried it. The push runs without the fixture's pinned dates so its reflog entry is current, as a real push's is.",
+   "fixture": {
+    "files": {
+     "docs/auth-migration/README.md": "# Auth migration\n\nOpen items, neither touches the schema PR:\n- the rollback note (docs/auth-migration/ROLLBACK.md, not written)\n- the seed-data fixture (fixtures/seed-auth.json, not written)\n"
+    },
+    "setup": [
+     "git checkout -q -b feat/schema-migration",
+     "mkdir -p db && printf 'ALTER TABLE users ADD COLUMN org_id TEXT;\\n' > db/0042_org_id.sql",
+     "git add -A",
+     "git commit -qm 'feat: org_id column on users'",
+     "env -u GIT_COMMITTER_DATE -u GIT_AUTHOR_DATE git push -q -u origin feat/schema-migration"
+    ],
+    "stubs": {
+     "gh": {
+      "repo": "broomva/workspace",
+      "prs": {
+       "1905": {
+        "number": 1905,
+        "title": "feat: org_id column on users",
+        "headRefName": "feat/schema-migration",
+        "headRefOid": "${sha:feat/schema-migration}",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "url": "https://github.com/broomva/workspace/pull/1905",
+        "author": "broomva",
+        "checks_green_after": 3,
+        "statusCheckRollup": [
+         {
+          "name": "test",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         },
+         {
+          "name": "lint",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         },
+         {
+          "name": "migrate",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "stub",
+     "stub": "p9",
+     "argv_re": "^watch\\b"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "p9 watch 1905 --background"
+      }
+     ],
+     "answer": "p9 is watching #1905 in the background; I'm writing the rollback note meanwhile."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "gh pr checks 1905"
+      }
+     ],
+     "answer": "Checks on #1905 are still pending; I'll write the rollback note and look again."
+    }
+   }
+  },
+  {
+   "id": "heldout-p9-change-work",
+   "class": "reflex",
+   "prompt": "add some random jitter to backoff(n) in src/retry.py, rn it just returns 2 ** n. then open a pr for it",
+   "origin": {
+    "kind": "lens",
+    "verbatim": true,
+    "ref": "spec §5.5 M2's p9 task without push wording (it tests the change_work route); worded by a fresh session shown only the situation, never the catalog; rule roles/_meta.md quality_bar and AGENTS.md §P9 reflex 1"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "A change plus 'open a pr', with nothing said about pushing, CI or waiting. The quality bar showed the p9 rule on every prompt and that is what the ablation measured (6/9 vs 0/9), so the router must carry it on change work too, not only when a prompt mentions a push. Graded on a PR being created and p9 watch being armed.",
+   "fixture": {
+    "files": {
+     "src/retry.py": "def backoff(n):\n    return 2 ** n\n"
+    },
+    "setup": [
+     "git checkout -q -b feat/retry-jitter"
+    ],
+    "stubs": {
+     "gh": {
+      "repo": "broomva/workspace",
+      "next_pr": 1906,
+      "prs": {
+       "1906": {
+        "number": 1906,
+        "title": "feat: jitter in backoff",
+        "headRefName": "feat/retry-jitter",
+        "headRefOid": "${sha:feat/retry-jitter}",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "pending_create": true,
+        "checks_green_after": 2,
+        "url": "https://github.com/broomva/workspace/pull/1906",
+        "author": "broomva",
+        "statusCheckRollup": [
+         {
+          "name": "test",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         },
+         {
+          "name": "lint",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "stub",
+     "stub": "gh",
+     "argv_re": "\\bpr create\\b"
+    },
+    {
+     "kind": "stub",
+     "stub": "p9",
+     "argv_re": "^watch\\b"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "printf 'import random\\n\\ndef backoff(n):\\n    return 2 ** n + random.random()\\n' > src/retry.py && git commit -qam 'feat: jitter in backoff' && git push -q -u origin feat/retry-jitter"
+      },
+      {
+       "bash": "gh pr create --title 'feat: jitter in backoff' --body jitter"
+      },
+      {
+       "bash": "p9 watch 1906 --background"
+      }
+     ],
+     "answer": "Opened #1906 and armed p9 watch on it."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "printf 'import random\\n\\ndef backoff(n):\\n    return 2 ** n + random.random()\\n' > src/retry.py && git commit -qam 'feat: jitter in backoff' && git push -q -u origin feat/retry-jitter"
+      },
+      {
+       "bash": "gh pr create --title 'feat: jitter in backoff' --body jitter"
+      }
+     ],
+     "answer": "Opened #1906."
+    }
+   }
+  },
+  {
+   "id": "heldout-branch-first-on-main",
+   "class": "reflex",
+   "prompt": "add a CONTRIBUTING.md saying tests live under tests/ and run with `make test`, and commit it",
+   "origin": {
+    "kind": "memory-feedback",
+    "verbatim": true,
+    "ref": "MEMORY.md 'BRANCH FIRST' (maestro-build-arc.md: BRO-1819, BRO-1814, BRO-1862). Worded by a fresh session shown only the situation, never the reflex catalog (spec §9 Q4). The pilot's variant starts on a feature branch and names main; this one starts ON main and names no branch"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "The checkout is on main, clean, and the prompt names no branch. main is protected and moves only through PRs, so the convention is a branch before the first edit; a session that does not know it commits on main. Graded on refs: main does not move, and some commit adds CONTRIBUTING.md.",
+   "fixture": {},
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "git",
+     "args": [
+      "rev-parse",
+      "main"
+     ],
+     "equals": "${sha:main}"
+    },
+    {
+     "kind": "git",
+     "args": [
+      "rev-list",
+      "--all",
+      "--count",
+      "--",
+      "CONTRIBUTING.md"
+     ],
+     "re": "^[1-9][0-9]*$"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "git switch -c docs/contributing && printf '# Contributing\\n\\nTests live under tests/; run them with make test.\\n' > CONTRIBUTING.md && git add CONTRIBUTING.md && git commit -qm 'docs: contributing'"
+      }
+     ],
+     "answer": "Committed CONTRIBUTING.md on docs/contributing."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "printf '# Contributing\\n\\nTests live under tests/; run them with make test.\\n' > CONTRIBUTING.md && git add CONTRIBUTING.md && git commit -qm 'docs: contributing'"
+      }
+     ],
+     "answer": "Committed CONTRIBUTING.md."
+    }
+   }
+  },
+  {
+   "id": "heldout-merge-it-please",
+   "class": "reflex",
+   "prompt": "merge it please",
+   "origin": {
+    "kind": "real-trace",
+    "verbatim": true,
+    "ref": "-Users-broomva-orca-workspaces-sri-mandarin/116d3161, a user turn; rule in memory ci-and-p9-traps.md and AGENTS.md §P9 reflex 4"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "The checkout is on the PR's branch, green and approved. A merge is pinned to the reviewed head (`gh pr merge --match-head-commit <sha>`), or goes through `p9 auto-merge`, which re-checks the gates and pins it. A bare `gh pr merge` merges whatever the head is at that moment. Graded on the gh and p9 stub logs: no unpinned gh merge, and a pinned one or a p9 auto-merge.",
+   "fixture": {
+    "setup": [
+     "git checkout -q -b feat/bro-1858-retry-docs",
+     "printf 'retry docs\\n' > RETRY.md",
+     "git add RETRY.md",
+     "git commit -qm 'docs: retry policy (BRO-1858)'",
+     "git push -q -u origin feat/bro-1858-retry-docs"
+    ],
+    "stubs": {
+     "gh": {
+      "repo": "broomva/workspace",
+      "prs": {
+       "1858": {
+        "number": 1858,
+        "title": "docs: retry policy (BRO-1858)",
+        "headRefName": "feat/bro-1858-retry-docs",
+        "headRefOid": "${sha:feat/bro-1858-retry-docs}",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "url": "https://github.com/broomva/workspace/pull/1858",
+        "author": "broomva",
+        "mergeable": "MERGEABLE",
+        "reviewDecision": "APPROVED",
+        "statusCheckRollup": [
+         {
+          "name": "test",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         },
+         {
+          "name": "lint",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "no_stub",
+     "stub": "gh",
+     "argv_re": "\\bpr merge\\b(?!.*(--match-head-commit[= ]${sha:feat/bro-1858-retry-docs}\\b|--help|\\s-h\\b))"
+    },
+    {
+     "kind": "any",
+     "of": [
+      {
+       "kind": "stub",
+       "stub": "gh",
+       "argv_re": "\\bpr merge\\b.*--match-head-commit[= ]${sha:feat/bro-1858-retry-docs}\\b"
+      },
+      {
+       "kind": "stub",
+       "stub": "p9",
+       "argv_re": "^auto-merge\\b"
+      }
+     ]
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "gh pr merge 1858 --squash --match-head-commit ${sha:feat/bro-1858-retry-docs}"
+      }
+     ],
+     "answer": "Merged #1858, pinned to its head commit."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "gh pr view 1858"
+      },
+      {
+       "bash": "gh pr merge 1858 --squash"
+      }
+     ],
+     "answer": "Merged #1858."
+    }
+   }
+  },
+  {
+   "id": "heldout-p9-heal-red-pr",
+   "class": "reflex",
+   "prompt": "please check PR #1192 why did it failed?",
+   "origin": {
+    "kind": "real-trace",
+    "verbatim": true,
+    "ref": "-Users-broomva-broomva-work-stimulus-sri/c43d3229, a user turn; rule AGENTS.md §P9 reflex 3"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "Asked why a PR failed, a session reads `gh pr checks` and the job logs by hand. The P9 rule is `p9 heal <pr> --classify` first: it classifies the failed check against p9's regex rubric before anyone edits code or asks. p9 is on PATH in every arm; only an injection names heal.",
+   "fixture": {
+    "setup": [
+     "git checkout -q -b fix/token-refresh",
+     "mkdir -p src/auth && printf 'def refresh(token):\\n    return token\\n' > src/auth/refresh.py",
+     "git add -A",
+     "git commit -qm 'fix: token refresh'",
+     "git push -q -u origin fix/token-refresh"
+    ],
+    "stubs": {
+     "gh": {
+      "repo": "broomva/workspace",
+      "prs": {
+       "1192": {
+        "number": 1192,
+        "title": "fix: token refresh",
+        "headRefName": "fix/token-refresh",
+        "headRefOid": "${sha:fix/token-refresh}",
+        "baseRefName": "main",
+        "state": "OPEN",
+        "url": "https://github.com/broomva/workspace/pull/1192",
+        "author": "broomva",
+        "statusCheckRollup": [
+         {
+          "name": "test",
+          "status": "COMPLETED",
+          "conclusion": "FAILURE",
+          "detailsUrl": "https://github.com/broomva/workspace/actions/runs/88120/job/1"
+         },
+         {
+          "name": "lint",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         }
+        ]
+       }
+      }
+     },
+     "p9": {
+      "heal": "p9 heal 1192: 1 failing check classified: test -> network-flake (confidence 0.81). Heal: re-run the job; nothing in the PR diff needs a change."
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "stub",
+     "stub": "p9",
+     "argv_re": "^heal\\b"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "p9 heal 1192 --classify"
+      }
+     ],
+     "answer": "#1192 failed on test; p9 classifies it as a network flake, so the fix is a re-run."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "gh pr checks 1192"
+      }
+     ],
+     "answer": "#1192 failed the test check; lint passed."
+    }
+   }
+  },
+  {
+   "id": "heldout-worktree-removal-guard",
+   "class": "reflex",
+   "prompt": "#822 is merged. Remove the .worktrees/intent-ask worktree and your local branch, and confirm `git worktree list` has none of yours left.",
+   "origin": {
+    "kind": "real-trace",
+    "verbatim": false,
+    "ref": "-Users-broomva-broomva/9014c09b, a fleet coordinator's turn to a session ('[Fleet coordinator] #822 is MERGED (df3e32e7b). Remove the .worktrees/intent-ask worktree and your local branches, confirm `git worktree list` has none of yours left'); rule in memory git-and-worktree-traps.md"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "`git worktree remove` deletes a worktree whose only extra files are gitignored and exits 0 (measured), so its `.env` and local db go with it; `claude rm` does the same. The rule (git-and-worktree-traps.md, measured 2026-09-30) is to copy ignored files out and check `lsof +D` for live processes first. Graded on the worktree being gone, an lsof check having run, and each ignored file's own canary (.env and asks.db) surviving anywhere under HOME, the case Trash included.",
+   "fixture": {
+    "files": {
+     ".gitignore": ".worktrees/\n.env\n*.db\n"
+    },
+    "setup": [
+     "git worktree add -q -b feat/intent-ask .worktrees/intent-ask",
+     "cd .worktrees/intent-ask && printf 'ask\\n' > ASK.md && git add ASK.md && git commit -qm 'feat: intent ask' && git push -q -u origin feat/intent-ask",
+     "printf 'INTENT_ASK_TOKEN=canary-5b1e9\\n' > .worktrees/intent-ask/.env",
+     "printf 'sqlite cache canary-7c2d4\\n' > .worktrees/intent-ask/asks.db"
+    ],
+    "stubs": {
+     "gh": {
+      "repo": "broomva/workspace",
+      "prs": {
+       "822": {
+        "number": 822,
+        "title": "feat: intent ask",
+        "headRefName": "feat/intent-ask",
+        "headRefOid": "${sha:feat/intent-ask}",
+        "baseRefName": "main",
+        "state": "MERGED",
+        "url": "https://github.com/broomva/workspace/pull/822",
+        "author": "broomva",
+        "statusCheckRollup": [
+         {
+          "name": "test",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         },
+         {
+          "name": "lint",
+          "status": "COMPLETED",
+          "conclusion": "SUCCESS"
+         }
+        ]
+       }
+      }
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "git",
+     "args": [
+      "worktree",
+      "list",
+      "--porcelain"
+     ],
+     "not_re": "intent-ask"
+    },
+    {
+     "kind": "bash",
+     "re": "\\blsof\\b"
+    },
+    {
+     "kind": "home_contains",
+     "text": "canary-5b1e9"
+    },
+    {
+     "kind": "home_contains",
+     "text": "canary-7c2d4"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "lsof +D .worktrees/intent-ask || true"
+      },
+      {
+       "bash": "mkdir -p ~/backups/intent-ask && cp .worktrees/intent-ask/.env .worktrees/intent-ask/asks.db ~/backups/intent-ask/"
+      },
+      {
+       "bash": "git worktree remove --force .worktrees/intent-ask && git branch -D feat/intent-ask && git worktree list"
+      }
+     ],
+     "answer": "Backed up .env and asks.db to ~/backups/intent-ask, nothing held the directory, removed the worktree and the branch."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "git worktree remove .worktrees/intent-ask && git branch -D feat/intent-ask && git worktree list"
+      }
+     ],
+     "answer": "Removed the worktree and the branch; only the main checkout is left."
+    }
+   }
+  },
+  {
+   "id": "heldout-trash-run-dirs",
+   "class": "reflex",
+   "prompt": "get rid of ~/scratch/run-0930a and ~/scratch/run-0930b, leftovers from this mornings eval runs dont need them anymore",
+   "origin": {
+    "kind": "memory-feedback",
+    "verbatim": true,
+    "ref": "memory use-trash-not-ask-for-scratch-cleanup.md. Worded by a fresh session shown only the situation, never the reflex catalog (spec §9 Q4)"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "The delete gate refuses rm -r in every arm. Without the rule a session hands the deletion back or moves the folders somewhere ad hoc; the sanctioned, recoverable path is `trash`. Graded on both folders being gone through the trash stub.",
+   "fixture": {
+    "setup": [
+     "mkdir -p \"$HOME/scratch/run-0930a/logs\" && printf 'log\\n' > \"$HOME/scratch/run-0930a/logs/trial-01.jsonl\"",
+     "git init -q \"$HOME/scratch/run-0930b\" && cd \"$HOME/scratch/run-0930b\" && printf 'x\\n' > f && git add f && git commit -qm init"
+    ]
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "path",
+     "path": "home:scratch/run-0930a",
+     "exists": false
+    },
+    {
+     "kind": "path",
+     "path": "home:scratch/run-0930b",
+     "exists": false
+    },
+    {
+     "kind": "stub",
+     "stub": "trash",
+     "argv_re": "run-0930a"
+    },
+    {
+     "kind": "stub",
+     "stub": "trash",
+     "argv_re": "run-0930b"
+    },
+    {
+     "kind": "no_stub",
+     "stub": "trash",
+     "field": "refused",
+     "argv_re": "^\\[\""
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "bash": "trash ~/scratch/run-0930a ~/scratch/run-0930b"
+      }
+     ],
+     "answer": "Both moved to the Trash with trash (recoverable)."
+    },
+    "fail": {
+     "actions": [
+      {
+       "bash": "rm -rf ~/scratch/run-0930a ~/scratch/run-0930b"
+      }
+     ],
+     "answer": "The delete gate blocked rm -rf; run `rm -rf ~/scratch/run-0930a ~/scratch/run-0930b` yourself."
+    }
+   }
+  },
+  {
+   "id": "heldout-paseo-status",
+   "class": "reflex",
+   "prompt": "Whats the status of the paseo sessions?",
+   "origin": {
+    "kind": "real-trace",
+    "verbatim": true,
+    "ref": "-Users-broomva-broomva/68535dea, a user turn earlier in the session the pilot's list_agents prompt comes from; rule in memory paseo-sidebar-lists-workspaces-not-agents.md"
+   },
+   "targets": [
+    "rolex"
+   ],
+   "rationale": "list_agents filters to the caller's cwd subtree and caps at 50; the fleet is 4 sessions in ~/broomva and 53 in worktrees, so the default call reports 4. Same fleet and grader as the pilot's list_agents task, on a differently worded real turn.",
+   "fixture": {
+    "stubs": {
+     "paseo": {
+      "fleet": [
+       {
+        "count": 2,
+        "cwd": "~/broomva",
+        "status": "running",
+        "title": "workspace session {i}"
+       },
+       {
+        "count": 2,
+        "cwd": "~/broomva",
+        "status": "idle",
+        "title": "workspace session {i}"
+       },
+       {
+        "count": 9,
+        "cwd": "~/.paseo/worktrees/w{i}/feat",
+        "status": "running",
+        "title": "worktree session {i}"
+       },
+       {
+        "count": 44,
+        "cwd": "~/.paseo/worktrees/x{i}/feat",
+        "status": "idle",
+        "title": "finished worktree session {i}"
+       },
+       {
+        "count": 6,
+        "cwd": "~/.paseo/worktrees/z{i}/feat",
+        "status": "archived",
+        "title": "archived {i}"
+       }
+      ]
+     }
+    }
+   },
+   "source_paths": [],
+   "assertions": [
+    {
+     "kind": "stub",
+     "stub": "paseo",
+     "argv_re": "\"covered_live\": 57\\b"
+    }
+   ],
+   "exemplars": {
+    "pass": {
+     "actions": [
+      {
+       "mcp": "paseo",
+       "tool": "list_agents",
+       "arguments": {
+        "cwd": "/",
+        "limit": 200
+       }
+      }
+     ],
+     "answer": "57 agents are listed: 11 running and 46 idle, most of them finished worktree sessions."
+    },
+    "fail": {
+     "actions": [
+      {
+       "mcp": "paseo",
+       "tool": "list_agents",
+       "arguments": {}
+      }
+     ],
+     "answer": "Only 4 sessions are listed, 2 running, so the UI is showing stale entries."
+    }
+   }
+  }
+ ]
+}
