@@ -1324,3 +1324,15 @@ def test_a2_bars_met_only_when_every_bar_is_measured_and_cleared():
     assert A2.bars(errored)["verdict"].startswith("router bars not shown")
     no_reg = [r for r in data if r["task"] != "reg-p3-x"]
     assert "P14/P11/P3" in A2.bars(no_reg)["verdict"]
+    # an arm with no graded trial on a regression or rest task is named, never dropped
+    for task, arm in (("reg-p3-x", "reflex"), ("reg-p3-x", "qbar"), ("heldout-merge", "reflex")):
+        holed = [r for r in data if not (r["arm"] == arm and r["task"] == task)]
+        holed += rows(arm, task, 0, outcome="ERROR")
+        assert A2.bars(holed)["verdict"].startswith("router bars not shown"), (task, arm)
+    # #850's condition is not shown when a CI is missing, even with p9 and branch-first present
+    one_p9 = [r for r in data if r["task"] != "heldout-p9-change"]
+    q = A2.bars([r for r in one_p9 if r["task"] in ("heldout-p9-watch", "heldout-branch-first", "heldout-merge",
+                                                    "heldout-trash", "reg-p3-x") or r["arm"] != "rolex"])
+    assert q["qbar_fallback"]["meets_850_condition"] in (None, False)
+    only_two = [r for r in data if r["task"] in ("heldout-p9-watch", "heldout-branch-first")]
+    assert A2.bars(only_two)["qbar_fallback"]["meets_850_condition"] is not True

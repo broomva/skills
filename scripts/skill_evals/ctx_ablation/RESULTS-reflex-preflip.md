@@ -89,9 +89,9 @@ What would change this, and what the shadow logs must show: [last section](#what
   - All six of autonomous's hits echo its own description ("go", "proceed", "be
     autonomous", "automerge", "merge autonomously"). Without them it scores 0/10.
   - Checkit's positives echo its description too.
-  - So do some of p9's: "buzz me when it's done" and "waiting on CI to go green" against
-    p9's "buzz my phone" and "waiting on CI". p9 passes at exactly 6/10. It is pinned and
-    stays routed until M2, so the routing outcome does not change.
+  - So does one of p9's six hits: "waiting on CI to go green" against p9's phrase "waiting
+    on CI". p9 passes at exactly 6/10. It is pinned and stays routed until M2, so the
+    routing outcome does not change.
 - The brief itself echoed some catalog vocabulary ("tear down", "check this out").
 - So autonomous is **not** routed on this evidence. A v3 seal should be written in a jail
   with no skill listing: the eval harness's own jailed CLI.
@@ -260,8 +260,7 @@ held-out run: old lines, its own 8 tasks and run directory, not pooled.
       declined: "I didn't create one for a three-line change".
     - legacy t3 read the Linear persona note and searched for a Linear tool, and its PR
       body says the ticket was deferred;
-  - three only say that no ticket was created, two of them naming P3 or the missing Linear
-    tool.
+  - three only say that no ticket was created, each naming the missing Linear tool.
 - No reflex run mentions a ticket.
 - So reflex mode drops P3 *awareness*, and the cell is a mention check on one prompt.
 - Its interval is the trial-level Newcombe interval on one task. Spec I2's task-clustered
@@ -278,19 +277,20 @@ edit, so reflex loses nothing there.
 
 - **For reflex.**
   - It has the highest point estimate on both models: 15/24 opus, 14/24 sonnet.
-  - It costs 7% of legacy's tokens (88 against 1,185) and 33% of qbar's, with fewer tool
+  - It costs 7% of legacy's tokens (88 against 1,185) and 34% of qbar's, with fewer tool
     calls (3.8 against 5.6).
   - The stop rule fires on one mention-graded prompt, and in production CLAUDE.md carries
     the same P3 rule.
   - The rest bar fails only because a task every arm fails sits in the group.
   - p9 was 6/6 on the two p9 tasks.
   - Against it: the gap on `reg-p14`, where nothing was injected on change work.
-- **For qbar.** It roughly equals legacy on both models (opus 10/24 against 11/24, CI
-  [−0.27, +0.19]; sonnet 0/24 against 1/24) at 22% of legacy's tokens, and it carries P3
-  and P14 by construction.
+- **For qbar.** It cannot be told apart from legacy on either model (opus 10/24 against
+  11/24, CI [−0.27, +0.19]; sonnet 0/24 against 1/24), at 22% of legacy's tokens. It also
+  carries P3 and P14 by construction.
 - **Both cases are real.** Neither clears A1, which comes first in the spec. Reflex leaves
-  P3 to CLAUDE.md alone. qbar's #850 condition is not shown, and on the one worktree
-  prompt it removed and lost files where legacy stopped.
+  P3 to CLAUDE.md alone. qbar's #850 condition is not shown. On the one worktree prompt it
+  removed and lost the files where legacy stopped. Shipped reflex injects nothing on that
+  prompt, so it would behave like bare there (2/3 lost).
 
 ## Shadow (step 2, the owner's)
 
@@ -301,24 +301,36 @@ production. Its four rows (01:40–01:43Z) are test runs. Shadow is not on yet.
 
 In the spec's order:
 0. **Fix `change_work` first.** Tune its regexes for short go-aheads and ship verbs, then
-   seal a v3 set in the jail, with no skill listing, before scoring it. This has to come
-   before the three days of shadow: A1 requires `change_work` to clear M3, and shadow
-   rows from a router the fix then changes would not count. Shadow can start now for base
-   rates (`router_ms`, errors, p9 coverage), as long as A1's M3 clause is read after the fix.
-1. **A1, shadow, three days** (`ROLE_X_OUTPUT=shadow`). Read it with
+   seal a v3 set in the jail, with no skill listing, before scoring it. Score with
+   `role-x reflexes route --heldout --heldout-file <v3>`; the default file is v2.
+   - This has to come before the three days of shadow. A1 requires `change_work` to clear
+     M3, and the fix changes p9's coverage too.
+   - Rows carry no router version, so start the three-day window after the fix is
+     installed and read it with `--since` set to that window. Shadow rows from before then
+     are base rates only.
+1. **A1, shadow, three days.** The owner sets `ROLE_X_OUTPUT=shadow` in the role-x intake
+   hook's environment: its command in the workspace's write-gated `.claude/settings.json`,
+   or the sessions' environment. Read it with
    `python3 skills/orchestration/role-x/scripts/role-x.py reflexes shadow --since 3d`, added
-   here as A1's instrument. Its report should show:
+   here as A1's instrument. It exits 0 when met, 1 when not met and 3 when not shown, and
+   it never reads a partial join as met. Its report should show:
    - `router_ms` (from before the router's import to just before the row is written, a
      field this PR adds) at p99 ≤ 100 ms;
    - no row with an `error`;
-   - on turns that ran `git push` or `gh pr create` (about 560 in three days), the p9 id in
-     `selected`, with a Wilson 95% lower bound ≥ 0.70. The reader finds those turns by
-     joining each row's prompt digest to its session transcript, and counts rows it cannot
-     join rather than guessing;
+   - on turns that ran `git push` or `gh pr create`, the p9 id in `selected`, with a Wilson
+     95% lower bound ≥ 0.70. The spec's figure is about 560 pushes in three days. By this
+     reader's definition, recent transcripts give about 300 ship turns, since a turn
+     often pushes more than once.
+     - The reader pairs each row with its prompt in the session transcript (the k-th row
+       for a prompt with the k-th time it was typed).
+     - Queued, `isMeta` and `/loop` prompts are their own turns, and a compaction summary
+       is not.
+     - Slash commands are stored as their expansion, so their ship turns show as unjoined
+       and keep the result at "not shown": a judgement for the reader;
    - no id firing on most prompts (`selected` per id).
    - For M3, `role-x reflexes route --heldout` scores the v2 cases (the v3 set after
      step 0).
-2. **Spec §5.3 row 14.** On a router error the hook must still print the p9 line.
+2. **Spec §5.6 row 14** (and §5.3's router-error row). On a router error the hook must still print the p9 line.
    `role-x.py` prints nothing on an error today, so one bad catalog edit would drop p9
    fleet-wide.
 3. **P3 in the block, or measured as covered.** Either a routed P3 line on PR-opening
@@ -336,7 +348,7 @@ In the spec's order:
 |---|---|---|---|
 | **keep legacy (default)** | 11/24 on opus [+0.10, +0.82]; carries P3; on the worktree prompt it stopped to ask (0/3 lost) | 1,185 tokens; 1/24 on sonnet; does not move merge or Paseo | **recommended until 0–5 hold** |
 | flip to reflex | highest point estimate on both models (15/24, 14/24), 88 tokens; merge 3/3 vs 0/3 on opus | A1 not run; the P3 stop rule as graded; rest bar unmet; `change_work` 0.70 and an I1 miss on `reg-p14`; no error fallback | no, not yet |
-| flip to qbar | about equal to legacy (CI [−0.27, +0.19]) at 22% of its tokens; p9 6/6 on opus; carries P3 | #850 condition not shown (no branch-first); lower bound rests on one trial and on P3; 0/24 held-out on sonnet; removed and lost the worktree files 3/3 | no |
+| flip to qbar | not distinguishable from legacy (CI [−0.27, +0.19]) at 22% of its tokens; p9 6/6 on opus; carries P3 | #850 condition not shown (no branch-first); lower bound rests on one trial and on P3; 0/24 held-out on sonnet; removed and lost the worktree files 3/3 | no |
 | qbar + pinned p9, merge and specs lines (v1's stratum-C alternative) | would carry P3 and P14 by construction | never measured | measure before relying on it |
 
 ## What this cannot say

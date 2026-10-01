@@ -129,7 +129,9 @@ def bars(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
             "not_shown_because": [] if shown else [g for g, s_ in (("p9", p9), ("branch-first", bf)) if not s_]}
     failed = (_above(rb) is False or any(x["reflex_ge_qbar"] is False for x in p9_bf)
               or (rq_rest is not None and _above(rq_rest) is False) or bool(fails))
-    missing += [f"{x['task']} (no graded trial in an arm)" for x in p9_bf if x["reflex_ge_qbar"] is None]
+    # a task an arm has no graded trial on drops out of every comparison silently: name it
+    missing += sorted(f"{t} (no graded trial for {arm})" for t in a2 for arm in ("reflex", "qbar", "bare")
+                      if not _counts(rows, arm, {t})[1])
     if rq_rest is not None and rq_rest["ci"] is None:
         missing.append("rest (fewer than 2 tasks for a CI)")
     out["router"]["not_shown"] = missing

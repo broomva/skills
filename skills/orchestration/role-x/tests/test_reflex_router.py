@@ -1346,42 +1346,100 @@ def test_mutating_a_predicate_fails_its_scenario(repo, tmp_path, name, how):
         assert not _scenario_fires(mod, CATALOG, repo, name)
 
 
-def test_the_shadow_reader_joins_rows_to_ship_turns(tmp_path):
-    """spec A1's instrument (workspace#850): router time, errors, and p9 on the turns that
-    ran git push or gh pr create, found through each row's prompt digest."""
-    import hashlib
-    rx = load_module(ROLE_X_PY, "role_x_under_test_shadow")
-    now = datetime.now(timezone.utc).isoformat()
-    dig = lambda p: "sha256:" + hashlib.sha256(p.encode()).hexdigest()  # noqa: E731
-    rows = [
-        {"ts": now, "event": "reflex", "shadow": True, "session": "s1", "prompt_digest": dig("push it and open a pr"),
-         "selected": ["p9.watch-after-push"], "router_ms": 40.0, "ms": 20.0},
-        {"ts": now, "event": "reflex", "shadow": True, "session": "s1", "prompt_digest": dig("ok go"),
-         "selected": [], "router_ms": 90.0, "ms": 30.0},
-        {"ts": now, "event": "reflex", "shadow": True, "session": "s1", "prompt_digest": dig("what is this"),
-         "error": "KeyError", "router_ms": 5.0},
-        {"ts": now, "event": "reflex", "session": "s1", "prompt_digest": dig("not shadow")},
-    ]
-    events = tmp_path / "events.jsonl"
-    events.write_text("".join(json.dumps(r) + "\n" for r in rows), encoding="utf-8")
-    proj = tmp_path / "projects" / "-ws"
-    proj.mkdir(parents=True)
-    t = [{"type": "user", "message": {"role": "user", "content": "push it and open a pr"}},
-         {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "git push -u origin x"}}]}},
-         {"type": "user", "message": {"content": [{"type": "tool_result", "content": "ok"}]}},
-         {"type": "user", "message": {"role": "user", "content": "ok go"}},
-         {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": "gh pr create --fill"}}]}},
-         {"type": "user", "message": {"role": "user", "content": "what is this"}}]
-    (proj / "s1.jsonl").write_text("".join(json.dumps(e) + "\n" for e in t), encoding="utf-8")
+def _shadow(tmp_path, rows, transcript, name="role_x_under_test_shadow"):
     import argparse as _ap
     import contextlib
-    import io
+    rx = load_module(ROLE_X_PY, name)
+    tmp_path.mkdir(parents=True, exist_ok=True)
+    events = tmp_path / "events.jsonl"
+    events.write_text("".join((r if isinstance(r, str) else json.dumps(r)) + "\n" for r in rows), encoding="utf-8")
+    proj = tmp_path / "projects" / "-ws"
+    proj.mkdir(parents=True, exist_ok=True)
+    (proj / "s1.jsonl").write_text("".join(json.dumps(e) + "\n" for e in transcript), encoding="utf-8")
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        rx.cmd_reflexes_shadow(_ap.Namespace(events=str(events), projects=str(tmp_path / "projects"),
-                                             since="3d", json=True))
-    rep = json.loads(buf.getvalue())
-    assert rep["rows"] == 3 and rep["errors"] == {"KeyError": 1}
-    assert rep["ship_turns"]["turns"] == 2 and rep["ship_turns"]["p9_selected"] == 1
-    assert rep["ship_turns"]["rows_without_a_found_turn"] == 0
-    assert rep["router_ms"]["p99"] == 90.0 and rep["verdict"].startswith("A1 router bars not met")
+        code = rx.cmd_reflexes_shadow(_ap.Namespace(events=str(events), projects=str(tmp_path / "projects"),
+                                                    since="3d", json=True))
+    return code, json.loads(buf.getvalue())
+
+
+def _row(prompt, selected=(), ms=40.0, ts=None, **extra):
+    import hashlib
+    from datetime import datetime, timezone
+    r = {"ts": ts or datetime.now(timezone.utc).isoformat(), "event": "reflex", "shadow": True, "session": "s1",
+         "prompt_digest": "sha256:" + hashlib.sha256(prompt.encode()).hexdigest(), "selected": list(selected)}
+    if ms is not None:
+        r["router_ms"] = ms
+        r["ms"] = ms / 2
+    return {**r, **extra}
+
+
+def _user(text, **extra):
+    return {"type": "user", "message": {"role": "user", "content": text}, **extra}
+
+
+def _bash(cmd):
+    return {"type": "assistant", "message": {"content": [{"type": "tool_use", "name": "Bash", "input": {"command": cmd}}]}}
+
+
+def test_the_shadow_reader_meets_a1_only_on_a_full_join(tmp_path):
+    """spec A1's instrument (workspace#850): met only when every row is timed and joined,
+    every ship turn has a row, no row errored, p99 <= 100 ms and p9's Wilson bound >= 0.70."""
+    rows, t = [], []
+    for i in range(12):
+        rows.append(_row(f"fix and push {i}", ["p9.watch-after-push"]))
+        t += [_user(f"fix and push {i}"), _bash(f"git -C /ws push -u origin b{i}"),
+              {"type": "user", "message": {"content": [{"type": "tool_result", "content": "ok"}]}}]
+    rows.append(_row("what is this"))
+    t.append(_user("what is this"))
+    code, rep = _shadow(tmp_path, rows + ["[1]", "not json"], t)
+    assert (code, rep["verdict"]) == (0, "met"), rep
+    assert rep["ship_turns"]["joined"] == 12 and rep["ship_turns"]["p9_selected"] == 12
+
+
+def test_the_shadow_reader_never_reads_a_partial_join_as_met(tmp_path):
+    base_rows = [_row(f"fix and push {i}", ["p9.watch-after-push"]) for i in range(12)]
+    base_t = [e for i in range(12) for e in (_user(f"fix and push {i}"), _bash("git push"))]
+    # a queued prompt (typed mid-turn) that ships, with a row that did not select p9: it is
+    # its own turn, so the push is not credited to the turn before it
+    queued = {"type": "attachment", "attachment": {"type": "queued_command", "prompt": "push it now"}}
+    code, rep = _shadow(tmp_path / "a", base_rows + [_row("push it now")], base_t + [queued, _bash("git push")])
+    assert rep["ship_turns"]["joined"] == 13 and rep["ship_turns"]["p9_selected"] == 12
+    # an isMeta prompt (a /loop firing) starts its own turn too; with no row it is unjoined
+    code, rep = _shadow(tmp_path / "b", base_rows, base_t + [_user("loop tick", isMeta=True), _bash("gh pr create --fill")])
+    assert (code, rep["verdict"]) == (3, "not shown") and rep["ship_turns"]["ship_turns_without_a_row"] == 1
+    # a compaction summary is not a prompt: the push after it stays with its turn
+    code, rep = _shadow(tmp_path / "c", base_rows + [_row("last one", ["p9.watch-after-push"])],
+                        base_t + [_user("last one"), _user("summary of the conversation", isCompactSummary=True),
+                                  _bash("git push")])
+    assert rep["ship_turns"]["joined"] == 13 and rep["verdict"] == "met"
+    # a row from an older install without router_ms: time is not shown
+    code, rep = _shadow(tmp_path / "d", base_rows[:-1] + [_row("fix and push 11", ["p9.watch-after-push"], ms=None)], base_t)
+    assert rep["verdict"] == "not shown"
+    # an error row fails A1 whatever else holds
+    code, rep = _shadow(tmp_path / "e", base_rows + [_row("x", error="KeyError")], base_t + [_user("x")])
+    assert (code, rep["verdict"]) == (1, "not met")
+
+
+def test_the_shadow_reader_pairs_repeated_prompts_by_occurrence(tmp_path):
+    """The k-th row for a digest is the k-th turn with it: 9 repeats of one prompt where only
+    the last pushed is 1 ship turn, not 9."""
+    rows = [_row("push and watch ci", ["p9.watch-after-push"]) for _ in range(9)]
+    t = []
+    for i in range(9):
+        t.append(_user("push and watch ci"))
+        if i == 8:
+            t.append(_bash("git push"))
+    code, rep = _shadow(tmp_path, rows, t)
+    assert rep["ship_turns"]["joined"] == 1 and rep["ship_turns"]["wilson_lower"] < 0.70
+
+
+def test_a_ship_is_a_command_segment_not_a_mention():
+    rx = load_module(ROLE_X_PY, "role_x_under_test_ships")
+    for cmd in ("git push -u origin x", "cd /ws && git -C /ws push", "GIT_X=1 git push", "gh pr create --fill",
+                "make test; git push"):
+        assert rx._ships(cmd), cmd
+    for cmd in ("git push origin --delete old", "python3 - <<'EOF'\nprint('git push')\nEOF", "echo 'run git push later'",
+                "grep -rn 'gh pr create' docs"):
+        assert not rx._ships(cmd), cmd
+    assert rx._wilson_lower(116, 150) < 0.70  # 0.69999..., unrounded

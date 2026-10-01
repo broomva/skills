@@ -88,10 +88,10 @@ never its text.
 | `predicate_errors` | Predicates that raised, by exception class; each counted as false, the rest still route |
 | `stage_ms`, `ms` | Stage timings (state, prompt, narrow) and the whole route, catalog load to render |
 | `router_ms` | The router's own time in the hook process, from before its import to just before this row is written, monotonic: the time workspace#850's A1 gate reads (p99 ≤ 100 ms) |
-
-`role-x reflexes shadow --since 3d` reads A1 off the shadow rows: `router_ms` p99, error rows, ids selected, and p9 on ship turns (a row's `prompt_digest` joined to its session transcript under `~/.claude/projects`, where a `git push` or `gh pr create` ran before the next prompt), with the Wilson lower bound and the rows it could not join.
 | `shadow` | `true` when logged by `ROLE_X_OUTPUT=shadow` and not injected |
 | `error` | The exception class when the router failed; nothing was printed |
+
+`role-x reflexes shadow --since 3d` reads spec A1 (workspace#850) off the shadow rows: `router_ms` p99, error rows, ids selected, and p9 on ship turns. A ship turn is a prompt in a shadow session's transcript (`~/.claude/projects/*/<session>.jsonl`) whose turn ran `git push` or `gh pr create`. The k-th row for a prompt digest is paired with the k-th such prompt. It exits 0 when met, 1 when not met, and 3 when not shown. Not shown covers an untimed row, a ship turn with no row, and a row with no turn: a partial join is never read as met.
 
 ## Sanitized prompt capture (v0.4.0, opt-in)
 

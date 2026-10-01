@@ -2,7 +2,7 @@
 
 ## role-x reflex router, pre-flip evidence (BRO-2674)
 
-Status: evals done, PR next, on `feat/role-x-reflex-preflip`. Owner decision 2026-10-01: do not
+Status: evals done; PR broomva/skills#260 in P20, on `feat/role-x-reflex-preflip`. Owner decision 2026-10-01: do not
 flip yet; run the pre-flip flow, then the owner decides. `ROLE_X_OUTPUT` stays
 default-off in this PR. Spec: workspace `docs/specs/2026-09-30-reflex-router-and-ontology-ranked-context.html`
 with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
