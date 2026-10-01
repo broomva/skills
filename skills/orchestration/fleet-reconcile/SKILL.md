@@ -175,19 +175,25 @@ unpinned checks, a repo not observed, a surface not read, drift, records
 with no process. A key is asked once, stays open until the owner answers it or
 a tick finds it no longer true (a resolution record), and an answer holds for
 as long as the condition does; a condition that ends and comes back is a new
-ask. A tick resolves a key only from a surface it read: a listing, job files,
-board or repo it couldn't read says nothing about the asks they raise. Keys
-carry no counts or error text, so they don't change tick to tick; a prompt's
-key carries the session's activity time, so a new wait after more work is a
-new ask. A tick writes a batch
+ask. A tick resolves a key only when it read the surfaces that raise it: the
+listing for a prompt (and not while the session reads as unknown), the job
+files and the scope's board too for a blocked session, the version, job files
+and listing for drift, the repo for its rules (a repo that leaves the scope
+resolves). Keys carry no counts or error text, so they don't change tick to
+tick. A prompt's key is the session and what it waits for: the first tick that
+sees it not waiting resolves it, so the next wait is a new ask (two waits
+between ticks read as one). The core comparison asks when it can't run: no
+registration time, or the prototype's `compare.jsonl`. A tick writes a batch
 (`<state_dir>/asks/<tick>.md` and an ask intent in the ledger) only when it has
 a new key.
 
 With the tick's lock released, `fleet act ask --show` shows a dialog (banners
 are stored but not shown on this Mac, spec §5.7): the scope, the number of
-open asks and the oldest one's line, with Seen and Later (the default),
-giving up after 10 minutes. The outcome is a `seen` record; a dialog that
-can't be shown writes none, and the tick alerts and exits 1. A batch not clicked Seen is shown
+open asks and the first open ask's line from the newest batch due, with
+Seen and Later (the default), giving up after 10 minutes. The outcome is a
+`seen` record. A dialog that can't be shown writes none (the next tick tries
+again) and sends no p9; the tick alerts and exits 1, and that alert, at most
+every 6 hours, is what reaches p9. A batch not clicked Seen is shown
 again at the next tick and then at most every `ask_renotify_h` (6) hours. It
 also calls `p9 notify` with the count only, since p9 may send off the machine.
 A Seen click is a statement, not a proof; only an answer closes an ask:
@@ -272,7 +278,7 @@ the caller's cwd and user site stay off `sys.path`; it imports ctx-core from
 ```bash
 cd skills/orchestration/fleet-reconcile
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py      # every rule deleted, every overlapping pair swapped, 40 protections removed
+python3 tests/mutation_check.py      # every rule deleted, every overlapping pair swapped, 47 protections removed
 python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (anonymized; public repo)
 ```
 
@@ -280,10 +286,10 @@ python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (a
 |---|---|
 | `test_parsers.py` | Every parser against the 2.1.280 capture; missing fields fail the surface; drift is reported; the bearer, env and prompts are never extracted; the slug rule; the ruleset check (skills flagged until its pull_request rule lands, unpinned checks flagged) |
 | `test_classify.py` | A positive case per class; the spec's five ordering tests; 41 rule pairs that can both match, the earlier winning; a grid proving the other 14 pairs can't; the arc and death currency rules; the spawn pause; the count check; the overlap pass |
-| `test_observe.py` | The pipeline over the capture in a scratch HOME; a 200-row listing fails closed unless the job files show it complete; one unparsed job file degrades only its session; an unresolvable slug, a gh error and a PR list at the cap fail only their repo; the bearer never reaches a snapshot or report; activity found past a last line larger than the first tail window; the token taken out of the environment and handed to gh alone |
-| `test_report.py` | Every section; withheld crm/ paths and tokens; per-occurrence asks (once, then still open; an answer holds while true; a recurrence is new; a different question is new), answers per batch, stable count keys, failed-surface asks, a resolution only from a surface read that tick, a new waiting episode as a new ask, the ack wording, the ruleset wording, the dialog's re-show rule, scheduled work as inventory only; the labelling sheet (distinct sessions only) |
+| `test_observe.py` | The pipeline over the capture in a scratch HOME; a 200-row listing fails closed unless the job files show it complete; one unparsed job file degrades only its session; an unresolvable slug, a gh error and a PR list at the cap fail only their repo; the bearer never reaches a snapshot or report; activity found past a last line larger than the first tail window (ctx-core's reader); the token taken out of the environment and handed to gh alone |
+| `test_report.py` | Every section; withheld crm/ paths and tokens; per-occurrence asks (once, then still open; an answer holds while true; a recurrence is new; a different question is new), answers per batch, stable count keys, failed-surface asks, a resolution only from the surfaces that raise the key, a wait's key holding while its subagents write, the ack wording, the ruleset wording, the dialog's re-show rule, scheduled work as inventory only; the labelling sheet (distinct sessions only) |
 | `test_ledger.py` | Validation, distinct owner ids within one millisecond, corrupt-line counting, 4 processes × 50 appends lose nothing, the ask and spawn folds |
-| `test_tick.py` | tick.sh end to end with stub claude/gh/osascript/p9: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, the token reaching gh and not claude, an empty token file, a token file open to others not used, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, the dialog shown again at the next tick and stopped by Seen, a dialog that can't be shown not recorded as seen, a failed compare not using up the day and the prototype's compare line refused, ack refused inside a session, refused verbs, the labelling sheet |
+| `test_tick.py` | tick.sh end to end with stub claude/gh/osascript/p9: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, the token reaching gh and not claude, an empty token file, a token file open to others not used, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, the dialog shown again at the next tick and stopped by Seen, a dialog that can't be shown not recorded as seen, a failed compare not using up the day and the prototype's compare line refused and asked about, the dialog's default button and line, no p9 when the dialog fails, ack refused inside a session, refused verbs, the labelling sheet |
 | `test_install.py` | The pinned copy (runnable without the checkout), plist rendering, config seeded once at 0600, bootout-wait-bootstrap on every run, a retried bootstrap, uninstall to the Trash, dry run, a broken config, uncommitted changes refused without --force |
 
 ## Phase 2 and 3

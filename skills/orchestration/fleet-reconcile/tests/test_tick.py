@@ -218,6 +218,7 @@ def test_a_dialog_that_cannot_be_shown_is_not_recorded_as_seen(rig):
     assert r.returncode == 1
     assert not [x for x in rig.ledger() if x["kind"] == "seen"]
     assert "could not be shown" in rig.log()
+    assert not [c for c in rig.calls("p9") if "fleet-ask" in c]  # the tick's alert (6 h limit) reaches p9 instead
     rig.tick()  # shown at the next tick, as an unseen batch is
     assert [x for x in rig.ledger() if x["kind"] == "seen"]
 
@@ -298,6 +299,24 @@ def test_an_unseen_batch_is_shown_again_at_the_next_tick_and_then_not_within_six
     assert len(dialogs) == 2 and "nothing to show" in rig.log()
 
 
+def test_the_dialog_defaults_to_later_and_leads_with_the_newest_batchs_first_open_ask(rig):
+    rig.tick()
+    rig.fleet("ack", "1", "--ask", "a1")
+    sd = rig.world.state["broomva"]
+    # A second batch with a new ask, the way a tick writes one.
+    out = rig.fleet("ledger-append", "fire", "--scope", "broomva", "--tick", "2", "--dry-run", "1")
+    assert out.returncode == 0, out.stderr
+    rec = {"v": 1, "scope": "broomva", "tick": 2, "dry_run": True, "by": "tick", "kind": "intent", "verb": "ask",
+           "key": "scope:broomva", "id": "2-9", "ts": time.strftime("%Y-%m-%dT%H:%M:%S.000Z", time.gmtime()),
+           "target": {"batch": "x", "asks": [{"id": "a1", "key": "newest-key", "class": "observe",
+                                               "question": "THE NEWEST QUESTION"}]}}
+    with (sd / "ledger.jsonl").open("a") as fh:
+        fh.write(json.dumps(rec) + "\n")
+    assert rig.fleet("act", "ask", "--show", "--tick", "2").returncode == 0
+    last = "\n".join(rig.calls("osascript")).rsplit("display dialog", 1)[1]  # the text spans lines
+    assert 'default button "Later"' in last and "THE NEWEST QUESTION" in last
+
+
 def test_a_seen_click_stops_the_dialog(rig):
     rig.tick(STUB_BUTTON="Seen")
     rig.tick(STUB_BUTTON="Seen")
@@ -329,12 +348,15 @@ def test_a_failed_compare_does_not_use_up_the_day_and_the_prototypes_line_is_ref
     proto = {"ts": ts(time.time() - 30 * 3600), "registered": reg, "pass": True}
     path.write_text(json.dumps(proto) + "\n")
     out = rig.fleet("core-compare")
-    assert out.returncode == 0 and "prototype" in out.stdout
+    assert out.returncode == 0 and "not run (prototype)" in out.stdout
+    rig.tick()  # the report says so and asks the owner
+    rep = json.loads((rig.world.state["broomva"] / "ticks" / "00001" / "report.json").read_text())
+    assert "compare:prototype" in [a["key"] for a in rep["asks"]] and rep["core_compare"] == {"refused": "prototype"}
     path.write_text(json.dumps(dict(proto, neither=0)) + "\n"
-                    + json.dumps({"ts": ts(time.time() - 60), "registered": reg, "pass": False,
-                                  "error": "claude agents exited 1"}) + "\n")
+                    + json.dumps({"ts": ts(time.time()), "registered": reg, "pass": False,
+                                  "error": "CompareError: claude agents exited 1"}) + "\n")
     out = rig.fleet("core-compare")
-    assert "not due" not in out.stdout and "compare" in out.stdout, out.stdout + out.stderr
+    assert "not due" not in out.stdout, out.stdout + out.stderr
     assert len(path.read_text().splitlines()) == 3  # it ran, and wrote its line
 
 

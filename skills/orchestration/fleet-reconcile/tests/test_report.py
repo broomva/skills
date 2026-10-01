@@ -116,40 +116,55 @@ def test_an_ack_answers_its_own_batch_whole_or_per_ask():
     assert set(ledger.open_by_key(recs + [_ack(3, ["a1"])])) == {"k1", "j1", "k2", "j2", "j3"}
 
 
-def test_a_new_waiting_episode_from_the_same_session_is_a_new_ask():
-    # Same prompt text, but the session worked in between: its activity moved.
+def test_a_waits_key_holds_while_its_subagents_keep_writing():
     first = report.build(_snap([S(session_id=_sid(1), status="waiting", waiting_for="dialog open",
                                   activity_ago=2 * H)]), [], True)["asks"]
-    records = _batch_records(first) + [_ack(1)]
     later = report.build(_snap([S(session_id=_sid(1), status="waiting", waiting_for="dialog open",
-                                  activity_ago=600)]), records, True)
-    assert len(later["asks"]) == 1 and later["asks"][0]["key"] != first[0]["key"]
+                                  activity_ago=2 * H, sub_ago=60)]), _batch_records(first), True)
+    assert later["asks"] == [] and later["resolved"] == [] and len(later["asks_open"]) == 1
 
 
-def test_an_ask_is_resolved_only_from_a_surface_read_this_tick():
-    blocked = bg(session_id=_sid(1), state="blocked", job=dict(QUESTION_JOB))
-    asks = report.build(_snap([blocked]), [], True)["asks"]
-    (key,) = [a["key"] for a in asks if a["key"].startswith("blocked:")]
-    records = _batch_records(asks)
-    # The job files weren't read: the session reads as unknown and its key is
-    # absent, but that says nothing about the question, so it stays open.
-    blind = _snap([bg(session_id=_sid(1), state="blocked")])
-    blind["surfaces"]["jobs"] = {"ok": False, "error": "EACCES"}
-    rep = report.build(blind, records, True)
-    assert rep["resolved"] == []  # stays open in the ledger (`fleet asks` lists it)
-    # A repo that wasn't observed doesn't resolve its rules ask either.
+def _resolves(asked, now_snap):
+    """Is the one key `asked` raised resolved by a tick that reads `now_snap`?"""
+    asks = report.build(asked, [], True)["asks"]
+    assert len(asks) == 1, asks
+    return asks[0]["key"] in report.build(now_snap, _batch_records(asks), True)["resolved"]
+
+
+def _surf(snap, **surfaces):
+    snap["surfaces"].update(surfaces)
+    return snap
+
+
+def test_an_ask_is_resolved_only_from_the_surfaces_that_raise_it():
+    blocked = lambda **kw: bg(session_id=_sid(1), state="blocked", job=dict(QUESTION_JOB), **kw)  # noqa: E731
+    done = lambda: bg(session_id=_sid(1), state="done", job=dict(QUESTION_JOB, state="done", needs=""))  # noqa: E731
+    ok = {"jobs": {"ok": True}, "claude_version": {"ok": True}}
+    # A job question: not while the job files, or its own job file, or this scope's board, weren't read.
+    assert not _resolves(_surf(_snap([blocked()]), **ok), _surf(_snap([done()]), jobs={"ok": False, "error": "x"}))
+    unread = bg(session_id=_sid(1), state="blocked")
+    unread["job_unread"] = True  # its own file was mid-write: the session reads as unknown
+    assert not _resolves(_surf(_snap([blocked()]), **ok), _surf(_snap([unread]), **ok))
+    assert not _resolves(_surf(_snap([blocked()]), **ok),
+                         _surf(_snap([done()]), board={"broomva": {"ok": False, "error": "EIO"}}, **ok))
+    # Another scope's board doesn't matter; read and gone, it resolves.
+    assert _resolves(_surf(_snap([blocked()]), **ok),
+                     _surf(_snap([done()]), board={"broomva": {"ok": True}, "sri": {"ok": False}}, **ok))
+    # Drift is found in the version, the job files and the listing: all three must be read.
+    drifted = _surf(_snap([], drift=["job file: state 'paused'"]), **ok)
+    assert not _resolves(drifted, _surf(_snap([]), jobs={"ok": False, "error": "x"}, claude_version={"ok": True}))
+    assert not _resolves(drifted, _surf(_snap([]), jobs={"ok": True}, claude_version={"ok": False}))
+    assert _resolves(drifted, _surf(_snap([]), **ok))
+    # Unparsed job files: only a reading of the job files says they parse now.
+    unparsed = _surf(_snap([]), jobs={"ok": True, "unparsed": 2}, claude_version={"ok": True})
+    assert not _resolves(unparsed, _surf(_snap([]), jobs={"ok": False, "error": "x"}, claude_version={"ok": True}))
+    # A repo's rules: not while the repo wasn't observed; resolved once it leaves the scope.
     flagged = _snap([], repos=[{"repo": "/w/b/.git", "slug": "o/b", "ok": True, "default_branch": "main",
                                 "rules": {"types": [], "pull_request": False, "approvals": 0, "checks": [],
                                           "unpinned": [], "driver_eligible": False, "flags": ["no pull_request rule"]},
                                 "prs": []}])
-    rasks = report.build(flagged, [], True)["asks"]
-    (rkey,) = [a["key"] for a in rasks if a["key"].startswith("rules:")]
-    unread = _snap([], repos=[{"repo": "/w/b/.git", "slug": "o/b", "ok": False, "error": "gh exited 1"}])
-    assert rkey not in report.build(unread, _batch_records(rasks), True)["resolved"]
-    # Read and gone: resolved.
-    jobs_read = _snap([bg(session_id=_sid(1), state="done", job=dict(QUESTION_JOB, state="done", needs=""))])
-    jobs_read["surfaces"]["jobs"] = {"ok": True}
-    assert key in report.build(jobs_read, records, True)["resolved"]
+    assert not _resolves(flagged, _snap([], repos=[{"repo": "/w/b/.git", "slug": "o/b", "ok": False, "error": "gh"}]))
+    assert _resolves(flagged, _snap([], repos=[]))
 
 
 def test_the_ack_text_says_what_an_ack_answers():

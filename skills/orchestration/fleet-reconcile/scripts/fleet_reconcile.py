@@ -34,7 +34,7 @@ import subprocess
 import sys
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 HERE = Path(__file__).resolve().parent
 CTX_SCRIPTS = HERE.parent.parent / "ctx-core" / "scripts"
@@ -104,6 +104,22 @@ def cmd_observe(args: argparse.Namespace) -> int:
     return 0
 
 
+def _compare_state(scope_id: str) -> Tuple[Optional[str], List[Dict[str, Any]]]:
+    """(why the daily comparison can't run, or None; the file's lines). The
+    first line is read the way ctx doctor --compare reads it."""
+    import ctx_compare
+
+    first = ctx_compare.first_line(scope_id)
+    if first is None:
+        return "unreadable", []
+    if ctx_compare.is_prototype(first):
+        return "prototype", []
+    lines = _compare_lines(scope_id)
+    if not first.get("registered") or not lines:
+        return "unregistered", lines
+    return None, lines
+
+
 def _compare_lines(scope_id: str) -> List[Dict[str, Any]]:
     import ctx
 
@@ -127,8 +143,8 @@ def cmd_report(args: argparse.Namespace) -> int:
     snap = json.loads((td / "snapshot.json").read_text(encoding="utf-8"))
     records, _ = ledger.read(sd)
     dry = _dry(args, sec)
-    lines = _compare_lines(sec["scope"])
-    rep = report.build(snap, records, dry, lines[-1] if lines else None)
+    refused, lines = _compare_state(sec["scope"])
+    rep = report.build(snap, records, dry, {"refused": refused} if refused else lines[-1])
     common.write_json(td / "report.json", rep)
     common.write_atomic(td / "report.md", report.render_md(rep).encode("utf-8"))
     report.prune(sd, time.time())
@@ -182,16 +198,10 @@ def p9_notify(title: str, body: str) -> Any:
         return common.safe_text(str(exc), 80)
 
 
-def _current_keys(sd: Path) -> Optional[List[str]]:
-    """The ask keys still true at the latest tick (its report.json)."""
-    rep = report.latest_report(sd)
-    return None if rep is None else list(rep.get("ask_keys_current") or [])
-
-
-def _open_now(records: list, sd: Path) -> Dict[str, Dict]:
-    opened = ledger.open_by_key(records)
-    current = _current_keys(sd)
-    return {k: v for k, v in opened.items() if current is None or k in current}
+def _open_now(records: list) -> Dict[str, Dict]:
+    """Open asks: each tick records the ones it found no longer true, so what
+    the ledger holds open is open (one whose surface wasn't read included)."""
+    return ledger.open_by_key(records)
 
 
 def due_batches(records: list, open_keys: Dict[str, Dict], now: float,
@@ -218,7 +228,7 @@ def cmd_act(args: argparse.Namespace) -> int:
         return EXIT_REFUSED
     sd = config.state_dir(sec)
     records, _ = ledger.read(sd)
-    open_now = _open_now(records, sd)
+    open_now = _open_now(records)
     if not args.show:
         print("fleet act ask: %d open ask(s); pass --show to show them" % len(open_now))
         return 0
@@ -233,16 +243,21 @@ def cmd_act(args: argparse.Namespace) -> int:
         return 0
     n = len(open_now)
     oldest = min((common.parse_iso(v["ts"]) or now) for v in open_now.values())
-    # §5.7: the dialog shows the first ask's line (the oldest open one).
-    first = sorted(open_now.values(), key=lambda v: (v["tick"] or 0, int((v["ask"].get("id") or "a0")[1:] or 0)))[0]["ask"]
+    # §5.7: the first ask's line, from the newest batch due, so a new ask isn't
+    # hidden behind long-lived ones. Every due batch holds an open ask.
+    newest = due[-1]
+    open_ids = {v["ask"].get("id") for v in open_now.values() if v["of"] == newest["id"]}
+    first = next(a for a in newest["asks"] if a.get("id") in open_ids)
     title = "fleet %s: %d open ask%s" % (sec["scope"], n, "" if n == 1 else "s")
     text = "%s\n\nOldest %s. Read them: fleet asks --scope %s\nAnswer: fleet ack <tick> --scope %s" % (
         common.safe_text(first.get("question"), 240), common.age(now - oldest), sec["scope"], sec["scope"])
     res = show_dialog(title, text)
-    res["p9"] = p9_notify(title, "%d open; read them on the Mac with fleet asks --scope %s" % (n, sec["scope"]))
-    if res.get("error"):  # not shown: no seen record, and the tick hears about it
+    if res.get("error"):
+        # Not shown: no seen record, so the next tick tries again. The tick
+        # fails, and its alert (at most every 6 h) is what reaches p9.
         print("fleet act ask: the dialog could not be shown: %s" % res["error"], file=sys.stderr)
         return 1
+    res["p9"] = p9_notify(title, "%d open; read them on the Mac with fleet asks --scope %s" % (n, sec["scope"]))
     tick = args.tick if args.tick else None
     for b in due:
         ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": sec["scope"], "tick": tick,
@@ -266,7 +281,7 @@ def cmd_asks(args: argparse.Namespace) -> int:
             for a in b["asks"]:
                 print("  [%s] (%s) %s" % (a.get("id"), a.get("class"), a.get("question")))
     else:
-        open_now = _open_now(records, sd)
+        open_now = _open_now(records)
         if not open_now:
             print("fleet asks: no open asks in scope %s" % sec["scope"])
         for key, v in sorted(open_now.items(), key=lambda kv: (kv[1]["tick"] or 0, kv[1]["ask"].get("id") or "")):
@@ -348,16 +363,15 @@ def cmd_core_compare(args: argparse.Namespace) -> int:
     time is the owner's to give once (`ctx doctor --compare --registered ...`);
     until compare.jsonl holds it, this step says so and does nothing."""
     sec = _sec(args)
-    lines = _compare_lines(sec["scope"])
     import ctx_compare
 
-    if not lines or not lines[0].get("registered") or ctx_compare.is_prototype(lines[0]):
-        print("fleet core-compare: no registration time yet (or compare.jsonl is the prototype's); the owner "
-              "runs `ctx doctor --compare --registered <UTC time>` once in the scope (ctx-core SKILL.md)")
+    refused, lines = _compare_state(sec["scope"])
+    if refused:  # the report asks the owner
+        print("fleet core-compare: not run (%s): %s" % (refused, report.COMPARE_REFUSALS[refused]))
         return 0
     now = time.time()
     if not args.force:
-        ran = [ln for ln in lines if not ln.get("error")]  # a failed run doesn't use up the day
+        ran = [ln for ln in lines if "error" not in ln]  # a failed run doesn't use up the day
         last = common.parse_iso(ran[-1].get("ts")) if ran else 0.0
         last = last or 0.0
         if time.localtime(last)[:3] == time.localtime(now)[:3] or time.localtime(now).tm_hour < sec["compare_hour"]:

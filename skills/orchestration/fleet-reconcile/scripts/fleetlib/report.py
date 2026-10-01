@@ -51,8 +51,7 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
             "action": r["action"], "scope": s["scope"], "placement": s["placement"],
             "cwd": common.tilde(s["cwd"]), "branch": s.get("branch"),
             "state": s.get("state"), "status": s.get("status"), "pid": s.get("pid") is not None,
-            "activity_age_s": None if a is None else round(now - a), "activity_ts": a,
-            "fleet_key": s.get("fleet_key"),
+            "activity_age_s": None if a is None else round(now - a), "fleet_key": s.get("fleet_key"),
             "paseo_agent": (s.get("paseo") or {}).get("agent_id"),
         })
     rows.sort(key=lambda x: (classify.ORDER.index(x["class"]), x["session_id"]))
@@ -76,7 +75,8 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
     rep["asks"], rep["asks_open"], rep["acked_still_open"] = make_asks(rep, records, now)
     rep["ask_keys_current"] = sorted(k for k, _, _ in candidates(rep))
     rep["resolved"] = resolved_keys(records, rep["ask_keys_current"], rep)
-    open_of = {v["of"] for v in ledger.open_by_key(records).values()}
+    gone = set(rep["resolved"])  # resolved by this tick, recorded after the report
+    open_of = {v["of"] for k, v in ledger.open_by_key(records).items() if k not in gone}
     pending = [b for b in ledger.ask_batches(records) if b["id"] in open_of]
     new_batch = 1 if rep["asks"] else 0  # this tick's, written after the report
     rep["batches"] = {"unanswered": len(pending) + new_batch,
@@ -124,10 +124,10 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
             continue
         label = "%s (%s)" % (s["name"] or "-", s["short"])
         if s["class"] == "3":
-            # One waiting episode: the activity time holds while it waits, and a
-            # later prompt follows new activity, so it is a new ask.
-            cands.append(("prompt:%s:%s" % (s["session_id"], _tag("%s|%s" % (s["evidence"], s.get("activity_ts")))),
-                          "3",
+            # A wait that ends is resolved by the first tick that sees the
+            # session not waiting, so the next wait is a new ask. Not keyed on
+            # activity: subagents keep writing while the main session waits.
+            cands.append(("prompt:%s:%s" % (s["session_id"], _tag(s["evidence"])), "3",
                           "Session %s is waiting at a prompt: %s. The fleet never approves prompts."
                           % (label, s["evidence"])))
         elif s["class"] == "7":
@@ -179,9 +179,21 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
                 name, "; ".join(ru["flags"]),
                 " Its PRs get no driver until it has a pull_request rule and checks pinned to GitHub Actions."
                 if not ru["driver_eligible"] else "")))
+    cmp_ = rep.get("core_compare") or {}
+    if cmp_.get("refused"):
+        cands.append(("compare:" + cmp_["refused"], "observe", "The core comparison (ctx doctor --compare) is "
+                      "not run in scope %s: %s. The owner's step is in ctx-core SKILL.md." % (
+                          rep["scope"], COMPARE_REFUSALS[cmp_["refused"]])))
     # Scheduled work is an inventory, report-only in phase 1: its readings
     # (staleness, exit codes) are in the report's table, not the owner's dialog.
     return cands
+
+
+COMPARE_REFUSALS = {
+    "unregistered": "it has no registration time yet; run it once with --registered",
+    "prototype": "compare.jsonl starts with the pre-spec prototype's line; move it aside, then register",
+    "unreadable": "compare.jsonl's first line can't be read; move it aside, then register",
+}
 
 
 def make_asks(rep: Dict[str, Any], records: List[Dict[str, Any]],
@@ -204,23 +216,35 @@ def make_asks(rep: Dict[str, Any], records: List[Dict[str, Any]],
 
 
 def observed(key: str, rep: Dict[str, Any]) -> bool:
-    """Was the surface that would raise this key read this tick? A key is
-    resolved only from a reading: a listing, a board or a repo that couldn't be
-    read says nothing about whether its asks are still true (a tick right after
-    wake, before the network is up, reads no repo at all)."""
+    """Were the surfaces that raise this key read this tick? A key is resolved
+    only from a reading: a listing, job file, board or repo that couldn't be
+    read says nothing about whether its asks are still true (a tick right
+    after wake, before the network is up, reads no repo at all)."""
     surf = rep["surfaces"]
-    ok = lambda name: bool(surf.get(name, {}).get("ok"))  # noqa: E731
-    boards = all(b.get("ok") for b in (surf.get("board") or {}).values())
-    if key.startswith(("prompt:", "fleet-shaped-unledgered", "drift:")):
+
+    def ok(*names: str) -> bool:
+        return all(bool((surf.get(n) or {}).get("ok")) for n in names)
+
+    kind, _, rest = key.partition(":")
+    if kind in ("prompt", "blocked"):
+        sid = rest.split(":", 1)[0]
+        if not ok("listing") or any(s["session_id"] == sid and s["class"] == "unknown" for s in rep["sessions"]):
+            return False  # unknown: its job file, board or transcript was not read
+        # blocked: an ARC-STATUS on this scope's board, or a job file's question
+        return kind == "prompt" or (ok("jobs") and bool(((surf.get("board") or {}).get(rep["scope"]) or {}).get("ok")))
+    if kind == "drift":
+        return ok("claude_version", "jobs", "listing")  # where drift is found
+    if key == "surface:jobs-unparsed":
+        return ok("jobs")
+    if kind == "records-without-process":
+        return ok("listing", "paseo_records")
+    if kind == "fleet-shaped-unledgered":
         return ok("listing")
-    if key.startswith("blocked:"):
-        return ok("listing") and ok("jobs") and boards
-    if key.startswith("records-without-process"):
-        return ok("listing") and ok("paseo_records")
-    if key.startswith("rules:"):
-        slug = key.split(":", 2)[1]
-        return any((r.get("slug") or common.tilde(r["repo"])) == slug and r.get("ok") for r in rep["repos"])
-    return True  # listing, surface:* and repo:* keys are about reading itself
+    if kind == "rules":
+        slug = rest.split(":", 1)[0]
+        mine = [r for r in rep["repos"] if (r.get("slug") or common.tilde(r["repo"])) == slug]
+        return not mine or any(r.get("ok") for r in mine)  # a repo that left the scope resolves
+    return True  # listing, surface:*, repo:* and compare:* keys are about reading itself
 
 
 def resolved_keys(records: List[Dict[str, Any]], current: Iterable[str], rep: Dict[str, Any]) -> List[str]:
@@ -386,10 +410,13 @@ def render_md(rep: Dict[str, Any]) -> str:
         c = rep["core_compare"]
         L.append("## Core comparison (ctx doctor --compare, latest)")
         L.append("")
-        L.append("%s: %s" % (c.get("ts", "?"), ("could not run: %s" % c["error"]) if c.get("error") else
-                             "board side %s, session side %s, %s." % (_pct(c.get("board_pct")),
-                                                                     _pct(c.get("session_pct")),
-                                                                     "pass" if c.get("pass") else "FAIL")))
+        if c.get("refused"):
+            L.append("Not run: %s." % COMPARE_REFUSALS[c["refused"]])
+        else:
+            L.append("%s: %s" % (c.get("ts", "?"), ("could not run: %s" % c["error"]) if "error" in c else
+                                 "board side %s, session side %s, %s." % (_pct(c.get("board_pct")),
+                                                                         _pct(c.get("session_pct")),
+                                                                         "pass" if c.get("pass") else "FAIL")))
         L.append("")
     L.append("## Asks")
     L.append("")

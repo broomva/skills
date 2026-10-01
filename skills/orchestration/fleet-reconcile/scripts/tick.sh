@@ -164,7 +164,7 @@ trap release EXIT
 # ── tick number: past both the counter and the ledger's last tick ─────────────
 N=$("$FLEET" next-tick --scope "$SCOPE" 2>>"$LOG")
 case "$N" in
-  (""|*[!0-9]*) release; trap - EXIT; alert tick "could not take a tick number for scope $SCOPE"; exit 1 ;;
+  (""|*[!0-9]*) trap - EXIT; release; alert tick "could not take a tick number for scope $SCOPE"; exit 1 ;;
 esac
 
 # The release this tick runs (install.sh pins a copy and writes RELEASE there).
@@ -260,8 +260,10 @@ FINAL=0
 log "tick $N done: $RCS"
 
 # ── with the lock released: the owner's dialog, which can wait 10 minutes ────
-release
+# The trap goes first: a signal between the two can't run release twice (and
+# remove a lock a newer tick took); a lock it leaves is reclaimed as stale.
 trap - EXIT
+release
 "$FLEET" act ask --show --scope "$SCOPE" --tick "$N" --dry-run "$DRY" < /dev/null >> "$LOG" 2>&1
 ASK_RC=$?
 RCS="$RCS ask=$ASK_RC"

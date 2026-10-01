@@ -12,7 +12,10 @@
   kill switch, dry-falls-toward-dry and the token's export; plus one per P20
   round-1 finding (the job time, the cap cross-check, degraded surfaces, the
   unknown branch, ack-through, per-key asks, token scoping, a failed tick's
-  exit, the process-group kill, tick numbering).
+  exit, the process-group kill, tick numbering) and per round-3 fix (where a
+  key may resolve, the wait's key, the tail windows, the dialog's default,
+  line and failure, the lock before an alert, the token file's mode, the held
+  lock, the compare's day and refusal, owner ids).
 
 Each mutant edits a scratch copy of this skill (and ctx-core beside it) and
 runs the tests that pin it. Exit 1 on a survivor, a stale anchor, or an error.
@@ -120,18 +123,34 @@ PROTECTIONS = [
     # P20 round 3 findings, each pinned
     ("an ask resolved from a surface not read", REP,
      'k not in now_true and observed(k, rep))', "k not in now_true)",
-     [T + "test_report.py", "-k", "resolved_only"]),
-    ("a waiting episode keyed by its text alone", REP,
-     '_tag("%s|%s" % (s["evidence"], s.get("activity_ts")))', '_tag(s["evidence"])',
-     [T + "test_report.py", "-k", "waiting_episode"]),
-    ("activity read from the first window only", "scripts/fleetlib/sources.py",
+     [T + "test_report.py", "-k", "surfaces_that_raise"]),
+    ("an unknown session's asks resolved", REP,
+     ' or any(s["session_id"] == sid and s["class"] == "unknown" for s in rep["sessions"]):', ":",
+     [T + "test_report.py", "-k", "surfaces_that_raise"]),
+    ("drift resolved from the listing alone", REP, 'return ok("claude_version", "jobs", "listing")',
+     'return ok("listing")', [T + "test_report.py", "-k", "surfaces_that_raise"]),
+    ("a repo that left the scope keeps its ask", REP, "return not mine or any(", "return any(",
+     [T + "test_report.py", "-k", "surfaces_that_raise"]),
+    ("a wait's key moved by activity", REP,
+     '_tag(s["evidence"])), "3",', '_tag("%s|%s" % (s["evidence"], s["activity_age_s"]))), "3",',
+     [T + "test_report.py", "-k", "subagents_keep_writing"]),
+    ("activity read from the first window only", "../ctx-core/scripts/ctx_compare.py",
      "TAIL_WINDOWS = (128 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024)", "TAIL_WINDOWS = (128 * 1024,)",
      [T + "test_observe.py", "-k", "larger_than"]),
     ("a dialog not shown counts as shown", "scripts/fleet_reconcile.py",
-     '    if res.get("error"):  # not shown', '    if False:  # not shown',
+     '    if res.get("error"):\n        # Not shown', '    if False:\n        # Not shown',
      [T + "test_tick.py", "-k", "cannot_be_shown"]),
+    ("p9 hourly when the dialog fails", "scripts/fleet_reconcile.py", "    res = show_dialog(title, text)\n",
+     '    res = show_dialog(title, text)\n    p9_notify(title, "n open")\n',
+     [T + "test_tick.py", "-k", "cannot_be_shown"]),
+    ("the dialog defaults to Seen", "scripts/fleet_reconcile.py", 'default button "Later"', 'default button "Seen"',
+     [T + "test_tick.py", "-k", "defaults_to_later"]),
+    ("the dialog leads with the oldest batch", "scripts/fleet_reconcile.py", "    newest = due[-1]\n",
+     "    newest = due[0]\n", [T + "test_tick.py", "-k", "defaults_to_later"]),
+    ("a refused compare is silent", REP, '    if cmp_.get("refused"):\n', "    if False:\n",
+     [T + "test_tick.py", "-k", "failed_compare"]),
     ("the tick-number alert holds the lock", TICK,
-     '(""|*[!0-9]*) release; trap - EXIT; alert tick', '(""|*[!0-9]*) alert tick',
+     '(""|*[!0-9]*) trap - EXIT; release; alert tick', '(""|*[!0-9]*) alert tick',
      [T + "test_tick.py", "-k", "tick_number"]),
     ("a token file open to others is used", TICK,
      'if [ "$MODE" != "600" ] && [ "$MODE" != "400" ]; then', "if false; then",
@@ -139,7 +158,7 @@ PROTECTIONS = [
     ("a lock held for hours is silent", TICK, "if [ $((NOW - MT)) -ge 7200 ]; then", "if false; then",
      [T + "test_tick.py", "-k", "two_hours"]),
     ("a failed compare uses up the day", "scripts/fleet_reconcile.py",
-     'ran = [ln for ln in lines if not ln.get("error")]', "ran = lines",
+     'ran = [ln for ln in lines if "error" not in ln]', "ran = lines",
      [T + "test_tick.py", "-k", "failed_compare"]),
     ("two owner records share an id", "scripts/fleetlib/ledger.py",
      'while rec["id"] in taken:  # two owner', 'while False:  # two owner',

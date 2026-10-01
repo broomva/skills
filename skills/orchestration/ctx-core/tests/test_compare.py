@@ -201,6 +201,28 @@ def test_a_last_entry_larger_than_the_first_window_is_still_found(world):
     assert ctx_compare.last_entry_ts(str(bare)) is None
 
 
+def test_a_window_that_starts_exactly_on_a_line_keeps_that_line(world, monkeypatch):
+    p = world.home / "edge.jsonl"
+    last = json.dumps({"type": "assistant", "timestamp": ctx.now_ts(T - H)}) + "\n"
+    p.write_text(json.dumps({"type": "user", "timestamp": ctx.now_ts(T - 2 * H)}) + "\n" + last)
+    monkeypatch.setattr(ctx_compare, "TAIL_WINDOWS", (len(last),))
+    assert ctx_compare.last_entry_ts(str(p)) == pytest.approx(T - H, abs=0.01)
+    monkeypatch.setattr(ctx_compare, "TAIL_WINDOWS", (len(last) - 1,))  # inside it: nothing whole
+    assert ctx_compare.last_entry_ts(str(p)) is None
+
+
+def test_a_comparison_that_raises_is_written_as_an_error_line(world, scene, monkeypatch, capsys):
+    s, lf = scene
+
+    def broken(*a, **k):
+        raise KeyError("died_ts")
+    monkeypatch.setattr(ctx_compare, "compare", broken)
+    assert ctx_compare.run_for_scope("broomva", listing_file=str(lf), registered=REG, now=T) == 1
+    last = json.loads((world.store("broomva") / "compare.jsonl").read_text().splitlines()[-1])
+    assert last["pass"] is False and last["error"].startswith("KeyError")
+    assert "failed: KeyError" in capsys.readouterr().out
+
+
 def test_the_prototypes_first_line_is_refused_until_the_owner_moves_it(world, scene, capsys):
     s, lf = scene
     store = world.store("broomva")
@@ -211,6 +233,9 @@ def test_the_prototypes_first_line_is_refused_until_the_owner_moves_it(world, sc
     out = capsys.readouterr().out
     assert "prototype" in out and "compare.prototype.jsonl" in out
     assert len((store / "compare.jsonl").read_text().splitlines()) == 1  # nothing appended
+    (store / "compare.jsonl").write_text('{"ts": "2026-09-30T0')  # torn
+    assert ctx_compare.run_for_scope("broomva", listing_file=str(lf), registered=REG, now=T) == 2
+    assert "can't be read" in capsys.readouterr().out and ctx_compare.registered_on_file("broomva") is None
 
 
 def test_the_cli_runs_it_from_a_scoped_directory(world, scene):

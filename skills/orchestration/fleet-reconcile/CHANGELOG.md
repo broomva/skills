@@ -51,12 +51,18 @@ Observe and classify, report only; no session is acted on. Ticket BRO-2674.
   `--all`) and refuses inside a session; adoption follows a Paseo agent across
   a relaunch; class 8 joins on a hash of the raw branch; the plist sets
   ProcessType Standard.
-- After round 3 (passed 7/10; fixed before the real ticks): a tick resolves an
-  ask only from a surface it read; a prompt's key carries the activity time;
-  the activity tail widens (128 KiB, 2 MiB, 16 MiB) past a large last line;
-  the ack wording says one batch (or `--all`); the dialog defaults to Later,
-  and one that can't be shown records nothing and fails the tick; owner ids
-  stay distinct within a millisecond; a failed compare doesn't use up the day
-  and the prototype's compare line is refused with the move to make; the
-  tick-number alert releases the lock first; scheduled work raises no asks;
-  a token file open to others is not used.
+- After round 3 (passed 7/10) and a review of the fixes: a tick resolves an
+  ask only when it read the surfaces that raise that key (per key kind; not
+  for a session that reads as unknown; a repo that left the scope resolves);
+  a prompt's key stays the session and what it waits for (activity moves
+  while subagents write); the activity tail is ctx-core's reader, widening
+  (128 KiB, 2 MiB, 16 MiB) and keeping a line the window starts on; the ack
+  wording says one batch (or `--all`), and the header counts after this
+  tick's resolutions; `fleet asks` and the dialog list every open ask; the
+  dialog defaults to Later and leads with the newest due batch's first open
+  ask, and one that can't be shown records nothing, sends no p9 and fails the
+  tick; owner ids stay distinct within a millisecond; the core comparison
+  asks when it can't run (no registration, the prototype's file, a torn
+  first line) and a failed run doesn't use up the day; the trap is cleared
+  before the lock is released; scheduled work raises no asks; a token file
+  open to others is not used.

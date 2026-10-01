@@ -245,16 +245,19 @@ later one that disagrees is refused. It rebuilds the board in memory and writes
 only `compare.jsonl`. No evidence (an unreadable transcript directory, an empty
 listing, an empty side) fails. fleet-reconcile's tick runs it once a day.
 The last entry is read from the transcript's tail, widening from 128 KiB to
-2 MiB and 16 MiB when the last line is larger.
+2 MiB and 16 MiB when the last line is larger (`last_in_tail`, which
+fleet-reconcile reads activity through). A comparison that raises is written
+as an error line too.
 
 The first run is the owner's. A `compare.jsonl` written by the pre-spec
-prototype (its first line has no `neither` field, and its registration time is
-the dogfood event §9 rejects) is refused until it is moved aside, once per
-scope:
+prototype (its first line has no `neither` field; its registration time was a
+guess, not the hooks' registration that §9 wants), or one whose first line
+can't be read, is refused until it is moved aside, once per scope. The loop
+moves only such a file and never overwrites an earlier move:
 
 ```bash
 for s in broomva sri; do f=~/.local/state/ctx/$s/compare.jsonl
-  [ -f "$f" ] && mv "$f" "${f%.jsonl}.prototype.jsonl"; done
+  [ -f "$f" ] && ! head -1 "$f" | grep -q '"neither"' && mv -n "$f" "${f%.jsonl}.prototype.jsonl"; done
 cd ~/broomva && python3 <ctx-core>/scripts/ctx.py doctor --compare --registered <UTC time the hooks were registered>
 cd ~/broomva/work/stimulus/sri && python3 <ctx-core>/scripts/ctx.py doctor --compare --registered <same, or sri's own>
 ```
@@ -349,7 +352,7 @@ computes it:
 cd skills/orchestration/ctx-core
 python3 -m pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py   # 31 protections removed in turn; the test pinning each must fail
+python3 tests/mutation_check.py   # 35 protections removed in turn; the test pinning each must fail
 ```
 
 | File | Pins |

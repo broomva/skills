@@ -123,8 +123,14 @@ MUTANTS = [
      "TAIL_WINDOWS = (128 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024)", "TAIL_WINDOWS = (128 * 1024,)",
      [T + "test_compare.py::test_a_last_entry_larger_than_the_first_window_is_still_found"]),
     ("compare runs on the prototype's line", "scripts/ctx_compare.py",
-     "    if first and is_prototype(first):", "    if False:",
+     "    if first is None or is_prototype(first):", "    if False:",
      [T + "test_compare.py::test_the_prototypes_first_line_is_refused_until_the_owner_moves_it"]),
+    ("compare drops a whole first line at the window's edge", "scripts/ctx_compare.py",
+     "fh.seek(max(0, start - 1))", "fh.seek(start)",
+     [T + "test_compare.py::test_a_window_that_starts_exactly_on_a_line_keeps_that_line"]),
+    ("compare crashes without a line on a logic error", "scripts/ctx_compare.py",
+     "    except Exception as exc:", "    except (CompareError, OSError, ValueError) as exc:",
+     [T + "test_compare.py::test_a_comparison_that_raises_is_written_as_an_error_line"]),
 ]
 
 

@@ -43,8 +43,9 @@ import json
 import os
 import subprocess
 import time
+import traceback
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import ctx
 
@@ -84,32 +85,41 @@ def load_listing(path: Optional[str] = None, timeout: float = 30.0) -> List[Dict
 
 
 #: Tail windows tried in turn: a window that starts inside a large last line
-#: (a screenshot, a big tool result) holds no whole entry.
+#: (a screenshot, a big tool result) holds no whole entry. A file with nothing
+#: to find is read up to three times, about 18 MiB in all.
 TAIL_WINDOWS = (128 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024)
+
+
+def last_in_tail(path: str, pick: Callable[[List[bytes]], Optional[float]]) -> Optional[float]:
+    """pick() over the whole lines of a file's tail, widening the window until
+    it finds something or has read the whole file; None when the file can't be
+    read. fleet-reconcile reads transcript activity through it too."""
+    for window in TAIL_WINDOWS:
+        try:
+            with open(path, "rb") as fh:
+                fh.seek(0, os.SEEK_END)
+                start = max(0, fh.tell() - window)
+                fh.seek(max(0, start - 1))  # one byte early: a newline there means the window starts a line
+                data = fh.read()
+        except OSError:
+            return None
+        if start:
+            cut = data.find(b"\n")
+            data = data[cut + 1:] if cut != -1 else b""
+        t = pick(data.split(b"\n"))
+        if t is not None or not start:
+            return t
+    return None
 
 
 def last_entry_ts(path: str) -> Optional[float]:
     """The time of a transcript's last entry that carries a timestamp, or None
     when there is none in its last 16 MiB. Reads only the `timestamp` field."""
-    for window in TAIL_WINDOWS:
-        try:
-            with open(path, "rb") as fh:
-                fh.seek(0, os.SEEK_END)
-                size = fh.tell()
-                fh.seek(max(0, size - window))
-                tail = fh.read()
-        except OSError:
-            return None
-        if size > window:
-            tail = tail[tail.find(b"\n") + 1:] if b"\n" in tail else b""
-        t = _entry_in(tail)
-        if t is not None or size <= window:
-            return t
-    return None
+    return last_in_tail(path, _entry_in)
 
 
-def _entry_in(tail: bytes) -> Optional[float]:
-    for raw in reversed(tail.split(b"\n")):
+def _entry_in(lines: List[bytes]) -> Optional[float]:
+    for raw in reversed(lines):
         if b'"timestamp"' not in raw:
             continue
         try:
@@ -261,20 +271,35 @@ def _path(scope_id: str) -> Path:
     return ctx.state_root() / scope_id / "compare.jsonl"
 
 
+def first_line(scope_id: str) -> Optional[Dict[str, Any]]:
+    """compare.jsonl's first line: {} when there is no file or it is empty,
+    None when it can't be read or isn't a JSON object. Every reader of the
+    registration time goes through here (fleet-reconcile's tick included)."""
+    try:
+        with _path(scope_id).open(encoding="utf-8") as fh:
+            text = fh.readline()
+    except FileNotFoundError:
+        return {}
+    except (OSError, UnicodeDecodeError):
+        return None
+    if not text.strip():
+        return {}
+    try:
+        first = json.loads(text)
+    except ValueError:
+        return None
+    return first if isinstance(first, dict) else None
+
+
 def is_prototype(first: Dict[str, Any]) -> bool:
-    """The line the pre-spec prototype wrote (no `neither` field): its
-    registration time was the 2026-09-29T23:05Z dogfood event, which core §9
-    rejects. It is moved aside once, by the owner."""
-    return "error" not in first and "neither" not in first
+    """A line the pre-spec prototype wrote (no `neither` field). Its
+    registration time was a guess, not the hooks' registration that core §9
+    wants, so the file is moved aside once, by the owner."""
+    return bool(first) and "error" not in first and "neither" not in first
 
 
 def registered_on_file(scope_id: str) -> Optional[str]:
-    try:
-        with _path(scope_id).open(encoding="utf-8") as fh:
-            first = fh.readline()
-        return json.loads(first).get("registered") if first.strip() else None
-    except (OSError, ValueError, AttributeError):
-        return None
+    return (first_line(scope_id) or {}).get("registered")
 
 
 def append_summary(scope_id: str, line: Dict[str, Any]) -> Path:
@@ -295,16 +320,12 @@ def run_for_scope(scope_id: str, hours: float = 6.0, as_json: bool = False, list
     written, so the latest line never shows an old pass); exit 2 when there is
     no registration time, or --registered disagrees with the file's."""
     now = time.time() if now is None else now
-    try:
-        with _path(scope_id).open(encoding="utf-8") as fh:
-            first = json.loads(fh.readline() or "{}")
-    except (OSError, ValueError):
-        first = {}
-    if first and is_prototype(first):
-        print("compare   %s starts with the prototype's line (registered %s, the dogfood time core §9 rejects); "
-              "move it aside once (mv %s %s), then pass --registered" % (
-                  _path(scope_id), first.get("registered"), _path(scope_id),
-                  _path(scope_id).with_name("compare.prototype.jsonl")))
+    first = first_line(scope_id)
+    if first is None or is_prototype(first):
+        print("compare   %s %s; move it aside once (mv -n %s %s), then pass --registered" % (
+            _path(scope_id), "has a first line that can't be read" if first is None else
+            "starts with the pre-spec prototype's line (registered %s)" % first.get("registered"),
+            _path(scope_id), _path(scope_id).with_name("compare.prototype.jsonl")))
         return 2
     on_file = registered_on_file(scope_id)
     if registered and on_file and registered != on_file:
@@ -325,11 +346,16 @@ def run_for_scope(scope_id: str, hours: float = 6.0, as_json: bool = False, list
         listing = load_listing(listing_file)
         files = transcripts()
         res = compare(scope_id, listing, files, now, reg, hours)
-    except (CompareError, OSError, ValueError) as exc:  # ValueError includes ctx.ConfigError
+    except Exception as exc:  # written as a line either way, so the latest line is not an old pass
+        unreadable = isinstance(exc, (CompareError, OSError, ctx.ConfigError))
         append_summary(scope_id, {"v": 1, "ts": ctx.now_ts(now), "scope": scope_id, "hours": hours,
                                   "registered": reg_text, "evidence": False, "pass": False,
-                                  "error": str(exc)[:200]})
-        print("compare   could not be read: %s" % exc)
+                                  "error": ("%s: %s" % (type(exc).__name__, exc))[:200]})
+        if unreadable:
+            print("compare   could not be read: %s" % exc)
+        else:
+            print("compare   failed: %s: %s" % (type(exc).__name__, exc))
+            traceback.print_exc()
         return 1
     append_summary(scope_id, {k: v for k, v in res.items() if k not in ("differences", "neither_ids")})
     print(json.dumps(res, indent=1, sort_keys=True) if as_json else render(res))

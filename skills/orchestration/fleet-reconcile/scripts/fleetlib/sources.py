@@ -15,6 +15,8 @@ import subprocess
 from pathlib import Path
 from typing import Any, Dict, Iterator, List, Optional, Tuple
 
+import ctx_compare  # ctx-core, beside this skill (fleet_reconcile.py puts it on sys.path)
+
 from . import common
 
 
@@ -62,37 +64,20 @@ def _last_limit(text: str) -> Optional[str]:
     return found
 
 
-#: Tail windows tried in turn: a last line can be large (a screenshot, a big
-#: tool result), and a window that starts inside it holds no whole entry.
-TAIL_WINDOWS = (128 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024)
-
-
 def last_activity_ts(path: str) -> Optional[float]:
     """A transcript's last activity (spec §5.3): the latest timestamp among its
     assistant entries and tool results. Not any entry: a queue-operation is
     stamped when a message is delivered, so a mail to a hung session would read
     as activity; and not the file's mtime, which Claude Code moves with
     untimestamped records (last-prompt, cost-state) long after a turn. Reads
-    the tail only, and only type, content kinds and timestamp. None when no
-    such entry is in the last 16 MiB."""
-    for window in TAIL_WINDOWS:
-        try:
-            tail = common.read_tail(Path(path), window)
-        except OSError:
-            return None
-        t = _activity_in(tail)
-        if t is not None:
-            return t
-        try:
-            if Path(path).stat().st_size <= window:
-                return None  # the whole file was read
-        except OSError:
-            return None
-    return None
+    the tail through ctx-core's reader (it widens past a large last line), and
+    only type, content kinds and timestamp. None when no such entry is in the
+    last 16 MiB."""
+    return ctx_compare.last_in_tail(path, _activity_in)
 
 
-def _activity_in(tail: bytes) -> Optional[float]:
-    for raw in reversed(tail.split(b"\n")):
+def _activity_in(lines: List[bytes]) -> Optional[float]:
+    for raw in reversed(lines):
         if b'"timestamp"' not in raw or (b'"assistant"' not in raw and b'"tool_result"' not in raw):
             continue
         try:
