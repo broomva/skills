@@ -339,7 +339,7 @@ the caller's cwd and user site stay off `sys.path`; it imports ctx-core from
 ```bash
 cd skills/orchestration/fleet-reconcile
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py      # every rule deleted, every overlapping pair swapped, 141 protections removed
+python3 tests/mutation_check.py      # every rule deleted, every overlapping pair swapped, 171 protections removed
 python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (anonymized; public repo)
 ```
 

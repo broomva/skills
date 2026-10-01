@@ -341,6 +341,7 @@ def test_a_batch_is_raised_once_and_the_owners_verdict_comes_back_as_the_answer(
     rig.tick()
     rig.tick()
     assert len(rig.raised("fleet broomva: ")) == 1  # the item stays at Needs you; never raised twice
+    assert len([x for x in rig.ledger() if x["kind"] == "seen"]) == 1  # nor looked up and re-recorded
     assert "[a1]" in rig.brief("itm-1") and "## Ask" in rig.brief("itm-1")
     rig.answer("itm-1", "revise", note="skills gets its pull_request rule this week")
     rig.tick()
