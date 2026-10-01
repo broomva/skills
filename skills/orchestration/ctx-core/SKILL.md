@@ -3,7 +3,7 @@ name: ctx-core
 tier: D
 primitive: null
 category: orchestration
-version: 0.1.0
+version: 0.2.0
 description: |
   The shared context core, phase 1: a read-only shared board for every Claude
   Code session in a workspace scope. Hooks publish each session's start, the
@@ -214,6 +214,7 @@ $CTX board --json       # the board as JSON
 $CTX board --rebuild    # recompute the cache from byte 0; says whether the old cache matched
 $CTX doctor             # config, store, cache, hook activity, misses, board size, retention
 $CTX doctor --unscoped  # from anywhere: repos with Claude Code sessions (last 14 days) but no scope
+$CTX doctor --compare   # the phase-1 exit comparison: live board rows vs listed sessions, 6 h (ctx_compare.py)
 $CTX -C <dir> board     # as if run in <dir>
 ```
 
@@ -231,6 +232,35 @@ from any directory. `doctor` exits 1 in any of these cases:
 
 An idle scope is not a problem. A cache far behind the log is a warning: it
 catches up by itself.
+
+`doctor --compare --registered <UTC time> [--hours 6] [--json]` is the phase-1
+exit criterion (core spec §9 as merged in workspace#842): board rows that are
+live against in-scope sessions from `claude agents --json --all` with a
+timestamped transcript entry in the same window (not the mtime), matched on the
+full session id. The pass bar is ≥95% each way on the raw sets; every
+difference gets one reason from an ordered list, which explains it and removes
+nothing, and in-scope transcripts on neither side are listed uncounted. The
+registration time is passed once and kept in `compare.jsonl`'s first line; a
+later one that disagrees is refused. It rebuilds the board in memory and writes
+only `compare.jsonl`. No evidence (an unreadable transcript directory, an empty
+listing, an empty side) fails. fleet-reconcile's tick runs it once a day.
+The last entry is read from the transcript's tail, widening from 128 KiB to
+2 MiB and 16 MiB when the last line is larger (`last_in_tail`, which
+fleet-reconcile reads activity through). A comparison that raises is written
+as an error line too.
+
+The first run is the owner's. A `compare.jsonl` written by the pre-spec
+prototype (its first line has no `neither` field; its registration time was a
+guess, not the hooks' registration that §9 wants), or one whose first line
+can't be read, is refused until it is moved aside, once per scope. The loop
+moves only such a file and never overwrites an earlier move:
+
+```bash
+for s in broomva sri; do f=~/.local/state/ctx/$s/compare.jsonl
+  [ -f "$f" ] && ! head -1 "$f" | grep -q -e '"neither"' -e '"error"' && mv -n "$f" "${f%.jsonl}.prototype.jsonl"; done
+cd ~/broomva && python3 <ctx-core>/scripts/ctx.py doctor --compare --registered <UTC time the hooks were registered>
+cd ~/broomva/work/stimulus/sri && python3 <ctx-core>/scripts/ctx.py doctor --compare --registered <same, or sri's own>
+```
 
 ## Registration (owner step; an agent does not apply it)
 
@@ -322,7 +352,7 @@ computes it:
 cd skills/orchestration/ctx-core
 python3 -m pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py   # 25 protections removed in turn; the test pinning each must fail
+python3 tests/mutation_check.py   # 35 protections removed in turn; the test pinning each must fail
 ```
 
 | File | Pins |
@@ -333,4 +363,5 @@ python3 tests/mutation_check.py   # 25 protections removed in turn; the test pin
 | `test_rebuild_determinism.py` | Cache plus tail equals a full rebuild. Any split of the log folds the same. Hooks never write the board under the lock. A torn line is healed. A hand edit is detected and replaced. A replaced log is detected. SessionStart never reads the whole log, and catches a stale cache up across runs |
 | `test_fail_open.py` | A ctx module that fails to import, raises, prints, hangs, gets SIGTERM or exits non-zero: exit 0 and no output every time. Hostile stdin. An unwritable store. The miss breadcrumb and its rotation |
 | `test_hook_deadline.py` | The normal path, git never run (or bounded and killed on the `GIT_DIR` path), an 11 MB log, and a board over the cap: each under 200 ms of wall time |
+| `test_compare.py` | `doctor --compare`: every reason on the fixed list, the pass bar on the raw sets, a last entry past a large last line, the prototype's line refused, a run that leaves the store's files byte-identical and appends one summary, the exit codes, the CLI in and out of a scope |
 | `test_hooks.py` | Structured fields only. The strict ARC-STATUS shape. The error class only. The brief's relevance, cap, one-line fields, linear cost and factual register. Live after a resumed death. The CLI and doctor. The wrapper: exit 0 with the script or the interpreter gone, against a positive control where Python exits 2 |

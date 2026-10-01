@@ -1,0 +1,23 @@
+{
+ "state": "blocked",
+ "detail": "detail 18",
+ "tempo": "blocked",
+ "sessionId": "00000006-f1ee-4000-8000-000000000006",
+ "resumeSessionId": "00000006-f1ee-4000-8000-000000000006",
+ "cwd": "{HOME}/gone/3",
+ "createdAt": "2026-09-07T13:54:54.662Z",
+ "updatedAt": "2026-09-07T14:26:01.099Z",
+ "cliVersion": "2.1.258",
+ "output": null,
+ "providerEnv": {
+  "FIXTURE_ENV": "not-read"
+ },
+ "respawnFlags": [
+  "--name",
+  "bg-flag-name",
+  "--settings",
+  "{\"crossSessionInbound\":\"accept\"}"
+ ],
+ "needs": "needs 4",
+ "name": "background-session-5"
+}

@@ -1,0 +1,92 @@
+[
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "main",
+  "headRefName": "branch-1",
+  "isDraft": false,
+  "labels": [],
+  "mergeStateStatus": "BLOCKED",
+  "number": 849,
+  "title": "PR title 1",
+  "updatedAt": "2026-09-30T23:54:36Z",
+  "url": "https://github.com/broomva/workspace/pull/849"
+ },
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "ci/fleet-phase3-preconditions",
+  "headRefName": "branch-2",
+  "isDraft": false,
+  "labels": [],
+  "mergeStateStatus": "CLEAN",
+  "number": 848,
+  "title": "PR title 2",
+  "updatedAt": "2026-09-30T22:41:29Z",
+  "url": "https://github.com/broomva/workspace/pull/848"
+ },
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "main",
+  "headRefName": "branch-3",
+  "isDraft": false,
+  "labels": [],
+  "mergeStateStatus": "CLEAN",
+  "number": 845,
+  "title": "PR title 3",
+  "updatedAt": "2026-09-30T22:43:31Z",
+  "url": "https://github.com/broomva/workspace/pull/845"
+ },
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "main",
+  "headRefName": "branch-4",
+  "isDraft": false,
+  "labels": [],
+  "mergeStateStatus": "DIRTY",
+  "number": 836,
+  "title": "PR title 4",
+  "updatedAt": "2026-09-30T03:07:43Z",
+  "url": "https://github.com/broomva/workspace/pull/836"
+ },
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "main",
+  "headRefName": "branch-5",
+  "isDraft": false,
+  "labels": [],
+  "mergeStateStatus": "DIRTY",
+  "number": 835,
+  "title": "PR title 5",
+  "updatedAt": "2026-09-30T01:39:05Z",
+  "url": "https://github.com/broomva/workspace/pull/835"
+ },
+ {
+  "author": {
+   "login": "owner",
+   "is_bot": false
+  },
+  "baseRefName": "main",
+  "headRefName": "branch-6",
+  "isDraft": false,
+  "labels": [],
+  "mergeStateStatus": "CLEAN",
+  "number": 824,
+  "title": "PR title 6",
+  "updatedAt": "2026-09-30T22:42:29Z",
+  "url": "https://github.com/broomva/workspace/pull/824"
+ }
+]

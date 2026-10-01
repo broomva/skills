@@ -33,6 +33,7 @@ Commands:
     ctx [-C DIR] board [--json] [--rebuild]
     ctx [-C DIR] doctor
     ctx doctor --unscoped [--days N]
+    ctx [-C DIR] doctor --compare [--hours H] [--json]   (ctx_compare.py)
 
 Stdlib only, Python 3.9+. The hook entry is ctx_hook.py (via ctx-hook.sh),
 beside this file. Imports on the hook path are kept cheap: no argparse,
@@ -1353,9 +1354,28 @@ def main(argv: Optional[List[str]] = None) -> int:
     d.add_argument("--unscoped", action="store_true",
                    help="list repos that have sessions but no scope (works from any directory)")
     d.add_argument("--days", type=float, default=14.0, help="session window for --unscoped (default 14)")
+    d.add_argument("--compare", action="store_true",
+                   help="the phase-1 exit comparison: live board rows against listed sessions (ctx_compare.py)")
+    d.add_argument("--hours", type=float, default=6.0, help="window for --compare (default 6)")
+    d.add_argument("--json", action="store_true", help="--compare: print the result as JSON")
+    d.add_argument("--agents-json", default=None, help="--compare: read the session listing from a file")
+    d.add_argument("--registered", default=None, help="--compare: when the hooks were registered "
+                   "(UTC YYYY-MM-DDTHH:MM:SS.mmmZ), passed once and kept in compare.jsonl's first line")
     args = ap.parse_args(argv)
     cwd = os.path.realpath(args.directory or os.getcwd())
     now = time.time()
+
+    if args.cmd == "doctor" and args.compare:
+        scope = resolve_scope(cwd)
+        if scope is None:
+            print("compare   %s is not in a scope" % cwd)
+            return 1
+        here = os.path.dirname(os.path.abspath(__file__))
+        if here not in sys.path:  # `python3 -I` leaves the script's directory off sys.path
+            sys.path.insert(0, here)
+        import ctx_compare  # the doctor path only; never imported by a hook
+
+        return ctx_compare.run_for_scope(scope.id, args.hours, args.json, args.agents_json, args.registered, now)
 
     if args.cmd == "doctor":
         cfg_lines, problems, scopes = doctor_config()

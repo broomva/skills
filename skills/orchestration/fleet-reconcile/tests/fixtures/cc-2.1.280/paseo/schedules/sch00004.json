@@ -1,0 +1,26 @@
+{
+ "id": "sch00004",
+ "name": "schedule 4",
+ "prompt": "prompt (not read)",
+ "cadence": {
+  "type": "cron",
+  "expression": "0 9 3-31 10 *",
+  "timezone": "America/Bogota"
+ },
+ "target": {
+  "type": "new-agent",
+  "config": {
+   "provider": "claude",
+   "cwd": "{HOME}/client/sri"
+  }
+ },
+ "status": "active",
+ "createdAt": "2026-09-25T15:46:49.251Z",
+ "updatedAt": "2026-09-25T15:46:49.251Z",
+ "nextRunAt": "2026-10-03T14:00:00.000Z",
+ "lastRunAt": null,
+ "pausedAt": null,
+ "expiresAt": "2026-11-09T15:46:49.233Z",
+ "maxRuns": 1,
+ "runs": []
+}

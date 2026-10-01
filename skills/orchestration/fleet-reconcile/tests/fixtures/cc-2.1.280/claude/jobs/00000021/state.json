@@ -1,0 +1,24 @@
+{
+ "state": "done",
+ "detail": "detail 9",
+ "tempo": "idle",
+ "sessionId": "00000021-f1ee-4000-8000-000000000021",
+ "resumeSessionId": "00000021-f1ee-4000-8000-000000000021",
+ "cwd": "{HOME}/gone/6",
+ "createdAt": "2026-09-08T16:29:21.731Z",
+ "updatedAt": "2026-09-08T17:14:02.946Z",
+ "cliVersion": "2.1.258",
+ "output": null,
+ "providerEnv": {
+  "FIXTURE_ENV": "not-read"
+ },
+ "respawnFlags": [
+  "--name",
+  "bg-flag-name",
+  "--settings",
+  "{\"crossSessionInbound\":\"accept\"}"
+ ],
+ "worktreePath": "{HOME}/gone/14",
+ "worktreeBranch": "worktree-branch-2",
+ "name": "background-session-20"
+}

@@ -443,3 +443,37 @@ reconciliation.
   its consistency test.
 - Bookkeeping replay against workspace `b1a4a662`: 931 entities frozen,
   2 unrelated design-system items would promote, no writes applied.
+
+## fleet-reconcile, phase 1: observe and classify, report only (BRO-2674)
+
+Status: phase 1 built on `feat/fleet-reconcile-phase1`; three real ticks and the
+labelling sheet next, then the PR. Phase 2 (dry run) follows on its own branch.
+
+### Scope and constraints
+
+- Code at `skills/orchestration/fleet-reconcile/` (owner decision), beside
+  ctx-core, which it imports from the same checkout. Stdlib only, `python3 -I`.
+- Design of record: workspace `docs/specs/2026-09-29-fleet-reconcile-design.html`
+  (§5.3, §5.4, §9 row 1); formats from its §5.7 amendment (workspace#842).
+  Choices it leaves open are marked "pending the spec" in code and SKILL.md.
+- Report-only: no mail, spawn, label or resume. No launchd job or Paseo schedule
+  is loaded by a session; `install.sh` is the owner's.
+- ctx-core: only the doctor path (`ctx doctor --compare` in `ctx_compare.py`),
+  since another session is adding a module there.
+- The repo is public: fixtures are anonymized captures.
+
+### Milestones
+
+1. Parsers pinned to Claude Code 2.1.280, tested on captures. Done.
+2. The class table, the ordering tests, the overlap pass on fixtures. Done.
+3. The count check, the 200-row fail-closed fixture, the ruleset check. Done.
+4. The report, the ask channel (`fleet asks`, `fleet ack`). Done.
+5. `ctx doctor --compare`. Done.
+6. tick.sh, the plist template, install.sh. Done.
+7. The scheduled-work inventory. Done.
+8. Three real ticks and the owner's labelling sheet.
+
+### Verification
+
+- `python3 -m pytest tests/` in both skills; both mutation checks at 0 survivors.
+- `bash -n` and shellcheck on the scripts; the catalog, SKILL.md and version lints.

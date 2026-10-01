@@ -1,5 +1,30 @@
 # Changelog: ctx-core
 
+## [0.2.0] - 2026-09-30
+
+- **`ctx doctor --compare --registered <UTC time>`**, the phase-1 exit
+  comparison (core spec §9 as merged in broomva/workspace#842, 007f05a98).
+  Board rows that are live against in-scope `claude agents --json --all`
+  sessions with a timestamped transcript entry in the window (not the mtime,
+  which Claude Code moves with untimestamped records long after a turn),
+  matched on the full session id. The pass bar is ≥95% each way on the raw
+  sets; each difference gets one reason from the spec's ordered list
+  (no-transcript, ended, pre-registration, died, died-then-continued,
+  stale-in-turn, no-event, else unexplained), which explains it and removes
+  nothing; in-scope transcripts on neither side are listed, uncounted. The
+  registration time is passed once and kept in compare.jsonl's first line; a
+  later one that disagrees is refused. No evidence fails: an unreadable
+  transcript directory, an empty listing (both also written to the file, so
+  the latest line never shows an old pass), or an empty side.
+- In `scripts/ctx_compare.py`, dispatched from `ctx.py`'s doctor path only; no
+  hook imports it. Read-only on the store; it writes only `compare.jsonl`.
+- The last entry is read from a tail that widens (128 KiB, 2 MiB, 16 MiB)
+  past a large last line. A `compare.jsonl` whose first line is the pre-spec
+  prototype's (no `neither` field) is refused, exit 2, with the `mv` that
+  moves it aside; a comparison that raises is written as an error line.
+- Not done here, left to the core: the hook change that records a miss (with
+  the session id) when run_hook returns at the scope stage for lack of time.
+
 ## [0.1.0] - 2026-09-29
 
 Phase 1 of the shared context core (broomva/workspace#825, round 7): the

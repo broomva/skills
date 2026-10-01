@@ -1,0 +1,15 @@
+#!/bin/sh
+# fleet: the fleet-reconcile CLI (spec §5.7). Execs python3 -I so the caller's
+# cwd, the script directory and the user site stay off sys.path;
+# fleet_reconcile.py adds its own directory and ../ctx-core/scripts itself.
+# A symlink to this file (for example from ~/.local/bin) is followed.
+self=$0
+while [ -L "$self" ]; do
+  link=$(readlink "$self") || exit 70
+  case $link in
+    /*) self=$link ;;
+    *) self=$(dirname -- "$self")/$link ;;
+  esac
+done
+dir=$(CDPATH='' cd -- "$(dirname -- "$self")" && pwd) || exit 70
+exec "${FLEET_PYTHON:-python3}" -I "$dir/fleet_reconcile.py" "$@"
