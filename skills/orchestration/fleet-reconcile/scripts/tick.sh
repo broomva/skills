@@ -12,11 +12,12 @@
 # Not carried over: the fire gate and quiet hours (launchd fires hourly, the
 # owner's cadence) and the inner resume tick (phase 2's resume verb).
 #
-# PHASE 1 runs deterministic code only; no model runs and no session is acted
-# on. Per tick: kill switch, config-check, lock, the tick number, the fleet
-# token, observe, report (classes, count check, asks), the core comparison once
-# a day, the ledger's tick_fire and runner_exit, and, with the lock released,
-# the owner's dialog (fleet act ask --show).
+# PHASE 1 runs deterministic code only and acts on no session; the owner
+# channel's Maestro items each run one model turn. Per tick: kill switch,
+# config-check, lock, the tick number, the fleet token, observe, report
+# (classes, count check, asks), the core comparison once a day, the owner's
+# asks (fleet act ask --show, Maestro work in the Paseo app), and the ledger's
+# tick_fire and runner_exit.
 # Phase 2 adds `fleet recover` before the coordinator and the coordinator itself.
 #
 # A tick that fails (a bad config, observe or report failing) raises a Maestro
@@ -65,20 +66,21 @@ NOTICE="$STATE_DIR/.disabled-notice"
 LOCK="$STATE_DIR/.tick.lock"
 log() { echo "[$(date -u +%FT%TZ)] $*" >> "$LOG"; }
 
-# alert KIND MESSAGE: tell the owner directly, from bash, so it works when
-# Python or the config is what broke: a dialog, since notification banners are
-# stored but not shown on this Mac (spec §5.7). At most once per 6 h per kind.
-# The message is this script's own text, never another session's words. Call
-# it with the lock released: the dialog waits up to 10 minutes.
+# alert KIND MESSAGE: tell the owner in the Paseo app, from bash, so it works
+# when Python or the config is what broke. At most once per 6 h per kind, the
+# stamp touched only once Maestro took it. The message is this script's own
+# text, never another session's words. When Maestro itself is down, the alert
+# reaches no one but this log: that is the channel's one blind spot.
 alert() {
   local kind=$1 msg=$2 stamp="$STATE_DIR/.alert-$1" now last
   log "ALERT $kind: $msg"
   now=$(date +%s)
   last=$(file_mtime "$stamp"); case "$last" in (""|*[!0-9]*) last=0 ;; esac
   [ $((now - last)) -ge 21600 ] || return 0
-  touch "$stamp"
   [ "${FLEET_NOTIFY:-}" = "0" ] && return 0
-  if ! maestro_alert "fleet $SCOPE: $kind" "$msg (tick.log: $LOG)"; then
+  if maestro_alert "fleet $SCOPE: $kind" "$msg (tick.log: $LOG)"; then
+    touch "$stamp"
+  else
     log "ALERT $kind NOT delivered: Maestro didn't take it; it's in this log only"
   fi
   return 0
@@ -178,6 +180,14 @@ release() {
   rmdir "$LOCK" 2>/dev/null
 }
 trap release EXIT
+
+# The owner channel's paths from the config, for alert() from bash too.
+for pair in "maestro_cli:FLEET_MAESTRO_CLI" "maestro_bun:FLEET_MAESTRO_BUN" "ask_repo:FLEET_ASK_REPO"; do
+  v=$(cfg "${pair%%:*}")
+  # shellcheck disable=SC2088  # a literal ~/ from the config, expanded here
+  case "$v" in ("~/"*) v="$HOME/${v#\~/}" ;; esac
+  [ -n "$v" ] && export "${pair#*:}=$v"
+done
 
 # ── tick number: past both the counter and the ledger's last tick ─────────────
 N=$("$FLEET" next-tick --scope "$SCOPE" 2>>"$LOG")
@@ -288,21 +298,21 @@ unset GH_TOKEN TOKEN
 # which dry_run and mode don't govern (core §9). Its verdict isn't the tick's.
 step compare "$FLEET" core-compare --scope "$SCOPE"; RCS="$RCS compare=$RC"
 
+# The owner channel, inside the lock and the budget: read answers back from
+# Maestro and raise new batches there (two ticks can't raise one batch twice).
+step ask "$FLEET" act ask --show --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS ask=$RC"
+[ "$RC" = "0" ] || FAILED="${FAILED:-ask}"
+
 FINAL=0
 [ -n "$FAILED" ] && FINAL=1
 "$FLEET" ledger-append exit --scope "$SCOPE" --tick "$N" --dry-run "$DRY" --exit "$FINAL" \
   --detail "$RCS" >> "$LOG" 2>&1
 log "tick $N done: $RCS"
 
-# ── with the lock released: the owner's dialog, which can wait 10 minutes ────
 # The trap goes first: a signal between the two can't run release twice (and
 # remove a lock a newer tick took); a lock it leaves is reclaimed as stale.
 trap - EXIT
 release
-"$FLEET" act ask --show --scope "$SCOPE" --tick "$N" --dry-run "$DRY" < /dev/null >> "$LOG" 2>&1
-ASK_RC=$?
-RCS="$RCS ask=$ASK_RC"
-[ "$ASK_RC" = "0" ] || FAILED="${FAILED:-ask}"
 echo "[$(date -u +%FT%TZ)] fleet-reconcile $SCOPE tick $N: $RCS"   # launchd's log: one line per run
 if [ -n "$FAILED" ]; then
   alert "tick-$FAILED" "tick $N failed at $FAILED ($RCS)"

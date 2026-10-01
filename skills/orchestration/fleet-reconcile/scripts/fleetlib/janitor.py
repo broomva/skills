@@ -39,7 +39,7 @@ from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 import ctx
 
-from . import common, observe, parsers
+from . import common, ledger, observe, parsers
 from .sources import SourceError, Sources
 
 QUIET_S = 24 * 3600
@@ -418,9 +418,15 @@ def run(sec: Dict[str, Any], src: Sources, path: str, owner: str, remove: bool,
     if not res["removed"]:  # claude rm keeps a worktree with changes or unpushed commits
         res["aborted"] = "rm kept the worktree"
         return res
-    # The driver's profile holds the fleet token; it goes with the worktree (§5.3).
+    # The driver's profile holds the fleet token; it goes with the worktree
+    # (§5.3). It is keyed by the ledger's spawn of this session, not by a name
+    # from the listing (a duplicate name, or one like "..", must delete nothing).
     sd = Path(sec["state_dir"])
-    for p in (sd / "profiles" / ("%s.json" % row["name"]), sd / "ghcfg" / row["name"]):
+    key = next((k for k, ids in ledger.spawned(ledger.read(sd)[0]).items()
+                if row["session_id"] in ids or row["session_id"][:8] in ids), None)
+    if not key or not observe.fleet_shaped(key, sec["scope"]):
+        return res
+    for p in (sd / "profiles" / ("%s.json" % key), sd / "ghcfg" / key):
         try:
             shutil.rmtree(str(p)) if p.is_dir() else (p.unlink() if p.exists() else None)
         except OSError as exc:

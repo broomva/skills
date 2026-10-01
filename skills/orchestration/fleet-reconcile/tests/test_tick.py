@@ -48,16 +48,26 @@ def rig(fresh_world, tmp_path):
           '  *default_branch*) cat "$d/default_branch.txt" ;;\n'
           '  "pr list"*) cat "$d/prs.json" ;;\n'
           '  *) exit 1 ;;\nesac\n' % (calls_dir, fx))
-    # maestro: `new` makes item itm-<n>; `show <id>` serves calls/maestro-show-<id>.json, else review.
-    _stub(bin_ / "maestro", 'printf "%%s\\n" "$*" | head -1 >> "%s/maestro"\n'
+    # maestro: `new` makes item itm-<n> (listed by `ls`); STUB_NEW_STATE sets its state, STUB_NEW_EXIT
+    # makes `new` fail after creating it (Maestro creates, then dispatches); `show <id>` serves
+    # calls/maestro-show-<id>.json, else review; `dispatch` starts it.
+    _stub(bin_ / "maestro", '[ -n "${STUB_MAESTRO_DOWN:-}" ] && { echo "Maestro is not listening" >&2; exit 2; }\n'
+          'printf "%%s\\n" "$*" | head -1 >> "%s/maestro"\n'
           '[ -n "${STUB_LOCK:-}" ] && [ -d "$STUB_LOCK" ] && echo held >> "%s/lock-during-alert"\n'
-          '[ -n "${STUB_MAESTRO_DOWN:-}" ] && { echo "Maestro is not listening" >&2; exit 2; }\n'
+          'c="%s"\n'
           'case "$1" in\n'
-          '  new) n=$(( $(cat "%s/maestro-n" 2>/dev/null || echo 0) + 1 )); echo $n > "%s/maestro-n";'
-          ' printf "%%s\\n" "$*" > "%s/maestro-new-itm-$n"; echo "{\\"item\\": {\\"id\\": \\"itm-$n\\", \\"state\\": \\"running\\"}}" ;;\n'
-          '  show) f="%s/maestro-show-$2.json"; if [ -f "$f" ]; then cat "$f"; else'
-          ' echo "{\\"item\\": {\\"state\\": \\"review\\"}, \\"events\\": []}"; fi ;;\n'
-          '  *) exit 2 ;;\nesac\n' % (calls_dir, calls_dir, calls_dir, calls_dir, calls_dir, calls_dir))
+          '  new) n=$(( $(cat "$c/maestro-n" 2>/dev/null || echo 0) + 1 )); echo $n > "$c/maestro-n";'
+          ' printf "%%s\\n" "$*" > "$c/maestro-new-itm-$n";'
+          ' title=$(printf "%%s" "$2" | tr -d \'"\'); init=""; prev=""; for a in "$@"; do [ "$prev" = --initiative ] && init=$a; prev=$a; done;'
+          ' printf \'{"id": "itm-%%s", "title": "%%s", "initiative": "%%s", "state": "%%s"}\\n\' "$n" "$title" "$init"'
+          ' "${STUB_NEW_STATE:-running}" >> "$c/maestro-items";'
+          ' [ -n "${STUB_NEW_EXIT:-}" ] && { echo "Maestro gave no clear answer" >&2; exit "$STUB_NEW_EXIT"; };'
+          ' echo "{\\"item\\": {\\"id\\": \\"itm-$n\\", \\"state\\": \\"${STUB_NEW_STATE:-running}\\"}}" ;;\n'
+          '  ls) printf \'{"items": [\'; [ -f "$c/maestro-items" ] && paste -sd, "$c/maestro-items" | tr -d \'\\n\'; echo "]}" ;;\n'
+          '  dispatch) echo "$2" >> "$c/maestro-dispatched"; echo "{\\"item\\": {\\"id\\": \\"$2\\", \\"state\\": \\"running\\"}}" ;;\n'
+          '  show) f="$c/maestro-show-$2.json"; if [ -f "$f" ]; then cat "$f"; else'
+          ' echo "{\\"item\\": {\\"state\\": \\"review\\", \\"verdict\\": null, \\"pending\\": null}, \\"events\\": []}"; fi ;;\n'
+          '  *) exit 2 ;;\nesac\n' % (calls_dir, calls_dir, calls_dir))
     (w.home / ".claude" / "projects").mkdir(parents=True)
     shutil.copytree(str(fx / "claude" / "jobs"), str(w.home / ".claude" / "jobs"))
     shutil.copytree(str(fx / "paseo"), str(w.home / ".paseo"))
@@ -103,9 +113,13 @@ def rig(fresh_world, tmp_path):
             return [c for c in self.calls("maestro") if c.startswith("new ") and title_part in c]
 
         def answer(self, item, verdict="approve", note=None, state="done"):
-            ev = {"ts": "2026-10-01T12:00:00.000Z", "type": "gate", "actor": "human", "verdict": verdict, "note": note}
+            """Maestro's wire shape: the item's verdict, and the settled decision's event text and note."""
+            words = {"approve": "You approved", "revise": "You sent it back", "block": "You canceled it"}
+            ev = {"ts": "2026-10-01T12:00:00.000Z", "type": "gate.pending", "actor": "human",
+                  "text": words.get(verdict, ""), "detail": note}
             (calls_dir / ("maestro-show-%s.json" % item)).write_text(json.dumps(
-                {"item": {"state": state}, "events": [ev] if verdict != "cancel" else []}))
+                {"item": {"state": state, "verdict": verdict if verdict in words else None, "pending": None},
+                 "events": [ev] if verdict in words else []}))
 
         def brief(self, item):
             return (calls_dir / ("maestro-new-%s" % item)).read_text()
@@ -133,7 +147,7 @@ def test_a_tick_observes_reports_asks_and_records_itself(rig):
     assert "--dispatch" in rig.brief("itm-1") and "--initiative fleet-reconcile-broomva" in rig.brief("itm-1")
     seen = [x for x in rig.ledger() if x["kind"] == "seen"]
     assert seen and seen[0]["result"] == {"channel": "maestro", "item": "itm-1", "state": "running"}
-    assert kinds.index("seen") > kinds.index("runner_exit")
+    assert kinds.index("seen") < kinds.index("runner_exit")  # inside the tick's lock now
     assert (sd / "asks" / "00001.md").is_file()
 
 
@@ -201,6 +215,18 @@ def test_a_failed_step_alerts_and_exits_1(rig):
     assert [x for x in rig.ledger() if x["kind"] == "runner_exit"][0]["exit"] == 1
     alerts = rig.raised("fleet broomva: tick-observe")
     assert len(alerts) == 1 and "failed at observe" in rig.brief("itm-%d" % len(rig.raised()))
+
+
+def test_an_alert_maestro_didnt_take_is_raised_once_maestro_is_back(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    (sd / "ticks").write_text("a file where the ticks dir goes")  # observe fails every tick
+    rig.tick(STUB_MAESTRO_DOWN="1")
+    assert rig.raised("tick-observe") == [] and "NOT delivered" in rig.log()
+    rig.tick()  # within the 6 h, but the first never reached the owner
+    assert len(rig.raised("fleet broomva: tick-observe")) == 1
+    rig.tick()
+    assert len(rig.raised("fleet broomva: tick-observe")) == 1  # delivered: now rate-limited
 
 
 def test_a_lost_counter_does_not_reuse_a_tick_number(rig):
@@ -321,16 +347,31 @@ def test_a_batch_is_raised_once_and_the_owners_verdict_comes_back_as_the_answer(
     (ack,) = [x for x in rig.ledger() if x["kind"] == "ack" and x.get("by") == "owner:maestro"]
     batch = [x for x in rig.ledger() if x["kind"] == "intent" and x.get("verb") == "ask"][0]
     assert ack["of"] == batch["id"] and ack["asks"] == "all"
-    assert ack["result"]["verdict"] == "revise" and ack["result"]["note"].startswith("skills gets")
+    assert ack["result"]["verdict"] == "revise" and ack["result"]["notes"][0].startswith("skills gets")
     assert "[tick 1, a1]" not in rig.fleet("asks").stdout
 
 
 def test_a_canceled_item_dismisses_its_batch(rig):
     rig.tick()
-    rig.answer("itm-1", "cancel", state="canceled")
+    rig.answer("itm-1", "block", state="canceled")
     rig.tick()
     acks = [x for x in rig.ledger() if x["kind"] == "ack" and x.get("by") == "owner:maestro"]
-    assert acks and acks[0]["result"]["verdict"] == "cancel"
+    assert acks and acks[0]["result"]["verdict"] == "block"
+
+
+def test_an_item_maestro_made_before_failing_is_adopted_not_raised_again(rig):
+    r = rig.tick(STUB_NEW_EXIT="3")  # created, then "no clear answer"
+    assert r.returncode == 1 and not [x for x in rig.ledger() if x["kind"] == "seen"]
+    rig.tick()
+    assert len(rig.raised("[batch ")) == 1  # found by its [batch ...] title, not created twice
+    assert rig.raised("fleet broomva: tick-ask")  # the failed tick's own alert
+    (seen,) = [x for x in rig.ledger() if x["kind"] == "seen"]
+    assert seen["result"]["item"] == "itm-1"
+
+
+def test_an_item_queued_at_maestros_cap_is_dispatched(rig):
+    rig.tick(STUB_NEW_STATE="proposed")
+    assert rig.calls("maestro-dispatched") == ["itm-1"]
 
 
 def test_the_owner_reads_and_acks_asks_and_other_verbs_refuse(rig):

@@ -268,11 +268,13 @@ def test_a_late_init_event_doesnt_undo_the_deadline(world, tmp_path, monkeypatch
 def test_a_fleet_child_keeps_auth_and_provider_settings(monkeypatch):
     from fleetlib import sources
     for k, v in (("CLAUDE_CODE_OAUTH_TOKEN", "x"), ("CLAUDE_CODE_USE_BEDROCK", "1"), ("CLAUDE_CODE_SESSION_ID", "s"),
-                 ("CLAUDECODE", "1"), ("PASEO_AGENT_ID", "a")):
+                 ("CLAUDE_CODE_MESSAGING_TOKEN", "m"), ("CLAUDE_CODE_SESSION_ATTENDED", "1"), ("CLAUDECODE", "1"),
+                 ("PASEO_AGENT_ID", "a")):
         monkeypatch.setenv(k, v)
     env = sources.child_env()
     assert env["CLAUDE_CODE_OAUTH_TOKEN"] == "x" and env["CLAUDE_CODE_USE_BEDROCK"] == "1"
-    assert not {"CLAUDE_CODE_SESSION_ID", "CLAUDECODE", "PASEO_AGENT_ID"} & set(env)
+    assert not {"CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_TOKEN", "CLAUDE_CODE_SESSION_ATTENDED", "CLAUDECODE",
+                "PASEO_AGENT_ID"} & set(env)  # a parent session's messaging token never reaches a child
 
 
 def test_a_partial_paseo_classification_fails_config_check(world):

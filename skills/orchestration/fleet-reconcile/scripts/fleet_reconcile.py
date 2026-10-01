@@ -204,7 +204,8 @@ def _open_now(records: list) -> Dict[str, Dict]:
 
 
 def _ask_sync(sec: dict, sd: Path, records: list, open_now: Dict[str, Dict]) -> Tuple[int, int]:
-    """Read the owner's verdicts back: (answered, failed reads)."""
+    """Read the owner's verdicts back, and dispatch an item left queued at
+    Maestro's concurrency cap: (answered, failed reads)."""
     from fleetlib import paseo_ask
 
     open_of = {v["of"] for v in open_now.values()}
@@ -214,9 +215,10 @@ def _ask_sync(sec: dict, sd: Path, records: list, open_now: Dict[str, Dict]) -> 
             continue
         try:
             ans = paseo_ask.answer(sec, b["item"])
+            if not ans["verdict"] and ans["state"] == "proposed":
+                paseo_ask.dispatch(sec, b["item"])
         except paseo_ask.MaestroError as exc:
-            print("fleet act ask: Maestro item %s of tick %s not read: %s" % (b["item"], b["tick"], exc),
-                  file=sys.stderr)
+            print("fleet act ask: Maestro item %s of tick %s: %s" % (b["item"], b["tick"], exc), file=sys.stderr)
             failed += 1
             continue
         if ans["verdict"]:
@@ -224,12 +226,16 @@ def _ask_sync(sec: dict, sd: Path, records: list, open_now: Dict[str, Dict]) -> 
                                "dry_run": False, "by": "owner:maestro",
                                "result": dict(ans, channel="maestro", item=b["item"])})
             answered += 1
+        elif ans["state"] == "blocked":
+            print("fleet act ask: Maestro item %s of tick %s is Stuck (its run failed); it shows there, and only "
+                  "the owner can unblock or cancel it" % (b["item"], b["tick"]), file=sys.stderr)
     return answered, failed
 
 
 def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
                open_now: Dict[str, Dict]) -> Tuple[int, int]:
-    """Raise every batch with an open ask and no item yet: (raised, failed)."""
+    """Raise every batch with an open ask and no item yet: (raised, failed).
+    An item Maestro made before failing is found by its title and adopted."""
     from fleetlib import paseo_ask
 
     raised = failed = 0
@@ -239,16 +245,23 @@ def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
         if b.get("item") or not asks:
             continue
         n = len(asks)
-        title = "fleet %s: %d ask%s (tick %s)" % (sec["scope"], n, "" if n == 1 else "s", b["tick"])
+        what = "%d fleet ask%s for scope %s (tick %s)" % (n, "" if n == 1 else "s", sec["scope"], b["tick"])
+        title = "fleet %s: %d ask%s (tick %s) %s" % (sec["scope"], n, "" if n == 1 else "s", b["tick"],
+                                                     paseo_ask.marker(b["id"]))
         text = paseo_ask.brief(
-            sec["scope"], "fleet-reconcile asks for the owner, scope %s, tick %s (read them all with `fleet asks "
-            "--scope %s`)." % (sec["scope"], b["tick"], sec["scope"]),
-            ["[%s] %s" % (a.get("id"), a.get("question")) for a in asks],
-            "Approve to acknowledge them; send back a note to answer; cancel to dismiss.")
+            "fleet-reconcile has %s for the owner; `fleet asks --scope %s` lists them too." % (what, sec["scope"]),
+            ["[%s] (%s) %s" % (a.get("id"), a.get("class"), a.get("question")) for a in asks],
+            "%s are in this item's brief: approve to acknowledge them, send back a note to answer, cancel to "
+            "dismiss" % what)
         try:
-            item = paseo_ask.raise_item(sec, title, text)
+            item = paseo_ask.find(sec, b["id"]) or paseo_ask.raise_item(sec, title, text)
+            if item.get("state") == "proposed":  # queued at Maestro's cap: started now or at a later tick
+                try:
+                    item = paseo_ask.dispatch(sec, item["id"]) or item
+                except paseo_ask.MaestroError:
+                    pass
         except (paseo_ask.MaestroError, OSError, subprocess.SubprocessError) as exc:
-            print("fleet act ask: batch of tick %s not raised: %s" % (b["tick"], common.safe_text(exc, 200)),
+            print("fleet act ask: batch of tick %s not raised: %s" % (b["tick"], common.safe_text(str(exc), 200)),
                   file=sys.stderr)
             failed += 1
             continue
@@ -588,7 +601,7 @@ def main(argv=None) -> int:
     p = scoped(sub.add_parser("act"))
     p.add_argument("verb", choices=("mail", "spawn", "label", "resume", "ask"))
     p.add_argument("--tick", type=int, default=0)
-    p.add_argument("--show", action="store_true", help="ask: show the owner a dialog of the open asks")
+    p.add_argument("--show", action="store_true", help="ask: read answers back from Maestro and raise new batches")
     p.add_argument("--dry-run", default=None, choices=("0", "1"))
     p.add_argument("--session", default=None, help="mail, resume: the target's session id")
     p.add_argument("--template", default=None, help="mail: stalled, hung or overlap")

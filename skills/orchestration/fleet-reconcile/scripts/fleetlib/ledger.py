@@ -13,7 +13,8 @@ tick), dry_run, by (act, recover, hook, tick, or owner:<tty>), kind:
 
     intent                      verb, key, target
     done / failed / unknown     of (the intent it closes), verb, key, result | reason, detail
-    seen                        of (the ask intent shown), result: {button, gave_up}
+    seen                        of (the ask intent raised), result: {channel: maestro, item, state}
+                                (a phase-1 dialog's: {button, gave_up})
     ack                         of (the ask intent answered), asks: "all" | [ask ids];
                                 or, by: tick, keys and resolved: true, when a tick
                                 finds asks no longer true (pending the spec)

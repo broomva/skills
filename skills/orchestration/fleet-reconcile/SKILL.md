@@ -205,30 +205,47 @@ a new key.
 
 **The asks reach the owner in the Paseo app** (owner decision 2026-10-01:
 "If it goes to the computer and I'm not there it won't work"; this replaces
-the dialog that workspace#842 chose). With the tick's lock released, `fleet
+the dialog that workspace#842 chose). Inside the tick's lock and budget, `fleet
 act ask --show` turns each batch with an open ask into one Maestro work item
-(`scripts/fleetlib/paseo_ask.py`). `maestro new --dispatch` runs one turn of
-a Paseo agent in the fleet's own scratch repo
-(`~/.local/state/fleet-reconcile/maestro-asks` by default, not a scope repo). The run
-changes nothing and ends with the asks under `## Ask`, so the item waits at
-**Needs you**. Its agent's Paseo record is also marked as needing attention.
+(`scripts/fleetlib/paseo_ask.py`).
+- `maestro new --dispatch` runs one turn of a Paseo agent in the fleet's own
+  scratch repo (`ask_repo`, by default
+  `~/.local/state/fleet-reconcile/maestro-asks`, not a scope repo).
+- The asks go in the item's brief as fenced data. The run changes nothing and
+  ends with the fleet's own one-line summary under `## Ask`, so the item waits
+  at **Needs you** and the agent's Paseo record is marked as needing
+  attention.
 
-Measured end to end on 2026-10-01, from the daemon state the app renders: the
-item reached `review` with the asks as its look, and the agent read
-`requiresAttention: true`. A `seen` record notes the item. A batch is raised
-once and stays at Needs you; the next tick reads the owner's verdict back as
-the answer, an `ack` by `owner:maestro`:
-- Approve is acknowledged;
-- Send back with a note is the answer, the note recorded;
-- Block, or Cancel, is dismissed.
+Measured end to end on 2026-10-01, at the daemon state the app renders: the
+item reached `review` and the agent read `requiresAttention: true`. A phone
+push was not measured.
 
-When Maestro isn't listening, nothing is recorded: the next tick raises the
-batch again, and the tick fails. tick.sh's own alerts (a bad config, a failed
-step, a held lock) go the same way, from bash, at most once per 6 h per kind
-of failure. One that Maestro doesn't take is logged as not delivered. There
-is no dialog, banner, ntfy or p9 notify. Each item costs one turn of the
-provider Maestro is configured with. The owner can also answer from a
-terminal:
+Raising is idempotent. The title carries the batch id, so an item Maestro
+created before failing (it creates, then dispatches) is found with `ls` and
+adopted. An item queued at Maestro's concurrency cap is dispatched at a later
+tick.
+
+The next tick reads the owner's verdict back, following Maestro's wire
+contract (the item's `verdict`; a settled decision's event and its note). It
+records an `ack` by `owner:maestro`, waiting out the undo window:
+- Approve acknowledges;
+- Send back with a note answers (every note is kept, even after a later
+  approve);
+- Cancel dismisses.
+
+Limits, by design:
+- A session can't cancel an item, so one whose batch resolved first, or was
+  answered from a terminal, stays until the owner closes it.
+- A Stuck run (its turn failed) shows in Maestro's Stuck group, is logged, and
+  isn't raised again.
+- Each item costs one turn of the provider Maestro is configured with, and a
+  send-back costs a second.
+
+tick.sh's own alerts (a bad config, a failed step, a held lock) are Maestro
+items too, sent from bash, at most once per 6 h per kind, stamped only once
+Maestro took one. When Maestro itself is down, they reach only `tick.log`:
+the channel's blind spot. There is no dialog, banner, ntfy or p9 notify. The
+owner can also answer from a terminal:
 
 ```bash
 F=~/.local/share/fleet-reconcile/releases/<commit>/orchestration/fleet-reconcile/scripts/fleet
@@ -289,11 +306,10 @@ sample (at least 3 sessions per class that occurs):
 $F label-sheet --scope broomva --ticks 1,2,3   # writes labelling/<name>.md and .csv
 ```
 
-≥90% agreement overall and no class below 2 of 3. Spec §9 also asks that
-each of those ticks' dialogs be clicked Seen. A tick writes a batch, and so a
-dialog, only for a new key, so a tick with nothing new shows none: the Seen
-clicks are on the ticks that had something to show, and this is raised with
-the spec.
+≥90% agreement overall and no class below 2 of 3. Spec §9 also asks that each
+of those ticks' dialogs be clicked Seen. With the owner channel on Paseo
+(0.3.0), that reads as each batch those ticks raised answered in Maestro; the
+spec's wording is to be amended.
 
 ## Commands
 

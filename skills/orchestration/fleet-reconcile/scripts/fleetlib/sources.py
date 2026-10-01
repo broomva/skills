@@ -39,18 +39,20 @@ def _take_token() -> None:
 
 
 #: What a session started from a session inherits and must not (evidence §1:
-#: an inherited CLAUDE_CODE_CHILD_SESSION turns transcript saving off): the
-#: session's own markers and Paseo's, by name, so auth and provider settings
-#: (CLAUDE_CODE_OAUTH_TOKEN, CLAUDE_CODE_USE_BEDROCK, ...) still pass.
-CHILD_DROP = ("CLAUDECODE", "CLAUDE_CODE_CHILD_SESSION", "CLAUDE_CODE_SESSION_ID", "CLAUDE_CODE_MESSAGING_SOCKET",
-              "CLAUDE_CODE_ENTRYPOINT", "CLAUDE_CODE_SSE_PORT", "PASEO_")
+#: an inherited CLAUDE_CODE_CHILD_SESSION turns transcript saving off): every
+#: CLAUDE_CODE_* (the session's markers, its messaging token and socket) and
+#: PASEO_* variable, but the auth and provider settings a headless run needs.
+CHILD_DROP = ("CLAUDECODE", "CLAUDE_CODE_", "PASEO_")
+CHILD_KEEP = ("CLAUDE_CODE_OAUTH_TOKEN", "CLAUDE_CODE_USE_BEDROCK", "CLAUDE_CODE_USE_VERTEX",
+              "CLAUDE_CODE_USE_FOUNDRY", "CLAUDE_CODE_SKIP_BEDROCK_AUTH", "CLAUDE_CODE_SKIP_VERTEX_AUTH",
+              "CLAUDE_CODE_MAX_OUTPUT_TOKENS", "CLAUDE_CODE_API_KEY_HELPER_TTL_MS")
 
 
 def child_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     """The environment for a session the fleet starts (spawn, resume, the
     coordinator): without Claude Code's or Paseo's variables or the fleet
     credential, and with FLEET_CHILD set to 1 (the recursion guard)."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith(CHILD_DROP)}
+    env = {k: v for k, v in os.environ.items() if k in CHILD_KEEP or not k.startswith(CHILD_DROP)}
     for k in _TOKEN_VARS:
         env.pop(k, None)
     env["FLEET_CHILD"] = "1"

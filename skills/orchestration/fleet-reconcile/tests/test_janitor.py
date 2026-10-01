@@ -254,8 +254,15 @@ def test_a_worktree_claude_rm_keeps_is_an_abort_and_a_removed_ones_profile_goes(
     _listing(world, [_row(OWNER, wt)])
     sd = world.state["broomva"]
     (sd / "profiles").mkdir(parents=True)
-    prof = sd / "profiles" / "fleet-drill-1.json"
+    prof = sd / "profiles" / "broomva-x-pr1.json"  # keyed by the ledger's spawn of this session
     prof.write_text("{}")
+    decoy = sd / "profiles" / "fleet-drill-1.json"  # the listing's name: never what decides
+    decoy.write_text("{}")
+    from fleetlib import ledger
+    it = ledger.append(sd, {"kind": "intent", "verb": "spawn", "key": "broomva-x-pr1", "target": {"name": "x"},
+                            "scope": "broomva", "tick": 1, "dry_run": False, "by": "act"})
+    ledger.append(sd, {"kind": "done", "verb": "spawn", "of": it["id"], "key": "broomva-x-pr1",
+                       "result": {"session_id": OWNER}, "scope": "broomva", "tick": 1, "dry_run": False, "by": "act"})
     src = FixtureSources(world.fixture)
     res = janitor.run(config.scope("broomva"), src, str(wt), OWNER, True, lambda m: None)
     assert res["aborted"] == "rm kept the worktree" and prof.exists()  # the fixture's rm removes nothing
@@ -267,4 +274,4 @@ def test_a_worktree_claude_rm_keeps_is_an_abort_and_a_removed_ones_profile_goes(
                                capture_output=True)
             return "removed"
     res = janitor.run(config.scope("broomva"), Removes(world.fixture), str(wt), OWNER, True, lambda m: None)
-    assert res["removed"] and not prof.exists(), res
+    assert res["removed"] and not prof.exists() and decoy.exists(), res

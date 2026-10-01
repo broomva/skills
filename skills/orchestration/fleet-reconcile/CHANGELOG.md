@@ -7,14 +7,19 @@ the computer and I'm not there it won't work"). It replaces the macOS dialog
 that broomva/workspace#842 §5.7 chose. Ticket BRO-2674.
 
 - **`fleet act ask --show` raises each batch with an open ask as Maestro work
-  at Needs you** (`fleetlib/paseo_ask.py`). `maestro new --dispatch` runs one
-  turn in the fleet's own scratch repo, and the run ends with the asks under
-  `## Ask`. Measured end to end: the item reached `review` and its agent's
-  Paseo record read `requiresAttention: true`. The next tick reads the owner's
-  verdict back as the answer: approve acknowledges, send back with a note
-  answers, cancel or block dismisses.
+  at Needs you** (`fleetlib/paseo_ask.py`). It runs inside the tick's lock.
+  `maestro new --dispatch` runs one turn in the fleet's own scratch repo; the
+  asks are fenced as data in the brief, and the look is the fleet's own
+  summary. Measured end to end: the item reached `review` and its agent's
+  Paseo record read `requiresAttention: true`.
+  - Raising is idempotent: an item Maestro made before failing is found by
+    its title's batch id, and one queued at the cap is dispatched later.
+  - The next tick reads the owner's verdict back on Maestro's wire contract
+    (the item's `verdict`, a settled decision's note), keeping every note:
+    approve acknowledges, send back with a note answers, cancel dismisses.
 - tick.sh's alerts go the same way, from bash, at most once per 6 h per kind
-  of failure. The dialog, the banner path and p9 notify are gone.
+  of failure, stamped only once delivered. The dialog, the banner path and p9
+  notify are gone.
 - The coordinator's tool list is an allowlist: `--tools Bash Read
   SendMessage`. Measured on 2.1.280, the init event lists exactly those.
   Anything else, or no list, stops it. A late init event can't undo the
@@ -35,8 +40,10 @@ that broomva/workspace#842 §5.7 chose. Ticket BRO-2674.
   - the send gate refuses on a corrupt ledger, and the `fleet` shim makes
     any failure of `send-gate pre` exit 2;
   - recover counts only the two delivery shapes, not a quote;
-  - a fleet child keeps auth and provider settings and drops only the
-    session markers;
+  - a fleet child drops every session and Paseo variable (a parent's
+    messaging token included) but keeps auth and provider settings;
+  - a removed driver's profile is found through the ledger's spawn, never a
+    listing name;
   - a partial Paseo classification fails config-check;
   - a duplicate fleet name is asked while it lasts;
   - the driver brief treats PR text as data.

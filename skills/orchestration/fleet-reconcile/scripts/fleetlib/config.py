@@ -45,7 +45,7 @@ SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     "launchd_logs": ("str_map", None),        # label -> the log that shows a real run, when stdout doesn't
     "bookkeeping_run_log": ("str_or_null", None),
     "dream_run_log": ("str_or_null", None),
-    "ask_renotify_h": ("int", 6),             # an unseen ask batch is shown again at most this often
+    "ask_renotify_h": ("int", 6),             # unused since 0.3.0 (the dialog's re-show); accepted, not read
     "tick_timeout_min": ("int", 15),
     "compare_hour": ("int", 18),              # the core comparison runs once a day from this local hour
     # phase 2
