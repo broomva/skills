@@ -22,8 +22,8 @@ Rules
 
 Statuses: PASS, FAIL, WARN, SKIP (nothing in the input for this rule), N/A (the
 profile does not define it), UNCHECKED (the detector cannot measure it), WAIVED (a
-FAIL the caller waived with --waive RULE=REASON; recorded in the report). Only FAIL
-fails the run; --strict also fails on UNCHECKED. Exit: 0 ok, 1 FAIL, 2 usage or
+FAIL the owner waived for this exact file: --waive WAIVERS.json, see "Waivers" in the
+reference). Only FAIL fails the run; --strict also fails on UNCHECKED. Exit: 0 ok, 1 FAIL, 2 usage or
 tool error.
 
 Stdlib only. Video and image input need ffmpeg/ffprobe plus a detector: macOS
@@ -36,6 +36,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import shutil
 import statistics
 import subprocess
@@ -61,6 +62,16 @@ RULES = [
 ]
 MAX_EVIDENCE = 6
 BOX_SLACK = 0.002  # fraction of height a detector box may overhang a zone edge
+
+# Waiver policy (references/vertical-layout.md, "Waivers"). No waiver covers these
+# rules: a wrong canvas puts every zone in the wrong place, and VL9 FAILs only on a
+# stroke the caller declared missing, which is fixed by adding the stroke. Declared
+# text that is not found (VL2, VL4, VL5 with --expect-*) is marked per result in
+# evaluate(), since the same rules can also FAIL for reasons a waiver may cover.
+NEVER_WAIVABLE = {"VL1": "a wrong canvas moves every zone",
+                  "VL9": "the stroke is declared missing; add it"}
+WAIVER_KEYS = frozenset({"rule", "input_sha256", "reason", "granted_by"})
+SHA256_HEX = re.compile(r"[0-9a-f]{64}")
 
 
 class ToolError(Exception):
@@ -140,6 +151,8 @@ class Result:
     status: str
     detail: str
     evidence: list = field(default_factory=list)
+    waivable: bool = True        # False: no waiver may turn this FAIL into WAIVED
+    waiver: dict | None = None   # the waiver applied, when status is WAIVED
 
 
 # ---------------------------------------------------------------------------
@@ -310,8 +323,9 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
     results: list[Result] = []
     names = dict(RULES)
 
-    def add(rule, status, detail, evidence=None):
-        results.append(Result(rule, names[rule], status, detail, (evidence or [])[:MAX_EVIDENCE]))
+    def add(rule, status, detail, evidence=None, waivable=True):
+        results.append(Result(rule, names[rule], status, detail, (evidence or [])[:MAX_EVIDENCE],
+                              waivable and rule not in NEVER_WAIVABLE))
 
     # VL1 canvas -----------------------------------------------------------
     aw, ah = canvas_cfg["aspect"]
@@ -382,7 +396,7 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
         detail = "; ".join(
             ([f"{len(bad)}/{len(overlay)} overlay text box(es) leave the {where}"] if bad else [])
             + [none_found(e, None) for e in missing])
-        add("VL2", "FAIL", detail + scene_note, [_ev(f, t) for f, t in bad])
+        add("VL2", "FAIL", detail + scene_note, [_ev(f, t) for f, t in bad], waivable=not missing)
     elif not overlay:
         add("VL2", "SKIP", "no overlay text found" + scene_note)
     else:
@@ -444,7 +458,7 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
         titles = [(f, t) for f, t in overlay if t.region == "title"]
         span = f"y {title_rect.y0:.0f}-{title_rect.y1:.0f} ({pct(title_rect.y0, H)}-{pct(title_rect.y1, H)})"
         if not titles and "title" in expect:
-            add("VL4", "FAIL", none_found("title", title_rect))
+            add("VL4", "FAIL", none_found("title", title_rect), waivable=False)
         elif not titles:
             add("VL4", "SKIP", "no title-hook text found")
         else:
@@ -465,7 +479,7 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
         span = (f"x {cap_rect.x0:.0f}-{cap_rect.x1:.0f}, y {cap_rect.y0:.0f}-{cap_rect.y1:.0f} "
                 f"({pct(cap_rect.y0, H)}-{pct(cap_rect.y1, H)})")
         if not caps and "caption" in expect:
-            add("VL5", "FAIL", none_found("caption", cap_rect))
+            add("VL5", "FAIL", none_found("caption", cap_rect), waivable=False)
         elif not caps:
             add("VL5", "SKIP", "no caption text found")
         else:
@@ -521,10 +535,10 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
                 ys = [y for _, y, _ in measured]
                 add("VL6", "PASS", f"eye line {min(ys):.0f}-{max(ys):.0f}px ({pct(min(ys), H)}-{pct(max(ys), H)}) "
                                    f"across {len(measured)} shot(s), inside {span}{blind_note}")
-        if len(measured) < 2:
-            why = ("fewer than two shots have eye landmarks" if len(segs) >= 2
-                   else f"no punch-in or cut found (face-scale change >= {eye_cfg['punch_in_scale_jump']:.0%})")
-            add("VL7", "SKIP", why)
+        if len(measured) < 2 and len(segs) >= 2:
+            add("VL7", "UNCHECKED", "fewer than two shots have eye landmarks")
+        elif len(measured) < 2:
+            add("VL7", "SKIP", f"no punch-in or cut found (face-scale change >= {eye_cfg['punch_in_scale_jump']:.0%})")
         else:
             # WARN, never FAIL: a face-scale change is a punch-in or a cut to another
             # shot, and face geometry cannot tell them apart (two centred speakers look
@@ -993,30 +1007,68 @@ def frames_from_spec(spec) -> tuple[int, int, list[Frame]]:
 # Report
 # ---------------------------------------------------------------------------
 
-def parse_waivers(specs: list[str] | None) -> dict[str, str]:
-    """--waive VL6="b-roll face": a FAIL the caller has judged not to apply. It is the
-    FAIL policy's mechanism: the waiver and its reason go into the report beside the
-    input's sha256, so a waiver cannot silently outlive the render it was about."""
+def load_waivers(path: str | None) -> tuple[list[dict], str | None]:
+    """Read an owner's waiver file and return its waivers and its sha256.
+
+    The file is {"waivers": [{"rule", "input_sha256", "reason", "granted_by"}, ...]}.
+    Whatever the policy forbids is a usage error (exit 2), never a silent skip: a
+    never-waivable rule, an empty reason or grantor, a malformed sha256, an unknown
+    key. The sha256 is of the bytes parsed here, so the report names the exact file."""
+    if path is None:
+        return [], None
+    try:
+        raw = Path(path).read_bytes()
+        doc = json.loads(raw)
+    except (OSError, ValueError) as exc:
+        raise ToolError(f"cannot read the waiver file {path}: {exc}") from exc
+    if not isinstance(doc, dict) or set(doc) != {"waivers"} or not isinstance(doc["waivers"], list):
+        raise ToolError(f'{path}: a waiver file is {{"waivers": [...]}} and nothing else')
     known = {rule for rule, _ in RULES}
-    waivers: dict[str, str] = {}
-    for spec in specs or []:
-        rule, _, reason = spec.partition("=")
-        rule, reason = rule.strip().upper(), reason.strip()
-        if rule not in known or not reason:
-            raise ToolError(f"--waive wants RULE=REASON with RULE in {sorted(known)}, got {spec!r}")
-        waivers[rule] = reason
-    return waivers
+    seen: set[tuple[str, str]] = set()
+    for i, w in enumerate(doc["waivers"]):
+        where = f"{path}: waivers[{i}]"
+        if not isinstance(w, dict) or set(w) != WAIVER_KEYS or not all(isinstance(v, str) for v in w.values()):
+            raise ToolError(f"{where} needs exactly {sorted(WAIVER_KEYS)}, all strings")
+        if w["rule"] not in known:
+            raise ToolError(f"{where}: unknown rule {w['rule']!r}")
+        if w["rule"] in NEVER_WAIVABLE:
+            raise ToolError(f"{where}: {w['rule']} cannot be waived ({NEVER_WAIVABLE[w['rule']]})")
+        if not SHA256_HEX.fullmatch(w["input_sha256"]):
+            raise ToolError(f"{where}: input_sha256 must be the lowercase 64-hex sha256 of the waived file")
+        if not w["reason"].strip() or not w["granted_by"].strip():
+            raise ToolError(f"{where}: reason and granted_by must not be empty")
+        if (w["rule"], w["input_sha256"]) in seen:
+            raise ToolError(f"{where}: a second waiver for {w['rule']} on the same file")
+        seen.add((w["rule"], w["input_sha256"]))
+    return doc["waivers"], hashlib.sha256(raw).hexdigest()
 
 
-def apply_waivers(results: list[Result], waivers: dict[str, str]) -> list[str]:
-    """Turn waived FAILs into WAIVED; return the waivers that matched no FAIL."""
-    used = set()
-    for r in results:
-        if r.status == "FAIL" and r.rule in waivers:
-            r.status = "WAIVED"
-            r.detail = f"waived ({waivers[r.rule]}): {r.detail}"
-            used.add(r.rule)
-    return sorted(set(waivers) - used)
+WAIVER_OUTCOMES = {
+    "applied": "turned this file's FAIL into WAIVED",
+    "refused": "not applied: this FAIL is never waivable (declared text not found)",
+    "no-fail": "not applied: the rule did not FAIL on this file",
+    "other-input": "not applied: bound to another file's sha256",
+}
+
+
+def apply_waivers(results: list[Result], waivers: list[dict], input_sha: str | None) -> list[dict]:
+    """Apply the waivers bound to this input's sha256; return each with its outcome
+    (a key of WAIVER_OUTCOMES). A waiver covers its rule's FAIL on that one file."""
+    log = []
+    for w in waivers:
+        outcome = "other-input"
+        if w["input_sha256"] == input_sha:
+            r = next((r for r in results if r.rule == w["rule"] and r.status == "FAIL"), None)
+            if r is None:
+                outcome = "no-fail"
+            elif not r.waivable:
+                outcome = "refused"
+            else:
+                outcome = "applied"
+                r.status, r.waiver = "WAIVED", {"reason": w["reason"], "granted_by": w["granted_by"]}
+                r.detail = f"waived by {w['granted_by']} ({w['reason']}): {r.detail}"
+        log.append({**w, "outcome": outcome})
+    return log
 
 
 def verdict(results: list[Result], strict: bool) -> tuple[str, dict]:
@@ -1042,8 +1094,9 @@ def render_table(meta: dict, results: list[Result], v: str, counts: dict) -> str
             lines.append(f"        - {json.dumps(e, ensure_ascii=False)}")
     tally = ", ".join(f"{counts[k]} {k}" for k in ("PASS", "FAIL", "WAIVED", "WARN", "SKIP", "N/A", "UNCHECKED")
                       if counts.get(k))
-    for rule in meta.get("waivers_unused") or []:
-        lines.append(f"  note: --waive {rule} matched no FAIL")
+    for w in meta.get("waivers") or []:
+        if w["outcome"] != "applied":
+            lines.append(f"  note: waiver {w['rule']} from {w['granted_by']} {WAIVER_OUTCOMES[w['outcome']]}")
     for key in ("report", "guide"):
         if meta.get(key):
             lines.append(f"{key}: {meta[key]}")
@@ -1062,11 +1115,11 @@ def sha256_of(path: Path) -> str:
     return h.hexdigest()
 
 
-def emit(args, meta: dict, results: list[Result]) -> int:
-    waivers = parse_waivers(getattr(args, "waive", None))
-    unused = apply_waivers(results, waivers)
-    meta = {**meta, "waivers": [{"rule": k, "reason": v} for k, v in sorted(waivers.items())],
-            "waivers_unused": unused}
+def emit(args, meta: dict, results: list[Result], waivers: tuple[list[dict], str | None],
+         input_sha: str | None) -> int:
+    entries, waiver_sha = waivers
+    meta = {**meta, "waivers": apply_waivers(results, entries, input_sha),
+            "waiver_file": {"path": args.waive, "sha256": waiver_sha} if args.waive else None}
     v, counts = verdict(results, args.strict)
     payload = {**meta, "verdict": v, "counts": counts,
                "results": [r.__dict__ for r in results]}
@@ -1093,9 +1146,12 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
     for i in inputs:
         if not Path(i).exists():
             raise ToolError(f"no such file: {i}")
-    parse_waivers(args.waive)  # reject a malformed --waive before any work
-    # Hash first: the verdict describes these bytes, even if the file is replaced
-    # while frames are being read.
+    waivers = load_waivers(args.waive)  # a bad waiver file is exit 2 before any work
+    if args.waive and len(inputs) != 1:
+        raise ToolError("a waiver binds to one file's sha256; check waived stills one at a time")
+    # Hashed before and again after every read (sampling, detection, guide): a file
+    # replaced mid-run is an error, not a verdict on a mix of two files. A file swapped
+    # and put back between the two hashes is not seen.
     input_sha = {i: sha256_of(Path(i)) for i in inputs}
     with tempfile.TemporaryDirectory(prefix="vlayout-") as tmp:
         if is_video:
@@ -1119,6 +1175,8 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
         if not args.no_guide:
             guide = args.guide or _default_out(inputs[0], "layout-guide.png")
             write_guide(inputs[0], W, H, info.get("duration"), profile, Path(guide), is_image=not is_video)
+    if {i: sha256_of(Path(i)) for i in inputs} != input_sha:
+        raise ToolError("the input changed while it was being checked; re-run on the finished file")
     if args.report is None and not args.no_report:
         args.report = _default_out(inputs[0], "layout-report.json")
     meta = {"input": inputs[0] if is_video else inputs, "mode": "video" if is_video else "image",
@@ -1130,21 +1188,24 @@ def cmd_media(args, layout: dict, pname: str, profile: dict, is_video: bool) -> 
             "contract_sha256": sha256_of(Path(args.layout or DEFAULT_LAYOUT))}
     if detector_note:
         meta["detector_note"] = detector_note
-    return emit(args, meta, results)
+    return emit(args, meta, results, waivers, input_sha[inputs[0]] if len(inputs) == 1 else None)
 
 
 def cmd_spec(args, layout: dict, pname: str, profile: dict) -> int:
+    waivers = load_waivers(args.waive)
     try:
-        spec = json.loads(Path(args.input).read_text())
-    except (OSError, json.JSONDecodeError) as exc:
+        raw = Path(args.input).read_bytes()  # hashed and parsed from the same bytes
+        spec = json.loads(raw)
+    except (OSError, ValueError) as exc:
         raise ToolError(f"cannot read spec {args.input}: {exc}") from exc
+    input_sha = hashlib.sha256(raw).hexdigest()
     W, H, frames = frames_from_spec(spec)
     results = evaluate(W, H, frames, profile, layout["classification"], layout["canvas"])
     meta = {"input": args.input, "mode": "spec", "profile": pname, "detector": "declared",
             "canvas": [W, H], "samples": len(frames), "report": args.report,
-            "input_sha256": {args.input: sha256_of(Path(args.input))},
+            "input_sha256": {args.input: input_sha},
             "contract_sha256": sha256_of(Path(args.layout or DEFAULT_LAYOUT))}
-    return emit(args, meta, results)
+    return emit(args, meta, results, waivers, input_sha)
 
 
 def cmd_guide(args, layout: dict, pname: str, profile: dict) -> int:
@@ -1188,9 +1249,9 @@ def build_parser() -> argparse.ArgumentParser:
         p.add_argument("--report", default=None, help="write the JSON report here")
         p.add_argument("--json", action="store_true", help="print the JSON report instead of the table")
         p.add_argument("--strict", action="store_true", help="UNCHECKED rules fail the run too")
-        p.add_argument("--waive", action="append", metavar="RULE=REASON",
-                       help='record a FAIL that does not apply, e.g. --waive VL6="b-roll, not a talking head"; '
-                            "shown as WAIVED and kept in the report (repeatable)")
+        p.add_argument("--waive", default=None, metavar="WAIVERS.json",
+                       help="the owner's waiver file: each entry binds one rule to one file's sha256, with "
+                            "a reason and who granted it; see references/vertical-layout.md, 'Waivers'")
         if media:
             p.add_argument("--detector", default="auto", choices=["auto", "vision", "tesseract"])
             p.add_argument("--guide", default=None, help="guide sheet path (default: <input>.layout-guide.png)")

@@ -408,12 +408,18 @@ def stitch_clips(clip_paths: list[Path], output_path: Path,
             f.write(f"file '{p.resolve()}'\n")
 
     try:
-        subprocess.run(
+        proc = subprocess.run(
             ["ffmpeg", "-f", "concat", "-safe", "0", "-i", str(concat_file),
              "-c", "copy", "-y", str(output_path)],
             capture_output=True, timeout=120,
         )
         concat_file.unlink()
+        if proc.returncode != 0:
+            # Whatever is at output_path is a partial write or an earlier run's file;
+            # the gate commands printed later name what this returns.
+            print(f"  Stitch failed: ffmpeg exited {proc.returncode}")
+            output_path.unlink(missing_ok=True)
+            return None
 
         if output_path.exists():
             size = output_path.stat().st_size

@@ -305,10 +305,12 @@ bytes it checked; re-run the gate after any re-render.
 **Pass criteria.** The checker exits 0 and the last line of its table output reads
 `VERDICT: PASS`. Then:
 
-1. Every **FAIL** is fixed and the gate re-run, or, when the rule does not apply to this
-   asset, re-run with `--waive RULE="reason"` (for example `--waive VL6="b-roll, not a
-   talking head"`). A waived FAIL shows as WAIVED, does not fail the run, and is kept in
-   the report with its reason, beside the input's sha256. There is no other way to waive.
+1. Every **FAIL** is fixed and the gate re-run. When the rule does not apply to this
+   asset (a b-roll face, text that is part of the footage), send the owner the report
+   and the guide sheet. Only the owner grants a waiver: a file bound to this render's
+   sha256, with a reason, passed as `--waive waivers.json`. An agent never writes one.
+   VL1, VL9 and declared text that is not found are never waived. The policy is in
+   `references/vertical-layout.md`, "Waivers".
 2. Every **UNCHECKED** rule is closed by looking at `<video>.layout-guide.png` (zones
    painted on six frames; `guide --frames N` paints more). tesseract has no face
    detector, so VL6-VL8 are UNCHECKED off macOS; use `--strict` where that must fail.

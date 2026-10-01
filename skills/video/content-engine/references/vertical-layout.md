@@ -31,8 +31,8 @@ from pixel differences between each guide's colour and a frame without guides, s
 are the Reel's own drawn geometry. Eye, caption and title positions come from macOS
 Vision on every sample (see `scripts/vision_probe.swift`):
 
-- **Eyes:** y 701-747 px in the wide shot (median 728) and 756-801 px after the punch-in
-  (median 770). The punch-in moves the eye line 42-43 px, not 0.
+- **Eyes:** y 701-772 px in the wide shot (median 729; the 772 is t=8.0 s, the sample
+  before the punch-in) and 756-801 px after the punch-in (median 770). The punch-in moves the eye line 42-43 px, not 0.
 - **Captions:** one word at a time, text boxes between y 1318 and 1426, centred.
 - **Title hook text:** y 233-323. It straddles the safe zone's top edge (277), which is
   why title-band text is exempt from VL2.
@@ -166,8 +166,7 @@ so `tail -1` reads it; the `report:` and `guide:` paths print just above it. Wit
 For a raw generated clip, before any text is added, the rules that matter are VL1 and
 VL6-VL8. VL2-VL5 and VL9 then describe text inside the footage (signage, a label), not
 an overlay. A FAIL there means text in the footage sits where overlays would go: reframe
-or regenerate the clip, or record why it does not matter next to the report (see the
-FAIL policy under "Statuses").
+or regenerate the clip, or send the report to the owner for a waiver (see "Waivers").
 
 A spec file lists boxes in pixels:
 
@@ -203,18 +202,57 @@ Any of the following exits 2 with the reason, and is never a verdict:
 | SKIP | The input has nothing this rule applies to (no text, no face, no punch-in) | no |
 | N/A | The profile does not define the rule, or the canvas is not 9:16 | no |
 | UNCHECKED | The detector cannot measure the rule here (tesseract has no face detector) | only with `--strict` |
-| WAIVED | A FAIL the caller judged not to apply, via `--waive RULE="reason"`; the reason is in the report | no |
+| WAIVED | A FAIL the owner waived for this exact file (see "Waivers"); the waiver is in the report | no |
 
 Exit code 0 means no FAIL, 1 means FAIL, 2 means a usage or tool error (no ffmpeg, no
 detector, unreadable input, a report that cannot be written). An exit of 2 is not a
 verdict.
 
-**FAIL policy.** A FAIL is fixed and the gate re-run. When the rule does not apply to
-the asset (text inside the footage, a b-roll face, a tesseract misread confirmed on the
-guide sheet), re-run with `--waive RULE="reason"`: the FAIL shows as WAIVED, the run
-passes, and the report keeps each waiver and its reason beside `input_sha256`. A waiver
-for one render therefore does not carry over to the next one. A `--waive` that matches
-no FAIL is noted in the output.
+**FAIL policy.** A FAIL is fixed and the gate re-run. A FAIL on a rule that does not
+apply to the asset (text inside the footage, a b-roll face, a tesseract misread
+confirmed on the guide sheet) goes to the owner: send the report and the guide sheet,
+and the owner decides whether to grant a waiver.
+
+### Waivers
+
+Owner policy. Each clause says whether the checker enforces it.
+
+1. **Only the owner grants a waiver.** An agent never writes, edits or generates a
+   waiver file, and never runs `--waive` with a file it wrote. The checker cannot tell
+   who wrote a file; it records `granted_by` as written. This clause holds because
+   agents follow it, not because the code checks it.
+2. **Some FAILs are never waived.** No waiver covers VL1 (canvas), VL9 (a busy
+   background declared without a stroke), or a VL2, VL4 or VL5 FAIL raised because text
+   declared with `--expect-captions` or `--expect-title` was not found. Enforced: a
+   waiver file naming VL1 or VL9 is rejected (exit 2), and a waiver that meets a
+   declared-text-not-found FAIL is logged as `refused` while the FAIL stands.
+3. **A waiver is bound to one file.** It names the sha256 of the file it was granted for
+   (`input_sha256` in that file's report) and applies to no other file, so a re-render,
+   a re-encode or an edited spec needs a new waiver. It covers every FAIL of its rule on
+   that file, so the owner grants it after reading the whole report. Enforced: a run
+   with `--waive` checks exactly one input, hashes it before and after reading it, and
+   exits 2 if it changed. A file swapped and put back between the two hashes is not
+   detected.
+4. **Every waiver has a reason and a grantor.** Enforced: `reason` and `granted_by`
+   must be non-empty strings, and a file with any other key is rejected.
+5. **Waivers are logged.** Enforced: the report lists each waiver in the file with its
+   outcome (`applied`, `refused`, `no-fail`, `other-input`) and records the waiver
+   file's path and sha256. Each WAIVED rule carries its reason and grantor. The table
+   output notes every waiver that was not applied.
+
+A waiver file:
+
+```json
+{"waivers": [
+  {"rule": "VL6",
+   "input_sha256": "<input_sha256 from the report>",
+   "reason": "shots 2-3 are crowd b-roll, not a talking head",
+   "granted_by": "<owner>"}
+]}
+```
+
+Pass it with `check_vertical_layout.py video final.mp4 --expect-captions --waive
+waivers.json`.
 
 The report records `input_sha256` and `contract_sha256`. A report describes the bytes it
 was run on: re-run after any re-render, and compare the sha before relying on a report
@@ -250,7 +288,7 @@ Known limits, each measured while building this gate:
   returned dozens of junk tokens. On the source Reel it read "nd" out of "background"
   and "St" out of "stroke". Single-glyph tokens under 85% confidence are dropped, and
   caption centring is judged on the median box. Confirm a tesseract FAIL on the guide
-  sheet or with Vision before acting on it or waiving it (see the FAIL policy).
+  sheet or with Vision before acting on it or asking for a waiver (see "Waivers").
 - **VL9 is a proxy.** Calibration on 1080x1920 fixtures, white bold 96 px text over
   pixel noise, Vision:
 
@@ -265,7 +303,7 @@ Known limits, each measured while building this gate:
   genuinely low contrast.
 - **Small overlays are only WARNed.** A watermark or handle under 1.5% of the height is
   classed as scene text. content-engine's pre-contract 16 px watermark sat bottom-right,
-  on the action rail. Video mode now WARNs on that (VL3) but cannot FAIL it, because
+  on the action rail. Video mode WARNs on that (VL3) but cannot FAIL it, because
   small text on the rail may be part of the footage. Declare small overlays in a `spec`
   file to get a FAIL.
 - **Punch-ins under 12% and cuts without a face are not seen.** VL7 needs a lasting
@@ -276,15 +314,16 @@ Known limits, each measured while building this gate:
 - **Position decides roles in a final render.** Text centred in the caption band's rows
   is judged as a caption, and text centred in the top 25% as a title. A lower-third
   name tag, a product label or a sign in the footage that sits in those rows is judged
-  the same way, and may FAIL VL4 or VL5. Keep such text out of those rows, or waive the
-  FAIL with `--waive` and that reason (see the FAIL policy).
+  the same way, and may FAIL VL4 or VL5. Keep such text out of those rows, or send the
+  report to the owner for a waiver (see "Waivers").
 - **The eye line needs a face.** Faceless content (product shots, b-roll) SKIPs VL6-VL8.
   Place key subjects inside the safe zone by eye, using the guide sheet.
 - **Only the largest face is judged.** VL3, VL6 and VL8 follow the largest face in each
   sample. A second person (a guest, a duet) on the rail is not checked. The largest face
   is judged at any size, so a small face in b-roll or a full-body shot can FAIL VL6:
-  `--waive VL6="..."` when the shot is not a talking head. A shot whose face has no eye
-  landmarks is left out of VL6 and VL7, and the VL6 detail counts it.
+  when the shot is not a talking head, the owner may waive VL6 for that file. A shot
+  whose face has no eye landmarks is left out of VL6 and VL7, and the VL6 detail counts
+  it.
 - **Short overlays can fall between samples.** Video mode samples 2 frames per second
   (`--fps`), capped at 120 samples (`--max-frames`; a 3-minute video is sampled at 0.67
   fps). An overlay on screen for less than the sampling interval may never be seen. Raise

@@ -7,6 +7,7 @@ Four layers:
   * real videos rendered with ffmpeg drawtext, run through every detector that is
     installed (macOS Vision, tesseract). These skip, loudly, when a tool is missing.
 """
+import hashlib
 import json
 import shutil
 import subprocess
@@ -590,24 +591,122 @@ def test_report_fingerprints_the_input_and_the_contract(tmp_path):
     assert rep["contract_sha256"] == hashlib.sha256(other.read_bytes()).hexdigest()
 
 
-def test_waiver_turns_a_fail_into_waived_and_is_recorded(tmp_path):
-    # The pre-contract watermark on the rail FAILs VL3; a waiver records why it is
-    # acceptable and lets the run pass, with the reason kept in the report.
+def _waivers(tmp_path, *entries, name="waivers.json"):
+    p = tmp_path / name
+    p.write_text(json.dumps({"waivers": list(entries)}))
+    return p
+
+
+def _waiver(rule, target, reason="client-approved end card", granted_by="owner"):
+    sha = target if isinstance(target, str) else hashlib.sha256(target.read_bytes()).hexdigest()
+    return {"rule": rule, "input_sha256": sha, "reason": reason, "granted_by": granted_by}
+
+
+def test_waiver_applies_only_to_the_file_it_names_and_is_logged(tmp_path):
+    # The pre-contract watermark on the rail FAILs VL2 (outside the safe zone) and VL3
+    # (on the rail). The owner waives both for this exact spec file.
     bad = _spec(tmp_path, [{"role": "watermark", "label": "brand", "box": [870, 1830, 1048, 1888]}])
     assert _cli("spec", str(bad)).returncode == 1
-    # It FAILs VL2 (outside the safe zone) and VL3 (on the rail); each waiver names one rule.
-    assert _cli("spec", str(bad), "--waive", "VL3=client-approved end card").returncode == 1
-    r = _cli("spec", str(bad), "--json", "--waive", "VL3=client-approved end card",
-             "--waive", "VL2=client-approved end card", "--waive", "VL6=unused")
-    assert r.returncode == 0, r.stdout
+    only_vl3 = _waivers(tmp_path, _waiver("VL3", bad), name="one.json")
+    assert _cli("spec", str(bad), "--waive", str(only_vl3)).returncode == 1  # VL2 still FAILs
+    both = _waivers(tmp_path, _waiver("VL3", bad), _waiver("VL2", bad), _waiver("VL6", bad),
+                    _waiver("VL8", "0" * 64))
+    r = _cli("spec", str(bad), "--json", "--waive", str(both))
+    assert r.returncode == 0, r.stdout + r.stderr
     rep = json.loads(r.stdout)
-    assert {x["rule"]: x["status"] for x in rep["results"]}["VL3"] == "WAIVED"
-    assert {"rule": "VL3", "reason": "client-approved end card"} in rep["waivers"]
-    assert rep["waivers_unused"] == ["VL6"]
-    table = _cli("spec", str(bad), "--waive", "VL3=ok", "--waive", "VL2=ok").stdout
+    res = {x["rule"]: x for x in rep["results"]}
+    assert res["VL3"]["status"] == "WAIVED"
+    assert res["VL3"]["waiver"] == {"reason": "client-approved end card", "granted_by": "owner"}
+    assert rep["waiver_file"] == {"path": str(both), "sha256": hashlib.sha256(both.read_bytes()).hexdigest()}
+    assert [(w["rule"], w["outcome"]) for w in rep["waivers"]] == [
+        ("VL3", "applied"), ("VL2", "applied"), ("VL6", "no-fail"), ("VL8", "other-input")]
+    table = _cli("spec", str(bad), "--waive", str(both)).stdout
     assert table.rstrip().splitlines()[-1].startswith("VERDICT: PASS") and "2 WAIVED" in table
-    for bad_waiver in ("VL3", "VL99=x", "=reason"):
-        assert _cli("spec", str(bad), "--waive", bad_waiver).returncode == 2, bad_waiver
+    assert "waiver VL8 from owner not applied: bound to another file's sha256" in table
+
+    # The same waivers on a changed file: nothing applies, the FAILs stand.
+    bad.write_text(bad.read_text() + "\n")
+    rep = json.loads(_cli("spec", str(bad), "--json", "--waive", str(both)).stdout)
+    assert rep["verdict"] == "FAIL" and {w["outcome"] for w in rep["waivers"]} == {"other-input"}
+    assert rep["input_sha256"] == {str(bad): hashlib.sha256(bad.read_bytes()).hexdigest()}
+
+
+def test_waiver_file_that_breaks_the_policy_is_a_usage_error(tmp_path):
+    bad = _spec(tmp_path, [{"role": "watermark", "label": "brand", "box": [870, 1830, 1048, 1888]}])
+    ok = _waiver("VL3", bad)
+    cases = {
+        "VL1 is never waivable": [_waiver("VL1", bad)],
+        "VL9 is never waivable": [_waiver("VL9", bad)],
+        "unknown rule": [_waiver("VL99", bad)],
+        "empty reason": [{**ok, "reason": "  "}],
+        "empty grantor": [{**ok, "granted_by": ""}],
+        "missing grantor": [{k: v for k, v in ok.items() if k != "granted_by"}],
+        "extra key": [{**ok, "expires": "never"}],
+        "sha not 64 hex": [{**ok, "input_sha256": "abc"}],
+        "uppercase sha": [{**ok, "input_sha256": ok["input_sha256"].upper()}],
+        "non-string": [{**ok, "reason": 1}],
+        "duplicate": [ok, {**ok, "reason": "again"}],
+    }
+    for why, entries in cases.items():
+        r = _cli("spec", str(bad), "--waive", str(_waivers(tmp_path, *entries)))
+        assert r.returncode == 2, why
+    never = _cli("spec", str(bad), "--waive", str(_waivers(tmp_path, _waiver("VL1", bad))))
+    assert "VL1 cannot be waived" in never.stderr
+    # Not a waiver file at all: the old RULE=REASON flag, a list, extra top-level keys.
+    (tmp_path / "list.json").write_text("[]")
+    (tmp_path / "extra.json").write_text(json.dumps({"waivers": [], "note": "x"}))
+    for arg in ("VL3=ok", str(tmp_path / "list.json"), str(tmp_path / "extra.json")):
+        assert _cli("spec", str(bad), "--waive", arg).returncode == 2, arg
+    # A waiver binds to one file, so a multi-still run cannot carry one.
+    a, b = tmp_path / "a.png", tmp_path / "b.png"
+    a.write_bytes(b"x"), b.write_bytes(b"y")
+    r = _cli("image", str(a), str(b), "--waive", str(_waivers(tmp_path, ok)))
+    assert r.returncode == 2 and "one at a time" in r.stderr
+
+
+def test_declared_text_not_found_is_never_waived():
+    sha = "a" * 64
+    # Captions declared, none readable anywhere: VL5 FAILs and no waiver covers it.
+    no_text = [cvl.Frame(label=f"t{i}", texts=[], faces=None) for i in range(4)]
+    res = cvl.evaluate(W, H, no_text, ORGANIC, CLS, CANVAS, frozenset({"caption", "title"}))
+    for rule in ("VL4", "VL5"):
+        r = next(x for x in res if x.rule == rule)
+        assert r.status == "FAIL" and not r.waivable
+    log = cvl.apply_waivers(res, [_waiver("VL5", sha), _waiver("VL4", sha)], sha)
+    assert [w["outcome"] for w in log] == ["refused", "refused"]
+    assert {r.rule: r.status for r in res}["VL5"] == "FAIL"
+    # A profile with no bands carries the expectation in VL2; also never waivable.
+    res = cvl.evaluate(W, H, no_text, META, CLS, CANVAS, frozenset({"caption"}))
+    vl2 = next(x for x in res if x.rule == "VL2")
+    assert vl2.status == "FAIL" and not vl2.waivable
+    # Captions found in the band's rows but overhanging its left edge: that FAIL is
+    # the waivable kind.
+    wide = [cvl.Frame(label=f"t{i}", texts=[text("word", 100, 1345, 500, 1405)]) for i in range(4)]
+    res = cvl.evaluate(W, H, wide, ORGANIC, CLS, CANVAS, frozenset({"caption"}))
+    vl5 = next(x for x in res if x.rule == "VL5")
+    assert vl5.status == "FAIL" and vl5.waivable
+    assert cvl.apply_waivers(res, [_waiver("VL5", sha)], sha)[0]["outcome"] == "applied"
+    assert vl5.status == "WAIVED" and vl5.waiver["granted_by"] == "owner"
+    # VL1 and VL9 FAILs are marked unwaivable even if a waiver reached them.
+    land = cvl.evaluate(1920, 1080, [], ORGANIC, CLS, CANVAS)
+    assert land[0].rule == "VL1" and land[0].status == "FAIL" and not land[0].waivable
+    assert cvl.apply_waivers(land, [_waiver("VL1", sha)], sha)[0]["outcome"] == "refused"
+
+
+@pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs ffmpeg")
+def test_input_changed_during_the_check_is_a_tool_error(tmp_path, monkeypatch):
+    still = tmp_path / "still.png"
+    subprocess.run(["ffmpeg", "-v", "error", "-f", "lavfi", "-i", "color=c=gray:s=1080x1920",
+                    "-frames:v", "1", str(still)], check=True)
+
+    def detector_that_rewrites_the_input(name, frames):
+        still.write_bytes(still.read_bytes() + b"\0")
+        return "test", ""
+    monkeypatch.setattr(cvl, "run_detector", detector_that_rewrites_the_input)
+    args = cvl.build_parser().parse_args(["image", str(still), "--no-guide", "--no-report"])
+    pname, profile = cvl.get_profile(LAYOUT, None)
+    with pytest.raises(cvl.ToolError, match="changed while it was being checked"):
+        cvl.cmd_media(args, LAYOUT, pname, profile, is_video=False)
 
 
 def test_shots_without_eye_landmarks_are_counted_not_hidden():
@@ -615,6 +714,7 @@ def test_shots_without_eye_landmarks_are_counted_not_hidden():
     b = [cvl.Frame(label=f"b{i}", faces=[face(300, 1100, 800, 1500, None)]) for i in range(4)]
     res = run(a + b)
     assert res["VL6"].status == "PASS" and "1 shot(s) without eye landmarks" in res["VL6"].detail
+    assert res["VL7"].status == "UNCHECKED"
     assert "fewer than two shots have eye landmarks" in res["VL7"].detail
 
 
@@ -628,6 +728,20 @@ def test_compose_prints_gate_commands_only_for_what_this_run_produced(tmp_path):
     cmds = mod.gate_commands(final, rendered)
     assert len(cmds) == 2 and str(final) in cmds[0] and cmds[1].endswith("--expect-captions --expect-title")
     assert mod.gate_commands(final, None) == [cmds[0]]
+
+
+@pytest.mark.skipif(not (shutil.which("ffmpeg") and shutil.which("ffprobe")), reason="needs ffmpeg")
+def test_failed_stitch_does_not_return_an_earlier_runs_file(tmp_path):
+    import importlib.util
+    spec = importlib.util.spec_from_file_location("compose_video", SKILL / "scripts" / "compose-video.py")
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    out = tmp_path / "final.mp4"
+    out.write_bytes(b"left over from an earlier run")
+    clips = [tmp_path / "a.mp4", tmp_path / "b.mp4"]
+    for c in clips:
+        c.write_bytes(b"not a video")
+    assert mod.stitch_clips(clips, out) is None and not out.exists()
 
 
 def test_io_failures_are_tool_errors(monkeypatch, tmp_path):
