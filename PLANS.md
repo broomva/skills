@@ -24,11 +24,17 @@ with #850's round-7 follow-ups (A2 fallback rule, router-time gate).
 
 ### Milestones
 
-1. [ ] Briefs written; blind writers (no catalog, no tools) produce routing v2 and the
-   fresh task prompts; both committed with sha256 before any rewording or scoring.
-2. [ ] Step 4: score v2, set `status` per the gate, tests gate on v2.
-3. [ ] Step 1: reword; fresh tasks; sonnet calibrate + reflex (new lines) + reflex at
-   9d24559 (old lines) on the same prompts.
+1. [x] Briefs written; blind writers (no catalog, no tools) produce routing v2 and the
+   fresh task prompts; both committed with sha256 before any rewording or scoring (be7726d).
+2. [x] Step 4: score v2, set `status` per the gate, tests gate on v2 (3b20c94): 10/31 pass;
+   heal and checkit listed, autonomous routed, ship-not-ask still listed.
+3. [ ] Step 1: lines reworded (3b20c94). Sonnet calibrate, then `reflex-reworded` and
+   `reflex-v1lines` on the same five fresh tasks. Checkpoint 2026-09-30 22:35 -05: PAUSED,
+   not started. devteam is at 99% of its 7-day window (resets 2026-10-05 07:00 -05) and the
+   guard stops at 85%; `~/.cache/ctx-ablation/wait-quota.sh` exits when the active account
+   is under 85% on both windows (team@'s 5h resets 23:49 -05). Resume:
+   `~/.cache/ctx-ablation/preflip-drive.sh ~/.cache/ctx-ablation/preflip-s1 <repo>/scripts/skill_evals/ctx_ablation/tasks/preflip-fresh.json ~/.cache/ctx-ablation/preflip-s1/calibration.json calibrate --task fresh-heal-why --task fresh-heal-fix --task fresh-paseo-count --task fresh-paseo-idle --task fresh-worktree-remove`,
+   then the same with `reflex-reworded`, then `reflex-v1lines` in place of `calibrate`.
 4. [ ] Step 3: opus calibrate, then bare, reflex, qbar, rolex one at a time.
 5. [ ] Results doc, recommendation table, P20 (B + C), merge with the flag off.
 
