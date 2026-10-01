@@ -213,6 +213,12 @@ class ArmRow:
     #: The lift interval divided by the (measured, near-constant) injected thousands.
     lift_per_1k_ci: list[float] | None = None
     pass_per_1k: float | None = None
+    #: System 1: claims injected per graded trial, their total, and how many a
+    #: later tool call opened (follow-through; a proxy for use, see s1_follow).
+    s1_claims: float | None = None
+    s1_claims_total: int = 0
+    s1_followed: int = 0
+    s1_by_stage: dict[str, dict[str, int]] | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return dict(self.__dict__)
@@ -248,6 +254,18 @@ def aggregate(results: Sequence[Mapping[str, Any]], arm_order: Sequence[str]) ->
                 if m is not None and task in bare_ctx:
                     deltas.append(m - bare_ctx[task])
             injected = _mean(deltas) if arm != "bare" else 0.0
+        # System 1's mid-turn stages inject after turn one, so turn-one context
+        # cannot see them: add their bytes (bytes/4, the context ledger's estimate).
+        mid = _mean([(r.get("s1") or {}).get("mid_turn_bytes") for r in graded if r.get("s1")])
+        if injected is not None and mid:
+            injected += mid / 4.0
+        s1_rows = [r.get("s1") for r in graded if r.get("s1")]
+        s1_stage: dict[str, dict[str, int]] = {}
+        for x in s1_rows:
+            for st, b in (x.get("by_stage") or {}).items():
+                acc = s1_stage.setdefault(st, {"decisions": 0, "injections": 0, "claims": 0, "bytes": 0})
+                for k in acc:
+                    acc[k] += int(b.get(k) or 0)
         src = [r["source_retrieved"] for r in graded if r.get("source_retrieved") is not None]
         reflex_keys = ("kg", "docs", "memory", "web", "subagent")
         rows_out.append(ArmRow(
@@ -272,6 +290,10 @@ def aggregate(results: Sequence[Mapping[str, Any]], arm_order: Sequence[str]) ->
                           if graded else None for k in reflex_keys},
             entities_injected=sum(len(r.get("entities_injected") or []) for r in graded),
             entities_opened=sum(len(r.get("entities_opened") or []) for r in graded),
+            s1_claims=_mean([x.get("claims") for x in s1_rows]) if s1_rows else None,
+            s1_claims_total=sum(int(x.get("claims") or 0) for x in s1_rows),
+            s1_followed=sum(int(x.get("followed") or 0) for x in s1_rows),
+            s1_by_stage=s1_stage or None,
         ))
     bare = next((r for r in rows_out if r.arm == "bare"), None)
     bare_by_task = _task_rates(by_arm.get("bare", []))
@@ -414,3 +436,23 @@ __all__ = [
     "task_matrix",
     "wilson",
 ]
+
+
+def format_s1(rows: Sequence[ArmRow]) -> str:
+    """The System 1 arms: claims injected, their follow-through, and the lift per
+    1,000 injected tokens (turn-one context plus mid-turn bytes/4)."""
+    head = ("| arm | pass | lift vs bare, task-clustered CI | injected tok | lift / 1k tok | claims / trial | "
+            "claims followed | decisions by stage (injections/decisions) |")
+    lines = [head, "|" + "---|" * 8]
+    for r in rows:
+        if r.s1_claims is None and r.arm != "bare":
+            continue
+        stages = ", ".join("%s %d/%d" % (st, b["injections"], b["decisions"])
+                           for st, b in sorted((r.s1_by_stage or {}).items()))
+        task_ci = f"[{r.lift_task_ci[0]:+.2f}, {r.lift_task_ci[1]:+.2f}]" if r.lift_task_ci else "—"
+        lines.append("| %s | %d/%d | %s | %s | %s | %s | %s | %s |" % (
+            r.arm, r.passes, r.graded, task_ci, _f(r.injected_tokens, "{:,.0f}"),
+            f"{r.lift_per_1k:+.3f}" if r.lift_per_1k is not None else "n/a",
+            _f(r.s1_claims, "{:.1f}"), "%d/%d" % (r.s1_followed, r.s1_claims_total) if r.s1_claims_total else "—",
+            stages or "—"))
+    return "\n".join(lines)
