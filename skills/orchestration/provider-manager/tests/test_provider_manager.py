@@ -183,7 +183,11 @@ def test_rotate_account_dry_run(mock_orca_data, mock_claude_json):
 
     with patch.object(pm, "get_orca_data", return_value=mock_orca_data), \
          patch.object(pm, "get_claude_json", return_value=mock_claude_json), \
-         patch.object(pm, "read_keychain_generic_password", return_value=fake_creds):
+         patch.object(pm, "read_keychain_generic_password", return_value=fake_creds), \
+         patch.object(pm, "fetch_all_usage", return_value=[
+             {"id": "acc-1", "email": "primary@example.com", "isActive": True, "hasStoredCredentials": True, "isRateLimited": False},
+             {"id": "acc-2", "email": "secondary@example.com", "isActive": False, "hasStoredCredentials": True, "isRateLimited": False, "isTokenFresh": True}
+         ]):
         result = pm.rotate_account(reason="rate_limit_429", dry_run=True)
         assert result["success"] is True
         assert result["dryRun"] is True
@@ -297,6 +301,49 @@ def test_fetch_account_usage_api_call(tmp_path):
         assert usage["seven_day"]["utilization"] == 45.0
         assert usage["status"] == "ok"
         assert usage["isRateLimited"] is False
+
+
+def test_fetch_account_usage_seven_day_locked_reason(tmp_path):
+    test_cache_file = tmp_path / "test-usage.json"
+    fake_creds = {"claudeAiOauth": {"accessToken": "t", "expiresAt": int((time.time() + 3600) * 1000)}}
+    api_payload = {
+        "five_hour": {"utilization": 20.0, "resets_at": "2026-10-01T00:00:00Z"},
+        "seven_day": {"utilization": 85.0, "resets_at": "2026-10-05T00:00:00Z", "locked_reason": "weekly_quota_exceeded"}
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(api_payload).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch.object(pm, "USAGE_CACHE_PATH", test_cache_file), \
+         patch.object(pm, "read_usage_cache", return_value={"accounts": {}}), \
+         patch.object(pm, "read_keychain_generic_password", return_value=fake_creds), \
+         patch.object(pm.urllib.request, "urlopen", return_value=mock_resp):
+        usage = pm.fetch_account_usage("acc-1", force_refresh=True)
+        assert usage is not None
+        assert usage["isRateLimited"] is True
+        assert usage["lockedReason"] == "weekly_quota_exceeded"
+
+
+def test_fetch_account_usage_limits_active_100_percent(tmp_path):
+    test_cache_file = tmp_path / "test-usage.json"
+    fake_creds = {"claudeAiOauth": {"accessToken": "t", "expiresAt": int((time.time() + 3600) * 1000)}}
+    api_payload = {
+        "five_hour": {"utilization": 50.0, "resets_at": "2026-10-01T00:00:00Z"},
+        "seven_day": {"utilization": 60.0, "resets_at": "2026-10-05T00:00:00Z"},
+        "limits": [{"is_active": True, "percent": 100, "group": "custom_quota"}]
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(api_payload).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch.object(pm, "USAGE_CACHE_PATH", test_cache_file), \
+         patch.object(pm, "read_usage_cache", return_value={"accounts": {}}), \
+         patch.object(pm, "read_keychain_generic_password", return_value=fake_creds), \
+         patch.object(pm.urllib.request, "urlopen", return_value=mock_resp):
+        usage = pm.fetch_account_usage("acc-1", force_refresh=True)
+        assert usage is not None
+        assert usage["isRateLimited"] is True
+        assert usage["lockedReason"] == "custom_quota_limit_reached"
 
 
 def test_refresh_account_token_persists_rotated_token(mock_orca_data):
@@ -483,6 +530,130 @@ def test_provider_events_logging_and_history(tmp_path):
         assert events[0]["fromAccount"] == "a1@example.com"
         assert events[0]["toAccount"] == "a2@example.com"
         assert events[0]["source"] == "proactive_balance"
+
+
+def test_balance_accounts_ignores_weekly_limited_standby(mock_orca_data):
+    # Active account is at 91% 5h, standby has isRateLimited: False but 100% 7d.
+    # Standby must NOT be chosen purely due to sevenDayUtil >= 99.0 guard.
+    usage_list = [
+        {"id": "acc-1", "email": "primary@example.com", "isActive": True, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 91.0, "sevenDayUtil": 80.0},
+        {"id": "acc-2", "email": "secondary@example.com", "isActive": False, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 0.0, "sevenDayUtil": 100.0},
+    ]
+
+    with patch.object(pm, "list_accounts", return_value=mock_orca_data["settings"]["claudeManagedAccounts"]), \
+         patch.object(pm, "fetch_all_usage", return_value=usage_list), \
+         patch.object(pm, "switch_account") as mock_switch:
+
+        res = pm.balance_accounts(threshold=85.0, dry_run=False)
+        assert res["action"] == "none"
+        assert res["reason"] == "no_available_standby"
+        mock_switch.assert_not_called()
+
+
+def test_balance_accounts_switches_when_active_rate_limited(mock_orca_data):
+    # Active account is rate limited (even if its numerical 5h is 0%), standby has 91% 5h.
+    # Must switch because active is rate-limited.
+    usage_list = [
+        {"id": "acc-1", "email": "primary@example.com", "isActive": True, "hasStoredCredentials": True, "isRateLimited": True, "fiveHourUtil": 0.0, "sevenDayUtil": 100.0},
+        {"id": "acc-2", "email": "secondary@example.com", "isActive": False, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 91.0, "sevenDayUtil": 80.0},
+    ]
+
+    with patch.object(pm, "list_accounts", return_value=mock_orca_data["settings"]["claudeManagedAccounts"]), \
+         patch.object(pm, "fetch_all_usage", return_value=usage_list), \
+         patch.object(pm, "switch_account", return_value={"success": True}) as mock_switch:
+
+        res = pm.balance_accounts(threshold=85.0, dry_run=False)
+        assert res["action"] == "switched"
+        assert res["fromAccount"] == "primary@example.com"
+        assert res["toAccount"] == "secondary@example.com"
+        assert res["reason"] == "active_rate_limited"
+        mock_switch.assert_called_once_with(
+            "acc-2",
+            source="proactive_balance",
+            metadata={
+                "fromAccount": "primary@example.com",
+                "activeUtilization": 0.0,
+                "standbyUtilization": 91.0,
+                "reason": "active_rate_limited"
+            }
+        )
+
+
+def test_rotate_account_fails_when_all_standbys_weekly_exhausted():
+    # Active account hits rate limit, only standby is weekly exhausted (100% 7d).
+    # Fallback must NOT select exhausted standby.
+    accounts = [
+        {"id": "acc-1", "email": "primary@example.com", "isActive": True, "hasStoredCredentials": True},
+        {"id": "acc-2", "email": "secondary@example.com", "isActive": False, "hasStoredCredentials": True},
+    ]
+    usage_list = [
+        {"id": "acc-1", "email": "primary@example.com", "isActive": True, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 99.0, "sevenDayUtil": 90.0},
+        {"id": "acc-2", "email": "secondary@example.com", "isActive": False, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 0.0, "sevenDayUtil": 100.0},
+    ]
+
+    with patch.object(pm, "list_accounts", return_value=accounts), \
+         patch.object(pm, "fetch_all_usage", return_value=usage_list), \
+         patch.object(pm, "switch_account") as mock_switch:
+
+        res = pm.rotate_account(reason="rate_limit", dry_run=False)
+        assert res["success"] is False
+        assert res["reason"] == "no_available_standby"
+        mock_switch.assert_not_called()
+
+
+def test_fetch_account_usage_handles_percent_none(tmp_path):
+    # Regression test: limits array containing percent: None must not raise TypeError
+    test_cache_file = tmp_path / "test-usage.json"
+    fake_creds = {
+        "claudeAiOauth": {
+            "accessToken": "test-token",
+            "expiresAt": int((time.time() + 3600) * 1000)
+        }
+    }
+    api_payload = {
+        "five_hour": {"utilization": 20.0, "resets_at": "2026-10-01T00:00:00Z"},
+        "seven_day": {"utilization": 30.0, "resets_at": "2026-10-05T00:00:00Z"},
+        "limits": [{"is_active": True, "percent": None, "group": "usage"}]
+    }
+    mock_resp = MagicMock()
+    mock_resp.read.return_value = json.dumps(api_payload).encode("utf-8")
+    mock_resp.__enter__.return_value = mock_resp
+
+    with patch.object(pm, "USAGE_CACHE_PATH", test_cache_file), \
+         patch.object(pm, "read_usage_cache", return_value={"accounts": {}}), \
+         patch.object(pm, "read_keychain_generic_password", return_value=fake_creds), \
+         patch.object(pm.urllib.request, "urlopen", return_value=mock_resp):
+        usage = pm.fetch_account_usage("acc-1", force_refresh=True)
+        assert usage is not None
+        assert usage["isRateLimited"] is False
+
+
+def test_hook_post_tool_use_writes_zero_bytes_to_stdout():
+    import io
+    import provider_manager_hook as pmh
+
+    accounts = [
+        {"id": "acc-1", "email": "primary@example.com", "isActive": True, "hasStoredCredentials": True},
+        {"id": "acc-2", "email": "secondary@example.com", "isActive": False, "hasStoredCredentials": True, "isTokenFresh": True},
+    ]
+    usage_list = [
+        {"id": "acc-1", "email": "primary@example.com", "isActive": True, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 99.0},
+        {"id": "acc-2", "email": "secondary@example.com", "isActive": False, "hasStoredCredentials": True, "isRateLimited": False, "fiveHourUtil": 10.0},
+    ]
+
+    stdout_buf = io.StringIO()
+    stderr_buf = io.StringIO()
+
+    with patch("sys.stdout", stdout_buf), patch("sys.stderr", stderr_buf), \
+         patch.object(pm, "list_accounts", return_value=accounts), \
+         patch.object(pm, "fetch_all_usage", return_value=usage_list), \
+         patch.object(pm, "switch_account", return_value={"success": True}):
+        pmh.handle_post_tool_use({"error": "rate_limit_error: 429"})
+
+    assert stdout_buf.getvalue() == "", f"Expected 0 bytes to stdout, got: {stdout_buf.getvalue()!r}"
+    assert "Rate limit detected" in stderr_buf.getvalue()
+
+
 
 
 

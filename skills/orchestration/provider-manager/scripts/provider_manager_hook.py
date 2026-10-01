@@ -34,7 +34,7 @@ RATE_LIMIT_PATTERNS = [
     r"too many requests",
     r"billing limit",
     r"quota exceeded",
-    r"credit balance",
+    r"credit balance is too low",
 ]
 
 RATE_LIMIT_RE = re.compile("|".join(RATE_LIMIT_PATTERNS), re.IGNORECASE)
@@ -47,13 +47,13 @@ def handle_session_start(payload: dict) -> None:
         balance_res = pm.balance_accounts(threshold=85.0, dry_run=False)
         action = balance_res.get("action")
         if action == "switched":
-            sys.stdout.write(
+            sys.stderr.write(
                 f"[provider-manager] Proactively rotated active account to {balance_res.get('toAccount')} "
                 f"(previous account {balance_res.get('fromAccount')} was at {balance_res.get('activeUtilization')}% utilization).\n"
             )
             return
 
-        # Single line glanceable status
+        # Single line glanceable status (to stderr so it does not pollute prompt prefix context)
         accounts = pm.fetch_all_usage()
         active = next((a for a in accounts if a.get("isActive")), None)
         standbys = [a for a in accounts if not a.get("isActive")]
@@ -66,7 +66,7 @@ def handle_session_start(payload: dict) -> None:
                 s_sd = f"{s.get('sevenDayUtil')}%" if s.get('sevenDayUtil') is not None else "?"
                 standby_parts.append(f"{s.get('email')} ({s_fh} 5h, {s_sd} 7d)")
             standby_str = f" | Standby: {', '.join(standby_parts)}" if standby_parts else ""
-            sys.stdout.write(f"[provider-manager] Active: {active.get('email')} ({active_fh} 5h, {active_sd} 7d){standby_str}\n")
+            sys.stderr.write(f"[provider-manager] Active: {active.get('email')} ({active_fh} 5h, {active_sd} 7d){standby_str}\n")
     except Exception:
         pass
 
@@ -86,7 +86,7 @@ def handle_post_tool_use(payload: dict) -> None:
         if combined and RATE_LIMIT_RE.search(combined):
             rotate_res = pm.rotate_account(reason="tool_rate_limit", dry_run=False)
             if rotate_res.get("success"):
-                sys.stdout.write(
+                sys.stderr.write(
                     f"\n[provider-manager] Rate limit detected in tool execution! "
                     f"Automatically failed over active account: {rotate_res.get('rotatedFrom')} -> {rotate_res.get('rotatedTo')}.\n"
                 )
@@ -99,7 +99,7 @@ def handle_prompt_submit(payload: dict) -> None:
     try:
         balance_res = pm.balance_accounts(threshold=90.0, dry_run=False)
         if balance_res.get("action") == "switched":
-            sys.stdout.write(
+            sys.stderr.write(
                 f"[provider-manager] Active account reached {balance_res.get('activeUtilization')}% utilization. "
                 f"Proactively rotated to {balance_res.get('toAccount')} before executing prompt.\n"
             )

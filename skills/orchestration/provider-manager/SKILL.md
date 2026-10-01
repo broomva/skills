@@ -27,7 +27,8 @@ Transforms provider switching and re-authentication from a manual, GUI-dependent
 1. **Multi-Account Discovery**: Enumerates all managed accounts, active status, organization UUIDs, subscription tiers (e.g. `max`, `pro`), and Keychain token health.
 2. **Instant Account Switching**: Swaps active credentials in < 1 second across Claude Code (`~/.claude.json`, scoped/unscoped Keychain items) and Orca (`orca-data.json`, `Orca Claude Code Managed Credentials`).
 3. **Headless Browser-Session OAuth**: Recovers active web sessions from Arc or Chrome profiles via macOS Keychain Safe Storage decryption, automatically authorizes Claude's PKCE OAuth flow, and injects the authorization code without physical screen or GUI access.
-4. **Autonomous Rate-Limit Rotation**: When an agent hits an HTTP 429 (`rate_limit_error`) or 5-hour quota exhaustion, it rotates to the next available account and immediately resumes execution.
+4. **Autonomous Rate-Limit Rotation**: When an agent hits an HTTP 429 (`rate_limit_error`), 5-hour quota exhaustion, or weekly 7-day quota lock, it rotates to the healthiest available standby account (filtering out exhausted quotas) and immediately resumes execution.
+5. **Prompt Prefix Cache Preservation**: All hook handlers write status and notifications strictly to `stderr` (0 bytes to `stdout`) so that Claude Code's 58,000-token prompt cache prefix remains byte-identical across sessions.
 
 ---
 
