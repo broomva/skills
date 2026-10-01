@@ -22,6 +22,7 @@ import fnmatch
 import hashlib
 import importlib.util
 import json
+import math
 import os
 import re
 import stat
@@ -2266,16 +2267,21 @@ def _score(router, catalog, key: str, cases: list[tuple[str, bool]]) -> dict:
 #: A1's bars (spec §10, #850): router time p99 <= 100 ms; p9 on ship turns, Wilson lower bound >= 0.70.
 A1_MAX_P99_MS = 100.0
 A1_MIN_P9_LOWER = 0.70
-#: A shell segment that ships: ``git [-C dir] push`` (not ``--delete``) or ``gh pr create``.
-_SHIP_SEGMENT_RE = re.compile(r"^\s*(?:\w+=\S*\s+)*(?:git(?:\s+-C\s+\S+)?\s+push\b(?!.*\s--delete\b)|gh\s+pr\s+create\b)")
+#: A shell segment that ships: ``git push`` or ``gh pr create``, behind env assignments,
+#: ``timeout N``, ``env``, ``nohup``, ``command``, a subshell or ``$(``, and git's global
+#: ``-C dir`` / ``-c key=value``. A push that deletes, dry-runs or pushes ``:ref`` is not.
+_SHIP_SEGMENT_RE = re.compile(
+    r"^\s*(?:\$?\(\s*)*(?:(?:\w+=\S*|env|nohup|command|timeout\s+\S+)\s+)*"
+    r"(?:git(?:\s+-[Cc]\s+\S+)*\s+push\b(?![^\n]*\s(?:-d|--delete|--dry-run|-n|:\S+)(?:\s|$))|gh\s+pr\s+create\b)")
 
 
 def _ships(command: str) -> bool:
-    """Does a Bash command run ``git push`` or ``gh pr create``? Each ``&&``/``;``/``|``
-    segment is checked from its start, and a heredoc's body is not read, so a script
-    that only mentions ``git push`` is not a ship."""
-    lines, kept, mark = command.split("\n"), [], None
-    for line in lines:
+    """Does a Bash command run ``git push`` or ``gh pr create``? Each ``&&``/``;``/``|``/
+    ``$(`` segment is checked from its start, and a heredoc's body is not read, so a
+    script that only mentions ``git push`` is not a ship. Quotes are not parsed: a quoted
+    ``a && gh pr create`` counts (a known over-count)."""
+    kept, mark = [], None
+    for line in command.split("\n"):
         if mark is not None:
             if line.strip() == mark:
                 mark = None
@@ -2284,7 +2290,7 @@ def _ships(command: str) -> bool:
         kept.append(line)
         if m:
             mark = m.group(1)
-    return any(_SHIP_SEGMENT_RE.match(seg) for seg in re.split(r"&&|\|\||;|\||\n", "\n".join(kept)))
+    return any(_SHIP_SEGMENT_RE.match(seg) for seg in re.split(r"&&|\|\||;|\||\$\(|\n", "\n".join(kept)))
 
 
 def _wilson_lower(k: int, n: int, z: float = 1.96) -> float | None:
@@ -2311,16 +2317,34 @@ def _prompt_text(content: object) -> str:
     return ""
 
 
+_COMMAND_TAGS_RE = re.compile(r"<command-name>\s*(/?[^<\s]+)\s*</command-name>.*?<command-args>(.*?)</command-args>", re.S)
+
+
+def _as_typed(ev: dict, text: str) -> str | None:
+    """The prompt as the hook saw it, or None when this entry is not a prompt.
+
+    ``isMeta`` user entries reach the hook only when they are standalone messages (cron,
+    ``/loop``, peer messages); a skill's expansion (``sourceToolUseID``), a turn companion,
+    an image placeholder or a local-command caveat do not, and are not turns. A slash
+    command is stored as ``<command-name>``/``<command-args>`` tags; the hook saw
+    ``/name args``."""
+    if ev.get("isCompactSummary"):
+        return None
+    if ev.get("isMeta") and (ev.get("sourceToolUseID") or ev.get("turnCompanion")
+                             or text.lstrip().startswith(("[Image", "<local-command", "Base directory for this skill"))):
+        return None
+    m = _COMMAND_TAGS_RE.search(text)
+    if m:
+        name = m.group(1) if m.group(1).startswith("/") else "/" + m.group(1)
+        return f"{name} {m.group(2).strip()}".strip()
+    return text
+
+
 def _turns(transcript: Path) -> list[dict]:
     """The prompts of one Claude Code transcript in order, each ``{"digest", "ts",
-    "ships"}``: did that turn run ``git push`` or ``gh pr create`` before the next prompt.
-
-    A prompt is a user entry that is not a tool result (``isMeta`` ones included: cron,
-    ``/loop`` and peer messages reach the hook too), or a queued command typed mid-turn
-    (an ``attachment`` of type ``queued_command``). A compaction summary is not: the turn
-    it interrupts continues. Shapes this does not model (a slash command is stored as its
-    expansion, not as typed) give digests no router row has, so their ship turns show up
-    as unjoined, never as someone else's."""
+    "ships"}``: did that turn run ``git push`` or ``gh pr create`` before the next prompt
+    (``_as_typed`` says what a prompt is; a queued command typed mid-turn is one).
+    Subagent transcripts are not read: a push a subagent makes is not counted."""
     out: list[dict] = []
     try:
         lines = transcript.read_text(encoding="utf-8", errors="replace").splitlines()
@@ -2335,17 +2359,18 @@ def _turns(transcript: Path) -> list[dict]:
             continue
         msg = ev.get("message") if isinstance(ev.get("message"), dict) else {}
         content = msg.get("content")
-        text = None
-        if ev.get("type") == "user" and not ev.get("isCompactSummary"):
+        typed = None
+        if ev.get("type") == "user":
             blocks = content if isinstance(content, list) else []
             if not any(isinstance(b, dict) and b.get("type") == "tool_result" for b in blocks):
                 text = _prompt_text(content)
+                typed = _as_typed(ev, text) if text else None
         elif ev.get("type") == "attachment" and isinstance(ev.get("attachment"), dict) \
                 and ev["attachment"].get("type") == "queued_command":
-            text = _prompt_text(ev["attachment"].get("prompt"))
-        if text:
-            out.append({"digest": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
-                        "ts": str(ev.get("timestamp") or ""), "ships": False})
+            typed = _prompt_text(ev["attachment"].get("prompt")) or None
+        if typed:
+            out.append({"digest": "sha256:" + hashlib.sha256(typed.encode("utf-8")).hexdigest(),
+                        "ts": _ts(ev.get("timestamp")), "ships": False})
         elif ev.get("type") == "assistant" and out and isinstance(content, list):
             for b in content:
                 if (isinstance(b, dict) and b.get("type") == "tool_use" and b.get("name") == "Bash"
@@ -2361,20 +2386,36 @@ def _ts(value: object) -> float | None:
         return None
 
 
+def _since(spec: str) -> float:
+    """``--since``: a duration (``3d``, ``72h``) back from now, or an ISO date or time
+    (``2026-10-03``, ``2026-10-03T14:00Z``) to start an A1 window at a fix's install."""
+    at = _ts(spec if "T" in spec or ":" in spec else spec + "T00:00:00+00:00") if spec[:1].isdigit() and "-" in spec else None
+    if at is not None:
+        return at
+    return datetime.now(timezone.utc).timestamp() - _parse_duration(spec)
+
+
+#: How far apart a row's ``ts`` (the hook) and its prompt's transcript entry may be.
+PAIR_WINDOW_S = 300.0
+
+
 def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
     """``role-x reflexes shadow``: spec A1's instrument (workspace#850) over the
     ``ROLE_X_OUTPUT=shadow`` rows in events.jsonl. Exit 0 met, 1 not met, 3 not shown.
 
     * Router time is ``router_ms`` (from before the router's import to just before the
-      row is written). A row without it (an older install) makes the p99 not shown.
-    * The p9 bar counts every turn, in a session with shadow rows, that ran ``git push``
-      or ``gh pr create`` (``_turns``). The k-th row for a prompt digest is the k-th turn
-      with that digest. A ship turn with no row, or a row with no turn, is counted and
-      makes the bar not shown: the spec asks for every such turn, so a partial join is
-      never read as met. Hook kills write no row; they show here as unjoined turns."""
+      row is written). A row without a finite one (an older install) makes it not shown.
+    * The p9 bar counts every turn that ran ``git push`` or ``gh pr create`` in a session
+      with shadow rows (``_turns``). A row pairs with the unpaired turn of the same prompt
+      nearest in time, within ``PAIR_WINDOW_S``; a hook that was killed wrote no row, so
+      its turn stays unpaired. Met needs every ship turn paired. Not met is read off the
+      best case, every unpaired ship turn counted as having p9, so the bar can fail
+      even while the join is partial.
+    * Rows from a session whose transcript is not found (probes, tests, deleted logs) are
+      reported and left out of the join."""
     events = Path(args.events) if args.events else EVENTS_PATH
     projects = Path(args.projects) if args.projects else Path.home() / ".claude" / "projects"
-    since = datetime.now(timezone.utc).timestamp() - _parse_duration(args.since)
+    since = _since(args.since)
     rows: list[dict] = []
     text = events.read_text(encoding="utf-8", errors="replace") if events.is_file() else ""
     for line in text.splitlines():
@@ -2384,7 +2425,8 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
             continue
         if isinstance(r, dict) and r.get("event") == "reflex" and r.get("shadow") and (_ts(r.get("ts")) or 0) >= since:
             rows.append(r)
-    timed = [float(r["router_ms"]) for r in rows if isinstance(r.get("router_ms"), (int, float))]
+    timed = [float(r["router_ms"]) for r in rows
+             if isinstance(r.get("router_ms"), (int, float)) and math.isfinite(float(r["router_ms"]))]
     errors: dict[str, int] = {}
     selected: dict[str, int] = {}
     for r in rows:
@@ -2392,50 +2434,67 @@ def cmd_reflexes_shadow(args: argparse.Namespace) -> int:
             errors[str(r["error"])] = errors.get(str(r["error"]), 0) + 1
         for rid in r.get("selected") or []:
             selected[rid] = selected.get(rid, 0) + 1
-    ship = with_p9 = ship_unjoined = rows_unjoined = 0
+    ship = with_p9 = ship_unpaired = rows_unpaired = no_transcript = 0
     by_session: dict[str, list[dict]] = {}
-    for r in sorted(rows, key=lambda x: _ts(x.get("ts")) or 0):
+    for r in rows:
         by_session.setdefault(str(r.get("session") or ""), []).append(r)
     for sid, srows in by_session.items():
-        found = next(iter(sorted(projects.glob(f"*/{sid}.jsonl"))), None) if sid else None
-        turns = [t for t in (_turns(found) if found else []) if (_ts(t["ts"]) or since) >= since]
-        queue: dict[str, list[dict]] = {}
-        for r in srows:
-            queue.setdefault(str(r.get("prompt_digest")), []).append(r)
-        for t in turns:
-            pending = queue.get(t["digest"])
-            row = pending.pop(0) if pending else None
-            if t["ships"]:
-                if row is None:
-                    ship_unjoined += 1
-                else:
-                    ship += 1
-                    with_p9 += "p9.watch-after-push" in (row.get("selected") or [])
-        rows_unjoined += sum(len(v) for v in queue.values())
-    p99, lower = _p99(timed), _wilson_lower(with_p9, ship)
+        found = sorted(projects.glob(f"*/{sid}.jsonl")) if sid else []
+        if not found:
+            no_transcript += len(srows)
+            continue
+        turns = [t for f in found for t in _turns(f) if t["ts"] is None or t["ts"] >= since - PAIR_WINDOW_S]
+        free = list(range(len(turns)))
+        paired: dict[int, dict] = {}
+        for r in sorted(srows, key=lambda x: _ts(x.get("ts")) or 0):
+            rts = _ts(r.get("ts"))
+            cands = [k for k in free if turns[k]["digest"] == r.get("prompt_digest") and turns[k]["ts"] is not None
+                     and rts is not None and abs(turns[k]["ts"] - rts) <= PAIR_WINDOW_S]
+            if not cands:
+                rows_unpaired += 1
+                continue
+            k = min(cands, key=lambda c: abs(turns[c]["ts"] - rts))
+            free.remove(k)
+            paired[k] = r
+        for k, t in enumerate(turns):
+            if not t["ships"] or (t["ts"] is not None and t["ts"] < since):
+                continue
+            if k in paired:
+                ship += 1
+                with_p9 += "p9.watch-after-push" in (paired[k].get("selected") or [])
+            else:
+                ship_unpaired += 1
+    p99 = _p99(timed)
+    lower = _wilson_lower(with_p9, ship)
+    best = _wilson_lower(with_p9 + ship_unpaired, ship + ship_unpaired)
     time_shown = bool(rows) and len(timed) == len(rows)
-    p9_shown = ship > 0 and ship_unjoined == 0 and rows_unjoined == 0
-    failed = bool(errors) or (time_shown and p99 > A1_MAX_P99_MS) or (p9_shown and lower < A1_MIN_P9_LOWER)
-    verdict = ("not met" if failed else "met" if time_shown and p9_shown else "not shown")
+    p9_shown = ship > 0 and ship_unpaired == 0 and rows_unpaired == 0
+    failed = (bool(errors) or (time_shown and p99 > A1_MAX_P99_MS)
+              or (best is not None and best < A1_MIN_P9_LOWER))
+    verdict = "not met" if failed else "met" if time_shown and p9_shown and lower >= A1_MIN_P9_LOWER else "not shown"
     report = {
         "rows": len(rows), "sessions": len(by_session),
         "router_ms": {"rows_timed": len(timed), "p99": p99, "max": max(timed) if timed else None},
         "errors": errors,
-        "ship_turns": {"joined": ship, "p9_selected": with_p9,
+        "ship_turns": {"paired": ship, "p9_selected": with_p9,
                        "wilson_lower": None if lower is None else round(lower, 4),
-                       "ship_turns_without_a_row": ship_unjoined, "rows_without_a_turn": rows_unjoined},
+                       "wilson_lower_best_case": None if best is None else round(best, 4),
+                       "ship_turns_without_a_row": ship_unpaired, "rows_without_a_turn": rows_unpaired,
+                       "rows_in_sessions_without_a_transcript": no_transcript},
         "selected": dict(sorted(selected.items(), key=lambda kv: -kv[1])),
         "verdict": verdict,
-        "not_covered_here": "M3 (change_work and branch-first): role-x reflexes route --heldout",
+        "not_covered_here": "M3 (change_work and branch-first): role-x reflexes route --heldout [--heldout-file <v3>]",
     }
     if args.json:
         print(json.dumps(report, indent=2))
     else:
+        st = report["ship_turns"]
         print(f"shadow rows {report['rows']} in {report['sessions']} sessions since {args.since}")
         print(f"router_ms p99 {p99} over {len(timed)} of {len(rows)} rows (bar {A1_MAX_P99_MS:g})")
         print(f"error rows {sum(errors.values())} {errors or ''}")
-        print(f"ship turns joined {ship}: p9 selected {with_p9}, Wilson lower {report['ship_turns']['wilson_lower']} "
-              f"(bar {A1_MIN_P9_LOWER}); ship turns without a row {ship_unjoined}; rows without a turn {rows_unjoined}")
+        print(f"ship turns paired {ship}: p9 selected {with_p9}, Wilson lower {st['wilson_lower']}, best case "
+              f"{st['wilson_lower_best_case']} (bar {A1_MIN_P9_LOWER}); ship turns without a row {ship_unpaired}; "
+              f"rows without a turn {rows_unpaired}; rows in sessions without a transcript {no_transcript}")
         print(f"selected per id {report['selected']}")
         print(f"A1 router bars: {verdict} ({report['not_covered_here']})")
     return {"met": 0, "not met": 1}.get(verdict, 3)

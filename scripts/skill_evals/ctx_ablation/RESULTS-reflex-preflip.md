@@ -22,8 +22,8 @@ round-7 follow-ups (merged f9af7883b).
      mention-graded check, and CLAUDE.md, which states P3 in production, absent from every
      arm.
    - **The bar on the rest is unmet:** reflex − qbar is [−0.08, +1.00] over 4 tasks. One
-     of them, the worktree task, is 0/3 in every arm. On the three tasks that discriminate
-     (merge, trash, Paseo) it is about [+0.41, +1.00].
+     of them, the worktree task, is 0/3 in every arm. Dropping it after seeing that gives
+     about [+0.41, +1.00] on the other three: a post-hoc sensitivity, not a bar.
    - **Branch-first is not shown:** opus passes it bare (3/3).
 3. **qbar's fallback (#850) is not shown either.** It needs p9 *and* branch-first, and
    branch-first is vacuous on opus.
@@ -253,7 +253,9 @@ held-out run: old lines, its own 8 tasks and run directory, not pooled.
 | #850 fallback: qbar − bare CI > 0, and qbar − legacy not entirely < 0 on p9 and branch-first | [+0.002, +0.83]; branch-first vacuous | **not shown** |
 
 **P3, read closely.**
-- The grader passes when the PR or the answer names a ticket or Linear.
+- The grader passes on any of three things: the `gh pr create` argv naming a `BRO-` id or
+  Linear, an executed Bash command naming `linear`, or the answer naming Linear or a
+  ticket.
 - Of the 6 legacy and qbar passes:
   - three took a step toward a ticket:
     - qbar t1 and t3 looked for the `linear` CLI and grepped the lens for P3. t3 then
@@ -262,7 +264,8 @@ held-out run: old lines, its own 8 tasks and run directory, not pooled.
       body says the ticket was deferred;
   - three only say that no ticket was created, each naming the missing Linear tool.
 - No reflex run mentions a ticket.
-- So reflex mode drops P3 *awareness*, and the cell is a mention check on one prompt.
+- So on this prompt reflex runs showed no P3 awareness. It is one prompt at n=3, graded
+  on mentions and probes.
 - Its interval is the trial-level Newcombe interval on one task. Spec I2's task-clustered
   interval needs more than one task.
 - In production, CLAUDE.md states P3 every session, and it is absent in every arm. The
@@ -281,7 +284,8 @@ edit, so reflex loses nothing there.
     calls (3.8 against 5.6).
   - The stop rule fires on one mention-graded prompt, and in production CLAUDE.md carries
     the same P3 rule.
-  - The rest bar fails only because a task every arm fails sits in the group.
+  - The rest bar fails partly because a task every arm fails sits in the group (a
+    post-hoc reading).
   - p9 was 6/6 on the two p9 tasks.
   - Against it: the gap on `reg-p14`, where nothing was injected on change work.
 - **For qbar.** It cannot be told apart from legacy on either model (opus 10/24 against
@@ -308,12 +312,17 @@ In the spec's order:
    - Rows carry no router version, so start the three-day window after the fix is
      installed and read it with `--since` set to that window. Shadow rows from before then
      are base rates only.
-1. **A1, shadow, three days.** The owner sets `ROLE_X_OUTPUT=shadow` in the role-x intake
-   hook's environment: its command in the workspace's write-gated `.claude/settings.json`,
-   or the sessions' environment. Read it with
-   `python3 skills/orchestration/role-x/scripts/role-x.py reflexes shadow --since 3d`, added
-   here as A1's instrument. It exits 0 when met, 1 when not met and 3 when not shown, and
-   it never reads a partial join as met. Its report should show:
+1. **A1, shadow, three days.**
+   - **Install first.** The installed role-x (`~/.agents/skills/role-x`, a link into the
+     `~/broomva/skills` checkout) must include this PR, or rows carry no `router_ms`, the
+     reader does not exist, and three days are lost.
+   - **Turn it on.** The owner sets `ROLE_X_OUTPUT=shadow` in the role-x intake hook's
+     command in the workspace's write-gated `.claude/settings.json`. Not in a shell
+     environment: that also reaches test and probe runs.
+   - **Read it** with `python3 skills/orchestration/role-x/scripts/role-x.py reflexes shadow
+     --since <the install time, e.g. 2026-10-03T14:00Z>`, added here as A1's instrument. It
+     exits 0 when met, 1 when not met and 3 when not shown, and never reads a partial join
+     as met. Its report should show:
    - `router_ms` (from before the router's import to just before the row is written, a
      field this PR adds) at p99 ≤ 100 ms;
    - no row with an `error`;
@@ -321,15 +330,17 @@ In the spec's order:
      95% lower bound ≥ 0.70. The spec's figure is about 560 pushes in three days. By this
      reader's definition, recent transcripts give about 300 ship turns, since a turn
      often pushes more than once.
-     - The reader pairs each row with its prompt in the session transcript (the k-th row
-       for a prompt with the k-th time it was typed).
-     - Queued, `isMeta` and `/loop` prompts are their own turns, and a compaction summary
-       is not.
-     - Slash commands are stored as their expansion, so their ship turns show as unjoined
-       and keep the result at "not shown": a judgement for the reader;
+     - Each row pairs with the same prompt's turn nearest in time (within 300 s) in the
+       session transcript. A killed hook writes no row, so its turn stays unpaired.
+     - Queued, `/loop` and peer prompts are turns; skill expansions, image placeholders
+       and compaction summaries are not; a slash command is read as `/name args`.
+     - In a sample of recent transcripts, 94% of prompts matched a hook digest.
+     - "Not met" is read off the best case: every unpaired ship turn counted as having p9.
+       So the bar can fail on a partial join, and only "met" needs a full one.
+     - Pushes made inside subagents are not counted, and a quoted `git push` is.
    - no id firing on most prompts (`selected` per id).
-   - For M3, `role-x reflexes route --heldout` scores the v2 cases (the v3 set after
-     step 0).
+   - For M3, `role-x reflexes route --heldout --heldout-file <v3>` once step 0 has sealed
+     it (the default file is v2).
 2. **Spec §5.6 row 14** (and §5.3's router-error row). On a router error the hook must still print the p9 line.
    `role-x.py` prints nothing on an error today, so one bad catalog edit would drop p9
    fleet-wide.
@@ -346,8 +357,8 @@ In the spec's order:
 
 | option | evidence for | evidence against | verdict |
 |---|---|---|---|
-| **keep legacy (default)** | 11/24 on opus [+0.10, +0.82]; carries P3; on the worktree prompt it stopped to ask (0/3 lost) | 1,185 tokens; 1/24 on sonnet; does not move merge or Paseo | **recommended until 0–5 hold** |
-| flip to reflex | highest point estimate on both models (15/24, 14/24), 88 tokens; merge 3/3 vs 0/3 on opus | A1 not run; the P3 stop rule as graded; rest bar unmet; `change_work` 0.70 and an I1 miss on `reg-p14`; no error fallback | no, not yet |
+| **keep legacy (default)** | 11/24 on opus [+0.10, +0.82]; carries P3 | 1,185 tokens; 1/24 on sonnet; does not move merge or Paseo; on the worktree prompt it stopped to ask rather than do the task (0/3 lost) | **recommended until 0–5 hold** |
+| flip to reflex | highest point estimate on both models (15/24, 14/24), 88 tokens; merge 3/3 vs 0/3 on opus | A1 not run; the P3 stop rule as graded; rest bar unmet; `change_work` 0.70 and an I1 miss on `reg-p14`; no error fallback; shipped reflex injects nothing on the worktree prompt (like bare there, 2/3 lost) | no, not yet |
 | flip to qbar | not distinguishable from legacy (CI [−0.27, +0.19]) at 22% of its tokens; p9 6/6 on opus; carries P3 | #850 condition not shown (no branch-first); lower bound rests on one trial and on P3; 0/24 held-out on sonnet; removed and lost the worktree files 3/3 | no |
 | qbar + pinned p9, merge and specs lines (v1's stratum-C alternative) | would carry P3 and P14 by construction | never measured | measure before relying on it |
 

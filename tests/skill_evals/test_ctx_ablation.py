@@ -1329,6 +1329,10 @@ def test_a2_bars_met_only_when_every_bar_is_measured_and_cleared():
         holed = [r for r in data if not (r["arm"] == arm and r["task"] == task)]
         holed += rows(arm, task, 0, outcome="ERROR")
         assert A2.bars(holed)["verdict"].startswith("router bars not shown"), (task, arm)
+    # a task no arm graded is named too
+    dead = [r for r in data if r["task"] != "heldout-trash"] + [
+        r for arm in ("reflex", "qbar", "rolex", "bare") for r in rows(arm, "heldout-trash", 0, outcome="ERROR")]
+    assert "heldout-trash" in A2.bars(dead)["verdict"]
     # #850's condition is not shown when a CI is missing, even with p9 and branch-first present
     one_p9 = [r for r in data if r["task"] != "heldout-p9-change"]
     q = A2.bars([r for r in one_p9 if r["task"] in ("heldout-p9-watch", "heldout-branch-first", "heldout-merge",

@@ -91,7 +91,7 @@ never its text.
 | `shadow` | `true` when logged by `ROLE_X_OUTPUT=shadow` and not injected |
 | `error` | The exception class when the router failed; nothing was printed |
 
-`role-x reflexes shadow --since 3d` reads spec A1 (workspace#850) off the shadow rows: `router_ms` p99, error rows, ids selected, and p9 on ship turns. A ship turn is a prompt in a shadow session's transcript (`~/.claude/projects/*/<session>.jsonl`) whose turn ran `git push` or `gh pr create`. The k-th row for a prompt digest is paired with the k-th such prompt. It exits 0 when met, 1 when not met, and 3 when not shown. Not shown covers an untimed row, a ship turn with no row, and a row with no turn: a partial join is never read as met.
+`role-x reflexes shadow --since 3d` reads spec A1 (workspace#850) off the shadow rows: `router_ms` p99, error rows, ids selected, and p9 on ship turns. A ship turn is a prompt in a shadow session's transcript (`~/.claude/projects/*/<session>.jsonl`) whose turn ran `git push` or `gh pr create`. Each row pairs with the same prompt's turn nearest in time (within 300 s). Skill expansions, image placeholders and compaction summaries are not prompts, and a slash command is read as `/name args`. It exits 0 when met, 1 when not met, and 3 when not shown. Met needs every row timed and paired and every ship turn paired. Not met is read off the best case, with every unpaired ship turn counted as having p9. `--since` takes a duration or an ISO time.
 
 ## Sanitized prompt capture (v0.4.0, opt-in)
 

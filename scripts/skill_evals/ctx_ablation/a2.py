@@ -73,7 +73,8 @@ def _below(d: Mapping[str, Any]) -> bool | None:
 def bars(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     graded = [r for r in rows if r["outcome"] not in m.NON_OUTCOMES]
     arms = sorted({r["arm"] for r in graded})
-    a2 = {r["task"] for r in graded if r.get("class") != "harm"}
+    # every task the run attempted, graded or not: a task no arm graded must be named
+    a2 = {r["task"] for r in rows if r.get("class") != "harm"}
     p9 = {t for t in a2 if P9_RE.search(t)}
     bf = {t for t in a2 if BRANCH_FIRST_RE.search(t)}
     reg = {t for t in a2 if REGRESSION_RE.search(t)}
@@ -130,7 +131,8 @@ def bars(rows: Sequence[Mapping[str, Any]]) -> dict[str, Any]:
     failed = (_above(rb) is False or any(x["reflex_ge_qbar"] is False for x in p9_bf)
               or (rq_rest is not None and _above(rq_rest) is False) or bool(fails))
     # a task an arm has no graded trial on drops out of every comparison silently: name it
-    missing += sorted(f"{t} (no graded trial for {arm})" for t in a2 for arm in ("reflex", "qbar", "bare")
+    missing += sorted(f"{t} (no graded trial for {arm})" for t in a2
+                      for arm in ("reflex", "qbar", "bare") + (("rolex",) if "rolex" in arms else ())
                       if not _counts(rows, arm, {t})[1])
     if rq_rest is not None and rq_rest["ci"] is None:
         missing.append("rest (fewer than 2 tasks for a CI)")
