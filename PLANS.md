@@ -9,6 +9,11 @@ end (a dispatched probe reached `review` with its ask, and its agent's Paseo rec
 `requiresAttention: true`); the owner's verdict is read back as the answer. Also: the
 coordinator's tool allowlist (`--tools Bash Read SendMessage`, measured) and the P20 round-2
 carry-overs and bot threads deferred from #258. Verification as below, then P20.
+Checkpoint (P20 round 2, 6/10, FAIL): the read-back misread Maestro's wire (undone and dropped
+decisions, the display `verdict`). Round 3 reads only decisions that took effect, rebuilt from
+Maestro's own test sequences; a scoped title marker; a raise delay for transient asks; refusals
+at the cap logged, not failed; alerts adopted through `fleet alert` with a bash fallback.
+Then: the credential follow-up (the owner's gh login, spec §5.2 precondition 1 waived).
 
 ## fleet-reconcile phase 2: dry run through fleet act (BRO-2674)
 

@@ -303,8 +303,8 @@ def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
 
 
 def cmd_alert(args: argparse.Namespace) -> int:
-    """tick.sh's alert, through Python so an open item of its kind is adopted,
-    never raised twice. Exit 0: the item is past Maestro's queue; 4: queued at
+    """tick.sh's alert, through Python so an open item of its kind is adopted
+    rather than a second raised. Exit 0: the item is past Maestro's queue; 4: queued at
     its cap (not delivered); 5: Maestro failed (not delivered). Any other exit
     (a config Python can't read) sends tick.sh to its bash fallback."""
     from fleetlib import paseo_ask

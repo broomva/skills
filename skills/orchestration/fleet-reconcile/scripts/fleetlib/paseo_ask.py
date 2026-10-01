@@ -203,8 +203,9 @@ def answer(sec: Dict[str, Any], item_id: str) -> Dict[str, Any]:
 
 
 def alert(sec: Dict[str, Any], kind: str, message: str) -> Dict[str, Any]:
-    """A tick alert as an item at Needs you, at most one open per kind: an open
-    one is returned as it is, never a second."""
+    """A tick alert as an item at Needs you. An open item of its kind is
+    adopted and returned rather than a second raised; two alerts of a kind at
+    the same instant, or tick.sh's bash fallback, can still raise two."""
     tag = marker(sec["scope"], "alert %s" % common.safe_text(kind, 40))
     open_one = find(sec, tag)
     if open_one is not None:

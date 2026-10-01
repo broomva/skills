@@ -18,8 +18,7 @@ while [ -L "$self" ]; do
 done
 dir=$(CDPATH='' cd -- "$(dirname -- "$self")" && pwd) || exit $fail
 if [ "$fail" = 2 ]; then
-  "${FLEET_PYTHON:-python3}" -I "$dir/fleet_reconcile.py" "$@"
-  [ $? -eq 0 ] && exit 0
+  "${FLEET_PYTHON:-python3}" -I "$dir/fleet_reconcile.py" "$@" && exit 0
   exit 2
 fi
 exec "${FLEET_PYTHON:-python3}" -I "$dir/fleet_reconcile.py" "$@"
