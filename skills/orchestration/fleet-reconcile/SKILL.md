@@ -248,7 +248,7 @@ Config keys beyond §5.7's, pending the spec: `listing_cap`, `pr_list_cap`,
 `gh_token_file`, `actions_app_id` (15368, GitHub Actions), `launchd_prefix`,
 `launchd_logs` (a label's real log, when its stdout is silent),
 `bookkeeping_run_log`, `dream_run_log`, `ask_renotify_h`, `tick_timeout_min`, `compare_hour`,
-`coordinator_model` (phase 2; null is Claude Code's default). §5.7's `paseo_tools` defaults to
+`coordinator_model` (phase 2; null is Claude Code's default), `coordinator_budget_usd` (2). §5.7's `paseo_tools` defaults to
 the pinned 0.9.2 classification (19 read, 42 write) and `driver` to probe 6's GitHub
 allowlist with no registries.
 §5.7's `b_step_timeout_min` and an adoption's `paseo_agent_id` are accepted.
@@ -306,7 +306,7 @@ the caller's cwd and user site stay off `sys.path`; it imports ctx-core from
 ```bash
 cd skills/orchestration/fleet-reconcile
 python3 -m pytest tests/ -q
-python3 tests/mutation_check.py      # every rule deleted, every overlapping pair swapped, 117 protections removed
+python3 tests/mutation_check.py      # every rule deleted, every overlapping pair swapped, 141 protections removed
 python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (anonymized; public repo)
 ```
 
@@ -331,13 +331,18 @@ Switch a scope with `"mode": "act"` and `"dry_run": 1` in `~/.config/ctx/fleet.j
 (sri stays at report in every phase, §5.6). Each tick then runs one coordinator
 after the report: `claude -p --name fleet-coordinator-<scope> --settings
 <state>/coordinator-settings.json --output-format stream-json --verbose
---permission-mode bypassPermissions --disallowedTools Agent Edit Write
+--permission-mode bypassPermissions --strict-mcp-config --max-budget-usd
+<coordinator_budget_usd, 2> --disallowedTools Agent Edit Write NotebookEdit
 mcp__paseo__<each pinned write tool> -- "<runner prompt>"`, with the Claude and
-Paseo variables unset and `FLEET_CHILD=1`, `FLEET_TICK`, `DRY_RUN` set. Its
-init event's tool list is checked as it starts: a disallowed tool, or a Paseo
-tool in neither pinned list, terminates it (exit 4; the tick fails loudly).
-The tool list is a posture: the coordinator runs unsandboxed and its Bash
-reaches git, gh and the Paseo CLI.
+Paseo variables unset and `FLEET_CHILD=1`, `FLEET_TICK`, `DRY_RUN` set; no MCP
+server loads (pending the spec, which names only the Paseo writes). Its init
+event's tool list is checked as it starts: a disallowed tool, a Paseo tool in
+neither pinned list, an event before the init event, or no init event within
+60 s stops it (exit 4; the tick fails loudly). It stays in the step's process
+group, so tick.sh's TERM-then-KILL reaches it. A live tick (`dry_run: 0`)
+without a usable fleet token file runs no coordinator and alerts. The tool
+list is a posture: the coordinator runs unsandboxed and its Bash reaches git,
+gh and the Paseo CLI.
 
 **fleet act** (`scripts/fleetlib/act.py`) is its named route. Each verb refuses
 in report mode, on a corrupt ledger (mail, spawn) and on an unanswered ask about
@@ -345,12 +350,15 @@ its target, then re-observes and re-checks in code:
 
 - `spawn --repo R --pr N` (drivers only; janitor runs are report-only): §5.5's
   rules from a fresh observation (ruleset, open, not draft or Dependabot, no
-  `hold` label, no `research/entities/**` file, the PR's files read, no live
-  session on its branch, no unknown claim, the name unused live or stopped,
-  ≤ 8 live fleet sessions, ≤ 12 active in 30 min, no usage-limit pause). The
+  `hold` label, no `research/entities/**` file among all its files, no live
+  session on its branch, no unknown claim, the name unused live or stopped in
+  the raw listing, ≤ 8 live fleet sessions, ≤ 12 active in 30 min, no
+  usage-limit pause), refusing when the listing, job files, transcripts or any
+  board weren't read, or while a spawn of the same key is unconfirmed. The
   argv is §5.3's: `claude --bg -w <key> --name <key> --strict-mcp-config
   --dangerously-skip-permissions --settings <0600 profile> "<brief>"`. A live
-  spawn never runs without the fleet token file.
+  spawn is refused without the fleet token file; one whose session the
+  listing doesn't show yet is done with its job id, which keys it until then.
 - `mail --session SID --template ...`: only a fleet spawn in the ledger or an
   adopted session; resolved to the live row by session id, else through its
   Paseo agent's current session; refused when no row has a process
@@ -358,12 +366,14 @@ its target, then re-observes and re-checks in code:
   recipient (the Paseo agent id, else the session id) per `mail_interval_h`,
   live and dry counted apart, a failed mail not counted. It prints the exact
   `to` and `message` for SendMessage. The templates never name a merge or a
-  removal.
+  removal, and take no free text: `other` must be a session name and `paths`
+  up to five plain paths; `hours` comes from the config.
 - `resume --session SID`: only a fleet or adopted background session with no
   process, never twice while one is unconfirmed; `claude --bg --resume <id>`
   with no other flag (a flag starts a copy; so does a session that still holds
   its process, which the drill measured).
-- `label --repo R --pr N --label L [--remove]`: an open PR of a scope repo.
+- `label --repo R --pr N --label L [--remove]`: an open PR of a scope repo;
+  never the `hold` label (the owner's); live only on the fleet token.
 
 Each writes its intent (fsynced) before acting; under dry run spawn, label and
 resume are closed at once with `done` and `would: true` plus the argv or API
@@ -372,7 +382,10 @@ PreToolUse hook on SendMessage refuses unless an unclosed mail intent from this
 tick matches `to` exactly (no `[ref]`) and `message`, the recipient is still
 fleet or adopted, the 6 h rule holds, and a fresh listing shows exactly one
 live row with that name and the intent's session id; under dry run a send that
-passes is closed `done (would)` and still blocked. PostToolUse and
+passes is closed `done (would)` and still blocked. The gate fails closed: an
+error of its own (a config it can't read included) exits 2, and it bounds its
+ledger lock (3 s) and listing (5 s) inside the hook's 10 s, since a hook the
+harness kills lets the tool run. PostToolUse and
 PostToolUseFailure close a live send, and a send with no intent is recorded as
 `unledgered_send`. **fleet recover** closes every intent a dead tick left open
 from what happened (§5.7's rules).
@@ -383,9 +396,12 @@ written 0600 per spawn under `profiles/`, with GH_TOKEN from `gh_token_file`
 
 **The janitor** (`janitor.py`): `fleet janitor-check PATH --owner ID` exits 0
 only when every check passes, 1 on a failure and 2 when a check couldn't run;
-`fleet janitor-run` checks, stops the owner, re-checks, backs up, re-reads the
+`fleet janitor-run` refuses unless the owner's cwd is in PATH, prunes backups
+older than 14 days, checks, stops the owner, re-checks, backs up, re-reads the
 listing and runs `claude rm`, and removes nothing but scratch worktrees (of no
-scope repo) until the owner accepts the janitor drill.
+scope repo) until the owner accepts the janitor drill. A scope repo's owner
+needs a terminal status on the board; the listing's `done` counts only for a
+scratch worktree.
 
 Not built in phase 2: `fleet adopt` and `fleet audit` (the owner's side), the
 recovery drill, spawning through bstack's peer.py (it takes no settings path;
@@ -401,6 +417,11 @@ the argv is built here), research spawns.
   - the credential half is BLOCKED on the fleet token file;
   - the update-branch probe is BLOCKED on the same file.
 - NOT RUN: the recovery drill.
+
+**The ask channel moves to Paseo.** Owner decision, 2026-10-01: owner
+notifications go through the Paseo app (a needs-attention ask, the paseo-asks
+plugin, or a Maestro "Needs you" item), never a macOS dialog. This replaces the
+dialog that workspace#842 chose for `fleet act ask`; a follow-up PR builds it.
 
 ## Phase 3
 

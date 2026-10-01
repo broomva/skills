@@ -355,3 +355,73 @@ def test_label_dry_and_its_refusals(world):
     assert res["ok"] and res["result"]["call"].startswith("gh api -X POST repos/broomva/workspace/issues/849/labels")
     assert not _act(world).label(WS, 1, "x", "add")["ok"]
     assert not _act(world).label(WS, 849, "bad\nlabel", "add")["ok"]
+
+
+# --------------------------------------------------------------------------
+# P20 round 1
+
+@pytest.mark.parametrize("op", ["add", "remove"])
+def test_the_hold_label_is_the_owners(world, op):
+    res = _act(world).label(WS, 849, "Hold", op)
+    assert not res["ok"] and "owner's" in res["detail"]
+
+
+def _token(world, tmp_path):
+    tok = tmp_path / "gh-token"
+    tok.write_text("github_pat_" + "T" * 40)
+    tok.chmod(0o600)
+    return str(tok)
+
+
+def test_a_live_label_needs_the_token_file_and_runs_on_it(world, tmp_path, monkeypatch):
+    res = _act(world, dry=False, dry_run=0).label(WS, 849, "ci-heal-escalation", "add")
+    assert not res["ok"] and "token file" in res["detail"]
+    from fleetlib import sources
+    monkeypatch.setattr(sources, "_TOKEN", {})
+    a = _act(world, dry=False, dry_run=0, gh_token_file=_token(world, tmp_path))
+    res = a.label(WS, 849, "ci-heal-escalation", "add")
+    assert res["ok"] and a.src.calls[0][:5] == ["gh", "api", "-X", "POST", "repos/broomva/workspace/issues/849/labels"]
+    assert sources._TOKEN["GH_TOKEN"] == "github_pat_" + "T" * 40
+
+
+def test_a_spawn_is_refused_while_one_for_the_key_is_unconfirmed(world):
+    _files(world, 849, [])
+    world.state["broomva"].mkdir(parents=True, exist_ok=True)
+    ledger.append(world.state["broomva"], {"kind": "intent", "verb": "spawn", "key": "broomva-workspace-pr849",
+                                           "target": {"name": "broomva-workspace-pr849"}, "scope": "broomva",
+                                           "tick": 2, "dry_run": True, "by": "act"})
+    res = _act(world, now=LATER).spawn(WS, 849)
+    assert not res["ok"] and "still unconfirmed" in res["detail"]
+
+
+def test_the_active_cap_allows_twelve_and_names_are_read_raw(world):
+    a = _act(world)
+    a.driver_check(_snap([_sess(i, transcript={"activity": LATER - 60}) for i in range(12)]), [], WS, 7,
+                   "broomva-workspace-pr7")
+    snap = _snap([_sess(1, name="[withheld]", pid=None)])  # the snapshot's name is guarded for display
+    raw = [{"session_id": _sess(1)["session_id"], "name": "broomva-workspace-pr7"}]
+    with pytest.raises(act.Refused) as exc:
+        a.driver_check(snap, [], WS, 7, "broomva-workspace-pr7", raw)
+    assert exc.value.reason == "name_taken"
+
+
+def test_a_live_spawn_whose_listing_lags_is_done_with_its_job_id_and_still_ours(world, tmp_path, monkeypatch):
+    _files(world, 849, [])
+    (world.fixture / "claude" / "run-bg.txt").write_text("backgrounded · abcd1234 · broomva-workspace-pr849\n")
+    monkeypatch.setattr(act, "LIVE_POLL_S", 0.0)
+    a = _act(world, dry=False, now=LATER, dry_run=0, gh_token_file=_token(world, tmp_path))
+    res = a.spawn(WS, 849)
+    assert res["ok"] and res["result"] == {"job_id": "abcd1234"}, res
+    assert a.src.calls[0][:2] == ["claude", "--bg"]
+    prof = world.state["broomva"] / "profiles" / "broomva-workspace-pr849.json"
+    assert oct(prof.stat().st_mode & 0o777) == "0o600" and "github_pat_" in prof.read_text()
+    later = _act(world, dry=False, dry_run=0)
+    assert later.whose("abcd1234-0000-4000-8000-000000000000")["key"] == "broomva-workspace-pr849"
+    assert ledger.spawned(_records(world)) == {"broomva-workspace-pr849": ["abcd1234"]}
+
+
+def test_a_shaped_value_still_passes_the_text_guard(world, live_ids):
+    sid = live_ids[0]["sessionId"]
+    tokenish = "a" * 40 + ".md"  # a path shape, but a token-like run
+    res = _act(world, adopted=[{"session_id": sid}]).mail(sid, "overlap", {"other": "drv-b", "paths": tokenish})
+    assert res["ok"] and tokenish not in res["send"]["message"] and "[withheld]" in res["send"]["message"]

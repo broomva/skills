@@ -125,10 +125,11 @@ def _stop(proc: "subprocess.Popen[str]") -> None:
 
 
 def _pump(proc: "subprocess.Popen[str]", out: IO[str], sec: Dict[str, Any], res: Dict[str, Any],
-          init_s: float = INIT_S) -> int:
+          init_s: Optional[float] = None) -> int:
     """Copy the stream; stop the coordinator on a failed posture, on an event
     before the init event (it acted unchecked), or when no init event came."""
     assert proc.stdout is not None
+    init_s = INIT_S if init_s is None else init_s
 
     def late() -> None:
         if not res["init"]:

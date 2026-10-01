@@ -159,3 +159,38 @@ def test_the_cli_reads_the_hook_from_stdin_and_exits_2_to_block(rig):
     garbage = subprocess.run(["/bin/sh", str(FLEET), "send-gate", "pre"], input="not json", capture_output=True,
                              text=True, env=env, timeout=60)
     assert garbage.returncode == 2
+
+
+def test_the_gate_fails_closed_when_it_fails(rig, tmp_path):
+    import os
+    import subprocess
+    from conftest import FLEET
+    m = rig.mail()
+    hook = json.dumps(rig.hook(m["send"]["to"], m["send"]["message"]))
+    for env in (dict(os.environ, FLEET_TICK="7", FLEET_SCOPE="broomva", FLEET_CONFIG=str(tmp_path / "missing.json")),
+                {k: v for k, v in dict(os.environ, FLEET_TICK="7").items() if k != "FLEET_SCOPE"}):
+        out = subprocess.run(["/bin/sh", str(FLEET), "send-gate", "pre"], input=hook, capture_output=True, text=True,
+                             env=env, timeout=60)
+        assert out.returncode == 2 and "fails closed" in out.stderr, out.stderr
+
+
+def test_a_ledger_it_cant_lock_still_refuses(rig, monkeypatch):
+    import fcntl
+    import os
+    monkeypatch.setattr(sendgate, "LOCK_WAIT_S", 0.2)
+    rig.mail()
+    fd = os.open(str(rig.w.state["broomva"] / "ledger.lock"), os.O_RDWR)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    try:
+        code, msg = rig.pre(rig.hook("someone", "x"))
+    finally:
+        os.close(fd)
+    assert code == 2 and "couldn't be recorded" in msg
+
+
+def test_a_send_that_reports_no_success_is_not_done(rig):
+    m = rig.mail(dry=False, dry_run=0)
+    rec = sendgate.post(rig.cfg(dry_run=0), rig.hook(m["send"]["to"], m["send"]["message"],
+                                                     hook_event_name="PostToolUse",
+                                                     tool_response={"success": False, "message": "held"}), 7, False)
+    assert rec["kind"] == "failed" and rec["reason"] == "harness_refused"

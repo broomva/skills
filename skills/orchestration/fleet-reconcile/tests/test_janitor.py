@@ -205,3 +205,11 @@ def test_a_scratch_run_stops_rechecks_backs_up_rereads_and_removes(world, wt):
     src = FixtureSources(world.fixture)
     janitor.run(config.scope("broomva"), src, str(wt), OWNER, True, lambda m: None)
     assert src.calls[0] == ["claude", "stop", OWNER]
+
+
+def test_an_open_pr_on_the_worktrees_branch_fails_it(world, wt):
+    _git("remote", "add", "origin", "https://github.com/broomva/workspace.git", cwd=wt)
+    (world.fixture / "gh" / "broomva__workspace" / "prs-head-feat__x.json").write_text('[{"number": 5, "state": "OPEN"}]')
+    assert _guard(world, wt).pr_closed() == ("fail", "PR #5 is open")
+    (world.fixture / "gh" / "broomva__workspace" / "prs-head-feat__x.json").write_text('[{"number": 5, "state": "MERGED"}]')
+    assert _guard(world, wt).pr_closed()[0] == "pass"

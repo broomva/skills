@@ -31,6 +31,24 @@ Phase 2 (spec §9 row 2): the coordinator and its verbs under dry run. Ticket BR
   owner's action owed; the failed-run counter tested; report.json's compare
   error guarded; a non-GitHub origin no longer blocks a departed repo's
   resolution; `fleet ack` says how many asks it answered, tested.
+- After Cross-Review (P20) round 1:
+  - the send gate fails closed on its own errors, inside the hook's time;
+  - mail templates take only fixed shapes (no free text), and hours come from
+    the config;
+  - the hold label is the owner's; a live label needs the fleet token;
+  - spawn refuses when the listing, job files, transcripts or a board weren't
+    read, reads names raw, refuses while a spawn of the key is unconfirmed,
+    records a spawn whose session the listing lags by its job id, and reads
+    every PR file (paginated);
+  - the coordinator loads no MCP server, has NotebookEdit disallowed and a
+    budget, is stopped on an event before its init event or none within 60 s,
+    and stays in the watchdog's process group;
+  - the janitor refuses an owner that doesn't own the path, needs the board
+    for a scope repo's owner, counts its ancestors as its own, finds secrets
+    in ignored directories, and prunes;
+  - tick.sh exports the fleet token before recover and runs no live
+    coordinator without it;
+  - a duplicate spawn is an ask.
 - Drills on scratch sessions (evidence under
   `~/.config/broomva/fleet/phase2-drills-20261001/`):
   - PASS: kill switch, tool-list posture, SendMessage refusals 5/5, the

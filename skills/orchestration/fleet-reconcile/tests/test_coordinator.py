@@ -188,3 +188,58 @@ def test_a_bad_driver_section_fails_config_check(world):
         world.write_config(driver=bad)
         with pytest.raises(config.ConfigError):
             config.scope("broomva")
+
+
+# --------------------------------------------------------------------------
+# P20 round 1: an unchecked coordinator is stopped, and the watchdog reaches it
+
+def _stub(tmp_path, body):
+    stub = tmp_path / "claude"
+    stub.write_text("#!/bin/sh\n" + body)
+    stub.chmod(0o755)
+    return str(stub)
+
+
+def test_a_coordinator_that_acts_before_its_init_event_is_stopped(world, tmp_path):
+    world.write_config(mode="act")
+    out = tmp_path / "c.jsonl"
+    res = coordinator.run(config.scope("broomva"), 3, "/x/fleet", out, True, claude=_stub(
+        tmp_path, "echo '{\"type\": \"assistant\", \"message\": {}}'\nexec sleep 20\n"))
+    assert res["exit"] == coordinator.EXIT_POSTURE and "before its init event" in res["posture"][0]
+
+
+def test_a_coordinator_with_no_init_event_is_stopped_at_the_deadline(world, tmp_path, monkeypatch):
+    import time
+    world.write_config(mode="act")
+    monkeypatch.setattr(coordinator, "INIT_S", 1.0)
+    t0 = time.monotonic()
+    res = coordinator.run(config.scope("broomva"), 3, "/x/fleet", tmp_path / "c.jsonl", True,
+                          claude=_stub(tmp_path, "exec sleep 20\n"))
+    assert res["exit"] == coordinator.EXIT_POSTURE and "no init event" in res["posture"][0]
+    assert time.monotonic() - t0 < 15
+
+
+def test_the_tick_watchdogs_term_to_the_step_group_reaches_the_coordinators_claude(world, tmp_path):
+    import signal
+    import time
+    world.write_config(mode="act")
+    stub = _stub(tmp_path, "echo '%s'\nexec sleep 47.25\n" % json.dumps(
+        {"type": "system", "subtype": "init", "tools": ["Bash"]}))
+    env = dict(os.environ, FLEET_SCOPE="broomva", FLEET_CLAUDE_BIN=stub)
+    (world.state["broomva"] / "ticks" / "00003").mkdir(parents=True)
+    p = subprocess.Popen(["/bin/sh", str(FLEET), "coordinator", "--tick", "3"], env=env, start_new_session=True,
+                         stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    time.sleep(2.0)
+    kids = subprocess.run(["pgrep", "-P", str(p.pid)], capture_output=True, text=True).stdout.split()
+    assert kids, "the coordinator's claude didn't start"
+    os.killpg(p.pid, signal.SIGTERM)  # what tick.sh's watchdog sends to the step's group
+    p.wait(timeout=20)
+    time.sleep(0.5)
+    alive = []
+    for k in kids:
+        try:
+            os.kill(int(k), 0)
+            alive.append(k)
+        except OSError:
+            pass
+    assert alive == [], "the coordinator's claude outlived the group TERM"

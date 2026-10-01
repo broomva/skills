@@ -327,3 +327,11 @@ def test_an_unseen_batch_is_shown_now_again_next_tick_then_at_most_every_6_hours
     assert due(recs + [_seen(1, None, 8 * H), _seen(2, "Later", 7 * H)]) == [1]
     assert due(recs + [_seen(1, "Seen", 0.1 * H)]) == []          # a Seen click: not shown again
     assert due(recs + [_ack(1)]) == []                            # answered: nothing open
+
+
+def test_a_duplicate_spawn_is_an_ask():
+    recs = [{"v": 1, "id": "5-2", "ts": "t", "scope": "broomva", "tick": 5, "dry_run": False, "by": "recover",
+             "kind": "done", "verb": "spawn", "of": "4-1", "key": "broomva-x-pr7",
+             "result": {"session_ids": ["a", "b"], "duplicate": True}}]
+    rep = report.build(_snap([]), recs, True)
+    assert "spawn-duplicate:broomva-x-pr7" in [a["key"] for a in rep["asks"]]

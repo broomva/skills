@@ -402,6 +402,25 @@ def test_a_tick_first_closes_the_intents_a_dead_tick_left_open(rig):
     assert "recover: 0-1 spawn broomva-x-pr1 -> failed" in rig.log()
 
 
+def test_recover_reads_github_with_the_fleet_token(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    rec = {"v": 1, "id": "0-1", "ts": "2026-09-30T00:00:00.000Z", "scope": "broomva", "tick": 0, "dry_run": False,
+           "by": "act", "kind": "intent", "verb": "label", "key": "broomva/workspace#849",
+           "target": {"repo": "broomva/workspace", "pr": 849, "label": "x", "op": "add"}}
+    (sd / "ledger.jsonl").write_text(json.dumps(rec) + "\n")
+    rig.tick()
+    assert [x["by"] for x in rig.ledger() if x.get("of") == "0-1"] == ["recover"]
+    assert set(rig.calls("gh-token-lengths")) == {str(len(TOKEN))}  # recover's gh call included
+
+
+def test_a_live_tick_without_the_fleet_token_runs_no_coordinator_and_says_so(rig):
+    rig.world.write_config(mode="act", dry_run=0)
+    r = rig.tick()
+    assert r.returncode == 1 and "coordinator=skipped" in r.stdout and rig.calls("coordinator-env") == []
+    assert any("failed at token" in c for c in rig.calls("osascript"))
+
+
 def test_in_report_mode_no_coordinator_runs(rig):
     rig.tick()
     assert rig.calls("coordinator-env") == [] and "coordinator=" not in rig.log()
