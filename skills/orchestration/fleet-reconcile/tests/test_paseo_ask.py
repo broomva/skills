@@ -293,6 +293,29 @@ def test_an_item_maestro_no_longer_has_frees_its_batch_and_is_not_seen(stub, wor
     assert _sync(stub, sd) == (0, 0) and stub.args.read_text() == ""  # not read again
 
 
+def _notices(sd, what=None):
+    return [r for r in ledger.read(sd)[0] if r["kind"] == "notice" and (what is None or r["result"]["what"] == what)]
+
+
+def test_a_stuck_item_logs_once_then_is_rate_limited(stub, world, capsys):
+    # An item with an open ask is read every tick; a blocked one logs "Stuck" at most once per 6 h (#263 review).
+    sd, _ = _batch(world)  # its ask k1 stays open, so it is read each tick
+    stub.show.write_text(json.dumps({"item": {"state": "blocked"}, "events": []}))
+    assert _sync(stub, sd) == (0, 0)
+    assert "is Stuck" in capsys.readouterr().err and len(_notices(sd, "stuck")) == 1
+    assert _sync(stub, sd) == (0, 0)  # second tick: rate-limited
+    assert "is Stuck" not in capsys.readouterr().err and len(_notices(sd, "stuck")) == 1
+
+
+def test_a_persistent_read_error_fails_the_step_once_then_is_rate_limited(stub, world, monkeypatch, capsys):
+    # A persistent non-gone error fails the ask step at most once per 6 h, not every hour (#263 review).
+    sd, _ = _batch(world)
+    monkeypatch.setenv("STUB_EXIT", "1")
+    monkeypatch.setenv("STUB_ERR", "boom")  # not a gone/cap/busy refusal: a real breakage
+    assert _sync(stub, sd) == (0, 1) and len(_notices(sd, "error")) == 1
+    assert _sync(stub, sd) == (0, 0) and len(_notices(sd, "error")) == 1  # rate-limited: the step isn't failed again
+
+
 def test_every_maestro_state_has_one_phase():
     assert {s: ledger.maestro_phase(s) for s in ("proposed", "reviewing", "triggered", "running", "review",
                                                  "blocked", "done", "canceled", "gone", "surprise", None)} == {

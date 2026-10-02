@@ -86,6 +86,18 @@ def cmd_config_get(args: argparse.Namespace) -> int:
         return 2
 
 
+def cmd_is_dry(args: argparse.Namespace) -> int:
+    """Print _dry()'s answer (1 dry, 0 live) for the scope, so tick.sh records
+    the same dryness every verb acts under — one source of truth, not a second
+    read of `dry_run` that a config edit mid-tick could disagree with (§5.3;
+    #263 review). Any config error reads as dry, as the kill switch does."""
+    try:
+        print("1" if _dry(args, _sec(args)) else "0")
+    except SystemExit:
+        print("1")
+    return 0
+
+
 def cmd_config_check(args: argparse.Namespace) -> int:
     try:
         raw = config.load()
@@ -210,6 +222,12 @@ def _open_now(records: list) -> Dict[str, Dict]:
 #: the owner's answer. One with an open ask is read for as long as it is open.
 ASK_READ_DAYS = 14
 
+#: An item with an open ask is read every tick. A reminder it then produces (a
+#: Stuck item, or a persistent non-gone read error) is logged, and an error
+#: fails the ask step, at most once per this interval per item — not every hour
+#: (#263 review). 6 h matches tick.sh's alert dedup.
+NOTICE_RENOTIFY_S = 6 * 3600
+
 
 def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
     """Read the owner's decisions back from every item that isn't final and
@@ -223,12 +241,29 @@ def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
     from fleetlib import paseo_ask
 
     answered = failed = 0
-    since = time.time() - ASK_READ_DAYS * 86400
+    now = time.time()
+    since = now - ASK_READ_DAYS * 86400
     open_of = {v["of"] for v in ledger.open_by_key(records).values()}
+    prior_notices = ledger.notices(records)
 
     def seen(b: Dict[str, Any], state: str) -> None:
         ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": sec["scope"], "tick": None, "dry_run": False,
                            "by": "tick", "result": {"channel": "maestro", "item": b["item"], "state": state}})
+
+    def note(b: Dict[str, Any], what: str, line: str) -> bool:
+        """Log `line` for item/what at most once per NOTICE_RENOTIFY_S; return
+        whether it was logged (so a caller counts a failure only when it was)."""
+        item = b.get("item")
+        if not isinstance(item, str):
+            return False
+        if now - prior_notices.get((item, what), 0.0) < NOTICE_RENOTIFY_S:
+            return False
+        print(line, file=sys.stderr)
+        ledger.append(sd, {"kind": "notice", "of": b["id"], "scope": sec["scope"], "tick": None,
+                           "dry_run": False, "by": "tick", "result": {"channel": "maestro", "item": item,
+                                                                       "what": what}})
+        prior_notices[(item, what)] = now
+        return True
 
     def gone(b: Dict[str, Any]) -> None:
         print("fleet act ask: Maestro no longer has item %s of tick %s; its batch is raised again while an ask in "
@@ -248,8 +283,8 @@ def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
             if exc.refusal == "gone":
                 gone(b)
                 continue
-            print("fleet act ask: Maestro item %s of tick %s: %s" % (b["item"], b["tick"], exc), file=sys.stderr)
-            failed += 1
+            if note(b, "error", "fleet act ask: Maestro item %s of tick %s: %s" % (b["item"], b["tick"], exc)):
+                failed += 1  # a persistent read error fails the step at most once per NOTICE_RENOTIFY_S
             continue
         state = ans["state"]
         if ledger.maestro_phase(state) == "queued" and b["id"] in open_of:  # a cleared batch stays queued
@@ -275,8 +310,8 @@ def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
                                "result": dict(ans, channel="maestro", item=b["item"])})
             answered += 1
         elif ans["state"] == "blocked":
-            print("fleet act ask: Maestro item %s of tick %s is Stuck (its run failed); it shows there, and only "
-                  "the owner can unblock or cancel it" % (b["item"], b["tick"]), file=sys.stderr)
+            note(b, "stuck", "fleet act ask: Maestro item %s of tick %s is Stuck (its run failed); it shows there, "
+                 "and only the owner can unblock or cancel it" % (b["item"], b["tick"]))
     return answered, failed
 
 
@@ -371,7 +406,15 @@ def cmd_act_verb(args: argparse.Namespace, sec: dict) -> int:
         print("fleet act %s: refused: scope %s is in report mode (observe, classify and ask); every other verb "
               "waits for mode: act (§5.7)" % (args.verb, sec["scope"]), file=sys.stderr)
         return EXIT_REFUSED
-    run = act.Act(sec, Sources(), _tick(args), _dry(args, sec))
+    dry = _dry(args, sec)
+    # When the config says dry_run 0 but it is refused (no live_accepted, or it
+    # doesn't name the gate tickets), the verb runs dry. Say why on stderr, so a
+    # terminal `fleet act` doesn't look live-but-silent (#263 review).
+    if dry and sec.get("dry_run") == 0:
+        refusal = config.live_refusal(sec)
+        if refusal:
+            print("fleet act %s: acting dry: %s" % (args.verb, refusal), file=sys.stderr)
+    run = act.Act(sec, Sources(), _tick(args), dry)
     try:
         if args.verb == "mail":
             if not args.session:
@@ -668,6 +711,8 @@ def main(argv=None) -> int:
     p.add_argument("scope_id", nargs="?")
     p.add_argument("--init", default=None, help="check a coordinator's stream-json init event (a file)")
     p.set_defaults(func=cmd_config_check)
+    p = scoped(sub.add_parser("is-dry", help="print 1 (dry) or 0 (live) as _dry() computes it for the scope"))
+    p.set_defaults(func=cmd_is_dry)
     p = scoped(sub.add_parser("observe"))
     p.add_argument("--tick", type=int, required=True)
     p.add_argument("--fixtures", default=None, help="read captured copies from DIR (tests)")

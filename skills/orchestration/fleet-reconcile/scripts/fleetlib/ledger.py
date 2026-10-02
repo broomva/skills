@@ -33,7 +33,8 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 
 from . import common
 
-KINDS = ("intent", "done", "failed", "unknown", "seen", "ack", "adopt", "tick_fire", "b_step", "runner_exit")
+KINDS = ("intent", "done", "failed", "unknown", "seen", "ack", "adopt", "tick_fire", "b_step", "runner_exit",
+         "notice")  # notice: a rate-limited reminder (a Stuck item, a persistent read error), not an action
 OUTCOMES = ("done", "failed", "unknown")
 VERBS = ("mail", "spawn", "label", "resume", "ask")
 REASONS = ("not_live", "ambiguous_name", "harness_refused", "gate_refused", "unledgered_send", "name_taken",
@@ -225,6 +226,24 @@ def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 if b["acked"] != "all":
                     b["acked"] = "all" if r.get("asks") == "all" else b["acked"] | set(r.get("asks") or [])
     return list(batches.values())
+
+
+def notices(records: Iterable[Dict[str, Any]]) -> Dict[Tuple[str, str], float]:
+    """{(maestro item id, what): the latest time a `notice` of that kind was
+    logged, as epoch seconds}. Used to rate-limit the reminders a still-open
+    ask produces each tick (a Stuck item, a persistent read error)."""
+    out: Dict[Tuple[str, str], float] = {}
+    for r in records:
+        if r.get("kind") != "notice":
+            continue
+        res = r.get("result") or {}
+        item, what = res.get("item"), res.get("what")
+        if not isinstance(item, str) or not isinstance(what, str):
+            continue
+        at = common.parse_iso(res.get("ts") or r.get("ts"))
+        if at is not None:
+            out[(item, what)] = max(at, out.get((item, what), 0.0))
+    return out
 
 
 def open_asks(batch: Dict[str, Any]) -> List[Dict[str, Any]]:

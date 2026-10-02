@@ -76,7 +76,12 @@ def driver_key(scope_id: str, slug: str, number: int) -> str:
 
 def render_template(name: str, values: Dict[str, Any]) -> str:
     """A fixed template with its placeholders filled; every value passes the
-    text guard first (it comes from observations other sessions can write)."""
+    text guard first (it comes from observations other sessions can write). A
+    non-string value is a caller bug (it is how the PR number once rendered
+    blank, #263): raise rather than let safe_text blank it silently."""
+    for k, v in values.items():
+        if not isinstance(v, str):
+            raise ValueError("render_template(%s): value %r is %s, not str" % (name, k, type(v).__name__))
     text = (TEMPLATES / name).read_text(encoding="utf-8")
     return text.format(**{k: common.safe_text(v, 200) for k, v in values.items()}).strip()
 
@@ -257,6 +262,10 @@ class Act:
             raise Refused("ineligible", "%s#%d is a draft" % (slug, number))
         if pr["dependabot"]:
             raise Refused("ineligible", "%s#%d is Dependabot's (batched separately)" % (slug, number))
+        if pr.get("fork"):
+            raise Refused("ineligible", "%s#%d is from a fork: a fork's author picks the head-branch name and the "
+                                        "PR text a driver's brief would carry, so fork PRs get no driver (spec "
+                                        "§5.2 W3)" % (slug, number))
         if any(lb.lower() == HOLD_LABEL for lb in pr["labels"]):
             raise Refused("ineligible", "%s#%d is held (label %s)" % (slug, number, HOLD_LABEL))
         # Raw names: a snapshot's are guarded for display (clipped or withheld).
@@ -296,6 +305,12 @@ class Act:
         key = driver_key(self.sec["scope"], slug, number)
         try:
             self.preflight("spawn", [key, "repo:%s" % slug, "rules:%s:" % slug])
+            # The brief carries the repo slug into the update-branch command (PUT /repos/<slug>/...): a slug the
+            # text guard would withhold (a crm/ segment, credential-shaped) must get no driver, not a brief with
+            # "[withheld]" in a command (#263 review).
+            if common.safe_text(slug, 200) != slug:
+                raise Refused("ineligible", "%s's repo slug isn't text the brief can carry into its update-branch "
+                                            "command (the guard withholds it); it gets no driver" % slug)
             if role != "driver":
                 raise Refused("ineligible", "janitor runs are report-only until the phase-2 janitor drill passes "
                                             "(§5.5); research spawns aren't built")

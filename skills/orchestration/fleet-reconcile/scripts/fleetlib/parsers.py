@@ -343,7 +343,7 @@ def evaluate_rules(rules: List[Dict[str, Any]], actions_app_id: int) -> Dict[str
     }
 
 
-PR_FIELDS = "number,title,headRefName,baseRefName,isDraft,author,labels,url,updatedAt,mergeStateStatus"
+PR_FIELDS = "number,title,headRefName,baseRefName,isDraft,isCrossRepository,author,labels,url,updatedAt,mergeStateStatus"
 
 
 def parse_pr_list(text: Any, what: str = "prs") -> List[Dict[str, Any]]:
@@ -364,6 +364,9 @@ def parse_pr_list(text: Any, what: str = "prs") -> List[Dict[str, Any]]:
             "head_raw": p["headRefName"],  # observe turns it into a join key and drops it
             "base": p.get("baseRefName") if isinstance(p.get("baseRefName"), str) else None,
             "draft": bool(p.get("isDraft")),
+            # A fork PR: its author picked the head-branch name and the body text that reach a driver's
+            # brief, so it gets no driver (spec §5.2 W3). Absent in a capture reads as not-a-fork.
+            "fork": bool(p.get("isCrossRepository")),
             "author": common.safe_text(login, 40),
             "bot": bool(author.get("is_bot")) or login.startswith("app/") or login.endswith("[bot]"),
             "dependabot": "dependabot" in login.lower(),

@@ -67,7 +67,23 @@ mkdir -p "$STATE_DIR" 2>/dev/null && chmod 700 "$STATE_DIR" 2>/dev/null
 LOG="$STATE_DIR/tick.log"
 NOTICE="$STATE_DIR/.disabled-notice"
 LOCK="$STATE_DIR/.tick.lock"
-log() { echo "[$(date -u +%FT%TZ)] $*" >> "$LOG"; }
+log() { echo "[$(date -u +%FT%TZ)] $*" >> "$LOG" 2>/dev/null; }
+
+# Is the state dir usable? The log, alert stamps, lock and ledger all live here.
+# When it can't be written, the alert stamp falls back to TMPDIR so the owner
+# hears a failure once per 6 h (not every tick), and an unusable state dir gets
+# its own alert kind below rather than being misread as a config-check failure
+# (#263 review). The ledger is unwritable either way, so alert() then skips the
+# Python path (which needs the ledger) and goes straight to the bash fallback.
+STAMP_DIR="$STATE_DIR"
+STATE_UNWRITABLE=""
+if ( : > "$STATE_DIR/.writable" ) 2>/dev/null; then
+  rm -f "$STATE_DIR/.writable" 2>/dev/null
+else
+  STATE_UNWRITABLE=1
+  STAMP_DIR="${TMPDIR:-/tmp}/fleet-reconcile-$SCOPE"
+  mkdir -p "$STAMP_DIR" 2>/dev/null
+fi
 
 # The owner channel's paths from the config, before any alert can fire (an
 # unreadable config leaves the defaults).
@@ -90,14 +106,18 @@ done
 # another session's words. When Maestro itself is down, the alert reaches no
 # one but this log: that is the channel's one blind spot.
 alert() {
-  local kind=$1 msg=$2 stamp="$STATE_DIR/.alert-$1" now last rc
+  local kind=$1 msg=$2 stamp="$STAMP_DIR/.alert-$1" now last rc
   log "ALERT $kind: $msg"
   now=$(date +%s)
   last=$(file_mtime "$stamp"); case "$last" in (""|*[!0-9]*) last=0 ;; esac
   [ $((now - last)) -ge 21600 ] || return 0
   [ "${FLEET_NOTIFY:-}" = "0" ] && return 0
-  "$FLEET" alert --scope "$SCOPE" --kind "$kind" --message "$msg (tick.log: $LOG)" </dev/null >> "$LOG" 2>&1
-  rc=$?
+  if [ -n "$STATE_UNWRITABLE" ]; then
+    rc=99  # the Python alert needs the ledger, which lives in the unwritable state dir: use the bash fallback
+  else
+    "$FLEET" alert --scope "$SCOPE" --kind "$kind" --message "$msg (tick.log: $LOG)" </dev/null >> "$LOG" 2>&1
+    rc=$?
+  fi
   case "$rc" in
     (0) touch "$stamp" ;;
     (4) log "ALERT $kind NOT delivered: still queued in Maestro (its run cap, or its loop is starting it); the next alert of its kind dispatches it" ;;
@@ -173,20 +193,26 @@ Change nothing and run no tools. End your turn at once with exactly two sections
   fi
   # To a file, not a command substitution: a child left holding a pipe would hold the tick. A file of its
   # own (not one in STATE_DIR: the fallback runs when things are broken, and two ticks before the lock can
-  # both run it). With no file at all the call still goes out, but an exit 1 can't be read as Maestro's and
-  # is retried at the next tick.
-  local out rc
-  out=$(mktemp "${TMPDIR:-/tmp}/fleet-alert.XXXXXX" 2>/dev/null) || out=/dev/null
-  bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json \
-    </dev/null >"$out" 2>&1
-  rc=$?
-  cat "$out" >> "$LOG" 2>/dev/null
-  local answered=no
+  # both run it). When mktemp itself fails, capture in memory instead — still bounded by bounded's watchdog —
+  # so an exit-1 refusal can still be classified rather than lost to /dev/null and retried every tick (#263).
+  local out rc cap answered=no
+  out=$(mktemp "${TMPDIR:-/tmp}/fleet-alert.XXXXXX" 2>/dev/null) || out=""
+  if [ -n "$out" ]; then
+    bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json \
+      </dev/null >"$out" 2>&1
+    rc=$?
+    cap=$(cat "$out" 2>/dev/null)
+    rm -f "$out"
+  else
+    cap=$(bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" \
+      --dispatch --json </dev/null 2>&1)
+    rc=$?
+  fi
+  printf '%s\n' "$cap" >> "$LOG" 2>/dev/null
   case "$rc" in
     (0|3) answered=yes ;;
-    (1) grep -q '^maestro: ' "$out" 2>/dev/null && answered=yes ;;
+    (1) printf '%s\n' "$cap" | grep -q '^maestro: ' && answered=yes ;;
   esac
-  [ "$out" = /dev/null ] || rm -f "$out"
   case "$rc:$answered" in
     (0:yes) return 0 ;;
     (*:yes) return 1 ;;
@@ -213,18 +239,29 @@ if [ "$KILL" != "1" ]; then
 fi
 rm -f "$NOTICE"
 
+# A state dir we can't write would make the config-check redirect below fail and
+# read as a config-check failure (the wrong reason, raised every tick since its
+# stamp can't be written either). Catch it first, with its own kind and a TMPDIR
+# stamp, so the owner hears the real reason once per 6 h (#263 review).
+if [ -n "$STATE_UNWRITABLE" ]; then
+  alert statedir "the state dir for scope $SCOPE can't be written ($STATE_DIR); no tick until it can"
+  exit 1
+fi
+
 if ! "$FLEET" config-check "$SCOPE" >> "$LOG" 2>&1; then
   alert config "config-check failed for scope $SCOPE; no tick until it passes"
   exit 1
 fi
 
 # ── dry run falls toward dry ─────────────────────────────────────────────────
-DRY=$(cfg dry_run)
-[ "$DRY" = "0" ] || DRY=1
-case "${DRY_RUN:-}" in
-  (""|0) : ;;
-  (*) DRY=1 ;;
-esac
+# One source of truth: ask fleet for _dry()'s own answer (it folds in dry_run,
+# live_accepted/live_refusal and the DRY_RUN env), so the tick records the same
+# dryness every verb acts under, even if the config changed between config-check
+# and here (#263 review). Any error reads as dry.
+DRY=$("$FLEET" is-dry --scope "$SCOPE" 2>>"$LOG")
+case "$DRY" in (0) : ;; (*) DRY=1 ;; esac
+# DRY_RUN in the env still forces dry (defence in depth; is-dry already honours it).
+case "${DRY_RUN:-}" in (""|0) : ;; (*) DRY=1 ;; esac
 
 # ── lock: one tick per scope at a time ───────────────────────────────────────
 # A stale lock is reclaimed under a second mkdir mutex, and its holder is

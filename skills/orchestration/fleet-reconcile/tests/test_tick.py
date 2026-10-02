@@ -89,9 +89,12 @@ def rig(fresh_world, tmp_path):
     tok.parent.mkdir(parents=True)
     tok.write_text(TOKEN + "\n")
     tok.chmod(0o600)
+    tmpdir = tmp_path / "tmp"
+    tmpdir.mkdir()
     env = {"FLEET_CLAUDE_BIN": str(bin_ / "claude"), "FLEET_GH_BIN": str(bin_ / "gh"),
            "CTX_CLAUDE_BIN": str(bin_ / "claude"), "FLEET_MAESTRO_BIN": str(bin_ / "maestro"),
-           "FLEET_ASK_REPO": str(tmp_path / "ask-repo"), "FLEET_NOTIFY": "1", "FLEET_SCOPE": "broomva"}
+           "FLEET_ASK_REPO": str(tmp_path / "ask-repo"), "FLEET_NOTIFY": "1", "FLEET_SCOPE": "broomva",
+           "TMPDIR": str(tmpdir)}  # isolate the TMPDIR alert-stamp fallback (broken state dir) per test
     base_config = w.write_config
 
     def write_config(**kw):
@@ -295,7 +298,8 @@ def test_each_run_leaves_one_line_on_stdout_for_launchds_log(rig):
 @pytest.mark.parametrize("cfg_dry,env_dry,expected", [(1, None, True), (0, None, False), (0, "1", True),
                                                       (1, "0", True), (0, "yes", True)])
 def test_dry_run_falls_toward_dry(rig, cfg_dry, env_dry, expected):
-    rig.world.write_config(dry_run=cfg_dry, **({"live_accepted": "test"} if cfg_dry == 0 else {}))
+    rig.world.write_config(dry_run=cfg_dry,
+                           **({"live_accepted": "phase 3, BRO-2755 and BRO-2756 done (test)"} if cfg_dry == 0 else {}))
     rig.tick(**({"DRY_RUN": env_dry} if env_dry is not None else {}))
     fire = [x for x in rig.ledger() if x["kind"] == "tick_fire"][0]
     assert fire["dry_run"] is expected
@@ -492,6 +496,32 @@ def test_the_bash_fallback_reaches_maestro_when_its_state_dir_is_broken(rig):
     assert r.returncode == 1 and len(rig.raised("fleet broomva: config")) == 1  # the last channel still works
 
 
+def test_an_unwritable_state_dir_alerts_its_own_kind_not_a_config_failure(rig):
+    # A valid config but a state dir that can't be written: the owner hears the real reason (statedir), once,
+    # not a misread config-check every hour (#263 review). The stamp lives under TMPDIR (writable).
+    sd = rig.world.state["broomva"]
+    sd.parent.mkdir(parents=True, exist_ok=True)
+    sd.write_text("a file where the state dir goes")
+    r1 = rig.tick()
+    r2 = rig.tick()
+    assert r1.returncode == 1 and r2.returncode == 1
+    assert len(rig.raised("fleet broomva: statedir")) == 1  # its own kind, deduped via the TMPDIR stamp
+    assert not rig.raised("fleet broomva: config")  # not misread as a config-check failure
+
+
+def test_the_bash_fallback_classifies_a_refusal_in_memory_when_mktemp_fails(rig, tmp_path):
+    # mktemp can't make its temp file: capture in memory instead, so an exit-1 refusal is still classified
+    # (stamped, not retried every tick) rather than lost to a /dev/null it can't grep (#263 review).
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    ro.chmod(0o500)  # read+execute, no write: mktemp fails here
+    rig.world.config.write_text("not json")  # force the bash fallback
+    sd = rig.world.state["broomva"]
+    r = rig.tick(TMPDIR=str(ro), STUB_NEW_EXIT="1")  # Maestro refuses (exit 1 with a "maestro: " line)
+    assert r.returncode == 1 and (sd / ".alert-config").exists()  # classified as answered -> stamped, not retried
+    assert "no answer from Maestro" not in rig.log()
+
+
 def test_live_mode_is_refused_until_its_preconditions_are_recorded(rig):
     # 0.4.0 removed the token that kept live mode closed; dry_run 0 alone no longer makes a tick live.
     rig.world.write_config(mode="act", dry_run=0)
@@ -500,7 +530,11 @@ def test_live_mode_is_refused_until_its_preconditions_are_recorded(rig):
     r = rig.tick()
     assert r.returncode == 1 and rig.raised("fleet broomva: config") and rig.calls("coordinator-env") == []
     assert not [x for x in rig.ledger() if x["kind"] == "tick_fire"]  # no tick at all
-    rig.world.write_config(mode="act", dry_run=0, live_accepted="phase 3 and BRO-2755 done (test)")
+    # A note that doesn't name both gate tickets is still refused (#263 review: no bare "no"/"TODO").
+    rig.world.write_config(mode="act", dry_run=0, live_accepted="BRO-2755 done, 2756 TODO")
+    check = rig.fleet("config-check", "broomva")
+    assert check.returncode == 1 and "BRO-2756" in check.stderr
+    rig.world.write_config(mode="act", dry_run=0, live_accepted="phase 3, BRO-2755 and BRO-2756 done (test)")
     assert rig.fleet("config-check", "broomva").returncode == 0
 
 
@@ -509,10 +543,29 @@ def test_every_verb_stays_dry_while_live_mode_is_unaccepted(rig):
 
     import fleet_reconcile
     args = argparse.Namespace(dry_run=None)
-    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0}) is True
-    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": " "}) is True
-    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": "done"}) is False
-    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 1, "live_accepted": "done"}) is True
+    gate = "phase 3, BRO-2755 and BRO-2756 done"
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0}) is True            # not set
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": " "}) is True   # blank
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": "done"}) is True  # no ticket
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": "BRO-2755"}) is True  # one
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": gate}) is False  # both named
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 1, "live_accepted": gate}) is True   # dry_run 1
+
+
+def test_every_verb_stays_dry_at_the_cli_under_an_unaccepted_dry_run_0(rig):
+    # Not just _dry(): the dryness flows through the actual verbs (#263 review). dry_run 0 with no live_accepted.
+    rig.world.write_config(mode="act", dry_run=0)
+    assert rig.fleet("is-dry").stdout.strip() == "1"  # the one source of truth tick.sh reads
+    lab = rig.fleet("act", "label", "--repo", "broomva/workspace", "--pr", "849", "--label", "ci-heal-escalation")
+    res = json.loads(lab.stdout)
+    assert res["dry_run"] is True and res["result"]["would"] is True  # label logs only
+    assert "acting dry" in lab.stderr and "live_accepted" in lab.stderr  # #3: it says why
+    sp = rig.fleet("act", "spawn", "--repo", "broomva/workspace", "--pr", "849")
+    assert "acting dry" in sp.stderr  # printed before spawn runs, whatever it then decides
+    (rig.world.state["broomva"] / "ticks" / "00001").mkdir(parents=True, exist_ok=True)  # the report step makes this
+    rig.fleet("coordinator", "--scope", "broomva", "--tick", "1")  # config-check would block a full tick; call direct
+    env = dict(ln.split("=", 1) for ln in rig.calls("coordinator-env") if "=" in ln)
+    assert env["DRY_RUN"] == "1"  # the coordinator child is told dry even though dry_run is 0
 
 
 def test_a_raised_batch_whose_run_cant_start_is_recorded_queued_and_dispatched_later(rig):
@@ -624,7 +677,7 @@ def test_recover_reads_github_on_the_owners_login(rig):
 
 def test_a_live_tick_runs_the_coordinator_on_the_owners_login(rig):
     # The fleet token is waived (spec §5.2 precondition 1): a live tick needs none.
-    rig.world.write_config(mode="act", dry_run=0, live_accepted="phase 3 and BRO-2755 done (test)")
+    rig.world.write_config(mode="act", dry_run=0, live_accepted="phase 3, BRO-2755 and BRO-2756 done (test)")
     r = rig.tick()
     assert r.returncode == 0 and "coordinator=0" in r.stdout and rig.calls("coordinator-env") != [], rig.log()
     assert not rig.raised("tick-token")
