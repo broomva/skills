@@ -669,6 +669,12 @@ PROTECTIONS = [
      [T + "test_act.py", "-k", "held_draft_or_dependabot"]),
     ("a ref is matched at its start only", COM, "REF_RE.fullmatch(name)", "REF_RE.match(name)",
      [T + "test_act.py", "-k", "held_draft_or_dependabot"]),
+    ("the brief pushes before its LFS check", "templates/driver-brief.md",
+     "   Before every push, run `git lfs ls-files origin/{base} HEAD`: if it lists a file, or fails, stop BLOCKED and say\n"
+     "   so, without pushing: LFS objects can't be pushed from here. Then push with `git -c core.hooksPath=/dev/null push`:\n",
+     "   Push with `git -c core.hooksPath=/dev/null push` first. Then, if `git lfs ls-files origin/{base} HEAD` lists a\n"
+     "   file, or fails, stop BLOCKED and say so: LFS objects can't be pushed from here:\n",
+     [T + "test_act.py", "-k", "carries_the_pr_number"]),
     ("the brief's PR number renders blank", ACT, '"pr": str(number)', '"pr": number',
      [T + "test_act.py", "-k", "carries_the_pr_number"]),
     ("a file list GitHub capped reads as complete", "scripts/fleetlib/sources.py",

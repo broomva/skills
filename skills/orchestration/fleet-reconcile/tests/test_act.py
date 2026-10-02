@@ -495,6 +495,7 @@ def test_the_driver_brief_carries_the_pr_number_and_plain_branches(world, monkey
     assert res["ok"], res
     assert "pull request broomva/workspace#849 (branch feat/x-1.2_y, base release/2026.10)" in brief
     assert "/pulls/849/update-branch" in brief and "git lfs ls-files origin/release/2026.10 HEAD" in brief
+    assert brief.index("git lfs ls-files") < brief.index("core.hooksPath=/dev/null push")  # checked before any push
 
 
 def test_a_hostile_default_branch_is_refused_when_the_pr_names_no_base(world, monkeypatch):
