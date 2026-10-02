@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -204,7 +205,8 @@ def live_refusal(sec: Dict[str, Any]) -> Optional[str]:
         return ("scope %s: dry_run 0 is refused until live_accepted records that phase 3's checks, the recovery "
                 "drill, the owner's review of the dry run and %s are done (SKILL.md, Phase 3)"
                 % (sec.get("scope"), " and ".join(LIVE_TICKETS)))
-    missing = [t for t in LIVE_TICKETS if t not in note]
+    # Match each ticket as a whole id, not a substring: "BRO-27550" must not satisfy "BRO-2755" (P20 round 1).
+    missing = [t for t in LIVE_TICKETS if not re.search(r"\b%s\b" % re.escape(t), note)]
     if missing:
         return ("scope %s: live_accepted must name the phase-3 gate ticket(s) %s so a bare \"no\" or \"TODO\" can't "
                 "pass as the owner's note (SKILL.md, Phase 3)" % (sec.get("scope"), ", ".join(missing)))

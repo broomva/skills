@@ -548,6 +548,8 @@ def test_every_verb_stays_dry_while_live_mode_is_unaccepted(rig):
     assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": " "}) is True   # blank
     assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": "done"}) is True  # no ticket
     assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": "BRO-2755"}) is True  # one
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0,
+                                       "live_accepted": "BRO-27550 BRO-27560"}) is True  # substrings, not the ids
     assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": gate}) is False  # both named
     assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 1, "live_accepted": gate}) is True   # dry_run 1
 
