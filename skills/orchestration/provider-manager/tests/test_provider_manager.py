@@ -654,6 +654,112 @@ def test_hook_post_tool_use_writes_zero_bytes_to_stdout():
     assert "Rate limit detected" in stderr_buf.getvalue()
 
 
+def test_merge_mcp_oauth_preserves_live_tokens():
+    live_creds = {
+        "claudeAiOauth": {"accessToken": "old-claude-tok"},
+        "mcpOAuth": {
+            "linear-server|638130d5ab3558f4": {
+                "serverName": "linear-server",
+                "accessToken": "lin_access_token_valid",
+                "refreshToken": "lin_refresh_token_valid",
+                "expiresAt": 1799999999999
+            },
+            "granola|55ca1435a7ba6440": {
+                "serverName": "granola",
+                "accessToken": "granola_tok_valid"
+            }
+        }
+    }
+    # Target credentials from Orca has empty stub for Linear and no entry for Granola
+    target_creds = {
+        "claudeAiOauth": {"accessToken": "new-claude-tok"},
+        "mcpOAuth": {
+            "linear-server|638130d5ab3558f4": {
+                "serverName": "linear-server",
+                "accessToken": "",
+                "expiresAt": 0
+            },
+            "slack|12345": {
+                "serverName": "slack",
+                "accessToken": "slack_tok"
+            }
+        }
+    }
+
+    merged = pm.merge_mcp_oauth(target_creds, live_creds)
+    assert merged["claudeAiOauth"]["accessToken"] == "new-claude-tok"
+    
+    # Linear token from live is preserved (not overwritten by empty string)
+    assert merged["mcpOAuth"]["linear-server|638130d5ab3558f4"]["accessToken"] == "lin_access_token_valid"
+    assert merged["mcpOAuth"]["linear-server|638130d5ab3558f4"]["refreshToken"] == "lin_refresh_token_valid"
+    
+    # Granola from live is preserved
+    assert merged["mcpOAuth"]["granola|55ca1435a7ba6440"]["accessToken"] == "granola_tok_valid"
+    
+    # Slack from target is retained
+    assert merged["mcpOAuth"]["slack|12345"]["accessToken"] == "slack_tok"
+
+
+def test_switch_account_preserves_live_mcp_oauth(mock_orca_data, mock_claude_json):
+    future_ms = int((time.time() + 3600) * 1000)
+    fake_target_creds = {
+        "claudeAiOauth": {
+            "accessToken": "tok-target",
+            "refreshToken": "ref-target",
+            "expiresAt": future_ms
+        },
+        # Orca has empty linear stub
+        "mcpOAuth": {
+            "linear-server|638130d5ab3558f4": {
+                "serverName": "linear-server",
+                "accessToken": ""
+            }
+        }
+    }
+
+    live_scoped_creds = {
+        "claudeAiOauth": {"accessToken": "tok-active-old"},
+        "mcpOAuth": {
+            "linear-server|638130d5ab3558f4": {
+                "serverName": "linear-server",
+                "accessToken": "lin_valid_token_123",
+                "refreshToken": "lin_refresh_token_456"
+            }
+        }
+    }
+
+    keychain_writes = {}
+
+    def fake_read_keychain(service, account=None):
+        if service == pm.KEYCHAIN_ORCA_SERVICE and account == "acc-2":
+            return fake_target_creds
+        if service == pm.KEYCHAIN_CLAUDE_SCOPED:
+            return live_scoped_creds
+        return None
+
+    def fake_write_keychain(service, account, data):
+        keychain_writes[service] = data
+        return True
+
+    with patch.object(pm, "get_orca_data", return_value=mock_orca_data), \
+         patch.object(pm, "get_claude_json", return_value=mock_claude_json), \
+         patch.object(pm, "read_keychain_generic_password", side_effect=fake_read_keychain), \
+         patch.object(pm, "write_keychain_generic_password", side_effect=fake_write_keychain), \
+         patch.object(pm, "save_claude_json", return_value=True), \
+         patch.object(pm, "save_orca_data", return_value=True), \
+         patch.object(pm, "get_claude_auth_status", return_value={"loggedIn": True, "email": "secondary@example.com"}):
+
+        result = pm.switch_account("secondary@example.com")
+        assert result["success"] is True
+
+        # Verify scoped write kept the live linear token!
+        scoped_data = keychain_writes[pm.KEYCHAIN_CLAUDE_SCOPED]
+        assert scoped_data["claudeAiOauth"]["accessToken"] == "tok-target"
+        assert scoped_data["mcpOAuth"]["linear-server|638130d5ab3558f4"]["accessToken"] == "lin_valid_token_123"
+        assert scoped_data["mcpOAuth"]["linear-server|638130d5ab3558f4"]["refreshToken"] == "lin_refresh_token_456"
+
+
+
 
 
 
