@@ -759,6 +759,107 @@ def test_switch_account_preserves_live_mcp_oauth(mock_orca_data, mock_claude_jso
         assert scoped_data["mcpOAuth"]["linear-server|638130d5ab3558f4"]["refreshToken"] == "lin_refresh_token_456"
 
 
+def test_merge_mcp_oauth_handles_none_and_malformed():
+    # target has explicit None for mcpOAuth
+    target = {"claudeAiOauth": {"accessToken": "foo"}, "mcpOAuth": None}
+    live = {
+        "mcpOAuth": {
+            "linear": {"accessToken": "lin_tok"}
+        }
+    }
+    merged = pm.merge_mcp_oauth(target, live)
+    assert merged["mcpOAuth"]["linear"]["accessToken"] == "lin_tok"
+
+    # live is None or non-dict
+    merged_no_live = pm.merge_mcp_oauth(target, None)
+    assert merged_no_live["claudeAiOauth"]["accessToken"] == "foo"
+
+    # target mcpOAuth is not a dict (e.g. string or list)
+    target_malformed = {"claudeAiOauth": {"accessToken": "foo"}, "mcpOAuth": "invalid"}
+    merged_malformed = pm.merge_mcp_oauth(target_malformed, live)
+    assert merged_malformed["mcpOAuth"]["linear"]["accessToken"] == "lin_tok"
+
+
+def test_sync_claude_keychains_merges_across_both_keychains():
+    username = "testuser"
+    unscoped_data = {
+        "claudeAiOauth": {"accessToken": "old-unscoped"},
+        "mcpOAuth": {
+            "linear-server": {"accessToken": "lin_tok_from_unscoped", "refreshToken": "lin_ref"}
+        }
+    }
+    scoped_data = {
+        "claudeAiOauth": {"accessToken": "old-scoped"},
+        "mcpOAuth": {
+            "slack-server": {"accessToken": "slack_tok_from_scoped"}
+        }
+    }
+
+    target_creds = {
+        "claudeAiOauth": {"accessToken": "new-tok"},
+        "mcpOAuth": {
+            "linear-server": {"accessToken": ""}  # empty stub
+        }
+    }
+
+    written = {}
+
+    def fake_read(service, account):
+        if service == pm.KEYCHAIN_CLAUDE_UNSCOPED:
+            return unscoped_data
+        if service == pm.KEYCHAIN_CLAUDE_SCOPED:
+            return scoped_data
+        return None
+
+    def fake_write(service, account, data):
+        written[service] = data
+        return True
+
+    with patch.object(pm, "read_keychain_generic_password", side_effect=fake_read), \
+         patch.object(pm, "write_keychain_generic_password", side_effect=fake_write):
+
+        ok_scoped, ok_unscoped = pm.sync_claude_keychains(target_creds, username)
+        assert ok_scoped is True
+        assert ok_unscoped is True
+
+        # Both keychains received the merged tokens!
+        for s in [pm.KEYCHAIN_CLAUDE_SCOPED, pm.KEYCHAIN_CLAUDE_UNSCOPED]:
+            out = written[s]
+            assert out["claudeAiOauth"]["accessToken"] == "new-tok"
+            # Linear from unscoped preserved over empty stub
+            assert out["mcpOAuth"]["linear-server"]["accessToken"] == "lin_tok_from_unscoped"
+            # Slack from scoped preserved
+            assert out["mcpOAuth"]["slack-server"]["accessToken"] == "slack_tok_from_scoped"
+
+
+def test_switch_account_fails_if_scoped_keychain_write_fails(mock_orca_data, mock_claude_json):
+    future_ms = int((time.time() + 3600) * 1000)
+    fake_target_creds = {
+        "claudeAiOauth": {
+            "accessToken": "tok-target",
+            "refreshToken": "ref-target",
+            "expiresAt": future_ms
+        }
+    }
+
+    def fake_write_keychain(service, account, data):
+        # Scoped fails, unscoped succeeds
+        if service == pm.KEYCHAIN_CLAUDE_SCOPED:
+            return False
+        return True
+
+    with patch.object(pm, "get_orca_data", return_value=mock_orca_data), \
+         patch.object(pm, "get_claude_json", return_value=mock_claude_json), \
+         patch.object(pm, "read_keychain_generic_password", return_value=fake_target_creds), \
+         patch.object(pm, "write_keychain_generic_password", side_effect=fake_write_keychain), \
+         patch.object(pm, "save_claude_json", return_value=True), \
+         patch.object(pm, "save_orca_data", return_value=True):
+
+        with pytest.raises(RuntimeError, match="Failed to write credentials to scoped macOS Keychain"):
+            pm.switch_account("secondary@example.com")
+
+
+
 
 
 
