@@ -83,15 +83,19 @@ def _mail(src: Sources, t: Dict[str, Any], since: float) -> Tuple[str, Dict[str,
 def _delivered(e: Dict[str, Any]) -> List[str]:
     """The texts a transcript entry delivered, in §5.7's two shapes: a user
     entry's message (a string, or its text parts), or a queue-operation's
-    enqueued content. Anything else (an assistant entry quoting it) is none."""
+    enqueued content (an enqueue only: another operation carrying the text
+    isn't a delivery). Anything else (an assistant entry quoting it, a
+    malformed content) is none."""
     if e.get("type") == "queue-operation":
-        return [e["content"]] if isinstance(e.get("content"), str) else []
+        return [e["content"]] if e.get("operation") == "enqueue" and isinstance(e.get("content"), str) else []
     if e.get("type") != "user":
         return []
     content = (e.get("message") or {}).get("content") if isinstance(e.get("message"), dict) else None
     if isinstance(content, str):
         return [content]
-    return [c.get("text") for c in content or [] if isinstance(c, dict) and isinstance(c.get("text"), str)]
+    if not isinstance(content, list):
+        return []
+    return [c.get("text") for c in content if isinstance(c, dict) and isinstance(c.get("text"), str)]
 
 
 def _spawn(src: Sources, rows: List[Dict[str, Any]], t: Dict[str, Any], since: float) -> Tuple[str, Dict[str, Any]]:

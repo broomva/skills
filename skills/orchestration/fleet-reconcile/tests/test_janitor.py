@@ -252,29 +252,14 @@ def test_secrets_in_ignored_dirs_are_found_but_dependency_dirs_are_skipped(world
 
 def test_a_worktree_claude_rm_keeps_is_an_abort_and_a_removed_ones_profile_goes(world, wt):
     _listing(world, [_row(OWNER, wt)])
-    sd = world.state["broomva"]
-    (sd / "profiles").mkdir(parents=True)
-    prof = sd / "profiles" / "broomva-x-pr1.json"  # keyed by the ledger's spawn of this session
-    prof.write_text("{}")
-    decoy = sd / "profiles" / "fleet-drill-1.json"  # the listing's name: never what decides
+    prof = _profile(world, spawned=True)  # keyed by the ledger's spawn of this session
+    decoy = prof.parent / "fleet-drill-1.json"  # the listing's name: never what decides
     decoy.write_text("{}")
-    from fleetlib import ledger
-    it = ledger.append(sd, {"kind": "intent", "verb": "spawn", "key": "broomva-x-pr1", "target": {"name": "x"},
-                            "scope": "broomva", "tick": 1, "dry_run": False, "by": "act"})
-    ledger.append(sd, {"kind": "done", "verb": "spawn", "of": it["id"], "key": "broomva-x-pr1",
-                       "result": {"session_id": OWNER}, "scope": "broomva", "tick": 1, "dry_run": False, "by": "act"})
-    src = FixtureSources(world.fixture)
-    res = janitor.run(config.scope("broomva"), src, str(wt), OWNER, True, lambda m: None)
+    res = janitor.run(config.scope("broomva"), FixtureSources(world.fixture), str(wt), OWNER, True, lambda m: None)
     assert res["aborted"] == "rm kept the worktree" and prof.exists()  # the fixture's rm removes nothing
-
-    class Removes(FixtureSources):
-        def run_claude(self, args, cwd=None, timeout=120):
-            if args[0] == "rm":
-                subprocess.run(["git", "worktree", "remove", "--force", str(wt)], cwd=str(wt.parent / "scratch"),
-                               capture_output=True)
-            return "removed"
-    res = janitor.run(config.scope("broomva"), Removes(world.fixture), str(wt), OWNER, True, lambda m: None)
-    assert res["removed"] and not prof.exists() and decoy.exists(), res
+    res = janitor.run(config.scope("broomva"), _Removes(world.fixture, world, wt), str(wt), OWNER, True,
+                      lambda m: None)
+    assert res["removed"] and not prof.exists() and decoy.exists() and "left" not in res, res
 
 
 class _Removes(FixtureSources):
@@ -322,3 +307,40 @@ def test_no_profile_is_deleted_for_an_owner_the_ledger_never_spawned(world, wt):
     res = janitor.run(config.scope("broomva"), _Removes(world.fixture, world, wt), str(wt), OWNER, True,
                       lambda m: None)
     assert res["removed"] and prof.exists(), res
+
+
+# ── #261's deferred findings (BRO-2714) ──────────────────────────────────────
+
+def test_an_ignored_dir_it_cant_walk_fails_the_backup_check_rather_than_reading_as_empty(world, wt):
+    (wt / ".gitignore").write_text(".env\ndata/\n")
+    locked = wt / "data" / "locked"
+    locked.mkdir(parents=True)
+    (locked / "app.db").write_text("x")
+    locked.chmod(0)
+    try:
+        verdict, detail = _guard(world, wt).backup_possible()
+        assert verdict == "not run" and "locked" in detail
+        with pytest.raises(OSError):
+            janitor.backup(world.state["broomva"], str(wt))  # no backup, so no removal
+    finally:
+        locked.chmod(0o700)
+
+
+def test_a_profile_the_run_cant_delete_fails_it(world, wt, monkeypatch):
+    import argparse
+
+    import fleet_reconcile
+    _listing(world, [_row(OWNER, wt)])
+    prof = _profile(world, spawned=True)
+    prof.parent.chmod(0o500)  # the profile can't be unlinked
+    try:
+        res = janitor.run(config.scope("broomva"), _Removes(world.fixture, world, wt), str(wt), OWNER, True,
+                          lambda m: None)
+    finally:
+        prof.parent.chmod(0o700)
+    assert res["removed"] and res["left"] == [str(prof)] and prof.exists(), res
+    monkeypatch.setattr(janitor, "run", lambda *a: res)
+    args = argparse.Namespace(scope="broomva", path=str(wt), owner=OWNER, remove=True)
+    assert fleet_reconcile.cmd_janitor_run(args) == 1
+    monkeypatch.setattr(janitor, "run", lambda *a: dict(res, left=[]))
+    assert fleet_reconcile.cmd_janitor_run(args) == 0

@@ -27,6 +27,7 @@
 # Env: FLEET_SCOPE (required); FLEET_CONFIG (default ~/.config/ctx/fleet.json);
 # DRY_RUN (any value but 0 forces dry; no value makes a tick live, only the
 # config's dry_run 0 does); FLEET_PYTHON. Test seams: FLEET_TICK_TIMEOUT_S,
+# FLEET_ALERT_TIMEOUT_S and FLEET_KILL_GRACE_S (the bash fallback's watchdog),
 # FLEET_NOTIFY=0, FLEET_MAESTRO_BIN (or FLEET_MAESTRO_BUN and FLEET_MAESTRO_CLI), FLEET_ASK_REPO.
 set -uo pipefail
 
@@ -76,12 +77,13 @@ done
 # alert KIND MESSAGE: tell the owner in the Paseo app. At most once per 6 h
 # per kind. `fleet alert` adopts an open item of the same kind rather than
 # raising a second, and the stamp is touched once the item reached the owner
-# (ledger.maestro_phase: one queued at the run cap is dispatched by the next
-# alert of its kind). When it can't run at all (the config or Python is what
-# broke), the bash fallback raises one; it can't adopt or classify, so an item
-# it raised is stamped, queued or not, which keeps it to one per 6 h. The message is this script's own text, never
-# another session's words. When Maestro itself is down, the alert reaches no
-# one but this log: that is the channel's one blind spot.
+# (ledger.maestro_phase: one still queued is dispatched by the next alert of
+# its kind). When it can't run at all (the config or Python is what broke),
+# the bash fallback raises one; it can't adopt or classify, so any answer from
+# Maestro (made, refused, or no clear answer) is stamped, which keeps it to one
+# per 6 h whatever Maestro's words. The message is this script's own text,
+# never another session's words. When Maestro itself is down, the alert
+# reaches no one but this log: that is the channel's one blind spot.
 alert() {
   local kind=$1 msg=$2 stamp="$STATE_DIR/.alert-$1" now last rc
   log "ALERT $kind: $msg"
@@ -93,28 +95,61 @@ alert() {
   rc=$?
   case "$rc" in
     (0) touch "$stamp" ;;
-    (4) log "ALERT $kind NOT delivered: queued at Maestro's concurrency cap; the next alert of its kind dispatches it" ;;
-    (5) log "ALERT $kind NOT delivered: Maestro didn't take it; it's in this log only" ;;
+    (4) log "ALERT $kind NOT delivered: still queued in Maestro (its run cap, or its loop is starting it); the next alert of its kind dispatches it" ;;
+    (5) log "ALERT $kind NOT delivered: Maestro failed (above); an item it made is adopted by the next alert of its kind" ;;
     (*)
-      if maestro_alert "fleet $SCOPE: $kind [fleet-reconcile $SCOPE alert $kind]" "$msg (tick.log: $LOG)"; then
-        touch "$stamp"
-      else
-        log "ALERT $kind NOT delivered: Maestro didn't take it; it's in this log only"
-      fi ;;
+      maestro_alert "fleet $SCOPE: $kind [fleet-reconcile $SCOPE alert $kind]" "$msg (tick.log: $LOG)"
+      rc=$?
+      case "$rc" in
+        (0) touch "$stamp" ;;
+        (1|3)
+          touch "$stamp"
+          log "ALERT $kind: the bash fallback's item may or may not exist (Maestro refused or gave no clear answer, exit $rc; above), and it can't look, so the next attempt is in 6 h" ;;
+        (*) log "ALERT $kind NOT delivered: Maestro didn't take it (exit $rc); it's in this log only" ;;
+      esac ;;
   esac
   return 0
 }
 
+# bounded CMD...: run CMD under a TERM-then-KILL watchdog, as step does: TERM
+# after FLEET_ALERT_TIMEOUT_S (120 s, past maestro's own 90 s answer wait),
+# KILL 30 s later, so an alert whose Maestro ignores TERM can't hold the tick.
+# Returns CMD's status (143 or 137 when the watchdog ended it).
+bounded() {
+  local secs=${FLEET_ALERT_TIMEOUT_S:-120} grace=${FLEET_KILL_GRACE_S:-30} pid wd rc
+  case "$secs" in (""|*[!0-9]*) secs=120 ;; esac
+  case "$grace" in (""|*[!0-9]*) grace=30 ;; esac
+  "$@" &
+  pid=$!
+  (
+    trap 'kill $(jobs -p) 2>/dev/null; exit 0' TERM
+    sleep "$secs" &
+    wait
+    kill -TERM "$pid" 2>/dev/null || exit 0
+    sleep "$grace" &
+    wait
+    kill -KILL "$pid" 2>/dev/null
+  ) >/dev/null 2>&1 &
+  wd=$!
+  wait "$pid"
+  rc=$?
+  kill "$wd" 2>/dev/null
+  wait "$wd" 2>/dev/null
+  return "$rc"
+}
+
 # maestro_alert TITLE TEXT: the bash fallback, a Maestro work item at Needs you
 # in the Paseo app (owner decision 2026-10-01: never a desktop dialog), run in
-# the fleet's own scratch repo. Fails when Maestro doesn't take it (an item it
-# queued at its run cap counts as raised: Maestro's loop starts it later).
+# the fleet's own scratch repo, bounded. Returns maestro's exit: 0 made; 1
+# refused (a start that failed after Maestro made the item included); 3 no
+# clear answer (it may have made it); 2 not listening; 70 no scratch repo;
+# 137 or 143 stopped by the watchdog.
 maestro_alert() {
   local title=$1 text=$2 repo="${FLEET_ASK_REPO:-$HOME/.local/state/fleet-reconcile/maestro-asks}"
   if [ ! -d "$repo/.git" ]; then
     mkdir -p "$repo" && git -C "$repo" init -q -b main &&
       git -C "$repo" -c user.name=fleet -c user.email=fleet@localhost commit -q --allow-empty -m "fleet-reconcile ask runs" ||
-      return 1
+      return 70
   fi
   local brief="fleet-reconcile alert for scope $SCOPE: $text
 
@@ -125,12 +160,10 @@ Change nothing and run no tools. End your turn at once with exactly two sections
     set -- "${FLEET_MAESTRO_BUN:-$HOME/.bun/bin/bun}" "${FLEET_MAESTRO_CLI:-$HOME/broomva/apps/maestro-paseo/bin/maestro.ts}"
   fi
   local out rc
-  out=$("$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json </dev/null 2>&1)
+  out=$(bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json </dev/null 2>&1)
   rc=$?
   printf '%s\n' "$out" >> "$LOG"
-  # Raised also when Maestro may have made it (exit 3) or made it and couldn't
-  # start it ("Created <id>, but it cannot be dispatched yet"): the item exists.
-  [ "$rc" = "0" ] || [ "$rc" = "3" ] || case "$out" in (*"Created "*", but it cannot be dispatched"*) true ;; (*) false ;; esac
+  return "$rc"
 }
 
 # ── kill switch: read before anything fires; an unreadable value is off ──────

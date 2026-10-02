@@ -216,7 +216,7 @@ class Guard:
     def backup_possible(self) -> Verdict:
         try:
             secrets = secret_files(self.path)
-        except SourceError as exc:
+        except (SourceError, OSError) as exc:  # an ignored directory that can't be walked: unknown, not empty
             return "not run", str(exc)
         bad = [s for s in secrets if not os.access(os.path.join(self.path, s), os.R_OK)]
         if bad:
@@ -284,8 +284,14 @@ def backup(state_dir: Path, path: str, now: Optional[float] = None) -> Dict[str,
     return dict(manifest, dir=str(dest))
 
 
+def _walk_error(exc: OSError) -> None:
+    raise exc
+
+
 def secret_files(path: str) -> List[str]:
-    """Ignored files named like secrets (.env*, *.db): backed up before any removal."""
+    """Ignored files named like secrets (.env*, *.db): backed up before any
+    removal. Raises OSError when an ignored directory can't be walked: one
+    unread could hold a secret."""
     # --directory lists an ignored directory as one entry; each is walked for
     # secrets (data/app.db), except dependency and build output (§5.5).
     out = _git(path, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory")
@@ -296,7 +302,7 @@ def secret_files(path: str) -> List[str]:
         if os.path.isdir(full) and not os.path.islink(full):
             if os.path.basename(rel) in HEAVY_DIRS:
                 continue
-            for root, dirs, files in os.walk(full):
+            for root, dirs, files in os.walk(full, onerror=_walk_error):
                 dirs[:] = [d for d in dirs if d not in HEAVY_DIRS]
                 found += [os.path.relpath(os.path.join(root, f), path) for f in files
                           if any(fnmatch.fnmatch(f, g) for g in SECRET_GLOBS)]
@@ -359,9 +365,9 @@ def run(sec: Dict[str, Any], src: Sources, path: str, owner: str, remove: bool,
             top = os.path.realpath(_git(row["cwd"], "rev-parse", "--show-toplevel").strip())
         except SourceError as exc:
             top, why = None, "git couldn't read the owner's worktree: %s" % exc
-        else:
-            why = "PATH is not the owner's worktree (that is %s)" % common.safe_path(top)
         if top != g.path:
+            if top is not None:
+                why = "PATH is not the owner's worktree (that is %s)" % common.safe_path(top)
             row = None
     if row is None or not _inside(row["cwd"], g.path):
         step("owner", why)
@@ -433,4 +439,5 @@ def run(sec: Dict[str, Any], src: Sources, path: str, owner: str, remove: bool,
             shutil.rmtree(str(p)) if p.is_dir() else (p.unlink() if p.exists() else None)
         except OSError as exc:
             step("profile", "not removed: %s" % exc)
+            res.setdefault("left", []).append(str(p))  # the run fails: the cleanup didn't finish
     return res

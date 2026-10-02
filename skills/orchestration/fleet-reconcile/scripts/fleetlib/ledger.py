@@ -190,10 +190,11 @@ def maestro_phase(state: Any) -> Optional[str]:
 def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
     """Every ask batch, oldest first: {id, tick, ts, batch, asks, shown: [{ts,
     button, gave_up}], seen (its Maestro item reached the owner, phase owner or
-    final; or a phase-1 dialog's Seen click), item (its Maestro work id; None
-    once Maestro no longer has it, so the batch is raised again), item_state
-    (as last recorded), answer (the last answer read back from Maestro, or
-    None), acked (set of ask ids, or "all")}."""
+    final, or a phase-1 dialog's Seen click; cleared when the item is gone),
+    item (its Maestro work id; None once Maestro no longer has it, so the
+    batch is raised again), raised (when the fleet first recorded that item:
+    the latest raise), item_state (as last recorded), answer (the last answer
+    read back from Maestro, or None), acked (set of ask ids, or "all")}."""
     batches: Dict[str, Dict[str, Any]] = {}
     for r in records:
         kind = r.get("kind")
@@ -201,7 +202,7 @@ def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
             t = r.get("target") or {}
             batches[r["id"]] = {"id": r["id"], "tick": r.get("tick"), "ts": r.get("ts"), "batch": t.get("batch"),
                                 "asks": t.get("asks") or [], "shown": [], "seen": False, "acked": set(),
-                                "item": None, "item_state": None, "answer": None}
+                                "item": None, "raised": None, "item_state": None, "answer": None}
         elif r.get("of") in batches:
             b = batches[r["of"]]
             if kind == "seen":
@@ -210,9 +211,13 @@ def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 # Raised in Paseo (a Maestro item past the queue), or a phase-1 dialog's Seen click.
                 maestro = res.get("channel") == "maestro"
                 phase = maestro_phase(res.get("state")) if maestro else None
-                b["seen"] = b["seen"] or res.get("button") == "Seen" or phase in ("owner", "final")
+                # Gone: the item that reached the owner is no more, and the batch is raised again.
+                b["seen"] = phase != "gone" and (b["seen"] or res.get("button") == "Seen" or phase in ("owner", "final"))
                 if maestro and isinstance(res.get("item"), str):
-                    b["item"], b["item_state"] = (None if phase == "gone" else res["item"]), res.get("state")
+                    item = None if phase == "gone" else res["item"]
+                    if item is not None and item != b["item"]:
+                        b["raised"] = r.get("ts")
+                    b["item"], b["item_state"] = item, res.get("state")
             elif kind == "ack" and not r.get("resolved"):
                 if r.get("by") == "owner:maestro" and isinstance(r.get("result"), dict):
                     b["answer"] = r["result"]

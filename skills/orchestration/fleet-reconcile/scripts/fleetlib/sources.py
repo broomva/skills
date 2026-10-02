@@ -245,10 +245,21 @@ class Sources:
     def pr_files(self, slug: str, number: int) -> str:
         """A JSON array of every changed path of the PR, a rename's old path
         too (the owner-merge check), through REST with --paginate: `gh pr view
-        --json files` stops at 100. GitHub lists at most 3000 files."""
+        --json files` stops at 100. GitHub lists at most 3000 files, so a list
+        shorter than the PR's changed_files raises SourceError: the
+        owner-merge check never passes on part of one."""
+        total = _run([self.gh, "api", "repos/%s/pulls/%d" % (slug, number), "--jq", ".changed_files"], 60,
+                     token=True).strip()
         out = _run([self.gh, "api", "--paginate", "repos/%s/pulls/%d/files?per_page=100" % (slug, number),
-                    "--jq", ".[] | .filename, (.previous_filename // empty)"], 120, token=True)
-        return json.dumps([ln for ln in out.splitlines() if ln])
+                    "--jq", ".[] | [.filename, .previous_filename]"], 120, token=True)
+        try:
+            rows = [json.loads(ln) for ln in out.splitlines() if ln.strip()]
+        except ValueError:
+            raise SourceError("%s#%d's file list isn't JSON" % (slug, number))
+        if not total.isdigit() or len(rows) < int(total):
+            raise SourceError("GitHub listed %d of %s#%d's %s changed files (it lists at most 3000)"
+                              % (len(rows), slug, number, common.safe_text(total, 20) or "?"))
+        return json.dumps([f for row in rows if isinstance(row, list) for f in row if isinstance(f, str)])
 
     def pr_heads(self, slug: str, branch: str) -> str:
         """A JSON array of {number, state} for PRs from this head branch (the janitor)."""

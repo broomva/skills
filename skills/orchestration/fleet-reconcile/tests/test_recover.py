@@ -112,3 +112,19 @@ def test_an_entry_that_only_quotes_the_text_is_not_a_delivery(world):
     ])
     (rec,) = _run(world)
     assert rec["of"] == it["id"] and rec["kind"] == "failed"
+
+
+# ── #261's deferred findings (BRO-2714) ──────────────────────────────────────
+
+def test_only_an_enqueue_delivers_and_a_malformed_entry_neither_delivers_nor_stops_recovery(world):
+    removed = _intent(world, "mail", {"session_id": SID, "text": "taken back"})
+    odd = _intent(world, "mail", {"session_id": SID, "text": "odd shapes first"})
+    later = common.ts(time.time() + 5)
+    _transcript(world, SID, [
+        {"type": "queue-operation", "operation": "remove", "timestamp": later, "content": "taken back"},
+        {"type": "user", "timestamp": later, "message": {"content": 7}, "quote": "odd shapes first"},
+        {"type": "user", "timestamp": later, "message": {"content": {"text": "odd shapes first"}}},
+        {"type": "user", "timestamp": later, "message": {"content": [{"type": "text", "text": "odd shapes first"}]}},
+    ])
+    out = {r["of"]: r for r in _run(world)}
+    assert out[removed["id"]]["kind"] == "failed" and out[odd["id"]]["kind"] == "done"

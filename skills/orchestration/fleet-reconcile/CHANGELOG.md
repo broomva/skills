@@ -25,6 +25,34 @@ merge. Ticket BRO-2674.
   with hooks bypassed and to stop on a change that adds LFS objects.
 - The phase-2 drills left blocked on the token (the driver credential half,
   update-branch) passed in that drill.
+- #261's deferred review findings (BRO-2714):
+  - the read-back window's 14 days run from a batch's latest raise, not from
+    the batch;
+  - the bash alert fallback counts any answer from Maestro (made, refused, no
+    clear answer) as raised, so a run that couldn't start ("Could not start
+    the run") no longer raises one alert per hour; it runs under a
+    TERM-then-KILL watchdog (120 s, then 30 s), and only "not listening" or a
+    stopped CLI is tried again at the next tick;
+  - `seen` is cleared when an item goes gone;
+  - Maestro's refusals are told apart by the words their message starts with,
+    on exit 1 only, not by a match anywhere in it (a failed start that quotes
+    "No work item" is not gone); Maestro has no refusal code yet: BRO-2753;
+  - a race with Maestro's loop no longer fails the tick: "already being
+    dispatched" is a wait, and any other refused dispatch is checked against
+    the item, which is recorded where it went when it left the queue;
+  - raising is `new`, then `start()`'s dispatch, so an item whose run couldn't
+    start is recorded queued and dispatched at a later tick, never raised
+    twice;
+  - recover counts a queue-operation only when it is an `enqueue`, and a
+    malformed transcript entry as nothing rather than stopping recovery;
+  - a duplicate fleet name's ask resolves only from a listing that was read;
+  - a PR file list shorter than its `changed_files` (GitHub's 3000-file cap)
+    refuses the spawn;
+  - a coordinator whose stream ends before its init event fails its posture;
+  - the janitor: an ignored directory it can't walk makes the backup check
+    `not run`, a profile or gh dir it can't delete fails the run, and the
+    owner-mismatch message is set only on a mismatch;
+  - binding an adopted item to more than its title marker is BRO-2754.
 
 ## [0.3.0] - 2026-10-01
 

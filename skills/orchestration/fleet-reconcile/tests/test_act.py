@@ -450,3 +450,21 @@ def test_a_live_resume_waits_for_the_listing_to_show_its_process(world, live_ids
     a.listing = lagging
     res = a.resume(bg["sessionId"])
     assert res["ok"] and res["result"] == {"pid": 5151}
+
+
+# ── #261's deferred findings (BRO-2714) ──────────────────────────────────────
+
+def test_a_pr_file_list_github_capped_is_refused_not_read_as_complete(tmp_path, monkeypatch):
+    from fleetlib import sources
+    gh = tmp_path / "gh"
+    gh.write_text('#!/bin/sh\ncase "$*" in\n'
+                  '  *"/files"*) printf \'["a.md",null]\\n["research/entities/x.md","old.md"]\\n\' ;;\n'
+                  '  *changed_files*) echo "${STUB_TOTAL-2}" ;;\n  *) exit 1 ;;\nesac\n')
+    gh.chmod(0o755)
+    monkeypatch.setenv("FLEET_GH_BIN", str(gh))
+    src = sources.Sources()
+    assert json.loads(src.pr_files("o/r", 1)) == ["a.md", "research/entities/x.md", "old.md"]  # a rename's old path
+    for total in ("3001", ""):  # more files than GitHub lists, or no count: never read as all of them
+        monkeypatch.setenv("STUB_TOTAL", total)
+        with pytest.raises(sources.SourceError, match="listed 2 of o/r#1"):
+            src.pr_files("o/r", 1)

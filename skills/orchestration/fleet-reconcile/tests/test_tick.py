@@ -50,23 +50,27 @@ def rig(fresh_world, tmp_path):
           '  *default_branch*) cat "$d/default_branch.txt" ;;\n'
           '  "pr list"*) cat "$d/prs.json" ;;\n'
           '  *) exit 1 ;;\nesac\n' % (calls_dir, fx))
-    # maestro: `new` makes item itm-<n> (listed by `ls`); STUB_NEW_STATE sets its state, STUB_NEW_EXIT
-    # makes `new` fail after creating it (Maestro creates, then dispatches); `show <id>` serves
-    # calls/maestro-show-<id>.json, else review; `dispatch` starts it, or STUB_DISPATCH_EXIT refuses (the cap).
+    # maestro: `new` makes item itm-<n> (listed by `ls`), queued, or with --dispatch (the bash fallback) in
+    # STUB_NEW_STATE; STUB_NEW_EXIT makes `new` fail after creating it, saying STUB_NEW_ERR; STUB_NEW_HANG
+    # makes it ignore TERM and hang; `show <id>` serves calls/maestro-show-<id>.json, else review; `dispatch`
+    # starts it, or STUB_DISPATCH_EXIT refuses (the cap, or STUB_DISPATCH_ERR). Refusals read as bin/maestro.ts
+    # prints them.
     _stub(bin_ / "maestro", '[ -n "${STUB_MAESTRO_DOWN:-}" ] && { echo "Maestro is not listening" >&2; exit 2; }\n'
           'printf "%%s\\n" "$*" | head -1 >> "%s/maestro"\n'
           '[ -n "${STUB_LOCK:-}" ] && [ -d "$STUB_LOCK" ] && echo held >> "%s/lock-during-alert"\n'
           'c="%s"\n'
           'case "$1" in\n'
-          '  new) n=$(( $(cat "$c/maestro-n" 2>/dev/null || echo 0) + 1 )); echo $n > "$c/maestro-n";'
+          '  new) [ -n "${STUB_NEW_HANG:-}" ] && { trap "" TERM; exec sleep 60; };'
+          ' n=$(( $(cat "$c/maestro-n" 2>/dev/null || echo 0) + 1 )); echo $n > "$c/maestro-n";'
           ' printf "%%s\\n" "$*" > "$c/maestro-new-itm-$n";'
+          ' st=proposed; case " $* " in (*" --dispatch "*) st=${STUB_NEW_STATE:-running} ;; esac;'
           ' title=$(printf "%%s" "$2" | tr -d \'"\'); init=""; prev=""; for a in "$@"; do [ "$prev" = --initiative ] && init=$a; prev=$a; done;'
           ' printf \'{"id": "itm-%%s", "title": "%%s", "initiative": "%%s", "state": "%%s", "createdAt": "%%s"}\\n\''
-          ' "$n" "$title" "$init" "${STUB_NEW_STATE:-running}" "$(date -u +%%FT%%TZ)" >> "$c/maestro-items";'
-          ' [ -n "${STUB_NEW_EXIT:-}" ] && { echo "Maestro gave no clear answer" >&2; exit "$STUB_NEW_EXIT"; };'
-          ' echo "{\\"item\\": {\\"id\\": \\"itm-$n\\", \\"state\\": \\"${STUB_NEW_STATE:-running}\\"}}" ;;\n'
+          ' "$n" "$title" "$init" "$st" "$(date -u +%%FT%%TZ)" >> "$c/maestro-items";'
+          ' [ -n "${STUB_NEW_EXIT:-}" ] && { echo "maestro: ${STUB_NEW_ERR:-Maestro gave no clear answer}" >&2; exit "$STUB_NEW_EXIT"; };'
+          ' echo "{\\"item\\": {\\"id\\": \\"itm-$n\\", \\"state\\": \\"$st\\"}}" ;;\n'
           '  ls) printf \'{"items": [\'; [ -f "$c/maestro-items" ] && paste -sd, "$c/maestro-items" | tr -d \'\\n\'; echo "]}" ;;\n'
-          '  dispatch) [ -n "${STUB_DISPATCH_EXIT:-}" ] && { echo "At capacity: 3 running. It stays queued." >&2; exit 1; };'
+          '  dispatch) [ -n "${STUB_DISPATCH_EXIT:-}" ] && { echo "maestro: ${STUB_DISPATCH_ERR:-At capacity: 3 running. It stays queued.}" >&2; exit 1; };'
           ' echo "$2" >> "$c/maestro-dispatched"; echo "{\\"item\\": {\\"id\\": \\"$2\\", \\"state\\": \\"running\\"}}" ;;\n'
           '  show) f="$c/maestro-show-$2.json"; if [ -f "$f" ]; then cat "$f"; else'
           ' echo "{\\"item\\": {\\"state\\": \\"review\\", \\"verdict\\": null, \\"pending\\": null}, \\"events\\": []}"; fi ;;\n'
@@ -160,7 +164,7 @@ def test_a_tick_observes_reports_asks_and_records_itself(rig):
     assert any(a["key"].startswith("rules:broomva/skills") for a in rep["asks"])
     # The owner channel is Paseo: one Maestro item at Needs you for the new batch, nothing on the desktop.
     assert "intent" in kinds and len(rig.raised(BATCH)) == 1, rig.calls("maestro")
-    assert "--dispatch" in rig.brief("itm-1") and "--initiative fleet-reconcile-broomva" in rig.brief("itm-1")
+    assert "--initiative fleet-reconcile-broomva" in rig.brief("itm-1") and rig.calls("maestro-dispatched") == ["itm-1"]
     seen = [x for x in rig.ledger() if x["kind"] == "seen"]
     assert seen and seen[0]["result"] == {"channel": "maestro", "item": "itm-1", "state": "running"}
     assert kinds.index("seen") < kinds.index("runner_exit")  # inside the tick's lock now
@@ -414,15 +418,45 @@ def test_an_alert_queued_at_the_cap_is_not_delivered(rig):
     assert len(rig.raised("fleet broomva: tick-observe")) == 1 and (sd / ".alert-tick-observe").exists()
 
 
-@pytest.mark.parametrize("extra", [{"STUB_NEW_STATE": "proposed"}, {"STUB_NEW_EXIT": "3"}])
+@pytest.mark.parametrize("extra", [{"STUB_NEW_STATE": "proposed"}, {"STUB_NEW_EXIT": "3"},
+                                   # made, then its run couldn't start: Maestro refuses, and the item exists
+                                   {"STUB_NEW_EXIT": "1", "STUB_NEW_ERR": "Could not start the run: no provider"}])
 def test_the_bash_fallback_raises_at_most_one_alert_per_6_h_even_queued_or_unconfirmed(rig, extra):
-    # It can't adopt an open item, so one it raised counts (else one more every tick at the cap).
+    # It can't adopt an open item or read Maestro's words, so any answer counts (else one more every tick).
     rig.world.config.write_text("not json")
     rig.tick(**extra)
     rig.tick(**extra)
     sd = rig.world.state["broomva"]
     assert len(rig.raised("fleet broomva: config [fleet-reconcile broomva alert config]")) == 1
     assert (sd / ".alert-config").exists()
+
+
+def test_the_bash_fallback_tries_again_when_maestro_wasnt_listening(rig):
+    rig.world.config.write_text("not json")
+    rig.tick(STUB_MAESTRO_DOWN="1")  # nothing was sent, so nothing was made
+    sd = rig.world.state["broomva"]
+    assert not (sd / ".alert-config").exists() and "NOT delivered" in rig.log() and "(exit 2)" in rig.log()
+    rig.tick()
+    assert len(rig.raised("fleet broomva: config")) == 1 and (sd / ".alert-config").exists()
+
+
+def test_a_bash_fallback_whose_maestro_hangs_is_stopped_and_the_tick_ends(rig):
+    rig.world.config.write_text("not json")
+    t0 = time.monotonic()
+    r = rig.tick(STUB_NEW_HANG="1", FLEET_ALERT_TIMEOUT_S="1", FLEET_KILL_GRACE_S="1")  # it ignores TERM
+    assert r.returncode == 1 and time.monotonic() - t0 < 30
+    assert "(exit 137)" in rig.log() and not (rig.world.state["broomva"] / ".alert-config").exists()
+
+
+def test_a_raised_batch_whose_run_cant_start_is_recorded_queued_and_dispatched_later(rig):
+    rig.item("itm-1", "proposed")
+    rig.item("itm-2", "proposed")  # the failed tick's own alert, which can't start either
+    r = rig.tick(STUB_DISPATCH_EXIT="1", STUB_DISPATCH_ERR="Could not start the run: no provider")
+    assert r.returncode == 1 and "ask=1" in r.stdout and "not started" in rig.log()
+    assert [x["result"]["state"] for x in rig.ledger() if x["kind"] == "seen"] == ["proposed"]
+    rig.tick()
+    assert len(rig.raised(BATCH)) == 1 and "itm-1" in rig.calls("maestro-dispatched")  # not raised twice
+    assert [x["result"]["state"] for x in rig.ledger() if x["kind"] == "seen"] == ["proposed", "running"]
 
 
 def test_an_alert_maestro_may_have_made_is_adopted_not_raised_twice(rig):

@@ -31,9 +31,18 @@ item's `verdict` field is display text and isn't read. A reply typed in the
 run's chat is not a decision and is not read: the owner answers with Send back.
 
 Raising is idempotent: the title ends with a marker carrying the scope and
-the batch id. An open item that `new` created before failing (Maestro
-creates, then dispatches) is found with `ls` and adopted, and an item left
-queued at Maestro's concurrency cap is dispatched at a later tick.
+the batch id. Raising is two calls, `new` then `dispatch`, so the fleet holds
+the item's id whatever the dispatch says; an open item a `new` with no clear
+answer made is found with `ls` and adopted, and an item left queued (at
+Maestro's run cap, or a start that failed) is dispatched at a later tick.
+Maestro's loop starts queued work too: a dispatch that loses that race is not
+a failure (start()).
+
+Maestro's refusals carry no code: the socket answers `{ok: false, error}` and
+the CLI prints `maestro: <message>` and exits 1 for each (BRO-2753 asks for
+one). The few that mean "wait" or "gone" are told apart by the words their
+message starts with (REFUSALS), never by a match anywhere in the text; a
+reworded one reads as a refusal, which fails the ask step loudly.
 
 The runs go to the fleet's own scratch repo (`ask_repo`; by default not a
 scope repo). Each item costs one turn of the provider Maestro is configured
@@ -59,19 +68,34 @@ EXITS = {1: "Maestro refused", 2: "Maestro is not listening", 3: "Maestro gave n
 #: A settled decision's event text, by verdict (maestro-paseo server/events.ts DECISION_WORDS).
 DECIDED = {"You approved": "approve", "You sent it back": "revise", "You canceled it": "block"}
 TOOK_EFFECT = "Took effect"
-#: The start of Maestro's refusals that mean "wait", not "broken" (server/engine.ts
-#: checkCapacity; server/store.ts NotFound): at the run cap an item stays queued,
-#: and an item Maestro no longer has is gone.
-AT_CAP = "At capacity"
-GONE = "No work item"
+#: Maestro's refusals that mean "wait" or "gone", not "broken", by the words
+#: their message starts with: at the run cap (server/engine.ts checkCapacity)
+#: and while Maestro's loop is starting it (engine.ts dispatch) an item stays
+#: queued; an item Maestro no longer has (server/store.ts WorkNotFoundError) is
+#: gone.
+REFUSALS = {"At capacity:": "cap", "This work is already being dispatched.": "busy", "No work item with id ": "gone"}
 NOTE_CHARS = 1000
 FENCE = "`" * 3
 
 
 class MaestroError(RuntimeError):
-    def __init__(self, code: Optional[int], detail: str) -> None:
+    """A failed maestro call. `refusal` is REFUSALS' kind (cap, busy, gone)
+    when Maestro refused (exit 1) with a message starting with its words."""
+
+    def __init__(self, code: Optional[int], detail: str, refusal: Optional[str] = None) -> None:
         super().__init__(detail)
         self.code = code
+        self.refusal = refusal
+
+
+def refusal_kind(stderr: str) -> Optional[str]:
+    """REFUSALS' kind of maestro's message (`maestro: <message>`), matched at
+    its start only: a message that quotes another (a failed start's "Could not
+    start the run: <why>") is none of them."""
+    message = stderr.strip()
+    if message.startswith("maestro: "):
+        message = message[len("maestro: "):]
+    return next((kind for words, kind in REFUSALS.items() if message.startswith(words)), None)
 
 
 def command(sec: Dict[str, Any]) -> List[str]:
@@ -90,7 +114,8 @@ def run(sec: Dict[str, Any], args: List[str], timeout: float = 90) -> Dict[str, 
     if proc.returncode != 0:
         raise MaestroError(proc.returncode, "%s (exit %d): %s" % (
             EXITS.get(proc.returncode, "maestro failed"), proc.returncode,
-            common.safe_text(proc.stderr or proc.stdout, 160)))
+            common.safe_text(proc.stderr or proc.stdout, 160)),
+            refusal_kind(proc.stderr) if proc.returncode == 1 else None)
     try:
         out = json.loads(proc.stdout)
     except ValueError:
@@ -149,15 +174,19 @@ def find(sec: Dict[str, Any], tag: str, since: Optional[float] = None) -> Option
 
 
 def raise_item(sec: Dict[str, Any], title: str, text: str) -> Dict[str, Any]:
-    """Create the work and dispatch its run; returns the item. At Maestro's
-    concurrency cap it comes back created and queued (`proposed`); the caller
-    dispatches it at a later tick."""
+    """Create the work, queued (`proposed`); returns the item. start()
+    dispatches it, so its id is the fleet's whatever the dispatch says."""
     out = run(sec, ["new", common.safe_text(title, 160), "--brief", text, "--repo", ensure_repo(sec),
-                    "--initiative", "fleet-reconcile-%s" % sec["scope"], "--dispatch"])
+                    "--initiative", "fleet-reconcile-%s" % sec["scope"]])
     item = out.get("item") if isinstance(out.get("item"), dict) else {}
     if not isinstance(item.get("id"), str):
         raise MaestroError(None, "maestro made no item id")
     return item
+
+
+def show(sec: Dict[str, Any], item_id: str) -> Dict[str, Any]:
+    """`maestro show`: {item, events}."""
+    return run(sec, ["show", item_id])
 
 
 def dispatch(sec: Dict[str, Any], item_id: str) -> Dict[str, Any]:
@@ -167,16 +196,25 @@ def dispatch(sec: Dict[str, Any], item_id: str) -> Dict[str, Any]:
 
 def start(sec: Dict[str, Any], item: Dict[str, Any]) -> Dict[str, Any]:
     """Dispatch an item that is still queued; returns it with its new state.
-    At Maestro's run cap it stays queued and is returned as it is; any other
-    refusal raises MaestroError."""
+    It stays queued, returned as it is, at Maestro's run cap or while
+    Maestro's loop is starting it. Any other failed dispatch is checked
+    against the item: one that left the queue meanwhile (the loop or the owner
+    started or canceled it) is returned as it now stands, and one still queued
+    raises the dispatch's MaestroError."""
     if maestro_phase(item.get("state")) != "queued":
         return item
     try:
         return dict(item, **dispatch(sec, item["id"]))
     except MaestroError as exc:
-        if AT_CAP in str(exc):
+        if exc.refusal in ("cap", "busy"):
             return item
-        raise
+        try:
+            now = show(sec, item["id"]).get("item")
+        except MaestroError:
+            raise exc
+        if not isinstance(now, dict) or maestro_phase(now.get("state")) in (None, "queued"):
+            raise exc
+        return dict(item, state=now["state"])
 
 
 def decisions(events: List[Any]) -> List[Dict[str, Any]]:
@@ -207,7 +245,7 @@ def answer(sec: Dict[str, Any], item_id: str) -> Dict[str, Any]:
     final (done: approved, canceled: dismissed); otherwise verdict is the
     latest decision that took effect (a send-back: answered), else None.
     notes are every note sent with a decision that took effect, oldest first."""
-    out = run(sec, ["show", item_id])
+    out = show(sec, item_id)
     item = out.get("item") if isinstance(out.get("item"), dict) else {}
     made = decisions(out.get("events") if isinstance(out.get("events"), list) else [])
     res: Dict[str, Any] = {"state": item.get("state"), "verdict": None, "at": None,

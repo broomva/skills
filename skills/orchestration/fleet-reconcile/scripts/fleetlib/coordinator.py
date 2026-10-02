@@ -135,7 +135,9 @@ def _stop(proc: "subprocess.Popen[str]") -> None:
 def _pump(proc: "subprocess.Popen[str]", out: IO[str], sec: Dict[str, Any], res: Dict[str, Any],
           init_s: Optional[float] = None) -> int:
     """Copy the stream; stop the coordinator on a failed posture, on an event
-    before the init event (it acted unchecked), or when no init event came."""
+    before the init event (it acted unchecked), or when no init event came
+    (in time, or before the stream ended: a clean exit with its tool list
+    never checked is a posture failure too)."""
     assert proc.stdout is not None
     init_s = INIT_S if init_s is None else init_s
 
@@ -167,6 +169,9 @@ def _pump(proc: "subprocess.Popen[str]", out: IO[str], sec: Dict[str, Any], res:
                 break  # its stream is no longer read: a child still holding it can't delay the stop
     finally:
         timer.cancel()
+    with lock:
+        if not res["init"] and not res["posture"]:
+            res["posture"] = ["its stream ended before its init event: the tool list was never checked"]
     proc.wait()
     return EXIT_POSTURE if res["posture"] else proc.returncode
 

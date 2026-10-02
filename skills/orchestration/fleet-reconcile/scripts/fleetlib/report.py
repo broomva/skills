@@ -277,7 +277,7 @@ def observed(key: str, rep: Dict[str, Any]) -> bool:
         return ok("jobs")
     if kind == "records-without-process":
         return ok("listing", "paseo_records")
-    if kind == "fleet-shaped-unledgered":
+    if kind in ("fleet-shaped-unledgered", "spawn-duplicate"):
         return ok("listing")
     if kind == "rules":
         slug = rest.split(":", 1)[0]

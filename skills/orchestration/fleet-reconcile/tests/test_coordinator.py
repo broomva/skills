@@ -203,6 +203,13 @@ def test_a_coordinator_with_no_init_event_is_stopped_at_the_deadline(world, tmp_
     assert time.monotonic() - t0 < 15
 
 
+def test_a_coordinator_whose_stream_ends_before_its_init_event_fails_its_posture(world, tmp_path):
+    world.write_config(mode="act")
+    res = coordinator.run(config.scope("broomva"), 3, "/x/fleet", tmp_path / "c.jsonl", True,
+                          claude=_stub(tmp_path, "exit 0\n"))  # a clean exit, its tool list never checked
+    assert res["exit"] == coordinator.EXIT_POSTURE and "ended before its init event" in res["posture"][0]
+
+
 def test_the_tick_watchdogs_term_to_the_step_group_reaches_the_coordinators_claude(world, tmp_path):
     import signal
     import time
