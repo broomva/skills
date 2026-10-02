@@ -509,17 +509,18 @@ def test_an_unwritable_state_dir_alerts_its_own_kind_not_a_config_failure(rig):
     assert not rig.raised("fleet broomva: config")  # not misread as a config-check failure
 
 
-def test_the_bash_fallback_classifies_a_refusal_in_memory_when_mktemp_fails(rig, tmp_path):
-    # mktemp can't make its temp file: capture in memory instead, so an exit-1 refusal is still classified
-    # (stamped, not retried every tick) rather than lost to a /dev/null it can't grep (#263 review).
+def test_the_bash_fallback_classifies_by_exit_code_when_mktemp_fails(rig, tmp_path):
+    # mktemp can't make its temp file: run without capturing (no command substitution that could hang on
+    # an escaped Maestro child — P20 round 2) and classify by exit code, so an ambiguous exit 1 is stamped,
+    # not retried every tick the way a /dev/null it can't grep would be (#263 review).
     ro = tmp_path / "ro"
     ro.mkdir()
     ro.chmod(0o500)  # read+execute, no write: mktemp fails here
     rig.world.config.write_text("not json")  # force the bash fallback
     sd = rig.world.state["broomva"]
-    r = rig.tick(TMPDIR=str(ro), STUB_NEW_EXIT="1")  # Maestro refuses (exit 1 with a "maestro: " line)
+    r = rig.tick(TMPDIR=str(ro), STUB_NEW_EXIT="1")  # Maestro exits 1
     assert r.returncode == 1 and (sd / ".alert-config").exists()  # classified as answered -> stamped, not retried
-    assert "no answer from Maestro" not in rig.log()
+    assert "no answer from Maestro" not in rig.log() and "by code alone" in rig.log()
 
 
 def test_live_mode_is_refused_until_its_preconditions_are_recorded(rig):

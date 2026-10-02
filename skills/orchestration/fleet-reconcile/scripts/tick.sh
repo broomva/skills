@@ -191,11 +191,14 @@ Change nothing and run no tools. End your turn at once with exactly two sections
   else
     set -- "${FLEET_MAESTRO_BUN:-$HOME/.bun/bin/bun}" "${FLEET_MAESTRO_CLI:-$HOME/broomva/apps/maestro-paseo/bin/maestro.ts}"
   fi
-  # To a file, not a command substitution: a child left holding a pipe would hold the tick. A file of its
-  # own (not one in STATE_DIR: the fallback runs when things are broken, and two ticks before the lock can
-  # both run it). When mktemp itself fails, capture in memory instead — still bounded by bounded's watchdog —
-  # so an exit-1 refusal can still be classified rather than lost to /dev/null and retried every tick (#263).
-  local out rc cap answered=no
+  # To a file, never a command substitution: a Maestro descendant that escaped bounded's process group
+  # (setsid/daemonized) would hold the pipe's write end open after bounded returns and hang the tick —
+  # which runs outside step()'s watchdog, with the lock held (P20 round 2). The file is the fallback's
+  # own (not one in STATE_DIR: the fallback runs when things are broken, and two ticks before the lock
+  # can both run it). When mktemp itself fails there is nowhere to capture, so run without capturing and
+  # classify by exit code alone; an ambiguous exit 1 is stamped, not retried every tick, the same policy
+  # the file branch's exit-1 case uses (#263).
+  local out rc cap="" answered=no
   out=$(mktemp "${TMPDIR:-/tmp}/fleet-alert.XXXXXX" 2>/dev/null) || out=""
   if [ -n "$out" ]; then
     bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json \
@@ -203,16 +206,18 @@ Change nothing and run no tools. End your turn at once with exactly two sections
     rc=$?
     cap=$(cat "$out" 2>/dev/null)
     rm -f "$out"
+    printf '%s\n' "$cap" >> "$LOG" 2>/dev/null
+    case "$rc" in
+      (0|3) answered=yes ;;
+      (1) printf '%s\n' "$cap" | grep -q '^maestro: ' && answered=yes ;;
+    esac
   else
-    cap=$(bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" \
-      --dispatch --json </dev/null 2>&1)
+    bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json \
+      </dev/null >/dev/null 2>&1
     rc=$?
+    log "ALERT fallback: mktemp failed; classified Maestro exit $rc by code alone (no capture)"
+    case "$rc" in (0|3|1) answered=yes ;; esac
   fi
-  printf '%s\n' "$cap" >> "$LOG" 2>/dev/null
-  case "$rc" in
-    (0|3) answered=yes ;;
-    (1) printf '%s\n' "$cap" | grep -q '^maestro: ' && answered=yes ;;
-  esac
   case "$rc:$answered" in
     (0:yes) return 0 ;;
     (*:yes) return 1 ;;
