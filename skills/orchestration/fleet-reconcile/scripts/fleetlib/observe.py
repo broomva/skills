@@ -333,7 +333,8 @@ def observe_repo(common_dir: str, sec: Dict[str, Any], src: Sources) -> Dict[str
             len(prs), sec["pr_list_cap"])
         return out
     for p in prs:
-        p["head_id"] = branch_id(p.pop("head_raw", None))
+        raw = p.pop("head_raw", None)
+        p["head_id"], p["head_plain"] = branch_id(raw), common.plain_ref(raw)  # judged on the raw name
     out["ok"] = True
     out["prs"] = prs
     return out

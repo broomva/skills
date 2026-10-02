@@ -9,9 +9,9 @@ the fleet acts with the owner's admin rights: a ruleset binds that login only
 as far as it lets an admin through, so the driver brief (never touch rulesets
 or workflows) and phase 3's checks are what hold a driver to the rules. The
 token used to keep live mode closed; now `config-check` refuses `dry_run: 0`
-unless a new key, `live_accepted`, holds the owner's note that phase 3's
-checks and BRO-2755 are done, and every verb stays dry without it. Ticket
-BRO-2674.
+unless a new key, `live_accepted`, holds the owner's note that SKILL.md's
+Phase 3 list (BRO-2755 included) is done, and every verb stays dry without
+it. Ticket BRO-2674.
 
 - **No token anywhere.** tick.sh no longer reads `gh_token_file` (accepted,
   not read) and drops a `GH_TOKEN` or `GITHUB_TOKEN` it inherits before it
@@ -72,6 +72,17 @@ BRO-2674.
     `not run`, a profile or gh dir it can't delete fails the run, and the
     owner-mismatch message is set only on a mismatch;
   - binding an adopted item to more than its title marker is BRO-2754.
+- From #263's review:
+  - the driver brief carried a blank PR number ("repo#",
+    `/pulls//update-branch`) since 0.2.0: the text guard blanked the integer;
+    it is now passed as text, and a test reads the rendered brief;
+  - spawn refuses a PR whose head or base branch isn't a plain ref name that
+    the text guard renders unchanged (the head judged on its raw name), since
+    the brief carries the base into a command; the allowlist is deliberately
+    conservative, so a branch with `+`, `@` or non-ASCII gets no driver;
+  - the brief treats branch names as data, and stops BLOCKED when its LFS
+    check fails;
+  - the remaining delta-review findings are BRO-2756.
 
 ## [0.3.0] - 2026-10-01
 

@@ -182,8 +182,9 @@ def scope(sid: str, check_scopes: bool = True) -> Dict[str, Any]:
 def live_refusal(sec: Dict[str, Any]) -> Optional[str]:
     """Why this scope's dry_run 0 is refused, or None. Since 0.4.0 the fleet
     acts on the owner's admin login with no token to gate it, and a driver can
-    read the login keychain: live mode waits on phase 3's checks and BRO-2755,
-    and the owner records that they are done in live_accepted. Until then
+    read the login keychain: live mode waits on SKILL.md's Phase 3 list
+    (phase 3's checks, the recovery drill, the owner's review of the dry run,
+    BRO-2755), and the owner records that it is done in live_accepted. Until then
     config-check fails (tick.sh alerts and runs no tick) and every verb stays
     dry."""
     if sec.get("dry_run") == 0 and not (sec.get("live_accepted") or "").strip():
