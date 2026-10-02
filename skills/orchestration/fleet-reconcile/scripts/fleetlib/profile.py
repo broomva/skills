@@ -16,9 +16,15 @@ configured gh credential helper, and pull-request calls go to the REST API
 with curl: gh's own network calls fail TLS inside the sandbox (OSStatus
 -26276), and taking gh out of it needs allowUnsandboxedCommands, the escape
 this profile refuses. Measured 2026-10-01 (credential drill, profile D).
-Open residual: with the keychain readable, so is any login-keychain item that
-trusts /usr/bin/security, not only gh's; BRO-2755 measures it before any live
-driver.
+Open residual (BRO-2755, measured 2026-10-02): with the keychain readable, a
+driver can read ANY login-keychain item via /usr/bin/security without a prompt,
+not only gh's (securityd is reachable from inside the sandbox; the file-based
+denyRead does not reach it). The keychain can't be partially denied — a file
+deny is whole-keychain and would break gh's own read — so the exposure is a W1
+decision for the owner (accept arm D, or arm A's env token + keychain-file deny,
+which a file deny does reach). What a driver does not need, this profile now
+denies: the credential files below. W5's full per-spawn pattern inventory
+(incl. **/.env*) is F1 follow-up.
 
 It changes what a driver reaches by default and is not a boundary (§5.1). The
 file stays at its path until the driver's worktree goes: a resume reads the
@@ -31,8 +37,19 @@ import os
 from pathlib import Path
 from typing import Any, Dict, List
 
-DENY_READ = ["~/.paseo"]
-DENY = ["Read(~/.paseo/**)", "Edit(~/.claude/**)", "Edit(**/.claude/settings*.json)"]
+#: Credential stores a GitHub-PR driver's gh route and build never need to read,
+#: measured present and driver-readable on 2026-10-01/02 (BRO-2755). Denied at
+#: the sandbox (Bash) and the Read tool. The login keychain is NOT here (the gh
+#: route needs it, and a file deny is whole-keychain: a W1 decision), and
+#: ~/.config/gh and git config stay readable (the gh route needs them). Package
+#: registries/toolchain caches (~/.npmrc, ~/.cargo/credentials.toml) are left
+#: readable: a scope's build may need them (DRIVER_DEFAULTS).
+CRED_DENY_READ = ["~/.aws", "~/.ssh", "~/.config/gcloud", "~/.kube", "~/.config/op",
+                  "~/.gnupg", "~/.netrc", "~/.docker/config.json"]
+
+DENY_READ = ["~/.paseo"] + CRED_DENY_READ
+DENY = (["Read(~/.paseo/**)", "Edit(~/.claude/**)", "Edit(**/.claude/settings*.json)"]
+        + ["Read(%s)" % p for p in CRED_DENY_READ] + ["Read(%s/**)" % p for p in CRED_DENY_READ])
 
 
 def driver_profile(sec: Dict[str, Any], key: str) -> Dict[str, Any]:

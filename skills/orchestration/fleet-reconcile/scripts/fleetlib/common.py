@@ -90,10 +90,12 @@ def safe_text(value: Any, cap: int = 80) -> str:
 
 
 #: A branch name a driver's brief may carry, in prose and in a command it runs.
-#: Deliberately conservative: git allows `$`, `;`, `|`, backticks and spaces in
-#: ref names, and also `+`, `@` and non-ASCII, which this refuses too (such a
-#: PR gets no driver).
-REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
+#: Deliberately conservative: git allows `$`, `;`, `|`, backticks and a NBSP
+#: (not a plain space) in ref names, and also `+`, `@` and non-ASCII, which this
+#: refuses too (such a PR gets no driver). Capped at 120 characters, the width
+#: parsers.py clips `head` to, so a name that passes here is one a brief shows
+#: in full (a longer name would reach the brief cut short with "…").
+REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,119}")
 
 
 def plain_ref(name: Any) -> bool:

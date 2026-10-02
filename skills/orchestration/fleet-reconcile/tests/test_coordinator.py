@@ -139,9 +139,15 @@ def test_the_driver_profile_is_probe_6s_shape_with_the_scopes_allowlist(world):
     assert sb["enabled"] is True and sb["allowUnsandboxedCommands"] is False
     assert sb["network"] == {"strictAllowlist": True, "allowedDomains": ["api.github.com", "registry.npmjs.org"]}
     # gh's config and the keychain are readable: a driver uses the owner's login (owner decision 2026-10-01).
-    assert sb["filesystem"]["denyRead"] == ["~/.paseo"]
+    # The login keychain is NOT denied (a file deny is whole-keychain, a W1 decision) and ~/.config/gh stays
+    # readable (the gh route needs it); the credential files the gh route doesn't need ARE denied (BRO-2755).
+    assert sb["filesystem"]["denyRead"] == ["~/.paseo"] + profile.CRED_DENY_READ
+    assert "~/.aws" in sb["filesystem"]["denyRead"] and "~/.ssh" in sb["filesystem"]["denyRead"]
+    assert not any("Keychains" in d or "/.config/gh" in d for d in sb["filesystem"]["denyRead"])
     assert sb["filesystem"]["allowWrite"] == ["~/.bun"]
-    assert p["permissions"]["deny"] == ["Read(~/.paseo/**)", "Edit(~/.claude/**)", "Edit(**/.claude/settings*.json)"]
+    assert p["permissions"]["deny"] == (
+        ["Read(~/.paseo/**)", "Edit(~/.claude/**)", "Edit(**/.claude/settings*.json)"]
+        + ["Read(%s)" % c for c in profile.CRED_DENY_READ] + ["Read(%s/**)" % c for c in profile.CRED_DENY_READ])
     assert not any(".claude/**" == d.split("(")[1].rstrip(")") for d in p["permissions"]["deny"])  # own worktree
     assert "env" not in p  # no token, no GH_CONFIG_DIR
 

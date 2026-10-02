@@ -209,6 +209,22 @@ def test_a_corrupt_ledger_refuses_the_send(rig):
     assert code == 2 and "corrupt" in msg
 
 
+def test_pre_goes_dry_when_the_config_refuses_live(rig):
+    # The gate's dry flag comes from _dry(config), as cmd_send_gate passes it: dry_run 0 without live_accepted
+    # keeps the send dry (#263 review), not only the unit _dry() test.
+    import argparse
+    import time
+
+    import fleet_reconcile
+    m = rig.mail(dry_run=0)  # config dry_run 0, no live_accepted
+    sec = config.scope("broomva")
+    dry = fleet_reconcile._dry(argparse.Namespace(dry_run=None), sec)
+    assert dry is True
+    code, msg = sendgate.pre(sec, FixtureSources(rig.w.fixture),
+                             rig.hook(m["send"]["to"], m["send"]["message"]), 7, dry, time.time())
+    assert code == 2 and "dry run" in msg
+
+
 def test_the_shim_fails_closed_when_python_cant_start(rig):
     import os
     import subprocess

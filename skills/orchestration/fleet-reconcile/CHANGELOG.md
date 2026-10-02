@@ -1,5 +1,51 @@
 # Changelog: fleet-reconcile
 
+## [0.4.1] - 2026-10-02
+
+Pre-live hardening before `dry_run: 0` (BRO-2755, BRO-2756; parent BRO-2714).
+Nothing is live: both installed scopes still run `dry_run: 1` in report mode.
+
+- **BRO-2755 — what a driver can read from the login keychain, measured.** On
+  the arm-D driver profile (Claude Code 2.1.280): securityd is reachable from
+  inside the driver sandbox, so a driver can read ANY login-keychain item via
+  `/usr/bin/security` without a prompt, not just gh's. A `denyRead` on the
+  keychain file is effective but whole-keychain (it would break gh's own read),
+  so the keychain can't be partially denied: that exposure is a W1 decision for
+  the owner (accept arm D, or arm A — a per-spawn env token with the keychain
+  file re-denied, which a file deny does reach). The profile now denies the
+  credential files the gh route doesn't need (`~/.aws`, `~/.ssh`,
+  `~/.config/gcloud`, `~/.kube`, `~/.config/op`, `~/.gnupg`, `~/.netrc`,
+  `~/.docker/config.json`); `~/.config/gh` and git config stay readable.
+  Evidence: `~/.config/broomva/fleet/credential-drill-20261001/keychain-table-20261002-bro2755.md`.
+- **Fork PRs get no driver (spec §5.2 W3).** `parse_pr_list` reads
+  `isCrossRepository`, and `fleet act spawn` refuses a fork, re-checked at spawn.
+- **Live gate names both tickets.** `config-check` refuses `dry_run: 0` unless
+  `live_accepted` names BRO-2755 and BRO-2756, so a bare "no" or "TODO" can't
+  pass. SKILL.md's Phase 3 and `live_refusal` both say so.
+- **One source of truth for dryness.** tick.sh reads `fleet is-dry` (which folds
+  in `dry_run`, `live_accepted` and the `DRY_RUN` env) instead of `dry_run`
+  alone, so a config edit mid-tick can't record a live tick while every verb
+  stays dry. A terminal `fleet act` on a refused `dry_run: 0` now says on stderr
+  why it is acting dry.
+- **A broken state dir** gets its own alert kind (`statedir`) with a TMPDIR
+  stamp, so the owner hears the real reason once per 6 h, not a misread
+  config-check every tick; the bash alert fallback captures Maestro's output in
+  memory when `mktemp` fails, so an exit-1 refusal is still classified.
+- **A still-open ask** no longer logs a "Stuck" line or fails the ask step every
+  tick: those reminders are rate-limited to once per 6 h per item.
+- **Driver brief, LFS and refs.** The brief fetches the base before the LFS
+  check, says it runs after the last commit, blocks only when an object would
+  actually need uploading, and lists "never push before the LFS check passes".
+  The ref cap is 120 characters (parsers.py's clip width), so a long plain head
+  can't reach the brief clipped; a repo slug the guard would withhold (a `crm/`
+  segment) gets no driver instead of rendering `[withheld]` in a command;
+  `render_template` raises on a non-string value instead of blanking it.
+- **Docs.** The `common.REF_RE` comment no longer says git allows a plain space
+  in ref names (it allows NBSP). SKILL.md and this log now record that the text
+  guard also withholds `SK-123`-style keys, `sk-`/`xox`/`AKIA`/`ghp_`
+  substrings, `crm/` path segments and runs of 32+ letters and digits — not
+  only `+`, `@` and non-ASCII.
+
 ## [0.4.0] - 2026-10-01
 
 The fleet uses the owner's gh login. Owner decision, 2026-10-01: no fleet
@@ -29,9 +75,10 @@ it. Ticket BRO-2674.
   squash-merges through REST. gh's own network calls fail TLS there (OSStatus
   -26276; a CA file doesn't help), and `sandbox.excludedCommands` didn't take
   gh out of the sandbox while `allowUnsandboxedCommands` is false. The global
-  pre-push hook's git-lfs fails the same way, so the driver brief says to push
-  with hooks bypassed and to stop on a change that adds LFS objects, and to
-  pass the token to curl on stdin, never in argv.
+  pre-push hook's git-lfs fails the same way, so the driver brief pushes with
+  hooks bypassed, runs its LFS check before each push (the check runs before
+  any push), and passes the token to curl on stdin, never in argv. (0.4.1
+  reorders and refines that LFS check; see below.)
 - **Open residual (BRO-2755):** with the keychain's deny gone a driver can
   likely read any login-keychain item that trusts `/usr/bin/security`, not
   just gh's; the drill probed only gh's. It is measured before any live

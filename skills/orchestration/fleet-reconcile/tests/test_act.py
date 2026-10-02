@@ -15,6 +15,12 @@ LATER = 1_800_000_000.0  # past every limit reset in the capture, so the spawn p
 WS = "broomva/workspace"
 
 
+def _plain_name(n: int) -> str:
+    """An `n`-char plain ref whose alnum runs stay under the text guard's 32-run
+    limit, so only REF_RE's 120-char cap (not the guard) decides it."""
+    return (("a" * 20 + "-") * (n // 21 + 1))[:n]
+
+
 def _rows(w):
     return json.loads((w.fixture / "claude" / "agents.json").read_text())
 
@@ -105,18 +111,7 @@ def test_a_dry_spawn_writes_the_intent_then_closes_it_with_the_argv_it_would_run
     assert a.src.calls == [] and not (world.state["broomva"] / "profiles").exists()  # nothing run, nothing written
 
 
-@pytest.mark.parametrize("change, why", [
-    (lambda p: p.update(labels=[{"name": "hold"}]), "held"),
-    (lambda p: p.update(isDraft=True), "draft"),
-    (lambda p: p.update(author={"login": "app/dependabot"}), "Dependabot"),
-    # A branch name the brief would carry into a command the driver runs, judged on its raw name.
-    (lambda p: p.update(headRefName="fix;id"), "head branch"),
-    (lambda p: p.update(headRefName="-rf"), "head branch"),
-    (lambda p: p.update(headRefName="main\u00a0"), "head branch"),  # the guard would show it as "main"
-    (lambda p: p.update(baseRefName="main$(id)"), "base branch"),
-    (lambda p: p.update(baseRefName="crm/main"), "base branch"),     # the guard would show it as [withheld]
-])
-def test_a_spawn_is_refused_for_a_held_draft_or_dependabot_pr(world, change, why):
+def _spawn_refused(world, change, why):
     prs = _prs(world)
     change(next(p for p in prs if p["number"] == 849))
     _write_prs(world, prs)
@@ -124,6 +119,54 @@ def test_a_spawn_is_refused_for_a_held_draft_or_dependabot_pr(world, change, why
     res = _act(world, now=LATER).spawn(WS, 849)
     assert not res["ok"] and res["reason"] == "ineligible" and why in res["detail"]
     assert _records(world)[-1]["of"] is None  # refused before any intent
+
+
+@pytest.mark.parametrize("change, why", [
+    (lambda p: p.update(labels=[{"name": "hold"}]), "held"),
+    (lambda p: p.update(isDraft=True), "draft"),
+    (lambda p: p.update(author={"login": "app/dependabot"}), "Dependabot"),
+    (lambda p: p.update(isCrossRepository=True), "fork"),  # W3: a fork's author picks the head name and PR text
+])
+def test_a_spawn_is_refused_for_a_held_draft_dependabot_or_fork_pr(world, change, why):
+    _spawn_refused(world, change, why)
+
+
+@pytest.mark.parametrize("change, why", [
+    # A branch name the brief would carry into a command the driver runs, judged on its raw name.
+    (lambda p: p.update(headRefName="fix;id"), "head branch"),
+    (lambda p: p.update(headRefName="-rf"), "head branch"),
+    (lambda p: p.update(headRefName="main\u00a0"), "head branch"),  # the guard would show it as "main"
+    (lambda p: p.update(headRefName=_plain_name(121)), "head branch"),  # 121 > REF_RE's 120 cap: would show clipped
+    (lambda p: p.update(baseRefName="main$(id)"), "base branch"),
+    (lambda p: p.update(baseRefName="crm/main"), "base branch"),     # the guard would show it as [withheld]
+])
+def test_a_spawn_is_refused_for_a_branch_name_that_isnt_a_plain_ref(world, change, why):
+    _spawn_refused(world, change, why)
+
+
+def test_a_spawn_is_refused_when_the_repo_slug_is_guard_withheld(world):
+    # broomva/crm would render PUT /repos/[withheld]/... in the brief's update-branch command (#263 review).
+    res = _act(world, now=LATER).spawn("broomva/crm", 1)
+    assert not res["ok"] and res["reason"] == "ineligible" and "slug" in res["detail"]
+    assert _records(world)[-1]["of"] is None  # refused before any intent
+
+
+def test_a_120_char_plain_head_passes_and_the_brief_shows_it_in_full(world, monkeypatch):
+    name = _plain_name(120)  # exactly REF_RE's cap and parsers.py's clip width: passes, and the brief shows it whole
+    assert len(name) == 120
+    prs = _prs(world)
+    next(p for p in prs if p["number"] == 849).update(headRefName=name)
+    _write_prs(world, prs)
+    _files(world, 849, [])
+    res, brief = _brief(world, monkeypatch)
+    assert res["ok"] and name in brief and "\u2026" not in brief
+
+
+def test_render_template_raises_on_a_non_string_value():
+    # #263 fixed only spawn's call site; render_template itself must refuse a non-string (how the PR # went blank).
+    with pytest.raises(ValueError):
+        act.render_template("driver-brief.md",
+                            {"key": "k", "repo": "o/r", "pr": 849, "branch": "b", "base": "main"})
 
 
 def test_text_instructing_a_driver_does_not_move_the_floor(world):
@@ -495,7 +538,13 @@ def test_the_driver_brief_carries_the_pr_number_and_plain_branches(world, monkey
     assert res["ok"], res
     assert "pull request broomva/workspace#849 (branch feat/x-1.2_y, base release/2026.10)" in brief
     assert "/pulls/849/update-branch" in brief and "git lfs ls-files origin/release/2026.10 HEAD" in brief
+    # The base is fetched first, the check runs before any push, and both the "every push" phrasing and the
+    # "without pushing" / Never-list rule are pinned so a later fix round can't quietly drop them (#263 review).
+    assert "git fetch origin release/2026.10" in brief and "after your last commit" in brief
+    assert brief.index("git fetch origin release/2026.10") < brief.index("git lfs ls-files")
     assert brief.index("git lfs ls-files") < brief.index("core.hooksPath=/dev/null push")  # checked before any push
+    assert "Before every push" in brief and "without pushing" in brief
+    assert "push before the LFS check above passes" in brief  # in the Never: list
 
 
 def test_a_hostile_default_branch_is_refused_when_the_pr_names_no_base(world, monkeypatch):

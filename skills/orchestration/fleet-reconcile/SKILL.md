@@ -3,7 +3,7 @@ name: fleet-reconcile
 tier: D
 primitive: null
 category: orchestration
-version: 0.4.0
+version: 0.4.1
 description: |
   The hourly fleet coordinator. Phase 1 observes and classifies, report only;
   phase 2 adds the coordinator and its verbs under dry run.
@@ -117,9 +117,10 @@ Trash; the config, the releases and the state dir stay.
    and child, so every step reads GitHub as that login. `gh_token_file` is accepted and not read.
    With no token to gate live mode, `config-check` refuses `dry_run: 0`
    unless `live_accepted` holds the owner's note that the Phase 3 list below
-   (BRO-2755 included) is done; tick.sh then alerts and runs no tick, and
-   every verb stays dry without it. The note is free text: it records a
-   deliberate second edit, not a check of the work.
+   is done and names both gate tickets, BRO-2755 and BRO-2756; tick.sh then
+   alerts and runs no tick, and every verb stays dry without it. The note
+   records a deliberate second edit; requiring the ticket ids keeps a bare
+   "no" or "TODO" from passing (it still doesn't check the work itself).
 6. `fleet recover` (closes intents a dead tick left open), `fleet observe`,
    `fleet report`, in act mode `fleet coordinator` (only after the three
    before it succeeded), and `fleet
@@ -343,7 +344,7 @@ Config keys beyond §5.7's, pending the spec: `listing_cap`, `pr_list_cap`,
 `bookkeeping_run_log`, `dream_run_log`, `tick_timeout_min`, `compare_hour`,
 `coordinator_model` (phase 2; null is Claude Code's default), `coordinator_budget_usd` (2),
 `maestro_cli`, `maestro_bun`, `ask_repo`, `ask_raise_after_min` (50; the owner channel),
-`live_accepted` (0.4.0: the owner's note that live mode's preconditions are done; `dry_run: 0` needs it). §5.7's `paseo_tools` defaults to
+`live_accepted` (0.4.0: the owner's note that live mode's preconditions are done; `dry_run: 0` needs it, and 0.4.1 requires it to name BRO-2755 and BRO-2756). §5.7's `paseo_tools` defaults to
 the pinned 0.9.2 classification (19 read, 42 write) and `driver` to probe 6's GitHub
 allowlist with no registries.
 §5.7's `b_step_timeout_min` and an adoption's `paseo_agent_id` are accepted.
@@ -411,12 +412,12 @@ python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (a
 | `test_observe.py` | The pipeline over the capture in a scratch HOME; a 200-row listing fails closed unless the job files show it complete; one unparsed job file degrades only its session; an unresolvable slug, a gh error and a PR list at the cap fail only their repo; the bearer never reaches a snapshot or report; activity found past a last line larger than the first tail window (ctx-core's reader); an inherited GH_TOKEN or GITHUB_TOKEN dropped, so gh reads the owner's login |
 | `test_report.py` | Every section; withheld crm/ paths and tokens; per-occurrence asks (once, then still open; an answer holds while true; a recurrence is new; a different question is new), answers per batch, stable count keys, failed-surface asks, a resolution only from the surfaces that raise the key (for a session that still classifies, too), open asks not re-checked still listed, a wait's key holding while its subagents write, a failing comparison asked after three runs with its error guarded, the ack wording, the ruleset wording, scheduled work as inventory only, a duplicate fleet name asked while it lasts (and not resolved without a listing); the labelling sheet (distinct sessions only) |
 | `test_ledger.py` | Validation, distinct owner ids within one millisecond, corrupt-line counting, 4 processes × 50 appends lose nothing, the ask and spawn folds |
-| `test_paseo_ask.py` | A batch raised as Maestro work in the fleet's own repo, then dispatched; only decisions that took effect read back, on Maestro's own wire sequences (undone, dropped, a torn cancel, the undo window, the display verdict, an agent's words); the note through the guard; Maestro's exit codes as errors; refusals told apart by the words they start with, on exit 1 only; `find` adopting only an open item of this scope's batch made after it; an alert adopting its kind's open item; the sync recording each new decision once, a note after the asks resolved, nothing past 14 days from the latest raise once its asks closed (an open one still read) or a final answer; a refusal at the cap, the loop starting it, or a lost race as no failure; a gone item freeing its batch and no longer seen; a refused dispatch whose item can't be read again raising its own error |
-| `test_tick.py` | tick.sh end to end with stub claude/gh/maestro: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, no token reaching any step (one configured or inherited included), recover and a live coordinator on the owner's login, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, a batch raised once at Needs you and the owner's verdict read back as the answer, a cancel dismissing, a batch raised only once its asks lasted, a batch queued at the cap neither failing the tick nor seen until dispatched, an open alert of its kind adopted, an alert queued at the cap not delivered, the bash fallback raising at most one per 6 h whatever Maestro answers, tried again when nothing reached Maestro (not listening, a CLI that didn't run), and stopped with its children when it hangs (or its leader dies), reaching Maestro with its state dir broken, live mode refused until `live_accepted` and every verb dry without it, a raised batch whose run can't start recorded queued and dispatched later, an ask Maestro doesn't take not recorded and raised at the next tick, alerts as Maestro work, a failed compare not using up the day and the prototype's compare line refused and asked about, ack refused inside a session, refused verbs, the labelling sheet |
-| `test_act.py` | Every verb refused in report mode and on a corrupt ledger or an open ask on its target; spawn's floor (held, draft, Dependabot, a head or base branch that isn't a plain ref, a hostile default branch, owner-merge, unread files, unruled repo, closed PR, taken name, a branch checked out, the caps, unknown claims, the spawn pause) against text that says otherwise; dry spawn, label and resume closed with the argv or call; mail only to fleet or adopted sessions, the 6 h rule (failed doesn't count, live and dry apart), not_live, ambiguous_name, a Paseo relaunch followed, template values guarded, no template names a merge or removal; a PR file list GitHub capped refused; the rendered driver brief's PR number and branches |
-| `test_sendgate.py` | Each pre check refusing with its own name; dry run closing the intent and still blocking; a live send passing and post closing it with the msg_id; harness_refused and unledgered_send; the CLI failing closed |
+| `test_paseo_ask.py` | A batch raised as Maestro work in the fleet's own repo, then dispatched; only decisions that took effect read back, on Maestro's own wire sequences (undone, dropped, a torn cancel, the undo window, the display verdict, an agent's words); the note through the guard; Maestro's exit codes as errors; refusals told apart by the words they start with, on exit 1 only; `find` adopting only an open item of this scope's batch made after it; an alert adopting its kind's open item; the sync recording each new decision once, a note after the asks resolved, nothing past 14 days from the latest raise once its asks closed (an open one still read) or a final answer; a refusal at the cap, the loop starting it, or a lost race as no failure; a gone item freeing its batch and no longer seen; a refused dispatch whose item can't be read again raising its own error; a Stuck item and a persistent read error each logged (and the error failing the step) at most once per 6 h, not every tick |
+| `test_tick.py` | tick.sh end to end with stub claude/gh/maestro: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, no token reaching any step (one configured or inherited included), recover and a live coordinator on the owner's login, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, a batch raised once at Needs you and the owner's verdict read back as the answer, a cancel dismissing, a batch raised only once its asks lasted, a batch queued at the cap neither failing the tick nor seen until dispatched, an open alert of its kind adopted, an alert queued at the cap not delivered, the bash fallback raising at most one per 6 h whatever Maestro answers, tried again when nothing reached Maestro (not listening, a CLI that didn't run), and stopped with its children when it hangs (or its leader dies), reaching Maestro with its state dir broken, live mode refused until `live_accepted` names BRO-2755 and BRO-2756 and every verb dry (at the CLI too: is-dry, act label/spawn, the coordinator child's DRY_RUN) without it, an unusable state dir alerting its own kind not a misread config-check, the bash fallback classifying a refusal in memory when mktemp fails, a raised batch whose run can't start recorded queued and dispatched later, an ask Maestro doesn't take not recorded and raised at the next tick, alerts as Maestro work, a failed compare not using up the day and the prototype's compare line refused and asked about, ack refused inside a session, refused verbs, the labelling sheet |
+| `test_act.py` | Every verb refused in report mode and on a corrupt ledger or an open ask on its target; spawn's floor (held, draft, Dependabot, a fork, a head or base branch that isn't a plain ref (incl. a 121-char head over the brief width), a withheld repo slug, a hostile default branch, owner-merge, unread files, unruled repo, closed PR, taken name, a branch checked out, the caps, unknown claims, the spawn pause) against text that says otherwise; a 120-char plain head shown in full; `render_template` raising on a non-string; dry spawn, label and resume closed with the argv or call; mail only to fleet or adopted sessions, the 6 h rule (failed doesn't count, live and dry apart), not_live, ambiguous_name, a Paseo relaunch followed, template values guarded, no template names a merge or removal; a PR file list GitHub capped refused; the rendered driver brief's PR number, branches, base fetch and LFS-check order |
+| `test_sendgate.py` | Each pre check refusing with its own name; dry run closing the intent and still blocking (incl. when the config refuses live); a live send passing and post closing it with the msg_id; harness_refused and unledgered_send; the CLI failing closed |
 | `test_recover.py` | Mail found in either delivery shape only after the intent (an enqueue only), else lost or unknown; a malformed entry counting as nothing; spawn's one, none or duplicate rows; resume by process start; label by the PR's labels |
-| `test_coordinator.py` | Every Paseo tool the captured 0.9.2 list holds is classified (fails when Paseo adds one); the argv's disallowed list and `--`; the settings' hooks; the posture check; a coordinator whose tool list fails it, or whose stream ends before its init event (its own exit code kept, a still-running one stopped), terminated; the child environment; the driver profile's shape and 0600 file, with no token even when a token file is configured |
+| `test_coordinator.py` | Every Paseo tool the captured 0.9.2 list holds is classified (fails when Paseo adds one); the argv's disallowed list and `--`; the settings' hooks; the posture check; a coordinator whose tool list fails it, or whose stream ends before its init event (its own exit code kept, a still-running one stopped), terminated; the child environment; the driver profile's shape and 0600 file, with no token even when a token file is configured, the keychain and gh config left readable, and the credential files the gh route doesn't need denied |
 | `test_janitor.py` | Each check passing, failing, or not running (a process listing showing only the janitor, an ignored directory it can't walk); the backup; pruning; a profile it can't delete failing the run; report-only without --remove; no removal of a scope repo's worktree; the scratch run's order |
 | `test_install.py` | The pinned copy (runnable without the checkout), plist rendering, config seeded once at 0600, bootout-wait-bootstrap on every run, a retried bootstrap, uninstall to the Trash, dry run, a broken config, uncommitted changes refused without --force |
 
@@ -445,10 +446,16 @@ in report mode, on a corrupt ledger (mail, spawn) and on an unanswered ask about
 its target, then re-observes and re-checks in code:
 
 - `spawn --repo R --pr N` (drivers only; janitor runs are report-only): §5.5's
-  rules from a fresh observation (ruleset, open, not draft or Dependabot, no
-  `hold` label, head and base branches that are plain ref names the text
-  guard renders unchanged (the head judged on its raw name; the brief carries
-  the base into a command; `+`, `@` or non-ASCII names get no driver), no
+  rules from a fresh observation (ruleset, open, not draft or Dependabot, not a
+  fork (spec §5.2 W3: a fork's author picks the head name and PR text a brief
+  would carry), no `hold` label, head and base branches that are plain ref
+  names the text guard renders unchanged and no longer than 120 characters (the
+  width a brief shows), and a repo slug the guard renders unchanged (the head
+  judged on its raw name; the brief carries the slug and base into a command).
+  The text guard withholds not only `+`, `@` and non-ASCII but credential-shaped
+  tokens (an `SK-123` key, a `ghp_`/`sk-`/`xox`/`AKIA` substring), a `crm/` path
+  segment, and a run of 32 or more letters and digits; a PR whose head, base or
+  slug it would change gets no driver. There must be no
   `research/entities/**` file among all its files (a list
   shorter than the PR's `changed_files`, GitHub's 3000-file cap, refuses
   it), no live
@@ -505,12 +512,21 @@ bypassed: the global pre-push hook's git-lfs fails the same way, so a driver
 can't push LFS objects) and call the REST API with curl. Measured in the
 credential drill (`~/.config/broomva/fleet/credential-drill-20261001/`):
 push, a REST PR, update-branch and a squash merge on a private scratch repo,
-with ~/.paseo reads and $HOME writes still refused. **Open residual:** with
-the keychain's deny gone the driver can read the whole login keychain file,
-so any item whose ACL trusts `/usr/bin/security` (provider-manager's managed
-credentials, for one) is likely readable without a prompt, and
-`api.github.com` is on the allowlist. The drill probed only gh's item.
-BRO-2755 measures it before any live driver; spawns stay dry until then.
+with ~/.paseo reads and $HOME writes still refused. Since BRO-2755 it also
+denies the credential files the gh route doesn't need (`~/.aws`, `~/.ssh`,
+`~/.config/gcloud`, `~/.kube`, `~/.config/op`, `~/.gnupg`, `~/.netrc`,
+`~/.docker/config.json`); `~/.config/gh` and git config stay readable (the gh
+route needs them). **Open residual (measured, BRO-2755,
+`keychain-table-20261002-bro2755.md`):** securityd is reachable from inside the
+driver sandbox, so a driver can read ANY login-keychain item via
+`/usr/bin/security` without a prompt — not just gh's (the `Claude Code` and
+`Orca Claude Code Managed Credentials`, `Houston-Linear-credentials`, cursor
+tokens, an `api.anthropic.com` internet-password, and the rest). A file-based
+`denyRead` on the keychain is whole-keychain and would break gh's own read, so
+the keychain can't be partially denied: the exposure is a W1 decision for the
+owner (accept arm D, or arm A — a per-spawn env token with the keychain file
+re-denied, which a file deny *does* reach). Spawns stay dry until the owner
+answers W1 and the rest of Phase 3 lands.
 
 **The janitor** (`janitor.py`): `fleet janitor-check PATH --owner ID` exits 0
 only when every check passes, 1 on a failure and 2 when a check couldn't run;
@@ -548,7 +564,10 @@ channel" above): Maestro work at Needs you, never a macOS dialog.
 Needs the two remaining preconditions of spec §5.2 (the owner waived the
 first, the fleet token): the Merge Gate judged by the base's copy, and the
 Hold and owner-merge checks. It also needs the unrun recovery drill, the
-owner's review of the dry run's proposals, and BRO-2755 (what a driver can
-read from the login keychain). Then `dry_run: 0` with `live_accepted` set to
-the owner's note that these are done: `config-check` refuses `dry_run: 0`
-without it, so tick.sh alerts and runs no tick, and every verb stays dry.
+owner's review of the dry run's proposals, BRO-2755 (what a driver can read
+from the login keychain) and BRO-2756 (phase-3 hardening, including that fork
+PRs get no driver — spec §5.2 W3). Then `dry_run: 0` with `live_accepted` set
+to the owner's note that these are done, naming both BRO-2755 and BRO-2756:
+`config-check` refuses `dry_run: 0` without a note that names them (a bare
+"no" or "TODO" does not pass), so tick.sh alerts and runs no tick, and every
+verb stays dry.

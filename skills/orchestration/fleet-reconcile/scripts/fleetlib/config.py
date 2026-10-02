@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -179,17 +180,36 @@ def scope(sid: str, check_scopes: bool = True) -> Dict[str, Any]:
     return sec
 
 
+#: live_accepted must name every phase-3 gate ticket, so "no" or "TODO" can't
+#: pass as the owner's note (spec §5.2 W1; #263 review). BRO-2755 (the keychain
+#: measurement) and BRO-2756 (phase-3 hardening, incl. fork PRs) both gate live.
+LIVE_TICKETS = ("BRO-2755", "BRO-2756")
+
+
 def live_refusal(sec: Dict[str, Any]) -> Optional[str]:
     """Why this scope's dry_run 0 is refused, or None. Since 0.4.0 the fleet
     acts on the owner's admin login with no token to gate it, and a driver can
     read the login keychain: live mode waits on SKILL.md's Phase 3 list
     (phase 3's checks, the recovery drill, the owner's review of the dry run,
-    BRO-2755), and the owner records that it is done in live_accepted. Until then
-    config-check fails (tick.sh alerts and runs no tick) and every verb stays
-    dry."""
-    if sec.get("dry_run") == 0 and not (sec.get("live_accepted") or "").strip():
+    BRO-2755 and BRO-2756), and the owner records that it is done in
+    live_accepted, naming those tickets. The refusal is scope-wide, not scoped
+    to mode: act: dry_run 0 declares intent to go live, so a report-mode scope
+    that sets it is a misconfiguration caught here (fail closed), and dry_run
+    carries no meaning in report mode anyway. Until the note is there and names
+    the tickets, config-check fails (tick.sh alerts and runs no tick) and every
+    verb stays dry."""
+    if sec.get("dry_run") != 0:
+        return None
+    note = (sec.get("live_accepted") or "").strip()
+    if not note:
         return ("scope %s: dry_run 0 is refused until live_accepted records that phase 3's checks, the recovery "
-                "drill, the owner's review of the dry run and BRO-2755 are done (SKILL.md, Phase 3)" % sec.get("scope"))
+                "drill, the owner's review of the dry run and %s are done (SKILL.md, Phase 3)"
+                % (sec.get("scope"), " and ".join(LIVE_TICKETS)))
+    # Match each ticket as a whole id, not a substring: "BRO-27550" must not satisfy "BRO-2755" (P20 round 1).
+    missing = [t for t in LIVE_TICKETS if not re.search(r"\b%s\b" % re.escape(t), note)]
+    if missing:
+        return ("scope %s: live_accepted must name the phase-3 gate ticket(s) %s so a bare \"no\" or \"TODO\" can't "
+                "pass as the owner's note (SKILL.md, Phase 3)" % (sec.get("scope"), ", ".join(missing)))
     return None
 
 

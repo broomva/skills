@@ -268,7 +268,9 @@ def test_the_captured_pr_lists_parse():
     fake = [{"number": 1, "title": "bump x", "headRefName": "dependabot/npm/x", "isDraft": False,
              "author": {"login": "app/dependabot", "is_bot": True}, "labels": [{"name": "hold"}]}]
     p = parsers.parse_pr_list(json.dumps(fake))[0]
-    assert p["dependabot"] and p["bot"] and p["labels"] == ["hold"]
+    assert p["dependabot"] and p["bot"] and p["labels"] == ["hold"] and p["fork"] is False  # absent reads as not-a-fork
+    forked = parsers.parse_pr_list(json.dumps([dict(fake[0], number=2, isCrossRepository=True)]))[0]
+    assert forked["fork"] is True
 
 
 # --------------------------------------------------------------------------
