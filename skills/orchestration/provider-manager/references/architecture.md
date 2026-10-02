@@ -74,7 +74,10 @@
   * **Scoped Service**: `Claude Code-credentials-d098dafb` (hash represents `~/.claude`)
   * **Fallback Service**: `Claude Code-credentials`
   * **Account**: macOS username (e.g. `$(whoami)`)
-  * **Format**: Hex-encoded JSON or raw JSON string.
+  * **Format**: Hex-encoded JSON or raw JSON string containing a composite dictionary:
+    * `claudeAiOauth`: Access and refresh tokens for Anthropic Claude Code CLI.
+    * `mcpOAuth`: Dynamic OAuth tokens for MCP servers (Linear, Slack, Sentry, Granola, etc.).
+  * **MCP OAuth Preservation Invariant**: When switching or rotating accounts, `provider-manager` uses `sync_claude_keychains()` and `merge_mcp_oauth()` to merge existing live `mcpOAuth` tokens from the Keychain before writing, ensuring third-party MCP connections are never wiped out or overwritten by empty stubs.
 
 ---
 

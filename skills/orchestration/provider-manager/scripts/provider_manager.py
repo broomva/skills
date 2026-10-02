@@ -21,7 +21,7 @@ import time
 import urllib.error
 import urllib.request
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 ORCA_DATA_PATH = Path.home() / "Library/Application Support/orca/profiles/local-default/orca-data.json"
 CLAUDE_CONFIG_PATH = Path.home() / ".claude.json"
@@ -119,6 +119,55 @@ def write_keychain_generic_password(service: str, account: str, data: Dict[str, 
     ]
     res = run_cmd(cmd, check=False)
     return res.returncode == 0
+
+
+def merge_mcp_oauth(target_creds: Dict[str, Any], live_creds: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Merge mcpOAuth tokens, preserving active third-party MCP tokens (Linear, Slack, Sentry, etc.)."""
+    result = dict(target_creds)
+    if not live_creds:
+        return result
+
+    live_mcp = live_creds.get("mcpOAuth")
+    if not isinstance(live_mcp, dict):
+        return result
+
+    raw_target_mcp = result.get("mcpOAuth")
+    target_mcp = dict(raw_target_mcp) if isinstance(raw_target_mcp, dict) else {}
+    for server_key, server_data in live_mcp.items():
+        if not isinstance(server_data, dict):
+            continue
+        has_token = bool(server_data.get("accessToken") or server_data.get("refreshToken"))
+        target_server = target_mcp.get(server_key)
+        target_has_token = bool(target_server.get("accessToken") or target_server.get("refreshToken")) if isinstance(target_server, dict) else False
+
+        if has_token:
+            # Always prefer live valid tokens over empty strings or missing tokens
+            target_mcp[server_key] = server_data
+        elif not target_has_token and server_key not in target_mcp:
+            target_mcp[server_key] = server_data
+
+    if target_mcp:
+        result["mcpOAuth"] = target_mcp
+    return result
+
+
+def sync_claude_keychains(target_creds: Dict[str, Any], username: str) -> Tuple[bool, bool]:
+    """Safely write target credentials to Claude Keychains, preserving live third-party mcpOAuth tokens.
+
+    Harvests and merges mcpOAuth across both existing keychains (unscoped & scoped) so tokens
+    are never dropped due to partial or stale storage. Returns (ok_scoped, ok_unscoped).
+    """
+    harvested_mcp: Dict[str, Any] = {}
+    for s in [KEYCHAIN_CLAUDE_UNSCOPED, KEYCHAIN_CLAUDE_SCOPED]:
+        existing = read_keychain_generic_password(s, username)
+        if existing and isinstance(existing.get("mcpOAuth"), dict):
+            harvested_mcp = merge_mcp_oauth({"mcpOAuth": harvested_mcp}, existing).get("mcpOAuth") or {}
+
+    merged_creds = merge_mcp_oauth(target_creds, {"mcpOAuth": harvested_mcp} if harvested_mcp else None)
+
+    ok_scoped = write_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED, username, merged_creds)
+    ok_unscoped = write_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED, username, merged_creds)
+    return (bool(ok_scoped), bool(ok_unscoped))
 
 
 def get_orca_data() -> Dict[str, Any]:
@@ -363,13 +412,16 @@ def refresh_account_token(account_id: str) -> Optional[Dict[str, Any]]:
         sys.stderr.write(f"Error: Failed to persist refreshed OAuth credentials for {account_id}\n")
         return None
 
-    # 2. If this account is currently active, mirror to Claude Keychains
+    # 2. If this account is currently active, mirror to Claude Keychains preserving MCP OAuth
     orca_data = get_orca_data()
     active_id = orca_data.get("settings", {}).get("activeClaudeManagedAccountId")
     username = get_current_username()
     if active_id == account_id:
-        write_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED, username, creds)
-        write_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED, username, creds)
+        ok_scoped, ok_unscoped = sync_claude_keychains(creds, username)
+        if not (ok_scoped or ok_unscoped):
+            sys.stderr.write(f"Warning: Failed to mirror refreshed credentials to Claude Keychains for {account_id}\n")
+        elif not (ok_scoped and ok_unscoped):
+            sys.stderr.write(f"Warning: Partial Claude Keychain synchronization for {account_id} (scoped={ok_scoped}, unscoped={ok_unscoped})\n")
 
     # 3. Update updatedAt in orca-data.json
     for acc in orca_data.get("settings", {}).get("claudeManagedAccounts", []):
@@ -692,13 +744,16 @@ def switch_account(identifier: str, source: str = "manual", metadata: Optional[D
             f"Run 'login-headless --email {target_email}' first."
         )
 
-    # 2. Write credentials to Claude Code Keychains
+    # 2. Write credentials to Claude Code Keychains, preserving live third-party mcpOAuth tokens
     username = os.environ.get("USER") or os.environ.get("LOGNAME") or getpass.getuser()
-    ok_scoped = write_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED, username, creds)
-    ok_unscoped = write_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED, username, creds)
-    if not (ok_scoped or ok_unscoped):
+    ok_scoped, ok_unscoped = sync_claude_keychains(creds, username)
+    if not ok_scoped:
         raise RuntimeError(
-            f"Failed to write credentials to macOS Keychain for account {target_email} ({username})."
+            f"Failed to write credentials to scoped macOS Keychain for account {target_email} ({username})."
+        )
+    if not ok_unscoped:
+        sys.stderr.write(
+            f"Warning: Unscoped keychain write failed during switch to {target_email}\n"
         )
 
     # 3. Update ~/.claude.json oauthAccount
@@ -884,11 +939,10 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
     if not ok:
         raise RuntimeError(f"Failed to sync credentials to Orca Keychain for {target_uuid}.")
 
-    # Mirror fresh creds across both Claude Keychains so they remain synchronized
-    ok_unscoped = write_keychain_generic_password(KEYCHAIN_CLAUDE_UNSCOPED, username, fresh_creds)
-    ok_scoped = write_keychain_generic_password(KEYCHAIN_CLAUDE_SCOPED, username, fresh_creds)
-    if not (ok_unscoped and ok_scoped):
-        sys.stderr.write(f"Warning: Partial keychain synchronization (unscoped={ok_unscoped}, scoped={ok_scoped})\n")
+    # Mirror fresh creds across both Claude Keychains so they remain synchronized, preserving MCP OAuth
+    ok_scoped, ok_unscoped = sync_claude_keychains(fresh_creds, username)
+    if not (ok_scoped and ok_unscoped):
+        sys.stderr.write(f"Warning: Partial keychain synchronization (scoped={ok_scoped}, unscoped={ok_unscoped})\n")
 
     orca.setdefault("settings", {})["activeClaudeManagedAccountId"] = target_uuid
     if matching_acc:
