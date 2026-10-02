@@ -26,7 +26,7 @@
 #
 # Env: FLEET_SCOPE (required); FLEET_CONFIG (default ~/.config/ctx/fleet.json);
 # DRY_RUN (any value but 0 forces dry; no value makes a tick live, only the
-# config's dry_run 0 does); FLEET_PYTHON. Test seams: FLEET_TICK_TIMEOUT_S,
+# config's dry_run 0 with live_accepted does); FLEET_PYTHON. Test seams: FLEET_TICK_TIMEOUT_S,
 # FLEET_ALERT_TIMEOUT_S and FLEET_KILL_GRACE_S (the bash fallback's watchdog),
 # FLEET_NOTIFY=0, FLEET_MAESTRO_BIN (or FLEET_MAESTRO_BUN and FLEET_MAESTRO_CLI), FLEET_ASK_REPO.
 set -uo pipefail
@@ -173,7 +173,8 @@ Change nothing and run no tools. End your turn at once with exactly two sections
   fi
   # To a file, not a command substitution: a child left holding a pipe would hold the tick. A file of its
   # own (not one in STATE_DIR: the fallback runs when things are broken, and two ticks before the lock can
-  # both run it), and with no file at all the call still goes out, unclassified.
+  # both run it). With no file at all the call still goes out, but an exit 1 can't be read as Maestro's and
+  # is retried at the next tick.
   local out rc
   out=$(mktemp "${TMPDIR:-/tmp}/fleet-alert.XXXXXX" 2>/dev/null) || out=/dev/null
   bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json \

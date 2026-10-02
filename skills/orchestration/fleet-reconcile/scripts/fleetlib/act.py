@@ -43,6 +43,10 @@ HOLD_LABEL = "hold"
 #: `claude --bg` prints "backgrounded · <bg id> · <name>" (probe 6, 2.1.280).
 SPAWNED_RE = re.compile(r"backgrounded\s*\S\s*([0-9a-f]{8})\b")
 LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,49}$")
+#: A branch name the driver's brief may carry, in prose and in a command it runs:
+#: a plain ref, never one with spaces or shell characters (git allows `$`, `;`,
+#: `|` and backticks in ref names).
+REF_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]{0,199}$")
 MAIL_TEMPLATES = ("stalled", "hung", "overlap")
 #: The only values a template takes from the caller, each a shape and never
 #: free text: §5.5's fixed templates "never name a merge or a removal", and a
@@ -317,12 +321,17 @@ class Act:
             if owner:
                 raise Refused("ineligible", "%s#%d touches %s: an owner-merge PR gets no driver (§5.2)" % (
                     slug, number, owner[0] if owner else "an unreadable file list"))
+            base = pr.get("base") or repo.get("default_branch") or "main"
+            odd = [b for b in (pr["head"], base) if not REF_RE.match(b or "")]
+            if odd:
+                raise Refused("ineligible", "%s#%d's branch %s isn't a plain ref name, and the driver's brief would "
+                                            "carry it into a command" % (slug, number, common.safe_text(odd[0], 60)))
         except Refused as exc:
             return self._refuse("spawn", key, exc)
         workdir = str(Path(repo["repo"]).parent)
         prof = profile.path_for(self.sd, key)
         brief = render_template("driver-brief.md", {"key": key, "repo": slug, "pr": number, "branch": pr["head"],
-                                                    "base": pr.get("base") or repo.get("default_branch") or "main"})
+                                                    "base": base})
         argv = profile.driver_argv(self.sec, key, prof, brief)
         it = self._intent("spawn", key, {"role": role, "repo": slug, "pr": number, "name": key, "profile": str(prof),
                                          "cwd": workdir, "argv_sha256": hashlib.sha256(

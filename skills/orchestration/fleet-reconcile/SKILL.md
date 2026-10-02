@@ -94,9 +94,11 @@ Trash; the config, the releases and the state dir stay.
    only when `fleet config-get <scope> dispatch_enabled` prints exactly `1`.
    Any other value is the owner's off (exit 0). A config that can't be read
    is off too, and is a failure (below). Then `config-check`.
-2. `dry_run` falls toward dry: live only when the config says exactly `0`; any
-   `DRY_RUN` value but `0` in the environment forces dry. Phase 1 acts on
-   nothing either way; the ledger records the mode.
+2. `dry_run` falls toward dry: live only when the config says exactly `0` and
+   `live_accepted` holds the owner's note (step 5); any `DRY_RUN` value but `0`
+   in the environment forces dry. `dry_run: 0` without that note fails
+   `config-check` in any mode, so no tick runs. Phase 1 acts on nothing
+   either way; the ledger records the mode.
 3. A mkdir lock per scope. A stale lock (both pids gone, 2 minutes old) is
    reclaimed under a second mkdir mutex that re-reads its holder, so two
    ticks can't both reclaim it.
@@ -114,9 +116,10 @@ Trash; the config, the releases and the state dir stay.
    inherits before it runs anything, and so does `Sources` for every gh call
    and child, so every step reads GitHub as that login. `gh_token_file` is accepted and not read.
    With no token to gate live mode, `config-check` refuses `dry_run: 0`
-   unless `live_accepted` holds the owner's note that phase 3's checks and
-   BRO-2755 are done (tick.sh then alerts and runs no tick), and every verb
-   stays dry without it.
+   unless `live_accepted` holds the owner's note that the Phase 3 list below
+   (BRO-2755 included) is done; tick.sh then alerts and runs no tick, and
+   every verb stays dry without it. The note is free text: it records a
+   deliberate second edit, not a check of the work.
 6. `fleet recover` (closes intents a dead tick left open), `fleet observe`,
    `fleet report`, in act mode `fleet coordinator` (only after the three
    before it succeeded), and `fleet
@@ -339,7 +342,8 @@ Config keys beyond §5.7's, pending the spec: `listing_cap`, `pr_list_cap`,
 `launchd_logs` (a label's real log, when its stdout is silent),
 `bookkeeping_run_log`, `dream_run_log`, `tick_timeout_min`, `compare_hour`,
 `coordinator_model` (phase 2; null is Claude Code's default), `coordinator_budget_usd` (2),
-`maestro_cli`, `maestro_bun`, `ask_repo`, `ask_raise_after_min` (50; the owner channel). §5.7's `paseo_tools` defaults to
+`maestro_cli`, `maestro_bun`, `ask_repo`, `ask_raise_after_min` (50; the owner channel),
+`live_accepted` (0.4.0: the owner's note that live mode's preconditions are done; `dry_run: 0` needs it). §5.7's `paseo_tools` defaults to
 the pinned 0.9.2 classification (19 read, 42 write) and `driver` to probe 6's GitHub
 allowlist with no registries.
 §5.7's `b_step_timeout_min` and an adoption's `paseo_agent_id` are accepted.
@@ -409,7 +413,7 @@ python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (a
 | `test_ledger.py` | Validation, distinct owner ids within one millisecond, corrupt-line counting, 4 processes × 50 appends lose nothing, the ask and spawn folds |
 | `test_paseo_ask.py` | A batch raised as Maestro work in the fleet's own repo, then dispatched; only decisions that took effect read back, on Maestro's own wire sequences (undone, dropped, a torn cancel, the undo window, the display verdict, an agent's words); the note through the guard; Maestro's exit codes as errors; refusals told apart by the words they start with, on exit 1 only; `find` adopting only an open item of this scope's batch made after it; an alert adopting its kind's open item; the sync recording each new decision once, a note after the asks resolved, nothing past 14 days from the latest raise once its asks closed (an open one still read) or a final answer; a refusal at the cap, the loop starting it, or a lost race as no failure; a gone item freeing its batch and no longer seen; a refused dispatch whose item can't be read again raising its own error |
 | `test_tick.py` | tick.sh end to end with stub claude/gh/maestro: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, no token reaching any step (one configured or inherited included), recover and a live coordinator on the owner's login, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, a batch raised once at Needs you and the owner's verdict read back as the answer, a cancel dismissing, a batch raised only once its asks lasted, a batch queued at the cap neither failing the tick nor seen until dispatched, an open alert of its kind adopted, an alert queued at the cap not delivered, the bash fallback raising at most one per 6 h whatever Maestro answers, tried again when nothing reached Maestro (not listening, a CLI that didn't run), and stopped with its children when it hangs (or its leader dies), reaching Maestro with its state dir broken, live mode refused until `live_accepted` and every verb dry without it, a raised batch whose run can't start recorded queued and dispatched later, an ask Maestro doesn't take not recorded and raised at the next tick, alerts as Maestro work, a failed compare not using up the day and the prototype's compare line refused and asked about, ack refused inside a session, refused verbs, the labelling sheet |
-| `test_act.py` | Every verb refused in report mode and on a corrupt ledger or an open ask on its target; spawn's floor (held, draft, Dependabot, owner-merge, unread files, unruled repo, closed PR, taken name, a branch checked out, the caps, unknown claims, the spawn pause) against text that says otherwise; dry spawn, label and resume closed with the argv or call; mail only to fleet or adopted sessions, the 6 h rule (failed doesn't count, live and dry apart), not_live, ambiguous_name, a Paseo relaunch followed, template values guarded, no template names a merge or removal; a PR file list GitHub capped refused |
+| `test_act.py` | Every verb refused in report mode and on a corrupt ledger or an open ask on its target; spawn's floor (held, draft, Dependabot, a branch name with shell characters, owner-merge, unread files, unruled repo, closed PR, taken name, a branch checked out, the caps, unknown claims, the spawn pause) against text that says otherwise; dry spawn, label and resume closed with the argv or call; mail only to fleet or adopted sessions, the 6 h rule (failed doesn't count, live and dry apart), not_live, ambiguous_name, a Paseo relaunch followed, template values guarded, no template names a merge or removal; a PR file list GitHub capped refused |
 | `test_sendgate.py` | Each pre check refusing with its own name; dry run closing the intent and still blocking; a live send passing and post closing it with the msg_id; harness_refused and unledgered_send; the CLI failing closed |
 | `test_recover.py` | Mail found in either delivery shape only after the intent (an enqueue only), else lost or unknown; a malformed entry counting as nothing; spawn's one, none or duplicate rows; resume by process start; label by the PR's labels |
 | `test_coordinator.py` | Every Paseo tool the captured 0.9.2 list holds is classified (fails when Paseo adds one); the argv's disallowed list and `--`; the settings' hooks; the posture check; a coordinator whose tool list fails it, or whose stream ends before its init event (its own exit code kept, a still-running one stopped), terminated; the child environment; the driver profile's shape and 0600 file, with no token even when a token file is configured |
@@ -442,7 +446,8 @@ its target, then re-observes and re-checks in code:
 
 - `spawn --repo R --pr N` (drivers only; janitor runs are report-only): §5.5's
   rules from a fresh observation (ruleset, open, not draft or Dependabot, no
-  `hold` label, no `research/entities/**` file among all its files (a list
+  `hold` label, branch names that are plain refs (the brief carries them
+  into commands), no `research/entities/**` file among all its files (a list
   shorter than the PR's `changed_files`, GitHub's 3000-file cap, refuses
   it), no live
   session on its branch, no unknown claim, the name unused live or stopped in

