@@ -189,7 +189,7 @@ def test_a_coordinator_that_acts_before_its_init_event_is_stopped(world, tmp_pat
     out = tmp_path / "c.jsonl"
     res = coordinator.run(config.scope("broomva"), 3, "/x/fleet", out, True, claude=_stub(
         tmp_path, "echo '{\"type\": \"assistant\", \"message\": {}}'\nexec sleep 20\n"))
-    assert res["exit"] == coordinator.EXIT_POSTURE and "before its init event" in res["posture"][0]
+    assert res["exit"] == coordinator.EXIT_POSTURE and "acted before its init event" in res["posture"][0]
 
 
 def test_a_coordinator_with_no_init_event_is_stopped_at_the_deadline(world, tmp_path, monkeypatch):
@@ -203,11 +203,17 @@ def test_a_coordinator_with_no_init_event_is_stopped_at_the_deadline(world, tmp_
     assert time.monotonic() - t0 < 15
 
 
-def test_a_coordinator_whose_stream_ends_before_its_init_event_fails_its_posture(world, tmp_path):
+@pytest.mark.parametrize("body, said", [("exit 0\n", "(it exited 0)"),   # a clean exit, its tool list never checked
+                                        ("exit 3\n", "(it exited 3)"),   # a crash keeps its own code beside it
+                                        ("exec 1>&-\nexec sleep 30\n", "(it exited -15)")])  # stream closed, still running
+def test_a_coordinator_whose_stream_ends_before_its_init_event_fails_its_posture(world, tmp_path, body, said):
+    import time
     world.write_config(mode="act")
+    t0 = time.monotonic()
     res = coordinator.run(config.scope("broomva"), 3, "/x/fleet", tmp_path / "c.jsonl", True,
-                          claude=_stub(tmp_path, "exit 0\n"))  # a clean exit, its tool list never checked
+                          claude=_stub(tmp_path, body))
     assert res["exit"] == coordinator.EXIT_POSTURE and "ended before its init event" in res["posture"][0]
+    assert said in res["posture"][0] and time.monotonic() - t0 < 20  # stopped, not waited out
 
 
 def test_the_tick_watchdogs_term_to_the_step_group_reaches_the_coordinators_claude(world, tmp_path):

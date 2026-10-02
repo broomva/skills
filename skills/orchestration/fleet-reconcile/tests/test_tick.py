@@ -1,6 +1,6 @@
 """tick.sh end to end, and the CLI verbs around it, in an isolated HOME with
 stub `claude`, `gh` and `maestro` that serve the captured fixture and
-record how they were called (a GH_TOKEN's length only, never its value)."""
+record how they were called (a token's length only, never its value)."""
 from __future__ import annotations
 
 import json
@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -34,14 +35,14 @@ def rig(fresh_world, tmp_path):
     calls_dir = tmp_path / "calls"
     calls_dir.mkdir()
     fx = w.fixture
-    _stub(bin_ / "claude", 'echo "${#GH_TOKEN}" >> "%s/claude-token-lengths"\n'
+    _stub(bin_ / "claude", 'echo "${#GH_TOKEN}/${#GITHUB_TOKEN}" >> "%s/claude-token-lengths"\n'
           'case "$1" in\n'
           '  --version) cat "%s/claude/version.txt" ;;\n'
           '  agents) [ -n "${STUB_HANG:-}" ] && { (trap "" TERM; exec sleep 33) & wait; }; cat "%s/claude/agents.json" ;;\n'
           '  -p) env > "%s/coordinator-env"; printf "%%s\\n" "{\\"type\\": \\"system\\", \\"subtype\\": \\"init\\", '
           '\\"tools\\": [${STUB_TOOLS:-\\"Bash\\"}]}"; echo "{\\"type\\": \\"result\\"}" ;;\n'
           '  *) exit 2 ;;\nesac\n' % (calls_dir, fx, fx, calls_dir))
-    _stub(bin_ / "gh", 'echo "${#GH_TOKEN}" >> "%s/gh-token-lengths"\n'
+    _stub(bin_ / "gh", 'echo "${#GH_TOKEN}/${#GITHUB_TOKEN}" >> "%s/gh-token-lengths"\n'
           'slug=""; for a in "$@"; do case "$a" in repos/*) slug=${a#repos/}; slug=${slug%%%%/rules*} ;; esac; done\n'
           'if [ "$1" = pr ]; then slug=$4; fi\n'
           'd="%s/gh/$(echo "$slug" | sed "s#/#__#")"\n'
@@ -52,15 +53,17 @@ def rig(fresh_world, tmp_path):
           '  *) exit 1 ;;\nesac\n' % (calls_dir, fx))
     # maestro: `new` makes item itm-<n> (listed by `ls`), queued, or with --dispatch (the bash fallback) in
     # STUB_NEW_STATE; STUB_NEW_EXIT makes `new` fail after creating it, saying STUB_NEW_ERR; STUB_NEW_HANG
-    # makes it ignore TERM and hang; `show <id>` serves calls/maestro-show-<id>.json, else review; `dispatch`
+    # makes it and a child ignore TERM and hang; STUB_CLI_CRASH exits 1 as bun does when the CLI can't load,
+    # before reaching Maestro; `show <id>` serves calls/maestro-show-<id>.json, else review; `dispatch`
     # starts it, or STUB_DISPATCH_EXIT refuses (the cap, or STUB_DISPATCH_ERR). Refusals read as bin/maestro.ts
     # prints them.
-    _stub(bin_ / "maestro", '[ -n "${STUB_MAESTRO_DOWN:-}" ] && { echo "Maestro is not listening" >&2; exit 2; }\n'
+    _stub(bin_ / "maestro", '[ -n "${STUB_MAESTRO_DOWN:-}" ] && { echo "maestro: Maestro is not listening" >&2; exit 2; }\n'
+          '[ -n "${STUB_CLI_CRASH:-}" ] && { echo "error: Module not found \\"maestro.ts\\"" >&2; exit 1; }\n'
           'printf "%%s\\n" "$*" | head -1 >> "%s/maestro"\n'
           '[ -n "${STUB_LOCK:-}" ] && [ -d "$STUB_LOCK" ] && echo held >> "%s/lock-during-alert"\n'
           'c="%s"\n'
           'case "$1" in\n'
-          '  new) [ -n "${STUB_NEW_HANG:-}" ] && { trap "" TERM; exec sleep 60; };'
+          '  new) [ -n "${STUB_NEW_HANG:-}" ] && { trap "" TERM; sleep 60 & echo $! > "$c/hang-child"; wait; };'
           ' n=$(( $(cat "$c/maestro-n" 2>/dev/null || echo 0) + 1 )); echo $n > "$c/maestro-n";'
           ' printf "%%s\\n" "$*" > "$c/maestro-new-itm-$n";'
           ' st=proposed; case " $* " in (*" --dispatch "*) st=${STUB_NEW_STATE:-running} ;; esac;'
@@ -171,12 +174,19 @@ def test_a_tick_observes_reports_asks_and_records_itself(rig):
     assert (sd / "asks" / "00001.md").is_file()
 
 
-def test_no_token_reaches_any_step_even_one_configured_or_inherited(rig):
+def test_no_token_reaches_any_step_even_one_configured_or_inherited(rig, tmp_path):
     # Owner decision 2026-10-01: GitHub on the owner's gh login. gh_token_file is set (accepted, not read),
-    # and a token inherited from the shell is dropped.
-    r = rig.tick(GH_TOKEN=TOKEN, GITHUB_TOKEN=TOKEN)
+    # and a token inherited from the shell is dropped: by tick.sh for every step it starts (the Python every
+    # step runs under is watched here), and by Sources for gh and every child.
+    seen = tmp_path / "python-token-lengths"
+    py = _stub(tmp_path / "python3", 'echo "$3 ${#GH_TOKEN}/${#GITHUB_TOKEN}" >> "%s"\nexec "%s" "$@"\n'
+               % (seen, sys.executable))
+    r = rig.tick(GH_TOKEN=TOKEN, GITHUB_TOKEN=TOKEN, FLEET_PYTHON=str(py))
     assert r.returncode == 0, rig.log()
-    assert set(rig.calls("gh-token-lengths")) == {"0"} and set(rig.calls("claude-token-lengths")) == {"0"}
+    assert set(rig.calls("gh-token-lengths")) == {"0/0"} and set(rig.calls("claude-token-lengths")) == {"0/0"}
+    steps = [ln.split() for ln in seen.read_text().splitlines()]
+    assert {"recover", "observe", "report", "act"} <= {cmd for cmd, _ in steps}
+    assert {n for cmd, n in steps if cmd in ("recover", "observe", "report", "act", "core-compare")} == {"0/0"}
     sd = rig.world.state["broomva"]
     for p in sd.rglob("*"):
         if p.is_file():
@@ -431,21 +441,28 @@ def test_the_bash_fallback_raises_at_most_one_alert_per_6_h_even_queued_or_uncon
     assert (sd / ".alert-config").exists()
 
 
-def test_the_bash_fallback_tries_again_when_maestro_wasnt_listening(rig):
+@pytest.mark.parametrize("down, code", [("STUB_MAESTRO_DOWN", 2),  # not listening
+                                        ("STUB_CLI_CRASH", 1)])   # bun's own exit 1, no "maestro: " line
+def test_the_bash_fallback_tries_again_when_nothing_reached_maestro(rig, down, code):
     rig.world.config.write_text("not json")
-    rig.tick(STUB_MAESTRO_DOWN="1")  # nothing was sent, so nothing was made
+    rig.tick(**{down: "1"})  # nothing was sent, so nothing was made
     sd = rig.world.state["broomva"]
-    assert not (sd / ".alert-config").exists() and "NOT delivered" in rig.log() and "(exit 2)" in rig.log()
+    assert not (sd / ".alert-config").exists() and "NOT delivered" in rig.log()
+    assert "no answer from Maestro (exit %d)" % code in rig.log()
     rig.tick()
     assert len(rig.raised("fleet broomva: config")) == 1 and (sd / ".alert-config").exists()
 
 
-def test_a_bash_fallback_whose_maestro_hangs_is_stopped_and_the_tick_ends(rig):
+def test_a_bash_fallback_whose_maestro_hangs_is_stopped_children_and_all(rig):
     rig.world.config.write_text("not json")
     t0 = time.monotonic()
-    r = rig.tick(STUB_NEW_HANG="1", FLEET_ALERT_TIMEOUT_S="1", FLEET_KILL_GRACE_S="1")  # it ignores TERM
+    r = rig.tick(STUB_NEW_HANG="1", FLEET_ALERT_TIMEOUT_S="1", FLEET_KILL_GRACE_S="1")  # both ignore TERM
     assert r.returncode == 1 and time.monotonic() - t0 < 30
     assert "(exit 137)" in rig.log() and not (rig.world.state["broomva"] / ".alert-config").exists()
+    child = int(rig.calls("hang-child")[0])
+    time.sleep(0.5)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)  # the group was killed, not only its leader
 
 
 def test_a_raised_batch_whose_run_cant_start_is_recorded_queued_and_dispatched_later(rig):
@@ -552,7 +569,7 @@ def test_recover_reads_github_on_the_owners_login(rig):
     (sd / "ledger.jsonl").write_text(json.dumps(rec) + "\n")
     rig.tick()
     assert [x["by"] for x in rig.ledger() if x.get("of") == "0-1"] == ["recover"]
-    assert set(rig.calls("gh-token-lengths")) == {"0"}  # recover's gh call included: no token
+    assert set(rig.calls("gh-token-lengths")) == {"0/0"}  # recover's gh call included: no token
 
 
 def test_a_live_tick_runs_the_coordinator_on_the_owners_login(rig):

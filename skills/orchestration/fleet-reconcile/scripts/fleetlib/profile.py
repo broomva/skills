@@ -16,6 +16,9 @@ configured gh credential helper, and pull-request calls go to the REST API
 with curl: gh's own network calls fail TLS inside the sandbox (OSStatus
 -26276), and taking gh out of it needs allowUnsandboxedCommands, the escape
 this profile refuses. Measured 2026-10-01 (credential drill, profile D).
+Open residual: with the keychain readable, so is any login-keychain item that
+trusts /usr/bin/security, not only gh's; BRO-2755 measures it before any live
+driver.
 
 It changes what a driver reaches by default and is not a boundary (§5.1). The
 file stays at its path until the driver's worktree goes: a resume reads the

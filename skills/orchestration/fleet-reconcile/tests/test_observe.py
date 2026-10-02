@@ -49,13 +49,13 @@ def test_a_tail_that_starts_exactly_on_a_line_keeps_it(tmp_path):
     assert common.read_tail(p, len(last) - 1) == b""
 
 
-def test_sources_take_the_token_out_of_the_environment_and_hand_it_to_gh_alone(monkeypatch):
-    monkeypatch.setattr(sources, "_TOKEN", {})
+def test_sources_drop_an_inherited_token_so_gh_reads_the_owners_login(monkeypatch):
+    # Owner decision 2026-10-01: GitHub on the owner's gh login, whoever runs `fleet` and from what shell.
     monkeypatch.setenv("GH_TOKEN", "t" * 20)
-    sources.Sources()
-    assert "GH_TOKEN" not in os.environ  # a child started any other way (git, under ctx) doesn't inherit it
-    probe = ["/bin/sh", "-c", "printf %s ${#GH_TOKEN}"]
-    assert sources._run(probe, 10, token=True) == "20" and sources._run(probe, 10) == "0"
+    monkeypatch.setenv("GITHUB_TOKEN", "u" * 20)
+    src = sources.Sources()
+    assert "GH_TOKEN" not in os.environ and "GITHUB_TOKEN" not in os.environ  # nor any child (git, under ctx)
+    assert src.gh and sources._run(["/bin/sh", "-c", "printf %s/%s ${#GH_TOKEN} ${#GITHUB_TOKEN}"], 10) == "0/0"
 
 
 def test_every_surface_of_the_capture_is_read(world, meta):

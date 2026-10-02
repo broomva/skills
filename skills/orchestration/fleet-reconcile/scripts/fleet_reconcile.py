@@ -234,8 +234,13 @@ def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
 
     for b in ledger.ask_batches(records):
         last = b.get("answer") or {}
-        if not b.get("item") or ledger.maestro_phase(last.get("state")) == "final" \
-                or (common.parse_iso(b.get("raised") or b["ts"]) or 0.0) < since:
+        if not b.get("item") or ledger.maestro_phase(last.get("state")) == "final":
+            continue
+        if (common.parse_iso(b.get("raised") or b["ts"]) or 0.0) < since:
+            if b["id"] in open_of:  # said each tick while an ask in it is open: an answer there is no longer read
+                print("fleet act ask: Maestro item %s of tick %s is past its %d-day read-back window and no longer "
+                      "read; answer its open asks with `fleet ack %s`" % (b["item"], b["tick"], ASK_READ_DAYS,
+                                                                         b["tick"]), file=sys.stderr)
             continue
         try:
             ans = paseo_ask.answer(sec, b["item"])

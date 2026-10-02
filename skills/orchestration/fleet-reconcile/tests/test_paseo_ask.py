@@ -23,7 +23,8 @@ def stub(world, tmp_path, monkeypatch):
     bin_.write_text('#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\necho "$1" >> "%s"\n'
                     '[ -n "$STUB_EXIT" ] && { echo "maestro: ${STUB_ERR:-nope}" >&2; exit $STUB_EXIT; }\n'
                     'case "$1" in new) echo \'{"item": {"id": "w1", "state": "proposed"}}\' ;; '
-                    'show) cat "%s" ;; ls) d=\'{"items": []}\'; echo "${STUB_LS:-$d}" ;; '
+                    'show) [ -n "$STUB_SHOW_EXIT" ] && { echo "maestro: Maestro is not listening" >&2; exit 2; }; '
+                    'cat "%s" ;; ls) d=\'{"items": []}\'; echo "${STUB_LS:-$d}" ;; '
                     'dispatch) [ -n "$STUB_RACE_STATE" ] && '
                     'printf \'{"item": {"state": "%%s"}, "events": []}\' "$STUB_RACE_STATE" > "%s"; '
                     '[ -n "$STUB_DISPATCH_EXIT" ] && '
@@ -209,10 +210,16 @@ def test_each_new_decision_is_recorded_once_and_a_final_one_ends_the_reading(stu
     assert _sync(stub, sd) == (0, 0) and stub.args.read_text() == ""  # done: not read again
 
 
-def test_an_item_older_than_the_read_window_is_not_read(stub, world):
+def test_an_item_older_than_the_read_window_is_not_read_and_says_so_while_its_asks_are_open(stub, world, capsys):
     sd, _ = _batch(world, ts=common.ts(time.time() - 15 * 86400))
     stub.show.write_text(json.dumps({"item": {"state": "done"}, "events": [_ev("You approved"), TOOK]}))
-    assert _sync(stub, sd) == (0, 0) and _acks(sd) == []
+    assert _sync(stub, sd) == (0, 0) and _acks(sd) == [] and stub.calls() == []
+    err = capsys.readouterr().err
+    assert "past its 14-day read-back window" in err and "fleet ack 3" in err  # not dropped silently
+    ledger.append(sd, {"kind": "ack", "resolved": True, "keys": ["k1"], "scope": "broomva", "tick": 4,
+                       "dry_run": True, "by": "report"})
+    _sync(stub, sd)
+    assert "past its" not in capsys.readouterr().err  # its asks no longer open: silent
 
 
 def test_the_read_window_starts_at_the_latest_raise_not_the_batch(stub, world):
@@ -365,6 +372,15 @@ def test_an_item_whose_dispatch_finds_it_gone_frees_its_batch(stub, world, monke
     assert _sync(stub, sd) == (0, 0)
     (batch,) = ledger.ask_batches(ledger.read(sd)[0])
     assert batch["item"] is None and batch["item_state"] == "gone"
+
+
+def test_a_refused_dispatch_whose_item_cant_be_read_again_raises_the_dispatchs_own_error(stub, monkeypatch):
+    monkeypatch.setenv("STUB_DISPATCH_EXIT", "1")
+    monkeypatch.setenv("STUB_DISPATCH_ERR", "Could not start the run: no provider")
+    monkeypatch.setenv("STUB_SHOW_EXIT", "1")  # Maestro went away between the two calls
+    with pytest.raises(paseo_ask.MaestroError) as exc:
+        paseo_ask.start(stub.sec, {"id": "w1", "state": "proposed"})
+    assert exc.value.code == 1 and "Could not start the run" in str(exc.value) and stub.calls() == ["dispatch", "show"]
 
 
 def test_a_dispatch_while_maestros_loop_is_starting_it_waits(stub, world, monkeypatch):

@@ -170,9 +170,14 @@ def _pump(proc: "subprocess.Popen[str]", out: IO[str], sec: Dict[str, Any], res:
     finally:
         timer.cancel()
     with lock:
-        if not res["init"] and not res["posture"]:
+        unchecked = not res["init"] and not res["posture"]
+        if unchecked:
             res["posture"] = ["its stream ended before its init event: the tool list was never checked"]
+    if unchecked and proc.poll() is None:
+        _stop(proc)  # its stream closed while it still runs
     proc.wait()
+    if unchecked:  # the posture failure stands; its own exit (a crash, an expired login) is kept beside it
+        res["posture"][0] += " (it exited %s)" % proc.returncode
     return EXIT_POSTURE if res["posture"] else proc.returncode
 
 

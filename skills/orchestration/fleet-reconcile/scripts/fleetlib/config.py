@@ -174,8 +174,6 @@ def scope(sid: str, check_scopes: bool = True) -> Dict[str, Any]:
     sec["paseo_tools"] = sec.get("paseo_tools") or PASEO_TOOLS
     sec["driver"] = dict(DRIVER_DEFAULTS, **(sec.get("driver") or {}))
     sec["state_dir"] = str(common.expand(sec.get("state_dir") or "~/.local/state/fleet-reconcile/%s" % sid))
-    if sec.get("gh_token_file"):
-        sec["gh_token_file"] = str(common.expand(sec["gh_token_file"]))
     sec["scope"] = sid
     return sec
 

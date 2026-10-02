@@ -55,7 +55,8 @@ do (see "Phase 2" below).
 **Not a boundary.** Nothing here constrains any session. The tick's reads are
 the owner's own reads (claude agents, gh on the owner's login, files under
 $HOME). What bounds a merge is the repo's ruleset on GitHub (spec
-§5.1); the report's ruleset check says which repos have one.
+§5.1), as far as it binds the owner's admin login (step 5 below); the
+report's ruleset check says which repos have one.
 
 ## Install (the owner runs this)
 
@@ -103,10 +104,18 @@ Trash; the config, the releases and the state dir stay.
    the ledger's last `tick_fire`, so a lost counter can't reuse a number.
 5. GitHub is read and written on the owner's gh login (the keyring). Owner
    decision 2026-10-01: no fleet token or GitHub App, and spec §5.2's
-   non-admin credential precondition is waived; the accepted residual is that
-   the fleet acts with admin rights, and the repos' gates still judge every
-   merge. tick.sh drops a `GH_TOKEN` or `GITHUB_TOKEN` it inherits, so every
-   step reads GitHub as that login. `gh_token_file` is accepted and not read.
+   non-admin credential precondition is waived. The accepted residual is
+   that the fleet acts with the owner's admin rights. A repo's ruleset binds
+   that login only as far as the ruleset lets an admin through: an admin can
+   merge past a ruleset that lists admins as bypass actors, and can edit a
+   ruleset over REST. What holds a driver to the rules is its brief (never
+   touch rulesets or workflows; merge only once every required check passes),
+   and phase 3's checks. tick.sh drops a `GH_TOKEN` or `GITHUB_TOKEN` it
+   inherits, and so does `Sources` for every gh call and child, so every step
+   reads GitHub as that login. `gh_token_file` is accepted and not read.
+   With no token, nothing in code keeps a tick dry but the config: dry run is
+   the default and anything but an exact `dry_run: 0` stays dry. Phase 3's
+   checks and BRO-2755 must land before the owner sets it.
 6. `fleet recover` (closes intents a dead tick left open), `fleet observe`,
    `fleet report`, in act mode `fleet coordinator` (only after the three
    before it succeeded), and `fleet
@@ -279,12 +288,15 @@ items too, at most once per 6 h per kind, stamped only once the item is past
 Maestro's queue. `fleet alert` adopts an open item of the same kind rather
 than raising a second, so that item stands for the later alerts of its kind
 (`tick.log` has each one's words). When Python or the config is what broke, a
-bash fallback raises one (`maestro new --dispatch`, under a TERM-then-KILL
-watchdog: TERM at 120 s, KILL 30 s later). It can't adopt or classify, so any
-answer from Maestro counts (made; refused, a run that couldn't start
-included; no clear answer), which keeps it to one per 6 h whatever Maestro's
-words; not listening, or a CLI the watchdog stopped, is tried again at the
-next tick. When Maestro itself is down, they reach only `tick.log`:
+bash fallback raises one (`maestro new --dispatch`, in its own process group
+under a TERM-then-KILL watchdog: TERM at 120 s, KILL 30 s later). It can't
+adopt or classify, so any answer from Maestro counts (made; refused, a run
+that couldn't start included; no clear answer), which keeps it to one per 6 h
+whatever Maestro's words. An exit 1 is Maestro's answer only with the CLI's
+`maestro: ` line; anything that never reached Maestro (not listening, a CLI
+that didn't run, one the watchdog stopped) is tried again at the next tick.
+`fleet alert` itself is bounded by its maestro calls' own timeouts (90 s
+each). When Maestro itself is down, they reach only `tick.log`:
 the channel's blind spot. There is no dialog, banner, ntfy or p9 notify. The
 owner can also answer from a terminal:
 
@@ -390,15 +402,15 @@ python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (a
 |---|---|
 | `test_parsers.py` | Every parser against the 2.1.280 capture; missing fields fail the surface; drift is reported; the bearer, env and prompts are never extracted; the slug rule; the ruleset check (skills flagged until its pull_request rule lands, unpinned checks flagged) |
 | `test_classify.py` | A positive case per class; the spec's five ordering tests; 41 rule pairs that can both match, the earlier winning; a grid proving the other 14 pairs can't; the arc and death currency rules; the spawn pause; the count check; the overlap pass |
-| `test_observe.py` | The pipeline over the capture in a scratch HOME; a 200-row listing fails closed unless the job files show it complete; one unparsed job file degrades only its session; an unresolvable slug, a gh error and a PR list at the cap fail only their repo; the bearer never reaches a snapshot or report; activity found past a last line larger than the first tail window (ctx-core's reader); the token taken out of the environment and handed to gh alone |
+| `test_observe.py` | The pipeline over the capture in a scratch HOME; a 200-row listing fails closed unless the job files show it complete; one unparsed job file degrades only its session; an unresolvable slug, a gh error and a PR list at the cap fail only their repo; the bearer never reaches a snapshot or report; activity found past a last line larger than the first tail window (ctx-core's reader); an inherited GH_TOKEN or GITHUB_TOKEN dropped, so gh reads the owner's login |
 | `test_report.py` | Every section; withheld crm/ paths and tokens; per-occurrence asks (once, then still open; an answer holds while true; a recurrence is new; a different question is new), answers per batch, stable count keys, failed-surface asks, a resolution only from the surfaces that raise the key (for a session that still classifies, too), open asks not re-checked still listed, a wait's key holding while its subagents write, a failing comparison asked after three runs with its error guarded, the ack wording, the ruleset wording, scheduled work as inventory only, a duplicate fleet name asked while it lasts (and not resolved without a listing); the labelling sheet (distinct sessions only) |
 | `test_ledger.py` | Validation, distinct owner ids within one millisecond, corrupt-line counting, 4 processes × 50 appends lose nothing, the ask and spawn folds |
-| `test_paseo_ask.py` | A batch raised as Maestro work in the fleet's own repo, then dispatched; only decisions that took effect read back, on Maestro's own wire sequences (undone, dropped, a torn cancel, the undo window, the display verdict, an agent's words); the note through the guard; Maestro's exit codes as errors; refusals told apart by the words they start with, on exit 1 only; `find` adopting only an open item of this scope's batch made after it; an alert adopting its kind's open item; the sync recording each new decision once, a note after the asks resolved, nothing past 14 days from the latest raise or a final answer; a refusal at the cap, the loop starting it, or a lost race as no failure; a gone item freeing its batch and no longer seen |
-| `test_tick.py` | tick.sh end to end with stub claude/gh/maestro: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, no token reaching any step (one configured or inherited included), recover and a live coordinator on the owner's login, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, a batch raised once at Needs you and the owner's verdict read back as the answer, a cancel dismissing, a batch raised only once its asks lasted, a batch queued at the cap neither failing the tick nor seen until dispatched, an open alert of its kind adopted, an alert queued at the cap not delivered, the bash fallback raising at most one per 6 h whatever Maestro answers, tried again when Maestro wasn't listening, and stopped when it hangs, a raised batch whose run can't start recorded queued and dispatched later, an ask Maestro doesn't take not recorded and raised at the next tick, alerts as Maestro work, a failed compare not using up the day and the prototype's compare line refused and asked about, ack refused inside a session, refused verbs, the labelling sheet |
+| `test_paseo_ask.py` | A batch raised as Maestro work in the fleet's own repo, then dispatched; only decisions that took effect read back, on Maestro's own wire sequences (undone, dropped, a torn cancel, the undo window, the display verdict, an agent's words); the note through the guard; Maestro's exit codes as errors; refusals told apart by the words they start with, on exit 1 only; `find` adopting only an open item of this scope's batch made after it; an alert adopting its kind's open item; the sync recording each new decision once, a note after the asks resolved, nothing past 14 days from the latest raise or a final answer; a refusal at the cap, the loop starting it, or a lost race as no failure; a gone item freeing its batch and no longer seen; a refused dispatch whose item can't be read again raising its own error; an item past its window saying so while its asks are open |
+| `test_tick.py` | tick.sh end to end with stub claude/gh/maestro: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, no token reaching any step (one configured or inherited included), recover and a live coordinator on the owner's login, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, a batch raised once at Needs you and the owner's verdict read back as the answer, a cancel dismissing, a batch raised only once its asks lasted, a batch queued at the cap neither failing the tick nor seen until dispatched, an open alert of its kind adopted, an alert queued at the cap not delivered, the bash fallback raising at most one per 6 h whatever Maestro answers, tried again when nothing reached Maestro (not listening, a CLI that didn't run), and stopped with its children when it hangs, a raised batch whose run can't start recorded queued and dispatched later, an ask Maestro doesn't take not recorded and raised at the next tick, alerts as Maestro work, a failed compare not using up the day and the prototype's compare line refused and asked about, ack refused inside a session, refused verbs, the labelling sheet |
 | `test_act.py` | Every verb refused in report mode and on a corrupt ledger or an open ask on its target; spawn's floor (held, draft, Dependabot, owner-merge, unread files, unruled repo, closed PR, taken name, a branch checked out, the caps, unknown claims, the spawn pause) against text that says otherwise; dry spawn, label and resume closed with the argv or call; mail only to fleet or adopted sessions, the 6 h rule (failed doesn't count, live and dry apart), not_live, ambiguous_name, a Paseo relaunch followed, template values guarded, no template names a merge or removal; a PR file list GitHub capped refused |
 | `test_sendgate.py` | Each pre check refusing with its own name; dry run closing the intent and still blocking; a live send passing and post closing it with the msg_id; harness_refused and unledgered_send; the CLI failing closed |
 | `test_recover.py` | Mail found in either delivery shape only after the intent (an enqueue only), else lost or unknown; a malformed entry counting as nothing; spawn's one, none or duplicate rows; resume by process start; label by the PR's labels |
-| `test_coordinator.py` | Every Paseo tool the captured 0.9.2 list holds is classified (fails when Paseo adds one); the argv's disallowed list and `--`; the settings' hooks; the posture check; a coordinator whose tool list fails it, or whose stream ends before its init event, terminated; the child environment; the driver profile's shape and 0600 file, with no token even when a token file is configured |
+| `test_coordinator.py` | Every Paseo tool the captured 0.9.2 list holds is classified (fails when Paseo adds one); the argv's disallowed list and `--`; the settings' hooks; the posture check; a coordinator whose tool list fails it, or whose stream ends before its init event (its own exit code kept, a still-running one stopped), terminated; the child environment; the driver profile's shape and 0600 file, with no token even when a token file is configured |
 | `test_janitor.py` | Each check passing, failing, or not running (a process listing showing only the janitor, an ignored directory it can't walk); the backup; pruning; a profile it can't delete failing the run; report-only without --remove; no removal of a scope repo's worktree; the scratch run's order |
 | `test_install.py` | The pinned copy (runnable without the checkout), plist rendering, config seeded once at 0600, bootout-wait-bootstrap on every run, a retried bootstrap, uninstall to the Trash, dry run, a broken config, uncommitted changes refused without --force |
 
@@ -484,7 +496,12 @@ bypassed: the global pre-push hook's git-lfs fails the same way, so a driver
 can't push LFS objects) and call the REST API with curl. Measured in the
 credential drill (`~/.config/broomva/fleet/credential-drill-20261001/`):
 push, a REST PR, update-branch and a squash merge on a private scratch repo,
-with ~/.paseo reads and $HOME writes still refused.
+with ~/.paseo reads and $HOME writes still refused. **Open residual:** with
+the keychain's deny gone the driver can read the whole login keychain file,
+so any item whose ACL trusts `/usr/bin/security` (provider-manager's managed
+credentials, for one) is likely readable without a prompt, and
+`api.github.com` is on the allowlist. The drill probed only gh's item.
+BRO-2755 measures it before any live driver; spawns stay dry until then.
 
 **The janitor** (`janitor.py`): `fleet janitor-check PATH --owner ID` exits 0
 only when every check passes, 1 on a failure and 2 when a check couldn't run;
