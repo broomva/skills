@@ -212,7 +212,8 @@ def ask_batches(records: Iterable[Dict[str, Any]]) -> List[Dict[str, Any]]:
                 maestro = res.get("channel") == "maestro"
                 phase = maestro_phase(res.get("state")) if maestro else None
                 # Gone: the item that reached the owner is no more, and the batch is raised again.
-                b["seen"] = phase != "gone" and (b["seen"] or res.get("button") == "Seen" or phase in ("owner", "final"))
+                b["seen"] = phase != "gone" and (
+                    b["seen"] or res.get("button") == "Seen" or phase in ("owner", "final"))
                 if maestro and isinstance(res.get("item"), str):
                     item = None if phase == "gone" else res["item"]
                     if item is not None and item != b["item"]:

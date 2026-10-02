@@ -7,12 +7,15 @@ token or GitHub App ("it's fine that it goes as me"), and spec §5.2's
 non-admin credential precondition is waived. The accepted residual is that
 the fleet acts with the owner's admin rights: a ruleset binds that login only
 as far as it lets an admin through, so the driver brief (never touch rulesets
-or workflows) and phase 3's checks are what hold a driver to the rules. With
-no token, nothing in code keeps a tick dry but the config's `dry_run` (dry by
-default; only an exact 0 is live). Ticket BRO-2674.
+or workflows) and phase 3's checks are what hold a driver to the rules. The
+token used to keep live mode closed; now `config-check` refuses `dry_run: 0`
+unless a new key, `live_accepted`, holds the owner's note that phase 3's
+checks and BRO-2755 are done, and every verb stays dry without it. Ticket
+BRO-2674.
 
 - **No token anywhere.** tick.sh no longer reads `gh_token_file` (accepted,
-  not read) and drops a `GH_TOKEN` or `GITHUB_TOKEN` it inherits, and
+  not read) and drops a `GH_TOKEN` or `GITHUB_TOKEN` it inherits before it
+  runs anything (the config reads and the alert fallback included), and
   `Sources` drops both too, so a `fleet` command run from a shell that has
   one still reads GitHub as the owner's login; the coordinator gets none; a
   live spawn and a live label no longer need one; a live tick runs its
@@ -42,9 +45,10 @@ default; only an exact 0 is live). Ticket BRO-2674.
     clear answer) as raised, so a run that couldn't start ("Could not start
     the run") no longer raises one alert per hour. It runs in its own
     process group under a TERM-then-KILL watchdog (120 s, then 30 s), its
-    output to a file rather than a pipe a child could hold. Anything that
-    never reached Maestro (not listening, a CLI that didn't run, the
-    watchdog) is tried again at the next tick;
+    output to a temp file of its own rather than a pipe a child could hold
+    (so a broken state dir doesn't silence it). Anything that never reached
+    Maestro (not listening, a CLI that didn't run, the watchdog) is tried
+    again at the next tick;
   - `seen` is cleared when an item goes gone;
   - Maestro's refusals are told apart by the words their message starts with,
     on exit 1 only, not by a match anywhere in it (a failed start that quotes
@@ -62,8 +66,8 @@ default; only an exact 0 is live). Ticket BRO-2674.
     refuses the spawn;
   - a coordinator whose stream ends before its init event fails its posture,
     with its own exit code beside it, and is stopped if it still runs;
-  - an item past its 14-day read-back window says so each tick while an ask
-    in its batch is open, rather than going quiet;
+  - an item is read past its 14-day window for as long as an ask in its
+    batch is open, so an answer given late still lands;
   - the janitor: an ignored directory it can't walk makes the backup check
     `not run`, a profile or gh dir it can't delete fails the run, and the
     owner-mismatch message is set only on a mismatch;

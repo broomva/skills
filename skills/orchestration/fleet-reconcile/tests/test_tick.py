@@ -53,17 +53,19 @@ def rig(fresh_world, tmp_path):
           '  *) exit 1 ;;\nesac\n' % (calls_dir, fx))
     # maestro: `new` makes item itm-<n> (listed by `ls`), queued, or with --dispatch (the bash fallback) in
     # STUB_NEW_STATE; STUB_NEW_EXIT makes `new` fail after creating it, saying STUB_NEW_ERR; STUB_NEW_HANG
-    # makes it and a child ignore TERM and hang; STUB_CLI_CRASH exits 1 as bun does when the CLI can't load,
+    # makes it and a child ignore TERM and hang (STUB_NEW_ORPHAN: only the child); STUB_CLI_CRASH exits 1 as bun does when the CLI can't load,
     # before reaching Maestro; `show <id>` serves calls/maestro-show-<id>.json, else review; `dispatch`
     # starts it, or STUB_DISPATCH_EXIT refuses (the cap, or STUB_DISPATCH_ERR). Refusals read as bin/maestro.ts
     # prints them.
     _stub(bin_ / "maestro", '[ -n "${STUB_MAESTRO_DOWN:-}" ] && { echo "maestro: Maestro is not listening" >&2; exit 2; }\n'
           '[ -n "${STUB_CLI_CRASH:-}" ] && { echo "error: Module not found \\"maestro.ts\\"" >&2; exit 1; }\n'
           'printf "%%s\\n" "$*" | head -1 >> "%s/maestro"\n'
+          'echo "${#GH_TOKEN}/${#GITHUB_TOKEN}" >> "%s/maestro-token-lengths"\n'
           '[ -n "${STUB_LOCK:-}" ] && [ -d "$STUB_LOCK" ] && echo held >> "%s/lock-during-alert"\n'
           'c="%s"\n'
           'case "$1" in\n'
           '  new) [ -n "${STUB_NEW_HANG:-}" ] && { trap "" TERM; sleep 60 & echo $! > "$c/hang-child"; wait; };'
+          ' [ -n "${STUB_NEW_ORPHAN:-}" ] && { (trap "" TERM; exec sleep 60) & echo $! > "$c/hang-child"; sleep 60; };'
           ' n=$(( $(cat "$c/maestro-n" 2>/dev/null || echo 0) + 1 )); echo $n > "$c/maestro-n";'
           ' printf "%%s\\n" "$*" > "$c/maestro-new-itm-$n";'
           ' st=proposed; case " $* " in (*" --dispatch "*) st=${STUB_NEW_STATE:-running} ;; esac;'
@@ -77,7 +79,7 @@ def rig(fresh_world, tmp_path):
           ' echo "$2" >> "$c/maestro-dispatched"; echo "{\\"item\\": {\\"id\\": \\"$2\\", \\"state\\": \\"running\\"}}" ;;\n'
           '  show) f="$c/maestro-show-$2.json"; if [ -f "$f" ]; then cat "$f"; else'
           ' echo "{\\"item\\": {\\"state\\": \\"review\\", \\"verdict\\": null, \\"pending\\": null}, \\"events\\": []}"; fi ;;\n'
-          '  *) exit 2 ;;\nesac\n' % (calls_dir, calls_dir, calls_dir))
+          '  *) exit 2 ;;\nesac\n' % (calls_dir, calls_dir, calls_dir, calls_dir))
     (w.home / ".claude" / "projects").mkdir(parents=True)
     shutil.copytree(str(fx / "claude" / "jobs"), str(w.home / ".claude" / "jobs"))
     shutil.copytree(str(fx / "paseo"), str(w.home / ".paseo"))
@@ -185,13 +187,19 @@ def test_no_token_reaches_any_step_even_one_configured_or_inherited(rig, tmp_pat
     assert r.returncode == 0, rig.log()
     assert set(rig.calls("gh-token-lengths")) == {"0/0"} and set(rig.calls("claude-token-lengths")) == {"0/0"}
     steps = [ln.split() for ln in seen.read_text().splitlines()]
-    assert {"recover", "observe", "report", "act"} <= {cmd for cmd, _ in steps}
-    assert {n for cmd, n in steps if cmd in ("recover", "observe", "report", "act", "core-compare")} == {"0/0"}
+    assert {"config-get", "config-check", "recover", "observe", "report", "act"} <= {cmd for cmd, _ in steps}
+    assert {n for _, n in steps} == {"0/0"}  # every one, the config reads before the lock included
     sd = rig.world.state["broomva"]
     for p in sd.rglob("*"):
         if p.is_file():
             assert TOKEN not in p.read_text(errors="replace"), p
     assert "gh: keyring (the owner's gh login)" in rig.log()
+
+
+def test_no_inherited_token_reaches_the_bash_alert_fallback(rig):
+    rig.world.config.write_text("not json")  # the fallback runs before anything else does
+    rig.tick(GH_TOKEN=TOKEN, GITHUB_TOKEN=TOKEN)
+    assert rig.raised("fleet broomva: config") and set(rig.calls("maestro-token-lengths")) == {"0/0"}
 
 
 def test_the_kill_switch_stops_the_tick_before_anything_fires(rig):
@@ -287,7 +295,7 @@ def test_each_run_leaves_one_line_on_stdout_for_launchds_log(rig):
 @pytest.mark.parametrize("cfg_dry,env_dry,expected", [(1, None, True), (0, None, False), (0, "1", True),
                                                       (1, "0", True), (0, "yes", True)])
 def test_dry_run_falls_toward_dry(rig, cfg_dry, env_dry, expected):
-    rig.world.write_config(dry_run=cfg_dry)
+    rig.world.write_config(dry_run=cfg_dry, **({"live_accepted": "test"} if cfg_dry == 0 else {}))
     rig.tick(**({"DRY_RUN": env_dry} if env_dry is not None else {}))
     fire = [x for x in rig.ledger() if x["kind"] == "tick_fire"][0]
     assert fire["dry_run"] is expected
@@ -465,6 +473,48 @@ def test_a_bash_fallback_whose_maestro_hangs_is_stopped_children_and_all(rig):
         os.kill(child, 0)  # the group was killed, not only its leader
 
 
+def test_a_bash_fallback_whose_leader_dies_still_has_its_term_proof_child_killed(rig):
+    rig.world.config.write_text("not json")
+    rig.tick(STUB_NEW_ORPHAN="1", FLEET_ALERT_TIMEOUT_S="1", FLEET_KILL_GRACE_S="20")  # the leader dies on TERM
+    assert "(exit 143)" in rig.log()
+    child = int(rig.calls("hang-child")[0])
+    time.sleep(0.5)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)  # killed with its group once the leader was reaped, not left for its 60 s
+
+
+def test_the_bash_fallback_reaches_maestro_when_its_state_dir_is_broken(rig):
+    rig.world.config.write_text("not json")
+    sd = rig.world.state["broomva"]
+    sd.parent.mkdir(parents=True, exist_ok=True)
+    sd.write_text("a file where the state dir goes")  # nothing can be written there, the log included
+    r = rig.tick()
+    assert r.returncode == 1 and len(rig.raised("fleet broomva: config")) == 1  # the last channel still works
+
+
+def test_live_mode_is_refused_until_its_preconditions_are_recorded(rig):
+    # 0.4.0 removed the token that kept live mode closed; dry_run 0 alone no longer makes a tick live.
+    rig.world.write_config(mode="act", dry_run=0)
+    check = rig.fleet("config-check", "broomva")
+    assert check.returncode == 1 and "live_accepted" in check.stderr
+    r = rig.tick()
+    assert r.returncode == 1 and rig.raised("fleet broomva: config") and rig.calls("coordinator-env") == []
+    assert not [x for x in rig.ledger() if x["kind"] == "tick_fire"]  # no tick at all
+    rig.world.write_config(mode="act", dry_run=0, live_accepted="phase 3 and BRO-2755 done (test)")
+    assert rig.fleet("config-check", "broomva").returncode == 0
+
+
+def test_every_verb_stays_dry_while_live_mode_is_unaccepted(rig):
+    import argparse
+
+    import fleet_reconcile
+    args = argparse.Namespace(dry_run=None)
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0}) is True
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": " "}) is True
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": "done"}) is False
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 1, "live_accepted": "done"}) is True
+
+
 def test_a_raised_batch_whose_run_cant_start_is_recorded_queued_and_dispatched_later(rig):
     rig.item("itm-1", "proposed")
     rig.item("itm-2", "proposed")  # the failed tick's own alert, which can't start either
@@ -574,7 +624,7 @@ def test_recover_reads_github_on_the_owners_login(rig):
 
 def test_a_live_tick_runs_the_coordinator_on_the_owners_login(rig):
     # The fleet token is waived (spec §5.2 precondition 1): a live tick needs none.
-    rig.world.write_config(mode="act", dry_run=0)
+    rig.world.write_config(mode="act", dry_run=0, live_accepted="phase 3 and BRO-2755 done (test)")
     r = rig.tick()
     assert r.returncode == 0 and "coordinator=0" in r.stdout and rig.calls("coordinator-env") != [], rig.log()
     assert not rig.raised("tick-token")

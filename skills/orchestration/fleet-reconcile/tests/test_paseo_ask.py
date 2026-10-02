@@ -210,16 +210,22 @@ def test_each_new_decision_is_recorded_once_and_a_final_one_ends_the_reading(stu
     assert _sync(stub, sd) == (0, 0) and stub.args.read_text() == ""  # done: not read again
 
 
-def test_an_item_older_than_the_read_window_is_not_read_and_says_so_while_its_asks_are_open(stub, world, capsys):
-    sd, _ = _batch(world, ts=common.ts(time.time() - 15 * 86400))
-    stub.show.write_text(json.dumps({"item": {"state": "done"}, "events": [_ev("You approved"), TOOK]}))
-    assert _sync(stub, sd) == (0, 0) and _acks(sd) == [] and stub.calls() == []
-    err = capsys.readouterr().err
-    assert "past its 14-day read-back window" in err and "fleet ack 3" in err  # not dropped silently
+def _resolve(sd):
     ledger.append(sd, {"kind": "ack", "resolved": True, "keys": ["k1"], "scope": "broomva", "tick": 4,
                        "dry_run": True, "by": "report"})
-    _sync(stub, sd)
-    assert "past its" not in capsys.readouterr().err  # its asks no longer open: silent
+
+
+def test_an_item_older_than_the_read_window_is_not_read_once_its_asks_are_closed(stub, world):
+    sd, _ = _batch(world, ts=common.ts(time.time() - 15 * 86400))
+    _resolve(sd)
+    stub.show.write_text(json.dumps({"item": {"state": "done"}, "events": [_ev("You approved"), TOOK]}))
+    assert _sync(stub, sd) == (0, 0) and _acks(sd) == [] and stub.calls() == []
+
+
+def test_an_item_past_the_read_window_is_still_read_while_an_ask_in_it_is_open(stub, world):
+    sd, _ = _batch(world, ts=common.ts(time.time() - 20 * 86400))
+    stub.show.write_text(json.dumps({"item": {"state": "running"}, "events": [_ev("You sent it back", "day 20"), TOOK]}))
+    assert _sync(stub, sd) == (1, 0) and _acks(sd)[0]["result"]["notes"] == ["day 20"]  # a late answer lands
 
 
 def test_the_read_window_starts_at_the_latest_raise_not_the_batch(stub, world):
@@ -227,6 +233,7 @@ def test_the_read_window_starts_at_the_latest_raise_not_the_batch(stub, world):
     now, day = time.time(), 86400
     at = {ago: common.ts(now - ago * day) for ago in (20, 19, 3, 2, 1)}
     sd, b = _batch(world, ts=at[20], item="w0", raised=at[19])
+    _resolve(sd)  # its asks closed, so only the window decides
     for item, state, ago in (("w0", "gone", 3), ("w1", "review", 2), ("w1", "running", 1)):
         ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": "broomva", "tick": None, "dry_run": False,
                            "by": "tick", "ts": at[ago], "result": {"channel": "maestro", "item": item, "state": state}})

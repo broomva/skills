@@ -203,9 +203,11 @@ def test_a_coordinator_with_no_init_event_is_stopped_at_the_deadline(world, tmp_
     assert time.monotonic() - t0 < 15
 
 
-@pytest.mark.parametrize("body, said", [("exit 0\n", "(it exited 0)"),   # a clean exit, its tool list never checked
-                                        ("exit 3\n", "(it exited 3)"),   # a crash keeps its own code beside it
-                                        ("exec 1>&-\nexec sleep 30\n", "(it exited -15)")])  # stream closed, still running
+@pytest.mark.parametrize("body, said", [
+    ("exit 0\n", "(it exited 0)"),                       # a clean exit, its tool list never checked
+    ("exit 3\n", "(it exited 3)"),                       # a crash keeps its own code beside it
+    ("exec 1>&-\nexec sleep 30\n", "(it exited -15)"),  # its stream closed while it still runs: stopped
+])
 def test_a_coordinator_whose_stream_ends_before_its_init_event_fails_its_posture(world, tmp_path, body, said):
     import time
     world.write_config(mode="act")

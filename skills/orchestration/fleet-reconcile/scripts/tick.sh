@@ -36,6 +36,10 @@ if [ -n "${FLEET_CHILD:-}" ]; then
   exit 0
 fi
 export FLEET_CHILD=1
+# GitHub is the owner's gh login (owner decision 2026-10-01): a token inherited
+# from a shell is dropped before anything runs, the config reads and the alert
+# fallback included, so every process this tick starts reads GitHub as it.
+unset GH_TOKEN GITHUB_TOKEN
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FLEET="$SCRIPT_DIR/fleet"
@@ -167,18 +171,25 @@ Change nothing and run no tools. End your turn at once with exactly two sections
   else
     set -- "${FLEET_MAESTRO_BUN:-$HOME/.bun/bin/bun}" "${FLEET_MAESTRO_CLI:-$HOME/broomva/apps/maestro-paseo/bin/maestro.ts}"
   fi
-  # To a file, not a command substitution: a child left holding a pipe would hold the tick.
-  local out="$STATE_DIR/.alert-fallback.out" rc
+  # To a file, not a command substitution: a child left holding a pipe would hold the tick. A file of its
+  # own (not one in STATE_DIR: the fallback runs when things are broken, and two ticks before the lock can
+  # both run it), and with no file at all the call still goes out, unclassified.
+  local out rc
+  out=$(mktemp "${TMPDIR:-/tmp}/fleet-alert.XXXXXX" 2>/dev/null) || out=/dev/null
   bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json \
     </dev/null >"$out" 2>&1
   rc=$?
   cat "$out" >> "$LOG" 2>/dev/null
+  local answered=no
   case "$rc" in
-    (0) rm -f "$out"; return 0 ;;
-    (3) rm -f "$out"; return 1 ;;
-    (1) if grep -q '^maestro: ' "$out" 2>/dev/null; then rm -f "$out"; return 1; fi ;;
+    (0|3) answered=yes ;;
+    (1) grep -q '^maestro: ' "$out" 2>/dev/null && answered=yes ;;
   esac
-  rm -f "$out"
+  [ "$out" = /dev/null ] || rm -f "$out"
+  case "$rc:$answered" in
+    (0:yes) return 0 ;;
+    (*:yes) return 1 ;;
+  esac
   log "ALERT fallback: no answer from Maestro (exit $rc)"
   return 2
 }
@@ -269,9 +280,7 @@ RELEASE=$(head -1 "$SCRIPT_DIR/../../../RELEASE" 2>/dev/null | sed 's/^release /
 
 # ── GitHub: the owner's gh login (owner decision 2026-10-01) ──────────────────
 # No fleet token: spec §5.2's non-admin credential is waived, and gh uses the
-# owner's keyring login. A token inherited from a shell is dropped, so every
-# step reads GitHub as the same login.
-unset GH_TOKEN GITHUB_TOKEN
+# owner's keyring login (an inherited token was dropped at the top).
 GH_AUTH="keyring (the owner's gh login)"
 
 "$FLEET" ledger-append fire --scope "$SCOPE" --tick "$N" --dry-run "$DRY" --detail "release: $RELEASE; gh: $GH_AUTH" \

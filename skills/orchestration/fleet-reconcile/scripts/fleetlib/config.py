@@ -25,7 +25,8 @@ DEFAULT_PATH = "~/.config/ctx/fleet.json"
 #: key -> (type check, default). A default of None means "absent is fine".
 SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     "dispatch_enabled": ("int01", 0),         # the kill switch: the tick fires only on exactly 1
-    "dry_run": ("int01", 1),                  # live only on exactly 0
+    "dry_run": ("int01", 1),                  # live only on exactly 0, and only with live_accepted
+    "live_accepted": ("str_or_null", None),   # the owner's note that live mode's preconditions are done (0.4.0)
     "mode": ("mode", "report"),               # report: observe, classify and ask; every other verb refuses
     "tracker": ("dict", None),
     "state_dir": ("str", None),               # default ~/.local/state/fleet-reconcile/<scope>
@@ -176,6 +177,19 @@ def scope(sid: str, check_scopes: bool = True) -> Dict[str, Any]:
     sec["state_dir"] = str(common.expand(sec.get("state_dir") or "~/.local/state/fleet-reconcile/%s" % sid))
     sec["scope"] = sid
     return sec
+
+
+def live_refusal(sec: Dict[str, Any]) -> Optional[str]:
+    """Why this scope's dry_run 0 is refused, or None. Since 0.4.0 the fleet
+    acts on the owner's admin login with no token to gate it, and a driver can
+    read the login keychain: live mode waits on phase 3's checks and BRO-2755,
+    and the owner records that they are done in live_accepted. Until then
+    config-check fails (tick.sh alerts and runs no tick) and every verb stays
+    dry."""
+    if sec.get("dry_run") == 0 and not (sec.get("live_accepted") or "").strip():
+        return ("scope %s: dry_run 0 is refused until live_accepted records that phase 3's checks and BRO-2755 "
+                "are done (SKILL.md, the tick's step 5)" % sec.get("scope"))
+    return None
 
 
 def state_dir(sec: Dict[str, Any]) -> Path:

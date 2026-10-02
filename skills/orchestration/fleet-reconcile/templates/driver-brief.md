@@ -9,8 +9,8 @@ Your job: bring this PR to a mergeable state and merge it if, and only if, the r
    authorized by `gh auth token` (it reads the owner's login without the network), passed on stdin and never in
    argv or output: `gh auth token | sed 's/^/Authorization: Bearer /' | curl -sS -H @- ...`.
    Push with `git -c core.hooksPath=/dev/null push`: the global pre-push hook is git-lfs's, and it can't verify
-   TLS here. If `git lfs ls-files` lists a file your commits add or change, stop BLOCKED and say so: LFS objects
-   can't be pushed from here.
+   TLS here (this skips every pre-push hook, a repo's own included). If `git lfs ls-files origin/{base} HEAD`
+   lists a file, stop BLOCKED and say so: LFS objects can't be pushed from here.
 4. Wait on CI through REST calls. When every required check passes and the PR is mergeable, merge it through REST
    with the head SHA you checked (sha=...), squash.
 5. End with one line: ARC-STATUS: MERGED, BLOCKED (and why), or CLOSED.

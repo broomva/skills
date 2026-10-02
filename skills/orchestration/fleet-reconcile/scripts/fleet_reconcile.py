@@ -68,11 +68,11 @@ def _sec(args: argparse.Namespace) -> dict:
 
 
 def _dry(args: argparse.Namespace, sec: dict) -> bool:
-    """Dry unless the config says exactly 0 and nothing forces dry: any DRY_RUN
-    value but "" or "0" forces it, as in tick.sh."""
+    """Dry unless the config says exactly 0, with live_accepted, and nothing
+    forces dry: any DRY_RUN value but "" or "0" forces it, as in tick.sh."""
     if os.environ.get("DRY_RUN", "") not in ("", "0") or getattr(args, "dry_run", None) == "1":
         return True
-    return sec.get("dry_run") != 0
+    return sec.get("dry_run") != 0 or config.live_refusal(sec) is not None
 
 
 # --------------------------------------------------------------------------
@@ -90,7 +90,9 @@ def cmd_config_check(args: argparse.Namespace) -> int:
     try:
         raw = config.load()
         for sid in ([args.scope_id] if args.scope_id else sorted(raw["scopes"])):
-            config.scope(sid)
+            refusal = config.live_refusal(config.scope(sid))
+            if refusal:
+                raise config.ConfigError(refusal)
     except config.ConfigError as exc:
         print("fleet config-check: %s" % exc, file=sys.stderr)
         return 1
@@ -203,15 +205,16 @@ def _open_now(records: list) -> Dict[str, Dict]:
     return ledger.open_by_key(records)
 
 
-#: How long a raised batch's item is read back, from its latest raise: a note
-#: sent after its asks stopped being true is still the owner's answer.
+#: How long a raised batch's item is read back, from its latest raise, once no
+#: ask in it is open: a note sent after its asks stopped being true is still
+#: the owner's answer. One with an open ask is read for as long as it is open.
 ASK_READ_DAYS = 14
 
 
 def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
-    """Read the owner's decisions back from every item raised (its latest
-    raise) in the last ASK_READ_DAYS that isn't final, record each change of
-    its state, and dispatch one left queued while an ask in its batch is still
+    """Read the owner's decisions back from every item that isn't final and
+    was raised (its latest raise) in the last ASK_READ_DAYS or still has an
+    open ask, record each change of its state, and dispatch one left queued while an ask in its batch is still
     open: (answers recorded, failed reads and dispatches). Where an item
     stands is ledger.maestro_phase's one rule. A dispatch that leaves it
     queued (Maestro's run cap, or its loop starting it) is logged, not a
@@ -234,13 +237,10 @@ def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
 
     for b in ledger.ask_batches(records):
         last = b.get("answer") or {}
-        if not b.get("item") or ledger.maestro_phase(last.get("state")) == "final":
-            continue
-        if (common.parse_iso(b.get("raised") or b["ts"]) or 0.0) < since:
-            if b["id"] in open_of:  # said each tick while an ask in it is open: an answer there is no longer read
-                print("fleet act ask: Maestro item %s of tick %s is past its %d-day read-back window and no longer "
-                      "read; answer its open asks with `fleet ack %s`" % (b["item"], b["tick"], ASK_READ_DAYS,
-                                                                         b["tick"]), file=sys.stderr)
+        # The window bounds only a batch whose asks are all answered or resolved: one with an ask still
+        # open is read for as long as it stays open, so an answer given after day 14 still lands.
+        if not b.get("item") or ledger.maestro_phase(last.get("state")) == "final" or (
+                (common.parse_iso(b.get("raised") or b["ts"]) or 0.0) < since and b["id"] not in open_of):
             continue
         try:
             ans = paseo_ask.answer(sec, b["item"])
