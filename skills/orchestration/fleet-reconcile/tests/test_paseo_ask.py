@@ -14,26 +14,37 @@ from fleetlib import common, config, ledger, paseo_ask
 
 @pytest.fixture
 def stub(world, tmp_path, monkeypatch):
+    # Refusals as bin/maestro.ts prints them ("maestro: <message>", exit 1). `new` makes the item queued;
+    # STUB_RACE_STATE: Maestro's loop moves the item to that state while `dispatch` is refused.
     out = tmp_path / "show.json"
     log = tmp_path / "args"
+    calls = tmp_path / "calls"
     bin_ = tmp_path / "maestro"
-    bin_.write_text('#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\n[ -n "$STUB_EXIT" ] && { echo "${STUB_ERR:-nope}" >&2; exit $STUB_EXIT; }\n'
-                    'case "$1" in new) echo \'{"item": {"id": "w1", "state": "running"}}\' ;; '
-                    'show) cat "%s" ;; ls) d=\'{"items": []}\'; echo "${STUB_LS:-$d}" ;; '
-                    'dispatch) [ -n "$STUB_DISPATCH_EXIT" ] && '
-                    '{ echo "${STUB_DISPATCH_ERR:-At capacity: 3 running. It stays queued.}" >&2; exit 1; }; '
-                    'echo \'{"item": {"id": "w1", "state": "running"}}\' ;; esac\n' % (log, out))
+    bin_.write_text('#!/bin/sh\nprintf "%%s\\n" "$@" > "%s"\necho "$1" >> "%s"\n'
+                    '[ -n "$STUB_EXIT" ] && { echo "maestro: ${STUB_ERR:-nope}" >&2; exit $STUB_EXIT; }\n'
+                    'case "$1" in new) echo \'{"item": {"id": "w1", "state": "proposed"}}\' ;; '
+                    'show) [ -n "$STUB_SHOW_EXIT" ] && { echo "maestro: Maestro is not listening" >&2; exit 2; }; '
+                    'cat "%s" ;; ls) d=\'{"items": []}\'; echo "${STUB_LS:-$d}" ;; '
+                    'dispatch) [ -n "$STUB_RACE_STATE" ] && '
+                    'printf \'{"item": {"state": "%%s"}, "events": []}\' "$STUB_RACE_STATE" > "%s"; '
+                    '[ -n "$STUB_DISPATCH_EXIT" ] && '
+                    '{ echo "maestro: ${STUB_DISPATCH_ERR:-At capacity: 3 running. It stays queued.}" >&2; exit 1; }; '
+                    'echo \'{"item": {"id": "w1", "state": "running"}}\' ;; esac\n' % (log, calls, out, out))
     bin_.chmod(0o755)
     monkeypatch.setenv("FLEET_MAESTRO_BIN", str(bin_))
     world.write_config(ask_repo=str(tmp_path / "asks-repo"))
-    return type("S", (), {"sec": config.scope("broomva"), "show": out, "args": log})
+    return type("S", (), {"sec": config.scope("broomva"), "show": out, "args": log,
+                          "calls": lambda: calls.read_text().split() if calls.exists() else []})
 
 
-def test_raising_dispatches_work_in_the_fleets_own_repo(stub):
+def test_raising_creates_work_in_the_fleets_own_repo_and_start_dispatches_it(stub):
     item = paseo_ask.raise_item(stub.sec, "fleet broomva: 2 asks (tick 3)",
                                 paseo_ask.brief("lead", ["[a1] q one", "[a2] q two"], "approve"))
     args = stub.args.read_text().splitlines()
-    assert item["id"] == "w1" and args[0] == "new" and "--dispatch" in args and args[-1] == "--json"
+    # Two calls, so the fleet holds the id whatever the dispatch says.
+    assert item == {"id": "w1", "state": "proposed"} and args[0] == "new" and "--dispatch" not in args
+    assert args[-1] == "--json" and paseo_ask.start(stub.sec, item)["state"] == "running"
+    assert stub.calls() == ["new", "dispatch"]
     repo = args[args.index("--repo") + 1]
     assert os.path.isdir(os.path.join(repo, ".git")) and args[args.index("--initiative") + 1] == "fleet-reconcile-broomva"
     text = "\n".join(args[args.index("--brief") + 1:])
@@ -152,7 +163,8 @@ def test_an_alert_adopts_the_open_item_of_its_kind_and_raises_one_when_there_is_
 
 # ── the fleet's sync: answers into the ledger ────────────────────────────────
 
-def _batch(world, ts=None, item="w1", state="review"):
+def _batch(world, ts=None, item="w1", state="review", raised=None):
+    """An ask batch made at `ts` and raised as `item` at `raised` (by default `ts`)."""
     sd = world.state["broomva"]
     base = {"scope": "broomva", "tick": 3, "dry_run": True, "by": "report"}
     rec = dict(base, kind="intent", verb="ask", key="scope:broomva",
@@ -160,8 +172,10 @@ def _batch(world, ts=None, item="w1", state="review"):
     if ts:
         rec["ts"] = ts
     b = ledger.append(sd, rec)
-    ledger.append(sd, dict(base, kind="seen", of=b["id"], by="tick",
-                           result={"channel": "maestro", "item": item, "state": state}))
+    seen = dict(base, kind="seen", of=b["id"], by="tick", result={"channel": "maestro", "item": item, "state": state})
+    if raised or ts:
+        seen["ts"] = raised or ts
+    ledger.append(sd, seen)
     return sd, b
 
 
@@ -196,10 +210,37 @@ def test_each_new_decision_is_recorded_once_and_a_final_one_ends_the_reading(stu
     assert _sync(stub, sd) == (0, 0) and stub.args.read_text() == ""  # done: not read again
 
 
-def test_an_item_older_than_the_read_window_is_not_read(stub, world):
+def _resolve(sd):
+    ledger.append(sd, {"kind": "ack", "resolved": True, "keys": ["k1"], "scope": "broomva", "tick": 4,
+                       "dry_run": True, "by": "report"})
+
+
+def test_an_item_older_than_the_read_window_is_not_read_once_its_asks_are_closed(stub, world):
     sd, _ = _batch(world, ts=common.ts(time.time() - 15 * 86400))
+    _resolve(sd)
     stub.show.write_text(json.dumps({"item": {"state": "done"}, "events": [_ev("You approved"), TOOK]}))
-    assert _sync(stub, sd) == (0, 0) and _acks(sd) == []
+    assert _sync(stub, sd) == (0, 0) and _acks(sd) == [] and stub.calls() == []
+
+
+def test_an_item_past_the_read_window_is_still_read_while_an_ask_in_it_is_open(stub, world):
+    sd, _ = _batch(world, ts=common.ts(time.time() - 20 * 86400))
+    stub.show.write_text(json.dumps({"item": {"state": "running"}, "events": [_ev("You sent it back", "day 20"), TOOK]}))
+    assert _sync(stub, sd) == (1, 0) and _acks(sd)[0]["result"]["notes"] == ["day 20"]  # a late answer lands
+
+
+def test_the_read_window_starts_at_the_latest_raise_not_the_batch(stub, world):
+    # A batch from 20 days ago whose first item went gone and was raised again 2 days ago: still read.
+    now, day = time.time(), 86400
+    at = {ago: common.ts(now - ago * day) for ago in (20, 19, 3, 2, 1)}
+    sd, b = _batch(world, ts=at[20], item="w0", raised=at[19])
+    _resolve(sd)  # its asks closed, so only the window decides
+    for item, state, ago in (("w0", "gone", 3), ("w1", "review", 2), ("w1", "running", 1)):
+        ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": "broomva", "tick": None, "dry_run": False,
+                           "by": "tick", "ts": at[ago], "result": {"channel": "maestro", "item": item, "state": state}})
+    (batch,) = ledger.ask_batches(ledger.read(sd)[0])
+    assert batch["item"] == "w1" and batch["raised"] == at[2]  # its raise, not its later change of state
+    stub.show.write_text(json.dumps({"item": {"state": "done"}, "events": [_ev("You approved"), TOOK]}))
+    assert _sync(stub, sd) == (1, 0) and _acks(sd)[0]["result"]["item"] == "w1"
 
 
 def test_a_queued_item_is_dispatched_and_a_refusal_at_the_cap_is_not_a_failure(stub, world, monkeypatch):
@@ -266,3 +307,93 @@ def test_an_item_started_by_someone_else_is_recorded_seen(stub, world):
     _sync(stub, sd)
     (batch,) = ledger.ask_batches(ledger.read(sd)[0])
     assert batch["seen"] is True and batch["item_state"] == "review"
+
+
+# ── #261's deferred findings (BRO-2714) ──────────────────────────────────────
+
+def test_a_gone_item_that_had_reached_the_owner_is_seen_no_more(stub, world, monkeypatch):
+    sd, _ = _batch(world, state="review")
+    assert ledger.ask_batches(ledger.read(sd)[0])[0]["seen"] is True
+    monkeypatch.setenv("STUB_EXIT", "1")
+    monkeypatch.setenv("STUB_ERR", "No work item with id w1")
+    assert _sync(stub, sd) == (0, 0)
+    (batch,) = ledger.ask_batches(ledger.read(sd)[0])
+    # Raised again, and not seen until the new item reaches the owner.
+    assert batch["seen"] is False and batch["item"] is None and batch["item_state"] == "gone"
+
+
+@pytest.mark.parametrize("message, kind", [
+    ("maestro: At capacity: 3 running. It stays queued.", "cap"),
+    ("At capacity: 3 running. It stays queued.", "cap"),
+    ("maestro: This work is already being dispatched.", "busy"),
+    ("maestro: No work item with id w1\n", "gone"),
+    # Anchored at the start: a message that quotes one of them is none of them.
+    ("maestro: Could not start the run: No work item with id w9", None),
+    ("maestro: Could not start the run: At capacity: 1 running.", None),
+    ("maestro: Only queued or stuck work can be dispatched.", None),
+    ("", None),
+])
+def test_maestros_refusals_are_told_apart_by_the_words_they_start_with(message, kind):
+    assert paseo_ask.refusal_kind(message) == kind
+
+
+def test_only_a_refusal_carries_a_refusal_kind(stub, monkeypatch):
+    monkeypatch.setenv("STUB_ERR", "No work item with id w1")
+    for code, kind in (("1", "gone"), ("3", None), ("2", None)):
+        monkeypatch.setenv("STUB_EXIT", code)
+        with pytest.raises(paseo_ask.MaestroError) as exc:
+            paseo_ask.answer(stub.sec, "w1")
+        assert exc.value.refusal == kind
+
+
+def test_a_failed_start_that_quotes_a_missing_item_is_a_failure_not_gone(stub, world, monkeypatch):
+    sd, _ = _batch(world, state="proposed")
+    stub.show.write_text(json.dumps({"item": {"state": "proposed"}, "events": []}))
+    monkeypatch.setenv("STUB_DISPATCH_EXIT", "1")
+    monkeypatch.setenv("STUB_DISPATCH_ERR", "Could not start the run: No work item with id w9")
+    assert _sync(stub, sd) == (0, 1)
+    assert ledger.ask_batches(ledger.read(sd)[0])[0]["item"] == "w1"
+
+
+@pytest.mark.parametrize("refusal, moved", [
+    ("A session can start only queued work. Stuck work is unblocked in Maestro.", "running"),  # the loop started it
+    ("The work changed while the run was starting.", "canceled"),                              # the owner canceled it
+])
+def test_a_dispatch_that_loses_a_race_to_maestro_is_not_a_failure(stub, world, monkeypatch, refusal, moved):
+    sd, _ = _batch(world, state="proposed")
+    stub.show.write_text(json.dumps({"item": {"state": "proposed"}, "events": []}))
+    monkeypatch.setenv("STUB_DISPATCH_EXIT", "1")
+    monkeypatch.setenv("STUB_DISPATCH_ERR", refusal)
+    monkeypatch.setenv("STUB_RACE_STATE", moved)
+    assert _sync(stub, sd) == (0, 0)
+    assert stub.calls()[-2:] == ["dispatch", "show"]  # read again after the refusal
+    (batch,) = ledger.ask_batches(ledger.read(sd)[0])
+    assert batch["seen"] is True and batch["item_state"] == moved
+
+
+def test_an_item_whose_dispatch_finds_it_gone_frees_its_batch(stub, world, monkeypatch):
+    sd, _ = _batch(world, state="proposed")
+    stub.show.write_text(json.dumps({"item": {"state": "proposed"}, "events": []}))
+    monkeypatch.setenv("STUB_DISPATCH_EXIT", "1")
+    monkeypatch.setenv("STUB_DISPATCH_ERR", "No work item with id w1")  # deleted between the read and the dispatch
+    assert _sync(stub, sd) == (0, 0)
+    (batch,) = ledger.ask_batches(ledger.read(sd)[0])
+    assert batch["item"] is None and batch["item_state"] == "gone"
+
+
+def test_a_refused_dispatch_whose_item_cant_be_read_again_raises_the_dispatchs_own_error(stub, monkeypatch):
+    monkeypatch.setenv("STUB_DISPATCH_EXIT", "1")
+    monkeypatch.setenv("STUB_DISPATCH_ERR", "Could not start the run: no provider")
+    monkeypatch.setenv("STUB_SHOW_EXIT", "1")  # Maestro went away between the two calls
+    with pytest.raises(paseo_ask.MaestroError) as exc:
+        paseo_ask.start(stub.sec, {"id": "w1", "state": "proposed"})
+    assert exc.value.code == 1 and "Could not start the run" in str(exc.value) and stub.calls() == ["dispatch", "show"]
+
+
+def test_a_dispatch_while_maestros_loop_is_starting_it_waits(stub, world, monkeypatch):
+    sd, _ = _batch(world, state="proposed")
+    stub.show.write_text(json.dumps({"item": {"state": "proposed"}, "events": []}))
+    monkeypatch.setenv("STUB_DISPATCH_EXIT", "1")
+    monkeypatch.setenv("STUB_DISPATCH_ERR", "This work is already being dispatched.")
+    assert _sync(stub, sd) == (0, 0)
+    assert ledger.ask_batches(ledger.read(sd)[0])[0]["seen"] is False  # the next tick reads where it went

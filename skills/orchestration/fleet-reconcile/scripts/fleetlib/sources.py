@@ -25,17 +25,17 @@ class SourceError(RuntimeError):
     pass
 
 
-#: Only gh needs the fleet token. Sources takes it out of the process
-#: environment when it starts, so no child inherits it (git run by ctx, say),
-#: and hands it to gh alone.
+#: gh reads GitHub on the owner's keyring login (since 0.4.0; owner decision
+#: 2026-10-01). A token inherited from a shell would make gh act as that token
+#: instead, so Sources drops both variables from the process environment when
+#: it starts: every gh call and every child reads GitHub as the owner's login,
+#: as tick.sh's steps do (it unsets them too).
 _TOKEN_VARS = ("GH_TOKEN", "GITHUB_TOKEN")
-_TOKEN: Dict[str, str] = {}
 
 
-def _take_token() -> None:
+def _drop_token() -> None:
     for k in _TOKEN_VARS:
-        if k in os.environ:
-            _TOKEN[k] = os.environ.pop(k)
+        os.environ.pop(k, None)
 
 
 #: What a session started from a session inherits and must not (evidence §1:
@@ -60,10 +60,9 @@ def child_env(extra: Optional[Dict[str, str]] = None) -> Dict[str, str]:
     return env
 
 
-def _run(argv: List[str], timeout: float, cwd: Optional[str] = None, token: bool = False,
-         env: Optional[Dict[str, str]] = None) -> str:
+def _run(argv: List[str], timeout: float, cwd: Optional[str] = None, env: Optional[Dict[str, str]] = None) -> str:
     if env is None:
-        env = dict(os.environ, **_TOKEN) if token else {k: v for k, v in os.environ.items() if k not in _TOKEN_VARS}
+        env = {k: v for k, v in os.environ.items() if k not in _TOKEN_VARS}
     try:
         proc = subprocess.run(argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                               timeout=timeout, cwd=cwd, env=env)
@@ -127,14 +126,9 @@ class Sources:
     and files under $HOME."""
 
     def __init__(self) -> None:
-        _take_token()
+        _drop_token()
         self.claude = os.environ.get("FLEET_CLAUDE_BIN") or "claude"
         self.gh = os.environ.get("FLEET_GH_BIN") or "gh"
-
-    def use_token(self, token: str) -> None:
-        """gh runs with this token (the fleet's, from its file), not the environment's."""
-        _TOKEN["GH_TOKEN"] = token
-        _TOKEN.pop("GITHUB_TOKEN", None)
 
     # Claude Code ---------------------------------------------------------
     def claude_version(self) -> str:
@@ -236,40 +230,50 @@ class Sources:
         return _run(["git", "--git-dir", common_dir, "remote", "get-url", "origin"], 10).strip()
 
     def default_branch(self, slug: str) -> str:
-        return _run([self.gh, "api", "repos/%s" % slug, "--jq", ".default_branch"], 30, token=True).strip()
+        return _run([self.gh, "api", "repos/%s" % slug, "--jq", ".default_branch"], 30).strip()
 
     def rules(self, slug: str, branch: str) -> str:
-        return _run([self.gh, "api", "repos/%s/rules/branches/%s" % (slug, branch)], 30, token=True)
+        return _run([self.gh, "api", "repos/%s/rules/branches/%s" % (slug, branch)], 30)
 
     def open_prs(self, slug: str, limit: int) -> str:
         from .parsers import PR_FIELDS
 
         return _run([self.gh, "pr", "list", "-R", slug, "--state", "open", "--limit", str(limit),
-                     "--json", PR_FIELDS], 60, token=True)
+                     "--json", PR_FIELDS], 60)
 
     def pr_files(self, slug: str, number: int) -> str:
         """A JSON array of every changed path of the PR, a rename's old path
         too (the owner-merge check), through REST with --paginate: `gh pr view
-        --json files` stops at 100. GitHub lists at most 3000 files."""
+        --json files` stops at 100. GitHub lists at most 3000 files, so a list
+        shorter than the PR's changed_files raises SourceError: the
+        owner-merge check never passes on part of one."""
+        total = _run([self.gh, "api", "repos/%s/pulls/%d" % (slug, number), "--jq", ".changed_files"], 60).strip()
         out = _run([self.gh, "api", "--paginate", "repos/%s/pulls/%d/files?per_page=100" % (slug, number),
-                    "--jq", ".[] | .filename, (.previous_filename // empty)"], 120, token=True)
-        return json.dumps([ln for ln in out.splitlines() if ln])
+                    "--jq", ".[] | [.filename, .previous_filename]"], 120)
+        try:
+            rows = [json.loads(ln) for ln in out.splitlines() if ln.strip()]
+        except ValueError:
+            raise SourceError("%s#%d's file list isn't JSON" % (slug, number))
+        if not total.isdigit() or len(rows) < int(total):
+            raise SourceError("GitHub listed %d of %s#%d's %s changed files (it lists at most 3000)"
+                              % (len(rows), slug, number, common.safe_text(total, 20) or "?"))
+        return json.dumps([f for row in rows if isinstance(row, list) for f in row if isinstance(f, str)])
 
     def pr_heads(self, slug: str, branch: str) -> str:
         """A JSON array of {number, state} for PRs from this head branch (the janitor)."""
         return _run([self.gh, "pr", "list", "-R", slug, "--head", branch, "--state", "all", "--json", "number,state"],
-                    60, token=True)
+                    60)
 
     def pr_labels(self, slug: str, number: int) -> str:
         """A JSON array of the PR's label names (recovering a label intent)."""
         return _run([self.gh, "pr", "view", str(number), "-R", slug, "--json", "labels", "--jq",
-                     "[.labels[].name]"], 60, token=True)
+                     "[.labels[].name]"], 60)
 
     def gh_api(self, method: str, path: str, fields: Optional[Dict[str, str]] = None) -> str:
         argv = [self.gh, "api", "-X", method, path]
         for k, v in (fields or {}).items():
             argv += ["-f", "%s=%s" % (k, v)]
-        return _run(argv, 60, token=True)
+        return _run(argv, 60)
 
     def run_claude(self, args: List[str], cwd: Optional[str] = None, timeout: float = 120) -> str:
         """`claude <args>` as a fleet child (spawn, resume, stop, rm)."""

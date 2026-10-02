@@ -1,6 +1,6 @@
 """tick.sh end to end, and the CLI verbs around it, in an isolated HOME with
 stub `claude`, `gh` and `maestro` that serve the captured fixture and
-record how they were called (the fleet token's length only, never its value)."""
+record how they were called (a token's length only, never its value)."""
 from __future__ import annotations
 
 import json
@@ -8,6 +8,7 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 import time
 from pathlib import Path
 
@@ -34,14 +35,14 @@ def rig(fresh_world, tmp_path):
     calls_dir = tmp_path / "calls"
     calls_dir.mkdir()
     fx = w.fixture
-    _stub(bin_ / "claude", 'echo "${#GH_TOKEN}" >> "%s/claude-token-lengths"\n'
+    _stub(bin_ / "claude", 'echo "${#GH_TOKEN}/${#GITHUB_TOKEN}" >> "%s/claude-token-lengths"\n'
           'case "$1" in\n'
           '  --version) cat "%s/claude/version.txt" ;;\n'
           '  agents) [ -n "${STUB_HANG:-}" ] && { (trap "" TERM; exec sleep 33) & wait; }; cat "%s/claude/agents.json" ;;\n'
           '  -p) env > "%s/coordinator-env"; printf "%%s\\n" "{\\"type\\": \\"system\\", \\"subtype\\": \\"init\\", '
           '\\"tools\\": [${STUB_TOOLS:-\\"Bash\\"}]}"; echo "{\\"type\\": \\"result\\"}" ;;\n'
           '  *) exit 2 ;;\nesac\n' % (calls_dir, fx, fx, calls_dir))
-    _stub(bin_ / "gh", 'echo "${#GH_TOKEN}" >> "%s/gh-token-lengths"\n'
+    _stub(bin_ / "gh", 'echo "${#GH_TOKEN}/${#GITHUB_TOKEN}" >> "%s/gh-token-lengths"\n'
           'slug=""; for a in "$@"; do case "$a" in repos/*) slug=${a#repos/}; slug=${slug%%%%/rules*} ;; esac; done\n'
           'if [ "$1" = pr ]; then slug=$4; fi\n'
           'd="%s/gh/$(echo "$slug" | sed "s#/#__#")"\n'
@@ -50,27 +51,35 @@ def rig(fresh_world, tmp_path):
           '  *default_branch*) cat "$d/default_branch.txt" ;;\n'
           '  "pr list"*) cat "$d/prs.json" ;;\n'
           '  *) exit 1 ;;\nesac\n' % (calls_dir, fx))
-    # maestro: `new` makes item itm-<n> (listed by `ls`); STUB_NEW_STATE sets its state, STUB_NEW_EXIT
-    # makes `new` fail after creating it (Maestro creates, then dispatches); `show <id>` serves
-    # calls/maestro-show-<id>.json, else review; `dispatch` starts it, or STUB_DISPATCH_EXIT refuses (the cap).
-    _stub(bin_ / "maestro", '[ -n "${STUB_MAESTRO_DOWN:-}" ] && { echo "Maestro is not listening" >&2; exit 2; }\n'
+    # maestro: `new` makes item itm-<n> (listed by `ls`), queued, or with --dispatch (the bash fallback) in
+    # STUB_NEW_STATE; STUB_NEW_EXIT makes `new` fail after creating it, saying STUB_NEW_ERR; STUB_NEW_HANG
+    # makes it and a child ignore TERM and hang (STUB_NEW_ORPHAN: only the child); STUB_CLI_CRASH exits 1 as bun does when the CLI can't load,
+    # before reaching Maestro; `show <id>` serves calls/maestro-show-<id>.json, else review; `dispatch`
+    # starts it, or STUB_DISPATCH_EXIT refuses (the cap, or STUB_DISPATCH_ERR). Refusals read as bin/maestro.ts
+    # prints them.
+    _stub(bin_ / "maestro", '[ -n "${STUB_MAESTRO_DOWN:-}" ] && { echo "maestro: Maestro is not listening" >&2; exit 2; }\n'
+          '[ -n "${STUB_CLI_CRASH:-}" ] && { echo "error: Module not found \\"maestro.ts\\"" >&2; exit 1; }\n'
           'printf "%%s\\n" "$*" | head -1 >> "%s/maestro"\n'
+          'echo "${#GH_TOKEN}/${#GITHUB_TOKEN}" >> "%s/maestro-token-lengths"\n'
           '[ -n "${STUB_LOCK:-}" ] && [ -d "$STUB_LOCK" ] && echo held >> "%s/lock-during-alert"\n'
           'c="%s"\n'
           'case "$1" in\n'
-          '  new) n=$(( $(cat "$c/maestro-n" 2>/dev/null || echo 0) + 1 )); echo $n > "$c/maestro-n";'
+          '  new) [ -n "${STUB_NEW_HANG:-}" ] && { trap "" TERM; sleep 60 & echo $! > "$c/hang-child"; wait; };'
+          ' [ -n "${STUB_NEW_ORPHAN:-}" ] && { (trap "" TERM; exec sleep 60) & echo $! > "$c/hang-child"; sleep 60; };'
+          ' n=$(( $(cat "$c/maestro-n" 2>/dev/null || echo 0) + 1 )); echo $n > "$c/maestro-n";'
           ' printf "%%s\\n" "$*" > "$c/maestro-new-itm-$n";'
+          ' st=proposed; case " $* " in (*" --dispatch "*) st=${STUB_NEW_STATE:-running} ;; esac;'
           ' title=$(printf "%%s" "$2" | tr -d \'"\'); init=""; prev=""; for a in "$@"; do [ "$prev" = --initiative ] && init=$a; prev=$a; done;'
           ' printf \'{"id": "itm-%%s", "title": "%%s", "initiative": "%%s", "state": "%%s", "createdAt": "%%s"}\\n\''
-          ' "$n" "$title" "$init" "${STUB_NEW_STATE:-running}" "$(date -u +%%FT%%TZ)" >> "$c/maestro-items";'
-          ' [ -n "${STUB_NEW_EXIT:-}" ] && { echo "Maestro gave no clear answer" >&2; exit "$STUB_NEW_EXIT"; };'
-          ' echo "{\\"item\\": {\\"id\\": \\"itm-$n\\", \\"state\\": \\"${STUB_NEW_STATE:-running}\\"}}" ;;\n'
+          ' "$n" "$title" "$init" "$st" "$(date -u +%%FT%%TZ)" >> "$c/maestro-items";'
+          ' [ -n "${STUB_NEW_EXIT:-}" ] && { echo "maestro: ${STUB_NEW_ERR:-Maestro gave no clear answer}" >&2; exit "$STUB_NEW_EXIT"; };'
+          ' echo "{\\"item\\": {\\"id\\": \\"itm-$n\\", \\"state\\": \\"$st\\"}}" ;;\n'
           '  ls) printf \'{"items": [\'; [ -f "$c/maestro-items" ] && paste -sd, "$c/maestro-items" | tr -d \'\\n\'; echo "]}" ;;\n'
-          '  dispatch) [ -n "${STUB_DISPATCH_EXIT:-}" ] && { echo "At capacity: 3 running. It stays queued." >&2; exit 1; };'
+          '  dispatch) [ -n "${STUB_DISPATCH_EXIT:-}" ] && { echo "maestro: ${STUB_DISPATCH_ERR:-At capacity: 3 running. It stays queued.}" >&2; exit 1; };'
           ' echo "$2" >> "$c/maestro-dispatched"; echo "{\\"item\\": {\\"id\\": \\"$2\\", \\"state\\": \\"running\\"}}" ;;\n'
           '  show) f="$c/maestro-show-$2.json"; if [ -f "$f" ]; then cat "$f"; else'
           ' echo "{\\"item\\": {\\"state\\": \\"review\\", \\"verdict\\": null, \\"pending\\": null}, \\"events\\": []}"; fi ;;\n'
-          '  *) exit 2 ;;\nesac\n' % (calls_dir, calls_dir, calls_dir))
+          '  *) exit 2 ;;\nesac\n' % (calls_dir, calls_dir, calls_dir, calls_dir))
     (w.home / ".claude" / "projects").mkdir(parents=True)
     shutil.copytree(str(fx / "claude" / "jobs"), str(w.home / ".claude" / "jobs"))
     shutil.copytree(str(fx / "paseo"), str(w.home / ".paseo"))
@@ -160,46 +169,37 @@ def test_a_tick_observes_reports_asks_and_records_itself(rig):
     assert any(a["key"].startswith("rules:broomva/skills") for a in rep["asks"])
     # The owner channel is Paseo: one Maestro item at Needs you for the new batch, nothing on the desktop.
     assert "intent" in kinds and len(rig.raised(BATCH)) == 1, rig.calls("maestro")
-    assert "--dispatch" in rig.brief("itm-1") and "--initiative fleet-reconcile-broomva" in rig.brief("itm-1")
+    assert "--initiative fleet-reconcile-broomva" in rig.brief("itm-1") and rig.calls("maestro-dispatched") == ["itm-1"]
     seen = [x for x in rig.ledger() if x["kind"] == "seen"]
     assert seen and seen[0]["result"] == {"channel": "maestro", "item": "itm-1", "state": "running"}
     assert kinds.index("seen") < kinds.index("runner_exit")  # inside the tick's lock now
     assert (sd / "asks" / "00001.md").is_file()
 
 
-def test_the_fleet_token_reaches_gh_through_the_environment_and_nowhere_else(rig):
-    rig.tick()
-    lengths = set(rig.calls("gh-token-lengths"))
-    assert lengths == {str(len(TOKEN))}
-    assert set(rig.calls("claude-token-lengths")) == {"0"}  # claude runs without it
+def test_no_token_reaches_any_step_even_one_configured_or_inherited(rig, tmp_path):
+    # Owner decision 2026-10-01: GitHub on the owner's gh login. gh_token_file is set (accepted, not read),
+    # and a token inherited from the shell is dropped: by tick.sh for every step it starts (the Python every
+    # step runs under is watched here), and by Sources for gh and every child.
+    seen = tmp_path / "python-token-lengths"
+    py = _stub(tmp_path / "python3", 'echo "$3 ${#GH_TOKEN}/${#GITHUB_TOKEN}" >> "%s"\nexec "%s" "$@"\n'
+               % (seen, sys.executable))
+    r = rig.tick(GH_TOKEN=TOKEN, GITHUB_TOKEN=TOKEN, FLEET_PYTHON=str(py))
+    assert r.returncode == 0, rig.log()
+    assert set(rig.calls("gh-token-lengths")) == {"0/0"} and set(rig.calls("claude-token-lengths")) == {"0/0"}
+    steps = [ln.split() for ln in seen.read_text().splitlines()]
+    assert {"config-get", "config-check", "recover", "observe", "report", "act"} <= {cmd for cmd, _ in steps}
+    assert {n for _, n in steps} == {"0/0"}  # every one, the config reads before the lock included
     sd = rig.world.state["broomva"]
     for p in sd.rglob("*"):
         if p.is_file():
             assert TOKEN not in p.read_text(errors="replace"), p
-    assert "gh: fleet token file" in rig.log()
+    assert "gh: keyring (the owner's gh login)" in rig.log()
 
 
-def test_without_a_token_file_gh_falls_back_to_the_keyring_and_the_report_says_so(rig):
-    rig.token_file.unlink()
-    rig.tick()
-    assert set(rig.calls("gh-token-lengths")) == {"0"}
-    assert "token file" in rig.log() and "unreadable" in rig.log()
-    md = (rig.world.state["broomva"] / "ticks" / "00001" / "report.md").read_text()
-    assert "read with the keyring token" in md
-
-
-def test_an_empty_token_file_is_not_a_token(rig):
-    rig.token_file.write_text("\n")
-    rig.tick()
-    assert set(rig.calls("gh-token-lengths")) == {"0"} and "is empty" in rig.log()
-
-
-def test_a_token_file_open_to_others_is_not_used(rig):
-    rig.token_file.chmod(0o644)
-    rig.tick()
-    assert set(rig.calls("gh-token-lengths")) == {"0"} and "not used" in rig.log()
-    fire = [x for x in rig.ledger() if x["kind"] == "tick_fire"][0]
-    assert "mode 644" in fire["detail"] and fire["detail"].startswith("release: checkout; gh: keyring")
+def test_no_inherited_token_reaches_the_bash_alert_fallback(rig):
+    rig.world.config.write_text("not json")  # the fallback runs before anything else does
+    rig.tick(GH_TOKEN=TOKEN, GITHUB_TOKEN=TOKEN)
+    assert rig.raised("fleet broomva: config") and set(rig.calls("maestro-token-lengths")) == {"0/0"}
 
 
 def test_the_kill_switch_stops_the_tick_before_anything_fires(rig):
@@ -295,7 +295,7 @@ def test_each_run_leaves_one_line_on_stdout_for_launchds_log(rig):
 @pytest.mark.parametrize("cfg_dry,env_dry,expected", [(1, None, True), (0, None, False), (0, "1", True),
                                                       (1, "0", True), (0, "yes", True)])
 def test_dry_run_falls_toward_dry(rig, cfg_dry, env_dry, expected):
-    rig.world.write_config(dry_run=cfg_dry, gh_token_file=str(rig.token_file))
+    rig.world.write_config(dry_run=cfg_dry, **({"live_accepted": "test"} if cfg_dry == 0 else {}))
     rig.tick(**({"DRY_RUN": env_dry} if env_dry is not None else {}))
     fire = [x for x in rig.ledger() if x["kind"] == "tick_fire"][0]
     assert fire["dry_run"] is expected
@@ -404,7 +404,7 @@ def test_a_batch_still_queued_at_the_cap_is_neither_a_failure_nor_seen_and_is_di
 
 
 def test_a_batch_reaches_the_owner_only_once_its_asks_have_lasted(rig):
-    rig.world.write_config(gh_token_file=str(rig.token_file), ask_raise_after_min=50)
+    rig.world.write_config(ask_raise_after_min=50)
     r = rig.tick()
     assert r.returncode == 0 and rig.raised(BATCH) == [] and "1 waiting" in rig.log()
     # An hour on, the asks are still open: the batch is raised.
@@ -436,15 +436,94 @@ def test_an_alert_queued_at_the_cap_is_not_delivered(rig):
     assert len(rig.raised("fleet broomva: tick-observe")) == 1 and (sd / ".alert-tick-observe").exists()
 
 
-@pytest.mark.parametrize("extra", [{"STUB_NEW_STATE": "proposed"}, {"STUB_NEW_EXIT": "3"}])
+@pytest.mark.parametrize("extra", [{"STUB_NEW_STATE": "proposed"}, {"STUB_NEW_EXIT": "3"},
+                                   # made, then its run couldn't start: Maestro refuses, and the item exists
+                                   {"STUB_NEW_EXIT": "1", "STUB_NEW_ERR": "Could not start the run: no provider"}])
 def test_the_bash_fallback_raises_at_most_one_alert_per_6_h_even_queued_or_unconfirmed(rig, extra):
-    # It can't adopt an open item, so one it raised counts (else one more every tick at the cap).
+    # It can't adopt an open item or read Maestro's words, so any answer counts (else one more every tick).
     rig.world.config.write_text("not json")
     rig.tick(**extra)
     rig.tick(**extra)
     sd = rig.world.state["broomva"]
     assert len(rig.raised("fleet broomva: config [fleet-reconcile broomva alert config]")) == 1
     assert (sd / ".alert-config").exists()
+
+
+@pytest.mark.parametrize("down, code", [("STUB_MAESTRO_DOWN", 2),  # not listening
+                                        ("STUB_CLI_CRASH", 1)])   # bun's own exit 1, no "maestro: " line
+def test_the_bash_fallback_tries_again_when_nothing_reached_maestro(rig, down, code):
+    rig.world.config.write_text("not json")
+    rig.tick(**{down: "1"})  # nothing was sent, so nothing was made
+    sd = rig.world.state["broomva"]
+    assert not (sd / ".alert-config").exists() and "NOT delivered" in rig.log()
+    assert "no answer from Maestro (exit %d)" % code in rig.log()
+    rig.tick()
+    assert len(rig.raised("fleet broomva: config")) == 1 and (sd / ".alert-config").exists()
+
+
+def test_a_bash_fallback_whose_maestro_hangs_is_stopped_children_and_all(rig):
+    rig.world.config.write_text("not json")
+    t0 = time.monotonic()
+    r = rig.tick(STUB_NEW_HANG="1", FLEET_ALERT_TIMEOUT_S="1", FLEET_KILL_GRACE_S="1")  # both ignore TERM
+    assert r.returncode == 1 and time.monotonic() - t0 < 30
+    assert "(exit 137)" in rig.log() and not (rig.world.state["broomva"] / ".alert-config").exists()
+    child = int(rig.calls("hang-child")[0])
+    time.sleep(0.5)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)  # the group was killed, not only its leader
+
+
+def test_a_bash_fallback_whose_leader_dies_still_has_its_term_proof_child_killed(rig):
+    rig.world.config.write_text("not json")
+    rig.tick(STUB_NEW_ORPHAN="1", FLEET_ALERT_TIMEOUT_S="1", FLEET_KILL_GRACE_S="20")  # the leader dies on TERM
+    assert "(exit 143)" in rig.log()
+    child = int(rig.calls("hang-child")[0])
+    time.sleep(0.5)
+    with pytest.raises(ProcessLookupError):
+        os.kill(child, 0)  # killed with its group once the leader was reaped, not left for its 60 s
+
+
+def test_the_bash_fallback_reaches_maestro_when_its_state_dir_is_broken(rig):
+    rig.world.config.write_text("not json")
+    sd = rig.world.state["broomva"]
+    sd.parent.mkdir(parents=True, exist_ok=True)
+    sd.write_text("a file where the state dir goes")  # nothing can be written there, the log included
+    r = rig.tick()
+    assert r.returncode == 1 and len(rig.raised("fleet broomva: config")) == 1  # the last channel still works
+
+
+def test_live_mode_is_refused_until_its_preconditions_are_recorded(rig):
+    # 0.4.0 removed the token that kept live mode closed; dry_run 0 alone no longer makes a tick live.
+    rig.world.write_config(mode="act", dry_run=0)
+    check = rig.fleet("config-check", "broomva")
+    assert check.returncode == 1 and "live_accepted" in check.stderr
+    r = rig.tick()
+    assert r.returncode == 1 and rig.raised("fleet broomva: config") and rig.calls("coordinator-env") == []
+    assert not [x for x in rig.ledger() if x["kind"] == "tick_fire"]  # no tick at all
+    rig.world.write_config(mode="act", dry_run=0, live_accepted="phase 3 and BRO-2755 done (test)")
+    assert rig.fleet("config-check", "broomva").returncode == 0
+
+
+def test_every_verb_stays_dry_while_live_mode_is_unaccepted(rig):
+    import argparse
+
+    import fleet_reconcile
+    args = argparse.Namespace(dry_run=None)
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0}) is True
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": " "}) is True
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 0, "live_accepted": "done"}) is False
+    assert fleet_reconcile._dry(args, {"scope": "broomva", "dry_run": 1, "live_accepted": "done"}) is True
+
+
+def test_a_raised_batch_whose_run_cant_start_is_recorded_queued_and_dispatched_later(rig):
+    rig.item("itm-1", "proposed")
+    rig.item("itm-2", "proposed")  # the failed tick's own alert, which can't start either
+    r = rig.tick(STUB_DISPATCH_EXIT="1", STUB_DISPATCH_ERR="Could not start the run: no provider")
+    assert r.returncode == 1 and "ask=1" in r.stdout and "not started" in rig.log()
+    assert [x["result"]["state"] for x in rig.ledger() if x["kind"] == "seen"] == ["proposed"]
+    rig.tick()
+    assert len(rig.raised(BATCH)) == 1 and "itm-1" in rig.calls("maestro-dispatched")  # not raised twice
+    assert [x["result"]["state"] for x in rig.ledger() if x["kind"] == "seen"] == ["proposed", "running"]
 
 
 def test_an_alert_maestro_may_have_made_is_adopted_not_raised_twice(rig):
@@ -498,7 +577,7 @@ def test_a_failed_compare_does_not_use_up_the_day_and_the_prototypes_line_is_ref
 
 
 def test_in_act_mode_the_tick_recovers_then_runs_the_coordinator_with_the_send_gate(rig):
-    rig.world.write_config(mode="act", gh_token_file=str(rig.token_file))
+    rig.world.write_config(mode="act")
     r = rig.tick()
     assert r.returncode == 0, rig.log()
     assert re.search(r"recover=0 observe=0 report=0 coordinator=0 compare=\d ask=0$", r.stdout.strip())
@@ -508,7 +587,7 @@ def test_in_act_mode_the_tick_recovers_then_runs_the_coordinator_with_the_send_g
     assert "send-gate pre --scope broomva" in hooks["PreToolUse"][0]["hooks"][0]["command"]
     env = dict(ln.split("=", 1) for ln in rig.calls("coordinator-env") if "=" in ln)
     assert env["FLEET_TICK"] == "1" and env["DRY_RUN"] == "1" and env["FLEET_CHILD"] == "1"
-    assert len(env["GH_TOKEN"]) == len(TOKEN)  # the fleet token, for the coordinator's gh
+    assert "GH_TOKEN" not in env  # the coordinator's gh uses the owner's login
 
 
 def test_a_coordinator_with_a_disallowed_tool_is_stopped_and_the_tick_fails(rig):
@@ -531,7 +610,7 @@ def test_a_tick_first_closes_the_intents_a_dead_tick_left_open(rig):
     assert "recover: 0-1 spawn broomva-x-pr1 -> failed" in rig.log()
 
 
-def test_recover_reads_github_with_the_fleet_token(rig):
+def test_recover_reads_github_on_the_owners_login(rig):
     sd = rig.world.state["broomva"]
     sd.mkdir(parents=True, exist_ok=True)
     rec = {"v": 1, "id": "0-1", "ts": "2026-09-30T00:00:00.000Z", "scope": "broomva", "tick": 0, "dry_run": False,
@@ -540,14 +619,15 @@ def test_recover_reads_github_with_the_fleet_token(rig):
     (sd / "ledger.jsonl").write_text(json.dumps(rec) + "\n")
     rig.tick()
     assert [x["by"] for x in rig.ledger() if x.get("of") == "0-1"] == ["recover"]
-    assert set(rig.calls("gh-token-lengths")) == {str(len(TOKEN))}  # recover's gh call included
+    assert set(rig.calls("gh-token-lengths")) == {"0/0"}  # recover's gh call included: no token
 
 
-def test_a_live_tick_without_the_fleet_token_runs_no_coordinator_and_says_so(rig):
-    rig.world.write_config(mode="act", dry_run=0)
+def test_a_live_tick_runs_the_coordinator_on_the_owners_login(rig):
+    # The fleet token is waived (spec §5.2 precondition 1): a live tick needs none.
+    rig.world.write_config(mode="act", dry_run=0, live_accepted="phase 3 and BRO-2755 done (test)")
     r = rig.tick()
-    assert r.returncode == 1 and "coordinator=skipped" in r.stdout and rig.calls("coordinator-env") == []
-    assert rig.raised("fleet broomva: tick-token")
+    assert r.returncode == 0 and "coordinator=0" in r.stdout and rig.calls("coordinator-env") != [], rig.log()
+    assert not rig.raised("tick-token")
 
 
 def test_in_report_mode_no_coordinator_runs(rig):

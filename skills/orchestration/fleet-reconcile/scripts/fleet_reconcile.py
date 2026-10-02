@@ -68,11 +68,11 @@ def _sec(args: argparse.Namespace) -> dict:
 
 
 def _dry(args: argparse.Namespace, sec: dict) -> bool:
-    """Dry unless the config says exactly 0 and nothing forces dry: any DRY_RUN
-    value but "" or "0" forces it, as in tick.sh."""
+    """Dry unless the config says exactly 0, with live_accepted, and nothing
+    forces dry: any DRY_RUN value but "" or "0" forces it, as in tick.sh."""
     if os.environ.get("DRY_RUN", "") not in ("", "0") or getattr(args, "dry_run", None) == "1":
         return True
-    return sec.get("dry_run") != 0
+    return sec.get("dry_run") != 0 or config.live_refusal(sec) is not None
 
 
 # --------------------------------------------------------------------------
@@ -90,7 +90,9 @@ def cmd_config_check(args: argparse.Namespace) -> int:
     try:
         raw = config.load()
         for sid in ([args.scope_id] if args.scope_id else sorted(raw["scopes"])):
-            config.scope(sid)
+            refusal = config.live_refusal(config.scope(sid))
+            if refusal:
+                raise config.ConfigError(refusal)
     except config.ConfigError as exc:
         print("fleet config-check: %s" % exc, file=sys.stderr)
         return 1
@@ -203,19 +205,21 @@ def _open_now(records: list) -> Dict[str, Dict]:
     return ledger.open_by_key(records)
 
 
-#: How long a raised batch's item is read back: a note sent after its asks
-#: stopped being true is still the owner's answer.
+#: How long a raised batch's item is read back, from its latest raise, once no
+#: ask in it is open: a note sent after its asks stopped being true is still
+#: the owner's answer. One with an open ask is read for as long as it is open.
 ASK_READ_DAYS = 14
 
 
 def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
-    """Read the owner's decisions back from every item raised in the last
-    ASK_READ_DAYS that isn't final, record each change of its state, and
-    dispatch one left queued while an ask in its batch is still open: (answers
-    recorded, failed reads and dispatches). Where an item stands is
-    ledger.maestro_phase's one rule. A dispatch refused at Maestro's run cap
-    is logged, not a failure; an item Maestro no longer has is recorded gone,
-    which frees its batch to be raised again if an ask in it is still open."""
+    """Read the owner's decisions back from every item that isn't final and
+    was raised (its latest raise) in the last ASK_READ_DAYS or still has an
+    open ask, record each change of its state, and dispatch one left queued while an ask in its batch is still
+    open: (answers recorded, failed reads and dispatches). Where an item
+    stands is ledger.maestro_phase's one rule. A dispatch that leaves it
+    queued (Maestro's run cap, or its loop starting it) is logged, not a
+    failure; an item Maestro no longer has is recorded gone, which frees its
+    batch to be raised again if an ask in it is still open."""
     from fleetlib import paseo_ask
 
     answered = failed = 0
@@ -226,18 +230,23 @@ def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
         ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": sec["scope"], "tick": None, "dry_run": False,
                            "by": "tick", "result": {"channel": "maestro", "item": b["item"], "state": state}})
 
+    def gone(b: Dict[str, Any]) -> None:
+        print("fleet act ask: Maestro no longer has item %s of tick %s; its batch is raised again while an ask in "
+              "it is open" % (b["item"], b["tick"]), file=sys.stderr)
+        seen(b, "gone")
+
     for b in ledger.ask_batches(records):
         last = b.get("answer") or {}
-        if not b.get("item") or ledger.maestro_phase(last.get("state")) == "final" \
-                or (common.parse_iso(b["ts"]) or 0.0) < since:
+        # The window bounds only a batch whose asks are all answered or resolved: one with an ask still
+        # open is read for as long as it stays open, so an answer given after day 14 still lands.
+        if not b.get("item") or ledger.maestro_phase(last.get("state")) == "final" or (
+                (common.parse_iso(b.get("raised") or b["ts"]) or 0.0) < since and b["id"] not in open_of):
             continue
         try:
             ans = paseo_ask.answer(sec, b["item"])
         except paseo_ask.MaestroError as exc:
-            if paseo_ask.GONE in str(exc):
-                print("fleet act ask: Maestro no longer has item %s of tick %s; its batch is raised again while "
-                      "an ask in it is open" % (b["item"], b["tick"]), file=sys.stderr)
-                seen(b, "gone")
+            if exc.refusal == "gone":
+                gone(b)
                 continue
             print("fleet act ask: Maestro item %s of tick %s: %s" % (b["item"], b["tick"], exc), file=sys.stderr)
             failed += 1
@@ -247,9 +256,12 @@ def _ask_sync(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
             try:
                 state = paseo_ask.start(sec, {"id": b["item"], "state": state}).get("state") or state
                 if ledger.maestro_phase(state) == "queued":
-                    print("fleet act ask: Maestro item %s of tick %s is queued at its run cap"
-                          % (b["item"], b["tick"]), file=sys.stderr)
+                    print("fleet act ask: Maestro item %s of tick %s is still queued (its run cap, or its loop is "
+                          "starting it)" % (b["item"], b["tick"]), file=sys.stderr)
             except paseo_ask.MaestroError as exc:
+                if exc.refusal == "gone":
+                    gone(b)
+                    continue
                 print("fleet act ask: Maestro item %s of tick %s not dispatched: %s" % (b["item"], b["tick"], exc),
                       file=sys.stderr)
                 failed += 1
@@ -273,8 +285,10 @@ def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
     """Raise each batch with no item (never raised, or its item gone) once an
     ask in it has been open for ask_raise_after_min (by default past the next
     hourly tick, so an ask a later tick found no longer true isn't raised):
-    (raised, failed, waiting). An open item Maestro made for the batch before
-    failing is found by its title's marker and adopted."""
+    (raised, failed, waiting). An open item Maestro made for the batch (a
+    `new` with no clear answer) is found by its title's marker and adopted. An
+    item made but not started is recorded all the same, queued, and a later
+    tick dispatches it; the failed start fails this step."""
     from fleetlib import paseo_ask
 
     raised = failed = waiting = 0
@@ -298,16 +312,21 @@ def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
             "%s are in this item's brief: approve to acknowledge them, send back a note to answer, cancel to "
             "dismiss" % what)
         try:
-            found = paseo_ask.find(sec, tag, since=asked)
-            item = paseo_ask.start(sec, found or paseo_ask.raise_item(sec, title, text))
-            if ledger.maestro_phase(item.get("state")) == "queued":
-                print("fleet act ask: batch of tick %s is queued at Maestro's run cap; a later tick dispatches it"
-                      % b["tick"], file=sys.stderr)
+            item = paseo_ask.find(sec, tag, since=asked) or paseo_ask.raise_item(sec, title, text)
         except (paseo_ask.MaestroError, OSError, subprocess.SubprocessError) as exc:
             print("fleet act ask: batch of tick %s not raised: %s" % (b["tick"], common.safe_text(str(exc), 200)),
                   file=sys.stderr)
             failed += 1
             continue
+        try:
+            item = paseo_ask.start(sec, item)
+            if ledger.maestro_phase(item.get("state")) == "queued":
+                print("fleet act ask: batch of tick %s is queued in Maestro (its run cap, or its loop is starting "
+                      "it); a later tick dispatches it" % b["tick"], file=sys.stderr)
+        except paseo_ask.MaestroError as exc:
+            print("fleet act ask: batch of tick %s raised as item %s but not started: %s; a later tick dispatches it"
+                  % (b["tick"], item["id"], common.safe_text(str(exc), 200)), file=sys.stderr)
+            failed += 1
         ledger.append(sd, {"kind": "seen", "of": b["id"], "scope": sec["scope"], "tick": tick,
                            "dry_run": _dry(args, sec), "by": "tick",
                            "result": {"channel": "maestro", "item": item["id"], "state": item.get("state")}})
@@ -318,20 +337,21 @@ def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
 def cmd_alert(args: argparse.Namespace) -> int:
     """tick.sh's alert, through Python so an open item of its kind is adopted
     rather than a second raised. Exit 0: the item reached the owner (phase
-    owner); 4: queued at Maestro's run cap (not delivered); 5: Maestro failed
-    (not delivered). Any other exit (a config Python can't read) sends tick.sh
-    to its bash fallback."""
+    owner); 4: still queued (Maestro's run cap, or its loop is starting it;
+    not delivered); 5: Maestro failed (not delivered; an item made but not
+    started is adopted by the next alert of its kind). Any other exit (a
+    config Python can't read) sends tick.sh to its bash fallback."""
     from fleetlib import paseo_ask
 
     sec = _sec(args)
     try:
         item = paseo_ask.start(sec, paseo_ask.alert(sec, args.kind, args.message))
     except (paseo_ask.MaestroError, OSError, subprocess.SubprocessError) as exc:
-        print("fleet alert: not raised: %s" % common.safe_text(str(exc), 200), file=sys.stderr)
+        print("fleet alert: not delivered: %s" % common.safe_text(str(exc), 200), file=sys.stderr)
         return 5
     print(json.dumps({"item": item.get("id"), "state": item.get("state"), "adopted": bool(item.get("adopted"))}))
     if ledger.maestro_phase(item.get("state")) == "queued":
-        print("fleet alert: queued at Maestro's run cap", file=sys.stderr)
+        print("fleet alert: still queued in Maestro (its run cap, or its loop is starting it)", file=sys.stderr)
         return 4
     return 0
 
@@ -529,24 +549,16 @@ def cmd_coordinator(args: argparse.Namespace) -> int:
 
 
 def cmd_driver_profile(args: argparse.Namespace) -> int:
-    """Render a driver's profile. Printed with the token withheld; --write
-    writes the real one 0600 (the token from gh_token_file, never printed)."""
+    """Render a driver's profile; --write writes it 0600. It holds no token:
+    a driver uses the owner's gh login (owner decision 2026-10-01)."""
     from fleetlib import profile
 
     sec = _sec(args)
     sd = config.state_dir(sec)
-    token = profile.read_token(sec)
-    gh_cfg = profile.gh_config_dir(sd, args.key) if args.write else str(sd / "ghcfg" / args.key)
-    prof = profile.driver_profile(sec, args.key, token or "", gh_cfg)
+    prof = profile.driver_profile(sec, args.key)
     if args.write:
-        if not token:
-            print("fleet driver-profile: no usable token file (%s): not written" % sec.get("gh_token_file"),
-                  file=sys.stderr)
-            return 1
         print(str(profile.write(profile.path_for(sd, args.key), prof)))
-    shown = json.loads(json.dumps(prof))
-    shown["env"]["GH_TOKEN"] = "[withheld: %s]" % ("from the token file" if token else "no token file")
-    print(json.dumps(shown, indent=1, sort_keys=True))
+    print(json.dumps(prof, indent=1, sort_keys=True))
     return 0
 
 
@@ -566,6 +578,8 @@ def cmd_janitor_run(args: argparse.Namespace) -> int:
     res = janitor.run(sec, Sources(), args.path, args.owner, args.remove,
                       lambda m: print("fleet janitor: %s" % m, file=sys.stderr))
     print(json.dumps(res, indent=1, default=str))
+    if res.get("left"):  # removed, but its profile or gh dir is still there
+        return 1
     return 0 if res.get("removed") or (not args.remove and not res.get("aborted")) else 1
 
 
@@ -694,7 +708,7 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_coordinator)
     p = scoped(sub.add_parser("driver-profile"))
     p.add_argument("--key", required=True)
-    p.add_argument("--write", action="store_true", help="write the 0600 file with the token")
+    p.add_argument("--write", action="store_true", help="write the 0600 file")
     p.set_defaults(func=cmd_driver_profile)
     p = scoped(sub.add_parser("janitor-check"))
     p.add_argument("path")

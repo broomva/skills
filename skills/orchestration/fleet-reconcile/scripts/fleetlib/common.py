@@ -89,6 +89,19 @@ def safe_text(value: Any, cap: int = 80) -> str:
     return flat if len(flat) <= cap else flat[: cap - 1] + "…"
 
 
+#: A branch name a driver's brief may carry, in prose and in a command it runs.
+#: Deliberately conservative: git allows `$`, `;`, `|`, backticks and spaces in
+#: ref names, and also `+`, `@` and non-ASCII, which this refuses too (such a
+#: PR gets no driver).
+REF_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._/-]{0,199}")
+
+
+def plain_ref(name: Any) -> bool:
+    """A plain ref name that the text guard renders unchanged, so what is
+    checked is what a brief shows."""
+    return isinstance(name, str) and REF_RE.fullmatch(name) is not None and safe_text(name, 200) == name
+
+
 def safe_path(value: Any) -> Optional[str]:
     """A path, or None when it is a crm/ path or credential-shaped."""
     if not isinstance(value, str) or not value:

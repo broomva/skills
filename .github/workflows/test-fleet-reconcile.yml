@@ -6,7 +6,7 @@ name: test-fleet-reconcile
 # check proves the suite goes red when a class rule is deleted, when two rules
 # that can both match are swapped, and when a protection is removed (the
 # listing cap, a failed slug reading as zero, the bearer never parsed, the kill
-# switch, dry-falls-toward-dry, the token's export).
+# switch, dry-falls-toward-dry, an inherited token dropped).
 
 on:
   pull_request:

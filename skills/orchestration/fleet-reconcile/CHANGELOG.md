@@ -1,5 +1,89 @@
 # Changelog: fleet-reconcile
 
+## [0.4.0] - 2026-10-01
+
+The fleet uses the owner's gh login. Owner decision, 2026-10-01: no fleet
+token or GitHub App ("it's fine that it goes as me"), and spec §5.2's
+non-admin credential precondition is waived. The accepted residual is that
+the fleet acts with the owner's admin rights: a ruleset binds that login only
+as far as it lets an admin through, so the driver brief (never touch rulesets
+or workflows) and phase 3's checks are what hold a driver to the rules. The
+token used to keep live mode closed; now `config-check` refuses `dry_run: 0`
+unless a new key, `live_accepted`, holds the owner's note that SKILL.md's
+Phase 3 list (BRO-2755 included) is done, and every verb stays dry without
+it. Ticket BRO-2674.
+
+- **No token anywhere.** tick.sh no longer reads `gh_token_file` (accepted,
+  not read) and drops a `GH_TOKEN` or `GITHUB_TOKEN` it inherits before it
+  runs anything (the config reads and the alert fallback included), and
+  `Sources` drops both too, so a `fleet` command run from a shell that has
+  one still reads GitHub as the owner's login; the coordinator gets none; a
+  live spawn and a live label no longer need one; a live tick runs its
+  coordinator without one.
+- **The driver profile carries no token** and no longer denies reading gh's
+  config or the login keychain; the ~/.paseo, ~/.claude and settings-file
+  denies stay. Measured in a credential drill on a private scratch repo
+  (`~/.config/broomva/fleet/credential-drill-20261001/`): inside the sandbox
+  `gh auth token` reads the owner's login without the network, git pushes
+  through gh's credential helper, and curl opens a PR, updates a branch and
+  squash-merges through REST. gh's own network calls fail TLS there (OSStatus
+  -26276; a CA file doesn't help), and `sandbox.excludedCommands` didn't take
+  gh out of the sandbox while `allowUnsandboxedCommands` is false. The global
+  pre-push hook's git-lfs fails the same way, so the driver brief says to push
+  with hooks bypassed and to stop on a change that adds LFS objects, and to
+  pass the token to curl on stdin, never in argv.
+- **Open residual (BRO-2755):** with the keychain's deny gone a driver can
+  likely read any login-keychain item that trusts `/usr/bin/security`, not
+  just gh's; the drill probed only gh's. It is measured before any live
+  driver; spawns stay dry until then.
+- The phase-2 drills left blocked on the token (the driver credential half,
+  update-branch) passed in that drill.
+- #261's deferred review findings (BRO-2714):
+  - the read-back window's 14 days run from a batch's latest raise, not from
+    the batch;
+  - the bash alert fallback counts any answer from Maestro (made, refused, no
+    clear answer) as raised, so a run that couldn't start ("Could not start
+    the run") no longer raises one alert per hour. It runs in its own
+    process group under a TERM-then-KILL watchdog (120 s, then 30 s), its
+    output to a temp file of its own rather than a pipe a child could hold
+    (so a broken state dir doesn't silence it). Anything that never reached
+    Maestro (not listening, a CLI that didn't run, the watchdog) is tried
+    again at the next tick;
+  - `seen` is cleared when an item goes gone;
+  - Maestro's refusals are told apart by the words their message starts with,
+    on exit 1 only, not by a match anywhere in it (a failed start that quotes
+    "No work item" is not gone); Maestro has no refusal code yet: BRO-2753;
+  - a race with Maestro's loop no longer fails the tick: "already being
+    dispatched" is a wait, and any other refused dispatch is checked against
+    the item, which is recorded where it went when it left the queue;
+  - raising is `new`, then `start()`'s dispatch, so an item whose run couldn't
+    start is recorded queued and dispatched at a later tick, never raised
+    twice;
+  - recover counts a queue-operation only when it is an `enqueue`, and a
+    malformed transcript entry as nothing rather than stopping recovery;
+  - a duplicate fleet name's ask resolves only from a listing that was read;
+  - a PR file list shorter than its `changed_files` (GitHub's 3000-file cap)
+    refuses the spawn;
+  - a coordinator whose stream ends before its init event fails its posture,
+    with its own exit code beside it, and is stopped if it still runs;
+  - an item is read past its 14-day window for as long as an ask in its
+    batch is open, so an answer given late still lands;
+  - the janitor: an ignored directory it can't walk makes the backup check
+    `not run`, a profile or gh dir it can't delete fails the run, and the
+    owner-mismatch message is set only on a mismatch;
+  - binding an adopted item to more than its title marker is BRO-2754.
+- From #263's review:
+  - the driver brief carried a blank PR number ("repo#",
+    `/pulls//update-branch`) since 0.2.0: the text guard blanked the integer;
+    it is now passed as text, and a test reads the rendered brief;
+  - spawn refuses a PR whose head or base branch isn't a plain ref name that
+    the text guard renders unchanged (the head judged on its raw name), since
+    the brief carries the base into a command; the allowlist is deliberately
+    conservative, so a branch with `+`, `@` or non-ASCII gets no driver;
+  - the brief treats branch names as data, and stops BLOCKED when its LFS
+    check fails;
+  - the remaining delta-review findings are BRO-2756.
+
 ## [0.3.0] - 2026-10-01
 
 The owner channel moves to Paseo (owner decision, 2026-10-01: "If it goes to

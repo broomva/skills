@@ -121,7 +121,7 @@ def test_run_passes_a_clean_coordinator_its_tick_and_no_session_variables(world,
     env = dict(ln.split("=", 1) for ln in (tmp_path / "env").read_text().splitlines() if "=" in ln)
     assert env["FLEET_TICK"] == "3" and env["FLEET_CHILD"] == "1" and env["DRY_RUN"] == "1"
     assert "CLAUDE_CODE_CHILD_SESSION" not in env and "PASEO_AGENT_ID" not in env
-    assert env["GH_TOKEN"].startswith("github_pat_")  # §5.2: the coordinator gets the fleet token
+    assert "GH_TOKEN" not in env  # the owner's gh login: no token reaches the coordinator (0.4.0)
     argv = (tmp_path / "argv").read_text()  # one argument per line; the prompt spans several
     assert argv.index("\n--\n") < argv.index("the fleet coordinator for scope broomva, tick 3")
     st = os.stat(str(world.state["broomva"] / "coordinator-settings.json"))
@@ -133,54 +133,38 @@ def test_run_passes_a_clean_coordinator_its_tick_and_no_session_variables(world,
 
 def test_the_driver_profile_is_probe_6s_shape_with_the_scopes_allowlist(world):
     world.write_config(driver={"allowed_domains": ["api.github.com", "registry.npmjs.org"], "allow_write": ["~/.bun"]})
-    p = profile.driver_profile(config.scope("broomva"), "broomva-x-pr1", "TOKEN", "/g")
+    p = profile.driver_profile(config.scope("broomva"), "broomva-x-pr1")
     assert p["crossSessionInbound"] == "accept"
     sb = p["sandbox"]
     assert sb["enabled"] is True and sb["allowUnsandboxedCommands"] is False
     assert sb["network"] == {"strictAllowlist": True, "allowedDomains": ["api.github.com", "registry.npmjs.org"]}
-    assert sb["filesystem"]["denyRead"] == ["~/.config/gh", "~/.paseo", "~/Library/Keychains/login.keychain-db"]
+    # gh's config and the keychain are readable: a driver uses the owner's login (owner decision 2026-10-01).
+    assert sb["filesystem"]["denyRead"] == ["~/.paseo"]
     assert sb["filesystem"]["allowWrite"] == ["~/.bun"]
-    assert p["permissions"]["deny"] == ["Read(~/.paseo/**)", "Read(~/.config/gh/**)", "Edit(~/.claude/**)",
-                                        "Edit(**/.claude/settings*.json)"]
+    assert p["permissions"]["deny"] == ["Read(~/.paseo/**)", "Edit(~/.claude/**)", "Edit(**/.claude/settings*.json)"]
     assert not any(".claude/**" == d.split("(")[1].rstrip(")") for d in p["permissions"]["deny"])  # own worktree
-    assert p["env"] == {"GH_TOKEN": "TOKEN", "GH_CONFIG_DIR": "/g"}
+    assert "env" not in p  # no token, no GH_CONFIG_DIR
 
 
-def test_the_profile_file_is_0600_and_the_token_file_must_be_too(world, tmp_path):
-    tok = tmp_path / "gh-token"
-    tok.write_text("github_pat_" + "Z" * 40 + "\n")
-    tok.chmod(0o600)
-    world.write_config(gh_token_file=str(tok))
+def test_the_profile_file_is_0600(world):
     sec = config.scope("broomva")
-    assert profile.read_token(sec) == "github_pat_" + "Z" * 40
-    f = profile.write(world.state["broomva"] / "profiles" / "k.json", profile.driver_profile(sec, "k", "T", "/g"))
+    f = profile.write(world.state["broomva"] / "profiles" / "k.json", profile.driver_profile(sec, "k"))
     assert stat.S_IMODE(os.stat(str(f)).st_mode) == 0o600
-    tok.chmod(0o644)
-    assert profile.read_token(sec) is None
-    tok.chmod(0o600)
-    tok.write_text("\n")
-    assert profile.read_token(sec) is None
 
 
-def test_the_cli_never_prints_the_token(world, tmp_path):
+def test_the_cli_writes_a_profile_with_no_token_even_with_a_token_file_configured(world, tmp_path):
     secret = "github_pat_" + "S" * 40
     tok = tmp_path / "gh-token"
     tok.write_text(secret)
     tok.chmod(0o600)
-    world.write_config(gh_token_file=str(tok))
-    env = dict(os.environ, FLEET_SCOPE="broomva")
-    for extra in ([], ["--write"]):
-        out = subprocess.run(["/bin/sh", str(FLEET), "driver-profile", "--key", "broomva-x-pr1"] + extra,
-                             capture_output=True, text=True, env=env, timeout=60)
-        assert out.returncode == 0, out.stderr
-        assert secret not in out.stdout + out.stderr and "[withheld" in out.stdout
+    world.write_config(gh_token_file=str(tok))  # accepted since 0.4.0, not read
+    env = dict(os.environ, FLEET_SCOPE="broomva", GH_TOKEN=secret)
+    out = subprocess.run(["/bin/sh", str(FLEET), "driver-profile", "--key", "broomva-x-pr1", "--write"],
+                         capture_output=True, text=True, env=env, timeout=60)
+    assert out.returncode == 0, out.stderr
     written = world.state["broomva"] / "profiles" / "broomva-x-pr1.json"
-    assert json.loads(written.read_text())["env"]["GH_TOKEN"] == secret
-    assert stat.S_IMODE(os.stat(str(written)).st_mode) == 0o600
-    tok.unlink()
-    out = subprocess.run(["/bin/sh", str(FLEET), "driver-profile", "--key", "k", "--write"], capture_output=True,
-                         text=True, env=env, timeout=60)
-    assert out.returncode == 1 and "not written" in out.stderr
+    assert secret not in out.stdout + out.stderr + written.read_text()
+    assert "env" not in json.loads(written.read_text()) and stat.S_IMODE(os.stat(str(written)).st_mode) == 0o600
 
 
 def test_a_bad_driver_section_fails_config_check(world):
@@ -205,7 +189,7 @@ def test_a_coordinator_that_acts_before_its_init_event_is_stopped(world, tmp_pat
     out = tmp_path / "c.jsonl"
     res = coordinator.run(config.scope("broomva"), 3, "/x/fleet", out, True, claude=_stub(
         tmp_path, "echo '{\"type\": \"assistant\", \"message\": {}}'\nexec sleep 20\n"))
-    assert res["exit"] == coordinator.EXIT_POSTURE and "before its init event" in res["posture"][0]
+    assert res["exit"] == coordinator.EXIT_POSTURE and "acted before its init event" in res["posture"][0]
 
 
 def test_a_coordinator_with_no_init_event_is_stopped_at_the_deadline(world, tmp_path, monkeypatch):
@@ -217,6 +201,21 @@ def test_a_coordinator_with_no_init_event_is_stopped_at_the_deadline(world, tmp_
                           claude=_stub(tmp_path, "exec sleep 20\n"))
     assert res["exit"] == coordinator.EXIT_POSTURE and "no init event" in res["posture"][0]
     assert time.monotonic() - t0 < 15
+
+
+@pytest.mark.parametrize("body, said", [
+    ("exit 0\n", "(it exited 0)"),                       # a clean exit, its tool list never checked
+    ("exit 3\n", "(it exited 3)"),                       # a crash keeps its own code beside it
+    ("exec 1>&-\nexec sleep 30\n", "(it exited -15)"),  # its stream closed while it still runs: stopped
+])
+def test_a_coordinator_whose_stream_ends_before_its_init_event_fails_its_posture(world, tmp_path, body, said):
+    import time
+    world.write_config(mode="act")
+    t0 = time.monotonic()
+    res = coordinator.run(config.scope("broomva"), 3, "/x/fleet", tmp_path / "c.jsonl", True,
+                          claude=_stub(tmp_path, body))
+    assert res["exit"] == coordinator.EXIT_POSTURE and "ended before its init event" in res["posture"][0]
+    assert said in res["posture"][0] and time.monotonic() - t0 < 20  # stopped, not waited out
 
 
 def test_the_tick_watchdogs_term_to_the_step_group_reaches_the_coordinators_claude(world, tmp_path):

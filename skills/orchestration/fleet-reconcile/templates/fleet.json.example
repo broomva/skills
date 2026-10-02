@@ -13,13 +13,11 @@
       "adopted": [],
       "listing_cap": 200,
       "pr_list_cap": 200,
-      "gh_token_file": "~/.config/broomva/fleet/gh-token",
       "actions_app_id": 15368,
       "launchd_prefix": "com.broomva.",
       "launchd_logs": {"com.broomva.moltbook-loop": "~/.config/moltbook/loop-runner.log"},
       "bookkeeping_run_log": "~/.config/bookkeeping/run-log.jsonl",
       "dream_run_log": null,
-      "ask_renotify_h": 6,
       "tick_timeout_min": 15
     },
     "sri": {
@@ -27,8 +25,7 @@
       "dry_run": 1,
       "mode": "report",
       "tracker": {"kind": "linear", "team": "STI"},
-      "state_dir": "~/.local/state/fleet-reconcile/sri",
-      "gh_token_file": null
+      "state_dir": "~/.local/state/fleet-reconcile/sri"
     }
   }
 }

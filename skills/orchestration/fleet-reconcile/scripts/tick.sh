@@ -14,7 +14,7 @@
 #
 # PHASE 1 runs deterministic code only and acts on no session; the owner
 # channel's Maestro items each run one model turn. Per tick: kill switch,
-# config-check, lock, the tick number, the fleet token, observe, report
+# config-check, lock, the tick number, observe, report
 # (classes, count check, asks), the core comparison once a day, the owner's
 # asks (fleet act ask --show, Maestro work in the Paseo app), and the ledger's
 # tick_fire and runner_exit.
@@ -26,7 +26,8 @@
 #
 # Env: FLEET_SCOPE (required); FLEET_CONFIG (default ~/.config/ctx/fleet.json);
 # DRY_RUN (any value but 0 forces dry; no value makes a tick live, only the
-# config's dry_run 0 does); FLEET_PYTHON. Test seams: FLEET_TICK_TIMEOUT_S,
+# config's dry_run 0 with live_accepted does); FLEET_PYTHON. Test seams: FLEET_TICK_TIMEOUT_S,
+# FLEET_ALERT_TIMEOUT_S and FLEET_KILL_GRACE_S (the bash fallback's watchdog),
 # FLEET_NOTIFY=0, FLEET_MAESTRO_BIN (or FLEET_MAESTRO_BUN and FLEET_MAESTRO_CLI), FLEET_ASK_REPO.
 set -uo pipefail
 
@@ -35,6 +36,10 @@ if [ -n "${FLEET_CHILD:-}" ]; then
   exit 0
 fi
 export FLEET_CHILD=1
+# GitHub is the owner's gh login (owner decision 2026-10-01): a token inherited
+# from a shell is dropped before anything runs, the config reads and the alert
+# fallback included, so every process this tick starts reads GitHub as it.
+unset GH_TOKEN GITHUB_TOKEN
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FLEET="$SCRIPT_DIR/fleet"
@@ -52,10 +57,8 @@ cfg() { "$FLEET" config-get "$SCOPE" "$1" 2>/dev/null; }
 # BSD (macOS) or GNU stat, detected once by behaviour, as governed-autonomy-loop does.
 if stat -c %Y / >/dev/null 2>&1; then
   file_mtime() { stat -c %Y "$1" 2>/dev/null; }
-  file_mode() { stat -c %a "$1" 2>/dev/null; }
 else
   file_mtime() { stat -f %m "$1" 2>/dev/null; }
-  file_mode() { stat -f %Lp "$1" 2>/dev/null; }
 fi
 
 STATE_DIR=$(cfg state_dir)
@@ -78,10 +81,12 @@ done
 # alert KIND MESSAGE: tell the owner in the Paseo app. At most once per 6 h
 # per kind. `fleet alert` adopts an open item of the same kind rather than
 # raising a second, and the stamp is touched once the item reached the owner
-# (ledger.maestro_phase: one queued at the run cap is dispatched by the next
-# alert of its kind). When it can't run at all (the config or Python is what
-# broke), the bash fallback raises one; it can't adopt or classify, so an item
-# it raised is stamped, queued or not, which keeps it to one per 6 h. The message is this script's own text, never
+# (ledger.maestro_phase: one still queued is dispatched by the next alert of
+# its kind); its own maestro calls are bounded (90 s each, at most four). When
+# it can't run at all (the config or Python is what broke), the bash fallback
+# raises one; it can't adopt or classify, so any answer from Maestro (made,
+# refused, or no clear answer) is stamped, which keeps it to one per 6 h
+# whatever Maestro's words. The message is this script's own text, never
 # another session's words. When Maestro itself is down, the alert reaches no
 # one but this log: that is the channel's one blind spot.
 alert() {
@@ -95,28 +100,68 @@ alert() {
   rc=$?
   case "$rc" in
     (0) touch "$stamp" ;;
-    (4) log "ALERT $kind NOT delivered: queued at Maestro's concurrency cap; the next alert of its kind dispatches it" ;;
-    (5) log "ALERT $kind NOT delivered: Maestro didn't take it; it's in this log only" ;;
+    (4) log "ALERT $kind NOT delivered: still queued in Maestro (its run cap, or its loop is starting it); the next alert of its kind dispatches it" ;;
+    (5) log "ALERT $kind NOT delivered: Maestro failed (above); an item it made is adopted by the next alert of its kind" ;;
     (*)
-      if maestro_alert "fleet $SCOPE: $kind [fleet-reconcile $SCOPE alert $kind]" "$msg (tick.log: $LOG)"; then
-        touch "$stamp"
-      else
-        log "ALERT $kind NOT delivered: Maestro didn't take it; it's in this log only"
-      fi ;;
+      maestro_alert "fleet $SCOPE: $kind [fleet-reconcile $SCOPE alert $kind]" "$msg (tick.log: $LOG)"
+      rc=$?
+      case "$rc" in
+        (0) touch "$stamp" ;;
+        (1)
+          touch "$stamp"
+          log "ALERT $kind: the bash fallback's item may or may not exist (Maestro refused or gave no clear answer; above), and it can't look, so the next attempt is in 6 h" ;;
+        (*) log "ALERT $kind NOT delivered: nothing reached Maestro; it's in this log only" ;;
+      esac ;;
   esac
   return 0
 }
 
+# bounded CMD...: run CMD in its own process group under a TERM-then-KILL
+# watchdog, as step does: TERM to the group after FLEET_ALERT_TIMEOUT_S (120 s,
+# past maestro's own 90 s answer wait), KILL 30 s later, then KILL again for
+# children that outlived it, so an alert whose Maestro (or a child of it)
+# ignores TERM can't hold the tick. Returns CMD's status (143 or 137 when the
+# watchdog ended it).
+bounded() {
+  local secs=${FLEET_ALERT_TIMEOUT_S:-120} grace=${FLEET_KILL_GRACE_S:-30} pid wd rc
+  case "$secs" in (""|*[!0-9]*) secs=120 ;; esac
+  case "$grace" in (""|*[!0-9]*) grace=30 ;; esac
+  set -m
+  "$@" &
+  pid=$!
+  set +m
+  (
+    trap 'kill $(jobs -p) 2>/dev/null; exit 0' TERM
+    sleep "$secs" &
+    wait
+    kill -TERM -- "-$pid" 2>/dev/null || exit 0
+    sleep "$grace" &
+    wait
+    kill -KILL -- "-$pid" 2>/dev/null
+  ) >/dev/null 2>&1 &
+  wd=$!
+  wait "$pid"
+  rc=$?
+  kill -KILL -- "-$pid" 2>/dev/null
+  kill "$wd" 2>/dev/null
+  wait "$wd" 2>/dev/null
+  return "$rc"
+}
+
 # maestro_alert TITLE TEXT: the bash fallback, a Maestro work item at Needs you
 # in the Paseo app (owner decision 2026-10-01: never a desktop dialog), run in
-# the fleet's own scratch repo. Fails when Maestro doesn't take it (an item it
-# queued at its run cap counts as raised: Maestro's loop starts it later).
+# the fleet's own scratch repo, bounded. Returns 0 when Maestro made it; 1 when
+# Maestro answered otherwise: it refused (exit 1 with the CLI's "maestro: "
+# line; a run that couldn't start after it made the item included) or gave no
+# clear answer (exit 3; it may have made it); 2 when nothing reached Maestro:
+# not listening (exit 2), a CLI that didn't run (bun's own exit 1 has no
+# "maestro: " line), no scratch repo, or the watchdog stopped it.
 maestro_alert() {
   local title=$1 text=$2 repo="${FLEET_ASK_REPO:-$HOME/.local/state/fleet-reconcile/maestro-asks}"
   if [ ! -d "$repo/.git" ]; then
     mkdir -p "$repo" && git -C "$repo" init -q -b main &&
       git -C "$repo" -c user.name=fleet -c user.email=fleet@localhost commit -q --allow-empty -m "fleet-reconcile ask runs" ||
-      return 1
+      return 2
   fi
   local brief="fleet-reconcile alert for scope $SCOPE: $text
 
@@ -126,13 +171,28 @@ Change nothing and run no tools. End your turn at once with exactly two sections
   else
     set -- "${FLEET_MAESTRO_BUN:-$HOME/.bun/bin/bun}" "${FLEET_MAESTRO_CLI:-$HOME/broomva/apps/maestro-paseo/bin/maestro.ts}"
   fi
+  # To a file, not a command substitution: a child left holding a pipe would hold the tick. A file of its
+  # own (not one in STATE_DIR: the fallback runs when things are broken, and two ticks before the lock can
+  # both run it). With no file at all the call still goes out, but an exit 1 can't be read as Maestro's and
+  # is retried at the next tick.
   local out rc
-  out=$("$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json </dev/null 2>&1)
+  out=$(mktemp "${TMPDIR:-/tmp}/fleet-alert.XXXXXX" 2>/dev/null) || out=/dev/null
+  bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json \
+    </dev/null >"$out" 2>&1
   rc=$?
-  printf '%s\n' "$out" >> "$LOG"
-  # Raised also when Maestro may have made it (exit 3) or made it and couldn't
-  # start it ("Created <id>, but it cannot be dispatched yet"): the item exists.
-  [ "$rc" = "0" ] || [ "$rc" = "3" ] || case "$out" in (*"Created "*", but it cannot be dispatched"*) true ;; (*) false ;; esac
+  cat "$out" >> "$LOG" 2>/dev/null
+  local answered=no
+  case "$rc" in
+    (0|3) answered=yes ;;
+    (1) grep -q '^maestro: ' "$out" 2>/dev/null && answered=yes ;;
+  esac
+  [ "$out" = /dev/null ] || rm -f "$out"
+  case "$rc:$answered" in
+    (0:yes) return 0 ;;
+    (*:yes) return 1 ;;
+  esac
+  log "ALERT fallback: no answer from Maestro (exit $rc)"
+  return 2
 }
 
 # ── kill switch: read before anything fires; an unreadable value is off ──────
@@ -219,25 +279,10 @@ esac
 RELEASE=$(head -1 "$SCRIPT_DIR/../../../RELEASE" 2>/dev/null | sed 's/^release //')
 [ -n "$RELEASE" ] || RELEASE="checkout"
 
-# ── the fleet token: read from its 0600 file, never argv, never printed ───────
-# Exported for the observe step and the coordinator only; observe passes it
-# to gh and to nothing else.
-GH_AUTH="keyring"
-TOKEN=""
-TOKFILE=$(cfg gh_token_file)
-if [ -n "$TOKFILE" ]; then
-  if [ -r "$TOKFILE" ]; then
-    MODE=$(file_mode "$TOKFILE")
-    if [ "$MODE" != "600" ] && [ "$MODE" != "400" ]; then
-      GH_AUTH="keyring (the token file has mode $MODE, not 600: not used)"
-    else
-      TOKEN=$(head -c 512 "$TOKFILE" | tr -d '[:space:]')
-      if [ -n "$TOKEN" ]; then GH_AUTH="fleet token file"; else GH_AUTH="keyring (the token file is empty)"; fi
-    fi
-  else
-    GH_AUTH="keyring (the token file is unreadable)"
-  fi
-fi
+# ── GitHub: the owner's gh login (owner decision 2026-10-01) ──────────────────
+# No fleet token: spec §5.2's non-admin credential is waived, and gh uses the
+# owner's keyring login (an inherited token was dropped at the top).
+GH_AUTH="keyring (the owner's gh login)"
 
 "$FLEET" ledger-append fire --scope "$SCOPE" --tick "$N" --dry-run "$DRY" --detail "release: $RELEASE; gh: $GH_AUTH" \
   >> "$LOG" 2>&1
@@ -288,8 +333,6 @@ step() {
 
 RCS=""
 FAILED=""
-# §5.7's order: the fleet token, then recover (its label check reads GitHub).
-if [ -n "$TOKEN" ]; then export GH_TOKEN="$TOKEN"; fi
 export FLEET_GH_AUTH="$GH_AUTH" FLEET_RELEASE="$RELEASE"
 # Intents a dead tick left open are closed first, from what happened (§5.7).
 step recover "$FLEET" recover --scope "$SCOPE" --tick "$N"; RCS="recover=$RC"
@@ -301,19 +344,13 @@ if [ "$RC" = "0" ]; then
   [ "$RC" = "0" ] || FAILED="${FAILED:-report}"
 fi
 # The coordinator, in act mode only, after a clean recover, observe and report;
-# it gets the fleet token too (§5.2) and acts only through fleet act. A tool
-# list that fails the posture check ends it with exit 4.
+# it acts only through fleet act. A tool list that fails the posture check
+# ends it with exit 4.
 MODE=$(cfg mode)
-# Live acts on the fleet token only (§5.2); without it, no live coordinator.
-if [ "$MODE" = "act" ] && [ "$DRY" = "0" ] && [ -z "$TOKEN" ]; then
-  log "no coordinator: live mode (dry_run 0) needs the fleet token file, and gh is on the $GH_AUTH"
-  RCS="$RCS coordinator=skipped"
-  FAILED="${FAILED:-token}"
-elif [ "$MODE" = "act" ] && [ -z "$FAILED" ]; then
+if [ "$MODE" = "act" ] && [ -z "$FAILED" ]; then
   step coordinator "$FLEET" coordinator --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS coordinator=$RC"
   [ "$RC" = "0" ] || FAILED="coordinator"
 fi
-unset GH_TOKEN TOKEN
 # The core's comparison: a read-only step the kill switch stops with the tick,
 # which dry_run and mode don't govern (core §9). Its verdict isn't the tick's.
 step compare "$FLEET" core-compare --scope "$SCOPE"; RCS="$RCS compare=$RC"

@@ -277,7 +277,7 @@ def observed(key: str, rep: Dict[str, Any]) -> bool:
         return ok("jobs")
     if kind == "records-without-process":
         return ok("listing", "paseo_records")
-    if kind == "fleet-shaped-unledgered":
+    if kind in ("fleet-shaped-unledgered", "spawn-duplicate"):
         return ok("listing")
     if kind == "rules":
         slug = rest.split(":", 1)[0]
@@ -328,9 +328,6 @@ def render_md(rep: Dict[str, Any]) -> str:
                  % (n_open, len(rep["asks"]), first))
     else:
         L.append("Open asks: 0.")
-    if rep.get("surfaces", {}).get("gh_auth", {}).get("mode", "").startswith("keyring"):
-        L.append("")
-        L.append("GitHub was read with the keyring token (%s), not the fleet token." % rep["surfaces"]["gh_auth"]["mode"])
     L.append("")
     L.append("## Observation")
     L.append("")

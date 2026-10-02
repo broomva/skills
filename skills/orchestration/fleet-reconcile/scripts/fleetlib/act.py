@@ -317,12 +317,21 @@ class Act:
             if owner:
                 raise Refused("ineligible", "%s#%d touches %s: an owner-merge PR gets no driver (§5.2)" % (
                     slug, number, owner[0] if owner else "an unreadable file list"))
+            # The brief carries both branches, the base into a command the driver runs: each must be a plain
+            # ref (common.plain_ref), the head judged on its raw name at observe.
+            base = pr.get("base") or repo.get("default_branch") or "main"
+            odd = [w for w, ok in (("head", pr.get("head_plain") is True), ("base", common.plain_ref(base)))
+                   if not ok]
+            if odd:
+                raise Refused("ineligible", "%s#%d's %s branch isn't a plain ref name the brief can carry "
+                                            "(shell characters, spaces, or text the guard withholds)"
+                              % (slug, number, odd[0]))
         except Refused as exc:
             return self._refuse("spawn", key, exc)
         workdir = str(Path(repo["repo"]).parent)
         prof = profile.path_for(self.sd, key)
-        brief = render_template("driver-brief.md", {"key": key, "repo": slug, "pr": number, "branch": pr["head"],
-                                                    "base": pr.get("base") or repo.get("default_branch") or "main"})
+        brief = render_template("driver-brief.md", {"key": key, "repo": slug, "pr": str(number), "branch": pr["head"],
+                                                    "base": base})
         argv = profile.driver_argv(self.sec, key, prof, brief)
         it = self._intent("spawn", key, {"role": role, "repo": slug, "pr": number, "name": key, "profile": str(prof),
                                          "cwd": workdir, "argv_sha256": hashlib.sha256(
@@ -332,10 +341,7 @@ class Act:
                                    "cwd": workdir, "claims": "checked" if snap["claims"]["published"]
                                    else "not published yet (core phase 2)"})
         try:
-            token = profile.read_token(self.sec)
-            if not token:
-                return self._failed(it, "spawn_error", "no fleet token file: a live spawn is refused without it")
-            profile.write(prof, profile.driver_profile(self.sec, key, token, profile.gh_config_dir(self.sd, key)))
+            profile.write(prof, profile.driver_profile(self.sec, key))
             out = self.src.run_claude(argv[1:], cwd=workdir)
         except (SourceError, OSError) as exc:
             return self._failed(it, "spawn_error", common.safe_text(exc, 160))
@@ -369,8 +375,6 @@ class Act:
             if name.strip().lower() == HOLD_LABEL:
                 raise Refused("ineligible", "the %s label is the owner's: fleet act neither adds nor removes it"
                               % HOLD_LABEL)
-            if not self.dry and not profile.read_token(self.sec):
-                raise Refused("ineligible", "a live label needs the fleet token file (never the keyring)")
             repo = self._repo(slug)
             if not any(p["number"] == number for p in repo["prs"]):
                 raise Refused("ineligible", "#%d is not an open PR of %s" % (number, slug))
@@ -385,7 +389,6 @@ class Act:
             return self._done(it, {"would": True, "call": "gh api -X %s %s%s" % (
                 call[0], call[1], "".join(" -f %s=%s" % kv for kv in call[2].items()))})
         try:
-            self.src.use_token(profile.read_token(self.sec) or "")
             self.src.gh_api(call[0], call[1], call[2])
         except SourceError as exc:
             return self._failed(it, "harness_refused", common.safe_text(exc, 160))

@@ -102,13 +102,19 @@ def test_a_dry_spawn_writes_the_intent_then_closes_it_with_the_argv_it_would_run
     intent, done = _records(world)[-2:]
     assert intent["kind"] == "intent" and intent["target"]["argv_sha256"] and done["of"] == intent["id"]
     assert done["result"]["would"] is True and done["dry_run"] is True
-    assert a.src.calls == [] and not (world.state["broomva"] / "profiles").exists()  # nothing run, no token written
+    assert a.src.calls == [] and not (world.state["broomva"] / "profiles").exists()  # nothing run, nothing written
 
 
 @pytest.mark.parametrize("change, why", [
     (lambda p: p.update(labels=[{"name": "hold"}]), "held"),
     (lambda p: p.update(isDraft=True), "draft"),
     (lambda p: p.update(author={"login": "app/dependabot"}), "Dependabot"),
+    # A branch name the brief would carry into a command the driver runs, judged on its raw name.
+    (lambda p: p.update(headRefName="fix;id"), "head branch"),
+    (lambda p: p.update(headRefName="-rf"), "head branch"),
+    (lambda p: p.update(headRefName="main\u00a0"), "head branch"),  # the guard would show it as "main"
+    (lambda p: p.update(baseRefName="main$(id)"), "base branch"),
+    (lambda p: p.update(baseRefName="crm/main"), "base branch"),     # the guard would show it as [withheld]
 ])
 def test_a_spawn_is_refused_for_a_held_draft_or_dependabot_pr(world, change, why):
     prs = _prs(world)
@@ -371,22 +377,11 @@ def test_the_hold_label_is_the_owners(world, op):
     assert not res["ok"] and "owner's" in res["detail"]
 
 
-def _token(world, tmp_path):
-    tok = tmp_path / "gh-token"
-    tok.write_text("github_pat_" + "T" * 40)
-    tok.chmod(0o600)
-    return str(tok)
-
-
-def test_a_live_label_needs_the_token_file_and_runs_on_it(world, tmp_path, monkeypatch):
-    res = _act(world, dry=False, dry_run=0).label(WS, 849, "ci-heal-escalation", "add")
-    assert not res["ok"] and "token file" in res["detail"]
-    from fleetlib import sources
-    monkeypatch.setattr(sources, "_TOKEN", {})
-    a = _act(world, dry=False, dry_run=0, gh_token_file=_token(world, tmp_path))
+def test_a_live_label_runs_on_the_owners_gh_login(world):
+    # Owner decision 2026-10-01: no fleet token; gh uses the keyring login, so no token file is needed.
+    a = _act(world, dry=False, dry_run=0)
     res = a.label(WS, 849, "ci-heal-escalation", "add")
     assert res["ok"] and a.src.calls[0][:5] == ["gh", "api", "-X", "POST", "repos/broomva/workspace/issues/849/labels"]
-    assert sources._TOKEN["GH_TOKEN"] == "github_pat_" + "T" * 40
 
 
 def test_a_spawn_is_refused_while_one_for_the_key_is_unconfirmed(world):
@@ -414,12 +409,12 @@ def test_a_live_spawn_whose_listing_lags_is_done_with_its_job_id_and_still_ours(
     _files(world, 849, [])
     (world.fixture / "claude" / "run-bg.txt").write_text("backgrounded · abcd1234 · broomva-workspace-pr849\n")
     monkeypatch.setattr(act, "LIVE_POLL_S", 0.0)
-    a = _act(world, dry=False, now=LATER, dry_run=0, gh_token_file=_token(world, tmp_path))
+    a = _act(world, dry=False, now=LATER, dry_run=0)
     res = a.spawn(WS, 849)
     assert res["ok"] and res["result"] == {"job_id": "abcd1234"}, res
     assert a.src.calls[0][:2] == ["claude", "--bg"]
     prof = world.state["broomva"] / "profiles" / "broomva-workspace-pr849.json"
-    assert oct(prof.stat().st_mode & 0o777) == "0o600" and "github_pat_" in prof.read_text()
+    assert oct(prof.stat().st_mode & 0o777) == "0o600" and "env" not in json.loads(prof.read_text())
     later = _act(world, dry=False, dry_run=0)
     assert later.whose("abcd1234-0000-4000-8000-000000000000")["key"] == "broomva-workspace-pr849"
     assert ledger.spawned(_records(world)) == {"broomva-workspace-pr849": ["abcd1234"]}
@@ -461,3 +456,53 @@ def test_a_live_resume_waits_for_the_listing_to_show_its_process(world, live_ids
     a.listing = lagging
     res = a.resume(bg["sessionId"])
     assert res["ok"] and res["result"] == {"pid": 5151}
+
+
+# ── #261's deferred findings (BRO-2714) ──────────────────────────────────────
+
+def test_a_pr_file_list_github_capped_is_refused_not_read_as_complete(tmp_path, monkeypatch):
+    from fleetlib import sources
+    gh = tmp_path / "gh"
+    gh.write_text('#!/bin/sh\ncase "$*" in\n'
+                  '  *"/files"*) printf \'["a.md",null]\\n["research/entities/x.md","old.md"]\\n\' ;;\n'
+                  '  *changed_files*) echo "${STUB_TOTAL-2}" ;;\n  *) exit 1 ;;\nesac\n')
+    gh.chmod(0o755)
+    monkeypatch.setenv("FLEET_GH_BIN", str(gh))
+    src = sources.Sources()
+    assert json.loads(src.pr_files("o/r", 1)) == ["a.md", "research/entities/x.md", "old.md"]  # a rename's old path
+    for total in ("3001", ""):  # more files than GitHub lists, or no count: never read as all of them
+        monkeypatch.setenv("STUB_TOTAL", total)
+        with pytest.raises(sources.SourceError, match="listed 2 of o/r#1"):
+            src.pr_files("o/r", 1)
+
+
+def _brief(world, monkeypatch, now=LATER):
+    from fleetlib import profile
+    seen = []
+    real = profile.driver_argv
+    monkeypatch.setattr(profile, "driver_argv", lambda sec, key, prof, brief: seen.append(brief) or real(sec, key, prof,
+                                                                                                         brief))
+    res = _act(world, now=now).spawn(WS, 849)
+    return res, (seen or [""])[0]
+
+
+def test_the_driver_brief_carries_the_pr_number_and_plain_branches(world, monkeypatch):
+    prs = _prs(world)
+    next(p for p in prs if p["number"] == 849).update(headRefName="feat/x-1.2_y", baseRefName="release/2026.10")
+    _write_prs(world, prs)
+    _files(world, 849, [])
+    res, brief = _brief(world, monkeypatch)
+    assert res["ok"], res
+    assert "pull request broomva/workspace#849 (branch feat/x-1.2_y, base release/2026.10)" in brief
+    assert "/pulls/849/update-branch" in brief and "git lfs ls-files origin/release/2026.10 HEAD" in brief
+    assert brief.index("git lfs ls-files") < brief.index("core.hooksPath=/dev/null push")  # checked before any push
+
+
+def test_a_hostile_default_branch_is_refused_when_the_pr_names_no_base(world, monkeypatch):
+    prs = _prs(world)
+    next(p for p in prs if p["number"] == 849).pop("baseRefName", None)
+    _write_prs(world, prs)
+    _files(world, 849, [])
+    (world.fixture / "gh" / "broomva__workspace" / "default_branch.txt").write_text("main;id\n")
+    res, brief = _brief(world, monkeypatch)
+    assert not res["ok"] and "base branch" in res["detail"] and brief == ""

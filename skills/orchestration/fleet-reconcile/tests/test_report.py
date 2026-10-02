@@ -321,3 +321,5 @@ def test_a_duplicate_fleet_name_is_an_ask_while_it_lasts():
     assert key == "spawn-duplicate:broomva-x-pr7"
     one = report.build(_snap(two[:1]), _batch_records(rep["asks"]), True)
     assert key in one["resolved"]  # one was removed: the ask clears
+    unread = _surf(_snap([]), listing={"ok": False, "error": "timed out"})
+    assert key not in report.build(unread, _batch_records(rep["asks"]), True)["resolved"]  # no listing, no reading

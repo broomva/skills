@@ -114,8 +114,6 @@ def run(sec: Dict[str, Any], tick: int, fleet_bin: str, out_path: Path, dry: boo
     report_json = out_path.parent / "report.json"
     av = argv(sec, sp, prompt(sec, tick, report_json, dry, fleet_bin), claude)
     extra = {"FLEET_TICK": str(tick), "FLEET_SCOPE": sec["scope"], "DRY_RUN": "1" if dry else "0"}
-    if os.environ.get("GH_TOKEN"):
-        extra["GH_TOKEN"] = os.environ["GH_TOKEN"]  # tick.sh exports the fleet token for this step
     res: Dict[str, Any] = {"exit": None, "posture": [], "init": False}
     with out_path.open("w", encoding="utf-8") as out, out_path.with_suffix(".err").open("w") as err:
         proc = subprocess.Popen(av, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=err, text=True,
@@ -137,7 +135,9 @@ def _stop(proc: "subprocess.Popen[str]") -> None:
 def _pump(proc: "subprocess.Popen[str]", out: IO[str], sec: Dict[str, Any], res: Dict[str, Any],
           init_s: Optional[float] = None) -> int:
     """Copy the stream; stop the coordinator on a failed posture, on an event
-    before the init event (it acted unchecked), or when no init event came."""
+    before the init event (it acted unchecked), or when no init event came
+    (in time, or before the stream ended: a clean exit with its tool list
+    never checked is a posture failure too)."""
     assert proc.stdout is not None
     init_s = INIT_S if init_s is None else init_s
 
@@ -169,7 +169,15 @@ def _pump(proc: "subprocess.Popen[str]", out: IO[str], sec: Dict[str, Any], res:
                 break  # its stream is no longer read: a child still holding it can't delay the stop
     finally:
         timer.cancel()
+    with lock:
+        unchecked = not res["init"] and not res["posture"]
+        if unchecked:
+            res["posture"] = ["its stream ended before its init event: the tool list was never checked"]
+    if unchecked and proc.poll() is None:
+        _stop(proc)  # its stream closed while it still runs
     proc.wait()
+    if unchecked:  # the posture failure stands; its own exit (a crash, an expired login) is kept beside it
+        res["posture"][0] += " (it exited %s)" % proc.returncode
     return EXIT_POSTURE if res["posture"] else proc.returncode
 
 
