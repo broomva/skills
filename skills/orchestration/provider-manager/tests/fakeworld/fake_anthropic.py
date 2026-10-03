@@ -65,6 +65,9 @@ def add_account(email, account_uuid, org_uuid, five_hour=10.0, seven_day=20.0):
             "usage_mode": "ok",
             "exhausted": False,
             "locked_reason": None,
+            # a fixed time 3 h ahead, as the real endpoint reports for one window; a test that wants a
+            # new window sets a new value
+            "five_hour_resets_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(time.time() + 3 * 3600)),
         }
 
 
@@ -161,8 +164,8 @@ def usage(at):
             return 500, {"error": {"type": "api_error", "message": "Internal server error"}}
         _record(d, "usage", email, 200)
         body = {
-            "five_hour": {"utilization": acct["five_hour"], "resets_at": "2026-10-03T03:00:00Z"},
-            "seven_day": {"utilization": acct["seven_day"], "resets_at": "2026-10-08T00:00:00Z"},
+            "five_hour": {"utilization": acct["five_hour"], "resets_at": acct["five_hour_resets_at"]},
+            "seven_day": {"utilization": acct["seven_day"], "resets_at": "2099-01-08T00:00:00Z"},
         }
         if acct.get("locked_reason"):
             body["five_hour"]["locked_reason"] = acct["locked_reason"]

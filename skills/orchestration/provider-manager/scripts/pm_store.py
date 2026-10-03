@@ -42,6 +42,10 @@ class StoreError(RuntimeError):
     """The store could not be read or written; callers must stop, not guess."""
 
 
+class StoreBusy(StoreError):
+    """The item kept changing between reads; nothing was written."""
+
+
 class LockBusy(RuntimeError):
     """A Claude Code process holds its refresh lock."""
 
@@ -240,7 +244,7 @@ def write_store_oauth(item: str, oauth: Dict[str, Any], account: Optional[str] =
             if not keychain_write(item, account, data, timeout):
                 raise StoreError("cannot write %s" % item)
             return
-    raise StoreError("%s kept changing while it was being written" % item)
+    raise StoreBusy("%s kept changing while it was being written; nothing was written" % item)
 
 
 def read_orca(account_id: str) -> Read:

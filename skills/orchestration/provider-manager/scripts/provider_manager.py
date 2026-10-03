@@ -39,6 +39,7 @@ sys.path.insert(0, str(SCRIPT_DIR))
 import pm_state  # noqa: E402
 from pm_store import (  # noqa: E402
     LockBusy,
+    StoreBusy,
     StoreError,
     claude_config_dir,
     STORE_BASE,
@@ -82,6 +83,8 @@ CACHE_TTL_SECONDS = 90.0
 CLAUDE_LOCK_WAIT_SECONDS = 5.0
 LOCKED_IO_TIMEOUT = 5.0  # each keychain call made while holding Claude Code's refresh lock
 LIMITED_HOLD_SECONDS = 3600.0  # a probe-confirmed limited account is not a failover target for this long
+MODEL_WEEKLY_BUCKETS = ("seven_day_opus", "seven_day_sonnet")  # per-model weekly caps in the usage payload
+_REFRESH_OUTCOME: Dict[str, str] = {}  # why the last refresh of an account did not happen (for messages)
 PROBE_TIMEOUT_SECONDS = 90.0
 PROBE_PROMPT = "Reply with the single word OK."
 # The probe reads Claude Code's structured result first (`api_error_status`). These phrases are the
@@ -413,6 +416,7 @@ def refresh_account_token(account_id: str, allow_unverified: bool = False) -> Op
     while the store's account cannot be identified. Returns the new claudeAiOauth, or None."""
     with pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=False, holder="refresh") as held:
         if not held:
+            _REFRESH_OUTCOME[account_id] = "balancer_busy"
             log_provider_event("refresh.deferred", {"accountId": account_id, "reason": "balancer_busy"})
             return None
         ctx = build_context(verify_identity=True)
@@ -433,6 +437,7 @@ def refresh_account_token(account_id: str, allow_unverified: bool = False) -> Op
                 and config_dir_override_running(claude_config_dir()):
             refusal = "refresh_token_in_mirror_with_a_reader"
         if refusal:
+            _REFRESH_OUTCOME[account_id] = refusal
             log_provider_event("refresh.refused", {"accountId": account_id, "reason": refusal})
             return None
         code, payload, _ = _http(TOKEN_ENDPOINT_URL, body={
@@ -443,6 +448,7 @@ def refresh_account_token(account_id: str, allow_unverified: bool = False) -> Op
                 if now_copy and not same_token(now_copy.get("refreshToken"), oauth["refreshToken"]):
                     log_provider_event("refresh.failed", {"accountId": account_id, "reason": "copy_changed_meanwhile"})
                     return None  # another writer refreshed this copy; it is not dead
+                _REFRESH_OUTCOME[account_id] = "invalid_grant"
                 _mark_health(account_id, True, "invalid_grant")
                 log_provider_event("refresh.failed", {"accountId": account_id, "reason": "invalid_grant", "needsLogin": True})
             else:
@@ -484,8 +490,8 @@ def _parse_numbers(account_id: str, data: Dict[str, Any], now: float) -> Dict[st
     for lim in data.get("limits") or []:
         if lim.get("is_active") and (lim.get("percent") or 0) >= 100:
             locked = locked or "%s_limit_reached" % lim.get("group", "usage")
-    for key, bucket in data.items():  # per-model weekly caps (seven_day_opus, seven_day_sonnet, ...)
-        if key.startswith("seven_day_") and isinstance(bucket, dict) \
+    for key, bucket in data.items():  # per-model weekly caps
+        if key in MODEL_WEEKLY_BUCKETS and isinstance(bucket, dict) \
                 and float(bucket.get("utilization", bucket.get("used_percentage", 0)) or 0) >= 100.0:
             locked = locked or "%s_limit_reached" % key
     limited = bool(locked or fh_util >= 100.0 or sd_util >= 100.0)
@@ -668,16 +674,19 @@ def probe_active_account() -> Tuple[str, str]:
     return "unknown", "probe rc %d" % res.returncode
 
 
-def probe_cached(account_id: str, ttl: float, fresh_after: float = 0.0) -> Tuple[str, str]:
+def probe_cached(account_id: str, ttl: float, fresh_after: float = 0.0,
+                 resets_at: Optional[str] = None) -> Tuple[str, str]:
     """A probe result from the last `ttl` seconds (30 s for "unknown"), unless it predates
-    fresh_after: a report newer than the cached probe gets a new probe."""
+    fresh_after: a report newer than the cached probe gets a new probe. A probe is stamped with the
+    time it STARTED, so a report that lands while it runs is never answered by it."""
     p = (load_state().get("probes") or {}).get(account_id) or {}
     age_ok = time.time() - p.get("at", 0) < (30.0 if p.get("result") == "unknown" else ttl)
     if p and age_ok and p.get("at", 0) >= fresh_after:
         return p.get("result", "unknown"), "cached"
+    started = time.time()
     result, detail = probe_active_account()
     update_state(lambda s: s.setdefault("probes", {}).__setitem__(
-        account_id, {"at": time.time(), "result": result, "detail": detail}))
+        account_id, {"at": started, "result": result, "detail": detail, "resetsAt": resets_at}))
     log_provider_event("probe", {"accountId": account_id, "result": result, "detail": detail})
     return result, detail
 
@@ -735,9 +744,12 @@ def _validate_target(target: Dict[str, Any], allow_unverified: bool = False) -> 
     """Prove the target's credential is live and is the target, without touching the store: refresh
     it through its own copy (proving the refresh token is unspent, and persisting the rotated pair to
     the copy first), then check that the new access token's profile names that account."""
+    _REFRESH_OUTCOME.pop(target["id"], None)
     oauth = refresh_account_token(target["id"], allow_unverified=allow_unverified)
     if not oauth:
-        return False, None, "its stored grant could not be refreshed (re-login it: login-headless --email %s)" % target["email"]
+        why = _REFRESH_OUTCOME.get(target["id"], "refresh failed")
+        hint = " (re-login it: login-headless --email %s)" % target["email"] if why == "invalid_grant" else ""
+        return False, None, "its stored grant could not be refreshed: %s%s" % (why, hint)
     code, prof = fetch_profile(oauth["accessToken"])
     if code != 200 or not prof:
         return False, None, "its credential could not be verified (profile HTTP %s)" % code
@@ -825,8 +837,12 @@ def _switch_locked(identifier: str, source: str, metadata: Dict[str, Any], force
                 raise SwitchRefused("could not save the outgoing account's live tokens; nothing was switched")
             if held_for() > LOCK_MAX_HOLD_SECONDS:
                 raise SwitchRefused("the keychain is too slow to switch safely inside Claude Code's refresh lock")
-            attempted = True
-            write_store_oauth(ctx["primary"], live_oauth, ctx["user"], LOCKED_IO_TIMEOUT, attempts=1)
+            try:
+                attempted = True
+                write_store_oauth(ctx["primary"], live_oauth, ctx["user"], LOCKED_IO_TIMEOUT, attempts=1)
+            except StoreBusy:
+                attempted = False  # nothing was written
+                raise SwitchRefused("the store changed while it was being written (Claude Code wrote it); retry")
             check = oauth_of(read_store(ctx["primary"], ctx["user"], LOCKED_IO_TIMEOUT).data)
             if not check or not same_token(check.get("refreshToken"), live_oauth.get("refreshToken")):
                 raise StoreError("the store was written but did not read back the new credential; "
@@ -870,6 +886,22 @@ def _record_active(target: Dict[str, Any]) -> None:
     for path, fn in ((CLAUDE_CONFIG_PATH, claude_hint), (ORCA_DATA_PATH, orca_active)):
         if not _guarded_update(path, fn):
             log_provider_event("record_active.skipped", {"file": path.name})
+
+
+def _window_reset_since(probe: Dict[str, Any], account: Dict[str, Any], now: float) -> bool:
+    """Has the account's 5-hour window reset since the probe found it limited? Either the reset time
+    seen at probe time has passed, or its usage now reports a different reset time (a new window)."""
+    at_probe = probe.get("resetsAt")
+    if not at_probe:
+        return False
+    current = account.get("fiveHourResetsAt")
+    if current and current != at_probe:
+        return True
+    try:
+        from datetime import datetime
+        return datetime.fromisoformat(str(at_probe).replace("Z", "+00:00")).timestamp() <= now
+    except ValueError:
+        return False
 
 
 def _standby_ok(a: Dict[str, Any], cfg: Dict[str, Any], active_fh: Optional[float] = None) -> bool:
@@ -920,9 +952,10 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
         signal = signal or pending[-1].get("type")
 
     def resolve_signals():
-        if pending and not dry_run:  # only the reports this evaluation saw; newer ones stay
-            update_state(lambda s: s.__setitem__(
-                "pendingSignals", [p for p in s.get("pendingSignals", []) if p.get("at", 0) > now]))
+        if pending and not dry_run:  # exactly the reports this evaluation saw; any other stays
+            seen = [(p.get("type"), p.get("at"), p.get("sessionId")) for p in pending]
+            update_state(lambda s: s.__setitem__("pendingSignals", [
+                p for p in s.get("pendingSignals", []) if (p.get("type"), p.get("at"), p.get("sessionId")) not in seen]))
 
     ctx = build_context(verify_identity=True)
     accounts = fetch_all_usage(ctx=ctx)
@@ -934,7 +967,8 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
 
     def healthy(a, active_fh=None):
         p = probes.get(a.get("id")) or {}
-        if p.get("result") == "limited" and now - p.get("at", 0) < LIMITED_HOLD_SECONDS:
+        if p.get("result") == "limited" and now - p.get("at", 0) < LIMITED_HOLD_SECONDS \
+                and not _window_reset_since(p, a, now):
             return False  # its numbers may look fine (a per-model cap); the probe said otherwise
         return _standby_ok(a, cfg, active_fh)
 
@@ -978,7 +1012,8 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
     evidence = {"activeUtilization": fh, "standbyUtilization": best.get("fiveHourUtil")}
     if limited_path:
         newest_report = max([p.get("at", 0) for p in pending] or [0])
-        result, detail = probe_cached(active["id"], cfg["probeTtlSeconds"], fresh_after=newest_report)
+        result, detail = probe_cached(active["id"], cfg["probeTtlSeconds"], fresh_after=newest_report,
+                                      resets_at=active.get("fiveHourResetsAt"))
         evidence["probe"] = result
         if result == "ok":
             resolve_signals()
@@ -1038,6 +1073,8 @@ def run_auto(reason: str = "hook", signal: Optional[str] = None) -> Dict[str, An
         if not signal and time.time() - load_state().get("lastEvalAt", 0) < cfg["evalIntervalSeconds"]:
             return {"success": True, "action": "none", "reason": "recent_evaluation"}
         update_state(lambda s: s.__setitem__("lastEvalAt", time.time()))
+        if cfg.get("versionGate", True):
+            claude_version()  # keeps the cached version (and so the visible gate status) current
         return balance_accounts(source="auto_failover" if signal else "proactive_balance",
                                 signal=signal, blocking=False, automatic=True)
 
@@ -1058,16 +1095,24 @@ def run_auto_until_settled(reason: str, signal: Optional[str], budget_seconds: f
             return {"success": True, "action": "none", "reason": "settle_loop_running"}
         started = time.time()
         deadline = started + budget_seconds
+        eval_started = time.time()
         res = run_auto(reason=reason, signal=signal)
         while time.time() < deadline:
-            if float((load_state().get("lastSwitch") or {}).get("at", 0) or 0) >= started:
-                break
             r = res.get("reason")
             transient = r == "switch_refused" and any(t in (res.get("error") or "") for t in TRANSIENT_REFUSALS)
-            if r not in ("busy", "cooldown", "probe_inconclusive") and not transient:
-                break
+            switched = float((load_state().get("lastSwitch") or {}).get("at", 0) or 0) >= started
+            if switched or (r not in ("busy", "cooldown", "probe_inconclusive") and not transient):
+                # a report that arrived during that evaluation was turned away by this loop's lock:
+                # it is this loop's to handle before it lets go
+                newer = [p for p in load_state().get("pendingSignals", []) if p.get("at", 0) > eval_started]
+                if not newer:
+                    break
+                eval_started = time.time()
+                res = run_auto(reason=reason, signal=newer[-1].get("type"))
+                continue
             wait = res.get("remainingSeconds") if r == "cooldown" else (35 if r == "probe_inconclusive" else 15)
             time.sleep(max(5.0, min(float(wait or 15) + 1.0, deadline - time.time())))
+            eval_started = time.time()
             res = run_auto(reason=reason, signal=signal)
         return res
 

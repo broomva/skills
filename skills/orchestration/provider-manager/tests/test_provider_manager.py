@@ -957,7 +957,7 @@ def test_a_report_arriving_during_the_probe_survives_it(world, monkeypatch):
     world.activate(A)
     pm.update_state(lambda s: s.__setitem__("pendingSignals", [{"type": "rate_limit", "at": time.time() - 5}]))
 
-    def probe_while_a_new_report_lands(account_id, ttl, fresh_after=0.0):
+    def probe_while_a_new_report_lands(account_id, ttl, fresh_after=0.0, **kw):
         time.sleep(0.01)
         pm.update_state(lambda s: s["pendingSignals"].append({"type": "rate_limit", "at": time.time()}))
         return "ok", "probe answered"
@@ -997,3 +997,67 @@ def test_a_store_proven_dead_is_not_written_back_over_the_copy(world):
     a_copy = world.orca_creds(A)
     pm.switch_account(B, store_proven_dead=True)
     assert world.orca_creds(A) == a_copy
+
+
+# -- P20 delta round 1 ----------------------------------------------------------------------------
+
+def test_a_probe_is_stamped_with_its_start_so_a_report_during_it_is_reprobed(world, monkeypatch):
+    def slow_probe():
+        time.sleep(0.05)
+        return "ok", "probe answered"
+
+    monkeypatch.setattr(pm, "probe_active_account", slow_probe)
+    t0 = time.time()
+    pm.probe_cached("x", 600.0)
+    assert pm.load_state()["probes"]["x"]["at"] < t0 + 0.05
+
+
+def test_the_settle_loop_handles_a_report_that_arrived_while_it_was_finishing(world, monkeypatch):
+    calls = []
+
+    def fake_run_auto(reason="hook", signal=None):
+        calls.append(signal)
+        if len(calls) == 1:  # while this evaluation runs, another session's report lands
+            pm.update_state(lambda s: s.setdefault("pendingSignals", []).append(
+                {"type": "rate_limit", "at": time.time() + 0.001, "sessionId": "S2"}))
+            return {"action": "none", "reason": "probe_ok_not_limited"}
+        pm.update_state(lambda s: s.__setitem__("pendingSignals", []))
+        return {"action": "none", "reason": "probe_ok_not_limited"}
+
+    monkeypatch.setattr(pm, "run_auto", fake_run_auto)
+    monkeypatch.setattr(pm.time, "sleep", lambda s: None)
+    pm.run_auto_until_settled("stop-failure", "rate_limit")
+    assert len(calls) == 2, "the late report was evaluated before the loop let go"
+
+
+def test_the_limited_hold_ends_when_the_accounts_window_resets(world):
+    world.add_account(A, five_hour=100.0)
+    world.add_account(B, five_hour=10.0)
+    world.activate(A)
+    world.set_usage(A, exhausted=True)
+    assert pm.balance_accounts()["action"] == "switched"  # A probed limited
+    world.set_usage(B, five_hour=100.0, exhausted=True)
+    world.set_usage(A, five_hour=5.0, exhausted=False, five_hour_resets_at="2099-01-01T00:00:00Z")  # a new window
+    pm.update_state(lambda s: s.__setitem__("lastSwitch", {"at": time.time() - 400}))
+    os.unlink(pm.USAGE_CACHE_PATH)
+    assert pm.balance_accounts()["action"] == "switched"
+    assert world.store_email() == A
+
+
+def test_a_store_that_changes_between_reads_refuses_transiently_and_records_no_switch(world, monkeypatch):
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+
+    def busy(*a, **k):
+        raise pm_store.StoreBusy("kept changing")
+
+    monkeypatch.setattr(pm, "write_store_oauth", busy)
+    res = _switch(B)
+    assert res["success"] is False and "store changed" in res["refused"]
+    assert pm.load_state().get("lastSwitch") is None and not world.events("switch.unverified")
+
+
+def test_only_known_per_model_buckets_count_as_limits():
+    e = pm._numbers_entry("x", {"five_hour": {"utilization": 10}, "seven_day_oauth_apps": {"utilization": 100}}, 1.0)
+    assert not e["isRateLimited"]

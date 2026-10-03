@@ -54,7 +54,8 @@ Checkpoint (round 2 PASSED: B 8/10, C 7/10, A unavailable). Post-pass delta for 
 - the settle loop is single-flight;
 - the lock hold is bounded.
 
-Now: 89 tests pass (3.9 and 3.14); all 15 kill-path tests fail on origin/main; 36/36 mutations proven;
+Delta round 1: B 6/10 (liveness: probe stamped at finish, settle loop lost wakeups, hold ignored resets), C 8/10; fixed.
+Now: 94 tests pass (3.9 and 3.14); all 15 kill-path tests fail on origin/main; 39/39 mutations proven;
 real-binary drill passes (switch scenarios and the probe). Real-binary drill: stale-target and rotation-back KILLED on origin/main ("OAuth session
 expired and could not be refreshed"), SURVIVED here; healthy-target survives both, and the running session is
 served by the new account after the switch.
