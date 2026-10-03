@@ -646,13 +646,18 @@ def test_refresh_never_runs_while_another_provider_manager_action_holds_the_lock
     creds["claudeAiOauth"]["expiresAt"] = fake_anthropic.now_ms() + 10_000  # B's copy needs a refresh
     world.set_orca_creds(B, creds)
     rt = creds["claudeAiOauth"]["refreshToken"]
-    code = ("import sys,time;sys.path.insert(0,%r);import pm_state\n"
-            "with pm_state.balancer_lock(%r):\n print('held',flush=True);time.sleep(3)\n"
-            % (str(IMPL_DIR), str(pm.BALANCER_LOCK_PATH)))
+    release = world.tmp / "release"
+    code = ("import os,sys,time;sys.path.insert(0,%r);import pm_state\n"
+            "with pm_state.balancer_lock(%r):\n print('held',flush=True)\n"
+            " while not os.path.exists(%r): time.sleep(0.05)\n"
+            % (str(IMPL_DIR), str(pm.BALANCER_LOCK_PATH), str(release)))
     p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True, env=world.env())
     assert p.stdout.readline().strip() == "held"
-    rows = {r["email"]: r for r in pm.fetch_all_usage(force_refresh=True)}
-    p.wait()
+    try:
+        rows = {r["email"]: r for r in pm.fetch_all_usage(force_refresh=True)}
+    finally:
+        release.write_text("1")  # held until here, however slow the runner
+        p.wait(timeout=30)
     assert fake_anthropic.refresh_state(rt) == "valid", "no refresh while another action holds the lock"
     assert rows[B]["telemetry"] == "auth_expired"
     assert world.events("refresh.deferred")

@@ -30,7 +30,9 @@ within about 30 seconds and with no restart. Report it and stop:
 ARC-STATUS: BLOCKED quota (rate limit on the active Claude account; provider-manager handles failover)
 ```
 
-`rotate`, `switch` and `login-headless` are for the operator or the orchestrator.
+`rotate`, `switch` and `login-headless` are for the operator or the orchestrator. (The report reaches
+the balancer only if the `StopFailure` hook is wired: see Hooks. Without it, failover waits for
+readable usage numbers.)
 
 ## How a switch reaches running sessions (measured, Claude Code 2.1.280)
 
@@ -130,7 +132,7 @@ readable usage numbers on a later prompt's evaluation. The wiring is in
 ## Tests and proof
 
 - `tests/test_kill_paths.py`: each observed kill or false rotation, end to end, with a running
-  session modelled on the binary. Against origin/main (`PM_IMPL_DIR=...`) all 14 fail; here all pass.
+  session modelled on the binary. Against origin/main (`PM_IMPL_DIR=...`) all 15 fail; here all pass.
 - `tests/mutation_check.py`: each guard disabled in a scratch copy turns its tests red.
 - `tests/drill/drill.py`: the real `claude` binary in a sandboxed scratch HOME (no keychain, network
   only to a local stub), with a switch made between two of its requests. Its `probe` scenario runs
