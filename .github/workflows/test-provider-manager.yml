@@ -1,0 +1,57 @@
+name: test-provider-manager
+
+# Tests for skills/orchestration/provider-manager: the BRO-2713 kill-path regression suite, the unit
+# tests, and the mutation proof of each guard. Hermetic: fake `security`/`claude`/`node` on PATH,
+# scratch HOME, urllib routed to a stub. No keychain, no network.
+# The real-binary drill (tests/drill) needs macOS, the claude binary and mitmproxy; it runs locally.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/orchestration/provider-manager/**'
+      - '.github/workflows/test-provider-manager.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/orchestration/provider-manager/**'
+      - '.github/workflows/test-provider-manager.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-provider-manager-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/orchestration/provider-manager
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.9", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - run: pip install -r tests/requirements-dev.txt
+      - name: Tests
+        run: python -m pytest tests/ -v -p no:cacheprovider
+
+  mutation:
+    name: mutation proof
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install -r tests/requirements-dev.txt
+      - name: Every guard's tests go red when the guard is disabled
+        run: python tests/mutation_check.py

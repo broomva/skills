@@ -1,129 +1,136 @@
 #!/usr/bin/env python3
 """
-provider_manager_hook.py — Claude Code Autonomous Balancing & Rate-Limit Hook
+provider_manager_hook.py — Claude Code hook for provider-manager.
 
-Wired to Claude Code hooks (SessionStart, PostToolUse, UserPromptSubmit) to:
-1. Proactively balance accounts before sessions start or when usage exceeds thresholds.
-2. Intercept rate-limit failures in tool executions and immediately failover/rotate
-   to standby accounts without interrupting the agent workflow.
+Every session on the machine runs this hook, so it decides nothing and switches nothing itself:
 
-Design principles:
-- SILENT BY DEFAULT: Emits output only when an action occurs or when reporting status at SessionStart.
-- FAST & NON-BLOCKING: Relies on cached usage data (<60s TTL); bounded 3s timeouts.
-- ALWAYS EXIT 0: Never crashes or blocks Claude Code execution turns.
+- session-start: one status line from the usage cache (stderr; no network), then a kick.
+- prompt-submit: a kick.
+- stop-failure:  the turn ended on an API error. Record the session for resume. On `rate_limit` or
+                 `authentication_failed`, queue the report and kick at once (the evaluation probes
+                 before acting: a limit must be confirmed, a dead grant proven dead by Claude Code).
+- post-tool-use: nothing. Tool output is never a Claude rate limit (a GitHub API limit or a site's
+                 429 used to rotate the machine's account).
+
+A kick starts `provider_manager.py balance --auto` detached, at most once per evaluation interval.
+That process takes the machine-wide balancer lock, so exactly one evaluation runs however many
+sessions kick. Always exits 0, writes nothing to stdout, and returns in milliseconds.
 """
 
 import json
 import os
-import re
 import sys
+import time
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-import provider_manager as pm
+try:
+    import pm_state  # noqa: E402
+    import provider_manager as pm  # noqa: E402
+except Exception:  # noqa: BLE001 - e.g. mid-install: a hook must never fail a session
+    pm = None
 
-RATE_LIMIT_PATTERNS = [
-    r"rate_limit_error",
-    r"rate limit (?:exceeded|reached)",
-    r"you have reached your (?:current )?usage limit",
-    r"hit a rate limit",
-    r"status(?: code)?:?\s*429",
-    r"http (?:status )?429",
-    r"too many requests",
-    r"billing limit",
-    r"quota exceeded",
-    r"credit balance is too low",
-]
+KICK_MIN_GAP_SECONDS = 30.0
+MAX_PAYLOAD_BYTES = 1_000_000
 
-RATE_LIMIT_RE = re.compile("|".join(RATE_LIMIT_PATTERNS), re.IGNORECASE)
+
+def kick(reason: str, signal: str = None, force: bool = False) -> None:
+    now = time.time()
+    if not force:
+        cfg = pm.load_config()
+        st = pm.load_state()
+        if now - st.get("lastEvalAt", 0) < cfg["evalIntervalSeconds"] or now - st.get("lastKickAt", 0) < KICK_MIN_GAP_SECONDS:
+            return
+    pm.update_state(lambda s: s.__setitem__("lastKickAt", now))
+    if os.environ.get("PROVIDER_MANAGER_INLINE") == "1":
+        pm.run_auto(reason=reason, signal=signal)
+        return
+    argv = [sys.executable] + (["-I"] if sys.flags.isolated else []) + [
+        str(SCRIPT_DIR / "provider_manager.py"), "balance", "--auto", "--reason", reason]
+    if signal:
+        argv += ["--signal", signal]
+    pm_state.spawn_detached(argv)
 
 
 def handle_session_start(payload: dict) -> None:
-    """Run proactive balancing and display multi-account status banner."""
     try:
-        # Run balancing with default 85% threshold
-        balance_res = pm.balance_accounts(threshold=85.0, dry_run=False)
-        action = balance_res.get("action")
-        if action == "switched":
-            sys.stderr.write(
-                f"[provider-manager] Proactively rotated active account to {balance_res.get('toAccount')} "
-                f"(previous account {balance_res.get('fromAccount')} was at {balance_res.get('activeUtilization')}% utilization).\n"
-            )
-            return
-
-        # Single line glanceable status (to stderr so it does not pollute prompt prefix context)
-        accounts = pm.fetch_all_usage()
-        active = next((a for a in accounts if a.get("isActive")), None)
-        standbys = [a for a in accounts if not a.get("isActive")]
-        if active:
-            active_fh = f"{active.get('fiveHourUtil')}%" if active.get('fiveHourUtil') is not None else "?"
-            active_sd = f"{active.get('sevenDayUtil')}%" if active.get('sevenDayUtil') is not None else "?"
-            standby_parts = []
-            for s in standbys:
-                s_fh = f"{s.get('fiveHourUtil')}%" if s.get('fiveHourUtil') is not None else "?"
-                s_sd = f"{s.get('sevenDayUtil')}%" if s.get('sevenDayUtil') is not None else "?"
-                standby_parts.append(f"{s.get('email')} ({s_fh} 5h, {s_sd} 7d)")
-            standby_str = f" | Standby: {', '.join(standby_parts)}" if standby_parts else ""
-            sys.stderr.write(f"[provider-manager] Active: {active.get('email')} ({active_fh} 5h, {active_sd} 7d){standby_str}\n")
-    except Exception:
+        cache = pm.read_usage_cache().get("accounts", {})
+        orca = pm.get_orca_data().get("settings", {})
+        active_id = orca.get("activeClaudeManagedAccountId")
+        parts = []
+        for acc in orca.get("claudeManagedAccounts", []):
+            u = cache.get(acc.get("id")) or {}
+            fh = (u.get("five_hour") or {}).get("utilization")
+            sd = (u.get("seven_day") or {}).get("utilization")
+            label = "%s (%s 5h, %s 7d%s)" % (acc.get("email"), "%s%%" % fh if fh is not None else "?",
+                                            "%s%%" % sd if sd is not None else "?",
+                                            "" if u.get("telemetry", "ok") == "ok" else ", " + u.get("telemetry"))
+            parts.append(("Active: " if acc.get("id") == active_id else "Standby: ") + label)
+        gate = pm.gate_status()
+        if gate:
+            parts.append(gate)
+        if parts:
+            sys.stderr.write("[provider-manager] %s\n" % " | ".join(sorted(parts)))
+    except Exception:  # noqa: BLE001 - a status line must never break a session
         pass
-
-
-def handle_post_tool_use(payload: dict) -> None:
-    """Detect rate limits in tool execution output or errors, and trigger auto-rotation."""
-    try:
-        text_to_check = []
-        for k in ("error", "tool_output", "stderr", "output", "result"):
-            v = payload.get(k)
-            if isinstance(v, str):
-                text_to_check.append(v)
-            elif isinstance(v, dict):
-                text_to_check.append(json.dumps(v))
-
-        combined = " ".join(text_to_check)
-        if combined and RATE_LIMIT_RE.search(combined):
-            rotate_res = pm.rotate_account(reason="tool_rate_limit", dry_run=False)
-            if rotate_res.get("success"):
-                sys.stderr.write(
-                    f"\n[provider-manager] Rate limit detected in tool execution! "
-                    f"Automatically failed over active account: {rotate_res.get('rotatedFrom')} -> {rotate_res.get('rotatedTo')}.\n"
-                )
-    except Exception:
-        pass
+    kick("session-start")
 
 
 def handle_prompt_submit(payload: dict) -> None:
-    """Before prompt executes, check if active account is near exhaustion (>=90%)."""
-    try:
-        balance_res = pm.balance_accounts(threshold=90.0, dry_run=False)
-        if balance_res.get("action") == "switched":
-            sys.stderr.write(
-                f"[provider-manager] Active account reached {balance_res.get('activeUtilization')}% utilization. "
-                f"Proactively rotated to {balance_res.get('toAccount')} before executing prompt.\n"
-            )
-    except Exception:
-        pass
+    kick("prompt-submit")
 
 
-def main():
+def handle_post_tool_use(payload: dict) -> None:
+    """Deliberately nothing: see the module docstring."""
+    return None
+
+
+def handle_stop_failure(payload: dict) -> None:
+    error = payload.get("error") or "unknown"
+    entry = pm_state.record_stalled(pm.STALLED_PATH, payload, dict(os.environ))
+    pm.log_provider_event("session.stalled", {"error": error, "stalledSession": entry.get("sessionId"),
+                                              "paseoAgentId": entry.get("paseoAgentId")})
+    signal = {"rate_limit": "rate_limit", "authentication_failed": "auth_failed"}.get(error)
+    if signal:
+        now = time.time()
+
+        def queue(s):
+            s.setdefault("pendingSignals", []).append({"type": signal, "at": now, "sessionId": entry.get("sessionId")})
+            s["pendingSignals"] = s["pendingSignals"][-20:]
+        pm.update_state(queue)
+        kick("stop-failure", signal=signal, force=True)
+
+
+HANDLERS = {
+    "session-start": handle_session_start, "SessionStart": handle_session_start,
+    "prompt-submit": handle_prompt_submit, "UserPromptSubmit": handle_prompt_submit,
+    "post-tool-use": handle_post_tool_use, "PostToolUse": handle_post_tool_use,
+    "PostToolUseFailure": handle_post_tool_use,
+    "stop-failure": handle_stop_failure, "StopFailure": handle_stop_failure,
+}
+
+
+def main() -> None:
+    if pm is None or os.environ.get("PROVIDER_MANAGER_PROBE"):
+        return  # modules unavailable, or inside our own probe
     event = sys.argv[1] if len(sys.argv) > 1 else "session-start"
+    handler = HANDLERS.get(event)
+    if handler is None or handler is handle_post_tool_use:
+        return
     payload = {}
     try:
         if not sys.stdin.isatty():
-            raw = sys.stdin.read()
+            raw = sys.stdin.read(MAX_PAYLOAD_BYTES)
             if raw.strip():
                 payload = json.loads(raw)
-    except Exception:
+    except Exception:  # noqa: BLE001
         payload = {}
-
-    if event in ("session-start", "SessionStart"):
-        handle_session_start(payload)
-    elif event in ("post-tool-use", "PostToolUse", "PostToolUseFailure"):
-        handle_post_tool_use(payload)
-    elif event in ("prompt-submit", "UserPromptSubmit"):
-        handle_prompt_submit(payload)
+    try:
+        handler(payload if isinstance(payload, dict) else {})
+    except Exception:  # noqa: BLE001 - always exit 0
+        pass
 
 
 if __name__ == "__main__":
