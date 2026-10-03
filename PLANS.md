@@ -1,5 +1,58 @@
 # PLANS.md
 
+## provider-manager: a balance or failover never kills running sessions (BRO-2713)
+
+Status: implemented and proven locally on `fix/provider-manager-seamless-balance` (from main de8c7ad); PR, P20, merge and live install next.
+Safety: never switch, rotate, balance or login-headless the live accounts. All work runs against a scratch
+HOME with a fake `security` (scratch keychain) and stubbed Anthropic endpoints. Live reads are by item
+name and attributes only.
+
+### Root cause (measured, Claude Code 2.1.280 binary + ledger + event log)
+
+1. Running sessions follow the store. No `~/.claude/.credentials.json` exists, so requests re-read the keychain
+   item `Claude Code-credentials` (the item when `CLAUDE_CONFIG_DIR` is unset; no live session sets it), through
+   a 30 s read cache. A switch reaches every running session within about 30 s (measured with the real binary).
+2. `switch_account` writes the target's Orca copy without checking that it is alive, and it never writes the
+   outgoing account's rotated tokens back to its Orca item. Claude Code rotates the refresh token on every
+   refresh, so the Orca copy of any account that has been active is stale. Switching back writes a consumed
+   refresh token. Every session then refreshes, gets `invalid_grant`, and fails with "OAuth session expired
+   and could not be refreshed".
+3. Triggers fire on non-evidence: a usage-endpoint 429 is recorded as `isRateLimited`. A standby with
+   unknown usage is eligible. A PostToolUseFailure regex rotates on any tool error that mentions rate limits,
+   GitHub's included.
+4. No coordination: every hook in every session can balance or rotate, with no lock and no cooldown
+   (flips 21 s apart).
+5. D28: `sync_claude_keychains` merges mcpOAuth across the scoped and unscoped items with "later wins".
+   The scoped item is a stale mirror, and its old Linear tokens overwrite the live ones.
+
+### Milestones
+
+1. [x] Fake world for tests: fake `security`, fake `claude`, stubbed token/usage/profile/messages, and a
+   Claude Code session simulator modelled on the binary. Hermetic guard: no test can reach the live
+   keychain or the network.
+2. [x] Kill-path regression suite. It runs against origin/main (each kill reproduced) and this branch (none).
+3. [x] Fix: a safe switch (Claude refresh lock, target liveness, outgoing write-back, per-item claudeAiOauth
+   writes, fail closed). One balancer (flock, eval interval, cooldown, hysteresis). Telemetry kept apart from
+   limits. A probe before declaring limited. StopFailure wiring, and a stalled-session list.
+4. [x] Mutation proof for each guard.
+5. [x] Real-binary drill: Claude Code 2.1.280 in a scratch HOME under sandbox-exec (no SecurityServer, no
+   live keychain file), fake `security`, mitmdump stub. The old switch kills a running session; the new one
+   does not, and the session adopts the new account.
+6. [x] Docs (SKILL.md reflex: agents never rotate), CI workflow (`test-provider-manager.yml`).
+7. [ ] PR, P20, p9, merge pinned; live install (vendored copy, swapped atomically under a 30-min hold); Linear.
+
+Checkpoint (local): 58 tests pass (Python 3.9 and 3.14). The 14 kill-path tests all fail on origin/main. 20/20
+mutations proven. Real-binary drill: stale-target and rotation-back KILLED on origin/main ("OAuth session
+expired and could not be refreshed"), SURVIVED here; healthy-target survives both, and the running session is
+served by the new account after the switch.
+
+### Verification
+
+`python -m pytest skills/orchestration/provider-manager/tests -q`;
+`PM_IMPL_DIR=<origin/main scripts> python -m pytest skills/orchestration/provider-manager/tests/test_kill_paths.py`
+(expected red); `python skills/orchestration/provider-manager/tests/mutation_check.py`;
+`bash skills/orchestration/provider-manager/tests/drill/run_drill.sh`.
+
 ## role-x reflex router, pre-flip evidence (BRO-2674)
 
 Status: evals done; PR broomva/skills#260 in P20, on `feat/role-x-reflex-preflip`. Owner decision 2026-10-01: do not

@@ -72,7 +72,7 @@ npx skills add broomva/skills --skill '*'
 | [`persist`](skills/orchestration/persist/) | bstack P12 — Persistent Loop Discipline |
 | [`resume`](skills/orchestration/resume/) | Restore an arc killed mid-flight by an API error, a dropped connection or an expired login — reconstruct what died from the transcript, recover dead subagents' work off disk, and continue rather than conclude |
 | [`role-x`](skills/orchestration/role-x/) | bstack P17 — Lens-Routed Request Articulation |
-| [`provider-manager`](skills/orchestration/provider-manager/) | Autonomous AI provider and subscription management toolkit. Enables seamless account discovery, credential switching, automated zero-touch browser-session OAuth re-authentication, and proactive… |
+| [`provider-manager`](skills/orchestration/provider-manager/) | Claude subscription account manager for macOS (Claude Code CLI, Orca, Keychain): account discovery, usage telemetry, one machine-wide balancer that fails over without killing running sessions, safe… |
 | [`ctx-core`](skills/orchestration/ctx-core/) | The shared context core, phase 1: a read-only shared board. Hooks append each session's start, ARC-STATUS keyword and death to a per-scope log as structured fields only; SessionStart injects a factual brief of the other sessions on the same branch. Coordination only, not a security boundary |
 | [`fleet-reconcile`](skills/orchestration/fleet-reconcile/) | The hourly fleet coordinator. Phase 1 observes and classifies, report only; phase 2 adds the coordinator and its verbs under dry run. Each tick reads every Claude Code session (claude agents --json… |
 

@@ -67,17 +67,21 @@
 ---
 
 ### B. Claude Code Runtime State
-* **Config File**:
-  `~/.claude.json`
-  * Block `oauthAccount`: contains `accountUuid`, `emailAddress`, `organizationUuid`, `organizationName`, `organizationType` (`claude_max`, `claude_pro`), etc.
-* **Credentials in macOS Keychain**:
-  * **Scoped Service**: `Claude Code-credentials-d098dafb` (hash represents `~/.claude`)
-  * **Fallback Service**: `Claude Code-credentials`
-  * **Account**: macOS username (e.g. `$(whoami)`)
-  * **Format**: Hex-encoded JSON or raw JSON string containing a composite dictionary:
-    * `claudeAiOauth`: Access and refresh tokens for Anthropic Claude Code CLI.
-    * `mcpOAuth`: Dynamic OAuth tokens for MCP servers (Linear, Slack, Sentry, Granola, etc.).
-  * **MCP OAuth Preservation Invariant**: When switching or rotating accounts, `provider-manager` uses `sync_claude_keychains()` and `merge_mcp_oauth()` to merge existing live `mcpOAuth` tokens from the Keychain before writing, ensuring third-party MCP connections are never wiped out or overwritten by empty stubs.
+* **Config File**: `~/.claude.json`. Its `oauthAccount` block (`emailAddress`, `organizationUuid`, ...) is
+  last-writer-wins across processes: a display hint, never the truth about which account is active.
+* **Credential store (keychain)**, as Claude Code 2.1.280 names it:
+  * `Claude Code-credentials` when `CLAUDE_CONFIG_DIR` is unset. **This is the item every live session
+    reads.** Verified 2026-10-02: no running `claude` process sets `CLAUDE_CONFIG_DIR`, and this item's
+    mdat follows the sessions' refreshes.
+  * `Claude Code-credentials-<sha256(config dir)[:8]>` when `CLAUDE_CONFIG_DIR` is set (`d098dafb` for
+    `~/.claude`). provider-manager keeps it in step as a mirror, for any session launched that way.
+  * `CLAUDE_SECURESTORAGE_CONFIG_DIR` overrides both. Account: `$USER`.
+  * Value: JSON (hex when written with `-X`) holding `claudeAiOauth` (Claude's access/refresh tokens,
+    `expiresAt`, scopes) and `mcpOAuth` (MCP servers' OAuth: Linear, Slack, Sentry...).
+* **Per-item write invariant**: a switch replaces `claudeAiOauth` in each item and writes the item's
+  other keys back exactly as it read them, immediately before (under Claude Code's refresh lock). MCP
+  tokens are never copied between items or from an Orca copy. The old cross-item merge let the stale
+  mirror's Linear tokens overwrite the live ones (D28).
 
 ---
 
@@ -119,15 +123,91 @@ When an account's refresh token has expired or credentials need initial setup wi
    * The response returns `{ "redirect_uri": "https://platform.claude.com/oauth/code/callback?code=...&state=..." }`.
    * The script formats `<code-value>#<state>` and injects it into standard input of `claude auth login`.
    * Claude Code automatically calls `https://platform.claude.com/v1/oauth/token` with `grant_type: authorization_code`, receives access & refresh tokens, and persists them into the Keychain.
-   * `provider-manager` mirrors the new tokens into Orca's Keychain service (`Orca Claude Code Managed Credentials`).
+   * `provider-manager` copies the new tokens into that account's Orca item (`Orca Claude Code Managed Credentials`).
+   * For an account the store does not hold, `claude auth login` runs with `CLAUDE_CONFIG_DIR` set to a
+     throwaway directory, so its tokens land in that directory's scoped item (deleted afterwards). The live
+     store is never written, and nothing switches. Before BRO-2713, every re-login was a hidden switch
+     that skipped the outgoing write-back.
 
 ---
 
-## 3. Rate Limit & Rotation Mechanism
+## 3. What Claude Code does with the store (measured)
 
-* **Quota Tracking**:
-  * Claude Code returns HTTP 429 when the 5-hour rolling organization rate limit window is exhausted.
-* **Auto-Rotation**:
-  * When an agent detects a 429 or rate limit warning, it runs `provider_manager.py rotate`.
-  * The tool selects the next alternate account with valid credentials, switches the active Keychain and config, and validates via `claude auth status`.
-  * The agent retries its turn on the newly activated subscription.
+Read from Claude Code 2.1.280's bundled source, then checked against the real binary with
+`tests/drill/drill.py`:
+
+| Behaviour | Source | Consequence |
+|---|---|---|
+| With no `<configDir>/.credentials.json` (none exists on this host), each request clears the token memo and re-reads the store, through a 30 s keychain read cache (`WNn=30000`). | `gD`/`zy`, keychain store class | A write to the store becomes every running session's credential within about 30 s. |
+| A token within 5 min of `expiresAt` is refreshed under `<configDir>/.oauth_refresh.lock` + `<realpath(configDir)>.lock` (proper-lockfile, stale 60 s). Inside the lock the store is re-read; a changed access token is adopted. | `ed`, `rdo`, `wSr` | Refreshes force a real read, so a session never refreshes the outgoing account after a switch. A switch that holds this lock cannot race a refresh. |
+| `invalid_grant` marks the refresh token dead; with no usable access token the turn fails "OAuth session expired and could not be refreshed". | `ed` catch, `i6`, `Rwt` | A switch that writes a consumed refresh token kills every running session at its next refresh. |
+| The refresh response names the account (`account.email_address`); `GET /api/oauth/profile` returns `account.email` and `organization.uuid`. | `eHe`, `DLn` | Identity checks without spending anything. |
+| `StopFailure` fires when an API error ends a turn; matcher on `error` (`rate_limit`, `authentication_failed`, ...); fire-and-forget. | hook schema `iN`, `mRe` | The real in-session rate-limit signal. A hook cannot resume the turn; it can only record it. |
+
+Drill results (real binary, sandboxed scratch HOME, stubbed endpoints) are in the BRO-2713 PR.
+
+## 4. The switch protocol
+
+1. Balancer lock (`~/.cache/broomva-provider-balancer.lock`, flock; reentrant within one process).
+2. Read everything: roster, every Orca copy, both store items. An unreadable store aborts.
+3. Identify the store's account: its refresh token equals an Orca copy's (`orca_copy_match`); a cached
+   profile check for the same token fingerprint (`profile_cached`); or a live profile check of its
+   access token (`profile`). Otherwise it is `orca_setting_unverified`, and a switch that would
+   discard that credential is refused unless `--force`.
+4. Validate the target, still outside any lock: if its access token has under 10 minutes left,
+   refresh it through its own Orca copy (persisting the rotated pair first). Then its access token
+   must pass a profile check naming that account.
+5. Under Claude Code's refresh lock (no network inside): re-read the store and abort if it changed;
+   write the outgoing account's live tokens to its Orca copy if they differ from it; write the target's
+   `claudeAiOauth` to the primary item, then the mirror; read back and verify.
+6. Record: orca-data active id, `~/.claude.json` hint, state `lastSwitch` (the cooldown), event `switch`.
+
+**Refresh interlock:** `refresh_account_token` refuses the account the store holds, and any copy whose
+refresh token equals a store item's. Telemetry for the store's account uses the store's access token
+and never refreshes it.
+
+## 5. Telemetry, balancer, probe
+
+`fetch_account_usage` returns `telemetry`: `ok` (numbers), `throttled` (usage endpoint 429; backoff
+2→4→...→30 min, or `Retry-After`; the last numbers are kept and marked stale), `auth_expired`,
+`needs_login` (`invalid_grant` on the copy), `no_credentials`, or `unavailable`. Only `ok` numbers can
+mark an account limited (`locked_reason`, 5h or 7d ≥ 100%, or an active limit at 100%).
+
+Decision rules and defaults: SKILL.md "The balancer". The probe runs `claude -p "Reply with the single
+word OK." --model haiku --tools "" --strict-mcp-config --setting-sources project --no-session-persistence
+--output-format json`, from an empty temp dir. Its environment drops `CLAUDECODE`, `CLAUDE_CODE_*`,
+`CLAUDE_PID` and `ANTHROPIC_*` auth overrides, keeps `CLAUDE_CONFIG_DIR` as the sessions have it, and
+sets `PROVIDER_MANAGER_PROBE=1` (the hook no-ops on it). The result is `ok`, `limited`, or `unknown`,
+cached `probeTtlSeconds`. Only `limited` permits a failover.
+
+## 6. Files and events
+
+| Path | What |
+|---|---|
+| `~/.cache/broomva-provider-events.jsonl` | Events. Every line: `timestamp`, `iso`, `event`, `trace_id` (one evaluation or switch), `run_id` (one process), `pid`, `session_id` (the calling session). |
+| `~/.cache/broomva-provider-state.json` | `lastEvalAt`, `lastKickAt`, `lastSwitch {at, from, to, source}`, `holdUntil`, `pendingSignals`, `telemetry {id: backoff}`, `health {id: needsLogin}`, `probes`, `storeIdentity` (token fingerprint, never a token). Mode 0600. |
+| `~/.cache/broomva-provider-usage.json` | Usage cache (90 s TTL). |
+| `~/.cache/broomva-provider-stalled.jsonl` | StopFailure reports: `sessionId`, `cwd`, `transcriptPath`, `error`, `paseoAgentId`. |
+| `~/.cache/broomva-provider-balancer.lock` | The machine-wide lock; holds `{pid, since, holder}`. |
+
+Events: `switch` (`fromAccount`, `toAccount`, `source`, `reason`, `wroteBack`, `outgoingIdentity`,
+utilisations, `probe`), `switch.refused` (`target`, `reason`), `switch.discard_unverified`,
+`balance.decision` (`action`, `reason`, `telemetry`, `remainingSeconds`...), `probe` (`result`),
+`telemetry.throttled` (`backoffUntil`), `refresh`, `refresh.refused`, `refresh.failed`
+(`needsLogin`), `refresh.persist_failed` (critical), `session.stalled`, `login`, `hold`.
+
+## Hook wiring
+
+The settings entries this version expects (`~/.claude/settings.json`). The UserPromptSubmit and
+SessionStart entries are unchanged. **Add** the StopFailure entry. The two PostToolUse/PostToolUseFailure
+entries are now no-ops and may be removed:
+
+```json
+"StopFailure": [
+  { "hooks": [ { "type": "command", "timeout": 5,
+                 "command": "python3 -I /Users/broomva/.agents/skills/provider-manager/scripts/provider_manager_hook.py stop-failure 2>/dev/null || true" } ] }
+]
+```
+
+No matcher: the hook reads `error` itself. It records every stalled turn and starts a failover
+evaluation only for `rate_limit`.
