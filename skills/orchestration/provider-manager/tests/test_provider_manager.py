@@ -1061,3 +1061,15 @@ def test_a_store_that_changes_between_reads_refuses_transiently_and_records_no_s
 def test_only_known_per_model_buckets_count_as_limits():
     e = pm._numbers_entry("x", {"five_hour": {"utilization": 10}, "seven_day_oauth_apps": {"utilization": 100}}, 1.0)
     assert not e["isRateLimited"]
+
+
+def test_reset_detection_compares_times_not_strings_and_spares_per_model_caps():
+    now = time.time()
+    iso = lambda t, us: time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime(t)) + ".%06d+00:00" % us  # noqa: E731
+    later = now + 3 * 3600
+    probe = {"resetsAt": iso(later, 577660), "fiveHourAtProbe": 100.0}
+    assert not pm._window_reset_since(probe, {"fiveHourResetsAt": iso(later, 577682)}, now), "same window, new microseconds"
+    assert pm._window_reset_since(probe, {"fiveHourResetsAt": iso(later + 5 * 3600, 1)}, now), "a new window"
+    assert pm._window_reset_since({"resetsAt": iso(now - 10, 0), "fiveHourAtProbe": 100.0}, {}, now), "the reset passed"
+    assert not pm._window_reset_since({"resetsAt": iso(now - 10, 0), "fiveHourAtProbe": 30.0}, {}, now), \
+        "a per-model cap (5-hour bucket not full) survives a 5-hour reset"

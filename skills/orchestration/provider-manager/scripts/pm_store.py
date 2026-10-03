@@ -236,7 +236,7 @@ def write_store_oauth(item: str, oauth: Dict[str, Any], account: Optional[str] =
     for _ in range(attempts):
         cur = keychain_read(item, account, timeout)
         if cur.status == "error":
-            raise StoreError("cannot read %s before writing it (%s)" % (item, cur.detail))
+            raise StoreBusy("cannot read %s before writing it (%s); nothing was written" % (item, cur.detail))
         data = dict(cur.data or {})
         data["claudeAiOauth"] = oauth
         again = keychain_read(item, account, timeout)

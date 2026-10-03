@@ -675,7 +675,7 @@ def probe_active_account() -> Tuple[str, str]:
 
 
 def probe_cached(account_id: str, ttl: float, fresh_after: float = 0.0,
-                 resets_at: Optional[str] = None) -> Tuple[str, str]:
+                 resets_at: Optional[str] = None, five_hour: Optional[float] = None) -> Tuple[str, str]:
     """A probe result from the last `ttl` seconds (30 s for "unknown"), unless it predates
     fresh_after: a report newer than the cached probe gets a new probe. A probe is stamped with the
     time it STARTED, so a report that lands while it runs is never answered by it."""
@@ -686,7 +686,8 @@ def probe_cached(account_id: str, ttl: float, fresh_after: float = 0.0,
     started = time.time()
     result, detail = probe_active_account()
     update_state(lambda s: s.setdefault("probes", {}).__setitem__(
-        account_id, {"at": started, "result": result, "detail": detail, "resetsAt": resets_at}))
+        account_id, {"at": started, "result": result, "detail": detail, "resetsAt": resets_at,
+                     "fiveHourAtProbe": five_hour}))
     log_provider_event("probe", {"accountId": account_id, "result": result, "detail": detail})
     return result, detail
 
@@ -840,9 +841,10 @@ def _switch_locked(identifier: str, source: str, metadata: Dict[str, Any], force
             try:
                 attempted = True
                 write_store_oauth(ctx["primary"], live_oauth, ctx["user"], LOCKED_IO_TIMEOUT, attempts=1)
-            except StoreBusy:
+            except StoreBusy as e:
                 attempted = False  # nothing was written
-                raise SwitchRefused("the store changed while it was being written (Claude Code wrote it); retry")
+                raise SwitchRefused("the store changed or could not be read while it was being written "
+                                    "(%s); retry" % e)
             check = oauth_of(read_store(ctx["primary"], ctx["user"], LOCKED_IO_TIMEOUT).data)
             if not check or not same_token(check.get("refreshToken"), live_oauth.get("refreshToken")):
                 raise StoreError("the store was written but did not read back the new credential; "
@@ -888,20 +890,28 @@ def _record_active(target: Dict[str, Any]) -> None:
             log_provider_event("record_active.skipped", {"file": path.name})
 
 
-def _window_reset_since(probe: Dict[str, Any], account: Dict[str, Any], now: float) -> bool:
-    """Has the account's 5-hour window reset since the probe found it limited? Either the reset time
-    seen at probe time has passed, or its usage now reports a different reset time (a new window)."""
-    at_probe = probe.get("resetsAt")
-    if not at_probe:
-        return False
-    current = account.get("fiveHourResetsAt")
-    if current and current != at_probe:
-        return True
+def _parse_ts(value: Any) -> Optional[float]:
     try:
         from datetime import datetime
-        return datetime.fromisoformat(str(at_probe).replace("Z", "+00:00")).timestamp() <= now
-    except ValueError:
+        return datetime.fromisoformat(str(value).replace("Z", "+00:00")).timestamp()
+    except (TypeError, ValueError):
+        return None
+
+
+def _window_reset_since(probe: Dict[str, Any], account: Dict[str, Any], now: float) -> bool:
+    """Has the limit the probe found ended with a 5-hour window reset? Only when the 5-hour bucket
+    was the limit at probe time (a per-model cap survives a 5-hour reset), and only by time: the reset
+    seen at probe time has passed, or the account now reports a reset more than a minute later. The
+    live endpoint returns microsecond timestamps that vary between calls, so strings are never compared."""
+    if float(probe.get("fiveHourAtProbe") or 0) < 100.0:
         return False
+    at_probe = _parse_ts(probe.get("resetsAt"))
+    if at_probe is None:
+        return False
+    if at_probe <= now:
+        return True
+    current = _parse_ts(account.get("fiveHourResetsAt"))
+    return current is not None and current > at_probe + 60
 
 
 def _standby_ok(a: Dict[str, Any], cfg: Dict[str, Any], active_fh: Optional[float] = None) -> bool:
@@ -1012,8 +1022,11 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
     evidence = {"activeUtilization": fh, "standbyUtilization": best.get("fiveHourUtil")}
     if limited_path:
         newest_report = max([p.get("at", 0) for p in pending] or [0])
+        resets = active.get("fiveHourResetsAt") if readable else None  # never a stale reading
+        if (_parse_ts(resets) or 0) <= now:
+            resets = None
         result, detail = probe_cached(active["id"], cfg["probeTtlSeconds"], fresh_after=newest_report,
-                                      resets_at=active.get("fiveHourResetsAt"))
+                                      resets_at=resets, five_hour=fh if readable else None)
         evidence["probe"] = result
         if result == "ok":
             resolve_signals()
@@ -1067,14 +1080,14 @@ def run_auto(reason: str = "hook", signal: Optional[str] = None) -> Dict[str, An
     now = time.time()
     if not signal and now - load_state().get("lastEvalAt", 0) < cfg["evalIntervalSeconds"]:
         return {"success": True, "action": "none", "reason": "recent_evaluation"}
+    if cfg.get("versionGate", True) and cfg.get("autoBalance", True):
+        claude_version()  # outside the lock: keeps the cached version (and the visible gate) current
     with pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=False, holder="auto:%s" % reason) as held:
         if not held:
             return {"success": True, "action": "none", "reason": "busy"}
         if not signal and time.time() - load_state().get("lastEvalAt", 0) < cfg["evalIntervalSeconds"]:
             return {"success": True, "action": "none", "reason": "recent_evaluation"}
         update_state(lambda s: s.__setitem__("lastEvalAt", time.time()))
-        if cfg.get("versionGate", True):
-            claude_version()  # keeps the cached version (and so the visible gate status) current
         return balance_accounts(source="auto_failover" if signal else "proactive_balance",
                                 signal=signal, blocking=False, automatic=True)
 
