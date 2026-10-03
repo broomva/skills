@@ -37,6 +37,7 @@ def default_paths(home):
         "STATE_PATH": home / ".cache/broomva-provider-state.json",
         "BALANCER_LOCK_PATH": home / ".cache/broomva-provider-balancer.lock",
         "STALLED_PATH": home / ".cache/broomva-provider-stalled.jsonl",
+        "SETTLE_LOCK_PATH": home / ".cache/broomva-provider-settle.lock",
         "CONFIG_PATH": home / ".config/broomva/provider-manager.json",
     }
 
@@ -179,7 +180,7 @@ class World:
         keychain_db.update_json(self.db, item or self.primary, USER, bump)
 
     def claude_process_reading_the_mirror(self):
-        self.ps_output.write_text("/Users/x/.local/share/claude/versions/2.1.280 -p hi PATH=/bin "
+        self.ps_output.write_text("/Users/x/.local/bin/claude --resume abc PATH=/bin "
                                   "CLAUDE_CONFIG_DIR=%s\n" % self.config_dir)
 
     def faults(self, **kw):

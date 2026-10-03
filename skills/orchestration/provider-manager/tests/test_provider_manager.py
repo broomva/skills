@@ -297,12 +297,17 @@ def test_a_stale_mirror_nobody_reads_does_not_block_switching_back(world):
 
 
 def test_override_detection_reads_real_environment_tokens_only(world):
+    cfg = world.config_dir
     world.ps_output.write_text(
-        "/usr/bin/grep CLAUDE_CONFIG_DIR= PATH=/bin\n"                      # a scan, not Claude Code
-        "/Users/x/.local/share/claude/versions/2.1.280 HOME=/Users/x PATH=/bin\n")
-    assert pm_store.config_dir_override_running() is False
+        "/usr/bin/grep CLAUDE_CONFIG_DIR=%s PATH=/bin\n" % cfg                   # a scan, not Claude Code
+        + "/Users/x/.local/share/claude/versions/2.1.280 HOME=/Users/x PATH=/bin\n"
+        + "/Users/x/.local/bin/claude -p hi PATH=/bin CLAUDE_CONFIG_DIR=/elsewhere/.claude\n")  # another dir
+    assert pm_store.config_dir_override_running(cfg) is False
+    world.ps_output.write_text("/Applications/Some App.app/Contents/claude/versions/2.1.280 --x "
+                               "PATH=/bin CLAUDE_CONFIG_DIR=%s\n" % cfg)  # a space in argv0
+    assert pm_store.config_dir_override_running(cfg) is True
     world.claude_process_reading_the_mirror()
-    assert pm_store.config_dir_override_running() is True
+    assert pm_store.config_dir_override_running(cfg) is True
 
 
 def test_refresh_persists_the_rotated_pair_to_the_copy(world):
@@ -727,8 +732,8 @@ def test_a_write_that_cannot_be_read_back_records_the_switch_as_unverified(world
     world.activate(A)
     real = pm.write_store_oauth
 
-    def lands_wrong(item, oauth, account=None, timeout=30.0):  # rc 0, but the item ends up different
-        real(item, dict(oauth, refreshToken="garbage"), account, timeout)
+    def lands_wrong(item, oauth, account=None, timeout=30.0, **kw):  # rc 0, but the item ends up different
+        real(item, dict(oauth, refreshToken="garbage"), account, timeout, **kw)
 
     monkeypatch.setattr(pm, "write_store_oauth", lands_wrong)
     with pytest.raises(pm_store.StoreError, match="did not read back"):
@@ -843,3 +848,147 @@ def test_events_and_stalled_logs_are_private(world, pmh, monkeypatch):
     pmh.handle_stop_failure({"session_id": "s", "error": "unknown"})
     for path in (pm.PROVIDER_EVENTS_PATH, pm.STALLED_PATH):
         assert (os.stat(path).st_mode & 0o777) == 0o600, path
+
+
+# -- P20 round 2 delta ----------------------------------------------------------------------------
+
+def test_the_unscoped_item_is_always_protected_even_when_it_is_the_mirror(world, monkeypatch):
+    """Run with CLAUDE_CONFIG_DIR=~/.claude, the primary is the scoped item and the mirror is
+    `Claude Code-credentials`: the item every default session reads, which no ps scan can see."""
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)  # both items hold A's chain, as A's copy does
+    monkeypatch.setenv("CLAUDE_CONFIG_DIR", str(world.config_dir))
+    primary, mirrors = pm_store.store_item_names()
+    assert mirrors == ["Claude Code-credentials"]
+    b = world.orca_creds(B)["claudeAiOauth"]
+    keychain_db.update_json(world.db, primary, "tester", lambda c: dict(c, claudeAiOauth=b))  # tool's view: B
+    a_rt = world.orca_creds(A)["claudeAiOauth"]["refreshToken"]
+    assert pm.refresh_account_token(world.accounts[A]["id"]) is None
+    assert fake_anthropic.refresh_state(a_rt) == "valid"
+
+
+def test_settle_loop_retries_until_a_switch_and_runs_once_per_machine(world, monkeypatch):
+    script = [{"action": "none", "reason": "cooldown", "remainingSeconds": 3},
+              {"action": "none", "reason": "switch_refused", "error": "the store changed while ...; retry"},
+              {"action": "switched", "reason": "confirmed_rate_limited"}]
+    calls = []
+
+    def fake_run_auto(reason="hook", signal=None):
+        res = script[len(calls)]
+        calls.append(res)
+        if res["action"] == "switched":
+            pm.update_state(lambda s: s.__setitem__("lastSwitch", {"at": time.time()}))
+        return res
+
+    monkeypatch.setattr(pm, "run_auto", fake_run_auto)
+    monkeypatch.setattr(pm.time, "sleep", lambda s: None)
+    assert pm.run_auto_until_settled("stop-failure", "rate_limit")["action"] == "switched"
+    assert len(calls) == 3
+    calls.clear()
+    script[:] = [{"action": "none", "reason": "no_healthy_standby"}]
+    with pm_state.exclusive(pm.SETTLE_LOCK_PATH):  # another settle loop is running
+        assert pm.run_auto_until_settled("stop-failure", "rate_limit")["reason"] == "settle_loop_running"
+    assert calls == []
+    assert pm.run_auto_until_settled("stop-failure", "rate_limit")["reason"] == "no_healthy_standby"
+    assert len(calls) == 1, "a conclusive outcome ends the loop"
+
+
+def test_login_headless_refuses_to_log_over_an_unidentifiable_live_store(world, monkeypatch):
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+    fake_anthropic.add_account("n@other.com", "uuid-n", "org-other")
+    keychain_db.update_json(world.db, world.primary, "tester",
+                            lambda c: dict(c, claudeAiOauth=fake_anthropic.mint("n@other.com")))
+    _login_world(world, monkeypatch, A)
+    before = world.store_raw()
+    with pytest.raises(pm.SwitchRefused, match="Pass --force"):
+        pm.login_headless(email=A)
+    assert world.store_raw() == before
+
+
+def test_a_report_newer_than_the_cached_probe_gets_a_new_probe(world):
+    world.add_account(A, five_hour=100.0)
+    world.add_account(B, five_hour=10.0)
+    world.activate(A)
+    world.set_usage(A, exhausted=True)
+    now = time.time()
+    pm.update_state(lambda s: s.update(
+        probes={world.accounts[A]["id"]: {"at": now - 100, "result": "ok"}},
+        pendingSignals=[{"type": "rate_limit", "at": now - 10}]))
+    res = pm.balance_accounts()
+    assert res["action"] == "switched" and res["probe"] == "limited"
+
+
+def test_an_unknown_probe_is_cached_for_seconds_not_minutes(world, monkeypatch):
+    monkeypatch.setattr(pm, "probe_active_account", lambda: ("ok", "fresh"))
+    pm.update_state(lambda s: s.__setitem__("probes", {"x": {"at": time.time() - 40, "result": "unknown"}}))
+    assert pm.probe_cached("x", 600.0) == ("ok", "fresh")
+
+
+def test_a_per_model_weekly_cap_counts_as_limited():
+    e = pm._numbers_entry("x", {"five_hour": {"utilization": 10}, "seven_day": {"utilization": 40},
+                                "seven_day_opus": {"utilization": 100}}, 1.0)
+    assert e["isRateLimited"] and e["lockedReason"] == "seven_day_opus_limit_reached"
+
+
+def test_no_failover_back_to_an_account_the_probe_confirmed_limited(world):
+    world.add_account(A, five_hour=100.0)
+    world.add_account(B, five_hour=10.0)
+    world.activate(A)
+    world.set_usage(A, exhausted=True)
+    assert pm.balance_accounts()["action"] == "switched"  # A probed limited, now on B
+    world.set_usage(B, five_hour=100.0, exhausted=True)
+    world.set_usage(A, five_hour=10.0, exhausted=False)  # A's numbers look fine again (a model cap?)
+    pm.update_state(lambda s: s.__setitem__("lastSwitch", {"at": time.time() - 400}))
+    os.unlink(pm.USAGE_CACHE_PATH)
+    assert pm.balance_accounts()["reason"] == "no_healthy_standby"
+
+
+def test_a_report_arriving_during_the_probe_survives_it(world, monkeypatch):
+    world.add_account(A, five_hour=100.0)
+    world.add_account(B, five_hour=10.0)
+    world.activate(A)
+    pm.update_state(lambda s: s.__setitem__("pendingSignals", [{"type": "rate_limit", "at": time.time() - 5}]))
+
+    def probe_while_a_new_report_lands(account_id, ttl, fresh_after=0.0):
+        time.sleep(0.01)
+        pm.update_state(lambda s: s["pendingSignals"].append({"type": "rate_limit", "at": time.time()}))
+        return "ok", "probe answered"
+
+    monkeypatch.setattr(pm, "probe_cached", probe_while_a_new_report_lands)
+    assert pm.balance_accounts()["reason"] == "probe_ok_not_limited"
+    assert len(pm.load_state()["pendingSignals"]) == 1
+
+
+def test_a_paused_version_gate_shows_in_the_session_start_line(world, pmh, monkeypatch):
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+    pm.update_state(lambda s: s.__setitem__("claudeVersion", {"path": "/x", "version": "2.2.0", "at": time.time()}))
+    monkeypatch.setenv("PROVIDER_MANAGER_AUTO", "0")
+    err = io.StringIO()
+    with patch("sys.stderr", err), patch.object(pmh, "kick"):
+        pmh.handle_session_start({})
+    assert "automatic switching paused: Claude Code 2.2.0" in err.getvalue()
+
+
+def test_existing_world_readable_logs_are_tightened(world):
+    pm.PROVIDER_EVENTS_PATH.parent.mkdir(parents=True, exist_ok=True)
+    pm.PROVIDER_EVENTS_PATH.write_text("")
+    os.chmod(pm.PROVIDER_EVENTS_PATH, 0o644)
+    pm.log_provider_event("x", {})
+    assert (os.stat(pm.PROVIDER_EVENTS_PATH).st_mode & 0o777) == 0o600
+
+
+def test_a_store_proven_dead_is_not_written_back_over_the_copy(world):
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+    s = world.session()
+    world.expire_store_access()
+    s.run(1)  # the store now holds a newer link of A's chain than A's copy
+    a_copy = world.orca_creds(A)
+    pm.switch_account(B, store_proven_dead=True)
+    assert world.orca_creds(A) == a_copy

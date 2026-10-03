@@ -100,15 +100,21 @@ def store_item_names() -> Tuple[str, List[str]]:
     return primary, mirrors
 
 
-_CLAUDE_ARGV0 = re.compile(r"(^|/)claude$|/claude/versions/\d+\.\d+\.\d+$|/@anthropic-ai/claude-code/")
-_OVERRIDE_VAR = re.compile(r"(?:^|\s)(CLAUDE_CONFIG_DIR|CLAUDE_SECURESTORAGE_CONFIG_DIR)=")
+_CLAUDE_CMD = re.compile(r"(^|/)claude(\s|$)|/claude/versions/\d+\.\d+\.\d+(\s|$)|/@anthropic-ai/claude-code/")
+_ENV_START = re.compile(r"\s[A-Za-z_][A-Za-z0-9_]*=")
+_OVERRIDE_VAR = re.compile(r"(?:^|\s)(?:CLAUDE_CONFIG_DIR|CLAUDE_SECURESTORAGE_CONFIG_DIR)=(\S+)")
 
 
-def config_dir_override_running() -> bool:
-    """Is any running Claude Code process launched with CLAUDE_CONFIG_DIR or
-    CLAUDE_SECURESTORAGE_CONFIG_DIR, and so possibly reading the other item name? Read from
-    `ps axeww` (argv0 must be Claude Code; the variable must be a real environment token). If the
-    process table cannot be read, the answer is yes: the caller then protects the mirror too."""
+def _same_dir(a: str, b: Any) -> bool:
+    return os.path.realpath(os.path.expanduser(a)) == os.path.realpath(str(b))
+
+
+def config_dir_override_running(config_dir: Any) -> bool:
+    """Is a running Claude Code process reading the scoped item for config_dir, i.e. launched with
+    CLAUDE_CONFIG_DIR (or CLAUDE_SECURESTORAGE_CONFIG_DIR) resolving to it? Read from `ps axeww`:
+    the command part (before the first environment token) must be Claude Code, and the variable must
+    be a real environment token with that value. If the process table cannot be read, the answer is
+    yes, and the caller then protects the mirror."""
     try:
         res = run_cmd(["ps", "axeww", "-o", "command="], timeout=10)
     except (OSError, subprocess.SubprocessError):
@@ -116,8 +122,13 @@ def config_dir_override_running() -> bool:
     if res.returncode != 0:
         return True
     for line in (res.stdout or "").splitlines():
-        if _CLAUDE_ARGV0.search(line.split(" ", 1)[0]) and _OVERRIDE_VAR.search(line):
-            return True
+        env_at = _ENV_START.search(line)
+        command = line[:env_at.start()] if env_at else line
+        if not _CLAUDE_CMD.search(command):
+            continue
+        for value in _OVERRIDE_VAR.findall(line[env_at.start():] if env_at else ""):
+            if _same_dir(value.strip('"'), config_dir):
+                return True
     return False
 
 
@@ -212,13 +223,13 @@ def read_store(item: str, account: Optional[str] = None, timeout: float = 30.0) 
 
 
 def write_store_oauth(item: str, oauth: Dict[str, Any], account: Optional[str] = None,
-                      timeout: float = 30.0) -> None:
+                      timeout: float = 30.0, attempts: int = 3) -> None:
     """Replace claudeAiOauth in one store item and nothing else: the item's mcpOAuth (and any other
     key) is re-read and written back as it was. The item is read twice and written only if both reads
     agree, which narrows (it cannot close) the window in which an MCP token refresh by Claude Code,
     which does not take the OAuth refresh lock, could be overwritten. Raises StoreError."""
     account = account or current_username()
-    for _ in range(3):
+    for _ in range(attempts):
         cur = keychain_read(item, account, timeout)
         if cur.status == "error":
             raise StoreError("cannot read %s before writing it (%s)" % (item, cur.detail))
@@ -236,17 +247,17 @@ def read_orca(account_id: str) -> Read:
     return keychain_read(ORCA_SERVICE, account_id)
 
 
-def write_orca_oauth(account_id: str, oauth: Dict[str, Any]) -> bool:
+def write_orca_oauth(account_id: str, oauth: Dict[str, Any], timeout: float = 30.0) -> bool:
     """Replace claudeAiOauth in an Orca account item, keeping its other keys, and read it back: a
     write-back that silently did not land would lose an account's only live chain."""
-    cur = keychain_read(ORCA_SERVICE, account_id)
+    cur = keychain_read(ORCA_SERVICE, account_id, timeout)
     if cur.status == "error":
         return False
     data = dict(cur.data or {})
     data["claudeAiOauth"] = oauth
-    if not keychain_write(ORCA_SERVICE, account_id, data):
+    if not keychain_write(ORCA_SERVICE, account_id, data, timeout):
         return False
-    check = oauth_of(keychain_read(ORCA_SERVICE, account_id).data)
+    check = oauth_of(keychain_read(ORCA_SERVICE, account_id, timeout).data)
     return bool(check) and same_token(check.get("refreshToken"), oauth.get("refreshToken"))
 
 

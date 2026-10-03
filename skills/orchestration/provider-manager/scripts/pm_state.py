@@ -75,6 +75,24 @@ def balancer_lock(path: Path, blocking: bool = False, timeout: float = 30.0, hol
         f.close()
 
 
+@contextmanager
+def exclusive(path: Path) -> Iterator[bool]:
+    """A plain non-blocking flock, separate from the reentrant balancer lock (used to keep one
+    settle loop per machine). Yields whether it was acquired."""
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with open(path, "a+") as f:
+        try:
+            fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            yield False
+            return
+        try:
+            yield True
+        finally:
+            fcntl.flock(f, fcntl.LOCK_UN)
+
+
 def lock_holder(path: Path) -> Optional[Dict[str, Any]]:
     """Who holds the balancer lock right now, or None."""
     path = Path(path)
@@ -172,6 +190,7 @@ def _append_private(path: Path, line: str) -> None:
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
         fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        os.fchmod(fd, 0o600)  # also tighten a file created by an older version
         with os.fdopen(fd, "a", encoding="utf-8") as f:
             f.write(line + "\n")
     except OSError:

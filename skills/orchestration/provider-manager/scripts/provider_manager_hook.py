@@ -68,6 +68,9 @@ def handle_session_start(payload: dict) -> None:
                                             "%s%%" % sd if sd is not None else "?",
                                             "" if u.get("telemetry", "ok") == "ok" else ", " + u.get("telemetry"))
             parts.append(("Active: " if acc.get("id") == active_id else "Standby: ") + label)
+        gate = pm.gate_status()
+        if gate:
+            parts.append(gate)
         if parts:
             sys.stderr.write("[provider-manager] %s\n" % " | ".join(sorted(parts)))
     except Exception:  # noqa: BLE001 - a status line must never break a session

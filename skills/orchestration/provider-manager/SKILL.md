@@ -60,8 +60,8 @@ So `switch` (and every balance or failover, which go through it):
    recorded as `switch.unverified`, and the cooldown still applies.
 
 This tool never refreshes a refresh token that a store item holds. That refresh token belongs to
-Claude Code, and spending it would kill every session. A mirror's token is protected whenever a
-running Claude Code process was launched with `CLAUDE_CONFIG_DIR`.
+Claude Code, and spending it would kill every session. The unscoped item is always protected. A
+scoped mirror is protected whenever a running Claude Code process is configured to read it.
 
 ## The balancer
 
@@ -80,7 +80,9 @@ many sessions kick. It switches only when:
   refresh the store's credential.
 - **never on its own:** a store left empty (`/logout`) is not refilled. On a Claude Code version
   other than the measured one (2.1.280), automatic switching is observe-only (`would_switch`,
-  `version_unverified`) until the drill is re-run and the version added (`verifiedClaudeVersions`).
+  `version_unverified`, shown in the session-start line and `usage`) until the drill is re-run and
+  the version added (`verifiedClaudeVersions`). An account the probe confirmed limited is not a
+  failover target for an hour.
 
 Telemetry that cannot be read is never a rate limit. The usage endpoint answering 429 means
 `throttled` (back off, keep the last numbers marked stale). An expired token means `auth_expired`. A

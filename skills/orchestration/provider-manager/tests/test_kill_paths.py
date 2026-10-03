@@ -317,3 +317,22 @@ def test_k14_a_dead_active_grant_fails_over_to_a_healthy_account(world, pmh, mon
     resumed = world.session("S1-resumed")
     assert resumed.run(2) == ["ok", "ok"]
     assert resumed.served[-1] == B
+
+
+# K15 — a copy whose access token is still valid but whose refresh token is already spent (a forced
+# refresh elsewhere, a 401 retry). Checking the access token alone would let it through, and every
+# session would die at its first refresh. The switch must prove the refresh token by refreshing it.
+def test_k15_a_live_access_token_with_a_spent_refresh_token_never_reaches_the_store(world):
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+    fake_anthropic.consume(world.orca_creds(B)["claudeAiOauth"]["refreshToken"])  # AT still valid for an hour
+    s = world.session()
+
+    _try(pm.switch_account, B)
+    # time passes: the access token the store holds expires, so the session must refresh its chain
+    fake_anthropic.expire_access(world.store()["claudeAiOauth"]["accessToken"])
+    world.expire_store_access()
+
+    s.run(2)
+    assert s.dead is None

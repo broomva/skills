@@ -74,14 +74,15 @@
     reads.** Verified 2026-10-02: no running `claude` process sets `CLAUDE_CONFIG_DIR`, and this item's
     mdat follows the sessions' refreshes.
   * `Claude Code-credentials-<sha256(config dir)[:8]>` when `CLAUDE_CONFIG_DIR` is set (`d098dafb` for
-    `~/.claude`). provider-manager keeps it in step as a mirror, for any session launched that way.
+    `~/.claude`). Old provider-manager versions also wrote this item (the "mirror"); this version never
+    writes it.
   * `CLAUDE_SECURESTORAGE_CONFIG_DIR` overrides both. Account: `$USER`.
   * Value: JSON (hex when written with `-X`) holding `claudeAiOauth` (Claude's access/refresh tokens,
     `expiresAt`, scopes) and `mcpOAuth` (MCP servers' OAuth: Linear, Slack, Sentry...).
-* **Per-item write invariant**: a switch replaces `claudeAiOauth` in each item and writes the item's
-  other keys back exactly as it read them, immediately before (under Claude Code's refresh lock). MCP
-  tokens are never copied between items or from an Orca copy. The old cross-item merge let the stale
-  mirror's Linear tokens overwrite the live ones (D28).
+* **Write invariant**: a switch replaces `claudeAiOauth` in the primary item only, and writes the
+  item's other keys back exactly as it read them (read twice, written only if both reads agree, under
+  Claude Code's refresh lock). MCP tokens are never copied between items or from an Orca copy. The
+  old cross-item merge let the stale mirror's Linear tokens overwrite the live ones (D28).
 
 ---
 
@@ -169,10 +170,15 @@ Drill results (real binary, sandboxed scratch HOME, stubbed endpoints) are in th
 
 **Refresh interlock:** `refresh_account_token` runs only under the balancer lock (non-blocking: if
 another provider-manager action holds it, nothing is refreshed), and re-reads every store item
-immediately before the POST. It refuses: the account the store holds; any copy whose refresh token
-equals the primary item's; one equal to the mirror's while a running Claude Code process was launched
-with `CLAUDE_CONFIG_DIR` (from `ps axeww`); and, unless the store was proven dead or the operator
-forced it, any refresh while the store's account cannot be identified. On `invalid_grant`, the copy is
+immediately before the POST. It refuses:
+- the account the store holds;
+- any copy whose refresh token equals the primary item's, or the unscoped `Claude Code-credentials`
+  item's even when that item is the mirror (every default session reads it);
+- one equal to a scoped mirror's while a running Claude Code process has `CLAUDE_CONFIG_DIR` resolving
+  to that config dir (from `ps axeww`: the command part must be Claude Code, the variable a real
+  environment token; an unreadable process table counts as yes);
+- unless the store was proven dead or the operator forced it, any refresh while the store's account
+  cannot be identified. On `invalid_grant`, the copy is
 re-read: if another writer changed it meanwhile, it is not marked `needs_login`. Telemetry for the
 store's account uses the store's access token and never refreshes it.
 
@@ -193,21 +199,27 @@ default model as the sessions), from an empty temp dir. Its environment drops `C
 `CLAUDE_CODE_*`, `CLAUDE_PID` and `ANTHROPIC_*` auth overrides, keeps `CLAUDE_CONFIG_DIR` as the
 sessions have it, and sets `PROVIDER_MANAGER_PROBE=1` (the hook no-ops on it).
 
-The result is cached for `probeTtlSeconds`:
+The result is cached for `probeTtlSeconds` (30 s for `unknown`), and a report newer than the cached
+probe always gets a fresh one:
 - `ok`;
 - `limited` (`api_error_status: 429` in Claude Code's JSON result, else the limit phrases);
 - `auth_dead` ("OAuth session expired and could not be refreshed");
 - `unknown`.
 
-`limited` permits a rate-limit failover; `auth_dead` permits the dead-grant failover. Measured against
+`limited` permits a rate-limit failover; `auth_dead` permits the dead-grant failover. An account the
+probe confirmed `limited` is not a failover target for an hour, whatever its numbers say: a per-model
+cap need not show in the 5-hour/7-day totals. Per-model weekly buckets (`seven_day_opus`,
+`seven_day_sonnet`, …) at 100% also count as limited. Measured against
 the real 2.1.280 binary (`tests/drill`, `probe` scenario):
 - a subscription-limit 429 (with the `anthropic-ratelimit-unified-status: rejected` / `-reset` headers)
   prints "You've hit your session limit · resets 10:47pm (…)" with `api_error_status: 429`;
 - a dead grant prints the auth message.
 
-**Version gate.** `claude --version` (cached per resolved binary, 1 h) must be in
-`MEASURED_CLAUDE_VERSIONS` (2.1.280) or `verifiedClaudeVersions`. Otherwise automatic evaluations log
-`version_unverified` and only `would_switch`. Operator commands are not gated.
+**Version gate.** `claude --version` (the binary on PATH, else `~/.local/bin`; cached per resolved
+binary for 1 h, a failed check for 1 min) must be in `MEASURED_CLAUDE_VERSIONS` (2.1.280) or
+`verifiedClaudeVersions`. Otherwise automatic evaluations log `version_unverified` and only
+`would_switch`, and the pause shows in the session-start line, `usage` and `state`. Operator commands
+(`switch`, `balance`, `rotate`) are not gated.
 
 ## 6. Files and events
 
@@ -246,4 +258,6 @@ entries are now no-ops and may be removed:
 No matcher: the hook reads `error` itself. It records every stalled turn and starts a failover
 evaluation for `rate_limit` and `authentication_failed`. The evaluation still needs the probe to agree
 before it acts. In the detached process, a reported limit that cannot be acted on yet (lock busy, inside
-the 5-minute gap) is retried for up to 15 minutes, because stalled sessions send no prompts.
+the 5-minute gap, an inconclusive probe, a transient refusal) is retried for up to 15 minutes, because
+stalled sessions send no prompts. One such loop runs per machine (`broomva-provider-settle.lock`), and
+it stops once any switch has happened. A resolved evaluation clears only the reports it saw.

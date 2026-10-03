@@ -119,6 +119,9 @@ def main(pm) -> None:
                     if a.get("sevenDayResetsAt"):
                         sd += " (%s)" % a["sevenDayResetsAt"].split("T")[0]
                     print("%-8s %-28s %-22s %-22s %s" % (" * " if a["isActive"] else "", a["email"], fh, sd, _usage_status(a)))
+                gate = pm.gate_status()
+                if gate:
+                    print("\nNote: %s." % gate)
         elif args.command == "balance":
             if args.auto:
                 res = pm.run_auto_until_settled(reason=args.reason, signal=args.signal)
@@ -185,6 +188,8 @@ def main(pm) -> None:
             st = pm.load_state()
             st["lockHolder"] = pm_state.lock_holder(pm.BALANCER_LOCK_PATH)
             st["config"] = pm.load_config()
+            verified, version = pm.version_verified(st["config"])
+            st["versionGate"] = {"claudeVersion": version, "automaticSwitching": "on" if verified else "paused"}
             st.pop("storeIdentity", None)
             print(json.dumps(st, indent=2))
     except Exception as e:  # noqa: BLE001 - the CLI reports, it does not trace

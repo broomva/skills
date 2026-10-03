@@ -46,8 +46,16 @@ name and attributes only.
    classification measured against the real binary). Then merge pinned; live install (vendored copy,
    swapped atomically under a 30-min hold); Linear.
 
-Checkpoint (round 2, local): 77 tests pass (Python 3.9 and 3.14). The 14 kill-path tests all fail on
-origin/main. 29/29 mutations proven (strict: only assertion failures count). Round 1 was 58 tests, 20/20. Real-binary drill: stale-target and rotation-back KILLED on origin/main ("OAuth session
+Checkpoint (round 2 PASSED: B 8/10, C 7/10, A unavailable). Post-pass delta for their MAJORs:
+- the unscoped item is always protected;
+- a closed version gate is visible;
+- a probe cache older than the newest report is ignored;
+- no failover back to a probe-limited account, and per-model caps count;
+- the settle loop is single-flight;
+- the lock hold is bounded.
+
+Now: 89 tests pass (3.9 and 3.14); all 15 kill-path tests fail on origin/main; 36/36 mutations proven;
+real-binary drill passes (switch scenarios and the probe). Real-binary drill: stale-target and rotation-back KILLED on origin/main ("OAuth session
 expired and could not be refreshed"), SURVIVED here; healthy-target survives both, and the running session is
 served by the new account after the switch.
 

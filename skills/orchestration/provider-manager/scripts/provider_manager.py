@@ -41,6 +41,7 @@ from pm_store import (  # noqa: E402
     LockBusy,
     StoreError,
     claude_config_dir,
+    STORE_BASE,
     claude_refresh_lock,
     config_dir_override_running,
     current_username,
@@ -68,6 +69,7 @@ PROVIDER_EVENTS_PATH = HOME / ".cache/broomva-provider-events.jsonl"
 STATE_PATH = HOME / ".cache/broomva-provider-state.json"
 BALANCER_LOCK_PATH = HOME / ".cache/broomva-provider-balancer.lock"
 STALLED_PATH = HOME / ".cache/broomva-provider-stalled.jsonl"
+SETTLE_LOCK_PATH = HOME / ".cache/broomva-provider-settle.lock"
 CONFIG_PATH = HOME / ".config/broomva/provider-manager.json"
 
 USAGE_API_URL = "https://api.anthropic.com/api/oauth/usage"
@@ -78,7 +80,8 @@ USER_AGENT = "Claude-Code/2.1.280"
 
 CACHE_TTL_SECONDS = 90.0
 CLAUDE_LOCK_WAIT_SECONDS = 5.0
-LOCKED_IO_TIMEOUT = 8.0  # each keychain call made while holding Claude Code's refresh lock
+LOCKED_IO_TIMEOUT = 5.0  # each keychain call made while holding Claude Code's refresh lock
+LIMITED_HOLD_SECONDS = 3600.0  # a probe-confirmed limited account is not a failover target for this long
 PROBE_TIMEOUT_SECONDS = 90.0
 PROBE_PROMPT = "Reply with the single word OK."
 # The probe reads Claude Code's structured result first (`api_error_status`). These phrases are the
@@ -127,14 +130,16 @@ def _load_json(path: Path, default: Any) -> Any:
         return default
 
 
-def _save_json(path: Path, data: Any) -> bool:
-    """Atomic replace that writes through a symlink and keeps the file's mode (new files: 0600)."""
+def _save_json(path: Path, data: Any, mode: Optional[int] = None) -> bool:
+    """Atomic replace that writes through a symlink and keeps the file's mode (new files: 0600),
+    unless a mode is given."""
     path = Path(os.path.realpath(str(path)))
     path.parent.mkdir(parents=True, exist_ok=True)
-    try:
-        mode = os.stat(path).st_mode & 0o777
-    except OSError:
-        mode = 0o600
+    if mode is None:
+        try:
+            mode = os.stat(path).st_mode & 0o777
+        except OSError:
+            mode = 0o600
     tmp = path.with_name("%s.tmp.%d" % (path.name, os.getpid()))
     try:
         fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
@@ -214,7 +219,7 @@ def read_usage_cache() -> Dict[str, Any]:
 
 
 def save_usage_cache(data: Dict[str, Any]) -> bool:
-    return _save_json(USAGE_CACHE_PATH, data)
+    return _save_json(USAGE_CACHE_PATH, data, mode=0o600)
 
 
 def log_provider_event(event_type: str, details: Dict[str, Any]) -> None:
@@ -316,12 +321,18 @@ def build_context(verify_identity: bool = True) -> Dict[str, Any]:
     user = current_username()
     store = read_store(primary, user)
     mirror_reads = [read_store(m, user) for m in mirrors]
-    primary_rt = (oauth_of(store.data) or {}).get("refreshToken")
-    mirror_rts = [(oauth_of(r.data) or {}).get("refreshToken") for r in mirror_reads]
+    # Protected unconditionally: the primary and, if it is the mirror, the unscoped item (what every
+    # session without CLAUDE_CONFIG_DIR reads). A scoped mirror is protected only while a Claude Code
+    # process is configured to read it (see refresh_account_token).
+    unconditional = [store] + [r for m, r in zip(mirrors, mirror_reads) if m == STORE_BASE]
+    scoped = [r for m, r in zip(mirrors, mirror_reads) if m != STORE_BASE]
+    def rts(reads):
+        return [o["refreshToken"] for o in (oauth_of(r.data) for r in reads) if o and o.get("refreshToken")]
+
     ctx = {
         "accounts": accounts, "copies": copies, "primary": primary, "mirrors": mirrors, "user": user,
-        "store": store, "storeOauth": oauth_of(store.data), "storeRts": [primary_rt] if primary_rt else [],
-        "mirrorRts": [r for r in mirror_rts if r],
+        "store": store, "storeOauth": oauth_of(store.data), "storeRts": rts(unconditional),
+        "mirrorRts": rts(scoped),
         "storeReadable": store.status != "error" and all(r.status != "error" for r in mirror_reads),
     }
     ctx["storeAccountId"], ctx["storeIdentity"] = identify_store_account(ctx, verify=verify_identity)
@@ -419,7 +430,7 @@ def refresh_account_token(account_id: str, allow_unverified: bool = False) -> Op
         if not refusal and any(same_token(oauth["refreshToken"], rt) for rt in ctx["storeRts"]):
             refusal = "refresh_token_in_store"
         if not refusal and any(same_token(oauth["refreshToken"], rt) for rt in ctx["mirrorRts"]) \
-                and config_dir_override_running():
+                and config_dir_override_running(claude_config_dir()):
             refusal = "refresh_token_in_mirror_with_a_reader"
         if refusal:
             log_provider_event("refresh.refused", {"accountId": account_id, "reason": refusal})
@@ -473,6 +484,10 @@ def _parse_numbers(account_id: str, data: Dict[str, Any], now: float) -> Dict[st
     for lim in data.get("limits") or []:
         if lim.get("is_active") and (lim.get("percent") or 0) >= 100:
             locked = locked or "%s_limit_reached" % lim.get("group", "usage")
+    for key, bucket in data.items():  # per-model weekly caps (seven_day_opus, seven_day_sonnet, ...)
+        if key.startswith("seven_day_") and isinstance(bucket, dict) \
+                and float(bucket.get("utilization", bucket.get("used_percentage", 0)) or 0) >= 100.0:
+            locked = locked or "%s_limit_reached" % key
     limited = bool(locked or fh_util >= 100.0 or sd_util >= 100.0)
     if limited:
         status = "limited"
@@ -653,9 +668,12 @@ def probe_active_account() -> Tuple[str, str]:
     return "unknown", "probe rc %d" % res.returncode
 
 
-def probe_cached(account_id: str, ttl: float) -> Tuple[str, str]:
+def probe_cached(account_id: str, ttl: float, fresh_after: float = 0.0) -> Tuple[str, str]:
+    """A probe result from the last `ttl` seconds (30 s for "unknown"), unless it predates
+    fresh_after: a report newer than the cached probe gets a new probe."""
     p = (load_state().get("probes") or {}).get(account_id) or {}
-    if p and time.time() - p.get("at", 0) < ttl:
+    age_ok = time.time() - p.get("at", 0) < (30.0 if p.get("result") == "unknown" else ttl)
+    if p and age_ok and p.get("at", 0) >= fresh_after:
         return p.get("result", "unknown"), "cached"
     result, detail = probe_active_account()
     update_state(lambda s: s.setdefault("probes", {}).__setitem__(
@@ -664,14 +682,20 @@ def probe_cached(account_id: str, ttl: float) -> Tuple[str, str]:
     return result, detail
 
 
+def _claude_binary() -> Optional[str]:
+    return shutil.which("claude", path=os.environ.get("PATH")) or shutil.which("claude", path=str(HOME / ".local/bin"))
+
+
 def claude_version() -> Optional[str]:
-    """`claude --version` of the binary on PATH, cached per resolved binary path for an hour."""
-    claude = shutil.which("claude", path=os.environ.get("PATH"))
+    """`claude --version` of the binary on PATH (else ~/.local/bin), cached per resolved binary path
+    for an hour; a failed check is cached for a minute only."""
+    claude = _claude_binary()
     if not claude:
         return None
     real = os.path.realpath(claude)
     cached = load_state().get("claudeVersion") or {}
-    if cached.get("path") == real and time.time() - cached.get("at", 0) < 3600:
+    ttl = 3600 if cached.get("version") else 60
+    if cached.get("path") == real and time.time() - cached.get("at", 0) < ttl:
         return cached.get("version")
     try:
         res = subprocess.run([claude, "--version"], text=True, capture_output=True, timeout=20, env=_probe_env())
@@ -683,11 +707,26 @@ def claude_version() -> Optional[str]:
     return version
 
 
-def version_verified(cfg: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+def version_verified(cfg: Dict[str, Any], version: Optional[str] = None, check: bool = True) -> Tuple[bool, Optional[str]]:
     if not cfg.get("versionGate", True):
         return True, None
-    version = claude_version()
+    if check:
+        version = claude_version()
     return version in MEASURED_CLAUDE_VERSIONS + list(cfg.get("verifiedClaudeVersions") or []), version
+
+
+def gate_status() -> Optional[str]:
+    """A one-line warning when automatic switching is paused by the version gate, from the cached
+    check only (no subprocess: the hook calls this). None when it is not paused."""
+    cfg = load_config()
+    cached = load_state().get("claudeVersion") or {}
+    if not cached:
+        return None
+    ok, version = version_verified(cfg, cached.get("version"), check=False)
+    if ok:
+        return None
+    return "automatic switching paused: Claude Code %s is not a measured version (%s)" % (
+        version or "unknown", ", ".join(MEASURED_CLAUDE_VERSIONS + list(cfg.get("verifiedClaudeVersions") or [])))
 
 
 # -- switch ---------------------------------------------------------------------------------------
@@ -768,6 +807,8 @@ def _switch_locked(identifier: str, source: str, metadata: Dict[str, Any], force
             log_provider_event("switch.discard_unverified", {
                 "identity": how, "why": "proven dead by the probe" if store_proven_dead else "--force"})
 
+    if store_proven_dead:
+        write_back = None  # Claude Code proved the store's chain dead: never bury the copy's under it
     ok, live_oauth, why = _validate_target(target, allow_unverified=bool(force or store_proven_dead))
     if not ok:
         raise SwitchRefused("%s is not safe to switch to: %s" % (target["email"], why))
@@ -780,12 +821,12 @@ def _switch_locked(identifier: str, source: str, metadata: Dict[str, Any], force
                 raise SwitchRefused("the credential store became unreadable; nothing was written")
             if not _same_chain(oauth_of(now_store.data), store_oauth):
                 raise SwitchRefused("the store changed while the switch was being prepared; retry")
-            if write_back and not write_orca_oauth(write_back, store_oauth):
+            if write_back and not write_orca_oauth(write_back, store_oauth, LOCKED_IO_TIMEOUT):
                 raise SwitchRefused("could not save the outgoing account's live tokens; nothing was switched")
             if held_for() > LOCK_MAX_HOLD_SECONDS:
                 raise SwitchRefused("the keychain is too slow to switch safely inside Claude Code's refresh lock")
             attempted = True
-            write_store_oauth(ctx["primary"], live_oauth, ctx["user"], LOCKED_IO_TIMEOUT)
+            write_store_oauth(ctx["primary"], live_oauth, ctx["user"], LOCKED_IO_TIMEOUT, attempts=1)
             check = oauth_of(read_store(ctx["primary"], ctx["user"], LOCKED_IO_TIMEOUT).data)
             if not check or not same_token(check.get("refreshToken"), live_oauth.get("refreshToken")):
                 raise StoreError("the store was written but did not read back the new credential; "
@@ -826,8 +867,9 @@ def _record_active(target: Dict[str, Any]) -> None:
         for acc in orca["settings"].get("claudeManagedAccounts", []):
             if acc.get("id") == target.get("id"):
                 acc["updatedAt"] = now_ms()
-    _guarded_update(CLAUDE_CONFIG_PATH, claude_hint)
-    _guarded_update(ORCA_DATA_PATH, orca_active)
+    for path, fn in ((CLAUDE_CONFIG_PATH, claude_hint), (ORCA_DATA_PATH, orca_active)):
+        if not _guarded_update(path, fn):
+            log_provider_event("record_active.skipped", {"file": path.name})
 
 
 def _standby_ok(a: Dict[str, Any], cfg: Dict[str, Any], active_fh: Optional[float] = None) -> bool:
@@ -878,8 +920,9 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
         signal = signal or pending[-1].get("type")
 
     def resolve_signals():
-        if pending and not dry_run:
-            update_state(lambda s: s.__setitem__("pendingSignals", []))
+        if pending and not dry_run:  # only the reports this evaluation saw; newer ones stay
+            update_state(lambda s: s.__setitem__(
+                "pendingSignals", [p for p in s.get("pendingSignals", []) if p.get("at", 0) > now]))
 
     ctx = build_context(verify_identity=True)
     accounts = fetch_all_usage(ctx=ctx)
@@ -887,7 +930,12 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
         return {"success": True, "action": "none", "reason": "single_account",
                 "message": "Only 1 account configured in roster."}
 
+    probes = state.get("probes") or {}
+
     def healthy(a, active_fh=None):
+        p = probes.get(a.get("id")) or {}
+        if p.get("result") == "limited" and now - p.get("at", 0) < LIMITED_HOLD_SECONDS:
+            return False  # its numbers may look fine (a per-model cap); the probe said otherwise
         return _standby_ok(a, cfg, active_fh)
 
     def rank(a):
@@ -929,7 +977,8 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
 
     evidence = {"activeUtilization": fh, "standbyUtilization": best.get("fiveHourUtil")}
     if limited_path:
-        result, detail = probe_cached(active["id"], cfg["probeTtlSeconds"])
+        newest_report = max([p.get("at", 0) for p in pending] or [0])
+        result, detail = probe_cached(active["id"], cfg["probeTtlSeconds"], fresh_after=newest_report)
         evidence["probe"] = result
         if result == "ok":
             resolve_signals()
@@ -993,17 +1042,34 @@ def run_auto(reason: str = "hook", signal: Optional[str] = None) -> Dict[str, An
                                 signal=signal, blocking=False, automatic=True)
 
 
+TRANSIENT_REFUSALS = ("store changed", "refreshing its token", "holds the balancer lock")
+
+
 def run_auto_until_settled(reason: str, signal: Optional[str], budget_seconds: float = 900.0) -> Dict[str, Any]:
     """For a reported limit (detached process only): when the evaluation could not act yet (lock
-    busy, inside the failover gap), wait and try again, for up to 15 minutes. Sessions stalled on the
-    limit send no prompts, so nothing else would start the evaluation again."""
-    deadline = time.time() + budget_seconds
-    res = run_auto(reason=reason, signal=signal)
-    while signal and res.get("reason") in ("busy", "cooldown") and time.time() < deadline:
-        wait = res.get("remainingSeconds") if res.get("reason") == "cooldown" else 15
-        time.sleep(max(5.0, min(float(wait or 15) + 1.0, deadline - time.time())))
+    busy, inside the failover gap, an inconclusive probe, a transient refusal), wait and try again
+    for up to 15 minutes. Sessions stalled on the limit send no prompts, so nothing else would start
+    it again. One such loop per machine (the report is in the state for it), and it stops as soon as
+    any switch has happened."""
+    if not signal:
+        return run_auto(reason=reason)
+    with pm_state.exclusive(SETTLE_LOCK_PATH) as mine:
+        if not mine:
+            return {"success": True, "action": "none", "reason": "settle_loop_running"}
+        started = time.time()
+        deadline = started + budget_seconds
         res = run_auto(reason=reason, signal=signal)
-    return res
+        while time.time() < deadline:
+            if float((load_state().get("lastSwitch") or {}).get("at", 0) or 0) >= started:
+                break
+            r = res.get("reason")
+            transient = r == "switch_refused" and any(t in (res.get("error") or "") for t in TRANSIENT_REFUSALS)
+            if r not in ("busy", "cooldown", "probe_inconclusive") and not transient:
+                break
+            wait = res.get("remainingSeconds") if r == "cooldown" else (35 if r == "probe_inconclusive" else 15)
+            time.sleep(max(5.0, min(float(wait or 15) + 1.0, deadline - time.time())))
+            res = run_auto(reason=reason, signal=signal)
+        return res
 
 
 def rotate_account(reason: str = "rate_limit", dry_run: bool = False, force: bool = False) -> Dict[str, Any]:
