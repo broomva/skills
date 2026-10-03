@@ -1,8 +1,8 @@
 """Shared fixtures. Every test runs hermetically: no test can reach the login keychain, the real
 `claude`, or the network.
 
-- PATH starts with a guard dir whose `security`, `claude` and `node` refuse (exit 99), unless the
-  test builds a `world`, whose fakes replace them.
+- PATH starts with a guard dir whose `security`, `claude` and `node` refuse (exit 99) and whose `ps`
+  shows nothing, unless the test builds a `world`, whose fakes replace them.
 - HOME and every module path constant point into tmp.
 - urllib is blocked unless a `world` routes it to the Anthropic stub.
 
@@ -53,6 +53,8 @@ def hermetic(tmp_path, monkeypatch):
         p = guard_bin / name
         p.write_text("#!/bin/sh\necho 'test guard: %s refused' >&2\nexit 99\n" % name)
         p.chmod(0o755)
+    (guard_bin / "ps").write_text("#!/bin/sh\nexit 0\n")  # no process table outside a world
+    (guard_bin / "ps").chmod(0o755)
     home = tmp_path / "guard-home"
     home.mkdir()
     monkeypatch.setenv("HOME", str(home))

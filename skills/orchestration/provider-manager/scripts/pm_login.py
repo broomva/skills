@@ -61,7 +61,12 @@ def run_claude_login(email: str, org_uuid: str, browser: str, profile: Optional[
     approve_cmd = ["node", str(AUTH_HELPER_PATH), "approve-oauth", auth_url[0], org_uuid, browser]
     if profile:
         approve_cmd.append(profile)
-    appr = subprocess.run(approve_cmd, text=True, capture_output=True, timeout=60)
+    try:
+        appr = subprocess.run(approve_cmd, text=True, capture_output=True, timeout=60)
+    except (OSError, subprocess.SubprocessError):
+        proc.kill()  # never leave a login listener behind (it could finish into a deleted scratch dir)
+        reader.join(timeout=2.0)
+        raise
     code = None
     if appr.returncode == 0:
         try:

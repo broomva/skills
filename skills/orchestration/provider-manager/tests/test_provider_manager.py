@@ -28,6 +28,14 @@ B = "b@example.com"
 C = "c@example.com"
 
 
+def _switch(target, **kw):
+    """switch_account, with a refusal returned as a value (so a test asserts on it, not crashes)."""
+    try:
+        return pm.switch_account(target, **kw)
+    except pm.SwitchRefused as e:
+        return {"success": False, "refused": str(e)}
+
+
 def _decisions(world):
     return world.events("balance.decision")
 
@@ -56,7 +64,7 @@ def test_store_item_names_follow_claude_code(monkeypatch, tmp_path):
 
 
 def test_keychain_write_keeps_secrets_off_argv_up_to_the_security_stdin_limit():
-    secret = "oat01-fake-" + "x" * 900  # a realistic store item is well over 800 bytes
+    secret = "oat01-fake-" + "x" * 900  # well over the old 800-byte limit, under 4032 chars of command
     data = {"claudeAiOauth": {"accessToken": secret}, "mcpOAuth": {"linear": {"accessToken": "y" * 400}}}
     with patch.object(pm_store, "run_cmd", return_value=MagicMock(returncode=0)) as run:
         assert pm_store.keychain_write("Svc", "acct", data) is True
@@ -98,14 +106,15 @@ def test_list_accounts_marks_the_store_account_active(world):
 
 # -- switch ---------------------------------------------------------------------------------------
 
-def test_switch_writes_claudeaioauth_to_both_items_and_records_the_switch(world):
+def test_switch_writes_the_primary_item_only_and_records_the_switch(world):
     world.add_account(A)
     world.add_account(B)
     world.activate(A)
+    mirror_before = world.store_raw(world.mirror)
     res = pm.switch_account(B)
     assert res["success"] and res["switchedTo"] == B
-    for item in (world.primary, world.mirror):
-        assert world.store(item)["claudeAiOauth"]["refreshToken"] == world.orca_creds(B)["claudeAiOauth"]["refreshToken"]
+    assert world.store()["claudeAiOauth"]["refreshToken"] == world.orca_creds(B)["claudeAiOauth"]["refreshToken"]
+    assert world.store_raw(world.mirror) == mirror_before, "one chain must never sit in two refreshable items"
     assert json.loads(world.paths["CLAUDE_CONFIG_PATH"].read_text())["oauthAccount"]["emailAddress"] == B
     assert world.orca_active_email() == B
     ev = world.switches()[-1]
@@ -266,9 +275,34 @@ def test_refresh_never_spends_a_refresh_token_that_a_store_item_holds(world):
     world.activate(A)
     rt = world.orca_creds(A)["claudeAiOauth"]["refreshToken"]
     assert pm.refresh_account_token(world.accounts[A]["id"]) is None  # A is the store's account
-    assert pm.refresh_account_token(world.accounts[A]["id"], store_rts=[rt], store_account_id=None) is None
-    assert fake_anthropic.refresh_state(rt) == "valid"
-    assert {e["reason"] for e in world.events("refresh.refused")} == {"refresh_token_in_store", "store_account"}
+    b_oauth = world.orca_creds(B)["claudeAiOauth"]
+    b_rt = b_oauth["refreshToken"]
+    keychain_db.update_json(world.db, world.mirror, "tester",  # the mirror holds B's chain...
+                            lambda c: dict(c, claudeAiOauth=b_oauth))
+    world.claude_process_reading_the_mirror()  # ...and a running session reads the mirror
+    assert pm.refresh_account_token(world.accounts[B]["id"]) is None
+    assert fake_anthropic.refresh_state(rt) == "valid" and fake_anthropic.refresh_state(b_rt) == "valid"
+    assert {e["reason"] for e in world.events("refresh.refused")} == {
+        "store_account", "refresh_token_in_mirror_with_a_reader"}
+
+
+def test_a_stale_mirror_nobody_reads_does_not_block_switching_back(world):
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)  # like old provider-manager: A's chain in the primary, the mirror and A's copy
+    assert _switch(B)["success"]
+    res = _switch(A)
+    assert res["success"], res
+    assert world.store_email() == A
+
+
+def test_override_detection_reads_real_environment_tokens_only(world):
+    world.ps_output.write_text(
+        "/usr/bin/grep CLAUDE_CONFIG_DIR= PATH=/bin\n"                      # a scan, not Claude Code
+        "/Users/x/.local/share/claude/versions/2.1.280 HOME=/Users/x PATH=/bin\n")
+    assert pm_store.config_dir_override_running() is False
+    world.claude_process_reading_the_mirror()
+    assert pm_store.config_dir_override_running() is True
 
 
 def test_refresh_persists_the_rotated_pair_to_the_copy(world):
@@ -549,7 +583,7 @@ def test_login_headless_for_the_store_account_renews_the_live_store(world, monke
     assert res["storeAccount"] is True
     live = world.store()["claudeAiOauth"]["refreshToken"]
     assert world.orca_creds(A)["claudeAiOauth"]["refreshToken"] == live
-    assert world.store(world.mirror)["claudeAiOauth"]["refreshToken"] == live
+    assert world.store(world.mirror)["claudeAiOauth"]["refreshToken"] != live, "the mirror is never written"
 
 
 # -- events ---------------------------------------------------------------------------------------
@@ -586,3 +620,226 @@ def test_cli_json_flag_works_before_or_after_the_subcommand(world):
         r = subprocess.run([sys.executable, str(IMPL_DIR / "provider_manager.py")] + argv,
                            capture_output=True, text=True, env=world.env(), timeout=60)
         assert r.returncode == 0 and isinstance(json.loads(r.stdout), list), argv
+
+
+def test_keychain_write_over_the_stdin_limit_goes_through_argv_as_hex_like_claude_code():
+    secret = "oat01-fake-" + "x" * 3000
+    with patch.object(pm_store, "run_cmd", return_value=MagicMock(returncode=0)) as run:
+        assert pm_store.keychain_write("Svc", "acct", {"claudeAiOauth": {"accessToken": secret}})
+    argv = run.call_args[0][0]
+    assert argv[:2] == ["security", "add-generic-password"] and all(secret not in a for a in argv)
+
+
+# -- round-2 findings (P20 round 1, CodeRabbit) ---------------------------------------------------
+
+def test_refresh_never_runs_while_another_provider_manager_action_holds_the_lock(world):
+    """B1: `usage` runs beside a switch. It must not spend a refresh token on a stale snapshot."""
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+    creds = world.orca_creds(B)
+    creds["claudeAiOauth"]["expiresAt"] = fake_anthropic.now_ms() + 10_000  # B's copy needs a refresh
+    world.set_orca_creds(B, creds)
+    rt = creds["claudeAiOauth"]["refreshToken"]
+    code = ("import sys,time;sys.path.insert(0,%r);import pm_state\n"
+            "with pm_state.balancer_lock(%r):\n print('held',flush=True);time.sleep(3)\n"
+            % (str(IMPL_DIR), str(pm.BALANCER_LOCK_PATH)))
+    p = subprocess.Popen([sys.executable, "-c", code], stdout=subprocess.PIPE, text=True, env=world.env())
+    assert p.stdout.readline().strip() == "held"
+    rows = {r["email"]: r for r in pm.fetch_all_usage(force_refresh=True)}
+    p.wait()
+    assert fake_anthropic.refresh_state(rt) == "valid", "no refresh while another action holds the lock"
+    assert rows[B]["telemetry"] == "auth_expired"
+    assert world.events("refresh.deferred")
+
+
+def test_refresh_rereads_the_store_so_a_switch_that_just_happened_is_seen(world):
+    """B1, the exact shape: a snapshot says B is a standby; a switch then puts B in the store."""
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+    stale_ctx = pm.build_context()
+    assert stale_ctx["storeAccountId"] == world.accounts[A]["id"]
+    pm.switch_account(B)
+    in_store = world.store()["claudeAiOauth"]["refreshToken"]
+    assert pm.refresh_account_token(world.accounts[B]["id"]) is None
+    assert fake_anthropic.refresh_state(in_store) == "valid"
+
+
+def test_invalid_grant_after_another_writer_refreshed_the_copy_is_not_needs_login(world, monkeypatch):
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+    b = world.orca_creds(B)
+    real_http = pm._http
+
+    def racing_http(url, **kw):
+        if url == pm.TOKEN_ENDPOINT_URL:  # someone else refreshes B's copy first
+            fresh = fake_anthropic.mint(B)
+            world.set_orca_creds(B, {"claudeAiOauth": fresh})
+            fake_anthropic.consume(b["claudeAiOauth"]["refreshToken"])
+        return real_http(url, **kw)
+
+    monkeypatch.setattr(pm, "_http", racing_http)
+    assert pm.refresh_account_token(world.accounts[B]["id"]) is None
+    assert world.accounts[B]["id"] not in pm.load_state().get("health", {})
+
+
+def test_a_stale_claude_refresh_lock_is_reclaimed(world):
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+    lock = world.config_dir / ".oauth_refresh.lock"
+    os.mkdir(lock)
+    old = time.time() - 120
+    os.utime(lock, (old, old))
+    res = _switch(B)
+    assert res["success"], res
+    assert not lock.exists()
+
+
+def test_identity_needs_email_and_org_to_agree():
+    roster = [{"id": "y", "email": "y@team.com", "organizationUuid": "org-team"},
+              {"id": "z", "email": "z@solo.com", "organizationUuid": "org-solo"}]
+    assert pm._match_roster({"account": {"email": "y@team.com"}, "organization": {"uuid": "org-team"}}, roster)["id"] == "y"
+    assert pm._match_roster({"account": {"email": "n@team.com"}, "organization": {"uuid": "org-team"}}, roster) is None
+    assert pm._match_roster({"account": {"email": "y@team.com"}, "organization": {"uuid": "org-other"}}, roster) is None
+    assert pm._match_roster({"organization": {"uuid": "org-solo"}}, roster)["id"] == "z"
+
+
+def test_a_same_org_stranger_in_the_store_is_not_written_back_as_a_roster_account(world):
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+    org_a = world.accounts[A]["org"]
+    fake_anthropic.add_account("n@example.com", "uuid-n", org_a)  # a teammate, same org, not in the roster
+    keychain_db.update_json(world.db, world.primary, "tester",
+                            lambda c: dict(c, claudeAiOauth=fake_anthropic.mint("n@example.com")))
+    a_copy = world.orca_creds(A)
+    with pytest.raises(pm.SwitchRefused, match="cannot be identified"):
+        pm.switch_account(B)
+    assert world.orca_creds(A) == a_copy
+
+
+def test_a_write_that_cannot_be_read_back_records_the_switch_as_unverified(world, monkeypatch):
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+    real = pm.write_store_oauth
+
+    def lands_wrong(item, oauth, account=None, timeout=30.0):  # rc 0, but the item ends up different
+        real(item, dict(oauth, refreshToken="garbage"), account, timeout)
+
+    monkeypatch.setattr(pm, "write_store_oauth", lands_wrong)
+    with pytest.raises(pm_store.StoreError, match="did not read back"):
+        pm.switch_account(B)
+    assert pm.load_state()["lastSwitch"]["unverified"] is True
+    assert world.events("switch.unverified")
+
+
+def test_an_orca_write_that_silently_does_not_land_is_reported(world, monkeypatch):
+    world.add_account(A)
+    monkeypatch.setattr(pm_store, "keychain_write", lambda *a, **k: True)  # rc 0, nothing written
+    assert pm_store.write_orca_oauth(world.accounts[A]["id"], {"accessToken": "x", "refreshToken": "new"}) is False
+
+
+def test_a_reported_limit_survives_a_cooldown_and_a_dry_run(world):
+    world.add_account(A, five_hour=100.0)
+    world.add_account(B, five_hour=10.0)
+    world.activate(A)
+    world.set_usage(A, exhausted=True)
+    pm.update_state(lambda s: s.update(pendingSignals=[{"type": "rate_limit", "at": time.time()}],
+                                       lastSwitch={"at": time.time(), "from": None, "to": None}))
+    assert pm.balance_accounts()["reason"] == "cooldown"
+    assert pm.load_state()["pendingSignals"], "a cooldown must not swallow the report"
+    pm.update_state(lambda s: s.__setitem__("lastSwitch", None))
+    assert pm.balance_accounts(dry_run=True)["action"] == "would_switch"
+    assert pm.load_state()["pendingSignals"], "a dry run must not swallow the report"
+    assert pm.balance_accounts()["action"] == "switched"
+    assert pm.load_state()["pendingSignals"] == []
+
+
+def test_an_empty_store_is_never_filled_by_an_automatic_evaluation(world):
+    world.add_account(A)
+    world.add_account(B)
+    assert pm.run_auto()["reason"] == "no_active_account"
+    assert world.switches() == []
+
+
+def test_an_unmeasured_claude_code_version_makes_automatic_switching_observe_only(world, monkeypatch):
+    world.add_account(A, five_hour=95.0)
+    world.add_account(B, five_hour=5.0)
+    world.activate(A)
+    monkeypatch.setenv("FAKE_CLAUDE_VERSION", "2.2.0")
+    res = pm.run_auto()
+    assert res["action"] == "would_switch" and res["reason"] == "version_unverified"
+    assert res["claudeVersion"] == "2.2.0" and world.switches() == []
+    assert pm.balance_accounts()["action"] == "switched", "an operator's balance is not gated"
+
+
+def test_probe_classification_reads_the_result_text_not_incidental_numbers(world, monkeypatch):
+    outputs = {
+        "ok": (0, json.dumps({"type": "result", "is_error": False, "result": "OK", "duration_ms": 429}), ""),
+        "unknown": (1, json.dumps({"type": "result", "is_error": True, "duration_ms": 429,
+                                   "result": "Failed to refresh OAuth token: another Claude Code process is refreshing it"}), ""),
+        # the real 2.1.280 binary's output for a subscription limit (measured in tests/drill, probe scenario)
+        "limited": (1, json.dumps({"type": "result", "is_error": True, "api_error_status": 429,
+                                   "result": "You've hit your session limit \u00b7 resets 10:47pm (America/Bogota)"}), ""),
+        "limited, text only": (1, json.dumps({"type": "result", "is_error": True,
+                                              "result": "You've hit your weekly limit \u00b7 resets Oct 8"}), ""),
+        "auth_dead": (1, json.dumps({"type": "result", "is_error": True, "api_error_status": None,
+                                     "result": "Failed to authenticate: OAuth session expired and could not be refreshed"}), ""),
+    }
+    for label, (rc, out, err) in outputs.items():
+        monkeypatch.setattr(pm.subprocess, "run", lambda *a, **k: MagicMock(returncode=rc, stdout=out, stderr=err))
+        assert pm.probe_active_account()[0] == label.split(",")[0], label
+
+
+def test_probe_uses_the_sessions_default_model_unless_configured(world, monkeypatch):
+    seen = {}
+
+    def fake_run(cmd, **kw):
+        seen["cmd"] = cmd
+        return MagicMock(returncode=0, stdout=json.dumps({"is_error": False, "result": "OK"}), stderr="")
+
+    monkeypatch.setattr(pm.subprocess, "run", fake_run)
+    pm.probe_active_account()
+    assert "--model" not in seen["cmd"]
+    pm.CONFIG_PATH.write_text(json.dumps({"probeModel": "opus"}))
+    pm.probe_active_account()
+    assert seen["cmd"][seen["cmd"].index("--model") + 1] == "opus"
+
+
+def test_hook_under_isolated_python_exits_zero_with_no_stdout_even_when_modules_are_missing(world, tmp_path):
+    hook = IMPL_DIR / "provider_manager_hook.py"
+    r = subprocess.run([sys.executable, "-I", str(hook), "prompt-submit"], input="{}", text=True,
+                       capture_output=True, env=dict(world.env(), PROVIDER_MANAGER_AUTO="0"), timeout=30)
+    assert r.returncode == 0 and r.stdout == ""
+    lonely = tmp_path / "lonely"
+    lonely.mkdir()
+    (lonely / "provider_manager_hook.py").write_text(hook.read_text())  # no siblings: imports fail
+    r = subprocess.run([sys.executable, "-I", str(lonely / "provider_manager_hook.py"), "stop-failure"],
+                       input='{"error": "rate_limit"}', text=True, capture_output=True, timeout=30)
+    assert r.returncode == 0 and r.stdout == ""
+
+
+def test_claude_json_that_does_not_parse_is_never_replaced_and_its_mode_is_kept(world):
+    world.add_account(A)
+    world.add_account(B)
+    world.activate(A)
+    cfg = world.paths["CLAUDE_CONFIG_PATH"]
+    cfg.write_text('{"projects": {"truncated":')
+    pm.switch_account(B)
+    assert cfg.read_text() == '{"projects": {"truncated":'
+    cfg.write_text(json.dumps({"projects": {"x": 1}}))
+    os.chmod(cfg, 0o600)
+    pm.switch_account(A)
+    assert json.loads(cfg.read_text())["projects"] == {"x": 1}
+    assert (os.stat(cfg).st_mode & 0o777) == 0o600
+
+
+def test_events_and_stalled_logs_are_private(world, pmh, monkeypatch):
+    pm.log_provider_event("x", {})
+    pmh.handle_stop_failure({"session_id": "s", "error": "unknown"})
+    for path in (pm.PROVIDER_EVENTS_PATH, pm.STALLED_PATH):
+        assert (os.stat(path).st_mode & 0o777) == 0o600, path

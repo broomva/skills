@@ -66,6 +66,7 @@ def main(pm) -> None:
     p.add_argument("--email")
     p.add_argument("--browser", default="arc", choices=["arc", "chrome"])
     p.add_argument("--profile")
+    p.add_argument("--force", action="store_true", help="Log in over an unidentifiable store credential")
     p = sub.add_parser("rotate", help="Failover for a reported rate limit (operator/orchestrator only)", parents=[common])
     p.add_argument("--reason", default="rate_limit")
     p.add_argument("--dry-run", action="store_true")
@@ -120,7 +121,7 @@ def main(pm) -> None:
                     print("%-8s %-28s %-22s %-22s %s" % (" * " if a["isActive"] else "", a["email"], fh, sd, _usage_status(a)))
         elif args.command == "balance":
             if args.auto:
-                res = pm.run_auto(reason=args.reason, signal=args.signal)
+                res = pm.run_auto_until_settled(reason=args.reason, signal=args.signal)
             else:
                 res = pm.balance_accounts(threshold=args.threshold, dry_run=args.dry_run, verbose=not args.json,
                                        source="manual_balance", signal=args.signal)
@@ -144,7 +145,7 @@ def main(pm) -> None:
                 print("Switched to %s (ID: %s)%s" % (res["switchedTo"], res["accountId"],
                                                       "; saved the outgoing account's live tokens" if res.get("wroteBack") else ""))
         elif args.command == "login-headless":
-            res = pm.login_headless(email=args.email, browser=args.browser, profile=args.profile)
+            res = pm.login_headless(email=args.email, browser=args.browser, profile=args.profile, force=args.force)
             print(json.dumps(res, indent=2) if args.json else "Logged in %s (no switch)." % res["email"])
         elif args.command == "rotate":
             res = pm.rotate_account(reason=args.reason, dry_run=args.dry_run, force=args.force)

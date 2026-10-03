@@ -164,11 +164,16 @@ def log_event(path: Path, event: str, details: Optional[Dict[str, Any]] = None) 
         "session_id": os.environ.get("CLAUDE_CODE_SESSION_ID"),
     }
     record.update(details or {})
+    _append_private(Path(path), json.dumps(record))
+
+
+def _append_private(path: Path, line: str) -> None:
+    """Append one line to a 0600 file (events and stalled sessions name accounts, paths and cwds)."""
     try:
-        path = Path(path)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(record) + "\n")
+        fd = os.open(str(path), os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+        with os.fdopen(fd, "a", encoding="utf-8") as f:
+            f.write(line + "\n")
     except OSError:
         pass
 
@@ -205,13 +210,7 @@ def record_stalled(path: Path, payload: Dict[str, Any], env: Dict[str, str]) -> 
         "errorDetails": str(payload.get("error_details") or "")[:300],
         "paseoAgentId": env.get("PASEO_AGENT_ID"),
     }
-    try:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with open(path, "a", encoding="utf-8") as f:
-            f.write(json.dumps(entry) + "\n")
-    except OSError:
-        pass
+    _append_private(Path(path), json.dumps(entry))
     return entry
 
 

@@ -39,10 +39,15 @@ name and attributes only.
    live keychain file), fake `security`, mitmdump stub. The old switch kills a running session; the new one
    does not, and the session adopts the new account.
 6. [x] Docs (SKILL.md reflex: agents never rotate), CI workflow (`test-provider-manager.yml`).
-7. [ ] PR, P20, p9, merge pinned; live install (vendored copy, swapped atomically under a 30-min hold); Linear.
+7. [ ] PR #266; P20 round 1: B 5/10 (BLOCKER: telemetry refresh outside the lock on a stale snapshot),
+   C 7/10; Strata A unavailable (Codex out of credits). Round 2 fixes all BLOCKER/MAJOR findings (refresh
+   under the lock with a store re-read, stale-lock reclaim, mirror never written, strict identity,
+   always-refresh validation, retained signals, version gate, probe on the sessions' model with
+   classification measured against the real binary). Then merge pinned; live install (vendored copy,
+   swapped atomically under a 30-min hold); Linear.
 
-Checkpoint (local): 58 tests pass (Python 3.9 and 3.14). The 14 kill-path tests all fail on origin/main. 20/20
-mutations proven. Real-binary drill: stale-target and rotation-back KILLED on origin/main ("OAuth session
+Checkpoint (round 2, local): 77 tests pass (Python 3.9 and 3.14). The 14 kill-path tests all fail on
+origin/main. 29/29 mutations proven (strict: only assertion failures count). Round 1 was 58 tests, 20/20. Real-binary drill: stale-target and rotation-back KILLED on origin/main ("OAuth session
 expired and could not be refreshed"), SURVIVED here; healthy-target survives both, and the running session is
 served by the new account after the switch.
 
@@ -51,7 +56,7 @@ served by the new account after the switch.
 `python -m pytest skills/orchestration/provider-manager/tests -q`;
 `PM_IMPL_DIR=<origin/main scripts> python -m pytest skills/orchestration/provider-manager/tests/test_kill_paths.py`
 (expected red); `python skills/orchestration/provider-manager/tests/mutation_check.py`;
-`bash skills/orchestration/provider-manager/tests/drill/run_drill.sh`.
+`python skills/orchestration/provider-manager/tests/drill/drill.py --all --old-impl <origin/main scripts>`.
 
 ## role-x reflex router, pre-flip evidence (BRO-2674)
 

@@ -226,8 +226,8 @@ def test_k8_switch_leaves_each_store_items_mcp_tokens_untouched(world):
     _try(pm.switch_account, B)
 
     assert world.store_email() == B
-    assert world.store()["mcpOAuth"] == live
-    assert world.store(world.mirror)["mcpOAuth"] == stale
+    assert world.store().get("mcpOAuth") == live
+    assert world.store(world.mirror).get("mcpOAuth") == stale
 
 
 # K9 — an unreadable store must stop the switch, not be treated as empty.

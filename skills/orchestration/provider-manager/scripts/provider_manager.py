@@ -9,13 +9,15 @@ their requests, through a 30-second read cache, so whatever this tool writes the
 running session's credential within about 30 s. A live credential is adopted in place. A stale one (a
 consumed refresh token) kills every session at its next refresh. So:
 
-- a switch writes only a target proven live (refreshed via its own copy if near expiry, then
-  identity-checked), and first saves the outgoing account's live tokens to its Orca item;
-- it holds Claude Code's refresh lock while it rewrites the store, and changes only claudeAiOauth
-  in each item (mcpOAuth untouched);
-- this tool never refreshes the credential the store holds (that refresh token is Claude Code's);
+- a switch writes only a target proven live (refreshed through its own copy, then identity-checked),
+  and first saves the outgoing account's live tokens to its Orca item;
+- it holds Claude Code's refresh lock while it rewrites the store item, and changes only
+  claudeAiOauth (mcpOAuth untouched); the other item name (the mirror) is never written;
+- this tool never refreshes a refresh token any store item holds, and refreshes only under the
+  machine-wide lock, re-reading the store first;
 - one balancer per machine (flock), an evaluation interval, a cooldown and hysteresis;
-- telemetry that cannot be read is never a rate limit; "limited" is confirmed by a real probe.
+- telemetry that cannot be read is never a rate limit; "limited" is confirmed by a real probe;
+- automatic switching runs only on Claude Code versions whose behaviour was measured.
 """
 
 import json
@@ -36,14 +38,15 @@ sys.path.insert(0, str(SCRIPT_DIR))
 
 import pm_state  # noqa: E402
 from pm_store import (  # noqa: E402
-    ORCA_SERVICE,
     LockBusy,
     StoreError,
     claude_config_dir,
     claude_refresh_lock,
+    config_dir_override_running,
     current_username,
     expiring,
     fingerprint,
+    LOCK_MAX_HOLD_SECONDS,
     keychain_delete,
     keychain_read,
     now_ms,
@@ -67,7 +70,6 @@ BALANCER_LOCK_PATH = HOME / ".cache/broomva-provider-balancer.lock"
 STALLED_PATH = HOME / ".cache/broomva-provider-stalled.jsonl"
 CONFIG_PATH = HOME / ".config/broomva/provider-manager.json"
 
-KEYCHAIN_ORCA_SERVICE = ORCA_SERVICE
 USAGE_API_URL = "https://api.anthropic.com/api/oauth/usage"
 PROFILE_API_URL = "https://api.anthropic.com/api/oauth/profile"
 TOKEN_ENDPOINT_URL = "https://platform.claude.com/v1/oauth/token"
@@ -76,16 +78,23 @@ USER_AGENT = "Claude-Code/2.1.280"
 
 CACHE_TTL_SECONDS = 90.0
 CLAUDE_LOCK_WAIT_SECONDS = 5.0
-# A target whose access token has under 10 minutes left is refreshed (through its own copy) before it
-# is written. Claude Code refreshes only in the last 5 minutes, so a copy with more time left still
-# holds the head of its refresh-token chain.
-TARGET_FRESH_MARGIN_MS = 10 * 60_000
+LOCKED_IO_TIMEOUT = 8.0  # each keychain call made while holding Claude Code's refresh lock
 PROBE_TIMEOUT_SECONDS = 90.0
-PROBE_MODEL = "haiku"
 PROBE_PROMPT = "Reply with the single word OK."
-LIMIT_RE = re.compile(r"hit your (?:usage )?limit|usage limit|rate[ _-]?limit|limit reached|\b429\b", re.I)
-AUTH_DEAD_RE = re.compile(r"OAuth session expired|could not be refreshed|refresh token is no longer valid", re.I)
+# The probe reads Claude Code's structured result first (`api_error_status`). These phrases are the
+# fallback, matched against the result text and stderr only (never the whole JSON, whose numbers
+# could contain "429"). Measured from the real 2.1.280 binary in tests/drill (probe scenario): a
+# subscription limit prints "You've hit your session limit · resets 10:47pm (...)" with
+# api_error_status 429; a dead grant prints "Failed to authenticate: OAuth session expired and could
+# not be refreshed".
+LIMIT_RE = re.compile(r"hit your [a-z ]*limit|usage limit reached|rate_limit_error|Request rejected \(429\)", re.I)
+AUTH_DEAD_RE = re.compile(r"OAuth session expired and could not be refreshed|"
+                          r"refresh token is no longer valid|invalid_grant", re.I)
 VERIFIED_IDENTITY = ("orca_copy_match", "profile", "profile_cached")
+# Claude Code versions whose credential behaviour (30 s store cache, refresh lock paths, item name,
+# invalid_grant handling) was measured: binary source plus the tests/drill run. Automatic switching
+# is observe-only on any other version until it is re-measured and added here or in the config.
+MEASURED_CLAUDE_VERSIONS = ["2.1.280"]
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "autoBalance": True,          # false: automatic evaluations log would_switch and never switch
@@ -98,6 +107,9 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "failoverMinGapMinutes": 5.0,  # between switches made for a confirmed limit
     "evalIntervalSeconds": 120.0,  # hooks start at most one evaluation per interval, machine-wide
     "probeTtlSeconds": 600.0,
+    "probeModel": None,           # None: Claude Code's default model, the one sessions run without --model
+    "versionGate": True,          # automatic switching only on a measured Claude Code version
+    "verifiedClaudeVersions": [],  # versions measured since (added to MEASURED_CLAUDE_VERSIONS)
 }
 
 
@@ -116,14 +128,21 @@ def _load_json(path: Path, default: Any) -> Any:
 
 
 def _save_json(path: Path, data: Any) -> bool:
-    path = Path(path)
+    """Atomic replace that writes through a symlink and keeps the file's mode (new files: 0600)."""
+    path = Path(os.path.realpath(str(path)))
     path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        mode = os.stat(path).st_mode & 0o777
+    except OSError:
+        mode = 0o600
     tmp = path.with_name("%s.tmp.%d" % (path.name, os.getpid()))
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, mode)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
+        os.chmod(tmp, mode)
         os.replace(tmp, path)
         return True
     except OSError as e:
@@ -133,6 +152,30 @@ def _save_json(path: Path, data: Any) -> bool:
         except OSError:
             pass
         return False
+
+
+def _guarded_update(path: Path, fn) -> bool:
+    """Read-modify-write a JSON file other programs also rewrite (~/.claude.json: every Claude Code
+    session; orca-data.json: the Orca app). Skip when the file exists but does not parse (never
+    replace a config with a fragment), and only write if nobody wrote it since this read."""
+    for _ in range(3):
+        try:
+            before = os.stat(path).st_mtime_ns
+        except OSError:
+            before = None
+        data = _load_json(path, None)
+        if before is not None and not isinstance(data, dict):
+            return False
+        data = data if isinstance(data, dict) else {}
+        fn(data)
+        try:
+            now_mtime = os.stat(path).st_mtime_ns
+        except OSError:
+            now_mtime = None
+        if now_mtime == before:
+            return _save_json(path, data)
+        time.sleep(0.05)
+    return False
 
 
 def load_config() -> Dict[str, Any]:
@@ -210,7 +253,7 @@ def _http(url: str, token: Optional[str] = None, body: Optional[Dict[str, Any]] 
     except urllib.error.HTTPError as e:
         try:
             payload = json.loads(e.read() or b"{}")
-        except ValueError:
+        except Exception:  # noqa: BLE001 - a body we cannot read is just absent
             payload = None
         return e.code, payload, dict(e.headers or {})
     except Exception:  # noqa: BLE001 - any transport failure is "unavailable"
@@ -249,11 +292,17 @@ def orca_active_id() -> Optional[str]:
 
 
 def _match_roster(profile: Dict[str, Any], accounts: List[Dict[str, Any]]) -> Optional[Dict[str, Any]]:
+    """The roster account a profile names, or None when it is ambiguous. With an email, the email
+    must match exactly one account and that account's org (when both are known) must agree; the org
+    alone decides only when the profile carries no email. Two people in one team org share an org."""
     email = ((profile.get("account") or {}).get("email") or "").lower()
     org = (profile.get("organization") or {}).get("uuid")
-    by_email = [a for a in accounts if email and (a.get("email") or "").lower() == email]
-    if len(by_email) == 1:
-        return by_email[0]
+    if email:
+        hits = [a for a in accounts if (a.get("email") or "").lower() == email]
+        if len(hits) != 1:
+            return None
+        known_org = hits[0].get("organizationUuid")
+        return hits[0] if not (org and known_org and org != known_org) else None
     by_org = [a for a in accounts if org and a.get("organizationUuid") == org]
     return by_org[0] if len(by_org) == 1 else None
 
@@ -267,10 +316,12 @@ def build_context(verify_identity: bool = True) -> Dict[str, Any]:
     user = current_username()
     store = read_store(primary, user)
     mirror_reads = [read_store(m, user) for m in mirrors]
-    store_rts = [o.get("refreshToken") for o in [oauth_of(store.data)] + [oauth_of(r.data) for r in mirror_reads] if o]
+    primary_rt = (oauth_of(store.data) or {}).get("refreshToken")
+    mirror_rts = [(oauth_of(r.data) or {}).get("refreshToken") for r in mirror_reads]
     ctx = {
         "accounts": accounts, "copies": copies, "primary": primary, "mirrors": mirrors, "user": user,
-        "store": store, "storeOauth": oauth_of(store.data), "storeRts": [r for r in store_rts if r],
+        "store": store, "storeOauth": oauth_of(store.data), "storeRts": [primary_rt] if primary_rt else [],
+        "mirrorRts": [r for r in mirror_rts if r],
         "storeReadable": store.status != "error" and all(r.status != "error" for r in mirror_reads),
     }
     ctx["storeAccountId"], ctx["storeIdentity"] = identify_store_account(ctx, verify=verify_identity)
@@ -340,54 +391,80 @@ def _mark_health(account_id: str, needs_login: bool, reason: str) -> None:
     update_state(put)
 
 
-def refresh_account_token(account_id: str, store_rts: Optional[List[str]] = None,
-                          store_account_id: Optional[str] = None) -> Optional[Dict[str, Any]]:
-    """Refresh an account's Orca copy and persist the rotated pair to that copy FIRST.
+def refresh_account_token(account_id: str, allow_unverified: bool = False) -> Optional[Dict[str, Any]]:
+    """Refresh an account's Orca copy and persist the rotated pair to that copy FIRST (read back).
 
-    Refuses when the copy might share a refresh-token chain with the store: the account the store holds,
-    or a refresh token equal to one in a store item. Spending that token would kill every running
-    session at its next refresh. Returns the new claudeAiOauth, or None."""
-    if store_rts is None:
-        ctx = build_context(verify_identity=False)
-        if not ctx["storeReadable"]:
+    Runs only under the machine-wide balancer lock (non-blocking: if another provider-manager action
+    holds it, nothing is refreshed), and re-reads every store item immediately before spending the
+    refresh token, so a switch that just moved this account into the store is always seen. Refuses
+    the store's account, any refresh token equal to one a store item holds, and, unless
+    allow_unverified (the store credential was proven dead, or an operator forced it), any refresh
+    while the store's account cannot be identified. Returns the new claudeAiOauth, or None."""
+    with pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=False, holder="refresh") as held:
+        if not held:
+            log_provider_event("refresh.deferred", {"accountId": account_id, "reason": "balancer_busy"})
             return None
-        store_rts, store_account_id = ctx["storeRts"], ctx["storeAccountId"]
-    if store_account_id and account_id == store_account_id:
-        log_provider_event("refresh.refused", {"accountId": account_id, "reason": "store_account"})
-        return None
-    copy = read_orca(account_id)
-    oauth = oauth_of(copy.data)
-    if copy.status != "ok" or not oauth or not oauth.get("refreshToken"):
-        return None
-    if any(same_token(oauth["refreshToken"], rt) for rt in store_rts or []):
-        log_provider_event("refresh.refused", {"accountId": account_id, "reason": "refresh_token_in_store"})
-        return None
-    code, payload, _ = _http(TOKEN_ENDPOINT_URL, body={
-        "client_id": CLIENT_ID, "grant_type": "refresh_token", "refresh_token": oauth["refreshToken"]}, timeout=10.0)
-    if code != 200 or not isinstance(payload, dict) or not payload.get("access_token"):
-        if code == 400 and isinstance(payload, dict) and payload.get("error") == "invalid_grant":
-            _mark_health(account_id, True, "invalid_grant")
-            log_provider_event("refresh.failed", {"accountId": account_id, "reason": "invalid_grant", "needsLogin": True})
-        else:
-            log_provider_event("refresh.failed", {"accountId": account_id, "reason": "http_%s" % code})
-        return None
-    new = dict(oauth)
-    new["accessToken"] = payload["access_token"]
-    new["refreshToken"] = payload.get("refresh_token") or oauth["refreshToken"]
-    new["expiresAt"] = now_ms() + int(payload.get("expires_in", 3600)) * 1000
-    if payload.get("scope"):
-        new["scopes"] = payload["scope"].split()
-    if not write_orca_oauth(account_id, new):
-        log_provider_event("refresh.persist_failed", {"accountId": account_id, "severity": "critical"})
-        return None
-    _mark_health(account_id, False, "refreshed")
-    log_provider_event("refresh", {"accountId": account_id})
-    return new
+        ctx = build_context(verify_identity=True)
+        refusal = None
+        if not ctx["storeReadable"]:
+            refusal = "store_unreadable"
+        elif ctx["storeAccountId"] and account_id == ctx["storeAccountId"]:
+            refusal = "store_account"
+        elif ctx["storeIdentity"] not in VERIFIED_IDENTITY + ("store_empty",) and not allow_unverified:
+            refusal = "store_identity_unverified"
+        copy = ctx["copies"].get(account_id)
+        oauth = oauth_of(copy.data) if copy is not None and copy.status == "ok" else None
+        if not refusal and (not oauth or not oauth.get("refreshToken")):
+            return None
+        if not refusal and any(same_token(oauth["refreshToken"], rt) for rt in ctx["storeRts"]):
+            refusal = "refresh_token_in_store"
+        if not refusal and any(same_token(oauth["refreshToken"], rt) for rt in ctx["mirrorRts"]) \
+                and config_dir_override_running():
+            refusal = "refresh_token_in_mirror_with_a_reader"
+        if refusal:
+            log_provider_event("refresh.refused", {"accountId": account_id, "reason": refusal})
+            return None
+        code, payload, _ = _http(TOKEN_ENDPOINT_URL, body={
+            "client_id": CLIENT_ID, "grant_type": "refresh_token", "refresh_token": oauth["refreshToken"]}, timeout=10.0)
+        if code != 200 or not isinstance(payload, dict) or not payload.get("access_token"):
+            if code == 400 and isinstance(payload, dict) and payload.get("error") == "invalid_grant":
+                now_copy = oauth_of(read_orca(account_id).data)
+                if now_copy and not same_token(now_copy.get("refreshToken"), oauth["refreshToken"]):
+                    log_provider_event("refresh.failed", {"accountId": account_id, "reason": "copy_changed_meanwhile"})
+                    return None  # another writer refreshed this copy; it is not dead
+                _mark_health(account_id, True, "invalid_grant")
+                log_provider_event("refresh.failed", {"accountId": account_id, "reason": "invalid_grant", "needsLogin": True})
+            else:
+                log_provider_event("refresh.failed", {"accountId": account_id, "reason": "http_%s" % code})
+            return None
+        new = dict(oauth)
+        new["accessToken"] = payload["access_token"]
+        new["refreshToken"] = payload.get("refresh_token") or oauth["refreshToken"]
+        try:
+            new["expiresAt"] = now_ms() + int(payload.get("expires_in", 3600)) * 1000
+        except (TypeError, ValueError):
+            new["expiresAt"] = now_ms() + 3600 * 1000
+        if isinstance(payload.get("scope"), str) and payload["scope"]:
+            new["scopes"] = payload["scope"].split()
+        if not write_orca_oauth(account_id, new):
+            log_provider_event("refresh.persist_failed", {"accountId": account_id, "severity": "critical"})
+            return None
+        _mark_health(account_id, False, "refreshed")
+        log_provider_event("refresh", {"accountId": account_id})
+        return new
 
 
 # -- telemetry (unreadable is never "limited") ----------------------------------------------------
 
-def _numbers_entry(account_id: str, data: Dict[str, Any], now: float) -> Dict[str, Any]:
+def _numbers_entry(account_id: str, data: Dict[str, Any], now: float) -> Optional[Dict[str, Any]]:
+    """Usage numbers, or None when the payload is not the shape this code knows (never a guess)."""
+    try:
+        return _parse_numbers(account_id, data, now)
+    except (TypeError, ValueError, AttributeError):
+        return None
+
+
+def _parse_numbers(account_id: str, data: Dict[str, Any], now: float) -> Dict[str, Any]:
     fh = data.get("five_hour") or {}
     sd = data.get("seven_day") or {}
     fh_util = float(fh.get("utilization", fh.get("used_percentage", 0.0)) or 0.0)
@@ -422,7 +499,6 @@ def _degraded_entry(account_id: str, telemetry: str, prev: Optional[Dict[str, An
              "five_hour": None, "seven_day": None, "numbersAt": None}
     if prev and prev.get("numbersAt"):
         entry.update({k: prev.get(k) for k in ("five_hour", "seven_day", "numbersAt")})
-        entry["lastKnownLimited"] = bool(prev.get("isRateLimited"))
     return entry
 
 
@@ -480,7 +556,7 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
         if not oauth:
             return done(_degraded_entry(account_id, "no_credentials", prev, now))
         if expiring(oauth, 60_000):
-            fresh = refresh_account_token(account_id, ctx["storeRts"], ctx["storeAccountId"]) if ctx["storeReadable"] else None
+            fresh = refresh_account_token(account_id) if ctx["storeReadable"] else None
             if not fresh:
                 needs = (load_state().get("health", {}).get(account_id) or {}).get("needsLogin")
                 return done(_degraded_entry(account_id, "needs_login" if needs else "auth_expired", prev, now))
@@ -488,15 +564,18 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
 
     code, payload, headers = _http(USAGE_API_URL, token=oauth["accessToken"],
                                    headers={"anthropic-version": "2023-06-01"}, timeout=5.0)
-    if code == 200 and isinstance(payload, dict):
+    entry = _numbers_entry(account_id, payload, now) if code == 200 and isinstance(payload, dict) else None
+    if entry:
         _clear_backoff(account_id)
-        return done(_numbers_entry(account_id, payload, now))
+        return done(entry)
+    if code == 200:
+        return done(_degraded_entry(account_id, "unavailable", prev, now, "usage payload not understood"))
     if code == 429:
         until = _note_429(account_id, headers.get("Retry-After") or headers.get("retry-after"), now)
         log_provider_event("telemetry.throttled", {"accountId": account_id, "backoffUntil": int(until)})
         return done(_degraded_entry(account_id, "throttled", prev, now, "usage endpoint 429"))
     if code == 401 and not is_store_account and max_retries > 0 and ctx["storeReadable"]:
-        if refresh_account_token(account_id, ctx["storeRts"], ctx["storeAccountId"]):
+        if refresh_account_token(account_id):
             return fetch_account_usage(account_id, True, max_retries - 1, build_context(verify_identity=False))
     if code == 401:
         return done(_degraded_entry(account_id, "auth_expired", prev, now, "usage endpoint 401"))
@@ -537,11 +616,16 @@ def _probe_env() -> Dict[str, str]:
 
 def probe_active_account() -> Tuple[str, str]:
     """Run one tiny real request through Claude Code itself, on the live store, with no hooks, tools
-    or MCP servers. Returns ("ok" | "limited" | "auth_dead" | "unknown", detail). "auth_dead" means
-    Claude Code itself tried the store's refresh token and was refused: that credential is dead."""
+    or MCP servers, on the model the sessions use (Claude Code's default unless `probeModel` is set:
+    a per-model weekly cap must not hide behind a cheaper model). Returns ("ok" | "limited" |
+    "auth_dead" | "unknown", detail). "auth_dead": Claude Code itself was refused the store's refresh
+    token, so that credential is dead."""
     claude = shutil.which("claude", path=os.environ.get("PATH")) or "claude"
-    cmd = [claude, "-p", PROBE_PROMPT, "--model", PROBE_MODEL, "--tools", "", "--strict-mcp-config",
-           "--setting-sources", "project", "--no-session-persistence", "--output-format", "json"]
+    cmd = [claude, "-p", PROBE_PROMPT, "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
+           "--no-session-persistence", "--output-format", "json"]
+    model = load_config().get("probeModel")
+    if model:
+        cmd += ["--model", str(model)]
     try:
         with tempfile.TemporaryDirectory(prefix="pm-probe-") as cwd:
             res = subprocess.run(cmd, cwd=cwd, env=_probe_env(), text=True, capture_output=True,
@@ -558,7 +642,10 @@ def probe_active_account() -> Tuple[str, str]:
             continue
     if res.returncode == 0 and isinstance(result, dict) and not result.get("is_error"):
         return "ok", "probe answered"
-    blob = " ".join([str((result or {}).get("result") or ""), text[-400:], (res.stderr or "")[-400:]])
+    if isinstance(result, dict) and result.get("api_error_status") == 429:
+        return "limited", "probe got HTTP 429 (%s)" % str(result.get("result") or "")[:80]
+    message = str(result.get("result") or "") if isinstance(result, dict) else text[-400:]
+    blob = " ".join([message, (res.stderr or "")[-400:]])
     if LIMIT_RE.search(blob):
         return "limited", "probe hit a limit"
     if AUTH_DEAD_RE.search(blob):
@@ -577,23 +664,42 @@ def probe_cached(account_id: str, ttl: float) -> Tuple[str, str]:
     return result, detail
 
 
+def claude_version() -> Optional[str]:
+    """`claude --version` of the binary on PATH, cached per resolved binary path for an hour."""
+    claude = shutil.which("claude", path=os.environ.get("PATH"))
+    if not claude:
+        return None
+    real = os.path.realpath(claude)
+    cached = load_state().get("claudeVersion") or {}
+    if cached.get("path") == real and time.time() - cached.get("at", 0) < 3600:
+        return cached.get("version")
+    try:
+        res = subprocess.run([claude, "--version"], text=True, capture_output=True, timeout=20, env=_probe_env())
+        m = re.search(r"\d+\.\d+\.\d+", res.stdout or "")
+        version = m.group(0) if m else None
+    except (OSError, subprocess.SubprocessError):
+        version = None
+    update_state(lambda s: s.__setitem__("claudeVersion", {"path": real, "version": version, "at": time.time()}))
+    return version
+
+
+def version_verified(cfg: Dict[str, Any]) -> Tuple[bool, Optional[str]]:
+    if not cfg.get("versionGate", True):
+        return True, None
+    version = claude_version()
+    return version in MEASURED_CLAUDE_VERSIONS + list(cfg.get("verifiedClaudeVersions") or []), version
+
+
 # -- switch ---------------------------------------------------------------------------------------
 
-def _validate_target(target: Dict[str, Any], oauth: Dict[str, Any], store_rts: List[str],
-                     store_account_id: Optional[str]) -> Tuple[bool, Optional[Dict[str, Any]], str]:
-    """Prove the target's credential is live and is the target, without touching the store."""
-    refreshed = False
-    if expiring(oauth, TARGET_FRESH_MARGIN_MS):
-        oauth = refresh_account_token(target["id"], store_rts, store_account_id)
-        if not oauth:
-            return False, None, "its stored grant could not be refreshed (re-login it: login-headless --email %s)" % target["email"]
-        refreshed = True
+def _validate_target(target: Dict[str, Any], allow_unverified: bool = False) -> Tuple[bool, Optional[Dict[str, Any]], str]:
+    """Prove the target's credential is live and is the target, without touching the store: refresh
+    it through its own copy (proving the refresh token is unspent, and persisting the rotated pair to
+    the copy first), then check that the new access token's profile names that account."""
+    oauth = refresh_account_token(target["id"], allow_unverified=allow_unverified)
+    if not oauth:
+        return False, None, "its stored grant could not be refreshed (re-login it: login-headless --email %s)" % target["email"]
     code, prof = fetch_profile(oauth["accessToken"])
-    if code == 401 and not refreshed:
-        oauth = refresh_account_token(target["id"], store_rts, store_account_id)
-        if not oauth:
-            return False, None, "its access token was rejected and its grant could not be refreshed"
-        code, prof = fetch_profile(oauth["accessToken"])
     if code != 200 or not prof:
         return False, None, "its credential could not be verified (profile HTTP %s)" % code
     match = _match_roster(prof, roster())
@@ -645,8 +751,8 @@ def _switch_locked(identifier: str, source: str, metadata: Dict[str, Any], force
     out_email = next((a.get("email") for a in accounts if a.get("id") == out_id), None)
 
     if out_id == target["id"] and how in VERIFIED_IDENTITY:
-        if how != "orca_copy_match" and store_oauth:
-            write_orca_oauth(target["id"], store_oauth)  # the store holds a newer link of its chain
+        if how != "orca_copy_match" and store_oauth and not write_orca_oauth(target["id"], store_oauth):
+            log_provider_event("writeback.failed", {"accountId": target["id"]})  # the store holds a newer link
         _record_active(target)
         return {"success": True, "switchedTo": target["email"], "accountId": target["id"], "alreadyActive": True}
 
@@ -662,31 +768,37 @@ def _switch_locked(identifier: str, source: str, metadata: Dict[str, Any], force
             log_provider_event("switch.discard_unverified", {
                 "identity": how, "why": "proven dead by the probe" if store_proven_dead else "--force"})
 
-    ok, live_oauth, why = _validate_target(target, t_oauth, ctx["storeRts"], out_id)
+    ok, live_oauth, why = _validate_target(target, allow_unverified=bool(force or store_proven_dead))
     if not ok:
         raise SwitchRefused("%s is not safe to switch to: %s" % (target["email"], why))
 
+    attempted = False
     try:
-        with claude_refresh_lock(claude_config_dir(), CLAUDE_LOCK_WAIT_SECONDS):
-            now_store = read_store(ctx["primary"], ctx["user"])
+        with claude_refresh_lock(claude_config_dir(), CLAUDE_LOCK_WAIT_SECONDS) as held_for:
+            now_store = read_store(ctx["primary"], ctx["user"], LOCKED_IO_TIMEOUT)
             if now_store.status == "error":
                 raise SwitchRefused("the credential store became unreadable; nothing was written")
             if not _same_chain(oauth_of(now_store.data), store_oauth):
                 raise SwitchRefused("the store changed while the switch was being prepared; retry")
             if write_back and not write_orca_oauth(write_back, store_oauth):
                 raise SwitchRefused("could not save the outgoing account's live tokens; nothing was switched")
-            write_store_oauth(ctx["primary"], live_oauth, ctx["user"])
-            for mirror in ctx["mirrors"]:
-                try:
-                    write_store_oauth(mirror, live_oauth, ctx["user"])
-                except StoreError as e:
-                    sys.stderr.write("Warning: mirror %s not updated: %s\n" % (mirror, e))
-            check = oauth_of(read_store(ctx["primary"], ctx["user"]).data)
+            if held_for() > LOCK_MAX_HOLD_SECONDS:
+                raise SwitchRefused("the keychain is too slow to switch safely inside Claude Code's refresh lock")
+            attempted = True
+            write_store_oauth(ctx["primary"], live_oauth, ctx["user"], LOCKED_IO_TIMEOUT)
+            check = oauth_of(read_store(ctx["primary"], ctx["user"], LOCKED_IO_TIMEOUT).data)
             if not check or not same_token(check.get("refreshToken"), live_oauth.get("refreshToken")):
                 raise StoreError("the store was written but did not read back the new credential; "
                                  "`list` shows which account it holds")
     except LockBusy as e:
         raise SwitchRefused(str(e))
+    except StoreError as e:
+        if attempted:  # the store may hold the target now: keep the cooldown, say so
+            update_state(lambda s: s.__setitem__("lastSwitch", {
+                "at": time.time(), "from": out_id, "to": target["id"], "source": source, "unverified": True}))
+            log_provider_event("switch.unverified", {"toAccount": target["email"], "fromAccount": out_email,
+                                                     "source": source, "error": str(e)})
+        raise
 
     _record_active(target)
     now = time.time()
@@ -702,32 +814,30 @@ def _switch_locked(identifier: str, source: str, metadata: Dict[str, Any], force
 
 
 def _record_active(target: Dict[str, Any]) -> None:
-    # ~/.claude.json is rewritten by every Claude Code session: only replace it if nobody wrote it
-    # between this read and this write (a display hint is not worth losing a session's write).
-    for _ in range(3):
-        try:
-            before = os.stat(CLAUDE_CONFIG_PATH).st_mtime_ns
-        except OSError:
-            before = None
-        claude_cfg = get_claude_json()
-        oauth_acc = claude_cfg.get("oauthAccount") or {}
-        oauth_acc.update({"emailAddress": target.get("email"), "organizationUuid": target.get("organizationUuid"),
-                          "organizationName": target.get("organizationName"), "profileFetchedAt": now_ms()})
-        claude_cfg["oauthAccount"] = oauth_acc
-        try:
-            now_mtime = os.stat(CLAUDE_CONFIG_PATH).st_mtime_ns
-        except OSError:
-            now_mtime = None
-        if now_mtime == before:
-            save_claude_json(claude_cfg)
-            break
-        time.sleep(0.05)
-    orca = get_orca_data()
-    orca.setdefault("settings", {})["activeClaudeManagedAccountId"] = target["id"]
-    for acc in orca["settings"].get("claudeManagedAccounts", []):
-        if acc.get("id") == target["id"]:
-            acc["updatedAt"] = now_ms()
-    save_orca_data(orca)
+    """Display hints only (the store is the truth): ~/.claude.json's oauthAccount and Orca's active id."""
+    def claude_hint(cfg):
+        acc = cfg.get("oauthAccount") or {}
+        acc.update({"emailAddress": target.get("email"), "organizationUuid": target.get("organizationUuid"),
+                    "organizationName": target.get("organizationName"), "profileFetchedAt": now_ms()})
+        cfg["oauthAccount"] = acc
+
+    def orca_active(orca):
+        orca.setdefault("settings", {})["activeClaudeManagedAccountId"] = target.get("id")
+        for acc in orca["settings"].get("claudeManagedAccounts", []):
+            if acc.get("id") == target.get("id"):
+                acc["updatedAt"] = now_ms()
+    _guarded_update(CLAUDE_CONFIG_PATH, claude_hint)
+    _guarded_update(ORCA_DATA_PATH, orca_active)
+
+
+def _standby_ok(a: Dict[str, Any], cfg: Dict[str, Any], active_fh: Optional[float] = None) -> bool:
+    """A standby the balancer may move to: readable numbers, a live grant, not limited, under
+    standbyMax, and (for balance, not failover) at least `margin` points under the active account."""
+    fh, sd = a.get("fiveHourUtil"), a.get("sevenDayUtil")
+    return bool(a.get("telemetry") == "ok" and a.get("hasStoredCredentials") and not a.get("needsLogin")
+                and not a.get("isRateLimited") and fh is not None and fh <= cfg["standbyMax"]
+                and (sd is None or sd < cfg["standbyWeeklyMax"])
+                and (active_fh is None or fh <= active_fh - cfg["margin"]))
 
 
 # -- the balancer ---------------------------------------------------------------------------------
@@ -761,10 +871,15 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
     state = load_state()
     if state.get("holdUntil", 0) > now:
         return {"success": True, "action": "none", "reason": "hold", "remainingSeconds": int(state["holdUntil"] - now)}
+    # A reported limit stays pending until an evaluation can act on it (a switch, or a probe showing
+    # the account is fine) or it expires; a cooldown, a busy lock or a dry run must not swallow it.
     pending = [p for p in state.get("pendingSignals", []) if now - p.get("at", 0) < 900]
     if pending:
-        update_state(lambda s: s.__setitem__("pendingSignals", []))
         signal = signal or pending[-1].get("type")
+
+    def resolve_signals():
+        if pending and not dry_run:
+            update_state(lambda s: s.__setitem__("pendingSignals", []))
 
     ctx = build_context(verify_identity=True)
     accounts = fetch_all_usage(ctx=ctx)
@@ -773,17 +888,15 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
                 "message": "Only 1 account configured in roster."}
 
     def healthy(a, active_fh=None):
-        fh, sd = a.get("fiveHourUtil"), a.get("sevenDayUtil")
-        return (a.get("telemetry") == "ok" and a.get("hasStoredCredentials") and not a.get("needsLogin")
-                and not a.get("isRateLimited") and fh is not None and fh <= cfg["standbyMax"]
-                and (sd is None or sd < cfg["standbyWeeklyMax"])
-                and (active_fh is None or fh <= active_fh - cfg["margin"]))
+        return _standby_ok(a, cfg, active_fh)
 
     def rank(a):
         return (a.get("fiveHourUtil"), a.get("sevenDayUtil") or 0.0)
 
     active = next((a for a in accounts if a.get("isActive")), None)
     if not active:
+        if automatic:  # an empty store may be a deliberate /logout; never log back in on our own
+            return {"success": True, "action": "none", "reason": "no_active_account"}
         cands = [a for a in accounts if healthy(a)]
         if not cands:
             return {"success": False, "action": "none", "reason": "no_active_account",
@@ -819,6 +932,9 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
         result, detail = probe_cached(active["id"], cfg["probeTtlSeconds"])
         evidence["probe"] = result
         if result == "ok":
+            resolve_signals()
+            if reported:
+                log_provider_event("probe.disagrees", {"accountId": active["id"], "signal": signal})
             return dict(base, success=True, action="none", reason="probe_ok_not_limited", probe=result)
         if result == "limited":
             reason = "confirmed_rate_limited"
@@ -832,7 +948,10 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
     if verbose:
         sys.stdout.write("[*] Balancing: %s (%s%%) -> %s (%s%%), %s\n" % (
             active.get("email"), fh, best.get("email"), best.get("fiveHourUtil"), reason))
-    return _do_switch(best, active, reason, dry_run, automatic, cfg, source, evidence)
+    res = _do_switch(best, active, reason, dry_run, automatic, cfg, source, evidence)
+    if res.get("action") == "switched" and res.get("success"):
+        resolve_signals()
+    return res
 
 
 def _do_switch(best, active, reason, dry_run, automatic, cfg, source, evidence) -> Dict[str, Any]:
@@ -841,6 +960,12 @@ def _do_switch(best, active, reason, dry_run, automatic, cfg, source, evidence) 
            "reason": reason, "probe": evidence.get("probe")}
     if dry_run or (automatic and not cfg["autoBalance"]):
         return dict(res, success=True, action="would_switch", dryRun=dry_run, observeOnly=not dry_run)
+    if automatic:
+        verified, version = version_verified(cfg)
+        if not verified:
+            log_provider_event("version_unverified", {"claudeVersion": version, "measured": MEASURED_CLAUDE_VERSIONS})
+            return dict(res, success=True, action="would_switch", observeOnly=True, reason="version_unverified",
+                        claudeVersion=version)
     try:
         sw = switch_account(best["id"], source=source, metadata={
             "fromAccount": res["fromAccount"], "activeUtilization": res["activeUtilization"],
@@ -868,30 +993,27 @@ def run_auto(reason: str = "hook", signal: Optional[str] = None) -> Dict[str, An
                                 signal=signal, blocking=False, automatic=True)
 
 
+def run_auto_until_settled(reason: str, signal: Optional[str], budget_seconds: float = 900.0) -> Dict[str, Any]:
+    """For a reported limit (detached process only): when the evaluation could not act yet (lock
+    busy, inside the failover gap), wait and try again, for up to 15 minutes. Sessions stalled on the
+    limit send no prompts, so nothing else would start the evaluation again."""
+    deadline = time.time() + budget_seconds
+    res = run_auto(reason=reason, signal=signal)
+    while signal and res.get("reason") in ("busy", "cooldown") and time.time() < deadline:
+        wait = res.get("remainingSeconds") if res.get("reason") == "cooldown" else 15
+        time.sleep(max(5.0, min(float(wait or 15) + 1.0, deadline - time.time())))
+        res = run_auto(reason=reason, signal=signal)
+    return res
+
+
 def rotate_account(reason: str = "rate_limit", dry_run: bool = False, force: bool = False) -> Dict[str, Any]:
     """Operator/orchestrator failover: treat the active account as reported limited. The probe must
     confirm it and the minimum gap must have passed, unless force (which still switches safely)."""
     if force:
-        ctx = build_context(verify_identity=True)
-        accounts = fetch_all_usage(ctx=ctx)
-        cfg = load_config()
-        cands = [a for a in accounts if not a.get("isActive") and a.get("telemetry") == "ok"
-                 and a.get("hasStoredCredentials") and not a.get("needsLogin") and not a.get("isRateLimited")
-                 and (a.get("fiveHourUtil") or 0) < 100 and (a.get("sevenDayUtil") or 0) < cfg["standbyWeeklyMax"]]
-        active = next((a for a in accounts if a.get("isActive")), None)
-        if not cands:
-            return {"success": False, "reason": "no_available_standby", "error": "No healthy standby account.",
-                    "currentAccount": active.get("email") if active else None}
-        best = min(cands, key=lambda a: (a.get("fiveHourUtil"), a.get("sevenDayUtil") or 0.0))
-        if dry_run:
-            return {"success": True, "dryRun": True, "currentAccount": active.get("email") if active else None,
-                    "nextAccount": best["email"], "reason": reason}
-        try:
-            sw = switch_account(best["id"], source="rate_limit_failover", metadata={"reason": reason, "forced": True})
-        except (SwitchRefused, RuntimeError, ValueError) as e:
-            return {"success": False, "attempted": best["email"], "error": str(e)}
-        return {"success": True, "rotatedFrom": sw.get("fromAccount"), "rotatedTo": sw["switchedTo"],
-                "reason": reason, "status": sw}
+        with pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=True, timeout=60.0, holder="rotate") as held:
+            if not held:
+                return {"success": False, "reason": "busy", "error": "another provider-manager action holds the lock"}
+            return _rotate_forced(reason, dry_run)
     res = balance_accounts(dry_run=dry_run, source="rate_limit_failover", signal="rate_limit")
     if res.get("action") == "switched":
         return {"success": bool(res.get("success")), "rotatedFrom": res.get("fromAccount"),
@@ -902,14 +1024,39 @@ def rotate_account(reason: str = "rate_limit", dry_run: bool = False, force: boo
     return {"success": False, "reason": res.get("reason"), "error": res.get("error") or res.get("reason")}
 
 
+def _rotate_forced(reason: str, dry_run: bool) -> Dict[str, Any]:
+    """Skip the probe and the gap, not the safety: the same standby rule (minus hysteresis) and the
+    same safe switch."""
+    accounts = fetch_all_usage(ctx=build_context(verify_identity=True))
+    cfg = dict(load_config(), standbyMax=99.9)
+    cands = [a for a in accounts if not a.get("isActive") and _standby_ok(a, cfg)]
+    active = next((a for a in accounts if a.get("isActive")), None)
+    current = active.get("email") if active else None
+    if not cands:
+        return {"success": False, "reason": "no_available_standby", "error": "No healthy standby account.",
+                "currentAccount": current}
+    best = min(cands, key=lambda a: (a.get("fiveHourUtil"), a.get("sevenDayUtil") or 0.0))
+    if dry_run:
+        return {"success": True, "dryRun": True, "currentAccount": current, "nextAccount": best["email"], "reason": reason}
+    try:
+        sw = switch_account(best["id"], source="rate_limit_failover", metadata={"reason": reason, "forced": True})
+    except (SwitchRefused, RuntimeError, ValueError) as e:
+        return {"success": False, "attempted": best["email"], "error": str(e)}
+    return {"success": True, "rotatedFrom": sw.get("fromAccount"), "rotatedTo": sw["switchedTo"],
+            "reason": reason, "status": sw}
+
+
 # -- login ----------------------------------------------------------------------------------------
 
-def login_headless(email: Optional[str] = None, browser: str = "arc", profile: Optional[str] = None) -> Dict[str, Any]:
+def login_headless(email: Optional[str] = None, browser: str = "arc", profile: Optional[str] = None,
+                   force: bool = False) -> Dict[str, Any]:
     """Re-authorize an account from a browser session.
 
     For the account the store holds, `claude auth login` writes the live store (a fresh grant; running
     sessions adopt it). For any other account, the login runs in a throwaway config dir, so the live
-    store is never touched and nothing switches; only that account's Orca copy is renewed."""
+    store is never touched and nothing switches; only that account's Orca copy is renewed. A store
+    credential nobody can identify is never logged over silently: a probe either lets Claude Code
+    refresh it (then it can be identified) or proves it dead; otherwise --force is required."""
     import pm_login
 
     with pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=True, timeout=60.0, holder="login") as held:
@@ -932,6 +1079,13 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
             raise RuntimeError("Could not resolve target account ID for %s." % target_email)
         sys.stdout.write("[*] Detected active browser session for %s (org: %s)\n" % (detected, org_uuid))
         ctx = build_context(verify_identity=True)
+        if ctx["storeOauth"] and ctx["storeIdentity"] not in VERIFIED_IDENTITY and not force:
+            result, _ = probe_active_account()
+            if result != "auth_dead":
+                ctx = build_context(verify_identity=True)
+                if ctx["storeIdentity"] not in VERIFIED_IDENTITY:
+                    raise SwitchRefused("the store holds a credential no Orca copy or profile check can identify, "
+                                        "and it is not proven dead; logging in could discard it. Pass --force.")
         is_store_account = target_id == ctx["storeAccountId"] or (
             ctx["storeIdentity"] not in VERIFIED_IDENTITY and target_id == orca_active_id())
 
@@ -942,11 +1096,6 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
             fresh = oauth_of(read_store(ctx["primary"], ctx["user"]).data)
             if not fresh or not fresh.get("accessToken"):
                 raise RuntimeError("Login succeeded in CLI, but no valid credentials found in Claude Keychain.")
-            for mirror in ctx["mirrors"]:
-                try:
-                    write_store_oauth(mirror, fresh, ctx["user"])
-                except StoreError:
-                    pass
             _record_active(account or {"id": target_id, "email": target_email, "organizationUuid": org_uuid})
         else:
             scratch = tempfile.mkdtemp(prefix="pm-login-")
@@ -968,12 +1117,12 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
         if not write_orca_oauth(target_id, fresh):
             raise RuntimeError("Failed to sync credentials to Orca Keychain for %s." % target_id)
         _mark_health(target_id, False, "login")
-        orca = get_orca_data()
-        for acc in orca.get("settings", {}).get("claudeManagedAccounts", []):
-            if acc.get("id") == target_id:
-                acc["lastAuthenticatedAt"] = now_ms()
-                acc["updatedAt"] = now_ms()
-        save_orca_data(orca)
+        def stamp(orca):
+            for acc in orca.get("settings", {}).get("claudeManagedAccounts", []):
+                if acc.get("id") == target_id:
+                    acc["lastAuthenticatedAt"] = now_ms()
+                    acc["updatedAt"] = now_ms()
+        _guarded_update(ORCA_DATA_PATH, stamp)
         log_provider_event("login", {"account": target_email, "accountId": target_id, "switched": False,
                                      "storeAccount": is_store_account})
         sys.stdout.write("[*] Synced updated credentials to Orca Keychain (id: %s).\n" % target_id)

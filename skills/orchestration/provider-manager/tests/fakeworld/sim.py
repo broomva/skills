@@ -14,7 +14,9 @@ Modelled on Claude Code 2.1.280's bundled source (`ed`/`gD`/`zy`/`rdo`, read fro
   death.
 - A 429 ends the turn (StopFailure `rate_limit`). The session is stalled, not dead.
 
-The real-binary drill (tests/drill) checks this model against the binary itself.
+What this model does not claim: proper-lockfile's exact retry schedule (it retries 5 times, briefly),
+the 30 s read cache, or Claude Code's handling of MCP tokens. The real-binary drill (tests/drill) runs
+the binary itself for the switch scenarios and the probe.
 """
 
 import os
@@ -57,7 +59,7 @@ class ClaudeCodeSim:
 
     def _lock(self):
         new = self.config_dir / ".oauth_refresh.lock"
-        legacy = Path(str(self.config_dir) + ".lock")
+        legacy = Path(os.path.realpath(str(self.config_dir)) + ".lock")
         for _ in range(5):
             try:
                 os.mkdir(new)

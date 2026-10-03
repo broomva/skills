@@ -26,8 +26,11 @@ from pathlib import Path
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
-import pm_state  # noqa: E402
-import provider_manager as pm  # noqa: E402
+try:
+    import pm_state  # noqa: E402
+    import provider_manager as pm  # noqa: E402
+except Exception:  # noqa: BLE001 - e.g. mid-install: a hook must never fail a session
+    pm = None
 
 KICK_MIN_GAP_SECONDS = 30.0
 MAX_PAYLOAD_BYTES = 1_000_000
@@ -107,8 +110,8 @@ HANDLERS = {
 
 
 def main() -> None:
-    if os.environ.get("PROVIDER_MANAGER_PROBE"):
-        return  # never act inside our own probe
+    if pm is None or os.environ.get("PROVIDER_MANAGER_PROBE"):
+        return  # modules unavailable, or inside our own probe
     event = sys.argv[1] if len(sys.argv) > 1 else "session-start"
     handler = HANDLERS.get(event)
     if handler is None or handler is handle_post_tool_use:

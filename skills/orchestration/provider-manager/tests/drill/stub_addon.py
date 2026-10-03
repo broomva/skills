@@ -71,9 +71,14 @@ class Stub:
         auth = flow.request.headers.get("authorization", "")
         bearer = auth[7:] if auth.lower().startswith("bearer ") else None
 
-        def reply(status, body, ctype="application/json"):
+        def reply(status, body, ctype="application/json", headers=None):
             data = body if isinstance(body, bytes) else json.dumps(body).encode()
-            flow.response = http.Response.make(status, data, {"content-type": ctype})
+            flow.response = http.Response.make(status, data, dict({"content-type": ctype}, **(headers or {})))
+
+        # what a subscription limit looks like on the wire (the headers Claude Code 2.1.280 reads)
+        limit_headers = {"anthropic-ratelimit-unified-status": "rejected",
+                         "anthropic-ratelimit-unified-reset": str(int(time.time()) + 3 * 3600),
+                         "anthropic-ratelimit-unified-representative-claim": "five_hour"}
 
         if host == "platform.claude.com" and path == "/v1/oauth/token":
             try:
@@ -98,11 +103,11 @@ class Stub:
             if not is_main:
                 _log("side.jsonl", {"status": status, "email": email})
                 if status != 200:
-                    return reply(status, payload)
+                    return reply(status, payload, headers=limit_headers if status == 429 else None)
                 return reply(200, _message([{"type": "text", "text": "OK"}], "end_turn"), "text/event-stream")
             if status != 200:
                 _log("served.jsonl", {"call": self.main + 1, "status": status, "email": email})
-                return reply(status, payload)
+                return reply(status, payload, headers=limit_headers if status == 429 else None)
             self.main += 1
             n = self.main
             _log("served.jsonl", {"call": n, "status": status, "email": email})

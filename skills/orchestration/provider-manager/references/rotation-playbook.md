@@ -42,7 +42,7 @@ Then act on what you see:
 |---|---|
 | Active OK and under limits | Nothing. `THROTTLED` on the usage endpoint is not a limit. |
 | Active limited, a standby `OK` and healthy | `rotate` (the probe confirms; switches safely), or wait for the balancer. |
-| A standby `NEEDS_LOGIN` | `login-headless --email <it>`. For a standby, this renews only its copy and does not switch. Then `switch` if you want it. |
+| A standby `NEEDS_LOGIN` | `login-headless --email EMAIL` (replace `EMAIL` with that standby's email). For a standby, this renews only its copy and does not switch. Then `switch` if you want it. |
 | You must move now, the probe disagrees | `rotate --force` (skips the probe and the gap; the switch still refuses a dead target). |
 | A switch is refused: "matches no Orca copy and cannot be identified" | Run any `claude -p` (it refreshes the store under Claude Code's lock), then retry; or `switch --force` to discard that credential. |
 | Want automatic switching off for a while | `hold --minutes N` (`hold --clear` to resume), or `"autoBalance": false` in the config. |

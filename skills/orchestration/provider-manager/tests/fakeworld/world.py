@@ -32,7 +32,6 @@ def default_paths(home):
     return {
         "ORCA_DATA_PATH": home / "Library/Application Support/orca/profiles/local-default/orca-data.json",
         "CLAUDE_CONFIG_PATH": home / ".claude.json",
-        "CLAUDE_CREDS_PATH": home / ".claude/.credentials.json",
         "USAGE_CACHE_PATH": home / ".cache/broomva-provider-usage.json",
         "PROVIDER_EVENTS_PATH": home / ".cache/broomva-provider-events.jsonl",
         "STATE_PATH": home / ".cache/broomva-provider-state.json",
@@ -57,6 +56,11 @@ class World:
         _shim(self.bin / "claude", FAKEWORLD_DIR / "fake_claude.py")
         (self.bin / "node").write_text("#!/bin/sh\necho 'fake node: refused (test guard)' >&2\nexit 99\n")
         (self.bin / "node").chmod(0o755)
+        # the process table as provider-manager sees it: empty unless a test sets one
+        self.ps_output = self.tmp / "ps.txt"
+        self.ps_output.write_text("")
+        (self.bin / "ps").write_text("#!/bin/sh\ncat %s\n" % self.ps_output)
+        (self.bin / "ps").chmod(0o755)
         self.db = str(self.tmp / "keychain.json")
         self.api = str(self.tmp / "anthropic.json")
 
@@ -173,6 +177,10 @@ class World:
             cur["claudeAiOauth"]["expiresAt"] = fake_anthropic.now_ms() + 60_000
             return cur
         keychain_db.update_json(self.db, item or self.primary, USER, bump)
+
+    def claude_process_reading_the_mirror(self):
+        self.ps_output.write_text("/Users/x/.local/share/claude/versions/2.1.280 -p hi PATH=/bin "
+                                  "CLAUDE_CONFIG_DIR=%s\n" % self.config_dir)
 
     def faults(self, **kw):
         keychain_db.set_faults(self.db, **kw)

@@ -29,6 +29,7 @@ jobs:
   test:
     name: pytest (Python ${{ matrix.python }})
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     strategy:
       fail-fast: false
       matrix:
@@ -45,6 +46,7 @@ jobs:
   mutation:
     name: mutation proof
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5

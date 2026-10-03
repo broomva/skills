@@ -44,18 +44,24 @@ ARC-STATUS: BLOCKED quota (rate limit on the active Claude account; provider-man
 
 So `switch` (and every balance or failover, which go through it):
 
-1. holds the machine-wide balancer lock (exactly one provider-manager action at a time);
-2. refuses to write a target it cannot prove live: near expiry, it is refreshed through its own copy
-   first, then its access token must pass a profile check that names that account;
-3. saves the outgoing account's live tokens to its Orca item first (Claude Code rotated them since
-   the last switch), so switching back later is safe;
-4. holds Claude Code's own refresh lock while it rewrites the store, and changes only
-   `claudeAiOauth` in each item (mcpOAuth, Linear's included, is never touched);
+1. holds the machine-wide balancer lock (one provider-manager action at a time; every refresh this
+   tool makes also needs that lock, and re-reads the store first);
+2. refuses to write a target it cannot prove live: it refreshes the target through its own copy
+   (proving the refresh token is unspent, and persisting the new pair first), then checks that the
+   new access token's profile names that account (email and org must agree);
+3. saves the outgoing account's live tokens to its Orca item first, and reads them back. Claude
+   Code rotated them since the last switch, and without this, switching back later would be unsafe;
+4. holds Claude Code's own refresh lock while it rewrites the store item (a lock left by a dead
+   process is reclaimed after 60 s, as Claude Code does). It changes only `claudeAiOauth`; mcpOAuth,
+   Linear's included, is written back as read. The other item name (the mirror) is never written:
+   one refresh chain must not sit in two items;
 5. fails closed: an unreadable store, a store that changed mid-switch, or an unidentifiable store
-   credential stops the switch with the store unchanged.
+   credential stops the switch with the store unchanged. A write that cannot be read back is
+   recorded as `switch.unverified`, and the cooldown still applies.
 
-This tool never refreshes the credential the store holds. That refresh token belongs to Claude Code;
-spending it would kill every session.
+This tool never refreshes a refresh token that a store item holds. That refresh token belongs to
+Claude Code, and spending it would kill every session. A mirror's token is protected whenever a
+running Claude Code process was launched with `CLAUDE_CONFIG_DIR`.
 
 ## The balancer
 
@@ -68,7 +74,13 @@ many sessions kick. It switches only when:
   ago; or
 - **failover:** the active account is limited by readable numbers, or a session reported a rate
   limit (StopFailure), **and** a real probe confirms it. The probe is one tiny `claude -p` on the live
-  store, with no hooks, tools or MCP. The minimum gap is 5 minutes.
+  store and the sessions' model, with no hooks, tools or MCP. The minimum gap is 5 minutes. A report
+  stays pending (up to 15 minutes) until an evaluation can act on it. A session that reported
+  `authentication_failed` triggers the same failover when the probe shows Claude Code itself cannot
+  refresh the store's credential.
+- **never on its own:** a store left empty (`/logout`) is not refilled. On a Claude Code version
+  other than the measured one (2.1.280), automatic switching is observe-only (`would_switch`,
+  `version_unverified`) until the drill is re-run and the version added (`verifiedClaudeVersions`).
 
 Telemetry that cannot be read is never a rate limit. The usage endpoint answering 429 means
 `throttled` (back off, keep the last numbers marked stale). An expired token means `auth_expired`. A
@@ -77,8 +89,8 @@ not a candidate. Tool output (a GitHub API limit, a site's 429) is never read as
 
 Configuration: `~/.config/broomva/provider-manager.json` (keys: `autoBalance`, `threshold`,
 `weeklyThreshold`, `standbyMax`, `margin`, `cooldownMinutes`, `failoverMinGapMinutes`,
-`evalIntervalSeconds`, `probeTtlSeconds`). Set `"autoBalance": false` to log `would_switch` and never
-switch automatically.
+`evalIntervalSeconds`, `probeTtlSeconds`, `probeModel`, `versionGate`, `verifiedClaudeVersions`). Set
+`"autoBalance": false` to log `would_switch` and never switch automatically.
 
 ## Commands
 
@@ -93,7 +105,7 @@ python3 $PM hold --minutes 30          # pause automatic switching (--clear to r
 python3 $PM balance [--dry-run]        # evaluate now (operator)
 python3 $PM switch team@company.com    # safe switch (operator); --force discards an unidentifiable store credential
 python3 $PM rotate [--force]           # failover now (orchestrator); probe-confirmed unless --force
-python3 $PM login-headless --email X   # re-login X from a browser session (see below)
+python3 $PM login-headless --email X   # re-login X from a browser session (see below); --force: over an unidentifiable store credential
 ```
 
 `login-headless` for an account the store does not hold runs `claude auth login` in a throwaway
@@ -105,17 +117,22 @@ running sessions adopt the fresh grant.
 
 `scripts/provider_manager_hook.py <event>`: `session-start` (one status line on stderr from the
 cache, then a kick), `prompt-submit` (a kick), `stop-failure` (records the stalled session; on
-`rate_limit`, queues a probe-confirmed failover), `post-tool-use` (does nothing, on purpose). It
-writes nothing to stdout, does no network I/O, and always exits 0. The wiring, including the
-`StopFailure` entry, is in [references/architecture.md](references/architecture.md#hook-wiring).
+`rate_limit` or `authentication_failed`, queues a probe-confirmed failover), `post-tool-use` (does nothing, on purpose). It
+writes nothing to stdout, does no network I/O, and always exits 0.
+
+**The `StopFailure` entry is a prerequisite for report-driven failover.** Claude Code runs StopFailure
+hooks only when they are configured. Without the entry, a rate limit reaches the balancer only through
+readable usage numbers on a later prompt's evaluation. The wiring is in
+[references/architecture.md](references/architecture.md#hook-wiring).
 
 ## Tests and proof
 
 - `tests/test_kill_paths.py`: each observed kill or false rotation, end to end, with a running
-  session modelled on the binary. Against origin/main (`PM_IMPL_DIR=...`) all 13 fail; here all pass.
+  session modelled on the binary. Against origin/main (`PM_IMPL_DIR=...`) all 14 fail; here all pass.
 - `tests/mutation_check.py`: each guard disabled in a scratch copy turns its tests red.
 - `tests/drill/drill.py`: the real `claude` binary in a sandboxed scratch HOME (no keychain, network
-  only to a local stub), with a switch made between two of its requests.
+  only to a local stub), with a switch made between two of its requests. Its `probe` scenario runs
+  the probe through the real binary and checks how its output is classified.
 
 ## References
 

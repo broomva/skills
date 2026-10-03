@@ -53,6 +53,10 @@ SCENARIOS = {
     "healthy-target": {"gates": [2], "calls": 4},
     # The session rotates A's refresh token; switch A -> B, then back to A.
     "rotation-back": {"gates": [2, 3], "calls": 5},
+    # No session: provider-manager's probe runs the REAL claude binary on the store, for three states
+    # of the active account (healthy, exhausted, dead grant), to check its classification of the real
+    # binary's output.
+    "probe": {"gates": [], "calls": 1},
 }
 
 
@@ -215,10 +219,47 @@ class Run:
             time.sleep(0.1)
         return False
 
+    def run_probe(self):
+        """probe_active_account() with `claude` resolving to the real binary, inside the sandbox."""
+        real = os.path.realpath(shutil.which("claude", path="%s/.local/bin:%s" % (REAL_HOME, os.environ.get("PATH", ""))))
+        os.unlink(self.bin / "claude")
+        (self.bin / "claude").symlink_to(real)
+        code = ("import sys,json;sys.path.insert(0,%r);import provider_manager as pm;"
+                "print(json.dumps(pm.probe_active_account()))" % str(self.impl))
+        results = {}
+        a = keychain_db.read_json(self.db, STORE, USER)["claudeAiOauth"]
+        for state in ("healthy", "exhausted", "dead_grant"):
+            if state == "exhausted":
+                fake_anthropic.set_account(A, exhausted=True)
+            if state == "dead_grant":
+                fake_anthropic.set_account(A, exhausted=False)
+                fake_anthropic.consume(a["refreshToken"])
+                fake_anthropic.expire_access(a["accessToken"])
+                a["expiresAt"] = fake_anthropic.now_ms() - 1000
+                keychain_db.update_json(self.db, STORE, USER, lambda c: dict(c, claudeAiOauth=a))
+            r = subprocess.run(self.sandboxed([sys.executable, "-c", code]), capture_output=True, text=True,
+                               env=self.env(), timeout=240)
+            try:
+                results[state] = json.loads(r.stdout.strip().splitlines()[-1])
+            except (ValueError, IndexError):
+                results[state] = ["error", (r.stderr or r.stdout)[-300:]]
+            raw = subprocess.run(self.sandboxed([real, "-p", "Reply with the single word OK.", "--tools", "",
+                                                 "--strict-mcp-config", "--setting-sources", "project",
+                                                 "--no-session-persistence", "--output-format", "json"]),
+                                 capture_output=True, text=True, env=self.env(), timeout=240, cwd=str(self.root))
+            results[state + "_raw"] = {"rc": raw.returncode, "stdout": raw.stdout[-600:], "stderr": raw.stderr[-300:]}
+        expected = {"healthy": "ok", "exhausted": "limited", "dead_grant": "auth_dead"}
+        ok = all(results[k][0] == v for k, v in expected.items())
+        return {"scenario": "probe", "impl": "new" if self.impl == NEW_IMPL else str(self.impl),
+                "verdict": "CLASSIFIED" if ok else "MISCLASSIFIED", "results": results, "expected": expected,
+                "served_by": [], "scratch": str(self.root)}
+
     def run(self):
         self.build()
         self.preflight()
         self.start_mitm()
+        if self.scenario == "probe":
+            return self.run_probe()
         claude = os.path.realpath(shutil.which("claude", path="%s/.local/bin:%s" % (REAL_HOME, os.environ.get("PATH", ""))))
         prompt = "Drill: run the bash commands you are given until told you are done."
         out = open(self.root / "claude.out", "w")
@@ -305,7 +346,7 @@ def main():
     runs = []
     if args.all:
         impls = [NEW_IMPL] + ([Path(args.old_impl)] if args.old_impl else [])
-        runs = [(i, s) for s in sorted(SCENARIOS) for i in impls]
+        runs = [(i, s) for s in sorted(SCENARIOS) if s != "probe" for i in impls] + [(NEW_IMPL, "probe")]
     else:
         runs = [(NEW_IMPL if args.impl == "new" else Path(args.impl), args.scenario)]
     reports = []

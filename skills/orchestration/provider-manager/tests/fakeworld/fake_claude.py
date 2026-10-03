@@ -77,6 +77,9 @@ def auth_login(argv):
 
 
 def main(argv):
+    if argv[:1] == ["--version"]:
+        print("%s (Claude Code)" % os.environ.get("FAKE_CLAUDE_VERSION", "2.1.280"))
+        return 0
     if argv[:2] == ["auth", "login"]:
         return auth_login(argv)
     if argv[:2] == ["auth", "status"]:
@@ -95,8 +98,19 @@ def main(argv):
         oauth = creds.get("claudeAiOauth") or {}
         status, body = fake_anthropic.messages(oauth.get("accessToken"), kind="probe")
         if status == 401 and oauth.get("refreshToken"):
-            # as Claude Code does: refresh with the store's refresh token, persist, retry once
-            code, fresh = fake_anthropic.token_refresh(oauth["refreshToken"])
+            # as Claude Code does: refresh with the store's refresh token under its lock, persist, retry once
+            cfg = os.environ.get("CLAUDE_CONFIG_DIR") or os.path.join(os.environ["HOME"], ".claude")
+            lock = os.path.join(cfg, ".oauth_refresh.lock")
+            try:
+                os.mkdir(lock)
+            except FileExistsError:
+                print(json.dumps({"type": "result", "is_error": True, "result":
+                                  "Failed to refresh OAuth token: another Claude Code process is refreshing it"}))
+                return 1
+            try:
+                code, fresh = fake_anthropic.token_refresh(oauth["refreshToken"])
+            finally:
+                os.rmdir(lock)
             if code == 200:
                 oauth = dict(oauth, accessToken=fresh["access_token"], refreshToken=fresh["refresh_token"],
                              expiresAt=fake_anthropic.now_ms() + fresh["expires_in"] * 1000)

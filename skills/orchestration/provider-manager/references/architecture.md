@@ -154,17 +154,30 @@ Drill results (real binary, sandboxed scratch HOME, stubbed endpoints) are in th
    profile check for the same token fingerprint (`profile_cached`); or a live profile check of its
    access token (`profile`). Otherwise it is `orca_setting_unverified`, and a switch that would
    discard that credential is refused unless `--force`.
-4. Validate the target, still outside any lock: if its access token has under 10 minutes left,
-   refresh it through its own Orca copy (persisting the rotated pair first). Then its access token
-   must pass a profile check naming that account.
-5. Under Claude Code's refresh lock (no network inside): re-read the store and abort if it changed;
-   write the outgoing account's live tokens to its Orca copy if they differ from it; write the target's
-   `claudeAiOauth` to the primary item, then the mirror; read back and verify.
-6. Record: orca-data active id, `~/.claude.json` hint, state `lastSwitch` (the cooldown), event `switch`.
+4. Validate the target, still outside Claude Code's lock: refresh it through its own Orca copy
+   (proving its refresh token unspent; the rotated pair is persisted and read back first). The new
+   access token must then pass a profile check naming that account: the email must match exactly one
+   roster account, and its org must agree.
+5. Under Claude Code's refresh lock (no network inside, each keychain call bounded at 8 s, the whole
+   hold far under the 60 s stale age): re-read the store and abort if it changed; write the outgoing
+   account's live tokens to its Orca copy (read back) if they differ from it; write the target's
+   `claudeAiOauth` to the primary item only; read back and verify. A failed read-back after the write
+   records `switch.unverified` and keeps the cooldown.
+6. Record: orca-data active id and the `~/.claude.json` hint (each rewritten only if nobody wrote the
+   file since it was read, never if it does not parse, keeping its mode); state `lastSwitch` (the
+   cooldown); event `switch`.
 
-**Refresh interlock:** `refresh_account_token` refuses the account the store holds, and any copy whose
-refresh token equals a store item's. Telemetry for the store's account uses the store's access token
-and never refreshes it.
+**Refresh interlock:** `refresh_account_token` runs only under the balancer lock (non-blocking: if
+another provider-manager action holds it, nothing is refreshed), and re-reads every store item
+immediately before the POST. It refuses: the account the store holds; any copy whose refresh token
+equals the primary item's; one equal to the mirror's while a running Claude Code process was launched
+with `CLAUDE_CONFIG_DIR` (from `ps axeww`); and, unless the store was proven dead or the operator
+forced it, any refresh while the store's account cannot be identified. On `invalid_grant`, the copy is
+re-read: if another writer changed it meanwhile, it is not marked `needs_login`. Telemetry for the
+store's account uses the store's access token and never refreshes it.
+
+**The mirror.** Old provider-manager versions wrote the scoped item too, so it can still hold a
+chain an Orca copy also holds. This version never writes it.
 
 ## 5. Telemetry, balancer, probe
 
@@ -174,27 +187,48 @@ and never refreshes it.
 mark an account limited (`locked_reason`, 5h or 7d ≥ 100%, or an active limit at 100%).
 
 Decision rules and defaults: SKILL.md "The balancer". The probe runs `claude -p "Reply with the single
-word OK." --model haiku --tools "" --strict-mcp-config --setting-sources project --no-session-persistence
---output-format json`, from an empty temp dir. Its environment drops `CLAUDECODE`, `CLAUDE_CODE_*`,
-`CLAUDE_PID` and `ANTHROPIC_*` auth overrides, keeps `CLAUDE_CONFIG_DIR` as the sessions have it, and
-sets `PROVIDER_MANAGER_PROBE=1` (the hook no-ops on it). The result is `ok`, `limited`, or `unknown`,
-cached `probeTtlSeconds`. Only `limited` permits a failover.
+word OK." --tools "" --strict-mcp-config --setting-sources project --no-session-persistence
+--output-format json` (plus `--model <probeModel>` only if configured: by default it uses the same
+default model as the sessions), from an empty temp dir. Its environment drops `CLAUDECODE`,
+`CLAUDE_CODE_*`, `CLAUDE_PID` and `ANTHROPIC_*` auth overrides, keeps `CLAUDE_CONFIG_DIR` as the
+sessions have it, and sets `PROVIDER_MANAGER_PROBE=1` (the hook no-ops on it).
+
+The result is cached for `probeTtlSeconds`:
+- `ok`;
+- `limited` (`api_error_status: 429` in Claude Code's JSON result, else the limit phrases);
+- `auth_dead` ("OAuth session expired and could not be refreshed");
+- `unknown`.
+
+`limited` permits a rate-limit failover; `auth_dead` permits the dead-grant failover. Measured against
+the real 2.1.280 binary (`tests/drill`, `probe` scenario):
+- a subscription-limit 429 (with the `anthropic-ratelimit-unified-status: rejected` / `-reset` headers)
+  prints "You've hit your session limit · resets 10:47pm (…)" with `api_error_status: 429`;
+- a dead grant prints the auth message.
+
+**Version gate.** `claude --version` (cached per resolved binary, 1 h) must be in
+`MEASURED_CLAUDE_VERSIONS` (2.1.280) or `verifiedClaudeVersions`. Otherwise automatic evaluations log
+`version_unverified` and only `would_switch`. Operator commands are not gated.
 
 ## 6. Files and events
 
 | Path | What |
 |---|---|
 | `~/.cache/broomva-provider-events.jsonl` | Events. Every line: `timestamp`, `iso`, `event`, `trace_id` (one evaluation or switch), `run_id` (one process), `pid`, `session_id` (the calling session). |
-| `~/.cache/broomva-provider-state.json` | `lastEvalAt`, `lastKickAt`, `lastSwitch {at, from, to, source}`, `holdUntil`, `pendingSignals`, `telemetry {id: backoff}`, `health {id: needsLogin}`, `probes`, `storeIdentity` (token fingerprint, never a token). Mode 0600. |
+| `~/.cache/broomva-provider-state.json` | `lastEvalAt`, `lastKickAt`, `lastSwitch {at, from, to, source, unverified?}`, `holdUntil`, `pendingSignals`, `telemetry {id: backoff}`, `health {id: needsLogin}`, `probes`, `claudeVersion`, `storeIdentity` (token fingerprint, never a token). Mode 0600. |
 | `~/.cache/broomva-provider-usage.json` | Usage cache (90 s TTL). |
 | `~/.cache/broomva-provider-stalled.jsonl` | StopFailure reports: `sessionId`, `cwd`, `transcriptPath`, `error`, `paseoAgentId`. |
 | `~/.cache/broomva-provider-balancer.lock` | The machine-wide lock; holds `{pid, since, holder}`. |
 
-Events: `switch` (`fromAccount`, `toAccount`, `source`, `reason`, `wroteBack`, `outgoingIdentity`,
-utilisations, `probe`), `switch.refused` (`target`, `reason`), `switch.discard_unverified`,
-`balance.decision` (`action`, `reason`, `telemetry`, `remainingSeconds`...), `probe` (`result`),
-`telemetry.throttled` (`backoffUntil`), `refresh`, `refresh.refused`, `refresh.failed`
-(`needsLogin`), `refresh.persist_failed` (critical), `session.stalled`, `login`, `hold`.
+Events:
+- `switch` (`fromAccount`, `toAccount`, `source`, `reason`, `wroteBack`, `outgoingIdentity`, utilisations, `probe`);
+- `switch.refused` (`target`, `reason`), `switch.unverified` (`error`), `switch.discard_unverified`;
+- `balance.decision` (`action`, `reason`, `telemetry`, `remainingSeconds`...);
+- `probe` (`result`), `probe.disagrees` (a session reported a limit and the probe says ok), `version_unverified` (`claudeVersion`);
+- `telemetry.throttled` (`backoffUntil`);
+- `refresh`, `refresh.refused` (`reason`), `refresh.deferred`, `refresh.failed` (`needsLogin`), `refresh.persist_failed` (critical);
+- `writeback.failed`, `session.stalled`, `login`, `hold`.
+
+Events and stalled-session logs are mode 0600.
 
 ## Hook wiring
 
@@ -210,4 +244,6 @@ entries are now no-ops and may be removed:
 ```
 
 No matcher: the hook reads `error` itself. It records every stalled turn and starts a failover
-evaluation only for `rate_limit`.
+evaluation for `rate_limit` and `authentication_failed`. The evaluation still needs the probe to agree
+before it acts. In the detached process, a reported limit that cannot be acted on yet (lock busy, inside
+the 5-minute gap) is retried for up to 15 minutes, because stalled sessions send no prompts.

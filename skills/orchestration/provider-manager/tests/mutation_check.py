@@ -28,9 +28,9 @@ U = "tests/test_provider_manager.py::"
 MUTATIONS = {
     "M1": ("target liveness check skipped",
            [("provider_manager.py",
-             '    """Prove the target\'s credential is live and is the target, without touching the store."""\n',
-             '    """Prove the target\'s credential is live and is the target, without touching the store."""\n'
-             '    return True, oauth, "ok"\n')],
+             '    the copy first), then check that the new access token\'s profile names that account."""\n',
+             '    the copy first), then check that the new access token\'s profile names that account."""\n'
+             '    return True, oauth_of(read_orca(target["id"]).data), "ok"\n')],
            [K + "test_k1_switch_to_stale_standby_never_kills_running_session",
             U + "test_switch_refuses_a_stale_target_with_the_reason_and_marks_it_needs_login",
             U + "test_switch_refuses_a_target_copy_holding_another_accounts_tokens"]),
@@ -45,10 +45,12 @@ MUTATIONS = {
            [U + "test_usage_429_backs_off_and_keeps_stale_numbers_without_claiming_a_limit"]),
     "M4": ("standby with unreadable usage or a dead grant eligible",
            [("provider_manager.py",
-             'return (a.get("telemetry") == "ok" and a.get("hasStoredCredentials") and not a.get("needsLogin")\n'
+             'return bool(a.get("telemetry") == "ok" and a.get("hasStoredCredentials") and not a.get("needsLogin")\n'
              '                and not a.get("isRateLimited") and fh is not None and fh <= cfg["standbyMax"]',
-             'return (a.get("hasStoredCredentials") and not a.get("isRateLimited")\n'
-             '                and (fh is None or fh <= cfg["standbyMax"])')],
+             'return bool(a.get("hasStoredCredentials") and not a.get("isRateLimited")\n'
+             '                and (fh is None or fh <= cfg["standbyMax"])'),
+            ("provider_manager.py", '                and (active_fh is None or fh <= active_fh - cfg["margin"]))',
+             '                and (active_fh is None or fh is None or fh <= active_fh - cfg["margin"]))')],
            [U + "test_balance_never_picks_a_standby_whose_usage_is_unreadable"]),
     "M5": ("post-tool-use rotates on rate-limit text again",
            [("provider_manager_hook.py", '    """Deliberately nothing: see the module docstring."""\n    return None',
@@ -62,8 +64,8 @@ MUTATIONS = {
            [("provider_manager.py", "    if since < gap:", "    if False:")],
            [K + "test_k7b_no_flip_back_inside_the_cooldown"]),
     "M8": ("store write drops the item's other keys (mcpOAuth)",
-           [("pm_store.py", '    data = dict(cur.data or {})\n    data["claudeAiOauth"] = oauth\n    if not keychain_write(item',
-             '    data = {"claudeAiOauth": oauth}\n    if not keychain_write(item')],
+           [("pm_store.py", '        data = dict(cur.data or {})\n        data["claudeAiOauth"] = oauth\n        again',
+             '        data = {"claudeAiOauth": oauth}\n        again')],
            [K + "test_k8_switch_leaves_each_store_items_mcp_tokens_untouched"]),
     "M9": ("unreadable keychain item treated as empty",
            [("pm_store.py",
@@ -72,12 +74,16 @@ MUTATIONS = {
            [K + "test_k9_switch_fails_closed_when_the_store_is_unreadable",
             U + "test_keychain_read_distinguishes_absent_from_unreadable"]),
     "M10": ("refresh interlock removed",
-            [("provider_manager.py", "    if store_account_id and account_id == store_account_id:", "    if False:"),
-             ("provider_manager.py", '    if any(same_token(oauth["refreshToken"], rt) for rt in store_rts or []):', "    if False:")],
+            [("provider_manager.py", '        elif ctx["storeAccountId"] and account_id == ctx["storeAccountId"]:', "        elif False:"),
+             ("provider_manager.py", '        if not refusal and any(same_token(oauth["refreshToken"], rt) for rt in ctx["storeRts"]):',
+              "        if False:")],
             [U + "test_refresh_never_spends_a_refresh_token_that_a_store_item_holds"]),
     "M10+M13": ("refresh interlock removed AND the store account read like a standby",
-                [("provider_manager.py", "    if store_account_id and account_id == store_account_id:", "    if False:"),
-                 ("provider_manager.py", '    if any(same_token(oauth["refreshToken"], rt) for rt in store_rts or []):', "    if False:"),
+                [("provider_manager.py", '        elif ctx["storeAccountId"] and account_id == ctx["storeAccountId"]:', "        elif False:"),
+                 ("provider_manager.py", '        if not refusal and any(same_token(oauth["refreshToken"], rt) for rt in ctx["storeRts"]):',
+                  "        if False:"),
+                 ("provider_manager.py", '        elif ctx["storeIdentity"] not in VERIFIED_IDENTITY + ("store_empty",) and not allow_unverified:',
+                  "        elif False:"),
                  ("provider_manager.py", '    is_store_account = account_id == ctx["storeAccountId"]', "    is_store_account = False")],
                 [K + "test_k10_usage_telemetry_never_spends_the_stores_refresh_token"]),
     "M11": ("probe skipped (telemetry 'limited' trusted)",
@@ -106,8 +112,8 @@ MUTATIONS = {
                        ("provider_manager.py", 'and fh is not None and fh <= cfg["standbyMax"]', 'and fh is not None and fh < 100.0')],
                       [K + "test_k7_no_flip_back_when_new_account_telemetry_is_throttled"]),
     "M12": ("Claude Code's refresh lock not taken",
-            [("provider_manager.py", "        with claude_refresh_lock(claude_config_dir(), CLAUDE_LOCK_WAIT_SECONDS):",
-              "        with open(os.devnull):")],
+            [("provider_manager.py", "        with claude_refresh_lock(claude_config_dir(), CLAUDE_LOCK_WAIT_SECONDS) as held_for:",
+              "        with __import__('contextlib').nullcontext(lambda: 0.0) as held_for:")],
             [K + "test_k13_switch_never_races_a_claude_code_refresh",
              U + "test_switch_refusals_name_the_reason"]),
     "M14": ("evaluation interval skipped",
@@ -127,6 +133,43 @@ MUTATIONS = {
             [("provider_manager.py", '        elif result == "auth_dead":\n            reason = "active_grant_dead"',
               '        elif False:\n            reason = "active_grant_dead"')],
             [K + "test_k14_a_dead_active_grant_fails_over_to_a_healthy_account"]),
+    "M19": ("refresh runs without the machine-wide lock",
+            [("provider_manager.py", '''    with pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=False, holder="refresh") as held:
+        if not held:''',
+              '''    with pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=False, holder="refresh") as held:
+        if False:''')],
+            [U + "test_refresh_never_runs_while_another_provider_manager_action_holds_the_lock"]),
+    "M21": ("a stale Claude Code refresh lock is never reclaimed",
+            [("pm_store.py", '    """proper-lockfile\'s rule: a lock directory untouched for 60 s belongs to a dead holder."""\n',
+              '    """proper-lockfile\'s rule: a lock directory untouched for 60 s belongs to a dead holder."""\n    return False\n')],
+            [U + "test_a_stale_claude_refresh_lock_is_reclaimed"]),
+    "M22": ("identity matched on email alone, or on org alone",
+            [("provider_manager.py", "        return hits[0] if not (org and known_org and org != known_org) else None", "        return hits[0]"),
+             ("provider_manager.py", "    if email:\n        hits", "    if False:\n        hits")],
+            [U + "test_identity_needs_email_and_org_to_agree",
+             U + "test_a_same_org_stranger_in_the_store_is_not_written_back_as_a_roster_account"]),
+    "M23": ("a reported limit is consumed by the first evaluation, whatever it decides",
+            [("provider_manager.py", '    if pending:\n        signal = signal or pending[-1].get("type")',
+              '    if pending:\n        update_state(lambda s: s.__setitem__("pendingSignals", []))\n'
+              '        signal = signal or pending[-1].get("type")')],
+            [U + "test_a_reported_limit_survives_a_cooldown_and_a_dry_run"]),
+    "M24": ("version gate off",
+            [("provider_manager.py", "        verified, version = version_verified(cfg)", "        verified, version = True, None")],
+            [U + "test_an_unmeasured_claude_code_version_makes_automatic_switching_observe_only"]),
+    "M25": ("the mirror item is written again",
+            [("provider_manager.py", '            write_store_oauth(ctx["primary"], live_oauth, ctx["user"], LOCKED_IO_TIMEOUT)\n',
+              '            write_store_oauth(ctx["primary"], live_oauth, ctx["user"], LOCKED_IO_TIMEOUT)\n'
+              '            [write_store_oauth(m, live_oauth, ctx["user"]) for m in ctx["mirrors"]]\n')],
+            [U + "test_switch_writes_the_primary_item_only_and_records_the_switch"]),
+    "M26a": ("the mirror is protected even when nothing reads it",
+             [("provider_manager.py", ' \\\n                and config_dir_override_running():', ':')],
+             [U + "test_a_stale_mirror_nobody_reads_does_not_block_switching_back"]),
+    "M26b": ("the mirror is never protected",
+             [("provider_manager.py", ' \\\n                and config_dir_override_running():', ' and False:')],
+             [U + "test_refresh_never_spends_a_refresh_token_that_a_store_item_holds"]),
+    "M27": ("an unparseable ~/.claude.json is overwritten",
+            [("provider_manager.py", "        if before is not None and not isinstance(data, dict):\n            return False\n", "")],
+            [U + "test_claude_json_that_does_not_parse_is_never_replaced_and_its_mode_is_kept"]),
     "M16": ("StopFailure rate_limit does not start a failover",
             [("provider_manager_hook.py", '        kick("stop-failure", signal=signal, force=True)', "        pass")],
             [U + "test_stop_failure_rate_limit_records_the_session_and_fails_over_and_the_session_continues"]),
@@ -149,13 +192,18 @@ def run_tests(impl: Path, tests) -> subprocess.CompletedProcess:
                           cwd=ROOT, env=env, text=True, capture_output=True, timeout=900)
 
 
+RED_MARKERS = ("AssertionError", "SessionDied", "DID NOT RAISE")
+
+
 def outcome(res: subprocess.CompletedProcess) -> str:
-    """'red' only for a real test failure. A collection error, an import error or a missing pytest
-    would turn every mutation 'red' and prove nothing."""
+    """'red' only when the test failed on its own assertion (or the session died, or an expected
+    refusal did not happen). A collection error, an import error, a missing pytest or an unrelated
+    exception from a broken mutation would turn every mutation 'red' and prove nothing."""
     tail = res.stdout.strip().splitlines()[-1] if res.stdout.strip() else ""
     if res.returncode == 0 and " passed" in tail:
         return "green"
-    if res.returncode == 1 and " failed" in tail and " error" not in tail:
+    if res.returncode == 1 and " failed" in tail and " error" not in tail \
+            and any(m in res.stdout for m in RED_MARKERS):
         return "red"
     return "invalid"
 
