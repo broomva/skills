@@ -48,14 +48,19 @@ reason *before* building:
 
 **3. Lab.**
 - Work in an isolated profile so the user's real state is never touched: `--user-data-dir`,
-  a copy of the vault, a test device. The playbook lists the knobs per app family. For Electron
-  apps, always add `--use-mock-keychain`.
+  a copy of the vault, a test device. The playbook lists the knobs per app family. For
+  Chromium-based apps (Electron, Chrome, Arc), always add `--use-mock-keychain`.
+- For a website, the lab is a fresh browser profile that the user logs into themselves. Never
+  copy a real browser profile: it carries cookies and saved logins.
 - A lab that raises system UI on the user's screen is touching the user's environment: a
   keychain prompt, a permission dialog, a focus change. Stop it by exact PID and fix the lab
   before going on.
-- A lab is not a sandbox. It shares the installed app, its updater, and the user's file
-  access. Turn the app's auto-update off in the lab profile. Remember that code you load in
-  the lab (a plugin, an injected script) runs with the user's own file access.
+- A lab is not a sandbox. It shares the installed app, its updater, the user's macOS
+  permissions and the user's file access.
+  - Where the app allows it, turn auto-update off in the lab, and check whether the updater
+    writes into the lab or into `/Applications`. Obsidian's writes into its profile.
+  - Code you load in the lab (a plugin, an injected script) runs with the user's own file
+    access.
 - Back up anything you will change, and write the restore path in the journal
   (`modlog.py log`).
 
@@ -91,14 +96,23 @@ own install. Write install and uninstall steps.
 
 **8. Publish check.** Before anything leaves the machine:
 `python3 $S/scripts/publish_check.py <mod-dir> [--deny-file <private-terms>]`.
-- It blocks third-party binaries (by extension or executable header), symlinks, secrets,
-  decompiler output, home paths, this machine's login name and hostname, and any term in the
-  deny file.
+- It fails closed. It blocks:
+  - third-party binaries (by extension or executable header);
+  - any other non-text file it cannot read, unless you `--allow` it after looking;
+  - network and device captures;
+  - symlinks;
+  - secrets, including bearer tokens, JWTs and cookies;
+  - decompiler output;
+  - home paths, this machine's login name and hostname;
+  - any term in the deny file.
+
+  File and folder names are checked like contents.
 - Put names no pattern can guess in the deny file: private project or vault names,
   knowledge-graph slugs.
 - It lists every image, and every directory it skipped, as REVIEW. Look at each one: a
   screenshot can show private data that no scan sees.
-- Exit 0 plus a look at every REVIEW line, or fix and re-run.
+- Exit 0 means "nothing this filter recognises", not "nothing private". Exit 0 plus a look at
+  every REVIEW line, or fix and re-run.
 
 **9. Field note.**
 - Scaffold the note: `modlog.py note --out $S/field-notes/<target>/<slug>.md`.
@@ -142,8 +156,12 @@ These are hard. The full reasoning and the legal summary are in `references/enve
 - **Ask before you:**
   - drive the user's mouse and keyboard, or take focus;
   - install into the user's real profile, app folder or vault (labs need no ask);
-  - write to a device: firmware, or configuration over BLE, USB or serial;
+  - send anything to a device other than a documented read: commands, probes, replayed
+    captures, configuration or firmware, over BLE, USB, serial or the network. A probe can
+    actuate hardware;
   - send writes or replayed requests to a live service, even on the user's own account;
+  - run code in, or automate, the user's real signed-in session: their browser profile or
+    their running app. Test in a lab profile the user logged into instead;
   - change system settings;
   - delete anything;
   - publish.
@@ -157,7 +175,7 @@ These are hard. The full reasoning and the legal summary are in `references/enve
 | Script | What it does |
 |---|---|
 | `scripts/modlog.py` | `init`, `log` (a free entry, no route needed), `route` (`--subgoal`, `--supersedes`), `ok` (refuses missing evidence), `fail` (exits 3 on a stall, with the re-rank checklist), `status`, `note` (scaffolds a field note), `lint-note` (also checks the cited evidence exists) |
-| `scripts/publish_check.py` | blocks third-party binaries and bundles, large files, secrets, decompiler output, home-directory paths and hostnames; lists every image for a human to review |
+| `scripts/publish_check.py` | fail-closed filter before sharing: blocks third-party binaries, opaque non-text files, captures, symlinks, large files, secrets (including tokens and cookies), decompiler output, home paths, the login name, hostnames and `--deny-file` terms, in contents and in names; lists images, skipped folders and special files for review |
 | `scripts/recon_macos_app.py` | recon adapter for macOS `.app` bundles: stack, extension points, Electron fuses (from the slice this machine runs), protections, update channel, state folders, and the ranked routes |
 
 Exit codes:
@@ -188,6 +206,6 @@ fake targets, once the domain recurs. Shipped so far: macOS apps.
   lab profiles for macOS apps.
 - `field-notes/` — notes from real runs. Search them first, and add yours last.
 - `examples/` — worked runs with their journals and evidence:
-  - `examples/recon-macos-apps/`: the adapter over ten apps.
+  - `examples/recon-macos-apps/`: the adapter's output for three common apps.
   - `examples/obsidian-kg-claims/`: a rung-2 Obsidian plugin with a scripted lab
     (`harness/lab.py`, `harness/record_evidence.sh`).

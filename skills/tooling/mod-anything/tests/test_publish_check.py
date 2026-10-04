@@ -104,9 +104,10 @@ def test_skips_vcs_and_dependency_dirs(clean: Path):
     assert pc.scan(clean) == []
 
 
-def test_binary_content_is_not_text_scanned(clean: Path):
+def test_binary_content_is_strings_scanned(clean: Path):
+    # An image's metadata can carry a path; the scan reads printable runs of binary files.
     (clean / "icon.png").write_bytes(b"\x89PNG\x00" + b"/Users/alice/" )
-    assert ("userpath", "icon.png") not in kinds(clean)
+    assert ("userpath", "icon.png") in kinds(clean)
 
 
 def test_cli_exit_codes(clean: Path, tmp_path: Path):
@@ -179,10 +180,15 @@ def test_secret_split_across_a_chunk_boundary_is_found(clean: Path):
     assert ("secret", "edge.txt") in kinds(clean, max_mb=10)
 
 
-@pytest.mark.parametrize("magic", [b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\x7fELF", b"MZ\x90\x00"])
+@pytest.mark.parametrize("magic", [b"\xcf\xfa\xed\xfe", b"\xca\xfe\xba\xbe", b"\x7fELF"])
 def test_executables_are_caught_by_header_without_an_extension(clean: Path, magic: bytes):
     (clean / "tool").write_bytes(magic + b"\x00" * 64)
     assert ("binary", "tool") in kinds(clean)
+
+
+def test_mz_without_a_pe_signature_still_fails_closed(clean: Path):
+    (clean / "tool").write_bytes(b"MZ\x90\x00" + b"\x00" * 64)  # not a PE, but not text either
+    assert kinds(clean) == {("opaque", "tool")}
 
 
 @pytest.mark.parametrize("name", ["addon.node", "mod.jar", "A.class"])
@@ -253,3 +259,89 @@ def test_skipped_dirs_are_listed_for_review(clean: Path):
     assert pc.skipped_dirs(clean) == ["node_modules"]
     r = subprocess.run([sys.executable, str(SCRIPT), str(clean)], capture_output=True, text=True)
     assert "REVIEW skipped  node_modules" in r.stdout
+
+
+# --- added after P20 round 2 (BRO-2816): fail closed on what the scan cannot read --------
+
+@pytest.mark.parametrize("name,payload", [
+    ("profile.sqlite", b"SQLite format 3\x00" + b"\x00" * 32 + b"/Users/alice/vault"),
+    ("leveldb.log", b"\x00\x01" + b"key AKIA" + b"ABCDEFGHIJKLMNOP"),
+    ("blob.dat", b"\x00\x00\x00\x01\x02"),
+])
+def test_unrecognised_binaries_fail_closed_and_are_strings_scanned(clean: Path, name: str, payload: bytes):
+    (clean / name).write_bytes(payload)
+    found = kinds(clean)
+    assert ("opaque", name) in found
+    if b"/Users/alice" in payload:
+        assert ("userpath", name) in found
+    if b"AKIA" in payload:
+        assert ("secret", name) in found
+    assert ("opaque", name) not in kinds(clean, allow=[name])
+
+
+@pytest.mark.parametrize("name", ["session.har", "dump.pcapng", "bt.pklg", "hci.btsnoop"])
+def test_captures_block(clean: Path, name: str):
+    (clean / name).write_text("{}\n")
+    assert ("capture", name) in kinds(clean)
+
+
+@pytest.mark.parametrize("text", [
+    'Authorization: Bearer abcdefghijklmnop.qrs',
+    '"authorization": "Bearer abcdefghijklmnopqrst"',
+    "token=" + "eyJ" + "hbGciOiJub25lIn0" + "." + "eyJ" + "zdWIiOiJ0ZXN0In0" + "." + "c2lnbmF0dXJlLXRlc3Q",  # assembled at runtime: no literal token in source
+    "Cookie: session=abcdef123456",
+    '  "set-cookie": "sid=0123456789abcdef; Path=/"',
+])
+def test_session_tokens_block(clean: Path, text: str):
+    (clean / "evidence.txt").write_text(text + "\n")
+    assert ("secret", "evidence.txt") in kinds(clean)
+
+
+def test_names_are_scanned_like_contents(clean: Path):
+    (clean / "alice-vault").mkdir()
+    (clean / "alice-vault" / "a.txt").write_text("clean\n")
+    (clean / "Bob-MacBook-Pro").mkdir()
+    (clean / "Bob-MacBook-Pro" / "b.txt").write_text("clean\n")
+    (clean / "projectx-notes.md").write_text("clean\n")
+    found = kinds(clean, username="alice", deny=["projectx"])
+    assert ("username", "alice-vault") in found or ("userpath", "alice-vault") in found
+    assert ("hostname", "Bob-MacBook-Pro") in found
+    assert ("denied", "projectx-notes.md") in found
+
+
+def test_mz_text_is_not_a_pe_file(clean: Path):
+    (clean / "README.md").write_text("MZ-1 drum machine notes\n")
+    (clean / "codes.csv").write_text("MZA,Mozambique\n")
+    assert kinds(clean) == set()
+
+
+def test_real_pe_header_is_caught(clean: Path):
+    head = bytearray(b"MZ" + b"\x00" * 0x3A + (0x80).to_bytes(4, "little") + b"\x00" * (0x80 - 0x40) + b"PE\x00\x00")
+    (clean / "tool").write_bytes(bytes(head) + b"\x00" * 64)
+    assert ("binary", "tool") in kinds(clean)
+
+
+def test_utf16be_beyond_the_first_chunk(clean: Path):
+    body = "x" * (pc.CHUNK // 2 + 100) + "\ntoken ghp_" + "a" * 36 + "\n"
+    (clean / "big16.txt").write_bytes(b"\xfe\xff" + body.encode("utf-16-be"))
+    assert ("secret", "big16.txt") in kinds(clean, max_mb=20)
+
+
+def test_generic_container_logins_are_not_matched():
+    assert all(u not in pc.GENERIC_LOGINS for u in [pc.local_username()] if u)
+    assert {"node", "vscode", "test", "build", "code"} <= pc.GENERIC_LOGINS
+
+
+def test_deny_terms_are_unicode_normalized_and_hash_can_be_escaped(clean: Path, tmp_path: Path):
+    (clean / "doc.md").write_text("by Andre\u0301s, tag #falcon\n")
+    assert ("denied", "doc.md") in kinds(clean, deny=["Andrés"])
+    deny = tmp_path / "deny.txt"
+    deny.write_text("# a comment\n\\#falcon\n")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--deny-file", str(deny)],
+                       capture_output=True, text=True)
+    assert r.returncode == 1 and "#falcon" in r.stdout
+
+
+def test_special_files_are_listed_for_review(clean: Path):
+    os.mkfifo(clean / "pipe")
+    assert "pipe" in pc.skipped_dirs(clean)

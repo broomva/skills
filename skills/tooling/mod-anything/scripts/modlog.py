@@ -29,7 +29,9 @@ Pure stdlib.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import datetime as _dt
+import fcntl
 import json
 import os
 import re
@@ -102,13 +104,40 @@ def load(d: Path) -> dict:
         state = json.loads(p.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
         raise Refused(f"{p} is unreadable ({e}); restore it from MODLOG.md or start a new journal")
-    if not isinstance(state, dict) or not isinstance(state.get("routes"), list):
-        raise Refused(f"{p} is not a modlog journal")
+    if not isinstance(state, dict) or not all(isinstance(state.get(k), str) for k in ("target", "idea")):
+        raise Refused(f"{p} is not a modlog journal (no target/idea)")
+    for k in ("routes", "logs", "steps", "failures", "stalls"):
+        v = state.setdefault(k, [])
+        if not isinstance(v, list) or not all(isinstance(x, dict) for x in v):
+            raise Refused(f"{p} is not a modlog journal ({k!r} is not a list of entries)")
+    for i, r in enumerate(state["routes"], 1):
+        if r.get("n") != i or r.get("rung") not in RUNGS or not isinstance(r.get("name"), str):
+            raise Refused(f"{p} is not a modlog journal (route #{i} is malformed)")
     return state
 
 
 def save(d: Path, state: dict) -> None:
-    (d / STATE).write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    """Atomic: write a temp file and rename it over the state, so a crash or a concurrent
+    reader never sees a half-written journal."""
+    tmp = d / (STATE + f".tmp{os.getpid()}")
+    tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    os.replace(tmp, d / STATE)
+
+
+@contextlib.contextmanager
+def locked(d: Path):
+    """Serialize read-modify-write commands on one journal, so two `fail` calls running at
+    once cannot both read count 2 and both write 3."""
+    if not d.is_dir():
+        yield
+        return
+    fd = os.open(d, os.O_RDONLY)  # lock the folder itself: no lock file to clutter a mod
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+        yield
+    finally:
+        fcntl.flock(fd, fcntl.LOCK_UN)
+        os.close(fd)
 
 
 def append(d: Path, text: str) -> None:
@@ -235,10 +264,14 @@ def _bad_evidence(d: Path, evidence: list[str]) -> list[str]:
 
 def cmd_fail(d: Path, sig: str, detail: str | None, limit: int | None) -> tuple[dict, bool]:
     state = load(d)
+    stored = int(state.get("limit", DEFAULT_LIMIT))
     if limit is None:
-        limit = int(state.get("limit", DEFAULT_LIMIT))
+        limit = stored
     elif limit < 1:
         raise Refused("--limit must be at least 1")
+    elif limit > stored:
+        raise Refused(f"--limit {limit} would raise the stall limit ({stored}); a stall is answered "
+                      "by a re-rank, not by more attempts")
     else:
         state["limit"] = limit  # a lower limit, once set, holds for the rest of the journal
     route = _current_route(state)
@@ -354,18 +387,31 @@ _HEADING = re.compile(r"^##\s+(.+?)\s*$", re.M)
 _GOTCHA = re.compile(r"^\s*\d+\.\s+.+→.+→.+$", re.S)
 _EVIDENCE = re.compile(r"`[^`]+`|\[[^\]]+\]\([^)]+\)")
 _TICKED = re.compile(r"`([^`]+)`")
-_FILE_EXT = re.compile(r"\.(?:png|jpe?g|gif|webp|txt|log|json|md|csv|tsv|html?|mp4|mov)$", re.I)
+_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+_FILE_EXT = re.compile(
+    r"\.(?:png|jpe?g|gif|webp|heic|txt|log|json|jsonl|md|csv|tsv|html?|xml|ya?ml|pdf|"
+    r"mp4|mov|mkv|webm|mp3|wav|m4a|ogg|flac|zip|tar|gz|out|err|sh|py|js|ts)$", re.I)
 
 
-def _looks_like_path(tok: str) -> bool:
-    """A cited evidence path, as opposed to a command in backticks. A token with spaces
-    counts only when it ends in a file extension (`evidence/run 2.png`), so commands such
-    as `cd tools/x && make` are not mistaken for paths."""
-    if "://" in tok:
-        return False
+def _evidence_path(tok: str) -> str | None:
+    """The file path a cited token points at, or None when it is not a path.
+
+    A path ends in a known file extension (after an optional `:line` suffix), and has no
+    glob or shell characters. A token with spaces counts only when its first word already
+    contains a `/` (`evidence/run 2.png`), so commands such as `screencapture -x out.png`
+    or `sample 4242 1 > evidence/run.txt` are not mistaken for paths. Media types
+    (`text/html`), `n/a` and bare domains have no file extension and are skipped."""
+    tok = tok.strip()
+    if "://" in tok or re.search(r"[*?\[\]<>|&;$]", tok):
+        return None
+    tok = re.sub(r":\d+(?::\d+)?$", "", tok)
+    if not _FILE_EXT.search(tok):
+        return None
     if re.search(r"\s", tok):
-        return bool(_FILE_EXT.search(tok))
-    return "/" in tok or bool(_FILE_EXT.search(tok))
+        first = tok.split()[0]
+        if "/" not in first or any(w.startswith("-") for w in tok.split()):
+            return None
+    return tok
 
 
 def _items(body: str) -> list[str]:
@@ -411,9 +457,9 @@ def lint_note(text: str, base: Path | list[Path] | None = None) -> list[str]:
         problems.append("## Verification cites no evidence (a `path` or a [link](url))")
     if base is not None and "Verification" in sections:
         bases = base if isinstance(base, list) else [base]
-        for tok in (t.strip() for t in _TICKED.findall(ver)):
-            if not _looks_like_path(tok):
-                continue
+        cited = [_evidence_path(t) for t in _TICKED.findall(ver)]
+        cited += [_evidence_path(t) for t in _LINK.findall(ver)]
+        for tok in dict.fromkeys(c for c in cited if c):
             p = Path(tok).expanduser()
             if not (p.exists() if p.is_absolute() else any((b / p).exists() for b in bases)):
                 problems.append(f"## Verification cites a path that does not exist: {tok}")
@@ -429,6 +475,50 @@ def lint_note(text: str, base: Path | list[Path] | None = None) -> list[str]:
     if "Route" in sections and not re.search(r"(?i)\brung\s*(?:[1-5]\b|passthrough)|passthrough", route):
         problems.append("## Route does not name a rung (1-5 or passthrough)")
     return problems
+
+
+def _dispatch(ns: argparse.Namespace, d: Path) -> int:
+    if ns.cmd == "init":
+        cmd_init(d, ns.target, ns.idea, ns.done)
+        print(f"journal started: {d / JOURNAL}")
+    elif ns.cmd == "log":
+        cmd_log(d, ns.text, ns.evidence)
+        print("noted")
+    elif ns.cmd == "route":
+        e = cmd_route(d, ns.rung, ns.name, ns.reason, ns.subgoal, ns.supersedes)
+        print(f"route #{e['n']}: rung {e['rung']} ({RUNGS[e['rung']]}) — {e['name']}")
+    elif ns.cmd == "ok":
+        e = cmd_ok(d, ns.step, ns.evidence)
+        print(f"ok: {e['step']}")
+    elif ns.cmd == "fail":
+        e, stalled = cmd_fail(d, ns.sig, ns.detail, ns.limit)
+        if stalled:
+            r = load(d)["routes"][-1]
+            print(STALL_TEXT.format(sig=e["sig"], count=e["count"], route=r["n"],
+                                    rung=r["rung"], name=r["name"]))
+            return 3
+        print(f"fail x{e['count']} (stall at {e['limit']}): {e['sig']}")
+    elif ns.cmd == "status":
+        print(cmd_status(d))
+    elif ns.cmd == "note":
+        out = cmd_note(d, Path(ns.out), ns.force)
+        print(f"field note scaffolded: {out} — fill every {TODO}, then run lint-note")
+    elif ns.cmd == "lint-note":
+        path = Path(ns.path)
+        if not path.is_file():
+            raise Refused(f"no such file: {path}")
+        try:
+            text = path.read_text(encoding="utf-8")
+        except (UnicodeDecodeError, OSError) as e:
+            raise Refused(f"cannot read {path} as UTF-8 text: {e}")
+        bases = [path.parent] + [r for r in [skill_root(path)] if r is not None]
+        problems = lint_note(text, base=bases)
+        for pr in problems:
+            print(f"FAIL {pr}")
+        if problems:
+            return 1
+        print(f"OK {path}: complete field note")
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -453,50 +543,11 @@ def main(argv: list[str] | None = None) -> int:
     ns = ap.parse_args(argv)
     d = Path(ns.dir)
     try:
-        if ns.cmd == "init":
-            cmd_init(d, ns.target, ns.idea, ns.done)
-            print(f"journal started: {d / JOURNAL}")
-        elif ns.cmd == "log":
-            cmd_log(d, ns.text, ns.evidence)
-            print("noted")
-        elif ns.cmd == "route":
-            e = cmd_route(d, ns.rung, ns.name, ns.reason, ns.subgoal, ns.supersedes)
-            print(f"route #{e['n']}: rung {e['rung']} ({RUNGS[e['rung']]}) — {e['name']}")
-        elif ns.cmd == "ok":
-            e = cmd_ok(d, ns.step, ns.evidence)
-            print(f"ok: {e['step']}")
-        elif ns.cmd == "fail":
-            e, stalled = cmd_fail(d, ns.sig, ns.detail, ns.limit)
-            if stalled:
-                r = load(d)["routes"][-1]
-                print(STALL_TEXT.format(sig=e["sig"], count=e["count"], route=r["n"],
-                                        rung=r["rung"], name=r["name"]))
-                return 3
-            print(f"fail x{e['count']} (stall at {e['limit']}): {e['sig']}")
-        elif ns.cmd == "status":
-            print(cmd_status(d))
-        elif ns.cmd == "note":
-            out = cmd_note(d, Path(ns.out), ns.force)
-            print(f"field note scaffolded: {out} — fill every {TODO}, then run lint-note")
-        elif ns.cmd == "lint-note":
-            path = Path(ns.path)
-            if not path.is_file():
-                raise Refused(f"no such file: {path}")
-            try:
-                text = path.read_text(encoding="utf-8")
-            except (UnicodeDecodeError, OSError) as e:
-                raise Refused(f"cannot read {path} as UTF-8 text: {e}")
-            bases = [path.parent] + [r for r in [skill_root(path)] if r is not None]
-            problems = lint_note(text, base=bases)
-            for pr in problems:
-                print(f"FAIL {pr}")
-            if problems:
-                return 1
-            print(f"OK {path}: complete field note")
+        with locked(d):
+            return _dispatch(ns, d)
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)
         return 2
-    return 0
 
 
 if __name__ == "__main__":

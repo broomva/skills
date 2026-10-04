@@ -10,11 +10,11 @@ exist:
 
 | Signal | Where | What it means |
 |---|---|---|
-| Bundle id, version | `Info.plist` → `CFBundleIdentifier`, `CFBundleShortVersionString` | This is the installer's version, not necessarily the running one. Obsidian's says 1.8.4 while it runs 1.13.7 from `<profile>/obsidian-1.13.7.asar`; Antigravity's `product.json` says 1.107.0 against Info.plist 2.1.1. Take the running version from the app itself (e.g. `obsidian version`) and record both. |
+| Bundle id, version | `Info.plist` → `CFBundleIdentifier`, `CFBundleShortVersionString` | This is the installer's version, not necessarily the running one. Obsidian's says 1.8.4 while it runs 1.13.7 from `<profile>/obsidian-1.13.7.asar`; a VS Code fork observed here carried a `product.json` version that differed from its Info.plist. Take the running version from the app itself (e.g. `obsidian version`) and record both. |
 | URL schemes | `Info.plist` → `CFBundleURLTypes[].CFBundleURLSchemes` | Rung 2: `open "<scheme>://..."` deep links. Observed: `vscode`, `obsidian`, `slack`, `spotify`, `figma`, `discord`. |
 | AppleScript dictionary | `Info.plist` → `OSAScriptingDefinition` names an `.sdef` in `Contents/Resources/` | Rung 2: `osascript` against the dictionary. Observed: Spotify, Google Chrome (`scripting.sdef`), Arc, Safari, Ghostty. |
 | App Intents | `Contents/Resources/Metadata.appintents/` | Rung 2: Shortcuts actions. Observed: Ghostty. |
-| Electron | `Contents/Frameworks/Electron Framework.framework` | A Chromium renderer plus Node. Observed: VS Code, Obsidian, Slack, Notion, Linear, Discord, Figma, Granola. |
+| Electron | `Contents/Frameworks/Electron Framework.framework` | A Chromium renderer plus Node. Observed: VS Code, Obsidian, Slack, Notion, Linear, Discord, Figma. |
 | App code (Electron) | `Contents/Resources/*.asar` or `Contents/Resources/app/` | Observed: Obsidian `app.asar` + `obsidian.asar`; Slack per-arch `app-arm64.asar`; VS Code unpacked `app/`. |
 | VS Code family | `Contents/Resources/app/product.json` | The extension API (rung 2); `dataFolderName` names the per-user folder (`.vscode` for VS Code). |
 | Auto-update | `Contents/Frameworks/Sparkle.framework` | Updates can overwrite or invalidate a file-level mod. Observed: Arc, Ghostty. |
@@ -56,8 +56,8 @@ What the fuses mean for the ladder:
   with OnlyLoadAppFromAsar.
 - **Inspect and Node-options fuses off**: the app's makers closed the Node-side debugging
   doors. Respect that. The inspect fuse governs only the Node main process, not the renderer's
-  DevTools port. Use that port (rung 3) only when the terms allow client modification or the
-  app itself ships DevTools to its users.
+  DevTools port. Use that port (rung 3) only when the terms allow client modification. An app
+  shipping DevTools to its users is not permission to modify it.
 - **Every protective fuse off, and the app ships a plugin API** (Obsidian: only
   GrantFileProtocolExtraPrivileges is on): use the API.
 
@@ -125,6 +125,11 @@ macOS works):
   Application State are shared with the lab.
 - **The user's file access.** A plugin or script you run in the lab can read and write
   anything the user can. Keep the code you run there to the code you wrote.
+- **macOS permissions (TCC).** Bluetooth, Screen Recording and Accessibility grants belong to
+  the responsible process, not the profile. A lab that needs one raises a system dialog;
+  that grant is the user's call, so ask.
+- **The keychain, beyond Electron.** Chrome and Arc also reach the login keychain. Use
+  `--use-mock-keychain` (Chrome also accepts `--password-store=basic`) in their lab profiles.
 - **Checking you left no trace.** A directory's modification time does not change when a file
   inside it is appended to. To prove you left the user's profile alone, hash its files before
   and after.

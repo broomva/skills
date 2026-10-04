@@ -324,3 +324,65 @@ def test_lint_checks_evidence_paths_with_spaces(tmp_path: Path):
 def test_lint_reports_duplicate_sections():
     dup = GOOD_NOTE + "\n## Verification\n- again: `other.png`\n"
     assert any("duplicate section: ## Verification" in p for p in modlog.lint_note(dup))
+
+
+# --- added after P20 round 2 (BRO-2816) ---------------------------------------------
+
+def test_wrong_shape_journal_exits_2(journal: Path):
+    for bad in ('{"routes":[{"n":1}],"failures":5}', '{"routes":[],"steps":[]}', '[]'):
+        (journal / ".modlog.json").write_text(bad)
+        r = run(journal, "status")
+        assert r.returncode == 2 and "not a modlog journal" in r.stderr, bad
+
+
+def test_the_stall_limit_cannot_be_raised(journal: Path):
+    run(journal, "route", "--rung", "2", "--name", "api", "--reason", "r")
+    r = run(journal, "fail", "--sig", "x", "--limit", "99")
+    assert r.returncode == 2 and "re-rank" in r.stderr
+    assert run(journal, "fail", "--sig", "x", "--limit", "2").returncode == 0
+    r = run(journal, "fail", "--sig", "x", "--limit", "3")  # back up: refused
+    assert r.returncode == 2
+
+
+def test_markdown_link_evidence_is_checked(tmp_path: Path):
+    note = GOOD_NOTE.replace("`evidence/shot.png`", "[screenshot](evidence/missing.png)")
+    assert any("missing.png" in p for p in modlog.lint_note(note, base=tmp_path))
+    url = GOOD_NOTE.replace("`evidence/shot.png`", "[docs](https://example.com/a.png)")
+    assert modlog.lint_note(url, base=tmp_path) == []
+
+
+@pytest.mark.parametrize("tok,expect", [
+    ("evidence/shot.png", "evidence/shot.png"),
+    ("evidence/run 2.png", "evidence/run 2.png"),
+    ("evidence/run.txt:12", "evidence/run.txt"),
+    ("evidence/run 2.mp3", "evidence/run 2.mp3"),
+    ("sample 4242 1 > evidence/run.txt", None),
+    ("screencapture -x evidence/shot.png", None),
+    ("n/a", None),
+    ("text/html", None),
+    ("github.com/obsidianmd/obsidian-api", None),
+    ("evidence/*.png", None),
+    ("https://example.com/x.png", None),
+])
+def test_evidence_path_heuristic(tok, expect):
+    assert modlog._evidence_path(tok) == expect
+
+
+def test_concurrent_fails_do_not_lose_counts(journal: Path):
+    run(journal, "route", "--rung", "2", "--name", "api", "--reason", "r")
+    procs = [subprocess.Popen([sys.executable, str(SCRIPT), "--dir", str(journal), "fail",
+                               "--sig", f"sig {i}", "--limit", "3"], stdout=subprocess.DEVNULL,
+                              stderr=subprocess.DEVNULL) for i in range(12)]
+    for p in procs:
+        p.wait()
+    assert len(json.loads((journal / ".modlog.json").read_text())["failures"]) == 12
+    assert not (journal / ".modlog.lock").exists()
+
+
+def test_malformed_route_in_an_otherwise_valid_journal_exits_2(journal: Path):
+    state = json.loads((journal / ".modlog.json").read_text())
+    for bad_route in ({"n": 1}, {"n": 2, "rung": "2", "name": "x"}, {"n": 1, "rung": "9", "name": "x"}):
+        state["routes"] = [bad_route]
+        (journal / ".modlog.json").write_text(json.dumps(state))
+        r = run(journal, "status")
+        assert r.returncode == 2 and "route #1 is malformed" in r.stderr, bad_route

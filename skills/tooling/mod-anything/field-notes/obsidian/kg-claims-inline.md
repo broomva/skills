@@ -24,10 +24,10 @@ relative to the skill root).
      no paths.
    - Why not rung 1: a CSS snippet cannot read another note's frontmatter.
    - Why not rung 3: the terms forbid modifying the Software.
-   - What recon ranked below it: the VS Code and Antigravity IDE extension API (rung 2, but
-     [[slug]] is not a link there), Zed extensions (Rust to WASM plus a language server, hover
-     only), Ulysses and Goodnotes (App Intents and URL schemes, which cannot add UI), and Notion
-     and Superlist (no sanctioned extension point).
+   - What recon ranked below it: VS Code-family extension APIs (rung 2, but [[slug]] is not a
+     link there), an editor whose extensions are Rust to WASM plus a language server (hover
+     only), writing apps with only App Intents and URL schemes (which cannot add UI), and note
+     apps with no sanctioned extension point.
 2. Rung 2, lab sub-goal (leave restricted mode and capture evidence with no input):
    Obsidian's own CLI.
    - It stalled three times: the CLI client hung and the lab main died.

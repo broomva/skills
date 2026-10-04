@@ -13,6 +13,8 @@ where the user is.
 | Bring your own files | Studying a program to interoperate is protected far more than shipping its bytes. Ship code, patches and converters that run on the user's own install. |
 | Ask before touching the user's real environment | Driving input takes over the user's machine. Installing into a real profile can lose state. Labs (a separate profile, a copy) need no ask, but a lab that raises system UI on the user's screen (a keychain prompt, a permission dialog) is touching the user's environment: stop it by exact PID and fix the lab. |
 | Back up first; kill by PID | A mod that corrupts a profile or kills the wrong process costs more than the mod is worth. Never `pkill -f`: the pattern can match the agent's own shell. |
+| Ask before sending anything but a documented read to a device | Undocumented commands, probes and replayed captures can actuate hardware (a motor, a relay, a heater, a lock) or brick it. A device that controls something physical is the user's call each time. |
+| Never use the user's real signed-in session | Testing a userscript or automation in the user's own browser profile or running app acts as them on live services. A website lab is a fresh profile the user logs into; a copied profile carries their cookies and saved logins. |
 
 ## The legal line, briefly
 
