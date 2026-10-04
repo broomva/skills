@@ -50,15 +50,22 @@ reason *before* building:
 - Work in an isolated profile so the user's real state is never touched: `--user-data-dir`,
   a copy of the vault, a test device. The playbook lists the knobs per app family. For
   Chromium-based apps (Electron, Chrome, Arc), always add `--use-mock-keychain`.
-- For a website, the lab is a fresh browser profile that the user logs into themselves. Never
-  copy a real browser profile: it carries cookies and saved logins.
+- For a website, the lab is a fresh browser profile that the user logs into themselves.
+  - A copied browser profile is never a lab: it carries cookies and saved logins. Never read
+    cookies or tokens out of the user's real profile either.
+  - A logged-in lab still holds the user's session: open a DevTools port on it only for the
+    session, and close it after.
+  - Screenshots and DOM dumps from it show the user's email and display name: put those in the
+    deny file (step 8).
 - A lab that raises system UI on the user's screen is touching the user's environment: a
   keychain prompt, a permission dialog, a focus change. Stop it by exact PID and fix the lab
   before going on.
 - A lab is not a sandbox. It shares the installed app, its updater, the user's macOS
   permissions and the user's file access.
   - Where the app allows it, turn auto-update off in the lab, and check whether the updater
-    writes into the lab or into `/Applications`. Obsidian's writes into its profile.
+    writes into the lab or into `/Applications`. Obsidian's writes into its profile. If it
+    writes into `/Applications` and cannot be turned off, that is the user's environment:
+    ask.
   - Code you load in the lab (a plugin, an injected script) runs with the user's own file
     access.
 - Back up anything you will change, and write the restore path in the journal
@@ -95,24 +102,26 @@ traffic or data. Your reading is a hypothesis; step 5 tests it.
 own install. Write install and uninstall steps.
 
 **8. Publish check.** Before anything leaves the machine:
-`python3 $S/scripts/publish_check.py <mod-dir> [--deny-file <private-terms>]`.
-- It fails closed. It blocks:
-  - third-party binaries (by extension or executable header);
-  - any other non-text file it cannot read, unless you `--allow` it after looking;
-  - network and device captures;
-  - symlinks;
-  - secrets, including bearer tokens, JWTs and cookies;
-  - decompiler output;
-  - home paths, this machine's login name and hostname;
-  - any term in the deny file.
+`python3 $S/scripts/publish_check.py <mod-dir> --deny-file <private-terms>`.
 
-  File and folder names are checked like contents.
-- Put names no pattern can guess in the deny file: private project or vault names,
-  knowledge-graph slugs.
-- It lists every image, and every directory it skipped, as REVIEW. Look at each one: a
-  screenshot can show private data that no scan sees.
-- Exit 0 means "nothing this filter recognises", not "nothing private". Exit 0 plus a look at
-  every REVIEW line, or fix and re-run.
+It is a fail-closed filter in front of you, not a privacy guarantee.
+- **It blocks:**
+  - third-party binaries;
+  - any other non-text file it cannot read (`--allow` clears that, but still scans the
+    content);
+  - captures (by extension);
+  - symlinks;
+  - secrets (gitleaks when installed, plus a short built-in list);
+  - decompiler output;
+  - home paths, the login name, the hostname and deny-file terms, in contents and names.
+- **It does not detect** cookies, session values or personal data such as emails and display
+  names. Keep those out at the source (no copied profiles; captures are blocked), and put the
+  names you know in the deny file: the user's email and display name, private project, vault
+  and knowledge-graph names.
+- **It lists as REVIEW** every image, allowed path, skipped folder and special file, and says
+  when gitleaks is missing. Look at each one.
+- **Exit 0** means "nothing this filter recognises". Ship only after exit 0 and a look at
+  every REVIEW line.
 
 **9. Field note.**
 - Scaffold the note: `modlog.py note --out $S/field-notes/<target>/<slug>.md`.
@@ -175,7 +184,7 @@ These are hard. The full reasoning and the legal summary are in `references/enve
 | Script | What it does |
 |---|---|
 | `scripts/modlog.py` | `init`, `log` (a free entry, no route needed), `route` (`--subgoal`, `--supersedes`), `ok` (refuses missing evidence), `fail` (exits 3 on a stall, with the re-rank checklist), `status`, `note` (scaffolds a field note), `lint-note` (also checks the cited evidence exists) |
-| `scripts/publish_check.py` | fail-closed filter before sharing: blocks third-party binaries, opaque non-text files, captures, symlinks, large files, secrets (including tokens and cookies), decompiler output, home paths, the login name, hostnames and `--deny-file` terms, in contents and in names; lists images, skipped folders and special files for review |
+| `scripts/publish_check.py` | fail-closed filter before sharing, not a privacy guarantee: blocks third-party binaries, opaque non-text files, captures, symlinks, large files, secrets (gitleaks plus a built-in fallback), decompiler output, home paths, the login name, hostnames and `--deny-file` terms, in contents and names; lists images, allowed paths, skipped folders and special files for review. Does not detect cookies, sessions or personal data |
 | `scripts/recon_macos_app.py` | recon adapter for macOS `.app` bundles: stack, extension points, Electron fuses (from the slice this machine runs), protections, update channel, state folders, and the ranked routes |
 
 Exit codes:

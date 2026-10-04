@@ -1,47 +1,46 @@
 #!/usr/bin/env python3
-"""publish_check — refuse to share a mod that carries what it must not.
+"""publish_check — a fail-closed filter in front of a person, before a mod is shared.
 
-Scans a mod's folder before anything leaves the machine: a commit to a public repo,
-a pull request to a shared knowledge base, a release, a post. Finds:
+Run it before anything leaves the machine: a commit to a public repo, a pull request to a shared
+knowledge base, a release, a post. It decides what it can decide and hands the rest to a person.
 
-  binary    third-party program or asset formats: by extension (.asar, .dylib, .framework,
-            .node, .jar, ROM and disc images, game archives, app bundles) or by content
-            (Mach-O, ELF, PE headers). Ship code, patches and converters, never the
-            target's bytes
+BLOCK (exit 1), file by file:
+  binary    third-party program or asset formats, by extension (.asar, .dylib, .framework,
+            .node, .jar, ROM and disc images, game archives, app bundles) or by executable
+            header (Mach-O, ELF, PE). Ship code, patches and converters, never the target's bytes
   opaque    any other non-text file that is not an image (a database, an archive, a
-            profile's log): the scan cannot read it, so it fails closed until --allow'ed
-  capture   network and device captures (.har, .pcap, .pcapng, .pklg, .btsnoop, ...): they
-            carry sessions, cookies and link keys
-  symlink   every symbolic link: git commits a link's target path as the file's content,
-            and an archiver that follows links ships whatever it points at
-  large     any file over --max-mb (default 5), which is rarely our own source
-  secret    credentials: private-key blocks, AWS/GitHub/Slack/OpenAI-style tokens, bearer
-            tokens, JWTs, Cookie/Set-Cookie headers
-  decomp    headers that decompilers and disassemblers write into their output
-  userpath  home-directory paths: /Users/<name>/, /home/<name>/, C:\\Users\\<name>\\, and
-            ~/... paths that contain this machine's login name
-  username  this machine's login name anywhere in text (names shorter than 4 are skipped)
+            profile's log, .DS_Store): this scan cannot read it, so it fails closed
+  capture   network and device captures by extension (.har, .pcap, .pcapng, .pklg, .btsnoop)
+  symlink   every symbolic link (git commits the target path; archivers follow it)
+  large     any file over --max-mb (default 5)
+  secret    found by gitleaks (`gitleaks dir`) when it is installed, plus a short built-in list
+            of token shapes (private keys, AWS/GitHub/Slack/OpenAI-style keys, bearer tokens,
+            JWTs). Without gitleaks only the built-in list runs, and a REVIEW line says so
+  decomp    headers that decompilers write into their output
+  userpath  home-directory paths, and ~/... paths that contain this machine's login name
+  username  this machine's login name (generic container logins are ignored)
   hostname  this machine's hostname, or a Mac-style one (<name>-MacBook-Pro.local)
-  denied    any term from --deny-file (one per line): private names, project slugs,
-            anything you know must not leave, which no pattern can guess
+  denied    any term from --deny-file (one per line; put a backslash before a term that
+            starts with #, which otherwise marks a comment)
 
-File and directory NAMES are checked with the same text patterns as contents: git publishes
-names too.
+Names are checked like contents: git publishes file and folder names too. Non-text files are
+also read for printable text, so a path in an image's metadata is found.
 
-It also prints REVIEW lines, which do not change the exit code: every image (a screenshot can
-show private content that no text scan sees), every directory it skipped (node_modules, .git,
-virtualenvs), and every special file (FIFO, socket) it did not read.
+--allow GLOB clears only the "is this file shippable at all" findings (binary, opaque,
+capture, large, symlink) for matching paths and their contents. Content and name findings
+still apply, and every allowed path is listed for review.
 
-A pass means "nothing this filter recognises", not "nothing private". It is a filter in front
-of a person reading every REVIEW line, never a substitute for that reading.
+REVIEW (exit unaffected): images, allowed paths, skipped folders (node_modules, .git,
+virtualenvs), special files, and the secrets engine when gitleaks is missing.
+
+NOT detected, by design: cookies and session values, personal data such as emails and display
+names, and code transcribed from a decompiler without its header. Keep them out at the source
+(never copy a browser profile; captures are blocked), put names you know in --deny-file, and
+read every REVIEW line. Exit 0 means "nothing this filter recognises", not "nothing private".
 
 Usage:  publish_check.py <dir> [--allow GLOB ...] [--deny-file F] [--max-mb N] [--json]
-Exit 0 clean · 1 findings · 2 usage error or a file it could not read (nothing is
-reported clean that was not read). Pure stdlib.
-
-What it cannot see: whether code was *transcribed* from a decompiler without its header,
-whether an asset was redrawn too closely, or whether the target's terms allow sharing at all.
-Those stay with the human review this gate precedes.
+Exit 0 clean · 1 findings · 2 usage error or a file it could not read. Stdlib, plus gitleaks
+on PATH when available.
 """
 from __future__ import annotations
 
@@ -51,8 +50,10 @@ import getpass
 import json
 import os
 import re
+import shutil
 import socket
 import stat
+import subprocess
 import sys
 from pathlib import Path
 
@@ -93,8 +94,11 @@ SECRET_PATTERNS = [
     ("OpenAI/Anthropic-style key", re.compile(r"\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b")),
     ("bearer token", re.compile(r"(?i)\bauthorization\b[\"']?\s*[:=]\s*[\"']?bearer\s+[A-Za-z0-9._~+/-]{12,}")),
     ("JWT", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
-    ("cookie header", re.compile(r"(?im)^\s*[\"']?(?:set-)?cookie[\"']?\s*[:=]\s*[\"']?[^\s\"']+=[^\s\"';]{6,}")),
 ]
+# Findings an --allow can clear: they say "this file should not ship", not "this text leaks".
+ALLOWABLE = {"binary", "opaque", "capture", "large", "symlink"}
+JUNK_NAMES = {".DS_Store": "Finder metadata; delete it", "Thumbs.db": "Windows thumbnail cache; delete it",
+              "desktop.ini": "Windows folder settings; delete it"}
 DECOMP_MARKERS = [
     re.compile(r"(?i)decompiled (?:with|by)\b"),
     re.compile(r"\bILSpy\b"),
@@ -250,17 +254,22 @@ def _scan_file(p: Path, rel: str, max_mb: float, hosts: set[str], user: str | No
     return out
 
 
-def review_images(root: Path, allow: list[str] | None = None) -> list[str]:
-    """Every image a person should look at before sharing (relative paths, sorted)."""
-    allow = allow or []
+def _allowed_path(rel: str, allow: list[str]) -> bool:
+    """True when `rel` or any folder above it matches an --allow glob."""
+    parts = Path(rel).parts
+    return any(_allowed(str(Path(*parts[:k])), allow) for k in range(1, len(parts) + 1))
+
+
+def review_images(root: Path) -> list[str]:
+    """Every image a person should look at before sharing (relative paths, sorted). An
+    --allow never removes an image from this list: allowing a file is not looking at it."""
     out = []
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for name in filenames:
             p = Path(dirpath) / name
-            rel = str(p.relative_to(root))
-            if p.suffix.lower() in IMAGE_EXT and not _allowed(rel, allow):
-                out.append(rel)
+            if p.suffix.lower() in IMAGE_EXT:
+                out.append(str(p.relative_to(root)))
     return sorted(out)
 
 
@@ -283,53 +292,44 @@ def skipped_dirs(root: Path) -> list[str]:
     return sorted(out)
 
 
-def _name_findings(rel: str, hosts: set[str], user: str | None, deny: list[str]) -> list[dict]:
-    """File and directory names are published too: run the text patterns over the path."""
+def _name_findings(name: str, hosts: set[str], user: str | None, deny: list[str]) -> list[dict]:
+    """File and directory names are published too: run the text patterns over one name."""
     out = []
-    for f in _text_findings(rel, rel, hosts, user, deny):
+    for f in _text_findings(name, name, hosts, user, deny):
         if f["kind"] in {"userpath", "username", "hostname", "denied", "secret"}:
-            out.append({"kind": f["kind"], "path": rel, "detail": f"in the name: {f['detail']}"})
+            out.append({"kind": f["kind"], "path": name, "detail": f"in the name: {f['detail']}"})
     return out
 
 
-def scan(root: Path, allow: list[str] | None = None, max_mb: float = 5.0,
-         hostnames: set[str] | None = None, username: str | None = "",
-         deny: list[str] | None = None) -> list[dict]:
-    """Findings for `root`. `hostnames`/`username` default to this machine's (pass an empty
-    set / None to disable in tests). Raises Unreadable for a file it could not read."""
-    allow = allow or []
-    deny = [t for t in (deny or []) if t.strip()]
-    hosts = local_hostnames() if hostnames is None else {h.lower() for h in hostnames}
-    user = local_username() if username == "" else username
-    findings: list[dict] = []
-    if not root.is_dir():
-        raise FileNotFoundError(root)
+def _walk_findings(root: Path, max_mb: float, hosts: set[str], user: str | None,
+                   deny: list[str], allow: list[str]) -> list[dict]:
+    """Every finding for every path under root, before --allow is applied. A bundle folder
+    (Foo.app) is one finding and is not entered, unless it is --allow'ed: then its contents
+    are scanned like anything else."""
+    findings: list[dict] = [dict(f, path=".") for f in _name_findings(root.resolve().name, hosts, user, deny)]
     if root.suffix.lower() in BINARY_EXT:
         findings.append({"kind": "binary", "path": ".", "detail": f"the folder itself is a {root.suffix} bundle"})
-        return findings
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         base = Path(dirpath)
         for d in list(dirnames):
             dp = base / d
             rel = str(dp.relative_to(root))
-            if not _allowed(rel, allow):
-                findings.extend(dict(f, path=rel) for f in _name_findings(d, hosts, user, deny))
+            findings.extend(dict(f, path=rel) for f in _name_findings(d, hosts, user, deny))
             if dp.is_symlink():
                 dirnames.remove(d)
-                if not _allowed(rel, allow):
-                    findings.append(_symlink_finding(dp, rel, hosts, user, deny))
-                continue
-            if Path(d).suffix.lower() in BINARY_EXT:
-                if not _allowed(rel, allow):
-                    findings.append({"kind": "binary", "path": rel, "detail": f"{Path(d).suffix} bundle"})
-                dirnames.remove(d)
+                findings.append(_symlink_finding(dp, rel, hosts, user, deny))
+            elif Path(d).suffix.lower() in BINARY_EXT:
+                findings.append({"kind": "binary", "path": rel, "detail": f"{Path(d).suffix} bundle"})
+                if not _allowed_path(rel, allow):
+                    dirnames.remove(d)
         for name in sorted(filenames):
             p = base / name
             rel = str(p.relative_to(root))
-            if _allowed(rel, allow):
-                continue
             findings.extend(dict(f, path=rel) for f in _name_findings(name, hosts, user, deny))
+            if name in JUNK_NAMES:
+                findings.append({"kind": "opaque", "path": rel, "detail": JUNK_NAMES[name]})
+                continue
             if p.is_symlink():
                 findings.append(_symlink_finding(p, rel, hosts, user, deny))
                 continue
@@ -341,6 +341,74 @@ def scan(root: Path, allow: list[str] | None = None, max_mb: float = 5.0,
                 continue  # FIFOs, sockets, devices: nothing to ship, and reading a FIFO hangs
             findings.extend(_scan_file(p, rel, max_mb, hosts, user, deny))
     return findings
+
+
+def gitleaks_findings(root: Path) -> tuple[list[dict], str | None]:
+    """Secrets found by gitleaks, a maintained ruleset, and None; or ([], why) when gitleaks
+    is not installed or did not run. The secret itself is never printed, only the rule."""
+    exe = shutil.which("gitleaks")
+    if not exe:
+        return [], "gitleaks is not installed"
+    try:
+        r = subprocess.run([exe, "dir", str(root), "--no-banner", "--exit-code", "0",
+                            "--report-format", "json", "--report-path", "-"],
+                           capture_output=True, text=True, timeout=300)
+        data = json.loads(r.stdout or "[]")
+    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as e:
+        return [], f"gitleaks did not run ({e})"
+    if r.returncode != 0:
+        return [], f"gitleaks exited {r.returncode}"
+    out = []
+    for leak in data or []:
+        f = Path(leak.get("File", ""))
+        try:
+            rel = str((f if f.is_absolute() else Path.cwd() / f).resolve().relative_to(root.resolve()))
+        except ValueError:
+            rel = str(f)
+        if any(part in SKIP_DIRS for part in Path(rel).parts):
+            continue
+        out.append({"kind": "secret", "path": rel,
+                    "detail": f"gitleaks {leak.get('RuleID', '?')} at line {leak.get('StartLine', '?')}"})
+    return out, None
+
+
+def scan(root: Path, allow: list[str] | None = None, max_mb: float = 5.0,
+         hostnames: set[str] | None = None, username: str | None = "",
+         deny: list[str] | None = None, use_gitleaks: bool = False) -> list[dict]:
+    """Findings for `root`, after --allow. `hostnames`/`username` default to this machine's
+    (pass an empty set / None to disable in tests). Raises Unreadable for a file it could
+    not read. The CLI also runs gitleaks; pass use_gitleaks=True to do the same here."""
+    return scan_report(root, allow, max_mb, hostnames, username, deny, use_gitleaks)["findings"]
+
+
+def scan_report(root: Path, allow: list[str] | None = None, max_mb: float = 5.0,
+                hostnames: set[str] | None = None, username: str | None = "",
+                deny: list[str] | None = None, use_gitleaks: bool = True) -> dict:
+    """The whole report: findings after --allow, the allowed paths, and the secrets engine."""
+    allow = allow or []
+    deny = [t for t in (deny or []) if t.strip()]
+    hosts = local_hostnames() if hostnames is None else {h.lower() for h in hostnames}
+    user = local_username() if username == "" else username
+    if not root.is_dir():
+        raise FileNotFoundError(root)
+    raw = _walk_findings(root, max_mb, hosts, user, deny, allow)
+    engine = "built-in token shapes only"
+    if use_gitleaks:
+        leaks, why = gitleaks_findings(root)
+        raw.extend(leaks)
+        engine = f"gitleaks plus built-in token shapes" if why is None else f"PARTIAL: {why}; built-in token shapes only"
+    findings, allowed = [], set()
+    seen = set()
+    for f in raw:
+        key = (f["kind"], f["path"], f["detail"])
+        if key in seen:
+            continue
+        seen.add(key)
+        if f["kind"] in ALLOWABLE and f["path"] != "." and _allowed_path(f["path"], allow):
+            allowed.add(f["path"])
+            continue
+        findings.append(f)
+    return {"findings": findings, "allowed": sorted(allowed), "secrets_engine": engine}
 
 
 def _symlink_finding(p: Path, rel: str, hosts: set[str], user: str | None, deny: list[str]) -> dict:
@@ -356,9 +424,11 @@ def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="publish_check.py", description=__doc__.split("\n")[0])
     ap.add_argument("dir")
     ap.add_argument("--allow", action="append", default=[],
-                    help="glob (relative to dir) to exempt, e.g. 'assets/own/*.png'; say why in the field note")
+                    help="glob (relative to dir): clears binary/opaque/capture/large/symlink findings for "
+                         "matching paths; content and name findings still apply. Say why in the field note")
     ap.add_argument("--deny-file", help="file with one private term per line that must not appear")
     ap.add_argument("--max-mb", type=float, default=5.0)
+    ap.add_argument("--no-gitleaks", action="store_true", help="skip gitleaks even when installed")
     ap.add_argument("--json", action="store_true")
     ns = ap.parse_args(argv)
     root = Path(ns.dir)
@@ -369,27 +439,32 @@ def main(argv: list[str] | None = None) -> int:
     if ns.deny_file:
         try:
             deny = [ln.strip().removeprefix("\\") for ln in Path(ns.deny_file).read_text(encoding="utf-8").splitlines()
-                    if ln.strip() and not ln.lstrip().startswith("#")]  # write "\\#term" to deny a term starting with #
+                    if ln.strip() and not ln.lstrip().startswith("#")]  # "\\#term" denies a term starting with #
         except (OSError, UnicodeDecodeError) as e:
             print(f"cannot read --deny-file: {e}", file=sys.stderr)
             return 2
     try:
-        findings = scan(root, ns.allow, ns.max_mb, deny=deny)
+        rep = scan_report(root, ns.allow, ns.max_mb, deny=deny, use_gitleaks=not ns.no_gitleaks)
     except Unreadable as e:
         print(f"cannot read {e} — nothing is reported clean that was not read", file=sys.stderr)
         return 2
-    review = review_images(root, ns.allow)
+    findings = rep["findings"]
+    review = review_images(root)
     skipped = skipped_dirs(root)
     if ns.json:
-        print(json.dumps({"dir": str(root), "findings": findings, "review": review,
-                          "skipped": skipped}, indent=2))
+        print(json.dumps({"dir": str(root), "findings": findings, "review": review, "allowed": rep["allowed"],
+                          "skipped": skipped, "secrets_engine": rep["secrets_engine"]}, indent=2))
     else:
         for f in findings:
             print(f"BLOCK {f['kind']:8} {f['path']}  ({f['detail']})")
         for r in review:
             print(f"REVIEW image    {r}  (look at it: screenshots can show private content)")
+        for a in rep["allowed"]:
+            print(f"REVIEW allowed  {a}  (--allow cleared it as a file; its content was still scanned)")
         for s in skipped:
             print(f"REVIEW skipped  {s}  (not scanned)")
+        if rep["secrets_engine"].startswith("PARTIAL"):
+            print(f"REVIEW secrets  {rep['secrets_engine']} — install gitleaks for a maintained ruleset")
         print(f"{len(findings)} finding(s) in {root}" if findings else
               f"OK {root}: nothing this filter recognises; read every REVIEW line before sharing")
     return 1 if findings else 0

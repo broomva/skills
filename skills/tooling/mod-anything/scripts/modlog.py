@@ -31,13 +31,17 @@ from __future__ import annotations
 import argparse
 import contextlib
 import datetime as _dt
-import fcntl
 import json
 import os
 import re
 import sys
 import unicodedata
 from pathlib import Path
+
+try:  # POSIX file locking; on Windows the journal is used unlocked (one writer at a time)
+    import fcntl
+except ImportError:  # pragma: no cover
+    fcntl = None
 
 RUNGS = {
     "1": "data and config",
@@ -106,14 +110,41 @@ def load(d: Path) -> dict:
         raise Refused(f"{p} is unreadable ({e}); restore it from MODLOG.md or start a new journal")
     if not isinstance(state, dict) or not all(isinstance(state.get(k), str) for k in ("target", "idea")):
         raise Refused(f"{p} is not a modlog journal (no target/idea)")
-    for k in ("routes", "logs", "steps", "failures", "stalls"):
-        v = state.setdefault(k, [])
-        if not isinstance(v, list) or not all(isinstance(x, dict) for x in v):
-            raise Refused(f"{p} is not a modlog journal ({k!r} is not a list of entries)")
-    for i, r in enumerate(state["routes"], 1):
-        if r.get("n") != i or r.get("rung") not in RUNGS or not isinstance(r.get("name"), str):
-            raise Refused(f"{p} is not a modlog journal (route #{i} is malformed)")
+    problem = _schema_problem(state)
+    if problem:
+        raise Refused(f"{p} is not a modlog journal ({problem})")
     return state
+
+
+# The one place the journal's shape is decided: every command reads through load().
+_ENTRY_FIELDS = {
+    "routes": {"n": int, "rung": str, "name": str, "reason": str},
+    "logs": {"text": str, "evidence": list},
+    "steps": {"step": str, "evidence": list, "route": int},
+    "failures": {"sig": str, "route": int, "count": int},
+    "stalls": {"sig": str, "route": int, "count": int},
+}
+
+
+def _schema_problem(state: dict) -> str | None:
+    for key, fields in _ENTRY_FIELDS.items():
+        entries = state.setdefault(key, [])
+        if not isinstance(entries, list):
+            return f"{key!r} is not a list"
+        for i, e in enumerate(entries, 1):
+            if not isinstance(e, dict):
+                return f"{key} entry {i} is not an object"
+            for f, typ in fields.items():
+                if not isinstance(e.get(f), typ) or isinstance(e.get(f), bool):
+                    return f"{key} entry {i} has no valid {f!r}"
+    for i, r in enumerate(state["routes"], 1):
+        if r["n"] != i or r["rung"] not in RUNGS:
+            return f"route #{i} is malformed"
+    if "limit" in state:
+        lim = state["limit"]
+        if not isinstance(lim, int) or isinstance(lim, bool) or not 1 <= lim <= DEFAULT_LIMIT:
+            return f"limit must be an integer from 1 to {DEFAULT_LIMIT}, got {lim!r}"
+    return None
 
 
 def save(d: Path, state: dict) -> None:
@@ -128,10 +159,13 @@ def save(d: Path, state: dict) -> None:
 def locked(d: Path):
     """Serialize read-modify-write commands on one journal, so two `fail` calls running at
     once cannot both read count 2 and both write 3."""
-    if not d.is_dir():
+    if fcntl is None or not d.is_dir():
         yield
         return
-    fd = os.open(d, os.O_RDONLY)  # lock the folder itself: no lock file to clutter a mod
+    try:
+        fd = os.open(d, os.O_RDONLY)  # lock the folder itself: no lock file to clutter a mod
+    except OSError as e:
+        raise Refused(f"cannot open {d} to lock the journal: {e.strerror or e}")
     try:
         fcntl.flock(fd, fcntl.LOCK_EX)
         yield

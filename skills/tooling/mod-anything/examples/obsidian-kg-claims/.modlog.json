@@ -200,6 +200,13 @@
         "harness/record_evidence.sh"
       ],
       "at": "2026-10-04T14:50:39Z"
+    },
+    {
+      "text": "Before publication: examples/recon-macos-apps/ was trimmed to three common apps (Obsidian, VS Code, Spotify). Entries above that say ten describe the run itself.",
+      "evidence": [
+        "../recon-macos-apps/summary.tsv"
+      ],
+      "at": "2026-10-04T15:33:41Z"
     }
   ]
 }

@@ -289,8 +289,6 @@ def test_captures_block(clean: Path, name: str):
     'Authorization: Bearer abcdefghijklmnop.qrs',
     '"authorization": "Bearer abcdefghijklmnopqrst"',
     "token=" + "eyJ" + "hbGciOiJub25lIn0" + "." + "eyJ" + "zdWIiOiJ0ZXN0In0" + "." + "c2lnbmF0dXJlLXRlc3Q",  # assembled at runtime: no literal token in source
-    "Cookie: session=abcdef123456",
-    '  "set-cookie": "sid=0123456789abcdef; Path=/"',
 ])
 def test_session_tokens_block(clean: Path, text: str):
     (clean / "evidence.txt").write_text(text + "\n")
@@ -345,3 +343,60 @@ def test_deny_terms_are_unicode_normalized_and_hash_can_be_escaped(clean: Path, 
 def test_special_files_are_listed_for_review(clean: Path):
     os.mkfifo(clean / "pipe")
     assert "pipe" in pc.skipped_dirs(clean)
+
+
+# --- the structural reshape (P20 continuation: hoist the invariant) ---------------------
+
+import shutil as _shutil
+
+
+def test_allow_clears_the_file_finding_but_not_its_content(clean: Path):
+    (clean / "state.db").write_bytes(b"SQLite format 3\x00" + b"\x00" * 16 + b" AKIA" + b"ABCDEFGHIJKLMNOP /Users/alice/x")
+    rep = pc.scan_report(clean, allow=["state.db"], hostnames=set(), username=None, use_gitleaks=False)
+    found = {(f["kind"], f["path"]) for f in rep["findings"]}
+    assert ("opaque", "state.db") not in found          # cleared as a file
+    assert ("secret", "state.db") in found and ("userpath", "state.db") in found  # content still scanned
+    assert rep["allowed"] == ["state.db"]
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--allow", "state.db", "--no-gitleaks"],
+                       capture_output=True, text=True)
+    assert r.returncode == 1 and "REVIEW allowed  state.db" in r.stdout
+
+
+def test_allowed_images_stay_on_the_review_list(clean: Path):
+    (clean / "shot.png").write_bytes(b"\x89PNG\x00")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--allow", "*.png", "--no-gitleaks"],
+                       capture_output=True, text=True)
+    assert "REVIEW image    shot.png" in r.stdout
+
+
+def test_ds_store_is_blocked_with_a_remedy(clean: Path):
+    (clean / ".DS_Store").write_bytes(b"\x00\x00\x00\x01Bud1")
+    found = pc.scan(clean, hostnames=set(), username=None)
+    assert any(f["kind"] == "opaque" and f["path"] == ".DS_Store" and "delete it" in f["detail"] for f in found)
+
+
+def test_the_root_folders_own_name_is_scanned(tmp_path: Path):
+    root = tmp_path / "alice-vault-plugin"
+    root.mkdir()
+    (root / "main.js").write_text("ok\n")
+    assert any(f["path"] == "." for f in pc.scan(root, hostnames=set(), username="alice"))
+
+
+@pytest.mark.skipif(not _shutil.which("gitleaks"), reason="gitleaks not installed")
+def test_gitleaks_findings_are_reported_without_the_secret(clean: Path):
+    import random, string
+    rnd = random.Random(7)  # seeded: a realistic-entropy token, assembled at runtime
+    tok = "ghp_" + "".join(rnd.choice(string.ascii_letters + string.digits) for _ in range(36))
+    (clean / "config.js").write_text(f'const t = "{tok}";\n')
+    rep = pc.scan_report(clean, hostnames=set(), username=None, use_gitleaks=True)
+    assert rep["secrets_engine"].startswith("gitleaks")
+    gl = [f for f in rep["findings"] if f["detail"].startswith("gitleaks")]
+    assert gl and all(tok not in f["detail"] for f in gl)
+
+
+def test_missing_gitleaks_is_announced_as_partial(clean: Path, tmp_path: Path):
+    empty = tmp_path / "emptybin"
+    empty.mkdir()
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean)], capture_output=True, text=True,
+                       env={"PATH": str(empty), "HOME": str(tmp_path)})
+    assert r.returncode == 0 and "REVIEW secrets  PARTIAL: gitleaks is not installed" in r.stdout

@@ -125,11 +125,14 @@ macOS works):
   Application State are shared with the lab.
 - **The user's file access.** A plugin or script you run in the lab can read and write
   anything the user can. Keep the code you run there to the code you wrote.
-- **macOS permissions (TCC).** Bluetooth, Screen Recording and Accessibility grants belong to
-  the responsible process, not the profile. A lab that needs one raises a system dialog;
-  that grant is the user's call, so ask.
-- **The keychain, beyond Electron.** Chrome and Arc also reach the login keychain. Use
-  `--use-mock-keychain` (Chrome also accepts `--password-store=basic`) in their lab profiles.
+- **macOS permissions (TCC).** Bluetooth, Screen Recording and Accessibility grants follow
+  the app's code identity (and the responsible process), not the profile. A lab instance of
+  an app that already holds a grant, or your terminal if it holds one, inherits it silently.
+  Check before relying on one. A new grant raises a system dialog, and that is the user's
+  call, so ask.
+- **The keychain, beyond Electron.** Chrome-family browsers also reach the login keychain.
+  Chromium's `--use-mock-keychain` switch avoids it; it has not been verified per browser
+  here (Arc included), so check that the lab raises no keychain prompt.
 - **Checking you left no trace.** A directory's modification time does not change when a file
   inside it is appended to. To prove you left the user's profile alone, hash its files before
   and after.

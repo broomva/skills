@@ -385,4 +385,20 @@ def test_malformed_route_in_an_otherwise_valid_journal_exits_2(journal: Path):
         state["routes"] = [bad_route]
         (journal / ".modlog.json").write_text(json.dumps(state))
         r = run(journal, "status")
-        assert r.returncode == 2 and "route #1 is malformed" in r.stderr, bad_route
+        assert r.returncode == 2 and "not a modlog journal" in r.stderr, bad_route
+
+
+@pytest.mark.parametrize("patch", [
+    {"failures": [{}]},
+    {"failures": [{"sig": "x", "route": "1", "count": 1}]},
+    {"steps": [{"step": "s", "evidence": "e.png", "route": 1}]},
+    {"limit": "abc"}, {"limit": None}, {"limit": 0}, {"limit": 99}, {"limit": True},
+])
+def test_every_entry_and_the_limit_are_validated(journal: Path, patch: dict):
+    run(journal, "route", "--rung", "2", "--name", "api", "--reason", "r")
+    state = json.loads((journal / ".modlog.json").read_text())
+    state.update(patch)
+    (journal / ".modlog.json").write_text(json.dumps(state))
+    for cmd in (["status"], ["fail", "--sig", "x"], ["note", "--out", str(journal / "n.md")]):
+        r = run(journal, *cmd)
+        assert r.returncode == 2 and "not a modlog journal" in r.stderr, (patch, cmd, r.stderr)
