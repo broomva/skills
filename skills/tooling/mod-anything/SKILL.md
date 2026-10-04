@@ -17,7 +17,7 @@ CLIs. Every route is a rung on one ladder, and the rules come from the law's own
 
 ## The loop
 
-Run these steps in order. Steps 0, 2 and 9 are not optional, even for a small mod.
+Run these steps in order. Steps 0, 2, 8 and 9 are not optional, even for a small mod.
 
 In the commands, `$S` is this skill's folder (where this SKILL.md lives) and `<work>` is the
 run's working folder. `modlog.py ...` is short for `python3 $S/scripts/modlog.py --dir <work> ...`.
@@ -26,7 +26,8 @@ run's working folder. `modlog.py ...` is short for `python3 $S/scripts/modlog.py
 - Get the target with its exact version, the idea in one sentence, and what *done* means. The
   default for done is: working in the real target, with a screenshot, log or dump as evidence.
 - Check the envelope first (§Rules). If the target's terms forbid modification, or the idea
-  needs a protection defeated, stop and say so.
+  needs a protection defeated, stop and say so. Check the terms of any companion app you
+  will read too (a device's phone app is licensed software).
 - Start the journal:
   `python3 $S/scripts/modlog.py --dir <work> init --target "<app> <version>" --idea "<one sentence>"`
 - If the user names a domain rather than a target ("mod any app", "an editor"), run step 1
@@ -55,8 +56,10 @@ reason *before* building:
     cookies or tokens out of the user's real profile either.
   - A logged-in lab still holds the user's session: open a DevTools port on it only for the
     session, and close it after.
-  - Screenshots and DOM dumps from it show the user's email and display name: put those in the
-    deny file (step 8).
+  - Evidence captured from a logged-in lab (DOM dumps, logs, screenshots of real pages)
+    carries the user's and other people's data. It stays in `<work>`. Evidence you publish
+    comes from a fixture you wrote: a local page, synthetic entities, as in
+    `examples/obsidian-kg-claims`.
 - A lab that raises system UI on the user's screen is touching the user's environment: a
   keychain prompt, a permission dialog, a focus change. Stop it by exact PID and fix the lab
   before going on.
@@ -101,8 +104,18 @@ traffic or data. Your reading is a hypothesis; step 5 tests it.
 **7. Package.** Ship only your own code, assets, patches or converters that run on the user's
 own install. Write install and uninstall steps.
 
-**8. Publish check.** Before anything leaves the machine:
-`python3 $S/scripts/publish_check.py <mod-dir> --deny-file <private-terms>`.
+**8. Field note, in `<work>` first.**
+- Scaffold it in the run's folder: `modlog.py note --out <work>/field-note.md`.
+- Fill every placeholder: exact versions, the route, what the target really does, the
+  evidence, numbered *symptom → cause → fix* gotchas, and the envelope.
+- `modlog.py lint-note <work>/field-note.md` must exit 0.
+- The note copies text from the journal, which may hold private details, so it is checked in
+  step 9 before it goes anywhere shared.
+- Write the note even when the mod failed. A documented dead end saves the next agent hours.
+
+**9. Publish check, then share.** Before anything leaves `<work>`, check the mod and the note
+together:
+`python3 $S/scripts/publish_check.py <mod-dir> <work>/field-note.md --deny-file <private-terms>`
 
 It is a fail-closed filter in front of you, not a privacy guarantee.
 - **It blocks:**
@@ -111,24 +124,21 @@ It is a fail-closed filter in front of you, not a privacy guarantee.
     content);
   - captures (by extension);
   - symlinks;
-  - secrets (gitleaks when installed, plus a short built-in list);
+  - files over `--max-mb`;
+  - secrets (gitleaks with its default rules when installed, plus a short built-in list);
   - decompiler output;
   - home paths, the login name, the hostname and deny-file terms, in contents and names.
 - **It does not detect** cookies, session values or personal data such as emails and display
-  names. Keep those out at the source (no copied profiles; captures are blocked), and put the
-  names you know in the deny file: the user's email and display name, private project, vault
-  and knowledge-graph names.
-- **It lists as REVIEW** every image, allowed path, skipped folder and special file, and says
-  when gitleaks is missing. Look at each one.
-- **Exit 0** means "nothing this filter recognises". Ship only after exit 0 and a look at
+  names. Keep those out at the source (step 3), and put the names you know in the deny file:
+  the user's email and display name, private project, vault and knowledge-graph names.
+- **It lists as REVIEW** every image, every file under an `evidence/` folder, allowed paths,
+  skipped folders, special files and in-tree gitleaks configs, and says when gitleaks did not
+  run. Look at each one.
+- **Exit 0** means "nothing this filter recognises". Share only after exit 0 and a look at
   every REVIEW line.
-
-**9. Field note.**
-- Scaffold the note: `modlog.py note --out $S/field-notes/<target>/<slug>.md`.
-- Fill every placeholder: exact versions, the route, what the target really does, the
-  evidence, numbered *symptom → cause → fix* gotchas, and the envelope.
-- `modlog.py lint-note <note>` must exit 0.
-- Write the note even when the mod failed. A documented dead end saves the next agent hours.
+- **Then copy the note** to `$S/field-notes/<target>/<slug>.md`. A note shared there cites
+  only evidence that ships with it (under `$S/examples/`); describe any other evidence
+  without a path.
 
 ## The ladder
 
@@ -159,15 +169,16 @@ These are hard. The full reasoning and the legal summary are in `references/enve
   anti-automation or anti-cheat check, a licence or DRM check, or an access control on
   something that isn't the user's. If a route needs one defeated, it is the wrong route.
 - **Never touch an online service's client or protocol beyond the user's own account and
-  data.** Never publish anything aimed at a live service.
+  data.** Never publish anything that automates, scrapes or writes to a live service. A
+  cosmetic mod that only changes what the user sees is fine.
 - **Bring your own files.** Never ship the target's bytes, decompiled code or extracted
   assets. `publish_check.py` enforces the mechanical part.
 - **Ask before you:**
   - drive the user's mouse and keyboard, or take focus;
   - install into the user's real profile, app folder or vault (labs need no ask);
-  - send anything to a device other than a documented read: commands, probes, replayed
-    captures, configuration or firmware, over BLE, USB, serial or the network. A probe can
-    actuate hardware;
+  - pair or bond with a device, or send it anything other than a documented read: commands,
+    probes, replayed captures, configuration or firmware, over BLE, USB, serial or the
+    network. A probe can actuate hardware, and pairing can evict the vendor's app;
   - send writes or replayed requests to a live service, even on the user's own account;
   - run code in, or automate, the user's real signed-in session: their browser profile or
     their running app. Test in a lab profile the user logged into instead;

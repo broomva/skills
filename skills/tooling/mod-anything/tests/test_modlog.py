@@ -393,6 +393,10 @@ def test_malformed_route_in_an_otherwise_valid_journal_exits_2(journal: Path):
     {"failures": [{"sig": "x", "route": "1", "count": 1}]},
     {"steps": [{"step": "s", "evidence": "e.png", "route": 1}]},
     {"limit": "abc"}, {"limit": None}, {"limit": 0}, {"limit": 99}, {"limit": True},
+    {"steps": [{"step": "s", "evidence": [1], "route": 1}]},
+    {"logs": [{"text": "t", "evidence": [""]}]},
+    {"target": ""},
+    {"routes": [{"n": 1, "rung": "2", "name": "a", "reason": "r", "superseded_by": "zz"}]},
 ])
 def test_every_entry_and_the_limit_are_validated(journal: Path, patch: dict):
     run(journal, "route", "--rung", "2", "--name", "api", "--reason", "r")

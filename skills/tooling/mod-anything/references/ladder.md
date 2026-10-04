@@ -23,11 +23,13 @@ A rung-2 mod that covers 80% of the idea usually beats a rung-4 mod that covers 
 Say which you chose, and why, in the journal.
 
 **Per sub-goal, not per project.** The route is picked for each sub-goal, and re-picked on a
-stall. The usual mistake is rebuilding (rung 5) a component that could simply be run. In the
-Bishop Fox SonicWall firmware write-up (2026-07-08), "Claude did not step back on its own. It
-kept grinding at the failing decryption". The appliance already shipped a working
-implementation, and the fix was to run it. The page also carries Claude's own account
-claiming the idea, so treat this as one contested specimen.
+stall. A re-pick must pass the Rules again. One failure worth checking for first is
+rebuilding (rung 5) a component that could simply be run.
+- In the Bishop Fox SonicWall firmware write-up (2026-07-08), "Claude did not step back on its
+  own. It kept grinding at the failing decryption". The appliance already shipped a working
+  implementation, and the fix was to run it.
+- The page also carries Claude's own account claiming the idea, so this is one contested
+  specimen, not a measured rate.
 
 ## The oracle
 
@@ -56,20 +58,9 @@ fail` exits 3). Stop and re-rank; don't retry.
 
 ## Passthrough
 
-Two programs run at once. A thin bridge in each exchanges state over `127.0.0.1`:
-- **State:** shared memory, a WebSocket, or UDP.
-- **Control:** JSON lines.
-- **Frames:** shared GPU surfaces.
-
-The host draws the guest inside its own frame, using its own camera and depth. That is scene
-integration, not a flat overlay. The host's world flows back to the guest: collision, events,
-input routed to one side at a time.
-
-Decide three things up front, in co-simulation terms:
-- **Communication points:** when state is exchanged (every frame, every tick, on event).
-- **Clock owner:** whose time is authoritative. Timestamp every message, use the same
-  high-resolution clock on both sides, and add a watchdog for when one side dies.
-- **Ownership:** each shared thing has exactly one owner, and the other side mirrors it.
-
-**First milestone:** one cube from A drawn in B at the right spot. Then positions every frame,
-then collision, and only then real content.
+Two programs run at once and exchange state over `127.0.0.1`: the host draws the guest inside
+its own frame, and the host's world (collision, events) flows back. No run of this skill has
+exercised it yet. The design to start from is in universal-modder's `mashup-mods` skill (see
+NOTICE). Begin with its first milestone, one cube from A drawn in B at the right spot. Decide
+three things in co-simulation terms first: when state is exchanged, whose clock is
+authoritative, and who owns each shared thing.

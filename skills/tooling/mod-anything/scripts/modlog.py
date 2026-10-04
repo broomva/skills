@@ -108,7 +108,8 @@ def load(d: Path) -> dict:
         state = json.loads(p.read_text(encoding="utf-8"))
     except (json.JSONDecodeError, UnicodeDecodeError, OSError) as e:
         raise Refused(f"{p} is unreadable ({e}); restore it from MODLOG.md or start a new journal")
-    if not isinstance(state, dict) or not all(isinstance(state.get(k), str) for k in ("target", "idea")):
+    if not isinstance(state, dict) or not all(isinstance(state.get(k), str) and state[k].strip()
+                                              for k in ("target", "idea")):
         raise Refused(f"{p} is not a modlog journal (no target/idea)")
     problem = _schema_problem(state)
     if problem:
@@ -137,9 +138,14 @@ def _schema_problem(state: dict) -> str | None:
             for f, typ in fields.items():
                 if not isinstance(e.get(f), typ) or isinstance(e.get(f), bool):
                     return f"{key} entry {i} has no valid {f!r}"
+            if "evidence" in fields and not all(isinstance(x, str) and x for x in e["evidence"]):
+                return f"{key} entry {i} has an evidence item that is not a path"
     for i, r in enumerate(state["routes"], 1):
         if r["n"] != i or r["rung"] not in RUNGS:
             return f"route #{i} is malformed"
+        sup = r.get("superseded_by")
+        if sup is not None and (not isinstance(sup, int) or isinstance(sup, bool) or not i < sup <= len(state["routes"])):
+            return f"route #{i} has an invalid superseded_by {sup!r}"
     if "limit" in state:
         lim = state["limit"]
         if not isinstance(lim, int) or isinstance(lim, bool) or not 1 <= lim <= DEFAULT_LIMIT:

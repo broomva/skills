@@ -13,9 +13,12 @@ BLOCK (exit 1), file by file:
   capture   network and device captures by extension (.har, .pcap, .pcapng, .pklg, .btsnoop)
   symlink   every symbolic link (git commits the target path; archivers follow it)
   large     any file over --max-mb (default 5)
-  secret    found by gitleaks (`gitleaks dir`) when it is installed, plus a short built-in list
-            of token shapes (private keys, AWS/GitHub/Slack/OpenAI-style keys, bearer tokens,
-            JWTs). Without gitleaks only the built-in list runs, and a REVIEW line says so
+  secret    found by gitleaks (`gitleaks dir`, run with its default rules: an in-tree config,
+            ignore file or gitleaks:allow comment cannot switch them off) when it is installed,
+            plus a short built-in list of token shapes (private keys, AWS, GitHub classic and
+            fine-grained, Slack, OpenAI-style keys, bearer tokens, JWTs). gitleaks skips binary
+            files, so those get the built-in list only. Without gitleaks only the built-in list
+            runs, and a REVIEW line says so
   decomp    headers that decompilers write into their output
   userpath  home-directory paths, and ~/... paths that contain this machine's login name
   username  this machine's login name (generic container logins are ignored)
@@ -30,15 +33,21 @@ also read for printable text, so a path in an image's metadata is found.
 capture, large, symlink) for matching paths and their contents. Content and name findings
 still apply, and every allowed path is listed for review.
 
-REVIEW (exit unaffected): images, allowed paths, skipped folders (node_modules, .git,
-virtualenvs), special files, and the secrets engine when gitleaks is missing.
+REVIEW (exit unaffected): images (and a file whose extension claims an image its bytes are
+not is opaque instead), every file under an `evidence/` folder (captured output can carry
+someone's data), allowed paths, skipped folders (node_modules, .git, virtualenvs), special
+files, any gitleaks config inside the scanned tree, and the secrets engine whenever gitleaks
+did not run (missing, failed, or --no-gitleaks).
 
 NOT detected, by design: cookies and session values, personal data such as emails and display
 names, and code transcribed from a decompiler without its header. Keep them out at the source
 (never copy a browser profile; captures are blocked), put names you know in --deny-file, and
 read every REVIEW line. Exit 0 means "nothing this filter recognises", not "nothing private".
 
-Usage:  publish_check.py <dir> [--allow GLOB ...] [--deny-file F] [--max-mb N] [--json]
+Usage:  publish_check.py <path> [<path> ...] [--allow GLOB ...] [--deny-file F] [--max-mb N]
+                         [--no-gitleaks] [--json]
+        Each path is a folder or a single file (for example the field note, before it is
+        copied anywhere public).
 Exit 0 clean · 1 findings · 2 usage error or a file it could not read. Stdlib, plus gitleaks
 on PATH when available.
 """
@@ -90,6 +99,7 @@ SECRET_PATTERNS = [
     ("private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
     ("AWS access key id", re.compile(r"\bAKIA[0-9A-Z]{16}\b")),
     ("GitHub token", re.compile(r"\bgh[pousr]_[A-Za-z0-9]{36,}\b")),
+    ("GitHub fine-grained token", re.compile(r"\bgithub_pat_[A-Za-z0-9_]{22,}")),
     ("Slack token", re.compile(r"\bxox[abprs]-[A-Za-z0-9-]{10,}\b")),
     ("OpenAI/Anthropic-style key", re.compile(r"\bsk-(?:ant-)?[A-Za-z0-9_-]{20,}\b")),
     ("bearer token", re.compile(r"(?i)\bauthorization\b[\"']?\s*[:=]\s*[\"']?bearer\s+[A-Za-z0-9._~+/-]{12,}")),
@@ -108,9 +118,13 @@ DECOMP_MARKERS = [
     re.compile(r"(?i)\bJD-GUI\b"),
     re.compile(r"(?i)\bdnSpy\b"),
 ]
-USERPATH = re.compile(r"(?:/Users/|/home/)(?!Shared\b)[A-Za-z0-9._-]+/|[A-Za-z]:\\\\?Users\\\\?[A-Za-z0-9._-]+")
+USERPATH = re.compile(r"(?:/Users/|/home/)(?!Shared\b)[A-Za-z0-9][A-Za-z0-9._-]*(?:/|\b)|[A-Za-z]:\\\\?Users\\\\?[A-Za-z0-9._-]+")
 MAC_HOST = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9-]*-(?:MacBook(?:-Pro|-Air)?|iMac(?:-Pro)?|Mac-mini|Mac-Pro|Mac-Studio)(?:-\d+)?(?:\.local)?\b")
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".tiff", ".bmp"}
+# An image extension must be backed by the image's own header; anything else is opaque.
+IMAGE_MAGIC = {".png": (b"\x89PNG",), ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",),
+               ".gif": (b"GIF87a", b"GIF89a"), ".webp": (b"RIFF",), ".bmp": (b"BM",)}
+GITLEAKS_CONFIGS = {".gitleaks.toml", ".gitleaksignore", "gitleaks.toml"}
 CHUNK = 4 * 1024 * 1024
 OVERLAP = 256  # longest pattern we look for, so a match split across chunks is still seen
 
@@ -168,9 +182,16 @@ def _nfkc(t: str) -> str:
     return unicodedata.normalize("NFKC", t)
 
 
-def _text_findings(rel: str, text: str, hosts: set[str], user: str | None, deny: list[str]) -> list[dict]:
+# In a binary file, values sit packed against each other ("githubghp_..."), so a leading word
+# boundary never matches there. The strings pass uses the same patterns without it.
+LOOSE_SECRET_PATTERNS = [(label, re.compile(rx.pattern.replace(r"\b", "", 1), rx.flags))
+                         for label, rx in SECRET_PATTERNS]
+
+
+def _text_findings(rel: str, text: str, hosts: set[str], user: str | None, deny: list[str],
+                   loose: bool = False) -> list[dict]:
     out: list[dict] = []
-    for label, rx in SECRET_PATTERNS:
+    for label, rx in (LOOSE_SECRET_PATTERNS if loose else SECRET_PATTERNS):
         if rx.search(text):
             out.append({"kind": "secret", "path": rel, "detail": label})
     for rx in DECOMP_MARKERS:
@@ -205,7 +226,7 @@ def _strings_findings(rel: str, data: bytes, hosts: set[str], user: str | None,
     `strings` reads a database or a log that starts with a NUL."""
     out: list[dict] = []
     for text in (data.decode("latin-1"), data.decode("utf-16-le", "ignore")):
-        out.extend(_text_findings(rel, text, hosts, user, deny))
+        out.extend(_text_findings(rel, text, hosts, user, deny, loose=True))
     return out
 
 
@@ -230,15 +251,18 @@ def _scan_file(p: Path, rel: str, max_mb: float, hosts: set[str], user: str | No
             if label and ext not in BINARY_EXT:
                 out.append({"kind": "binary", "path": rel, "detail": f"{label} header"})
             if codec is None:
-                # Not text. Images are listed for a person to look at; anything else is
+                # Not text. A real image is listed for a person to look at; anything else is
                 # opaque to this scan and fails closed. Either way, read its printable runs.
-                if ext not in IMAGE_EXT and ext not in BINARY_EXT and ext not in CAPTURE_EXT and not label:
-                    out.append({"kind": "opaque", "path": rel,
-                                "detail": "non-text file this scan cannot read; --allow it after looking"})
-                data = head
+                real_image = ext in IMAGE_EXT and (ext not in IMAGE_MAGIC or head.startswith(IMAGE_MAGIC[ext]))
+                if not real_image and ext not in BINARY_EXT and ext not in CAPTURE_EXT and not label:
+                    detail = ("an image extension on a file that is not that image"
+                              if ext in IMAGE_EXT else "non-text file this scan cannot read; --allow it after looking")
+                    out.append({"kind": "opaque", "path": rel, "detail": detail})
+                data, tail = head, b""
                 while data:
-                    for fnd in _strings_findings(rel, data, hosts, user, deny):
+                    for fnd in _strings_findings(rel, tail + data, hosts, user, deny):
                         seen.setdefault((fnd["kind"], fnd["detail"]), fnd)
+                    tail = data[-OVERLAP:]
                     data = f.read(CHUNK)
             else:
                 data, tail = head, b""
@@ -270,6 +294,21 @@ def review_images(root: Path) -> list[str]:
             p = Path(dirpath) / name
             if p.suffix.lower() in IMAGE_EXT:
                 out.append(str(p.relative_to(root)))
+    return sorted(out)
+
+
+def review_extra(root: Path) -> list[tuple[str, str]]:
+    """(kind, path) pairs a person must look at: captured evidence, and gitleaks config or
+    ignore files inside the tree (they would change what a plain gitleaks run reports)."""
+    out = []
+    for dirpath, dirnames, filenames in os.walk(root):
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
+        for name in filenames:
+            rel = Path(dirpath, name).relative_to(root)
+            if "evidence" in rel.parts[:-1] and rel.suffix.lower() not in IMAGE_EXT:
+                out.append(("evidence", str(rel)))
+            if name in GITLEAKS_CONFIGS:
+                out.append(("gitleaks", str(rel)))
     return sorted(out)
 
 
@@ -309,7 +348,10 @@ def _walk_findings(root: Path, max_mb: float, hosts: set[str], user: str | None,
     findings: list[dict] = [dict(f, path=".") for f in _name_findings(root.resolve().name, hosts, user, deny)]
     if root.suffix.lower() in BINARY_EXT:
         findings.append({"kind": "binary", "path": ".", "detail": f"the folder itself is a {root.suffix} bundle"})
-    for dirpath, dirnames, filenames in os.walk(root):
+    def _unreadable(e: OSError) -> None:
+        raise Unreadable(f"{e.filename}: {e.strerror or e}")
+
+    for dirpath, dirnames, filenames in os.walk(root, onerror=_unreadable):
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         base = Path(dirpath)
         for d in list(dirnames):
@@ -318,7 +360,7 @@ def _walk_findings(root: Path, max_mb: float, hosts: set[str], user: str | None,
             findings.extend(dict(f, path=rel) for f in _name_findings(d, hosts, user, deny))
             if dp.is_symlink():
                 dirnames.remove(d)
-                findings.append(_symlink_finding(dp, rel, hosts, user, deny))
+                findings.extend(_symlink_findings(dp, rel, hosts, user, deny))
             elif Path(d).suffix.lower() in BINARY_EXT:
                 findings.append({"kind": "binary", "path": rel, "detail": f"{Path(d).suffix} bundle"})
                 if not _allowed_path(rel, allow):
@@ -327,12 +369,13 @@ def _walk_findings(root: Path, max_mb: float, hosts: set[str], user: str | None,
             p = base / name
             rel = str(p.relative_to(root))
             findings.extend(dict(f, path=rel) for f in _name_findings(name, hosts, user, deny))
-            if name in JUNK_NAMES:
-                findings.append({"kind": "opaque", "path": rel, "detail": JUNK_NAMES[name]})
-                continue
             if p.is_symlink():
-                findings.append(_symlink_finding(p, rel, hosts, user, deny))
+                findings.extend(_symlink_findings(p, rel, hosts, user, deny))
                 continue
+            if name in JUNK_NAMES:
+                # Blocked as a file (allowable), but its content is still read below:
+                # .DS_Store records folder and file names.
+                findings.append({"kind": "opaque", "path": rel, "detail": JUNK_NAMES[name]})
             try:
                 mode = p.lstat().st_mode
             except OSError as e:
@@ -349,13 +392,21 @@ def gitleaks_findings(root: Path) -> tuple[list[dict], str | None]:
     exe = shutil.which("gitleaks")
     if not exe:
         return [], "gitleaks is not installed"
-    try:
-        r = subprocess.run([exe, "dir", str(root), "--no-banner", "--exit-code", "0",
-                            "--report-format", "json", "--report-path", "-"],
-                           capture_output=True, text=True, timeout=300)
-        data = json.loads(r.stdout or "[]")
-    except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as e:
-        return [], f"gitleaks did not run ({e})"
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="publish-check-gl.") as tmp:
+        # Force gitleaks' default rules: a .gitleaks.toml, a .gitleaksignore or a
+        # gitleaks:allow comment inside the scanned tree must not switch them off.
+        cfg = Path(tmp) / "default.toml"
+        cfg.write_text("[extend]\nuseDefault = true\n", encoding="utf-8")
+        try:
+            r = subprocess.run([exe, "dir", str(root), "--no-banner", "--exit-code", "0",
+                                "--config", str(cfg), "--gitleaks-ignore-path", tmp,
+                                "--ignore-gitleaks-allow", "--report-format", "json",
+                                "--report-path", "-"],
+                               capture_output=True, text=True, timeout=300)
+            data = json.loads(r.stdout or "[]")
+        except (OSError, subprocess.SubprocessError, json.JSONDecodeError) as e:
+            return [], f"gitleaks did not run ({e})"
     if r.returncode != 0:
         return [], f"gitleaks exited {r.returncode}"
     out = []
@@ -392,7 +443,7 @@ def scan_report(root: Path, allow: list[str] | None = None, max_mb: float = 5.0,
     if not root.is_dir():
         raise FileNotFoundError(root)
     raw = _walk_findings(root, max_mb, hosts, user, deny, allow)
-    engine = "built-in token shapes only"
+    engine = "PARTIAL: gitleaks was not run (--no-gitleaks); built-in token shapes only"
     if use_gitleaks:
         leaks, why = gitleaks_findings(root)
         raw.extend(leaks)
@@ -411,30 +462,59 @@ def scan_report(root: Path, allow: list[str] | None = None, max_mb: float = 5.0,
     return {"findings": findings, "allowed": sorted(allowed), "secrets_engine": engine}
 
 
-def _symlink_finding(p: Path, rel: str, hosts: set[str], user: str | None, deny: list[str]) -> dict:
+def _symlink_findings(p: Path, rel: str, hosts: set[str], user: str | None, deny: list[str]) -> list[dict]:
+    """A symlink is one allowable finding, plus a finding for anything its target path leaks.
+    Git commits the target path as the file's content, so those are content findings that
+    --allow cannot clear."""
     target = os.readlink(p)
-    extra = _text_findings(rel, target, hosts, user, deny)
-    detail = f"-> {target}"
-    if extra:
-        detail += " (target path also leaks: " + ", ".join(sorted({f["kind"] for f in extra})) + ")"
-    return {"kind": "symlink", "path": rel, "detail": detail}
+    out = [{"kind": "symlink", "path": rel, "detail": f"-> {target}"}]
+    for f in _text_findings(rel, target, hosts, user, deny):
+        out.append({"kind": f["kind"], "path": rel, "detail": f"in the link target: {f['detail']}"})
+    return out
+
+
+def _report_for(path: Path, allow: list[str], max_mb: float, deny: list[str],
+                use_gitleaks: bool) -> dict:
+    """scan_report for a folder, or for one file scanned on its own (in a temporary folder,
+    reported under its real path)."""
+    if path.is_dir():
+        rep = scan_report(path, allow, max_mb, deny=deny, use_gitleaks=use_gitleaks)
+        rep["review"] = review_images(path)
+        rep["extra"] = review_extra(path)
+        rep["skipped"] = skipped_dirs(path)
+        rep["label"] = str(path)
+        return rep
+    import tempfile
+    with tempfile.TemporaryDirectory(prefix="publish-check-file.") as tmp:
+        shutil.copy2(path, Path(tmp) / path.name)
+        rep = scan_report(Path(tmp), allow, max_mb, deny=deny, use_gitleaks=use_gitleaks)
+        rep["findings"] = [f for f in rep["findings"] if f["path"] != "."]
+        rep["review"] = review_images(Path(tmp))
+        rep["extra"] = review_extra(Path(tmp))
+        rep["skipped"] = []
+    rep["label"] = str(path.parent)
+    return rep
 
 
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(prog="publish_check.py", description=__doc__.split("\n")[0])
-    ap.add_argument("dir")
+    ap.add_argument("paths", nargs="+", help="folders or single files to check")
     ap.add_argument("--allow", action="append", default=[],
-                    help="glob (relative to dir): clears binary/opaque/capture/large/symlink findings for "
-                         "matching paths; content and name findings still apply. Say why in the field note")
+                    help="glob (relative to a folder): clears binary/opaque/capture/large/symlink findings "
+                         "for matching paths; content and name findings still apply. Say why in the field note")
     ap.add_argument("--deny-file", help="file with one private term per line that must not appear")
     ap.add_argument("--max-mb", type=float, default=5.0)
-    ap.add_argument("--no-gitleaks", action="store_true", help="skip gitleaks even when installed")
+    ap.add_argument("--no-gitleaks", action="store_true", help="skip gitleaks even when installed (reported as PARTIAL)")
     ap.add_argument("--json", action="store_true")
     ns = ap.parse_args(argv)
-    root = Path(ns.dir)
-    if not root.is_dir():
-        print(f"not a directory: {root}", file=sys.stderr)
+    if not (ns.max_mb > 0 and ns.max_mb != float("inf")):
+        print(f"--max-mb must be a positive number, got {ns.max_mb}", file=sys.stderr)
         return 2
+    roots = [Path(x) for x in ns.paths]
+    for r in roots:
+        if not (r.is_dir() or r.is_file()):
+            print(f"not a folder or file: {r}", file=sys.stderr)
+            return 2
     deny: list[str] = []
     if ns.deny_file:
         try:
@@ -443,31 +523,44 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, UnicodeDecodeError) as e:
             print(f"cannot read --deny-file: {e}", file=sys.stderr)
             return 2
+    reports = []
     try:
-        rep = scan_report(root, ns.allow, ns.max_mb, deny=deny, use_gitleaks=not ns.no_gitleaks)
+        for r in roots:
+            reports.append(_report_for(r, ns.allow, ns.max_mb, deny, not ns.no_gitleaks))
     except Unreadable as e:
         print(f"cannot read {e} — nothing is reported clean that was not read", file=sys.stderr)
         return 2
-    findings = rep["findings"]
-    review = review_images(root)
-    skipped = skipped_dirs(root)
+    total = sum(len(rep["findings"]) for rep in reports)
     if ns.json:
-        print(json.dumps({"dir": str(root), "findings": findings, "review": review, "allowed": rep["allowed"],
-                          "skipped": skipped, "secrets_engine": rep["secrets_engine"]}, indent=2))
-    else:
-        for f in findings:
-            print(f"BLOCK {f['kind']:8} {f['path']}  ({f['detail']})")
-        for r in review:
-            print(f"REVIEW image    {r}  (look at it: screenshots can show private content)")
+        print(json.dumps([{"path": str(r), **{k: v for k, v in rep.items() if k != "label"}}
+                          for r, rep in zip(roots, reports)], indent=2))
+        return 1 if total else 0
+    single = len(roots) == 1 and roots[0].is_dir()
+    for r, rep in zip(roots, reports):
+        def where(rel: str, r: Path = r) -> str:
+            if r.is_file():
+                return str(r)
+            if single:
+                return rel
+            return str(r) if rel == "." else str(r / rel)
+        for f in rep["findings"]:
+            print(f"BLOCK {f['kind']:8} {where(f['path'])}  ({f['detail']})")
+        for i in rep["review"]:
+            print(f"REVIEW image    {where(i)}  (look at it: screenshots can show private content)")
+        for kind, x in rep["extra"]:
+            msg = ("captured output: check it holds no one's data" if kind == "evidence"
+                   else "gitleaks config in the tree: it would change a plain gitleaks run (this scan ignores it)")
+            print(f"REVIEW {kind:8} {where(x)}  ({msg})")
         for a in rep["allowed"]:
-            print(f"REVIEW allowed  {a}  (--allow cleared it as a file; its content was still scanned)")
-        for s in skipped:
-            print(f"REVIEW skipped  {s}  (not scanned)")
+            print(f"REVIEW allowed  {where(a)}  (--allow cleared it as a file; its content was still scanned)")
+        for sk in rep["skipped"]:
+            print(f"REVIEW skipped  {where(sk)}  (not scanned)")
         if rep["secrets_engine"].startswith("PARTIAL"):
-            print(f"REVIEW secrets  {rep['secrets_engine']} — install gitleaks for a maintained ruleset")
-        print(f"{len(findings)} finding(s) in {root}" if findings else
-              f"OK {root}: nothing this filter recognises; read every REVIEW line before sharing")
-    return 1 if findings else 0
+            prefix = "" if single else f"{r}: "
+            print(f"REVIEW secrets  {prefix}{rep['secrets_engine']} — install gitleaks for a maintained ruleset")
+    print(f"{total} finding(s)" if total else
+          "OK: nothing this filter recognises; read every REVIEW line before sharing")
+    return 1 if total else 0
 
 
 if __name__ == "__main__":

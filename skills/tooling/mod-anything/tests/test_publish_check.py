@@ -161,9 +161,10 @@ def test_symlinked_file_and_dir_are_findings_with_their_target(clean: Path, tmp_
     os.symlink("../outside/key", clean / "key")
     os.symlink("/Users/alice/.ssh", clean / "sshdir")
     found = pc.scan(clean, hostnames=set(), username=None)
-    by = {f["path"]: f for f in found}
-    assert by["key"]["kind"] == "symlink" and "../outside/key" in by["key"]["detail"]
-    assert by["sshdir"]["kind"] == "symlink" and "userpath" in by["sshdir"]["detail"]
+    kinds_at = lambda path: {f["kind"] for f in found if f["path"] == path}  # noqa: E731
+    assert kinds_at("key") == {"symlink"}
+    assert any("../outside/key" in f["detail"] for f in found if f["path"] == "key")
+    assert kinds_at("sshdir") == {"symlink", "userpath"}  # the leaking target is its own finding
 
 
 def test_whole_file_is_scanned_not_just_the_head(clean: Path):
@@ -400,3 +401,117 @@ def test_missing_gitleaks_is_announced_as_partial(clean: Path, tmp_path: Path):
     r = subprocess.run([sys.executable, str(SCRIPT), str(clean)], capture_output=True, text=True,
                        env={"PATH": str(empty), "HOME": str(tmp_path)})
     assert r.returncode == 0 and "REVIEW secrets  PARTIAL: gitleaks is not installed" in r.stdout
+
+
+# --- fresh round 1 after the reshape (BRO-2816) -----------------------------------------
+
+import sqlite3 as _sqlite3
+
+
+def _rand_token(prefix: str, n: int, seed: int = 7) -> str:
+    import random, string
+    rnd = random.Random(seed)
+    return prefix + "".join(rnd.choice(string.ascii_letters + string.digits) for _ in range(n))
+
+
+def test_token_packed_in_a_real_sqlite_row_is_found_even_when_allowed(clean: Path):
+    db = clean / "store.sqlite"
+    con = _sqlite3.connect(db)
+    con.execute("create table k (svc text, val text)")
+    con.execute("insert into k values (?, ?)", ("github", _rand_token("ghp_", 36)))
+    con.commit(); con.close()
+    rep = pc.scan_report(clean, allow=["*.sqlite"], hostnames=set(), username=None, use_gitleaks=False)
+    assert ("secret", "store.sqlite") in {(f["kind"], f["path"]) for f in rep["findings"]}
+
+
+def test_allow_does_not_clear_what_a_ds_store_or_a_link_target_leaks(clean: Path):
+    (clean / "assets").mkdir()
+    (clean / "assets" / ".DS_Store").write_bytes(b"\x00\x00\x00\x01Bud1/Users/alice/secret-project")
+    os.symlink("/Users/alice/private/notes.md", clean / "link.md")
+    rep = pc.scan_report(clean, allow=["assets", "link.md"], hostnames=set(), username=None, use_gitleaks=False)
+    found = {(f["kind"], f["path"]) for f in rep["findings"]}
+    assert ("userpath", "assets/.DS_Store") in found and ("opaque", "assets/.DS_Store") not in found
+    assert ("userpath", "link.md") in found and ("symlink", "link.md") not in found
+
+
+@pytest.mark.skipif(not _shutil.which("gitleaks"), reason="gitleaks not installed")
+def test_an_in_tree_gitleaks_config_cannot_silence_gitleaks(clean: Path):
+    (clean / ".gitleaks.toml").write_text("[allowlist]\npaths = ['''.*''']\n")
+    (clean / ".gitleaksignore").write_text("*\n")
+    tok = _rand_token("ghp_", 36, seed=11)
+    (clean / "app.js").write_text(f'const t = "{tok}"; // gitleaks:allow\n')
+    rep = pc.scan_report(clean, hostnames=set(), username=None, use_gitleaks=True)
+    assert any(f["detail"].startswith("gitleaks") for f in rep["findings"])
+    assert ("gitleaks", ".gitleaks.toml") in pc.review_extra(clean)
+
+
+def test_evidence_files_are_listed_for_review(clean: Path):
+    (clean / "evidence").mkdir()
+    (clean / "evidence" / "dom.txt").write_text("page text\n")
+    (clean / "evidence" / "shot.png").write_bytes(b"\x89PNG\x00")
+    assert ("evidence", "evidence/dom.txt") in pc.review_extra(clean)
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--no-gitleaks"], capture_output=True, text=True)
+    assert "REVIEW evidence evidence/dom.txt" in r.stdout
+
+
+def test_home_path_without_a_trailing_slash(clean: Path):
+    (clean / "cfg.json").write_text('{"cwd": "/Users/alice"}\n')
+    assert ("userpath", "cfg.json") in kinds(clean)
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root can read mode-000 folders")
+def test_unreadable_subfolder_is_exit_2(clean: Path):
+    sub = clean / "locked"
+    sub.mkdir()
+    (sub / "x.txt").write_text("x")
+    sub.chmod(0)
+    try:
+        r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--no-gitleaks"], capture_output=True, text=True)
+        assert r.returncode == 2 and "cannot read" in r.stderr
+    finally:
+        sub.chmod(0o755)
+
+
+@pytest.mark.parametrize("value", ["nan", "-1", "0", "inf"])
+def test_max_mb_must_be_a_positive_number(clean: Path, value: str):
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--max-mb", value], capture_output=True, text=True)
+    assert r.returncode == 2
+
+
+def test_an_image_extension_on_a_non_image_is_opaque(clean: Path):
+    (clean / "photo.png").write_bytes(b"SQLite format 3\x00" + b"\x00" * 32)
+    assert ("opaque", "photo.png") in kinds(clean)
+
+
+def test_token_split_across_binary_chunks_is_found(clean: Path):
+    tok = _rand_token("ghp_", 36, seed=3)
+    f = clean / "blob.bin"
+    pad = pc.CHUNK - 10
+    f.write_bytes(b"\x00" * pad + tok.encode() + b"\x00" * 16)
+    rep = pc.scan_report(clean, allow=["blob.bin"], max_mb=10, hostnames=set(), username=None, use_gitleaks=False)
+    assert ("secret", "blob.bin") in {(x["kind"], x["path"]) for x in rep["findings"]}
+
+
+def test_a_single_file_can_be_checked(clean: Path, tmp_path: Path):
+    note = tmp_path / "field-note.md"
+    note.write_text("vault at ~/Documents/AcmeSecretVault\n")
+    deny = tmp_path / "deny.txt"
+    deny.write_text("AcmeSecretVault\n")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(note), "--deny-file", str(deny), "--no-gitleaks"],
+                       capture_output=True, text=True)
+    assert r.returncode == 1 and f"BLOCK denied   {note}" in r.stdout
+
+
+def test_fine_grained_github_token_is_a_built_in_shape(clean: Path):
+    (clean / "env.txt").write_text("T=" + _rand_token("github_pat_", 40) + "\n")
+    assert ("secret", "env.txt") in kinds(clean)
+
+
+def test_no_gitleaks_flag_is_announced_as_partial(clean: Path):
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--no-gitleaks"], capture_output=True, text=True)
+    assert "REVIEW secrets  PARTIAL: gitleaks was not run (--no-gitleaks)" in r.stdout
+
+
+def test_a_dotfile_under_a_home_dir_is_not_a_username(clean: Path):
+    (clean / "lab.py").write_text("# binds <lab>/home/.obsidian-cli.sock\n")
+    assert kinds(clean) == set()
