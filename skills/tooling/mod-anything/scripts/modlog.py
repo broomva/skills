@@ -7,7 +7,11 @@ Every command reads and writes two files in the working folder:
   .modlog.json   the machine state the breaker and the field-note scaffold read
 
 Commands
-  init       --target T --idea I [--done D]     start a journal (refuses to overwrite)
+  init       --target T --idea I [--done D] [--in-repo]
+                                                 start a journal (refuses to overwrite). The
+                                                 working folder belongs outside every git repo
+                                                 (mktemp -d): the journal may hold private
+                                                 detail. --in-repo overrides, on purpose
   log        --text T [--evidence PATH...]       a free journal entry (recon facts, the lab's
                                                  restore path); needs no route
   route      --rung R --name N --reason TEXT [--subgoal S] [--supersedes N]
@@ -21,7 +25,9 @@ Commands
                                                  STALL (exit 3) with the re-rank checklist
   status                                         print the current route and failure counts
   note       --out PATH [--force]                scaffold a field note from the journal
-  lint-note  PATH                                check a field note is complete (exit 1 if not)
+  lint-note  PATH [--root DIR]                   check a field note is complete (exit 1 if not);
+                                                 cited paths resolve from the note's folder and
+                                                 from --root (default: the enclosing skill)
 
 Exit codes: 0 ok · 1 lint findings · 2 usage or refused input · 3 STALL.
 Pure stdlib.
@@ -140,6 +146,15 @@ def _schema_problem(state: dict) -> str | None:
                     return f"{key} entry {i} has no valid {f!r}"
             if "evidence" in fields and not all(isinstance(x, str) and x for x in e["evidence"]):
                 return f"{key} entry {i} has an evidence item that is not a path"
+    if not isinstance(state.get("done", ""), str):
+        return "'done' is not text"
+    n_routes = len(state["routes"])
+    for key in ("steps", "failures", "stalls"):
+        for i, e in enumerate(state[key], 1):
+            if not 1 <= e["route"] <= n_routes:
+                return f"{key} entry {i} points at route #{e['route']}, which does not exist"
+            if key != "steps" and e["count"] < 1:
+                return f"{key} entry {i} has a count below 1"
     for i, r in enumerate(state["routes"], 1):
         if r["n"] != i or r["rung"] not in RUNGS:
             return f"route #{i} is malformed"
@@ -185,9 +200,21 @@ def append(d: Path, text: str) -> None:
         f.write(text.rstrip("\n") + "\n\n")
 
 
-def cmd_init(d: Path, target: str, idea: str, done: str | None) -> dict:
+def _enclosing_repo(d: Path) -> Path | None:
+    for a in [d.resolve(), *d.resolve().parents]:
+        if (a / ".git").exists():
+            return a
+    return None
+
+
+def cmd_init(d: Path, target: str, idea: str, done: str | None, in_repo: bool = False) -> dict:
     if not target.strip() or not idea.strip():
         raise Refused("--target and --idea must be non-empty")
+    repo = _enclosing_repo(d)
+    if repo is not None and not in_repo:
+        raise Refused(f"{d} is inside the git repo {repo}. Keep the working folder outside every repo "
+                      "(mktemp -d): the journal can hold private detail, and a repo publishes it. "
+                      "Pass --in-repo only for a journal you mean to publish")
     if (d / STATE).exists() or (d / JOURNAL).exists():
         raise Refused(f"a journal already exists in {d}; continue it instead of starting over")
     d.mkdir(parents=True, exist_ok=True)
@@ -519,7 +546,7 @@ def lint_note(text: str, base: Path | list[Path] | None = None) -> list[str]:
 
 def _dispatch(ns: argparse.Namespace, d: Path) -> int:
     if ns.cmd == "init":
-        cmd_init(d, ns.target, ns.idea, ns.done)
+        cmd_init(d, ns.target, ns.idea, ns.done, ns.in_repo)
         print(f"journal started: {d / JOURNAL}")
     elif ns.cmd == "log":
         cmd_log(d, ns.text, ns.evidence)
@@ -551,7 +578,8 @@ def _dispatch(ns: argparse.Namespace, d: Path) -> int:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError) as e:
             raise Refused(f"cannot read {path} as UTF-8 text: {e}")
-        bases = [path.parent] + [r for r in [skill_root(path)] if r is not None]
+        root = Path(ns.root) if ns.root else skill_root(path)
+        bases = [path.parent] + ([root] if root is not None else [])
         problems = lint_note(text, base=bases)
         for pr in problems:
             print(f"FAIL {pr}")
@@ -567,6 +595,7 @@ def main(argv: list[str] | None = None) -> int:
     sub = ap.add_subparsers(dest="cmd", required=True)
     p = sub.add_parser("init"); p.add_argument("--target", required=True)
     p.add_argument("--idea", required=True); p.add_argument("--done")
+    p.add_argument("--in-repo", action="store_true", help="allow a working folder inside a git repo")
     p = sub.add_parser("log"); p.add_argument("--text", required=True)
     p.add_argument("--evidence", nargs="+", default=[])
     p = sub.add_parser("route"); p.add_argument("--rung", required=True)
@@ -580,6 +609,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("note"); p.add_argument("--out", required=True)
     p.add_argument("--force", action="store_true")
     p = sub.add_parser("lint-note"); p.add_argument("path")
+    p.add_argument("--root", help="folder that skill-relative citations resolve from (the tree you will ship)")
     ns = ap.parse_args(argv)
     d = Path(ns.dir)
     try:

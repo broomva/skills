@@ -406,3 +406,39 @@ def test_every_entry_and_the_limit_are_validated(journal: Path, patch: dict):
     for cmd in (["status"], ["fail", "--sig", "x"], ["note", "--out", str(journal / "n.md")]):
         r = run(journal, *cmd)
         assert r.returncode == 2 and "not a modlog journal" in r.stderr, (patch, cmd, r.stderr)
+
+
+# --- fresh round 2 (BRO-2816) -------------------------------------------------------------
+
+def test_init_refuses_a_working_folder_inside_a_git_repo(tmp_path: Path):
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    work = repo / "examples" / "run"
+    r = run(work, "init", "--target", "T", "--idea", "I")
+    assert r.returncode == 2 and "inside the git repo" in r.stderr
+    assert run(work, "init", "--target", "T", "--idea", "I", "--in-repo").returncode == 0
+
+
+def test_lint_note_root_resolves_citations_in_the_tree_you_will_ship(tmp_path: Path):
+    ship = tmp_path / "ship"
+    (ship / "examples" / "x" / "evidence").mkdir(parents=True)
+    (ship / "examples" / "x" / "evidence" / "shot.png").write_bytes(b"png")
+    note = ship / "field-notes" / "app" / "n.md"
+    note.parent.mkdir(parents=True)
+    note.write_text(GOOD_NOTE.replace("`evidence/shot.png`", "`examples/x/evidence/shot.png`"))
+    assert run(tmp_path, "lint-note", str(note)).returncode == 1          # no SKILL.md above: unresolved
+    assert run(tmp_path, "lint-note", str(note), "--root", str(ship)).returncode == 0
+
+
+@pytest.mark.parametrize("patch", [
+    {"done": 123},
+    {"steps": [{"step": "s", "evidence": ["e.png"], "route": 9}]},
+    {"failures": [{"sig": "x", "route": 1, "count": 0}]},
+])
+def test_cross_references_in_the_journal_are_validated(journal: Path, patch: dict):
+    run(journal, "route", "--rung", "2", "--name", "api", "--reason", "r")
+    state = json.loads((journal / ".modlog.json").read_text())
+    state.update(patch)
+    (journal / ".modlog.json").write_text(json.dumps(state))
+    r = run(journal, "status")
+    assert r.returncode == 2 and "not a modlog journal" in r.stderr

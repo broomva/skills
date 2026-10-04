@@ -22,6 +22,10 @@ Run these steps in order. Steps 0, 2, 8 and 9 are not optional, even for a small
 In the commands, `$S` is this skill's folder (where this SKILL.md lives) and `<work>` is the
 run's working folder. `modlog.py ...` is short for `python3 $S/scripts/modlog.py --dir <work> ...`.
 
+`<work>` is a fresh folder outside every git repo (`mktemp -d`). The journal, the deny file
+and the logged-in evidence all live there, and none of them should be one `git add` away from
+a commit. `modlog.py init` refuses a folder inside a repo.
+
 **0. Intake.**
 - Get the target with its exact version, the idea in one sentence, and what *done* means. The
   default for done is: working in the real target, with a screenshot, log or dump as evidence.
@@ -56,10 +60,11 @@ reason *before* building:
     cookies or tokens out of the user's real profile either.
   - A logged-in lab still holds the user's session: open a DevTools port on it only for the
     session, and close it after.
-  - Evidence captured from a logged-in lab (DOM dumps, logs, screenshots of real pages)
-    carries the user's and other people's data. It stays in `<work>`. Evidence you publish
-    comes from a fixture you wrote: a local page, synthetic entities, as in
-    `examples/obsidian-kg-claims`.
+- Anything captured from real use stays in `<work>`: DOM dumps, logs and screenshots from a
+  logged-in lab, traffic captures, device recordings. It carries the user's data and other
+  people's, and a device capture can carry addresses, serials and keys. Evidence you publish
+  comes from a fixture you wrote (a local page, synthetic entities, a hand-written frame), as
+  in `examples/obsidian-kg-claims`.
 - A lab that raises system UI on the user's screen is touching the user's environment: a
   keychain prompt, a permission dialog, a focus change. Stop it by exact PID and fix the lab
   before going on.
@@ -104,18 +109,25 @@ traffic or data. Your reading is a hypothesis; step 5 tests it.
 **7. Package.** Ship only your own code, assets, patches or converters that run on the user's
 own install. Write install and uninstall steps.
 
-**8. Field note, in `<work>` first.**
-- Scaffold it in the run's folder: `modlog.py note --out <work>/field-note.md`.
+**8. Field note, in the ship tree.** Build the exact tree you will share inside
+`<work>/ship/`, laid out like `$S`:
+- `examples/<slug>/` holds the mod, its install and uninstall steps, and only evidence made
+  from fixtures you wrote. Shipped fixtures are synthetic and written by hand, never a saved
+  page or a recorded capture, and carry no addresses, serials or keys.
+- `field-notes/<target>/<slug>.md` is the note. Scaffold it with
+  `modlog.py note --out <work>/ship/field-notes/<target>/<slug>.md`.
 - Fill every placeholder: exact versions, the route, what the target really does, the
-  evidence, numbered *symptom → cause → fix* gotchas, and the envelope.
-- `modlog.py lint-note <work>/field-note.md` must exit 0.
-- The note copies text from the journal, which may hold private details, so it is checked in
-  step 9 before it goes anywhere shared.
+  evidence, numbered *symptom → cause → fix* gotchas, and the envelope. Cite evidence by its
+  path in the ship tree (`examples/<slug>/evidence/...`); describe evidence that does not ship
+  without a path.
+- `modlog.py lint-note <note> --root <work>/ship` must exit 0. It checks every cited path
+  exists in the ship tree.
+- The note copies text from the journal, which may hold private details, so step 9 checks
+  it before it goes anywhere shared.
 - Write the note even when the mod failed. A documented dead end saves the next agent hours.
 
-**9. Publish check, then share.** Before anything leaves `<work>`, check the mod and the note
-together:
-`python3 $S/scripts/publish_check.py <mod-dir> <work>/field-note.md --deny-file <private-terms>`
+**9. Publish check, then copy.** Check the whole ship tree in one pass:
+`python3 $S/scripts/publish_check.py <work>/ship --deny-file <work>/deny.txt`
 
 It is a fail-closed filter in front of you, not a privacy guarantee.
 - **It blocks:**
@@ -136,9 +148,10 @@ It is a fail-closed filter in front of you, not a privacy guarantee.
   run. Look at each one.
 - **Exit 0** means "nothing this filter recognises". Share only after exit 0 and a look at
   every REVIEW line.
-- **Then copy the note** to `$S/field-notes/<target>/<slug>.md`. A note shared there cites
-  only evidence that ships with it (under `$S/examples/`); describe any other evidence
-  without a path.
+- **Then copy the tree byte for byte** into a checkout of this skill's repo, at the same
+  relative paths, and run both checks again on the destination (`lint-note` on the note,
+  `publish_check.py` on `examples/<slug>` and the note) before committing. Publishing is an
+  ask (§Rules).
 
 ## The ladder
 
@@ -156,7 +169,7 @@ Rungs 1–5 are ordered by cost and invasiveness. Pick the lowest rung that reac
 sixth rung. No run of this skill has exercised it yet.
 
 `references/ladder.md` has the rung definitions, how to choose, the oracle patterns
-(scriptable runtime, fake host stand-ins) and passthrough.
+(scriptable runtime, fake host stand-ins) and a pointer for passthrough.
 
 ## Rules
 
@@ -170,15 +183,16 @@ These are hard. The full reasoning and the legal summary are in `references/enve
   something that isn't the user's. If a route needs one defeated, it is the wrong route.
 - **Never touch an online service's client or protocol beyond the user's own account and
   data.** Never publish anything that automates, scrapes or writes to a live service. A
-  cosmetic mod that only changes what the user sees is fine.
+  cosmetic mod that only changes what the user sees is fine, if the terms allow it.
 - **Bring your own files.** Never ship the target's bytes, decompiled code or extracted
   assets. `publish_check.py` enforces the mechanical part.
 - **Ask before you:**
   - drive the user's mouse and keyboard, or take focus;
   - install into the user's real profile, app folder or vault (labs need no ask);
-  - pair or bond with a device, or send it anything other than a documented read: commands,
-    probes, replayed captures, configuration or firmware, over BLE, USB, serial or the
-    network. A probe can actuate hardware, and pairing can evict the vendor's app;
+  - connect to a device beyond reading its advertisements, pair or bond with it, or send it
+    anything other than a documented read: commands, probes, replayed captures, configuration
+    or firmware, over BLE, USB, serial or the network. A probe can actuate hardware, and
+    pairing can evict the vendor's app;
   - send writes or replayed requests to a live service, even on the user's own account;
   - run code in, or automate, the user's real signed-in session: their browser profile or
     their running app. Test in a lab profile the user logged into instead;
@@ -188,7 +202,8 @@ These are hard. The full reasoning and the legal summary are in `references/enve
 - **Back up first.** Kill processes by exact PID, never by pattern.
 - **Disclosure.** If you find a vulnerability, nothing describing it leaves the private repo
   until the vendor has been contacted, an embargo agreed, and the owner has signed off.
-  Private journals stay unblocked.
+  Private journals stay unblocked. A device that obeys a replayed command with no pairing or
+  authentication is such a finding, not a route.
 
 ## Scripts
 
@@ -219,7 +234,7 @@ fake targets, once the domain recurs. Shipped so far: macOS apps.
 
 ## References
 
-- `references/ladder.md` — rungs, choosing, the oracle and passthrough in detail.
+- `references/ladder.md` — rungs, choosing, the oracle, and where to start on passthrough.
 - `references/envelope.md` — the rules with their reasons, the legal summary (US/EU), disclosure.
 - `references/field-note.md` — the field-note format and what makes one useful.
 - `references/playbooks/macos-apps.md` — bundle anatomy, extension points, protections and

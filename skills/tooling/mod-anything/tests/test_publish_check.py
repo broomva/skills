@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import importlib.util
+import json
 import subprocess
 import sys
 from pathlib import Path
@@ -434,15 +435,27 @@ def test_allow_does_not_clear_what_a_ds_store_or_a_link_target_leaks(clean: Path
     assert ("userpath", "link.md") in found and ("symlink", "link.md") not in found
 
 
+def test_an_in_tree_gitleaks_config_or_ignore_file_is_blocked(clean: Path):
+    (clean / ".gitleaks.toml").write_text("[allowlist]\npaths = ['.*']\n")
+    (clean / "sub").mkdir()
+    (clean / "sub" / ".gitleaksignore").write_text("cfg.py:gitlab-pat:1\n")
+    found = kinds(clean)
+    assert ("gitleaks", ".gitleaks.toml") in found and ("gitleaks", "sub/.gitleaksignore") in found
+    # not clearable: --allow is for "is this file shippable", and this file changes what is checked
+    assert ("gitleaks", ".gitleaks.toml") in kinds(clean, allow=[".gitleaks.toml"])
+
+
 @pytest.mark.skipif(not _shutil.which("gitleaks"), reason="gitleaks not installed")
-def test_an_in_tree_gitleaks_config_cannot_silence_gitleaks(clean: Path):
-    (clean / ".gitleaks.toml").write_text("[allowlist]\npaths = ['''.*''']\n")
-    (clean / ".gitleaksignore").write_text("*\n")
-    tok = _rand_token("ghp_", 36, seed=11)
-    (clean / "app.js").write_text(f'const t = "{tok}"; // gitleaks:allow\n')
-    rep = pc.scan_report(clean, hostnames=set(), username=None, use_gitleaks=True)
-    assert any(f["detail"].startswith("gitleaks") for f in rep["findings"])
-    assert ("gitleaks", ".gitleaks.toml") in pc.review_extra(clean)
+def test_a_real_fingerprint_in_gitleaksignore_cannot_make_the_run_quiet(clean: Path):
+    tok = "glpat-" + _rand_token("", 20, seed=5)
+    (clean / "cfg.py").write_text(f'T = "{tok}"\n')
+    probe = subprocess.run(["gitleaks", "dir", str(clean), "--no-banner", "--exit-code", "0",
+                            "--report-format", "json", "--report-path", "-"], capture_output=True, text=True)
+    fps = [leak["Fingerprint"] for leak in json.loads(probe.stdout or "[]")]
+    assert fps, "the probe token should be a gitleaks finding"
+    (clean / ".gitleaksignore").write_text("\n".join(fps) + "\n")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean)], capture_output=True, text=True)
+    assert r.returncode == 1 and "BLOCK gitleaks .gitleaksignore" in r.stdout
 
 
 def test_evidence_files_are_listed_for_review(clean: Path):
@@ -515,3 +528,89 @@ def test_no_gitleaks_flag_is_announced_as_partial(clean: Path):
 def test_a_dotfile_under_a_home_dir_is_not_a_username(clean: Path):
     (clean / "lab.py").write_text("# binds <lab>/home/.obsidian-cli.sock\n")
     assert kinds(clean) == set()
+
+
+# --- fresh round 2 (BRO-2816) -------------------------------------------------------------
+
+def test_aws_key_packed_in_a_real_sqlite_row(clean: Path):
+    db = clean / "keys.sqlite"
+    con = _sqlite3.connect(db)
+    con.execute("create table k (id text, secret text)")
+    con.execute("insert into k values (?, ?)", ("AKIA" + "IOSFODNN7EXAMPLQ", "nextvalue"))
+    con.commit(); con.close()
+    rep = pc.scan_report(clean, allow=["*.sqlite"], hostnames=set(), username=None, use_gitleaks=False)
+    assert ("secret", "keys.sqlite") in {(f["kind"], f["path"]) for f in rep["findings"]}
+
+
+def test_sk_shape_stays_anchored_in_binaries(clean: Path):
+    (clean / "chart.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"tEXt" + b"risk-assessment-for-the-project-2026")
+    assert kinds(clean) == set()
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root reads mode-000 files")
+def test_single_file_unreadable_is_exit_2(tmp_path: Path):
+    f = tmp_path / "note.md"
+    f.write_text("x")
+    f.chmod(0)
+    try:
+        r = subprocess.run([sys.executable, str(SCRIPT), str(f), "--no-gitleaks"], capture_output=True, text=True)
+        assert r.returncode == 2 and "cannot read" in r.stderr
+    finally:
+        f.chmod(0o644)
+
+
+def test_single_file_symlink_is_blocked_not_followed(tmp_path: Path):
+    (tmp_path / "real.md").write_text("clean\n")
+    link = tmp_path / "note.md"
+    os.symlink(tmp_path / "real.md", link)
+    r = subprocess.run([sys.executable, str(SCRIPT), str(link), "--no-gitleaks"], capture_output=True, text=True)
+    assert r.returncode == 1 and "BLOCK symlink" in r.stdout
+
+
+def test_single_file_under_evidence_is_reviewed(tmp_path: Path):
+    (tmp_path / "evidence").mkdir()
+    f = tmp_path / "evidence" / "dom.txt"
+    f.write_text("page\n")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(f), "--no-gitleaks"], capture_output=True, text=True)
+    assert "REVIEW evidence" in r.stdout
+
+
+@pytest.mark.parametrize("name,head,real", [
+    ("a.tiff", b"II*\x00" + b"\x00" * 16, True),
+    ("b.tiff", b"SQLite format 3\x00", False),
+    ("c.webp", b"RIFF\x00\x00\x00\x00WEBP", True),
+    ("d.webp", b"RIFF\x00\x00\x00\x00WAVE", False),
+    ("e.heic", b"\x00\x00\x00\x18ftypheic", True),
+    ("f.heic", b"\x00\x00\x00\x00", False),
+])
+def test_more_image_headers_are_checked(clean: Path, name: str, head: bytes, real: bool):
+    (clean / name).write_bytes(head + b"\x00" * 32)
+    assert (("opaque", name) in kinds(clean)) is (not real)
+
+
+def test_fixture_files_are_listed_for_review(clean: Path):
+    (clean / "harness" / "fixtures").mkdir(parents=True)
+    (clean / "harness" / "fixtures" / "recorded.json").write_text("{}\n")
+    assert ("fixtures", "harness/fixtures/recorded.json") in pc.review_extra(clean)
+
+
+def test_installed_but_failing_gitleaks_is_exit_2(clean: Path, tmp_path: Path):
+    bindir = tmp_path / "fakebin"
+    bindir.mkdir()
+    fake = bindir / "gitleaks"
+    fake.write_text("#!/bin/sh\necho broken >&2\nexit 3\n")
+    fake.chmod(0o755)
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean)], capture_output=True, text=True,
+                       env={"PATH": f"{bindir}:/usr/bin:/bin", "HOME": str(tmp_path)})
+    assert r.returncode == 2 and "gitleaks is installed but" in r.stderr
+
+
+def test_the_strings_pass_keeps_the_word_boundary_on_the_generic_sk_shape():
+    # Unanchored, "sk-" plus 20 word characters matches ordinary text inside an image's
+    # metadata; the other shapes have distinctive prefixes and drop the boundary safely.
+    prose = "risk-assessment-for-the-quarterly-report"
+    assert not [f for f in pc._text_findings("x.png", prose, set(), None, [], loose=True)
+                if f["kind"] == "secret"]
+    key = "sk-" + "A1b2C3d4E5f6G7h8J9k0L1m2"
+    assert [f for f in pc._text_findings("x.png", f"\x00{key}\x00", set(), None, [], loose=True)
+            if f["kind"] == "secret"]

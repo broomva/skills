@@ -61,3 +61,5 @@ Anything not in this journal is lost at the next context compaction.
 
 - NOTE (2026-10-04T15:33:41Z): Before publication: examples/recon-macos-apps/ was trimmed to three common apps (Obsidian, VS Code, Spotify). Entries above that say ten describe the run itself. — evidence: `../recon-macos-apps/summary.tsv`
 
+- NOTE (2026-10-04T16:03:42Z): Review round 3 (2026-10-04): removed evidence/lab1-stderr-excerpt.txt (one local-time console line) and the raw mtimes in evidence/owner-untouched.txt before publication. The lab step above that cites the excerpt describes the first run.
+

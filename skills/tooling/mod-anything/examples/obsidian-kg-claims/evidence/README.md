@@ -7,6 +7,7 @@ Two runs produced this folder.
   `reading-view.png`, `after-restart.png`.
 - **From the first run**, which used copies of real entities (none of their content is here):
   `owner-untouched.txt`, `restart-rounds.txt`, `main-thread-blocked-keychain.txt`,
-  `cli-hang.txt`, `screencapture-denied.txt`, `lab1-launcher.log`, `lab1-stderr-excerpt.txt`.
+  `cli-hang.txt`, `screencapture-denied.txt`, `lab1-launcher.log`.
   The first run's transcripts and screenshots that quoted real entities were removed before
-  publication.
+  publication, as were `lab1-stderr-excerpt.txt` (a local-time console line) and the raw
+  timestamps in `owner-untouched.txt`.

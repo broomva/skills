@@ -24,9 +24,12 @@ missing → folder name differs from the manifest id → rename the folder to th
 "Fixed the plugin" is not.
 
 **Where notes go.**
-1. Write and lint the note in `<work>`. It copies journal text, which may be private.
-2. Run `publish_check.py` over the mod and the note together, with your deny file.
-3. Only then copy it to `field-notes/<target>/` in this skill, so it ships with it. A shared
-   note cites only evidence that ships too (under `examples/`).
+1. Write the note in the ship tree, `<work>/ship/field-notes/<target>/<slug>.md`, next to the
+   mod in `<work>/ship/examples/<slug>/`. It copies journal text, which may be private.
+2. Lint it with `lint-note <note> --root <work>/ship`, so every cited path resolves in the
+   tree that will ship. Evidence that does not ship is described without a path.
+3. Run `publish_check.py <work>/ship` with your deny file.
+4. Only then copy the tree byte for byte into the skill's repo, and run both checks again on
+   the destination before committing.
 
 Search before you start: `grep -ril "<target>" field-notes/`.

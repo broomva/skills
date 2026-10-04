@@ -207,6 +207,11 @@
         "../recon-macos-apps/summary.tsv"
       ],
       "at": "2026-10-04T15:33:41Z"
+    },
+    {
+      "text": "Review round 3 (2026-10-04): removed evidence/lab1-stderr-excerpt.txt (one local-time console line) and the raw mtimes in evidence/owner-untouched.txt before publication. The lab step above that cites the excerpt describes the first run.",
+      "evidence": [],
+      "at": "2026-10-04T16:03:42Z"
     }
   ]
 }
