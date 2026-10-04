@@ -1,0 +1,3 @@
+screencapture probe:
+could not create image from rect
+exit 1

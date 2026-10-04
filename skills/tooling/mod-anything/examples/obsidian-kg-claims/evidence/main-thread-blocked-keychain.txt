@@ -1,0 +1,19 @@
+sample <lab main pid> 1 — main thread, top and bottom frames (lab instance launched with HOME=<lab>/home)
+743 Thread_246325065   DispatchQueue_1: com.apple.main-thread  (serial)
+743 start  (in dyld) + 6992  [0x18693be00]
+743 ElectronMain  (in Electron Framework) + 204  [0x1166557bc]
+743 v8::CodeEvent::GetScriptLine()  (in Electron Framework) + 461152  [0x1169a1328]
+743 v8::CodeEvent::GetScriptLine()  (in Electron Framework) + 460920  [0x1169a1240]
+743 v8::CodeEvent::GetScriptLine()  (in Electron Framework) + 466520  [0x1169a2820]
+743 v8::CodeEvent::GetScriptLine()  (in Electron Framework) + 466904  [0x1169a29a0]
+  ...
+743 node::MakeCallback(v8::Isolate*, v8::Local<v8::Object>, v8::Local<v8::Function>, int, v8::Local<v8::Value>*, node::a
+743 SecKeychainAddGenericPassword  (in Security) + 576  [0x18a8af0fc]
+743 Security::KeychainCore::StorageManager::defaultKeychainUI(Security::KeychainCore::Item&)  (in Security) + 168  [0x18
+743 Security::KeychainCore::StorageManager::makeLoginAuthUI(Security::KeychainCore::Item const*, bool)  (in Security) + 
+743 AuthorizationCopyRights  (in Security) + 384  [0x18a7b0220]
+743 _AuthorizationCopyRights_send_message  (in Security) + 48  [0x18a7b05ac]
+743 xpc_connection_send_message_with_reply_sync  (in libxpc.dylib) + 284  [0x1869d2eb0]
+
+curl http://127.0.0.1:<port>/json/version -> connected, 0 bytes in 5 s (DevTools handler needs the blocked UI thread)
+SecurityAgent (system) started 5 pids after the lab main; exited after the lab main was SIGKILLed; no window listed when checked

@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 105 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
+> 106 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
 ## Governance & control — `skills/governance/` (11)
 
@@ -36,7 +36,7 @@
 | `ctx-core` | The shared context core, phase 1: a read-only shared board. Hooks append each session's start, ARC-STATUS keyword and death to a per-scope log as structured fields only; SessionStart injects a factual brief of the other sessions on the same branch. Coordination only, not a security boundary |
 | `fleet-reconcile` | The hourly fleet coordinator. Phase 1 observes and classifies, report only; phase 2 adds the coordinator and its verbs under dry run. Each tick reads every Claude Code session (claude agents --json… |
 
-## Skill & prompt tooling — `skills/tooling/` (9)
+## Skill & prompt tooling — `skills/tooling/` (10)
 
 | Skill | What it does |
 |---|---|
@@ -48,7 +48,8 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 105 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 106 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `mod-anything` | Change or extend software or a device the user owns but whose source they don't control (a desktop app, a website, a game, a device protocol, a CLI) by the cheapest route that reaches the idea. The… |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
 
@@ -226,7 +227,7 @@
 
 ## Aggregates
 
-- **Total skills**: 105
+- **Total skills**: 106
 - **Total category buckets**: 23
 - **Largest bucket**: Orchestration & autonomy (13)
 - **Smallest buckets** (1): Science

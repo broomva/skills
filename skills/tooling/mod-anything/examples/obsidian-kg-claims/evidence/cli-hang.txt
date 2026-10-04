@@ -1,0 +1,29 @@
+attempt 1 (harness cli: version, vaults, plugins:restrict, plugins) — each client timed out after 30 s; launcher log:
+2026-10-04 13:58:33 Loading updated app package /private/tmp/mod-anything-lab.QeA1/obsidian-data/obsidian-1.13.7.asar
+2026-10-04 13:59:04 Loading updated app package /private/tmp/mod-anything-lab.QeA1/obsidian-data/obsidian-1.13.7.asar
+2026-10-04 13:59:04 Checking for update using Github
+2026-10-04 13:59:04 Success.
+2026-10-04 13:59:04 Latest version is 1.13.7
+2026-10-04 13:59:04 App is up to date.
+2026-10-04 13:59:35 Loading updated app package /private/tmp/mod-anything-lab.QeA1/obsidian-data/obsidian-1.13.7.asar
+2026-10-04 13:59:36 Checking for update using Github
+2026-10-04 13:59:37 Success.
+2026-10-04 13:59:37 Latest version is 1.13.7
+2026-10-04 13:59:37 App is up to date.
+2026-10-04 14:00:04 Loading updated app package /private/tmp/mod-anything-lab.QeA1/obsidian-data/obsidian-1.13.7.asar
+2026-10-04 14:00:04 Checking for update using Github
+2026-10-04 14:00:04 Success.
+2026-10-04 14:00:04 Latest version is 1.13.7
+2026-10-04 14:00:04 App is up to date.
+SingletonLock afterwards: already gone when read (so which process held it last is not known)
+
+attempt 2 (one client by hand, 14:02:14): client prints nothing, main pid 82196 alive at +8 s, gone at +42 s; client still running at +42 s
+2026-10-04 14:02:14 Loading updated app package /private/tmp/mod-anything-lab.QeA1/obsidian-data/obsidian-1.13.7.asar
+main stdout never logs 'Received command line'
+
+attempt 3 (client through LaunchServices: open -W -g -n ... version): open still waiting at +20 s, client printed only:
+2026-10-04 14:03:22 Loading updated app package /private/tmp/mod-anything-lab.QeA1/obsidian-data/obsidian-1.13.7.asar
+lab main pid 93320 gone by +20 s
+
+Root cause found later (evidence/main-thread-blocked-keychain.txt): the lab main's UI thread was blocked in a
+login-keychain authorization request caused by the lab's HOME override; the client was never at fault.

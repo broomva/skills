@@ -1,0 +1,9 @@
+{
+  "id": "kg-claims",
+  "name": "KG Claims",
+  "version": "0.1.0",
+  "minAppVersion": "1.4.0",
+  "description": "Shows the core_claim of a linked knowledge-graph entity next to its [[wikilink]] in reading view, and as the link's hover title.",
+  "author": "mod-anything example",
+  "isDesktopOnly": false
+}

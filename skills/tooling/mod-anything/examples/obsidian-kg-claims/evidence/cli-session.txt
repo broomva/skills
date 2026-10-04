@@ -1,0 +1,28 @@
+# session: enable the plugin in the lab vault, open the fixture note in reading view
+$ obsidian version
+1.13.7 (installer 1.8.4)
+$ obsidian plugins:restrict off
+Restricted mode disabled. Reloading...
+$ lab.py install (copies plugin/ into <lab>/vault/.obsidian/plugins/kg-claims)
+$ obsidian reload
+Reloading...
+$ obsidian plugin:enable id=kg-claims
+Enabled: kg-claims
+$ obsidian open path=Notes/reading-test.md
+
+# expected: five claims (the five entity links, the alias and #heading forms included); none for [[plain-note]] or [[no-such-entity]]
+$ obsidian dev:dom selector=.markdown-reading-view .kg-claim all text
+Synthetic fixture: most coasts see two high tides a day.
+Synthetic fixture: a starter fed daily stays active.
+Synthetic fixture: a light's range grows with its height.
+Synthetic fixture: a lower gear trades speed for torque.
+Synthetic fixture: the tool-typed garden-map.
+# the hover title carries the same claim
+$ obsidian dev:dom selector=a.internal-link[data-kg-claim] all attr=title
+Synthetic fixture: most coasts see two high tides a day.
+Synthetic fixture: a starter fed daily stays active.
+Synthetic fixture: a light's range grows with its height.
+Synthetic fixture: a lower gear trades speed for torque.
+Synthetic fixture: the tool-typed garden-map.
+$ obsidian dev:screenshot path=/tmp/mod-anything-lab.xu31/reading-view.png
+

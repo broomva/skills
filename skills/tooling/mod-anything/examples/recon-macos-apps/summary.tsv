@@ -1,0 +1,4 @@
+app	version_info_plist	bundle_id	stack	electron	protections	updates	best_route_above_rung_1	caveats
+Obsidian	1.8.4	md.obsidian	electron	33.3.2	hardened-runtime,library-validation-off	squirrel,app-code-in-state-folder	rung 2: Obsidian community plugin API	Info.plist says version 1.8.4 but the state folder holds app-code archives (obsidian-1.13.7.asar); the running version may be the newest of those
+Spotify	1.3.3.264	com.spotify.client	cef		hardened-runtime,library-validation-off	none-detected	rung 2: AppleScript dictionary	-
+Code	1.129.0	com.microsoft.VSCode	electron	42.6.0	hardened-runtime	squirrel	rung 2: Code extension API	-

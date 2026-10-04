@@ -1,0 +1,21 @@
+(Published copy: evidence/rerun-fresh-lab.txt, named below, was removed before publication because it quoted the owner's private knowledge graph. harness/record_evidence.sh regenerates the equivalent run from synthetic fixtures.)
+
+Lab /tmp/mod-anything-lab.ISmV, after the fresh re-run (evidence/rerun-fresh-lab.txt).
+
+1. First relaunch after the re-run (whose stop needed two SIGTERMs): claims=0, polled 8 times
+   over 8 s; tab "[markdown] reading-test" restored; plugins:enabled filter=community -> (empty);
+   restricted mode "off"; vault/.obsidian/community-plugins.json = [] with mtime 09:15:36, i.e.
+   rewritten during that startup. The screenshot from that session (no claims, no consent
+   modal) was evidence/restart-empty-list.png (removed before publication: it showed real entity slugs). Cause NOT established: the list was empty
+   when the app started. The 'Enabled: kg-claims' answer comes before the 1 s debounced save
+   (Obsidian's app code saves the plugin list on a one-second debounce), and that stop needed a second SIGTERM.
+
+2. Enable once more, then launch / check / stop rounds (lab.py; stop = SIGTERM to the exact PID):
+round 1: claims=5 file-before-stop=["kg-claims"] | stopped pid 38216 (SIGTERM x1) | file-after-stop=["kg-claims"]
+round 2: claims=5 file-before-stop=["kg-claims"] | stopped pid 38358 (SIGTERM x1) | file-after-stop=["kg-claims"]
+round 3: claims=5 file-before-stop=["kg-claims"] | stopped pid 38396 (SIGTERM x1) | file-after-stop=["kg-claims"]
+(rounds 2 and 3 rendered 5 claims at startup without any enable call)
+
+3. The same, with dev:screenshot as the last command before stop:
+round 1: claims=5 before=["kg-claims"] | stopped pid 38753 (SIGTERM x1) | after=["kg-claims"]
+round 2: claims=5 before=["kg-claims"] | stopped pid 39232 (SIGTERM x1) | after=["kg-claims"]

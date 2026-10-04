@@ -1,0 +1,15 @@
+Owner's Obsidian profile: stat (path, mtime epoch, size) before the first lab launch and after the last lab stop
+before:
+~/Library/Application Support/obsidian/obsidian.json 1789169181 799
+~/Library/Application Support/obsidian/ 1789169279 1152
+~/Library/Application Support/obsidian/Local Storage/leveldb 1789169134 352
+after:
+~/Library/Application Support/obsidian/obsidian.json 1789169181 799
+~/Library/Application Support/obsidian/ 1789169279 1152
+~/Library/Application Support/obsidian/Local Storage/leveldb 1789169134 352
+diff: identical
+~/.obsidian-cli.sock: does not exist (lab sockets live in <lab>/home)
+git status --porcelain on the 6 source entities in <kg repo>/research/entities: clean (only copies were opened)
+Obsidian processes left running: 0
+
+Limit (added in review): directory modification times do not change when a file inside is appended to, and this check did not cover ~/Library/Preferences or Saved Application State. Hashing the files before and after is the stronger check.

@@ -1,0 +1,190 @@
+{
+  "target": {
+    "path": "/Applications/Visual Studio Code.app",
+    "name": "Code",
+    "bundle_id": "com.microsoft.VSCode",
+    "version": "1.129.0",
+    "build": "1.129.0",
+    "min_os": "12.0",
+    "arch": "arm64"
+  },
+  "stack": {
+    "kind": "electron",
+    "evidence": [
+      "Contents/Frameworks/Electron Framework.framework"
+    ],
+    "electron": {
+      "electron_version": "42.6.0",
+      "app_code": [
+        "Contents/Resources/app/"
+      ],
+      "fuse_wire": {
+        "found": true,
+        "slice": "arm64",
+        "count": 9,
+        "fuses": {
+          "RunAsNode": "on",
+          "EnableCookieEncryption": "off",
+          "EnableNodeOptionsEnvironmentVariable": "on",
+          "EnableNodeCliInspectArguments": "on",
+          "EnableEmbeddedAsarIntegrityValidation": "off",
+          "OnlyLoadAppFromAsar": "off",
+          "LoadBrowserProcessSpecificV8Snapshot": "off",
+          "GrantFileProtocolExtraPrivileges": "on",
+          "WasmTrapHandlers": "on"
+        },
+        "slices": [
+          "arm64",
+          "x86_64"
+        ],
+        "slices_agree": true
+      }
+    },
+    "vscode_family": {
+      "source": "Contents/Resources/app/product.json",
+      "name": "Code",
+      "version": "1.129.0",
+      "data_folder": ".vscode",
+      "application_name": "code",
+      "cli": "Contents/Resources/app/bin/code",
+      "gallery": true
+    }
+  },
+  "extension_points": [
+    {
+      "rung": "2",
+      "kind": "vscode-extensions",
+      "name": "Code extension API",
+      "detail": "product.json at Contents/Resources/app/product.json; per-user folder ~/.vscode; CLI Contents/Resources/app/bin/code takes --user-data-dir and --extensions-dir",
+      "source": "bundle"
+    },
+    {
+      "rung": "2",
+      "kind": "url-scheme",
+      "name": "URL schemes",
+      "detail": "vscode://",
+      "source": "bundle"
+    },
+    {
+      "rung": "2",
+      "kind": "accessibility",
+      "name": "Accessibility (AX) API",
+      "detail": "every app; needs the Accessibility permission, reads and drives the UI",
+      "source": "platform"
+    }
+  ],
+  "protections": {
+    "signature": {
+      "checked": true,
+      "signed": true,
+      "team_id": "UBF8T346G9",
+      "hardened_runtime": true,
+      "sandbox": false,
+      "disable_library_validation": false,
+      "allow_jit": true,
+      "apple_events": true
+    },
+    "mas_receipt": false,
+    "asar_integrity": false,
+    "only_load_app_from_asar": false,
+    "node_inspect": true,
+    "node_options": true,
+    "run_as_node": true
+  },
+  "updates": [
+    {
+      "kind": "squirrel",
+      "detail": "Electron autoUpdater (replaces the bundle)"
+    }
+  ],
+  "state": [
+    {
+      "kind": "app-support",
+      "path": "~/Library/Application Support/Code",
+      "exists": true
+    },
+    {
+      "kind": "app-support",
+      "path": "~/Library/Application Support/com.microsoft.VSCode",
+      "exists": false
+    },
+    {
+      "kind": "container",
+      "path": "~/Library/Containers/com.microsoft.VSCode",
+      "exists": false
+    },
+    {
+      "kind": "preferences",
+      "path": "~/Library/Preferences/com.microsoft.VSCode.plist",
+      "exists": true
+    },
+    {
+      "kind": "extensions",
+      "path": "~/.vscode/extensions",
+      "exists": false
+    }
+  ],
+  "app_extensions": [],
+  "bundled_tools": [
+    "Contents/Resources/app/bin/code-tunnel"
+  ],
+  "caveats": [],
+  "routes": [
+    {
+      "rung": "1",
+      "name": "settings and data files",
+      "status": "available",
+      "reason": "cheapest, but reaches only what the app already reads; state: ~/Library/Application Support/Code, ~/Library/Preferences/com.microsoft.VSCode.plist",
+      "rank": 1
+    },
+    {
+      "rung": "2",
+      "name": "Code extension API",
+      "status": "available",
+      "reason": "the makers' extension point: can add UI and behaviour; product.json at Contents/Resources/app/product.json; per-user folder ~/.vscode; CLI Contents/Resources/app/bin/code takes --user-data-dir and --extensions-dir",
+      "rank": 2
+    },
+    {
+      "rung": "2",
+      "name": "URL schemes",
+      "status": "caveat",
+      "reason": "deep links (vscode://); trigger only. Caveat: `open` routes to an already-running instance, which may be the user's real profile",
+      "rank": 3
+    },
+    {
+      "rung": "2",
+      "name": "Accessibility (AX) API",
+      "status": "caveat",
+      "reason": "read and drive the UI; needs the Accessibility permission and acting through it is driving input, so ask first; the electron UI exposes a thin AX tree",
+      "rank": 4
+    },
+    {
+      "rung": "3",
+      "name": "renderer script via DevTools Protocol",
+      "status": "caveat",
+      "reason": "launch-time renderer script over the DevTools Protocol (--remote-debugging-port, lab profile, session only); app files untouched; check the app's terms first: a prohibition on client modification puts this out of scope",
+      "rank": 5
+    },
+    {
+      "rung": "4",
+      "name": "network capture of the app's own traffic",
+      "status": "caveat",
+      "reason": "your own account and data only; rarely needed for an app mod",
+      "rank": 6
+    },
+    {
+      "rung": "5",
+      "name": "companion tool beside the app",
+      "status": "available",
+      "reason": "rebuild the part you need next to the app, from its data files or API; most work, and the user sees it outside the app",
+      "rank": 7
+    },
+    {
+      "rung": "3",
+      "name": "edit the app's files",
+      "status": "blocked",
+      "reason": "editing a signed bundle breaks its seal: that defeats an integrity check; an updater would overwrite the edit anyway",
+      "rank": 8
+    }
+  ]
+}

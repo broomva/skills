@@ -1,0 +1,72 @@
+name: test-mod-anything
+
+# Python test gate for the `mod-anything` skill
+# (skills/tooling/mod-anything/). Path-filtered so it runs ONLY when that
+# skill changes — the monorepo's tests-optional default (lint-skill-md.yml)
+# stands everywhere else.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/tooling/mod-anything/**'
+      - '.github/workflows/test-mod-anything.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/tooling/mod-anything/**'
+      - '.github/workflows/test-mod-anything.yml'
+  workflow_dispatch:
+
+# Least privilege: this workflow only reads the checkout. It never pushes, never
+# comments, never publishes — so it has no need of the default write token.
+permissions:
+  contents: read
+
+concurrency:
+  group: test-mod-anything-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/tooling/mod-anything
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install pytest
+      - name: Unit tests (journal, stall breaker, publish check, recon adapter on fake bundles)
+        run: python -m pytest tests/ -v
+
+      # The exit codes ARE the contract, so CI asserts them directly.
+      - name: modlog exit 3 on the third identical failure (the stall)
+        run: |
+          d=$(mktemp -d)
+          python scripts/modlog.py --dir "$d" init --target "ci" --idea "probe"
+          python scripts/modlog.py --dir "$d" route --rung 5 --name "rebuild" --reason "probe"
+          python scripts/modlog.py --dir "$d" fail --sig "same"
+          python scripts/modlog.py --dir "$d" fail --sig "same"
+          set +e
+          python scripts/modlog.py --dir "$d" fail --sig "same"
+          code=$?
+          set -e
+          test "$code" -eq 3 || { echo "::error::the third identical failure must exit 3, got $code"; exit 1; }
+      - name: the shipped field notes lint clean (and their evidence exists)
+        run: |
+          for n in $(find field-notes -name '*.md' ! -name README.md); do
+            python scripts/modlog.py lint-note "$n"
+          done
+      - name: the shipped examples pass the publish check
+        run: |
+          for d in examples/*/; do python scripts/publish_check.py "$d"; done
