@@ -32,10 +32,12 @@ Commands
                                                  (exit 1 if not). Evidence cited under
                                                  ## Verification must exist inside DIR (default:
                                                  the enclosing skill, else the note's folder):
-                                                 absolute, ~ and .. paths fail. The Envelope
-                                                 needs one Disclosure line: none found |
-                                                 embargoed (fails) | cleared YYYY-MM-DD (a real
-                                                 date, not in the future)
+                                                 absolute, ~/, .. and file:// paths fail, in
+                                                 backticks or any link form. The Envelope needs
+                                                 one Disclosure line: none found | embargoed
+                                                 (fails) | cleared YYYY-MM-DD (a real date, not
+                                                 in the future). The word "embargoed" anywhere
+                                                 in the note fails
 
 Exit codes: 0 ok · 1 lint findings · 2 usage, refused input, or a file or folder it could not
 read or write · 3 STALL. Pure stdlib.
@@ -469,11 +471,13 @@ _GOTCHA = re.compile(r"^\s*\d+\.\s+.+(?:→|->).+(?:→|->).+$", re.S)
 # runs until the next list item, blank line or heading (Markdown continues an item on
 # unindented lines too). Every "Disclosure:" line is counted on its own, nested ones included.
 _DISCLOSURE = re.compile(r"(?im)^\s*[-*]?\s*Disclosure:\s*(.*(?:\n(?![ \t]*(?:[-*+]|\d+\.)\s|[ \t]*$|#).*)*)")
-_DISCLOSURE_LINE = re.compile(r"(?im)^\s*(?:[-*+]\s*)?Disclosure:")
+# Counted in any markup (- Disclosure:, **Disclosure:**, 1. Disclosure:, > Disclosure:).
+_DISCLOSURE_LABEL = re.compile(r"(?i)\bdisclosure\b[*_`\s]*:")
 _DISCLOSURE_STATE = re.compile(r"(?i)^(none found|embargoed|cleared \d{4}-\d{2}-\d{2})\b")
 _EVIDENCE = re.compile(r"`[^`]+`|\[[^\]]+\]\([^)]+\)")
 _TICKED = re.compile(r"`([^`]+)`")
-_LINK = re.compile(r"\[[^\]]*\]\((?:<([^>]+)>|([^)\s]+))(?:\s+\"[^\"]*\")?\)")
+_LINK = re.compile(r"\[[^\]]*\]\((?:<([^>]+)>|([^)\s]+))(?:\s+(?:\"[^\"]*\"|'[^']*'|\([^)]*\)))?\)")
+_REFDEF = re.compile(r"(?m)^[ \t]*\[[^\]]+\]:[ \t]*(?:<([^>]+)>|(\S+))")
 _FILE_EXT = re.compile(
     r"\.(?:png|jpe?g|gif|webp|heic|txt|log|json|jsonl|md|csv|tsv|html?|xml|ya?ml|pdf|"
     r"mp4|mov|mkv|webm|mp3|wav|m4a|ogg|flac|zip|tar|gz|out|err|sh|py|js|ts)$", re.I)
@@ -530,7 +534,9 @@ def _citation_problems(ver: str, bases: list[Path], root: Path | None) -> list[s
     not it has spaces, because it points at something that does not ship."""
     problems: list[str] = []
     top = root.resolve() if root is not None else None
-    links = [a or b for a, b in _LINK.findall(ver)]
+    links = [a or b for a, b in _LINK.findall(ver) + _REFDEF.findall(ver)]
+    if re.search(r"(?i)file://", ver) and root is not None:
+        problems.append("## Verification cites a file:// URL: a local file that does not ship")
     for tok in dict.fromkeys(t.strip() for t in _TICKED.findall(ver) + links):
         if tok.lower().startswith("file://"):
             tok = tok[7:]  # a local file, whatever the scheme says
@@ -558,7 +564,7 @@ def _disclosure_problems(env: str) -> list[str]:
     lines = _DISCLOSURE.findall(env)
     if not lines or not lines[0].strip():
         return ["## Envelope has no 'Disclosure:' line (none found | embargoed ... | cleared YYYY-MM-DD ...)"]
-    if len(_DISCLOSURE_LINE.findall(env)) > 1:
+    if len(_DISCLOSURE_LABEL.findall(env)) > 1:
         return ["## Envelope has more than one 'Disclosure:' line; keep one"]
     value = " ".join(lines[0].split())
     if TODO in value:
@@ -572,15 +578,13 @@ def _disclosure_problems(env: str) -> list[str]:
             day = _dt.date.fromisoformat(state.split()[1])
         except ValueError:
             return [f"Disclosure 'cleared' needs a real date: {value[:60]}"]
-        later = [d for d in re.findall(r"\d{4}-\d{2}-\d{2}", value) if d > _dt.date.today().isoformat()]
+        later = [d for d in re.findall(r"\d{4}-\d{2}-\d{2}", env) if d > _dt.date.today().isoformat()]
         if day > _dt.date.today() or later:
             return [f"Disclosure names a date that has not arrived ({(later or [str(day)])[0]}): "
                     "an agreed date in the future is still an embargo"]
-        if re.search(r"(?i)\bembargoed\b", value):
-            return ["Disclosure is 'cleared' but still says something is embargoed: one finding per "
-                    "note, and nothing embargoed ships"]
         return []
-    if state == "embargoed" or re.search(r"(?i)embargo", value):
+    first = lines[0].split("\n")[0]  # the state line itself; later lines are checked note-wide
+    if state == "embargoed" or re.search(r"(?i)\bembargo", first):
         return ["Disclosure is embargoed: nothing describing the flaw ships until the agreed disclosure "
                 "date has passed (or the vendor shipped a fix) and the owner signed off; then write "
                 "'cleared YYYY-MM-DD ...' (references/envelope.md)"]
@@ -624,6 +628,11 @@ def lint_note(text: str, base: Path | list[Path] | None = None, root: Path | Non
                 problems.append(f"gotcha is not 'symptom → cause → fix': {it[:70]}")
     if "Envelope" in sections:
         problems += _disclosure_problems(sections["Envelope"])
+    # Markdown has many ways to nest a second finding under a cleared one; the word is the
+    # check. A note that says "embargoed" anywhere does not ship.
+    if re.search(r"(?i)\bembargoed\b", text) and not any("embargoed" in p for p in problems):
+        problems.append("the note says 'embargoed': nothing describing an embargoed finding ships "
+                        "(one finding per note; write 'cleared YYYY-MM-DD' once disclosure clears)")
     route = sections.get("Route", "")
     if "Route" in sections and not re.search(r"(?i)\brung\s*(?:[1-5]\b|passthrough)|passthrough", route):
         problems.append("## Route does not name a rung (1-5 or passthrough)")

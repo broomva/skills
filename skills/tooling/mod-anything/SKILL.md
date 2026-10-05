@@ -137,11 +137,14 @@ own install. Write install and uninstall steps.
     to publish (the shipped example's journal was scrubbed; its last entries say how).
 - `modlog.py lint-note <note> --root <work>/ship` must exit 0. It fails on a placeholder, a
   missing section, and an evidence path cited under `## Verification` that is missing or
-  points outside the ship tree (absolute, `~` or `..`, with or without spaces). Write commands
-  and API routes there without backticks: a backticked `/api/...` reads as a path.
+  points outside the ship tree (absolute, `~/`, `..` or `file://`, in backticks or as any
+  kind of link). Write commands and API routes there without backticks: a backticked
+  `/api/...` reads as a path.
 - The Envelope's `Disclosure:` line is one of `none found`, `embargoed (...)` or
   `cleared YYYY-MM-DD (...)`, where the date is the day the §Rules disclosure conditions were
-  met (a real date, not in the future). If the run found a vulnerability:
+  met (a real date, not in the future). One finding per note, one `Disclosure:` line. Lint
+  fails while the word "embargoed" appears anywhere in the note, or the Envelope names a
+  YYYY-MM-DD date that has not arrived. If the run found a vulnerability:
   - write `embargoed (what, since YYYY-MM-DD)`; lint then refuses the note, so the run ends
     here;
   - draft the vendor report for the user, who decides whether to send it. If they decide
@@ -180,14 +183,20 @@ agent runs it, but the user decides what ships.
   a `dist/` bundle can carry the target's modules or other people's code.
 - **It lists as REVIEW** every image and SVG; HTML, notebooks, plists and source maps (they
   often embed encoded content); every file under `evidence/` or `fixtures/`; every journal;
-  every file under `dist/` or `build/` (a bundle can carry the target's code); allowed paths
-  and special files. It also says when gitleaks did not run.
-- `--allow <glob>` clears only "this type should not ship" findings (and a credentials file
-  name), after the user has looked at the file: for example a binary you built yourself (a
-  Harmony `.dll`, an `.esp`) that holds only your code. Its content is still scanned. Write
-  globs from the ship-tree root (`examples/<slug>/Mod.dll`): they also match the end of the
-  full path, so the same `--allow` works on the destination re-check. A `folder` finding (`.git`, `node_modules`, `venv`) cannot be allowed: remove the
-  folder. Build output such as `dist/` is scanned like any folder.
+  every file in a build-output folder (`dist/`, `build/`, `out/`, `target/`, `.next/`,
+  `.nuxt/`: a bundle can carry the target's code); allowed paths and special files. It also
+  says when gitleaks did not run. A built file the plugin format needs (an Obsidian
+  `main.js`) may ship once the user has reviewed it.
+- `--allow <glob>` clears only "this type should not ship" findings, after the user has
+  looked at the file: for example a binary you built yourself (a Harmony `.dll`, an `.esp`)
+  that holds only your code. Its content is still scanned. Write globs from the ship-tree
+  root (`examples/<slug>/Mod.dll`). A credentials file name is cleared only by its exact
+  path, never by a wildcard.
+- Some findings cannot be allowed, because the fix is to change the file: a `folder`
+  (`.git`, `node_modules`, `venv`: remove it), a hardware address (redact it, or use the
+  RFC 7042 documentation range `00:00:5E:00:53:xx`), a deny-file term (generalise it: a
+  userscript's `@match` for the user's tenant becomes `https://*.example.com/*`), a home
+  path, a secret.
 - `publish_check.py --help` prints the full list of what it blocks, reviews and cannot see.
 - **Exit 0** means "nothing this filter recognises", not "safe to share".
 - **The user reviews, not you.** Publishing is an ask (§Rules), and the ask carries the whole
@@ -197,7 +206,8 @@ agent runs it, but the user decides what ships.
 - **Then copy the tree byte for byte** into a checkout of this skill's repo, at the same
   relative paths. Before committing, run both checks again on the destination: `lint-note` on
   the note, and `publish_check.py` on `examples/<slug>` and the note with the same
-  `--deny-file` and the `--allow` the user approved.
+  `--deny-file`, the `--allow` the user approved, and `--base <checkout>/<this skill's
+  folder>` so those globs match unchanged.
 
 ## The ladder
 

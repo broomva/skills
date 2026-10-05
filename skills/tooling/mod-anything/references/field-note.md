@@ -17,7 +17,7 @@ journal, in the tree that will ship (SKILL.md step 8). `modlog.py lint-note <not
 | `## Envelope` | the rung, the terms that permit the mod, what is shipped, and one `Disclosure:` line starting `none found`, `embargoed (...)` or `cleared YYYY-MM-DD (...)`; the `cleared` date is a real date that has arrived. Write every date in the item as YYYY-MM-DD: lint checks those, not "1 March 2027". One finding per note |
 
 The lint also fails while any `TODO(mod-anything)` placeholder remains, and while the
-`Disclosure:` line says `embargoed`: such a note stays private until the conditions in
+note says "embargoed" anywhere: such a note stays private until the conditions in
 `envelope.md` (Disclosure) are met and the line says `cleared`. The scaffold names
 each journal evidence file in a placeholder instead of citing it, because the working folder
 never ships: copy the file into `examples/<slug>/` and cite that path, or describe it. Gotchas may wrap over several lines; continuation lines are joined to their item.

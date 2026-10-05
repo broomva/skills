@@ -828,9 +828,35 @@ def test_one_allow_glob_works_on_the_ship_tree_and_on_the_destination(tmp_path: 
     glob = ["examples/harmony-mod/Mod.dll"]
     ship = tmp_path / "ship"
     dest = tmp_path / "repo/skills/tooling/mod-anything/examples/harmony-mod"
+    skill = tmp_path / "repo/skills/tooling/mod-anything"
     assert pc.scan(ship, allow=glob) == []
-    assert pc.scan(dest, allow=glob) == []          # the re-check scans examples/<slug> itself
-    assert pc.scan(dest, allow=["other/Mod.dll"]) != []
+    assert pc.scan(dest, allow=glob) != []                      # without --base the glob is relative
+    assert pc.scan(dest, allow=glob, base=skill) == []          # the re-check: --base at the skill folder
+    assert pc.scan(dest, allow=["examples/other/Mod.dll"], base=skill) != []
+
+
+def test_a_bare_name_glob_does_not_reach_into_subfolders(clean: Path):
+    (clean / "evidence" / "vendor").mkdir(parents=True)
+    (clean / "evidence" / "vendor" / "Mod.dll").write_bytes(b"MZ" + b"\x00" * 64)
+    assert ("binary", "evidence/vendor/Mod.dll") in kinds(clean, allow=["Mod.dll"])
+
+
+def test_a_credentials_file_is_cleared_only_by_its_own_path(clean: Path):
+    (clean / "cfg").mkdir()
+    (clean / "cfg" / "pgpass.conf").write_text("db:5432:app:ada:pw\n")
+    assert ("credfile", "cfg/pgpass.conf") in kinds(clean, allow=["cfg/*"])
+    assert ("credfile", "cfg/pgpass.conf") not in kinds(clean, allow=["cfg/pgpass.conf"])
+
+
+def test_a_fingerprint_is_not_a_hardware_address(clean: Path):
+    (clean / "notes.md").write_text("host key MD5:43:51:43:a1:b5:fc:8b:b7:0a:3a:a9:b1:0f:66:73:a8\n")
+    assert kinds(clean) == set()
+
+
+def test_base_must_be_a_folder(clean: Path):
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--base", str(clean / "nope")],
+                       capture_output=True, text=True)
+    assert r.returncode == 2 and "--base" in r.stderr
 
 
 def test_build_output_is_listed_for_review(clean: Path):

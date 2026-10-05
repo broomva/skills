@@ -18,10 +18,11 @@ All notable changes to the `mod-anything` skill. The format follows
   real date that has arrived.
 - `scripts/publish_check.py`: a fail-closed filter before sharing. Only an allowlist of file
   types ships (source, docs, small data files, screenshots). It blocks binaries, captures,
-  dependency folders, secrets (gitleaks, built-in patterns and well-known credential file
-  names), decompiler output, home paths, hardware addresses and deny-file terms, matched as
-  written. It decodes nothing; it lists journals, evidence, fixtures, images, SVGs and the
-  types that usually embed encoded content (HTML, notebooks, plists, source maps) for a
+  dependency folders, well-known credential file names (cleared only by exact path),
+  secrets (gitleaks and built-in patterns), decompiler output, home paths, hardware
+  addresses and deny-file terms, matched as written. It decodes nothing; it lists journals,
+  evidence, fixtures, build output, images, SVGs and the types that usually embed encoded
+  content (HTML, notebooks, plists, source maps) for a
   person to read.
 - `scripts/recon_macos_app.py`: recon adapter for macOS `.app` bundles (stack, extension
   points, Electron fuses, protections, update channel, state folders, ranked routes).
