@@ -146,11 +146,12 @@ own install. Write install and uninstall steps.
     here;
   - draft the vendor report for the user, who decides whether to send it. If they decide
     not to, the note never ships;
-  - ask the user for a durable private folder: one they name, outside every public repo and
+  - ask the user for a durable private folder: one they name, outside every repo and
     outside temp folders, which get cleared. Record its path and the embargo in the journal
-    (`modlog.py log`), then move the ship tree, the journal and `deny.txt` there;
-  - when the conditions are met, write `cleared` with that date and resume at step 9 from
-    that folder.
+    (`modlog.py log`), then move the whole `<work>` folder there (journal, evidence, ship
+    tree, `deny.txt`, the drafted report);
+  - when the conditions are met, write `cleared` with that date, and resume from that folder
+    at the lint above, then step 9.
 - Write the note even when the mod failed. A documented dead end saves the next agent hours.
 
 **9. Publish check, then copy.** Check the whole ship tree in one pass:
@@ -179,11 +180,13 @@ agent runs it, but the user decides what ships.
   a `dist/` bundle can carry the target's modules or other people's code.
 - **It lists as REVIEW** every image and SVG; HTML, notebooks, plists and source maps (they
   often embed encoded content); every file under `evidence/` or `fixtures/`; every journal;
-  allowed paths and special files. It also says when gitleaks did not run.
-- `--allow <glob>` clears only "this type should not ship" findings, after you have looked at
-  the file: for example a binary you built yourself (a Harmony `.dll`, an `.esp`) that holds
-  only your code. Its content is still scanned. Globs match paths relative to each scanned
-  folder. A `folder` finding (`.git`, `node_modules`, `venv`) cannot be allowed: remove the
+  every file under `dist/` or `build/` (a bundle can carry the target's code); allowed paths
+  and special files. It also says when gitleaks did not run.
+- `--allow <glob>` clears only "this type should not ship" findings (and a credentials file
+  name), after the user has looked at the file: for example a binary you built yourself (a
+  Harmony `.dll`, an `.esp`) that holds only your code. Its content is still scanned. Write
+  globs from the ship-tree root (`examples/<slug>/Mod.dll`): they also match the end of the
+  full path, so the same `--allow` works on the destination re-check. A `folder` finding (`.git`, `node_modules`, `venv`) cannot be allowed: remove the
   folder. Build output such as `dist/` is scanned like any folder.
 - `publish_check.py --help` prints the full list of what it blocks, reviews and cannot see.
 - **Exit 0** means "nothing this filter recognises", not "safe to share".
@@ -194,7 +197,7 @@ agent runs it, but the user decides what ships.
 - **Then copy the tree byte for byte** into a checkout of this skill's repo, at the same
   relative paths. Before committing, run both checks again on the destination: `lint-note` on
   the note, and `publish_check.py` on `examples/<slug>` and the note with the same
-  `--deny-file`.
+  `--deny-file` and the `--allow` the user approved.
 
 ## The ladder
 

@@ -572,4 +572,44 @@ def test_rooted_paths_fail_whatever_their_extension_or_spaces(tmp_path: Path, ci
 ])
 def test_disclosure_reads_the_whole_item_and_every_date(disclosure: str):
     note = GOOD_NOTE.replace("- Disclosure: none found", f"- Disclosure: {disclosure}")
-    assert modlog.lint_note(note) != []
+    problems = modlog.lint_note(note)
+    assert any("embargoed" in p or "has not arrived" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("disclosure,expect", [
+    # a nested second Disclosure line must not hide behind a cleared one (round-1 regression)
+    ("cleared 2026-01-02 (flaw A fixed)\n  - Disclosure: embargoed (flaw B, since 2026-09-01)", "more than one"),
+    # Markdown continues an item on an unindented line too
+    ("cleared 2026-01-02 (advisory\npublished 2999-03-01)", "has not arrived"),
+    ("cleared 2026-01-02 (flaw A fixed; flaw B still embargoed)", "still says something is embargoed"),
+])
+def test_disclosure_cannot_hide_an_embargo(disclosure: str, expect: str):
+    note = GOOD_NOTE.replace("- Disclosure: none found", f"- Disclosure: {disclosure}")
+    assert any(expect in p for p in modlog.lint_note(note)), modlog.lint_note(note)
+
+
+def test_a_cleared_line_may_mention_the_lifted_embargo():
+    note = GOOD_NOTE.replace("- Disclosure: none found",
+                             "- Disclosure: cleared 2026-01-02 (embargo lifted after the vendor's fix)")
+    assert modlog.lint_note(note) == []
+
+
+@pytest.mark.parametrize("cite", ["[the lab log](</Volumes/Lab Disk/run 2.png>)",
+                                  "[run](file:///tmp/tmp.Ab12/evidence/run.txt)"])
+def test_link_targets_are_held_to_the_root(tmp_path: Path, cite: str):
+    note = GOOD_NOTE.replace("`evidence/shot.png`", cite)
+    problems = modlog.lint_note(note, base=[tmp_path], root=tmp_path)
+    assert any("outside the ship tree" in p for p in problems), problems
+
+
+def test_a_tilde_that_is_not_a_home_path_is_not_a_citation(tmp_path: Path):
+    (tmp_path / "evidence").mkdir()
+    (tmp_path / "evidence" / "shot.png").write_bytes(b"png")
+    note = GOOD_NOTE.replace("`evidence/shot.png`", "`evidence/shot.png` in `~200ms`")
+    assert modlog.lint_note(note, base=[tmp_path], root=tmp_path) == []
+
+
+def test_a_second_disclosure_inside_a_continuation_is_still_counted():
+    note = GOOD_NOTE.replace("- Disclosure: none found",
+                             "- Disclosure: cleared 2026-01-02 (flaw A)\nDisclosure: embargoed (flaw B)")
+    assert any("more than one" in p for p in modlog.lint_note(note)), modlog.lint_note(note)

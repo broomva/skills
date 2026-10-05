@@ -23,8 +23,9 @@ BLOCK (exit 1), file by file:
             Remove them from the tree. Build output (dist/, build/) is scanned like any folder
   symlink   every symbolic link (git commits the target path; archivers follow it)
   large     any file over --max-mb (default 5)
-  secret    a well-known credentials file name (.yarnrc.yml, pgpass.conf, credentials.json,
-            ...), anything found by gitleaks (`gitleaks dir`, run with its default rules: an
+  credfile  a well-known credentials file name (.yarnrc.yml, pgpass.conf, credentials.json,
+            ...): --allow it only after a person looked
+  secret    anything found by gitleaks (`gitleaks dir`, run with its default rules: an
             in-tree config, ignore file or gitleaks:allow comment cannot switch them off) when
             it is installed, and a short built-in list of token shapes (private keys, AWS, GitHub classic and
             fine-grained, Slack, OpenAI-style keys, bearer tokens, JWTs). gitleaks skips binary
@@ -48,20 +49,22 @@ also read for printable text (Latin-1, and UTF-16 at either byte alignment), so 
 image's metadata is found. Text is matched as written: nothing is decoded.
 
 --allow GLOB clears only the "is this file shippable at all" findings (type, binary, opaque,
-capture, large, symlink) for matching paths and their contents. Content and name findings
-still apply, and every allowed path is listed for review. Globs match the path relative to
-each scanned folder.
+capture, large, symlink, credfile) for matching paths and their contents. Content and name
+findings still apply, and every allowed path is listed for review. A glob matches the path
+relative to each scanned folder, or the end of the full path, so one written from the ship
+tree's root still matches when only examples/<slug> is scanned.
 
 A gitleaks config or ignore file inside the tree is a BLOCK too (kind "gitleaks"): gitleaks
 reads <source>/.gitleaksignore whatever flags say, so it would silence a plain gitleaks run.
 
 REVIEW (exit unaffected): images and SVGs (a file whose extension claims an image its bytes
-are not is opaque instead), HTML, notebooks, plists and source maps (they often embed encoded
-content), every file under an `evidence/` or `fixtures/` folder and every modlog
-journal (MODLOG.md, .modlog.json): captured output, recordings and journals can carry
-someone's data, device addresses or keys. Also allowed paths, special files (FIFOs, sockets),
-and the secrets engine when gitleaks is not installed or was skipped with --no-gitleaks.
-gitleaks installed but failing exits 2.
+are not is opaque instead), HTML, notebooks, plists and source maps (they often embed
+encoded content), files under dist/ or build/ (a bundle can carry the target's code), every
+file under an `evidence/` or `fixtures/` folder and every modlog journal (MODLOG.md,
+.modlog.json): captured output, recordings and journals can carry someone's data, device
+addresses or keys. Also allowed paths, special files (FIFOs, sockets), and the secrets
+engine when gitleaks is not installed or was skipped with --no-gitleaks. gitleaks installed
+but failing exits 2.
 
 NOT detected, by design: cookies and session values, personal data such as emails and display
 names (unless they are in --deny-file), serial numbers, anything encoded (URL-encoding, \\u or
@@ -172,7 +175,7 @@ SECRET_PATTERNS = [
     ("JWT", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
 ]
 # Findings an --allow can clear: they say "this file should not ship", not "this text leaks".
-ALLOWABLE = {"type", "binary", "opaque", "capture", "large", "symlink"}
+ALLOWABLE = {"type", "binary", "opaque", "capture", "large", "symlink", "credfile"}
 JUNK_NAMES = {".DS_Store": "Finder metadata; delete it", "Thumbs.db": "Windows thumbnail cache; delete it",
               "desktop.ini": "Windows folder settings; delete it"}
 DECOMP_MARKERS = [
@@ -190,9 +193,10 @@ USERPATH = re.compile(r"(?:/Users/|/home/)(?!Shared\b)[A-Za-z0-9][A-Za-z0-9._-]*
 # A hardware address in either separator style. RFC 7042's documentation range and the
 # all-zero and broadcast addresses are fine in fixtures.
 DEVICE_ADDR = re.compile(r"(?<![0-9A-Za-z])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Za-z])")
-# In binary content values are packed against letters ("Lamp3c:22:fb:..."), so the strings
-# pass only refuses a neighbouring hex digit, as it drops word boundaries for secrets.
-DEVICE_ADDR_LOOSE = re.compile(DEVICE_ADDR.pattern.replace("0-9A-Za-z", "0-9A-Fa-f"))
+# In binary content values are packed against marker bytes that are often hex characters
+# (a binary plist puts "3" before a date and "A"-"F" before data), so the strings pass uses
+# no boundary at all, as it drops word boundaries for secrets.
+DEVICE_ADDR_LOOSE = re.compile(r"[0-9A-Fa-f]{2}([:-])(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}")
 DOC_ADDR = re.compile(r"(?i)^00[:-]00[:-]5e[:-]00[:-]53[:-][0-9a-f]{2}$|^(?:00[:-]){5}00$|^(?:ff[:-]){5}ff$")
 MAC_HOST = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9-]*-(?:MacBook(?:-Pro|-Air)?|iMac(?:-Pro)?|Mac-mini|Mac-Pro|Mac-Studio)(?:-\d+)?(?:\.local)?\b")
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".tiff", ".bmp"}
@@ -201,6 +205,9 @@ REVIEW_IMAGE_EXT = IMAGE_EXT | {".svg"}
 # Text types that commonly embed encoded content (base64 images, inline source maps, plist
 # <data>, URL-encoded strings) that this scan does not decode: listed for a person.
 ENCODED_EXT = {".html", ".htm", ".ipynb", ".plist", ".map"}
+# Build output is scanned, and listed: a bundle can carry the target's modules or other
+# people's code, which no pattern sees.
+BUILD_DIRS = {"dist", "build", "out", "target", ".next", ".nuxt"}
 # An image extension must be backed by the image's own header; anything else is opaque.
 IMAGE_MAGIC = {".png": (b"\x89PNG",), ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",),
                ".gif": (b"GIF87a", b"GIF89a"), ".bmp": (b"BM",), ".tiff": (b"II*\x00", b"MM\x00*")}
@@ -373,7 +380,8 @@ def _scan_file(p: Path, rel: str, max_mb: float, hosts: set[str], user: str | No
     elif ext in CAPTURE_EXT:
         out.append({"kind": "capture", "path": rel, "detail": f"{ext} capture: sessions, cookies, keys"})
     elif p.name.lower() in CREDENTIAL_NAMES:
-        out.append({"kind": "secret", "path": rel, "detail": "a well-known credentials file name"})
+        out.append({"kind": "credfile", "path": rel,
+                    "detail": "a well-known credentials file name; --allow it only after the user looked"})
     elif kind is None and p.name not in JUNK_NAMES:
         what = f"{ext} file" if ext else "file with no extension"
         out.append({"kind": "type", "path": rel,
@@ -418,10 +426,20 @@ def _scan_file(p: Path, rel: str, max_mb: float, hosts: set[str], user: str | No
     return out
 
 
-def _allowed_path(rel: str, allow: list[str]) -> bool:
-    """True when `rel` or any folder above it matches an --allow glob."""
+def _allowed_path(rel: str, allow: list[str], root: Path | None = None) -> bool:
+    """True when `rel` or any folder above it matches an --allow glob, relative to the scanned
+    folder or as the end of the full path. So `examples/<slug>/x` written for the ship tree
+    still matches when the destination re-check scans `examples/<slug>` itself."""
     parts = Path(rel).parts
-    return any(_allowed(str(Path(*parts[:k])), allow) for k in range(1, len(parts) + 1))
+    full = (root.resolve() / rel).as_posix() if root is not None else None
+    for k in range(1, len(parts) + 1):
+        if _allowed(str(Path(*parts[:k])), allow):
+            return True
+        if full is not None:
+            head = (root.resolve() / Path(*parts[:k])).as_posix()
+            if any(fnmatch.fnmatch(head, "*/" + g.lstrip("/")) for g in allow):
+                return True
+    return False
 
 
 def _files(root: Path):
@@ -445,6 +463,8 @@ def _extra_kind(rel: Path) -> str | None:
         return "journal"
     if rel.suffix.lower() in ENCODED_EXT:
         return "encoded"
+    if any(part in BUILD_DIRS for part in rel.parts[:-1]):
+        return "bundle"
     folder = next((f for f in ("evidence", "fixtures") if f in rel.parts[:-1]), None)
     return folder if folder and rel.suffix.lower() not in REVIEW_IMAGE_EXT else None
 
@@ -502,7 +522,7 @@ def _walk_findings(root: Path, max_mb: float, hosts: set[str], user: str | None,
                 findings.extend(_symlink_findings(dp, rel, hosts, user, deny))
             elif Path(d).suffix.lower() in BINARY_EXT:
                 findings.append({"kind": "binary", "path": rel, "detail": f"{Path(d).suffix} bundle"})
-                if not _allowed_path(rel, allow):
+                if not _allowed_path(rel, allow, root):
                     dirnames.remove(d)
         for name in sorted(filenames):
             p = base / name
@@ -598,7 +618,7 @@ def scan_report(root: Path, allow: list[str] | None = None, max_mb: float = 5.0,
         if key in seen:
             continue
         seen.add(key)
-        if f["kind"] in ALLOWABLE and f["path"] != "." and _allowed_path(f["path"], allow):
+        if f["kind"] in ALLOWABLE and f["path"] != "." and _allowed_path(f["path"], allow, root):
             allowed.add(f["path"])
             continue
         findings.append(f)
@@ -705,7 +725,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"REVIEW image    {where(i)}  (look at it: screenshots can show private content)")
         for kind, x in rep["extra"]:
             why = {"journal": "a run journal: ship it only if every entry is fit to publish",
-                   "encoded": "can embed encoded content this scan does not decode: open it and check"
+                   "encoded": "can embed encoded content this scan does not decode: open it and check",
+                   "bundle": "build output: check it holds only your code and libraries you may ship"
                    }.get(kind, "captured output or fixture: check it holds no one's data, device "
                                "addresses, serials or keys")
             print(f"REVIEW {kind:8} {where(x)}  ({why})")

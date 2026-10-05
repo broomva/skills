@@ -465,13 +465,15 @@ def cmd_note(d: Path, out: Path, force: bool) -> Path:
 
 _HEADING = re.compile(r"^##\s+(.+?)\s*$", re.M)
 _GOTCHA = re.compile(r"^\s*\d+\.\s+.+(?:→|->).+(?:→|->).+$", re.S)
-# The Envelope's disclosure line, in one of three states (references/envelope.md).
-# The Disclosure item, with any indented continuation lines.
-_DISCLOSURE = re.compile(r"(?im)^\s*[-*]?\s*Disclosure:\s*(.*(?:\n[ \t]+\S.*)*)")
+# The Envelope's disclosure line, in one of three states (references/envelope.md). The item
+# runs until the next list item, blank line or heading (Markdown continues an item on
+# unindented lines too). Every "Disclosure:" line is counted on its own, nested ones included.
+_DISCLOSURE = re.compile(r"(?im)^\s*[-*]?\s*Disclosure:\s*(.*(?:\n(?![ \t]*(?:[-*+]|\d+\.)\s|[ \t]*$|#).*)*)")
+_DISCLOSURE_LINE = re.compile(r"(?im)^\s*(?:[-*+]\s*)?Disclosure:")
 _DISCLOSURE_STATE = re.compile(r"(?i)^(none found|embargoed|cleared \d{4}-\d{2}-\d{2})\b")
 _EVIDENCE = re.compile(r"`[^`]+`|\[[^\]]+\]\([^)]+\)")
 _TICKED = re.compile(r"`([^`]+)`")
-_LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
+_LINK = re.compile(r"\[[^\]]*\]\((?:<([^>]+)>|([^)\s]+))(?:\s+\"[^\"]*\")?\)")
 _FILE_EXT = re.compile(
     r"\.(?:png|jpe?g|gif|webp|heic|txt|log|json|jsonl|md|csv|tsv|html?|xml|ya?ml|pdf|"
     r"mp4|mov|mkv|webm|mp3|wav|m4a|ogg|flac|zip|tar|gz|out|err|sh|py|js|ts)$", re.I)
@@ -517,19 +519,27 @@ def skill_root(path: Path) -> Path | None:
     return None
 
 
+def _outside(path: str) -> bool:
+    """An absolute, home (~/) or .. path: it points outside any tree that ships."""
+    return path.startswith(("/", "~/")) or path == "~" or ".." in Path(path).parts
+
+
 def _citation_problems(ver: str, bases: list[Path], root: Path | None) -> list[str]:
     """Evidence cited in ## Verification must exist. With a root, every cited path must also
     stay inside it: an absolute, ~ or .. path fails whatever its extension and whether or
     not it has spaces, because it points at something that does not ship."""
     problems: list[str] = []
     top = root.resolve() if root is not None else None
-    for tok in dict.fromkeys(t.strip() for t in _TICKED.findall(ver) + _LINK.findall(ver)):
-        rooted = tok.startswith(("/", "~", "./", "../"))  # a path even with spaces, any extension
+    links = [a or b for a, b in _LINK.findall(ver)]
+    for tok in dict.fromkeys(t.strip() for t in _TICKED.findall(ver) + links):
+        if tok.lower().startswith("file://"):
+            tok = tok[7:]  # a local file, whatever the scheme says
+        rooted = _outside(tok) or tok.startswith("./")  # a path even with spaces, any extension
         path = _evidence_path(tok) or (tok if rooted or ("/" in tok and " " not in tok and "://" not in tok)
                                        else None)
         if path is None:
             continue  # a command, a URL or prose
-        if top is not None and (path.startswith(("/", "~")) or ".." in Path(path).parts):
+        if top is not None and _outside(path):
             problems.append(f"## Verification cites a path outside the ship tree (absolute, ~ or ..): {tok}")
             continue
         if _evidence_path(tok) is None:
@@ -548,7 +558,7 @@ def _disclosure_problems(env: str) -> list[str]:
     lines = _DISCLOSURE.findall(env)
     if not lines or not lines[0].strip():
         return ["## Envelope has no 'Disclosure:' line (none found | embargoed ... | cleared YYYY-MM-DD ...)"]
-    if len(lines) > 1:
+    if len(_DISCLOSURE_LINE.findall(env)) > 1:
         return ["## Envelope has more than one 'Disclosure:' line; keep one"]
     value = " ".join(lines[0].split())
     if TODO in value:
@@ -566,6 +576,9 @@ def _disclosure_problems(env: str) -> list[str]:
         if day > _dt.date.today() or later:
             return [f"Disclosure names a date that has not arrived ({(later or [str(day)])[0]}): "
                     "an agreed date in the future is still an embargo"]
+        if re.search(r"(?i)\bembargoed\b", value):
+            return ["Disclosure is 'cleared' but still says something is embargoed: one finding per "
+                    "note, and nothing embargoed ships"]
         return []
     if state == "embargoed" or re.search(r"(?i)embargo", value):
         return ["Disclosure is embargoed: nothing describing the flaw ships until the agreed disclosure "

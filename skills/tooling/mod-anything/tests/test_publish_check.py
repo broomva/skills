@@ -768,7 +768,8 @@ def test_encoded_content_is_not_decoded_but_its_carriers_are_reviewed(clean: Pat
 @pytest.mark.parametrize("name", [".yarnrc.yml", "pgpass.conf", "credentials.json"])
 def test_well_known_credential_names_block_even_with_a_shippable_extension(clean: Path, name: str):
     (clean / name).write_text("npmAuthToken: x\n")
-    assert ("secret", name) in kinds(clean)
+    assert ("credfile", name) in kinds(clean)
+    assert ("credfile", name) not in kinds(clean, allow=[name])   # the user looked and allowed it
 
 
 @pytest.mark.parametrize("name", [".eslintrc", ".babelrc", ".prettierrc"])
@@ -803,4 +804,41 @@ def test_a_single_encoded_file_is_listed_once(tmp_path: Path):
 @pytest.mark.parametrize("name", ["notice.npmrc", "readme.env", "application_default_credentials.json"])
 def test_known_names_with_credential_suffixes_do_not_ship(clean: Path, name: str):
     (clean / name).write_text("x\n")
-    assert kinds(clean) & {("type", name), ("secret", name)}
+    assert kinds(clean) & {("type", name), ("credfile", name)}
+
+
+# --- round 1 of the round-4 ledger (BRO-2820) ------------------------------------------------
+
+@pytest.mark.parametrize("after", ["date", "data", "unicode"])
+def test_addresses_next_to_binary_plist_markers_are_found(after: str):
+    import plistlib
+    from datetime import datetime
+    value = {"date": datetime(2026, 9, 1), "data": b"\x01\x02\x03\x04", "unicode": "Lämp"}[after]
+    data = plistlib.dumps({"Address": "3c:22:fb:12:34:56", "Next": value}, fmt=plistlib.FMT_BINARY)
+    data2 = plistlib.dumps({"3c:22:fb:12:34:56": value}, fmt=plistlib.FMT_BINARY)
+    for blob in (data, data2):
+        assert "address" in {f["kind"] for f in pc._strings_findings("bt.plist", blob, set(), None, [])}
+
+
+def test_one_allow_glob_works_on_the_ship_tree_and_on_the_destination(tmp_path: Path):
+    for top in ("ship", "repo/skills/tooling/mod-anything"):
+        mod = tmp_path / top / "examples" / "harmony-mod"
+        mod.mkdir(parents=True)
+        (mod / "Mod.dll").write_bytes(b"MZ" + b"\x00" * 64)
+    glob = ["examples/harmony-mod/Mod.dll"]
+    ship = tmp_path / "ship"
+    dest = tmp_path / "repo/skills/tooling/mod-anything/examples/harmony-mod"
+    assert pc.scan(ship, allow=glob) == []
+    assert pc.scan(dest, allow=glob) == []          # the re-check scans examples/<slug> itself
+    assert pc.scan(dest, allow=["other/Mod.dll"]) != []
+
+
+def test_build_output_is_listed_for_review(clean: Path):
+    (clean / "dist").mkdir()
+    (clean / "dist" / "main.js").write_text("console.log(1)\n")
+    assert ("bundle", "dist/main.js") in pc.review_extra(clean)
+
+
+@pytest.mark.parametrize("blob", [b"\x00LampA3c:22:fb:12:34:56\x00", b"\x00Lamp3c:22:fb:12:34:56D\x00"])
+def test_addresses_between_hex_characters_in_binary_content_are_found(blob: bytes):
+    assert "address" in {f["kind"] for f in pc._strings_findings("x.bin", blob, set(), None, [])}

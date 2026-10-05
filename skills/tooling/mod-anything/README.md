@@ -61,8 +61,8 @@ All three are Python 3.9+, standard library only, and print `--help`.
 | `scripts/recon_macos_app.py` | recon of a macOS `.app` bundle with ranked routes | 0 ok · 2 not an app bundle |
 
 `publish_check.py` is a filter in front of a person, not a privacy guarantee. It decodes
-nothing and does not detect cookies, sessions or personal data; its `--help` and its OK line
-say so. The agent runs it, and the user reviews its REVIEW list before anything is published.
+nothing and does not detect cookies, sessions or personal data: its `--help` says so, and
+its OK line names what it cannot see. The agent runs it, and the user reviews its REVIEW list before anything is published.
 
 ## Layout
 
