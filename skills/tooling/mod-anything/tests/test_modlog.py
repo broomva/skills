@@ -636,3 +636,11 @@ def test_mentioning_embargo_rules_is_not_an_embargo():
     note = GOOD_NOTE.replace("- Disclosure: none found",
                              "- Disclosure: none found\nSee envelope.md on embargo rules")
     assert modlog.lint_note(note) == []
+
+
+@pytest.mark.parametrize("extra", ["  - auth bypass in sync: vendor fix due 2999-03-01, under embargo",
+                                   "- Second finding: reported to the vendor, public on 2999-03-01"])
+def test_a_future_date_fails_under_any_state(extra: str):
+    # Round 3: the future-date rule only ran for "cleared"; it is unconditional now.
+    note = GOOD_NOTE.replace("- Disclosure: none found", "- Disclosure: none found\n" + extra)
+    assert any("has not arrived" in p for p in modlog.lint_note(note)), modlog.lint_note(note)

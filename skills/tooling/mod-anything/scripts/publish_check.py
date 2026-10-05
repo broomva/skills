@@ -11,20 +11,21 @@ until a person looks at it and passes --allow.
 BLOCK (exit 1), file by file:
   type      a file type that is not on the ship allowlist (a PDF, a font, an archive, a
             database, audio or video, a file with no extension and no known name)
-  binary    third-party program or asset formats, by extension (.asar, .dylib, .framework,
-            .node, .jar, ROM and disc images, game archives, app bundles) or by executable
-            header (Mach-O, ELF, PE). Ship code, patches and converters, never the target's bytes
+  binary    third-party program or asset formats, by extension (.asar, .dylib, .node, .jar,
+            ROM and disc images, game archives) or by executable header (Mach-O, ELF, PE).
+            Ship code, patches and converters, never the target's bytes
   opaque    an allowlisted type whose bytes are not what the type claims: a .txt or .js that
             is not valid UTF-8 (or UTF-16 with a byte-order mark) or holds NUL bytes, an
             image extension on a file that is not that image, and .DS_Store-style junk
   capture   network and device captures by extension (.har, .pcap, .pcapng, .pklg, .btsnoop)
-  folder    dependency, cache and VCS folders (.git, node_modules, venv, __pycache__, ...):
-            a mod does not ship them, they are not scanned, and --allow cannot clear them.
-            Remove them from the tree. Build output (dist/, build/) is scanned like any folder
+  folder    dependency, cache and VCS folders (.git, node_modules, venv, __pycache__, ...)
+            and app or plugin bundles (.app, .framework, .bundle, .plugin): a mod does not ship
+            them, they are not scanned, and --allow cannot clear them. Remove them from the
+            tree. Build output (dist/, build/) is scanned like any folder
   symlink   every symbolic link (git commits the target path; archivers follow it)
   large     any file over --max-mb (default 5)
   credfile  a well-known credentials file name (.yarnrc.yml, pgpass.conf, credentials.json,
-            ...): --allow it only after a person looked
+            ...): remove it
   secret    anything found by gitleaks (`gitleaks dir`, run with its default rules: an
             in-tree config, ignore file or gitleaks:allow comment cannot switch them off) when
             it is installed, and a short built-in list of token shapes (private keys, AWS, GitHub classic and
@@ -49,11 +50,11 @@ also read for printable text (Latin-1, and UTF-16 at either byte alignment), so 
 image's metadata is found. Text is matched as written: nothing is decoded.
 
 --allow GLOB clears only the "is this file shippable at all" findings (type, binary, opaque,
-capture, large, symlink) for matching paths and their contents, and a credfile finding only by
-its exact path (no wildcard). Content and name findings still apply, and every allowed path is
-listed for review. Globs are relative to each scanned folder, or to --base DIR when DIR
-contains it: the destination re-check scans examples/<slug> with --base at the skill folder,
-so the globs approved on the ship tree match unchanged.
+capture, large, symlink) for matching paths and their contents, relative to each scanned
+folder. Content and name findings still apply, and every allowed path is listed for review.
+Folder findings (dependency folders, app and plugin bundles) and credentials file names cannot
+be allowed: remove them. A mod shipped into this skill's repo passes with no --allow at all
+(CI runs it that way).
 
 A gitleaks config or ignore file inside the tree is a BLOCK too (kind "gitleaks"): gitleaks
 reads <source>/.gitleaksignore whatever flags say, so it would silence a plain gitleaks run.
@@ -176,7 +177,7 @@ SECRET_PATTERNS = [
     ("JWT", re.compile(r"\beyJ[A-Za-z0-9_-]{8,}\.eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}")),
 ]
 # Findings an --allow can clear: they say "this file should not ship", not "this text leaks".
-ALLOWABLE = {"type", "binary", "opaque", "capture", "large", "symlink", "credfile"}
+ALLOWABLE = {"type", "binary", "opaque", "capture", "large", "symlink"}
 JUNK_NAMES = {".DS_Store": "Finder metadata; delete it", "Thumbs.db": "Windows thumbnail cache; delete it",
               "desktop.ini": "Windows folder settings; delete it"}
 DECOMP_MARKERS = [
@@ -193,10 +194,9 @@ USERPATH = re.compile(r"(?:/Users/|/home/)(?!Shared\b)[A-Za-z0-9][A-Za-z0-9._-]*
                       r"|(?<![\w.-])/root/|/var/folders/[A-Za-z0-9_+-]{2}/[A-Za-z0-9_+-]{8,}")
 # A hardware address in either separator style. RFC 7042's documentation range and the
 # all-zero and broadcast addresses are fine in fixtures.
-# In text, an address stands alone: not inside a word, nor inside a longer run of hex pairs
-# such as an SSH or TLS fingerprint (MD5:43:51:43:a1:...).
-DEVICE_ADDR = re.compile(r"(?<![0-9A-Za-z])(?<![0-9A-Fa-f][:-])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}"
-                         r"[0-9A-Fa-f]{2}(?![0-9A-Za-z])(?![:-][0-9A-Fa-f])")
+# In text, an address is not inside a word. A run of hex pairs inside a fingerprint matches
+# too: it fails closed, and a host-key fingerprint identifies a machine anyway (redact it).
+DEVICE_ADDR = re.compile(r"(?<![0-9A-Za-z])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Za-z])")
 # In binary content values are packed against marker bytes that are often hex characters
 # (a binary plist puts "3" before a date and "A"-"F" before data), so the strings pass uses
 # no boundary at all, as it drops word boundaries for secrets.
@@ -384,8 +384,7 @@ def _scan_file(p: Path, rel: str, max_mb: float, hosts: set[str], user: str | No
     elif ext in CAPTURE_EXT:
         out.append({"kind": "capture", "path": rel, "detail": f"{ext} capture: sessions, cookies, keys"})
     elif p.name.lower() in CREDENTIAL_NAMES:
-        out.append({"kind": "credfile", "path": rel,
-                    "detail": "a well-known credentials file name; --allow it only after the user looked"})
+        out.append({"kind": "credfile", "path": rel, "detail": "a well-known credentials file name: remove it"})
     elif kind is None and p.name not in JUNK_NAMES:
         what = f"{ext} file" if ext else "file with no extension"
         out.append({"kind": "type", "path": rel,
@@ -430,17 +429,9 @@ def _scan_file(p: Path, rel: str, max_mb: float, hosts: set[str], user: str | No
     return out
 
 
-def _allowed_path(rel: str, allow: list[str], root: Path | None = None,
-                  base: Path | None = None) -> bool:
-    """True when `rel` or any folder above it matches an --allow glob. Globs are relative to
-    the scanned folder, or to --base when it is given and contains the folder: the
-    destination re-check scans examples/<slug> with --base at the skill folder, so the globs
-    the user approved on the ship tree (examples/<slug>/...) match unchanged."""
-    if base is not None and root is not None:
-        try:
-            rel = (root.resolve() / rel).relative_to(base.resolve()).as_posix()
-        except ValueError:
-            pass
+def _allowed_path(rel: str, allow: list[str]) -> bool:
+    """True when `rel` or any folder above it matches an --allow glob (relative to the scanned
+    folder)."""
     parts = Path(rel).parts
     return any(_allowed(str(Path(*parts[:k])), allow) for k in range(1, len(parts) + 1))
 
@@ -500,35 +491,34 @@ def _name_findings(name: str, hosts: set[str], user: str | None, deny: list[str]
 
 
 def _walk_findings(root: Path, max_mb: float, hosts: set[str], user: str | None,
-                   deny: list[str], allow: list[str], base: Path | None = None) -> list[dict]:
+                   deny: list[str]) -> list[dict]:
     """Every finding for every path under root, before --allow is applied. A bundle folder
-    (Foo.app) is one finding and is not entered, unless it is --allow'ed: then its contents
-    are scanned like anything else."""
+    (Foo.app) is one "folder" finding and is never entered: ship its source and a build step."""
     findings: list[dict] = [dict(f, path=".") for f in _name_findings(root.resolve().name, hosts, user, deny)]
     if root.suffix.lower() in BINARY_EXT:
-        findings.append({"kind": "binary", "path": ".", "detail": f"the folder itself is a {root.suffix} bundle"})
+        findings.append({"kind": "folder", "path": ".", "detail": f"the folder itself is a {root.suffix} bundle"})
     def _unreadable(e: OSError) -> None:
         raise Unreadable(f"{e.filename}: {e.strerror or e}")
 
     for dirpath, dirnames, filenames in os.walk(root, onerror=_unreadable):
-        base = Path(dirpath)
+        here = Path(dirpath)
         for d in sorted(d for d in dirnames if d in SKIP_DIRS):
-            findings.append({"kind": "folder", "path": str((base / d).relative_to(root)),
+            findings.append({"kind": "folder", "path": str((here / d).relative_to(root)),
                              "detail": "dependency, cache or VCS folder: not part of a mod and not scanned; remove it"})
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         for d in list(dirnames):
-            dp = base / d
+            dp = here / d
             rel = str(dp.relative_to(root))
             findings.extend(dict(f, path=rel) for f in _name_findings(d, hosts, user, deny))
             if dp.is_symlink():
                 dirnames.remove(d)
                 findings.extend(_symlink_findings(dp, rel, hosts, user, deny))
             elif Path(d).suffix.lower() in BINARY_EXT:
-                findings.append({"kind": "binary", "path": rel, "detail": f"{Path(d).suffix} bundle"})
-                if not _allowed_path(rel, allow, root, base):
-                    dirnames.remove(d)
+                findings.append({"kind": "folder", "path": rel,
+                                 "detail": f"{Path(d).suffix} bundle: not scanned; ship its source and a build step"})
+                dirnames.remove(d)
         for name in sorted(filenames):
-            p = base / name
+            p = here / name
             rel = str(p.relative_to(root))
             findings.extend(dict(f, path=rel) for f in _name_findings(name, hosts, user, deny))
             if p.is_symlink():
@@ -591,18 +581,16 @@ def gitleaks_findings(root: Path) -> tuple[list[dict], str | None]:
 
 def scan(root: Path, allow: list[str] | None = None, max_mb: float = 5.0,
          hostnames: set[str] | None = None, username: str | None = "",
-         deny: list[str] | None = None, use_gitleaks: bool = False,
-         base: Path | None = None) -> list[dict]:
+         deny: list[str] | None = None, use_gitleaks: bool = False) -> list[dict]:
     """Findings for `root`, after --allow. `hostnames`/`username` default to this machine's
     (pass an empty set / None to disable in tests). Raises Unreadable for a file it could
     not read. The CLI also runs gitleaks; pass use_gitleaks=True to do the same here."""
-    return scan_report(root, allow, max_mb, hostnames, username, deny, use_gitleaks, base)["findings"]
+    return scan_report(root, allow, max_mb, hostnames, username, deny, use_gitleaks)["findings"]
 
 
 def scan_report(root: Path, allow: list[str] | None = None, max_mb: float = 5.0,
                 hostnames: set[str] | None = None, username: str | None = "",
-                deny: list[str] | None = None, use_gitleaks: bool = True,
-                base: Path | None = None) -> dict:
+                deny: list[str] | None = None, use_gitleaks: bool = True) -> dict:
     """The whole report: findings after --allow, the allowed paths, and the secrets engine."""
     allow = allow or []
     deny = [t for t in (deny or []) if t.strip()]
@@ -610,7 +598,7 @@ def scan_report(root: Path, allow: list[str] | None = None, max_mb: float = 5.0,
     user = local_username() if username == "" else username
     if not root.is_dir():
         raise FileNotFoundError(root)
-    raw = _walk_findings(root, max_mb, hosts, user, deny, allow, base)
+    raw = _walk_findings(root, max_mb, hosts, user, deny)
     engine = "PARTIAL: gitleaks was not run (--no-gitleaks); built-in token shapes only"
     if use_gitleaks:
         leaks, why = gitleaks_findings(root)
@@ -623,9 +611,7 @@ def scan_report(root: Path, allow: list[str] | None = None, max_mb: float = 5.0,
         if key in seen:
             continue
         seen.add(key)
-        # A credentials file is cleared only by its own path: a folder glob is not a look.
-        globs = allow if f["kind"] != "credfile" else [g for g in allow if not any(c in g for c in "*?[")]
-        if f["kind"] in ALLOWABLE and f["path"] != "." and _allowed_path(f["path"], globs, root, base):
+        if f["kind"] in ALLOWABLE and f["path"] != "." and _allowed_path(f["path"], allow):
             allowed.add(f["path"])
             continue
         findings.append(f)
@@ -644,11 +630,11 @@ def _symlink_findings(p: Path, rel: str, hosts: set[str], user: str | None, deny
 
 
 def _report_for(path: Path, allow: list[str], max_mb: float, deny: list[str],
-                use_gitleaks: bool, base: Path | None = None) -> dict:
+                use_gitleaks: bool) -> dict:
     """scan_report for a folder, or for one file scanned on its own (in a temporary folder,
     reported under its real path)."""
     if path.is_dir():
-        rep = scan_report(path, allow, max_mb, deny=deny, use_gitleaks=use_gitleaks, base=base)
+        rep = scan_report(path, allow, max_mb, deny=deny, use_gitleaks=use_gitleaks)
         rep["review"] = review_images(path)
         rep["extra"] = review_extra(path)
         rep["skipped"] = special_files(path)
@@ -682,11 +668,9 @@ def main(argv: list[str] | None = None) -> int:
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="+", help="folders or single files to check")
     ap.add_argument("--allow", action="append", default=[],
-                    help="glob relative to each scanned folder, or to --base: clears type/binary/opaque/"
-                         "capture/large/symlink findings for matching paths after the user looked, and a "
-                         "credfile finding only by its exact path; content and name findings still apply")
-    ap.add_argument("--base", help="folder the --allow globs are relative to, when it contains the scanned "
-                                   "folder (the destination re-check: --base <skill folder>)")
+                    help="glob relative to each scanned folder: clears type/binary/opaque/capture/"
+                         "large/symlink findings for matching paths after the user looked; content and "
+                         "name findings still apply. Not for a mod shipped into this skill's repo")
     ap.add_argument("--deny-file", help="file with one private term per line that must not appear")
     ap.add_argument("--max-mb", type=float, default=5.0)
     ap.add_argument("--no-gitleaks", action="store_true", help="skip gitleaks even when installed (reported as PARTIAL)")
@@ -694,9 +678,6 @@ def main(argv: list[str] | None = None) -> int:
     ns = ap.parse_args(argv)
     if not (ns.max_mb > 0 and ns.max_mb != float("inf")):
         print(f"--max-mb must be a positive number, got {ns.max_mb}", file=sys.stderr)
-        return 2
-    if ns.base and not Path(ns.base).is_dir():
-        print(f"--base is not a folder: {ns.base}", file=sys.stderr)
         return 2
     roots = [Path(x) for x in ns.paths]
     for r in roots:
@@ -714,8 +695,7 @@ def main(argv: list[str] | None = None) -> int:
     reports = []
     try:
         for r in roots:
-            reports.append(_report_for(r, ns.allow, ns.max_mb, deny, not ns.no_gitleaks,
-                                       Path(ns.base) if ns.base else None))
+            reports.append(_report_for(r, ns.allow, ns.max_mb, deny, not ns.no_gitleaks))
     except Unreadable as e:
         print(f"cannot read {e} — nothing is reported clean that was not read", file=sys.stderr)
         return 2

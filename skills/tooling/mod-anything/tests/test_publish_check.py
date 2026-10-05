@@ -46,7 +46,7 @@ def test_app_bundle_directory_blocks_and_is_not_descended(clean: Path):
     (clean / "Target.app" / "Contents").mkdir(parents=True)
     (clean / "Target.app" / "Contents" / "x.dylib").write_bytes(b"\x00")
     found = kinds(clean)
-    assert ("binary", "Target.app") in found
+    assert ("folder", "Target.app") in found
     assert not any(p.startswith("Target.app/") for _, p in found)
 
 
@@ -204,10 +204,10 @@ def test_more_binary_extensions(clean: Path, name: str):
 
 def test_framework_dir_and_root_bundle(clean: Path, tmp_path: Path):
     (clean / "Bar.framework" / "Versions").mkdir(parents=True)
-    assert ("binary", "Bar.framework") in kinds(clean)
+    assert ("folder", "Bar.framework") in kinds(clean)
     app = tmp_path / "Foo.app"
     (app / "Contents").mkdir(parents=True)
-    assert ("binary", ".") in kinds(app)
+    assert ("folder", ".") in kinds(app)
 
 
 def test_special_files_are_skipped_not_hung_on(clean: Path):
@@ -769,7 +769,7 @@ def test_encoded_content_is_not_decoded_but_its_carriers_are_reviewed(clean: Pat
 def test_well_known_credential_names_block_even_with_a_shippable_extension(clean: Path, name: str):
     (clean / name).write_text("npmAuthToken: x\n")
     assert ("credfile", name) in kinds(clean)
-    assert ("credfile", name) not in kinds(clean, allow=[name])   # the user looked and allowed it
+    assert ("credfile", name) in kinds(clean, allow=[name])       # not allowable: remove the file
 
 
 @pytest.mark.parametrize("name", [".eslintrc", ".babelrc", ".prettierrc"])
@@ -820,20 +820,14 @@ def test_addresses_next_to_binary_plist_markers_are_found(after: str):
         assert "address" in {f["kind"] for f in pc._strings_findings("bt.plist", blob, set(), None, [])}
 
 
-def test_one_allow_glob_works_on_the_ship_tree_and_on_the_destination(tmp_path: Path):
-    for top in ("ship", "repo/skills/tooling/mod-anything"):
-        mod = tmp_path / top / "examples" / "harmony-mod"
-        mod.mkdir(parents=True)
-        (mod / "Mod.dll").write_bytes(b"MZ" + b"\x00" * 64)
-    glob = ["examples/harmony-mod/Mod.dll"]
-    ship = tmp_path / "ship"
-    dest = tmp_path / "repo/skills/tooling/mod-anything/examples/harmony-mod"
-    skill = tmp_path / "repo/skills/tooling/mod-anything"
-    assert pc.scan(ship, allow=glob) == []
-    assert pc.scan(dest, allow=glob) != []                      # without --base the glob is relative
-    assert pc.scan(dest, allow=glob, base=skill) == []          # the re-check: --base at the skill folder
-    assert pc.scan(dest, allow=["examples/other/Mod.dll"], base=skill) != []
-
+def test_an_allowed_bundle_is_still_blocked_and_never_entered(tmp_path: Path):
+    # Round 3: an --allow'ed nested bundle was cleared but never scanned, while the output
+    # said its content was. A bundle is now an unallowable folder finding.
+    b = tmp_path / "ship" / "examples" / "lamp" / "LampMod.bundle" / "Contents"
+    b.mkdir(parents=True)
+    (b / "Info.plist").write_text("<string>/Users/alice/dev</string>\n")
+    found = kinds(tmp_path / "ship", allow=["examples/lamp/LampMod.bundle"])
+    assert ("folder", "examples/lamp/LampMod.bundle") in found
 
 def test_a_bare_name_glob_does_not_reach_into_subfolders(clean: Path):
     (clean / "evidence" / "vendor").mkdir(parents=True)
@@ -841,22 +835,18 @@ def test_a_bare_name_glob_does_not_reach_into_subfolders(clean: Path):
     assert ("binary", "evidence/vendor/Mod.dll") in kinds(clean, allow=["Mod.dll"])
 
 
-def test_a_credentials_file_is_cleared_only_by_its_own_path(clean: Path):
+@pytest.mark.parametrize("glob", ["cfg/*", "cfg", "cfg/pgpass.conf"])
+def test_no_allow_clears_a_credentials_file(clean: Path, glob: str):
     (clean / "cfg").mkdir()
     (clean / "cfg" / "pgpass.conf").write_text("db:5432:app:ada:pw\n")
-    assert ("credfile", "cfg/pgpass.conf") in kinds(clean, allow=["cfg/*"])
-    assert ("credfile", "cfg/pgpass.conf") not in kinds(clean, allow=["cfg/pgpass.conf"])
+    assert ("credfile", "cfg/pgpass.conf") in kinds(clean, allow=[glob])
 
-
-def test_a_fingerprint_is_not_a_hardware_address(clean: Path):
-    (clean / "notes.md").write_text("host key MD5:43:51:43:a1:b5:fc:8b:b7:0a:3a:a9:b1:0f:66:73:a8\n")
-    assert kinds(clean) == set()
-
-
-def test_base_must_be_a_folder(clean: Path):
-    r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--base", str(clean / "nope")],
-                       capture_output=True, text=True)
-    assert r.returncode == 2 and "--base" in r.stderr
+@pytest.mark.parametrize("text", ["MAC:3c:22:fb:12:34:56", "BSSID:3c:22:fb:12:34:56", "en0:3c:22:fb:12:34:56",
+                                  "host key MD5:43:51:43:a1:b5:fc:8b:b7:0a:3a:a9:b1:0f:66:73:a8"])
+def test_labelled_addresses_and_fingerprints_block(clean: Path, text: str):
+    # A labelled address (serial-console output) must block; a fingerprint blocks too (redact).
+    (clean / "notes.md").write_text(text + "\n")
+    assert ("address", "notes.md") in kinds(clean)
 
 
 def test_build_output_is_listed_for_review(clean: Path):

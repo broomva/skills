@@ -32,8 +32,9 @@ Commands
                                                  (exit 1 if not). Evidence cited under
                                                  ## Verification must exist inside DIR (default:
                                                  the enclosing skill, else the note's folder):
-                                                 absolute, ~/, .. and file:// paths fail, in
-                                                 backticks or any link form. The Envelope needs
+                                                 absolute, ~/, .. and file:// paths fail (it
+                                                 reads backticks, inline links and reference
+                                                 definitions there). The Envelope needs
                                                  one Disclosure line: none found | embargoed
                                                  (fails) | cleared YYYY-MM-DD (a real date, not
                                                  in the future). The word "embargoed" anywhere
@@ -467,10 +468,9 @@ def cmd_note(d: Path, out: Path, force: bool) -> Path:
 
 _HEADING = re.compile(r"^##\s+(.+?)\s*$", re.M)
 _GOTCHA = re.compile(r"^\s*\d+\.\s+.+(?:→|->).+(?:→|->).+$", re.S)
-# The Envelope's disclosure line, in one of three states (references/envelope.md). The item
-# runs until the next list item, blank line or heading (Markdown continues an item on
-# unindented lines too). Every "Disclosure:" line is counted on its own, nested ones included.
-_DISCLOSURE = re.compile(r"(?im)^\s*[-*]?\s*Disclosure:\s*(.*(?:\n(?![ \t]*(?:[-*+]|\d+\.)\s|[ \t]*$|#).*)*)")
+# The Envelope's disclosure state line (references/envelope.md). The lint reads this one
+# line; the other Disclosure rules are unconditional checks over the Envelope or the note.
+_DISCLOSURE = re.compile(r"(?im)^\s*[-*+]?\s*Disclosure:\s*(.*)$")
 # Counted in any markup (- Disclosure:, **Disclosure:**, 1. Disclosure:, > Disclosure:).
 _DISCLOSURE_LABEL = re.compile(r"(?i)\bdisclosure\b[*_`\s]*:")
 _DISCLOSURE_STATE = re.compile(r"(?i)^(none found|embargoed|cleared \d{4}-\d{2}-\d{2})\b")
@@ -560,13 +560,20 @@ def _citation_problems(ver: str, bases: list[Path], root: Path | None) -> list[s
 
 
 def _disclosure_problems(env: str) -> list[str]:
-    """Exactly one Disclosure line, in one of three states; 'embargoed' cannot ship."""
+    """The state line: none found | embargoed (fails) | cleared YYYY-MM-DD (a real date, not in
+    the future). Unconditional: one Disclosure label in any markup, and no YYYY-MM-DD in the
+    Envelope after today. The note-wide "embargoed" check is in lint_note."""
     lines = _DISCLOSURE.findall(env)
     if not lines or not lines[0].strip():
         return ["## Envelope has no 'Disclosure:' line (none found | embargoed ... | cleared YYYY-MM-DD ...)"]
     if len(_DISCLOSURE_LABEL.findall(env)) > 1:
-        return ["## Envelope has more than one 'Disclosure:' line; keep one"]
-    value = " ".join(lines[0].split())
+        return ["## Envelope has more than one 'Disclosure:' line; keep one (one finding per note)"]
+    today = _dt.date.today().isoformat()
+    later = [d for d in re.findall(r"\d{4}-\d{2}-\d{2}", env) if d > today]
+    if later:
+        return [f"## Envelope names a date that has not arrived ({later[0]}): an agreed date in the "
+                "future is still an embargo"]
+    value = lines[0].strip()
     if TODO in value:
         return []  # already reported as an unfilled placeholder
     m = _DISCLOSURE_STATE.match(value)
@@ -575,16 +582,11 @@ def _disclosure_problems(env: str) -> list[str]:
     state = m.group(1).lower()
     if state.startswith("cleared"):
         try:
-            day = _dt.date.fromisoformat(state.split()[1])
+            _dt.date.fromisoformat(state.split()[1])
         except ValueError:
             return [f"Disclosure 'cleared' needs a real date: {value[:60]}"]
-        later = [d for d in re.findall(r"\d{4}-\d{2}-\d{2}", env) if d > _dt.date.today().isoformat()]
-        if day > _dt.date.today() or later:
-            return [f"Disclosure names a date that has not arrived ({(later or [str(day)])[0]}): "
-                    "an agreed date in the future is still an embargo"]
         return []
-    first = lines[0].split("\n")[0]  # the state line itself; later lines are checked note-wide
-    if state == "embargoed" or re.search(r"(?i)\bembargo", first):
+    if state == "embargoed" or re.search(r"(?i)\bembargo", value):
         return ["Disclosure is embargoed: nothing describing the flaw ships until the agreed disclosure "
                 "date has passed (or the vendor shipped a fix) and the owner signed off; then write "
                 "'cleared YYYY-MM-DD ...' (references/envelope.md)"]

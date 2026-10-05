@@ -18,7 +18,7 @@ All notable changes to the `mod-anything` skill. The format follows
   real date that has arrived.
 - `scripts/publish_check.py`: a fail-closed filter before sharing. Only an allowlist of file
   types ships (source, docs, small data files, screenshots). It blocks binaries, captures,
-  dependency folders, well-known credential file names (cleared only by exact path),
+  dependency folders, app and plugin bundles, well-known credential file names,
   secrets (gitleaks and built-in patterns), decompiler output, home paths, hardware
   addresses and deny-file terms, matched as written. It decodes nothing; it lists journals,
   evidence, fixtures, build output, images, SVGs and the types that usually embed encoded

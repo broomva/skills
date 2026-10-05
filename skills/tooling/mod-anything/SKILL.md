@@ -137,14 +137,17 @@ own install. Write install and uninstall steps.
     to publish (the shipped example's journal was scrubbed; its last entries say how).
 - `modlog.py lint-note <note> --root <work>/ship` must exit 0. It fails on a placeholder, a
   missing section, and an evidence path cited under `## Verification` that is missing or
-  points outside the ship tree (absolute, `~/`, `..` or `file://`, in backticks or as any
-  kind of link). Write commands and API routes there without backticks: a backticked
-  `/api/...` reads as a path.
+  points outside the ship tree (absolute, `~/`, `..` or `file://`). It reads backticks,
+  inline links and reference definitions under `## Verification`; other forms (HTML tags,
+  definitions elsewhere in the note) are not read, so cite evidence only the first ways.
+  Write commands and API routes without backticks: a backticked `/api/...` reads as a path.
 - The Envelope's `Disclosure:` line is one of `none found`, `embargoed (...)` or
   `cleared YYYY-MM-DD (...)`, where the date is the day the §Rules disclosure conditions were
-  met (a real date, not in the future). One finding per note, one `Disclosure:` line. Lint
-  fails while the word "embargoed" appears anywhere in the note, or the Envelope names a
-  YYYY-MM-DD date that has not arrived. If the run found a vulnerability:
+  met (a real date, not in the future). Lint also fails, whatever the state, while the word
+  "embargoed" appears anywhere in the note, the Envelope names a YYYY-MM-DD date that has not
+  arrived, or the Envelope has more than one `Disclosure:` label. The lint is a speed bump,
+  not the gate: "one finding per note, nothing embargoed in it" is a line in the publish ask
+  that the user confirms. If the run found a vulnerability:
   - write `embargoed (what, since YYYY-MM-DD)`; lint then refuses the note, so the run ends
     here;
   - draft the vendor report for the user, who decides whether to send it. If they decide
@@ -187,27 +190,28 @@ agent runs it, but the user decides what ships.
   `.nuxt/`: a bundle can carry the target's code); allowed paths and special files. It also
   says when gitleaks did not run. A built file the plugin format needs (an Obsidian
   `main.js`) may ship once the user has reviewed it.
-- `--allow <glob>` clears only "this type should not ship" findings, after the user has
-  looked at the file: for example a binary you built yourself (a Harmony `.dll`, an `.esp`)
-  that holds only your code. Its content is still scanned. Write globs from the ship-tree
-  root (`examples/<slug>/Mod.dll`). A credentials file name is cleared only by its exact
-  path, never by a wildcard.
-- Some findings cannot be allowed, because the fix is to change the file: a `folder`
-  (`.git`, `node_modules`, `venv`: remove it), a hardware address (redact it, or use the
-  RFC 7042 documentation range `00:00:5E:00:53:xx`), a deny-file term (generalise it: a
-  userscript's `@match` for the user's tenant becomes `https://*.example.com/*`), a home
-  path, a secret.
+- **This skill's repo takes no `--allow`.** A mod shipped here passes `publish_check.py`
+  with no `--allow`; CI runs it that way. If a mod needs one (a binary you built, a font),
+  ship its source and a build step instead, or share it somewhere else, where `--allow
+  <glob>` (relative to the scanned folder) clears "this type should not ship" findings after
+  the user has looked. Its content is still scanned.
+- Some findings cannot be allowed, because the fix is to change the tree: a `folder`
+  (`.git`, `node_modules`, `venv`, an `.app` or plugin bundle: remove it), a credentials
+  file (remove it), a hardware address or fingerprint (redact it, or use the RFC 7042
+  documentation range `00:00:5E:00:53:xx`), a deny-file term (generalise it: a userscript's
+  `@match` for the user's tenant becomes `https://*.example.com/*`), a home path, a
+  secret.
 - `publish_check.py --help` prints the full list of what it blocks, reviews and cannot see.
 - **Exit 0** means "nothing this filter recognises", not "safe to share".
 - **The user reviews, not you.** Publishing is an ask (§Rules), and the ask carries the whole
-  REVIEW list and every `--allow` you used, each with one line on what the file is. The user
-  opens what they need and clears the list, or says no. The known failure mode is an agent
+  REVIEW list, each line with one line on what the file is, and the note's disclosure state
+  ("one finding, nothing embargoed"). The user opens what they need and clears the list, or
+  says no. The known failure mode is an agent
   that reads its own REVIEW lines, sees exit 0 and asks only "publish?".
 - **Then copy the tree byte for byte** into a checkout of this skill's repo, at the same
-  relative paths. Before committing, run both checks again on the destination: `lint-note` on
-  the note, and `publish_check.py` on `examples/<slug>` and the note with the same
-  `--deny-file`, the `--allow` the user approved, and `--base <checkout>/<this skill's
-  folder>` so those globs match unchanged.
+  relative paths. Before committing, run both checks again on the destination, the same
+  commands CI runs: `lint-note` on the note, and `publish_check.py` on `examples/<slug>` and
+  the note with the same `--deny-file`.
 
 ## The ladder
 
