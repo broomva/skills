@@ -1,0 +1,67 @@
+KG Claims — an Obsidian community plugin
+========================================
+
+What it does: in reading view, after every [[wikilink]] whose target note has a
+`core_claim` in its frontmatter, it shows the claim inline (muted, italic) and puts it in
+the link's hover title. It resolves links with Obsidian's own resolver and reads the claim
+from Obsidian's metadata cache: it reads, never writes, and never touches the file system.
+Not covered yet: Live Preview / source mode (editing view). See MODLOG.md.
+
+Files: plugin/manifest.json, plugin/main.js, plugin/styles.css (no build step).
+
+
+Install into a real vault (the owner does this, or says yes first)
+-----------------------------------------------------------------
+
+1. Copy the three files from plugin/ to <vault>/.obsidian/plugins/kg-claims/
+   The entity notes must be inside the vault (or reachable through a folder symlinked into it)
+   for [[slug]] to resolve.
+2. In Obsidian: Settings > Community plugins. If restricted mode is on, turn on community
+   plugins (this vault only). Then enable "KG Claims".
+   CLI equivalent (Obsidian 1.12+ with the CLI turned on in Settings > General > Advanced):
+       obsidian plugins:restrict off
+       obsidian plugin:enable id=kg-claims
+3. Open a note with [[slug]] links in reading view.
+
+Uninstall
+---------
+
+1. Settings > Community plugins > disable "KG Claims" (or: obsidian plugin:disable id=kg-claims).
+   Disabling removes everything the plugin added to the page (verified: evidence/cli-disable.txt).
+2. Delete <vault>/.obsidian/plugins/kg-claims/.
+Nothing else is written anywhere: no settings file, no cache, no vault edits.
+
+
+Re-run the lab (how the evidence in evidence/ was produced)
+-----------------------------------------------------------
+
+Needs: macOS, /Applications/Obsidian.app (1.12+), python3. Never touches the user's profile, vault,
+keychain or ~/.obsidian-cli.sock (see the knobs in harness/lab.py). Uses only the synthetic
+entities in harness/fixtures/entities/.
+
+    bash harness/record_evidence.sh
+
+It sets up a lab, launches Obsidian in the background on a lab profile (a fresh profile warms up
+once and downloads the current app code), enables the plugin through Obsidian's own CLI, and
+writes evidence/cli-session.txt, cli-live-update.txt, cli-restart.txt, cli-disable.txt,
+reading-view.png and after-restart.png. Each transcript line starting with "$ " is the exact
+command.
+
+Expected: five claims (the five entity links, the alias and #heading forms included), none for
+[[plain-note]] or [[no-such-entity]].
+
+Step by step, by hand:
+
+    LAB=$(mktemp -d /tmp/mod-anything-lab.XXXX)
+    H=harness/lab.py
+    python3 $H setup $LAB --entities harness/fixtures/entities \
+        --slugs concept/tide-table concept/sourdough-starter concept/lighthouse \
+                concept/bicycle-gearing concept/garden-map tool/garden-map
+    python3 $H launch $LAB
+    python3 $H cli $LAB plugins:restrict off
+    python3 $H install $LAB
+    python3 $H cli $LAB reload
+    python3 $H cli $LAB plugin:enable id=kg-claims
+    python3 $H cli $LAB open path=Notes/reading-test.md
+    python3 $H cli $LAB dev:dom "selector=.markdown-reading-view .kg-claim" all text
+    python3 $H stop $LAB

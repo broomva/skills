@@ -1,0 +1,187 @@
+{
+  "target": {
+    "path": "/Applications/Obsidian.app",
+    "name": "Obsidian",
+    "bundle_id": "md.obsidian",
+    "version": "1.8.4",
+    "build": "0.14.8",
+    "min_os": "11.0",
+    "arch": "arm64"
+  },
+  "stack": {
+    "kind": "electron",
+    "evidence": [
+      "Contents/Frameworks/Electron Framework.framework"
+    ],
+    "electron": {
+      "electron_version": "33.3.2",
+      "app_code": [
+        "Contents/Resources/app.asar",
+        "Contents/Resources/obsidian.asar"
+      ],
+      "fuse_wire": {
+        "found": true,
+        "slice": "arm64",
+        "count": 8,
+        "fuses": {
+          "RunAsNode": "off",
+          "EnableCookieEncryption": "off",
+          "EnableNodeOptionsEnvironmentVariable": "off",
+          "EnableNodeCliInspectArguments": "off",
+          "EnableEmbeddedAsarIntegrityValidation": "off",
+          "OnlyLoadAppFromAsar": "off",
+          "LoadBrowserProcessSpecificV8Snapshot": "off",
+          "GrantFileProtocolExtraPrivileges": "on"
+        },
+        "slices": [
+          "arm64",
+          "x86_64"
+        ],
+        "slices_agree": true
+      }
+    }
+  },
+  "extension_points": [
+    {
+      "rung": "2",
+      "kind": "plugin-api",
+      "name": "Obsidian community plugin API",
+      "detail": "<vault>/.obsidian/plugins/<id>/ (manifest.json + main.js); per vault. Plugins load only after the vault leaves restricted mode, a per-vault consent the app stores in its localStorage (enable-plugin-<appId>).",
+      "source": "known (checked against this app; not advertised by the bundle)"
+    },
+    {
+      "rung": "1",
+      "kind": "css",
+      "name": "Obsidian CSS snippets and themes",
+      "detail": "<vault>/.obsidian/snippets/*.css, enabled in Settings > Appearance",
+      "source": "known (checked against this app; not advertised by the bundle)"
+    },
+    {
+      "rung": "2",
+      "kind": "url-scheme",
+      "name": "URL schemes",
+      "detail": "obsidian://",
+      "source": "bundle"
+    },
+    {
+      "rung": "2",
+      "kind": "accessibility",
+      "name": "Accessibility (AX) API",
+      "detail": "every app; needs the Accessibility permission, reads and drives the UI",
+      "source": "platform"
+    }
+  ],
+  "protections": {
+    "signature": {
+      "checked": true,
+      "signed": true,
+      "team_id": "6JSW4SJWN9",
+      "hardened_runtime": true,
+      "sandbox": false,
+      "disable_library_validation": true,
+      "allow_jit": true,
+      "apple_events": false
+    },
+    "mas_receipt": false,
+    "asar_integrity": false,
+    "only_load_app_from_asar": false,
+    "node_inspect": false,
+    "node_options": false,
+    "run_as_node": false
+  },
+  "updates": [
+    {
+      "kind": "squirrel",
+      "detail": "Electron autoUpdater (replaces the bundle)"
+    },
+    {
+      "kind": "app-code-in-state-folder",
+      "detail": "~/Library/Application Support/Obsidian/obsidian-1.13.7.asar"
+    }
+  ],
+  "state": [
+    {
+      "kind": "app-support",
+      "path": "~/Library/Application Support/Obsidian",
+      "exists": true
+    },
+    {
+      "kind": "app-support",
+      "path": "~/Library/Application Support/md.obsidian",
+      "exists": false
+    },
+    {
+      "kind": "container",
+      "path": "~/Library/Containers/md.obsidian",
+      "exists": false
+    },
+    {
+      "kind": "preferences",
+      "path": "~/Library/Preferences/md.obsidian.plist",
+      "exists": true
+    }
+  ],
+  "app_extensions": [],
+  "bundled_tools": [],
+  "caveats": [
+    "Info.plist says version 1.8.4 but the state folder holds app-code archives (obsidian-1.13.7.asar); the running version may be the newest of those"
+  ],
+  "routes": [
+    {
+      "rung": "1",
+      "name": "Obsidian CSS snippets and themes",
+      "status": "available",
+      "reason": "the app reads it with no code of ours: <vault>/.obsidian/snippets/*.css, enabled in Settings > Appearance",
+      "rank": 1
+    },
+    {
+      "rung": "2",
+      "name": "Obsidian community plugin API",
+      "status": "available",
+      "reason": "the makers' extension point: can add UI and behaviour; <vault>/.obsidian/plugins/<id>/ (manifest.json + main.js); per vault. Plugins load only after the vault leaves restricted mode, a per-vault consent the app stores in its localStorage (enable-plugin-<appId>).",
+      "rank": 2
+    },
+    {
+      "rung": "2",
+      "name": "URL schemes",
+      "status": "caveat",
+      "reason": "deep links (obsidian://); trigger only. Caveat: `open` routes to an already-running instance, which may be the user's real profile",
+      "rank": 3
+    },
+    {
+      "rung": "2",
+      "name": "Accessibility (AX) API",
+      "status": "caveat",
+      "reason": "read and drive the UI; needs the Accessibility permission and acting through it is driving input, so ask first; the electron UI exposes a thin AX tree",
+      "rank": 4
+    },
+    {
+      "rung": "3",
+      "name": "renderer script via DevTools Protocol",
+      "status": "caveat",
+      "reason": "launch-time renderer script over the DevTools Protocol (--remote-debugging-port, lab profile, session only); app files untouched; check the app's terms first: a prohibition on client modification puts this out of scope; the Node inspect fuse is off (the main process is closed; the renderer port is a different door)",
+      "rank": 5
+    },
+    {
+      "rung": "4",
+      "name": "network capture of the app's own traffic",
+      "status": "caveat",
+      "reason": "your own account and data only; rarely needed for an app mod",
+      "rank": 6
+    },
+    {
+      "rung": "5",
+      "name": "companion tool beside the app",
+      "status": "available",
+      "reason": "rebuild the part you need next to the app, from its data files or API; most work, and the user sees it outside the app",
+      "rank": 7
+    },
+    {
+      "rung": "3",
+      "name": "edit the app's files",
+      "status": "blocked",
+      "reason": "editing a signed bundle breaks its seal: that defeats an integrity check; an updater would overwrite the edit anyway",
+      "rank": 8
+    }
+  ]
+}

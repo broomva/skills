@@ -1,0 +1,9 @@
+# live update: change the LAB COPY of bicycle-gearing's core_claim through the app; the open note updates
+$ obsidian property:set name=core_claim value=LAB EDIT: claim changed while the note is open path=entities/concept/bicycle-gearing.md
+Set core_claim: LAB EDIT: claim changed while the note is open
+$ obsidian dev:dom selector=.markdown-reading-view .kg-claim all text
+Synthetic fixture: most coasts see two high tides a day.
+Synthetic fixture: a starter fed daily stays active.
+Synthetic fixture: a light's range grows with its height.
+LAB EDIT: claim changed while the note is open
+Synthetic fixture: the tool-typed garden-map.

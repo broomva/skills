@@ -1,0 +1,7 @@
+# uninstall path: disabling the plugin must remove everything it added
+$ obsidian plugin:disable id=kg-claims
+Disabled: kg-claims
+$ obsidian dev:dom selector=.kg-claim total
+No elements found.
+$ obsidian dev:dom selector=a.internal-link[data-kg-claim] total
+No elements found.

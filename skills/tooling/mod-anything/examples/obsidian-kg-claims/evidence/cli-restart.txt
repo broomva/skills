@@ -1,0 +1,15 @@
+# restart: stop the lab instance by PID, launch again, no other action
+stopped pid 9568 (SIGTERM x1)
+launched pid 9721
+$ obsidian plugins:enabled filter=community
+kg-claims
+$ obsidian open path=Notes/reading-test.md
+Opened: Notes/reading-test.md
+$ obsidian dev:dom selector=.markdown-reading-view .kg-claim all text
+Synthetic fixture: most coasts see two high tides a day.
+Synthetic fixture: a starter fed daily stays active.
+Synthetic fixture: a light's range grows with its height.
+LAB EDIT: claim changed while the note is open
+Synthetic fixture: the tool-typed garden-map.
+$ obsidian dev:screenshot path=/tmp/mod-anything-lab.xu31/after-restart.png
+

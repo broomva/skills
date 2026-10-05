@@ -1,0 +1,9 @@
+/* KG Claims: the claim reads as a quiet aside after the link. */
+.kg-claim {
+  margin-left: 0.4em;
+  padding: 0 0.35em;
+  border-left: 2px solid var(--interactive-accent);
+  color: var(--text-muted);
+  font-size: var(--font-smaller);
+  font-style: italic;
+}
