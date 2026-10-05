@@ -114,6 +114,7 @@ def test_note_scaffold_fails_lint_until_filled(journal: Path):
     # The agent decides each journal file on purpose: here it cites a copy beside the note.
     text = re.sub(rf"{re.escape(modlog.TODO)}: e\.txt is in the working folder[^\n]*", "`e.txt`", text)
     filled = text.replace(f"{modlog.TODO}: ", "").replace(modlog.TODO, "x")
+    filled = re.sub(r"(?m)^- Disclosure: .*$", "- Disclosure: none found", filled)
     note.write_text(filled)
     r = run(journal, "lint-note", str(note))
     assert r.returncode == 0, r.stdout
@@ -253,7 +254,10 @@ def test_lint_note_refuses_citations_outside_the_root(tmp_path: Path):
 
 @pytest.mark.parametrize("line,ok", [
     ("none found", True),
-    ("cleared 2027-01-08 (vendor fixed it in 2.3; owner signed off)", True),
+    ("cleared 2026-01-08 (vendor fixed it in 2.3; owner signed off)", True),
+    ("cleared 2999-01-08 (the agreed date)", False),     # not arrived yet: still an embargo
+    ("cleared 2026-02-30", False),                       # not a real date
+    ("none found; vendor contacted, embargoed until 2027-01-08", False),
     ("embargoed (vendor contacted 2026-10-10, disclosure date 2027-01-08)", False),
     ("vendor contacted, awaiting fix", False),          # not one of the three states
     ("cleared after the fix", False),                   # cleared needs its date
@@ -536,3 +540,15 @@ def test_a_run_with_no_failure_scaffolds_none_hit_and_lints_clean(journal: Path)
     gotchas = text.split("## Gotchas")[1].split("##")[0]
     assert modlog.lint_note(GOOD_NOTE.replace(
         "1. Plugin missing → manifest id mismatch → match folder name to id", gotchas.strip())) == []
+
+
+@pytest.mark.parametrize("cite", ["`~/Library/Application Support/obsidian/obsidian.log`",
+                                  "`/Users/alice/Desktop/Screen Shot 2026-10-05 at 10.00.00.png`",
+                                  "`../../../outside/run 2.txt`"])
+def test_paths_with_spaces_are_held_to_the_root_too(tmp_path: Path, cite: str):
+    # Round 2: a space in the path skipped the containment check entirely.
+    ship = tmp_path / "ship"
+    ship.mkdir()
+    note = GOOD_NOTE.replace("`evidence/shot.png`", cite)
+    problems = modlog.lint_note(note, base=[ship, ship], root=ship)
+    assert any("outside the ship tree" in p for p in problems), problems

@@ -44,8 +44,11 @@ command shell) and in devices (a signature check that can be poked off). When yo
    never in scope.
 4. The note's `Disclosure:` line records the state: `none found`, `embargoed (...)` while the
    embargo holds, and `cleared YYYY-MM-DD (...)` once step 2's conditions are met.
-   `modlog.py lint-note` refuses `embargoed`, so the documented publish flow (SKILL.md steps
-   8-9) stops there until the line says `cleared`.
+   `modlog.py lint-note` refuses `embargoed`, a `cleared` date in the future, and any line
+   that mentions an embargo without being `cleared`, so the documented publish flow (SKILL.md
+   steps 8-9) stops there until step 2's conditions are met.
+5. The user contacts the vendor. The agent drafts the report; sending it reaches outside the
+   user's machine, which is the user's call (SKILL.md §Rules, ask before).
 
 One public write-up shows the pattern. It reverse-engineered five peripherals and found a
 microphone command shell and a light whose signature check could be disabled, and its author

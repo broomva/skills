@@ -138,9 +138,13 @@ own install. Write install and uninstall steps.
 - `modlog.py lint-note <note> --root <work>/ship` must exit 0. It fails on a placeholder, a
   missing section, and a cited path that is missing, absolute or outside the ship tree.
 - The Envelope's `Disclosure:` line is one of `none found`, `embargoed (...)` or
-  `cleared YYYY-MM-DD (...)`. If the run found a vulnerability, write `embargoed`: lint then
-  refuses the note, and the ship tree stays private until the §Rules disclosure conditions
-  are met. Then write `cleared` with the date.
+  `cleared YYYY-MM-DD (...)`, where the date is the day the §Rules disclosure conditions were
+  met (a real date, not in the future). If the run found a vulnerability:
+  - write `embargoed`; lint then refuses the note, so the run ends here;
+  - draft the vendor report for the user, who decides whether to send it;
+  - move the ship tree and the journal out of `<work>` to a durable private place the user
+    names (temp folders are cleared), and tell the user what waits on the embargo;
+  - when the conditions are met, write `cleared` with that date and resume at step 9.
 - Write the note even when the mod failed. A documented dead end saves the next agent hours.
 
 **9. Publish check, then copy.** Check the whole ship tree in one pass:
@@ -154,18 +158,20 @@ in front of you, not a privacy guarantee.
   - any file type that is not on its ship allowlist (source, docs, small data files,
     screenshots), and text files that are not really text;
   - third-party binaries, captures, symlinks, files over `--max-mb`;
-  - dependency, build and VCS folders (`.git`, `node_modules`, `venv`, ...);
-  - secrets (gitleaks with its default rules when installed, plus a built-in list), and
-    gitleaks config or ignore files inside the tree;
+  - dependency, cache and VCS folders (`.git`, `node_modules`, `venv`, ...);
+  - secrets (gitleaks with its default rules when installed, plus a built-in list), well-known
+    credential file names, and gitleaks config or ignore files inside the tree;
   - decompiler output;
-  - home paths (also URL-encoded), the login name, the hostname, hardware addresses and
-    deny-file terms, in contents and in names.
-- **It does not detect** cookies, session values, serial numbers, or personal data such as
-  emails and display names unless they are in the deny file. Keep those out at the source
-  (step 3).
-- **It lists as REVIEW** every image and SVG, every file under `evidence/` or `fixtures/`,
-  every journal, allowed paths and special files, and says when gitleaks did not run. Read
-  each one.
+  - home paths, the login name, the hostname, hardware addresses and deny-file terms, in
+    contents and in names, matched as written.
+- **It does not detect** cookies, session values, serial numbers, personal data such as
+  emails and display names unless they are in the deny file, anything encoded (URL-encoding,
+  escapes, base64, compression), or the target's own code copied in as text. Keep those out
+  at the source (step 3), and ship your mod's source with a build step rather than a bundle:
+  a `dist/` bundle can carry the target's modules or other people's code.
+- **It lists as REVIEW** every image and SVG; HTML, notebooks, plists and source maps (they
+  often embed encoded content); every file under `evidence/` or `fixtures/`; every journal;
+  allowed paths and special files. It also says when gitleaks did not run. Read each one.
 - `--allow <glob>` clears only "this type should not ship" findings, after you have looked at
   the file: for example a binary you built yourself (a Harmony `.dll`, an `.esp`) that holds
   only your code. Its content is still scanned. Globs match paths relative to each scanned
@@ -224,6 +230,7 @@ These are hard. The full reasoning and the legal summary are in `references/enve
     their running app. Test in a lab profile the user logged into instead;
   - change system settings;
   - delete anything;
+  - contact a vendor or anyone else outside the user's machine (draft it; the user sends it);
   - publish.
 - **Back up first.** Kill processes by exact PID, never by pattern.
 - **Disclosure.** If you find a vulnerability, nothing describing it leaves the private repo

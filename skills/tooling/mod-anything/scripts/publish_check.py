@@ -23,18 +23,20 @@ BLOCK (exit 1), file by file:
             Remove them from the tree. Build output (dist/, build/) is scanned like any folder
   symlink   every symbolic link (git commits the target path; archivers follow it)
   large     any file over --max-mb (default 5)
-  secret    found by gitleaks (`gitleaks dir`, run with its default rules: an in-tree config,
-            ignore file or gitleaks:allow comment cannot switch them off) when it is installed,
-            plus a short built-in list of token shapes (private keys, AWS, GitHub classic and
+  secret    a well-known credentials file name (.yarnrc.yml, pgpass.conf, credentials.json,
+            ...), anything found by gitleaks (`gitleaks dir`, run with its default rules: an
+            in-tree config, ignore file or gitleaks:allow comment cannot switch them off) when
+            it is installed, and a short built-in list of token shapes (private keys, AWS, GitHub classic and
             fine-grained, Slack, OpenAI-style keys, bearer tokens, JWTs). gitleaks skips binary
             files, so those get the built-in list only. Without gitleaks only the built-in list
             runs, and a REVIEW line says so
   decomp    headers that decompilers write into their output
-  userpath  home-directory paths (/Users, /home, /root, C:\\Users, macOS per-user temp
-            folders under /var/folders), also when URL-encoded, and ~/... paths that contain
-            this machine's login name
-  address   a device hardware address (MAC or Bluetooth, aa:bb:cc:dd:ee:ff); the RFC 7042
-            documentation range 00:00:5E:00:53:xx and all-zero or broadcast are allowed
+  userpath  home-directory paths (/Users, /home, /root, C:\\Users in any case, macOS
+            per-user temp folders under /var/folders), and ~/... paths that contain this
+            machine's login name
+  address   a device hardware address (MAC or Bluetooth, aa:bb:cc:dd:ee:ff, with at least
+            one hex letter so dates and times do not match); the RFC 7042 documentation range
+            00:00:5E:00:53:xx and all-zero or broadcast are allowed
   username  this machine's login name (generic container logins are ignored)
   hostname  this machine's hostname, or a Mac-style one (<name>-MacBook-Pro.local)
   denied    any term from --deny-file (one per line; put a backslash before a term that
@@ -43,8 +45,7 @@ BLOCK (exit 1), file by file:
 
 Names are checked like contents: git publishes file and folder names too. Non-text files are
 also read for printable text (Latin-1, and UTF-16 at either byte alignment), so a path in an
-image's metadata is found. In text files, URL-encoding, JSON \\u escapes and base64 blobs
-(data: URIs, plist <data>, long runs) are decoded and read too.
+image's metadata is found. Text is matched as written: nothing is decoded.
 
 --allow GLOB clears only the "is this file shippable at all" findings (type, binary, opaque,
 capture, large, symlink) for matching paths and their contents. Content and name findings
@@ -55,16 +56,18 @@ A gitleaks config or ignore file inside the tree is a BLOCK too (kind "gitleaks"
 reads <source>/.gitleaksignore whatever flags say, so it would silence a plain gitleaks run.
 
 REVIEW (exit unaffected): images and SVGs (a file whose extension claims an image its bytes
-are not is opaque instead), every file under an `evidence/` or `fixtures/` folder and every modlog
+are not is opaque instead), HTML, notebooks, plists and source maps (they often embed encoded
+content), every file under an `evidence/` or `fixtures/` folder and every modlog
 journal (MODLOG.md, .modlog.json): captured output, recordings and journals can carry
 someone's data, device addresses or keys. Also allowed paths, special files (FIFOs, sockets),
 and the secrets engine when gitleaks is not installed or was skipped with --no-gitleaks.
 gitleaks installed but failing exits 2.
 
 NOT detected, by design: cookies and session values, personal data such as emails and display
-names (unless they are in --deny-file), serial numbers, compressed or encrypted content (inside
-an image's chunks or an --allow'ed file), text in encodings other than those above, and code
-transcribed from a decompiler without its header. Keep them out at the source
+names (unless they are in --deny-file), serial numbers, anything encoded (URL-encoding, \\u or
+\\/ escapes, base64, compression, encryption), the target's own code copied in as text (an
+Electron app's JS, bundled into dist/), and code transcribed from a decompiler without its
+header. Logins shorter than 4 characters and hostnames shorter than 6 are not matched. Keep them out at the source
 (never copy a browser profile; captures are blocked), put names you know in --deny-file, and
 read every REVIEW line. Exit 0 means "nothing this filter recognises", not "nothing private".
 
@@ -78,8 +81,6 @@ on PATH when available.
 from __future__ import annotations
 
 import argparse
-import base64
-import binascii
 import codecs
 import fnmatch
 import getpass
@@ -91,7 +92,6 @@ import socket
 import stat
 import subprocess
 import sys
-import urllib.parse
 from pathlib import Path
 
 BINARY_EXT = {
@@ -131,7 +131,7 @@ SHIP_TEXT_EXT = {
     # docs and data
     ".md", ".markdown", ".txt", ".rst", ".adoc", ".log", ".json", ".jsonl", ".jsonc", ".json5",
     ".csv", ".tsv", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".conf", ".properties", ".xml",
-    ".plist", ".svg", ".html", ".htm", ".sql", ".graphql", ".gql", ".ipynb", ".lock",
+    ".plist", ".svg", ".html", ".htm", ".sql", ".graphql", ".gql", ".ipynb", ".lock", ".map",
     # code, patches and scripts
     ".py", ".pyi", ".js", ".mjs", ".cjs", ".ts", ".mts", ".cts", ".tsx", ".jsx", ".vue",
     ".svelte", ".css", ".scss", ".sass", ".less", ".sh", ".bash", ".zsh", ".fish", ".ps1",
@@ -149,11 +149,14 @@ SHIP_TEXT_NAMES = re.compile(
     r"(?i)^(?:licen[cs]e|notice|readme|changelog|changes|authors|contributors|copying|"
     r"makefile|justfile|dockerfile|containerfile|procfile|gemfile|rakefile|brewfile|"
     r"\.gitignore|\.gitattributes|\.editorconfig|\.npmignore|\.nvmrc|\.node-version|"
-    r"\.python-version|\.tool-versions|\.(?:bash|zsh|vim|input|screen)rc|\.(?:bash_|z)?profile|"
+    r"\.python-version|\.tool-versions|\.(?:bash|zsh|vim|input|screen|eslint|babel|prettier|stylelint|swc|editor)rc|\.(?:bash_|z)?profile|"
     r"\.gitconfig)(?:[-.][\w.-]*)?$")
 # Not on the list on purpose, so they BLOCK as "type": .env, .netrc, .npmrc, .pypirc, .envrc,
 # .yarnrc, .git-credentials, .pgpass. They exist to hold credentials.
 JOURNAL_NAMES = {"MODLOG.md", ".modlog.json"}
+# Well-known credential files whose extension is otherwise shippable (.yml, .conf, .json).
+CREDENTIAL_NAMES = {".yarnrc.yml", "pgpass.conf", "_netrc", "credentials", "credentials.json",
+                    ".dockercfg", "service-account.json", "client_secret.json"}
 
 SECRET_PATTERNS = [
     ("private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -180,16 +183,19 @@ DECOMP_MARKERS = [
     re.compile(r"(?i)\bdnSpy\b"),
 ]
 USERPATH = re.compile(r"(?:/Users/|/home/)(?!Shared\b)[A-Za-z0-9][A-Za-z0-9._-]*(?:/|\b)"
-                      r"|[A-Za-z]:\\\\?Users\\\\?[A-Za-z0-9._-]+"
+                      r"|[A-Za-z]:\\\\?(?i:users)\\\\?[A-Za-z0-9._-]+"
                       r"|(?<![\w.-])/root/|/var/folders/[A-Za-z0-9_+-]{2}/[A-Za-z0-9_+-]{8,}")
 # A hardware address in either separator style. RFC 7042's documentation range and the
 # all-zero and broadcast addresses are fine in fixtures.
-DEVICE_ADDR = re.compile(r"(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Fa-f])")
+DEVICE_ADDR = re.compile(r"(?<![0-9A-Za-z])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Za-z])")
 DOC_ADDR = re.compile(r"(?i)^00[:-]00[:-]5e[:-]00[:-]53[:-][0-9a-f]{2}$|^(?:00[:-]){5}00$|^(?:ff[:-]){5}ff$")
 MAC_HOST = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9-]*-(?:MacBook(?:-Pro|-Air)?|iMac(?:-Pro)?|Mac-mini|Mac-Pro|Mac-Studio)(?:-\d+)?(?:\.local)?\b")
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".tiff", ".bmp"}
 # Shown to a person as images. SVG is scanned as text, but can embed a screenshot.
 REVIEW_IMAGE_EXT = IMAGE_EXT | {".svg"}
+# Text types that commonly embed encoded content (base64 images, inline source maps, plist
+# <data>, URL-encoded strings) that this scan does not decode: listed for a person.
+ENCODED_EXT = {".html", ".htm", ".ipynb", ".plist", ".map"}
 # An image extension must be backed by the image's own header; anything else is opaque.
 IMAGE_MAGIC = {".png": (b"\x89PNG",), ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",),
                ".gif": (b"GIF87a", b"GIF89a"), ".bmp": (b"BM",), ".tiff": (b"II*\x00", b"MM\x00*")}
@@ -290,58 +296,33 @@ def _text_findings(rel: str, text: str, hosts: set[str], user: str | None, deny:
         if m:
             out.append({"kind": "decomp", "path": rel, "detail": f"marker {m.group(0)!r}"})
             break
-    # Paths and names also hide URL-encoded (obsidian://open?path=%2FUsers%2F...) and as
-    # JSON \u escapes (json.dumps writes "Jos\u00e9" for "José").
-    views = [text]
-    if re.search(r"%[0-9A-Fa-f]{2}", text):
-        views.append(urllib.parse.unquote(text))
-    if "\\u" in text:
-        views.append(_UESC.sub(lambda m: chr(int(m.group(1), 16)), text))
-    m = next((m for v in views for m in [USERPATH.search(v)] if m), None)
+    # Text is matched as written. Encoded content (URL-encoding, escapes, base64) is not decoded;
+    # the file types that usually carry it are listed for a person instead (ENCODED_EXT).
+    m = USERPATH.search(text)
     if m:
         out.append({"kind": "userpath", "path": rel, "detail": m.group(0)})
-    m = next((m for m in DEVICE_ADDR.finditer(text) if not DOC_ADDR.match(m.group(0))), None)
+    m = next((m for m in DEVICE_ADDR.finditer(text)
+              if re.search(r"[A-Fa-f]", m.group(0)) and not DOC_ADDR.match(m.group(0))), None)
     if m:
         out.append({"kind": "address", "path": rel, "detail": f"hardware address {m.group(0)}"})
-    lows = [_nfkc(v).lower() for v in views]
-    low = lows[0]
+    low = _nfkc(text).lower()
     if user:
         ul = user.lower()
-        m = next((m for lw in lows for m in [re.search(r"~/[^\s'\"`)]*" + re.escape(ul), lw)] if m), None)
+        m = re.search(r"~/[^\s'\"`)]*" + re.escape(ul), low)
         if m:
             out.append({"kind": "userpath", "path": rel, "detail": m.group(0)})
-        elif any(re.search(r"(?<![a-z0-9])" + re.escape(ul) + r"(?![a-z0-9])", lw) for lw in lows):
+        elif re.search(r"(?<![a-z0-9])" + re.escape(ul) + r"(?![a-z0-9])", low):
             out.append({"kind": "username", "path": rel, "detail": user})
     m = MAC_HOST.search(text)
     hit = m.group(0) if m else next((h for h in sorted(hosts) if h in low), None)
     if hit:
         out.append({"kind": "hostname", "path": rel, "detail": hit})
     # Deny terms match across line wraps and repeated spaces ("Ada\n  Lovelace").
-    flat = [re.sub(r"\s+", " ", lw) for lw in lows]
+    flat = re.sub(r"\s+", " ", low)
     for term in deny:
         t = re.sub(r"\s+", " ", _nfkc(term).lower())
-        if any(t in f for f in flat):
+        if t in flat:
             out.append({"kind": "denied", "path": rel, "detail": term})
-    return out
-
-
-_UESC = re.compile(r"\\u([0-9a-fA-F]{4})")
-# Base64 a text file can carry: data: URIs (SVG, HTML, notebooks), <data> blocks (plists), and
-# any long run. Decoded and read like a binary file.
-_B64 = re.compile(r"base64,([A-Za-z0-9+/=\s]{40,})|<data>([A-Za-z0-9+/=\s]{40,})</data>|([A-Za-z0-9+/]{200,}={0,2})")
-
-
-def _base64_findings(rel: str, text: str, hosts: set[str], user: str | None,
-                     deny: list[str]) -> list[dict]:
-    out: list[dict] = []
-    for m in _B64.finditer(text):
-        blob = re.sub(r"\s", "", next(g for g in m.groups() if g))
-        try:
-            data = base64.b64decode(blob + "=" * (-len(blob) % 4))
-        except (binascii.Error, ValueError):
-            continue
-        for f in _strings_findings(rel, data, hosts, user, deny):
-            out.append(dict(f, detail=f"in base64 content: {f['detail']}"))
     return out
 
 
@@ -369,7 +350,6 @@ def _text_file_findings(f, head: bytes, rel: str, hosts: set[str], user: str | N
             if "\x00" in text:
                 return out, False
             out.extend(_text_findings(rel, tail + text, hosts, user, deny))
-            out.extend(_base64_findings(rel, text, hosts, user, deny))
             if not data:
                 return out, True
             tail = (tail + text)[-OVERLAP:]
@@ -387,6 +367,8 @@ def _scan_file(p: Path, rel: str, max_mb: float, hosts: set[str], user: str | No
         out.append({"kind": "binary", "path": rel, "detail": f"{ext} file"})
     elif ext in CAPTURE_EXT:
         out.append({"kind": "capture", "path": rel, "detail": f"{ext} capture: sessions, cookies, keys"})
+    elif p.name.lower() in CREDENTIAL_NAMES:
+        out.append({"kind": "secret", "path": rel, "detail": "a well-known credentials file name"})
     elif kind is None and p.name not in JUNK_NAMES:
         what = f"{ext} file" if ext else "file with no extension"
         out.append({"kind": "type", "path": rel,
@@ -453,9 +435,11 @@ def review_images(root: Path) -> list[str]:
 
 
 def _extra_kind(rel: Path) -> str | None:
-    """'journal', 'evidence' or 'fixtures' for a file a person must read, else None."""
+    """'journal', 'evidence', 'fixtures' or 'encoded' for a file a person must read."""
     if rel.name in JOURNAL_NAMES:
         return "journal"
+    if rel.suffix.lower() in ENCODED_EXT:
+        return "encoded"
     folder = next((f for f in ("evidence", "fixtures") if f in rel.parts[:-1]), None)
     return folder if folder and rel.suffix.lower() not in REVIEW_IMAGE_EXT else None
 
@@ -502,7 +486,7 @@ def _walk_findings(root: Path, max_mb: float, hosts: set[str], user: str | None,
         base = Path(dirpath)
         for d in sorted(d for d in dirnames if d in SKIP_DIRS):
             findings.append({"kind": "folder", "path": str((base / d).relative_to(root)),
-                             "detail": "dependency, build or VCS folder: not part of a mod, and not scanned"})
+                             "detail": "dependency, cache or VCS folder: not part of a mod and not scanned; remove it"})
         dirnames[:] = sorted(d for d in dirnames if d not in SKIP_DIRS)
         for d in list(dirnames):
             dp = base / d
@@ -715,9 +699,10 @@ def main(argv: list[str] | None = None) -> int:
         for i in rep["review"]:
             print(f"REVIEW image    {where(i)}  (look at it: screenshots can show private content)")
         for kind, x in rep["extra"]:
-            why = ("a run journal: ship it only if every entry is fit to publish" if kind == "journal"
-                   else "captured output or fixture: check it holds no one's data, device addresses, "
-                        "serials or keys")
+            why = {"journal": "a run journal: ship it only if every entry is fit to publish",
+                   "encoded": "can embed encoded content this scan does not decode: open it and check"
+                   }.get(kind, "captured output or fixture: check it holds no one's data, device "
+                               "addresses, serials or keys")
             print(f"REVIEW {kind:8} {where(x)}  ({why})")
         for a in rep["allowed"]:
             print(f"REVIEW allowed  {where(a)}  (--allow cleared it as a file; its content, or a link's target, "

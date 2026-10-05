@@ -29,10 +29,13 @@ Commands
                                                  copy it into the ship tree and cite it there,
                                                  or describe it without a path
   lint-note  PATH [--root DIR]                   check a field note is complete and shippable
-                                                 (exit 1 if not). Cited paths must exist inside
-                                                 DIR (default: the enclosing skill, else the
-                                                 note's folder): absolute paths and ../ escapes
-                                                 fail. A Disclosure line under embargo fails too
+                                                 (exit 1 if not). Evidence cited under
+                                                 ## Verification must exist inside DIR (default:
+                                                 the enclosing skill, else the note's folder):
+                                                 absolute, ~ and .. paths fail. The Envelope
+                                                 needs one Disclosure line: none found |
+                                                 embargoed (fails) | cleared YYYY-MM-DD (a real
+                                                 date, not in the future)
 
 Exit codes: 0 ok · 1 lint findings · 2 usage, refused input, or a file or folder it could not
 read or write · 3 STALL. Pure stdlib.
@@ -514,25 +517,21 @@ def skill_root(path: Path) -> Path | None:
 
 
 def _citation_problems(ver: str, bases: list[Path], root: Path | None) -> list[str]:
-    """Evidence cited in ## Verification must exist. With a root, every path-shaped token
-    (one with a /, no spaces, not a URL) must also stay inside it: absolute, ~ and ..
-    paths fail whatever their extension, because they point at something that does not
-    ship."""
+    """Evidence cited in ## Verification must exist. With a root, every cited path must also
+    stay inside it: an absolute, ~ or .. path fails whatever its extension and whether or
+    not it has spaces, because it points at something that does not ship."""
     problems: list[str] = []
-    toks = list(dict.fromkeys(t.strip() for t in _TICKED.findall(ver) + _LINK.findall(ver)))
-
-    def escapes(tok: str) -> bool:
-        return tok.startswith(("/", "~")) or ".." in Path(tok).parts
-
-    if root is not None:
-        for tok in toks:
-            if "/" in tok and " " not in tok and "://" not in tok and escapes(tok):
-                problems.append(f"## Verification cites a path outside the ship tree (absolute, ~ or ..): {tok}")
     top = root.resolve() if root is not None else None
-    for tok in dict.fromkeys(c for c in map(_evidence_path, toks) if c):
-        if top is not None and escapes(tok):
-            continue  # reported above
-        p = Path(tok).expanduser()
+    for tok in dict.fromkeys(t.strip() for t in _TICKED.findall(ver) + _LINK.findall(ver)):
+        path = _evidence_path(tok) or (tok if "/" in tok and " " not in tok and "://" not in tok else None)
+        if path is None:
+            continue  # a command, a URL or prose
+        if top is not None and (path.startswith(("/", "~")) or ".." in Path(path).parts):
+            problems.append(f"## Verification cites a path outside the ship tree (absolute, ~ or ..): {tok}")
+            continue
+        if _evidence_path(tok) is None:
+            continue  # path-shaped, inside the root, but not a file the lint can check
+        p = Path(path).expanduser()
         hits = [p] if p.is_absolute() else [(b / p) for b in bases if (b / p).exists()]
         if not (hits and hits[0].exists()):
             problems.append(f"## Verification cites a path that does not exist: {tok}")
@@ -554,7 +553,17 @@ def _disclosure_problems(env: str) -> list[str]:
     m = _DISCLOSURE_STATE.match(value)
     if not m:
         return [f"Disclosure must start with 'none found', 'embargoed' or 'cleared YYYY-MM-DD': {value[:60]}"]
-    if m.group(1).lower() == "embargoed":
+    state = m.group(1).lower()
+    if state.startswith("cleared"):
+        try:
+            day = _dt.date.fromisoformat(state.split()[1])
+        except ValueError:
+            return [f"Disclosure 'cleared' needs a real date: {value[:60]}"]
+        if day > _dt.date.today():
+            return [f"Disclosure 'cleared {day}' is in the future: an agreed date that has not "
+                    "arrived is still an embargo"]
+        return []
+    if state == "embargoed" or re.search(r"(?i)embargo", value):
         return ["Disclosure is embargoed: nothing describing the flaw ships until the agreed disclosure "
                 "date has passed (or the vendor shipped a fix) and the owner signed off; then write "
                 "'cleared YYYY-MM-DD ...' (references/envelope.md)"]

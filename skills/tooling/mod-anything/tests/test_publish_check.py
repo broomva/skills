@@ -654,11 +654,6 @@ def test_other_types_block_until_allowed(clean: Path, name: str):
     assert kinds(clean, allow=[name]) == set()
 
 
-def test_url_encoded_home_paths_are_found(clean: Path):
-    (clean / "main.js").write_text('open("obsidian://open?path=%2FUsers%2Falice%2FResearch%2Fnote.md")\n')
-    assert ("userpath", "main.js") in kinds(clean)
-
-
 def test_a_deny_term_is_found_across_a_line_wrap(clean: Path):
     (clean / "note.md").write_text("Thanks to Ada\n  Lovelace for the idea.\n")
     assert ("denied", "note.md") in kinds(clean, deny=["Ada Lovelace"])
@@ -725,24 +720,6 @@ def test_hardware_addresses_in_names_block(clean: Path):
     assert ("address", "lamp-A4-C1-38-9F-12-34") in kinds(clean)
 
 
-def test_json_unicode_escapes_do_not_hide_deny_terms(clean: Path):
-    (clean / "state.json").write_text('{"vault": "B\\u00f3veda de Jos\\u00e9 Pe\\u00f1a"}\n')
-    assert ("denied", "state.json") in kinds(clean, deny=["José Peña"])
-
-
-def test_base64_content_in_text_files_is_decoded_and_read(clean: Path):
-    import base64 as b64
-    png = b"\x89PNG\r\n\x1a\n" + b"tEXtComment\x00/Users/alice/Private Vault/screenshot"
-    uri = b64.b64encode(png).decode()
-    (clean / "shot.svg").write_text(f'<svg><image href="data:image/png;base64,{uri}"/></svg>\n')
-    found = kinds(clean)
-    assert ("userpath", "shot.svg") in found
-    blob = b64.b64encode(b"bookmark\x00/Users/alice/Documents/Private Vault/x" * 2).decode()
-    wrapped = "\n\t".join(blob[i:i + 60] for i in range(0, len(blob), 60))
-    (clean / "prefs.plist").write_text(f"<plist><dict><key>b</key><data>\n\t{wrapped}\n</data></dict></plist>\n")
-    assert ("userpath", "prefs.plist") in kinds(clean)
-
-
 def test_svgs_are_listed_with_images(clean: Path):
     (clean / "logo.svg").write_text("<svg/>\n")
     assert pc.review_images(clean) == ["logo.svg"]
@@ -771,3 +748,40 @@ def test_text_that_stops_being_text_in_a_later_chunk_is_opaque(clean: Path, monk
     monkeypatch.setattr(pc, "CHUNK", 64)  # several chunks, so the failure is not in the first
     (clean / "notes.txt").write_bytes(b"plain text line\n" * 20 + b"\xff\xfe\x00compressed")
     assert ("opaque", "notes.txt") in kinds(clean)
+
+
+# --- round 3 of the fresh ledger: claim less (BRO-2820) -------------------------------------
+
+def test_encoded_content_is_not_decoded_but_its_carriers_are_reviewed(clean: Path):
+    # Each decoder became a new claim to break (one URL-decode pass, \\u for some checks,
+    # base64 split at a chunk edge), so the contract is: text is matched as written, and the
+    # types that usually embed encoded content are listed for a person.
+    (clean / "page.html").write_text('<img src="data:image/png;base64,L1VzZXJzL2FsaWNl">\n')
+    (clean / "notes.ipynb").write_text("{}\n")
+    (clean / "prefs.plist").write_text("<plist/>\n")
+    (clean / "main.js.map").write_text("{}\n")
+    assert kinds(clean) == set()
+    assert pc.review_extra(clean) == [("encoded", "main.js.map"), ("encoded", "notes.ipynb"),
+                                      ("encoded", "page.html"), ("encoded", "prefs.plist")]
+
+
+@pytest.mark.parametrize("name", [".yarnrc.yml", "pgpass.conf", "credentials.json"])
+def test_well_known_credential_names_block_even_with_a_shippable_extension(clean: Path, name: str):
+    (clean / name).write_text("npmAuthToken: x\n")
+    assert ("secret", name) in kinds(clean)
+
+
+@pytest.mark.parametrize("name", [".eslintrc", ".babelrc", ".prettierrc"])
+def test_js_tool_dotfiles_ship(clean: Path, name: str):
+    (clean / name).write_text("{}\n")
+    assert kinds(clean) == set()
+
+
+def test_digit_only_runs_are_not_hardware_addresses(clean: Path):
+    (clean / "rec-26-10-05-14-30-59.txt").write_text("at 12:30:45:10:20:30\n")
+    assert kinds(clean) == set()
+
+
+def test_windows_home_paths_match_in_any_case(clean: Path):
+    (clean / "run.log").write_text("c:\\users\\ada\\appdata\\x\n")
+    assert ("userpath", "run.log") in kinds(clean)

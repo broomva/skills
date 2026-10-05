@@ -14,7 +14,7 @@ journal, in the tree that will ship (SKILL.md step 8). `modlog.py lint-note <not
 | `## What it really does` | what the target was observed to do, as opposed to what its docs or your first reading said |
 | `## Verification` | at least one piece of evidence: a `path` to a screenshot, log or dump made from a fixture you wrote, or a [link](url) to a public source. Cite paths from the root (`--root`, else the enclosing skill): they must exist there, and any absolute, `~` or `..` path fails, because it points at something that does not ship. Evidence from real use is described without a path |
 | `## Gotchas` | a numbered list, each item `symptom → cause → fix` (`->` works too), of what this run hit; or `None hit on this run` when the journal recorded no failure. Never invent one to fill the section |
-| `## Envelope` | the rung, the terms that permit the mod, what is shipped, and one `Disclosure:` line starting `none found`, `embargoed (...)` or `cleared YYYY-MM-DD (...)` |
+| `## Envelope` | the rung, the terms that permit the mod, what is shipped, and one `Disclosure:` line starting `none found`, `embargoed (...)` or `cleared YYYY-MM-DD (...)`; the `cleared` date is a real date that has arrived |
 
 The lint also fails while any `TODO(mod-anything)` placeholder remains, and while the
 `Disclosure:` line says `embargoed`: such a note stays private until the conditions in
