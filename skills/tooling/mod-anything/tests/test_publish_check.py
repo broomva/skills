@@ -785,3 +785,22 @@ def test_digit_only_runs_are_not_hardware_addresses(clean: Path):
 def test_windows_home_paths_match_in_any_case(clean: Path):
     (clean / "run.log").write_text("c:\\users\\ada\\appdata\\x\n")
     assert ("userpath", "run.log") in kinds(clean)
+
+
+def test_packed_hardware_addresses_in_binary_content_are_found():
+    import plistlib
+    data = plistlib.dumps({"3c:22:fb:12:34:56": "Lamp"}, fmt=plistlib.FMT_BINARY)
+    assert "address" in {f["kind"] for f in pc._strings_findings("bt.plist", data, set(), None, [])}
+
+
+def test_a_single_encoded_file_is_listed_once(tmp_path: Path):
+    page = tmp_path / "page.html"
+    page.write_text("<p>hi</p>\n")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(page), "--no-gitleaks"], capture_output=True, text=True)
+    assert r.stdout.count("REVIEW encoded") == 1, r.stdout
+
+
+@pytest.mark.parametrize("name", ["notice.npmrc", "readme.env", "application_default_credentials.json"])
+def test_known_names_with_credential_suffixes_do_not_ship(clean: Path, name: str):
+    (clean / name).write_text("x\n")
+    assert kinds(clean) & {("type", name), ("secret", name)}

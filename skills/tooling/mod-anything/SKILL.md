@@ -136,15 +136,21 @@ own install. Write install and uninstall steps.
   - The journal itself stays in `<work>`. Copy it into the example only if every entry is fit
     to publish (the shipped example's journal was scrubbed; its last entries say how).
 - `modlog.py lint-note <note> --root <work>/ship` must exit 0. It fails on a placeholder, a
-  missing section, and a cited path that is missing, absolute or outside the ship tree.
+  missing section, and an evidence path cited under `## Verification` that is missing or
+  points outside the ship tree (absolute, `~` or `..`, with or without spaces). Write commands
+  and API routes there without backticks: a backticked `/api/...` reads as a path.
 - The Envelope's `Disclosure:` line is one of `none found`, `embargoed (...)` or
   `cleared YYYY-MM-DD (...)`, where the date is the day the §Rules disclosure conditions were
   met (a real date, not in the future). If the run found a vulnerability:
-  - write `embargoed`; lint then refuses the note, so the run ends here;
-  - draft the vendor report for the user, who decides whether to send it;
-  - move the ship tree and the journal out of `<work>` to a durable private place the user
-    names (temp folders are cleared), and tell the user what waits on the embargo;
-  - when the conditions are met, write `cleared` with that date and resume at step 9.
+  - write `embargoed (what, since YYYY-MM-DD)`; lint then refuses the note, so the run ends
+    here;
+  - draft the vendor report for the user, who decides whether to send it. If they decide
+    not to, the note never ships;
+  - ask the user for a durable private folder: one they name, outside every public repo and
+    outside temp folders, which get cleared. Record its path and the embargo in the journal
+    (`modlog.py log`), then move the ship tree, the journal and `deny.txt` there;
+  - when the conditions are met, write `cleared` with that date and resume at step 9 from
+    that folder.
 - Write the note even when the mod failed. A documented dead end saves the next agent hours.
 
 **9. Publish check, then copy.** Check the whole ship tree in one pass:
@@ -152,8 +158,10 @@ own install. Write install and uninstall steps.
 
 The deny file holds the private names you know: the user's email and display name, private
 project, vault and knowledge-graph names, and for a website the tenant subdomain and the
-organisation or account IDs a userscript's `@match` or selectors would carry. `publish_check.py` is a fail-closed filter
-in front of you, not a privacy guarantee.
+organisation or account IDs a userscript's `@match` or selectors would carry.
+
+`publish_check.py` is a fail-closed filter in front of the user, not a privacy guarantee. The
+agent runs it, but the user decides what ships.
 - **It blocks** (exit 1):
   - any file type that is not on its ship allowlist (source, docs, small data files,
     screenshots), and text files that are not really text;
@@ -171,19 +179,22 @@ in front of you, not a privacy guarantee.
   a `dist/` bundle can carry the target's modules or other people's code.
 - **It lists as REVIEW** every image and SVG; HTML, notebooks, plists and source maps (they
   often embed encoded content); every file under `evidence/` or `fixtures/`; every journal;
-  allowed paths and special files. It also says when gitleaks did not run. Read each one.
+  allowed paths and special files. It also says when gitleaks did not run.
 - `--allow <glob>` clears only "this type should not ship" findings, after you have looked at
   the file: for example a binary you built yourself (a Harmony `.dll`, an `.esp`) that holds
   only your code. Its content is still scanned. Globs match paths relative to each scanned
   folder. A `folder` finding (`.git`, `node_modules`, `venv`) cannot be allowed: remove the
   folder. Build output such as `dist/` is scanned like any folder.
 - `publish_check.py --help` prints the full list of what it blocks, reviews and cannot see.
-- **Exit 0** means "nothing this filter recognises". Share only after exit 0 and a look at
-  every REVIEW line.
+- **Exit 0** means "nothing this filter recognises", not "safe to share".
+- **The user reviews, not you.** Publishing is an ask (§Rules), and the ask carries the whole
+  REVIEW list and every `--allow` you used, each with one line on what the file is. The user
+  opens what they need and clears the list, or says no. The known failure mode is an agent
+  that reads its own REVIEW lines, sees exit 0 and asks only "publish?".
 - **Then copy the tree byte for byte** into a checkout of this skill's repo, at the same
   relative paths. Before committing, run both checks again on the destination: `lint-note` on
   the note, and `publish_check.py` on `examples/<slug>` and the note with the same
-  `--deny-file`. Publishing is an ask (§Rules).
+  `--deny-file`.
 
 ## The ladder
 
@@ -233,13 +244,14 @@ These are hard. The full reasoning and the legal summary are in `references/enve
   - contact a vendor or anyone else outside the user's machine (draft it; the user sends it);
   - publish.
 - **Back up first.** Kill processes by exact PID, never by pattern.
-- **Disclosure.** If you find a vulnerability, nothing describing it leaves the private repo
-  until the vendor has been contacted, the disclosure date agreed with them has passed (or
-  they shipped a fix), and the owner has signed off. A vendor that never answers gets a
-  deadline the owner sets. Private journals stay unblocked. A device that obeys a replayed command with no pairing or
-  authentication is such a finding. The mod may still drive the user's own device locally
-  (the device ask above applies), but nothing describing the protocol, including the mod's
-  code, ships until disclosure clears.
+- **Disclosure.** If you find a vulnerability, nothing describing it leaves the user's private
+  storage until the vendor has been contacted, the disclosure date agreed with them has
+  passed (or they shipped a fix), and the owner has signed off. A vendor that never answers
+  gets a deadline the owner sets. Private journals stay unblocked.
+  - A device that obeys a replayed command with no pairing or authentication is such a
+    finding. The mod may still drive the user's own device locally (the device ask above
+    applies), but nothing describing the protocol, including the mod's code, ships until
+    disclosure clears.
 
 ## Scripts
 

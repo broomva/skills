@@ -121,7 +121,7 @@ def _is_pe(head: bytes) -> bool:
 
 
 CAPTURE_EXT = {".har", ".pcap", ".pcapng", ".cap", ".pklg", ".btsnoop", ".saz", ".etl", ".snoop"}
-# Dependency, build and VCS folders: never part of a mod, and not scanned (BLOCK "folder").
+# Dependency, cache and VCS folders: never part of a mod, and not scanned (BLOCK "folder").
 # Build output (dist/, build/) is the mod's own code, so it is scanned like anything else.
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "bower_components", "__pycache__", ".venv",
              "venv", ".tox", ".nox", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".gradle",
@@ -156,7 +156,9 @@ SHIP_TEXT_NAMES = re.compile(
 JOURNAL_NAMES = {"MODLOG.md", ".modlog.json"}
 # Well-known credential files whose extension is otherwise shippable (.yml, .conf, .json).
 CREDENTIAL_NAMES = {".yarnrc.yml", "pgpass.conf", "_netrc", "credentials", "credentials.json",
-                    ".dockercfg", "service-account.json", "client_secret.json"}
+                    ".dockercfg", "service-account.json", "client_secret.json",
+                    "application_default_credentials.json", "rclone.conf", "secrets.yml",
+                    "secrets.yaml", "secrets.json", "auth.json", "pip.conf"}
 
 SECRET_PATTERNS = [
     ("private key block", re.compile(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")),
@@ -188,6 +190,9 @@ USERPATH = re.compile(r"(?:/Users/|/home/)(?!Shared\b)[A-Za-z0-9][A-Za-z0-9._-]*
 # A hardware address in either separator style. RFC 7042's documentation range and the
 # all-zero and broadcast addresses are fine in fixtures.
 DEVICE_ADDR = re.compile(r"(?<![0-9A-Za-z])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Za-z])")
+# In binary content values are packed against letters ("Lamp3c:22:fb:..."), so the strings
+# pass only refuses a neighbouring hex digit, as it drops word boundaries for secrets.
+DEVICE_ADDR_LOOSE = re.compile(DEVICE_ADDR.pattern.replace("0-9A-Za-z", "0-9A-Fa-f"))
 DOC_ADDR = re.compile(r"(?i)^00[:-]00[:-]5e[:-]00[:-]53[:-][0-9a-f]{2}$|^(?:00[:-]){5}00$|^(?:ff[:-]){5}ff$")
 MAC_HOST = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9-]*-(?:MacBook(?:-Pro|-Air)?|iMac(?:-Pro)?|Mac-mini|Mac-Pro|Mac-Studio)(?:-\d+)?(?:\.local)?\b")
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".tiff", ".bmp"}
@@ -257,8 +262,8 @@ def ship_type(name: str) -> str | None:
         return "image"
     if ext in SHIP_TEXT_EXT:
         return "text"
-    if SHIP_TEXT_NAMES.match(name) and ext not in BINARY_EXT | CAPTURE_EXT:
-        return "text"  # LICENSE, Makefile, .gitignore, README-ja ...
+    if SHIP_TEXT_NAMES.match(name) and not ext:
+        return "text"  # LICENSE, Makefile, .gitignore, README-ja (README.md is covered by .md)
     return None
 
 
@@ -301,7 +306,7 @@ def _text_findings(rel: str, text: str, hosts: set[str], user: str | None, deny:
     m = USERPATH.search(text)
     if m:
         out.append({"kind": "userpath", "path": rel, "detail": m.group(0)})
-    m = next((m for m in DEVICE_ADDR.finditer(text)
+    m = next((m for m in (DEVICE_ADDR_LOOSE if loose else DEVICE_ADDR).finditer(text)
               if re.search(r"[A-Fa-f]", m.group(0)) and not DOC_ADDR.match(m.group(0))), None)
     if m:
         out.append({"kind": "address", "path": rel, "detail": f"hardware address {m.group(0)}"})
@@ -637,8 +642,8 @@ def _report_for(path: Path, allow: list[str], max_mb: float, deny: list[str],
         rep["findings"] = [f for f in rep["findings"] if f["path"] != "."]
         rep["review"] = review_images(Path(tmp))
         rep["extra"] = review_extra(Path(tmp))
-        kind = _extra_kind(path)
-        if kind:
+        kind = _extra_kind(path)  # the real path: evidence/ and fixtures/ come from its folders
+        if kind and (kind, path.name) not in rep["extra"]:
             rep["extra"].append((kind, path.name))
         rep["skipped"] = []
     rep["label"] = str(path.parent)

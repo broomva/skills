@@ -33,9 +33,9 @@ where the user is.
 Reverse engineering finds vulnerabilities, in apps (an open debugging port, a reachable
 command shell) and in devices (a signature check that can be poked off). When you find one:
 
-1. Keep working privately. Journals, private notes and private knowledge-graph commits stay
+1. Keep working privately. Journals and the user's private notes and repositories stay
    unblocked, because the method depends on them.
-2. Nothing describing the flaw leaves the private repo until three things are true: the vendor
+2. Nothing describing the flaw leaves the user's private storage until three things are true: the vendor
    has been contacted, the disclosure date agreed with them has passed (or they shipped a
    fix), and the owner has signed off. That covers a public field note, a pull request to a
    public knowledge base, a post or a release. A vendor that never answers gets a deadline the

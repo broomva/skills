@@ -60,8 +60,9 @@ All three are Python 3.9+, standard library only, and print `--help`.
 | `scripts/publish_check.py` | fail-closed filter before sharing (allowlisted file types, secrets via gitleaks, home paths, hardware addresses, deny-file terms); `--json` available | 0 clean · 1 findings · 2 could not read |
 | `scripts/recon_macos_app.py` | recon of a macOS `.app` bundle with ranked routes | 0 ok · 2 not an app bundle |
 
-`publish_check.py` is a filter in front of a person, not a privacy guarantee. It does not
-detect cookies, sessions or personal data, and says so in its output.
+`publish_check.py` is a filter in front of a person, not a privacy guarantee. It decodes
+nothing and does not detect cookies, sessions or personal data; its `--help` and its OK line
+say so. The agent runs it, and the user reviews its REVIEW list before anything is published.
 
 ## Layout
 

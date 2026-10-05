@@ -552,3 +552,24 @@ def test_paths_with_spaces_are_held_to_the_root_too(tmp_path: Path, cite: str):
     note = GOOD_NOTE.replace("`evidence/shot.png`", cite)
     problems = modlog.lint_note(note, base=[ship, ship], root=ship)
     assert any("outside the ship tree" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("cite", ["`~/Library/Application Support/obsidian/Preferences`",
+                                  "`/Users/ada/Ada Private Vault`",
+                                  "`../other skill/evidence/run.dmp`"])
+def test_rooted_paths_fail_whatever_their_extension_or_spaces(tmp_path: Path, cite: str):
+    # Round 3: an extensionless path with a space still skipped containment.
+    note = GOOD_NOTE.replace("`evidence/shot.png`", "`evidence/shot.png`, " + cite)
+    (tmp_path / "evidence").mkdir()
+    (tmp_path / "evidence" / "shot.png").write_bytes(b"png")
+    problems = modlog.lint_note(note, base=[tmp_path], root=tmp_path)
+    assert any("outside the ship tree" in p for p in problems), problems
+
+
+@pytest.mark.parametrize("disclosure", [
+    "none found\n  embargoed until 2027-03-01 (acme)",                 # continuation line
+    "cleared 2026-10-01 (vendor contacted; embargo until 2999-03-01)",  # a later date inside
+])
+def test_disclosure_reads_the_whole_item_and_every_date(disclosure: str):
+    note = GOOD_NOTE.replace("- Disclosure: none found", f"- Disclosure: {disclosure}")
+    assert modlog.lint_note(note) != []

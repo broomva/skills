@@ -456,7 +456,7 @@ def cmd_note(d: Path, out: Path, force: bool) -> Path:
 - Rung: {rung}
 - Terms checked: {TODO}: the target's terms permit this (cite them)
 - Bytes shipped: only our own code, assets, patches or converters
-- Disclosure: {TODO}: none found | embargoed (vendor, date contacted) | cleared YYYY-MM-DD (how)
+- Disclosure: {TODO}: none found | embargoed (what, since YYYY-MM-DD) | cleared YYYY-MM-DD (how)
 """
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
@@ -466,7 +466,8 @@ def cmd_note(d: Path, out: Path, force: bool) -> Path:
 _HEADING = re.compile(r"^##\s+(.+?)\s*$", re.M)
 _GOTCHA = re.compile(r"^\s*\d+\.\s+.+(?:→|->).+(?:→|->).+$", re.S)
 # The Envelope's disclosure line, in one of three states (references/envelope.md).
-_DISCLOSURE = re.compile(r"(?im)^\s*[-*]?\s*Disclosure:\s*(.*)$")
+# The Disclosure item, with any indented continuation lines.
+_DISCLOSURE = re.compile(r"(?im)^\s*[-*]?\s*Disclosure:\s*(.*(?:\n[ \t]+\S.*)*)")
 _DISCLOSURE_STATE = re.compile(r"(?i)^(none found|embargoed|cleared \d{4}-\d{2}-\d{2})\b")
 _EVIDENCE = re.compile(r"`[^`]+`|\[[^\]]+\]\([^)]+\)")
 _TICKED = re.compile(r"`([^`]+)`")
@@ -523,7 +524,9 @@ def _citation_problems(ver: str, bases: list[Path], root: Path | None) -> list[s
     problems: list[str] = []
     top = root.resolve() if root is not None else None
     for tok in dict.fromkeys(t.strip() for t in _TICKED.findall(ver) + _LINK.findall(ver)):
-        path = _evidence_path(tok) or (tok if "/" in tok and " " not in tok and "://" not in tok else None)
+        rooted = tok.startswith(("/", "~", "./", "../"))  # a path even with spaces, any extension
+        path = _evidence_path(tok) or (tok if rooted or ("/" in tok and " " not in tok and "://" not in tok)
+                                       else None)
         if path is None:
             continue  # a command, a URL or prose
         if top is not None and (path.startswith(("/", "~")) or ".." in Path(path).parts):
@@ -547,7 +550,7 @@ def _disclosure_problems(env: str) -> list[str]:
         return ["## Envelope has no 'Disclosure:' line (none found | embargoed ... | cleared YYYY-MM-DD ...)"]
     if len(lines) > 1:
         return ["## Envelope has more than one 'Disclosure:' line; keep one"]
-    value = lines[0].strip()
+    value = " ".join(lines[0].split())
     if TODO in value:
         return []  # already reported as an unfilled placeholder
     m = _DISCLOSURE_STATE.match(value)
@@ -559,9 +562,10 @@ def _disclosure_problems(env: str) -> list[str]:
             day = _dt.date.fromisoformat(state.split()[1])
         except ValueError:
             return [f"Disclosure 'cleared' needs a real date: {value[:60]}"]
-        if day > _dt.date.today():
-            return [f"Disclosure 'cleared {day}' is in the future: an agreed date that has not "
-                    "arrived is still an embargo"]
+        later = [d for d in re.findall(r"\d{4}-\d{2}-\d{2}", value) if d > _dt.date.today().isoformat()]
+        if day > _dt.date.today() or later:
+            return [f"Disclosure names a date that has not arrived ({(later or [str(day)])[0]}): "
+                    "an agreed date in the future is still an embargo"]
         return []
     if state == "embargoed" or re.search(r"(?i)embargo", value):
         return ["Disclosure is embargoed: nothing describing the flaw ships until the agreed disclosure "
