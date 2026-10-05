@@ -36,14 +36,16 @@ command shell) and in devices (a signature check that can be poked off). When yo
 1. Keep working privately. Journals, private notes and private knowledge-graph commits stay
    unblocked, because the method depends on them.
 2. Nothing describing the flaw leaves the private repo until three things are true: the vendor
-   has been contacted, an embargo has been agreed, and the owner has signed off. That covers a
-   public field note, a pull request to a public knowledge base, a post or a release. A vendor
-   that never answers gets a deadline the owner sets.
+   has been contacted, the disclosure date agreed with them has passed (or they shipped a
+   fix), and the owner has signed off. That covers a public field note, a pull request to a
+   public knowledge base, a post or a release. A vendor that never answers gets a deadline the
+   owner sets.
 3. A published field note describes the mod, not the exploit. Defeating the protection was
    never in scope.
-4. While the embargo holds, the note's `Disclosure:` line says `embargoed`, and
-   `modlog.py lint-note` refuses it, so the documented publish flow (SKILL.md steps 8-9)
-   stops there.
+4. The note's `Disclosure:` line records the state: `none found`, `embargoed (...)` while the
+   embargo holds, and `cleared YYYY-MM-DD (...)` once step 2's conditions are met.
+   `modlog.py lint-note` refuses `embargoed`, so the documented publish flow (SKILL.md steps
+   8-9) stops there until the line says `cleared`.
 
 One public write-up shows the pattern. It reverse-engineered five peripherals and found a
 microphone command shell and a light whose signature check could be disabled, and its author

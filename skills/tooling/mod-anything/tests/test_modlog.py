@@ -231,21 +231,55 @@ def test_lint_note_refuses_citations_outside_the_root(tmp_path: Path):
     escape = GOOD_NOTE.replace("`evidence/shot.png`", "`../../../evidence/dom.html`")
     note.write_text(escape)
     r = run(tmp_path, "lint-note", str(note), "--root", str(ship))
-    assert r.returncode == 1 and "outside ship/" in r.stdout, r.stdout
+    assert r.returncode == 1 and "outside the ship tree" in r.stdout, r.stdout
     absolute = GOOD_NOTE.replace("`evidence/shot.png`", f"`{tmp_path / 'evidence' / 'dom.html'}`")
     note.write_text(absolute)
     r = run(tmp_path, "lint-note", str(note), "--root", str(ship))
-    assert r.returncode == 1 and "absolute path" in r.stdout, r.stdout
+    assert r.returncode == 1 and "outside the ship tree" in r.stdout, r.stdout
+    # A .. path fails even when it resolves inside the root: cite paths from the root.
+    (ship / "examples" / "x").mkdir(parents=True)
+    (ship / "examples" / "x" / "shot.png").write_bytes(b"png")
+    note.write_text(GOOD_NOTE.replace("`evidence/shot.png`", "`../../examples/x/shot.png`"))
+    assert run(tmp_path, "lint-note", str(note), "--root", str(ship)).returncode == 1
+    # Path-shaped tokens are held to the root whatever their extension; commands are not paths.
+    note.write_text(GOOD_NOTE.replace("`evidence/shot.png`",
+                                      "`examples/x/shot.png`, `/tmp/tmp.x/lamp.pklg`, `sample 4242 1`"))
+    r = run(tmp_path, "lint-note", str(note), "--root", str(ship))
+    assert r.returncode == 1 and "/tmp/tmp.x/lamp.pklg" in r.stdout and "sample" not in r.stdout, r.stdout
     # Without --root and with no SKILL.md above, the root is the note's own folder.
     note.write_text(escape)
     assert "outside" in run(tmp_path, "lint-note", str(note)).stdout
 
 
-def test_lint_note_blocks_an_embargoed_disclosure():
-    embargoed = GOOD_NOTE.replace("- Disclosure: none found", "- Disclosure: embargoed until the vendor answers")
-    assert any("under embargo" in p for p in modlog.lint_note(embargoed))
+@pytest.mark.parametrize("line,ok", [
+    ("none found", True),
+    ("cleared 2027-01-08 (vendor fixed it in 2.3; owner signed off)", True),
+    ("embargoed (vendor contacted 2026-10-10, disclosure date 2027-01-08)", False),
+    ("vendor contacted, awaiting fix", False),          # not one of the three states
+    ("cleared after the fix", False),                   # cleared needs its date
+])
+def test_disclosure_has_three_states_and_only_embargoed_blocks(line: str, ok: bool):
+    note = GOOD_NOTE.replace("- Disclosure: none found", f"- Disclosure: {line}")
+    assert (modlog.lint_note(note) == []) is ok, modlog.lint_note(note)
+
+
+def test_disclosure_line_is_required_and_single():
     missing = GOOD_NOTE.replace("- Disclosure: none found\n", "")
     assert any("no 'Disclosure:' line" in p for p in modlog.lint_note(missing))
+    two = GOOD_NOTE.replace("- Disclosure: none found", "- Disclosure: none found\n- Disclosure: embargoed")
+    assert any("more than one" in p for p in modlog.lint_note(two))
+
+
+def test_gotchas_accept_ascii_arrows():
+    ascii_arrows = GOOD_NOTE.replace("1. Plugin missing → manifest id mismatch → match folder name to id",
+                                     "1. Plugin missing -> manifest id mismatch -> match folder name to id")
+    assert modlog.lint_note(ascii_arrows) == []
+
+
+def test_the_journal_keeps_non_ascii_readable(tmp_path: Path):
+    # A deny-file scan reads the raw bytes: "Jos\u00e9" would hide "José".
+    run(tmp_path, "init", "--target", "Bóveda de José", "--idea", "x")
+    assert "Bóveda de José" in (tmp_path / ".modlog.json").read_text(encoding="utf-8")
 
 
 def test_an_unwritable_working_folder_exits_2_not_1(tmp_path: Path):

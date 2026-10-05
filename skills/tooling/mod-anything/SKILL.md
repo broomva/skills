@@ -129,20 +129,26 @@ own install. Write install and uninstall steps.
   run hit; if nothing failed, keep the scaffold's "None hit on this run" and invent none.
   - The scaffold names each journal evidence file in a placeholder rather than citing it,
     because `<work>` never ships. For each one, copy it into `examples/<slug>/` and cite it
-    by its ship-tree path, or describe it without a path.
+    by its path from the ship-tree root (`examples/<slug>/evidence/run.txt`, no `..`), or
+    describe it without a path.
+  - At least one piece of evidence ships, made from a fixture you wrote, or the note links
+    to a public source. Evidence from real use is described, never copied in.
   - The journal itself stays in `<work>`. Copy it into the example only if every entry is fit
     to publish (the shipped example's journal was scrubbed; its last entries say how).
 - `modlog.py lint-note <note> --root <work>/ship` must exit 0. It fails on a placeholder, a
   missing section, and a cited path that is missing, absolute or outside the ship tree.
-- If the run found a vulnerability, write `Disclosure: embargoed ...`. Lint then refuses the
-  note, and the ship tree stays private until the §Rules disclosure conditions are met.
+- The Envelope's `Disclosure:` line is one of `none found`, `embargoed (...)` or
+  `cleared YYYY-MM-DD (...)`. If the run found a vulnerability, write `embargoed`: lint then
+  refuses the note, and the ship tree stays private until the §Rules disclosure conditions
+  are met. Then write `cleared` with the date.
 - Write the note even when the mod failed. A documented dead end saves the next agent hours.
 
 **9. Publish check, then copy.** Check the whole ship tree in one pass:
 `python3 $S/scripts/publish_check.py <work>/ship --deny-file <work>/deny.txt`
 
-The deny file holds the private names you know: the user's email and display name, and
-private project, vault and knowledge-graph names. `publish_check.py` is a fail-closed filter
+The deny file holds the private names you know: the user's email and display name, private
+project, vault and knowledge-graph names, and for a website the tenant subdomain and the
+organisation or account IDs a userscript's `@match` or selectors would carry. `publish_check.py` is a fail-closed filter
 in front of you, not a privacy guarantee.
 - **It blocks** (exit 1):
   - any file type that is not on its ship allowlist (source, docs, small data files,
@@ -157,10 +163,15 @@ in front of you, not a privacy guarantee.
 - **It does not detect** cookies, session values, serial numbers, or personal data such as
   emails and display names unless they are in the deny file. Keep those out at the source
   (step 3).
-- **It lists as REVIEW** every image, every file under `evidence/` or `fixtures/`, every
-  journal, allowed paths and special files, and says when gitleaks did not run. Read each one.
+- **It lists as REVIEW** every image and SVG, every file under `evidence/` or `fixtures/`,
+  every journal, allowed paths and special files, and says when gitleaks did not run. Read
+  each one.
 - `--allow <glob>` clears only "this type should not ship" findings, after you have looked at
-  the file. Its content is still scanned. Globs match paths relative to each scanned folder.
+  the file: for example a binary you built yourself (a Harmony `.dll`, an `.esp`) that holds
+  only your code. Its content is still scanned. Globs match paths relative to each scanned
+  folder. A `folder` finding (`.git`, `node_modules`, `venv`) cannot be allowed: remove the
+  folder. Build output such as `dist/` is scanned like any folder.
+- `publish_check.py --help` prints the full list of what it blocks, reviews and cannot see.
 - **Exit 0** means "nothing this filter recognises". Share only after exit 0 and a look at
   every REVIEW line.
 - **Then copy the tree byte for byte** into a checkout of this skill's repo, at the same
@@ -216,8 +227,9 @@ These are hard. The full reasoning and the legal summary are in `references/enve
   - publish.
 - **Back up first.** Kill processes by exact PID, never by pattern.
 - **Disclosure.** If you find a vulnerability, nothing describing it leaves the private repo
-  until the vendor has been contacted, an embargo agreed, and the owner has signed off.
-  Private journals stay unblocked. A device that obeys a replayed command with no pairing or
+  until the vendor has been contacted, the disclosure date agreed with them has passed (or
+  they shipped a fix), and the owner has signed off. A vendor that never answers gets a
+  deadline the owner sets. Private journals stay unblocked. A device that obeys a replayed command with no pairing or
   authentication is such a finding. The mod may still drive the user's own device locally
   (the device ask above applies), but nothing describing the protocol, including the mod's
   code, ships until disclosure clears.
@@ -227,7 +239,7 @@ These are hard. The full reasoning and the legal summary are in `references/enve
 | Script | What it does |
 |---|---|
 | `scripts/modlog.py` | `init`, `log` (a free entry, no route needed), `route` (`--subgoal`, `--supersedes`), `ok` (refuses missing evidence), `fail` (exits 3 on a stall, with the re-rank checklist), `status`, `note` (scaffolds a field note), `lint-note` (checks a note is complete and its citations stay inside `--root`) |
-| `scripts/publish_check.py` | the fail-closed filter of step 9: what it blocks, lists for review and does not detect is listed there and in its `--help`. `--json` for machine-readable output |
+| `scripts/publish_check.py` | the fail-closed filter of step 9: what it blocks, lists for review and cannot see is in step 9 and in its `--help`. `--json` for machine-readable output |
 | `scripts/recon_macos_app.py` | recon adapter for macOS `.app` bundles: stack, extension points, Electron fuses (from the slice this machine runs), protections, update channel, state folders, and the ranked routes |
 
 Exit codes:

@@ -179,7 +179,7 @@ def save(d: Path, state: dict) -> None:
     """Atomic: write a temp file and rename it over the state, so a crash or a concurrent
     reader never sees a half-written journal."""
     tmp = d / (STATE + f".tmp{os.getpid()}")
-    tmp.write_text(json.dumps(state, indent=2) + "\n", encoding="utf-8")
+    tmp.write_text(json.dumps(state, indent=2, ensure_ascii=False) + "\n", encoding="utf-8")
     os.replace(tmp, d / STATE)
 
 
@@ -453,7 +453,7 @@ def cmd_note(d: Path, out: Path, force: bool) -> Path:
 - Rung: {rung}
 - Terms checked: {TODO}: the target's terms permit this (cite them)
 - Bytes shipped: only our own code, assets, patches or converters
-- Disclosure: {TODO}: none found, or the coordinated-disclosure status
+- Disclosure: {TODO}: none found | embargoed (vendor, date contacted) | cleared YYYY-MM-DD (how)
 """
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(text, encoding="utf-8")
@@ -461,7 +461,10 @@ def cmd_note(d: Path, out: Path, force: bool) -> Path:
 
 
 _HEADING = re.compile(r"^##\s+(.+?)\s*$", re.M)
-_GOTCHA = re.compile(r"^\s*\d+\.\s+.+→.+→.+$", re.S)
+_GOTCHA = re.compile(r"^\s*\d+\.\s+.+(?:→|->).+(?:→|->).+$", re.S)
+# The Envelope's disclosure line, in one of three states (references/envelope.md).
+_DISCLOSURE = re.compile(r"(?im)^\s*[-*]?\s*Disclosure:\s*(.*)$")
+_DISCLOSURE_STATE = re.compile(r"(?i)^(none found|embargoed|cleared \d{4}-\d{2}-\d{2})\b")
 _EVIDENCE = re.compile(r"`[^`]+`|\[[^\]]+\]\([^)]+\)")
 _TICKED = re.compile(r"`([^`]+)`")
 _LINK = re.compile(r"\[[^\]]*\]\(([^)\s]+)(?:\s+\"[^\"]*\")?\)")
@@ -510,14 +513,63 @@ def skill_root(path: Path) -> Path | None:
     return None
 
 
+def _citation_problems(ver: str, bases: list[Path], root: Path | None) -> list[str]:
+    """Evidence cited in ## Verification must exist. With a root, every path-shaped token
+    (one with a /, no spaces, not a URL) must also stay inside it: absolute, ~ and ..
+    paths fail whatever their extension, because they point at something that does not
+    ship."""
+    problems: list[str] = []
+    toks = list(dict.fromkeys(t.strip() for t in _TICKED.findall(ver) + _LINK.findall(ver)))
+
+    def escapes(tok: str) -> bool:
+        return tok.startswith(("/", "~")) or ".." in Path(tok).parts
+
+    if root is not None:
+        for tok in toks:
+            if "/" in tok and " " not in tok and "://" not in tok and escapes(tok):
+                problems.append(f"## Verification cites a path outside the ship tree (absolute, ~ or ..): {tok}")
+    top = root.resolve() if root is not None else None
+    for tok in dict.fromkeys(c for c in map(_evidence_path, toks) if c):
+        if top is not None and escapes(tok):
+            continue  # reported above
+        p = Path(tok).expanduser()
+        hits = [p] if p.is_absolute() else [(b / p) for b in bases if (b / p).exists()]
+        if not (hits and hits[0].exists()):
+            problems.append(f"## Verification cites a path that does not exist: {tok}")
+        elif top is not None and not any(h.resolve().is_relative_to(top) for h in hits):
+            problems.append(f"## Verification cites a path outside {top.name}/, which does not ship: {tok}")
+    return problems
+
+
+def _disclosure_problems(env: str) -> list[str]:
+    """Exactly one Disclosure line, in one of three states; 'embargoed' cannot ship."""
+    lines = _DISCLOSURE.findall(env)
+    if not lines or not lines[0].strip():
+        return ["## Envelope has no 'Disclosure:' line (none found | embargoed ... | cleared YYYY-MM-DD ...)"]
+    if len(lines) > 1:
+        return ["## Envelope has more than one 'Disclosure:' line; keep one"]
+    value = lines[0].strip()
+    if TODO in value:
+        return []  # already reported as an unfilled placeholder
+    m = _DISCLOSURE_STATE.match(value)
+    if not m:
+        return [f"Disclosure must start with 'none found', 'embargoed' or 'cleared YYYY-MM-DD': {value[:60]}"]
+    if m.group(1).lower() == "embargoed":
+        return ["Disclosure is embargoed: nothing describing the flaw ships until the agreed disclosure "
+                "date has passed (or the vendor shipped a fix) and the owner signed off; then write "
+                "'cleared YYYY-MM-DD ...' (references/envelope.md)"]
+    return []
+
+
 def lint_note(text: str, base: Path | list[Path] | None = None, root: Path | None = None) -> list[str]:
     """Problems that make a field note unusable to the next agent, or unfit to ship. Empty =
     clean.
 
     With `base` (the note's folder, or a list of folders), every evidence path cited in
-    ## Verification must exist under at least one of them. With `root`, it must also resolve
-    inside `root`: an absolute path or a ../ escape points at something that does not ship.
-    The CLI passes the note's folder and the root, and always sets the root."""
+    ## Verification must exist under at least one of them; with `root`, it must also stay
+    inside `root` (_citation_problems). The Envelope needs one Disclosure line
+    (_disclosure_problems). The CLI passes the note's folder and the root, and always sets
+    the root."""
     problems: list[str] = []
     headings = [h.strip() for h in _HEADING.findall(text)]
     sections: dict[str, str] = {}
@@ -535,20 +587,7 @@ def lint_note(text: str, base: Path | list[Path] | None = None, root: Path | Non
     if "Verification" in sections and not _EVIDENCE.search(ver):
         problems.append("## Verification cites no evidence (a `path` or a [link](url))")
     if base is not None and "Verification" in sections:
-        bases = base if isinstance(base, list) else [base]
-        cited = [_evidence_path(t) for t in _TICKED.findall(ver)]
-        cited += [_evidence_path(t) for t in _LINK.findall(ver)]
-        top = root.resolve() if root is not None else None
-        for tok in dict.fromkeys(c for c in cited if c):
-            p = Path(tok).expanduser()
-            if top is not None and (p.is_absolute() or tok.startswith("~")):
-                problems.append(f"## Verification cites an absolute path, which does not ship: {tok}")
-                continue
-            hits = [p] if p.is_absolute() else [(b / p) for b in bases if (b / p).exists()]
-            if not (hits and hits[0].exists()):
-                problems.append(f"## Verification cites a path that does not exist: {tok}")
-            elif top is not None and not any(h.resolve().is_relative_to(top) for h in hits):
-                problems.append(f"## Verification cites a path outside {top.name}/, which does not ship: {tok}")
+        problems += _citation_problems(ver, base if isinstance(base, list) else [base], root)
     got = sections.get("Gotchas", "")
     if "Gotchas" in sections:
         items = _items(got)
@@ -557,14 +596,8 @@ def lint_note(text: str, base: Path | list[Path] | None = None, root: Path | Non
         for it in items:
             if not _GOTCHA.match(it):
                 problems.append(f"gotcha is not 'symptom → cause → fix': {it[:70]}")
-    env = sections.get("Envelope", "")
     if "Envelope" in sections:
-        m = re.search(r"(?im)^\s*[-*]?\s*Disclosure:\s*(.*)$", env)
-        if not m or not m.group(1).strip():
-            problems.append("## Envelope has no 'Disclosure:' line (none found, or the disclosure status)")
-        elif re.search(r"(?i)embargo", m.group(1)):
-            problems.append("Disclosure is under embargo: nothing describing the flaw ships until the vendor "
-                            "was contacted, an embargo agreed and the owner signed off (envelope.md)")
+        problems += _disclosure_problems(sections["Envelope"])
     route = sections.get("Route", "")
     if "Route" in sections and not re.search(r"(?i)\brung\s*(?:[1-5]\b|passthrough)|passthrough", route):
         problems.append("## Route does not name a rung (1-5 or passthrough)")

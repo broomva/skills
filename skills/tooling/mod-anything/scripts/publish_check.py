@@ -18,8 +18,9 @@ BLOCK (exit 1), file by file:
             is not valid UTF-8 (or UTF-16 with a byte-order mark) or holds NUL bytes, an
             image extension on a file that is not that image, and .DS_Store-style junk
   capture   network and device captures by extension (.har, .pcap, .pcapng, .pklg, .btsnoop)
-  folder    dependency, build and VCS folders (.git, node_modules, venv, __pycache__, ...):
-            a mod does not ship them, and they are not scanned
+  folder    dependency, cache and VCS folders (.git, node_modules, venv, __pycache__, ...):
+            a mod does not ship them, they are not scanned, and --allow cannot clear them.
+            Remove them from the tree. Build output (dist/, build/) is scanned like any folder
   symlink   every symbolic link (git commits the target path; archivers follow it)
   large     any file over --max-mb (default 5)
   secret    found by gitleaks (`gitleaks dir`, run with its default rules: an in-tree config,
@@ -42,7 +43,8 @@ BLOCK (exit 1), file by file:
 
 Names are checked like contents: git publishes file and folder names too. Non-text files are
 also read for printable text (Latin-1, and UTF-16 at either byte alignment), so a path in an
-image's metadata is found. Compressed or encrypted content cannot be read this way.
+image's metadata is found. In text files, URL-encoding, JSON \\u escapes and base64 blobs
+(data: URIs, plist <data>, long runs) are decoded and read too.
 
 --allow GLOB clears only the "is this file shippable at all" findings (type, binary, opaque,
 capture, large, symlink) for matching paths and their contents. Content and name findings
@@ -52,15 +54,16 @@ each scanned folder.
 A gitleaks config or ignore file inside the tree is a BLOCK too (kind "gitleaks"): gitleaks
 reads <source>/.gitleaksignore whatever flags say, so it would silence a plain gitleaks run.
 
-REVIEW (exit unaffected): images (a file whose extension claims an image its bytes are not is
-opaque instead), every file under an `evidence/` or `fixtures/` folder and every modlog
+REVIEW (exit unaffected): images and SVGs (a file whose extension claims an image its bytes
+are not is opaque instead), every file under an `evidence/` or `fixtures/` folder and every modlog
 journal (MODLOG.md, .modlog.json): captured output, recordings and journals can carry
 someone's data, device addresses or keys. Also allowed paths, special files (FIFOs, sockets),
 and the secrets engine when gitleaks is not installed or was skipped with --no-gitleaks.
 gitleaks installed but failing exits 2.
 
 NOT detected, by design: cookies and session values, personal data such as emails and display
-names, serial numbers, compressed or encrypted content inside an --allow'ed file, and code
+names (unless they are in --deny-file), serial numbers, compressed or encrypted content (inside
+an image's chunks or an --allow'ed file), text in encodings other than those above, and code
 transcribed from a decompiler without its header. Keep them out at the source
 (never copy a browser profile; captures are blocked), put names you know in --deny-file, and
 read every REVIEW line. Exit 0 means "nothing this filter recognises", not "nothing private".
@@ -75,6 +78,8 @@ on PATH when available.
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import codecs
 import fnmatch
 import getpass
@@ -117,9 +122,10 @@ def _is_pe(head: bytes) -> bool:
 
 CAPTURE_EXT = {".har", ".pcap", ".pcapng", ".cap", ".pklg", ".btsnoop", ".saz", ".etl", ".snoop"}
 # Dependency, build and VCS folders: never part of a mod, and not scanned (BLOCK "folder").
+# Build output (dist/, build/) is the mod's own code, so it is scanned like anything else.
 SKIP_DIRS = {".git", ".hg", ".svn", "node_modules", "bower_components", "__pycache__", ".venv",
              "venv", ".tox", ".nox", ".mypy_cache", ".pytest_cache", ".ruff_cache", ".gradle",
-             ".next", ".nuxt", ".turbo", ".parcel-cache", "target", "dist", "build", ".eggs"}
+             ".parcel-cache", ".turbo", ".eggs"}
 # The ship allowlist: what a mod is made of. Text types are read and must decode as text.
 SHIP_TEXT_EXT = {
     # docs and data
@@ -143,7 +149,10 @@ SHIP_TEXT_NAMES = re.compile(
     r"(?i)^(?:licen[cs]e|notice|readme|changelog|changes|authors|contributors|copying|"
     r"makefile|justfile|dockerfile|containerfile|procfile|gemfile|rakefile|brewfile|"
     r"\.gitignore|\.gitattributes|\.editorconfig|\.npmignore|\.nvmrc|\.node-version|"
-    r"\.python-version|\.tool-versions|\.[\w-]*rc|\.profile|\.gitconfig|\.inputrc)(?:[-.][\w.-]*)?$")
+    r"\.python-version|\.tool-versions|\.(?:bash|zsh|vim|input|screen)rc|\.(?:bash_|z)?profile|"
+    r"\.gitconfig)(?:[-.][\w.-]*)?$")
+# Not on the list on purpose, so they BLOCK as "type": .env, .netrc, .npmrc, .pypirc, .envrc,
+# .yarnrc, .git-credentials, .pgpass. They exist to hold credentials.
 JOURNAL_NAMES = {"MODLOG.md", ".modlog.json"}
 
 SECRET_PATTERNS = [
@@ -175,10 +184,12 @@ USERPATH = re.compile(r"(?:/Users/|/home/)(?!Shared\b)[A-Za-z0-9][A-Za-z0-9._-]*
                       r"|(?<![\w.-])/root/|/var/folders/[A-Za-z0-9_+-]{2}/[A-Za-z0-9_+-]{8,}")
 # A hardware address in either separator style. RFC 7042's documentation range and the
 # all-zero and broadcast addresses are fine in fixtures.
-DEVICE_ADDR = re.compile(r"(?<![0-9A-Fa-f:-])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Fa-f:-])")
+DEVICE_ADDR = re.compile(r"(?<![0-9A-Fa-f])(?:[0-9A-Fa-f]{2}([:-]))(?:[0-9A-Fa-f]{2}\1){4}[0-9A-Fa-f]{2}(?![0-9A-Fa-f])")
 DOC_ADDR = re.compile(r"(?i)^00[:-]00[:-]5e[:-]00[:-]53[:-][0-9a-f]{2}$|^(?:00[:-]){5}00$|^(?:ff[:-]){5}ff$")
 MAC_HOST = re.compile(r"\b[A-Za-z0-9][A-Za-z0-9-]*-(?:MacBook(?:-Pro|-Air)?|iMac(?:-Pro)?|Mac-mini|Mac-Pro|Mac-Studio)(?:-\d+)?(?:\.local)?\b")
 IMAGE_EXT = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".heic", ".tiff", ".bmp"}
+# Shown to a person as images. SVG is scanned as text, but can embed a screenshot.
+REVIEW_IMAGE_EXT = IMAGE_EXT | {".svg"}
 # An image extension must be backed by the image's own header; anything else is opaque.
 IMAGE_MAGIC = {".png": (b"\x89PNG",), ".jpg": (b"\xff\xd8\xff",), ".jpeg": (b"\xff\xd8\xff",),
                ".gif": (b"GIF87a", b"GIF89a"), ".bmp": (b"BM",), ".tiff": (b"II*\x00", b"MM\x00*")}
@@ -279,10 +290,13 @@ def _text_findings(rel: str, text: str, hosts: set[str], user: str | None, deny:
         if m:
             out.append({"kind": "decomp", "path": rel, "detail": f"marker {m.group(0)!r}"})
             break
-    # Paths and names also hide URL-encoded (obsidian://open?path=%2FUsers%2F...).
+    # Paths and names also hide URL-encoded (obsidian://open?path=%2FUsers%2F...) and as
+    # JSON \u escapes (json.dumps writes "Jos\u00e9" for "José").
     views = [text]
     if re.search(r"%[0-9A-Fa-f]{2}", text):
         views.append(urllib.parse.unquote(text))
+    if "\\u" in text:
+        views.append(_UESC.sub(lambda m: chr(int(m.group(1), 16)), text))
     m = next((m for v in views for m in [USERPATH.search(v)] if m), None)
     if m:
         out.append({"kind": "userpath", "path": rel, "detail": m.group(0)})
@@ -311,6 +325,26 @@ def _text_findings(rel: str, text: str, hosts: set[str], user: str | None, deny:
     return out
 
 
+_UESC = re.compile(r"\\u([0-9a-fA-F]{4})")
+# Base64 a text file can carry: data: URIs (SVG, HTML, notebooks), <data> blocks (plists), and
+# any long run. Decoded and read like a binary file.
+_B64 = re.compile(r"base64,([A-Za-z0-9+/=\s]{40,})|<data>([A-Za-z0-9+/=\s]{40,})</data>|([A-Za-z0-9+/]{200,}={0,2})")
+
+
+def _base64_findings(rel: str, text: str, hosts: set[str], user: str | None,
+                     deny: list[str]) -> list[dict]:
+    out: list[dict] = []
+    for m in _B64.finditer(text):
+        blob = re.sub(r"\s", "", next(g for g in m.groups() if g))
+        try:
+            data = base64.b64decode(blob + "=" * (-len(blob) % 4))
+        except (binascii.Error, ValueError):
+            continue
+        for f in _strings_findings(rel, data, hosts, user, deny):
+            out.append(dict(f, detail=f"in base64 content: {f['detail']}"))
+    return out
+
+
 def _strings_findings(rel: str, data: bytes, hosts: set[str], user: str | None,
                       deny: list[str]) -> list[dict]:
     """Text patterns over a binary file's printable runs, the way `strings` reads a database
@@ -335,6 +369,7 @@ def _text_file_findings(f, head: bytes, rel: str, hosts: set[str], user: str | N
             if "\x00" in text:
                 return out, False
             out.extend(_text_findings(rel, tail + text, hosts, user, deny))
+            out.extend(_base64_findings(rel, text, hosts, user, deny))
             if not data:
                 return out, True
             tail = (tail + text)[-OVERLAP:]
@@ -402,17 +437,19 @@ def _allowed_path(rel: str, allow: list[str]) -> bool:
     return any(_allowed(str(Path(*parts[:k])), allow) for k in range(1, len(parts) + 1))
 
 
-def review_images(root: Path) -> list[str]:
-    """Every image a person should look at before sharing (relative paths, sorted). An
-    --allow never removes an image from this list: allowing a file is not looking at it."""
-    out = []
+def _files(root: Path):
+    """(relative path, path) for every file the scan enters: SKIP_DIRS are not entered."""
     for dirpath, dirnames, filenames in os.walk(root):
         dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
         for name in filenames:
             p = Path(dirpath) / name
-            if p.suffix.lower() in IMAGE_EXT:
-                out.append(str(p.relative_to(root)))
-    return sorted(out)
+            yield p.relative_to(root), p
+
+
+def review_images(root: Path) -> list[str]:
+    """Every image a person should look at before sharing (relative paths, sorted). An
+    --allow never removes an image from this list: allowing a file is not looking at it."""
+    return sorted(str(rel) for rel, _ in _files(root) if rel.suffix.lower() in REVIEW_IMAGE_EXT)
 
 
 def _extra_kind(rel: Path) -> str | None:
@@ -420,35 +457,24 @@ def _extra_kind(rel: Path) -> str | None:
     if rel.name in JOURNAL_NAMES:
         return "journal"
     folder = next((f for f in ("evidence", "fixtures") if f in rel.parts[:-1]), None)
-    return folder if folder and rel.suffix.lower() not in IMAGE_EXT else None
+    return folder if folder and rel.suffix.lower() not in REVIEW_IMAGE_EXT else None
 
 
 def review_extra(root: Path) -> list[tuple[str, str]]:
     """(kind, path) pairs a person must read: journals, captured output and fixtures, which
     can carry someone's data, device addresses or keys."""
-    out = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-        for name in filenames:
-            rel = Path(dirpath, name).relative_to(root)
-            kind = _extra_kind(rel)
-            if kind:
-                out.append((kind, str(rel)))
-    return sorted(out)
+    return sorted((k, str(rel)) for rel, _ in _files(root) for k in [_extra_kind(rel)] if k)
 
 
 def special_files(root: Path) -> list[str]:
     """FIFOs, sockets and devices: never read (reading a FIFO hangs), so a person knows."""
     out = []
-    for dirpath, dirnames, filenames in os.walk(root):
-        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS]
-        for name in filenames:
-            p = Path(dirpath) / name
-            try:
-                if not p.is_symlink() and not stat.S_ISREG(p.lstat().st_mode):
-                    out.append(str(p.relative_to(root)))
-            except OSError:
-                continue
+    for rel, p in _files(root):
+        try:
+            if not p.is_symlink() and not stat.S_ISREG(p.lstat().st_mode):
+                out.append(str(rel))
+        except OSError:
+            continue
     return sorted(out)
 
 
@@ -456,7 +482,7 @@ def _name_findings(name: str, hosts: set[str], user: str | None, deny: list[str]
     """File and directory names are published too: run the text patterns over one name."""
     out = []
     for f in _text_findings(name, name, hosts, user, deny):
-        if f["kind"] in {"userpath", "username", "hostname", "denied", "secret"}:
+        if f["kind"] in {"userpath", "username", "hostname", "denied", "secret", "address"}:
             out.append({"kind": f["kind"], "path": name, "detail": f"in the name: {f['detail']}"})
     return out
 
@@ -636,11 +662,13 @@ def _report_for(path: Path, allow: list[str], max_mb: float, deny: list[str],
 
 
 def main(argv: list[str] | None = None) -> int:
-    ap = argparse.ArgumentParser(prog="publish_check.py", description=__doc__.split("\n")[0])
+    ap = argparse.ArgumentParser(prog="publish_check.py", description=__doc__,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("paths", nargs="+", help="folders or single files to check")
     ap.add_argument("--allow", action="append", default=[],
-                    help="glob (relative to a folder): clears binary/opaque/capture/large/symlink findings "
-                         "for matching paths; content and name findings still apply. Say why in the field note")
+                    help="glob (relative to each scanned folder): clears type/binary/opaque/capture/large/"
+                         "symlink findings for matching paths after you looked; content and name findings "
+                         "still apply. Say why in the field note")
     ap.add_argument("--deny-file", help="file with one private term per line that must not appear")
     ap.add_argument("--max-mb", type=float, default=5.0)
     ap.add_argument("--no-gitleaks", action="store_true", help="skip gitleaks even when installed (reported as PARTIAL)")
@@ -700,7 +728,8 @@ def main(argv: list[str] | None = None) -> int:
             prefix = "" if single else f"{r}: "
             print(f"REVIEW secrets  {prefix}{rep['secrets_engine']} — install gitleaks for a maintained ruleset")
     print(f"{total} finding(s)" if total else
-          "OK: nothing this filter recognises; read every REVIEW line before sharing")
+          "OK: nothing this filter recognises (it cannot see cookies, sessions or personal data "
+          "not in --deny-file); read every REVIEW line before sharing")
     return 1 if total else 0
 
 

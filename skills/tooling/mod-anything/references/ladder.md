@@ -49,7 +49,9 @@ artifact did not happen.
 
 **Fake host stand-ins.** When the real target is slow, scarce or dangerous to poke (energy
 hardware, a device you could brick, a game that takes minutes to load), build against a fake
-that replays recorded traffic or known state first. Then confirm on the real one. SkyCraft
+that replays recorded traffic or known state first. Then confirm on the real one. A fake that
+replays recordings stays in `<work>` with them; a fake that ships uses traffic you wrote by
+hand. SkyCraft
 ships `fake_skyrim.py` for this. universal-modder built its GTA V compositor against a fake
 D3D11 host before the game was installed.
 

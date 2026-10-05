@@ -709,3 +709,65 @@ def test_config_files_a_rung_1_mod_is_made_of_ship(clean: Path, name: str):
 def test_env_files_still_block(clean: Path, name: str):
     (clean / name).write_text("API_URL=https://example.test\n")
     assert kinds(clean) == {("type", name)}
+
+
+# --- P20 round 2 of the fresh ledger (BRO-2820) --------------------------------------------
+
+@pytest.mark.parametrize("name", [".netrc", ".npmrc", ".pypirc", ".envrc", ".yarnrc", ".git-credentials"])
+def test_credential_dotfiles_are_not_on_the_allowlist(clean: Path, name: str):
+    (clean / name).write_text("machine api.example.test login ada password Zk3pQ9vLm2Xr7TfB\n")
+    assert ("type", name) in kinds(clean)
+
+
+def test_hardware_addresses_in_names_block(clean: Path):
+    (clean / "lamp-A4-C1-38-9F-12-34").mkdir()
+    (clean / "lamp-A4-C1-38-9F-12-34" / "notes.md").write_text("hello\n")
+    assert ("address", "lamp-A4-C1-38-9F-12-34") in kinds(clean)
+
+
+def test_json_unicode_escapes_do_not_hide_deny_terms(clean: Path):
+    (clean / "state.json").write_text('{"vault": "B\\u00f3veda de Jos\\u00e9 Pe\\u00f1a"}\n')
+    assert ("denied", "state.json") in kinds(clean, deny=["José Peña"])
+
+
+def test_base64_content_in_text_files_is_decoded_and_read(clean: Path):
+    import base64 as b64
+    png = b"\x89PNG\r\n\x1a\n" + b"tEXtComment\x00/Users/alice/Private Vault/screenshot"
+    uri = b64.b64encode(png).decode()
+    (clean / "shot.svg").write_text(f'<svg><image href="data:image/png;base64,{uri}"/></svg>\n')
+    found = kinds(clean)
+    assert ("userpath", "shot.svg") in found
+    blob = b64.b64encode(b"bookmark\x00/Users/alice/Documents/Private Vault/x" * 2).decode()
+    wrapped = "\n\t".join(blob[i:i + 60] for i in range(0, len(blob), 60))
+    (clean / "prefs.plist").write_text(f"<plist><dict><key>b</key><data>\n\t{wrapped}\n</data></dict></plist>\n")
+    assert ("userpath", "prefs.plist") in kinds(clean)
+
+
+def test_svgs_are_listed_with_images(clean: Path):
+    (clean / "logo.svg").write_text("<svg/>\n")
+    assert pc.review_images(clean) == ["logo.svg"]
+
+
+def test_build_output_is_scanned_not_blocked(clean: Path):
+    (clean / "dist").mkdir()
+    (clean / "dist" / "main.js").write_text("console.log(1)\n")
+    assert kinds(clean) == set()
+    (clean / "dist" / "main.js").write_text('const v = "/Users/alice/vault";\n')
+    assert ("userpath", "dist/main.js") in kinds(clean)
+
+
+def test_help_prints_the_whole_contract():
+    r = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, text=True)
+    assert r.returncode == 0 and "BLOCK (exit 1)" in r.stdout and "NOT detected" in r.stdout
+    assert "type/binary/opaque" in r.stdout
+
+
+def test_ok_line_states_what_it_cannot_see(clean: Path):
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--no-gitleaks"], capture_output=True, text=True)
+    assert r.returncode == 0 and "cannot see cookies, sessions or personal data" in r.stdout
+
+
+def test_text_that_stops_being_text_in_a_later_chunk_is_opaque(clean: Path, monkeypatch):
+    monkeypatch.setattr(pc, "CHUNK", 64)  # several chunks, so the failure is not in the first
+    (clean / "notes.txt").write_bytes(b"plain text line\n" * 20 + b"\xff\xfe\x00compressed")
+    assert ("opaque", "notes.txt") in kinds(clean)

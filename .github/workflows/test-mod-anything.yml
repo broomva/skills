@@ -79,4 +79,5 @@ jobs:
       - name: the shipped examples and field notes pass the publish check (gitleaks on)
         run: |
           python scripts/publish_check.py examples/*/ field-notes
-          python scripts/publish_check.py examples/obsidian-kg-claims | grep -q 'REVIEW secrets' && { echo "::error::gitleaks did not run"; exit 1; } || true
+          out=$(python scripts/publish_check.py examples/obsidian-kg-claims)
+          if grep -q 'REVIEW secrets' <<<"$out"; then echo "::error::gitleaks did not run"; exit 1; fi
