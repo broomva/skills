@@ -1,0 +1,27 @@
+# Changelog
+
+All notable changes to the `mod-anything` skill. The format follows
+[Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and the skill uses
+[Semantic Versioning](https://semver.org/).
+
+## [0.1.0] - 2026-10-05
+
+### Added
+
+- The loop: intake, recon, route ladder (data and config, sanctioned API, patch from inside,
+  hooks and wires, reimplement), lab, vertical slice verified in the running original,
+  stall breaker with re-rank, packaging, field note, publish check.
+- `scripts/modlog.py`: the run journal and stall breaker. `fail` exits 3 on the third
+  identical failure on a route. `note` scaffolds a field note; `lint-note --root` checks it is
+  complete and that every citation stays inside the tree that will ship.
+- `scripts/publish_check.py`: a fail-closed filter before sharing. Only an allowlist of file
+  types ships (source, docs, small data files, screenshots). It blocks binaries, captures,
+  dependency folders, secrets (gitleaks plus built-in patterns), decompiler output, home
+  paths, hardware addresses and deny-file terms, and lists journals, evidence, fixtures and
+  images for a person to read.
+- `scripts/recon_macos_app.py`: recon adapter for macOS `.app` bundles (stack, extension
+  points, Electron fuses, protections, update channel, state folders, ranked routes).
+- References: the ladder, the envelope (rules, legal summary, disclosure), the field-note
+  format, and a macOS apps playbook.
+- Examples: recon output for three apps, and a rung-2 Obsidian plugin with a scripted lab and
+  evidence regenerated from synthetic fixtures. One field note from that run.

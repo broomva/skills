@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import re
 import subprocess
 import sys
 from pathlib import Path
@@ -109,7 +110,10 @@ def test_note_scaffold_fails_lint_until_filled(journal: Path):
     assert run(journal, "note", "--out", str(note)).returncode == 0
     r = run(journal, "lint-note", str(note))
     assert r.returncode == 1 and "unfilled placeholders" in r.stdout
-    filled = note.read_text().replace(f"{modlog.TODO}: ", "").replace(modlog.TODO, "x")
+    text = note.read_text()
+    # The agent decides each journal file on purpose: here it cites a copy beside the note.
+    text = re.sub(rf"{re.escape(modlog.TODO)}: e\.txt is in the working folder[^\n]*", "`e.txt`", text)
+    filled = text.replace(f"{modlog.TODO}: ", "").replace(modlog.TODO, "x")
     note.write_text(filled)
     r = run(journal, "lint-note", str(note))
     assert r.returncode == 0, r.stdout
@@ -135,6 +139,7 @@ It reads the vault.
 
 ## Envelope
 - Rung: 2
+- Disclosure: none found
 """
 
 
@@ -203,14 +208,56 @@ def test_stall_text_names_sampling_a_hang(journal: Path):
     assert r.returncode == 3 and "sample <pid> 1" in r.stdout
 
 
-def test_note_rewrites_evidence_relative_to_the_note(journal: Path):
+def test_note_leaves_journal_evidence_as_a_decision_not_a_citation(journal: Path):
+    # Journal evidence lives in the working folder, which never ships. The scaffold must not
+    # cite it as a path (a ../ citation would lint clean and point outside the ship tree).
     (journal / "evidence").mkdir()
     (journal / "evidence" / "shot.png").write_bytes(b"png")
     run(journal, "route", "--rung", "2", "--name", "api", "--reason", "r")
     run(journal, "ok", "--step", "renders", "--evidence", "evidence/shot.png")
-    note = journal / "notes" / "app" / "n.md"
+    note = journal / "ship" / "field-notes" / "app" / "n.md"
     run(journal, "note", "--out", str(note))
-    assert "`../../evidence/shot.png`" in note.read_text()
+    text = note.read_text()
+    assert "`" not in text.split("## Verification")[1].split("##")[0]
+    assert f"{modlog.TODO}: evidence/shot.png is in the working folder" in text
+
+
+def test_lint_note_refuses_citations_outside_the_root(tmp_path: Path):
+    ship = tmp_path / "ship"
+    (tmp_path / "evidence").mkdir()
+    (tmp_path / "evidence" / "dom.html").write_text("<p>logged-in page</p>")
+    note = ship / "field-notes" / "app" / "n.md"
+    note.parent.mkdir(parents=True)
+    escape = GOOD_NOTE.replace("`evidence/shot.png`", "`../../../evidence/dom.html`")
+    note.write_text(escape)
+    r = run(tmp_path, "lint-note", str(note), "--root", str(ship))
+    assert r.returncode == 1 and "outside ship/" in r.stdout, r.stdout
+    absolute = GOOD_NOTE.replace("`evidence/shot.png`", f"`{tmp_path / 'evidence' / 'dom.html'}`")
+    note.write_text(absolute)
+    r = run(tmp_path, "lint-note", str(note), "--root", str(ship))
+    assert r.returncode == 1 and "absolute path" in r.stdout, r.stdout
+    # Without --root and with no SKILL.md above, the root is the note's own folder.
+    note.write_text(escape)
+    assert "outside" in run(tmp_path, "lint-note", str(note)).stdout
+
+
+def test_lint_note_blocks_an_embargoed_disclosure():
+    embargoed = GOOD_NOTE.replace("- Disclosure: none found", "- Disclosure: embargoed until the vendor answers")
+    assert any("under embargo" in p for p in modlog.lint_note(embargoed))
+    missing = GOOD_NOTE.replace("- Disclosure: none found\n", "")
+    assert any("no 'Disclosure:' line" in p for p in modlog.lint_note(missing))
+
+
+def test_an_unwritable_working_folder_exits_2_not_1(tmp_path: Path):
+    ro = tmp_path / "ro"
+    ro.mkdir()
+    ro.chmod(0o500)
+    try:
+        r = run(ro, "init", "--target", "T", "--idea", "I")
+        assert r.returncode == 2 and "cannot read or write" in r.stderr, (r.returncode, r.stderr)
+        assert "Traceback" not in r.stderr
+    finally:
+        ro.chmod(0o700)
 
 
 def test_envelope_rung_ignores_subgoal_and_superseded_routes(journal: Path):
@@ -442,3 +489,16 @@ def test_cross_references_in_the_journal_are_validated(journal: Path, patch: dic
     (journal / ".modlog.json").write_text(json.dumps(state))
     r = run(journal, "status")
     assert r.returncode == 2 and "not a modlog journal" in r.stderr
+
+
+def test_a_run_with_no_failure_scaffolds_none_hit_and_lints_clean(journal: Path):
+    # Dogfood (Codex, 2026-10-05): with no failure recorded, a template demanding a numbered
+    # gotcha made the agent invent three. "None hit" is the honest entry and must lint clean.
+    run(journal, "route", "--rung", "1", "--name", "alias", "--reason", "documented config")
+    note = journal / "n.md"
+    run(journal, "note", "--out", str(note))
+    text = note.read_text()
+    assert modlog.NONE_HIT in text
+    gotchas = text.split("## Gotchas")[1].split("##")[0]
+    assert modlog.lint_note(GOOD_NOTE.replace(
+        "1. Plugin missing → manifest id mismatch → match folder name to id", gotchas.strip())) == []

@@ -13,7 +13,7 @@ where the user is.
 | Bring your own files | Studying a program to interoperate is protected far more than shipping its bytes. Ship code, patches and converters that run on the user's own install. |
 | Ask before touching the user's real environment | Driving input takes over the user's machine. Installing into a real profile can lose state. Labs (a separate profile, a copy of a vault or a save) need no ask, but a lab that raises system UI on the user's screen (a keychain prompt, a permission dialog) is touching the user's environment: stop it by exact PID and fix the lab. A copied browser profile is never a lab. |
 | Back up first; kill by PID | A mod that corrupts a profile or kills the wrong process costs more than the mod is worth. Never `pkill -f`: the pattern can match the agent's own shell. |
-| Ask before connecting to a device, pairing with it, or sending it anything but a documented read | Undocumented commands, probes and replayed captures can actuate hardware (a motor, a relay, a heater, a lock) or brick it, and pairing can evict the vendor's app. Reading advertisements needs no ask. A device that controls something physical is the user's call each time. Recordings of its traffic stay private: they can carry addresses, serials and keys. |
+| Ask before connecting to a device, pairing with it, or sending it anything but a documented read | Undocumented commands, probes and replayed captures can actuate hardware (a motor, a relay, a heater, a lock) or brick it, and pairing can evict the vendor's app. Reading advertisements needs no ask. A device that controls something physical is the user's call each time. Recordings of its traffic stay private: they can carry addresses, serials and keys. A device that obeys a replayed command with no pairing or authentication is a disclosure finding: the user's own mod may still drive it locally, but nothing describing the protocol ships until disclosure clears. |
 | Ask before using the user's real signed-in session | Testing a userscript or automation in the user's own browser profile or running app acts as them on live services. A website lab is a fresh profile the user logs into. A copied profile carries their cookies and saved logins, so it is never a lab, and cookies are never read out of the real one. |
 
 ## The legal line, briefly
@@ -41,6 +41,9 @@ command shell) and in devices (a signature check that can be poked off). When yo
    that never answers gets a deadline the owner sets.
 3. A published field note describes the mod, not the exploit. Defeating the protection was
    never in scope.
+4. While the embargo holds, the note's `Disclosure:` line says `embargoed`, and
+   `modlog.py lint-note` refuses it, so the documented publish flow (SKILL.md steps 8-9)
+   stops there.
 
 One public write-up shows the pattern. It reverse-engineered five peripherals and found a
 microphone command shell and a light whose signature check could be disabled, and its author

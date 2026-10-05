@@ -5,6 +5,7 @@ import importlib.util
 import json
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 import pytest
@@ -97,12 +98,12 @@ def test_user_paths(clean: Path, text: str, blocks: bool):
     assert (("userpath", "paths.py") in kinds(clean)) is blocks
 
 
-def test_skips_vcs_and_dependency_dirs(clean: Path):
+def test_dependency_and_vcs_folders_block_and_are_not_entered(clean: Path):
     (clean / "node_modules" / "dep").mkdir(parents=True)
     (clean / "node_modules" / "dep" / "lib.dylib").write_bytes(b"\x00")
     (clean / ".git").mkdir()
     (clean / ".git" / "secret").write_text("ghp_" + "a" * 36)
-    assert pc.scan(clean) == []
+    assert kinds(clean) == {("folder", "node_modules"), ("folder", ".git")}
 
 
 def test_binary_content_is_strings_scanned(clean: Path):
@@ -189,8 +190,10 @@ def test_executables_are_caught_by_header_without_an_extension(clean: Path, magi
 
 
 def test_mz_without_a_pe_signature_still_fails_closed(clean: Path):
-    (clean / "tool").write_bytes(b"MZ\x90\x00" + b"\x00" * 64)  # not a PE, but not text either
-    assert kinds(clean) == {("opaque", "tool")}
+    (clean / "tool").write_bytes(b"MZ\x90\x00" + b"\x00" * 64)  # not a PE, and not a shippable type
+    assert kinds(clean) == {("type", "tool")}
+    (clean / "tool").rename(clean / "tool.txt")                   # a text type that is not text
+    assert kinds(clean) == {("opaque", "tool.txt")}
 
 
 @pytest.mark.parametrize("name", ["addon.node", "mod.jar", "A.class"])
@@ -256,11 +259,12 @@ def test_deny_terms(clean: Path, tmp_path: Path):
     assert r.returncode == 1 and "BLOCK denied" in r.stdout
 
 
-def test_skipped_dirs_are_listed_for_review(clean: Path):
-    (clean / "node_modules" / "x").mkdir(parents=True)
-    assert pc.skipped_dirs(clean) == ["node_modules"]
-    r = subprocess.run([sys.executable, str(SCRIPT), str(clean)], capture_output=True, text=True)
-    assert "REVIEW skipped  node_modules" in r.stdout
+def test_a_venv_inside_the_tree_blocks_even_though_it_is_not_scanned(clean: Path):
+    # Round 3: a secret inside a skipped venv/ was reported "not scanned" and exited 0.
+    (clean / "m" / "venv").mkdir(parents=True)
+    (clean / "m" / "venv" / "notes.txt").write_text("key = AKIA" + "ABCDEFGHIJKLMNOP\n")
+    r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--no-gitleaks"], capture_output=True, text=True)
+    assert r.returncode == 1 and "BLOCK folder   m/venv" in r.stdout, r.stdout
 
 
 # --- added after P20 round 2 (BRO-2816): fail closed on what the scan cannot read --------
@@ -273,12 +277,14 @@ def test_skipped_dirs_are_listed_for_review(clean: Path):
 def test_unrecognised_binaries_fail_closed_and_are_strings_scanned(clean: Path, name: str, payload: bytes):
     (clean / name).write_bytes(payload)
     found = kinds(clean)
-    assert ("opaque", name) in found
+    # Not a shippable type at all (type), or a text type whose bytes are not text (opaque).
+    kind = "opaque" if Path(name).suffix in pc.SHIP_TEXT_EXT else "type"
+    assert (kind, name) in found
     if b"/Users/alice" in payload:
         assert ("userpath", name) in found
     if b"AKIA" in payload:
         assert ("secret", name) in found
-    assert ("opaque", name) not in kinds(clean, allow=[name])
+    assert (kind, name) not in kinds(clean, allow=[name])
 
 
 @pytest.mark.parametrize("name", ["session.har", "dump.pcapng", "bt.pklg", "hci.btsnoop"])
@@ -344,7 +350,7 @@ def test_deny_terms_are_unicode_normalized_and_hash_can_be_escaped(clean: Path, 
 
 def test_special_files_are_listed_for_review(clean: Path):
     os.mkfifo(clean / "pipe")
-    assert "pipe" in pc.skipped_dirs(clean)
+    assert "pipe" in pc.special_files(clean)
 
 
 # --- the structural reshape (P20 continuation: hoist the invariant) ---------------------
@@ -356,7 +362,8 @@ def test_allow_clears_the_file_finding_but_not_its_content(clean: Path):
     (clean / "state.db").write_bytes(b"SQLite format 3\x00" + b"\x00" * 16 + b" AKIA" + b"ABCDEFGHIJKLMNOP /Users/alice/x")
     rep = pc.scan_report(clean, allow=["state.db"], hostnames=set(), username=None, use_gitleaks=False)
     found = {(f["kind"], f["path"]) for f in rep["findings"]}
-    assert ("opaque", "state.db") not in found          # cleared as a file
+    assert ("type", "state.db") in kinds(clean)         # blocked before the allow
+    assert ("type", "state.db") not in found            # cleared as a file
     assert ("secret", "state.db") in found and ("userpath", "state.db") in found  # content still scanned
     assert rep["allowed"] == ["state.db"]
     r = subprocess.run([sys.executable, str(SCRIPT), str(clean), "--allow", "state.db", "--no-gitleaks"],
@@ -399,8 +406,10 @@ def test_gitleaks_findings_are_reported_without_the_secret(clean: Path):
 def test_missing_gitleaks_is_announced_as_partial(clean: Path, tmp_path: Path):
     empty = tmp_path / "emptybin"
     empty.mkdir()
+    # HOME must not be the scanned folder: some Pythons write a bytecode cache under it.
+    home = Path(tempfile.mkdtemp(prefix="pc-home."))
     r = subprocess.run([sys.executable, str(SCRIPT), str(clean)], capture_output=True, text=True,
-                       env={"PATH": str(empty), "HOME": str(tmp_path)})
+                       env={"PATH": str(empty), "HOME": str(home)})
     assert r.returncode == 0 and "REVIEW secrets  PARTIAL: gitleaks is not installed" in r.stdout
 
 
@@ -614,3 +623,89 @@ def test_the_strings_pass_keeps_the_word_boundary_on_the_generic_sk_shape():
     key = "sk-" + "A1b2C3d4E5f6G7h8J9k0L1m2"
     assert [f for f in pc._text_findings("x.png", f"\x00{key}\x00", set(), None, [], loose=True)
             if f["kind"] == "secret"]
+
+
+# --- P20 round 3 (BRO-2820): a ship allowlist instead of a NUL sniff ----------------------
+
+def test_a_pdf_is_not_on_the_ship_allowlist_even_when_it_looks_like_text(clean: Path):
+    # 9 of 40 system PDFs had no NUL in their first 8 KB, so a sniff read them as text.
+    (clean / "report.pdf").write_bytes(b"%PDF-1.4\n" + b"x" * 9000 + b"\n%%EOF\n")
+    assert kinds(clean) == {("type", "report.pdf")}
+
+
+def test_a_text_type_must_decode_as_text_all_the_way_through(clean: Path):
+    import zlib
+    blob = zlib.compress(b"/Users/alice/vault AKIA" + b"ABCDEFGHIJKLMNOP" * 4, 9)
+    (clean / "notes.txt").write_bytes(b"plain text header\n" * 600 + blob)  # > 8 KB of text first
+    assert ("opaque", "notes.txt") in kinds(clean)
+
+
+@pytest.mark.parametrize("name", ["LICENSE", "NOTICE", "Makefile", ".gitignore", "README-ja", "main.js",
+                                  "patch.diff", "manifest.json", "style.css"])
+def test_ordinary_mod_files_ship(clean: Path, name: str):
+    (clean / name).write_text("hello\n")
+    assert kinds(clean) == set()
+
+
+@pytest.mark.parametrize("name", ["font.ttf", "song.mp3", "archive.zip", "data", "notes.docx"])
+def test_other_types_block_until_allowed(clean: Path, name: str):
+    (clean / name).write_bytes(b"hello\n")
+    assert kinds(clean) == {("type", name)}
+    assert kinds(clean, allow=[name]) == set()
+
+
+def test_url_encoded_home_paths_are_found(clean: Path):
+    (clean / "main.js").write_text('open("obsidian://open?path=%2FUsers%2Falice%2FResearch%2Fnote.md")\n')
+    assert ("userpath", "main.js") in kinds(clean)
+
+
+def test_a_deny_term_is_found_across_a_line_wrap(clean: Path):
+    (clean / "note.md").write_text("Thanks to Ada\n  Lovelace for the idea.\n")
+    assert ("denied", "note.md") in kinds(clean, deny=["Ada Lovelace"])
+
+
+def test_a_bearer_token_without_a_colon_is_a_secret(clean: Path):
+    (clean / "u.user.js").write_text('xhr.setRequestHeader("Authorization", "Bearer 9f8e7d6c5b4a39281706f5e4d3c2b1a0");\n')
+    assert ("secret", "u.user.js") in kinds(clean)
+    (clean / "u.user.js").write_text("Bearer tokens are sent in a header.\n")
+    assert ("secret", "u.user.js") not in kinds(clean)
+
+
+@pytest.mark.parametrize("offset", [0, 1])
+def test_utf16_text_in_an_image_is_found_at_either_alignment(clean: Path, offset: int):
+    png = b"\x89PNG\r\n\x1a\n" + b"\x01" * offset + "/Users/alice/Research".encode("utf-16-le")
+    (clean / "shot.png").write_bytes(png)
+    assert ("userpath", "shot.png") in kinds(clean)
+
+
+def test_hardware_addresses_block_except_the_documentation_range(clean: Path):
+    (clean / "lamp.py").write_text('ADDR = "C4:7C:8D:6A:1B:2E"\n')
+    assert ("address", "lamp.py") in kinds(clean)
+    (clean / "lamp.py").write_text('ADDR = "00:00:5E:00:53:01"  # RFC 7042 documentation address\n')
+    assert ("address", "lamp.py") not in kinds(clean)
+
+
+@pytest.mark.parametrize("text", ["/var/folders/g9/_dhv_jzj5ljd5nywv14y31hm0000gn/T/tmp.x/evidence",
+                                  "cd /root/.config/app"])
+def test_macos_temp_and_root_home_paths_are_userpaths(clean: Path, text: str):
+    (clean / "run.log").write_text(text + "\n")
+    assert ("userpath", "run.log") in kinds(clean)
+
+
+def test_journals_are_listed_for_review(clean: Path):
+    (clean / "MODLOG.md").write_text("# journal\n")
+    (clean / ".modlog.json").write_text("{}\n")
+    assert pc.review_extra(clean) == [("journal", ".modlog.json"), ("journal", "MODLOG.md")]
+
+
+@pytest.mark.parametrize("name", ["git-lg.gitconfig", ".bashrc", ".profile", "theme.itermcolors", "keys.reg"])
+def test_config_files_a_rung_1_mod_is_made_of_ship(clean: Path, name: str):
+    # Dogfood (Codex, 2026-10-05): a git alias snippet was blocked and renamed to .conf.
+    (clean / name).write_text("[alias]\n\tlg = log --oneline --graph\n")
+    assert kinds(clean) == set()
+
+
+@pytest.mark.parametrize("name", [".env", "prod.env"])
+def test_env_files_still_block(clean: Path, name: str):
+    (clean / name).write_text("API_URL=https://example.test\n")
+    assert kinds(clean) == {("type", name)}

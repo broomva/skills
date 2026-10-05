@@ -135,4 +135,6 @@ relative to the skill root).
   - The published evidence and fixtures are synthetic (`harness/fixtures/entities/`). The first
     run's transcripts and screenshots quoted the owner's private knowledge graph and were removed.
 - Disclosure: none found. The CLI socket accepts commands, including `eval`, from any process of
-  the same user once the user turns the CLI on. That is the documented design, not a flaw.
+  the same user once the user turns the CLI on. That is the documented design, not a flaw: a
+  process running as the same user can already read the vault, so it crosses no privilege
+  boundary.

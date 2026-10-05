@@ -1,6 +1,12 @@
 ---
 name: mod-anything
 description: Change or extend software or a device the user owns but whose source they don't control (a desktop app, a website, a game, a device protocol, a CLI) by the cheapest route that reaches the idea. The running original is the oracle, a journal and a stall breaker keep long runs honest, and every run ends in a field note for the next agent. Generalizes rehan-remade/universal-modder's mod-any-game method beyond games. USE WHEN the user wants an app or site to do something it doesn't, to add a feature or automation to a third-party app, to hook into or extend a desktop app, to reverse-engineer a device or file format they own, or to bridge two programs; or asks "can I mod X?", "mod any app", "make <app> do <thing>". NOT FOR code whose source you control (edit it), online games or services behind anti-cheat or anti-automation, bypassing DRM, licence, integrity or ownership checks, or anything the target's terms prohibit.
+license: MIT
+compatibility: Any agent that can read files and run shell commands. Scripts need Python 3.9+ (stdlib only). publish_check.py uses gitleaks 8.x when it is on PATH and says so when it is not. recon_macos_app.py needs macOS (it calls codesign). No network access needed.
+metadata:
+  version: "0.1.0"
+  author: broomva
+category: tooling
 tier: D
 ---
 
@@ -55,6 +61,8 @@ reason *before* building:
 - Work in an isolated profile so the user's real state is never touched: `--user-data-dir`,
   a copy of the vault, a test device. The playbook lists the knobs per app family. For
   Chromium-based apps (Electron, Chrome, Arc), always add `--use-mock-keychain`.
+- For a CLI, the lab is its config pointed into `<work>`: `GIT_CONFIG_GLOBAL`,
+  `XDG_CONFIG_HOME`, or `HOME` for tools that read only that, plus synthetic input data.
 - For a website, the lab is a fresh browser profile that the user logs into themselves.
   - A copied browser profile is never a lab: it carries cookies and saved logins. Never read
     cookies or tokens out of the user's real profile either.
@@ -86,9 +94,9 @@ traffic or data. Your reading is a hypothesis; step 5 tests it.
 - Take one feature all the way through, then widen.
 - The running original is the oracle; your reading of the code is not. Drive it through a
   scriptable runtime (launch, act, wait, screenshot or dump) that writes an evidence file per run.
-- Capture evidence through the target when you can. A screenshot from inside the app needs no
-  OS permission, for example Obsidian's `dev:screenshot` or Electron's `capturePage`;
-  `screencapture` needs Screen Recording.
+- Capture evidence through the target when you can. For a CLI, its captured output is the
+  dump. A screenshot from inside an app needs no OS permission, for example Obsidian's
+  `dev:screenshot` or Electron's `capturePage`; `screencapture` needs Screen Recording.
 - Record every verified step with its evidence. The script refuses a step whose evidence
   file is missing:
   `modlog.py ok --step "hover shows the claim" --evidence evidence/hover.png`
@@ -117,41 +125,48 @@ own install. Write install and uninstall steps.
 - `field-notes/<target>/<slug>.md` is the note. Scaffold it with
   `modlog.py note --out <work>/ship/field-notes/<target>/<slug>.md`.
 - Fill every placeholder: exact versions, the route, what the target really does, the
-  evidence, numbered *symptom → cause → fix* gotchas, and the envelope. Cite evidence by its
-  path in the ship tree (`examples/<slug>/evidence/...`); describe evidence that does not ship
-  without a path.
-- `modlog.py lint-note <note> --root <work>/ship` must exit 0. It checks every cited path
-  exists in the ship tree.
-- The note copies text from the journal, which may hold private details, so step 9 checks
-  it before it goes anywhere shared.
+  evidence, numbered *symptom → cause → fix* gotchas, and the envelope. Gotchas are what this
+  run hit; if nothing failed, keep the scaffold's "None hit on this run" and invent none.
+  - The scaffold names each journal evidence file in a placeholder rather than citing it,
+    because `<work>` never ships. For each one, copy it into `examples/<slug>/` and cite it
+    by its ship-tree path, or describe it without a path.
+  - The journal itself stays in `<work>`. Copy it into the example only if every entry is fit
+    to publish (the shipped example's journal was scrubbed; its last entries say how).
+- `modlog.py lint-note <note> --root <work>/ship` must exit 0. It fails on a placeholder, a
+  missing section, and a cited path that is missing, absolute or outside the ship tree.
+- If the run found a vulnerability, write `Disclosure: embargoed ...`. Lint then refuses the
+  note, and the ship tree stays private until the §Rules disclosure conditions are met.
 - Write the note even when the mod failed. A documented dead end saves the next agent hours.
 
 **9. Publish check, then copy.** Check the whole ship tree in one pass:
 `python3 $S/scripts/publish_check.py <work>/ship --deny-file <work>/deny.txt`
 
-It is a fail-closed filter in front of you, not a privacy guarantee.
-- **It blocks:**
-  - third-party binaries;
-  - any other non-text file it cannot read (`--allow` clears that, but still scans the
-    content);
-  - captures (by extension);
-  - symlinks;
-  - files over `--max-mb`;
-  - secrets (gitleaks with its default rules when installed, plus a short built-in list);
+The deny file holds the private names you know: the user's email and display name, and
+private project, vault and knowledge-graph names. `publish_check.py` is a fail-closed filter
+in front of you, not a privacy guarantee.
+- **It blocks** (exit 1):
+  - any file type that is not on its ship allowlist (source, docs, small data files,
+    screenshots), and text files that are not really text;
+  - third-party binaries, captures, symlinks, files over `--max-mb`;
+  - dependency, build and VCS folders (`.git`, `node_modules`, `venv`, ...);
+  - secrets (gitleaks with its default rules when installed, plus a built-in list), and
+    gitleaks config or ignore files inside the tree;
   - decompiler output;
-  - home paths, the login name, the hostname and deny-file terms, in contents and names.
-- **It does not detect** cookies, session values or personal data such as emails and display
-  names. Keep those out at the source (step 3), and put the names you know in the deny file:
-  the user's email and display name, private project, vault and knowledge-graph names.
-- **It lists as REVIEW** every image, every file under an `evidence/` folder, allowed paths,
-  skipped folders, special files and in-tree gitleaks configs, and says when gitleaks did not
-  run. Look at each one.
+  - home paths (also URL-encoded), the login name, the hostname, hardware addresses and
+    deny-file terms, in contents and in names.
+- **It does not detect** cookies, session values, serial numbers, or personal data such as
+  emails and display names unless they are in the deny file. Keep those out at the source
+  (step 3).
+- **It lists as REVIEW** every image, every file under `evidence/` or `fixtures/`, every
+  journal, allowed paths and special files, and says when gitleaks did not run. Read each one.
+- `--allow <glob>` clears only "this type should not ship" findings, after you have looked at
+  the file. Its content is still scanned. Globs match paths relative to each scanned folder.
 - **Exit 0** means "nothing this filter recognises". Share only after exit 0 and a look at
   every REVIEW line.
 - **Then copy the tree byte for byte** into a checkout of this skill's repo, at the same
-  relative paths, and run both checks again on the destination (`lint-note` on the note,
-  `publish_check.py` on `examples/<slug>` and the note) before committing. Publishing is an
-  ask (§Rules).
+  relative paths. Before committing, run both checks again on the destination: `lint-note` on
+  the note, and `publish_check.py` on `examples/<slug>` and the note with the same
+  `--deny-file`. Publishing is an ask (§Rules).
 
 ## The ladder
 
@@ -203,21 +218,23 @@ These are hard. The full reasoning and the legal summary are in `references/enve
 - **Disclosure.** If you find a vulnerability, nothing describing it leaves the private repo
   until the vendor has been contacted, an embargo agreed, and the owner has signed off.
   Private journals stay unblocked. A device that obeys a replayed command with no pairing or
-  authentication is such a finding, not a route.
+  authentication is such a finding. The mod may still drive the user's own device locally
+  (the device ask above applies), but nothing describing the protocol, including the mod's
+  code, ships until disclosure clears.
 
 ## Scripts
 
 | Script | What it does |
 |---|---|
-| `scripts/modlog.py` | `init`, `log` (a free entry, no route needed), `route` (`--subgoal`, `--supersedes`), `ok` (refuses missing evidence), `fail` (exits 3 on a stall, with the re-rank checklist), `status`, `note` (scaffolds a field note), `lint-note` (also checks the cited evidence exists) |
-| `scripts/publish_check.py` | fail-closed filter before sharing, not a privacy guarantee: blocks third-party binaries, opaque non-text files, captures, symlinks, large files, secrets (gitleaks plus a built-in fallback), decompiler output, home paths, the login name, hostnames and `--deny-file` terms, in contents and names; lists images, allowed paths, skipped folders and special files for review. Does not detect cookies, sessions or personal data |
+| `scripts/modlog.py` | `init`, `log` (a free entry, no route needed), `route` (`--subgoal`, `--supersedes`), `ok` (refuses missing evidence), `fail` (exits 3 on a stall, with the re-rank checklist), `status`, `note` (scaffolds a field note), `lint-note` (checks a note is complete and its citations stay inside `--root`) |
+| `scripts/publish_check.py` | the fail-closed filter of step 9: what it blocks, lists for review and does not detect is listed there and in its `--help`. `--json` for machine-readable output |
 | `scripts/recon_macos_app.py` | recon adapter for macOS `.app` bundles: stack, extension points, Electron fuses (from the slice this machine runs), protections, update channel, state folders, and the ranked routes |
 
 Exit codes:
 
 | Script | Codes |
 |---|---|
-| `modlog.py` | 0 ok · 1 `lint-note` findings · 2 usage, refused or unreadable input · 3 STALL (`fail`) |
+| `modlog.py` | 0 ok · 1 `lint-note` findings · 2 usage, refused input, or a file or folder it could not read or write · 3 STALL (`fail`) |
 | `publish_check.py` | 0 clean · 1 findings · 2 usage error or a file it could not read |
 | `recon_macos_app.py` | 0 ok · 2 usage error or not an app bundle |
 

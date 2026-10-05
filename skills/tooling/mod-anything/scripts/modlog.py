@@ -24,13 +24,18 @@ Commands
                                                  same signature on the same route is a
                                                  STALL (exit 3) with the re-rank checklist
   status                                         print the current route and failure counts
-  note       --out PATH [--force]                scaffold a field note from the journal
-  lint-note  PATH [--root DIR]                   check a field note is complete (exit 1 if not);
-                                                 cited paths resolve from the note's folder and
-                                                 from --root (default: the enclosing skill)
+  note       --out PATH [--force]                scaffold a field note from the journal. Each
+                                                 journal evidence file becomes a placeholder:
+                                                 copy it into the ship tree and cite it there,
+                                                 or describe it without a path
+  lint-note  PATH [--root DIR]                   check a field note is complete and shippable
+                                                 (exit 1 if not). Cited paths must exist inside
+                                                 DIR (default: the enclosing skill, else the
+                                                 note's folder): absolute paths and ../ escapes
+                                                 fail. A Disclosure line under embargo fails too
 
-Exit codes: 0 ok · 1 lint findings · 2 usage or refused input · 3 STALL.
-Pure stdlib.
+Exit codes: 0 ok · 1 lint findings · 2 usage, refused input, or a file or folder it could not
+read or write · 3 STALL. Pure stdlib.
 """
 from __future__ import annotations
 
@@ -61,6 +66,8 @@ DEFAULT_LIMIT = 3
 STATE = ".modlog.json"
 JOURNAL = "MODLOG.md"
 TODO = "TODO(mod-anything)"
+NONE_HIT = "None hit on this run (the journal recorded no failure)."
+
 
 NOTE_SECTIONS = (
     "Versions",
@@ -393,20 +400,23 @@ def cmd_note(d: Path, out: Path, force: bool) -> Path:
         for r in state["routes"]
     ) or f"{TODO}: no route was recorded"
 
-    def rel(e: str) -> str:
-        # Evidence is recorded relative to the journal; the note lives elsewhere.
-        p = _resolve(d, e)
-        return e if Path(e).expanduser().is_absolute() else os.path.relpath(p, out.parent)
-
+    # Journal evidence lives in the working folder, which never ships. Each file is a
+    # decision the agent makes on purpose: copy it into the ship tree (only if it was made
+    # from a fixture you wrote) and cite it there, or describe it without a path.
     verification = "\n".join(
-        f"- {s['step']}: " + ", ".join(f"`{rel(e)}`" for e in s["evidence"]) for s in state["steps"]
+        f"- {s['step']}: " + "; ".join(
+            f"{TODO}: {e} is in the working folder; copy it into examples/<slug>/ and cite "
+            f"that path, or describe it without a path" for e in s["evidence"])
+        for s in state["steps"]
     ) or f"- {TODO}: no verified step was recorded"
     seen: dict[str, str] = {}
     for f in state["failures"]:
         seen.setdefault(f["sig"], f.get("text") or f["sig"])
+    # Gotchas are what the run hit. With no recorded failure the honest entry is "None hit";
+    # a template that demands an item invites invented ones.
     gotchas = "\n".join(
         f"{i}. {text} → {TODO}: cause → {TODO}: fix" for i, text in enumerate(seen.values(), 1)
-    ) or f"1. {TODO}: symptom → cause → fix"
+    ) or NONE_HIT
     stalls = "".join(
         f"\n- Stall on route #{s['route']}: {s['sig']} (x{s['count']})" for s in state["stalls"]
     )
@@ -500,12 +510,14 @@ def skill_root(path: Path) -> Path | None:
     return None
 
 
-def lint_note(text: str, base: Path | list[Path] | None = None) -> list[str]:
-    """Problems that make a field note unusable to the next agent. Empty = clean.
+def lint_note(text: str, base: Path | list[Path] | None = None, root: Path | None = None) -> list[str]:
+    """Problems that make a field note unusable to the next agent, or unfit to ship. Empty =
+    clean.
 
     With `base` (the note's folder, or a list of folders), every evidence path cited in
-    ## Verification must exist under at least one of them. The CLI passes the note's folder
-    and the skill root, so a note may cite paths relative to either."""
+    ## Verification must exist under at least one of them. With `root`, it must also resolve
+    inside `root`: an absolute path or a ../ escape points at something that does not ship.
+    The CLI passes the note's folder and the root, and always sets the root."""
     problems: list[str] = []
     headings = [h.strip() for h in _HEADING.findall(text)]
     sections: dict[str, str] = {}
@@ -526,18 +538,33 @@ def lint_note(text: str, base: Path | list[Path] | None = None) -> list[str]:
         bases = base if isinstance(base, list) else [base]
         cited = [_evidence_path(t) for t in _TICKED.findall(ver)]
         cited += [_evidence_path(t) for t in _LINK.findall(ver)]
+        top = root.resolve() if root is not None else None
         for tok in dict.fromkeys(c for c in cited if c):
             p = Path(tok).expanduser()
-            if not (p.exists() if p.is_absolute() else any((b / p).exists() for b in bases)):
+            if top is not None and (p.is_absolute() or tok.startswith("~")):
+                problems.append(f"## Verification cites an absolute path, which does not ship: {tok}")
+                continue
+            hits = [p] if p.is_absolute() else [(b / p) for b in bases if (b / p).exists()]
+            if not (hits and hits[0].exists()):
                 problems.append(f"## Verification cites a path that does not exist: {tok}")
+            elif top is not None and not any(h.resolve().is_relative_to(top) for h in hits):
+                problems.append(f"## Verification cites a path outside {top.name}/, which does not ship: {tok}")
     got = sections.get("Gotchas", "")
     if "Gotchas" in sections:
         items = _items(got)
-        if not items:
-            problems.append("## Gotchas has no numbered items")
+        if not items and not re.match(r"(?i)\s*none hit\b", got.strip()):
+            problems.append("## Gotchas has no numbered items (write 'None hit on this run.' if nothing failed)")
         for it in items:
             if not _GOTCHA.match(it):
                 problems.append(f"gotcha is not 'symptom → cause → fix': {it[:70]}")
+    env = sections.get("Envelope", "")
+    if "Envelope" in sections:
+        m = re.search(r"(?im)^\s*[-*]?\s*Disclosure:\s*(.*)$", env)
+        if not m or not m.group(1).strip():
+            problems.append("## Envelope has no 'Disclosure:' line (none found, or the disclosure status)")
+        elif re.search(r"(?i)embargo", m.group(1)):
+            problems.append("Disclosure is under embargo: nothing describing the flaw ships until the vendor "
+                            "was contacted, an embargo agreed and the owner signed off (envelope.md)")
     route = sections.get("Route", "")
     if "Route" in sections and not re.search(r"(?i)\brung\s*(?:[1-5]\b|passthrough)|passthrough", route):
         problems.append("## Route does not name a rung (1-5 or passthrough)")
@@ -578,9 +605,10 @@ def _dispatch(ns: argparse.Namespace, d: Path) -> int:
             text = path.read_text(encoding="utf-8")
         except (UnicodeDecodeError, OSError) as e:
             raise Refused(f"cannot read {path} as UTF-8 text: {e}")
-        root = Path(ns.root) if ns.root else skill_root(path)
-        bases = [path.parent] + ([root] if root is not None else [])
-        problems = lint_note(text, base=bases)
+        root = Path(ns.root) if ns.root else (skill_root(path) or path.parent)
+        if not root.is_dir():
+            raise Refused(f"--root is not a folder: {root}")
+        problems = lint_note(text, base=[path.parent, root], root=root)
         for pr in problems:
             print(f"FAIL {pr}")
         if problems:
@@ -617,6 +645,9 @@ def main(argv: list[str] | None = None) -> int:
             return _dispatch(ns, d)
     except Refused as e:
         print(f"refused: {e}", file=sys.stderr)
+        return 2
+    except OSError as e:  # an unwritable folder, a full disk: not a lint finding
+        print(f"cannot read or write {e.filename or d}: {e.strerror or e}", file=sys.stderr)
         return 2
 
 
