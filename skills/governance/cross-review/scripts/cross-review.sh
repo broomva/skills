@@ -46,8 +46,9 @@ REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUBRIC_FILE="$REPO/references/rubric.md"
 CLAIMS_RUBRIC_FILE="$REPO/references/claims-rubric.md"
 # Stakes tier. "code" is the full panel; "knowledge" is computed from the diff
-# (every changed path under research/ or docs/knowledge-index.md) and can only
-# be escalated back to "code" with --tier=code, never requested.
+# (an allowlist of regular declarative files in the knowledge locations; see the
+# tier block below) and can only be forced back to "code" with --tier=code,
+# never requested.
 TIER_REQUEST=""
 
 # ─── Defaults ─────────────────────────────────────────────────────────────
@@ -314,7 +315,6 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "  Diff base:        $DIFF_BASE"
     echo "  Rubric:           $RUBRIC"
     echo "  Round budget:     3 free / 4-7 earned / >=8 human (cross-review round)"
-    echo "  Rubric file:      $RUBRIC_FILE"
     echo "  Verdict format:   $OUTPUT_FORMAT"
     echo ""
 
@@ -364,18 +364,27 @@ if [ "$COMMAND" = "pre-push" ]; then
     #
     # An allowlist, not a prefix: research/ also holds code projects
     # (research/kaggriculture/, research/ternary-diffusion/), so only declarative
-    # file types in the three knowledge locations qualify. Any script, any other
-    # location, a rename's source path (--no-renames lists both ends), an empty
-    # list, an unreadable diff or an unknown scope is the code tier. Paths are
-    # read once with -z: NUL-separated, and never quoted, so non-ASCII names match.
-    # Matching ignores case, since phone captures arrive as .HEIC and .JPG.
+    # file types in the three knowledge locations qualify, and only as regular,
+    # non-executable files (new mode 100644, or 000000 for a deletion): a symlink,
+    # an executable or a submodule is the code tier whatever its name. So is any
+    # other location, a rename's source path (--no-renames lists both ends), an
+    # empty list, an unreadable diff or an unknown scope. The raw diff is read
+    # once with -z: NUL-separated, never quoted, so non-ASCII names match, and
+    # with --no-renames every record is one metadata line and one path line.
+    # Only the extension is case-folded (phone captures arrive as .HEIC, .JPG);
+    # directories and the index name are matched as written.
     TIER="code"
     if [ "$SCOPE_UNKNOWN" = "0" ] && [ "$TIER_REQUEST" != "code" ]; then
         TIER_PATHS=$(mktemp)
-        if git diff --name-only --no-renames -z "$DIFF_BASE"...HEAD > "$TIER_PATHS" 2>/dev/null \
+        if git diff --raw --no-renames -z "$DIFF_BASE"...HEAD > "$TIER_PATHS" 2>/dev/null \
            && [ -s "$TIER_PATHS" ]; then
-            KNOWLEDGE_RE='^(docs/knowledge-index\.md|research/(entities|notes|imported-documents)/.*(\.(md|txt|json|jsonl|csv|tsv|vtt|srt|jpg|jpeg|png|webp|gif|heic|pdf)|/SHA256SUMS))$'
-            NON_KNOWLEDGE=$(tr '\0' '\n' < "$TIER_PATHS" | grep -civE "$KNOWLEDGE_RE" || true)
+            KNOWLEDGE_RE='^(docs/knowledge-index\.md|research/(entities|notes|imported-documents)/(.*\.(md|txt|json|jsonl|csv|tsv|vtt|srt|jpg|jpeg|png|webp|gif|heic|pdf)|(.*/)?SHA256SUMS))$'
+            NON_KNOWLEDGE=$(tr '\0' '\n' < "$TIER_PATHS" | KRE="$KNOWLEDGE_RE" awk '
+                NR % 2 == 1 { split($0, meta, " "); mode = meta[2]; next }
+                { p = $0
+                  if (match(p, /\.[^.\/]+$/)) p = substr(p, 1, RSTART) tolower(substr(p, RSTART + 1))
+                  if ((mode != "100644" && mode != "000000") || p !~ ENVIRON["KRE"]) n++ }
+                END { if (NR % 2 == 1) n++; print n + 0 }')
             [ "$NON_KNOWLEDGE" = "0" ] && TIER="knowledge"
         fi
         rm -f "$TIER_PATHS"
@@ -649,7 +658,7 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "    - plan-design-review / plan-ceo-review / plan-eng-review"
     echo ""
     echo "  Aggregate findings from all skills. Each is graded by the rubric's"
-    echo "  severity rules: only a BLOCKER or a reproduced MAJOR zeroes a dimension,"
+    echo "  severity rules: only a reproduced BLOCKER or MAJOR zeroes a dimension,"
     echo "  and a MINOR lowers nothing. The round score is the minimum across strata."
     echo ""
     fi

@@ -54,7 +54,7 @@ When invoking a Strata-A (Codex) or Strata-B (subagent) evaluator, include this 
 > - 1: a BLOCKER or a MAJOR you did not reproduce. Cite file:line and the failure scenario.
 > - 2: no finding on this dimension, or only MINOR findings. List MINORs; they never lower a score.
 >
-> Severity decides the score. The per-dimension tables below say what to look for; their `-1` entries are not a second scoring system. Sum the points (max 10). Total ≥7 AND no dimension at 0 → APPROVE. Otherwise REVISE.
+> Severity decides the score. The per-dimension tables below say what to look for; their deduction entries (`-1`, `-2`) are not a second scoring system. Sum the points (max 10). Total ≥7 AND no dimension at 0 → APPROVE. Otherwise REVISE.
 >
 > **Report the five per-dimension scores, not just the total** — as `AXES: a,b,c,d,e` in rubric order. A total that clears the bar with a dimension at zero is not a pass: `2+2+2+2+0 = 8` leaves *tests cover the change* unmet, and the controller caps such a round below the bar from the axes you report.
 >
@@ -71,7 +71,7 @@ Two further rules are **orchestrator duties**. `round-budget.sh` does not check 
 
 ### Stakes tiers
 
-`cross-review pre-push` computes a tier from the diff's paths, and it fails closed. The diff is the **knowledge** tier only when every changed path, both ends of every rename included, is `docs/knowledge-index.md` or a declarative file (markdown, text, JSON or JSONL, CSV/TSV, a subtitle track, an image, a PDF, or `SHA256SUMS`; extensions match in any case) under `research/entities/`, `research/notes/` or `research/imported-documents/`. A knowledge diff gets one stratum: A (cross-vendor) when codex can run, else B, the same model as the writer and so weaker. That stratum uses the claims rubric in `references/claims-rubric.md`, and Strata C is skipped. Every other diff is the **code** tier, with this rubric and the full panel: a script anywhere, a code project under `research/`, or a base the script cannot resolve. `--tier=code` escalates a knowledge diff; nothing downgrades a code diff.
+`cross-review pre-push` computes a tier from the diff's paths, and it fails closed. The diff is the **knowledge** tier only when every changed path, both ends of every rename included, is `docs/knowledge-index.md` or a declarative file (markdown, text, JSON or JSONL, CSV/TSV, a subtitle track, an image, a PDF, or `SHA256SUMS`; extensions match in any case) under `research/entities/`, `research/notes/` or `research/imported-documents/`. A knowledge diff gets one stratum: A (cross-vendor) when codex can run, else B, the same model as the writer and so weaker. That stratum uses the claims rubric in `references/claims-rubric.md`, and Strata C is skipped. Every other diff is the **code** tier, with this rubric and the full panel: a script anywhere, a code project under `research/`, or a base the script cannot resolve. `--tier=code` forces the code tier, swapping the claims rubric for this one; nothing downgrades a code diff. Only regular, non-executable files qualify; a symlink, an executable or a submodule is the code tier whatever its name. The tier is a proportionality rule for honest diffs, not a security boundary: content is not inspected, and a reviewer should report a disguised script as a finding on the diff, not as a defect of the tier.
 
 ## Per-dimension detail
 

@@ -128,10 +128,12 @@ Why: in BRO-2829, a Low-priority /checkit ran seven three-stratum rounds. Every 
 
 | Tier | When | Panel | Rubric |
 |---|---|---|---|
-| **knowledge** | every changed path, both ends of a rename included, is `docs/knowledge-index.md` or a declarative file (`.md`, `.txt`, `.json`, `.jsonl`, `.csv`, `.tsv`, `.vtt`, `.srt`, an image, a `.pdf`, `SHA256SUMS`; any case) under `research/entities/`, `research/notes/` or `research/imported-documents/` | one stratum: A (cross-vendor) when codex can run, else B (same model, weaker); C skipped | `references/claims-rubric.md`: claims trace, quotes keep their sense, numbers recompute, gaps are disclosed, evidence is sound and leaks nothing |
+| **knowledge** | every changed path, both ends of a rename included, is `docs/knowledge-index.md` or a declarative file (`.md`, `.txt`, `.json`, `.jsonl`, `.csv`, `.tsv`, `.vtt`, `.srt`, an image, a `.pdf`, `SHA256SUMS`; any case) under `research/entities/`, `research/notes/` or `research/imported-documents/` | one stratum: A (cross-vendor) when codex can run, else B (same model, weaker); an explicit `--strata=A` without codex runs none and says so; C skipped | `references/claims-rubric.md`: claims trace, quotes keep their sense, numbers recompute, gaps are disclosed, evidence is sound and leaks nothing |
 | **code** | anything else, including any script, a code project under `research/`, and a base that cannot be resolved | A or B, plus C | `references/rubric.md` |
 
-The knowledge tier expects one round, plus a second only to verify the fix of a zeroed dimension. `--tier=code` escalates a knowledge diff. Nothing downgrades a code diff, and `--tier=knowledge` is refused.
+The knowledge tier expects one round, plus a second only to verify the fix of a zeroed dimension. `--tier=code` forces the code tier: the full panel, on the code rubric in place of the claims rubric. Nothing downgrades a code diff, and `--tier=knowledge` is refused. For a page whose claims carry high stakes, keep the knowledge tier and pass `--strata=A`: the claims rubric stays, and the reviewer must be cross-vendor.
+
+The tier is a **proportionality rule, not a security boundary**. It reads paths, extensions and file modes (only regular, non-executable files qualify), and it classifies honest diffs. A writer set on evading review can skip `pre-push` altogether, so naming a script `notes.md` defeats nothing that the gate guards (see *NOT enforced*).
 
 ### The round budget is dynamic
 
@@ -274,6 +276,7 @@ appended to it.
   as the defect it replaces — the old bound was a number no conditional read;
   this one is a conditional no caller is *required* to run — and pretending
   otherwise would repeat the original mistake one level up.
+- **The stakes tier is not a security boundary either.** It is computed from paths, extensions and file modes, and it trusts that a `.md` file is prose. Content is not inspected.
 - **The ledger is not a security boundary.** It is a plain file under `.git/`.
   An agent determined to evade it can edit or delete it. It is bookkeeping that
   makes drift *visible*, not a control that makes drift impossible.
@@ -622,7 +625,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 2b. **When the budget returns REVIEW-REQUIRED (exit 5)** — run the continuation review on *the decision to continue*, against a STOP default. `CONTINUE` obliges a falsifiable prediction that the next round settles; two refuted in a row end the loop regardless of score.
 3. **When the writer is the only model in the loop** — STOP. Strata B at minimum is mandatory.
 4. **When tempted to skip "this PR is small enough"** — apply the substantive-threshold test (>200 LOC OR public API OR multi-file OR governance-class). A substantive diff that touches only knowledge material still fires, in the knowledge tier (§Stakes tiers).
-4b. **When fixing review findings** — fix what blocks: zeroed dimensions, plus any MAJOR covered by the agreement rule. Run each other unreproduced BLOCKER or MAJOR once: fix it if it reproduces, list it in the PR as unreproduced if it does not. Log MINORs as follow-ups or decline them with a reason. Do not spend a round on them.
+4b. **When fixing review findings** — fix what blocks: zeroed dimensions, a total below 7, and any MAJOR covered by the agreement rule. Run each other unreproduced BLOCKER or MAJOR once: fix it if it reproduces, list it in the PR as unreproduced if it does not. Log MINORs as follow-ups or decline them with a reason. Do not spend a round on them.
 5. **When P20 verdict and CI verdict disagree** — P20 is the *quality* gate; CI is the *correctness* gate. Both must pass. P20 cannot override CI; CI cannot substitute for P20.
 
 ## Cardinal rule

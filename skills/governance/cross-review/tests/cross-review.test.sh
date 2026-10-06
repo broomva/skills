@@ -33,6 +33,28 @@ echo ""
 # strip used `\?`, a GNU extension BSD sed reads as a literal '?'. So on macOS
 # every line printed with its '#' still on it -- and "# Usage:" contains
 # "Usage:", so this test stayed green through it. Assert the stripping.
+# ── T00: no surface states the superseded severity rule ────────────────────
+# Round 1 reworded "a BLOCKER, or a MAJOR you reproduced" in the rubric and the
+# SKILL, and missed the copy the script prints (BRO-2844 round 2): the rule is
+# that only a REPRODUCED blocker or major zeroes a dimension.
+echo "T00. the superseded severity wording appears on no surface"
+STALE=$(grep -rnE 'BLOCKER or a reproduced MAJOR|a BLOCKER, or a MAJOR' "$(dirname "$CROSS_REVIEW_SH")/.." 2>/dev/null | grep -v '/tests/' || true)
+if [ -z "$STALE" ]; then
+    ok "T00: severity wording is consistent"
+else
+    fail "T00: the superseded severity rule is still stated" "$STALE"
+fi
+
+# ── T0: the entrypoint is executable and runs directly ─────────────────────
+# Every other test runs it through `bash`, which hides a lost exec bit; a BSD
+# `sed -i` once left it 0600 and the suite stayed green (BRO-2844 round 2).
+echo "T0. cross-review.sh is executable and runs without bash in front"
+if [ -x "$CROSS_REVIEW_SH" ] && "$CROSS_REVIEW_SH" version 2>&1 | grep -q "v0.0.1"; then
+    ok "T0: entrypoint is executable"
+else
+    fail "T0: entrypoint is not executable" "$(ls -l "$CROSS_REVIEW_SH")"
+fi
+
 echo "T1. --help prints Usage as text, not as comments"
 OUT=$(bash "$CROSS_REVIEW_SH" --help 2>&1 || true)
 HASHED=$(printf '%s\n' "$OUT" | grep -c '^#' || true)
@@ -649,8 +671,9 @@ echo "TIER. knowledge-only diffs get the one-stratum claims review; anything els
 # A repo whose base commit holds base.txt plus any PRE paths ("pre:path"), and
 # whose HEAD adds the other given paths (60 lines each, so every case clears the
 # substantive threshold) or renames a pre path ("mv:src:dst").
+TIER_ROOT=$(mktemp -d)   # every tier fixture lives here, so one rm cleans them all
 tier_repo() {
-    local dir; dir=$(mktemp -d)
+    local dir; dir=$(mktemp -d "$TIER_ROOT/repo.XXXXXX")
     (
         cd "$dir" && git init -q . && echo base > base.txt
         for f in "$@"; do case "$f" in pre:*) f=${f#pre:}; mkdir -p "$(dirname "$f")"; seq 1 60 > "$f" ;; esac; done
@@ -658,6 +681,8 @@ tier_repo() {
         for f in "$@"; do
             case "$f" in
                 pre:*) ;;
+                x:*) f=${f#x:}; mkdir -p "$(dirname "$f")"; seq 1 60 > "$f"; chmod +x "$f" ;;
+                ln:*) f=${f#ln:}; mkdir -p "$(dirname "$f")"; ln -s "$PWD/base.txt" "$f" ;;
                 mv:*) src=${f#mv:}; dst=${src#*:}; src=${src%%:*}; mkdir -p "$(dirname "$dst")"; git mv "$src" "$dst" ;;
                 *) mkdir -p "$(dirname "$f")"; seq 1 60 > "$f" ;;
             esac
@@ -672,6 +697,15 @@ tier_run() {
     (cd "$dir" && PATH="${TIER_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD~1 "$@" 2>&1)
 }
 has() { printf '%s' "$1" | grep -qF -- "$2"; }
+# tier_is_code LABEL DIR DESCRIPTION: the diff in DIR must be the code tier.
+tier_is_code() {
+    local out; out=$(tier_run "$2")
+    if has "$out" "Stakes tier:      code"; then
+        ok "$1: $3 is the code tier"
+    else
+        fail "$1: $3 got the knowledge tier" "$(printf '%s' "$out" | grep -E 'Stakes tier' | head -1)"
+    fi
+}
 KNOW=$(tier_repo research/notes/a.md research/notes/b.md research/entities/c.md \
     research/imported-documents/X_Checkit/d.txt research/imported-documents/X_Checkit/SHA256SUMS docs/knowledge-index.md)
 OUT=$(tier_run "$KNOW")
@@ -701,13 +735,10 @@ if [ "$RC" = "2" ] && has "$OUT" "--tier accepts only 'code'"; then
 else
     fail "TIER4: --tier=knowledge was not refused by the --tier parser" "exit $RC: $(printf '%s' "$OUT" | head -1)"
 fi
-LOOKALIKE=$(tier_repo research-tools/a.md research/entities-old/b.md docs/knowledge-index.md.bak research/notes/c.md)
-OUT=$(tier_run "$LOOKALIKE")
-if has "$OUT" "Stakes tier:      code"; then
-    ok "TIER5: look-alike paths (research-tools/, research/entities-old/, knowledge-index.md.bak) are not knowledge"
-else
-    fail "TIER5: a look-alike path was read as knowledge" "$(printf '%s' "$OUT" | grep -E 'Stakes tier' | head -1)"
-fi
+# One look-alike per repo, beside knowledge-only paths, so each one alone decides.
+for p in research-tools/a.md research/entities-old/b.md docs/knowledge-index.md.bak research/notes/x.md.sh; do
+    tier_is_code TIER5 "$(tier_repo "$p" research/notes/k1.md research/notes/k2.md research/entities/k3.md)" "look-alike $p"
+done
 CODEPROJ=$(tier_repo research/kaggriculture/main.py research/kaggriculture/bots/v5.py research/notes/a.md research/notes/b.md)
 OUT=$(tier_run "$CODEPROJ")
 if has "$OUT" "Stakes tier:      code"; then
@@ -739,13 +770,19 @@ else
     fail "TIER9: a non-ASCII knowledge path fell to the code tier" "$(printf '%s' "$OUT" | grep -E 'Stakes tier' | head -1)"
 fi
 CAPTURES=$(tier_repo research/imported-documents/Z_Checkit/IMG_0001.HEIC research/imported-documents/Z_Checkit/frame.JPG \
-    research/imported-documents/Z_Checkit/video.en.vtt research/imported-documents/Z_Checkit/events.jsonl)
+    research/imported-documents/Z_Checkit/video.en.vtt research/imported-documents/Z_Checkit/events.jsonl research/notes/SHA256SUMS)
 OUT=$(tier_run "$CAPTURES")
 if has "$OUT" "Stakes tier:      knowledge"; then
     ok "TIER9b: phone captures (.HEIC, .JPG), subtitles (.vtt) and .jsonl are knowledge, in any case"
 else
     fail "TIER9b: a declarative capture fell to the code tier" "$(printf '%s' "$OUT" | grep -E 'Stakes tier' | head -1)"
 fi
+EXEC=$(tier_repo x:research/notes/check.md research/notes/a.md research/notes/b.md research/entities/c.md)
+LINK=$(tier_repo ln:research/notes/link.md research/notes/a.md research/notes/b.md research/entities/c.md)
+CASED=$(tier_repo Research/notes/a.md Research/notes/b.md Research/entities/c.md DOCS/knowledge-index.md)
+tier_is_code TIER13 "$EXEC" "an executable named .md"
+tier_is_code TIER13 "$LINK" "a symlink named .md"
+tier_is_code TIER13 "$CASED" "Research/ and DOCS/ (directories match as written, only extensions fold)"
 OUT=$(cd "$KNOW" && PATH="/usr/bin:/bin:/usr/sbin:/sbin" bash "$CROSS_REVIEW_SH" pre-push --diff-base=no-such-ref 2>&1)
 if has "$OUT" "Stakes tier:      code"; then
     ok "TIER10: an unresolvable diff base is the code tier"
@@ -767,7 +804,7 @@ if has "$OUT" "Knowledge-tier stratum: A" && has "$OUT" "Strata A: cross-vendor"
 else
     fail "TIER12: the knowledge tier with codex did not run A alone" "$(printf '%s' "$OUT" | grep -E 'stratum|Strata [ABC]' | head -4)"
 fi
-rm -rf "$KNOW" "$MIXED" "$LOOKALIKE" "$CODEPROJ" "$SCRIPTED" "$RENAMED" "$UNICODE" "$STUB"
+rm -rf "$TIER_ROOT" "$STUB"
 
 echo ""
 echo "── results ────────────────────────────────────────────────────"
