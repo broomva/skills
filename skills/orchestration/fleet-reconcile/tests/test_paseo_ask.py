@@ -209,6 +209,11 @@ def test_an_open_item_raised_for_the_batch_is_found_by_its_marker_and_nothing_el
     assert paseo_ask.find(stub.sec, tag, since=since)["id"] == "w6"
     monkeypatch.setenv("STUB_LS", json.dumps({"items": items[:5]}))
     assert paseo_ask.find(stub.sec, tag, since=since) is None
+    # Titles quote questions now: one that quotes this batch's marker mid-title belongs to another batch.
+    quoting = dict(_listed("w7", "batch 9-9"))
+    quoting["title"] = "x (+9 more) %s %s" % (tag, paseo_ask.marker("broomva", "batch 9-9"))
+    monkeypatch.setenv("STUB_LS", json.dumps({"items": [quoting]}))
+    assert paseo_ask.find(stub.sec, tag, since=since) is None
 
 
 def test_an_open_item_raised_under_the_old_title_is_adopted_not_raised_again(stub, monkeypatch):

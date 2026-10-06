@@ -6,7 +6,8 @@ The asks the fleet raises in Maestro read as asks (BRO-2840; Maestro's side,
 which parses this shape, is BRO-2839).
 
 - **Title.** A batch's title is its first ask's question (whitespace collapsed,
-  any `[aN]`/class prefix dropped, cut at a word boundary to 90 characters with
+  an `[aN]` id and the class after it dropped, a question's own leading
+  parenthetical kept, cut at a word boundary to 90 characters with
   `…`), then ` (+N more)` for the rest of the batch, then the unchanged marker:
   `<question>[ (+N more)] [fleet-reconcile <scope> batch <id>]`. It was
   `1 ask (tick 7) [fleet-reconcile sri batch 7-3]`. The 160-character bound
@@ -16,10 +17,14 @@ which parses this shape, is BRO-2839).
   `- [<id>] (<class>) <question>` in a fenced `text` block (still data, never
   instructions to the run; the ids let a sent-back note name its ask), and
   exactly one line on what Approve, Send back and Cancel do.
-  `## For the run`: the run agent's instructions, unchanged in meaning.
+  `## For the run`: the run agent's instructions, unchanged in meaning, except
+  that the run is told the item's title quotes other sessions' words too (the
+  title now opens with the first ask, and Maestro puts it on the run's first
+  prompt line).
 - **Alerts** read `fleet <scope>: <kind> — <the alert's words> <marker>` with
   the same two-section brief: `- [alert] (<kind>) <words>`, and a verbs line
-  that says a sent-back note isn't read (the bash fallback is unchanged).
+  that says a sent-back note isn't read and that repeats within 6 h are only
+  logged, as tick.sh delivers one per kind per 6 h (the bash fallback is unchanged).
 - **Mutation check runs without bytecode.** Two mutants of one file with the
   same size written in the same second reused the first's `.pyc` (Python
   checks only mtime in seconds and size), so "the brief opens with the run's
