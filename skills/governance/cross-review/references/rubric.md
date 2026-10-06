@@ -44,17 +44,34 @@ When invoking a Strata-A (Codex) or Strata-B (subagent) evaluator, include this 
 
 > You are the adversarial reviewer. The writer (a different model OR the same model in a different context) just produced the diff you're about to read. **You are NOT the writer's ally.** Your job is to find what's wrong, what's missing, what's over-built, what's under-tested, what's brittle.
 >
-> Read the diff. Apply the 5-dimension anti-slop rubric below. For each dimension, assign 0, 1, or 2 points:
+> Read the diff. Apply the 5-dimension anti-slop rubric below. Grade every finding by severity first, then score each dimension from the worst finding on it:
 >
-> - 0: clear failure, named deduction with file:line reference
-> - 1: marginal, named caveat with file:line reference
-> - 2: clean pass
+> - **BLOCKER** — the change is wrong for its stated purpose: a false claim, broken behaviour, data loss, a security hole.
+> - **MAJOR** — a concrete failure a real user or reader would plausibly hit. Name the input and the wrong outcome.
+> - **MINOR** — polish, wording, hardening against inputs no realistic author or user produces, a test gap for a rule the change did not touch.
 >
-> Sum the points (max 10). Total ≥7 AND no dimension at 0 → APPROVE. Otherwise REVISE.
+> - 0: a BLOCKER or a MAJOR that you **reproduced** — quote the command and its output, or the exact source line that shows the defect. Cite file:line. Never quote a secret or personal value: give its path, line and kind, redacted, since this verdict is pasted into the PR.
+> - 1: a BLOCKER or a MAJOR you did not reproduce. Cite file:line and the failure scenario.
+> - 2: no finding on this dimension, or only MINOR findings. List MINORs; they never lower a score.
+>
+> Severity decides the score. The per-dimension tables below say what to look for; their deduction entries (`-1`, `-2`) are not a second scoring system. Sum the points (max 10). Total ≥7 AND no dimension at 0 → APPROVE. Otherwise REVISE.
 >
 > **Report the five per-dimension scores, not just the total** — as `AXES: a,b,c,d,e` in rubric order. A total that clears the bar with a dimension at zero is not a pass: `2+2+2+2+0 = 8` leaves *tests cover the change* unmet, and the controller caps such a round below the bar from the axes you report.
 >
-> When you REVISE, name the specific failures the writer must address. Don't give vague feedback. Each deduction must cite a file path + line range + the rubric dimension violated. Be ruthless — finding nothing wrong is suspicious; correlated blind spots are real.
+> When you REVISE, name the specific failures the writer must address. Don't give vague feedback. Each deduction must cite a file path + line range + the rubric dimension violated. Be ruthless in looking and honest in grading: correlated blind spots are real, so search hard, but an unreproduced suspicion scores at most 1, never 0, and an empty finding list is a valid result for a sound change.
+
+### What blocks, and the agreement rule (BRO-2844)
+
+A round blocks in two ways. A dimension at 0 blocks on its own, through the cap above, and only a reproduced BLOCKER or MAJOR scores 0. A total below 7 also blocks, which takes unreproduced findings on four of the five dimensions. A MINOR never lowers a score, so no stratum can fail a round on polish. This keeps the gate proportionate: in BRO-2829 every round of a three-stratum panel failed on findings the artifact never exhibited, and seven rounds bought what one reproduced finding would have.
+
+Two further rules are **orchestrator duties**. `round-budget.sh` does not check them, because the ledger stores scores, not findings:
+
+- **Agreement.** When two strata independently raise the same MAJOR and one of them is cross-vendor (Strata A), the writer fixes it or refutes it with a reproduction, even though each stratum scored it 1. Agreement between B and C does not trigger this, because they are the same model and their agreement is weak evidence (see the knowledge-graph pattern `correlated-verifier-is-no-verifier`).
+- **Reproduce once.** For every other BLOCKER or MAJOR scored 1, the writer runs the input the reviewer named, once. If it reproduces, it is a defect and gets fixed. If not, it is listed in the PR as unreproduced, with what was run.
+
+### Stakes tiers
+
+`cross-review pre-push` computes a tier from the diff's paths, and it fails closed. The diff is the **knowledge** tier only when every changed path, both ends of every rename included, is `docs/knowledge-index.md` or a declarative file (markdown, text, JSON or JSONL, CSV/TSV, a subtitle track, an image, a PDF, or `SHA256SUMS`; extensions match in any case) under `research/entities/`, `research/notes/` or `research/imported-documents/`. A knowledge diff gets one stratum: A (cross-vendor) when codex can run, else B, the same model as the writer and so weaker. That stratum uses the claims rubric in `references/claims-rubric.md`, and Strata C is skipped. Every other diff is the **code** tier, with this rubric and the full panel: a script anywhere, a code project under `research/`, or a base the script cannot resolve. `--tier=code` forces the code tier, swapping the claims rubric for this one; nothing downgrades a code diff. Only regular, non-executable files qualify; a symlink, an executable or a submodule is the code tier whatever its name. The tier is a proportionality rule for honest diffs, not a security boundary: content is not inspected, and a reviewer should report a disguised script as a finding on the diff, not as a defect of the tier.
 
 ## Per-dimension detail
 

@@ -33,6 +33,28 @@ echo ""
 # strip used `\?`, a GNU extension BSD sed reads as a literal '?'. So on macOS
 # every line printed with its '#' still on it -- and "# Usage:" contains
 # "Usage:", so this test stayed green through it. Assert the stripping.
+# ── T00: no surface states the superseded severity rule ────────────────────
+# Round 1 reworded "a BLOCKER, or a MAJOR you reproduced" in the rubric and the
+# SKILL, and missed the copy the script prints (BRO-2844 round 2): the rule is
+# that only a REPRODUCED blocker or major zeroes a dimension.
+echo "T00. the superseded severity wording appears on no surface"
+STALE=$(grep -rnE 'BLOCKER or a reproduced MAJOR|a BLOCKER, or a MAJOR' "$(dirname "$CROSS_REVIEW_SH")/.." 2>/dev/null | grep -v '/tests/' || true)
+if [ -z "$STALE" ]; then
+    ok "T00: severity wording is consistent"
+else
+    fail "T00: the superseded severity rule is still stated" "$STALE"
+fi
+
+# ── T0: the entrypoint is executable and runs directly ─────────────────────
+# Every other test runs it through `bash`, which hides a lost exec bit; a BSD
+# `sed -i` once left it 0600 and the suite stayed green (BRO-2844 round 2).
+echo "T0. cross-review.sh is executable and runs without bash in front"
+if [ -x "$CROSS_REVIEW_SH" ] && "$CROSS_REVIEW_SH" version 2>&1 | grep -q "v0.0.1"; then
+    ok "T0: entrypoint is executable"
+else
+    fail "T0: entrypoint is not executable" "$(ls -l "$CROSS_REVIEW_SH")"
+fi
+
 echo "T1. --help prints Usage as text, not as comments"
 OUT=$(bash "$CROSS_REVIEW_SH" --help 2>&1 || true)
 HASHED=$(printf '%s\n' "$OUT" | grep -c '^#' || true)
@@ -642,6 +664,147 @@ if [ -z "$SLOOP_BAD" ]; then
 else
     fail "S-LOOP: a fix instruction is narrower than its pass rule" "$SLOOP_BAD"
 fi
+
+# ── TIER: stakes tier from the diff's paths (BRO-2844) ────────────────────
+echo ""
+echo "TIER. knowledge-only diffs get the one-stratum claims review; anything else the full panel"
+# A repo whose base commit holds base.txt plus any PRE paths ("pre:path"), and
+# whose HEAD adds the other given paths (60 lines each, so every case clears the
+# substantive threshold) or renames a pre path ("mv:src:dst").
+TIER_ROOT=$(mktemp -d)   # every tier fixture lives here, so one rm cleans them all
+tier_repo() {
+    local dir; dir=$(mktemp -d "$TIER_ROOT/repo.XXXXXX")
+    (
+        cd "$dir" && git init -q . && echo base > base.txt
+        for f in "$@"; do case "$f" in pre:*) f=${f#pre:}; mkdir -p "$(dirname "$f")"; seq 1 60 > "$f" ;; esac; done
+        git add -A && git -c user.email=t@t -c user.name=t commit -qm base
+        for f in "$@"; do
+            case "$f" in
+                pre:*) ;;
+                x:*) f=${f#x:}; mkdir -p "$(dirname "$f")"; seq 1 60 > "$f"; chmod +x "$f" ;;
+                ln:*) f=${f#ln:}; mkdir -p "$(dirname "$f")"; ln -s "$PWD/base.txt" "$f" ;;
+                mv:*) src=${f#mv:}; dst=${src#*:}; src=${src%%:*}; mkdir -p "$(dirname "$dst")"; git mv "$src" "$dst" ;;
+                *) mkdir -p "$(dirname "$f")"; seq 1 60 > "$f" ;;
+            esac
+        done
+        git add -A && git -c user.email=t@t -c user.name=t commit -qm change
+    ) >/dev/null 2>&1
+    echo "$dir"
+}
+# PATH without codex, so the stratum is deterministic (B) unless a test adds a stub.
+tier_run() {
+    local dir=$1; shift
+    (cd "$dir" && PATH="${TIER_PATH:-/usr/bin:/bin:/usr/sbin:/sbin}" bash "$CROSS_REVIEW_SH" pre-push --diff-base=HEAD~1 "$@" 2>&1)
+}
+has() { printf '%s' "$1" | grep -qF -- "$2"; }
+# tier_is_code LABEL DIR DESCRIPTION: the diff in DIR must be the code tier.
+tier_is_code() {
+    local out; out=$(tier_run "$2")
+    if has "$out" "Stakes tier:      code"; then
+        ok "$1: $3 is the code tier"
+    else
+        fail "$1: $3 got the knowledge tier" "$(printf '%s' "$out" | grep -E 'Stakes tier' | head -1)"
+    fi
+}
+KNOW=$(tier_repo research/notes/a.md research/notes/b.md research/entities/c.md \
+    research/imported-documents/X_Checkit/d.txt research/imported-documents/X_Checkit/SHA256SUMS docs/knowledge-index.md)
+OUT=$(tier_run "$KNOW")
+if has "$OUT" "Stakes tier:      knowledge" && has "$OUT" "Strata C: skipped" \
+   && has "$OUT" "Read references/claims-rubric.md" && has "$OUT" "--stratum=B:" \
+   && ! has "$OUT" "--stratum=C:" && ! has "$OUT" "Strata C: composed"; then
+    ok "TIER1: notes, entities, evidence and the index are the knowledge tier; B alone gets the claims rubric"
+else
+    fail "TIER1: knowledge-only diff was not given the knowledge tier" "$(printf '%s' "$OUT" | grep -E 'Stakes tier|Strata C|stratum=' | head -4)"
+fi
+MIXED=$(tier_repo research/notes/a.md research/notes/b.md research/entities/c.md scripts/tool.sh)
+OUT=$(tier_run "$MIXED")
+if has "$OUT" "Stakes tier:      code" && has "$OUT" "Strata C: composed" && has "$OUT" "Read references/rubric.md"; then
+    ok "TIER2: one path outside the knowledge locations makes the whole diff the code tier"
+else
+    fail "TIER2: a mixed diff was not given the code tier" "$(printf '%s' "$OUT" | grep -E 'Stakes tier|Strata C' | head -3)"
+fi
+OUT=$(tier_run "$KNOW" --tier=code)
+if has "$OUT" "Stakes tier:      code" && has "$OUT" "Strata C: composed"; then
+    ok "TIER3: --tier=code escalates a knowledge diff to the full panel"
+else
+    fail "TIER3: --tier=code did not escalate" "$(printf '%s' "$OUT" | grep -E 'Stakes tier' | head -2)"
+fi
+OUT=$(tier_run "$KNOW" --tier=knowledge); RC=$?
+if [ "$RC" = "2" ] && has "$OUT" "--tier accepts only 'code'"; then
+    ok "TIER4: --tier=knowledge is refused with its own message (exit 2)"
+else
+    fail "TIER4: --tier=knowledge was not refused by the --tier parser" "exit $RC: $(printf '%s' "$OUT" | head -1)"
+fi
+# One look-alike per repo, beside knowledge-only paths, so each one alone decides.
+for p in research-tools/a.md research/entities-old/b.md docs/knowledge-index.md.bak research/notes/x.md.sh; do
+    tier_is_code TIER5 "$(tier_repo "$p" research/notes/k1.md research/notes/k2.md research/entities/k3.md)" "look-alike $p"
+done
+CODEPROJ=$(tier_repo research/kaggriculture/main.py research/kaggriculture/bots/v5.py research/notes/a.md research/notes/b.md)
+OUT=$(tier_run "$CODEPROJ")
+if has "$OUT" "Stakes tier:      code"; then
+    ok "TIER6: a code project under research/ is the code tier"
+else
+    fail "TIER6: code under research/ got the knowledge tier" "$(printf '%s' "$OUT" | grep -E 'Stakes tier' | head -1)"
+fi
+SCRIPTED=$(tier_repo research/imported-documents/Y_Checkit/capture.sh research/notes/a.md research/notes/b.md research/entities/c.md)
+OUT=$(tier_run "$SCRIPTED")
+if has "$OUT" "Stakes tier:      code"; then
+    ok "TIER7: a script inside an evidence folder is the code tier"
+else
+    fail "TIER7: an evidence-folder script got the knowledge tier" "$(printf '%s' "$OUT" | grep -E 'Stakes tier' | head -1)"
+fi
+RENAMED=$(tier_repo pre:scripts/t1.sh pre:scripts/t2.sh pre:scripts/t3.sh pre:scripts/t4.sh \
+    mv:scripts/t1.sh:research/notes/t1.md mv:scripts/t2.sh:research/notes/t2.md \
+    mv:scripts/t3.sh:research/notes/t3.md mv:scripts/t4.sh:research/notes/t4.md)
+OUT=$(tier_run "$RENAMED")
+if has "$OUT" "Stakes tier:      code"; then
+    ok "TIER8: a rename from scripts/ into research/notes/ counts its source path and is the code tier"
+else
+    fail "TIER8: a rename into research/ hid its source path" "$(printf '%s' "$OUT" | grep -E 'Stakes tier|Diff scope' | head -2)"
+fi
+UNICODE=$(tier_repo "research/entities/café.md" research/notes/a.md research/notes/b.md research/notes/c.md)
+OUT=$(tier_run "$UNICODE")
+if has "$OUT" "Stakes tier:      knowledge"; then
+    ok "TIER9: a non-ASCII knowledge path is matched (core.quotePath off)"
+else
+    fail "TIER9: a non-ASCII knowledge path fell to the code tier" "$(printf '%s' "$OUT" | grep -E 'Stakes tier' | head -1)"
+fi
+CAPTURES=$(tier_repo research/imported-documents/Z_Checkit/IMG_0001.HEIC research/imported-documents/Z_Checkit/frame.JPG \
+    research/imported-documents/Z_Checkit/video.en.vtt research/imported-documents/Z_Checkit/events.jsonl research/notes/SHA256SUMS)
+OUT=$(tier_run "$CAPTURES")
+if has "$OUT" "Stakes tier:      knowledge"; then
+    ok "TIER9b: phone captures (.HEIC, .JPG), subtitles (.vtt) and .jsonl are knowledge, in any case"
+else
+    fail "TIER9b: a declarative capture fell to the code tier" "$(printf '%s' "$OUT" | grep -E 'Stakes tier' | head -1)"
+fi
+EXEC=$(tier_repo x:research/notes/check.md research/notes/a.md research/notes/b.md research/entities/c.md)
+LINK=$(tier_repo ln:research/notes/link.md research/notes/a.md research/notes/b.md research/entities/c.md)
+CASED=$(tier_repo Research/notes/a.md Research/notes/b.md Research/entities/c.md DOCS/knowledge-index.md)
+tier_is_code TIER13 "$EXEC" "an executable named .md"
+tier_is_code TIER13 "$LINK" "a symlink named .md"
+tier_is_code TIER13 "$CASED" "Research/ and DOCS/ (directories match as written, only extensions fold)"
+OUT=$(cd "$KNOW" && PATH="/usr/bin:/bin:/usr/sbin:/sbin" bash "$CROSS_REVIEW_SH" pre-push --diff-base=no-such-ref 2>&1)
+if has "$OUT" "Stakes tier:      code"; then
+    ok "TIER10: an unresolvable diff base is the code tier"
+else
+    fail "TIER10: unknown scope got the knowledge tier" "$(printf '%s' "$OUT" | grep -E 'Stakes tier' | head -1)"
+fi
+OUT=$(tier_run "$KNOW" --strata=A)
+if has "$OUT" "Strata A was requested but" && has "$OUT" "Knowledge-tier stratum: none" && ! has "$OUT" "--stratum=B:"; then
+    ok "TIER11: an explicit A without codex is announced and does not silently become B"
+else
+    fail "TIER11: explicit A without codex was rewritten or unannounced" "$(printf '%s' "$OUT" | grep -E 'NOTE|stratum' | head -3)"
+fi
+STUB=$(mktemp -d); printf '#!/bin/sh\nexit 0\n' > "$STUB/codex"; chmod +x "$STUB/codex"
+OUT=$(TIER_PATH="$STUB:/usr/bin:/bin:/usr/sbin:/sbin" tier_run "$KNOW")
+if has "$OUT" "Knowledge-tier stratum: A" && has "$OUT" "Strata A: cross-vendor" \
+   && has "$OUT" "claims-rubric.md" && ! has "$OUT" "Strata B: fresh-context" \
+   && has "$OUT" "--stratum=A:" && ! has "$OUT" "--stratum=C:"; then
+    ok "TIER12: with codex present the knowledge tier runs A alone on the claims rubric"
+else
+    fail "TIER12: the knowledge tier with codex did not run A alone" "$(printf '%s' "$OUT" | grep -E 'stratum|Strata [ABC]' | head -4)"
+fi
+rm -rf "$TIER_ROOT" "$STUB"
 
 echo ""
 echo "── results ────────────────────────────────────────────────────"

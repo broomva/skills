@@ -5,10 +5,11 @@
 # before merge. Three strata, ordered by signal strength:
 #   A — Codex CLI cross-vendor (truest cross-model)
 #   B — Fresh Agent subagent under devil's-advocate brief (cross-context)
-#   C — Composed existing adversarial-review skills (always)
+#   C — Composed existing adversarial-review skills (code tier)
 #
 # Auto-detects environment: if `codex` CLI is on PATH, fires Strata A;
-# otherwise falls back to Strata B. Always runs Strata C in parallel.
+# otherwise falls back to Strata B. Runs Strata C in parallel in the code tier;
+# a knowledge-only diff gets one stratum (see --tier and SKILL.md §Stakes tiers).
 #
 # Scoring: anti-slop rubric (see references/rubric.md). PASS at ≥7/10 AND no
 # dimension at 0 — a zeroed axis caps the round below the bar (BRO-2636).
@@ -22,6 +23,7 @@
 #   cross-review pre-push --strata=A      # force Codex cross-vendor
 #   cross-review pre-push --strata=B      # force subagent
 #   cross-review pre-push --strata=C      # composed skills only
+#   cross-review pre-push --tier=code     # escalate a knowledge-only diff to the full panel
 #   cross-review plan --spec PATH         # plan-stage gate
 #   cross-review audit --target PATH      # audit-on-demand
 #   cross-review reviewer-guard capture   # fingerprint the tree before review
@@ -42,6 +44,12 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 RUBRIC_FILE="$REPO/references/rubric.md"
+CLAIMS_RUBRIC_FILE="$REPO/references/claims-rubric.md"
+# Stakes tier. "code" is the full panel; "knowledge" is computed from the diff
+# (an allowlist of regular declarative files in the knowledge locations; see the
+# tier block below) and can only be forced back to "code" with --tier=code,
+# never requested.
+TIER_REQUEST=""
 
 # ─── Defaults ─────────────────────────────────────────────────────────────
 COMMAND=""
@@ -101,6 +109,15 @@ esac
 for arg in "$@"; do
     case "$arg" in
         --strata=*) STRATA="${arg#*=}" ;;
+        --tier=*)
+            TIER_REQUEST="${arg#*=}"
+            if [ "$TIER_REQUEST" != "code" ]; then
+                echo "cross-review: --tier accepts only 'code', to escalate a knowledge-tier" >&2
+                echo "  diff to the full panel. The knowledge tier is computed from the diff's" >&2
+                echo "  paths and cannot be requested." >&2
+                exit 2
+            fi
+            ;;
         --diff-base=*) DIFF_BASE="${arg#*=}" ;;
         --spec=*) SPEC="${arg#*=}" ;;
         --target=*) TARGET="${arg#*=}" ;;
@@ -298,7 +315,6 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "  Diff base:        $DIFF_BASE"
     echo "  Rubric:           $RUBRIC"
     echo "  Round budget:     3 free / 4-7 earned / >=8 human (cross-review round)"
-    echo "  Rubric file:      $RUBRIC_FILE"
     echo "  Verdict format:   $OUTPUT_FORMAT"
     echo ""
 
@@ -338,6 +354,51 @@ if [ "$COMMAND" = "pre-push" ]; then
     else
         echo "  Diff scope:       $CHANGED_FILES file(s), $ADDITIONS insertion(s)"
     fi
+
+    # Stakes tier. A diff that only adds or edits knowledge -- entity pages,
+    # notes, their captured evidence, the generated index -- gets one claims
+    # review instead of the three-stratum code panel: its failure mode is a false
+    # or unsourced claim, which the claims rubric asks about directly, while the
+    # code rubric grades scaffolding as software (BRO-2844: a Low-priority
+    # /checkit ran 7 code-panel rounds on its evidence scripts).
+    #
+    # An allowlist, not a prefix: research/ also holds code projects
+    # (research/kaggriculture/, research/ternary-diffusion/), so only declarative
+    # file types in the three knowledge locations qualify, and only as regular,
+    # non-executable files (new mode 100644, or 000000 for a deletion): a symlink,
+    # an executable or a submodule is the code tier whatever its name. So is any
+    # other location, a rename's source path (--no-renames lists both ends), an
+    # empty list, an unreadable diff or an unknown scope. The raw diff is read
+    # once with -z: NUL-separated, never quoted, so non-ASCII names match, and
+    # with --no-renames every record is one metadata line and one path line.
+    # Only the extension is case-folded (phone captures arrive as .HEIC, .JPG);
+    # directories and the index name are matched as written.
+    TIER="code"
+    if [ "$SCOPE_UNKNOWN" = "0" ] && [ "$TIER_REQUEST" != "code" ]; then
+        TIER_PATHS=$(mktemp)
+        if git diff --raw --no-renames -z "$DIFF_BASE"...HEAD > "$TIER_PATHS" 2>/dev/null \
+           && [ -s "$TIER_PATHS" ]; then
+            KNOWLEDGE_RE='^(docs/knowledge-index\.md|research/(entities|notes|imported-documents)/(.*\.(md|txt|json|jsonl|csv|tsv|vtt|srt|jpg|jpeg|png|webp|gif|heic|pdf)|(.*/)?SHA256SUMS))$'
+            NON_KNOWLEDGE=$(tr '\0' '\n' < "$TIER_PATHS" | KRE="$KNOWLEDGE_RE" awk '
+                NR % 2 == 1 { split($0, meta, " "); mode = meta[2]; next }
+                { p = $0
+                  if (match(p, /\.[^.\/]+$/)) p = substr(p, 1, RSTART) tolower(substr(p, RSTART + 1))
+                  if ((mode != "100644" && mode != "000000") || p !~ ENVIRON["KRE"]) n++ }
+                END { if (NR % 2 == 1) n++; print n + 0 }')
+            [ "$NON_KNOWLEDGE" = "0" ] && TIER="knowledge"
+        fi
+        rm -f "$TIER_PATHS"
+    fi
+    if [ "$TIER" = "knowledge" ]; then
+        RUBRIC_FILE="$CLAIMS_RUBRIC_FILE"
+        echo "  Stakes tier:      knowledge (every changed path is a declarative file under"
+        echo "                    research/{entities,notes,imported-documents}/ or is"
+        echo "                    docs/knowledge-index.md): one stratum, Strata C skipped."
+        echo "                    --tier=code escalates."
+    else
+        echo "  Stakes tier:      code (full panel)"
+    fi
+    echo "  Rubric (tier):    $RUBRIC_FILE"
     echo ""
 
     # Substantive-threshold test (the agent's reflexive trigger)
@@ -451,12 +512,32 @@ if [ "$COMMAND" = "pre-push" ]; then
     elif [ "$SELECTED_STRATA" = "B" ]; then
         STRATA_HINT="B,C"
     fi
+
     # An explicitly requested stratum that cannot run is stated, not silently
     # downgraded: "the signal did not run" and "the signal passed" must never
     # look alike, and that applies to the panel too.
     if [ "$SELECTED_STRATA" = "A" ] && ! command -v codex >/dev/null 2>&1; then
         echo "  NOTE: Strata A was requested but \`codex\` is not on PATH, so it"
         echo "        will NOT run. The suggested panel below omits A deliberately."
+        echo ""
+    fi
+    # The knowledge tier runs one stratum, chosen AFTER the note above so an
+    # explicit A that cannot run is still announced. auto takes A when codex can
+    # run it, else B; an explicit B or C takes B (C does not run in this tier);
+    # an explicit A without codex runs nothing until the caller picks B.
+    if [ "$TIER" = "knowledge" ]; then
+        if { [ "$SELECTED_STRATA" = "A" ] || [ "$SELECTED_STRATA" = "auto" ]; } \
+           && command -v codex >/dev/null 2>&1; then
+            STRATA_HINT="A"
+            echo "  Knowledge-tier stratum: A (cross-vendor)."
+        elif [ "$SELECTED_STRATA" = "A" ]; then
+            STRATA_HINT=""
+            echo "  Knowledge-tier stratum: none. A was requested and cannot run; pass"
+            echo "  --strata=B to accept a same-model review, which is weaker evidence."
+        else
+            STRATA_HINT="B"; SELECTED_STRATA="B"
+            echo "  Knowledge-tier stratum: B (same model as the writer; weaker than A)."
+        fi
         echo ""
     fi
     echo "  After each scored round, one --stratum per stratum that scored it:"
@@ -505,7 +586,7 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo ""
         echo "  [TODO-AGENT] The agent runs the following pattern:"
         echo "    1. Capture the diff: git diff $DIFF_BASE...HEAD > /tmp/cross-review-diff.patch"
-        echo "    2. Invoke Codex with the adversarial brief from references/rubric.md,"
+        echo "    2. Invoke Codex with the brief from references/$(basename "$RUBRIC_FILE"),"
         echo "       composed as the rubric specifies: its Strata-A preamble first, then"
         echo "       the rubric. That is the prompt argument; the diff goes on stdin,"
         echo "       which codex exec appends to the prompt as a <stdin> block:"
@@ -545,7 +626,7 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "       dispatched to report, and a fixed finding is indistinguishable"
         echo "       from one that was never found."
         echo "       Prompt: 'You are reviewing diff X against rubric Y as a devil's"
-        echo "        advocate. Read references/rubric.md. Score each dimension"
+        echo "        advocate. Read references/$(basename "$RUBRIC_FILE"). Score each dimension"
         echo "        and report verdict. You cannot change code: report, do not fix.'"
         echo "    3. Parse the subagent's response"
         echo "    4. Same loop: ≥7 AND no dimension at 0 to pass; otherwise fix-rescore, then drive the round budget"
@@ -554,7 +635,15 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "  (This script enforces the structure; the agent dispatches the subagent)"
     fi
 
-    # Strata C — composed existing skills (always)
+    # Strata C — composed existing skills (code tier only)
+    if [ "$TIER" = "knowledge" ]; then
+    echo "  ─── Strata C: skipped (knowledge tier) ──────────────────────"
+    echo ""
+    echo "  A knowledge-only diff gets one claims review (A when codex can run). Its failure"
+    echo "  mode is a false or unsourced claim, and the code-review skills composed"
+    echo "  in Strata C grade scaffolding as software. --tier=code restores them."
+    echo ""
+    else
     echo "  ─── Strata C: composed existing skills (always parallel) ────"
     echo ""
     echo "  [TODO-AGENT] Invoke each applicable skill via the Skill tool:"
@@ -568,9 +657,11 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "    - premortem                          (imagine this failed)"
     echo "    - plan-design-review / plan-ceo-review / plan-eng-review"
     echo ""
-    echo "  Aggregate findings from all skills. Each contributes to the rubric"
-    echo "  dimensions. Final score is the consensus minimum (failures count)."
+    echo "  Aggregate findings from all skills. Each is graded by the rubric's"
+    echo "  severity rules: only a reproduced BLOCKER or MAJOR zeroes a dimension,"
+    echo "  and a MINOR lowers nothing. The round score is the minimum across strata."
     echo ""
+    fi
 
     # ─── Mutation-proof — REPORTED SIGNAL, not a gate ────────────────────
     # Rubric dimension 5 ("tests cover the change") is the one dimension a
