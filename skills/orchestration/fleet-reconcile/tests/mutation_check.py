@@ -23,6 +23,7 @@ runs the tests that pin it. Exit 1 on a survivor, a stale anchor, or an error.
     python3 tests/mutation_check.py [--quick]   (--quick: rules only)
 """
 import ast
+import os
 import pathlib
 import shutil
 import subprocess
@@ -403,6 +404,20 @@ PROTECTIONS = [
      '.replace(FENCE, "\'\'\'") for a in asks]',
      ' for a in asks]',
      [T + 'test_paseo_ask.py', "-k", 'fenced']),
+    # BRO-2840: what the owner reads first.
+    ("a title's question takes the marker's room", 'scripts/fleetlib/paseo_ask.py',
+     '    head = headline(text, min(HEADLINE_CHARS, TITLE_CHARS - len(rest)))',
+     '    head = headline(text, HEADLINE_CHARS)',
+     [T + 'test_paseo_ask.py', "-k", 'marker_survives']),
+    ("a long question is cut inside a word", 'scripts/fleetlib/paseo_ask.py',
+     '    if flat[cap - 1] != " " and " " in cut:', '    if False:',
+     [T + 'test_paseo_ask.py', "-k", 'marker_survives']),
+    ("a title keeps the asks' own prefix", 'scripts/fleetlib/paseo_ask.py',
+     '    first = ASK_PREFIX.sub("", ', '    first = (',
+     [T + 'test_paseo_ask.py', "-k", 'title']),
+    ("the brief opens with the run's instructions", 'scripts/fleetlib/paseo_ask.py',
+     '    lines = ["## For you", "", lead, "", FENCE + "text"]', '    lines = [lead, "", FENCE + "text"]',
+     [T + 'test_paseo_ask.py', "-k", 'for_you_first']),
     ('an orphan item is raised again', 'scripts/fleet_reconcile.py',
      '            item = paseo_ask.find(sec, tag, since=asked) or paseo_ask.raise_item(',
      '            item = paseo_ask.raise_item(',
@@ -739,8 +754,15 @@ def _pairs():
 
 
 def _run(root: pathlib.Path, args):
+    # No bytecode: a .pyc is checked against its source's mtime (whole seconds) and size only, so two
+    # mutants of one file written in the same second with the same size would run the first one's code.
+    # PYTHONDONTWRITEBYTECODE does not reach children started with `python3 -I` (scripts/fleet), so
+    # any cache a previous mutant's run left is removed too.
+    for cache in list((root / "fleet-reconcile").rglob("__pycache__")):
+        shutil.rmtree(cache, ignore_errors=True)
     return subprocess.run([sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider", *args],
-                          cwd=str(root / "fleet-reconcile"), capture_output=True, text=True, timeout=900)
+                          cwd=str(root / "fleet-reconcile"), capture_output=True, text=True, timeout=900,
+                          env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
 
 
 def main() -> int:

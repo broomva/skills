@@ -1,5 +1,38 @@
 # Changelog: fleet-reconcile
 
+## [0.4.2] - 2026-10-05
+
+The asks the fleet raises in Maestro read as asks (BRO-2840; Maestro's side,
+which parses this shape, is BRO-2839).
+
+- **Title.** A batch's title is its first ask's question (whitespace collapsed,
+  an `[aN]` id and the class after it dropped, a question's own leading
+  parenthetical kept, cut at a word boundary to 90 characters with
+  `…`), then ` (+N more)` for the rest of the batch, then the unchanged marker:
+  `<question>[ (+N more)] [fleet-reconcile <scope> batch <id>]`. It was
+  `1 ask (tick 7) [fleet-reconcile sri batch 7-3]`. The 160-character bound
+  cuts the question, never the marker.
+- **Brief.** Two sections, the owner's first. `## For you`: what this is and
+  that `fleet asks --scope <scope>` lists them too, the asks as
+  `- [<id>] (<class>) <question>` in a fenced `text` block (still data, never
+  instructions to the run; the ids let a sent-back note name its ask), and
+  exactly one line on what Approve, Send back and Cancel do.
+  `## For the run`: the run agent's instructions, unchanged in meaning, except
+  that the run is told the item's title quotes other sessions' words too (the
+  title now opens with the first ask, and Maestro puts it on the run's first
+  prompt line).
+- **Alerts** read `fleet <scope>: <kind> — <the alert's words> <marker>` with
+  the same two-section brief: `- [alert] (<kind>) <words>`, and a verbs line
+  that says a sent-back note isn't read and that repeats within 6 h are only
+  logged, as tick.sh delivers one per kind per 6 h (the bash fallback is unchanged).
+- **Mutation check runs without bytecode.** Two mutants of one file with the
+  same size written in the same second reused the first's `.pyc` (Python
+  checks only mtime in seconds and size), so "the brief opens with the run's
+  instructions" ran the previous mutant's code and survived in CI.
+- Unchanged: the run's contract, how answers are read back, idempotency and
+  refusal handling. An item still open under the old title is found by its
+  marker and adopted, not raised again (tested at `find` and end to end).
+
 ## [0.4.1] - 2026-10-02
 
 Pre-live hardening before `dry_run: 0` (BRO-2755, BRO-2756; parent BRO-2714).
