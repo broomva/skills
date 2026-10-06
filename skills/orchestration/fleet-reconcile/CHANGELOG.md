@@ -13,11 +13,17 @@ which parses this shape, is BRO-2839).
   cuts the question, never the marker.
 - **Brief.** Two sections, the owner's first. `## For you`: what this is and
   that `fleet asks --scope <scope>` lists them too, the asks as
-  `- (<class>) <question>` in a fenced `text` block (still data, never
-  instructions to the run), and what Approve, Send back and Cancel do.
+  `- [<id>] (<class>) <question>` in a fenced `text` block (still data, never
+  instructions to the run; the ids let a sent-back note name its ask), and
+  exactly one line on what Approve, Send back and Cancel do.
   `## For the run`: the run agent's instructions, unchanged in meaning.
 - **Alerts** read `fleet <scope>: <kind> — <the alert's words> <marker>` with
-  the same two-section brief (the bash fallback is unchanged).
+  the same two-section brief: `- [alert] (<kind>) <words>`, and a verbs line
+  that says a sent-back note isn't read (the bash fallback is unchanged).
+- **Mutation check runs without bytecode.** Two mutants of one file with the
+  same size written in the same second reused the first's `.pyc` (Python
+  checks only mtime in seconds and size), so "the brief opens with the run's
+  instructions" ran the previous mutant's code and survived in CI.
 - Unchanged: the run's contract, how answers are read back, idempotency and
   refusal handling. An item still open under the old title is found by its
   marker and adopted, not raised again (tested at `find` and end to end).

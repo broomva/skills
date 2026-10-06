@@ -95,7 +95,10 @@ ASK_PREFIX = re.compile(r"^(?:\[a\d+\]\s*)?(?:\([\w-]+\)\s*)?")
 #: What Maestro's verbs do, in the owner's words, under `## For you`.
 ASK_VERBS = ("Approve acknowledges them · Send back answers with your note (the fleet reads it at its next tick) · "
              "Cancel dismisses them.")
-ALERT_VERBS = "Approve or Cancel dismisses it; a note sent back isn't read. tick.log has each alert's words."
+#: An alert's answer is never read: closing its item only means the next
+#: alert of its kind raises a new one (alert() adopts an open item).
+ALERT_VERBS = ("Approve or Cancel closes it (the next alert of this kind raises a new item) · a note sent back "
+               "isn't read · tick.log has each alert's words.")
 
 
 class MaestroError(RuntimeError):
@@ -188,6 +191,14 @@ def item_title(text: Any, tag: str, more: int = 0) -> str:
     return head + rest if head else rest.lstrip()
 
 
+def ask_line(ask_id: Any, cls: Any, question: Any) -> str:
+    """An ask as `## For you` lists it (after its "- "): `[<id>] (<class>)
+    <question>`, the class empty when there is none. The id lets a sent-back
+    note name the ask it answers."""
+    return "[%s] (%s) %s" % ("" if ask_id is None else ask_id, "" if cls is None else cls,
+                             "" if question is None else question)
+
+
 def ask_title(questions: List[Any], tag: str) -> str:
     """A batch's title: its first ask's question (without an `[aN] (class)`
     prefix), " (+N more)" for the others, then the marker."""
@@ -195,13 +206,14 @@ def ask_title(questions: List[Any], tag: str) -> str:
     return item_title(first or "A fleet ask", tag, len(questions) - 1)
 
 
-def brief(lead: str, asks: List[str], closing: str, verbs: str = ASK_VERBS) -> str:
+def brief(lead: str, asks: List[str], closing: str, verbs: str = ASK_VERBS, notes_read: bool = True) -> str:
     """The item's brief in two sections, the owner's first. `## For you`: the
     lead, the asks one per line (`- <ask>`), and what Maestro's verbs do with
     them. The asks quote other sessions' words (statuses, job questions,
     names): they go in a fenced block as data, and the look the run writes
     carries only the fleet's own words. `## For the run`: the run agent's
-    instructions (change nothing; end with '## Decided' and '## Ask')."""
+    instructions (change nothing; end with '## Decided' and '## Ask'); with
+    `notes_read` false (an alert) it says a sent-back note isn't read."""
     lines = ["## For you", "", lead, "", FENCE + "text"]
     lines += ["- " + common.safe_text(a, 400).replace(FENCE, "'''") for a in asks]
     lines += [FENCE, "", verbs, "", "## For the run", "",
@@ -210,8 +222,9 @@ def brief(lead: str, asks: List[str], closing: str, verbs: str = ASK_VERBS) -> s
               "", "Change nothing and run no tools. End your turn at once with exactly two sections: "
               "'## Decided' with one bullet, 'nothing', and '## Ask' with one bullet: '%s'" % closing,
               "", "If the owner sends a note back, change nothing and end again at once with '## Decided' saying "
-              "the fleet reads the note at its next tick, and '## Ask' with one bullet: approve to close. If they "
-              "write to you in this chat instead, reply only that chat replies aren't read: answer with Send back."]
+              + ("the fleet reads the note at its next tick" if notes_read else "the fleet doesn't read notes on alerts")
+              + ", and '## Ask' with one bullet: approve to close. If they write to you in this chat instead, reply "
+              "only that chat replies aren't read" + (": answer with Send back." if notes_read else ".")]
     return "\n".join(lines)
 
 
@@ -323,7 +336,7 @@ def alert(sec: Dict[str, Any], kind: str, message: str) -> Dict[str, Any]:
     if open_one is not None:
         return dict(open_one, adopted=True)
     text = brief("The fleet's tick for scope %s raised an alert (%s)." % (sec["scope"], common.safe_text(kind, 40)),
-                 [message], "a fleet-reconcile alert for scope %s is in this item's brief: approve to dismiss"
-                 % sec["scope"], ALERT_VERBS)
+                 [ask_line("alert", common.safe_text(kind, 40), message)], "a fleet-reconcile alert for scope %s is in this item's brief: approve to dismiss"
+                 % sec["scope"], ALERT_VERBS, notes_read=False)
     words = "fleet %s: %s — %s" % (sec["scope"], common.safe_text(kind, 40), common.safe_text(message, 1 << 20))
     return raise_item(sec, item_title(words, tag), text)

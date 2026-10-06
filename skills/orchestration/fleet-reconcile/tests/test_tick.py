@@ -366,7 +366,9 @@ def test_a_batch_is_raised_once_and_the_owners_verdict_comes_back_as_the_answer(
     title = rig.raised(BATCH)[0].split(" --brief ")[0]
     assert title.startswith("new Session interactive-session-47 ") and "(+3 more) " + BATCH in title  # its question
     you, run = rig.brief("itm-1").split("\n## For the run\n")
-    assert "--brief ## For you\n" in you and "\n- (7) Session interactive-session-47" in you and "## Ask" in run
+    listed = [ln for ln in you.splitlines() if ln.startswith("- ")]
+    assert len(listed) == 4 and all(re.match(r"^- \[[^\]]+\] \([^)]*\) .+", ln) for ln in listed)
+    assert "--brief ## For you\n" in you and "\n- [a1] (7) Session interactive-session-47" in you and "## Ask" in run
     rig.answer("itm-1", "revise", note="skills gets its pull_request rule this week", state="running")
     rig.tick()
     (ack,) = [x for x in rig.ledger() if x["kind"] == "ack" and x.get("by") == "owner:maestro"]

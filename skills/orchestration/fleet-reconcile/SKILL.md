@@ -234,13 +234,15 @@ that a later tick found no longer true isn't raised; 0 raises at once).
   `<question>[ (+N more)] [fleet-reconcile <scope> batch <id>]`, 160
   characters at most, the question cut to fit and the marker never.
 - Its brief opens with `## For you`: a plain line on what this is (and that
-  `fleet asks --scope <scope>` lists the asks too), the asks one per line,
-  `- (<class>) <question>`, in a fenced `text` block as data (they quote other
-  sessions' words), and what the verbs do: "Approve acknowledges them · Send
-  back answers with your note (the fleet reads it at its next tick) · Cancel
-  dismisses them." Then `## For the run`: the run changes nothing and ends
-  with the fleet's own one-line summary under `## Ask`, so the item waits at
-  **Needs you** and the agent's Paseo record is marked as needing attention.
+  `fleet asks --scope <scope>` lists the asks too), then the asks one per
+  line, `- [<id>] (<class>) <question>` (ids like `a1`, so a sent-back note
+  can name the ask it answers; the class empty, `()`, when there is none),
+  inside a fenced `text` block as data (they quote other sessions' words),
+  then exactly one verbs line: "Approve acknowledges them · Send back answers
+  with your note (the fleet reads it at its next tick) · Cancel dismisses
+  them." Then `## For the run`: the run changes nothing and ends with the
+  fleet's own one-line summary under `## Ask`, so the item waits at **Needs
+  you** and the agent's Paseo record is marked as needing attention.
 
 Measured end to end on 2026-10-01, at the daemon state the app renders: the
 item reached `review` and the agent read `requiresAttention: true`. A phone
@@ -304,7 +306,11 @@ tick.sh's own alerts (a bad config, a failed step, a held lock) are Maestro
 items too, at most once per 6 h per kind, stamped only once the item is past
 Maestro's queue. Their title reads `fleet <scope>: <kind> — <the alert's
 words, cut to fit> [fleet-reconcile <scope> alert <kind>]`, and their brief
-has the same two sections (the bash fallback's keeps its one-line form). `fleet alert` adopts an open item of the same kind rather
+has the same two sections: under `## For you` the alert as one line,
+`- [alert] (<kind>) <words>`, and one verbs line that says what is honoured:
+"Approve or Cancel closes it (the next alert of this kind raises a new item)
+· a note sent back isn't read · tick.log has each alert's words." (The bash
+fallback's brief keeps its one-line form.) `fleet alert` adopts an open item of the same kind rather
 than raising a second, so that item stands for the later alerts of its kind
 (`tick.log` has each one's words). When Python or the config is what broke, a
 bash fallback raises one (`maestro new --dispatch`, in its own process group

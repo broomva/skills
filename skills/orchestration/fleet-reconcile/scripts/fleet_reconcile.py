@@ -344,7 +344,7 @@ def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
         text = paseo_ask.brief(
             "The fleet has %d question%s for you from scope %s (tick %s). In a terminal, `fleet asks --scope %s` "
             "lists them too." % (n, "" if n == 1 else "s", sec["scope"], b["tick"], sec["scope"]),
-            ["(%s) %s" % (a.get("class"), a.get("question")) for a in asks],
+            [paseo_ask.ask_line(a.get("id"), a.get("class"), a.get("question")) for a in asks],
             "%s are in this item's brief: approve to acknowledge them, send back a note to answer, cancel to "
             "dismiss" % what)
         try:

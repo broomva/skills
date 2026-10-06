@@ -23,6 +23,7 @@ runs the tests that pin it. Exit 1 on a survivor, a stale anchor, or an error.
     python3 tests/mutation_check.py [--quick]   (--quick: rules only)
 """
 import ast
+import os
 import pathlib
 import shutil
 import subprocess
@@ -753,8 +754,11 @@ def _pairs():
 
 
 def _run(root: pathlib.Path, args):
+    # No bytecode: a .pyc is checked against its source's mtime (whole seconds) and size only, so two
+    # mutants of one file written in the same second with the same size would run the first one's code.
     return subprocess.run([sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider", *args],
-                          cwd=str(root / "fleet-reconcile"), capture_output=True, text=True, timeout=900)
+                          cwd=str(root / "fleet-reconcile"), capture_output=True, text=True, timeout=900,
+                          env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
 
 
 def main() -> int:
