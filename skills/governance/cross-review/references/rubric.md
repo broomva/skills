@@ -44,17 +44,31 @@ When invoking a Strata-A (Codex) or Strata-B (subagent) evaluator, include this 
 
 > You are the adversarial reviewer. The writer (a different model OR the same model in a different context) just produced the diff you're about to read. **You are NOT the writer's ally.** Your job is to find what's wrong, what's missing, what's over-built, what's under-tested, what's brittle.
 >
-> Read the diff. Apply the 5-dimension anti-slop rubric below. For each dimension, assign 0, 1, or 2 points:
+> Read the diff. Apply the 5-dimension anti-slop rubric below. Grade every finding by severity first, then score each dimension from the worst finding on it:
 >
-> - 0: clear failure, named deduction with file:line reference
-> - 1: marginal, named caveat with file:line reference
-> - 2: clean pass
+> - **BLOCKER** — the change is wrong for its stated purpose: a false claim, broken behaviour, data loss, a security hole.
+> - **MAJOR** — a concrete failure a real user or reader would plausibly hit. Name the input and the wrong outcome.
+> - **MINOR** — polish, wording, hardening against inputs no realistic author or user produces, a test gap for a rule the change did not touch.
+>
+> - 0: a BLOCKER, or a MAJOR you **reproduced** — quote the command and its output, or the exact source line that shows the defect. Cite file:line.
+> - 1: a MAJOR you did not reproduce. Cite file:line and the failure scenario.
+> - 2: no finding on this dimension, or only MINOR findings. List MINORs; they never lower a score.
 >
 > Sum the points (max 10). Total ≥7 AND no dimension at 0 → APPROVE. Otherwise REVISE.
 >
 > **Report the five per-dimension scores, not just the total** — as `AXES: a,b,c,d,e` in rubric order. A total that clears the bar with a dimension at zero is not a pass: `2+2+2+2+0 = 8` leaves *tests cover the change* unmet, and the controller caps such a round below the bar from the axes you report.
 >
-> When you REVISE, name the specific failures the writer must address. Don't give vague feedback. Each deduction must cite a file path + line range + the rubric dimension violated. Be ruthless — finding nothing wrong is suspicious; correlated blind spots are real.
+> When you REVISE, name the specific failures the writer must address. Don't give vague feedback. Each deduction must cite a file path + line range + the rubric dimension violated. Be ruthless in looking and honest in grading: correlated blind spots are real, so search hard, but an unreproduced suspicion is at most a MAJOR and never a 0, and an empty finding list is a valid result for a sound change.
+
+### What blocks, and the agreement rule (BRO-2844)
+
+Only a dimension at 0 blocks, through the cap above, and only a BLOCKER or a reproduced MAJOR scores 0. A MINOR never lowers a score, so a stratum cannot fail a round on polish. This is how the gate stays proportionate: in BRO-2829 every round of a three-stratum panel failed on findings the artifact never exhibited, and seven rounds bought what one reproduced finding would have.
+
+The orchestrator owes one more thing that no single reviewer can see. When two strata independently raise the same MAJOR, and one of them is cross-vendor (Strata A), the writer must either fix it or refute it with a reproduction, even though each stratum scored it 1. Two correlated strata agreeing (B and C, same model) do not trigger this: their agreement is weak evidence (see the knowledge-graph pattern `correlated-verifier-is-no-verifier`).
+
+### Stakes tiers
+
+`cross-review pre-push` computes a tier from the diff's paths. A diff whose every path is under `research/` or is `docs/knowledge-index.md` is the **knowledge** tier: one cross-vendor stratum (A, or B when codex is absent), the claims rubric in `references/claims-rubric.md`, and Strata C skipped. Every other diff is the **code** tier and gets this rubric and the full panel. `--tier=code` escalates a knowledge diff; nothing downgrades a code diff.
 
 ## Per-dimension detail
 

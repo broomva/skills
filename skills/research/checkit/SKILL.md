@@ -54,6 +54,15 @@ note-taking tools in sequence; it does **not** reimplement them.
 > *surface the expensive option as a ranked next step* — you still never ask,
 > you defer.
 
+## Proportionality: depth follows stakes
+
+Size a /checkit to what rides on it, before the first tool call:
+
+- **Light path, the default.** Use it for a social post, reel, thread or link nobody has made a decision on. Read the primary source, write the S/D/P entity, and keep a small evidence folder: captured sources, a `SHA256SUMS`, and what `video_ingest.py` already produced. Write no checker script, no mutation tests and no extra capture tooling. The PR is knowledge-only, so P20 runs its knowledge tier: one cross-vendor claims review (`cross-review` §Stakes tiers). Target: one session hour and one review round.
+- **Heavy path.** Use it only when the finding feeds a spec, a plan, a public claim or a decision someone is about to take. Say so in the ticket. Verification scripts are allowed then, but every script is review surface, so add one only when a claim needs it.
+
+If review findings start landing on your scaffolding rather than on your claims, delete the scaffolding. Hardening it is the failure mode: BRO-2829 spent about 3.3M tokens, 14 review subagents and 3 hours on a Low-priority reel whose finding was known 8 minutes in.
+
 ## Pipeline (what `/checkit <artifact>` does)
 
 1. **Infer + declare intent** — one line: *"Reading this as: <inferred ask>
@@ -228,6 +237,7 @@ note-taking tools in sequence; it does **not** reimplement them.
 | "I confirmed the repo/page exists — that's verification." | Existence ≠ contents. `[HIGH]` requires reading the canonical text; a tag naming a source you didn't open is false provenance. |
 | "This artifact isn't obviously about our work." | For a focused builder/researcher it almost always is — find the link to active work before defaulting to a neutral read. |
 | "Let me just kick off the deep multi-agent run on this guess." | Costly/irreversible on an inference → surface it as a next step instead (the carve-out). |
+| "I'll add a checker with mutation tests so the entity is airtight." | On the light path, no. Each script becomes review surface and invites its own findings. The S/D/P page plus its captured sources is the proof. |
 
 ## Scope
 

@@ -111,6 +111,25 @@ BUDGET: 3 free rounds · 4-7 earned by a continuation verdict · ≥8 human
 ESCALATE: STOP verdict, two refuted predictions, a score regression, or round 8
 ```
 
+### What blocks: severity, not volume (BRO-2844)
+
+A reviewer grades every finding before scoring. A **BLOCKER** means the change is wrong for its purpose. A **MAJOR** is a concrete failure a real user or reader would plausibly hit. A **MINOR** is polish, wording, or hardening against inputs no realistic author produces. A dimension scores **0 only for a BLOCKER or a MAJOR the reviewer reproduced** (a command and its output, or the exact source line). An unreproduced MAJOR costs 1, and a MINOR costs nothing. Since a zero caps the round below the bar, only reproduced defects can block, and no stratum fails a round on polish. The full rules are in `references/rubric.md` §What blocks.
+
+**The agreement rule.** When two strata independently raise the same MAJOR and one of them is cross-vendor (A), the writer fixes it or refutes it with a reproduction, even though each scored it 1. B and C agreeing does not trigger this, because they are the same model.
+
+Why: in BRO-2829, a Low-priority /checkit ran seven three-stratum rounds. Every stratum confirmed the page's substance, while every round failed on hardening findings the artifact never exhibited.
+
+### Stakes tiers
+
+`pre-push` computes the tier from the diff's paths:
+
+| Tier | When | Panel | Rubric |
+|---|---|---|---|
+| **knowledge** | every changed path is under `research/` or is `docs/knowledge-index.md` | one stratum: A, or B when codex is absent; C skipped | `references/claims-rubric.md`: do claims trace, quotes keep their sense, numbers recompute, gaps get disclosed, evidence reproduce |
+| **code** | anything else | A or B, plus C | `references/rubric.md` |
+
+The knowledge tier expects one round, plus a second only to verify the fix of a zeroed dimension. `--tier=code` escalates a knowledge diff. Nothing downgrades a code diff, and `--tier=knowledge` is refused.
+
 ### The round budget is dynamic
 
 The old rule was `max 3 rounds`, and it was enforced nowhere — `pre-push` printed
@@ -599,7 +618,8 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore, and record the round: `cross-review round record-round --run-id=$ID --score=N/10 --axes=a,b,c,d,e --defect=yes|no --stratum=L:N/10:PASS|FAIL ...` (one `--stratum` per stratum that scored; `--strata=<actual>` is accepted instead only for a failing round), where the letters are the panel that really produced the score — `A,C` when Codex ran, `B,C` when it did not, `C` alone when only the composed skills did. Writing `A,B,C` out of habit is the failure this field exists to prevent. Ask `cross-review round budget` before starting another; past round 3 it will require a continuation verdict.
 2b. **When the budget returns REVIEW-REQUIRED (exit 5)** — run the continuation review on *the decision to continue*, against a STOP default. `CONTINUE` obliges a falsifiable prediction that the next round settles; two refuted in a row end the loop regardless of score.
 3. **When the writer is the only model in the loop** — STOP. Strata B at minimum is mandatory.
-4. **When tempted to skip "this PR is small enough"** — apply the substantive-threshold test (>200 LOC OR public API OR multi-file OR governance-class).
+4. **When tempted to skip "this PR is small enough"** — apply the substantive-threshold test (>200 LOC OR public API OR multi-file OR governance-class). A substantive diff that touches only knowledge material still fires, in the knowledge tier (§Stakes tiers).
+4b. **When fixing review findings** — fix what blocks: zeroed dimensions, plus any MAJOR covered by the agreement rule. Log MINORs as follow-ups or decline them with a reason. Do not spend a round on them.
 5. **When P20 verdict and CI verdict disagree** — P20 is the *quality* gate; CI is the *correctness* gate. Both must pass. P20 cannot override CI; CI cannot substitute for P20.
 
 ## Cardinal rule
