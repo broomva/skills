@@ -756,6 +756,10 @@ def _pairs():
 def _run(root: pathlib.Path, args):
     # No bytecode: a .pyc is checked against its source's mtime (whole seconds) and size only, so two
     # mutants of one file written in the same second with the same size would run the first one's code.
+    # PYTHONDONTWRITEBYTECODE does not reach children started with `python3 -I` (scripts/fleet), so
+    # any cache a previous mutant's run left is removed too.
+    for cache in list((root / "fleet-reconcile").rglob("__pycache__")):
+        shutil.rmtree(cache, ignore_errors=True)
     return subprocess.run([sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider", *args],
                           cwd=str(root / "fleet-reconcile"), capture_output=True, text=True, timeout=900,
                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))

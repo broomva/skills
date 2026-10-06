@@ -308,8 +308,9 @@ Maestro's queue. Their title reads `fleet <scope>: <kind> — <the alert's
 words, cut to fit> [fleet-reconcile <scope> alert <kind>]`, and their brief
 has the same two sections: under `## For you` the alert as one line,
 `- [alert] (<kind>) <words>`, and one verbs line that says what is honoured:
-"Approve or Cancel closes it (the next alert of this kind raises a new item)
-· a note sent back isn't read · tick.log has each alert's words." (The bash
+"Approve or Cancel closes it (a later alert of this kind raises a new item;
+repeats within 6 h are only logged) · a note sent back isn't read · tick.log
+has each alert's words." (The bash
 fallback's brief keeps its one-line form.) `fleet alert` adopts an open item of the same kind rather
 than raising a second, so that item stands for the later alerts of its kind
 (`tick.log` has each one's words). When Python or the config is what broke, a
