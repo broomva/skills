@@ -363,7 +363,10 @@ def test_a_batch_is_raised_once_and_the_owners_verdict_comes_back_as_the_answer(
     assert len(rig.raised(BATCH)) == 1  # the item stays at Needs you; never raised twice
     # nor raised again: the second tick only records the item's move to Needs you (review)
     assert [x["result"]["state"] for x in rig.ledger() if x["kind"] == "seen"] == ["running", "review"]
-    assert "[a1]" in rig.brief("itm-1") and "## Ask" in rig.brief("itm-1")
+    title = rig.raised(BATCH)[0].split(" --brief ")[0]
+    assert title.startswith("new Session interactive-session-47 ") and "(+3 more) " + BATCH in title  # its question
+    you, run = rig.brief("itm-1").split("\n## For the run\n")
+    assert "--brief ## For you\n" in you and "\n- (7) Session interactive-session-47" in you and "## Ask" in run
     rig.answer("itm-1", "revise", note="skills gets its pull_request rule this week", state="running")
     rig.tick()
     (ack,) = [x for x in rig.ledger() if x["kind"] == "ack" and x.get("by") == "owner:maestro"]
@@ -387,6 +390,23 @@ def test_an_item_maestro_made_before_failing_is_adopted_not_raised_again(rig):
     rig.tick()
     assert len(rig.raised(BATCH)) == 1  # found by its title's marker, not created twice
     assert rig.raised("fleet broomva: tick-ask")  # the failed tick's own alert
+    (seen,) = [x for x in rig.ledger() if x["kind"] == "seen"]
+    assert seen["result"]["item"] == "itm-1"
+
+
+def test_an_open_item_raised_under_the_old_title_is_adopted_not_raised_again(rig, tmp_path):
+    # Before BRO-2840 a batch's title read "<n> asks (tick <t>) <marker>". An item still open under it is
+    # found by the same marker at the next tick, so the batch isn't raised a second time.
+    rig.tick(STUB_NEW_EXIT="3")  # created, then "no clear answer": not recorded
+    items = tmp_path / "calls" / "maestro-items"
+    listed = [json.loads(x) for x in items.read_text().splitlines()]
+    for it in listed:
+        if BATCH in it["title"]:
+            it["title"] = "4 asks (tick 1) " + it["title"][it["title"].index(BATCH):]
+    assert [it["id"] for it in listed if it["title"].startswith("4 asks (tick 1) " + BATCH)] == ["itm-1"]
+    items.write_text("".join(json.dumps(it) + "\n" for it in listed))
+    rig.tick()
+    assert len(rig.raised(BATCH)) == 1
     (seen,) = [x for x in rig.ledger() if x["kind"] == "seen"]
     assert seen["result"]["item"] == "itm-1"
 

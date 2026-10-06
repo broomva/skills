@@ -1,5 +1,27 @@
 # Changelog: fleet-reconcile
 
+## [0.4.2] - 2026-10-05
+
+The asks the fleet raises in Maestro read as asks (BRO-2840; Maestro's side,
+which parses this shape, is BRO-2839).
+
+- **Title.** A batch's title is its first ask's question (whitespace collapsed,
+  any `[aN]`/class prefix dropped, cut at a word boundary to 90 characters with
+  `…`), then ` (+N more)` for the rest of the batch, then the unchanged marker:
+  `<question>[ (+N more)] [fleet-reconcile <scope> batch <id>]`. It was
+  `1 ask (tick 7) [fleet-reconcile sri batch 7-3]`. The 160-character bound
+  cuts the question, never the marker.
+- **Brief.** Two sections, the owner's first. `## For you`: what this is and
+  that `fleet asks --scope <scope>` lists them too, the asks as
+  `- (<class>) <question>` in a fenced `text` block (still data, never
+  instructions to the run), and what Approve, Send back and Cancel do.
+  `## For the run`: the run agent's instructions, unchanged in meaning.
+- **Alerts** read `fleet <scope>: <kind> — <the alert's words> <marker>` with
+  the same two-section brief (the bash fallback is unchanged).
+- Unchanged: the run's contract, how answers are read back, idempotency and
+  refusal handling. An item still open under the old title is found by its
+  marker and adopted, not raised again (tested at `find` and end to end).
+
 ## [0.4.1] - 2026-10-02
 
 Pre-live hardening before `dry_run: 0` (BRO-2755, BRO-2756; parent BRO-2714).
