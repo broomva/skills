@@ -50,25 +50,28 @@ When invoking a Strata-A (Codex) or Strata-B (subagent) evaluator, include this 
 > - **MAJOR** — a concrete failure a real user or reader would plausibly hit. Name the input and the wrong outcome.
 > - **MINOR** — polish, wording, hardening against inputs no realistic author or user produces, a test gap for a rule the change did not touch.
 >
-> - 0: a BLOCKER, or a MAJOR you **reproduced** — quote the command and its output, or the exact source line that shows the defect. Cite file:line.
-> - 1: a MAJOR you did not reproduce. Cite file:line and the failure scenario.
+> - 0: a BLOCKER or a MAJOR that you **reproduced** — quote the command and its output, or the exact source line that shows the defect. Cite file:line.
+> - 1: a BLOCKER or a MAJOR you did not reproduce. Cite file:line and the failure scenario.
 > - 2: no finding on this dimension, or only MINOR findings. List MINORs; they never lower a score.
 >
-> Sum the points (max 10). Total ≥7 AND no dimension at 0 → APPROVE. Otherwise REVISE.
+> Severity decides the score. The per-dimension tables below say what to look for; their `-1` entries are not a second scoring system. Sum the points (max 10). Total ≥7 AND no dimension at 0 → APPROVE. Otherwise REVISE.
 >
 > **Report the five per-dimension scores, not just the total** — as `AXES: a,b,c,d,e` in rubric order. A total that clears the bar with a dimension at zero is not a pass: `2+2+2+2+0 = 8` leaves *tests cover the change* unmet, and the controller caps such a round below the bar from the axes you report.
 >
-> When you REVISE, name the specific failures the writer must address. Don't give vague feedback. Each deduction must cite a file path + line range + the rubric dimension violated. Be ruthless in looking and honest in grading: correlated blind spots are real, so search hard, but an unreproduced suspicion is at most a MAJOR and never a 0, and an empty finding list is a valid result for a sound change.
+> When you REVISE, name the specific failures the writer must address. Don't give vague feedback. Each deduction must cite a file path + line range + the rubric dimension violated. Be ruthless in looking and honest in grading: correlated blind spots are real, so search hard, but an unreproduced suspicion scores at most 1, never 0, and an empty finding list is a valid result for a sound change.
 
 ### What blocks, and the agreement rule (BRO-2844)
 
-Only a dimension at 0 blocks, through the cap above, and only a BLOCKER or a reproduced MAJOR scores 0. A MINOR never lowers a score, so a stratum cannot fail a round on polish. This is how the gate stays proportionate: in BRO-2829 every round of a three-stratum panel failed on findings the artifact never exhibited, and seven rounds bought what one reproduced finding would have.
+A round blocks in two ways. A dimension at 0 blocks on its own, through the cap above, and only a reproduced BLOCKER or MAJOR scores 0. A total below 7 also blocks, which takes unreproduced findings on four of the five dimensions. A MINOR never lowers a score, so no stratum can fail a round on polish. This keeps the gate proportionate: in BRO-2829 every round of a three-stratum panel failed on findings the artifact never exhibited, and seven rounds bought what one reproduced finding would have.
 
-The orchestrator owes one more thing that no single reviewer can see. When two strata independently raise the same MAJOR, and one of them is cross-vendor (Strata A), the writer must either fix it or refute it with a reproduction, even though each stratum scored it 1. Two correlated strata agreeing (B and C, same model) do not trigger this: their agreement is weak evidence (see the knowledge-graph pattern `correlated-verifier-is-no-verifier`).
+Two further rules are **orchestrator duties**. `round-budget.sh` does not check them, because the ledger stores scores, not findings:
+
+- **Agreement.** When two strata independently raise the same MAJOR and one of them is cross-vendor (Strata A), the writer fixes it or refutes it with a reproduction, even though each stratum scored it 1. Agreement between B and C does not trigger this, because they are the same model and their agreement is weak evidence (see the knowledge-graph pattern `correlated-verifier-is-no-verifier`).
+- **Reproduce once.** For every other BLOCKER or MAJOR scored 1, the writer runs the input the reviewer named, once. If it reproduces, it is a defect and gets fixed. If not, it is listed in the PR as unreproduced, with what was run.
 
 ### Stakes tiers
 
-`cross-review pre-push` computes a tier from the diff's paths. A diff whose every path is under `research/` or is `docs/knowledge-index.md` is the **knowledge** tier: one cross-vendor stratum (A, or B when codex is absent), the claims rubric in `references/claims-rubric.md`, and Strata C skipped. Every other diff is the **code** tier and gets this rubric and the full panel. `--tier=code` escalates a knowledge diff; nothing downgrades a code diff.
+`cross-review pre-push` computes a tier from the diff's paths, and it fails closed. The diff is the **knowledge** tier only when every changed path, both ends of every rename included, is `docs/knowledge-index.md` or a declarative file (markdown, text, JSON or JSONL, CSV/TSV, a subtitle track, an image, a PDF, or `SHA256SUMS`; extensions match in any case) under `research/entities/`, `research/notes/` or `research/imported-documents/`. A knowledge diff gets one stratum: A (cross-vendor) when codex can run, else B, the same model as the writer and so weaker. That stratum uses the claims rubric in `references/claims-rubric.md`, and Strata C is skipped. Every other diff is the **code** tier, with this rubric and the full panel: a script anywhere, a code project under `research/`, or a base the script cannot resolve. `--tier=code` escalates a knowledge diff; nothing downgrades a code diff.
 
 ## Per-dimension detail
 

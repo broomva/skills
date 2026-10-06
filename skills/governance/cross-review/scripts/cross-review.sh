@@ -5,10 +5,11 @@
 # before merge. Three strata, ordered by signal strength:
 #   A — Codex CLI cross-vendor (truest cross-model)
 #   B — Fresh Agent subagent under devil's-advocate brief (cross-context)
-#   C — Composed existing adversarial-review skills (always)
+#   C — Composed existing adversarial-review skills (code tier)
 #
 # Auto-detects environment: if `codex` CLI is on PATH, fires Strata A;
-# otherwise falls back to Strata B. Always runs Strata C in parallel.
+# otherwise falls back to Strata B. Runs Strata C in parallel in the code tier;
+# a knowledge-only diff gets one stratum (see --tier and SKILL.md §Stakes tiers).
 #
 # Scoring: anti-slop rubric (see references/rubric.md). PASS at ≥7/10 AND no
 # dimension at 0 — a zeroed axis caps the round below the bar (BRO-2636).
@@ -22,6 +23,7 @@
 #   cross-review pre-push --strata=A      # force Codex cross-vendor
 #   cross-review pre-push --strata=B      # force subagent
 #   cross-review pre-push --strata=C      # composed skills only
+#   cross-review pre-push --tier=code     # escalate a knowledge-only diff to the full panel
 #   cross-review plan --spec PATH         # plan-stage gate
 #   cross-review audit --target PATH      # audit-on-demand
 #   cross-review reviewer-guard capture   # fingerprint the tree before review
@@ -353,27 +355,41 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "  Diff scope:       $CHANGED_FILES file(s), $ADDITIONS insertion(s)"
     fi
 
-    # Stakes tier. A diff that only adds or edits knowledge material -- research
-    # notes, entity pages, their evidence folders, the generated index -- gets one
-    # cross-vendor claims review instead of the three-stratum code panel: its
-    # failure mode is a false or unsourced claim, which the claims rubric asks
-    # about directly, while the code rubric grades its scaffolding as software
-    # (BRO-2844: a Low-priority /checkit ran 7 code-panel rounds on its evidence
-    # scripts). Unknown scope is code, as above; an empty path list is code.
+    # Stakes tier. A diff that only adds or edits knowledge -- entity pages,
+    # notes, their captured evidence, the generated index -- gets one claims
+    # review instead of the three-stratum code panel: its failure mode is a false
+    # or unsourced claim, which the claims rubric asks about directly, while the
+    # code rubric grades scaffolding as software (BRO-2844: a Low-priority
+    # /checkit ran 7 code-panel rounds on its evidence scripts).
+    #
+    # An allowlist, not a prefix: research/ also holds code projects
+    # (research/kaggriculture/, research/ternary-diffusion/), so only declarative
+    # file types in the three knowledge locations qualify. Any script, any other
+    # location, a rename's source path (--no-renames lists both ends), an empty
+    # list, an unreadable diff or an unknown scope is the code tier. Paths are
+    # read once with -z: NUL-separated, and never quoted, so non-ASCII names match.
+    # Matching ignores case, since phone captures arrive as .HEIC and .JPG.
     TIER="code"
-    if [ "$SCOPE_UNKNOWN" = "0" ] && [ "$CHANGED_FILES" -gt 0 ] && [ "$TIER_REQUEST" != "code" ]; then
-        NON_KNOWLEDGE=$(git diff --name-only "$DIFF_BASE"...HEAD 2>/dev/null \
-            | grep -cvE '^(research/|docs/knowledge-index\.md$)' || true)
-        [ "$NON_KNOWLEDGE" = "0" ] && TIER="knowledge"
+    if [ "$SCOPE_UNKNOWN" = "0" ] && [ "$TIER_REQUEST" != "code" ]; then
+        TIER_PATHS=$(mktemp)
+        if git diff --name-only --no-renames -z "$DIFF_BASE"...HEAD > "$TIER_PATHS" 2>/dev/null \
+           && [ -s "$TIER_PATHS" ]; then
+            KNOWLEDGE_RE='^(docs/knowledge-index\.md|research/(entities|notes|imported-documents)/.*(\.(md|txt|json|jsonl|csv|tsv|vtt|srt|jpg|jpeg|png|webp|gif|heic|pdf)|/SHA256SUMS))$'
+            NON_KNOWLEDGE=$(tr '\0' '\n' < "$TIER_PATHS" | grep -civE "$KNOWLEDGE_RE" || true)
+            [ "$NON_KNOWLEDGE" = "0" ] && TIER="knowledge"
+        fi
+        rm -f "$TIER_PATHS"
     fi
     if [ "$TIER" = "knowledge" ]; then
-        echo "  Stakes tier:      knowledge (every changed path is under research/ or is"
-        echo "                    docs/knowledge-index.md): one cross-vendor stratum, the"
-        echo "                    claims rubric, Strata C skipped. --tier=code escalates."
         RUBRIC_FILE="$CLAIMS_RUBRIC_FILE"
+        echo "  Stakes tier:      knowledge (every changed path is a declarative file under"
+        echo "                    research/{entities,notes,imported-documents}/ or is"
+        echo "                    docs/knowledge-index.md): one stratum, Strata C skipped."
+        echo "                    --tier=code escalates."
     else
         echo "  Stakes tier:      code (full panel)"
     fi
+    echo "  Rubric (tier):    $RUBRIC_FILE"
     echo ""
 
     # Substantive-threshold test (the agent's reflexive trigger)
@@ -487,19 +503,32 @@ if [ "$COMMAND" = "pre-push" ]; then
     elif [ "$SELECTED_STRATA" = "B" ]; then
         STRATA_HINT="B,C"
     fi
-    # The knowledge tier runs one stratum: A when codex can run it, else B.
-    if [ "$TIER" = "knowledge" ]; then
-        case "$STRATA_HINT" in
-            A,C) STRATA_HINT="A" ;;
-            *)   STRATA_HINT="B"; SELECTED_STRATA="B" ;;
-        esac
-    fi
+
     # An explicitly requested stratum that cannot run is stated, not silently
     # downgraded: "the signal did not run" and "the signal passed" must never
     # look alike, and that applies to the panel too.
     if [ "$SELECTED_STRATA" = "A" ] && ! command -v codex >/dev/null 2>&1; then
         echo "  NOTE: Strata A was requested but \`codex\` is not on PATH, so it"
         echo "        will NOT run. The suggested panel below omits A deliberately."
+        echo ""
+    fi
+    # The knowledge tier runs one stratum, chosen AFTER the note above so an
+    # explicit A that cannot run is still announced. auto takes A when codex can
+    # run it, else B; an explicit B or C takes B (C does not run in this tier);
+    # an explicit A without codex runs nothing until the caller picks B.
+    if [ "$TIER" = "knowledge" ]; then
+        if { [ "$SELECTED_STRATA" = "A" ] || [ "$SELECTED_STRATA" = "auto" ]; } \
+           && command -v codex >/dev/null 2>&1; then
+            STRATA_HINT="A"
+            echo "  Knowledge-tier stratum: A (cross-vendor)."
+        elif [ "$SELECTED_STRATA" = "A" ]; then
+            STRATA_HINT=""
+            echo "  Knowledge-tier stratum: none. A was requested and cannot run; pass"
+            echo "  --strata=B to accept a same-model review, which is weaker evidence."
+        else
+            STRATA_HINT="B"; SELECTED_STRATA="B"
+            echo "  Knowledge-tier stratum: B (same model as the writer; weaker than A)."
+        fi
         echo ""
     fi
     echo "  After each scored round, one --stratum per stratum that scored it:"
@@ -548,7 +577,7 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo ""
         echo "  [TODO-AGENT] The agent runs the following pattern:"
         echo "    1. Capture the diff: git diff $DIFF_BASE...HEAD > /tmp/cross-review-diff.patch"
-        echo "    2. Invoke Codex with the adversarial brief from references/rubric.md,"
+        echo "    2. Invoke Codex with the brief from references/$(basename "$RUBRIC_FILE"),"
         echo "       composed as the rubric specifies: its Strata-A preamble first, then"
         echo "       the rubric. That is the prompt argument; the diff goes on stdin,"
         echo "       which codex exec appends to the prompt as a <stdin> block:"
@@ -601,7 +630,7 @@ if [ "$COMMAND" = "pre-push" ]; then
     if [ "$TIER" = "knowledge" ]; then
     echo "  ─── Strata C: skipped (knowledge tier) ──────────────────────"
     echo ""
-    echo "  A knowledge-only diff gets one cross-vendor claims review. Its failure"
+    echo "  A knowledge-only diff gets one claims review (A when codex can run). Its failure"
     echo "  mode is a false or unsourced claim, and the code-review skills composed"
     echo "  in Strata C grade scaffolding as software. --tier=code restores them."
     echo ""

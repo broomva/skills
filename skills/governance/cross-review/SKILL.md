@@ -3,7 +3,7 @@ name: cross-review
 tier: D
 primitive: P20
 category: governance
-description: "bstack P20 — Cross-Model Adversarial Review Gate. The model that wrote the code cannot be the final judge of the code. Before substantive PRs merge, fire a cross-model adversarial gate — different evaluator than writer, anti-slop scoring ≥7/10, a dynamic round budget (3 free, 4-7 earned by a continuation verdict carrying a falsifiable prediction, >=8 human), verdict logged in PR. Three strata: (A) Codex CLI cross-vendor for true different-model verdict, (B) fresh-context subagent under devils-advocate brief, (C) composed existing adversarial-review skills always parallel. Use cross-review when: (1) about to push a substantive PR (>200 LOC OR public API OR multi-file OR governance-class), (2) reviewing a draft plan/design before implementation, (3) auditing a feature spec against single-model blind spots, (4) integrating with the /autonomous skill's pre-push gate. Triggers on 'cross-review', 'P20', 'adversarial review', 'anti-slop', 'cross-model gate', 'different evaluator', 'devils advocate gate', 'self-review prohibition'."
+description: "bstack P20 — Cross-Model Adversarial Review Gate. The model that wrote the code cannot be the final judge of the code. Before substantive PRs merge, fire a cross-model adversarial gate — different evaluator than writer, anti-slop scoring ≥7/10, a dynamic round budget (3 free, 4-7 earned by a continuation verdict carrying a falsifiable prediction, >=8 human), verdict logged in PR. Three strata: (A) Codex CLI cross-vendor for true different-model verdict, (B) fresh-context subagent under devils-advocate brief, (C) composed existing adversarial-review skills in parallel on code (a knowledge-only diff takes one stratum on a claims rubric). Use cross-review when: (1) about to push a substantive PR (>200 LOC OR public API OR multi-file OR governance-class), (2) reviewing a draft plan/design before implementation, (3) auditing a feature spec against single-model blind spots, (4) integrating with the /autonomous skill's pre-push gate. Triggers on 'cross-review', 'P20', 'adversarial review', 'anti-slop', 'cross-model gate', 'different evaluator', 'devils advocate gate', 'self-review prohibition'."
 ---
 
 # cross-review — bstack P20 Cross-Model Adversarial Review Gate
@@ -70,11 +70,11 @@ Different mechanisms for different environments. The *substance* is the gate —
 
 | Strata | Mechanism | When | Strength |
 |---|---|---|---|
-| **A — True cross-vendor** | `codex exec -c sandbox_mode=read-only` takes the rubric's Strata-A preamble followed by `references/rubric.md` as its prompt and the diff on stdin, and scores. Model: codex's configured default, or `CROSS_REVIEW_CODEX_MODEL` to pin one | Codex CLI installed | Strongest — different weights, different training, genuinely different blind spots |
+| **A — True cross-vendor** | `codex exec -c sandbox_mode=read-only` takes the rubric's Strata-A preamble followed by `references/rubric.md` (`claims-rubric.md` on the knowledge tier) as its prompt and the diff on stdin, and scores. Model: codex's configured default, or `CROSS_REVIEW_CODEX_MODEL` to pin one | Codex CLI installed | Strongest — different weights, different training, genuinely different blind spots |
 | **B — Cross-context same-model** | Fresh `Agent` subagent under devil's-advocate brief reads diff and scores | Always available | Weaker than (A) but still strong — fresh context + adversarial framing breaks within-conversation echo |
-| **C — Composed existing skills** | Dispatch `superpowers:constructive-dissent`, `devils-advocate`, `pr-review-toolkit:*`, `critique`, `premortem`, `plan-design-review`, `plan-ceo-review`, `plan-eng-review` — each fires a domain-specific lens | Always | Toolkit P20 makes mandatory — adversarial-review-by-composition |
+| **C — Composed existing skills** | Dispatch `superpowers:constructive-dissent`, `devils-advocate`, `pr-review-toolkit:*`, `critique`, `premortem`, `plan-design-review`, `plan-ceo-review`, `plan-eng-review` — each fires a domain-specific lens | Code tier (skipped on the knowledge tier, §Stakes tiers) | Toolkit P20 makes mandatory on the code tier — adversarial-review-by-composition |
 
-**Default**: invoke Strata A if Codex available, fall back to Strata B, always run Strata C in parallel.
+**Default (code tier)**: invoke Strata A if Codex available, fall back to Strata B, and run Strata C in parallel. A knowledge-tier diff gets one stratum, A else B, and no C (§Stakes tiers).
 
 ## The anti-slop rubric
 
@@ -113,20 +113,23 @@ ESCALATE: STOP verdict, two refuted predictions, a score regression, or round 8
 
 ### What blocks: severity, not volume (BRO-2844)
 
-A reviewer grades every finding before scoring. A **BLOCKER** means the change is wrong for its purpose. A **MAJOR** is a concrete failure a real user or reader would plausibly hit. A **MINOR** is polish, wording, or hardening against inputs no realistic author produces. A dimension scores **0 only for a BLOCKER or a MAJOR the reviewer reproduced** (a command and its output, or the exact source line). An unreproduced MAJOR costs 1, and a MINOR costs nothing. Since a zero caps the round below the bar, only reproduced defects can block, and no stratum fails a round on polish. The full rules are in `references/rubric.md` §What blocks.
+A reviewer grades every finding before scoring. A **BLOCKER** means the change is wrong for its purpose. A **MAJOR** is a concrete failure a real user or reader would plausibly hit. A **MINOR** is polish, wording, or hardening against inputs no realistic author produces. A dimension scores **0 only for a BLOCKER or a MAJOR the reviewer reproduced** (a command and its output, or the exact source line). An unreproduced BLOCKER or MAJOR costs 1, and a MINOR costs nothing. A round blocks when a dimension is 0, which the ledger's cap enforces, or when the total is below 7, which takes unreproduced findings on four of the five dimensions. No stratum fails a round on polish. The full rules are in `references/rubric.md` §What blocks.
 
-**The agreement rule.** When two strata independently raise the same MAJOR and one of them is cross-vendor (A), the writer fixes it or refutes it with a reproduction, even though each scored it 1. B and C agreeing does not trigger this, because they are the same model.
+Two rules are **orchestrator duties**. `round-budget.sh` stores scores, not findings, so it checks neither:
+
+- **Agreement.** When two strata independently raise the same MAJOR and one of them is cross-vendor (A), the writer fixes it or refutes it with a reproduction, even though each scored it 1. B and C agreeing does not trigger this, because they are the same model.
+- **Reproduce once.** For every other BLOCKER or MAJOR scored 1, the writer runs the input the reviewer named, once. A reproduction is a defect and gets fixed. Otherwise the PR lists it as unreproduced, with what was run.
 
 Why: in BRO-2829, a Low-priority /checkit ran seven three-stratum rounds. Every stratum confirmed the page's substance, while every round failed on hardening findings the artifact never exhibited.
 
 ### Stakes tiers
 
-`pre-push` computes the tier from the diff's paths:
+`pre-push` computes the tier from the diff's paths, failing closed:
 
 | Tier | When | Panel | Rubric |
 |---|---|---|---|
-| **knowledge** | every changed path is under `research/` or is `docs/knowledge-index.md` | one stratum: A, or B when codex is absent; C skipped | `references/claims-rubric.md`: do claims trace, quotes keep their sense, numbers recompute, gaps get disclosed, evidence reproduce |
-| **code** | anything else | A or B, plus C | `references/rubric.md` |
+| **knowledge** | every changed path, both ends of a rename included, is `docs/knowledge-index.md` or a declarative file (`.md`, `.txt`, `.json`, `.jsonl`, `.csv`, `.tsv`, `.vtt`, `.srt`, an image, a `.pdf`, `SHA256SUMS`; any case) under `research/entities/`, `research/notes/` or `research/imported-documents/` | one stratum: A (cross-vendor) when codex can run, else B (same model, weaker); C skipped | `references/claims-rubric.md`: claims trace, quotes keep their sense, numbers recompute, gaps are disclosed, evidence is sound and leaks nothing |
+| **code** | anything else, including any script, a code project under `research/`, and a base that cannot be resolved | A or B, plus C | `references/rubric.md` |
 
 The knowledge tier expects one round, plus a second only to verify the fix of a zeroed dimension. `--tier=code` escalates a knowledge diff. Nothing downgrades a code diff, and `--tier=knowledge` is refused.
 
@@ -615,11 +618,11 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 
 1. **Before pushing any substantive PR** — fire `cross-review pre-push`. State the strata + score in the response.
 1b. **When the PR claims test coverage for a fix** — mutation-prove it. "I added a test" is a claim; `verdict=PROVEN` is evidence. Report the verdict either way; UNPROVEN does not block, it obliges an answer.
-2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore, and record the round: `cross-review round record-round --run-id=$ID --score=N/10 --axes=a,b,c,d,e --defect=yes|no --stratum=L:N/10:PASS|FAIL ...` (one `--stratum` per stratum that scored; `--strata=<actual>` is accepted instead only for a failing round), where the letters are the panel that really produced the score — `A,C` when Codex ran, `B,C` when it did not, `C` alone when only the composed skills did. Writing `A,B,C` out of habit is the failure this field exists to prevent. Ask `cross-review round budget` before starting another; past round 3 it will require a continuation verdict.
+2. **When verdict < 7** — apply the specific fixes the rubric flagged, rescore, and record the round: `cross-review round record-round --run-id=$ID --score=N/10 --axes=a,b,c,d,e --defect=yes|no --stratum=L:N/10:PASS|FAIL ...` (one `--stratum` per stratum that scored; `--strata=<actual>` is accepted instead only for a failing round), where the letters are the panel that really produced the score — `A,C` when Codex ran, `B,C` when it did not, `C` alone when only the composed skills did, and `A` or `B` alone for a knowledge-tier round. Writing `A,B,C` out of habit is the failure this field exists to prevent. Ask `cross-review round budget` before starting another; past round 3 it will require a continuation verdict.
 2b. **When the budget returns REVIEW-REQUIRED (exit 5)** — run the continuation review on *the decision to continue*, against a STOP default. `CONTINUE` obliges a falsifiable prediction that the next round settles; two refuted in a row end the loop regardless of score.
 3. **When the writer is the only model in the loop** — STOP. Strata B at minimum is mandatory.
 4. **When tempted to skip "this PR is small enough"** — apply the substantive-threshold test (>200 LOC OR public API OR multi-file OR governance-class). A substantive diff that touches only knowledge material still fires, in the knowledge tier (§Stakes tiers).
-4b. **When fixing review findings** — fix what blocks: zeroed dimensions, plus any MAJOR covered by the agreement rule. Log MINORs as follow-ups or decline them with a reason. Do not spend a round on them.
+4b. **When fixing review findings** — fix what blocks: zeroed dimensions, plus any MAJOR covered by the agreement rule. Run each other unreproduced BLOCKER or MAJOR once: fix it if it reproduces, list it in the PR as unreproduced if it does not. Log MINORs as follow-ups or decline them with a reason. Do not spend a round on them.
 5. **When P20 verdict and CI verdict disagree** — P20 is the *quality* gate; CI is the *correctness* gate. Both must pass. P20 cannot override CI; CI cannot substitute for P20.
 
 ## Cardinal rule
@@ -633,7 +636,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 | "I already self-reviewed; it's good" | Self-review by the writing model is forbidden as the *sole* verdict. Same-model echo chamber. |
 | "This PR is small — gate is overhead" | Threshold is *substantive* (>200 LOC OR public API OR multi-file OR governance). If your PR crosses ANY of those, P20 fires. |
 | "CodeRabbit + claude-review already reviewed it" | Those are external gates that catch *specific patterns*. P20 is *additional* — the writer's own attempt must face a fresh-context adversarial verdict before merge, not just rubber-stamp validators. |
-| "We don't have Codex installed — P20 doesn't apply" | Strata B (fresh subagent) + Strata C (composed skills) are always available. The substance is the gate, not the vendor pair. |
+| "We don't have Codex installed — P20 doesn't apply" | Strata B (fresh subagent) + Strata C (composed skills) are always available; a knowledge-tier diff needs B alone. The substance is the gate, not the vendor pair. |
 | "The Haiku evaluator in /goal already judges quality" | `/goal` evaluates *condition met*, not *work quality*. Different gate. |
 | "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7 AND no dimension at 0. Below either → fix, rescore, ask the budget. Don't push override. |
 | "The reviewer said one more round seems reasonable" | That is the vacuous yes. A `CONTINUE` without a falsifiable prediction is refused by `round-budget.sh` at record time, because a verdict that cannot be wrong is not a verdict. |
@@ -657,7 +660,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 
 ## Implementation
 
-`scripts/cross-review.sh` — the entry point. Auto-detects Codex availability (Strata A), falls back to subagent dispatch (Strata B), always runs composed adversarial skills (Strata C).
+`scripts/cross-review.sh` — the entry point. Auto-detects Codex availability (Strata A), falls back to subagent dispatch (Strata B), and runs composed adversarial skills (Strata C) on the code tier; computes the stakes tier from the diff's paths.
 
 `scripts/mutation-proof.sh` — the mutation-proof runner. The only part of the rubric this repo executes rather than describes.
 
