@@ -22,7 +22,9 @@ for a BLOCKER or a MAJOR the reviewer reproduced; a MINOR never lowers a score.
 | **Evidence is sound and leaks nothing** | 2 | The captured files are the ones cited, and no secret, credential, PII or tenant/client identifier appears in the page, its evidence or `docs/knowledge-index.md` (the workspace `REVIEW.md` security pass: workspace#580 leaked a tenant slug into the index). A leak is a BLOCKER |
 
 A finding reproduces when the reviewer quotes the page's sentence beside the source line it misstates,
-gives the arithmetic that shows a number is wrong, or quotes the leaked string with its path and line.
+gives the arithmetic that shows a number is wrong, or names the path and line of a leak and the kind of value leaked.
+**Never quote a leaked value.** The verdict is pasted into the PR, so a quoted secret is published again even after
+the page is fixed: write `research/notes/x.md:12, an API key (sk-…, redacted)`, not the key.
 
 ## The brief (what to give the evaluator)
 
@@ -37,7 +39,7 @@ gives the arithmetic that shows a number is wrong, or quotes the leaked string w
 > - **MINOR** — wording, ordering, formatting.
 >
 > Score each dimension from its worst finding: 0 for a BLOCKER or a MAJOR you reproduced (quote both
-> sides, the arithmetic, or the leaked string with its path), 1 for a BLOCKER or a MAJOR you did not
+> sides, the arithmetic, or the path, line and kind of a leaked value, never the value itself), 1 for a BLOCKER or a MAJOR you did not
 > reproduce, 2 otherwise. An unreproduced suspicion scores at most 1, never 0. List MINORs; they never
 > lower a score. Report `AXES: a,b,c,d,e` in table order, `SCORE: N/10`, and `VERDICT: APPROVE` (>=7, no
 > 0) or `VERDICT: REVISE`. An empty finding list is a valid result for a sound page.

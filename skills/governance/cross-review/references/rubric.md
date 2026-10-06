@@ -50,7 +50,7 @@ When invoking a Strata-A (Codex) or Strata-B (subagent) evaluator, include this 
 > - **MAJOR** — a concrete failure a real user or reader would plausibly hit. Name the input and the wrong outcome.
 > - **MINOR** — polish, wording, hardening against inputs no realistic author or user produces, a test gap for a rule the change did not touch.
 >
-> - 0: a BLOCKER or a MAJOR that you **reproduced** — quote the command and its output, or the exact source line that shows the defect. Cite file:line.
+> - 0: a BLOCKER or a MAJOR that you **reproduced** — quote the command and its output, or the exact source line that shows the defect. Cite file:line. Never quote a secret or personal value: give its path, line and kind, redacted, since this verdict is pasted into the PR.
 > - 1: a BLOCKER or a MAJOR you did not reproduce. Cite file:line and the failure scenario.
 > - 2: no finding on this dimension, or only MINOR findings. List MINORs; they never lower a score.
 >
