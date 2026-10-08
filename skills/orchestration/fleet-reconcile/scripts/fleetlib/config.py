@@ -53,11 +53,11 @@ SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     # phase 2
     "coordinator_model": ("str_or_null", None),  # the coordinator's --model; null: Claude Code's default
     "coordinator_budget_usd": ("num", 2),        # its --max-budget-usd per tick
-    # the owner channel on Paseo (fleetlib/paseo_ask.py); null: the defaults there
+    # tick.sh's bash fallback alert (a Maestro item when Python can't run); null: tick.sh's defaults
     "maestro_cli": ("str_or_null", None),
     "maestro_bun": ("str_or_null", None),
     "ask_repo": ("str_or_null", None),
-    "ask_raise_after_min": ("int", 50),          # a batch reaches the owner once an ask in it is this old (0: at once)
+    "ask_raise_after_min": ("int", 50),          # an ask reaches the ask ledger once it is this old (0: at once)
 }
 CAP_KEYS = ("fleet_sessions", "active_sessions", "active_window_min", "research_spawns_per_day")
 CAP_DEFAULTS = {"fleet_sessions": 8, "active_sessions": 12, "active_window_min": 30, "research_spawns_per_day": 4}
