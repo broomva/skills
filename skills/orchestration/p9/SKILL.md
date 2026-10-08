@@ -406,6 +406,12 @@ it can stop a merge but never enable one.
 
 `gates:` with no value means gated with the defaults, under both YAML loaders.
 
+These rejections bind only the paths that act on `auto_merge`: `auto-merge`,
+`gate-check`, the base-branch read and `doctor`. `watch` and the escalation
+notify never act on it. There, a block p9 rejects (another repo's own keys, or
+a malformed value) prints a warning and loads as disabled, so a repo whose
+policy carries keys for its own tooling can still be watched (BRO-2957).
+
 **What the gates do not do (named, not hidden).**
 
 - **The marker is self-attested.** It records that a review passed and cannot
