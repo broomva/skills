@@ -74,8 +74,9 @@ On such a host, the rows above that say `--background`, `--detach` or
   another code.
 - **Exit 5 between slices** means a pending PR still holds the
   `max_concurrent_prs` slot. Finish that PR's watch before watching another.
-- If you stop re-running, `p9 reap` folds the PR to ABANDONED once it has
-  sat for 600s. A later `p9 watch` reopens it.
+- Re-run within 10 minutes. After 600s, `p9 reap` folds the PR to ABANDONED
+  quietly, with no notification. A later `p9 watch` reopens it, so a slow
+  re-run costs nothing, but CI news waits until you look.
 - `p9 wait-for` slices the same way, and its termination report's
   `next_action` gives the `--timeout` left. Re-run with that value, not the
   original, or the wait never times out.

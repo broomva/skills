@@ -3093,7 +3093,11 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
         # so the fold always lands on the row it retires and the slot is freed.
         repo = _row_repo(row)
         pr = row["pr"]
+        handback = _is_slice_handback(row)
         to_state, reason = _reconcile_dead_watcher(pr, repo, reconcile)
+        if handback:
+            reason = (f"slice hand-back not re-run within "
+                      f"{BASH_CALL_CAP_SECONDS}s ({reason})")
         event = PRStateEvent(
             ts=_utcnow(), pr=pr, repo=repo,
             from_state=state.value, to_state=to_state.value,
@@ -3111,9 +3115,14 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
         # Termination invariant (BRO-1701): SIGKILL and machine-death can't be
         # trapped by the watcher itself — the reap path is where those become
         # a report + notification instead of a silent slot leak.
+        # A slow re-run (the agent was busy between slices) is routine, not
+        # news: the next `p9 watch` simply reopens the PR. No phone buzz.
         emit_termination_report(
-            pr_termination_report(dataclasses.asdict(event),
-                                  cause="reaped:dead-watcher"))
+            pr_termination_report(
+                dataclasses.asdict(event),
+                cause=("reaped:slice-handback" if handback
+                       else "reaped:dead-watcher")),
+            do_notify=not handback)
         enriched = dict(row)
         enriched.update(to_state=to_state.value, reason=reason)
         reaped.append(enriched)

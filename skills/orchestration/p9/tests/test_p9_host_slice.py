@@ -303,3 +303,20 @@ class TestWaitForHandback:
         monkeypatch.setattr(p9.subprocess, "Popen", lambda *a, **kw: _Child())
         p9.main(["wait-for", "bg", "--cmd", "true", "--detach"])
         assert "does not wake" in capsys.readouterr().err
+
+
+def test_reaped_handback_is_quiet_and_says_why(p9, capsys):
+    # P20 round 2: an agent busy for >10 min between slices is routine. Its
+    # hand-back is reaped without a phone buzz, with an honest reason.
+    p9.append_state_event(p9.PRStateEvent(
+        ts="2020-01-01T00:00:00+00:00", pr=920, repo=REPO,
+        from_state=p9.PRState.WATCHING.value,
+        to_state=p9.PRState.PUSHED.value, watcher_id="wslow",
+        extra={"termination": "slice", "slice_seconds": 540},
+    ))
+    p9.main(["reap", "--no-reconcile", "--now"])
+    assert _NOTIFIED == []
+    rows, _ = p9.jsonl_read_all(p9.state_jsonl())
+    last = [r for r in rows if r["pr"] == 920][-1]
+    assert last["to_state"] == "ABANDONED"
+    assert "slice hand-back" in last["extra"]["reason"]
