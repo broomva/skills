@@ -1137,21 +1137,29 @@ def _scalar(s: str) -> Any:
     return s
 
 
-def load_policy(path: Path | str | None = None) -> PolicyConfig:
+def load_policy(path: Path | str | None = None, *,
+                validate_auto_merge: bool = True) -> PolicyConfig:
     """Load .control/policy.yaml. **Fail-closed** on missing/malformed blocks.
 
     Accepts both `Path` and `str` (str is coerced — historic callers were
     inconsistent). None falls back to `policy_yaml_path()`.
+
+    ``validate_auto_merge=False`` is for paths that never act on auto_merge
+    (watch, notify). There an auto_merge block p9 cannot parse — another
+    repo's keys, or a malformed one — warns and loads as disabled instead of
+    killing the command (BRO-2957). The merge paths keep the default.
     """
     p = Path(path) if path is not None else policy_yaml_path()
     if not p.exists():
         raise PolicyError(f"policy.yaml not found at {p}")
-    return load_policy_text(p.read_text(encoding="utf-8"))
+    return load_policy_text(p.read_text(encoding="utf-8"),
+                            validate_auto_merge=validate_auto_merge)
 
 
-def load_policy_text(text: str) -> PolicyConfig:
-    """Parse policy YAML text with the same fail-closed checks as a file load.
-    Used to judge a PR by its BASE branch's policy (BRO-2591)."""
+def load_policy_text(text: str, *, validate_auto_merge: bool = True) -> PolicyConfig:
+    """Parse policy YAML text with the same fail-closed checks as a file load,
+    ``validate_auto_merge`` included. Used to judge a PR by its BASE branch's
+    policy (BRO-2591), which always validates."""
     try:
         loader = _yaml_loader()
         data = loader(text)
@@ -1163,10 +1171,11 @@ def load_policy_text(text: str) -> PolicyConfig:
         raise PolicyError("policy.yaml missing required block: ci_watch")
     if "ci_heal" not in data:
         raise PolicyError("policy.yaml missing required block: ci_heal")
-    return _parse_policy(data)
+    return _parse_policy(data, validate_auto_merge=validate_auto_merge)
 
 
-def _parse_policy(data: dict[str, Any]) -> PolicyConfig:
+def _parse_policy(data: dict[str, Any], *,
+                  validate_auto_merge: bool = True) -> PolicyConfig:
     cw_raw = data.get("ci_watch") or {}
     ch_raw = data.get("ci_heal") or {}
     iso_raw = cw_raw.get("isolation_tier_map") or {}
@@ -1209,8 +1218,22 @@ def _parse_policy(data: dict[str, Any]) -> PolicyConfig:
                 ),
             ),
         ),
-        auto_merge=_parse_auto_merge(data.get("auto_merge")),
+        auto_merge=_auto_merge_for(data.get("auto_merge"), validate_auto_merge),
     )
+
+
+def _auto_merge_for(raw: Any, validate: bool) -> AutoMergePolicy:
+    if validate:
+        return _parse_auto_merge(raw)
+    # A read-only path: the block is not ours to enforce here, so a rejection
+    # becomes a warning and the block loads as disabled. Nothing merges on it,
+    # and the merge paths still re-parse it strictly.
+    try:
+        return _parse_auto_merge(raw)
+    except PolicyError as e:
+        print(f"p9: warning: ignoring auto_merge on a read-only path "
+              f"(auto-merge would refuse it): {e}", file=sys.stderr)
+        return AutoMergePolicy()
 
 
 _AUTO_MERGE_ACTIONS = ("auto", "require_human", "notify")
@@ -2638,7 +2661,7 @@ def notify(kind: str, title: str, body: str,
     # "stuck" qualify, not just a literal "escalation" kind (P20 finding #5).
     if "escalat" in kind or kind == "stuck":
         with contextlib.suppress(Exception):
-            hook = load_policy().ci_heal.escalation_channel.notify_hook
+            hook = load_policy(validate_auto_merge=False).ci_heal.escalation_channel.notify_hook
             hook_path = Path(hook)
             if not hook_path.is_absolute():
                 hook_path = policy_yaml_path().parent.parent / hook
@@ -3665,7 +3688,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     aliases for the default; they exist so historic AGENTS.md guidance
     using `p9 watch <pr> --background` keeps working.
     """
-    policy = load_policy()
+    policy = load_policy(validate_auto_merge=False)
     if not policy.ci_watch.enabled:
         print("ci_watch.enabled=false in policy; refusing to watch", file=sys.stderr)
         return EXIT_POLICY_ERROR
