@@ -165,8 +165,9 @@ def rig(fresh_world, tmp_path):
             p = w.state[scope] / ".control" / "asks" / ("fleet-%s.yaml" % scope)
             lines = p.read_text().splitlines()
             at = next(i for i, ln in enumerate(lines) if ln == '  - id: "%s"' % uid)
-            add = ['    answer_option: "%s"' % option, "    answer: %s" % json.dumps(note),
-                   '    answered_at: "2026-10-08T12:00:00Z"', '    answered_by: "owner:maestro"', '    status: "resolved"']
+            add = (['    answer_option: "%s"' % option] if option else []) + [
+                "    answer: %s" % json.dumps(note), '    answered_at: "2026-10-08T12:00:00Z"',
+                '    answered_by: "owner:maestro"', '    status: "resolved"']
             p.write_text("\n".join(lines[:at + 1] + add + lines[at + 1:]) + "\n")
 
     return Rig()
@@ -251,7 +252,8 @@ def test_a_failed_step_alerts_and_exits_1(rig):
     assert r.returncode == 1
     assert [x for x in rig.ledger() if x["kind"] == "runner_exit"][0]["exit"] == 1
     (alert,) = rig.alerts("tick-observe")
-    assert "failed at observe" in alert["headline"] and alert["blocking"] is True and rig.raised() == []
+    # Listed with its words, not blocking: the failing tick counts once, as Maestro's own fleet health notice.
+    assert "failed at observe" in alert["headline"] and alert["blocking"] is False and rig.raised() == []
 
 
 def test_an_alert_is_written_once_per_six_hours_refreshed_while_open_and_new_once_answered(rig):
@@ -280,14 +282,19 @@ def test_a_lost_counter_does_not_reuse_a_tick_number(rig):
     assert fires == [1, 2, 3]
 
 
-def test_no_tick_number_releases_the_lock_before_the_alert(rig):
+def test_no_tick_number_releases_the_lock_before_the_alert(rig, tmp_path):
     sd = rig.world.state["broomva"]
     sd.mkdir(parents=True, exist_ok=True)
     (sd / "tick-counter").mkdir()  # next-tick can't write its counter
-    r = rig.tick(STUB_LOCK=str(sd / ".tick.lock"))
+    lock = sd / ".tick.lock"
+    held = tmp_path / "lock-during-alert"
+    # The alert runs through FLEET_PYTHON: note whether the tick's lock is still held when it does.
+    py = _stub(tmp_path / "python3", 'case " $* " in *" alert "*) [ -e "%s" ] && echo held >> "%s" ;; esac\n'
+               'exec "%s" "$@"\n' % (lock, held, sys.executable))
+    r = rig.tick(STUB_LOCK=str(lock), FLEET_PYTHON=str(py))
     (alert,) = rig.alerts("tick")
     assert r.returncode == 1 and "tick number" in alert["headline"]
-    assert rig.calls("lock-during-alert") == [] and not (sd / ".tick.lock").exists()
+    assert not held.exists() and not lock.exists()
 
 
 def test_a_lock_held_past_two_hours_alerts_the_owner(rig):
@@ -379,7 +386,7 @@ def test_each_ask_is_one_ledger_entry_and_the_owners_answer_comes_back_once(rig)
     asks = rig.asks()
     assert len(asks) == 4 and len({a["uid"] for a in asks}) == 4  # one entry per ask, never written twice
     a1 = [a for a in asks if a["fleet"]["ask"] == "a1"][0]
-    assert a1["fleet"]["class"] == "7" and [o["id"] for o in a1["options"]] == ["ack", "dismiss"]
+    assert a1["fleet"]["class"] == "7" and [o["id"] for o in a1["options"]] == ["ack"]
     rig.answer_ask(a1["uid"], "ack", note="skills gets its pull_request rule this week")
     rig.tick()
     rig.tick()  # read back once
@@ -390,13 +397,30 @@ def test_each_ask_is_one_ledger_entry_and_the_owners_answer_comes_back_once(rig)
     assert "[tick 1, a1]" not in rig.fleet("asks").stdout
 
 
-def test_dismissing_an_ask_answers_it(rig):
+def test_an_answer_in_words_alone_comes_back_and_a_terminal_ack_closes_the_entry(rig):
     rig.tick()
     a1 = [a for a in rig.asks() if a["fleet"]["ask"] == "a1"][0]
-    rig.answer_ask(a1["uid"], "dismiss")
+    rig.answer_ask(a1["uid"], None, note="leave it, I am on it")
     rig.tick()
     acks = [x for x in rig.ledger() if x["kind"] == "ack" and x.get("by") == "owner:maestro"]
-    assert acks and acks[0]["result"]["option"] == "dismiss" and acks[0]["asks"] == ["a1"]
+    assert acks and acks[0]["result"]["option"] is None and acks[0]["result"]["answer"] == "leave it, I am on it"
+    # Another ask answered from a terminal: its entry closes in the ledger, and nothing is read back for it.
+    a2 = [a for a in rig.asks() if a["fleet"]["ask"] == "a2"][0]
+    assert rig.fleet("ack", "1", "--ask", "a2").returncode == 0
+    rig.tick()
+    closed = [a for a in rig.asks() if a["uid"] == a2["uid"]][0]
+    assert closed["status"] == "resolved" and "fleet ack" in closed["resolution"]
+    assert len([x for x in rig.ledger() if x["kind"] == "ack" and x.get("by") == "owner:maestro"]) == 1
+
+
+def test_an_alert_the_ledger_cant_take_is_logged_not_raised_and_tried_again(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    (sd / "ticks").write_text("a file where the ticks dir goes")  # observe fails
+    (sd / ".control").write_text("a file where the ask ledger's folder goes")  # the ledger can't be written
+    r = rig.tick()
+    assert r.returncode == 1 and "NOT delivered: the ask ledger was not written" in rig.log()
+    assert rig.raised() == [] and not (sd / ".alert-tick-observe").exists()  # not stamped: tried again
 
 
 def test_an_ask_reaches_the_ledger_only_once_it_has_lasted(rig):

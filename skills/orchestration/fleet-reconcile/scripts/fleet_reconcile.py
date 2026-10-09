@@ -12,7 +12,7 @@ the user site stay off sys.path; this file puts its own directory and
     fleet config-check [<scope>]            exit 1 on any problem
     fleet observe --tick N                  write ticks/<N>/snapshot.json
     fleet report --tick N [--dry-run 0|1]   classify; write report.json, report.md and the ask batch
-    fleet act ask --show [--tick N]         read answers back from Maestro; raise new batches there (Paseo)
+    fleet act ask --show [--tick N]         read the owner's answers back from the ask ledger; write new asks to it
     fleet act mail|spawn|label|resume       phase 2: re-check eligibility, intent, then dry or live (act.py)
     fleet recover [--tick N]                close intents a dead tick left open (recover.py)
     fleet send-gate pre|post                the coordinator's SendMessage hooks (sendgate.py)
@@ -237,14 +237,18 @@ def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
             waiting += 1
             continue
         ready[key] = v
-    states = ledger.key_states(records)
-    resolved = [(k, v["of"]) for k, v in states.items() if v["state"] == "resolved"]
-    acked = [(k, v["of"]) for k, v in states.items() if v["state"] == "acked"]
+    open_all = [(k, v["of"]) for k, v in open_now.items()]
+    acked = [(k, v["of"]) for k, v in ledger.key_states(records).items() if v["state"] == "acked"]
     try:
-        raised, withdrawn = ledger_ask.sync(sec, ready, resolved, acked)
+        raised, withdrawn = ledger_ask.sync(sec, ready, open_all, acked)
     except (ledger_ask.LedgerError, OSError) as exc:
         print("fleet act ask: the ask ledger was not written: %s" % common.safe_text(str(exc), 200), file=sys.stderr)
         return 0, 1, waiting
+    # Seen: its asks reached the ledger the owner reads (the report's "unseen" counts the rest).
+    for b in sorted({v["of"] for v in ready.values()}):
+        if not next((x for x in ledger.ask_batches(records) if x["id"] == b and x["seen"]), None):
+            ledger.append(sd, {"kind": "seen", "of": b, "scope": sec["scope"], "tick": None, "dry_run": False,
+                               "by": "tick", "result": {"channel": "ledger"}})
     if withdrawn:
         print("fleet act ask: %d ask(s) withdrawn from the ledger (no longer true)" % withdrawn, file=sys.stderr)
     return raised, 0, waiting
@@ -624,7 +628,7 @@ def main(argv=None) -> int:
     p = scoped(sub.add_parser("act"))
     p.add_argument("verb", choices=("mail", "spawn", "label", "resume", "ask"))
     p.add_argument("--tick", type=int, default=0)
-    p.add_argument("--show", action="store_true", help="ask: read answers back from Maestro and raise new batches")
+    p.add_argument("--show", action="store_true", help="ask: read answers back from the ask ledger and write new asks to it")
     p.add_argument("--dry-run", default=None, choices=("0", "1"))
     p.add_argument("--session", default=None, help="mail, resume: the target's session id")
     p.add_argument("--template", default=None, help="mail: stalled, hung or overlap")

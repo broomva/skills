@@ -133,7 +133,7 @@ Trash; the config, the releases and the state dir stay.
    ask ledger Maestro's Decisions reads), and one line on stdout for launchd's log.
 
 **A failed tick is loud.** An unreadable config, a failed `config-check`, or
-observe or report failing, or a lock held for over 2 h, writes a blocking alert
+observe or report failing, or a lock held for over 2 h, writes a alert
 in the scope's ask ledger (a Maestro item from bash when Python is what broke),
 at most once per 6 h per kind, and exits 1, so launchd's last exit shows it.
 
@@ -226,32 +226,39 @@ fleet-<scope>.yaml` (`scripts/fleetlib/ledger_ask.py`), in step with the open
 asks, once an ask has been open for `ask_raise_after_min` (50 by default: past
 the next hourly tick, so an ask a later tick found no longer true isn't
 written; 0 writes at once).
-- Each open ask is one decision ask: its question as the headline, the
-  options Acknowledge and Dismiss (a note can go with either), and
-  `blocking: true` for a session that waits on the owner (class 3, at a
+- Each open ask is one decision ask: its question as the headline, one
+  option, Acknowledge, with the owner's note if any (`fleet ack`'s own
+  meaning), and `blocking: true` for a session that waits on the owner (class 3, at a
   prompt; 7, blocked on you), which Maestro counts in Needs you. The rest list
   in Decisions without counting. An ask is one occurrence: its `uid` is the
   scope plus a hash of its key and the batch that first asked it, so a tick
   never writes it twice, and a condition that ends and comes back is a new
   entry beside the old one's answer.
-- A tick withdraws an entry whose ask it found no longer true (`status:
-  withdrawn`), and closes one the owner answered from a terminal (`fleet
-  ack`). An answer is never touched.
+- Any open entry that is no longer an open occurrence is closed at the next
+  ask step: as answered from a terminal when the owner used `fleet ack`, else
+  withdrawn (`status: withdrawn`, no longer true). So a tick that skipped its
+  ask step (its budget, `FLEET_NOTIFY=0`, the lock) leaves nothing open
+  behind. An answer is never touched, and an open question is rewritten only
+  when its words changed (an answer checks the entry it read).
 - The owner's answer, written into the entry by Maestro, is read back once
   (by its uid) as an `ack` of that batch's ask by `owner:maestro`, with the
   option and the words: the record the old item verdicts made, so the report
   and `fleet asks` read it unchanged.
 - The ledger is written under the control interface spec's lock (§5.5,
-  `~/.local/state/control-asks/locks/<k>.d`, the one Maestro takes), and only
-  as one-line JSON values, which is YAML too and is what Maestro's answer edit
-  writes; a line outside that subset fails the step loudly, and nothing is
-  written over a file it cannot read.
+  `~/.local/state/control-asks/locks/<k>.d`, the one Maestro takes, its token
+  checked again right before the rename), and only as one-line JSON values,
+  which is YAML too and is what Maestro's answer edit writes; lines are split
+  on newlines only (an answer may hold a raw U+2028). A line outside that
+  subset fails the step loudly, and nothing is written over a file it cannot
+  read. A batch whose asks reached the ledger counts as seen.
 - No agent runs and no work item is made: the channel costs no provider turn.
 
 tick.sh's own alerts (a bad config, a failed step, a held lock) are entries in
-the same ledger, at most once per 6 h per kind: `blocking: true`, an
-Acknowledge option, one open entry per kind refreshed while it is open, a new
-one once the last was answered. When Python or the config is what broke, a
+the same ledger, at most once per 6 h per kind: an Acknowledge option, one
+open entry per kind refreshed while it is open, a new one once the last was
+answered. They are not blocking: a failing or missed tick is Maestro's own
+fleet health notice, which counts in Needs you, so the one failure is counted
+once and the entry carries its words. When Python or the config is what broke, a
 bash fallback raises one Maestro item instead (`maestro new --dispatch`, in its
 own process group under a TERM-then-KILL watchdog: TERM at 120 s, KILL 30 s
 later). It can't classify, so any answer from Maestro counts (made; refused, a

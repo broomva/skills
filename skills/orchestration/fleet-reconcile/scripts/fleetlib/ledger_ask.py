@@ -37,7 +37,7 @@ import subprocess
 import time
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, Dict, Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 from . import common
 
@@ -52,13 +52,11 @@ LOCK_WAIT_S = 5.0
 #: A session waits on the owner in these classes (3: at a prompt; 7: blocked on you): Needs you counts them.
 BLOCKING_CLASSES = frozenset({"3", "7"})
 
-#: What each answer does, as the fleet reads it back.
-ACK, DISMISS = "ack", "dismiss"
+#: The one answer the fleet acts on: acknowledged, with the owner's note if any (`fleet ack`'s own meaning).
+ACK = "ack"
 OPTIONS = [
-    {"id": ACK, "label": "Acknowledge", "consequence": "The fleet records it as seen; it stays in the report while "
-     "it is true.", "reversible": True, "recommended": True},
-    {"id": DISMISS, "label": "Dismiss", "consequence": "The fleet stops asking about it until it stops being true and "
-     "comes back.", "reversible": True},
+    {"id": ACK, "label": "Acknowledge", "consequence": "The fleet records your answer and its note, and asks again "
+     "only if this stops being true and comes back.", "reversible": True, "recommended": True},
 ]
 WHY_YOU = "fleet-reconcile only observes and asks: it never approves a prompt or changes a repo's rules for you."
 DEFAULT = "It stays open until you answer, or until a tick finds it no longer true."
@@ -106,7 +104,7 @@ def _start_of(pid: int) -> Optional[int]:
 
 def _alive(pid_line: str) -> bool:
     words = pid_line.split()
-    if not words or not words[0].isdigit():
+    if not words or not words[0].isdigit() or int(words[0]) <= 0:
         return False
     pid = int(words[0])
     try:
@@ -172,8 +170,9 @@ def _rmtree(d: Path) -> None:
 
 
 @contextmanager
-def locked(ledger: Path, wait: float = LOCK_WAIT_S) -> Iterator[None]:
-    """Hold the ledger's spec §5.5 lock: a directory with our pid and start, and a token checked at release."""
+def locked(ledger: Path, wait: float = LOCK_WAIT_S) -> Iterator[Callable[[], None]]:
+    """Hold the ledger's spec §5.5 lock: a directory with our pid and start, and a token. Yields a check to
+    call right before writing: it raises if the lock is no longer ours (reclaimed as stale meanwhile)."""
     root = lock_root()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     ledger.parent.mkdir(parents=True, exist_ok=True)
@@ -186,14 +185,27 @@ def locked(ledger: Path, wait: float = LOCK_WAIT_S) -> Iterator[None]:
         except FileExistsError:
             if _stale(d):
                 _reclaim(d)
-            elif time.time() >= deadline:
+            if time.time() >= deadline:
                 raise LedgerError("another writer holds the lock on %s; nothing was written" % common.tilde(ledger))
             time.sleep(0.05)
     token = secrets.token_hex(16)
     try:
         (d / "pid").write_text("%d %d\n" % (os.getpid(), _start_of(os.getpid()) or int(time.time())))
         (d / "token").write_text(token + "\n")
-        yield
+    except OSError as exc:
+        _rmtree(d)  # made but not finished: taken back, so no half-written lock is left
+        raise LedgerError("could not take the lock on %s: %s" % (common.tilde(ledger), exc))
+
+    def still_ours() -> None:
+        try:
+            if (d / "token").read_text().strip() == token:
+                return
+        except OSError:
+            pass
+        raise LedgerError("the lock on %s was taken over; nothing was written" % common.tilde(ledger))
+
+    try:
+        yield still_ours
     finally:
         try:
             if (d / "token").read_text().strip() == token:
@@ -209,8 +221,9 @@ def parse(text: str) -> Dict[str, Any]:
     doc: Dict[str, Any] = {}
     asks: Optional[List[Dict[str, Any]]] = None
     entry: Optional[Dict[str, Any]] = None
-    for n, raw in enumerate(text.splitlines(), 1):
-        line = raw.rstrip()
+    # "\n" only: an answer's JSON may hold a raw U+2028 or U+0085, which str.splitlines() would break on.
+    for n, raw in enumerate(text.split("\n"), 1):
+        line = raw.rstrip("\r").rstrip(" \t")
         if not line.strip() or line.lstrip().startswith("#"):
             continue
         indent = len(line) - len(line.lstrip(" "))
@@ -279,7 +292,8 @@ def read(ledger: Path) -> Dict[str, Any]:
         raise LedgerError("%s: %s" % (common.tilde(ledger), exc))
 
 
-def _write(ledger: Path, doc: Dict[str, Any], scope: str) -> None:
+def _write(ledger: Path, doc: Dict[str, Any], scope: str, still_ours: Callable[[], None]) -> None:
+    still_ours()  # spec §5.5: the token is checked again right before the rename
     common.write_atomic(ledger, render(doc, scope).encode("utf-8"), mode=0o600)
 
 
@@ -311,22 +325,23 @@ def ask_entry(scope: str, ask: Dict[str, Any], batch: Optional[str], tick: Any, 
     }
 
 
-def sync(sec: Dict[str, Any], open_now: Dict[str, Dict[str, Any]],
-         resolved: List[Tuple[str, Any]], acked: List[Tuple[str, Any]] = ()) -> Tuple[int, int]:
-    """Bring the ledger to the fleet's open asks: each open occurrence has an entry (added when new, its
-    question refreshed while open); an open entry for an occurrence a tick resolved, `(key, batch)`, is
-    withdrawn, and one the owner answered elsewhere (`fleet ack` from a terminal) is closed as answered
-    there. Answers are never touched. (added, withdrawn)."""
+def sync(sec: Dict[str, Any], ready: Dict[str, Dict[str, Any]], open_all: List[Tuple[str, Any]],
+         acked: List[Tuple[str, Any]] = ()) -> Tuple[int, int]:
+    """Bring the ledger to the fleet's asks. Each ready occurrence (open past ask_raise_after_min) has an
+    entry, added when new, its question refreshed while open. Any open entry that is no longer an open
+    occurrence (`open_all`, every `(key, batch)` the fleet holds open) is closed: as answered from a
+    terminal when the owner acked it there (`acked`), else withdrawn, no longer true; so a tick that
+    skipped its ask step leaves nothing open behind. Answers are never touched. (added, withdrawn)."""
     scope = sec["scope"]
     ledger = path(sec)
     added = withdrawn = 0
-    with locked(ledger):
+    with locked(ledger) as still_ours:
         doc = read(ledger)
         doc.setdefault("arc", "fleet-%s" % scope)
         doc.setdefault("writer", "fleet-reconcile")
         entries = doc["asks"]
         by_uid = {e.get("uid"): e for e in entries}
-        for key, v in open_now.items():
+        for key, v in ready.items():
             ask = dict(v["ask"], key=key)
             e = by_uid.get(uid(scope, key, v.get("of")))
             if e is None:
@@ -335,26 +350,31 @@ def sync(sec: Dict[str, Any], open_now: Dict[str, Dict[str, Any]],
                 by_uid[fresh["uid"]] = fresh
                 added += 1
             elif is_open(e):
-                e["headline"] = common.safe_text(ask.get("question"), 400)
-        gone = {uid(scope, k, b) for k, b in resolved}
+                headline = common.safe_text(ask.get("question"), 400)
+                if e.get("headline") != headline:  # only when it changed: an answer checks the entry it read
+                    e["headline"] = headline
+        still = {uid(scope, k, b) for k, b in open_all}
         elsewhere = {uid(scope, k, b) for k, b in acked}
         for e in entries:
-            if e.get("uid") in gone and is_open(e):
+            f = e.get("fleet") if isinstance(e.get("fleet"), dict) else {}
+            if not f.get("key") or not is_open(e) or e.get("uid") in still:
+                continue
+            if e.get("uid") in elsewhere:
+                e["status"] = "resolved"
+                e["resolution"] = "Answered from a terminal (fleet ack)."
+            else:
                 e["status"] = "withdrawn"
                 e["resolution"] = "A tick found it no longer true."
                 withdrawn += 1
-            elif e.get("uid") in elsewhere and is_open(e):
-                e["status"] = "resolved"
-                e["resolution"] = "Answered from a terminal (fleet ack)."
-        _write(ledger, doc, scope)
+        _write(ledger, doc, scope, still_ours)
     return added, withdrawn
 
 
 def alert(sec: Dict[str, Any], kind: str, message: str) -> str:
-    """An alert of `kind`, as a blocking entry: refreshed while one is open, a new one once the last was answered."""
+    """An alert of `kind`, as an entry: refreshed while one is open, a new one once the last was answered."""
     scope = sec["scope"]
     ledger = path(sec)
-    with locked(ledger):
+    with locked(ledger) as still_ours:
         doc = read(ledger)
         doc.setdefault("arc", "fleet-%s" % scope)
         doc.setdefault("writer", "fleet-reconcile")
@@ -364,13 +384,15 @@ def alert(sec: Dict[str, Any], kind: str, message: str) -> str:
         text = common.safe_text(message, 400)
         if current is None:
             u = "%s-%d" % (base, int(time.time()))
-            current = {"id": u, "uid": u, "class": "alert", "blocking": True, "why_you": WHY_YOU,
+            # Not blocking: a failing or missed tick is Maestro's own fleet health notice, which counts in Needs
+            # you; this entry is its words, listed in Decisions, so the one failure is never counted twice.
+            current = {"id": u, "uid": u, "class": "alert", "blocking": False, "why_you": WHY_YOU,
                        "default": "It stays open until you acknowledge it.",
                        "options": [OPTIONS[0]], "fleet": {"scope": scope, "alert": kind}}
             entries.append(current)
         current["headline"] = "The %s fleet tick: %s" % (scope, text)
         current["asked_at"] = common.ts(time.time())
-        _write(ledger, doc, scope)
+        _write(ledger, doc, scope, still_ours)
     return str(current["uid"])
 
 

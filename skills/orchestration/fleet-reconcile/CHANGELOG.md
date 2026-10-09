@@ -8,15 +8,16 @@ per batch (BRO-2908: one answer surface, no parallel system).
 - **Asks** are decision asks in the scope's own ask ledger,
   `<state_dir>/.control/asks/fleet-<scope>.yaml`
   (`scripts/fleetlib/ledger_ask.py`): one entry per open occurrence (its
-  `uid` hashes the key and the batch that first asked it), Acknowledge or
-  Dismiss with a note, `blocking` for a session that waits on the owner
-  (classes 3 and 7). Maestro lists them in Decisions and counts the blocking
-  ones in Needs you. A tick withdraws an occurrence it found no longer true and
-  closes one answered with `fleet ack`; an answer is never touched. The
+  `uid` hashes the key and the batch that first asked it), Acknowledge with
+  a note, `blocking` for a session that waits on the owner (classes 3 and 7).
+  Maestro lists them in Decisions and counts the blocking ones in Needs you.
+  Any open entry no longer an open occurrence is closed at the next ask step
+  (answered with `fleet ack`, else withdrawn); an answer is never touched. The
   owner's answer is read back once as the same `ack` record the item verdicts
   made.
-- **Alerts** from tick.sh are blocking entries in the same ledger, one open per
-  kind; the bash fallback (Python broken) still raises a Maestro item.
+- **Alerts** from tick.sh are entries in the same ledger, one open per kind,
+  not blocking (a failing tick already counts once, as Maestro's fleet health
+  notice); the bash fallback (Python broken) still raises a Maestro item.
 - **The ledger** is written under the control interface spec's lock (§5.5,
   shared with Maestro) and only as one-line JSON values, Maestro's answer
   edit's own shape; a line outside it fails the step and is not written over.

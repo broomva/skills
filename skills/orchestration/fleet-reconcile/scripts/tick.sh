@@ -12,16 +12,16 @@
 # Not carried over: the fire gate and quiet hours (launchd fires hourly, the
 # owner's cadence) and the inner resume tick (phase 2's resume verb).
 #
-# PHASE 1 runs deterministic code only and acts on no session; the owner
-# channel's Maestro items each run one model turn. Per tick: kill switch,
-# config-check, lock, the tick number, observe, report
+# PHASE 1 runs deterministic code only and acts on no session. Per tick:
+# kill switch, config-check, lock, the tick number, observe, report
 # (classes, count check, asks), the core comparison once a day, the owner's
-# asks (fleet act ask --show, Maestro work in the Paseo app), and the ledger's
-# tick_fire and runner_exit.
+# asks (fleet act ask --show: the scope's ask ledger, answered in Maestro's
+# Decisions), and the ledger's tick_fire and runner_exit.
 # Phase 2 adds `fleet recover` before the coordinator and the coordinator itself.
 #
-# A tick that fails (a bad config, observe or report failing) raises a Maestro
-# item at Needs you in the Paseo app, at most once per 6 h per kind of failure,
+# A tick that fails (a bad config, observe or report failing) writes an alert to
+# the scope's ask ledger (a Maestro item from bash when Python is what broke),
+# at most once per 6 h per kind of failure,
 # and exits 1 so launchd's last exit shows it. The kill switch set to off is not a failure: exit 0.
 #
 # Env: FLEET_SCOPE (required); FLEET_CONFIG (default ~/.config/ctx/fleet.json);
