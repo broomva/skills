@@ -90,3 +90,44 @@ def test_auto_merge_refuses(tmp_path, monkeypatch, capsys, policy, why):
     err = capsys.readouterr().err
     assert why in err
     assert "read-only path" not in err
+
+
+# Every strict call site gets its own test: a site that went lax would still
+# block (the block loads as disabled), but for the wrong reason, and no other
+# test would notice.
+class _Done:
+    def __init__(self, stdout: str = "", returncode: int = 0):
+        self.stdout, self.stderr, self.returncode = stdout, "", returncode
+
+
+def test_gate_check_refuses(tmp_path, monkeypatch, capsys):
+    p9 = _p9(tmp_path, monkeypatch, _FOREIGN)
+    monkeypatch.setattr(p9.subprocess, "run",
+                        lambda *a, **kw: pytest.fail("reached gh"))
+    rc = p9.main(["gate-check", "100", "--repo", "broomva/test"])
+    err = capsys.readouterr().err
+    assert rc == p9.EXIT_POLICY_ERROR
+    assert "auto_merge has unknown key(s)" in err
+    assert "read-only path" not in err
+
+
+def test_doctor_reports_the_rejection(tmp_path, monkeypatch, capsys):
+    p9 = _p9(tmp_path, monkeypatch, _FOREIGN)
+    monkeypatch.setattr(p9.subprocess, "run", lambda *a, **kw: _Done())
+    rc = p9.main(["doctor"])
+    out = capsys.readouterr()
+    assert rc == p9.EXIT_POLICY_ERROR
+    assert "auto_merge has unknown key(s)" in out.out
+    assert "read-only path" not in out.err
+
+
+def test_base_branch_policy_read_is_strict(tmp_path, monkeypatch, capsys):
+    p9 = _p9(tmp_path, monkeypatch, _FOREIGN)
+    monkeypatch.delenv("BROOMVA_P9_POLICY")
+    text = _FOREIGN.read_text(encoding="utf-8")
+    monkeypatch.setattr(p9.subprocess, "run", lambda *a, **kw: _Done(text))
+    policy, why = p9.authoritative_auto_merge_policy(
+        p9.AutoMergePolicy(), "broomva/test", "deadbeef", [])
+    assert policy is None
+    assert "malformed" in why and "unknown key(s)" in why
+    assert "read-only path" not in capsys.readouterr().err

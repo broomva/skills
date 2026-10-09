@@ -1157,8 +1157,9 @@ def load_policy(path: Path | str | None = None, *,
 
 
 def load_policy_text(text: str, *, validate_auto_merge: bool = True) -> PolicyConfig:
-    """Parse policy YAML text with the same fail-closed checks as a file load.
-    Used to judge a PR by its BASE branch's policy (BRO-2591)."""
+    """Parse policy YAML text with the same fail-closed checks as a file load,
+    ``validate_auto_merge`` included. Used to judge a PR by its BASE branch's
+    policy (BRO-2591), which always validates."""
     try:
         loader = _yaml_loader()
         data = loader(text)
