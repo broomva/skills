@@ -65,14 +65,22 @@ On such a host, the rows above that say `--background`, `--detach` or
 `run_in_background` change:
 
 - Run `p9 watch <pr>` as a plain **foreground** Bash call, never
-  `run_in_background`. It slices itself at 540s, under the 10-minute Bash
+  `run_in_background`. (`--background` is only a legacy alias for the
+  foreground default.) It slices itself at 540s, under the 10-minute Bash
   cap.
 - **Exit 8 (`EXIT_PENDING`)** means CI was still running when the slice
   ended. The PR folded back to PUSHED. Run the same command again in the
   foreground, and keep doing so until it exits 0 (folded GREEN or RED) or
   another code.
-- `p9 wait-for` slices the same way. Each re-run starts a fresh `--timeout`,
-  so bound the total wait yourself.
+- **Exit 5 between slices** means a pending PR still holds the
+  `max_concurrent_prs` slot. Finish that PR's watch before watching another.
+- If you stop re-running, `p9 reap` folds the PR to ABANDONED once it has
+  sat for 600s. A later `p9 watch` reopens it.
+- `p9 wait-for` slices the same way, and its termination report's
+  `next_action` gives the `--timeout` left. Re-run with that value, not the
+  original, or the wait never times out.
+- `wait-for --detach` and `p9 rearm` children run unsliced. Nothing reports
+  back when they finish, so poll `p9 status` / `p9 report`.
 - Do the next piece of work between slices, not instead of them. Never end
   the turn on a pending wait.
 - Run P20 reviewers and other subagents as blocking calls, never in the

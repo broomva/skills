@@ -3063,11 +3063,24 @@ def reap_stale_watchers(*, grace_seconds: float | None = None,
         lock_ctx.__exit__(None, None, None)
 
 
+def _is_slice_handback(row: dict[str, Any]) -> bool:
+    """A PUSHED row folded by a foreground slice expiry (BRO-2815)."""
+    return (row.get("to_state") == PRState.PUSHED.value
+            and (row.get("extra") or {}).get("termination") == "slice")
+
+
 def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
                reaped: list[dict[str, Any]]) -> list[dict[str, Any]]:
     for row in open_prs(session_id=session_id):
         state = PRState(row["to_state"])
-        if state not in (PRState.WATCHING, PRState.HEALING):
+        if _is_slice_handback(row):
+            # BRO-2815: a live session re-runs the watch within seconds. One
+            # still parked here after a whole Bash cap stopped re-running —
+            # the same orphan a killed foreground watch used to leave.
+            if _iso_age_seconds(row.get("ts", "")) < max(
+                    grace, BASH_CALL_CAP_SECONDS):
+                continue
+        elif state not in (PRState.WATCHING, PRState.HEALING):
             continue
         pid = _row_pid(row)
         if pid > 0 and is_watcher_alive(pid):
@@ -3748,6 +3761,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     if not policy.ci_watch.enabled:
         print("ci_watch.enabled=false in policy; refusing to watch", file=sys.stderr)
         return EXIT_POLICY_ERROR
+    t0 = time.monotonic()  # the slice bounds the whole call, not just gh
     sid = current_session_id()
     pr = int(args.pr)
     # One resolution for the whole invocation (BRO-1988): the de-dup read, the
@@ -3871,11 +3885,18 @@ def cmd_watch(args: argparse.Namespace) -> int:
             return EXIT_OK
 
         try:
-            rc = proc.wait(timeout=slice_s) if slice_s else proc.wait()
+            rc = (proc.wait(timeout=max(1.0, slice_s - (time.monotonic() - t0)))
+                  if slice_s else proc.wait())
         except subprocess.TimeoutExpired:
             with contextlib.suppress(Exception):
                 proc.terminate()
+            try:
                 proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                with contextlib.suppress(Exception):
+                    proc.kill()
+            except Exception:  # noqa: BLE001 — cleanup only
+                pass
             outcome = (PRState.PUSHED, "slice-expired", {
                 "reason": (f"CI still pending after the {slice_s:.0f}s "
                            "foreground slice"),
@@ -3939,7 +3960,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
             report["state"] = "SUPERSEDED"
             report["next_action"] = (
                 "none — a live watcher owns this PR; this fold was discarded")
-            emit_termination_report(report)
+            emit_termination_report(report,
+                                    do_notify=cause != "slice-expired")
     # `reraise` must survive the rejection branch: an early return here would
     # swallow the very exception that terminated the watcher.
     if reraise is not None:
@@ -4378,6 +4400,11 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
                   "--timeout", str(timeout), "--slice", "0"]
 
     if args.detach:
+        if not host_profile()["background_wakes"]:
+            print("p9: this host does not wake an idle session when a "
+                  f"background task ends; nothing will tell you {name!r} "
+                  "settled — run the wait in the foreground instead",
+                  file=sys.stderr)
         logs_dir().mkdir(parents=True, exist_ok=True)
         log_path = logs_dir() / f"wait-{_safe_slug(wait_id)}.log"
         child_argv = rearm_argv + ["--wait-id", wait_id]
@@ -4476,8 +4503,9 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
                 if slice_left <= 0:
                     outcome = (WaitState.TIMED_OUT, "slice-expired",
                                f"predicate still false after the "
-                               f"{slice_s:.0f}s foreground slice; run the "
-                               f"same p9 wait-for again", EXIT_PENDING)
+                               f"{slice_s:.0f}s foreground slice; run "
+                               f"p9 wait-for again with the --timeout left",
+                               EXIT_PENDING)
                     break
                 remaining = min(remaining, slice_left)
             time.sleep(min(interval, remaining))
@@ -4520,8 +4548,10 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
         report = wait_termination_report(dataclasses.asdict(event),
                                          cause=cause)
         if cause == "slice-expired":
-            report["next_action"] = ("run the same p9 wait-for again, in the "
-                                     "foreground")
+            left = max(1, int(timeout - (time.monotonic() - started)))
+            report["next_action"] = (
+                f"run p9 wait-for again in the foreground with --timeout "
+                f"{left} (the time left to the original deadline)")
         emit_termination_report(report, do_notify=cause != "slice-expired")
     if reraise is not None:
         raise reraise
@@ -4615,8 +4645,10 @@ def cmd_rearm(args: argparse.Namespace) -> int:
                 actions.append(action)
                 continue
             else:
+                # `--slice 0` (BRO-2815): a detached child blocks nobody's
+                # Bash call; sliced, it would fold PUSHED unseen and stop.
                 argv = [sys.executable, script, "watch", str(pr),
-                        "--repo", repo]
+                        "--repo", repo, "--slice", "0"]
                 argv.append("--force" if args.now else "--adopt")
                 logs_dir().mkdir(parents=True, exist_ok=True)
                 log_path = logs_dir() / f"rearm-watch-{_safe_slug(str(pr))}.log"

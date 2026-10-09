@@ -111,7 +111,8 @@ class TestWatchSlice:
         monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **kw: proc)
         rc = p9.main(["watch", "700", "--repo", REPO])
         assert rc == p9.EXIT_PENDING
-        assert proc.timeouts[0] == p9.DEFAULT_SLICE_SECONDS
+        # The slice bounds the whole call, so gh gets what is left of it.
+        assert p9.DEFAULT_SLICE_SECONDS - 30 < proc.timeouts[0] <= p9.DEFAULT_SLICE_SECONDS
         assert proc.terminated
         # Not ABANDONED: the next action is simply to watch again.
         assert p9.current_pr_state(700) == p9.PRState.PUSHED
@@ -138,7 +139,7 @@ class TestWatchSlice:
         monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **kw: done)
         p9.main(["watch", "703", "--repo", REPO, "--slice", "30"])
         p9.main(["watch", "704", "--repo", REPO, "--slice", "0"])
-        assert done.timeouts == [30.0, None]
+        assert 0 < done.timeouts[0] <= 30.0 and done.timeouts[1] is None
 
     def test_slice_expiry_json(self, p9, monkeypatch, capsys):
         monkeypatch.setenv("PASEO_AGENT_ID", "abc")
@@ -211,3 +212,94 @@ def test_pending_exit_code_is_the_documented_8(p9):
     assert p9.EXIT_PENDING == 8
     assert p9.EXIT_PENDING not in (p9.EXIT_OK, p9.EXIT_DEGRADED,
                                    p9.EXIT_AUTO_MERGE_BLOCKED)
+
+
+class TestSliceHandbackLifecycle:
+    """P20 round 1 (stratum B): a slice hand-back must never be the thing
+    that strands a PR — not via rearm, not as an unreapable row."""
+
+    def _dead_watching(self, p9, pr):
+        dead = subprocess.Popen([sys.executable, "-c", "pass"])
+        dead.wait()
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2020-01-01T00:00:00+00:00", pr=pr, repo=REPO,
+            from_state=p9.PRState.PUSHED.value,
+            to_state=p9.PRState.WATCHING.value,
+            watcher_id="wdead", extra={"pid": dead.pid},
+        ))
+
+    def test_rearmed_watch_child_is_never_sliced(self, p9, monkeypatch, capsys):
+        # A detached child blocks nobody's Bash call. Sliced, it would fold
+        # PUSHED into a log nobody reads and stop — silently.
+        monkeypatch.setenv("PASEO_AGENT_ID", "abc")
+        self._dead_watching(p9, 900)
+        spawned: list[list[str]] = []
+
+        class _Child:
+            pid = 4244
+
+        def fake_popen(argv, **kw):
+            spawned.append([str(a) for a in argv])
+            return _Child()
+
+        monkeypatch.setattr(p9.subprocess, "Popen", fake_popen)
+        assert p9.main(["rearm", "--now", "--json"]) == p9.EXIT_OK
+        watch = [a for a in spawned if "watch" in a]
+        assert watch, f"rearm spawned no watch child: {spawned}"
+        argv = watch[0]
+        assert argv[argv.index("--slice") + 1] == "0"
+
+    def _slice_handback(self, p9, pr, ts):
+        p9.append_state_event(p9.PRStateEvent(
+            ts=ts, pr=pr, repo=REPO,
+            from_state=p9.PRState.WATCHING.value,
+            to_state=p9.PRState.PUSHED.value, watcher_id="wslice",
+            extra={"termination": "slice", "slice_seconds": 540},
+        ))
+
+    def test_abandoned_handback_is_reaped(self, p9):
+        # Older than a whole Bash cap: the session stopped re-running.
+        self._slice_handback(p9, 910, "2020-01-01T00:00:00+00:00")
+        assert p9.main(["reap", "--no-reconcile", "--now"]) == p9.EXIT_OK
+        assert p9.current_pr_state(910) == p9.PRState.ABANDONED
+
+    def test_fresh_handback_is_left_for_the_rerun(self, p9):
+        # `--now` drops the dead-watcher grace, not the re-run window.
+        self._slice_handback(p9, 911, p9._utcnow())
+        p9.main(["reap", "--no-reconcile", "--now"])
+        assert p9.current_pr_state(911) == p9.PRState.PUSHED
+
+    def test_ordinary_pushed_row_is_not_reaped(self, p9):
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2020-01-01T00:00:00+00:00", pr=912, repo=REPO,
+            from_state=p9.PRState.WATCHING.value,
+            to_state=p9.PRState.PUSHED.value,
+            watcher_id="wpush", extra={},  # no termination=slice marker
+        ))
+        p9.main(["reap", "--no-reconcile", "--now"])
+        assert p9.current_pr_state(912) == p9.PRState.PUSHED
+
+
+class TestWaitForHandback:
+    def test_next_action_carries_the_deadline(self, p9, monkeypatch, capsys):
+        # Re-running with the same --timeout would restart the clock every
+        # slice, so a wait that never settles would never time out.
+        monkeypatch.setattr(p9.time, "sleep", lambda s: None)
+        p9.main(["wait-for", "dl", "--cmd", "false", "--interval", "0.1",
+                 "--timeout", "60", "--slice", "0.3"])
+        err = capsys.readouterr().err
+        line = next(l for l in err.splitlines()
+                    if l.startswith("P9-TERMINATION-REPORT "))
+        nxt = json.loads(line.split(" ", 1)[1])["next_action"]
+        left = int(nxt.split("--timeout ", 1)[1].split()[0])
+        assert 50 <= left < 60
+
+    def test_detach_on_non_waking_host_warns(self, p9, monkeypatch, capsys):
+        monkeypatch.setenv("PASEO_AGENT_ID", "abc")
+
+        class _Child:
+            pid = 4245
+
+        monkeypatch.setattr(p9.subprocess, "Popen", lambda *a, **kw: _Child())
+        p9.main(["wait-for", "bg", "--cmd", "true", "--detach"])
+        assert "does not wake" in capsys.readouterr().err
