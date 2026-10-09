@@ -814,7 +814,7 @@ echo "PASEO. SKILL.md keeps the Paseo foreground rule for every stratum"
 PASEO_SEC=$(awk '/^### Paseo-hosted sessions: run every stratum in the foreground/{f=1; next} f && /^#{2,3} /{exit} f' "$REPO/SKILL.md")
 if printf '%s' "$PASEO_SEC" | grep -q 'PASEO_AGENT_ID' \
    && printf '%s' "$PASEO_SEC" | grep -q 'run_in_background: false' \
-   && printf '%s' "$PASEO_SEC" | grep -q 'never `run_in_background`' \
+   && printf '%s' "$PASEO_SEC" | grep -q "never \`run_in_background\`" \
    && printf '%s' "$PASEO_SEC" | grep -qi 'never end the turn'; then
     ok "PASEO: foreground rule present (Stratum A foreground, B/C blocking, never end the turn)"
 else
