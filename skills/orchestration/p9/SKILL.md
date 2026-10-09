@@ -54,6 +54,31 @@ when_to_use: |
 | A watcher/wait looks wedged | `p9 stuck-scan` — structured dump + notification |
 | About to `sleep` | **Don't.** Pull from `p9 wait-queue pop` instead |
 
+### Paseo-hosted sessions: wait in foreground slices (BRO-2815)
+
+When `PASEO_AGENT_ID` is set, a background task that finishes does **not**
+wake an idle session. A session that ends its turn on "waiting for the
+background watcher" stays stranded until someone nudges it. `p9 host`
+prints the regime for this host. `P9_BACKGROUND_WAKES=0|1` overrides it.
+
+On such a host, the rows above that say `--background`, `--detach` or
+`run_in_background` change:
+
+- Run `p9 watch <pr>` as a plain **foreground** Bash call, never
+  `run_in_background`. It slices itself at 540s, under the 10-minute Bash
+  cap.
+- **Exit 8 (`EXIT_PENDING`)** means CI was still running when the slice
+  ended. The PR folded back to PUSHED. Run the same command again in the
+  foreground, and keep doing so until it exits 0 (folded GREEN or RED) or
+  another code.
+- `p9 wait-for` slices the same way. Each re-run starts a fresh `--timeout`,
+  so bound the total wait yourself.
+- Do the next piece of work between slices, not instead of them. Never end
+  the turn on a pending wait.
+- Run P20 reviewers and other subagents as blocking calls, never in the
+  background.
+- `--slice N` sets the slice length. `--slice 0` disables it.
+
 ## Parallel agent sessions (BRO-1529, BRO-2373)
 
 P9 state lives in one shared dir (`~/.config/broomva/p9/`). Concurrent agents

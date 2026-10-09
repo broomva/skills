@@ -30,3 +30,7 @@ def _hermetic_session_identity(monkeypatch):
     import p9 as _p9
     for env_name, _prefix in _p9.SESSION_MARKERS:
         monkeypatch.delenv(env_name, raising=False)
+    # Same rule for the host markers (BRO-2815): run from a Paseo session, the
+    # suite would otherwise inherit a 540s foreground slice it never asked for.
+    for env_name in _p9.HOST_MARKERS:
+        monkeypatch.delenv(env_name, raising=False)

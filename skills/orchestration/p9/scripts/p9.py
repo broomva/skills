@@ -53,6 +53,7 @@ EXIT_EXTERNAL_ERROR = 4          # gh/Linear/network failure
 EXIT_CONCURRENCY_CEILING = 5     # max_concurrent_prs reached
 EXIT_HEAL_LOCK_TIMEOUT = 6
 EXIT_AUTO_MERGE_BLOCKED = 7      # auto_merge policy says require_human / notify
+EXIT_PENDING = 8                 # foreground slice ended before the wait settled: re-run it (BRO-2815)
 EXIT_INVARIANT_VIOLATION = 99    # cardinal-rule breach: cannot persist state
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -134,6 +135,55 @@ def heartbeats_dir() -> Path:
 
 def stuck_markers_dir() -> Path:
     return p9_home() / "stuck"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Host wake semantics (BRO-2815)
+#
+# On some hosts a finished background task never wakes an idle agent session.
+# Paseo is the measured case: across 2026-09 the fleet coordinator had to send
+# "wait in the FOREGROUND" ~50 times to sessions parked on a `p9 watch` or a
+# reviewer they had put in the background. There the only wait that completes
+# is a foreground one — and a foreground Bash call is capped at 10 minutes,
+# where a killed watcher folds to ABANDONED. So `watch` and `wait-for` slice
+# their foreground wait under the cap on such hosts and return EXIT_PENDING
+# with "run me again", which the agent can do without ever going idle.
+# ─────────────────────────────────────────────────────────────────────────────
+HOST_MARKERS: tuple[str, ...] = ("PASEO_AGENT_ID", "P9_BACKGROUND_WAKES",
+                                 "CLAUDECODE")
+BASH_CALL_CAP_SECONDS = 600
+DEFAULT_SLICE_SECONDS = 540
+
+
+def host_profile() -> dict[str, Any]:
+    """Which wait regime this host needs. `P9_BACKGROUND_WAKES=0|1` overrides
+    detection, for a host p9 does not know or a Paseo build that fixes wakes."""
+    paseo = bool(os.environ.get("PASEO_AGENT_ID", "").strip())
+    if paseo:
+        host = "paseo"
+    elif os.environ.get("CLAUDECODE"):
+        host = "claude-code"
+    else:
+        host = "unknown"
+    wakes, source = not paseo, ("PASEO_AGENT_ID" if paseo else "default")
+    override = os.environ.get("P9_BACKGROUND_WAKES", "").strip()
+    if override in ("0", "1"):
+        wakes, source = override == "1", "P9_BACKGROUND_WAKES"
+    return {
+        "host": host,
+        "background_wakes": wakes,
+        "wait_mode": "background" if wakes else "foreground",
+        "source": source,
+        "bash_call_cap_seconds": BASH_CALL_CAP_SECONDS,
+        "default_slice_seconds": None if wakes else DEFAULT_SLICE_SECONDS,
+    }
+
+
+def resolve_slice(requested: float | None) -> float | None:
+    """`--slice N` wins (0 disables); otherwise the host's default."""
+    if requested is not None:
+        return float(requested) if requested > 0 else None
+    return host_profile()["default_slice_seconds"]
 
 
 # Harness markers that identify ONE agent stream. Each row is (env var, id
@@ -598,6 +648,9 @@ _TRANSITIONS: set[tuple[PRState, PRState]] = {
     (PRState.GREEN, PRState.MERGE_READY),
     (PRState.MERGE_READY, PRState.MERGED),
     (PRState.MERGE_READY, PRState.WATCHING),       # rare: human pushed amend post-green
+    # A foreground slice ended with CI still running (BRO-2815): the watch
+    # hands the PR back to PUSHED, whose next action is to watch again.
+    (PRState.WATCHING, PRState.PUSHED),
     # Terminal "abandoned" reachable from any non-terminal — needed for
     # `p9 abandon` and `p9 cleanup` to drain orphans regardless of the
     # state they're parked in.
@@ -3679,9 +3732,12 @@ def cmd_watch(args: argparse.Namespace) -> int:
     Default behavior (PR E onwards): foreground — block on
     `gh pr checks --watch`, then fold the subprocess exit code into a state
     transition (WATCHING → GREEN on exit 0, WATCHING → RED_UNCLASSIFIED
-    otherwise). Callers (the agent) wrap this in `run_in_background` so the
-    bg-task notification fires when the *whole* watch+fold has finished —
-    which is what the cardinal protocol actually wants.
+    otherwise). Where a finished background task wakes the session, callers
+    wrap this in `run_in_background` so the notification fires when the
+    *whole* watch+fold has finished. Where it does not (Paseo, see
+    `host_profile`), the wait is sliced under the Bash cap: a slice that ends
+    with CI still running folds back to PUSHED and returns EXIT_PENDING, and
+    the agent runs the watch again in the foreground (BRO-2815).
 
     --detach reverts to the old fire-and-forget behavior (no fold; the
     caller is responsible for polling state). --background and --block are
@@ -3761,6 +3817,12 @@ def cmd_watch(args: argparse.Namespace) -> int:
     log_path: str | None = None
     row_written = False
     foreground = not (args.detach or args.dry_run)
+    slice_s = resolve_slice(getattr(args, "slice", None)) if foreground else None
+    if args.detach and not host_profile()["background_wakes"]:
+        print("p9: this host does not wake an idle session when a background "
+              f"task ends; nothing will tell you PR #{pr} settled — poll "
+              f"`p9 status --pr {pr}`, or watch it in the foreground instead",
+              file=sys.stderr)
     outcome: tuple[PRState, str, dict[str, Any]] | None = None
     reraise: BaseException | None = None
     fold_rejected = False
@@ -3808,10 +3870,21 @@ def cmd_watch(args: argparse.Namespace) -> int:
             # Detach / dry-run: do NOT block; caller polls state.jsonl.
             return EXIT_OK
 
-        rc = proc.wait()
-        next_state = PRState.GREEN if rc == 0 else PRState.RED_UNCLASSIFIED
-        outcome = (next_state, "gh-exit",
-                   {"gh_exit_code": rc, "folded_by": "p9 watch"})
+        try:
+            rc = proc.wait(timeout=slice_s) if slice_s else proc.wait()
+        except subprocess.TimeoutExpired:
+            with contextlib.suppress(Exception):
+                proc.terminate()
+                proc.wait(timeout=5)
+            outcome = (PRState.PUSHED, "slice-expired", {
+                "reason": (f"CI still pending after the {slice_s:.0f}s "
+                           "foreground slice"),
+                "slice_seconds": slice_s, "termination": "slice",
+            })
+        else:
+            next_state = PRState.GREEN if rc == 0 else PRState.RED_UNCLASSIFIED
+            outcome = (next_state, "gh-exit",
+                       {"gh_exit_code": rc, "folded_by": "p9 watch"})
     except _WaitInterrupted as exc:
         if proc is not None:
             with contextlib.suppress(Exception):
@@ -3849,8 +3922,11 @@ def cmd_watch(args: argparse.Namespace) -> int:
         # fold is stale. Dropping it is the point — applying it would bury a
         # live watcher and hand its slot to a third.
         if append_state_event(event, expect_owner=watcher_id):
+            # A slice expiry is a hand-back, not news: no phone buzz every
+            # nine minutes while CI runs.
             emit_termination_report(
-                pr_termination_report(dataclasses.asdict(event), cause=cause))
+                pr_termination_report(dataclasses.asdict(event), cause=cause),
+                do_notify=cause != "slice-expired")
         else:
             # The termination invariant (BRO-1701) says EVERY exit path emits
             # a report. A dropped fold is still a termination — of *this*
@@ -3872,11 +3948,40 @@ def cmd_watch(args: argparse.Namespace) -> int:
         return EXIT_DEGRADED
     if next_state is PRState.ABANDONED:
         return EXIT_DEGRADED
+    if cause == "slice-expired":
+        if args.json:
+            print(json.dumps({"watcher_id": watcher_id, "result": "PENDING",
+                              "slice_seconds": slice_s}))
+        else:
+            again = f"p9 watch {pr}" + (f" --repo {repo}" if args.repo else "")
+            print(f"pending: CI on PR #{pr} still running after the "
+                  f"{slice_s:.0f}s slice — run `{again}` again "
+                  "(in the foreground)")
+        return EXIT_PENDING
     rc = int(extra.get("gh_exit_code", 0))
     if args.json:
         print(json.dumps({"watcher_id": watcher_id, "result": next_state.value, "gh_exit_code": rc}))
     else:
         print(f"folded: {next_state.value} (gh exit {rc})")
+    return EXIT_OK
+
+
+def cmd_host(args: argparse.Namespace) -> int:
+    """Report the wait regime this host needs (BRO-2815)."""
+    prof = host_profile()
+    if args.json:
+        print(json.dumps(prof))
+        return EXIT_OK
+    if prof["background_wakes"]:
+        print(f"host={prof['host']}: a finished background task wakes this "
+              "session; `p9 watch <pr>` may run as a background task")
+    else:
+        print(f"host={prof['host']} (from {prof['source']}): a finished "
+              "background task does NOT wake an idle session. Run "
+              "`p9 watch <pr>` in the FOREGROUND; it returns every "
+              f"{prof['default_slice_seconds']}s with exit 8 while CI runs, "
+              "so run it again until it folds. Run reviewers as blocking "
+              "subagents, never in the background.")
     return EXIT_OK
 
 
@@ -4266,9 +4371,11 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
     script = str(Path(__file__).resolve())
     # Recorded with the RESOLVED command so `p9 rearm` can re-exec without
     # re-deriving preset/target. Built from controlled fields only.
+    # `--slice 0`: a re-armed or detached child blocks nobody's Bash call,
+    # so it must not inherit the host's foreground slice from the env.
     rearm_argv = [sys.executable, script, "wait-for", name,
                   "--cmd", cmd, "--interval", str(interval),
-                  "--timeout", str(timeout)]
+                  "--timeout", str(timeout), "--slice", "0"]
 
     if args.detach:
         logs_dir().mkdir(parents=True, exist_ok=True)
@@ -4310,6 +4417,13 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
         with contextlib.suppress(OSError, ValueError):
             prev_handlers[s] = signal.signal(s, _on_signal)
 
+    slice_s = resolve_slice(getattr(args, "slice", None))
+    # A slice only matters when it ends before the deadline. Both are fixed
+    # offsets from `started`, so compare them once, not against `remaining`
+    # (which shrinks below the slice mid-wait and would switch it off).
+    if slice_s is not None and slice_s >= timeout:
+        slice_s = None
+    horizon = timeout if slice_s is None else slice_s
     started = time.monotonic()
     try:
         append_wait_event(WaitEvent(
@@ -4328,7 +4442,7 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
 
         while outcome is None:
             poll_budget = max(1.0, min(interval * 3.0 + 10.0,
-                                       timeout - (time.monotonic() - started)))
+                                       horizon - (time.monotonic() - started)))
             try:
                 res = subprocess.run(cmd, shell=True, capture_output=True,
                                      text=True, timeout=poll_budget,
@@ -4357,6 +4471,15 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
                            f"predicate still false after {timeout:.0f}s "
                            f"({polls} polls)", EXIT_DEGRADED)
                 break
+            if slice_s is not None:
+                slice_left = slice_s - (time.monotonic() - started)
+                if slice_left <= 0:
+                    outcome = (WaitState.TIMED_OUT, "slice-expired",
+                               f"predicate still false after the "
+                               f"{slice_s:.0f}s foreground slice; run the "
+                               f"same p9 wait-for again", EXIT_PENDING)
+                    break
+                remaining = min(remaining, slice_left)
             time.sleep(min(interval, remaining))
             # Deadline-first: never launch another poll past the deadline
             # (CodeRabbit) — the sleep above may end exactly at it.
@@ -4394,8 +4517,12 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
         append_wait_event(event)
         with contextlib.suppress(OSError):
             wait_heartbeat_path(wait_id).unlink(missing_ok=True)
-        emit_termination_report(
-            wait_termination_report(dataclasses.asdict(event), cause=cause))
+        report = wait_termination_report(dataclasses.asdict(event),
+                                         cause=cause)
+        if cause == "slice-expired":
+            report["next_action"] = ("run the same p9 wait-for again, in the "
+                                     "foreground")
+        emit_termination_report(report, do_notify=cause != "slice-expired")
     if reraise is not None:
         raise reraise
     return exit_code
@@ -4807,6 +4934,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "backwards compatibility with reflexive-rule guidance)")
     pw.add_argument("--block", action="store_true",
                     help="Alias for default foreground behavior")
+    pw.add_argument("--slice", type=float, default=None,
+                    help="Return after this many seconds if CI is still "
+                         "running (exit 8; run watch again). Defaults to 540 "
+                         "on hosts where background completions do not wake "
+                         "the session (`p9 host`); 0 disables")
     pw.add_argument("--adopt", action="store_true",
                     help="Re-watch a PR whose prior watcher pid is gone, "
                          "superseding the stale row immediately (orphan recovery "
@@ -4816,6 +4948,11 @@ def build_parser() -> argparse.ArgumentParser:
                          "appears live (overrides the double-watch guard).")
     pw.add_argument("--json", action="store_true")
     pw.set_defaults(func=cmd_watch)
+
+    ph = sub.add_parser("host", help="Does a finished background task wake "
+                        "this session? (decides foreground vs background waits)")
+    ph.add_argument("--json", action="store_true")
+    ph.set_defaults(func=cmd_host)
 
     ps = sub.add_parser("status", help="Show in-flight PRs")
     ps.add_argument("--pr", help="filter by PR number")
@@ -4955,6 +5092,11 @@ def build_parser() -> argparse.ArgumentParser:
     pwf.add_argument("--detach", action="store_true",
                      help="Spawn the wait detached; output lands in "
                           "logs/wait-<id>.log")
+    pwf.add_argument("--slice", type=float, default=None,
+                     help="Foreground only: return after this many seconds "
+                          "if the predicate is still false (exit 8; run "
+                          "again). Defaults to 540 where background "
+                          "completions do not wake the session; 0 disables")
     pwf.add_argument("--wait-id", default=None, help=argparse.SUPPRESS)
     pwf.add_argument("--rearmed-from", default=None, help=argparse.SUPPRESS)
     pwf.add_argument("--json", action="store_true")
