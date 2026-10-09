@@ -56,13 +56,14 @@ when_to_use: |
 
 ### Paseo-hosted sessions: wait in foreground slices (BRO-2815)
 
-When `PASEO_AGENT_ID` is set, a background task that finishes does **not**
-wake an idle session. A session that ends its turn on "waiting for the
-background watcher" stays stranded until someone nudges it. `p9 host`
-prints the regime for this host. `P9_BACKGROUND_WAKES=0|1` overrides it.
+On Paseo (`PASEO_AGENT_ID` set), a background task that finishes does
+**not** wake an idle session. A session that ends its turn on "waiting for
+the background watcher" stays stranded until someone nudges it.
+`P9_BACKGROUND_WAKES=0|1` overrides that detection either way, so go by the
+regime `p9 host` reports, not by the env var.
 
-On such a host, the rows above that say `--background`, `--detach` or
-`run_in_background` change:
+When `p9 host` says `wait_mode=foreground`, the rows above that say
+`--background`, `--detach` or `run_in_background` change:
 
 - Run `p9 watch <pr>` as a plain **foreground** Bash call, never
   `run_in_background`. (`--background` is only a legacy alias for the
