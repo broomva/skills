@@ -54,6 +54,41 @@ when_to_use: |
 | A watcher/wait looks wedged | `p9 stuck-scan` — structured dump + notification |
 | About to `sleep` | **Don't.** Pull from `p9 wait-queue pop` instead |
 
+### Paseo-hosted sessions: wait in foreground slices (BRO-2815)
+
+On Paseo (`PASEO_AGENT_ID` set), a background task that finishes does
+**not** wake an idle session. A session that ends its turn on "waiting for
+the background watcher" stays stranded until someone nudges it.
+`P9_BACKGROUND_WAKES=0|1` overrides that detection either way, so go by the
+regime `p9 host` reports, not by the env var.
+
+When `p9 host` says `wait_mode=foreground`, the rows above that say
+`--background`, `--detach` or `run_in_background` change:
+
+- Run `p9 watch <pr>` as a plain **foreground** Bash call, never
+  `run_in_background`. (`--background` is only a legacy alias for the
+  foreground default.) It slices itself at 540s, under the 10-minute Bash
+  cap.
+- **Exit 8 (`EXIT_PENDING`)** means CI was still running when the slice
+  ended. The PR folded back to PUSHED. Run the same command again in the
+  foreground, and keep doing so until it exits 0 (folded GREEN or RED) or
+  another code.
+- **Exit 5 between slices** means a pending PR still holds the
+  `max_concurrent_prs` slot. Finish that PR's watch before watching another.
+- Re-run within 10 minutes. After 600s, `p9 reap` folds the PR to ABANDONED
+  quietly, with no notification. A later `p9 watch` reopens it, so a slow
+  re-run costs nothing, but CI news waits until you look.
+- `p9 wait-for` slices the same way, and its termination report's
+  `next_action` gives the `--timeout` left. Re-run with that value, not the
+  original, or the wait never times out.
+- `wait-for --detach` and `p9 rearm` children run unsliced. Nothing reports
+  back when they finish, so poll `p9 status` / `p9 report`.
+- Do the next piece of work between slices, not instead of them. Never end
+  the turn on a pending wait.
+- Run P20 reviewers and other subagents as blocking calls, never in the
+  background.
+- `--slice N` sets the slice length. `--slice 0` disables it.
+
 ## Parallel agent sessions (BRO-1529, BRO-2373)
 
 P9 state lives in one shared dir (`~/.config/broomva/p9/`). Concurrent agents
