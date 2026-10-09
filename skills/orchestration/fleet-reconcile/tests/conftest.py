@@ -251,3 +251,9 @@ def env_for(repos=None, now: float = NOW, scope: str = "broomva"):
 
     return classify.Env(scope, now, repos if repos is not None else [
         {"repo": "/w/broomva/.git", "ok": True, "prs": []}])
+
+
+@pytest.fixture(autouse=True)
+def _ask_ledger_locks(tmp_path, monkeypatch):
+    """Every test's ask-ledger lock (spec §5.5) goes to scratch, never the real control-asks/locks."""
+    monkeypatch.setenv("MAESTRO_PASEO_ASK_LOCKS", str(tmp_path / "ask-ledger-locks"))

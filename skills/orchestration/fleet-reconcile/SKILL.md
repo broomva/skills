@@ -3,7 +3,7 @@ name: fleet-reconcile
 tier: D
 primitive: null
 category: orchestration
-version: 0.4.2
+version: 0.5.0
 description: |
   The hourly fleet coordinator. Phase 1 observes and classifies, report only;
   phase 2 adds the coordinator and its verbs under dry run.
@@ -13,8 +13,8 @@ description: |
   branch rules of every repo in the scope). It classifies each session with the
   spec's class table, runs the count check, inventories scheduled work
   (Paseo schedules, com.broomva.* LaunchAgents, bookkeeping, Dream), and writes
-  a markdown and JSON report plus one batch of owner asks, raised in the
-  Paseo app as Maestro work at Needs you.
+  a markdown and JSON report plus one batch of owner asks, written to the
+  scope's ask ledger and answered in Maestro's Decisions.
   In act mode (phase 2) a headless coordinator acts only through fleet act
   (mail, spawn, label, resume), which re-checks eligibility in code and, under
   dry run, logs what it would do; a send gate hooks its SendMessage. Runs
@@ -129,13 +129,13 @@ Trash; the config, the releases and the state dir stay.
    `tick_timeout_min` (15), so a timeout also ends its `claude` and `gh`
    children.
 7. `tick_fire` and `runner_exit` records in the ledger (through
-   `fleet ledger-append`), the lock released, then `fleet act ask --show` (a
-   Maestro item at Needs you in the Paseo app), and one line on stdout for launchd's log.
+   `fleet ledger-append`), the lock released, then `fleet act ask --show` (the
+   ask ledger Maestro's Decisions reads), and one line on stdout for launchd's log.
 
 **A failed tick is loud.** An unreadable config, a failed `config-check`, or
-observe or report failing, or a lock held for over 2 h, raises a Maestro item directly
-from bash (so it works when Python is what broke), at most once per 6 h per
-kind, and exits 1, so launchd's last exit shows it.
+observe or report failing, or a lock held for over 2 h, writes a alert
+in the scope's ask ledger (a Maestro item from bash when Python is what broke),
+at most once per 6 h per kind, and exits 1, so launchd's last exit shows it.
 
 By hand: `FLEET_SCOPE=broomva bash scripts/tick.sh`.
 
@@ -217,113 +217,61 @@ attempt is retried at the next tick. A tick writes a batch
 (`<state_dir>/asks/<tick>.md` and an ask intent in the ledger) only when it has
 a new key.
 
-**The asks reach the owner in the Paseo app** (owner decision 2026-10-01:
-"If it goes to the computer and I'm not there it won't work"; this replaces
-the dialog that workspace#842 chose). Inside the tick's lock and budget, `fleet
-act ask --show` turns each batch with an open ask into one Maestro work item
-(`scripts/fleetlib/paseo_ask.py`) once an ask in it has been open for
-`ask_raise_after_min` (50 by default: past the next hourly tick, so an ask
-that a later tick found no longer true isn't raised; 0 raises at once).
-- `maestro new`, then `maestro dispatch`, runs one turn of a Paseo agent in
-  the fleet's own scratch repo (`ask_repo`, by default
-  `~/.local/state/fleet-reconcile/maestro-asks`, not a scope repo). Two calls,
-  so the fleet holds the item's id whatever the dispatch says.
-- The item is written for a person (BRO-2840). Its title is the first ask's
-  question (whitespace collapsed, cut at a word boundary to 90 characters with
-  `…`), then ` (+N more)` for the rest of the batch, then the marker:
-  `<question>[ (+N more)] [fleet-reconcile <scope> batch <id>]`, 160
-  characters at most, the question cut to fit and the marker never.
-- Its brief opens with `## For you`: a plain line on what this is (and that
-  `fleet asks --scope <scope>` lists the asks too), then the asks one per
-  line, `- [<id>] (<class>) <question>` (ids like `a1`, so a sent-back note
-  can name the ask it answers; the class empty, `()`, when there is none),
-  inside a fenced `text` block as data (they quote other sessions' words),
-  then exactly one verbs line: "Approve acknowledges them · Send back answers
-  with your note (the fleet reads it at its next tick) · Cancel dismisses
-  them." Then `## For the run`: the run changes nothing and ends with the
-  fleet's own one-line summary under `## Ask`, so the item waits at **Needs
-  you** and the agent's Paseo record is marked as needing attention.
+**The asks reach the owner in the Paseo app**, through Maestro's Decisions
+(owner decision 2026-10-01: "If it goes to the computer and I'm not there it
+won't work"; BRO-2908 moved it from one Maestro work item per batch to the
+ledger Maestro already reads). Inside the tick's lock and budget, `fleet act
+ask --show` keeps the scope's ask ledger, `<state_dir>/.control/asks/
+fleet-<scope>.yaml` (`scripts/fleetlib/ledger_ask.py`), in step with the open
+asks, once an ask has been open for `ask_raise_after_min` (50 by default: past
+the next hourly tick, so an ask a later tick found no longer true isn't
+written; 0 writes at once).
+- Each open ask is one decision ask: its question as the headline, one
+  option, Acknowledge, with the owner's note if any (`fleet ack`'s own
+  meaning), and `blocking: true` for a session that waits on the owner (class 3, at a
+  prompt; 7, blocked on you), which Maestro counts in Needs you. The rest list
+  in Decisions without counting. An ask is one occurrence: its `uid` is the
+  scope plus a hash of its key and the batch that first asked it, so a tick
+  never writes it twice, and a condition that ends and comes back is a new
+  entry beside the old one's answer.
+- Any open entry that is no longer an open occurrence is closed at the next
+  ask step: as answered from a terminal when the owner used `fleet ack`, else
+  withdrawn (`status: withdrawn`, no longer true). So a tick that skipped its
+  ask step (its budget, `FLEET_NOTIFY=0`, the lock) leaves nothing open
+  behind. An answer is never touched, and an open question is rewritten only
+  when its words changed (an answer checks the entry it read).
+- The owner's answer, written into the entry by Maestro, is read back once
+  (by its uid) as an `ack` of that batch's ask by `owner:maestro`, with the
+  option and the words: the record the old item verdicts made, so the report
+  and `fleet asks` read it unchanged.
+- The ledger is written under the control interface spec's lock (§5.5,
+  `~/.local/state/control-asks/locks/<k>.d`, the one Maestro takes, its token
+  checked again right before the rename), and only as one-line JSON values,
+  which is YAML too and is what Maestro's answer edit writes; lines are split
+  on newlines only (an answer may hold a raw U+2028). A line outside that
+  subset fails the step loudly, and nothing is written over a file it cannot
+  read. A batch whose asks reached the ledger counts as seen.
+- No agent runs and no work item is made: the channel costs no provider turn.
 
-Measured end to end on 2026-10-01, at the daemon state the app renders: the
-item reached `review` and the agent read `requiresAttention: true`. A phone
-push was not measured.
-
-Raising is idempotent. The title ends with a marker carrying the scope and
-the batch id (`[fleet-reconcile <scope> batch <id>]`), so an open item a `new`
-with no clear answer made is found with `ls` and adopted; a done or canceled
-one, or one older than the batch, is not. The lookup reads only the marker,
-so an item still open under the earlier title (`<n> asks (tick <t>)
-<marker>`) is adopted, not raised again. An item made whose run couldn't
-start is recorded all the same, queued, and dispatched at a later tick; the
-failed start fails the ask step. Where an item stands is one rule,
-`ledger.maestro_phase`, which every ask path reads: queued (`proposed`,
-`reviewing`, `triggered`: waiting for a dispatch), owner (`running`,
-`review`, `blocked`: in the Paseo app), final (`done`, `canceled`), or gone
-(Maestro no longer has it). A batch counts as seen only once its item reached
-the owner, whoever started it, and no longer once it is gone; each tick
-records the item's state when it changes. A queued item is dispatched at a
-later tick while an ask in its batch is still open. A dispatch that leaves it
-queued is logged, not a failed tick: at the run cap (`At capacity:`), or
-while Maestro's loop is starting it (`This work is already being
-dispatched.`). Any other refusal is checked against the item: one the loop or
-the owner moved out of the queue first (a lost race) is recorded where it
-went, and one still queued fails the ask step. An item Maestro no longer has
-(`No work item with id`) is recorded gone, which frees its batch to be raised
-again while an ask in it is open.
-
-Maestro's refusals carry no code (the socket answers `{ok: false, error}`;
-the CLI prints `maestro: <message>` and exits 1 for each; BRO-2753 asks for
-one). Those three are told apart by the words their message starts with,
-never by a match anywhere in it, and only on exit 1. A reworded one reads as
-a refusal, which fails the ask step: loud, not silent.
-
-Each tick reads the owner's decisions back from every item that isn't final
-and either has an ask still open or was raised (its latest raise) in the last
-14 days, following Maestro's wire (server/events.ts
-`toWireEvents`). There every settled decision reads as made, so only one that
-**took effect** counts: its words followed by `Took effect`, or a decision
-applied at once. One undone (`Undone`) or dropped (`… did not take effect`) is
-not the owner's answer. The item's `verdict` field is display text and isn't
-read. Each new decision is an `ack` by `owner:maestro`:
-- Approve acknowledges;
-- Send back with a note answers (every note is kept, up to 1000 characters
-  each, flattened to one line, even after a later approve; a note sent after
-  the asks stopped being true is still recorded);
-- Cancel dismisses.
-
-Only Send back's note is read. A reply typed in the run's chat is not a
-decision, and the run answers one by saying so.
-
-Limits, by design:
-- A session can't cancel an item, so one whose batch resolved first, or was
-  answered from a terminal, stays until the owner closes it.
-- A Stuck run (its turn failed) shows in Maestro's Stuck group, is logged, and
-  isn't raised again.
-- Each item costs one turn of the provider Maestro is configured with, and a
-  send-back costs a second.
-
-tick.sh's own alerts (a bad config, a failed step, a held lock) are Maestro
-items too, at most once per 6 h per kind, stamped only once the item is past
-Maestro's queue. Their title reads `fleet <scope>: <kind> — <the alert's
-words, cut to fit> [fleet-reconcile <scope> alert <kind>]`, and their brief
-has the same two sections: under `## For you` the alert as one line,
-`- [alert] (<kind>) <words>`, and one verbs line that says what is honoured:
-"Approve or Cancel closes it (a later alert of this kind raises a new item;
-repeats within 6 h are only logged) · a note sent back isn't read · tick.log
-has each alert's words." (The bash
-fallback's brief keeps its one-line form.) `fleet alert` adopts an open item of the same kind rather
-than raising a second, so that item stands for the later alerts of its kind
-(`tick.log` has each one's words). When Python or the config is what broke, a
-bash fallback raises one (`maestro new --dispatch`, in its own process group
-under a TERM-then-KILL watchdog: TERM at 120 s, KILL 30 s later). It can't
-adopt or classify, so any answer from Maestro counts (made; refused, a run
-that couldn't start included; no clear answer), which keeps it to one per 6 h
-whatever Maestro's words. An exit 1 is Maestro's answer only with the CLI's
-`maestro: ` line; anything that never reached Maestro (not listening, a CLI
-that didn't run, one the watchdog stopped) is tried again at the next tick.
-`fleet alert` itself is bounded by its maestro calls' own timeouts (90 s
-each). When Maestro itself is down, they reach only `tick.log`:
-the channel's blind spot. There is no dialog, banner, ntfy or p9 notify. The
+tick.sh's own alerts (a bad config, a failed step, a held lock) are entries in
+the same ledger, at most once per 6 h per kind: an Acknowledge option, one
+open entry per kind refreshed while it is open, a new one once the last was
+answered. They are not blocking: a failing or missed tick is Maestro's own
+fleet health notice, which counts in Needs you, so the one failure is counted
+once and the entry carries its words. A failed step marks the scope failing at
+once; a failure before the tick records itself (a refused config, no tick
+number, a held lock) is listed in Decisions at once and counts in Needs you
+when Maestro marks the scope missed: two hourly intervals of awake time after
+the last tick began. Acknowledging an alert records that you saw it; the
+health notice stays until a tick passes, and the alert comes back after 6 h
+while the failure lasts. When Python or the config is what broke, a
+bash fallback raises one Maestro item instead (`maestro new --dispatch`, in its
+own process group under a TERM-then-KILL watchdog: TERM at 120 s, KILL 30 s
+later). It can't classify, so any answer from Maestro counts (made; refused, a
+run that couldn't start included; no clear answer), which keeps it to one per
+6 h whatever Maestro's words; anything that never reached Maestro is tried
+again at the next tick. When neither path works, the alert reaches only
+`tick.log`. There is no dialog, banner, ntfy or p9 notify. The
 owner can also answer from a terminal:
 
 ```bash
@@ -363,7 +311,7 @@ Config keys beyond §5.7's, pending the spec: `listing_cap`, `pr_list_cap`,
 `launchd_logs` (a label's real log, when its stdout is silent),
 `bookkeeping_run_log`, `dream_run_log`, `tick_timeout_min`, `compare_hour`,
 `coordinator_model` (phase 2; null is Claude Code's default), `coordinator_budget_usd` (2),
-`maestro_cli`, `maestro_bun`, `ask_repo`, `ask_raise_after_min` (50; the owner channel),
+`maestro_cli`, `maestro_bun`, `ask_repo` (the bash fallback's alert item), `ask_raise_after_min` (50; the owner channel),
 `live_accepted` (0.4.0: the owner's note that live mode's preconditions are done; `dry_run: 0` needs it, and 0.4.1 requires it to name BRO-2755 and BRO-2756). §5.7's `paseo_tools` defaults to
 the pinned 0.9.2 classification (19 read, 42 write) and `driver` to probe 6's GitHub
 allowlist with no registries.
@@ -432,8 +380,8 @@ python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (a
 | `test_observe.py` | The pipeline over the capture in a scratch HOME; a 200-row listing fails closed unless the job files show it complete; one unparsed job file degrades only its session; an unresolvable slug, a gh error and a PR list at the cap fail only their repo; the bearer never reaches a snapshot or report; activity found past a last line larger than the first tail window (ctx-core's reader); an inherited GH_TOKEN or GITHUB_TOKEN dropped, so gh reads the owner's login |
 | `test_report.py` | Every section; withheld crm/ paths and tokens; per-occurrence asks (once, then still open; an answer holds while true; a recurrence is new; a different question is new), answers per batch, stable count keys, failed-surface asks, a resolution only from the surfaces that raise the key (for a session that still classifies, too), open asks not re-checked still listed, a wait's key holding while its subagents write, a failing comparison asked after three runs with its error guarded, the ack wording, the ruleset wording, scheduled work as inventory only, a duplicate fleet name asked while it lasts (and not resolved without a listing); the labelling sheet (distinct sessions only) |
 | `test_ledger.py` | Validation, distinct owner ids within one millisecond, corrupt-line counting, 4 processes × 50 appends lose nothing, the ask and spawn folds |
-| `test_paseo_ask.py` | A batch raised as Maestro work in the fleet's own repo, then dispatched; its title (one ask, three asks as `(+2 more)`, a 300-character question cut at a word boundary with the marker whole, a question with backticks) and its brief (`## For you` before `## For the run`, the asks fenced as data); only decisions that took effect read back, on Maestro's own wire sequences (undone, dropped, a torn cancel, the undo window, the display verdict, an agent's words); the note through the guard; Maestro's exit codes as errors; refusals told apart by the words they start with, on exit 1 only; `find` adopting only an open item of this scope's batch made after it; an alert adopting its kind's open item; the sync recording each new decision once, a note after the asks resolved, nothing past 14 days from the latest raise once its asks closed (an open one still read) or a final answer; a refusal at the cap, the loop starting it, or a lost race as no failure; a gone item freeing its batch and no longer seen; a refused dispatch whose item can't be read again raising its own error; a Stuck item and a persistent read error each logged (and the error failing the step) at most once per 6 h, not every tick |
-| `test_tick.py` | tick.sh end to end with stub claude/gh/maestro: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, no token reaching any step (one configured or inherited included), recover and a live coordinator on the owner's login, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, a batch raised once at Needs you (titled by its first question, its brief opening `## For you`) and the owner's verdict read back as the answer, an item still open under the old title adopted not raised again, a cancel dismissing, a batch raised only once its asks lasted, a batch queued at the cap neither failing the tick nor seen until dispatched, an open alert of its kind adopted, an alert queued at the cap not delivered, the bash fallback raising at most one per 6 h whatever Maestro answers, tried again when nothing reached Maestro (not listening, a CLI that didn't run), and stopped with its children when it hangs (or its leader dies), reaching Maestro with its state dir broken, live mode refused until `live_accepted` names BRO-2755 and BRO-2756 and every verb dry (at the CLI too: is-dry, act label/spawn, the coordinator child's DRY_RUN) without it, an unusable state dir alerting its own kind not a misread config-check, the bash fallback classifying a refusal in memory when mktemp fails, a raised batch whose run can't start recorded queued and dispatched later, an ask Maestro doesn't take not recorded and raised at the next tick, alerts as Maestro work, a failed compare not using up the day and the prototype's compare line refused and asked about, ack refused inside a session, refused verbs, the labelling sheet |
+| `test_ledger_ask.py` | The owner channel as a ledger (BRO-2908): one entry per open occurrence, never written twice; a waiting session blocks, the rest do not; an open question refreshed, a resolved one withdrawn, an answer never touched; a condition that comes back is a new entry beside the old answer; an answer read back with its batch and ask, alerts apart; one open alert per kind, a new one after an answer; a line outside the one-line-JSON subset (plain YAML, a block scalar) fails the step and is not written over; the spec §5.5 lock keyed as Maestro keys it, a live holder kept, a dead one reclaimed, a fresh one waited on; an ask answered from a terminal closed in the ledger and not read back as Maestro's |
+| `test_tick.py` | tick.sh end to end with stub claude/gh/maestro: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, no token reaching any step (one configured or inherited included), recover and a live coordinator on the owner's login, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, each ask one entry in the scope's ask ledger (a waiting session blocking) and the owner's answer read back once, an answer in words alone, a terminal ack closing its entry, an alert the ledger can't take logged and retried, an ask written only once it lasted, an alert written once per 6 h, refreshed while open and new once answered, the bash fallback raising at most one per 6 h whatever Maestro answers, tried again when nothing reached Maestro (not listening, a CLI that didn't run), and stopped with its children when it hangs (or its leader dies), reaching Maestro with its state dir broken, live mode refused until `live_accepted` names BRO-2755 and BRO-2756 and every verb dry (at the CLI too: is-dry, act label/spawn, the coordinator child's DRY_RUN) without it, an unusable state dir alerting its own kind not a misread config-check, the bash fallback classifying a refusal in memory when mktemp fails, alerts as ledger entries, a failed compare not using up the day and the prototype's compare line refused and asked about, ack refused inside a session, refused verbs, the labelling sheet |
 | `test_act.py` | Every verb refused in report mode and on a corrupt ledger or an open ask on its target; spawn's floor (held, draft, Dependabot, a fork, a head or base branch that isn't a plain ref (incl. a 121-char head over the brief width), a withheld repo slug, a hostile default branch, owner-merge, unread files, unruled repo, closed PR, taken name, a branch checked out, the caps, unknown claims, the spawn pause) against text that says otherwise; a 120-char plain head shown in full; `render_template` raising on a non-string; dry spawn, label and resume closed with the argv or call; mail only to fleet or adopted sessions, the 6 h rule (failed doesn't count, live and dry apart), not_live, ambiguous_name, a Paseo relaunch followed, template values guarded, no template names a merge or removal; a PR file list GitHub capped refused; the rendered driver brief's PR number, branches, base fetch and LFS-check order |
 | `test_sendgate.py` | Each pre check refusing with its own name; dry run closing the intent and still blocking (incl. when the config refuses live); a live send passing and post closing it with the msg_id; harness_refused and unledgered_send; the CLI failing closed |
 | `test_recover.py` | Mail found in either delivery shape only after the intent (an enqueue only), else lost or unknown; a malformed entry counting as nothing; spawn's one, none or duplicate rows; resume by process start; label by the PR's labels |

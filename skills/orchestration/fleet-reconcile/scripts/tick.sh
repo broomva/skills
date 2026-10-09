@@ -12,16 +12,16 @@
 # Not carried over: the fire gate and quiet hours (launchd fires hourly, the
 # owner's cadence) and the inner resume tick (phase 2's resume verb).
 #
-# PHASE 1 runs deterministic code only and acts on no session; the owner
-# channel's Maestro items each run one model turn. Per tick: kill switch,
-# config-check, lock, the tick number, observe, report
+# PHASE 1 runs deterministic code only and acts on no session. Per tick:
+# kill switch, config-check, lock, the tick number, observe, report
 # (classes, count check, asks), the core comparison once a day, the owner's
-# asks (fleet act ask --show, Maestro work in the Paseo app), and the ledger's
-# tick_fire and runner_exit.
+# asks (fleet act ask --show: the scope's ask ledger, answered in Maestro's
+# Decisions), and the ledger's tick_fire and runner_exit.
 # Phase 2 adds `fleet recover` before the coordinator and the coordinator itself.
 #
-# A tick that fails (a bad config, observe or report failing) raises a Maestro
-# item at Needs you in the Paseo app, at most once per 6 h per kind of failure,
+# A tick that fails (a bad config, observe or report failing) writes an alert to
+# the scope's ask ledger (a Maestro item from bash when Python is what broke),
+# at most once per 6 h per kind of failure,
 # and exits 1 so launchd's last exit shows it. The kill switch set to off is not a failure: exit 0.
 #
 # Env: FLEET_SCOPE (required); FLEET_CONFIG (default ~/.config/ctx/fleet.json);
@@ -95,16 +95,15 @@ for pair in "maestro_cli:FLEET_MAESTRO_CLI" "maestro_bun:FLEET_MAESTRO_BUN" "ask
 done
 
 # alert KIND MESSAGE: tell the owner in the Paseo app. At most once per 6 h
-# per kind. `fleet alert` adopts an open item of the same kind rather than
-# raising a second, and the stamp is touched once the item reached the owner
-# (ledger.maestro_phase: one still queued is dispatched by the next alert of
-# its kind); its own maestro calls are bounded (90 s each, at most four). When
-# it can't run at all (the config or Python is what broke), the bash fallback
-# raises one; it can't adopt or classify, so any answer from Maestro (made,
-# refused, or no clear answer) is stamped, which keeps it to one per 6 h
-# whatever Maestro's words. The message is this script's own text, never
-# another session's words. When Maestro itself is down, the alert reaches no
-# one but this log: that is the channel's one blind spot.
+# per kind. `fleet alert` writes an entry in the scope's ask ledger
+# (fleetlib/ledger_ask.py, BRO-2908), which Maestro lists in Decisions: one
+# open entry per kind, refreshed while it is open. Needs you counts the failure
+# once, through Maestro's own fleet health notice (failing or missed).
+# When it can't run at all (the config or Python is what broke), the bash
+# fallback raises one Maestro item instead; it can't classify, so any answer
+# from Maestro (made, refused, or no clear answer) is stamped, which keeps it
+# to one per 6 h whatever Maestro's words. The message is this script's own
+# text, never another session's words.
 alert() {
   local kind=$1 msg=$2 stamp="$STAMP_DIR/.alert-$1" now last rc
   log "ALERT $kind: $msg"
@@ -120,8 +119,7 @@ alert() {
   fi
   case "$rc" in
     (0) touch "$stamp" ;;
-    (4) log "ALERT $kind NOT delivered: still queued in Maestro (its run cap, or its loop is starting it); the next alert of its kind dispatches it" ;;
-    (5) log "ALERT $kind NOT delivered: Maestro failed (above); an item it made is adopted by the next alert of its kind" ;;
+    (5) log "ALERT $kind NOT delivered: the ask ledger was not written (above); the next alert of its kind tries again" ;;
     (*)
       maestro_alert "fleet $SCOPE: $kind [fleet-reconcile $SCOPE alert $kind]" "$msg (tick.log: $LOG)"
       rc=$?
