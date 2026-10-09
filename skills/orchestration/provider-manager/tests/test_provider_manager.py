@@ -787,6 +787,15 @@ def test_an_unmeasured_claude_code_version_makes_automatic_switching_observe_onl
     assert pm.balance_accounts()["action"] == "switched", "an operator's balance is not gated"
 
 
+def test_2_1_295_switches_automatically_since_its_drill_passed(world, monkeypatch):
+    world.add_account(A, five_hour=95.0)
+    world.add_account(B, five_hour=5.0)
+    world.activate(A)
+    monkeypatch.setenv("FAKE_CLAUDE_VERSION", "2.1.295")
+    res = pm.run_auto()
+    assert res["action"] == "switched" and world.switches(), res
+
+
 def test_probe_classification_reads_the_result_text_not_incidental_numbers(world, monkeypatch):
     outputs = {
         "ok": (0, json.dumps({"type": "result", "is_error": False, "result": "OK", "duration_ms": 429}), ""),

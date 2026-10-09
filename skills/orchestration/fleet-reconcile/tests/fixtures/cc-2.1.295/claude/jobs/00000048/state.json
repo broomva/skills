@@ -1,0 +1,22 @@
+{
+ "state": "done",
+ "detail": "detail 4",
+ "tempo": "idle",
+ "sessionId": "00000048-f1ee-4000-8000-000000000048",
+ "resumeSessionId": "00000048-f1ee-4000-8000-000000000048",
+ "cwd": "{HOME}/broomva",
+ "createdAt": "2026-10-09T05:22:32.057Z",
+ "updatedAt": "2026-10-09T05:22:40.621Z",
+ "cliVersion": "2.1.295",
+ "output": null,
+ "providerEnv": {
+  "FIXTURE_ENV": "not-read"
+ },
+ "respawnFlags": [
+  "--name",
+  "bg-flag-name",
+  "--settings",
+  "{\"crossSessionInbound\":\"accept\"}"
+ ],
+ "name": "background-session-41"
+}

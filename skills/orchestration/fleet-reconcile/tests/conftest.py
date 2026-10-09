@@ -33,7 +33,12 @@ HERE = Path(__file__).resolve().parent
 SKILL = HERE.parent
 SCRIPTS = SKILL / "scripts"
 CTX_SCRIPTS = SKILL.parent / "ctx-core" / "scripts"
+#: The scenario capture every behavioural test runs on (its sessions, PRs,
+#: rulesets and limit deaths are what the assertions name).
 FIXTURE = HERE / "fixtures" / "cc-2.1.280"
+#: The Claude Code surfaces captured on the pinned version (claude/ and
+#: meta.json only): the parsers must read them with no drift.
+PINNED_FIXTURE = HERE / "fixtures" / "cc-2.1.295"
 FLEET = SCRIPTS / "fleet"
 for _p in (str(CTX_SCRIPTS), str(SCRIPTS)):
     if _p not in sys.path:
@@ -123,6 +128,9 @@ def build_world(root: Path, home: Optional[Path] = None) -> World:
             dst = fixture / p.relative_to(FIXTURE)
             dst.parent.mkdir(parents=True, exist_ok=True)
             dst.write_text(p.read_text().replace("{HOME}", real_home))
+    # The world runs the pinned Claude Code: the scenario capture's listing and
+    # job files read the same on it (test_parsers checks the pinned capture).
+    shutil.copy(PINNED_FIXTURE / "claude" / "version.txt", fixture / "claude" / "version.txt")
     for scope in ("broomva", "sri"):
         src = fixture / "ctx" / scope / "events.jsonl"
         if src.is_file():

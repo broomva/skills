@@ -100,7 +100,9 @@ VERIFIED_IDENTITY = ("orca_copy_match", "profile", "profile_cached")
 # Claude Code versions whose credential behaviour (30 s store cache, refresh lock paths, item name,
 # invalid_grant handling) was measured: binary source plus the tests/drill run. Automatic switching
 # is observe-only on any other version until it is re-measured and added here or in the config.
-MEASURED_CLAUDE_VERSIONS = ["2.1.280"]
+# 2.1.295: the tests/drill scenarios re-run on the real binary, all passing (BRO-2964); the bundled
+# source was not re-read.
+MEASURED_CLAUDE_VERSIONS = ["2.1.280", "2.1.295"]
 
 DEFAULT_CONFIG: Dict[str, Any] = {
     "autoBalance": True,          # false: automatic evaluations log would_switch and never switch

@@ -2,7 +2,14 @@
 
 `cc-<version>/` holds copies of every surface fleet-reconcile parses, captured
 on the owner's machine by `tests/capture_fixtures.py` and anonymized (this repo
-is public). `parsers.PINNED_CC_VERSION` names the directory the tests use.
+is public). `cc-2.1.280/` is the full scenario capture the behavioural tests
+run on. `cc-<parsers.PINNED_CC_VERSION>/` holds only the Claude Code surfaces
+(`claude/` and `meta.json`) captured on the pinned version, which must parse
+with no drift; its other surfaces were not committed, because no test reads
+them and each one is more anonymized data in a public repo. The job file
+capture is an allowlist: keys Claude Code added after 2.1.280 (`intent`,
+`linkScanPath`, `tokens` and others on 2.1.295) are dropped, since no parser
+reads them.
 
 | Path | Surface | Read by |
 |---|---|---|

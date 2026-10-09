@@ -1,0 +1,22 @@
+{
+ "state": "done",
+ "detail": "detail 27",
+ "tempo": "idle",
+ "sessionId": "00000023-f1ee-4000-8000-000000000023",
+ "resumeSessionId": "00000023-f1ee-4000-8000-000000000023",
+ "cwd": "{HOME}/gone/10",
+ "createdAt": "2026-09-15T21:52:04.257Z",
+ "updatedAt": "2026-09-16T00:53:42.779Z",
+ "cliVersion": "2.1.258",
+ "output": null,
+ "providerEnv": {
+  "FIXTURE_ENV": "not-read"
+ },
+ "respawnFlags": [
+  "--name",
+  "bg-flag-name",
+  "--settings",
+  "{\"crossSessionInbound\":\"accept\"}"
+ ],
+ "name": "background-session-22"
+}

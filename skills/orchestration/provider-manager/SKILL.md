@@ -81,7 +81,7 @@ many sessions kick. It switches only when:
   `authentication_failed` triggers the same failover when the probe shows Claude Code itself cannot
   refresh the store's credential.
 - **never on its own:** a store left empty (`/logout`) is not refilled. On a Claude Code version
-  other than the measured one (2.1.280), automatic switching is observe-only (`would_switch`,
+  other than the measured ones (2.1.280, and 2.1.295 by the drill), automatic switching is observe-only (`would_switch`,
   `version_unverified`, shown in the session-start line and `usage`) until the drill is re-run and
   the version added (`verifiedClaudeVersions`). An account the probe confirmed limited is not a
   failover target for an hour.

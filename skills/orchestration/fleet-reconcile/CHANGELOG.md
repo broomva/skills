@@ -1,5 +1,19 @@
 # Changelog: fleet-reconcile
 
+## [0.5.1] - 2026-10-09
+
+The parsers are pinned to Claude Code 2.1.295 (BRO-2964), so the tick no
+longer reports parser drift on it.
+
+- `tests/fixtures/cc-2.1.295/` holds the listing, job files and version
+  captured on 2.1.295, including a job file that 2.1.295 wrote. They parse
+  with no drift. No parser changed: the listing has the same keys and enum
+  values, and the job file only gained keys the parsers don't read
+  (`intent`, `linkScanPath`, `tokens`, `backend`, `firstTerminalAt` and
+  others). `claude --bg` still prints `backgrounded · <id> · <name>`.
+- The behavioural tests stay on the 2.1.280 capture, which they need for its
+  scenarios.
+
 ## [0.5.0] - 2026-10-08
 
 The owner channel is a ledger Maestro already reads, not a Maestro work item

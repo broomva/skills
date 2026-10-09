@@ -1,0 +1,21 @@
+{
+ "state": "stopped",
+ "detail": "detail 28",
+ "tempo": "idle",
+ "sessionId": "00000001-f1ee-4000-8000-000000000001",
+ "resumeSessionId": "00000001-f1ee-4000-8000-000000000001",
+ "cwd": "{HOME}/broomva",
+ "createdAt": "2026-05-29T21:10:19.987Z",
+ "updatedAt": "2026-09-30T13:53:14.522Z",
+ "cliVersion": null,
+ "output": null,
+ "providerEnv": {
+  "FIXTURE_ENV": "not-read"
+ },
+ "respawnFlags": [
+  "--name",
+  "bg-flag-name",
+  "--settings",
+  "{\"crossSessionInbound\":\"accept\"}"
+ ]
+}

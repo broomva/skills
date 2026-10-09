@@ -27,7 +27,7 @@ import ctx
 
 from . import common
 
-PINNED_CC_VERSION = "2.1.280"
+PINNED_CC_VERSION = "2.1.295"
 
 LISTING_KINDS = ("interactive", "background")
 LISTING_STATES = ("working", "done", "blocked", "failed", "stopped")
