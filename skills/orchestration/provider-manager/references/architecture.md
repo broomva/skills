@@ -216,7 +216,8 @@ the real 2.1.280 binary (`tests/drill`, `probe` scenario):
 - a dead grant prints the auth message.
 
 **Version gate.** `claude --version` (the binary on PATH, else `~/.local/bin`; cached per resolved
-binary for 1 h, a failed check for 1 min) must be in `MEASURED_CLAUDE_VERSIONS` (2.1.280) or
+binary for 1 h, a failed check for 1 min) must be in `MEASURED_CLAUDE_VERSIONS` (2.1.280; 2.1.295, whose drill passed every
+scenario) or
 `verifiedClaudeVersions`. Otherwise automatic evaluations log `version_unverified` and only
 `would_switch`, and the pause shows in the session-start line, `usage` and `state`. Operator commands
 (`switch`, `balance`, `rotate`) are not gated.

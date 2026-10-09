@@ -3,7 +3,7 @@ name: fleet-reconcile
 tier: D
 primitive: null
 category: orchestration
-version: 0.5.0
+version: 0.5.1
 description: |
   The hourly fleet coordinator. Phase 1 observes and classifies, report only;
   phase 2 adds the coordinator and its verbs under dry run.
@@ -150,8 +150,10 @@ By hand: `FLEET_SCOPE=broomva bash scripts/tick.sh`.
 | The board | ctx-core's `events.jsonl`, rebuilt in memory (no cache write) | reported and asked per scope; that scope's sessions that would be 9, 9a or 10 read unknown, since 2, 4, 7 and 8 couldn't be checked |
 | GitHub | per repo: slug from `origin`, `repos/<r>` default branch, `rules/branches/<b>`, `gh pr list` | **that repo** is reported as not observed. A slug that doesn't resolve, a gh error or a PR list at `pr_list_cap` never reads as zero PRs |
 
-The parsers are pinned to Claude Code 2.1.280 and tested against copies
-captured on it (`tests/fixtures/cc-2.1.280/`). Another running version, a new
+The parsers are pinned to Claude Code 2.1.295: its listing and job files are
+captured in `tests/fixtures/cc-2.1.295/` and must parse with no drift. The
+behavioural tests run on the fuller 2.1.280 capture (`tests/fixtures/cc-2.1.280/`),
+whose sessions, PRs and limit deaths they name. Another running version, a new
 listing field or an unfamiliar enum value is reported as drift and asked
 about. Never extracted (each file is loaded whole and these fields are
 dropped before anything is kept): a Paseo record's `persistence.metadata`
@@ -375,7 +377,7 @@ python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (a
 
 | File | Pins |
 |---|---|
-| `test_parsers.py` | Every parser against the 2.1.280 capture; missing fields fail the surface; drift is reported; the bearer, env and prompts are never extracted; the slug rule; the ruleset check (skills flagged until its pull_request rule lands, unpinned checks flagged) |
+| `test_parsers.py` | Every parser against the 2.1.280 capture, and the listing and job files against the pinned (2.1.295) one; missing fields fail the surface; drift is reported; the bearer, env and prompts are never extracted; the slug rule; the ruleset check (skills flagged until its pull_request rule lands, unpinned checks flagged) |
 | `test_classify.py` | A positive case per class; the spec's five ordering tests; 41 rule pairs that can both match, the earlier winning; a grid proving the other 14 pairs can't; the arc and death currency rules; the spawn pause; the count check; the overlap pass |
 | `test_observe.py` | The pipeline over the capture in a scratch HOME; a 200-row listing fails closed unless the job files show it complete; one unparsed job file degrades only its session; an unresolvable slug, a gh error and a PR list at the cap fail only their repo; the bearer never reaches a snapshot or report; activity found past a last line larger than the first tail window (ctx-core's reader); an inherited GH_TOKEN or GITHUB_TOKEN dropped, so gh reads the owner's login |
 | `test_report.py` | Every section; withheld crm/ paths and tokens; per-occurrence asks (once, then still open; an answer holds while true; a recurrence is new; a different question is new), answers per batch, stable count keys, failed-surface asks, a resolution only from the surfaces that raise the key (for a session that still classifies, too), open asks not re-checked still listed, a wait's key holding while its subagents write, a failing comparison asked after three runs with its error guarded, the ack wording, the ruleset wording, scheduled work as inventory only, a duplicate fleet name asked while it lasts (and not resolved without a listing); the labelling sheet (distinct sessions only) |

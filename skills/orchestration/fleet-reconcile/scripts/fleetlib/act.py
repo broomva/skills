@@ -40,7 +40,8 @@ TEMPLATES = SKILL / "templates"
 #: §5.2: PRs under these paths merge only with the owner's approval, so they get no driver.
 OWNER_MERGE_PREFIXES = ("research/entities/",)
 HOLD_LABEL = "hold"
-#: `claude --bg` prints "backgrounded · <bg id> · <name>" (probe 6, 2.1.280).
+#: `claude --bg` prints "backgrounded · <bg id> · <name>" (probe 6, 2.1.280;
+#: unchanged on 2.1.295, BRO-2964).
 SPAWNED_RE = re.compile(r"backgrounded\s*\S\s*([0-9a-f]{8})\b")
 LABEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9 ._:/-]{0,49}$")
 MAIL_TEMPLATES = ("stalled", "hung", "overlap")

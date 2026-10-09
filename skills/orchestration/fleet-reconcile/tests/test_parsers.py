@@ -1,5 +1,6 @@
 """Each parser against the copies captured on Claude Code 2.1.280 (and Paseo
-0.9.2), and against the shapes that must fail the surface."""
+0.9.2), the Claude Code surfaces captured on the pinned version, and the
+shapes that must fail the surface."""
 from __future__ import annotations
 
 import collections
@@ -7,7 +8,7 @@ import json
 from pathlib import Path
 
 import pytest
-from conftest import FAKE_BEARER, FIXTURE
+from conftest import FAKE_BEARER, FIXTURE, PINNED_FIXTURE
 
 from fleetlib import parsers
 
@@ -19,10 +20,31 @@ def _read(rel: str) -> str:
 # --------------------------------------------------------------------------
 # The pin
 
-def test_the_fixture_was_captured_on_the_pinned_version(meta):
-    assert parsers.cc_version(_read("claude/version.txt")) == parsers.PINNED_CC_VERSION
+def test_the_pinned_capture_was_taken_on_the_pinned_version():
+    meta = json.loads((PINNED_FIXTURE / "meta.json").read_text())
+    assert parsers.cc_version((PINNED_FIXTURE / "claude" / "version.txt").read_text()) == parsers.PINNED_CC_VERSION
     assert meta["claude_version"] == parsers.PINNED_CC_VERSION
-    assert FIXTURE.name == "cc-%s" % parsers.PINNED_CC_VERSION
+    assert PINNED_FIXTURE.name == "cc-%s" % parsers.PINNED_CC_VERSION
+
+
+def test_the_scenario_capture_is_the_2_1_280_one(meta):
+    assert meta["claude_version"] == "2.1.280" == parsers.cc_version(_read("claude/version.txt"))
+
+
+def test_the_pinned_listing_parses_with_no_drift():
+    text = (PINNED_FIXTURE / "claude" / "agents.json").read_text()
+    rows, drift = parsers.parse_listing(text)
+    assert drift == []
+    assert rows and len(rows) == len(json.loads(text))
+
+
+def test_every_pinned_job_file_parses_and_one_was_written_by_the_pinned_version():
+    parsed = [parsers.parse_job_state(p.read_text(), p.parent.name)
+              for p in sorted((PINNED_FIXTURE / "claude" / "jobs").glob("*/state.json"))]
+    assert parsed and all(j["state_known"] for j in parsed)
+    assert parsers.PINNED_CC_VERSION in {j["cli_version"] for j in parsed}
+    for j in parsed:
+        assert j["job_id"] == j["session_id"][:8] and j["updated_at"]
 
 
 def test_cc_version_reads_the_cli_banner():

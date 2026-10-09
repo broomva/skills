@@ -1,0 +1,24 @@
+{
+ "state": "done",
+ "detail": "detail 1",
+ "tempo": "idle",
+ "sessionId": "00000028-f1ee-4000-8000-000000000028",
+ "resumeSessionId": "00000028-f1ee-4000-8000-000000000028",
+ "cwd": "{HOME}/gone/11",
+ "createdAt": "2026-09-21T12:46:26.591Z",
+ "updatedAt": "2026-09-21T16:24:17.300Z",
+ "cliVersion": "2.1.258",
+ "output": null,
+ "providerEnv": {
+  "FIXTURE_ENV": "not-read"
+ },
+ "respawnFlags": [
+  "--name",
+  "bg-flag-name",
+  "--settings",
+  "{\"crossSessionInbound\":\"accept\"}"
+ ],
+ "worktreePath": "{HOME}/client/sri",
+ "worktreeBranch": "worktree-branch-1",
+ "name": "background-session-27"
+}
