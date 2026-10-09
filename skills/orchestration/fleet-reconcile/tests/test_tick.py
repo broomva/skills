@@ -395,6 +395,8 @@ def test_each_ask_is_one_ledger_entry_and_the_owners_answer_comes_back_once(rig)
     assert ack["of"] == batch["id"] and ack["asks"] == ["a1"]
     assert ack["result"]["option"] == "ack" and ack["result"]["answer"].startswith("skills gets")
     assert "[tick 1, a1]" not in rig.fleet("asks").stdout
+    # Its asks reached the ledger the owner reads: the batch counts as seen.
+    assert "not seen" not in rig.fleet("asks", "--all").stdout
 
 
 def test_an_answer_in_words_alone_comes_back_and_a_terminal_ack_closes_the_entry(rig):

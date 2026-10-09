@@ -279,10 +279,10 @@ def _ledger_answers(sec: dict, sd: Path, records: list) -> Tuple[int, int]:
 
 
 def cmd_alert(args: argparse.Namespace) -> int:
-    """tick.sh's alert, as a blocking entry in the scope's ask ledger (fleetlib/ledger_ask.py, BRO-2908):
-    one open entry per kind, refreshed while it is open. Exit 0: written, so Maestro shows it in Decisions
-    and Needs you; 5: not written. Any other exit (a config Python can't read) sends tick.sh to its bash
-    fallback."""
+    """tick.sh's alert, as an entry in the scope's ask ledger (fleetlib/ledger_ask.py, BRO-2908): one open
+    entry per kind, refreshed while it is open, listed in Maestro's Decisions. Not blocking: Needs you counts
+    the failure once, through Maestro's own fleet health notice. Exit 0: written; 5: not written. Any other
+    exit (a config Python can't read) sends tick.sh to its bash fallback."""
     from fleetlib import ledger_ask
 
     sec = _sec(args)

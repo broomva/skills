@@ -95,9 +95,10 @@ for pair in "maestro_cli:FLEET_MAESTRO_CLI" "maestro_bun:FLEET_MAESTRO_BUN" "ask
 done
 
 # alert KIND MESSAGE: tell the owner in the Paseo app. At most once per 6 h
-# per kind. `fleet alert` writes a blocking entry in the scope's ask ledger
-# (fleetlib/ledger_ask.py, BRO-2908), which Maestro shows in Decisions and
-# counts in Needs you: one open entry per kind, refreshed while it is open.
+# per kind. `fleet alert` writes an entry in the scope's ask ledger
+# (fleetlib/ledger_ask.py, BRO-2908), which Maestro lists in Decisions: one
+# open entry per kind, refreshed while it is open. Needs you counts the failure
+# once, through Maestro's own fleet health notice (failing or missed).
 # When it can't run at all (the config or Python is what broke), the bash
 # fallback raises one Maestro item instead; it can't classify, so any answer
 # from Maestro (made, refused, or no clear answer) is stamped, which keeps it

@@ -187,3 +187,45 @@ def test_a_lock_taken_over_before_the_write_writes_nothing(sec):
         with pytest.raises(ledger_ask.LedgerError):
             ledger_ask._write(p, {"asks": [{"id": "x"}]}, "sri", still_ours)
     assert p.read_text() == "arc: \"fleet-sri\"\nasks:\n" and held.exists()  # and theirs is left alone
+
+
+def _stale_lock(sec, pid_line):
+    p = ledger_ask.path(sec)
+    p.parent.mkdir(parents=True, exist_ok=True)
+    held = Path(os.environ[ledger_ask.LOCK_ROOT_ENV]) / ("%s.d" % ledger_ask.lock_key(p))
+    held.mkdir(parents=True)
+    (held / "pid").write_text(pid_line)
+    old = time.time() - 600
+    os.utime(held, (old, old))
+    return p, held
+
+
+def test_a_stale_lock_whose_pid_reads_zero_is_reclaimed(sec):
+    p, held = _stale_lock(sec, "0 1\n")
+    with ledger_ask.locked(p, wait=1.0):
+        assert (held / "token").is_file()
+
+
+def test_a_stale_lock_whose_reclaim_is_held_still_gives_up_at_the_deadline(sec):
+    """A fresh reclaim mutex beside a stale lock: the writer waits out its deadline, it never spins for good."""
+    p, held = _stale_lock(sec, "999999 1\n")
+    Path(str(held)[:-2] + ".reclaim.d").mkdir()
+    code = ("import sys; sys.path[:0] = %r\nfrom fleetlib import ledger_ask\nfrom pathlib import Path\n"
+            "try:\n    with ledger_ask.locked(Path(%r), wait=0.3):\n        sys.exit(2)\n"
+            "except ledger_ask.LedgerError:\n    sys.exit(0)\n" % (sys.path[:3], str(p)))
+    r = subprocess.run([sys.executable, "-c", code], env=dict(os.environ), timeout=20)
+    assert r.returncode == 0
+
+
+def test_a_lock_half_made_is_taken_back(sec, monkeypatch):
+    p = ledger_ask.path(sec)
+    p.parent.mkdir(parents=True)
+
+    def broken(_pid):
+        raise OSError("ps is gone")
+
+    monkeypatch.setattr(ledger_ask, "_start_of", broken)
+    with pytest.raises(ledger_ask.LedgerError):
+        with ledger_ask.locked(p, wait=0.2):
+            pass
+    assert not (Path(os.environ[ledger_ask.LOCK_ROOT_ENV]) / ("%s.d" % ledger_ask.lock_key(p))).exists()

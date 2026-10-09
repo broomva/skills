@@ -58,6 +58,12 @@ OPTIONS = [
     {"id": ACK, "label": "Acknowledge", "consequence": "The fleet records your answer and its note, and asks again "
      "only if this stops being true and comes back.", "reversible": True, "recommended": True},
 ]
+#: An alert's one answer: seen. It comes back while the failure lasts, and Maestro's health notice stays until a tick passes.
+ALERT_OPTIONS = [
+    {"id": ACK, "label": "Acknowledge", "consequence": "Records that you saw it. While the failure lasts it is raised "
+     "again after 6 h, and Maestro's fleet health notice stays until a tick passes.", "reversible": True,
+     "recommended": True},
+]
 WHY_YOU = "fleet-reconcile only observes and asks: it never approves a prompt or changes a repo's rules for you."
 DEFAULT = "It stays open until you answer, or until a tick finds it no longer true."
 
@@ -388,7 +394,7 @@ def alert(sec: Dict[str, Any], kind: str, message: str) -> str:
             # you; this entry is its words, listed in Decisions, so the one failure is never counted twice.
             current = {"id": u, "uid": u, "class": "alert", "blocking": False, "why_you": WHY_YOU,
                        "default": "It stays open until you acknowledge it.",
-                       "options": [OPTIONS[0]], "fleet": {"scope": scope, "alert": kind}}
+                       "options": ALERT_OPTIONS, "fleet": {"scope": scope, "alert": kind}}
             entries.append(current)
         current["headline"] = "The %s fleet tick: %s" % (scope, text)
         current["asked_at"] = common.ts(time.time())
