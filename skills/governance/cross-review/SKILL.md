@@ -76,6 +76,30 @@ Different mechanisms for different environments. The *substance* is the gate —
 
 **Default (code tier)**: invoke Strata A if Codex available, fall back to Strata B, and run Strata C in parallel. A knowledge-tier diff gets one stratum, A else B, and no C (§Stakes tiers).
 
+### Paseo-hosted sessions: run every stratum in the foreground (BRO-2815)
+
+On Paseo (`PASEO_AGENT_ID` set), a background task that finishes does **not**
+reliably wake an idle session. A session that ends its turn on "waiting for the
+reviewer's verdict" stays stranded until someone nudges it. On 2026-10-09 four arcs
+stalled on their own P20 reviewer or verify step, under briefs that said "wait in
+the foreground".
+
+So on a Paseo host every stratum is a **blocking** call:
+
+- **Stratum A:** run `codex exec ... </dev/null` as a plain foreground Bash call,
+  never `run_in_background`. If one review can outrun the 10-minute Bash cap, run it
+  detached to a file, then poll for that file with foreground until-loops, each under
+  10 minutes, until the verdict lands. A long leading `sleep` is refused.
+- **Stratum B / C:** launch reviewer subagents with `run_in_background: false`.
+  Parallel strata go in one message as several blocking Agent calls. They still run
+  concurrently, and the turn resumes when all of them have returned.
+- **Never end the turn** while a reviewer is in flight. Read the verdicts, log the
+  round, and act on them in the same turn.
+
+bstack ≥ 0.45.0 enforces this at the harness: its `bg-task-stop-guard` Stop hook
+refuses, once per turn, a Paseo turn-end that leaves the session's own background
+task running. The hook is the backstop. Waiting in the foreground is the rule.
+
 ## The anti-slop rubric
 
 Cross-model-agents' core insight is *scoring* not just *reviewing*. The reviewer assigns a numeric score (1-10) against a rubric:
