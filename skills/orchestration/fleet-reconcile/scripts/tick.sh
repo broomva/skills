@@ -100,9 +100,10 @@ done
 # open entry per kind, refreshed while it is open. Needs you counts the failure
 # once, through Maestro's own fleet health notice (failing or missed).
 # When it can't run at all (the config or Python is what broke), the bash
-# fallback raises one Maestro item instead; it can't classify, so any answer
-# from Maestro (made, refused, or no clear answer) is stamped, which keeps it
-# to one per 6 h whatever Maestro's words. The message is this script's own
+# fallback queues one Maestro item instead; it can't classify, so a made item or
+# an unclear answer is stamped, which keeps it to one per 6 h whatever Maestro's
+# words. A refusal made nothing and is not stamped: it is logged, and the next
+# alert of its kind tries again. The message is this script's own
 # text, never another session's words.
 alert() {
   local kind=$1 msg=$2 stamp="$STAMP_DIR/.alert-$1" now last rc
@@ -127,8 +128,8 @@ alert() {
         (0) touch "$stamp" ;;
         (1)
           touch "$stamp"
-          log "ALERT $kind: the bash fallback's item may or may not exist (Maestro refused or gave no clear answer; above), and it can't look, so the next attempt is in 6 h" ;;
-        (*) log "ALERT $kind NOT delivered: nothing reached Maestro; it's in this log only" ;;
+          log "ALERT $kind: the bash fallback's item may or may not exist (Maestro gave no clear answer; above), and it can't look, so the next attempt is in 6 h" ;;
+        (*) log "ALERT $kind NOT delivered: Maestro made no item (refused, or nothing reached it; above); it's in this log only, and the next alert of its kind tries again" ;;
       esac ;;
   esac
   return 0
@@ -166,14 +167,17 @@ bounded() {
   return "$rc"
 }
 
-# maestro_alert TITLE TEXT: the bash fallback, a Maestro work item at Needs you
-# in the Paseo app (owner decision 2026-10-01: never a desktop dialog), run in
-# the fleet's own scratch repo, bounded. Returns 0 when Maestro made it; 1 when
-# Maestro answered otherwise: it refused (exit 1 with the CLI's "maestro: "
-# line; a run that couldn't start after it made the item included) or gave no
-# clear answer (exit 3; it may have made it); 2 when nothing reached Maestro:
-# not listening (exit 2), a CLI that didn't run (bun's own exit 1 has no
-# "maestro: " line), no scratch repo, or the watchdog stopped it.
+# maestro_alert TITLE TEXT: the bash fallback, a Maestro work item the owner
+# starts or cancels in the Paseo app (owner decision 2026-10-01: never a desktop
+# dialog), filed in the fleet's own scratch repo, bounded. It only QUEUES: a
+# session starts nothing (A8, BRO-2996), so there is no --dispatch, and the item
+# is filed as a process outside any session (PASEO_AGENT_ID is unset for it),
+# which Maestro holds for the owner in Needs you. Returns 0 when Maestro made
+# it; 1 when it gave no clear answer (exit 3; it may have made it, and nothing
+# can look); 2 when it did not make it: Maestro refused (exit 1 with the CLI's
+# "maestro: " line; nothing was made, since no run is started), is not
+# listening (exit 2), the CLI didn't run (bun's own exit 1 has no "maestro: "
+# line), there is no scratch repo, or the watchdog stopped it.
 maestro_alert() {
   local title=$1 text=$2 repo="${FLEET_ASK_REPO:-$HOME/.local/state/fleet-reconcile/maestro-asks}"
   if [ ! -d "$repo/.git" ]; then
@@ -183,7 +187,7 @@ maestro_alert() {
   fi
   local brief="fleet-reconcile alert for scope $SCOPE: $text
 
-Change nothing and run no tools. End your turn at once with exactly two sections: '## Decided' with one bullet, 'nothing', and '## Ask' with two bullets, word for word: the alert above, and 'Approve to dismiss; the tick log has the detail.'"
+Nothing runs for this item. Read it, then cancel it; the tick log has the detail."
   if [ -n "${FLEET_MAESTRO_BIN:-}" ]; then
     set -- "$FLEET_MAESTRO_BIN"
   else
@@ -199,7 +203,7 @@ Change nothing and run no tools. End your turn at once with exactly two sections
   local out rc cap="" answered=no
   out=$(mktemp "${TMPDIR:-/tmp}/fleet-alert.XXXXXX" 2>/dev/null) || out=""
   if [ -n "$out" ]; then
-    bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json \
+    bounded env -u PASEO_AGENT_ID "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --json \
       </dev/null >"$out" 2>&1
     rc=$?
     cap=$(cat "$out" 2>/dev/null)
@@ -207,14 +211,15 @@ Change nothing and run no tools. End your turn at once with exactly two sections
     printf '%s\n' "$cap" >> "$LOG" 2>/dev/null
     case "$rc" in
       (0|3) answered=yes ;;
-      (1) printf '%s\n' "$cap" | grep -q '^maestro: ' && answered=yes ;;
+      # Refused: nothing was made (no run is started to fail after it), so it is not delivered; the next alert tries again.
+      (1) printf '%s\n' "$cap" | grep -q '^maestro: ' && { log "ALERT fallback: Maestro refused it (exit 1; above), so no item was made"; return 2; } ;;
     esac
   else
-    bounded "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --dispatch --json \
+    bounded env -u PASEO_AGENT_ID "$@" new "$title" --brief "$brief" --repo "$repo" --initiative "fleet-reconcile-$SCOPE" --json \
       </dev/null >/dev/null 2>&1
     rc=$?
     log "ALERT fallback: mktemp failed; classified Maestro exit $rc by code alone (no capture)"
-    case "$rc" in (0|3|1) answered=yes ;; esac
+    case "$rc" in (0|3) answered=yes ;; esac
   fi
   case "$rc:$answered" in
     (0:yes) return 0 ;;

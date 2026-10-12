@@ -1,5 +1,23 @@
 # Changelog: fleet-reconcile
 
+## [0.5.2] - 2026-10-12
+
+The bash alert fallback no longer asks Maestro to start anything (BRO-2996,
+maestro-paseo #61). Since BRO-2990 a session starts nothing, and since
+BRO-2996 `maestro new --dispatch` is refused; the fallback's alert never
+landed, and its refusal read as an answer, so nothing was raised and nothing
+said so for 6 h.
+
+- `tick.sh` files the alert with `maestro new` and no `--dispatch`, as a
+  process outside any session (`PASEO_AGENT_ID` unset): Maestro queues it,
+  held for you in Needs you. The brief says nothing runs for it.
+- A refusal by Maestro (exit 1 with its "maestro: " line) is no longer an
+  answer. Nothing was made, so it is logged and not stamped, and the next
+  alert of its kind tries again. Exit 3 (no clear answer) still stamps.
+- Tests: the stub refuses `--dispatch` and an unverifiable `PASEO_AGENT_ID`
+  as the CLI now does; new tests for no dispatch, outside-session filing and
+  the retried refusal. Mutation entries added.
+
 ## [0.5.1] - 2026-10-09
 
 The parsers are pinned to Claude Code 2.1.295 (BRO-2964), so the tick no
