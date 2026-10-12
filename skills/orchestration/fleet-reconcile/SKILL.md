@@ -3,7 +3,7 @@ name: fleet-reconcile
 tier: D
 primitive: null
 category: orchestration
-version: 0.5.1
+version: 0.5.2
 description: |
   The hourly fleet coordinator. Phase 1 observes and classifies, report only;
   phase 2 adds the coordinator and its verbs under dry run.
@@ -267,12 +267,14 @@ when Maestro marks the scope missed: two hourly intervals of awake time after
 the last tick began. Acknowledging an alert records that you saw it; the
 health notice stays until a tick passes, and the alert comes back after 6 h
 while the failure lasts. When Python or the config is what broke, a
-bash fallback raises one Maestro item instead (`maestro new --dispatch`, in its
-own process group under a TERM-then-KILL watchdog: TERM at 120 s, KILL 30 s
-later). It can't classify, so any answer from Maestro counts (made; refused, a
-run that couldn't start included; no clear answer), which keeps it to one per
-6 h whatever Maestro's words; anything that never reached Maestro is tried
-again at the next tick. When neither path works, the alert reaches only
+bash fallback queues one Maestro item instead (`maestro new`, with no
+`--dispatch`: a session starts nothing, A8, and the item waits in Needs you for
+you to start or cancel; it runs outside any session, so `PASEO_AGENT_ID` is
+unset for it; in its own process group under a TERM-then-KILL watchdog: TERM at
+120 s, KILL 30 s later). It can't classify, so a made item or an unclear answer
+counts, which keeps it to one per 6 h whatever Maestro's words. A refusal by
+Maestro (exit 1) made nothing: it is logged and not stamped, and anything that
+never reached Maestro is tried again at the next tick. When neither path works, the alert reaches only
 `tick.log`. There is no dialog, banner, ntfy or p9 notify. The
 owner can also answer from a terminal:
 

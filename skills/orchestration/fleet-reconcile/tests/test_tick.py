@@ -51,8 +51,10 @@ def rig(fresh_world, tmp_path):
           '  *default_branch*) cat "$d/default_branch.txt" ;;\n'
           '  "pr list"*) cat "$d/prs.json" ;;\n'
           '  *) exit 1 ;;\nesac\n' % (calls_dir, fx))
-    # maestro: `new` makes item itm-<n> (listed by `ls`), queued, or with --dispatch (the bash fallback) in
-    # STUB_NEW_STATE; STUB_NEW_EXIT makes `new` fail after creating it, saying STUB_NEW_ERR; STUB_NEW_HANG
+    # maestro: `new` makes item itm-<n> (listed by `ls`), queued. It answers as bin/maestro.ts does since BRO-2996:
+    # `--dispatch` is refused (a session starts nothing), and a PASEO_AGENT_ID the registry does not know is refused
+    # (STUB_SESSION_IDS lists the ones it does), both before anything is made; with no id the item is queued as
+    # filed from outside any session. STUB_NEW_EXIT makes `new` fail after creating it, saying STUB_NEW_ERR; STUB_NEW_HANG
     # makes it and a child ignore TERM and hang (STUB_NEW_ORPHAN: only the child); STUB_CLI_CRASH exits 1 as bun does when the CLI can't load,
     # before reaching Maestro; `show <id>` serves calls/maestro-show-<id>.json, else review; `dispatch`
     # starts it, or STUB_DISPATCH_EXIT refuses (the cap, or STUB_DISPATCH_ERR). Refusals read as bin/maestro.ts
@@ -64,11 +66,17 @@ def rig(fresh_world, tmp_path):
           '[ -n "${STUB_LOCK:-}" ] && [ -d "$STUB_LOCK" ] && echo held >> "%s/lock-during-alert"\n'
           'c="%s"\n'
           'case "$1" in\n'
-          '  new) [ -n "${STUB_NEW_HANG:-}" ] && { trap "" TERM; sleep 60 & echo $! > "$c/hang-child"; wait; };'
+          '  new) case " $* " in (*" --dispatch "*) echo "maestro: A session does not start work (A8): you start it with'
+          ' Dispatch in Maestro, or a lane or the conductor does. Work you create is queued." >&2; exit 1 ;; esac;'
+          ' [ -n "${PASEO_AGENT_ID:-}" ] && case " ${STUB_SESSION_IDS:-} " in (*" $PASEO_AGENT_ID "*) ;;'
+          ' (*) echo "maestro: No Paseo session has the id $PASEO_AGENT_ID." >&2; exit 1 ;; esac;'
+          ' [ -n "${STUB_REFUSE:-}" ] && { echo "maestro: $STUB_REFUSE" >&2; exit 1; };'
+          ' echo "${PASEO_AGENT_ID:-none}" >> "$c/maestro-new-caller";'
+          ' [ -n "${STUB_NEW_HANG:-}" ] && { trap "" TERM; sleep 60 & echo $! > "$c/hang-child"; wait; };'
           ' [ -n "${STUB_NEW_ORPHAN:-}" ] && { (trap "" TERM; exec sleep 60) & echo $! > "$c/hang-child"; sleep 60; };'
           ' n=$(( $(cat "$c/maestro-n" 2>/dev/null || echo 0) + 1 )); echo $n > "$c/maestro-n";'
           ' printf "%%s\\n" "$*" > "$c/maestro-new-itm-$n";'
-          ' st=proposed; case " $* " in (*" --dispatch "*) st=${STUB_NEW_STATE:-running} ;; esac;'
+          ' st=proposed;'
           ' title=$(printf "%%s" "$2" | tr -d \'"\'); init=""; prev=""; for a in "$@"; do [ "$prev" = --initiative ] && init=$a; prev=$a; done;'
           ' printf \'{"id": "itm-%%s", "title": "%%s", "initiative": "%%s", "state": "%%s", "createdAt": "%%s"}\\n\''
           ' "$n" "$title" "$init" "$st" "$(date -u +%%FT%%TZ)" >> "$c/maestro-items";'
@@ -438,17 +446,47 @@ def test_an_ask_reaches_the_ledger_only_once_it_has_lasted(rig):
     assert len(rig.asks()) == 4
 
 
-@pytest.mark.parametrize("extra", [{"STUB_NEW_STATE": "proposed"}, {"STUB_NEW_EXIT": "3"},
-                                   # made, then its run couldn't start: Maestro refuses, and the item exists
-                                   {"STUB_NEW_EXIT": "1", "STUB_NEW_ERR": "Could not start the run: no provider"}])
+@pytest.mark.parametrize("extra", [{}, {"STUB_NEW_EXIT": "3"}])
 def test_the_bash_fallback_raises_at_most_one_alert_per_6_h_even_queued_or_unconfirmed(rig, extra):
-    # It can't adopt an open item or read Maestro's words, so any answer counts (else one more every tick).
+    # It can't adopt an open item or read Maestro's words, so a made item or an unclear answer counts (else one more
+    # every tick). The item is only queued: the owner starts or cancels it.
     rig.world.config.write_text("not json")
     rig.tick(**extra)
     rig.tick(**extra)
     sd = rig.world.state["broomva"]
     assert len(rig.raised("fleet broomva: config [fleet-reconcile broomva alert config]")) == 1
     assert (sd / ".alert-config").exists()
+
+
+def test_the_bash_fallback_never_asks_maestro_to_start_anything(rig):
+    rig.world.config.write_text("not json")
+    rig.tick()
+    (call,) = rig.raised("fleet broomva: config")
+    assert "--dispatch" not in call and "dispatch" not in call.split("--brief")[0]
+    assert "Nothing runs for this item" in rig.brief("itm-1")
+
+
+def test_the_bash_fallback_files_as_outside_any_session_whatever_session_ran_the_tick(rig):
+    # A tick started from a session's shell inherits its PASEO_AGENT_ID; Maestro refuses an id it can't verify, and
+    # the alert would never land. The fallback unsets it: it is a process outside any session.
+    rig.world.config.write_text("not json")
+    rig.tick(PASEO_AGENT_ID="3f9c1e52-7a40-4d8b-9c26-0a1b2c3d4e5f")
+    assert len(rig.raised("fleet broomva: config")) == 1 and rig.calls("maestro-new-caller") == ["none"]
+    assert (rig.world.state["broomva"] / ".alert-config").exists()
+
+
+@pytest.mark.parametrize("why", ["A session does not start work (A8)", "Maestro refused it for its own reason"])
+def test_a_refusal_by_maestro_is_not_delivered_it_is_logged_and_tried_again(rig, why):
+    # Exit 1 with Maestro's own "maestro: " line used to read as an answer, stamp the alert and wait 6 h, so a refusal
+    # raised no alert, ever. Nothing was made (no run is started), so it is logged, not stamped, and retried.
+    rig.world.config.write_text("not json")
+    sd = rig.world.state["broomva"]
+    r = rig.tick(STUB_REFUSE=why)
+    assert r.returncode == 1 and rig.calls("maestro-items") == []  # tried, and nothing was made
+    assert not (sd / ".alert-config").exists()
+    assert "NOT delivered" in rig.log() and "refused it" in rig.log() and why in rig.log()
+    rig.tick()  # Maestro accepts it now: the alert lands, and only now is it stamped
+    assert len(rig.calls("maestro-items")) == 1 and (sd / ".alert-config").exists()
 
 
 @pytest.mark.parametrize("down, code", [("STUB_MAESTRO_DOWN", 2),  # not listening
@@ -509,16 +547,19 @@ def test_an_unwritable_state_dir_alerts_its_own_kind_not_a_config_failure(rig):
 
 def test_the_bash_fallback_classifies_by_exit_code_when_mktemp_fails(rig, tmp_path):
     # mktemp can't make its temp file: run without capturing (no command substitution that could hang on
-    # an escaped Maestro child — P20 round 2) and classify by exit code, so an ambiguous exit 1 is stamped,
-    # not retried every tick the way a /dev/null it can't grep would be (#263 review).
+    # an escaped Maestro child — P20 round 2) and classify by exit code: exit 3 (no clear answer) is stamped, and
+    # exit 1 (a refusal, nothing made) is not, so it is tried again.
     ro = tmp_path / "ro"
     ro.mkdir()
     ro.chmod(0o500)  # read+execute, no write: mktemp fails here
     rig.world.config.write_text("not json")  # force the bash fallback
     sd = rig.world.state["broomva"]
-    r = rig.tick(TMPDIR=str(ro), STUB_NEW_EXIT="1")  # Maestro exits 1
+    r = rig.tick(TMPDIR=str(ro), STUB_NEW_EXIT="3")  # Maestro gives no clear answer
     assert r.returncode == 1 and (sd / ".alert-config").exists()  # classified as answered -> stamped, not retried
     assert "no answer from Maestro" not in rig.log() and "by code alone" in rig.log()
+    (sd / ".alert-config").unlink()
+    rig.tick(TMPDIR=str(ro), STUB_REFUSE="No.")  # exit 1: nothing was made, so not stamped
+    assert not (sd / ".alert-config").exists()
 
 
 def test_live_mode_is_refused_until_its_preconditions_are_recorded(rig):
