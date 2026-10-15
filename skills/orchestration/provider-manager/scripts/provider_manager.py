@@ -60,6 +60,20 @@ from pm_store import (  # noqa: E402
     store_item_names,
     write_orca_oauth,
     write_store_oauth,
+    ORCA_CODEX_SERVICE,
+    CODEX_AUTH_PATH,
+    CODEX_CLIENT_ID,
+    CODEX_TOKEN_URL,
+    CODEX_USAGE_URL,
+    decode_jwt_unverified,
+    read_codex_auth,
+    write_codex_auth,
+    read_orca_codex,
+    write_orca_codex,
+    delete_orca_codex,
+    refresh_codex_token,
+    codex_token_expiring,
+    extract_codex_identity,
 )
 
 HOME = Path.home()
@@ -1256,6 +1270,513 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
                 "storeAccount": is_store_account, "switched": False}
 
 
+# -- OpenAI Codex provider implementation ---------------------------------------------------------
+
+DEFAULT_CODEX_ROSTER = [
+    {
+        "id": "d24aa235-8a59-5d76-852d-c66136a9c2fc",
+        "email": "devteam@getstimulus.ai",
+        "organizationName": "Stimulus (devteam)",
+        "authMethod": "chatgpt",
+    },
+    {
+        "id": "dc906358-ff8c-5ad9-8e71-86e423b49425",
+        "email": "carlos@getstimulus.ai",
+        "organizationName": "Stimulus (carlos)",
+        "authMethod": "chatgpt",
+    },
+]
+
+
+def codex_roster() -> List[Dict[str, Any]]:
+    orca = get_orca_data()
+    roster_accounts = list(orca.get("settings", {}).get("codexManagedAccounts", []) or [])
+    known_emails = {a.get("email", "").lower() for a in roster_accounts if a.get("email")}
+
+    for default_acc in DEFAULT_CODEX_ROSTER:
+        if default_acc["email"].lower() not in known_emails:
+            roster_accounts.append(dict(default_acc))
+            known_emails.add(default_acc["email"].lower())
+
+    store = read_codex_auth()
+    if store.data:
+        ident = extract_codex_identity(store.data.get("tokens"))
+        email = ident.get("email", "").lower()
+        if email and email not in known_emails:
+            import uuid
+            acc_id = str(uuid.uuid5(uuid.NAMESPACE_DNS, email))
+            roster_accounts.append({
+                "id": acc_id,
+                "email": email,
+                "organizationName": ident.get("planType", "team"),
+                "authMethod": "chatgpt",
+            })
+            known_emails.add(email)
+
+    return roster_accounts
+
+
+def build_codex_context(verify_identity: bool = True) -> Dict[str, Any]:
+    accounts = codex_roster()
+    copies = {}
+    for acc in accounts:
+        acc_id = acc.get("id")
+        email = acc.get("email")
+        copy_read = read_orca_codex(acc_id)
+        if copy_read.status != "ok" and email:
+            copy_read = read_orca_codex(email)
+        copies[acc_id] = copy_read
+
+    store = read_codex_auth()
+    store_tokens = store.data.get("tokens") if store.data else None
+    active_identity = extract_codex_identity(store_tokens) if store_tokens else {}
+
+    active_acc_id = None
+    if active_identity.get("email"):
+        active_email = active_identity["email"].lower()
+        for acc in accounts:
+            if (acc.get("email") or "").lower() == active_email:
+                active_acc_id = acc.get("id")
+                break
+
+    return {
+        "accounts": accounts,
+        "copies": copies,
+        "store": store,
+        "storeTokens": store_tokens,
+        "activeIdentity": active_identity,
+        "activeAccountId": active_acc_id,
+        "storeReadable": store.status == "ok",
+    }
+
+
+def list_codex_accounts(ctx: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+    ctx = ctx or build_codex_context(verify_identity=False)
+    out = []
+    for acc in ctx["accounts"]:
+        acc_id = acc.get("id")
+        email = acc.get("email")
+        copy_read = ctx["copies"].get(acc_id)
+        copy_data = copy_read.data if copy_read and copy_read.status == "ok" else None
+        copy_tokens = copy_data.get("tokens") if isinstance(copy_data, dict) else None
+
+        is_active = acc_id == ctx["activeAccountId"]
+        source_tokens = ctx["storeTokens"] if is_active and ctx["storeTokens"] else copy_tokens
+        ident = extract_codex_identity(source_tokens) if source_tokens else {}
+
+        out.append({
+            "id": acc_id,
+            "email": email,
+            "organizationName": acc.get("organizationName") or ident.get("planType", "team"),
+            "isActive": is_active,
+            "hasStoredCredentials": bool(copy_tokens and copy_tokens.get("access_token")),
+            "isTokenFresh": bool(copy_tokens) and not codex_token_expiring(copy_tokens, 0),
+            "subscriptionType": ident.get("planType") or acc.get("authMethod") or "team",
+            "needsLogin": not bool(copy_tokens or (is_active and source_tokens)),
+        })
+    return out
+
+
+def get_codex_auth_status() -> Dict[str, Any]:
+    store = read_codex_auth()
+    if store.status != "ok" or not store.data:
+        return {"loggedIn": False, "provider": "codex", "error": store.detail or "auth.json absent"}
+    tokens = store.data.get("tokens") or {}
+    ident = extract_codex_identity(tokens)
+    exp = codex_token_expiring(tokens, 0)
+    return {
+        "loggedIn": True,
+        "provider": "codex",
+        "email": ident.get("email"),
+        "planType": ident.get("planType"),
+        "accountId": ident.get("accountId"),
+        "tokenFresh": not exp,
+        "authMode": store.data.get("auth_mode", "chatgpt"),
+    }
+
+
+def fetch_codex_usage_raw(access_token: str, account_id: str, timeout: float = 15.0) -> Tuple[Optional[int], Optional[Dict[str, Any]], str]:
+    import urllib.error
+    import urllib.request
+
+    req = urllib.request.Request(
+        CODEX_USAGE_URL,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "ChatGPT-Account-ID": account_id,
+            "User-Agent": "CodexCLI/0.154.0",
+            "Accept": "application/json",
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return resp.status, data, ""
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = e.read().decode("utf-8")
+        except Exception:
+            err_body = ""
+        return e.code, None, "HTTP %d: %s" % (e.code, err_body[:200])
+    except Exception as e:
+        return None, None, str(e)
+
+
+def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None, force_refresh: Optional[bool] = None) -> List[Dict[str, Any]]:
+    if force_refresh is not None:
+        force = force or force_refresh
+    ctx = ctx or build_codex_context(verify_identity=True)
+    out = []
+
+    cache = _load_json(USAGE_CACHE_PATH, {})
+    now = time.time()
+
+    for acc in ctx["accounts"]:
+        acc_id = acc.get("id")
+        email = (acc.get("email") or "").lower()
+        is_active = acc_id == ctx["activeAccountId"]
+
+        copy_read = ctx["copies"].get(acc_id)
+        copy_data = copy_read.data if copy_read and copy_read.status == "ok" else None
+        copy_tokens = copy_data.get("tokens") if isinstance(copy_data, dict) else None
+
+        tokens = ctx["storeTokens"] if is_active and ctx["storeTokens"] else copy_tokens
+        cache_key = "codex:%s" % email
+        cached_entry = cache.get(cache_key)
+
+        if not force and cached_entry and (now - cached_entry.get("cachedAt", 0)) < CACHE_TTL_SECONDS:
+            entry = dict(cached_entry)
+            entry["isActive"] = is_active
+            out.append(entry)
+            continue
+
+        if not tokens or not tokens.get("access_token"):
+            out.append({
+                "id": acc_id,
+                "email": email,
+                "isActive": is_active,
+                "telemetry": "needs_login",
+                "needsLogin": True,
+                "usageStatus": "NEEDS_LOGIN",
+                "primary": None,
+                "secondary": None,
+                "credits": None,
+                "resetCredits": None,
+                "isRateLimited": False,
+            })
+            continue
+
+        active_tokens = tokens
+        # Do not refresh the active account's tokens from the usage path; the running Codex CLI owns active token refresh.
+        if not is_active and codex_token_expiring(active_tokens, 60_000):
+            rf = active_tokens.get("refresh_token")
+            if rf:
+                code, new_data, err = refresh_codex_token(rf)
+                if code == 200 and new_data:
+                    active_tokens = {
+                        "id_token": new_data.get("id_token") or active_tokens.get("id_token"),
+                        "access_token": new_data.get("access_token"),
+                        "refresh_token": new_data.get("refresh_token") or rf,
+                        "account_id": active_tokens.get("account_id"),
+                    }
+                    write_orca_codex(email, {"auth_mode": "chatgpt", "tokens": active_tokens, "email": email})
+                    write_orca_codex(acc_id, {"auth_mode": "chatgpt", "tokens": active_tokens, "email": email})
+                else:
+                    out.append({
+                        "id": acc_id,
+                        "email": email,
+                        "isActive": is_active,
+                        "telemetry": "auth_expired",
+                        "needsLogin": True,
+                        "usageStatus": "AUTH_EXPIRED",
+                        "primary": None,
+                        "secondary": None,
+                        "credits": None,
+                        "resetCredits": None,
+                        "isRateLimited": False,
+                    })
+                    continue
+
+        if not active_tokens.get("access_token"):
+            out.append({
+                "id": acc_id,
+                "email": email,
+                "isActive": is_active,
+                "telemetry": "auth_expired",
+                "needsLogin": True,
+                "usageStatus": "AUTH_EXPIRED",
+                "primary": None,
+                "secondary": None,
+                "credits": None,
+                "resetCredits": None,
+                "isRateLimited": False,
+            })
+            continue
+
+        ident = extract_codex_identity(active_tokens)
+        acc_uuid = active_tokens.get("account_id") or ident.get("accountId")
+        if not acc_uuid:
+            out.append({
+                "id": acc_id,
+                "email": email,
+                "isActive": is_active,
+                "telemetry": "error",
+                "needsLogin": False,
+                "usageStatus": "NO_ACCOUNT_ID",
+                "primary": None,
+                "secondary": None,
+                "credits": None,
+                "resetCredits": None,
+                "isRateLimited": False,
+            })
+            continue
+
+        status_code, data, err_msg = fetch_codex_usage_raw(active_tokens["access_token"], acc_uuid)
+        if status_code == 200 and isinstance(data, dict):
+            rl = data.get("rate_limit") or {}
+            pw = rl.get("primary_window") or {}
+            sw = rl.get("secondary_window") or {}
+            cr = data.get("credits") or {}
+            rc = data.get("rate_limit_reset_credits") or {}
+
+            is_limited = rl.get("limit_reached", False) or (rl.get("allowed") is False)
+            lim_type = data.get("rate_limit_reached_type")
+            if isinstance(lim_type, dict):
+                lim_type = lim_type.get("type")
+
+            entry = {
+                "id": acc_id,
+                "email": email,
+                "isActive": is_active,
+                "telemetry": "ok",
+                "needsLogin": False,
+                "usageStatus": "LIMITED" if is_limited else "OK",
+                "isRateLimited": is_limited,
+                "rateLimitType": lim_type,
+                "subscriptionType": data.get("plan_type") or ident.get("planType") or "team",
+                "primary": {
+                    "usedPercent": pw.get("used_percent"),
+                    "resetsAt": pw.get("reset_at"),
+                    "resetAfterSeconds": pw.get("reset_after_seconds"),
+                    "windowMinutes": int(pw.get("limit_window_seconds", 18000) / 60),
+                } if pw else None,
+                "secondary": {
+                    "usedPercent": sw.get("used_percent"),
+                    "resetsAt": sw.get("reset_at"),
+                    "resetAfterSeconds": sw.get("reset_after_seconds"),
+                    "windowMinutes": int(sw.get("limit_window_seconds", 604800) / 60),
+                } if sw else None,
+                "credits": {
+                    "balance": cr.get("balance"),
+                    "hasCredits": cr.get("has_credits", False),
+                },
+                "resetCredits": {
+                    "availableCount": rc.get("available_count", 0),
+                },
+                "cachedAt": now,
+            }
+            cache[cache_key] = entry
+            out.append(entry)
+        elif status_code == 429:
+            entry = cached_entry or {
+                "id": acc_id, "email": email, "isActive": is_active,
+                "primary": None, "secondary": None, "credits": None, "resetCredits": None,
+                "isRateLimited": True,
+            }
+            entry["telemetry"] = "throttled"
+            entry["usageStatus"] = "THROTTLED"
+            entry["isActive"] = is_active
+            out.append(entry)
+        else:
+            out.append({
+                "id": acc_id,
+                "email": email,
+                "isActive": is_active,
+                "telemetry": "unavailable",
+                "usageStatus": "UNAVAILABLE",
+                "error": err_msg,
+                "primary": None, "secondary": None, "credits": None, "resetCredits": None,
+                "isRateLimited": False,
+            })
+
+    _save_json(USAGE_CACHE_PATH, cache)
+    return out
+
+
+def switch_codex_account(target: str, force: bool = False) -> Dict[str, Any]:
+    ctx = build_codex_context(verify_identity=True)
+    target_clean = target.strip().lower()
+
+    matched_acc = None
+    for acc in ctx["accounts"]:
+        if acc.get("id") == target or (acc.get("email") or "").lower() == target_clean:
+            matched_acc = acc
+            break
+
+    if not matched_acc:
+        raise StoreError(f"Target account '{target}' not found in Codex roster")
+
+    target_id = matched_acc["id"]
+    target_email = matched_acc["email"].lower()
+
+    if target_id == ctx["activeAccountId"]:
+        return {
+            "status": "already_active",
+            "account": target_email,
+            "id": target_id,
+            "message": f"{target_email} is already the active Codex account"
+        }
+
+    target_read = read_orca_codex(target_id)
+    if target_read.status != "ok" or not target_read.data:
+        target_read = read_orca_codex(target_email)
+
+    if target_read.status != "ok" or not target_read.data:
+        raise StoreError(f"No stored credentials found in Keychain for {target_email} ({target_id})")
+
+    target_tokens = target_read.data.get("tokens") or target_read.data
+    rf = target_tokens.get("refresh_token")
+    if not rf:
+        raise StoreError(f"Stored credentials for {target_email} lack a refresh_token")
+
+    code, refreshed, err = refresh_codex_token(rf)
+    if code != 200 or not refreshed:
+        raise StoreError(f"Cannot switch to {target_email}: refresh failed ({err})")
+
+    t_ident = extract_codex_identity(refreshed)
+    target_acc_id = target_tokens.get("account_id") or t_ident.get("accountId")
+    if not target_acc_id:
+        id_tok = refreshed.get("id_token") or target_tokens.get("id_token")
+        if id_tok:
+            id_claims = decode_jwt_unverified(id_tok)
+            target_acc_id = id_claims.get("chatgpt_account_id")
+    if not target_acc_id:
+        raise StoreError(f"Cannot switch to {target_email}: unable to determine accountId from credentials")
+
+    live_target_tokens = {
+        "id_token": refreshed.get("id_token") or target_tokens.get("id_token"),
+        "access_token": refreshed.get("access_token"),
+        "refresh_token": refreshed.get("refresh_token") or rf,
+        "account_id": target_acc_id,
+    }
+
+    target_rec = {"auth_mode": "chatgpt", "tokens": live_target_tokens, "email": target_email}
+    if not (write_orca_codex(target_id, target_rec) and write_orca_codex(target_email, target_rec)):
+        raise StoreError(f"Failed to persist refreshed credentials for {target_email} in Keychain")
+
+    prev_email = "unknown"
+    if ctx["storeTokens"]:
+        active_ident = ctx["activeIdentity"]
+        prev_email = active_ident.get("email") or "unknown"
+        prev_id = ctx["activeAccountId"] or prev_email
+        prev_rec = {"auth_mode": "chatgpt", "tokens": ctx["storeTokens"], "email": prev_email}
+        if not write_orca_codex(prev_id, prev_rec):
+            raise StoreError(f"Failed to back up outgoing Codex credentials ({prev_id}) to Keychain; auth.json unchanged")
+        if prev_email and prev_email != "unknown" and prev_email != prev_id:
+            if not write_orca_codex(prev_email, prev_rec):
+                raise StoreError(f"Failed to back up outgoing Codex credentials ({prev_email}) to Keychain; auth.json unchanged")
+
+    new_auth = {
+        "auth_mode": "chatgpt",
+        "tokens": live_target_tokens
+    }
+    if not write_codex_auth(new_auth):
+        raise StoreError("Failed to write ~/.codex/auth.json")
+
+    def update_orca_active(data):
+        s = data.setdefault("settings", {})
+        s["activeCodexManagedAccountId"] = target_id
+    _guarded_update(ORCA_DATA_PATH, update_orca_active)
+
+    log_provider_event("codex.switch", {
+        "previous": prev_email,
+        "active": target_email,
+        "targetId": target_id,
+        "timestamp": time.time(),
+    })
+
+    return {
+        "status": "switched",
+        "previous": prev_email,
+        "active": target_email,
+        "id": target_id,
+    }
+
+
+def evaluate_codex_balance(threshold: Optional[float] = None, dry_run: bool = False,
+                           reason: str = "operator") -> Dict[str, Any]:
+    cfg = load_config()
+    thresh = threshold if threshold is not None else cfg.get("threshold", 90.0)
+    weekly_thresh = cfg.get("weeklyThreshold", 97.0)
+    standby_max = cfg.get("standbyMax", 70.0)
+    margin = cfg.get("margin", 25.0)
+
+    ctx = build_codex_context(verify_identity=True)
+    usage_list = fetch_codex_usage(force=True, ctx=ctx)
+
+    active_entry = next((u for u in usage_list if u.get("isActive")), None)
+    if not active_entry:
+        return {"action": "hold", "reason": "No active Codex account identified"}
+
+    active_email = active_entry.get("email")
+    active_primary = (active_entry.get("primary") or {}).get("usedPercent")
+    active_secondary = (active_entry.get("secondary") or {}).get("usedPercent")
+    active_limited = active_entry.get("isRateLimited", False)
+
+    needs_switch = False
+    switch_reason = ""
+
+    if active_limited:
+        needs_switch = True
+        switch_reason = f"Active account {active_email} is rate limited ({active_entry.get('rateLimitType', 'limited')})"
+    elif active_primary is not None and active_primary >= thresh:
+        needs_switch = True
+        switch_reason = f"Active account {active_email} 5-hour usage is {active_primary}% (>= {thresh}%)"
+    elif active_secondary is not None and active_secondary >= weekly_thresh:
+        needs_switch = True
+        switch_reason = f"Active account {active_email} weekly usage is {active_secondary}% (>= {weekly_thresh}%)"
+
+    if not needs_switch:
+        return {
+            "action": "hold",
+            "reason": f"Active account {active_email} usage is healthy ({active_primary}% 5h, {active_secondary}% 7d)",
+            "active": active_email,
+        }
+
+    standbys = [u for u in usage_list if not u.get("isActive") and u.get("telemetry") == "ok" and not u.get("isRateLimited")]
+    best_candidate = None
+
+    for s in standbys:
+        s_prim = (s.get("primary") or {}).get("usedPercent") or 0
+        if s_prim <= standby_max and (active_limited or (active_primary is not None and (active_primary - s_prim) >= margin)):
+            best_candidate = s
+            break
+
+    if not best_candidate:
+        return {
+            "action": "hold",
+            "reason": f"Active account needs switch ({switch_reason}), but no eligible standby candidate found",
+            "active": active_email,
+        }
+
+    target_email = best_candidate["email"]
+    target_id = best_candidate["id"]
+
+    if dry_run:
+        return {
+            "action": "would_switch",
+            "previous": active_email,
+            "target": target_email,
+            "reason": switch_reason,
+            "candidateUsage": best_candidate.get("primary", {}).get("usedPercent"),
+        }
+
+    res = switch_codex_account(target_id, force=True)
+    res["action"] = "switched"
+    res["reason"] = switch_reason
+    return res
+
+
 # -- CLI ------------------------------------------------------------------------------------------
 
 def main() -> None:
@@ -1266,3 +1787,4 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+

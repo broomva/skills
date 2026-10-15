@@ -16,6 +16,7 @@ Facts this module encodes (Claude Code 2.1.280, read from the bundled source):
 Nothing here prints or logs a secret. Token comparison is constant-time and returns a bool.
 """
 
+import base64
 import hashlib
 import hmac
 import json
@@ -31,6 +32,11 @@ from typing import Any, Dict, List, NamedTuple, Optional, Tuple
 
 ORCA_SERVICE = "Orca Claude Code Managed Credentials"
 STORE_BASE = "Claude Code-credentials"
+ORCA_CODEX_SERVICE = "Orca Codex Managed Credentials"
+CODEX_AUTH_PATH = Path(os.environ.get("CODEX_AUTH_PATH") or Path.home() / ".codex/auth.json")
+CODEX_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
+CODEX_TOKEN_URL = "https://auth.openai.com/oauth/token"
+CODEX_USAGE_URL = "https://chatgpt.com/backend-api/wham/usage"
 NOT_FOUND_RC = 44
 SECURITY_STDIN_LIMIT = 4032
 EXPIRY_BUFFER_MS = 300_000  # Claude Code refreshes inside the last 5 minutes
@@ -327,3 +333,157 @@ def claude_refresh_lock(config_dir: Optional[Path] = None, wait_seconds: float =
                     os.rmdir(p)
                 except OSError:
                     pass
+
+
+# -- OpenAI Codex store & keychain ----------------------------------------------------------------
+
+def decode_jwt_unverified(token: Any) -> Dict[str, Any]:
+    """Extract claims from a JWT without network verification."""
+    if not token or not isinstance(token, str):
+        return {}
+    parts = token.split(".")
+    if len(parts) < 2:
+        return {}
+    try:
+        padded = parts[1] + "=" * (-len(parts[1]) % 4)
+        raw = base64.urlsafe_b64decode(padded.encode("ascii")).decode("utf-8")
+        val = json.loads(raw)
+        return val if isinstance(val, dict) else {}
+    except Exception:
+        return {}
+
+
+def read_codex_auth(path: Optional[Path] = None) -> Read:
+    """Read ~/.codex/auth.json (or override path)."""
+    p = path or CODEX_AUTH_PATH
+    if not p.is_file():
+        return Read("absent", None)
+    try:
+        with open(p, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        if isinstance(data, dict):
+            return Read("ok", data)
+        return Read("error", None, "auth.json is not a JSON object")
+    except (OSError, ValueError) as e:
+        return Read("error", None, str(e))
+
+
+def write_codex_auth(data: Dict[str, Any], path: Optional[Path] = None) -> bool:
+    """Atomically write ~/.codex/auth.json via temporary file and replace."""
+    p = path or CODEX_AUTH_PATH
+    p = Path(os.path.realpath(str(p)))
+    p.parent.mkdir(parents=True, exist_ok=True)
+    tmp = p.with_name("%s.tmp.%d" % (p.name, os.getpid()))
+    try:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+            f.flush()
+            os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
+        os.replace(tmp, p)
+        try:
+            dir_fd = os.open(str(p.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
+        except OSError:
+            pass
+        return True
+    except OSError:
+        try:
+            if tmp.exists():
+                tmp.unlink()
+        except OSError:
+            pass
+        return False
+
+
+def read_orca_codex(account_key: str) -> Read:
+    """Read a managed Codex account credential from macOS Keychain."""
+    return keychain_read(ORCA_CODEX_SERVICE, account_key)
+
+
+def write_orca_codex(account_key: str, data: Dict[str, Any], timeout: float = 30.0) -> bool:
+    """Write a managed Codex account credential to macOS Keychain and verify."""
+    if not keychain_write(ORCA_CODEX_SERVICE, account_key, data, timeout):
+        return False
+    check = keychain_read(ORCA_CODEX_SERVICE, account_key, timeout)
+    return check.status == "ok" and check.data is not None
+
+
+def delete_orca_codex(account_key: str) -> bool:
+    """Remove a managed Codex account credential from macOS Keychain."""
+    return keychain_delete(ORCA_CODEX_SERVICE, account_key)
+
+
+def refresh_codex_token(refresh_token: str, client_id: str = CODEX_CLIENT_ID,
+                        timeout: float = 30.0) -> Tuple[Optional[int], Optional[Dict[str, Any]], str]:
+    """Exchange a refresh token for fresh tokens with auth.openai.com. Returns (status_code, data, error)."""
+    import urllib.error
+    import urllib.request
+
+    body = json.dumps({
+        "grant_type": "refresh_token",
+        "client_id": client_id,
+        "refresh_token": refresh_token,
+    }).encode("utf-8")
+
+    req = urllib.request.Request(
+        CODEX_TOKEN_URL,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "User-Agent": "CodexCLI/0.154.0",
+            "Accept": "application/json",
+        }
+    )
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+            return resp.status, data, ""
+    except urllib.error.HTTPError as e:
+        try:
+            err_body = e.read().decode("utf-8")
+        except Exception:
+            err_body = ""
+        return e.code, None, "HTTP %d: %s" % (e.code, err_body[:200])
+    except Exception as e:
+        return None, None, str(e)
+
+
+def codex_token_expiring(tokens: Optional[Dict[str, Any]], margin_ms: int = EXPIRY_BUFFER_MS) -> bool:
+    """Check if an access token is expired or expiring within margin_ms."""
+    if not tokens or not tokens.get("access_token"):
+        return True
+    claims = decode_jwt_unverified(tokens.get("access_token"))
+    exp = claims.get("exp")
+    if exp is None:
+        return False
+    return (now_ms() + margin_ms) >= int(exp) * 1000
+
+
+def extract_codex_identity(tokens: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+    """Extract identity (email, accountId, userId, planType) from Codex tokens dict."""
+    if not tokens:
+        return {}
+    id_claims = decode_jwt_unverified(tokens.get("id_token"))
+    access_claims = decode_jwt_unverified(tokens.get("access_token"))
+    auth_claim = access_claims.get("https://api.openai.com/auth") or id_claims.get("https://api.openai.com/auth") or {}
+    profile_claim = access_claims.get("https://api.openai.com/profile") or id_claims.get("https://api.openai.com/profile") or {}
+
+    email = id_claims.get("email") or profile_claim.get("email") or ""
+    account_id = tokens.get("account_id") or auth_claim.get("chatgpt_account_id") or ""
+    user_id = auth_claim.get("chatgpt_user_id") or auth_claim.get("user_id") or id_claims.get("sub") or ""
+    plan_type = auth_claim.get("chatgpt_plan_type") or "team"
+
+    return {
+        "email": email.lower(),
+        "accountId": account_id,
+        "userId": user_id,
+        "planType": plan_type,
+        "name": id_claims.get("name") or profile_claim.get("name") or "",
+        "sub": id_claims.get("sub") or "",
+    }
+
