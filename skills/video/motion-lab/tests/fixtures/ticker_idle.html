@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>html,body{margin:0;background:#fff}</style></head>
+<body><canvas id="c" width="160" height="90"></canvas>
+<script>
+  // Like a paused GSAP timeline: a ticker keeps scheduling frames forever but
+  // draws only when something plays, and nothing plays. Frames are driven purely
+  // by renderAt. A renderer that counted requestAnimationFrame calls flagged this
+  // correct page (P20 round 4); a drift check must not.
+  const ctx = document.getElementById('c').getContext('2d');
+  let playing = false;
+  (function tick() { if (playing) ctx.fillRect(0, 0, 160, 90); requestAnimationFrame(tick); })();
+  window.renderAt = function (t) {
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 160, 90);
+    ctx.fillStyle = '#000'; ctx.fillRect((t * 40) % 150, 40, 10, 10);
+  };
+</script></body></html>

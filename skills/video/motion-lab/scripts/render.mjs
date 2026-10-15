@@ -27,22 +27,31 @@
 //
 // Exit codes: 0 ok; 2 usage or runtime error; 3 --verify found an impure frame;
 // 4 --mp4 failed; 5 the page threw (page_errors in the manifest); 6 nothing drives
-// motion (no renderAt, no animations, no SMIL) and every frame is the same image:
-// 7 the page keeps scheduling its own frames (requestAnimationFrame, three.js
-// setAnimationLoop, the GSAP ticker, setInterval) while frozen under ?t=, so its
-// live loop can draw over the frozen frames. Detected at runtime by wrapping those
-// functions before any page script runs: static analysis cannot prove a guard
-// wraps a loop (three P20 rounds found ways past it), the runtime count can.
-// pass --allow-static when a still is what you want. If nothing the renderer seeks
-// drives the page but the frames still change, the motion runs on its own clock:
-// exit 3, the same as an impure frame.
+// motion (no renderAt, no animations, no SMIL) and every frame is the same image
+// (pass --allow-static when a still is what you want); 7 a frozen frame keeps
+// changing on its own: something on the page still draws while it is frozen at a
+// t (a preview loop its ?t= guard does not stop, a setTimeout chain, a worker).
+// If nothing the renderer seeks drives the page but the frames still change, the
+// motion runs on its own clock: exit 3, the same as an impure frame.
+//
+// Exit 7 is a DRIFT check: the renderer seeks a frame, screenshots it, waits
+// 250 ms, and screenshots again. Static analysis cannot prove a guard wraps a loop
+// (P20 rounds 1-3 kept finding shapes that fooled it), and counting
+// requestAnimationFrame calls flagged a correct paused GSAP timeline, whose ticker
+// keeps scheduling frames while drawing nothing (round 4). A pixel that changes
+// while frozen is the thing that actually corrupts a render. The call counts are
+// still recorded in manifest.loop_probe as a diagnostic.
+//
+// Untrusted input: the page is loaded from file://, and file:// requests outside
+// the input file's directory are blocked (an <iframe src="file:///..."> could
+// otherwise put a local file into a frame).
 //
 // Playwright is resolved from the CURRENT directory first, so the skill can live
 // anywhere: run it from a project that has `npm i -D playwright` (or bun add -d).
 
 import { createRequire } from 'node:module';
 import { pathToFileURL } from 'node:url';
-import { mkdirSync, writeFileSync, rmSync, existsSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync, statSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
@@ -103,9 +112,21 @@ const LOOP_PROBE = `(() => {
   window.setInterval = function (...a) { window.__mlCounts.interval++; return si(...a); };
 })();`;
 
+const FRAME_TIMEOUT_MS = Number(process.env.MOTION_LAB_FRAME_TIMEOUT_MS) > 0
+  ? Number(process.env.MOTION_LAB_FRAME_TIMEOUT_MS) : 30000; // per renderAt call
+const DRIFT_WAIT_MS = 250;
+
 async function openAt(browser, o, url) {
   const page = await browser.newPage({ viewport: { width: o.width, height: o.height }, deviceScaleFactor: o.scale });
   await page.addInitScript(LOOP_PROBE);
+  const allowedDir = pathToFileURL(path.dirname(path.resolve(o.file)) + path.sep).href;
+  const blocked = [];
+  await page.route('file://**', (route) => {
+    const u = route.request().url();
+    if (u.startsWith(allowedDir)) return route.continue();
+    blocked.push(u);
+    return route.abort();
+  });
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(url, { waitUntil: 'load' });
@@ -128,17 +149,32 @@ async function openAt(browser, o, url) {
   });
   await frameAt(page, 0, errors);
   await page.screenshot();
-  return { page, errors };
+  return { page, errors, blocked };
 }
 
 async function frameAt(page, t, errors = []) {
+  let timer;
   try {
-    return await frameAtUnsafe(page, t);
+    const timeout = new Promise((_, reject) => {
+      timer = setTimeout(() => reject(new Error(`timed out after ${FRAME_TIMEOUT_MS} ms`)), FRAME_TIMEOUT_MS);
+    });
+    return await Promise.race([frameAtUnsafe(page, t), timeout]);
   } catch (e) {
     // renderAt threw for this t: record it (exit 5) instead of aborting the render
     errors.push(`renderAt(${t}): ${String(e.message || e).split('\n')[0]}`);
     return { drew: true, anims: 0, smil: 0, threw: true };
+  } finally {
+    clearTimeout(timer);
   }
+}
+
+async function drifts(page, t, errors) {
+  // Seek t, capture, wait, capture again: a frozen frame must not change.
+  await frameAt(page, t, errors);
+  const a = await page.screenshot();
+  await page.waitForTimeout(DRIFT_WAIT_MS);
+  const b = await page.screenshot();
+  return !a.equals(b);
 }
 
 async function frameAtUnsafe(page, t) {
@@ -175,22 +211,25 @@ function sheetHtml(picks) {
 async function main() {
   const o = parseArgs(process.argv.slice(2));
   if (!existsSync(o.file)) throw new Error(`no such file: ${o.file}`);
+  if (statSync(o.file).isDirectory()) throw new Error(`not a file: ${o.file}`);
   const N = Math.round(o.seconds * o.fps);
   const outDir = path.resolve(o.out);
   const framesDir = path.join(outDir, 'frames');
-  rmSync(framesDir, { recursive: true, force: true });
-  mkdirSync(framesDir, { recursive: true });
 
   const url = new URL(pathToFileURL(path.resolve(o.file)).href);
   url.searchParams.set('t', '0');
 
   const { chromium } = await loadPlaywright();
+  // Only now touch the output: remove earlier frame PNGs (NNNN.png) and nothing else.
+  mkdirSync(framesDir, { recursive: true });
+  for (const f of readdirSync(framesDir)) if (/^\d{4,}\.png$/.test(f)) rmSync(path.join(framesDir, f));
   const browser = await chromium.launch();
   const manifest = { file: o.file, seconds: o.seconds, fps: o.fps, frames: N, render_range: [0, N - 1],
+    ...(Math.abs(o.seconds * o.fps - N) > 1e-9 ? { note: `seconds x fps = ${o.seconds * o.fps}, rounded to ${N} frames` } : {}),
     width: o.width, height: o.height, scale: o.scale, frames_dir: framesDir };
   let exitCode = 0;
   try {
-    const { page, errors } = await openAt(browser, o, url.href);
+    const { page, errors, blocked } = await openAt(browser, o, url.href);
     const before = await page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }));
     let drive = null;
     for (let i = 0; i < N; i++) {
@@ -199,17 +238,13 @@ async function main() {
       await page.screenshot({ path: path.join(framesDir, `${String(i).padStart(4, '0')}.png`) });
     }
     const after = await page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }));
-    // A one-off rAF at load is fine; re-requesting frames DURING the frozen render
-    // is a live loop. Any setInterval at all under ?t= breaks the contract.
+    // Diagnostic only: a paused GSAP timeline keeps its ticker scheduling frames
+    // while drawing nothing, so a count is not evidence of a live loop.
     manifest.loop_probe = { raf_during_render: after.raf - before.raf, intervals: after.interval };
     manifest.driven_by = drive ? { renderAt: drive.drew, animations: drive.anims, smil: drive.smil } : null;
     manifest.page_errors = errors;
+    manifest.blocked_requests = blocked;
     if (errors.length) exitCode = 5;
-    if (!exitCode && (after.raf - before.raf >= 2 || after.interval > 0)) {
-      manifest.warning = 'the page schedules its own frames under ?t= (a preview loop the guard does not stop): '
-        + 'its live loop can draw over the frozen frames';
-      exitCode = 7;
-    }
     if (drive && !drive.drew && drive.anims === 0 && drive.smil === 0) {
       const { readFileSync } = await import('node:fs');
       const frame = (i) => readFileSync(path.join(framesDir, `${String(i).padStart(4, '0')}.png`));
@@ -224,6 +259,15 @@ async function main() {
         manifest.warning = 'no window.renderAt, no document animations and no SMIL: every frame is the same image';
         if (!o.allowStatic && !exitCode) exitCode = 6;
       }
+    }
+    const driftPicks = [...new Set([0, Math.floor(N / 2), N - 1])];
+    const drifting = [];
+    for (const i of driftPicks) if (await drifts(page, i / o.fps, errors)) drifting.push(i);
+    manifest.drift = { frames: driftPicks, drifting, wait_ms: DRIFT_WAIT_MS };
+    if (!exitCode && drifting.length) {
+      manifest.warning = 'a frozen frame keeps changing on its own: something still draws while the page is frozen '
+        + '(a preview loop the ?t= guard does not stop, a timer chain, a worker)';
+      exitCode = 7;
     }
     await page.close();
 

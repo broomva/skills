@@ -164,6 +164,8 @@ def read_gif_delays(data: bytes) -> list[int]:
     """
     if data[:6] not in (b"GIF87a", b"GIF89a"):
         raise ValueError("not a GIF")
+    if len(data) < 13:
+        raise ValueError("truncated GIF: no logical screen descriptor")
     pos = 13
     packed = data[10]
     if packed & 0x80:
@@ -179,18 +181,25 @@ def read_gif_delays(data: bytes) -> list[int]:
                 return p
             p += size
 
+    def need(p: int, k: int) -> None:
+        if p + k > len(data):
+            raise ValueError(f"truncated GIF at byte {p}")
+
     delays: list[int] = []
     pending: int | None = None
-    while pos < len(data):
+    while True:
+        need(pos, 1)  # running off the end without a 0x3B trailer is truncation
         tag = data[pos]
         if tag == 0x3B:
             break
         if tag == 0x21:
+            need(pos, 2)
             label = data[pos + 1]
             if label == 0xF9 and pos + 7 < len(data):
                 pending = data[pos + 4] | (data[pos + 5] << 8)
             pos = skip_sub_blocks(pos + 2)
         elif tag == 0x2C:
+            need(pos, 11)
             lpacked = data[pos + 9]
             pos += 10
             if lpacked & 0x80:

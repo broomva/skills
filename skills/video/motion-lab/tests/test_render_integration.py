@@ -68,9 +68,9 @@ class TestRender:
 
     def test_two_independent_renders_are_byte_identical(self, tmp_path):
         a, b = tmp_path / "a", tmp_path / "b"
-        render("good.html", a, "--no-sheet")
-        render("good.html", b, "--no-sheet")
-        assert digests(a) == digests(b)
+        assert render("good.html", a, "--no-sheet").returncode == 0
+        assert render("good.html", b, "--no-sheet").returncode == 0
+        assert len(digests(a)) == 12 and digests(a) == digests(b)
 
     def test_verify_catches_an_impure_renderat(self, tmp_path):
         r = render("impure.html", tmp_path, "--verify", "--no-sheet")
@@ -94,8 +94,8 @@ class TestRender:
         assert len(set(digests(tmp_path))) == 12
 
     def test_warm_up_keeps_the_first_frame_pure_on_composited_animations(self, tmp_path):
-        # Measured: removing the animation.ready await before pausing fails this
-        # at frame 0 on every cold run (4/4); the shipped code passes.
+        # Measured: removing the animation.ready awaits before pausing (warm-up and
+        # per-frame) fails this at frame 0 on 5/5 cold runs; the shipped code passes.
         r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "warmup.html"), "--seconds", "1",
                             "--fps", "12", "--width", "1080", "--height", "1080", "--out", str(tmp_path),
                             "--verify", "--no-sheet"], cwd=NODE_DIR, capture_output=True, text=True, timeout=180)
@@ -136,11 +136,22 @@ class TestRender:
         # the ?t= check exists but the loop starts unconditionally; no --verify needed
         r = render("loop_unguarded.html", tmp_path, "--no-sheet")
         assert r.returncode == 7, r.stdout + r.stderr
-        assert json.loads(r.stdout)["loop_probe"]["raf_during_render"] >= 2
+        assert json.loads(r.stdout)["drift"]["drifting"]
 
     def test_a_guarded_preview_loop_does_not_trip_the_probe(self, tmp_path):
         m = json.loads(render("good.html", tmp_path, "--no-sheet").stdout)
-        assert m["loop_probe"] == {"raf_during_render": 0, "intervals": 0}
+        assert m["loop_probe"] == {"raf_during_render": 0, "intervals": 0} and m["drift"]["drifting"] == []
+
+    def test_an_idle_ticker_is_not_a_live_loop(self, tmp_path):
+        # the paused-GSAP shape: rAF scheduled every frame, nothing drawn (round 4)
+        r = render("ticker_idle.html", tmp_path, "--no-sheet")
+        m = json.loads(r.stdout)
+        assert r.returncode == 0, m
+        assert m["loop_probe"]["raf_during_render"] >= 2 and m["drift"]["drifting"] == []
+
+    def test_a_timeout_loop_exits_7(self, tmp_path):
+        r = render("timeout_loop.html", tmp_path, "--no-sheet")
+        assert r.returncode == 7 and json.loads(r.stdout)["loop_probe"]["raf_during_render"] == 0
 
     def test_renderat_throwing_mid_render_exits_5_with_a_manifest(self, tmp_path):
         r = render("throws_mid.html", tmp_path, "--no-sheet")
@@ -156,6 +167,39 @@ class TestRender:
     def test_every_keeps_the_seam_frame(self, tmp_path):
         picks = json.loads(render("good.html", tmp_path, "--every", "5").stdout)["contact_frames"]
         assert picks == [0, 5, 10, 11]
+
+    def test_a_hung_renderat_times_out_with_exit_5(self, tmp_path):
+        env = {**os.environ, "MOTION_LAB_FRAME_TIMEOUT_MS": "1000"}
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "hang.html"), "--seconds", "0.25",
+                            "--fps", "12", "--width", "160", "--height", "90", "--out", str(tmp_path), "--no-sheet"],
+                           cwd=NODE_DIR, env=env, capture_output=True, text=True, timeout=90)
+        assert r.returncode == 5 and "timed out" in json.loads(r.stdout)["page_errors"][0]
+
+    def test_local_files_outside_the_input_dir_are_blocked(self, tmp_path):
+        page = tmp_path / "page"
+        page.mkdir()
+        secret = tmp_path / "secret.txt"
+        secret.write_text("TOKEN=do-not-render")
+        (page / "index.html").write_text(
+            f'<!doctype html><body><iframe src="{secret.as_uri()}"></iframe>'
+            '<style>@keyframes x{to{transform:translateX(9px)}} div{animation:x 1s infinite}</style><div>.</div></body>')
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(page / "index.html"), "--seconds", "0.25",
+                            "--fps", "12", "--width", "160", "--height", "90", "--out", str(tmp_path / "out"), "--no-sheet"],
+                           cwd=NODE_DIR, capture_output=True, text=True, timeout=120)
+        assert secret.as_uri() in json.loads(r.stdout)["blocked_requests"]
+
+    def test_cleanup_keeps_files_that_are_not_frames(self, tmp_path):
+        frames = tmp_path / "frames"
+        frames.mkdir()
+        (frames / "storyboard-notes.txt").write_text("keep me")
+        (frames / "0099.png").write_bytes(b"stale")
+        assert render("good.html", tmp_path, "--no-sheet").returncode == 0
+        assert (frames / "storyboard-notes.txt").exists() and not (frames / "0099.png").exists()
+
+    def test_a_directory_is_a_usage_error(self, tmp_path):
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX)], cwd=NODE_DIR,
+                           capture_output=True, text=True)
+        assert r.returncode == 2 and "not a file" in r.stderr
 
 
 needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
@@ -183,3 +227,4 @@ def test_ffmpeg_gif_export_keeps_exact_loop_timing(tmp_path):
     report = mm.gif_check(gif, fps=24)
     assert report["frames"] == 144
     assert report["duration_s"] == pytest.approx(6.0, abs=0.011), report
+

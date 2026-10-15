@@ -66,7 +66,8 @@ _PIN = re.compile(r"@v?\d+\.\d+\.\d+(?![\d.])|/v?\d+\.\d+\.\d+(?:/|$)")
 _URL = re.compile(r"""(?:https?:)?//(?:[A-Za-z0-9.-]+\.[A-Za-z]{2,}|localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]+\])(?::\d+)?(?:[/?#][^\s'"`)<>]*)?""")
 _SCRIPT = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.I | re.S)
 _STYLE = re.compile(r"<style\b[^>]*>(.*?)</style\s*>", re.I | re.S)
-_TAG_ATTR = re.compile(r"""<(?:link|img|source|video|audio|iframe|script|image|use|object|embed|track|input)\b[^>]*?\b(?:src|href|xlink:href|poster|data|srcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""", re.I)
+_TAG = re.compile(r"<(?:link|img|source|video|audio|iframe|script|image|use|object|embed|track|input)\b[^>]*>", re.I)
+_ATTR = re.compile(r"""\s(src|href|xlink:href|poster|data|srcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""", re.I)
 
 
 @dataclass
@@ -84,49 +85,90 @@ def line_of(text: str, offset: int) -> int:
 def strip_js(code: str) -> tuple[str, str]:
     """Return (no_comments, no_comments_no_strings), both length-preserving.
 
-    Comments become spaces in both views; string and template-literal bodies
-    are kept in the first and blanked in the second, so a URL inside a string
-    stays checkable while a quoted "Date.now" cannot trip an API rule.
-    Newlines are always kept, so offsets map back to the original lines.
-    Limitation: a regex literal containing a quote can desynchronise the
-    scanner; that costs a missed or spurious finding on that line, never a crash.
+    Comments become spaces in both views; string and template-literal TEXT is
+    kept in the first and blanked in the second, so a URL inside a string stays
+    checkable while a quoted "Date.now" cannot trip an API rule. The `${...}`
+    expressions inside a template literal are code, not text, and stay visible
+    in both views (P20 round 4: blanking them hid `${Math.random()}`, the usual
+    way motion code builds a transform string). Newlines are always kept, so
+    offsets map back to the original lines.
+    Limitation: a regex literal containing a quote or a backtick can desynchronise
+    the scanner; that costs a missed or spurious finding, never a crash.
     """
     keep = list(code)
     blank = list(code)
-    i, n = 0, len(code)
+    n = len(code)
 
     def wipe(buf: list[str], a: int, b: int) -> None:
-        for k in range(a, b):
+        for k in range(a, min(b, n)):
             if buf[k] != "\n":
                 buf[k] = " "
 
-    while i < n:
-        c = code[i]
-        nxt = code[i + 1] if i + 1 < n else ""
-        if c == "/" and nxt == "/":
-            j = code.find("\n", i)
-            j = n if j == -1 else j
-            wipe(keep, i, j)
-            wipe(blank, i, j)
-            i = j
-        elif c == "/" and nxt == "*":
-            j = code.find("*/", i + 2)
-            j = n if j == -1 else j + 2
-            wipe(keep, i, j)
-            wipe(blank, i, j)
-            i = j
-        elif c in "'\"`":
-            j = i + 1
-            while j < n and code[j] != c:
-                if code[j] == "\\":
+    def scan_code(i: int, in_expr: bool) -> int:
+        """Scan code from i. Inside a ${...} expression, return the index of the
+        closing brace; at top level, return n."""
+        depth = 0
+        while i < n:
+            c = code[i]
+            nxt = code[i + 1] if i + 1 < n else ""
+            if c == "/" and nxt == "/":
+                j = code.find("\n", i)
+                j = n if j == -1 else j
+                wipe(keep, i, j)
+                wipe(blank, i, j)
+                i = j
+            elif c == "/" and nxt == "*":
+                j = code.find("*/", i + 2)
+                j = n if j == -1 else j + 2
+                wipe(keep, i, j)
+                wipe(blank, i, j)
+                i = j
+            elif c in "'\"":
+                j = i + 1
+                while j < n and code[j] != c:
+                    if code[j] == "\\":
+                        j += 1
+                    elif code[j] == "\n":
+                        break  # unterminated ordinary string: stop at the line end
                     j += 1
-                elif code[j] == "\n" and c != "`":
-                    break  # unterminated ordinary string: stop at the line end
-                j += 1
-            wipe(blank, i + 1, min(j, n))
-            i = j + 1
-        else:
-            i += 1
+                wipe(blank, i + 1, j)
+                i = j + 1
+            elif c == "`":
+                i = scan_template(i + 1)
+            elif c == "{":
+                depth += 1
+                i += 1
+            elif c == "}":
+                if in_expr and depth == 0:
+                    return i
+                depth -= 1
+                i += 1
+            else:
+                i += 1
+        return n
+
+    def scan_template(i: int) -> int:
+        """Scan a template literal body from i (just past the opening backtick);
+        return the index just past the closing backtick."""
+        text_start = i
+        while i < n:
+            c = code[i]
+            if c == "\\":
+                i += 2
+            elif c == "`":
+                wipe(blank, text_start, i)
+                return i + 1
+            elif c == "$" and i + 1 < n and code[i + 1] == "{":
+                wipe(blank, text_start, i)
+                close = scan_code(i + 2, in_expr=True)
+                i = close + 1
+                text_start = i
+            else:
+                i += 1
+        wipe(blank, text_start, n)
+        return n
+
+    scan_code(0, in_expr=False)
     return "".join(keep), "".join(blank)
 
 
@@ -190,7 +232,9 @@ JS_KEEP_RULES = [
 ]
 # renderAt reachable from page.evaluate: assigned on window/globalThis/self, or a
 # top-level `function renderAt` / `var renderAt` in a classic (non-module) script.
-RENDER_AT_EXPOSED = re.compile(r"\b(?:window|globalThis|self)\s*(?:\.\s*renderAt|\[\s*['\"`]renderAt['\"`]\s*\])\s*=(?!=)")
+RENDER_AT_EXPOSED = re.compile(
+    r"\b(?:window|globalThis|self)\s*(?:\.\s*renderAt|\[\s*['\"`]renderAt['\"`]\s*\])\s*=(?!=)"
+    r"|\bObject\.(?:assign|defineProperty)\s*\(\s*(?:window|globalThis|self)\b[^;]*\brenderAt\b")
 RENDER_AT_GLOBAL_DECL = re.compile(r"\b(?:async\s+)?function\s+renderAt\b")
 RENDER_AT_VAR = re.compile(r"\bvar\s+renderAt\b")  # function-scoped: global unless inside a function
 # Evidence that JavaScript drives motion. A canvas context alone is not: a canvas
@@ -449,12 +493,13 @@ def lint_text(text: str, is_html: bool = True) -> list[Finding]:
             for m in re.finditer(r"url\(\s*['\"]?([^'\")]+)", sm.group(2)):
                 if _URL.match(m.group(1).strip()):
                     check_url(m.group(1).strip(), line_of(text, sm.start()), findings)
-        for m in _TAG_ATTR.finditer(text):
-            raw = next(g for g in m.groups() if g is not None).strip()
-            line = line_of(text, m.start())
+        for tm in _TAG.finditer(text):
+          line = line_of(text, tm.start())
+          for m in _ATTR.finditer(tm.group(0)):  # every URL attribute, not just the first
+            raw = next(g for g in m.groups()[1:] if g is not None).strip()
             # srcset holds "url 1x, url 2x"; every other attribute holds one reference
             refs = [part.strip().split()[0] for part in raw.split(",") if part.strip()] \
-                if re.search(r"\bsrcset\s*=", m.group(0), re.I) else [raw]
+                if m.group(1).lower() == "srcset" else [raw]
             for ref in refs:
                 if not ref or ref.startswith(("data:", "#", "blob:", "javascript:")):
                     continue

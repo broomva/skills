@@ -127,16 +127,25 @@ and this skill is built to keep them:
    | 2 | usage or runtime error (including a duration that rounds to zero frames) |
    | 3 | `--verify` found an impure frame (listed in the manifest), or the frames change although nothing the renderer seeks drives them (motion on its own clock) |
    | 4 | `--mp4` failed |
-   | 5 | the page threw (`page_errors` in the manifest): frames are likely blank |
+   | 5 | the page threw, or a `renderAt` call did not finish within 30 s (`page_errors` in the manifest; `MOTION_LAB_FRAME_TIMEOUT_MS` overrides) |
    | 6 | nothing drives motion, so every frame is the same image (`--allow-static` for a still) |
-   | 7 | the page keeps scheduling its own frames under `?t=` (a preview loop its guard does not stop), so its live loop can draw over the frozen frames |
+   | 7 | a frozen frame keeps changing on its own: something still draws while the page is frozen at `t` (a preview loop its `?t=` guard does not stop, a timer chain, a worker) |
 
-   Exit 7 comes from a runtime probe, not from reading code: before any page
-   script runs, `render.mjs` wraps `requestAnimationFrame` and `setInterval` and
-   counts calls during the frozen render (`manifest.loop_probe`). It sees a running
-   loop however the guard is written, including three.js `setAnimationLoop` and the
-   GSAP ticker, which schedule through `requestAnimationFrame`. A `renderAt` that
-   throws for some `t` is recorded in `page_errors` (exit 5) and the render continues.
+   Exit 7 is a drift check, not a code reading: the renderer seeks frames 0, N/2
+   and N-1, screenshots each, waits 250 ms, and screenshots again
+   (`manifest.drift`). A pixel that changes while frozen is what corrupts a render,
+   and the check sees it however the loop is written: `requestAnimationFrame`,
+   three.js `setAnimationLoop`, a `setTimeout` chain, a worker. A paused GSAP
+   timeline keeps its ticker running but draws nothing, so it passes. A loop that
+   only redraws slower than 250 ms can slip past; `--verify` is the backstop.
+   `manifest.loop_probe` still counts the page's `requestAnimationFrame` and
+   `setInterval` calls, as a diagnostic. A `renderAt` that throws for some `t` is
+   recorded in `page_errors` (exit 5) and the render continues.
+
+   The input is treated as untrusted: `file://` requests outside the input file's
+   directory are blocked (`manifest.blocked_requests`), so an `<iframe>` cannot put
+   a local file into a frame. Only `NNNN.png` files are removed from
+   `out/frames/` before a render, and only after Playwright has loaded.
 
 5. **Look, then fix with frame numbers.** Read `contact.png` first, then only the
    frames a note needs. Write notes as numbers, never feelings:

@@ -27,8 +27,8 @@ MUTATIONS = [
     ("Math.random rule removed", "scripts/motion_lint.py",
      r'"MC03", re.compile(r"\bMath\.random\b|', r'"MC03", re.compile(r"', "test_timers_and_random or test_module_mode", False),
     ("comment stripping disabled", "scripts/motion_lint.py",
-     "            wipe(keep, i, j)\n            wipe(blank, i, j)\n            i = j\n        elif c == \"/\" and nxt == \"*\":",
-     "            i = j\n        elif c == \"/\" and nxt == \"*\":", "test_comments_and_strings", False),
+     "                wipe(keep, i, j)\n                wipe(blank, i, j)\n                i = j\n            elif c == \"/\" and nxt == \"*\":",
+     "                i = j\n            elif c == \"/\" and nxt == \"*\":", "test_comments_and_strings", False),
     ("preview guard ignored (every clock is an error)", "scripts/motion_lint.py",
      "    preview_ok = has_render_at and has_guard", "    preview_ok = False",
      "test_clock_with_renderat_and_guard or test_good_fixture", False),
@@ -53,9 +53,14 @@ MUTATIONS = [
      "for (let i = 0; i < N; i++) {", "for (let i = 0; i <= N; i++) {", "test_renders_frames_0_to_n", True),
     ("verify never compares", "scripts/render.mjs",
      "if (!again.equals(first)) mismatches.push(i);", "", "test_verify_catches", True),
-    ("warm-up ready-await removed", "scripts/render.mjs",
+    # The mechanism is "wait for animation.ready before pausing", done twice: once
+    # in the warm-up and once per frame. Round 4 showed removing only the warm-up
+    # copy survives (the per-frame copy covers it), so the mutant removes both:
+    # 5/5 cold runs then fail at frame 0.
+    ("ready-await before pausing removed (warm-up and per-frame)", "scripts/render.mjs",
      "    await Promise.all(document.getAnimations().map((a) => a.ready.catch(() => {})));\n    const tick = window.__mlRAF || window.requestAnimationFrame.bind(window);\n    for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));\n  });\n  await frameAt(page, 0, errors);",
-     "  });\n  await frameAt(page, 0, errors);", "test_warm_up_keeps", True),
+     "  });\n  await frameAt(page, 0, errors);", "test_warm_up_keeps", True,
+     ("    await Promise.all(anims.map((a) => a.ready.catch(() => {})));\n", "")),
     ("SMIL timelines not seeked", "scripts/render.mjs",
      "if (typeof svg.pauseAnimations === 'function') { svg.pauseAnimations(); svg.setCurrentTime(tt); }", "",
      "test_svg_smil", True),
@@ -93,16 +98,13 @@ MUTATIONS = [
      "    if False:", "test_unseeked_gsap", False),
     ("unreachable renderAt accepted", "scripts/motion_lint.py",
      "    if is_html and has_render_at and not exposed:", "    if False:", "test_unreachable_renderat", False),
-    ("runtime loop probe ignored", "scripts/render.mjs",
-     "    if (!exitCode && (after.raf - before.raf >= 2 || after.interval > 0)) {",
-     "    if (false) {", "test_a_preview_loop_running_under_t", True),
     ("renderer counts its own rAF waits against the page", "scripts/render.mjs",
      "    const tick = window.__mlRAF || window.requestAnimationFrame.bind(window);\n    let drew = false;",
      "    const tick = window.requestAnimationFrame.bind(window);\n    let drew = false;",
      "test_a_guarded_preview_loop", True),
     ("a mid-render throw aborts the render", "scripts/render.mjs",
-     "    return await frameAtUnsafe(page, t);\n  } catch (e) {",
-     "    return await frameAtUnsafe(page, t);\n  } catch (e) { throw e;",
+     "    return await Promise.race([frameAtUnsafe(page, t), timeout]);\n  } catch (e) {",
+     "    return await Promise.race([frameAtUnsafe(page, t), timeout]);\n  } catch (e) { throw e;",
      "test_renderat_throwing_mid_render", True),
     ("the seam frame dropped with --every", "scripts/render.mjs",
      "        if (picks[picks.length - 1] !== N - 1) picks.push(N - 1);", "", "test_every_keeps_the_seam", True),
@@ -112,6 +114,23 @@ MUTATIONS = [
     ("style-attribute url() not scanned", "scripts/motion_lint.py",
      "                if _URL.match(m.group(1).strip()):\n                    check_url(m.group(1).strip(), line_of(text, sm.start()), findings)",
      "                pass", "test_html_load_paths", False),
+    ("drift gate removed", "scripts/render.mjs",
+     "    if (!exitCode && drifting.length) {", "    if (false) {",
+     "test_a_preview_loop_running_under_t or test_a_timeout_loop", True),
+    ("call-count gate instead of drift (flags an idle ticker)", "scripts/render.mjs",
+     "    if (!exitCode && drifting.length) {", "    if (!exitCode && (after.raf - before.raf >= 2 || drifting.length)) {",
+     "test_an_idle_ticker", True),
+    ("renderAt timeout removed", "scripts/render.mjs",
+     "    return await Promise.race([frameAtUnsafe(page, t), timeout]);", "    return await frameAtUnsafe(page, t);",
+     "test_a_hung_renderat", True),
+    ("file:// outside the input dir allowed", "scripts/render.mjs",
+     "    if (u.startsWith(allowedDir)) return route.continue();", "    return route.continue();",
+     "test_local_files_outside", True),
+    ("output cleanup deletes every file", "scripts/render.mjs",
+     "if (/^\\d{4,}\\.png$/.test(f)) rmSync", "rmSync", "test_cleanup_keeps", True),
+    ("template ${} expressions blanked", "scripts/motion_lint.py",
+     "                wipe(blank, text_start, i)\n                close = scan_code(i + 2, in_expr=True)",
+     "                close = scan_code(i + 2, in_expr=True)\n                wipe(blank, text_start, close)", "test_template_interpolation", False),
     ("renderAt not called", "scripts/render.mjs",
      "if (typeof window.renderAt === 'function') { await window.renderAt(tt); drew = true; }", "",
      "test_frames_actually_change or test_renders_frames_0_to_n", True),
@@ -121,7 +140,7 @@ MUTATIONS = [
 def main() -> int:
     render_ok = bool(os.environ.get("MOTION_LAB_NODE_DIR"))
     survivors, ran = [], 0
-    for desc, rel, old, new, sel, needs_render in MUTATIONS:
+    for desc, rel, old, new, sel, needs_render, *extra in MUTATIONS:
         if needs_render and not render_ok:
             print(f"SKIP  {desc} (set MOTION_LAB_NODE_DIR)")
             continue
@@ -133,18 +152,24 @@ def main() -> int:
             if text.count(old) != 1:
                 print(f"ERROR {desc}: anchor not found exactly once in {rel}")
                 return 2
-            target.write_text(text.replace(old, new))
+            text = text.replace(old, new)
+            for old2, new2 in extra:
+                if text.count(old2) != 1:
+                    print(f"ERROR {desc}: second anchor not found exactly once in {rel}")
+                    return 2
+                text = text.replace(old2, new2)
+            target.write_text(text)
             r = subprocess.run([sys.executable, "-m", "pytest", "-q", "-p", "no:cacheprovider", "-x",
                                 "tests/", "-k", sel], cwd=work / "s", capture_output=True, text=True)
             ran += 1
             if r.returncode == 0:
                 survivors.append(desc)
                 print(f"SURVIVED {desc}  (-k {sel})")
-            elif r.returncode == 5:
-                print(f"ERROR {desc}: selector matched no tests: {sel}")
-                return 2
-            else:
+            elif r.returncode == 1:  # tests ran and at least one failed
                 print(f"KILLED   {desc}")
+            else:  # 2 interrupted, 3 internal, 4 usage, 5 no tests: not a kill
+                print(f"ERROR {desc}: pytest exit {r.returncode} (-k {sel})\n{r.stdout[-800:]}")
+                return 2
         finally:
             shutil.rmtree(work, ignore_errors=True)
     print(f"\n{ran - len(survivors)}/{ran} mutations killed")

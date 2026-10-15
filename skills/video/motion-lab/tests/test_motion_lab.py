@@ -335,6 +335,31 @@ class TestLintReviewRound3:
         assert ml.lint_text(html(style=".a { transition: transform 0s var(--d); }")) == []
 
 
+class TestLintReviewRound4:
+    """Cases from P20 round 4 (Strata B and C), reproduced first."""
+
+    @pytest.mark.parametrize("src,rule", [
+        ("window.renderAt = t => { el.style.transform = `rotate(${Math.random() * 360}deg)`; };", "MC03"),
+        ("const s = `${performance.now()}`;", "MC01"),
+        ("const s = `a ${ `b ${Date.now()}` } c`;", "MC01"),
+        ("const s = `${ setInterval(f, 9) }`;", "MC02"),
+    ])
+    def test_template_interpolation_is_code(self, src, rule):
+        assert rule in rules(ml.lint_text(html(src)), "error")
+
+    def test_template_text_stays_text(self):
+        assert ml.lint_text(html("const s = `Math.random() and Date.now() as words`;")) == []
+
+    def test_object_assign_exposes_renderat(self):
+        src = "const g = c.getContext('2d'); function renderAt(t) {} Object.assign(window, { renderAt }); requestAnimationFrame(f);"
+        assert not [f for f in ml.lint_text(html(src)) if f.rule == "MC04"]
+
+    def test_every_url_attribute_in_a_tag_is_checked(self):
+        doc = html().replace("<body>", '<body><video poster="local.jpg" src="https://cdn.example.com/clip.mp4"></video>')
+        found = ml.lint_text(doc)
+        assert "MC06" in rules(found, "error") and "MC07" in rules(found, "warn")
+
+
 class TestRenderAtReachable:
     """renderAt must be callable from page.evaluate, i.e. live on window."""
 
@@ -496,6 +521,13 @@ class TestGifReader:
             mm.read_gif_delays(b"\x89PNG\r\n\x1a\n")
         with pytest.raises(ValueError):
             mm.read_gif_delays(make_gif([4, 4])[:-6])
+
+    @pytest.mark.parametrize("cut", [6, 13, 14, 16, -1])
+    def test_any_truncation_is_a_value_error_not_a_crash(self, cut):
+        # round 4: a 6-byte GIF89a, a file ending after 0x21 or 0x2C, or one with no
+        # 0x3B trailer crashed with IndexError or reported 0 frames
+        with pytest.raises(ValueError):
+            mm.read_gif_delays(make_gif([4, 4])[:cut])
 
     def test_gif_check_reports_error_against_target(self, tmp_path):
         p = tmp_path / "a.gif"
