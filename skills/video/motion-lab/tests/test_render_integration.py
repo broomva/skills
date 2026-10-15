@@ -175,13 +175,15 @@ class TestRender:
 
     def test_a_hung_renderat_times_out_with_exit_5(self, tmp_path):
         env = {**os.environ, "MOTION_LAB_FRAME_TIMEOUT_MS": "1000"}
-        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "hang.html"), "--seconds", "0.25",
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "hang.html"), "--seconds", "1",
                             "--fps", "12", "--width", "160", "--height", "90", "--out", str(tmp_path), "--no-sheet"],
                            cwd=NODE_DIR, env=env, capture_output=True, text=True, timeout=90)
         m = json.loads(r.stdout)
         # an async hang still lets screenshots work, so only the timeout path stops
-        # the render: without it every later frame would pay the timeout too
-        assert r.returncode == 5 and "timed out" in m["page_errors"][0] and m["aborted_at_frame"] == 1
+        # the render: without it every later frame pays the timeout too, and each
+        # one is recorded
+        timeouts = [e for e in m["page_errors"] if "timed out" in e]
+        assert r.returncode == 5 and m["aborted_at_frame"] == 6 and len(timeouts) == 1, m["page_errors"]
 
     def test_local_files_outside_the_input_dir_are_blocked(self, tmp_path):
         page = tmp_path / "page"
@@ -235,7 +237,7 @@ class TestRender:
                             "--fps", "12", "--width", "160", "--height", "90", "--out", str(tmp_path), "--no-sheet"],
                            cwd=NODE_DIR, env=env, capture_output=True, text=True, timeout=60)
         m = json.loads((tmp_path / "manifest.json").read_text())
-        assert r.returncode == 5 and m["aborted_at_frame"] == 1 and "timed out" in m["page_errors"][0]
+        assert r.returncode == 5 and m["aborted_at_frame"] == 6 and "timed out" in m["page_errors"][0]
 
     def test_symlinks_and_dotfiles_cannot_leak_into_frames(self, tmp_path):
         page = tmp_path / "page"
@@ -251,6 +253,64 @@ class TestRender:
                            cwd=NODE_DIR, capture_output=True, text=True, timeout=120)
         blocked = json.loads(r.stdout)["blocked_requests"]
         assert any(u.endswith("up/secret.txt") for u in blocked) and any(u.endswith("/.env") for u in blocked)
+
+    @pytest.mark.parametrize("fixture,reference", [
+        ("paused_css.html", "paused_css_reference.html"),        # no renderAt, CSS paused under ?t=
+        ("mixed_frozen.html", "mixed_reference.html"),           # renderAt + a decorative spinner the page froze
+        ("scrub_negdelay_inline.html", "scrub_reference.html"),  # renderAt pauses and scrubs inline
+    ])
+    def test_ownership_is_tested_not_guessed(self, tmp_path, fixture, reference):
+        # round 6: "paused by the page = the page's" froze pages nothing drove, and
+        # deciding before renderAt ran doubled an inline scrub. Each page must render
+        # byte-identical to a reference that has no pause / sets the pose directly.
+        args = ["--seconds", "1", "--fps", "8", "--width", "160", "--height", "90", "--no-sheet"]
+        for src, out in ((FIX / fixture, tmp_path / "a"), (FIX / reference, tmp_path / "b")):
+            r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(src), "--out", str(out), *args],
+                               cwd=NODE_DIR, capture_output=True, text=True, timeout=120)
+            assert r.returncode == 0, r.stdout + r.stderr
+        assert digests(tmp_path / "a") == digests(tmp_path / "b")
+        assert len(set(digests(tmp_path / "a"))) == 8
+
+    def test_a_hang_at_t0_aborts_in_the_warm_up_with_a_manifest(self, tmp_path):
+        env = {**os.environ, "MOTION_LAB_FRAME_TIMEOUT_MS": "1500"}
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "hang0.html"), "--seconds", "1",
+                            "--fps", "12", "--width", "160", "--height", "90", "--out", str(tmp_path), "--no-sheet"],
+                           cwd=NODE_DIR, env=env, capture_output=True, text=True, timeout=60)
+        m = json.loads((tmp_path / "manifest.json").read_text())
+        assert r.returncode == 5 and m["aborted_at_frame"] == 0 and "timed out" in m["page_errors"][0]
+
+    def test_a_symlinked_input_renders(self, tmp_path):
+        (tmp_path / "real").mkdir()
+        (tmp_path / "link").mkdir()
+        (tmp_path / "real" / "anim.html").write_text((FIX / "good.html").read_text())
+        (tmp_path / "link" / "anim.html").symlink_to(tmp_path / "real" / "anim.html")
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(tmp_path / "link" / "anim.html"),
+                            "--seconds", "0.5", "--fps", "8", "--width", "160", "--height", "90",
+                            "--out", str(tmp_path / "out"), "--no-sheet"], cwd=NODE_DIR, capture_output=True, text=True,
+                           timeout=120)
+        assert r.returncode == 0, r.stdout + r.stderr
+
+    def test_stale_outputs_from_an_earlier_run_are_removed(self, tmp_path):
+        for name in ("contact.png", "anim.mp4", "manifest.json"):
+            (tmp_path / name).write_text("stale")
+        assert render("good.html", tmp_path, "--no-sheet").returncode == 0
+        assert not (tmp_path / "contact.png").exists() and not (tmp_path / "anim.mp4").exists()
+        assert json.loads((tmp_path / "manifest.json").read_text())["frames"] == 12
+
+    def test_directory_urls_are_refused(self, tmp_path):
+        page = tmp_path / "page"
+        page.mkdir()
+        (page / "assets").mkdir()
+        (page / "assets" / "a.txt").write_text("asset")
+        (page / "index.html").write_text(
+            '<!doctype html><body><iframe src="./"></iframe><iframe src="assets/"></iframe>'
+            '<style>@keyframes x{to{transform:translateX(9px)}} div{animation:x 1s infinite}</style><div>.</div></body>')
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(page / "index.html"), "--seconds", "0.25",
+                            "--fps", "12", "--width", "160", "--height", "90", "--out", str(tmp_path / "out"), "--no-sheet"],
+                           cwd=NODE_DIR, capture_output=True, text=True, timeout=120)
+        blocked = json.loads(r.stdout)["blocked_requests"]
+        assert any(u.rstrip("/").endswith("/page") for u in blocked)
+        assert any(u.rstrip("/").endswith("/page/assets") for u in blocked)  # a subdirectory listing, too
 
 
 needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")

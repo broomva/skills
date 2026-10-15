@@ -110,12 +110,14 @@ and this skill is built to keep them:
 
    It writes `out/frames/0000.png…` for frames 0..N-1, `out/contact.png` (up to 12
    frames labelled with their numbers), and `out/manifest.json`. For each frame the
-   renderer first seeks the animations it owns (every `document.getAnimations()`
-   entry it found running) and the SVG SMIL timelines (`<animate>` is not in
-   `getAnimations()`), then calls `renderAt(t)` last, so `renderAt` wins for anything
-   it sets itself. An animation the page paused on its own is the page's (a scrub
-   driven by a negative `animation-delay`, a WAAPI animation `renderAt` positions)
-   and is left alone (`driven_by.page_owned`). `--verify` reloads the page
+   renderer first seeks its animations (`document.getAnimations()`) and the SVG
+   SMIL timelines (`<animate>` is not in `getAnimations()`), then calls `renderAt(t)`
+   last, so `renderAt` wins for anything it sets itself. Which animations are the
+   page's is tested, not guessed: during the warm-up the renderer calls `renderAt`
+   at two times, and a paused animation whose timing changed between them is
+   driven by `renderAt` (a scrub through a negative `animation-delay`, a WAAPI
+   animation it positions) and is left alone (`driven_by.page_owned`). Every other
+   animation is seeked to t, including CSS the page froze under `?t=`. `--verify` reloads the page
    and re-renders the first, middle and last frames; if any byte differs, a frame
    is not a pure function of t. This catches what the linter cannot, such as a
    `renderAt` that reads a counter. `--verify-all` re-renders every frame, in
@@ -133,7 +135,10 @@ and this skill is built to keep them:
    | 4 | `--mp4` failed |
    | 5 | the page threw, or a `renderAt` call did not finish within 30 s (`page_errors` in the manifest; `MOTION_LAB_FRAME_TIMEOUT_MS` overrides) |
    | 6 | nothing drives motion, so every frame is the same image (`--allow-static` for a still) |
-   | 7 | a frozen frame keeps changing on its own: something still draws while the page is frozen at `t` (a preview loop its `?t=` guard does not stop, a timer chain, a worker) |
+   | 7 | a frozen frame keeps changing on its own: something still draws while the page is frozen at `t` (a preview loop its `?t=` guard does not stop, a timer chain, a worker, a transition `renderAt` starts) |
+
+   When several apply, one code is reported by precedence 3 > 5 > 7 > 6 > 4
+   (`manifest.exit_code`); the manifest lists every finding.
 
    Exit 7 is a drift check, not a code reading: the renderer seeks a frame,
    screenshots it, waits 250 ms, and screenshots again (`manifest.drift`). It does
@@ -146,14 +151,19 @@ and this skill is built to keep them:
    and the manifest says so when the page scheduled frames but nothing drifted.
    `manifest.loop_probe` still counts the page's `requestAnimationFrame` and
    `setInterval` calls, as a diagnostic. A `renderAt` that throws for some `t` is
-   recorded in `page_errors` (exit 5) and the render continues; one that times out
-   stops the render there (`aborted_at_frame`), since a hung page hangs every later
-   frame too, and the manifest is still written.
+   recorded in `page_errors` (exit 5) and the render continues; one that times out,
+   in the warm-up or in any frame, stops the render there (`aborted_at_frame`),
+   since a hung page hangs every later frame too, and the manifest is still
+   written. Earlier `contact.png`, `anim.mp4` and `manifest.json` in `--out` are
+   removed first, so an aborted run never leaves a previous run's outputs looking
+   current.
 
-   The input is treated as untrusted: a `file://` request is served only when its
-   real path (symlinks resolved) lies inside the input file's directory and no path
-   segment below it starts with a dot (`.env`, `.git`). Everything else is blocked
-   and listed in `manifest.blocked_requests`. Other files in that directory remain
+   The input is treated as untrusted: a `file://` request is served only when it is
+   a regular file whose real path (symlinks resolved) lies inside the real input
+   file's directory, with no path segment below it starting with a dot (`.env`,
+   `.git`). Directory URLs and everything else are blocked and listed in
+   `manifest.blocked_requests`. A symlinked input renders from its target's
+   directory. Other files in that directory remain
    readable by the page, so render untrusted HTML from a directory that holds only
    its assets. Only `NNNN.png` files are removed from
    `out/frames/` before a render, and only after Playwright has loaded.

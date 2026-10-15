@@ -233,8 +233,8 @@ JS_KEEP_RULES = [
 # renderAt reachable from page.evaluate: assigned on window/globalThis/self, or a
 # top-level `function renderAt` / `var renderAt` in a classic (non-module) script.
 RENDER_AT_EXPOSED = re.compile(
-    r"\b(?:window|globalThis|self)\s*(?:\.\s*renderAt|\[\s*['\"`]renderAt['\"`]\s*\])\s*=(?!=)"
-    r"|\bObject\.(?:assign|defineProperty)\s*\(\s*(?:window|globalThis|self)\b[^;)\n]{0,200}\brenderAt\b")
+    r"\b(?:window|globalThis|self)\s*(?:\.\s*renderAt|\[\s*['\"`]renderAt['\"`]\s*\])\s*=(?!=)")
+OBJECT_CALL = re.compile(r"\bObject\.(?:assign|defineProperty|defineProperties)\s*\(")
 RENDER_AT_GLOBAL_DECL = re.compile(r"\b(?:async\s+)?function\s+renderAt\b")
 RENDER_AT_VAR = re.compile(r"\bvar\s+renderAt\b")  # function-scoped: global unless inside a function
 # Evidence that JavaScript drives motion. A canvas context alone is not: a canvas
@@ -315,6 +315,24 @@ def render_at_spans(blank: str) -> list[tuple[int, int]]:
     return spans
 
 
+def exposed_by_object_call(keep: str, blank: str) -> bool:
+    """Object.assign(window, { renderAt }) / Object.defineProperty(window, 'renderAt', ...).
+
+    The call's argument span is found by bracket matching on the string-blanked
+    view, so a multi-line object literal and nested calls inside it are handled
+    (round 6), and the match cannot run on into the next statement (round 5).
+    """
+    for m in OBJECT_CALL.finditer(blank):
+        depth, j = 1, m.end()
+        while j < len(blank) and depth:
+            depth += {"(": 1, "[": 1, "{": 1, ")": -1, "]": -1, "}": -1}.get(blank[j], 0)
+            j += 1
+        args = keep[m.end():j - 1]
+        if re.match(r"\s*(?:window|globalThis|self)\b", args) and re.search(r"\brenderAt\b", args):
+            return True
+    return False
+
+
 def depth_at(blank: str, pos: int) -> int:
     """Brace depth at pos (strings and comments already blanked).
 
@@ -375,7 +393,9 @@ def guard_wraps(blank: str, keep: str, clock_pos: int) -> bool:
     for g in T_PARAM.finditer(keep):
         if g.start() >= clock_pos:
             break
-        negated = re.search(r"!\s*[\w$.]*\s*$", keep[max(0, g.start() - 40):g.start()])
+        head = keep[max(0, g.start() - 200):g.start()]
+        cond = re.search(r"\bif\s*\(([^;{}]*)$", head)  # the open if-condition holding the check
+        negated = re.search(r"!\s*[\w$.]*\s*$", head[-40:]) or (cond and cond.group(1).lstrip().startswith("!"))
         between = blank[g.end():clock_pos]
         if negated or re.search(r"\belse\b", between) or re.search(r"\breturn\b", between):
             return True
@@ -393,7 +413,7 @@ def lint_text(text: str, is_html: bool = True) -> list[Finding]:
         if b.kind == "script":
             keep, blank = strip_js(b.body)
             js_views.append((b.start, keep, blank))
-            if RENDER_AT_EXPOSED.search(keep) or (not b.module and (any(
+            if RENDER_AT_EXPOSED.search(keep) or exposed_by_object_call(keep, blank) or (not b.module and (any(
                     depth_at(blank, m.start()) == 0 for m in RENDER_AT_GLOBAL_DECL.finditer(blank))
                     or any(not in_function(blank, m.start()) for m in RENDER_AT_VAR.finditer(blank)))):
                 exposed = True

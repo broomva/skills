@@ -376,6 +376,23 @@ class TestLintReviewRound5:
         assert r.returncode == 2 and "nested too deeply" in r.stderr
 
 
+class TestLintReviewRound6:
+    """Cases from P20 round 6 (Strata B and C), reproduced first."""
+
+    @pytest.mark.parametrize("src", [
+        "const g = c.getContext('2d')\nconst renderAt = (t) => {}\nObject.assign(window, {\n  renderAt,\n})\nrequestAnimationFrame(f)",
+        "const g = c.getContext('2d'); const renderAt = t => {}; Object.assign(window, { ready: Promise.resolve(), renderAt }); requestAnimationFrame(f);",
+        "const g = c.getContext('2d'); const renderAt = t => {}; Object.defineProperty(window, 'renderAt', { value: renderAt }); requestAnimationFrame(f);",
+    ])
+    def test_object_calls_that_expose_renderat(self, src):
+        doc = f'<html><body><script type="module">{src}</script></body></html>'
+        assert not [f for f in ml.lint_text(doc) if f.rule == "MC04"]
+
+    def test_an_inline_negated_guard_excuses_the_loop(self):
+        src = "window.renderAt = t => {}; if (!new URLSearchParams(location.search).has('t')) { requestAnimationFrame(f); }"
+        assert [f.severity for f in ml.lint_text(html(src)) if f.rule == "MC01"] == ["warn"]
+
+
 class TestRenderAtReachable:
     """renderAt must be callable from page.evaluate, i.e. live on window."""
 

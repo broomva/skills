@@ -1,0 +1,19 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;background:#fff}
+  .spin{position:absolute;left:110px;top:20px;width:30px;height:30px;background:#D97757;
+        animation:spin 1s linear infinite}
+  @keyframes spin{to{transform:rotate(360deg)}}
+
+</style></head>
+<body><canvas id="c" width="100" height="90"></canvas><div class="spin"></div>
+<script>
+  // renderAt draws the canvas; a decorative CSS spinner the page froze under ?t=
+  // is NOT driven by renderAt, so the renderer must still seek it.
+  const ctx = document.getElementById('c').getContext('2d');
+  window.renderAt = function (t) {
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 100, 90);
+    ctx.fillStyle = '#000'; ctx.fillRect((t * 40) % 90, 40, 10, 10);
+  };
+
+</script></body></html>
