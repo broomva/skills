@@ -90,7 +90,7 @@ and this skill is built to keep them:
    | MC01 | `Date.now`, `Date()`, `new Date`, `performance.now`, `requestAnimationFrame`, a three.js `Clock` / `getElapsedTime` / `getDelta`, `document.timeline` | ERROR; WARN when `renderAt` and a `?t=` guard exist (live preview), but always ERROR inside `renderAt` itself |
    | MC02 | `setTimeout` / `setInterval` | ERROR |
    | MC03 | `Math.random` (also `Math["random"]`, `const {random} = Math`) / `getRandomValues` | ERROR |
-   | MC04 | Canvas / WebGL / three.js / GSAP / rAF motion with no `window.renderAt(t)` | ERROR |
+   | MC04 | Canvas / WebGL / three.js / GSAP / rAF motion with no `window.renderAt(t)`, or a `renderAt` the renderer cannot reach (a `const`/`let`, or declared inside a `type="module"` script) | ERROR |
    | MC05 | a CSS transition with a non-zero duration, in CSS, a `style=""` attribute or set from JS | ERROR |
    | MC06 | `fetch` / XHR / WebSocket, or a *loaded* remote URL (src/href, importmap, `url()`, a JS import, a JS string naming a loadable file) that is not a font host and not pinned to `MAJOR.MINOR.PATCH`. A URL that is only text, like the SVG namespace, is not checked | ERROR |
    | MC07 | a local `src`/`href` (not one self-contained file) | WARN |

@@ -74,6 +74,8 @@ MUTATIONS = [
     ("unseeked GSAP not reported", "scripts/motion_lint.py",
      "    if re.search(r\"\\bgsap\\b\", all_js_blank) and not GSAP_SEEKED.search(all_js_blank):",
      "    if False:", "test_unseeked_gsap", False),
+    ("unreachable renderAt accepted", "scripts/motion_lint.py",
+     "    if is_html and has_render_at and not exposed:", "    if False:", "test_unreachable_renderat", False),
     ("renderAt not called", "scripts/render.mjs",
      "if (typeof window.renderAt === 'function') { await window.renderAt(tt); drew = true; }", "",
      "test_frames_actually_change or test_renders_frames_0_to_n", True),

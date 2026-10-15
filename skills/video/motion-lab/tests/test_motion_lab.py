@@ -234,6 +234,29 @@ class TestLintReviewRound1:
         assert rules(ml.lint_text(doc), "warn") == {"MC10"}
 
 
+class TestRenderAtReachable:
+    """renderAt must be callable from page.evaluate, i.e. live on window."""
+
+    @pytest.mark.parametrize("src,module", [
+        ("const c = x.getContext('2d'); function renderAt(t) {}", True),   # module scope
+        ("const c = x.getContext('2d'); const renderAt = t => {};", False),  # lexical binding
+        ("const c = x.getContext('2d'); let renderAt = function (t) {};", False),
+    ])
+    def test_unreachable_renderat_is_mc04(self, src, module):
+        tag = '<script type="module">' if module else "<script>"
+        found = ml.lint_text(f"<html><body>{tag}{src}</script></body></html>")
+        assert [f for f in found if f.rule == "MC04" and "not on window" in f.message]
+
+    @pytest.mark.parametrize("src,module", [
+        ("const c = x.getContext('2d');\nfunction renderAt(t) {}", False),
+        ("const c = x.getContext('2d'); window.renderAt = t => {};", True),
+        ("globalThis.renderAt = t => {};", True),
+    ])
+    def test_reachable_renderat_passes(self, src, module):
+        tag = '<script type="module">' if module else "<script>"
+        assert "MC04" not in rules(ml.lint_text(f"<html><body>{tag}{src}</script></body></html>"))
+
+
 class TestLintCli:
     def run(self, *args):
         return subprocess.run([sys.executable, str(SKILL / "scripts" / "motion_lint.py"), *args],

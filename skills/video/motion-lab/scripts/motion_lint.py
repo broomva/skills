@@ -18,8 +18,9 @@ an HTML file (or a bare .js/.mjs/.ts/.tsx module):
                     crypto.getRandomValues: unseeded randomness makes shapes
                     jitter frame to frame.
   MC04 renderAt     JS-driven motion (canvas, WebGL, three.js, GSAP, rAF) with no
-                    window.renderAt(t). CSS-only motion is exempt: the renderer
-                    seeks document.getAnimations() directly.
+                    window.renderAt(t), or a renderAt that is not on window (a
+                    const/let, or declared in a type=module script). CSS-only and
+                    SMIL motion are exempt: the renderer seeks them directly.
   MC05 transition   a CSS transition with a non-zero duration, in a <style> block,
                     a style="" attribute or set from JS (state-triggered, so not
                     seekable by t).
@@ -150,18 +151,20 @@ class Block:
     kind: str  # "script" | "style" | "importmap"
     start: int  # offset of the block body in the whole file
     body: str
+    module: bool = False  # <script type="module">: top-level names are NOT on window
 
 
 def blocks_of(text: str, is_html: bool) -> list[Block]:
     if not is_html:
-        return [Block("script", 0, text)]
+        return [Block("script", 0, text, module=True)]
     out: list[Block] = []
     for m in _SCRIPT.finditer(text):
         attrs = m.group(1)
         kind = "importmap" if re.search(r"type\s*=\s*['\"]importmap['\"]", attrs, re.I) else "script"
         if re.search(r"type\s*=\s*['\"](?:text/template|text/x-|application/json|x-shader)", attrs, re.I):
             continue  # inert data: shader source or JSON, not executed JS
-        out.append(Block(kind, m.start(2), m.group(2)))
+        module = bool(re.search(r"type\s*=\s*['\"]module['\"]", attrs, re.I))
+        out.append(Block(kind, m.start(2), m.group(2), module))
     for m in _STYLE.finditer(text):
         out.append(Block("style", m.start(1), m.group(1)))
     return out
@@ -183,6 +186,10 @@ JS_KEEP_RULES = [
     ("MC03", re.compile(r"\bMath\s*\[\s*['\"`]random['\"`]\s*\]|\{[^{}]*\brandom\b[^{}]*\}\s*=\s*Math\b"), "unseeded randomness"),
     ("MC05", re.compile(r"\.style\.setProperty\s*\(\s*['\"`]transition"), "CSS transition set from JS"),
 ]
+# renderAt reachable from page.evaluate: assigned on window/globalThis/self, or a
+# top-level `function renderAt` / `var renderAt` in a classic (non-module) script.
+RENDER_AT_EXPOSED = re.compile(r"\b(?:window|globalThis|self)\s*\.\s*renderAt\s*=(?!=)")
+RENDER_AT_GLOBAL_DECL = re.compile(r"(?m)^\s*(?:async\s+)?function\s+renderAt\b|^\s*var\s+renderAt\b")
 MOTION_JS = re.compile(r"getContext\s*\(|\bTHREE\b|from\s*['\"]three|\bgsap\b|requestAnimationFrame|WebGLRenderer")
 RENDER_AT = re.compile(r"\brenderAt\s*=|\bfunction\s+renderAt\b|\brenderAt\s*:")
 T_PARAM = re.compile(r"\.(?:has|get)\s*\(\s*['\"`]t['\"`]\s*\)")
@@ -269,10 +276,13 @@ def lint_text(text: str, is_html: bool = True) -> list[Finding]:
     blocks = blocks_of(text, is_html)
 
     js_views: list[tuple[int, str, str]] = []
+    exposed = False  # does some script put renderAt on window?
     for b in blocks:
         if b.kind == "script":
             keep, blank = strip_js(b.body)
             js_views.append((b.start, keep, blank))
+            if RENDER_AT_EXPOSED.search(blank) or (not b.module and RENDER_AT_GLOBAL_DECL.search(blank)):
+                exposed = True
     all_js_keep = "\n".join(k for _, k, _ in js_views)
     all_js_blank = "\n".join(bl for _, _, bl in js_views)
 
@@ -301,6 +311,13 @@ def lint_text(text: str, is_html: bool = True) -> list[Finding]:
         for m in _URL.finditer(keep):
             if is_load(keep, m):
                 check_url(m.group(0), line_of(text, start + m.start()), findings)
+
+    # MC04b — a renderAt the renderer cannot reach (const/let, or a module scope)
+    if is_html and has_render_at and not exposed:
+        m = RENDER_AT.search(text)
+        findings.append(Finding("MC04", "error", line_of(text, m.start()) if m else 1,
+            "renderAt is defined but not on window (a const/let, or inside a type=module script): "
+            "assign window.renderAt = ... so the renderer can call it"))
 
     # MC10 — motion that runs on its own clock
     if re.search(r"\bgsap\b", all_js_blank) and not GSAP_SEEKED.search(all_js_blank):

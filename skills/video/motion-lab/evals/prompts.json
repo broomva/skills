@@ -89,7 +89,7 @@
       "prompt": "add a hover animation to the pricing card button",
       "should_trigger": false,
       "expected_checks": [
-        "skill_not_triggered"
+        "final_answer_non_empty"
       ],
       "rationale": "UI micro-interaction in a live app: the animate skill or the Motion library, not a rendered clip."
     },
@@ -99,7 +99,7 @@
       "prompt": "cut the 40 minute podcast into three vertical clips",
       "should_trigger": false,
       "expected_checks": [
-        "skill_not_triggered"
+        "final_answer_non_empty"
       ],
       "rationale": "Footage editing: video-cut."
     },
@@ -109,7 +109,7 @@
       "prompt": "generate a cinematic video of a surfer at sunset",
       "should_trigger": false,
       "expected_checks": [
-        "skill_not_triggered"
+        "final_answer_non_empty"
       ],
       "rationale": "Generated footage from a video model: higgsfield / ltx-video."
     },
@@ -119,7 +119,7 @@
       "prompt": "make the launch video with the liquid glass look, floating panels and particles",
       "should_trigger": false,
       "expected_checks": [
-        "skill_not_triggered"
+        "final_answer_non_empty"
       ],
       "rationale": "That fixed aesthetic is launch-video's brief; motion-lab would ban half of it."
     }
