@@ -170,6 +170,8 @@ def read_gif_delays(data: bytes) -> list[int]:
     packed = data[10]
     if packed & 0x80:
         pos += 3 * (2 ** ((packed & 0x07) + 1))
+        if pos > len(data):
+            raise ValueError("truncated GIF: in the global colour table")
 
     def skip_sub_blocks(p: int) -> int:
         while True:

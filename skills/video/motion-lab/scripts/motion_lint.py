@@ -234,7 +234,7 @@ JS_KEEP_RULES = [
 # top-level `function renderAt` / `var renderAt` in a classic (non-module) script.
 RENDER_AT_EXPOSED = re.compile(
     r"\b(?:window|globalThis|self)\s*(?:\.\s*renderAt|\[\s*['\"`]renderAt['\"`]\s*\])\s*=(?!=)"
-    r"|\bObject\.(?:assign|defineProperty)\s*\(\s*(?:window|globalThis|self)\b[^;]*\brenderAt\b")
+    r"|\bObject\.(?:assign|defineProperty)\s*\(\s*(?:window|globalThis|self)\b[^;)\n]{0,200}\brenderAt\b")
 RENDER_AT_GLOBAL_DECL = re.compile(r"\b(?:async\s+)?function\s+renderAt\b")
 RENDER_AT_VAR = re.compile(r"\bvar\s+renderAt\b")  # function-scoped: global unless inside a function
 # Evidence that JavaScript drives motion. A canvas context alone is not: a canvas
@@ -535,6 +535,11 @@ def main(argv: list[str] | None = None) -> int:
             found = lint_path(f)
         except (OSError, UnicodeDecodeError) as e:
             print(f"motion_lint: cannot read {f}: {e}", file=sys.stderr)
+            return 2
+        except RecursionError:
+            # pathologically nested template literals: a usage-level failure, not a
+            # finding, so it must not exit 1 (the "ERROR found" code)
+            print(f"motion_lint: {f}: template literals nested too deeply to scan", file=sys.stderr)
             return 2
         report[str(f)] = found
         if any(x.severity == "error" or (args.strict and x.severity == "warn") for x in found):

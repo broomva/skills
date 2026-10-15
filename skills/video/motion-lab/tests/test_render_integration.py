@@ -60,7 +60,7 @@ class TestRender:
         assert m["frames"] == 12 and m["render_range"] == [0, 11]
         assert len(list((tmp_path / "frames").glob("*.png"))) == 12
         assert (tmp_path / "contact.png").stat().st_size > 0
-        assert m["verify"]["pure"] is True and m["driven_by"] == {"renderAt": True, "animations": 1, "smil": 0}
+        assert m["verify"]["pure"] is True and m["driven_by"] == {"renderAt": True, "animations": 1, "smil": 0, "page_owned": 0}
 
     def test_frames_actually_change_over_time(self, tmp_path):
         render("good.html", tmp_path, "--no-sheet")
@@ -126,10 +126,12 @@ class TestRender:
         assert picks[0] == 0 and picks[-1] == 23 and len(picks) == 12
 
     def test_verify_reports_its_scope_and_verify_all_checks_every_frame(self, tmp_path):
-        sampled = json.loads(render("impure.html", tmp_path / "s", "--verify", "--no-sheet").stdout)["verify"]
-        full = json.loads(render("impure.html", tmp_path / "a", "--verify-all", "--no-sheet").stdout)["verify"]
+        # history.html replays exactly when re-rendered in rising order; only the
+        # reverse-order --verify-all exposes it (an in-order check found 0 mismatches)
+        sampled = json.loads(render("history.html", tmp_path / "s", "--verify", "--no-sheet").stdout)["verify"]
+        full = json.loads(render("history.html", tmp_path / "a", "--verify-all", "--no-sheet").stdout)["verify"]
         assert sampled["scope"] == "sampled 3 of 12 frames" and full["scope"] == "all 12 frames"
-        assert len(full["mismatches"]) > len(sampled["mismatches"])
+        assert full["mismatches"] and len(full["mismatches"]) > len(sampled["mismatches"])
 
     def test_undriven_motion_is_reported_not_called_static(self, tmp_path):
         r = render("undriven.html", tmp_path, "--no-sheet")
@@ -176,7 +178,10 @@ class TestRender:
         r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "hang.html"), "--seconds", "0.25",
                             "--fps", "12", "--width", "160", "--height", "90", "--out", str(tmp_path), "--no-sheet"],
                            cwd=NODE_DIR, env=env, capture_output=True, text=True, timeout=90)
-        assert r.returncode == 5 and "timed out" in json.loads(r.stdout)["page_errors"][0]
+        m = json.loads(r.stdout)
+        # an async hang still lets screenshots work, so only the timeout path stops
+        # the render: without it every later frame would pay the timeout too
+        assert r.returncode == 5 and "timed out" in m["page_errors"][0] and m["aborted_at_frame"] == 1
 
     def test_local_files_outside_the_input_dir_are_blocked(self, tmp_path):
         page = tmp_path / "page"
@@ -203,6 +208,49 @@ class TestRender:
         r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX)], cwd=NODE_DIR,
                            capture_output=True, text=True)
         assert r.returncode == 2 and "not a file" in r.stderr
+
+    @pytest.mark.parametrize("fixture,offset", [("scrub_negdelay.html", "0"), ("scrub_waapi.html", "0.25")])
+    def test_renderat_wins_over_the_renderers_own_seek(self, tmp_path, fixture, offset):
+        # round 5: seeking every animation AFTER renderAt doubled a negative-delay
+        # scrub and overwrote a WAAPI offset. Each scrub page must match a reference
+        # that sets the same transform directly.
+        ref = tmp_path / "ref.html"
+        ref.write_text((FIX / "scrub_reference.html").read_text().replace("get('offset') || '0'", f"get('offset') || '{offset}'"))
+        args = ["--seconds", "1", "--fps", "8", "--width", "160", "--height", "90", "--no-sheet"]
+        for src, out in ((FIX / fixture, tmp_path / "a"), (ref, tmp_path / "b")):
+            r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(src), "--out", str(out), *args],
+                               cwd=NODE_DIR, capture_output=True, text=True, timeout=120)
+            assert r.returncode == 0, r.stdout + r.stderr
+        assert digests(tmp_path / "a") == digests(tmp_path / "b")
+        assert len(set(digests(tmp_path / "a"))) > 2  # it actually moves
+
+    def test_a_one_shot_intro_is_caught_by_the_early_drift_sample(self, tmp_path):
+        r = render("intro_oneshot.html", tmp_path, "--no-sheet")
+        m = json.loads(r.stdout)
+        assert r.returncode == 7 and m["drift"]["early"] is True
+
+    def test_a_synchronous_hang_aborts_fast_with_a_manifest(self, tmp_path):
+        env = {**os.environ, "MOTION_LAB_FRAME_TIMEOUT_MS": "1500"}
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "hang_sync.html"), "--seconds", "1",
+                            "--fps", "12", "--width", "160", "--height", "90", "--out", str(tmp_path), "--no-sheet"],
+                           cwd=NODE_DIR, env=env, capture_output=True, text=True, timeout=60)
+        m = json.loads((tmp_path / "manifest.json").read_text())
+        assert r.returncode == 5 and m["aborted_at_frame"] == 1 and "timed out" in m["page_errors"][0]
+
+    def test_symlinks_and_dotfiles_cannot_leak_into_frames(self, tmp_path):
+        page = tmp_path / "page"
+        page.mkdir()
+        (tmp_path / "secret.txt").write_text("TOKEN=outside")
+        (page / ".env").write_text("API_KEY=sibling")
+        (page / "up").symlink_to(tmp_path)
+        (page / "index.html").write_text(
+            '<!doctype html><body><iframe src="up/secret.txt"></iframe><iframe src=".env"></iframe>'
+            '<style>@keyframes x{to{transform:translateX(9px)}} div{animation:x 1s infinite}</style><div>.</div></body>')
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(page / "index.html"), "--seconds", "0.25",
+                            "--fps", "12", "--width", "160", "--height", "90", "--out", str(tmp_path / "out"), "--no-sheet"],
+                           cwd=NODE_DIR, capture_output=True, text=True, timeout=120)
+        blocked = json.loads(r.stdout)["blocked_requests"]
+        assert any(u.endswith("up/secret.txt") for u in blocked) and any(u.endswith("/.env") for u in blocked)
 
 
 needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")

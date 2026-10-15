@@ -109,9 +109,13 @@ and this skill is built to keep them:
    ```
 
    It writes `out/frames/0000.png…` for frames 0..N-1, `out/contact.png` (up to 12
-   frames labelled with their numbers), and `out/manifest.json`. Each frame calls
-   `renderAt(t)`, seeks every `document.getAnimations()` entry, and seeks SVG SMIL
-   timelines (`<animate>` is not in `getAnimations()`). `--verify` reloads the page
+   frames labelled with their numbers), and `out/manifest.json`. For each frame the
+   renderer first seeks the animations it owns (every `document.getAnimations()`
+   entry it found running) and the SVG SMIL timelines (`<animate>` is not in
+   `getAnimations()`), then calls `renderAt(t)` last, so `renderAt` wins for anything
+   it sets itself. An animation the page paused on its own is the page's (a scrub
+   driven by a negative `animation-delay`, a WAAPI animation `renderAt` positions)
+   and is left alone (`driven_by.page_owned`). `--verify` reloads the page
    and re-renders the first, middle and last frames; if any byte differs, a frame
    is not a pure function of t. This catches what the linter cannot, such as a
    `renderAt` that reads a counter. `--verify-all` re-renders every frame, in
@@ -131,20 +135,27 @@ and this skill is built to keep them:
    | 6 | nothing drives motion, so every frame is the same image (`--allow-static` for a still) |
    | 7 | a frozen frame keeps changing on its own: something still draws while the page is frozen at `t` (a preview loop its `?t=` guard does not stop, a timer chain, a worker) |
 
-   Exit 7 is a drift check, not a code reading: the renderer seeks frames 0, N/2
-   and N-1, screenshots each, waits 250 ms, and screenshots again
-   (`manifest.drift`). A pixel that changes while frozen is what corrupts a render,
+   Exit 7 is a drift check, not a code reading: the renderer seeks a frame,
+   screenshots it, waits 250 ms, and screenshots again (`manifest.drift`). It does
+   this once right after load (catching an intro that plays for a while and then
+   stops) and at frames 0, N/2 and N-1 after the render. A pixel that changes while frozen is what corrupts a render,
    and the check sees it however the loop is written: `requestAnimationFrame`,
    three.js `setAnimationLoop`, a `setTimeout` chain, a worker. A paused GSAP
    timeline keeps its ticker running but draws nothing, so it passes. A loop that
-   only redraws slower than 250 ms can slip past; `--verify` is the backstop.
+   only redraws slower than 250 ms can slip past; `--verify-all` is the backstop,
+   and the manifest says so when the page scheduled frames but nothing drifted.
    `manifest.loop_probe` still counts the page's `requestAnimationFrame` and
    `setInterval` calls, as a diagnostic. A `renderAt` that throws for some `t` is
-   recorded in `page_errors` (exit 5) and the render continues.
+   recorded in `page_errors` (exit 5) and the render continues; one that times out
+   stops the render there (`aborted_at_frame`), since a hung page hangs every later
+   frame too, and the manifest is still written.
 
-   The input is treated as untrusted: `file://` requests outside the input file's
-   directory are blocked (`manifest.blocked_requests`), so an `<iframe>` cannot put
-   a local file into a frame. Only `NNNN.png` files are removed from
+   The input is treated as untrusted: a `file://` request is served only when its
+   real path (symlinks resolved) lies inside the input file's directory and no path
+   segment below it starts with a dot (`.env`, `.git`). Everything else is blocked
+   and listed in `manifest.blocked_requests`. Other files in that directory remain
+   readable by the page, so render untrusted HTML from a directory that holds only
+   its assets. Only `NNNN.png` files are removed from
    `out/frames/` before a render, and only after Playwright has loaded.
 
 5. **Look, then fix with frame numbers.** Read `contact.png` first, then only the
@@ -226,6 +237,12 @@ later. Ambient motion stays under 5% of the hero's travel.
   does not know. `render.mjs --verify` is the runtime check, and it samples three
   frames in one session, not all of them. A clock that changes slower than the
   verify window (the minute of the hour, say) passes both gates.
+- The linter scans JavaScript with a small tokenizer, not a parser. A regex literal
+  that contains a quote or a backtick (``s.replace(/`/g, "'")``) can hide the code
+  after it; the runtime checks still see what that code does.
+- The warm-up that keeps frame 0 pure guards a compositor race seen on macOS
+  Chromium (24 of 25 cold runs failed without it). Ubuntu CI's headless Chromium
+  never shows the race, so its mutation runs only on macOS.
 - `--verify` compares bytes. WebGL on a different GPU or driver can differ by a few
   pixels between machines. Verify on the machine that renders.
 - Neither tool judges taste. The contact sheet and the frame-numbered notes are

@@ -360,6 +360,22 @@ class TestLintReviewRound4:
         assert "MC06" in rules(found, "error") and "MC07" in rules(found, "warn")
 
 
+class TestLintReviewRound5:
+    """Cases from P20 round 5 (Strata B and C), reproduced first."""
+
+    def test_object_assign_does_not_reach_across_statements(self):
+        doc = ('<html><body><script type="module">const g = c.getContext("2d")\n'
+               'Object.assign(window, { debug: true })\nconst renderAt = (t) => {}\nrequestAnimationFrame(f)\n'
+               '</script></body></html>')
+        assert [f for f in ml.lint_text(doc) if f.rule == "MC04" and "not on window" in f.message]
+
+    def test_deeply_nested_templates_exit_2_not_1(self, tmp_path):
+        f = tmp_path / "deep.html"
+        f.write_text("<html><body><script>const s = " + "`${" * 2000 + "1" + "}`" * 2000 + ";</script></body></html>")
+        r = subprocess.run([sys.executable, str(SKILL / "scripts" / "motion_lint.py"), str(f)], capture_output=True, text=True)
+        assert r.returncode == 2 and "nested too deeply" in r.stderr
+
+
 class TestRenderAtReachable:
     """renderAt must be callable from page.evaluate, i.e. live on window."""
 
@@ -521,6 +537,10 @@ class TestGifReader:
             mm.read_gif_delays(b"\x89PNG\r\n\x1a\n")
         with pytest.raises(ValueError):
             mm.read_gif_delays(make_gif([4, 4])[:-6])
+
+    def test_truncation_inside_the_colour_table_names_it(self):
+        with pytest.raises(ValueError, match="global colour table"):
+            mm.read_gif_delays(make_gif([4])[:15])
 
     @pytest.mark.parametrize("cut", [6, 13, 14, 16, -1])
     def test_any_truncation_is_a_value_error_not_a_crash(self, cut):
