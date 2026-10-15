@@ -274,8 +274,12 @@ def main(pm) -> None:
                     print("Switched to %s (ID: %s)%s" % (res["switchedTo"], res["accountId"],
                                                           "; saved the outgoing account's live tokens" if res.get("wroteBack") else ""))
         elif args.command == "login-headless":
-            res = pm.login_headless(email=args.email, browser=args.browser, profile=args.profile, force=args.force)
-            print(json.dumps(res, indent=2) if args.json else "Logged in %s (no switch)." % res["email"])
+            if getattr(args, "provider", "claude") == "codex":
+                res = pm.login_codex_headless(email=args.email)
+                print(json.dumps(res, indent=2) if args.json else "Logged in Codex %s." % res["email"])
+            else:
+                res = pm.login_headless(email=args.email, browser=args.browser, profile=args.profile, force=args.force)
+                print(json.dumps(res, indent=2) if args.json else "Logged in %s (no switch)." % res["email"])
         elif args.command == "rotate":
             res = pm.rotate_account(reason=args.reason, dry_run=args.dry_run, force=args.force)
             if args.json:
