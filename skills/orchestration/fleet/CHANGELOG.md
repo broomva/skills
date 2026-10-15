@@ -1,4 +1,40 @@
-# Changelog: fleet-reconcile
+# Changelog: fleet (fleet-reconcile until 0.6.0)
+
+## [0.6.0] - 2026-10-15
+
+The skill is renamed `fleet-reconcile` → `fleet`, and becomes an entry point
+that routes to workflows (BRO-3122; owner, 2026-10-15: "lets just name it
+fleet, and add specialization workflows like reconcile").
+
+- `skills/orchestration/fleet/`. SKILL.md is now short: what the fleet is, and
+  a routing table to `workflows/`. The old SKILL.md moved, whole, to
+  `workflows/reconcile.md` (the hourly tick).
+- New workflows, only where the practice already runs: `census` (bstack
+  orchestrator-tick base §4), `close-out` (§6) and `rollover` (§11, and the
+  broomva overlay's Rollover). Each states its trigger and a check you can
+  run, and links to the base instead of copying it.
+- CLI: `fleet reconcile [--scope S]` runs one tick by hand (tick.sh, forced
+  `DRY_RUN=1`); `fleet workflows` lists them; `fleet census|close-out|rollover`
+  print the procedure. `fleet --help` lists the workflows. Every existing verb
+  is unchanged.
+- `install.sh` pins `orchestration/fleet/{scripts,templates,workflows}` in a
+  release (was `orchestration/fleet-reconcile/{scripts,templates}`).
+- Kept on purpose: the launchd labels `com.broomva.fleet-reconcile.<scope>`,
+  `~/.local/state/fleet-reconcile/`, `~/.local/share/fleet-reconcile/releases/`,
+  the loop rows `fleet-reconcile-{broomva,sri}`, the Maestro initiative and
+  alert titles, and the module names `fleet_reconcile.py` and `fleetlib/`.
+  Maestro (`server/fleet.ts`, `server/paths.ts`) and the loop ledger read the
+  runtime names; renaming them would break the Fleet view and the loop ledger
+  for no user-visible gain.
+- Deprecated alias, for one release: `skills/orchestration/fleet-reconcile/`
+  holds a SKILL.md (`deprecated: fleet`) and `scripts/{fleet,install.sh,
+  tick.sh}`, which print one stderr line and forward here. So
+  `~/.claude/skills/fleet-reconcile` and `npx skills add broomva/skills
+  --skill fleet-reconcile` still resolve.
+- Tests: `test_layout.py` (each routed workflow exists and states a trigger
+  and a check; the CLI's list matches the table; the alias resolves and
+  forwards, directly and through a directory symlink; its send-gate keeps
+  exit 2), and `fleet reconcile` end to end in `test_tick.py`.
 
 ## [0.5.2] - 2026-10-12
 

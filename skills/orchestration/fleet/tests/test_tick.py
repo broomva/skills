@@ -716,3 +716,14 @@ def test_three_ticks_make_a_labelling_sheet(rig):
     assert out.returncode == 0, out.stderr
     md, csv_ = out.stdout.split()
     assert Path(md).is_file() and Path(csv_).read_text().startswith("row,tick,session")
+
+
+def test_fleet_reconcile_runs_one_tick_by_hand_and_it_is_dry_even_when_the_config_is_live(rig):
+    """`fleet reconcile` (BRO-3122) is the reconcile workflow's hand route: tick.sh, with DRY_RUN=1."""
+    rig.world.write_config(dry_run=0, live_accepted="phase 3, BRO-2755 and BRO-2756 done (test)")
+    r = rig.fleet("reconcile", "--scope", "broomva")
+    assert r.returncode == 0, r.stdout + r.stderr
+    assert re.search(r"fleet-reconcile broomva tick 1: recover=0 observe=0 report=0", r.stdout), r.stdout
+    td = rig.world.state["broomva"] / "ticks" / "00001"
+    assert (td / "report.md").is_file() and json.loads((td / "report.json").read_text())["dry_run"] is True
+    assert [x for x in rig.ledger() if x["kind"] == "tick_fire"][0]["dry_run"] is True

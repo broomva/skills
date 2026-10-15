@@ -1,4 +1,4 @@
-"""Shared fixtures for fleet-reconcile.
+"""Shared fixtures for the fleet skill (its reconcile tick).
 
 `world`: a scratch HOME holding real git repos laid out the way the captured
 fixture's path templates expect (tests/capture_fixtures.py):

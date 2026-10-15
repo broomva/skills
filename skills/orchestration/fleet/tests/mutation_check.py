@@ -605,6 +605,13 @@ PROTECTIONS = [
     ("a pre-init crash loses its exit code", "scripts/fleetlib/coordinator.py",
      '        res["posture"][0] += " (it exited %s)" % proc.returncode', "        pass",
      [T + "test_coordinator.py", "-k", "stream_ends"]),
+    # BRO-3122: SKILL.md routes to workflow files; a route to a missing file must fail the layout test.
+    ("a SKILL.md route to a missing workflow", "SKILL.md",
+     "[workflows/rollover.md](workflows/rollover.md)", "[workflows/rolover.md](workflows/rolover.md)",
+     [T + "test_layout.py", "-k", "route"]),
+    ("a workflow without its CLI entry", "scripts/fleet_reconcile.py",
+     '    ("census", "every coordinator tick: list the live agents in scope and classify them"),\n', "",
+     [T + "test_layout.py", "-k", "cli_lists"]),
 ]
 
 
@@ -631,10 +638,10 @@ def _run(root: pathlib.Path, args):
     # mutants of one file written in the same second with the same size would run the first one's code.
     # PYTHONDONTWRITEBYTECODE does not reach children started with `python3 -I` (scripts/fleet), so
     # any cache a previous mutant's run left is removed too.
-    for cache in list((root / "fleet-reconcile").rglob("__pycache__")):
+    for cache in list((root / "fleet").rglob("__pycache__")):
         shutil.rmtree(cache, ignore_errors=True)
     return subprocess.run([sys.executable, "-m", "pytest", "-x", "-q", "-p", "no:cacheprovider", *args],
-                          cwd=str(root / "fleet-reconcile"), capture_output=True, text=True, timeout=900,
+                          cwd=str(root / "fleet"), capture_output=True, text=True, timeout=900,
                           env=dict(os.environ, PYTHONDONTWRITEBYTECODE="1"))
 
 
@@ -659,10 +666,10 @@ def main() -> int:
     with tempfile.TemporaryDirectory() as tmp:
         root = pathlib.Path(tmp)
         ignore = shutil.ignore_patterns("__pycache__", ".pytest_cache")
-        for name in ("fleet-reconcile", "ctx-core"):
+        for name in ("fleet", "fleet-reconcile", "ctx-core"):  # the alias too: test_layout reads it
             shutil.copytree(str(SKILL.parent / name), str(root / name), ignore=ignore)
         for name, rel, old, new, args in mutants:
-            path = root / "fleet-reconcile" / rel
+            path = root / "fleet" / rel
             orig = path.read_text()
             if orig.count(old) != 1:
                 print("STALE     %s (anchor found %d times in %s)" % (name, orig.count(old), rel))

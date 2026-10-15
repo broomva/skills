@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
-"""fleet: the fleet-reconcile CLI (broomva/workspace
-docs/specs/2026-09-29-fleet-reconcile-design.html, §5.7).
+"""fleet: the fleet skill's CLI. Its reconcile workflow is the hourly tick
+(broomva/workspace docs/specs/2026-09-29-fleet-reconcile-design.html, §5.7);
+the skill was named fleet-reconcile until BRO-3122.
 
 Phase 1 observes, classifies and reports; phase 2 adds the verbs under dry
 run (mode act, dry_run 1); phase 3 runs them live. Stdlib
@@ -8,6 +9,9 @@ only. Run through scripts/fleet, which execs `python3 -I` so the tick's cwd and
 the user site stay off sys.path; this file puts its own directory and
 ../ctx-core/scripts (the same checkout) there itself.
 
+    fleet reconcile                         run one reconcile tick now, by hand (tick.sh, forced dry)
+    fleet workflows                         list the skill's workflows: name, trigger, file
+    fleet rollover | close-out | census     print that workflow (a procedure an agent runs; no code)
     fleet config-get <scope> <key>          one value; tick.sh reads errors as off and dry
     fleet config-check [<scope>]            exit 1 on any problem
     fleet observe --tick N                  write ticks/<N>/snapshot.json
@@ -76,6 +80,46 @@ def _dry(args: argparse.Namespace, sec: dict) -> bool:
 
 
 # --------------------------------------------------------------------------
+# The workflows (SKILL.md's routing table; tests/test_layout.py keeps the two
+# in step). reconcile is code: the tick. The others are procedures an agent
+# runs from the base protocol; the CLI prints them.
+
+WORKFLOWS: Tuple[Tuple[str, str], ...] = (
+    ("reconcile", "the hourly tick: observe, classify, report, ask; act under dry run"),
+    ("census", "every coordinator tick: list the live agents in scope and classify them"),
+    ("close-out", "a driven or owner session finished: archive it only when fully finished"),
+    ("rollover", "a session's context passed its handoff mark: hand it to a seeded successor"),
+)
+
+
+def workflow_file(name: str) -> Path:
+    return HERE.parent / "workflows" / ("%s.md" % name)
+
+
+def cmd_reconcile(args: argparse.Namespace) -> int:
+    """One tick now, through tick.sh (its kill switch, lock, tick number and
+    alerts), with DRY_RUN=1: a tick run by hand is never live."""
+    env = dict(os.environ, FLEET_SCOPE=_scope(args), DRY_RUN="1")
+    return subprocess.call(["/bin/bash", str(HERE / "tick.sh")], env=env)
+
+
+def cmd_workflows(args: argparse.Namespace) -> int:
+    for name, what in WORKFLOWS:
+        print("%-10s %s\n           %s" % (name, what, workflow_file(name)))
+    return 0
+
+
+def cmd_show_workflow(args: argparse.Namespace) -> int:
+    path = workflow_file(args.cmd)
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        print("fleet: workflow %s: %s" % (args.cmd, exc), file=sys.stderr)
+        return 1
+    print("# %s\n" % path)
+    sys.stdout.write(text)
+    return 0
+
 
 def cmd_config_get(args: argparse.Namespace) -> int:
     try:
@@ -600,13 +644,24 @@ def cmd_label_sheet(args: argparse.Namespace) -> int:
 
 
 def main(argv=None) -> int:
-    ap = argparse.ArgumentParser(prog="fleet", description=__doc__.split("\n\n")[0])
+    epilog = "workflows (skills/orchestration/fleet/workflows/):\n" + "\n".join(
+        "  %-10s %s" % (name, what) for name, what in WORKFLOWS)
+    epilog += "\n\nEvery other command is the reconcile tick's own (see SKILL.md, workflows/reconcile.md)."
+    ap = argparse.ArgumentParser(prog="fleet", description=__doc__.split("\n\n")[0], epilog=epilog,
+                                 formatter_class=argparse.RawDescriptionHelpFormatter)
     sub = ap.add_subparsers(dest="cmd", required=True)
 
     def scoped(p: argparse.ArgumentParser) -> argparse.ArgumentParser:
         p.add_argument("--scope", default=None, help="scope id (default: $FLEET_SCOPE)")
         return p
 
+    p = scoped(sub.add_parser("reconcile", help="workflow: run one reconcile tick now (tick.sh, forced dry)"))
+    p.set_defaults(func=cmd_reconcile)
+    p = sub.add_parser("workflows", help="list the workflows")
+    p.set_defaults(func=cmd_workflows)
+    for name, what in WORKFLOWS[1:]:
+        p = sub.add_parser(name, help="workflow: print it (%s)" % what)
+        p.set_defaults(func=cmd_show_workflow)
     p = sub.add_parser("config-get")
     p.add_argument("scope_id")
     p.add_argument("key")
