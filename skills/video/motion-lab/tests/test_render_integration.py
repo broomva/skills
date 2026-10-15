@@ -131,3 +131,55 @@ class TestRender:
     def test_undriven_motion_is_reported_not_called_static(self, tmp_path):
         r = render("undriven.html", tmp_path, "--no-sheet")
         assert r.returncode == 3 and "own clock" in json.loads(r.stdout)["warning"]
+
+    def test_a_preview_loop_running_under_t_exits_7(self, tmp_path):
+        # the ?t= check exists but the loop starts unconditionally; no --verify needed
+        r = render("loop_unguarded.html", tmp_path, "--no-sheet")
+        assert r.returncode == 7, r.stdout + r.stderr
+        assert json.loads(r.stdout)["loop_probe"]["raf_during_render"] >= 2
+
+    def test_a_guarded_preview_loop_does_not_trip_the_probe(self, tmp_path):
+        m = json.loads(render("good.html", tmp_path, "--no-sheet").stdout)
+        assert m["loop_probe"] == {"raf_during_render": 0, "intervals": 0}
+
+    def test_renderat_throwing_mid_render_exits_5_with_a_manifest(self, tmp_path):
+        r = render("throws_mid.html", tmp_path, "--no-sheet")
+        assert r.returncode == 5
+        assert any("boom" in e for e in json.loads(r.stdout)["page_errors"])
+        assert (tmp_path / "manifest.json").exists()
+
+    @pytest.mark.parametrize("every", ["0", "0.5", "abc"])
+    def test_every_must_be_a_positive_integer(self, tmp_path, every):
+        r = render("good.html", tmp_path, "--every", every)
+        assert r.returncode == 2 and "--every" in r.stderr
+
+    def test_every_keeps_the_seam_frame(self, tmp_path):
+        picks = json.loads(render("good.html", tmp_path, "--every", "5").stdout)["contact_frames"]
+        assert picks == [0, 5, 10, 11]
+
+
+needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")
+
+
+@needs_playwright
+@needs_ffmpeg
+def test_ffmpeg_gif_export_keeps_exact_loop_timing(tmp_path):
+    """Receipt for the SKILL.md GIF claim: re-measures whatever ffmpeg is installed.
+
+    24 fps cannot be stored in centisecond GIF delays; a per-frame-rounding encoder
+    runs 4% fast. ffmpeg 8.1 alternated 4 and 5 cs and held 6.00 s exactly.
+    """
+    import sys
+    sys.path.insert(0, str(SKILL / "scripts"))
+    import motion_math as mm
+    r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "good.html"), "--seconds", "6",
+                        "--fps", "24", "--width", "160", "--height", "90", "--out", str(tmp_path), "--no-sheet"],
+                       cwd=NODE_DIR, capture_output=True, text=True, timeout=300)
+    assert r.returncode == 0, r.stderr
+    gif = tmp_path / "anim.gif"
+    subprocess.run(["ffmpeg", "-loglevel", "error", "-y", "-framerate", "24", "-i", str(tmp_path / "frames" / "%04d.png"),
+                    "-vf", "split[a][b];[a]palettegen=stats_mode=diff[p];[b][p]paletteuse", "-loop", "0", str(gif)],
+                   check=True)
+    report = mm.gif_check(gif, fps=24)
+    assert report["frames"] == 144
+    assert report["duration_s"] == pytest.approx(6.0, abs=0.011), report

@@ -291,6 +291,50 @@ class TestLintReviewRound2:
         assert rules(ml.lint_text(html(src)), "warn") == {"MC10"}
 
 
+class TestLintReviewRound3:
+    """Cases from P20 round 3 (Stratum B), reproduced first."""
+
+    @pytest.mark.parametrize("src", [
+        "window.renderAt = t => {}; renderer.setAnimationLoop(() => renderer.render(scene, cam));",
+        "gsap.ticker.add(update);",
+    ])
+    def test_engine_frame_loops_are_clocks(self, src):
+        assert "MC01" in rules(ml.lint_text(html(src)), "error")
+
+    def test_clearing_the_animation_loop_is_fine(self):
+        assert "MC01" not in rules(ml.lint_text(html("window.renderAt = t => {}; renderer.setAnimationLoop(null);")))
+
+    @pytest.mark.parametrize("src", [
+        "const rnd = Math.random; rnd();", "const x = THREE.MathUtils.randFloat(0, 1);", "crypto.randomUUID();",
+    ])
+    def test_random_aliases(self, src):
+        assert "MC03" in rules(ml.lint_text(html(src)), "error")
+
+    @pytest.mark.parametrize("body", [
+        '<div style="background-image: url(https://picsum.photos/400)"></div>',
+        '<img srcset="https://example.com/a.jpg 1x, https://example.com/b.jpg 2x">',
+        '<video poster="https://example.com/p.jpg"></video>',
+        '<svg><image href="https://example.com/i.png"/></svg>',
+        '<object data="https://example.com/x.svg"></object>',
+        '<embed src="https://example.com/x.swf">',
+        '<script src="http://localhost:8080/app.js"></script>',
+        '<script src="http://192.168.1.10/app.js"></script>',
+    ])
+    def test_html_load_paths(self, body):
+        assert "MC06" in rules(ml.lint_text(html().replace("<body>", "<body>" + body)), "error")
+
+    def test_var_renderat_in_a_top_level_block_is_reachable(self):
+        src = "const g = c.getContext('2d'); if (true) { var renderAt = function (t) {}; }"
+        assert "MC04" not in rules(ml.lint_text(html(src)))
+
+    def test_var_renderat_inside_a_function_is_not(self):
+        src = "(function () { var renderAt = function (t) {}; requestAnimationFrame(f); })();"
+        assert [f for f in ml.lint_text(html(src)) if f.rule == "MC04" and "not on window" in f.message]
+
+    def test_explicit_zero_duration_beats_var(self):
+        assert ml.lint_text(html(style=".a { transition: transform 0s var(--d); }")) == []
+
+
 class TestRenderAtReachable:
     """renderAt must be callable from page.evaluate, i.e. live on window."""
 

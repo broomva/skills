@@ -63,10 +63,10 @@ FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com", "use.typekit.net", "f
 # A full MAJOR.MINOR.PATCH pin, as `pkg@1.2.3` (jsDelivr, unpkg, esm.sh) or as a
 # path segment `/1.2.3/` (cdnjs). `three@0.160` and `gsap@3` are NOT pins.
 _PIN = re.compile(r"@v?\d+\.\d+\.\d+(?![\d.])|/v?\d+\.\d+\.\d+(?:/|$)")
-_URL = re.compile(r"""(?:https?:)?//[A-Za-z0-9.-]+\.[A-Za-z]{2,}[^\s'"`)<>]*""")
+_URL = re.compile(r"""(?:https?:)?//(?:[A-Za-z0-9.-]+\.[A-Za-z]{2,}|localhost|\d{1,3}(?:\.\d{1,3}){3}|\[[0-9a-fA-F:]+\])(?::\d+)?(?:[/?#][^\s'"`)<>]*)?""")
 _SCRIPT = re.compile(r"<script\b([^>]*)>(.*?)</script\s*>", re.I | re.S)
 _STYLE = re.compile(r"<style\b[^>]*>(.*?)</style\s*>", re.I | re.S)
-_TAG_ATTR = re.compile(r"""<(?:link|img|source|video|audio|iframe|script)\b[^>]*?\b(?:src|href)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""", re.I)
+_TAG_ATTR = re.compile(r"""<(?:link|img|source|video|audio|iframe|script|image|use|object|embed|track|input)\b[^>]*?\b(?:src|href|xlink:href|poster|data|srcset)\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>"']+))""", re.I)
 
 
 @dataclass
@@ -174,12 +174,13 @@ def blocks_of(text: str, is_html: bool) -> list[Block]:
 
 CLOCK = re.compile(
     r"\bDate\.now\b|\bnew\s+Date\b|(?<!new )(?<![\w.$])Date\s*\(|\bperformance\.now\b"
-    r"|\brequestAnimationFrame\s*\(|\bClock\s*\(|\bgetElapsedTime\s*\(|\bgetDelta\s*\(|\bdocument\.timeline\b")
+    r"|\brequestAnimationFrame\s*\(|\bClock\s*\(|\bgetElapsedTime\s*\(|\bgetDelta\s*\(|\bdocument\.timeline\b"
+    r"|\.setAnimationLoop\s*\(\s*(?!null\b)|\bticker\.add\s*\(")
 # Rules over the string-blanked view (a quoted name cannot trip them).
 JS_RULES = [
     ("MC01", CLOCK, "clock or frame loop"),
     ("MC02", re.compile(r"\bset(?:Timeout|Interval)\s*\("), "timer start"),
-    ("MC03", re.compile(r"\bMath\.random\s*\(|\bgetRandomValues\s*\("), "unseeded randomness"),
+    ("MC03", re.compile(r"\bMath\.random\b|\bgetRandomValues\s*\(|\bMathUtils\.rand(?:Float|Int|FloatSpread)\b|\brandomUUID\s*\("), "unseeded randomness"),
     ("MC06", re.compile(r"\bfetch\s*\(|\bXMLHttpRequest\b|\bnew\s+WebSocket\s*\(|\bnew\s+EventSource\s*\("), "network request"),
 ]
 # Rules that need string contents (the view with comments stripped, strings kept).
@@ -190,7 +191,8 @@ JS_KEEP_RULES = [
 # renderAt reachable from page.evaluate: assigned on window/globalThis/self, or a
 # top-level `function renderAt` / `var renderAt` in a classic (non-module) script.
 RENDER_AT_EXPOSED = re.compile(r"\b(?:window|globalThis|self)\s*(?:\.\s*renderAt|\[\s*['\"`]renderAt['\"`]\s*\])\s*=(?!=)")
-RENDER_AT_GLOBAL_DECL = re.compile(r"\b(?:async\s+)?function\s+renderAt\b|\bvar\s+renderAt\b")
+RENDER_AT_GLOBAL_DECL = re.compile(r"\b(?:async\s+)?function\s+renderAt\b")
+RENDER_AT_VAR = re.compile(r"\bvar\s+renderAt\b")  # function-scoped: global unless inside a function
 # Evidence that JavaScript drives motion. A canvas context alone is not: a canvas
 # painted once beside seekable CSS motion is a valid page (P20 round 1, Codex).
 MOTION_JS = re.compile(r"\bTHREE\b|\bgsap\b|requestAnimationFrame|WebGLRenderer|\bsetInterval\b|\bsetTimeout\b")
@@ -223,7 +225,7 @@ def transition_is_live(longhand: str | None, value: str) -> bool:
     value = value.strip().lower()  # none / initial / 0s carry no positive duration
     if longhand not in (None, "-duration"):
         return False
-    if "var(" in value and not value.startswith("none"):
+    if "var(" in value and not value.startswith("none") and not DURATION.search(value):
         return True  # a custom-property duration cannot be resolved statically; assume it runs
     for num, unit in DURATION.findall(value):
         if float(num) > 0:
@@ -270,8 +272,29 @@ def render_at_spans(blank: str) -> list[tuple[int, int]]:
 
 
 def depth_at(blank: str, pos: int) -> int:
-    """Brace depth at pos (strings and comments already blanked)."""
+    """Brace depth at pos (strings and comments already blanked).
+
+    Limitation: a regex literal holding an unbalanced brace skews this count for
+    the rest of the block; the reachability check can then misjudge a renderAt
+    declared after it.
+    """
     return blank.count("{", 0, pos) - blank.count("}", 0, pos)
+
+
+def in_function(blank: str, pos: int) -> bool:
+    """Is pos inside a function body? Walk the unclosed braces left of pos and
+    ask whether any opens a function (`function ... {` or `=> {`)."""
+    stack = []
+    for i, c in enumerate(blank[:pos]):
+        if c == "{":
+            stack.append(i)
+        elif c == "}" and stack:
+            stack.pop()
+    for i in stack:
+        head = blank[max(0, i - 160):i]
+        if re.search(r"\bfunction\b[^;{}]*$|=>\s*$|\)\s*$", head) and not re.search(r"\b(?:if|for|while|switch|catch|with)\s*\([^;{}]*\)\s*$", head):
+            return True
+    return False
 
 
 LOAD_CTX = re.compile(
@@ -326,8 +349,9 @@ def lint_text(text: str, is_html: bool = True) -> list[Finding]:
         if b.kind == "script":
             keep, blank = strip_js(b.body)
             js_views.append((b.start, keep, blank))
-            if RENDER_AT_EXPOSED.search(keep) or (not b.module and any(
-                    depth_at(blank, m.start()) == 0 for m in RENDER_AT_GLOBAL_DECL.finditer(blank))):
+            if RENDER_AT_EXPOSED.search(keep) or (not b.module and (any(
+                    depth_at(blank, m.start()) == 0 for m in RENDER_AT_GLOBAL_DECL.finditer(blank))
+                    or any(not in_function(blank, m.start()) for m in RENDER_AT_VAR.finditer(blank)))):
                 exposed = True
     all_js_keep = "\n".join(k for _, k, _ in js_views)
     all_js_blank = "\n".join(bl for _, _, bl in js_views)
@@ -421,17 +445,23 @@ def lint_text(text: str, is_html: bool = True) -> list[Finding]:
                 if transition_is_live(m.group(1), m.group(2)):
                     findings.append(Finding("MC05", "error", line_of(text, sm.start()),
                         f"inline CSS transition `{m.group(0).strip()}` is state-triggered, not seekable by t"))
+        for sm in STYLE_ATTR.finditer(text):
+            for m in re.finditer(r"url\(\s*['\"]?([^'\")]+)", sm.group(2)):
+                if _URL.match(m.group(1).strip()):
+                    check_url(m.group(1).strip(), line_of(text, sm.start()), findings)
         for m in _TAG_ATTR.finditer(text):
-            ref = next(g for g in m.groups() if g is not None).strip()
-            if not ref:
-                continue
+            raw = next(g for g in m.groups() if g is not None).strip()
             line = line_of(text, m.start())
-            if ref.startswith(("data:", "#", "blob:")):
-                continue
-            if _URL.match(ref):
-                check_url(ref, line, findings)
-            else:
-                findings.append(Finding("MC07", "warn", line, f"local reference `{ref}`: the contract asks for one self-contained file"))
+            # srcset holds "url 1x, url 2x"; every other attribute holds one reference
+            refs = [part.strip().split()[0] for part in raw.split(",") if part.strip()] \
+                if re.search(r"\bsrcset\s*=", m.group(0), re.I) else [raw]
+            for ref in refs:
+                if not ref or ref.startswith(("data:", "#", "blob:", "javascript:")):
+                    continue
+                if _URL.match(ref):
+                    check_url(ref, line, findings)
+                else:
+                    findings.append(Finding("MC07", "warn", line, f"local reference `{ref}`: the contract asks for one self-contained file"))
 
     uses_webfont = bool(re.search(r"@font-face|fonts\.googleapis\.com|use\.typekit\.net|fonts\.bunny\.net", text))
     if uses_webfont and not FONTS_READY.search(all_js_blank + all_js_keep):

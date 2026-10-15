@@ -87,12 +87,12 @@ and this skill is built to keep them:
 
    | Rule | Catches | Level |
    |---|---|---|
-   | MC01 | `Date.now`, `Date()`, `new Date`, `performance.now`, `requestAnimationFrame`, a three.js `Clock` / `getElapsedTime` / `getDelta`, `document.timeline` | ERROR; WARN only when `renderAt` exists and a `?t=` guard actually wraps the loop (an `else` branch, an early `return`, or a negated check), and always ERROR inside `renderAt` itself |
+   | MC01 | `Date.now`, `Date()`, `new Date`, `performance.now`, `requestAnimationFrame`, three.js `setAnimationLoop` / `Clock` / `getElapsedTime` / `getDelta`, `gsap.ticker.add`, `document.timeline` | ERROR; a WARN when `renderAt` exists and a `?t=` guard appears to wrap the loop, and always ERROR inside `renderAt` itself. The static guard check is a heuristic: `render.mjs` decides at runtime (exit 7) |
    | MC02 | `setTimeout` / `setInterval` | ERROR |
-   | MC03 | `Math.random` (also `Math["random"]`, `const {random} = Math`) / `getRandomValues` | ERROR |
+   | MC03 | `Math.random` (also aliased: `const r = Math.random`, `Math["random"]`, `const {random} = Math`), `getRandomValues`, `randomUUID`, three.js `MathUtils.randFloat/randInt/randFloatSpread` | ERROR |
    | MC04 | JS-driven motion (rAF, timers, three.js, GSAP; a canvas painted once does not count) with no `window.renderAt(t)`, or a `renderAt` the renderer cannot reach (a `const`/`let`, or declared inside a `type="module"` script) | ERROR |
    | MC05 | a CSS transition with a non-zero duration, in CSS, a `style=""` attribute or set from JS | ERROR |
-   | MC06 | `fetch` / XHR / WebSocket, or a *loaded* remote URL (src/href quoted or not, importmap, `url()`, `@import`, a JS import, `.src =`, `.load()`, `new URL()`, a JS string naming a loadable file) that is not a font host and not pinned to `MAJOR.MINOR.PATCH`. Any other remote URL in a JS string is a WARN; the SVG namespace is never checked | ERROR |
+   | MC06 | `fetch` / XHR / WebSocket, or a *loaded* remote URL (src/href/poster/data/srcset quoted or not, SVG `<image>`, `<object>`, `<embed>`, importmap, `url()` in CSS or a `style=""` attribute, `@import`, a JS import, `.src =`, `.load()`, `new URL()`, a JS string naming a loadable file) that is not a font host and not pinned to `MAJOR.MINOR.PATCH`. Any other remote URL in a JS string is a WARN; the SVG namespace is never checked | ERROR |
    | MC07 | a local `src`/`href` (not one self-contained file) | WARN |
    | MC08 | web fonts with no `document.fonts.ready` wait | WARN |
    | MC09 | `@keyframes` animating width / height / top / left | WARN |
@@ -117,7 +117,8 @@ and this skill is built to keep them:
    `renderAt` that reads a counter. `--verify-all` re-renders every frame, in
    reverse order: a `renderAt` that depends on its call history replays identically
    when frames come in the same order, so an in-order check passes it. The manifest
-   records the scope (`sampled 3 of N frames` or `all N frames`). Add `--mp4` for an
+   records the scope (`sampled 3 of N frames` or `all N frames`). `--every N` puts
+   every Nth frame on the contact sheet and always ends it on frame N-1, the seam. Add `--mp4` for an
    H.264 file (needs ffmpeg).
 
    | Exit | Meaning |
@@ -128,6 +129,14 @@ and this skill is built to keep them:
    | 4 | `--mp4` failed |
    | 5 | the page threw (`page_errors` in the manifest): frames are likely blank |
    | 6 | nothing drives motion, so every frame is the same image (`--allow-static` for a still) |
+   | 7 | the page keeps scheduling its own frames under `?t=` (a preview loop its guard does not stop), so its live loop can draw over the frozen frames |
+
+   Exit 7 comes from a runtime probe, not from reading code: before any page
+   script runs, `render.mjs` wraps `requestAnimationFrame` and `setInterval` and
+   counts calls during the frozen render (`manifest.loop_probe`). It sees a running
+   loop however the guard is written, including three.js `setAnimationLoop` and the
+   GSAP ticker, which schedule through `requestAnimationFrame`. A `renderAt` that
+   throws for some `t` is recorded in `page_errors` (exit 5) and the render continues.
 
 5. **Look, then fix with frame numbers.** Read `contact.png` first, then only the
    frames a note needs. Write notes as numbers, never feelings:
@@ -161,8 +170,10 @@ and this skill is built to keep them:
    A GIF stores delays in hundredths of a second, so 24 fps (41.67 ms) cannot be
    stored exactly. An encoder that rounds every frame to 4 cs runs 4% fast and falls
    off the beat grid. ffmpeg 8.1 was measured alternating 4 and 5 cs and holding a
-   144-frame loop at exactly 6.00 s; other encoders may not. `gif-delays` prints
-   the exact schedule.
+   144-frame loop at exactly 6.00 s; the integration test
+   `test_ffmpeg_gif_export_keeps_exact_loop_timing` re-measures whatever ffmpeg is
+   installed, so the claim is checked rather than remembered. Other encoders may
+   differ. `gif-delays` prints the exact schedule.
 
 ## The render contract
 

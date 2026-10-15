@@ -28,6 +28,11 @@
 // Exit codes: 0 ok; 2 usage or runtime error; 3 --verify found an impure frame;
 // 4 --mp4 failed; 5 the page threw (page_errors in the manifest); 6 nothing drives
 // motion (no renderAt, no animations, no SMIL) and every frame is the same image:
+// 7 the page keeps scheduling its own frames (requestAnimationFrame, three.js
+// setAnimationLoop, the GSAP ticker, setInterval) while frozen under ?t=, so its
+// live loop can draw over the frozen frames. Detected at runtime by wrapping those
+// functions before any page script runs: static analysis cannot prove a guard
+// wraps a loop (three P20 rounds found ways past it), the runtime count can.
 // pass --allow-static when a still is what you want. If nothing the renderer seeks
 // drives the page but the frames still change, the motion runs on its own clock:
 // exit 3, the same as an impure frame.
@@ -53,7 +58,10 @@ function parseArgs(argv) {
     else if (a === '--height') o.height = Number(val());
     else if (a === '--scale') o.scale = Number(val());
     else if (a === '--out') o.out = val();
-    else if (a === '--every') o.every = Number(val());
+    else if (a === '--every') {
+      o.every = Number(val());
+      if (!Number.isInteger(o.every) || o.every < 1) throw new Error('--every must be a positive integer');
+    }
     else if (a === '--verify') o.verify = true;
     else if (a === '--verify-all') { o.verify = true; o.verifyAll = true; }
     else if (a === '--mp4') o.mp4 = true;
@@ -83,8 +91,21 @@ async function loadPlaywright() {
   throw new Error('playwright not found. In your project: npm i -D playwright && npx playwright install chromium');
 }
 
+// Injected before any page script. Counts the page's own frame scheduling and
+// keeps an unwrapped requestAnimationFrame for the renderer's waits, so the
+// renderer's own rAF calls are never counted against the page.
+const LOOP_PROBE = `(() => {
+  const raf = window.requestAnimationFrame.bind(window);
+  const si = window.setInterval.bind(window);
+  window.__mlRAF = raf;
+  window.__mlCounts = { raf: 0, interval: 0 };
+  window.requestAnimationFrame = function (cb) { window.__mlCounts.raf++; return raf(cb); };
+  window.setInterval = function (...a) { window.__mlCounts.interval++; return si(...a); };
+})();`;
+
 async function openAt(browser, o, url) {
   const page = await browser.newPage({ viewport: { width: o.width, height: o.height }, deviceScaleFactor: o.scale });
+  await page.addInitScript(LOOP_PROBE);
   const errors = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(url, { waitUntil: 'load' });
@@ -102,15 +123,27 @@ async function openAt(browser, o, url) {
   // an animated element's antialiased edge). Then draw frame 0 once and discard it.
   await page.evaluate(async () => {
     await Promise.all(document.getAnimations().map((a) => a.ready.catch(() => {})));
-    for (let k = 0; k < 2; k++) await new Promise((r) => requestAnimationFrame(() => r()));
+    const tick = window.__mlRAF || window.requestAnimationFrame.bind(window);
+    for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));
   });
-  await frameAt(page, 0);
+  await frameAt(page, 0, errors);
   await page.screenshot();
   return { page, errors };
 }
 
-async function frameAt(page, t) {
+async function frameAt(page, t, errors = []) {
+  try {
+    return await frameAtUnsafe(page, t);
+  } catch (e) {
+    // renderAt threw for this t: record it (exit 5) instead of aborting the render
+    errors.push(`renderAt(${t}): ${String(e.message || e).split('\n')[0]}`);
+    return { drew: true, anims: 0, smil: 0, threw: true };
+  }
+}
+
+async function frameAtUnsafe(page, t) {
   return page.evaluate(async (tt) => {
+    const tick = window.__mlRAF || window.requestAnimationFrame.bind(window);
     let drew = false;
     if (typeof window.renderAt === 'function') { await window.renderAt(tt); drew = true; }
     const anims = document.getAnimations();
@@ -125,7 +158,7 @@ async function frameAt(page, t) {
     // in the same frame can capture the pre-seek pose. Wait for every animation to
     // be ready, then two frames so the compositor has committed the paused state.
     await Promise.all(anims.map((a) => a.ready.catch(() => {})));
-    for (let k = 0; k < 2; k++) await new Promise((r) => requestAnimationFrame(() => r()));
+    for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));
     return { drew, anims: anims.length, smil };
   }, t);
 }
@@ -158,15 +191,25 @@ async function main() {
   let exitCode = 0;
   try {
     const { page, errors } = await openAt(browser, o, url.href);
+    const before = await page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }));
     let drive = null;
     for (let i = 0; i < N; i++) {
-      const info = await frameAt(page, i / o.fps);
-      if (drive === null) drive = info;
+      const info = await frameAt(page, i / o.fps, errors);
+      if (drive === null && !info.threw) drive = info;
       await page.screenshot({ path: path.join(framesDir, `${String(i).padStart(4, '0')}.png`) });
     }
+    const after = await page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }));
+    // A one-off rAF at load is fine; re-requesting frames DURING the frozen render
+    // is a live loop. Any setInterval at all under ?t= breaks the contract.
+    manifest.loop_probe = { raf_during_render: after.raf - before.raf, intervals: after.interval };
     manifest.driven_by = drive ? { renderAt: drive.drew, animations: drive.anims, smil: drive.smil } : null;
     manifest.page_errors = errors;
     if (errors.length) exitCode = 5;
+    if (!exitCode && (after.raf - before.raf >= 2 || after.interval > 0)) {
+      manifest.warning = 'the page schedules its own frames under ?t= (a preview loop the guard does not stop): '
+        + 'its live loop can draw over the frozen frames';
+      exitCode = 7;
+    }
     if (drive && !drive.drew && drive.anims === 0 && drive.smil === 0) {
       const { readFileSync } = await import('node:fs');
       const frame = (i) => readFileSync(path.join(framesDir, `${String(i).padStart(4, '0')}.png`));
@@ -195,7 +238,7 @@ async function main() {
       const { readFileSync } = await import('node:fs');
       const mismatches = [];
       for (const i of picks) {
-        await frameAt(p2, i / o.fps);
+        await frameAt(p2, i / o.fps, errors);
         const again = await p2.screenshot();
         const first = readFileSync(path.join(framesDir, `${String(i).padStart(4, '0')}.png`));
         if (!again.equals(first)) mismatches.push(i);
@@ -213,7 +256,8 @@ async function main() {
       let picks;
       if (o.every > 0) {
         picks = [];
-        for (let i = 0; i < N && picks.length < 12; i += o.every) picks.push(i);
+        for (let i = 0; i < N && picks.length < 11; i += o.every) picks.push(i);
+        if (picks[picks.length - 1] !== N - 1) picks.push(N - 1); // the seam frame is always on the sheet
       } else {
         const k = Math.min(12, N);
         picks = [...new Set(Array.from({ length: k }, (_, j) => (k === 1 ? 0 : Math.round((j * (N - 1)) / (k - 1)))))];
