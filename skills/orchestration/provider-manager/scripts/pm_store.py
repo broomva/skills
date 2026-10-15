@@ -371,16 +371,23 @@ def read_codex_auth(path: Optional[Path] = None) -> Read:
 def write_codex_auth(data: Dict[str, Any], path: Optional[Path] = None) -> bool:
     """Atomically write ~/.codex/auth.json via temporary file and replace."""
     p = path or CODEX_AUTH_PATH
+    p = Path(os.path.realpath(str(p)))
     p.parent.mkdir(parents=True, exist_ok=True)
-    tmp = p.with_suffix(".tmp.%d" % os.getpid())
+    tmp = p.with_name("%s.tmp.%d" % (p.name, os.getpid()))
     try:
-        with open(tmp, "w", encoding="utf-8") as f:
+        fd = os.open(str(tmp), os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
             f.flush()
             os.fsync(f.fileno())
+        os.chmod(tmp, 0o600)
         os.replace(tmp, p)
         try:
-            os.chmod(p, 0o600)
+            dir_fd = os.open(str(p.parent), os.O_RDONLY)
+            try:
+                os.fsync(dir_fd)
+            finally:
+                os.close(dir_fd)
         except OSError:
             pass
         return True

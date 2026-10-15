@@ -244,3 +244,80 @@ def test_evaluate_codex_balance(monkeypatch):
     dec2 = pm.evaluate_codex_balance(threshold=90.0, dry_run=True)
     assert dec2["action"] == "would_switch"
     assert dec2["target"] == "carlos@getstimulus.ai"
+
+
+def test_write_codex_auth_file_mode(tmp_path):
+    auth_file = tmp_path / "auth.json"
+    data = {"auth_mode": "chatgpt", "tokens": {"access_token": "tok1"}}
+    ok = pm_store.write_codex_auth(data, auth_file)
+    assert ok is True
+    # Verify file permissions are 0600 (read/write only by owner)
+    mode = auth_file.stat().st_mode & 0o777
+    assert mode == 0o600
+
+
+def test_fetch_codex_usage_skips_refresh_for_active(monkeypatch):
+    id_claims = {"email": "devteam@getstimulus.ai"}
+    access_claims = {"exp": int(time.time()) - 100}  # expired
+    tokens = {
+        "id_token": _make_dummy_jwt(id_claims),
+        "access_token": _make_dummy_jwt(access_claims),
+        "refresh_token": "rf_active",
+        "account_id": "acc_stimulus",
+    }
+    ctx = {
+        "accounts": [{"id": "id_1", "email": "devteam@getstimulus.ai"}],
+        "copies": {"id_1": pm_store.Read("ok", {"tokens": tokens})},
+        "store": pm_store.Read("ok", {"auth_mode": "chatgpt", "tokens": tokens}),
+        "storeTokens": tokens,
+        "activeIdentity": {"email": "devteam@getstimulus.ai"},
+        "activeAccountId": "id_1",
+        "storeReadable": True,
+    }
+    refresh_called = []
+    monkeypatch.setattr(pm, "refresh_codex_token", lambda rf: refresh_called.append(rf) or (200, {}, ""))
+    monkeypatch.setattr(pm, "fetch_codex_usage_raw", lambda tok, acc: (200, {"rate_limit": {}}, ""))
+
+    res = pm.fetch_codex_usage(force_refresh=True, ctx=ctx)
+    # Active account token must NOT be refreshed by usage check
+    assert len(refresh_called) == 0
+    assert len(res) == 1
+    assert res[0]["isActive"] is True
+
+
+def test_switch_codex_account_aborts_on_keychain_write_failure(monkeypatch, tmp_path):
+    target_tokens = {
+        "id_token": _make_dummy_jwt({"email": "carlos@getstimulus.ai"}),
+        "access_token": _make_dummy_jwt({"exp": int(time.time()) + 3600}),
+        "refresh_token": "rf_carlos_live",
+        "account_id": "acc_stimulus",
+    }
+    keychain_db = {
+        "carlos@getstimulus.ai": {"tokens": target_tokens},
+        "dc906358-ff8c-5ad9-8e71-86e423b49425": {"tokens": target_tokens},
+    }
+
+    monkeypatch.setattr(pm, "read_orca_codex", lambda k: pm_store.Read("ok", keychain_db.get(k)))
+    # write_orca_codex fails
+    monkeypatch.setattr(pm, "write_orca_codex", lambda k, d, timeout=30: False)
+
+    auth_path = tmp_path / "auth.json"
+    initial_auth = json.dumps({"auth_mode": "chatgpt", "tokens": {"access_token": "orig"}})
+    auth_path.write_text(initial_auth)
+    monkeypatch.setattr(pm_store, "CODEX_AUTH_PATH", auth_path)
+    monkeypatch.setattr(pm, "CODEX_AUTH_PATH", auth_path)
+
+    refreshed_data = {
+        "id_token": _make_dummy_jwt({"email": "carlos@getstimulus.ai"}),
+        "access_token": _make_dummy_jwt({"exp": int(time.time()) + 7200}),
+        "refresh_token": "rf_carlos_new",
+    }
+    monkeypatch.setattr(pm, "refresh_codex_token", lambda rf, client_id=None, timeout=30: (200, refreshed_data, ""))
+
+    with pytest.raises(pm_store.StoreError) as excinfo:
+        pm.switch_codex_account("carlos@getstimulus.ai")
+
+    assert "Failed to persist refreshed credentials" in str(excinfo.value)
+    # auth.json MUST remain untouched
+    assert auth_path.read_text() == initial_auth
+

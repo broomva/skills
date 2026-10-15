@@ -1422,7 +1422,9 @@ def fetch_codex_usage_raw(access_token: str, account_id: str, timeout: float = 1
         return None, None, str(e)
 
 
-def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
+def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None, force_refresh: Optional[bool] = None) -> List[Dict[str, Any]]:
+    if force_refresh is not None:
+        force = force or force_refresh
     ctx = ctx or build_codex_context(verify_identity=True)
     out = []
 
@@ -1465,7 +1467,8 @@ def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None)
             continue
 
         active_tokens = tokens
-        if codex_token_expiring(active_tokens, 60_000):
+        # Do not refresh the active account's tokens from the usage path; the running Codex CLI owns active token refresh.
+        if not is_active and codex_token_expiring(active_tokens, 60_000):
             rf = active_tokens.get("refresh_token")
             if rf:
                 code, new_data, err = refresh_codex_token(rf)
@@ -1476,8 +1479,6 @@ def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None)
                         "refresh_token": new_data.get("refresh_token") or rf,
                         "account_id": active_tokens.get("account_id"),
                     }
-                    if is_active:
-                        write_codex_auth({"auth_mode": "chatgpt", "tokens": active_tokens})
                     write_orca_codex(email, {"auth_mode": "chatgpt", "tokens": active_tokens, "email": email})
                     write_orca_codex(acc_id, {"auth_mode": "chatgpt", "tokens": active_tokens, "email": email})
                 else:
@@ -1496,8 +1497,39 @@ def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None)
                     })
                     continue
 
+        if not active_tokens.get("access_token"):
+            out.append({
+                "id": acc_id,
+                "email": email,
+                "isActive": is_active,
+                "telemetry": "auth_expired",
+                "needsLogin": True,
+                "usageStatus": "AUTH_EXPIRED",
+                "primary": None,
+                "secondary": None,
+                "credits": None,
+                "resetCredits": None,
+                "isRateLimited": False,
+            })
+            continue
+
         ident = extract_codex_identity(active_tokens)
-        acc_uuid = active_tokens.get("account_id") or ident.get("accountId") or "45663a8d-d52d-4b55-8dd3-2af5ce5e6779"
+        acc_uuid = active_tokens.get("account_id") or ident.get("accountId")
+        if not acc_uuid:
+            out.append({
+                "id": acc_id,
+                "email": email,
+                "isActive": is_active,
+                "telemetry": "error",
+                "needsLogin": False,
+                "usageStatus": "NO_ACCOUNT_ID",
+                "primary": None,
+                "secondary": None,
+                "credits": None,
+                "resetCredits": None,
+                "isRateLimited": False,
+            })
+            continue
 
         status_code, data, err_msg = fetch_codex_usage_raw(active_tokens["access_token"], acc_uuid)
         if status_code == 200 and isinstance(data, dict):
@@ -1611,24 +1643,38 @@ def switch_codex_account(target: str, force: bool = False) -> Dict[str, Any]:
     if code != 200 or not refreshed:
         raise StoreError(f"Cannot switch to {target_email}: refresh failed ({err})")
 
+    t_ident = extract_codex_identity(refreshed)
+    target_acc_id = target_tokens.get("account_id") or t_ident.get("accountId")
+    if not target_acc_id:
+        id_tok = refreshed.get("id_token") or target_tokens.get("id_token")
+        if id_tok:
+            id_claims = decode_jwt_unverified(id_tok)
+            target_acc_id = id_claims.get("chatgpt_account_id")
+    if not target_acc_id:
+        raise StoreError(f"Cannot switch to {target_email}: unable to determine accountId from credentials")
+
     live_target_tokens = {
         "id_token": refreshed.get("id_token") or target_tokens.get("id_token"),
         "access_token": refreshed.get("access_token"),
         "refresh_token": refreshed.get("refresh_token") or rf,
-        "account_id": target_tokens.get("account_id") or "45663a8d-d52d-4b55-8dd3-2af5ce5e6779",
+        "account_id": target_acc_id,
     }
 
-    write_orca_codex(target_id, {"auth_mode": "chatgpt", "tokens": live_target_tokens, "email": target_email})
-    write_orca_codex(target_email, {"auth_mode": "chatgpt", "tokens": live_target_tokens, "email": target_email})
+    target_rec = {"auth_mode": "chatgpt", "tokens": live_target_tokens, "email": target_email}
+    if not (write_orca_codex(target_id, target_rec) and write_orca_codex(target_email, target_rec)):
+        raise StoreError(f"Failed to persist refreshed credentials for {target_email} in Keychain")
 
     prev_email = "unknown"
     if ctx["storeTokens"]:
         active_ident = ctx["activeIdentity"]
         prev_email = active_ident.get("email") or "unknown"
         prev_id = ctx["activeAccountId"] or prev_email
-        write_orca_codex(prev_id, {"auth_mode": "chatgpt", "tokens": ctx["storeTokens"], "email": prev_email})
-        if prev_email and prev_email != "unknown":
-            write_orca_codex(prev_email, {"auth_mode": "chatgpt", "tokens": ctx["storeTokens"], "email": prev_email})
+        prev_rec = {"auth_mode": "chatgpt", "tokens": ctx["storeTokens"], "email": prev_email}
+        if not write_orca_codex(prev_id, prev_rec):
+            raise StoreError(f"Failed to back up outgoing Codex credentials ({prev_id}) to Keychain; auth.json unchanged")
+        if prev_email and prev_email != "unknown" and prev_email != prev_id:
+            if not write_orca_codex(prev_email, prev_rec):
+                raise StoreError(f"Failed to back up outgoing Codex credentials ({prev_email}) to Keychain; auth.json unchanged")
 
     new_auth = {
         "auth_mode": "chatgpt",
