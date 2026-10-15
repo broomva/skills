@@ -148,11 +148,16 @@ def _close_out_script() -> str:
 
 @pytest.fixture
 def close_out(tmp_path):
-    wt = tmp_path / "wt"
-    wt.mkdir()
+    origin, wt = tmp_path / "origin.git", tmp_path / "wt"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "clone", "-q", str(origin), str(wt)], check=True, capture_output=True)
     git = lambda *a: subprocess.run(["git", "-C", str(wt), *a], check=True, capture_output=True, text=True)
-    git("init", "-q", "-b", "feat")
-    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work")
+    commit = lambda m: git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", m)
+    commit("base")
+    git("push", "-q", "origin", "HEAD:main")
+    git("fetch", "-q", "origin")
+    git("checkout", "-q", "-b", "feat")
+    commit("work")  # the session's own work: not in origin/main
     home = tmp_path / "home"
     (home / ".paseo" / "agents" / "w").mkdir(parents=True)
     bin_ = tmp_path / "bin"
@@ -168,7 +173,7 @@ def close_out(tmp_path):
         return subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, env=e)
 
     run.head = git("rev-parse", "HEAD").stdout.strip()
-    run.wt, run.git, run.home = wt, git, home
+    run.wt, run.git, run.home, run.commit = wt, git, home, commit
     return run
 
 
@@ -179,11 +184,17 @@ def _pr(state, oid):
 
 def test_close_out_finished_only_when_a_merged_pr_carries_head(close_out):
     ok = close_out(_pr("MERGED", close_out.head))
-    assert ok.returncode == 0 and ok.stdout.startswith("FINISHED"), ok.stderr
+    assert ok.returncode == 0 and ok.stdout.startswith("FINISHED: PR merged"), ok.stderr
+
+
+def test_close_out_finishes_a_session_with_no_work_of_its_own_without_asking_github(close_out):
+    close_out.git("reset", "-q", "--hard", "origin/main")  # HEAD already in the default branch
+    ok = close_out("[]", STUB_GH_FAIL="1")
+    assert ok.returncode == 0 and "no work of its own" in ok.stdout, ok.stderr
 
 
 @pytest.mark.parametrize("case", ["never pushed, no PR", "commit after the merge", "PR still open",
-                                  "dirty tree", "gh fails", "a live child"])
+                                  "dirty tree", "gh fails", "a live child", "an unreadable registry file"])
 def test_close_out_refuses_what_is_not_finished(close_out, case):
     import json
     prs = _pr("MERGED", close_out.head)
@@ -191,15 +202,33 @@ def test_close_out_refuses_what_is_not_finished(close_out, case):
     if case == "never pushed, no PR":
         prs = "[]"
     elif case == "commit after the merge":
-        close_out.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "more")
+        close_out.commit("more")
     elif case == "PR still open":
         prs = _pr("OPEN", close_out.head)
     elif case == "dirty tree":
         (close_out.wt / "f").write_text("x")
     elif case == "gh fails":
         env["STUB_GH_FAIL"] = "1"
+    elif case == "an unreadable registry file":
+        (close_out.home / ".paseo" / "agents" / "w" / "half.json").write_text('{"id": "x')
     elif case == "a live child":
         (close_out.home / ".paseo" / "agents" / "w" / "c.json").write_text(json.dumps(
             {"id": "cccccccc-1", "archivedAt": None, "labels": {"paseo.parent-agent-id": "aaaaaaaa-1"}}))
     r = close_out(prs, **env)
     assert r.returncode == 1 and "NOT FINISHED" in r.stderr and "FINISHED" not in r.stdout, (case, r.stdout, r.stderr)
+
+
+def test_the_launch_checks_parse_against_the_installed_bstack():
+    """launch.md's check lines, run as written with an id that doesn't exist: bstack must get as far as
+    looking the id up (exit 1, "not found"), not refuse the argument shape (exit 2, usage)."""
+    import shutil
+    bstack = shutil.which("bstack") or os.path.expanduser("~/.claude/skills/bstack/bin/bstack")
+    if not os.access(bstack, os.X_OK):
+        pytest.skip("no bstack on this machine")
+    check = (SKILL / "workflows" / "launch.md").read_text(encoding="utf-8").split("## Check", 1)[1]
+    lines = [ln.split("#", 1)[0].strip() for ln in re.search(r"```bash\n(.*?)```", check, re.S).group(1).splitlines()]
+    assert len([ln for ln in lines if ln]) == 2
+    for ln in filter(None, lines):
+        argv = [bstack] + re.sub(r"<[a-z-]+>", "no-such-id-bro3122", ln).split()[1:]
+        r = subprocess.run(argv, capture_output=True, text=True, timeout=60)
+        assert r.returncode == 1 and "not found" in r.stderr and "usage:" not in r.stderr, (ln, r.stderr)

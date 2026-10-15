@@ -43,35 +43,52 @@
 Before archiving agent `<id>` (its 8-hex prefix), with `<wt>` its worktree,
 `<owner/repo>` its repo and `<branch>` its branch. One script, one verdict:
 `FINISHED` and exit 0, or `NOT FINISHED: <why>` and exit 1. Any read that
-fails is NOT FINISHED, never zero (`tests/test_layout.py` runs this block).
+fails or times out is NOT FINISHED, never zero (`tests/test_layout.py` runs
+this block). A session with no work of its own (HEAD already in the
+remote's default branch) is finished without a PR.
 
 ```bash
 python3 - <wt> <owner/repo> <branch> <id> <<'PY'
 import glob, json, os, subprocess, sys
 wt, repo, branch, agent = sys.argv[1:5]
+def run(*argv):
+    try:
+        return subprocess.run(argv, capture_output=True, text=True, timeout=60)
+    except subprocess.TimeoutExpired:
+        sys.exit("NOT FINISHED: %s timed out after 60 s" % " ".join(argv[:3]))
 def read(*argv):
-    r = subprocess.run(argv, capture_output=True, text=True)
+    r = run(*argv)
     if r.returncode:
         sys.exit("NOT FINISHED: %s failed: %s" % (" ".join(argv[:3]), r.stderr.strip()[:200]))
     return r.stdout
 if read("git", "-C", wt, "status", "--porcelain").strip():
     sys.exit("NOT FINISHED: uncommitted changes in %s" % wt)
 head = read("git", "-C", wt, "rev-parse", "HEAD").strip()
-prs = json.loads(read("gh", "pr", "list", "-R", repo, "--head", branch, "--state", "all",
-                      "--json", "number,state,headRefOid") or "[]")
-at = [p for p in prs if p.get("headRefOid") == head]   # the PR carries every local commit
-if not at:
-    sys.exit("NOT FINISHED: no PR on %s at HEAD %s (never pushed, never opened, or commits after it)" % (branch, head[:12]))
-if not any(p.get("state") == "MERGED" for p in at):
-    sys.exit("NOT FINISHED: PR #%s is %s (CLOSED counts only if the owner closed it)" % (at[0].get("number"), at[0].get("state")))
+base = run("git", "-C", wt, "rev-parse", "--abbrev-ref", "origin/HEAD").stdout.strip() or "origin/main"
+if run("git", "-C", wt, "merge-base", "--is-ancestor", head, base).returncode == 0:
+    done = "no work of its own: HEAD %s is in %s" % (head[:12], base)
+else:
+    prs = json.loads(read("gh", "pr", "list", "-R", repo, "--head", branch, "--state", "all",
+                          "--json", "number,state,headRefOid") or "[]")
+    at = [p for p in prs if p.get("headRefOid") == head]   # the PR carries every local commit
+    if not at:
+        sys.exit("NOT FINISHED: HEAD %s is in no PR on %s and not in %s (unpushed, never opened, "
+                 "or the PR moved on GitHub)" % (head[:12], branch, base))
+    if not any(p.get("state") == "MERGED" for p in at):
+        sys.exit("NOT FINISHED: PR #%s is %s (CLOSED counts only if the owner closed it)"
+                 % (at[0].get("number"), at[0].get("state")))
+    done = "PR merged at %s" % head[:12]
 kids = []
 for f in glob.glob(os.path.expanduser("~/.paseo/agents/*/*.json")):
-    a = json.load(open(f))
+    try:
+        a = json.load(open(f))
+    except (OSError, ValueError) as exc:
+        sys.exit("NOT FINISHED: registry file %s unreadable (%s)" % (f, exc))
     if not a.get("archivedAt") and str((a.get("labels") or {}).get("paseo.parent-agent-id", "")).startswith(agent):
-        kids.append(a["id"][:8])
+        kids.append(str(a.get("id"))[:8])
 if kids:
     sys.exit("NOT FINISHED: live children %s would be archived with it (clear their label first)" % kids)
-print("FINISHED: PR merged at %s, tree clean, no live child" % head[:12])
+print("FINISHED: %s; tree clean; no live child" % done)
 PY
 ```
 
@@ -79,4 +96,6 @@ It checks base §6 items 1 and 2 and the cascade. Items 3 to 5 (follow-ups
 ticketed, decisions in a ledger, the Maestro card) are read from the final
 message and the card. A PR the owner closed unmerged also counts as finished
 (item 1); the script can't tell who closed it, so it says NOT FINISHED and
-names the state.
+names the state: the owner's close is the override, recorded on the ticket.
+A detached HEAD has no branch: pass `HEAD`, and only the no-work path can
+pass it.

@@ -114,8 +114,10 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     proc = subprocess.run(["/bin/bash", str(HERE / "tick.sh")], env=env, stdout=subprocess.PIPE, text=True)
     sys.stdout.write(proc.stdout)
     if " tick " not in proc.stdout:
-        print("fleet reconcile: no tick ran for %s (kill switch off, or a tick holds the lock); see %s"
-              % (sec["scope"], Path(sec["state_dir"]) / "tick.log"), file=sys.stderr)
+        why = ("kill switch off, or another tick holds the lock" if proc.returncode == 0 else
+               "tick.sh failed before a tick: its alert and reason are in tick.log")
+        print("fleet reconcile: no tick ran for %s (%s); see %s"
+              % (sec["scope"], why, Path(sec["state_dir"]) / "tick.log"), file=sys.stderr)
     return proc.returncode
 
 

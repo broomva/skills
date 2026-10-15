@@ -41,7 +41,7 @@ decides on the worktree axis.
 
 ```bash
 bstack wave status <wave-id>     # one row per plan, LIVE column joined to its session
-bstack fleet status <fleet-id>   # per-peer liveness; `unknown`, never clean, when the listing can't be read
+bstack fleet status --fleet <fleet-id>   # per-peer liveness; `unknown`, never clean, when the listing can't be read
 ```
 
 Every peer must show live, or a terminal state its brief allows.

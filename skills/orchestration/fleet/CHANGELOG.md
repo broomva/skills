@@ -14,8 +14,10 @@ fleet, and add specialization workflows like reconcile").
   broomva overlay's Rollover). Each states its trigger and a check you can
   run, and links to the base instead of copying it. close-out's check is one
   script with one verdict: FINISHED only when a merged PR carries the
-  worktree's HEAD, the tree is clean and no live child would cascade; any
-  failed read is NOT FINISHED (a missing upstream used to read as zero).
+  worktree's HEAD, or HEAD is already in the remote's default branch (no
+  work of its own), the tree is clean and no live child would cascade; any
+  failed or timed-out read is NOT FINISHED (a missing upstream used to read
+  as zero).
 - `launch` routes to bstack's launchers and builds none: each peer its own
   worktree → `bstack wave dispatch`; peers share one → `bstack fleet up`;
   manage what's running → this skill. `bstack fleet` is untouched, and this
@@ -50,7 +52,7 @@ fleet, and add specialization workflows like reconcile").
   install; installed alone it names the fix, and its send-gate keeps exit
   2; close-out's script run as written against a scratch repo and a stub gh),
   and `fleet reconcile` end to end in `test_tick.py` (dry, an unknown scope
-  refused before any alert, a skipped tick reported). Four mutants added.
+  refused before any alert, a skipped tick reported), and launch.md's checks run against the installed bstack (skipped without one). Five mutants added.
 
 ## [0.5.2] - 2026-10-12
 
