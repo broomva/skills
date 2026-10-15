@@ -2,21 +2,20 @@
 name: provider-manager
 category: orchestration
 description: >
-  Claude subscription account manager for macOS (Claude Code CLI, Orca, Keychain): account
-  discovery, usage telemetry, one machine-wide balancer that fails over without killing running
-  sessions, safe switching, and browser-session re-login. Use when: inspecting quotas or which
-  account is active, an operator or orchestrator switching or rotating accounts, re-authorizing an
-  account, listing sessions stalled by a rate limit, or pausing automatic switching. An agent that
-  hits a rate limit does NOT rotate: the balancer handles it. Triggers: "switch claude account",
-  "provider usage", "rate limit reached", "login headless", "orca credentials", "provider-manager",
-  "stalled sessions", "subscription limit".
+  Subscription account manager for macOS (Claude Code CLI & OpenAI Codex CLI, Orca, Keychain): account
+  discovery, usage telemetry, machine-wide balancer that fails over without killing running sessions,
+  safe switching, and browser-session re-login. Use when: inspecting quotas or which account is active,
+  switching or rotating Claude or Codex accounts, re-authorizing an account, listing sessions stalled
+  by a rate limit, or balancing multi-account quotas across providers. Triggers: "switch claude account",
+  "switch codex account", "provider usage", "codex usage", "rate limit reached", "login headless",
+  "orca credentials", "provider-manager", "stalled sessions", "subscription limit".
 license: MIT
 ---
 
 # Provider Manager
 
-Claude subscription accounts on one Mac: telemetry, one balancer, and a switch that never kills a
-running session.
+Claude and OpenAI Codex subscription accounts on one Mac: telemetry, balancing, and safe switching
+that never kills running sessions.
 
 ## Agents: a rate limit is not yours to fix
 
@@ -98,18 +97,34 @@ Configuration: `~/.config/broomva/provider-manager.json` (keys: `autoBalance`, `
 
 ## Commands
 
+All commands accept `--provider {claude,codex,all}` (default: `claude`):
+
 ```bash
 PM=~/.agents/skills/provider-manager/scripts/provider_manager.py
-python3 $PM list                       # accounts; which one the store holds, and how we know
-python3 $PM usage [--force]            # 5h/7d per account, with telemetry status (OK, THROTTLED, NEEDS_LOGIN...)
+
+# Claude commands (default)
+python3 $PM list                       # Claude accounts; active store vs Keychain copies
+python3 $PM usage [--force]            # 5h/7d per Claude account, with status (OK, THROTTLED, NEEDS_LOGIN...)
 python3 $PM state                      # balancer lock, cooldown, hold, health, backoff
 python3 $PM history [--all]            # switches (or every decision, refusal and probe)
 python3 $PM stalled [--hours 24]       # sessions whose turn ended on a rate limit/auth error, for resume
 python3 $PM hold --minutes 30          # pause automatic switching (--clear to resume)
-python3 $PM balance [--dry-run]        # evaluate now (operator)
-python3 $PM switch team@company.com    # safe switch (operator); --force discards an unidentifiable store credential
+python3 $PM balance [--dry-run]        # evaluate Claude balance now
+python3 $PM switch team@company.com    # safe Claude switch; --force discards unidentifiable credential
 python3 $PM rotate [--force]           # failover now (orchestrator); probe-confirmed unless --force
-python3 $PM login-headless --email X   # re-login X from a browser session (see below); --force: over an unidentifiable store credential
+python3 $PM login-headless --email X   # re-login X from browser session; --force: over unidentifiable credential
+
+# OpenAI Codex commands
+python3 $PM list --provider codex                    # Codex accounts (devteam, carlos) & active store
+python3 $PM status --provider codex                  # active Codex auth mode, email, plan, token freshness
+python3 $PM usage --provider codex [--force]         # 5h/7d Codex utilization, reset credits, status
+python3 $PM switch --provider codex devteam@...      # safe Codex switch (backs up outgoing, updates auth.json)
+python3 $PM balance --provider codex [--dry-run]     # evaluate Codex balance (5h threshold / credits depleted)
+
+# Multi-provider aggregate commands
+python3 $PM usage --provider all       # display both Claude Code and OpenAI Codex telemetry
+python3 $PM status --provider all      # inspect authentication across both providers
+python3 $PM list --provider all        # list managed accounts across both providers
 ```
 
 `login-headless` for an account the store does not hold runs `claude auth login` in a throwaway

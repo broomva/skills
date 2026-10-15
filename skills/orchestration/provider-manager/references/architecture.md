@@ -84,6 +84,38 @@
   Claude Code's refresh lock). MCP tokens are never copied between items or from an Orca copy. The
   old cross-item merge let the stale mirror's Linear tokens overwrite the live ones (D28).
 
+### D. OpenAI Codex Storage & Credentials
+* **Store File**:
+  `~/.codex/auth.json` (or `CODEX_AUTH_PATH` override)
+* **Schema**:
+  ```json
+  {
+    "auth_mode": "chatgpt",
+    "tokens": {
+      "id_token": "<jwt>",
+      "access_token": "<jwt>",
+      "refresh_token": "<rt>",
+      "account_id": "45663a8d-d52d-4b55-8dd3-2af5ce5e6779"
+    }
+  }
+  ```
+* **Keychain Service**:
+  `Orca Codex Managed Credentials`
+  * Account key: email or account UUID
+  * Value: JSON containing `auth_mode`, `tokens`, `email`, and update timestamp.
+* **Hot-Reload Invariant**:
+  The native Codex binary (`@openai/codex-darwin-arm64`) watches `~/.codex/auth.json` and hot-reloads
+  credentials on disk modification without restarting running processes. Writes use atomic
+  temp-file replacement (`tmp` + `os.replace`) to prevent partial reads.
+* **OAuth Refresh**:
+  * Endpoint: `https://auth.openai.com/oauth/token`
+  * Client ID: `app_EMoamEEZ73f0CkXaXp7hrann`
+  * Body: `{"grant_type": "refresh_token", "client_id": "...", "refresh_token": "..."}`
+* **Telemetry**:
+  * Endpoint: `https://chatgpt.com/backend-api/wham/usage`
+  * Header: `ChatGPT-Account-ID: <account_id>`, `Authorization: Bearer <access_token>`
+  * Returns: 5-hour primary window, 7-day secondary window, credits balance, and rate limit reset credits.
+
 ---
 
 ## 2. Autonomous Headless OAuth Flow
