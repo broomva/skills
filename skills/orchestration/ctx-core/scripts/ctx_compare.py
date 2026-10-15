@@ -93,7 +93,7 @@ TAIL_WINDOWS = (128 * 1024, 2 * 1024 * 1024, 16 * 1024 * 1024)
 def last_in_tail(path: str, pick: Callable[[List[bytes]], Optional[float]]) -> Optional[float]:
     """pick() over the whole lines of a file's tail, widening the window until
     it finds something or has read the whole file; None when the file can't be
-    read. fleet-reconcile reads transcript activity through it too."""
+    read. fleet's reconcile tick reads transcript activity through it too."""
     for window in TAIL_WINDOWS:
         try:
             with open(path, "rb") as fh:
@@ -274,7 +274,7 @@ def _path(scope_id: str) -> Path:
 def first_line(scope_id: str) -> Optional[Dict[str, Any]]:
     """compare.jsonl's first line: {} when there is no file or it is empty,
     None when it can't be read or isn't a JSON object. Every reader of the
-    registration time goes through here (fleet-reconcile's tick included)."""
+    registration time goes through here (fleet's reconcile tick included)."""
     try:
         with _path(scope_id).open(encoding="utf-8") as fh:
             text = fh.readline()

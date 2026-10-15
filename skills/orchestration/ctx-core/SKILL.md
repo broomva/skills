@@ -256,10 +256,10 @@ nothing, and in-scope transcripts on neither side are listed uncounted. The
 registration time is passed once and kept in `compare.jsonl`'s first line; a
 later one that disagrees is refused. It rebuilds the board in memory and writes
 only `compare.jsonl`. No evidence (an unreadable transcript directory, an empty
-listing, an empty side) fails. fleet-reconcile's tick runs it once a day.
+listing, an empty side) fails. fleet's reconcile tick runs it once a day.
 The last entry is read from the transcript's tail, widening from 128 KiB to
 2 MiB and 16 MiB when the last line is larger (`last_in_tail`, which
-fleet-reconcile reads activity through). A comparison that raises is written
+fleet's reconcile tick reads activity through). A comparison that raises is written
 as an error line too.
 
 The first run is the owner's. A `compare.jsonl` written by the pre-spec

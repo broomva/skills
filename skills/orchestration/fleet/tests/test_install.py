@@ -65,17 +65,18 @@ def test_install_pins_a_copy_renders_the_plist_seeds_the_config_and_loads_the_jo
     commit = subprocess.run(["git", "-C", str(SKILL), "rev-parse", "--short=12", "HEAD"], capture_output=True,
                             text=True).stdout.strip()
     assert rel.name.startswith(commit)
-    for f in ("orchestration/fleet-reconcile/scripts/tick.sh", "orchestration/fleet-reconcile/scripts/fleet",
-              "orchestration/fleet-reconcile/templates/fleet.json.example",
-              "orchestration/fleet-reconcile/templates/mail/stalled.txt",
-              "orchestration/fleet-reconcile/templates/runner-prompt.md",
-              "orchestration/fleet-reconcile/templates/driver-brief.md",
+    for f in ("orchestration/fleet/scripts/tick.sh", "orchestration/fleet/scripts/fleet",
+              "orchestration/fleet/templates/fleet.json.example",
+              "orchestration/fleet/templates/mail/stalled.txt",
+              "orchestration/fleet/templates/runner-prompt.md",
+              "orchestration/fleet/templates/driver-brief.md",
+              "orchestration/fleet/workflows/reconcile.md", "orchestration/fleet/workflows/rollover.md",
               "orchestration/ctx-core/scripts/ctx.py", "RELEASE"):
         assert (rel / f).is_file(), f
-    assert not list(rel.rglob("__pycache__")) and not (rel / "orchestration/fleet-reconcile/tests").exists()
+    assert not list(rel.rglob("__pycache__")) and not (rel / "orchestration/fleet/tests").exists()
     p = _plist(inst)
     assert p["Label"] == LABEL
-    assert p["ProgramArguments"] == ["/bin/bash", str(rel / "orchestration/fleet-reconcile/scripts/tick.sh")]
+    assert p["ProgramArguments"] == ["/bin/bash", str(rel / "orchestration/fleet/scripts/tick.sh")]
     assert p["StartInterval"] == 3600 and p["RunAtLoad"] is False and p["ProcessType"] == "Standard"
     assert p["EnvironmentVariables"]["FLEET_SCOPE"] == "broomva"
     assert p["EnvironmentVariables"]["FLEET_CONFIG"] == str(inst.cfg)
@@ -89,7 +90,7 @@ def test_install_pins_a_copy_renders_the_plist_seeds_the_config_and_loads_the_jo
 def test_the_pinned_copy_runs_without_the_checkout(inst, tmp_path):
     assert inst.run("--scope", "broomva", "--force").returncode == 0
     (rel,) = list(inst.releases.iterdir())
-    out = subprocess.run(["/bin/sh", str(rel / "orchestration/fleet-reconcile/scripts/fleet"), "config-check",
+    out = subprocess.run(["/bin/sh", str(rel / "orchestration/fleet/scripts/fleet"), "config-check",
                           "broomva"], capture_output=True, text=True, env=dict(os.environ, FLEET_CONFIG=str(inst.cfg)))
     assert out.returncode == 0, out.stderr
 
@@ -149,16 +150,16 @@ def test_a_scope_is_required(inst):
 
 def test_uncommitted_changes_are_refused_without_force(inst, tmp_path):
     repo = tmp_path / "repo"
-    for name in ("fleet-reconcile", "ctx-core"):
+    for name in ("fleet", "ctx-core"):
         shutil.copytree(str(SKILL.parent / name), str(repo / "orchestration" / name),
                         ignore=shutil.ignore_patterns("__pycache__", "tests"))
     _git("init", "-q", "-b", "main", cwd=repo)
     _git("add", "-A", cwd=repo)
     _git("commit", "-q", "-m", "x", cwd=repo)
-    script = repo / "orchestration" / "fleet-reconcile" / "scripts" / "install.sh"
+    script = repo / "orchestration" / "fleet" / "scripts" / "install.sh"
     clean = inst.run("--scope", "broomva", script=script)
     assert clean.returncode == 0, clean.stderr
-    (repo / "orchestration" / "fleet-reconcile" / "scripts" / "tick.sh").write_text("# edited\n")
+    (repo / "orchestration" / "fleet" / "scripts" / "tick.sh").write_text("# edited\n")
     dirty = inst.run("--scope", "broomva", script=script)
     assert dirty.returncode == 2 and "uncommitted changes" in dirty.stderr
     forced = inst.run("--scope", "broomva", "--force", script=script)

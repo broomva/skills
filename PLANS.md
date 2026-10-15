@@ -1,5 +1,24 @@
 # PLANS.md
 
+## fleet: rename fleet-reconcile, with workflows (BRO-3122)
+
+Status: built on `feature/bro-3122-fleet-skill` (from main 59af385); P20, PR, merge, broomva launchd cutover next.
+Scope: `skills/orchestration/fleet-reconcile/` → `fleet/` (0.6.0); SKILL.md an entry point routing to
+`workflows/{reconcile,census,close-out,rollover}.md`; `fleet reconcile|workflows|census|close-out|rollover`;
+`fleet-reconcile/` a deprecated alias (SKILL.md + forwarding scripts) for one release.
+Decisions: runtime names stay `fleet-reconcile` (launchd labels, state and releases dirs, loop ids, Maestro
+initiative and alert titles): Maestro `server/fleet.ts`/`paths.ts` and the loop ledger read them. Module names
+`fleet_reconcile.py`/`fleetlib` stay (smallest blast radius: tick.sh, install.sh, tests, every pinned release).
+Verification: pytest (402 + layout), `tests/mutation_check.py` (route mutants added), catalog/md/version lints,
+`fleet reconcile --scope broomva` on the live state, then `install.sh --scope broomva` and one real launchd tick.
+Cross-repo: workspace loop row notes + overlay line (PR); `.control/initiatives/fleet-autonomy.yaml` (owner-merge PR).
+SRI's plist is SRI's: told, never touched. The old release dir stays until both scopes cut over.
+Deploy (after merge): ff `~/broomva/skills`; link `fleet` beside the alias in every per-skill root that
+links `fleet-reconcile` (`~/.claude/skills`, `~/.agents/skills`: `ln -s ~/broomva/skills/skills/orchestration/fleet`),
+since after the pull those links reach only the alias stub. P20 round 1: A 4/10, B 6/10, both on close-out's
+no-upstream check (fixed: one script, FINISHED only when a merged PR carries HEAD), plus the frontmatter kept
+whole, `fleet reconcile` scope check, alias-installed-alone message, the launch routing (coordinator's ask).
+
 ## provider-manager: a balance or failover never kills running sessions (BRO-2713)
 
 Status: implemented and proven locally on `fix/provider-manager-seamless-balance` (from main de8c7ad); PR, P20, merge and live install next.

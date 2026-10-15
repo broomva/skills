@@ -1270,6 +1270,16 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
                 "storeAccount": is_store_account, "switched": False}
 
 
+def login_codex_headless(email: Optional[str] = None, space: str = "Stimulus") -> Dict[str, Any]:
+    """Re-authorize a Codex account headlessly from an active Arc browser session."""
+    import pm_codex_login
+    target_email = email or "devteam@getstimulus.ai"
+    ok, msg = pm_codex_login.run_codex_autonomous_login(target_email, space_name=space)
+    if not ok:
+        raise StoreError(f"Autonomous Codex login failed: {msg}")
+    return {"success": True, "provider": "codex", "email": target_email, "message": msg}
+
+
 # -- OpenAI Codex provider implementation ---------------------------------------------------------
 
 DEFAULT_CODEX_ROSTER = [
@@ -1587,6 +1597,18 @@ def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None,
             entry["usageStatus"] = "THROTTLED"
             entry["isActive"] = is_active
             out.append(entry)
+        elif status_code == 401:
+            out.append({
+                "id": acc_id,
+                "email": email,
+                "isActive": is_active,
+                "telemetry": "auth_expired",
+                "needsLogin": True,
+                "usageStatus": "NEEDS_LOGIN",
+                "error": err_msg,
+                "primary": None, "secondary": None, "credits": None, "resetCredits": None,
+                "isRateLimited": False,
+            })
         else:
             out.append({
                 "id": acc_id,
@@ -1631,17 +1653,43 @@ def switch_codex_account(target: str, force: bool = False) -> Dict[str, Any]:
     if target_read.status != "ok" or not target_read.data:
         target_read = read_orca_codex(target_email)
 
-    if target_read.status != "ok" or not target_read.data:
-        raise StoreError(f"No stored credentials found in Keychain for {target_email} ({target_id})")
+    target_tokens = (target_read.data.get("tokens") or target_read.data) if (target_read and target_read.status == "ok" and target_read.data) else None
+    rf = target_tokens.get("refresh_token") if target_tokens else None
 
-    target_tokens = target_read.data.get("tokens") or target_read.data
-    rf = target_tokens.get("refresh_token")
-    if not rf:
-        raise StoreError(f"Stored credentials for {target_email} lack a refresh_token")
+    refreshed = None
+    if rf:
+        code, refreshed, err = refresh_codex_token(rf)
 
-    code, refreshed, err = refresh_codex_token(rf)
-    if code != 200 or not refreshed:
-        raise StoreError(f"Cannot switch to {target_email}: refresh failed ({err})")
+    if not refreshed:
+        # Autonomous login via browser session if stored credentials are missing or invalidated
+        try:
+            import pm_codex_login
+            if pm_codex_login.is_arc_available():
+                ok, msg = pm_codex_login.run_codex_autonomous_login(target_email)
+                if ok:
+                    new_auth = read_codex_auth()
+                    if new_auth.status == "ok" and new_auth.data:
+                        def update_orca_active(data):
+                            s = data.setdefault("settings", {})
+                            s["activeCodexManagedAccountId"] = target_id
+                        _guarded_update(ORCA_DATA_PATH, update_orca_active)
+                        log_provider_event("codex.switch", {
+                            "from": ctx["activeAccountId"],
+                            "to": target_id,
+                            "email": target_email,
+                            "method": "autonomous_browser_login"
+                        })
+                        return {
+                            "status": "switched",
+                            "active": target_email,
+                            "id": target_id,
+                            "previous": ctx["activeIdentity"].get("email") or "unknown",
+                            "method": "autonomous_browser_login"
+                        }
+        except Exception as e:
+            sys.stderr.write(f"Autonomous login attempt error: {e}\n")
+
+        raise StoreError(f"Cannot switch to {target_email}: refresh failed and autonomous login unavailable")
 
     t_ident = extract_codex_identity(refreshed)
     target_acc_id = target_tokens.get("account_id") or t_ident.get("accountId")

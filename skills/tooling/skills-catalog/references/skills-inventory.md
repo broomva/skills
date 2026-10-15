@@ -18,7 +18,7 @@
 | `spec-contract` | The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked… |
 | `autoreview` | Unattended multi-lens review of a plan, launch plan, spec, strategy doc, ADR or proposal. The autonomous counterpart to grill-with-docs: instead of interviewing the human, the agent asks the grilling… |
 
-## Orchestration & autonomy — `skills/orchestration/` (13)
+## Orchestration & autonomy — `skills/orchestration/` (14)
 
 | Skill | What it does |
 |---|---|
@@ -34,7 +34,8 @@
 | `resume` | Restore an arc that was killed mid-flight by something external — API 529 / 500, ENOTFOUND, ConnectionRefused, an expired login, a laptop that slept, a Ctrl-C. The operator restarts, types `resume`… |
 | `provider-manager` | Autonomous AI provider and subscription management toolkit. Enables seamless account discovery, credential switching, automated zero-touch browser-session OAuth re-authentication, and proactive… |
 | `ctx-core` | The shared context core, phase 1: a read-only shared board. Hooks append each session's start, ARC-STATUS keyword and death to a per-scope log as structured fields only; SessionStart injects a factual brief of the other sessions on the same branch. Coordination only, not a security boundary |
-| `fleet-reconcile` | The hourly fleet coordinator. Phase 1 observes and classifies, report only; phase 2 adds the coordinator and its verbs under dry run. Each tick reads every Claude Code session (claude agents --json… |
+| `fleet-reconcile` | **Deprecated** alias of `fleet` (renamed in fleet 0.6.0, BRO-3122); forwards its scripts there for one release |
+| `fleet` | The Broomva fleet: every Claude Code and Paseo session, PR and loop the coordinators drive, and the workflows that manage it. reconcile is the hourly launchd tick (observe, classify, report, owner… |
 
 ## Skill & prompt tooling — `skills/tooling/` (10)
 
@@ -230,6 +231,6 @@
 
 - **Total skills**: 107
 - **Total category buckets**: 23
-- **Largest bucket**: Orchestration & autonomy (13)
+- **Largest bucket**: Orchestration & autonomy (14)
 - **Smallest buckets** (1): Science
 - Taxonomy = the 23 `skills/<category>/` directory buckets. Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.

@@ -1,6 +1,6 @@
 # Captured fixtures
 
-`cc-<version>/` holds copies of every surface fleet-reconcile parses, captured
+`cc-<version>/` holds copies of every surface fleet's reconcile tick parses, captured
 on the owner's machine by `tests/capture_fixtures.py` and anonymized (this repo
 is public). `cc-2.1.280/` is the full scenario capture the behavioural tests
 run on. `cc-<parsers.PINNED_CC_VERSION>/` holds only the Claude Code surfaces
