@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 106 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
+> 107 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
 ## Governance & control — `skills/governance/` (11)
 
@@ -48,7 +48,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 106 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 107 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 | `mod-anything` | Change or extend software or a device the user owns but whose source they don't control (a desktop app, a website, a game, a device protocol, a CLI) by the cheapest route that reaches the idea. The… |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
@@ -102,7 +102,7 @@
 | `seo-llmeo` | SEO and LLM Engine Optimization (LLMEO) skill for BroomVA content |
 | `social-intelligence` | Autonomous social engagement + knowledge extraction loop for Moltbook and X/Twitter |
 
-## Video & multimedia — `skills/video/` (6)
+## Video & multimedia — `skills/video/` (7)
 
 | Skill | What it does |
 |---|---|
@@ -112,6 +112,7 @@
 | `launch-video` | Produce polished product launch videos using the Liquid Glass aesthetic — dark void backgrounds, 3D perspective floating UI panels, particle effects, spring |
 | `ltx-video` | Set up, configure, and run LTX-2/LTX-2.3 (Lightricks) for AI video and audio generation |
 | `video-cut` | Edit raw footage into a finished cut by conversation, fully local |
+| `motion-lab` | Directed, reproducible code-first motion: a render-contract linter, a Playwright freeze-frame renderer with a labelled contact sheet and purity check, and drift-free motion math (beats, springs, GIF timing) |
 
 ## Audio & music — `skills/audio/` (3)
 
@@ -227,7 +228,7 @@
 
 ## Aggregates
 
-- **Total skills**: 106
+- **Total skills**: 107
 - **Total category buckets**: 23
 - **Largest bucket**: Orchestration & autonomy (13)
 - **Smallest buckets** (1): Science

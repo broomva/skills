@@ -1,0 +1,221 @@
+---
+name: motion-lab
+tier: D
+category: video
+description: >-
+  Make code-first motion (an animation that is a program, rendered frame by frame
+  in a headless browser) look directed instead of generic, and prove every frame
+  is reproducible. Ships the render contract (every frame a pure function of t,
+  window.renderAt(t), no clocks, timers or unseeded random, pinned libraries,
+  frames 0..N-1), a numbers-not-adjectives prompt template with a living ban list,
+  and a render -> look -> fix loop whose notes name frames. Deterministic core:
+  scripts/motion_lint.py (static contract linter), scripts/render.mjs (Playwright
+  freeze-frame renderer with a labelled contact sheet and a --verify purity
+  re-render), scripts/motion_math.py (drift-free beat grid, spring damping ratio,
+  loop frames, text holds, GIF delay schedule and a GIF timing reader). USE WHEN:
+  writing or fixing an animated loop, title card, product shot, explainer clip,
+  logo reveal or launch video in plain HTML/CSS, Canvas, SVG, three.js, GSAP,
+  HyperFrames or Remotion; a render flickers, jitters, hiccups at the loop seam,
+  drifts off the beat or "looks like AI"; exporting a loop for X. Triggers on
+  "motion lab", "motion design", "animate this", "make an animation", "animated
+  loop", "render this animation", "render contract", "renderAt", "contact sheet",
+  "frame 84", "looks like AI", "it looks generic", "loop hiccup", "GIF for X".
+  NOT FOR: UI micro-interactions inside a live app (use the animate skill or the
+  Motion library), editing recorded footage (video-cut), AI-generated video
+  footage or people (higgsfield, ltx-video), or a fixed-aesthetic Remotion recipe
+  (launch-video).
+---
+
+# motion-lab — directed, reproducible code-first motion
+
+An LLM does not output pixels for an animation. It writes a program that draws
+each frame, and a headless browser records the frames. Three properties follow,
+and this skill is built to keep them:
+
+1. **A frame is reproducible.** Frame 84 rendered twice is the same image twice.
+2. **An edit is cheap.** Change one number and re-render. Nothing is re-rolled.
+3. **The agent can check its own work.** It reads stills and a contact sheet, and
+   writes notes against frame numbers.
+
+## The one rule
+
+> **Adjectives get defaults. Numbers get direction.**
+>
+> The generic look is what the model produces where the prompt left a value open.
+> "Premium", "cool" and "modern" decide nothing, so the model decides for you:
+> dark navy space, glow, bloom, particles, a spinning turntable. Every adjective
+> you replace with a number is a decision you take back.
+
+## Pipeline
+
+1. **Pick the engine and the canvas first.** Changing the canvas later means
+   re-directing every shot.
+
+   | Piece | Engine |
+   |---|---|
+   | one idea, under 10 s, 2D | plain HTML + CSS / Canvas / SVG |
+   | a series, a template, data-driven | Remotion (load the `remotion` skill) |
+   | thinks in web pages and GSAP timelines | HyperFrames |
+   | anything 3D | three.js (pin the version: `three@0.160.0`) |
+
+   Sizes: 1920x1080 (16:9), 1080x1080 (1:1, safest in the feed), 1080x1350 (4:5),
+   1080x1920 (9:16).
+
+2. **Write the directed prompt.** Fill every line of
+   [`assets/prompt-template.md`](assets/prompt-template.md): GOAL, OUTPUT, TIME, LOOK,
+   MOTION, SHOTS, BANNED, QA. Paste the render contract (below) under it. Get every
+   number from [`references/motion-numbers.md`](references/motion-numbers.md) or
+   compute it:
+
+   ```bash
+   python3 scripts/motion_math.py frames --seconds 6 --fps 60 --bpm 120   # 360 frames, loop closes on the music
+   python3 scripts/motion_math.py beats --fps 30 --bpm 128 --count 32      # beat frames, rounded per beat
+   python3 scripts/motion_math.py damping --stiffness 100 --damping 10     # zeta 0.5: playful
+   python3 scripts/motion_math.py hold --words 2 --fps 24                  # 27 frames minimum
+   ```
+
+   Hand the model [`assets/motion.js`](assets/motion.js) with the line
+   *"use only these tokens, no inline numbers"*. It holds the easing curves, the
+   durations, the stagger and a closed-form spring that needs no simulation, so
+   frame 84 renders without computing frames 0 to 83.
+
+3. **Lint before rendering.** The static half of the contract:
+
+   ```bash
+   python3 scripts/motion_lint.py anim.html            # exit 1 on any ERROR
+   ```
+
+   | Rule | Catches | Level |
+   |---|---|---|
+   | MC01 | `Date.now`, `new Date()`, `performance.now`, `requestAnimationFrame` | ERROR; WARN when `renderAt` and a `?t=` guard exist (live preview) |
+   | MC02 | `setTimeout` / `setInterval` | ERROR |
+   | MC03 | `Math.random` / `getRandomValues` | ERROR |
+   | MC04 | Canvas / WebGL / three.js / GSAP / rAF motion with no `window.renderAt(t)` | ERROR |
+   | MC05 | CSS `transition` (state-triggered, not seekable) | ERROR |
+   | MC06 | `fetch` / XHR / WebSocket, or a remote URL that is not a font host and not pinned to `MAJOR.MINOR.PATCH` | ERROR |
+   | MC07 | a local `src`/`href` (not one self-contained file) | WARN |
+   | MC08 | web fonts with no `document.fonts.ready` wait | WARN |
+   | MC09 | `@keyframes` animating width / height / top / left | WARN |
+
+   It also lints a bare `.js` / `.tsx` module (a Remotion component), where MC04
+   does not apply but MC01–MC03 and MC06 do.
+
+4. **Render stills, a contact sheet, and verify purity.** From a project with
+   Playwright installed (`npm i -D playwright && npx playwright install chromium`):
+
+   ```bash
+   node scripts/render.mjs anim.html --seconds 6 --fps 24 --width 1080 --height 1080 --verify
+   ```
+
+   It writes `out/frames/0000.png…` for frames 0..N-1, `out/contact.png` (12 frames
+   labelled with their numbers), and `out/manifest.json`. `--verify` reloads the page
+   and re-renders the first, middle and last frames. If any byte differs, a frame
+   is not a pure function of t: exit 3, with the frames listed. This catches what
+   the linter cannot, such as a `renderAt` that reads a counter. Add `--mp4` for an
+   H.264 file (needs ffmpeg).
+
+5. **Look, then fix with frame numbers.** Read `contact.png` first, then only the
+   frames a note needs. Write notes as numbers, never feelings:
+
+   | The note you have | The note you send |
+   |---|---|
+   | "make it pop" | scale 1.0 → 1.08 → 1.0 over 6 frames, peak on the beat |
+   | "make it feel premium" | ease-out-quint entrances, springs at zeta 0.8, no overshoot on text |
+   | "it drags" | shorten each hold by one beat (12 frames at 120 BPM, 24 fps) |
+   | "it feels busy" | one hero move at a time; the rest start 150 ms later at 60% of its travel |
+   | "it looks like AI" | name every default it used, add each to BANNED, render again |
+
+   Send one or two notes per round; seven at once turns a fix into a rewrite. Two to
+   four rounds is normal. If a fix does not hold, render the frames on either side
+   of the problem and list every difference. More prompts that work are in
+   [`references/fixes.md`](references/fixes.md).
+
+6. **Sound (optional), measured not heard.** The model cannot listen. Score from
+   frame numbers, synthesize in code (Web Audio), land each hit 1 frame *after* its
+   picture, mix to −14 LUFS with peaks at −1 dBTP, then check each hit by decoding
+   the finished MP4. The picture must work muted first: the feed autoplays silent.
+
+7. **Export and check.** Commands are in
+   [`references/motion-numbers.md`](references/motion-numbers.md#export-for-x). Then
+   measure the GIF rather than trusting the encoder:
+
+   ```bash
+   python3 scripts/motion_math.py gif-check out/anim.gif --fps 24
+   ```
+
+   A GIF stores delays in hundredths of a second, so 24 fps (41.67 ms) cannot be
+   stored exactly. An encoder that rounds every frame to 4 cs runs 4% fast and falls
+   off the beat grid. ffmpeg 8.1 was measured alternating 4 and 5 cs and holding a
+   144-frame loop at exactly 6.00 s; other encoders may not. `gif-delays` prints
+   the exact schedule.
+
+## The render contract
+
+Paste it under every motion prompt. Each line closes one way a render goes wrong.
+
+```text
+Output one self-contained HTML file. Only the libraries the prompt names, pinned to a version.
+No network requests except fonts and those pinned libraries.
+Every frame must be a pure function of time t, in seconds.
+If JavaScript drives any motion, expose window.renderAt(t) that draws exactly that frame.
+With ?t= in the URL, draw that frame and never start requestAnimationFrame.
+Animate with CSS keyframes, the Web Animations API, SVG, Canvas 2D or WebGL. No CSS transitions.
+No Date.now, no setTimeout or setInterval starts, no unseeded Math.random.
+Loops: render frames 0 to N-1 only, and frame N-1 must flow into frame 0.
+If the page needs time to load (fonts, textures), set window.__ready = true when done.
+```
+
+When a fix works, add its line to the contract. The contract is the memory: every
+line is a failure you never have to see again.
+
+## The ban list
+
+Start from this, then grow it after every first render by naming what the model
+used anyway:
+
+- purple or blue gradients, glow, lens flares, bloom, neon
+- floating particles as decoration
+- dark void backgrounds (unless the brief asks for one)
+- everything fading in at once; fade-and-slide-up on every element
+- centered-everything layouts
+- text that moves while it is being read
+- spinning turntables
+
+One hero move per shot. Secondary moves travel 50–70% as far and start 100–200 ms
+later. Ambient motion stays under 5% of the hero's travel.
+
+## What the gates cannot see
+
+- The linter is static. It cannot tell whether `renderAt` reads only `t`, or whether
+  a seeded generator is reseeded per frame. `render.mjs --verify` is the runtime
+  check, and it samples three frames, not all of them.
+- `--verify` compares bytes. WebGL on a different GPU or driver can differ by a few
+  pixels between machines. Verify on the machine that renders.
+- Neither tool judges taste. The contact sheet and the frame-numbered notes are
+  where judgment happens.
+
+## Composition
+
+| With | How |
+|---|---|
+| `remotion` / `remotion-best-practices` | the engine for series and data-driven video; lint its components in module mode |
+| `launch-video` | a Remotion recipe with a fixed Liquid Glass look (dark void, glow, particles). Those are on this ban list: use launch-video when that look is the brief, and this skill when the brief is your own direction |
+| `adaptive-video-ingest` (via `checkit`) | the same contact-sheet instrument, used to read video rather than grade your own |
+| Claude Motion (claude.ai artifact) | the hosted version of this paradigm; this skill is the in-harness path |
+
+## Tests
+
+```bash
+python3 -m pytest tests/ -q                                  # lint + math (render tests skip without playwright)
+MOTION_LAB_NODE_DIR=/path/with/playwright python3 -m pytest tests/ -q   # + end-to-end render tests
+python3 tests/mutation_proof.py                              # every load-bearing line has a test that fails without it
+```
+
+## Provenance
+
+Method, numbers and the render contract distilled from Florence (@flxrnc),
+"Opus 5.5 Motion Lab: Make Claude Animate Like a Studio" (X Article, 2026-09-30,
+<https://x.com/flxrnc/status/2105311836190978392>), assessed in the broomva
+workspace note `research/notes/2026-10-15-opus-motion-lab-render-contract-raw.md`.
+The linter, renderer changes (`?t=0` load, animation warm-up, `--verify`, labelled
+sheet) and the GIF timing measurement are this skill's own. BRO-3117.

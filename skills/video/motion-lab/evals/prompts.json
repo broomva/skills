@@ -1,0 +1,127 @@
+{
+  "skill": "motion-lab",
+  "version": 1,
+  "notes": "10 cases: 6 positive / 4 negative. Every case is an authored golden: the skill shipped 2026-10-15 (BRO-3117) with zero production invocations, so no real-trace cases exist and none are claimed. Re-cut against real transcripts once the skill has been used. 4 of 6 positives avoid the skill name so they measure paraphrase inference; the negatives are the neighbours this skill must not steal from (animate, video-cut, higgsfield, launch-video).",
+  "execution_contract": {
+    "model": "claude-opus-5-5",
+    "note": "trigger-surface grading only; output quality is not gated here (taste is the open tier-J question)"
+  },
+  "known_gaps": [
+    "no real-trace cases",
+    "output quality ungated: a tier-J judge over contact sheets does not exist yet"
+  ],
+  "cases": [
+    {
+      "id": "golden-01",
+      "source": "authored",
+      "prompt": "make a 6 second seamless loop of our logo pouring into place, for an X post",
+      "should_trigger": true,
+      "expected_checks": [
+        "skill_triggered",
+        "final_answer_non_empty",
+        "no_clarifying_question_bounced_back"
+      ],
+      "rationale": "Explicit rendered-motion ask with no engine named; the skill must pick the engine and canvas first and direct with numbers rather than return a one-shot file."
+    },
+    {
+      "id": "golden-02",
+      "source": "authored",
+      "prompt": "the title card animation flickers between renders and hiccups where the loop restarts",
+      "should_trigger": true,
+      "expected_checks": [
+        "skill_triggered",
+        "final_answer_non_empty",
+        "no_clarifying_question_bounced_back"
+      ],
+      "rationale": "Two contract symptoms (impurity, frame N rendered) described without the vocabulary; measures paraphrase inference."
+    },
+    {
+      "id": "golden-03",
+      "source": "authored",
+      "prompt": "this three.js product shot looks generic, like every other AI demo",
+      "should_trigger": true,
+      "expected_checks": [
+        "skill_triggered",
+        "final_answer_non_empty",
+        "no_clarifying_question_bounced_back"
+      ],
+      "rationale": "The ban-list case: the fix is naming the defaults it used, not a vaguer 'make it premium'."
+    },
+    {
+      "id": "golden-04",
+      "source": "authored",
+      "prompt": "use motion-lab to render anim.html and give me a contact sheet I can annotate",
+      "should_trigger": true,
+      "expected_checks": [
+        "skill_triggered",
+        "final_answer_non_empty",
+        "no_clarifying_question_bounced_back"
+      ],
+      "rationale": "Explicit invocation by name; the renderer, sheet and frame labels are the expected path."
+    },
+    {
+      "id": "golden-05",
+      "source": "authored",
+      "prompt": "the remotion explainer's cuts drift off the music by the end",
+      "should_trigger": true,
+      "expected_checks": [
+        "skill_triggered",
+        "final_answer_non_empty",
+        "no_clarifying_question_bounced_back"
+      ],
+      "rationale": "Beat-grid drift in a Remotion piece; motion_math beats, not a hand-tuned offset."
+    },
+    {
+      "id": "golden-06",
+      "source": "authored",
+      "prompt": "export this canvas animation as a GIF for an X article and check the timing",
+      "should_trigger": true,
+      "expected_checks": [
+        "skill_triggered",
+        "final_answer_non_empty",
+        "no_clarifying_question_bounced_back"
+      ],
+      "rationale": "Last-mile export plus a measured GIF timing check."
+    },
+    {
+      "id": "neg-01",
+      "source": "authored",
+      "prompt": "add a hover animation to the pricing card button",
+      "should_trigger": false,
+      "expected_checks": [
+        "skill_not_triggered"
+      ],
+      "rationale": "UI micro-interaction in a live app: the animate skill or the Motion library, not a rendered clip."
+    },
+    {
+      "id": "neg-02",
+      "source": "authored",
+      "prompt": "cut the 40 minute podcast into three vertical clips",
+      "should_trigger": false,
+      "expected_checks": [
+        "skill_not_triggered"
+      ],
+      "rationale": "Footage editing: video-cut."
+    },
+    {
+      "id": "neg-03",
+      "source": "authored",
+      "prompt": "generate a cinematic video of a surfer at sunset",
+      "should_trigger": false,
+      "expected_checks": [
+        "skill_not_triggered"
+      ],
+      "rationale": "Generated footage from a video model: higgsfield / ltx-video."
+    },
+    {
+      "id": "neg-04",
+      "source": "authored",
+      "prompt": "make the launch video with the liquid glass look, floating panels and particles",
+      "should_trigger": false,
+      "expected_checks": [
+        "skill_not_triggered"
+      ],
+      "rationale": "That fixed aesthetic is launch-video's brief; motion-lab would ban half of it."
+    }
+  ]
+}

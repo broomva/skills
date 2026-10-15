@@ -1,0 +1,18 @@
+<!doctype html>
+<html>
+<head><meta charset="utf-8"><style>html,body{margin:0;background:#fff}</style></head>
+<body>
+<canvas id="c" width="160" height="90"></canvas>
+<script>
+  // Passes the static linter, but is impure: renderAt depends on how many times
+  // it has been called, not on t alone. Only a runtime re-render can catch this.
+  const ctx = document.getElementById('c').getContext('2d');
+  let calls = 0;
+  window.renderAt = function (t) {
+    calls += 1;
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 160, 90);
+    ctx.fillStyle = '#000'; ctx.fillRect((t * 40 + calls * 7) % 150, 40, 10, 10);
+  };
+</script>
+</body>
+</html>
