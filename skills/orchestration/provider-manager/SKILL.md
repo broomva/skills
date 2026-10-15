@@ -118,8 +118,9 @@ python3 $PM login-headless --email X   # re-login X from browser session; --forc
 python3 $PM list --provider codex                    # Codex accounts (devteam, carlos) & active store
 python3 $PM status --provider codex                  # active Codex auth mode, email, plan, token freshness
 python3 $PM usage --provider codex [--force]         # 5h/7d Codex utilization, reset credits, status
-python3 $PM switch --provider codex devteam@...      # safe Codex switch (backs up outgoing, updates auth.json)
+python3 $PM switch --provider codex devteam@...      # safe Codex switch (backs up outgoing, updates auth.json; auto-browser login fallback)
 python3 $PM balance --provider codex [--dry-run]     # evaluate Codex balance (5h threshold / credits depleted)
+python3 $PM login-headless --provider codex [--email X] # autonomous Codex re-login via Arc browser session
 
 # Multi-provider aggregate commands
 python3 $PM usage --provider all       # display both Claude Code and OpenAI Codex telemetry
@@ -127,10 +128,7 @@ python3 $PM status --provider all      # inspect authentication across both prov
 python3 $PM list --provider all        # list managed accounts across both providers
 ```
 
-`login-headless` for an account the store does not hold runs `claude auth login` in a throwaway
-config dir: only that account's Orca copy is renewed, and nothing switches. Follow it with `switch`
-if you want that account active. For the account the store holds, it renews the live store, and
-running sessions adopt the fresh grant.
+`login-headless` for Claude accounts renews via browser cookies in Arc/Chrome without GUI interaction. For OpenAI Codex, `switch` and `login-headless` autonomously drive the OAuth code approval via Arc's browser session (selecting account and confirming workspace consent headlessly) whenever stored tokens need refresh, enabling zero-prompt continuous swapping between team members.
 
 ## Hooks
 

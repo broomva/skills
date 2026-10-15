@@ -321,3 +321,46 @@ def test_switch_codex_account_aborts_on_keychain_write_failure(monkeypatch, tmp_
     # auth.json MUST remain untouched
     assert auth_path.read_text() == initial_auth
 
+
+def test_login_codex_headless(monkeypatch):
+    import pm_codex_login
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login",
+                        lambda email, space_name="Stimulus": (True, f"Logged in {email}"))
+    res = pm.login_codex_headless("carlos@getstimulus.ai")
+    assert res["success"] is True
+    assert res["email"] == "carlos@getstimulus.ai"
+    assert res["provider"] == "codex"
+
+
+def test_switch_codex_account_autonomous_fallback(monkeypatch, tmp_path):
+    import pm_codex_login
+    # Simulate missing/invalidated stored token
+    monkeypatch.setattr(pm, "read_orca_codex", lambda k: pm_store.Read("absent", None))
+
+    auth_path = tmp_path / "auth.json"
+    outgoing_tokens = {"access_token": "dev_tok", "email": "devteam@getstimulus.ai"}
+    auth_path.write_text(json.dumps({"auth_mode": "chatgpt", "tokens": outgoing_tokens}))
+    monkeypatch.setattr(pm_store, "CODEX_AUTH_PATH", auth_path)
+    monkeypatch.setattr(pm, "CODEX_AUTH_PATH", auth_path)
+
+    # Mock autonomous login to write new auth
+    def mock_auto_login(email, space_name="Stimulus"):
+        carlos_tokens = {
+            "id_token": _make_dummy_jwt({"email": "carlos@getstimulus.ai"}),
+            "access_token": _make_dummy_jwt({"exp": int(time.time()) + 3600}),
+            "refresh_token": "rf_carlos_auto",
+            "account_id": "acc_stimulus",
+        }
+        auth_path.write_text(json.dumps({"auth_mode": "chatgpt", "tokens": carlos_tokens}))
+        return True, "autologin ok"
+
+    monkeypatch.setattr(pm_codex_login, "is_arc_available", lambda: True)
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", mock_auto_login)
+    monkeypatch.setattr(pm, "_guarded_update", lambda path, fn: None)
+
+    res = pm.switch_codex_account("carlos@getstimulus.ai")
+    assert res["status"] == "switched"
+    assert res["active"] == "carlos@getstimulus.ai"
+    assert res["method"] == "autonomous_browser_login"
+
+
