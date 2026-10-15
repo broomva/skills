@@ -4,14 +4,14 @@ tier: D
 category: video
 description: >-
   Make code-first motion (an animation that is a program, rendered frame by frame
-  in a headless browser) look directed instead of generic, and prove every frame
-  is reproducible. Ships the render contract (every frame a pure function of t,
+  in a headless browser) look directed instead of generic, and check that its
+  frames re-render identically. Ships the render contract (every frame a pure function of t,
   window.renderAt(t), no clocks, timers or unseeded random, pinned libraries,
   frames 0..N-1), a numbers-not-adjectives prompt template with a living ban list,
   and a render -> look -> fix loop whose notes name frames. Deterministic core:
   scripts/motion_lint.py (static contract linter), scripts/render.mjs (Playwright
-  freeze-frame renderer with a labelled contact sheet and a --verify purity
-  re-render), scripts/motion_math.py (drift-free beat grid, spring damping ratio,
+  freeze-frame renderer that also seeks SVG SMIL, with a labelled contact sheet
+  and a --verify purity re-render of sampled frames), scripts/motion_math.py (drift-free beat grid, spring damping ratio,
   loop frames, text holds, GIF delay schedule and a GIF timing reader). USE WHEN:
   writing or fixing an animated loop, title card, product shot, explainer clip,
   logo reveal or launch video in plain HTML/CSS, Canvas, SVG, three.js, GSAP,
@@ -87,15 +87,16 @@ and this skill is built to keep them:
 
    | Rule | Catches | Level |
    |---|---|---|
-   | MC01 | `Date.now`, `new Date()`, `performance.now`, `requestAnimationFrame` | ERROR; WARN when `renderAt` and a `?t=` guard exist (live preview) |
+   | MC01 | `Date.now`, `Date()`, `new Date`, `performance.now`, `requestAnimationFrame`, a three.js `Clock` / `getElapsedTime` / `getDelta`, `document.timeline` | ERROR; WARN when `renderAt` and a `?t=` guard exist (live preview), but always ERROR inside `renderAt` itself |
    | MC02 | `setTimeout` / `setInterval` | ERROR |
-   | MC03 | `Math.random` / `getRandomValues` | ERROR |
+   | MC03 | `Math.random` (also `Math["random"]`, `const {random} = Math`) / `getRandomValues` | ERROR |
    | MC04 | Canvas / WebGL / three.js / GSAP / rAF motion with no `window.renderAt(t)` | ERROR |
-   | MC05 | CSS `transition` (state-triggered, not seekable) | ERROR |
-   | MC06 | `fetch` / XHR / WebSocket, or a remote URL that is not a font host and not pinned to `MAJOR.MINOR.PATCH` | ERROR |
+   | MC05 | a CSS transition with a non-zero duration, in CSS, a `style=""` attribute or set from JS | ERROR |
+   | MC06 | `fetch` / XHR / WebSocket, or a *loaded* remote URL (src/href, importmap, `url()`, a JS import, a JS string naming a loadable file) that is not a font host and not pinned to `MAJOR.MINOR.PATCH`. A URL that is only text, like the SVG namespace, is not checked | ERROR |
    | MC07 | a local `src`/`href` (not one self-contained file) | WARN |
    | MC08 | web fonts with no `document.fonts.ready` wait | WARN |
    | MC09 | `@keyframes` animating width / height / top / left | WARN |
+   | MC10 | something on its own clock: GSAP with no paused timeline or seek, an autoplaying `<video>`/`<audio>` | WARN |
 
    It also lints a bare `.js` / `.tsx` module (a Remotion component), where MC04
    does not apply but MC01–MC03 and MC06 do.
@@ -107,12 +108,22 @@ and this skill is built to keep them:
    node scripts/render.mjs anim.html --seconds 6 --fps 24 --width 1080 --height 1080 --verify
    ```
 
-   It writes `out/frames/0000.png…` for frames 0..N-1, `out/contact.png` (12 frames
-   labelled with their numbers), and `out/manifest.json`. `--verify` reloads the page
-   and re-renders the first, middle and last frames. If any byte differs, a frame
-   is not a pure function of t: exit 3, with the frames listed. This catches what
-   the linter cannot, such as a `renderAt` that reads a counter. Add `--mp4` for an
-   H.264 file (needs ffmpeg).
+   It writes `out/frames/0000.png…` for frames 0..N-1, `out/contact.png` (up to 12
+   frames labelled with their numbers), and `out/manifest.json`. Each frame calls
+   `renderAt(t)`, seeks every `document.getAnimations()` entry, and seeks SVG SMIL
+   timelines (`<animate>` is not in `getAnimations()`). `--verify` reloads the page
+   and re-renders the first, middle and last frames; if any byte differs, a frame
+   is not a pure function of t. This catches what the linter cannot, such as a
+   `renderAt` that reads a counter. Add `--mp4` for an H.264 file (needs ffmpeg).
+
+   | Exit | Meaning |
+   |---|---|
+   | 0 | rendered |
+   | 2 | usage or runtime error |
+   | 3 | `--verify` found an impure frame (listed in the manifest) |
+   | 4 | `--mp4` failed |
+   | 5 | the page threw (`page_errors` in the manifest): frames are likely blank |
+   | 6 | nothing drives motion, so every frame is the same image (`--allow-static` for a still) |
 
 5. **Look, then fix with frame numbers.** Read `contact.png` first, then only the
    frames a note needs. Write notes as numbers, never feelings:
@@ -186,9 +197,11 @@ later. Ambient motion stays under 5% of the hero's travel.
 
 ## What the gates cannot see
 
-- The linter is static. It cannot tell whether `renderAt` reads only `t`, or whether
-  a seeded generator is reseeded per frame. `render.mjs --verify` is the runtime
-  check, and it samples three frames, not all of them.
+- The linter is static. It cannot tell whether `renderAt` reads only `t`, whether
+  a seeded generator is reseeded per frame, or a clock reached through an alias it
+  does not know. `render.mjs --verify` is the runtime check, and it samples three
+  frames in one session, not all of them. A clock that changes slower than the
+  verify window (the minute of the hour, say) passes both gates.
 - `--verify` compares bytes. WebGL on a different GPU or driver can differ by a few
   pixels between machines. Verify on the machine that renders.
 - Neither tool judges taste. The contact sheet and the frame-numbered notes are
@@ -208,7 +221,7 @@ later. Ambient motion stays under 5% of the hero's travel.
 ```bash
 python3 -m pytest tests/ -q                                  # lint + math (render tests skip without playwright)
 MOTION_LAB_NODE_DIR=/path/with/playwright python3 -m pytest tests/ -q   # + end-to-end render tests
-python3 tests/mutation_proof.py                              # every load-bearing line has a test that fails without it
+python3 tests/mutation_proof.py                              # each listed mechanism has a test that fails without it
 ```
 
 ## Provenance
@@ -217,5 +230,6 @@ Method, numbers and the render contract distilled from Florence (@flxrnc),
 "Opus 5.5 Motion Lab: Make Claude Animate Like a Studio" (X Article, 2026-09-30,
 <https://x.com/flxrnc/status/2105311836190978392>), assessed in the broomva
 workspace note `research/notes/2026-10-15-opus-motion-lab-render-contract-raw.md`.
-The linter, renderer changes (`?t=0` load, animation warm-up, `--verify`, labelled
-sheet) and the GIF timing measurement are this skill's own. BRO-3117.
+The linter, renderer changes (`?t=0` load, animation warm-up, SMIL seeking,
+`--verify`, exit codes, labelled sheet) and the GIF timing measurement are this
+skill's own. BRO-3117.

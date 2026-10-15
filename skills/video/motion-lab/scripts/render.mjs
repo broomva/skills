@@ -2,12 +2,14 @@
 // render.mjs — freeze a code-first animation at every frame and save PNGs.
 //
 //   node render.mjs anim.html --seconds 6 --fps 24 [--width 1080 --height 1080]
-//        [--scale 1] [--out out] [--every 12] [--verify] [--mp4] [--no-sheet]
+//        [--scale 1] [--out out] [--every 12] [--verify] [--mp4] [--no-sheet] [--allow-static]
 //
 // Frames are 0..N-1 (N = seconds * fps): frame N is frame 0 again, and rendering
 // it is the hiccup at a loop seam. Each frame is the page frozen at t = i / fps by
-// calling window.renderAt(t) (when the page defines it) and seeking every
-// document.getAnimations() entry, so the result is exact however slow the machine.
+// calling window.renderAt(t) (when the page defines it), seeking every
+// document.getAnimations() entry (CSS animations, transitions, WAAPI) and seeking
+// every SVG SMIL timeline (<animate>, <animateTransform>, <set>, which
+// getAnimations() does not list), so the result is exact however slow the machine.
 //
 // The page is loaded with ?t=0 so its own preview loop never starts (the render
 // contract: "with ?t= never start requestAnimationFrame"); a running preview loop
@@ -19,7 +21,13 @@
 // manifest.json, and anim.mp4 with --mp4 (needs ffmpeg on PATH).
 //
 // --verify reloads the page and re-renders the first, middle and last frames;
-// any byte difference means a frame is not a pure function of t. Exit 3.
+// any byte difference means a frame is not a pure function of t. It samples
+// three frames on one machine: a pass is evidence, not proof, of purity.
+//
+// Exit codes: 0 ok; 2 usage or runtime error; 3 --verify found an impure frame;
+// 4 --mp4 failed; 5 the page threw (page_errors in the manifest); 6 nothing drives
+// motion (no renderAt, no animations, no SMIL), so every frame is the same image.
+// Pass --allow-static when a still frame is what you want.
 //
 // Playwright is resolved from the CURRENT directory first, so the skill can live
 // anywhere: run it from a project that has `npm i -D playwright` (or bun add -d).
@@ -31,7 +39,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 function parseArgs(argv) {
-  const o = { seconds: 6, fps: 24, width: 1080, height: 1080, scale: 1, out: 'out', every: 0, verify: false, mp4: false, sheet: true };
+  const o = { seconds: 6, fps: 24, width: 1080, height: 1080, scale: 1, out: 'out', every: 0, verify: false, mp4: false, sheet: true, allowStatic: false };
   const pos = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -46,6 +54,7 @@ function parseArgs(argv) {
     else if (a === '--verify') o.verify = true;
     else if (a === '--mp4') o.mp4 = true;
     else if (a === '--no-sheet') o.sheet = false;
+    else if (a === '--allow-static') o.allowStatic = true;
     else if (a.startsWith('--')) throw new Error(`unknown flag ${a}`);
     else pos.push(a);
   }
@@ -101,12 +110,18 @@ async function frameAt(page, t) {
     if (typeof window.renderAt === 'function') { await window.renderAt(tt); drew = true; }
     const anims = document.getAnimations();
     for (const a of anims) { a.pause(); a.currentTime = tt * 1000; }
+    // SVG SMIL is not in getAnimations(): seek each <svg> document timeline.
+    let smil = 0;
+    for (const svg of document.querySelectorAll('svg')) {
+      if (typeof svg.pauseAnimations === 'function') { svg.pauseAnimations(); svg.setCurrentTime(tt); }
+    }
+    smil = document.querySelectorAll('animate, animateTransform, animateMotion, set').length;
     // A just-started CSS animation is still pending; seeking it and screenshotting
     // in the same frame can capture the pre-seek pose. Wait for every animation to
     // be ready, then two frames so the compositor has committed the paused state.
     await Promise.all(anims.map((a) => a.ready.catch(() => {})));
     for (let k = 0; k < 2; k++) await new Promise((r) => requestAnimationFrame(() => r()));
-    return { drew, anims: anims.length };
+    return { drew, anims: anims.length, smil };
   }, t);
 }
 
@@ -144,11 +159,13 @@ async function main() {
       if (drive === null) drive = info;
       await page.screenshot({ path: path.join(framesDir, `${String(i).padStart(4, '0')}.png`) });
     }
-    manifest.driven_by = drive ? { renderAt: drive.drew, animations: drive.anims } : null;
-    if (drive && !drive.drew && drive.anims === 0) {
-      manifest.warning = 'no window.renderAt and no document animations: every frame may be identical';
-    }
+    manifest.driven_by = drive ? { renderAt: drive.drew, animations: drive.anims, smil: drive.smil } : null;
     manifest.page_errors = errors;
+    if (errors.length) exitCode = 5;
+    if (drive && !drive.drew && drive.anims === 0 && drive.smil === 0) {
+      manifest.warning = 'no window.renderAt, no document animations and no SMIL: every frame is the same image';
+      if (!o.allowStatic && !exitCode) exitCode = 6;
+    }
     await page.close();
 
     if (o.verify) {
@@ -164,7 +181,7 @@ async function main() {
       }
       await p2.close();
       manifest.verify = { frames: picks, mismatches, pure: mismatches.length === 0 };
-      if (mismatches.length) exitCode = 3;
+      if (mismatches.length) exitCode = 3; // impurity outranks the other findings
     }
 
     if (o.sheet && N > 0) {

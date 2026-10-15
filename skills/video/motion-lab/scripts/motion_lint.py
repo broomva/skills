@@ -6,32 +6,43 @@ of time t, so a headless browser can freeze it at any frame and get the same
 pixels every run. This checker finds the static violations of that contract in
 an HTML file (or a bare .js/.mjs/.ts/.tsx module):
 
-  MC01 clock        Date.now / new Date() / performance.now / requestAnimationFrame.
+  MC01 clock        Date.now / Date() / new Date / performance.now / rAF / a
+                    three.js Clock / getElapsedTime / getDelta / document.timeline.
                     ERROR, unless the file defines renderAt AND a ?t= guard: that
                     is the live-preview pattern, and the guard keeps the clock out
-                    of a frozen render. Then it is a WARN to confirm by eye.
+                    of a frozen render. Then it is a WARN to confirm by eye. A clock
+                    inside renderAt's own body is always an ERROR.
   MC02 timer        setTimeout / setInterval (a timer start makes frame N differ
                     run to run).
-  MC03 random       Math.random / crypto.getRandomValues (unseeded randomness
-                    makes shapes jitter frame to frame).
+  MC03 random       Math.random (also via Math["random"] or destructuring) /
+                    crypto.getRandomValues: unseeded randomness makes shapes
+                    jitter frame to frame.
   MC04 renderAt     JS-driven motion (canvas, WebGL, three.js, GSAP, rAF) with no
                     window.renderAt(t). CSS-only motion is exempt: the renderer
                     seeks document.getAnimations() directly.
-  MC05 transition   a CSS `transition` (state-triggered, so not seekable by t).
-  MC06 network      fetch / XMLHttpRequest / WebSocket / EventSource, or a remote
-                    URL that is neither a font host nor pinned to MAJOR.MINOR.PATCH.
+  MC05 transition   a CSS transition with a non-zero duration, in a <style> block,
+                    a style="" attribute or set from JS (state-triggered, so not
+                    seekable by t).
+  MC06 network      fetch / XMLHttpRequest / WebSocket / EventSource, or a loaded
+                    remote URL (src/href, importmap, CSS url(), a JS import, or a JS
+                    string naming a loadable file) that is neither a font host nor
+                    pinned to MAJOR.MINOR.PATCH. A URL that is only text, such as the
+                    SVG namespace, is not a load and is not checked.
   MC07 local-file   a relative src/href (the contract asks for one self-contained
                     file). WARN.
   MC08 fonts        web fonts loaded with no document.fonts.ready wait. WARN.
   MC09 layout       @keyframes animating width/height/top/left/right/bottom
                     (jank; animate transform and opacity). WARN.
+  MC10 ext-clock    something that plays on its own clock: GSAP with no paused
+                    timeline or seek, or an autoplaying <video>/<audio>. WARN:
+                    drive it from renderAt (tl.seek(t), el.currentTime = t).
 
 Exit 0 when no ERROR is found (WARNs allowed), 1 on any ERROR, 2 on a usage or
 read error. --strict makes a WARN fail too. --json prints machine output.
 
 What this cannot see: whether renderAt really reads only t, whether a seeded
-generator is reseeded per frame, or whether frame N-1 flows into frame 0. Those
-are runtime properties. `render.mjs --verify` re-renders frames and compares
+generator is reseeded per frame, a clock reached through an alias it does not
+know, or whether frame N-1 flows into frame 0. Those are runtime properties. `render.mjs --verify` re-renders frames and compares
 bytes, which is the dynamic half of the same contract.
 """
 
@@ -156,19 +167,101 @@ def blocks_of(text: str, is_html: bool) -> list[Block]:
     return out
 
 
+CLOCK = re.compile(
+    r"\bDate\.now\b|\bnew\s+Date\b|(?<!new )(?<![\w.$])Date\s*\(|\bperformance\.now\b"
+    r"|\brequestAnimationFrame\s*\(|\bClock\s*\(|\bgetElapsedTime\s*\(|\bgetDelta\s*\(|\bdocument\.timeline\b")
+# Rules over the string-blanked view (a quoted name cannot trip them).
 JS_RULES = [
-    ("MC01", re.compile(r"\bDate\.now\s*\(|\bnew\s+Date\s*\(|\bperformance\.now\s*\(|\brequestAnimationFrame\s*\("), "clock or frame loop"),
+    ("MC01", CLOCK, "clock or frame loop"),
     ("MC02", re.compile(r"\bset(?:Timeout|Interval)\s*\("), "timer start"),
     ("MC03", re.compile(r"\bMath\.random\s*\(|\bgetRandomValues\s*\("), "unseeded randomness"),
+    ("MC05", re.compile(r"\.style\.transition\w*\s*=(?!=)"), "CSS transition set from JS"),
     ("MC06", re.compile(r"\bfetch\s*\(|\bXMLHttpRequest\b|\bnew\s+WebSocket\s*\(|\bnew\s+EventSource\s*\("), "network request"),
+]
+# Rules that need string contents (the view with comments stripped, strings kept).
+JS_KEEP_RULES = [
+    ("MC03", re.compile(r"\bMath\s*\[\s*['\"`]random['\"`]\s*\]|\{[^{}]*\brandom\b[^{}]*\}\s*=\s*Math\b"), "unseeded randomness"),
+    ("MC05", re.compile(r"\.style\.setProperty\s*\(\s*['\"`]transition"), "CSS transition set from JS"),
 ]
 MOTION_JS = re.compile(r"getContext\s*\(|\bTHREE\b|from\s*['\"]three|\bgsap\b|requestAnimationFrame|WebGLRenderer")
 RENDER_AT = re.compile(r"\brenderAt\s*=|\bfunction\s+renderAt\b|\brenderAt\s*:")
-T_GUARD = re.compile(r"URLSearchParams[\s\S]{0,400}?\.(?:has|get)\s*\(\s*['\"]t['\"]\s*\)")
+T_PARAM = re.compile(r"\.(?:has|get)\s*\(\s*['\"`]t['\"`]\s*\)")
+T_SEARCH = re.compile(r"location\.search[^\n]{0,160}\bt=")
+LOAD_EXT = re.compile(r"\.(?:m?js|cjs|css|json|wasm|glb|gltf|bin|hdr|exr|ktx2|png|jpe?g|webp|avif|gif|svg|mp[34]|webm|wav|ogg|woff2?|ttf|otf)(?:[?#]|$)", re.I)
+IMPORT_CTX = re.compile(r"(?:\bimport\s*\(\s*|\bfrom\s*|\bimport\s+)['\"`]$")
+RENDER_AT_DEF = re.compile(
+    r"\brenderAt\s*[=:]\s*(?:async\s+)?function\b[^{]*\{"
+    r"|\bfunction\s+renderAt\s*\([^)]*\)\s*\{"
+    r"|\brenderAt\s*[=:]\s*(?:async\s+)?(?:\([^)]*\)|[A-Za-z_$][\w$]*)\s*=>\s*")
+GSAP_SEEKED = re.compile(r"paused\s*:\s*true|\.seek\s*\(|\.progress\s*\(|\.totalTime\s*\(|\.time\s*\(|\.pause\s*\(")
+MEDIA_AUTOPLAY = re.compile(r"<(video|audio)\b[^>]*\bautoplay\b", re.I)
+STYLE_ATTR = re.compile(r"""\bstyle\s*=\s*(["'])(.*?)\1""", re.I | re.S)
+DURATION = re.compile(r"(\d*\.?\d+)\s*(ms|s)\b", re.I)
 FONTS_READY = re.compile(r"document\.fonts\.ready|document\.fonts\.load\s*\(")
-TRANSITION = re.compile(r"(?<![-\w.#])transition(?:-[a-z-]+)?\s*:\s*([^;}{]*)", re.I)
+TRANSITION = re.compile(r"(?<![-\w.#])transition(-[a-z-]+)?\s*:\s*([^;}{\"']*)", re.I)
 KEYFRAMES = re.compile(r"@keyframes\s+[\w-]+\s*\{((?:[^{}]*\{[^{}]*\})*)[^{}]*\}", re.I)
 LAYOUT_PROP = re.compile(r"(?<![-\w])(width|height|top|left|right|bottom)\s*:", re.I)
+
+
+def transition_is_live(longhand: str | None, value: str) -> bool:
+    """A transition matters only if it can run: some duration must be above zero.
+
+    `transition: transform` (0s by default), `transition: all 0s`,
+    `transition-behavior: allow-discrete` and `transition-delay: 1s` alone
+    animate nothing, so they are not findings.
+    """
+    value = value.strip().lower()  # none / initial / 0s carry no positive duration
+    if longhand not in (None, "-duration"):
+        return False
+    for num, unit in DURATION.findall(value):
+        if float(num) > 0:
+            # in the shorthand the FIRST time is the duration, the second the delay
+            return True if longhand == "-duration" else _first_time_positive(value)
+    return False
+
+
+def _first_time_positive(value: str) -> bool:
+    for part in value.split(","):
+        times = DURATION.findall(part)
+        if times and float(times[0][0]) > 0:
+            return True
+    return False
+
+
+def render_at_spans(blank: str) -> list[tuple[int, int]]:
+    """Character spans of every renderAt body, found on the string-blanked view."""
+    spans = []
+    for m in RENDER_AT_DEF.finditer(blank):
+        i = m.end()
+        if blank[i - 1] == "{" or (i < len(blank) and blank[i] == "{"):
+            i = i if blank[i - 1] == "{" else i + 1
+            depth, j = 1, i
+            while j < len(blank) and depth:
+                depth += {"{": 1, "}": -1}.get(blank[j], 0)
+                j += 1
+            spans.append((i, j))
+        else:  # expression-bodied arrow: up to the statement end at depth 0
+            depth, j = 0, i
+            while j < len(blank):
+                c = blank[j]
+                if c in "([{":
+                    depth += 1
+                elif c in ")]}":
+                    if depth == 0:
+                        break
+                    depth -= 1
+                elif c in ";\n" and depth == 0:
+                    break
+                j += 1
+            spans.append((i, j))
+    return spans
+
+
+def is_load(keep: str, m: re.Match) -> bool:
+    url = m.group(0)
+    if "www.w3.org/" in url:
+        return False  # XML/SVG/MathML namespace identifiers are never fetched
+    return bool(LOAD_EXT.search(url) or IMPORT_CTX.search(keep[max(0, m.start() - 24):m.start()]))
 
 
 def lint_text(text: str, is_html: bool = True) -> list[Finding]:
@@ -184,20 +277,40 @@ def lint_text(text: str, is_html: bool = True) -> list[Finding]:
     all_js_blank = "\n".join(bl for _, _, bl in js_views)
 
     has_render_at = bool(RENDER_AT.search(all_js_blank))
-    has_guard = bool(T_GUARD.search(all_js_keep))
+    has_guard = bool(("URLSearchParams" in all_js_blank and T_PARAM.search(all_js_keep))
+                     or T_SEARCH.search(all_js_keep))
     preview_ok = has_render_at and has_guard
 
     for start, keep, blank in js_views:
+        spans = render_at_spans(blank)
         for rule, rx, label in JS_RULES:
             for m in rx.finditer(blank):
                 line = line_of(text, start + m.start())
-                if rule == "MC01" and preview_ok:
+                in_render_at = any(a <= m.start() < b for a, b in spans)
+                if rule == "MC01" and in_render_at:
+                    findings.append(Finding(rule, "error", line,
+                        f"{label} `{m.group(0).strip()}` inside renderAt: the frame then depends on more than t"))
+                elif rule == "MC01" and preview_ok:
                     findings.append(Finding(rule, "warn", line,
                         f"{label} `{m.group(0).strip()}` with renderAt + ?t= guard: confirm it only drives the live preview"))
                 else:
                     findings.append(Finding(rule, "error", line, f"{label} `{m.group(0).strip()}`"))
+        for rule, rx, label in JS_KEEP_RULES:
+            for m in rx.finditer(keep):
+                findings.append(Finding(rule, "error", line_of(text, start + m.start()), f"{label} `{m.group(0).strip()}`"))
         for m in _URL.finditer(keep):
-            check_url(m.group(0), line_of(text, start + m.start()), findings)
+            if is_load(keep, m):
+                check_url(m.group(0), line_of(text, start + m.start()), findings)
+
+    # MC10 — motion that runs on its own clock
+    if re.search(r"\bgsap\b", all_js_blank) and not GSAP_SEEKED.search(all_js_blank):
+        m = re.search(r"\bgsap\b", text)
+        findings.append(Finding("MC10", "warn", line_of(text, m.start()) if m else 1,
+            "GSAP plays on its own ticker: create timelines with paused: true and seek them from renderAt"))
+    if is_html:
+        for m in MEDIA_AUTOPLAY.finditer(text):
+            findings.append(Finding("MC10", "warn", line_of(text, m.start()),
+                f"autoplaying <{m.group(1).lower()}> plays on the wall clock: pause it and set currentTime = t in renderAt"))
 
     # MC04 — JS-driven motion needs a renderAt(t) entry point (HTML only: a bare
     # module may legitimately be a Remotion component driven by useCurrentFrame).
@@ -213,8 +326,7 @@ def lint_text(text: str, is_html: bool = True) -> list[Finding]:
         elif b.kind == "style":
             css = strip_css_comments(b.body)
             for m in TRANSITION.finditer(css):
-                value = m.group(1).strip().lower()
-                if value in ("none", "0s", "0", "initial", "unset") or value.startswith("none"):
+                if not transition_is_live(m.group(1), m.group(2)):
                     continue
                 findings.append(Finding("MC05", "error", line_of(text, b.start + m.start()),
                     f"CSS transition `{m.group(0).strip()}` is state-triggered, not seekable by t"))
@@ -227,6 +339,11 @@ def lint_text(text: str, is_html: bool = True) -> list[Finding]:
                     check_url(m.group(1), line_of(text, b.start + m.start()), findings)
 
     if is_html:
+        for sm in STYLE_ATTR.finditer(text):
+            for m in TRANSITION.finditer(sm.group(2)):
+                if transition_is_live(m.group(1), m.group(2)):
+                    findings.append(Finding("MC05", "error", line_of(text, sm.start()),
+                        f"inline CSS transition `{m.group(0).strip()}` is state-triggered, not seekable by t"))
         for m in _TAG_ATTR.finditer(text):
             ref = m.group(1).strip()
             line = line_of(text, m.start())

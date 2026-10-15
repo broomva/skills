@@ -60,7 +60,7 @@ class TestRender:
         assert m["frames"] == 12 and m["render_range"] == [0, 11]
         assert len(list((tmp_path / "frames").glob("*.png"))) == 12
         assert (tmp_path / "contact.png").stat().st_size > 0
-        assert m["verify"]["pure"] is True and m["driven_by"] == {"renderAt": True, "animations": 1}
+        assert m["verify"]["pure"] is True and m["driven_by"] == {"renderAt": True, "animations": 1, "smil": 0}
 
     def test_frames_actually_change_over_time(self, tmp_path):
         render("good.html", tmp_path, "--no-sheet")
@@ -83,3 +83,29 @@ class TestRender:
         assert r.returncode == 2 and "positive" in r.stderr
 
 
+
+    def test_svg_smil_is_seeked(self, tmp_path):
+        # <animate> is not in document.getAnimations(); without an SVG timeline
+        # seek the frames follow the wall clock and --verify fails.
+        r = render("smil.html", tmp_path, "--verify", "--no-sheet")
+        assert r.returncode == 0, r.stderr
+        m = json.loads(r.stdout)
+        assert m["driven_by"]["smil"] == 1 and m["verify"]["pure"] is True
+        assert len(set(digests(tmp_path))) == 12
+
+    def test_warm_up_keeps_the_first_frame_pure_on_composited_animations(self, tmp_path):
+        # Measured: removing the animation.ready await before pausing fails this
+        # at frame 0 on every cold run (4/4); the shipped code passes.
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "warmup.html"), "--seconds", "1",
+                            "--fps", "12", "--width", "1080", "--height", "1080", "--out", str(tmp_path),
+                            "--verify", "--no-sheet"], cwd=NODE_DIR, capture_output=True, text=True, timeout=180)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert json.loads(r.stdout)["verify"]["mismatches"] == []
+
+    def test_a_page_that_throws_exits_5(self, tmp_path):
+        r = render("throws.html", tmp_path, "--no-sheet")
+        assert r.returncode == 5 and json.loads(r.stdout)["page_errors"]
+
+    def test_a_static_page_exits_6_unless_allowed(self, tmp_path):
+        assert render("static.html", tmp_path / "a", "--no-sheet").returncode == 6
+        assert render("static.html", tmp_path / "b", "--no-sheet", "--allow-static").returncode == 0

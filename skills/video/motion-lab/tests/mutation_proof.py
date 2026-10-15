@@ -19,6 +19,8 @@ from pathlib import Path
 SRC = Path(__file__).resolve().parents[1]
 
 # (description, file, original text, mutated text, pytest -k selector, needs render)
+# The list is the claim: each entry is a mechanism with a test that fails without
+# it. Lines not listed here (e.g. the contact-sheet labels) carry no such claim.
 MUTATIONS = [
     ("pin check always passes", "scripts/motion_lint.py",
      "    return bool(_PIN.search(url))", "    return True", "test_unpinned_urls_fail", False),
@@ -32,9 +34,6 @@ MUTATIONS = [
      "test_clock_with_renderat_and_guard or test_good_fixture", False),
     ("WAAPI treated as needing renderAt", "scripts/motion_lint.py",
      '|WebGLRenderer")', '|WebGLRenderer|\\.animate\\s*\\(")', "test_waapi_only", False),
-    ("transition: none flagged", "scripts/motion_lint.py",
-     'if value in ("none", "0s", "0", "initial", "unset") or value.startswith("none"):', "if False:",
-     "test_css_transition", False),
     ("beats accumulate a rounded step", "scripts/motion_math.py",
      "    return [round_half_up(offset + n * fpb) for n in range(count)]",
      "    return [round_half_up(offset) + n * round_half_up(fpb) for n in range(count)]",
@@ -54,6 +53,27 @@ MUTATIONS = [
      "for (let i = 0; i < N; i++) {", "for (let i = 0; i <= N; i++) {", "test_renders_frames_0_to_n", True),
     ("verify never compares", "scripts/render.mjs",
      "if (!again.equals(first)) mismatches.push(i);", "", "test_verify_catches", True),
+    ("warm-up ready-await removed", "scripts/render.mjs",
+     "    await Promise.all(document.getAnimations().map((a) => a.ready.catch(() => {})));\n    for (let k = 0; k < 2; k++) await new Promise((r) => requestAnimationFrame(() => r()));\n  });\n  await frameAt(page, 0);",
+     "  });\n  await frameAt(page, 0);", "test_warm_up_keeps", True),
+    ("SMIL timelines not seeked", "scripts/render.mjs",
+     "if (typeof svg.pauseAnimations === 'function') { svg.pauseAnimations(); svg.setCurrentTime(tt); }", "",
+     "test_svg_smil", True),
+    ("page errors do not change the exit code", "scripts/render.mjs",
+     "    if (errors.length) exitCode = 5;", "", "test_a_page_that_throws", True),
+    ("static pages exit 0", "scripts/render.mjs",
+     "      if (!o.allowStatic && !exitCode) exitCode = 6;", "", "test_a_static_page", True),
+    ("every JS-string URL treated as a load", "scripts/motion_lint.py",
+     "            if is_load(keep, m):", "            if True:", "test_svg_namespace or test_a_url_that_is_only_text", False),
+    ("clock inside renderAt downgraded by the guard", "scripts/motion_lint.py",
+     "                if rule == \"MC01\" and in_render_at:", "                if False:",
+     "test_a_clock_inside_renderat", False),
+    ("any transition flagged regardless of duration", "scripts/motion_lint.py",
+     "                if not transition_is_live(m.group(1), m.group(2)):\n                    continue",
+     "                pass", "test_transitions_that_cannot_run", False),
+    ("unseeked GSAP not reported", "scripts/motion_lint.py",
+     "    if re.search(r\"\\bgsap\\b\", all_js_blank) and not GSAP_SEEKED.search(all_js_blank):",
+     "    if False:", "test_unseeked_gsap", False),
     ("renderAt not called", "scripts/render.mjs",
      "if (typeof window.renderAt === 'function') { await window.renderAt(tt); drew = true; }", "",
      "test_frames_actually_change or test_renders_frames_0_to_n", True),

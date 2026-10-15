@@ -166,6 +166,74 @@ class TestLintRules:
         assert len([f for f in found if f.rule == "MC09"]) == 1
 
 
+class TestLintReviewRound1:
+    """Cases from the P20 round-1 review (Stratum B), each reproduced before the fix."""
+
+    def test_svg_namespace_is_not_a_network_load(self):
+        doc = html('const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); window.renderAt = t => {};')
+        assert ml.lint_text(doc) == []
+
+    def test_a_url_that_is_only_text_is_not_checked(self):
+        assert ml.lint_text(html("window.renderAt = t => {}; const site = 'https://broomva.tech';")) == []
+
+    def test_dynamic_import_of_an_unpinned_module_is_checked(self):
+        assert "MC06" in rules(ml.lint_text(html("import('https://esm.sh/x');")), "error")
+
+    @pytest.mark.parametrize("body", [
+        "window.renderAt = t => ctx.fillRect((t * 40 + performance.now() / 100) % 150, 1, 2, 2);",
+        "window.renderAt = function (t) { const d = Date.now(); };",
+        "function renderAt(t) { return new Date().getSeconds(); }",
+    ])
+    def test_a_clock_inside_renderat_stays_an_error_despite_the_guard(self, body):
+        found = ml.lint_text(html(body + " " + GUARD + " else { requestAnimationFrame(f); }"))
+        errors = [f for f in found if f.rule == "MC01" and f.severity == "error"]
+        assert errors and all("inside renderAt" in f.message for f in errors)
+
+    def test_guard_far_below_urlsearchparams_still_counts(self):
+        src = "const q = new URLSearchParams(location.search);" + "\n" * 80 + \
+              "window.renderAt = t => {}; if (q.has('t')) {} else requestAnimationFrame(f);"
+        assert [f.severity for f in ml.lint_text(html(src)) if f.rule == "MC01"] == ["warn"]
+
+    def test_location_search_guard_counts(self):
+        src = "window.renderAt = t => {}; if (location.search.match(/t=/)) {} else requestAnimationFrame(f);"
+        assert [f.severity for f in ml.lint_text(html(src)) if f.rule == "MC01"] == ["warn"]
+
+    @pytest.mark.parametrize("src", [
+        "const c = new THREE.Clock();", "c.getElapsedTime();", "c.getDelta();",
+        "const m = (new Date).getMinutes();", "const s = Date();", "const x = document.timeline.currentTime;",
+        "const n = performance.now.bind(performance);",
+    ])
+    def test_clock_variants(self, src):
+        assert "MC01" in rules(ml.lint_text(html(src)), "error")
+
+    @pytest.mark.parametrize("src", ["const r = Math['random']();", "const { random } = Math; random();"])
+    def test_random_variants(self, src):
+        assert "MC03" in rules(ml.lint_text(html(src)), "error")
+
+    @pytest.mark.parametrize("src", ["el.style.transition = 'opacity 1s';", "el.style.setProperty('transition', 'all 1s');"])
+    def test_transition_set_from_js(self, src):
+        assert "MC05" in rules(ml.lint_text(html(src)), "error")
+
+    def test_inline_style_transition(self):
+        doc = html() .replace("<body>", '<body><div style="transition: transform 0.4s ease"></div>')
+        assert "MC05" in rules(ml.lint_text(doc), "error")
+
+    @pytest.mark.parametrize("decl", ["transition: all 0s", "transition-behavior: allow-discrete",
+                                      "transition: transform", "transition-delay: 1s",
+                                      "transition: opacity 0s 1s"])
+    def test_transitions_that_cannot_run_are_not_findings(self, decl):
+        assert ml.lint_text(html(style=f".a {{ {decl}; }}")) == []
+
+    def test_unseeked_gsap_warns_and_a_paused_timeline_does_not(self):
+        loose = ml.lint_text(html("gsap.to('.a', {x: 100, repeat: -1}); window.renderAt = t => {};"))
+        seeked = ml.lint_text(html("const tl = gsap.timeline({paused: true}); window.renderAt = t => tl.seek(t);"))
+        assert rules(loose, "warn") == {"MC10"} and seeked == []
+
+    def test_autoplaying_media_warns(self):
+        doc = html().replace("<body>", '<body><video src="data:x" autoplay muted></video>')
+        assert rules(ml.lint_text(doc), "warn") == {"MC10"}
+
+
 class TestLintCli:
     def run(self, *args):
         return subprocess.run([sys.executable, str(SKILL / "scripts" / "motion_lint.py"), *args],
