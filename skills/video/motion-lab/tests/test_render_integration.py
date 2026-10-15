@@ -109,3 +109,25 @@ class TestRender:
     def test_a_static_page_exits_6_unless_allowed(self, tmp_path):
         assert render("static.html", tmp_path / "a", "--no-sheet").returncode == 6
         assert render("static.html", tmp_path / "b", "--no-sheet", "--allow-static").returncode == 0
+
+    def test_zero_frame_duration_is_rejected(self, tmp_path):
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "good.html"), "--seconds", "0.01",
+                            "--fps", "24", "--out", str(tmp_path)], cwd=NODE_DIR, capture_output=True, text=True)
+        assert r.returncode == 2 and "zero frames" in r.stderr
+
+    def test_contact_sheet_spans_frame_0_to_n_minus_1(self, tmp_path):
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "good.html"), "--seconds", "2",
+                            "--fps", "12", "--width", "160", "--height", "90", "--out", str(tmp_path)],
+                           cwd=NODE_DIR, capture_output=True, text=True, timeout=180)
+        picks = json.loads(r.stdout)["contact_frames"]
+        assert picks[0] == 0 and picks[-1] == 23 and len(picks) == 12
+
+    def test_verify_reports_its_scope_and_verify_all_checks_every_frame(self, tmp_path):
+        sampled = json.loads(render("impure.html", tmp_path / "s", "--verify", "--no-sheet").stdout)["verify"]
+        full = json.loads(render("impure.html", tmp_path / "a", "--verify-all", "--no-sheet").stdout)["verify"]
+        assert sampled["scope"] == "sampled 3 of 12 frames" and full["scope"] == "all 12 frames"
+        assert len(full["mismatches"]) > len(sampled["mismatches"])
+
+    def test_undriven_motion_is_reported_not_called_static(self, tmp_path):
+        r = render("undriven.html", tmp_path, "--no-sheet")
+        assert r.returncode == 3 and "own clock" in json.loads(r.stdout)["warning"]

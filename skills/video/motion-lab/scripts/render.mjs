@@ -2,7 +2,7 @@
 // render.mjs — freeze a code-first animation at every frame and save PNGs.
 //
 //   node render.mjs anim.html --seconds 6 --fps 24 [--width 1080 --height 1080]
-//        [--scale 1] [--out out] [--every 12] [--verify] [--mp4] [--no-sheet] [--allow-static]
+//        [--scale 1] [--out out] [--every 12] [--verify | --verify-all] [--mp4] [--no-sheet] [--allow-static]
 //
 // Frames are 0..N-1 (N = seconds * fps): frame N is frame 0 again, and rendering
 // it is the hiccup at a loop seam. Each frame is the page frozen at t = i / fps by
@@ -22,12 +22,15 @@
 //
 // --verify reloads the page and re-renders the first, middle and last frames;
 // any byte difference means a frame is not a pure function of t. It samples
-// three frames on one machine: a pass is evidence, not proof, of purity.
+// three frames on one machine: a pass is evidence, not proof, of purity, and the
+// manifest says so (verify.scope). --verify-all re-renders every frame.
 //
 // Exit codes: 0 ok; 2 usage or runtime error; 3 --verify found an impure frame;
 // 4 --mp4 failed; 5 the page threw (page_errors in the manifest); 6 nothing drives
-// motion (no renderAt, no animations, no SMIL), so every frame is the same image.
-// Pass --allow-static when a still frame is what you want.
+// motion (no renderAt, no animations, no SMIL) and every frame is the same image:
+// pass --allow-static when a still is what you want. If nothing the renderer seeks
+// drives the page but the frames still change, the motion runs on its own clock:
+// exit 3, the same as an impure frame.
 //
 // Playwright is resolved from the CURRENT directory first, so the skill can live
 // anywhere: run it from a project that has `npm i -D playwright` (or bun add -d).
@@ -39,7 +42,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 function parseArgs(argv) {
-  const o = { seconds: 6, fps: 24, width: 1080, height: 1080, scale: 1, out: 'out', every: 0, verify: false, mp4: false, sheet: true, allowStatic: false };
+  const o = { seconds: 6, fps: 24, width: 1080, height: 1080, scale: 1, out: 'out', every: 0, verify: false, verifyAll: false, mp4: false, sheet: true, allowStatic: false };
   const pos = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -52,6 +55,7 @@ function parseArgs(argv) {
     else if (a === '--out') o.out = val();
     else if (a === '--every') o.every = Number(val());
     else if (a === '--verify') o.verify = true;
+    else if (a === '--verify-all') { o.verify = true; o.verifyAll = true; }
     else if (a === '--mp4') o.mp4 = true;
     else if (a === '--no-sheet') o.sheet = false;
     else if (a === '--allow-static') o.allowStatic = true;
@@ -61,8 +65,9 @@ function parseArgs(argv) {
   if (pos.length !== 1) throw new Error('usage: node render.mjs <file.html> [--seconds 6 --fps 24 ...]');
   o.file = pos[0];
   for (const k of ['seconds', 'fps', 'width', 'height', 'scale']) {
-    if (!(o[k] > 0)) throw new Error(`--${k} must be a positive number`);
+    if (!(o[k] > 0) || !Number.isFinite(o[k])) throw new Error(`--${k} must be a positive number`);
   }
+  if (Math.round(o.seconds * o.fps) < 1) throw new Error('--seconds x --fps rounds to zero frames');
   return o;
 }
 
@@ -163,13 +168,29 @@ async function main() {
     manifest.page_errors = errors;
     if (errors.length) exitCode = 5;
     if (drive && !drive.drew && drive.anims === 0 && drive.smil === 0) {
-      manifest.warning = 'no window.renderAt, no document animations and no SMIL: every frame is the same image';
-      if (!o.allowStatic && !exitCode) exitCode = 6;
+      const { readFileSync } = await import('node:fs');
+      const frame = (i) => readFileSync(path.join(framesDir, `${String(i).padStart(4, '0')}.png`));
+      const first = frame(0);
+      const changes = Array.from({ length: N - 1 }, (_, k) => k + 1).some((i) => !frame(i).equals(first));
+      if (changes) {
+        // e.g. SMIL inside an <img src="data:image/svg+xml...">, a <video>, a CSS
+        // background the renderer cannot reach: motion that ignores t.
+        manifest.warning = 'frames change but nothing the renderer seeks drives them: the motion runs on its own clock';
+        exitCode = exitCode || 3;
+      } else {
+        manifest.warning = 'no window.renderAt, no document animations and no SMIL: every frame is the same image';
+        if (!o.allowStatic && !exitCode) exitCode = 6;
+      }
     }
     await page.close();
 
     if (o.verify) {
-      const picks = [...new Set([0, Math.floor(N / 2), N - 1])].filter((i) => i >= 0);
+      // Re-render OUT of the first pass's order. A renderAt that depends on its
+      // call history (a counter, an accumulator) replays identically when the
+      // frames come in the same order, so an in-order --verify-all passed an
+      // impure page with zero mismatches. Reverse order breaks that replay.
+      const picks = o.verifyAll ? Array.from({ length: N }, (_, i) => N - 1 - i)
+        : [...new Set([0, Math.floor(N / 2), N - 1])].filter((i) => i >= 0);
       const { page: p2 } = await openAt(browser, o, url.href);
       const { readFileSync } = await import('node:fs');
       const mismatches = [];
@@ -180,14 +201,23 @@ async function main() {
         if (!again.equals(first)) mismatches.push(i);
       }
       await p2.close();
-      manifest.verify = { frames: picks, mismatches, pure: mismatches.length === 0 };
+      mismatches.sort((a, b) => a - b);
+      manifest.verify = { frames: [...picks].sort((a, b) => a - b), mismatches, pure: mismatches.length === 0,
+        scope: o.verifyAll ? `all ${N} frames` : `sampled ${picks.length} of ${N} frames` };
       if (mismatches.length) exitCode = 3; // impurity outranks the other findings
     }
 
     if (o.sheet && N > 0) {
-      const every = o.every > 0 ? o.every : Math.max(1, Math.round(N / 12));
-      const picks = [];
-      for (let i = 0; i < N && picks.length < 12; i += every) picks.push(i);
+      // Up to 12 frames spread evenly from 0 to N-1, so the seam frame is always
+      // on the sheet. --every N takes every Nth frame instead (still capped at 12).
+      let picks;
+      if (o.every > 0) {
+        picks = [];
+        for (let i = 0; i < N && picks.length < 12; i += o.every) picks.push(i);
+      } else {
+        const k = Math.min(12, N);
+        picks = [...new Set(Array.from({ length: k }, (_, j) => (k === 1 ? 0 : Math.round((j * (N - 1)) / (k - 1)))))];
+      }
       const sheetFile = path.join(outDir, 'contact.html');
       writeFileSync(sheetFile, sheetHtml(picks));
       const sp = await browser.newPage({ viewport: { width: 1600, height: 900 } });

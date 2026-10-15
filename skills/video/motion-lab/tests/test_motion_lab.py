@@ -110,8 +110,15 @@ class TestLintRules:
         found = ml.lint_text(html("new WebSocket(u); new XMLHttpRequest(); new EventSource(u);"))
         assert len([f for f in found if f.rule == "MC06"]) == 3
 
-    def test_canvas_without_renderat_is_mc04(self):
-        assert "MC04" in rules(ml.lint_text(html("document.querySelector('c').getContext('2d');")), "error")
+    def test_canvas_loop_without_renderat_is_mc04(self):
+        src = "const g = document.querySelector('c').getContext('2d'); requestAnimationFrame(draw);"
+        assert "MC04" in rules(ml.lint_text(html(src)), "error")
+
+    def test_static_canvas_beside_css_motion_is_not_mc04(self):
+        # a canvas painted once is not JS-driven motion (P20 round 1, Codex)
+        doc = html("const g = c.getContext('2d'); g.fillRect(0, 0, 10, 10);",
+                   style=".d { animation: x 1s linear infinite; } @keyframes x { to { transform: translateX(9px); } }")
+        assert "MC04" not in rules(ml.lint_text(doc))
 
     def test_canvas_with_renderat_is_not_mc04(self):
         found = ml.lint_text(html("const g = c.getContext('2d'); window.renderAt = function (t) {};"))
@@ -173,8 +180,9 @@ class TestLintReviewRound1:
         doc = html('const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); window.renderAt = t => {};')
         assert ml.lint_text(doc) == []
 
-    def test_a_url_that_is_only_text_is_not_checked(self):
-        assert ml.lint_text(html("window.renderAt = t => {}; const site = 'https://broomva.tech';")) == []
+    def test_a_url_that_is_only_text_warns_but_does_not_fail(self):
+        found = ml.lint_text(html("window.renderAt = t => {}; const site = 'https://broomva.tech';"))
+        assert rules(found, "error") == set() and rules(found, "warn") == {"MC06"}
 
     def test_dynamic_import_of_an_unpinned_module_is_checked(self):
         assert "MC06" in rules(ml.lint_text(html("import('https://esm.sh/x');")), "error")
@@ -232,6 +240,55 @@ class TestLintReviewRound1:
     def test_autoplaying_media_warns(self):
         doc = html().replace("<body>", '<body><video src="data:x" autoplay muted></video>')
         assert rules(ml.lint_text(doc), "warn") == {"MC10"}
+
+
+class TestLintReviewRound2:
+    """Cases from P20 round 2 (Stratum B) and round 1 (Codex), reproduced first."""
+
+    @pytest.mark.parametrize("src", [
+        "img.src = 'https://picsum.photos/400';",
+        "s.src = 'https://unpkg.com/gsap';",
+        "loader.load('https://example.com/models/latest');",
+        "el.setAttribute('src', 'https://example.com/a');",
+        "const u = new URL('https://example.com/data');",
+    ])
+    def test_extensionless_loads_are_errors(self, src):
+        assert "MC06" in rules(ml.lint_text(html(src)), "error")
+
+    def test_guard_without_else_does_not_excuse_the_loop(self):
+        src = ("window.renderAt = t => {}; const q = new URLSearchParams(location.search);"
+               " if (q.has('t')) renderAt(+q.get('t')); requestAnimationFrame(tick);")
+        assert "MC01" in rules(ml.lint_text(html(src)), "error")
+
+    def test_negated_guard_excuses_the_loop(self):
+        src = ("window.renderAt = t => {}; const q = new URLSearchParams(location.search);"
+               " if (!q.has('t')) requestAnimationFrame(tick);")
+        assert [f.severity for f in ml.lint_text(html(src)) if f.rule == "MC01"] == ["warn"]
+
+    def test_unquoted_remote_script_src(self):
+        doc = html().replace("<head>", "<head><script src=https://cdn.jsdelivr.net/npm/gsap@latest/dist/gsap.js></script>")
+        assert "MC06" in rules(ml.lint_text(doc), "error")
+
+    def test_css_import_of_an_unpinned_stylesheet(self):
+        assert "MC06" in rules(ml.lint_text(html(style='@import "https://cdn.example.com/latest.css";')), "error")
+
+    def test_style_transition_none_from_js_is_fine(self):
+        assert ml.lint_text(html("el.style.transition = 'none';")) == []
+
+    def test_var_duration_counts_as_live(self):
+        assert "MC05" in rules(ml.lint_text(html(style=".a { transition: opacity var(--d); }")), "error")
+
+    def test_renderat_nested_in_an_iife_is_unreachable(self):
+        src = "(function () { function renderAt(t) {} requestAnimationFrame(f); })();"
+        assert [f for f in ml.lint_text(html(src)) if f.rule == "MC04" and "not on window" in f.message]
+
+    def test_bracket_assignment_is_reachable(self):
+        src = "const g = c.getContext('2d'); window['renderAt'] = t => {};"
+        assert "MC04" not in rules(ml.lint_text(html(src)))
+
+    def test_a_time_getter_is_not_a_seek(self):
+        src = "gsap.to('.a', {x: 9, repeat: -1}); const now = gsap.globalTimeline.time(); window.renderAt = t => {};"
+        assert rules(ml.lint_text(html(src)), "warn") == {"MC10"}
 
 
 class TestRenderAtReachable:
@@ -316,6 +373,16 @@ class TestSprings:
     ])
     def test_classification(self, zeta, feel):
         assert mm.classify_zeta(zeta) == feel
+
+
+class TestInputValidation:
+    @pytest.mark.parametrize("call", [
+        lambda: mm.loop_frames(-1, 24), lambda: mm.loop_frames(0.01, 24), lambda: mm.loop_frames(6, float("nan")),
+        lambda: mm.text_hold(2, -24), lambda: mm.ms_to_frames(-5, 24), lambda: mm.beat_frames(24, 120, -1),
+    ])
+    def test_bad_inputs_raise(self, call):
+        with pytest.raises(ValueError):
+            call()
 
 
 class TestLoopsAndHolds:

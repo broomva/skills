@@ -31,8 +31,7 @@ def round_half_up(x: float) -> int:
 
 
 def frames_per_beat(fps: float, bpm: float) -> float:
-    if fps <= 0 or bpm <= 0:
-        raise ValueError("fps and bpm must be positive")
+    _positive(fps=fps, bpm=bpm)
     return fps * 60.0 / bpm
 
 
@@ -44,6 +43,8 @@ def beat_frames(fps: float, bpm: float, count: int, offset: float = 0.0) -> list
     frame of the music.
     """
     fpb = frames_per_beat(fps, bpm)
+    if count < 0:
+        raise ValueError("count must be >= 0")
     return [round_half_up(offset + n * fpb) for n in range(count)]
 
 
@@ -80,10 +81,19 @@ def classify_zeta(zeta: float) -> str:
     return "cartoon"
 
 
+def _positive(**kw: float | None) -> None:
+    for name, v in kw.items():
+        if v is not None and not (math.isfinite(v) and v > 0):
+            raise ValueError(f"{name} must be a finite positive number, got {v}")
+
+
 def loop_frames(seconds: float, fps: float, bpm: float | None = None) -> dict:
     """N frames, render 0..N-1 (frame N is frame 0 again), and music closure."""
+    _positive(seconds=seconds, fps=fps, bpm=bpm)
     exact = seconds * fps
     n = round_half_up(exact)
+    if n < 1:
+        raise ValueError(f"{seconds} s at {fps} fps rounds to zero frames")
     out = {
         "frames": n,
         "render_range": [0, n - 1],
@@ -98,6 +108,9 @@ def loop_frames(seconds: float, fps: float, bpm: float | None = None) -> dict:
 
 
 def ms_to_frames(ms: float, fps: float) -> int:
+    _positive(fps=fps)
+    if not math.isfinite(ms) or ms < 0:
+        raise ValueError("ms must be a finite non-negative number")
     return round_half_up(ms * fps / 1000.0)
 
 
@@ -105,6 +118,7 @@ def text_hold(words: int, fps: float | None = None) -> dict:
     """Minimum hold: 0.3 s per word plus 0.5 s; frames rounded UP (never shorter)."""
     if words < 0:
         raise ValueError("words must be >= 0")
+    _positive(fps=fps)
     secs = 0.3 * words + 0.5
     out = {"seconds": round(secs, 4)}
     if fps:
@@ -120,8 +134,9 @@ def gif_delays(fps: float, frames: int) -> list[int]:
     cumulative time is within half a centisecond of exact, so the loop length is
     exact whenever 100 * frames / fps is whole.
     """
-    if fps <= 0 or frames < 0:
-        raise ValueError("fps must be positive and frames non-negative")
+    _positive(fps=fps)
+    if frames < 0:
+        raise ValueError("frames must be non-negative")
     return [round_half_up(100 * (i + 1) / fps) - round_half_up(100 * i / fps) for i in range(frames)]
 
 

@@ -4,8 +4,8 @@ tier: D
 category: video
 description: >-
   Make code-first motion (an animation that is a program, rendered frame by frame
-  in a headless browser) look directed instead of generic, and check that its
-  frames re-render identically. Ships the render contract (every frame a pure function of t,
+  in a headless browser) look directed instead of generic, and check that
+  sampled frames re-render identically. Ships the render contract (every frame a pure function of t,
   window.renderAt(t), no clocks, timers or unseeded random, pinned libraries,
   frames 0..N-1), a numbers-not-adjectives prompt template with a living ban list,
   and a render -> look -> fix loop whose notes name frames. Deterministic core:
@@ -87,12 +87,12 @@ and this skill is built to keep them:
 
    | Rule | Catches | Level |
    |---|---|---|
-   | MC01 | `Date.now`, `Date()`, `new Date`, `performance.now`, `requestAnimationFrame`, a three.js `Clock` / `getElapsedTime` / `getDelta`, `document.timeline` | ERROR; WARN when `renderAt` and a `?t=` guard exist (live preview), but always ERROR inside `renderAt` itself |
+   | MC01 | `Date.now`, `Date()`, `new Date`, `performance.now`, `requestAnimationFrame`, a three.js `Clock` / `getElapsedTime` / `getDelta`, `document.timeline` | ERROR; WARN only when `renderAt` exists and a `?t=` guard actually wraps the loop (an `else` branch, an early `return`, or a negated check), and always ERROR inside `renderAt` itself |
    | MC02 | `setTimeout` / `setInterval` | ERROR |
    | MC03 | `Math.random` (also `Math["random"]`, `const {random} = Math`) / `getRandomValues` | ERROR |
-   | MC04 | Canvas / WebGL / three.js / GSAP / rAF motion with no `window.renderAt(t)`, or a `renderAt` the renderer cannot reach (a `const`/`let`, or declared inside a `type="module"` script) | ERROR |
+   | MC04 | JS-driven motion (rAF, timers, three.js, GSAP; a canvas painted once does not count) with no `window.renderAt(t)`, or a `renderAt` the renderer cannot reach (a `const`/`let`, or declared inside a `type="module"` script) | ERROR |
    | MC05 | a CSS transition with a non-zero duration, in CSS, a `style=""` attribute or set from JS | ERROR |
-   | MC06 | `fetch` / XHR / WebSocket, or a *loaded* remote URL (src/href, importmap, `url()`, a JS import, a JS string naming a loadable file) that is not a font host and not pinned to `MAJOR.MINOR.PATCH`. A URL that is only text, like the SVG namespace, is not checked | ERROR |
+   | MC06 | `fetch` / XHR / WebSocket, or a *loaded* remote URL (src/href quoted or not, importmap, `url()`, `@import`, a JS import, `.src =`, `.load()`, `new URL()`, a JS string naming a loadable file) that is not a font host and not pinned to `MAJOR.MINOR.PATCH`. Any other remote URL in a JS string is a WARN; the SVG namespace is never checked | ERROR |
    | MC07 | a local `src`/`href` (not one self-contained file) | WARN |
    | MC08 | web fonts with no `document.fonts.ready` wait | WARN |
    | MC09 | `@keyframes` animating width / height / top / left | WARN |
@@ -114,13 +114,17 @@ and this skill is built to keep them:
    timelines (`<animate>` is not in `getAnimations()`). `--verify` reloads the page
    and re-renders the first, middle and last frames; if any byte differs, a frame
    is not a pure function of t. This catches what the linter cannot, such as a
-   `renderAt` that reads a counter. Add `--mp4` for an H.264 file (needs ffmpeg).
+   `renderAt` that reads a counter. `--verify-all` re-renders every frame, in
+   reverse order: a `renderAt` that depends on its call history replays identically
+   when frames come in the same order, so an in-order check passes it. The manifest
+   records the scope (`sampled 3 of N frames` or `all N frames`). Add `--mp4` for an
+   H.264 file (needs ffmpeg).
 
    | Exit | Meaning |
    |---|---|
    | 0 | rendered |
-   | 2 | usage or runtime error |
-   | 3 | `--verify` found an impure frame (listed in the manifest) |
+   | 2 | usage or runtime error (including a duration that rounds to zero frames) |
+   | 3 | `--verify` found an impure frame (listed in the manifest), or the frames change although nothing the renderer seeks drives them (motion on its own clock) |
    | 4 | `--mp4` failed |
    | 5 | the page threw (`page_errors` in the manifest): frames are likely blank |
    | 6 | nothing drives motion, so every frame is the same image (`--allow-static` for a still) |
