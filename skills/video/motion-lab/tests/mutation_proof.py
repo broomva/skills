@@ -56,7 +56,9 @@ MUTATIONS = [
     # The mechanism is "wait for animation.ready before pausing", done twice: once
     # in the warm-up and once per frame. Round 4 showed removing only the warm-up
     # copy survives (the per-frame copy covers it), so the mutant removes both:
-    # 5/5 cold runs then fail at frame 0.
+    # 5/5 cold runs then fail at frame 0 on macOS Chromium. The compositor race it
+    # guards does NOT occur in Ubuntu CI's headless Chromium (the mutant survived
+    # there), so this entry runs only on macOS: see PLATFORM_ONLY.
     ("ready-await before pausing removed (warm-up and per-frame)", "scripts/render.mjs",
      "    await Promise.all(document.getAnimations().map((a) => a.ready.catch(() => {})));\n    const tick = window.__mlRAF || window.requestAnimationFrame.bind(window);\n    for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));\n  });\n  await frameAt(page, 0, errors);",
      "  });\n  await frameAt(page, 0, errors);", "test_warm_up_keeps", True,
@@ -137,12 +139,24 @@ MUTATIONS = [
 ]
 
 
+# Mutations whose race only reproduces on one platform. Elsewhere they print SKIP
+# with the reason instead of being counted: a mutant no test can kill on this
+# platform says nothing about the test, only about the platform.
+PLATFORM_ONLY = {
+    "ready-await before pausing removed (warm-up and per-frame)": (
+        "darwin", "the compositor race reproduces on macOS Chromium (5/5), not on Linux headless Chromium"),
+}
+
+
 def main() -> int:
     render_ok = bool(os.environ.get("MOTION_LAB_NODE_DIR"))
     survivors, ran = [], 0
     for desc, rel, old, new, sel, needs_render, *extra in MUTATIONS:
         if needs_render and not render_ok:
             print(f"SKIP  {desc} (set MOTION_LAB_NODE_DIR)")
+            continue
+        if desc in PLATFORM_ONLY and not sys.platform.startswith(PLATFORM_ONLY[desc][0]):
+            print(f"SKIP  {desc} ({PLATFORM_ONLY[desc][1]})")
             continue
         work = Path(tempfile.mkdtemp(prefix="mut_motionlab_"))
         try:

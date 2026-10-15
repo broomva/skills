@@ -178,8 +178,8 @@ and this skill is built to keep them:
 
    A GIF stores delays in hundredths of a second, so 24 fps (41.67 ms) cannot be
    stored exactly. An encoder that rounds every frame to 4 cs runs 4% fast and falls
-   off the beat grid. ffmpeg 8.1 was measured alternating 4 and 5 cs and holding a
-   144-frame loop at exactly 6.00 s; the integration test
+   off the beat grid. ffmpeg 8.1 (macOS) and 6.1.1 (Ubuntu CI) were both measured
+   alternating 4 and 5 cs and holding a 144-frame loop at exactly 6.00 s; the integration test
    `test_ffmpeg_gif_export_keeps_exact_loop_timing` re-measures whatever ffmpeg is
    installed, so the claim is checked rather than remembered. Other encoders may
    differ. `gif-delays` prints the exact schedule.

@@ -96,11 +96,14 @@ class TestRender:
     def test_warm_up_keeps_the_first_frame_pure_on_composited_animations(self, tmp_path):
         # Measured: removing the animation.ready awaits before pausing (warm-up and
         # per-frame) fails this at frame 0 on 5/5 cold runs; the shipped code passes.
-        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "warmup.html"), "--seconds", "1",
-                            "--fps", "12", "--width", "1080", "--height", "1080", "--out", str(tmp_path),
-                            "--verify", "--no-sheet"], cwd=NODE_DIR, capture_output=True, text=True, timeout=180)
-        assert r.returncode == 0, r.stdout + r.stderr
-        assert json.loads(r.stdout)["verify"]["mismatches"] == []
+        # The race is timing-dependent (a mutant without the awaits failed 24 of 25
+        # cold runs on macOS), so two independent cold renders must both be pure.
+        for run in ("a", "b"):
+            r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "warmup.html"), "--seconds", "1",
+                                "--fps", "12", "--width", "1080", "--height", "1080", "--out", str(tmp_path / run),
+                                "--verify", "--no-sheet"], cwd=NODE_DIR, capture_output=True, text=True, timeout=180)
+            assert r.returncode == 0, r.stdout + r.stderr
+            assert json.loads(r.stdout)["verify"]["mismatches"] == []
 
     def test_a_page_that_throws_exits_5(self, tmp_path):
         r = render("throws.html", tmp_path, "--no-sheet")
