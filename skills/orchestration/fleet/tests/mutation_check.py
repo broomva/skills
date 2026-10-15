@@ -612,6 +612,12 @@ PROTECTIONS = [
     ("a workflow without its CLI entry", "scripts/fleet_reconcile.py",
      '    ("census", "every coordinator tick: list the live agents in scope and classify them"),\n', "",
      [T + "test_layout.py", "-k", "cli_lists"]),
+    ("fleet reconcile passes an unknown scope to tick.sh", "scripts/fleet_reconcile.py",
+     "    sec = _sec(args)\n    env = dict(", '    sec = {"scope": _scope(args), "state_dir": "/nonexistent"}\n    env = dict(',
+     [T + "test_tick.py", "-k", "fleet_reconcile_refuses"]),
+    ("close-out accepts a PR that doesn't carry HEAD", "workflows/close-out.md",
+     'at = [p for p in prs if p.get("headRefOid") == head]', "at = prs",
+     [T + "test_layout.py", "-k", "close_out"]),
 ]
 
 

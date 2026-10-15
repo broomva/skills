@@ -35,7 +35,7 @@
 | `provider-manager` | Autonomous AI provider and subscription management toolkit. Enables seamless account discovery, credential switching, automated zero-touch browser-session OAuth re-authentication, and proactive… |
 | `ctx-core` | The shared context core, phase 1: a read-only shared board. Hooks append each session's start, ARC-STATUS keyword and death to a per-scope log as structured fields only; SessionStart injects a factual brief of the other sessions on the same branch. Coordination only, not a security boundary |
 | `fleet-reconcile` | **Deprecated** alias of `fleet` (renamed in fleet 0.6.0, BRO-3122); forwards its scripts there for one release |
-| `fleet` | The Broomva fleet: every Claude Code and Paseo session, PR and loop the coordinators drive, and the workflows that keep it reconciled. reconcile is the hourly launchd tick (observe, classify, report… |
+| `fleet` | The Broomva fleet: every Claude Code and Paseo session, PR and loop the coordinators drive, and the workflows that manage it. reconcile is the hourly launchd tick (observe, classify, report, owner… |
 
 ## Skill & prompt tooling — `skills/tooling/` (10)
 

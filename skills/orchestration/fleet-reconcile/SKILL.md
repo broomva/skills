@@ -16,7 +16,9 @@ This skill is now [`fleet`](../fleet/SKILL.md). The hourly tick it described
 is fleet's [reconcile workflow](../fleet/workflows/reconcile.md).
 
 The old paths still run, for one release, and print a deprecation line on
-stderr before forwarding:
+stderr before forwarding. They need `fleet` (and `ctx-core`, as before)
+installed beside this directory, as in the repo; installed on its own, they
+exit 70 and say `npx skills add broomva/skills --skill fleet`:
 
 | Old | Forwards to |
 |---|---|

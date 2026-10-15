@@ -15,8 +15,8 @@
 ## Trigger
 
 Every fire of a standing coordinator: the `every` tier of `coordinator-tick`
-(broomva) and of `sri-coordinator-tick` (SRI, its own overlay and scope). Also
-before any launch, resume or archive, because those act on the census.
+(broomva) and of `sri-coordinator-tick` (SRI, its own overlay and scope). The
+check below is broomva's snapshot; SRI's census runs from SRI's own overlay.
 
 ## Steps
 
@@ -26,9 +26,10 @@ before any launch, resume or archive, because those act on the census.
 2. Drop every agent outside the overlay's scope. SRI's sessions are SRI's, and
    are never read, prompted or archived from the broomva side.
 3. Classify each agent left, first match wins (base §4): `self`, `other` (not
-   a model session, another orchestrator or its descendant), `arc` (a worker
-   this coordinator or a predecessor launched: the `paseo.parent-agent-id` or
-   `dispatched-by` label), `owner` (everything else). A cleared parent label is
+   a model session, another orchestrator or its descendant, or a Maestro run
+   in another scope), `arc` (a worker this coordinator or a predecessor
+   launched: the `paseo.parent-agent-id` or `dispatched-by` label, or a
+   Maestro card it filed), `owner` (everything else). A cleared parent label is
    `""`, and `""` is never a parent.
 4. Hand each class to its handling: `arc` to session handling (base §5),
    `owner` to [close-out](close-out.md) once idle over 12 h.

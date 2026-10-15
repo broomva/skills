@@ -13,6 +13,11 @@ Verification: pytest (402 + layout), `tests/mutation_check.py` (route mutants ad
 `fleet reconcile --scope broomva` on the live state, then `install.sh --scope broomva` and one real launchd tick.
 Cross-repo: workspace loop row notes + overlay line (PR); `.control/initiatives/fleet-autonomy.yaml` (owner-merge PR).
 SRI's plist is SRI's: told, never touched. The old release dir stays until both scopes cut over.
+Deploy (after merge): ff `~/broomva/skills`; link `fleet` beside the alias in every per-skill root that
+links `fleet-reconcile` (`~/.claude/skills`, `~/.agents/skills`: `ln -s ~/broomva/skills/skills/orchestration/fleet`),
+since after the pull those links reach only the alias stub. P20 round 1: A 4/10, B 6/10, both on close-out's
+no-upstream check (fixed: one script, FINISHED only when a merged PR carries HEAD), plus the frontmatter kept
+whole, `fleet reconcile` scope check, alias-installed-alone message, the launch routing (coordinator's ask).
 
 ## provider-manager: a balance or failover never kills running sessions (BRO-2713)
 

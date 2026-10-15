@@ -105,3 +105,101 @@ def test_the_alias_send_gate_fails_closed_when_fleet_is_gone(tmp_path):
     (copy / "fleet").write_text((ALIAS / "scripts" / "fleet").read_text())
     r = subprocess.run(["/bin/sh", str(copy / "fleet"), "send-gate", "pre"], capture_output=True, text=True)
     assert r.returncode == 2
+
+
+def _flat_install(root: Path, names) -> Path:
+    """A per-skill install's layout: each named skill a sibling under one root (~/.agents/skills)."""
+    import shutil
+    root.mkdir()
+    for name in names:
+        shutil.copytree(str(SKILL.parent / name), str(root / name),
+                        ignore=shutil.ignore_patterns("__pycache__", "tests"))
+    return root
+
+
+def test_the_alias_installed_alone_says_to_install_fleet(tmp_path):
+    root = _flat_install(tmp_path / "skills", ["fleet-reconcile"])
+    r = subprocess.run(["/bin/sh", str(root / "fleet-reconcile" / "scripts" / "fleet"), "workflows"],
+                       capture_output=True, text=True)
+    assert r.returncode == 70 and "--skill fleet" in r.stderr and r.stdout == ""
+    gate = subprocess.run(["/bin/sh", str(root / "fleet-reconcile" / "scripts" / "fleet"), "send-gate", "pre"],
+                          capture_output=True, text=True)
+    assert gate.returncode == 2  # a hook that blocks, not one that lets the tool run
+    for script in ("install.sh", "tick.sh"):
+        r = subprocess.run(["/bin/bash", str(root / "fleet-reconcile" / "scripts" / script)],
+                           capture_output=True, text=True)
+        assert r.returncode == 70 and "--skill fleet" in r.stderr, script
+
+
+def test_the_alias_installed_beside_fleet_forwards(tmp_path):
+    root = _flat_install(tmp_path / "skills", ["fleet-reconcile", "fleet", "ctx-core"])
+    r = subprocess.run(["/bin/sh", str(root / "fleet-reconcile" / "scripts" / "fleet"), "workflows"],
+                       capture_output=True, text=True)
+    assert r.returncode == 0 and str(root / "fleet" / "workflows" / "launch.md") in r.stdout
+
+
+# --- close-out's check: the script in workflows/close-out.md, run as written -----------------------
+
+def _close_out_script() -> str:
+    body = (SKILL / "workflows" / "close-out.md").read_text(encoding="utf-8")
+    check = body.split("## Check", 1)[1]
+    return re.search(r"```bash\n(.*?)```", check, re.S).group(1)
+
+
+@pytest.fixture
+def close_out(tmp_path):
+    wt = tmp_path / "wt"
+    wt.mkdir()
+    git = lambda *a: subprocess.run(["git", "-C", str(wt), *a], check=True, capture_output=True, text=True)
+    git("init", "-q", "-b", "feat")
+    git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "work")
+    home = tmp_path / "home"
+    (home / ".paseo" / "agents" / "w").mkdir(parents=True)
+    bin_ = tmp_path / "bin"
+    bin_.mkdir()
+    gh = bin_ / "gh"
+    gh.write_text('#!/bin/sh\n[ -n "$STUB_GH_FAIL" ] && { echo "gh: boom" >&2; exit 1; }\nprintf "%s" "$STUB_PRS"\n')
+    gh.chmod(0o755)
+    script = _close_out_script().replace("<wt>", str(wt)).replace("<owner/repo>", "o/r") \
+        .replace("<branch>", "feat").replace("<id>", "aaaaaaaa")
+
+    def run(prs="[]", **env):
+        e = dict(os.environ, HOME=str(home), PATH="%s:%s" % (bin_, os.environ["PATH"]), STUB_PRS=prs, **env)
+        return subprocess.run(["/bin/bash", "-c", script], capture_output=True, text=True, env=e)
+
+    run.head = git("rev-parse", "HEAD").stdout.strip()
+    run.wt, run.git, run.home = wt, git, home
+    return run
+
+
+def _pr(state, oid):
+    import json
+    return json.dumps([{"number": 7, "state": state, "headRefOid": oid}])
+
+
+def test_close_out_finished_only_when_a_merged_pr_carries_head(close_out):
+    ok = close_out(_pr("MERGED", close_out.head))
+    assert ok.returncode == 0 and ok.stdout.startswith("FINISHED"), ok.stderr
+
+
+@pytest.mark.parametrize("case", ["never pushed, no PR", "commit after the merge", "PR still open",
+                                  "dirty tree", "gh fails", "a live child"])
+def test_close_out_refuses_what_is_not_finished(close_out, case):
+    import json
+    prs = _pr("MERGED", close_out.head)
+    env = {}
+    if case == "never pushed, no PR":
+        prs = "[]"
+    elif case == "commit after the merge":
+        close_out.git("-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "--allow-empty", "-m", "more")
+    elif case == "PR still open":
+        prs = _pr("OPEN", close_out.head)
+    elif case == "dirty tree":
+        (close_out.wt / "f").write_text("x")
+    elif case == "gh fails":
+        env["STUB_GH_FAIL"] = "1"
+    elif case == "a live child":
+        (close_out.home / ".paseo" / "agents" / "w" / "c.json").write_text(json.dumps(
+            {"id": "cccccccc-1", "archivedAt": None, "labels": {"paseo.parent-agent-id": "aaaaaaaa-1"}}))
+    r = close_out(prs, **env)
+    assert r.returncode == 1 and "NOT FINISHED" in r.stderr and "FINISHED" not in r.stdout, (case, r.stdout, r.stderr)

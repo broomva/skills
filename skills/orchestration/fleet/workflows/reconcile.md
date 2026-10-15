@@ -13,6 +13,35 @@
 > Paths below (`scripts/`, `templates/`, `tests/`) are relative to the skill root.
 
 
+## When to use (the 0.5.2 frontmatter, kept whole)
+
+What the skill's description said before the rename, and the phrases that
+should still route here (the `fleet` SKILL.md carries a shorter version):
+
+> The hourly fleet coordinator. Phase 1 observes and classifies, report only;
+> phase 2 adds the coordinator and its verbs under dry run.
+> Each tick reads every Claude Code session (claude agents --json --all and the
+> background job files), Paseo's agent records and schedules from disk, the
+> ctx-core board, transcript times, and GitHub (open PRs and the effective
+> branch rules of every repo in the scope). It classifies each session with the
+> spec's class table, runs the count check, inventories scheduled work
+> (Paseo schedules, com.broomva.* LaunchAgents, bookkeeping, Dream), and writes
+> a markdown and JSON report plus one batch of owner asks, written to the
+> scope's ask ledger and answered in Maestro's Decisions.
+> In act mode (phase 2) a headless coordinator acts only through fleet act
+> (mail, spawn, label, resume), which re-checks eligibility in code and, under
+> dry run, logs what it would do; a send gate hooks its SendMessage. Runs
+> hourly from launchd once the owner installs it. Coordination only; not a
+> security boundary. USE WHEN installing or checking the fleet tick, reading a
+> tick report, answering the fleet's asks (fleet asks, fleet ack), asking
+> "which sessions are live / stalled / waiting on me", "which repos can get a
+> driver", "what runs on a schedule and is it keeping time", or producing the
+> phase-1 labelling sheet, rendering a driver profile, checking a worktree
+> before a janitor removes it. NOT FOR live actions (phase 3, after the spec's
+> §5.2 preconditions), merging PRs, or waiting on CI (use p9).
+
+Triggers: "fleet tick", "fleet reconcile", "fleet-reconcile", "fleet asks", "fleet ack", "class table", "which sessions are stalled", "count check", "labelling sheet", "install the tick", "is the fleet running", "scheduled work inventory", "fleet act", "send gate", "driver profile", "janitor-check", "fleet recover".
+
 The 09-26 → 09-29 run's coordinator reported 6 live sessions when there were
 30, lost state to compaction, and kept its ledgers by hand. This skill is the
 first phase of its replacement, as the design of record specifies:

@@ -11,7 +11,7 @@ the user site stay off sys.path; this file puts its own directory and
 
     fleet reconcile                         run one reconcile tick now, by hand (tick.sh, forced dry)
     fleet workflows                         list the skill's workflows: name, trigger, file
-    fleet rollover | close-out | census     print that workflow (a procedure an agent runs; no code)
+    fleet census|close-out|rollover|launch  print that workflow (a procedure an agent runs; no code here)
     fleet config-get <scope> <key>          one value; tick.sh reads errors as off and dry
     fleet config-check [<scope>]            exit 1 on any problem
     fleet observe --tick N                  write ticks/<N>/snapshot.json
@@ -89,6 +89,7 @@ WORKFLOWS: Tuple[Tuple[str, str], ...] = (
     ("census", "every coordinator tick: list the live agents in scope and classify them"),
     ("close-out", "a driven or owner session finished: archive it only when fully finished"),
     ("rollover", "a session's context passed its handoff mark: hand it to a seeded successor"),
+    ("launch", "N peers to start: routes to bstack wave dispatch / bstack fleet up (bstack's launchers)"),
 )
 
 
@@ -98,9 +99,24 @@ def workflow_file(name: str) -> Path:
 
 def cmd_reconcile(args: argparse.Namespace) -> int:
     """One tick now, through tick.sh (its kill switch, lock, tick number and
-    alerts), with DRY_RUN=1: a tick run by hand is never live."""
-    env = dict(os.environ, FLEET_SCOPE=_scope(args), DRY_RUN="1")
-    return subprocess.call(["/bin/bash", str(HERE / "tick.sh")], env=env)
+    alerts), with DRY_RUN=1: a tick run by hand is never live.
+
+    The scope is checked first: a scope the config doesn't hold exits 2 here,
+    before tick.sh would raise a config alert to the owner for it. tick.sh's
+    one stdout line is passed through; a run that printed none ran no tick
+    (the recursion guard, the kill switch off, or another tick holding the
+    lock), and says so on stderr rather than exiting 0 in silence."""
+    if os.environ.get("FLEET_CHILD"):
+        print("fleet reconcile: inside a fleet tick (FLEET_CHILD set); no tick", file=sys.stderr)
+        return 0
+    sec = _sec(args)
+    env = dict(os.environ, FLEET_SCOPE=sec["scope"], DRY_RUN="1")
+    proc = subprocess.run(["/bin/bash", str(HERE / "tick.sh")], env=env, stdout=subprocess.PIPE, text=True)
+    sys.stdout.write(proc.stdout)
+    if " tick " not in proc.stdout:
+        print("fleet reconcile: no tick ran for %s (kill switch off, or a tick holds the lock); see %s"
+              % (sec["scope"], Path(sec["state_dir"]) / "tick.log"), file=sys.stderr)
+    return proc.returncode
 
 
 def cmd_workflows(args: argparse.Namespace) -> int:

@@ -12,10 +12,21 @@ fleet, and add specialization workflows like reconcile").
 - New workflows, only where the practice already runs: `census` (bstack
   orchestrator-tick base §4), `close-out` (§6) and `rollover` (§11, and the
   broomva overlay's Rollover). Each states its trigger and a check you can
-  run, and links to the base instead of copying it.
+  run, and links to the base instead of copying it. close-out's check is one
+  script with one verdict: FINISHED only when a merged PR carries the
+  worktree's HEAD, the tree is clean and no live child would cascade; any
+  failed read is NOT FINISHED (a missing upstream used to read as zero).
+- `launch` routes to bstack's launchers and builds none: each peer its own
+  worktree → `bstack wave dispatch`; peers share one → `bstack fleet up`;
+  manage what's running → this skill. `bstack fleet` is untouched, and this
+  skill puts no `fleet` on PATH.
+- workflows/reconcile.md keeps the 0.5.2 frontmatter (description and
+  triggers) whole, in a "When to use" section.
 - CLI: `fleet reconcile [--scope S]` runs one tick by hand (tick.sh, forced
-  `DRY_RUN=1`); `fleet workflows` lists them; `fleet census|close-out|rollover`
-  print the procedure. `fleet --help` lists the workflows. Every existing verb
+  `DRY_RUN=1`), after checking the scope is in the config (a typo used to
+  raise an owner alert) and saying on stderr when no tick ran; `fleet
+  workflows` lists them; `fleet census|close-out|rollover|launch` print the
+  procedure. `fleet --help` lists the workflows. Every existing verb
   is unchanged.
 - `install.sh` pins `orchestration/fleet/{scripts,templates,workflows}` in a
   release (was `orchestration/fleet-reconcile/{scripts,templates}`).
@@ -29,12 +40,17 @@ fleet, and add specialization workflows like reconcile").
 - Deprecated alias, for one release: `skills/orchestration/fleet-reconcile/`
   holds a SKILL.md (`deprecated: fleet`) and `scripts/{fleet,install.sh,
   tick.sh}`, which print one stderr line and forward here. So
-  `~/.claude/skills/fleet-reconcile` and `npx skills add broomva/skills
-  --skill fleet-reconcile` still resolve.
+  `~/.claude/skills/fleet-reconcile` still resolves and runs. Installed on
+  its own (`npx skills add ... --skill fleet-reconcile`) the scripts need
+  `fleet` beside them, as the old skill needed `ctx-core`: they exit 70 and
+  name the install command.
 - Tests: `test_layout.py` (each routed workflow exists and states a trigger
   and a check; the CLI's list matches the table; the alias resolves and
-  forwards, directly and through a directory symlink; its send-gate keeps
-  exit 2), and `fleet reconcile` end to end in `test_tick.py`.
+  forwards, directly, through a directory symlink and in a flat per-skill
+  install; installed alone it names the fix, and its send-gate keeps exit
+  2; close-out's script run as written against a scratch repo and a stub gh),
+  and `fleet reconcile` end to end in `test_tick.py` (dry, an unknown scope
+  refused before any alert, a skipped tick reported). Four mutants added.
 
 ## [0.5.2] - 2026-10-12
 

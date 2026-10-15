@@ -17,8 +17,9 @@
   "Finished" row).
 - An `owner` session from the [census](census.md) has been idle more than
   12 h. At most 3 owner close-outs per tick, and only while usage allows (§7).
-- A session replaced by a [rollover](rollover.md) successor, once the
-  successor is verified.
+- A session replaced by a [rollover](rollover.md) successor: a driven
+  session once its successor is launched (base §11); the coordinator only
+  through its successor, once that one verifies (the overlay).
 
 ## Steps
 
@@ -39,21 +40,43 @@
 
 ## Check
 
-Before archiving `<id>` (its 8-hex prefix), with `<wt>` its worktree and
-`<branch>` its branch:
+Before archiving agent `<id>` (its 8-hex prefix), with `<wt>` its worktree,
+`<owner/repo>` its repo and `<branch>` its branch. One script, one verdict:
+`FINISHED` and exit 0, or `NOT FINISHED: <why>` and exit 1. Any read that
+fails is NOT FINISHED, never zero (`tests/test_layout.py` runs this block).
 
 ```bash
-git -C <wt> status --porcelain | wc -l                    # 0
-git -C <wt> log --oneline @{u}..HEAD 2>/dev/null | wc -l  # 0: nothing unpushed
-gh pr list --head <branch> --state open --json number -q length   # 0
-python3 - <id> <<'PY'
-import glob, json, os, sys
-kids = [a for f in glob.glob(os.path.expanduser("~/.paseo/agents/*/*.json"))
-        for a in [json.load(open(f))] if not a.get("archivedAt")
-        and str((a.get("labels") or {}).get("paseo.parent-agent-id", "")).startswith(sys.argv[1])]
-print([k["id"][:8] for k in kids])   # []: no live child would be archived with it
+python3 - <wt> <owner/repo> <branch> <id> <<'PY'
+import glob, json, os, subprocess, sys
+wt, repo, branch, agent = sys.argv[1:5]
+def read(*argv):
+    r = subprocess.run(argv, capture_output=True, text=True)
+    if r.returncode:
+        sys.exit("NOT FINISHED: %s failed: %s" % (" ".join(argv[:3]), r.stderr.strip()[:200]))
+    return r.stdout
+if read("git", "-C", wt, "status", "--porcelain").strip():
+    sys.exit("NOT FINISHED: uncommitted changes in %s" % wt)
+head = read("git", "-C", wt, "rev-parse", "HEAD").strip()
+prs = json.loads(read("gh", "pr", "list", "-R", repo, "--head", branch, "--state", "all",
+                      "--json", "number,state,headRefOid") or "[]")
+at = [p for p in prs if p.get("headRefOid") == head]   # the PR carries every local commit
+if not at:
+    sys.exit("NOT FINISHED: no PR on %s at HEAD %s (never pushed, never opened, or commits after it)" % (branch, head[:12]))
+if not any(p.get("state") == "MERGED" for p in at):
+    sys.exit("NOT FINISHED: PR #%s is %s (CLOSED counts only if the owner closed it)" % (at[0].get("number"), at[0].get("state")))
+kids = []
+for f in glob.glob(os.path.expanduser("~/.paseo/agents/*/*.json")):
+    a = json.load(open(f))
+    if not a.get("archivedAt") and str((a.get("labels") or {}).get("paseo.parent-agent-id", "")).startswith(agent):
+        kids.append(a["id"][:8])
+if kids:
+    sys.exit("NOT FINISHED: live children %s would be archived with it (clear their label first)" % kids)
+print("FINISHED: PR merged at %s, tree clean, no live child" % head[:12])
 PY
 ```
 
-All four must hold. A child listed in the last line is either cleared (step 2)
-or archived with it on purpose.
+It checks base §6 items 1 and 2 and the cascade. Items 3 to 5 (follow-ups
+ticketed, decisions in a ledger, the Maestro card) are read from the final
+message and the card. A PR the owner closed unmerged also counts as finished
+(item 1); the script can't tell who closed it, so it says NOT FINISHED and
+names the state.

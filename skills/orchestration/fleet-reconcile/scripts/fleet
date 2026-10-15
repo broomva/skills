@@ -13,6 +13,9 @@ while [ -L "$self" ]; do
     *) self=$(dirname -- "$self")/$link ;;
   esac
 done
-dir=$(CDPATH='' cd -P -- "$(dirname -- "$self")/../../fleet/scripts" && pwd) || exit $fail
+dir=$(CDPATH='' cd -P -- "$(dirname -- "$self")/../../fleet/scripts" 2>/dev/null && pwd) || {
+  echo "fleet-reconcile: deprecated alias of fleet, and fleet is not installed beside it (expected ../../fleet/scripts); install it: npx skills add broomva/skills --skill fleet" >&2
+  exit $fail
+}
 echo "fleet-reconcile: deprecated, renamed to fleet; use $dir/fleet" >&2
 exec "$dir/fleet" "$@"

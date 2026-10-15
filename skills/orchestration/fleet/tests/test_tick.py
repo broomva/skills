@@ -727,3 +727,22 @@ def test_fleet_reconcile_runs_one_tick_by_hand_and_it_is_dry_even_when_the_confi
     td = rig.world.state["broomva"] / "ticks" / "00001"
     assert (td / "report.md").is_file() and json.loads((td / "report.json").read_text())["dry_run"] is True
     assert [x for x in rig.ledger() if x["kind"] == "tick_fire"][0]["dry_run"] is True
+
+
+def test_fleet_reconcile_refuses_a_scope_the_config_lacks_before_any_tick_or_alert(rig):
+    """A mistyped scope must not reach tick.sh, which would raise a config alert to the owner for it."""
+    r = rig.fleet("reconcile", "--scope", "broomav")
+    assert r.returncode != 0 and "broomav" in r.stderr
+    assert rig.raised() == [] and not (rig.world.home / ".local" / "state" / "fleet-reconcile" / "broomav").exists()
+
+
+def test_fleet_reconcile_says_so_when_no_tick_ran(rig):
+    sd = rig.world.state["broomva"]
+    sd.mkdir(parents=True, exist_ok=True)
+    lock = sd / ".tick.lock"
+    lock.mkdir()
+    (lock / "pid").write_text(str(os.getpid()))  # a live holder: the tick is skipped
+    r = rig.fleet("reconcile", "--scope", "broomva")
+    assert r.returncode == 0 and "no tick ran for broomva" in r.stderr and r.stdout == ""
+    inside = rig.fleet("reconcile", "--scope", "broomva", FLEET_CHILD="1")
+    assert inside.returncode == 0 and "FLEET_CHILD" in inside.stderr

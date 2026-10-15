@@ -40,8 +40,8 @@ creation of the last main-thread turn, in thousands):
 2. `create_agent` the successor in the same workspace (`claude`, Opus),
    seeded with the overlay, the base, `state.yaml` and memory, and nothing
    else, plus the cutover steps: its own heartbeat under the same name, one
-   verified tick, `loop.rollover.completed`, archive the predecessor,
-   `loops-live.ts`, tell the SRI coordinator.
+   verified tick, `loop.rollover.completed`, check its own parent label,
+   archive the predecessor, `loops-live.ts`, tell the SRI coordinator.
 3. At once, `update_agent` the successor's `paseo.parent-agent-id` to `""`
    and re-read its registry file. Otherwise archiving the predecessor
    cascades and kills the successor.
@@ -59,7 +59,7 @@ import glob, json, os, sys
 (a,) = [json.load(open(f)) for f in glob.glob(os.path.expanduser("~/.paseo/agents/*/%s*.json" % sys.argv[1]))]
 print(repr((a.get("labels") or {}).get("paseo.parent-agent-id")))   # '' or None: no parent to cascade from
 PY
-bun ~/broomva/apps/maestro-paseo/scripts/dogfood/loops-live.ts | grep coordinator-tick   # a row, `on` and `ok`
+bun ~/broomva/apps/maestro-paseo/scripts/dogfood/loops-live.ts | grep '^coordinator-tick '   # a row, `on` and `ok`
 ```
 
 The first line must print `''` or `None`. The second must show the
