@@ -52,11 +52,13 @@ bytes, which is the dynamic half of the same contract.
 from __future__ import annotations
 
 import argparse
+import html as htmllib
 import json
 import re
 import sys
 from dataclasses import asdict, dataclass
 from pathlib import Path
+from urllib.parse import urlsplit
 
 FONT_HOSTS = ("fonts.googleapis.com", "fonts.gstatic.com", "use.typekit.net", "fonts.bunny.net")
 
@@ -172,6 +174,23 @@ def strip_js(code: str) -> tuple[str, str]:
     return "".join(keep), "".join(blank)
 
 
+ON_ATTR = re.compile(r"""\s(on[a-z]+)\s*=\s*(["'])(.*?)\2""", re.I | re.S)
+SRCDOC = re.compile(r"""\ssrcdoc\s*=\s*(["'])(.*?)\1""", re.I | re.S)
+
+
+def blank_blocks(text: str) -> str:
+    """The document with <script> and <style> bodies blanked (length-preserving), so
+    attribute scans never read JavaScript or CSS source as markup."""
+    out = list(text)
+    for rx in (_SCRIPT, _STYLE):
+        for m in rx.finditer(text):
+            body = m.start(m.lastindex)
+            for k in range(body, m.end(m.lastindex)):
+                if out[k] != "\n":
+                    out[k] = " "
+    return "".join(out)
+
+
 def strip_css_comments(css: str) -> str:
     return re.sub(r"/\*.*?\*/", lambda m: re.sub(r"[^\n]", " ", m.group(0)), css, flags=re.S)
 
@@ -181,7 +200,10 @@ def is_pinned(url: str) -> bool:
 
 
 def is_font_host(url: str) -> bool:
-    return any(h in url for h in FONT_HOSTS)
+    """Exact hostname match: a substring test let fonts.googleapis.com.attacker.invalid
+    pass as a font host (P20 round 7, Codex)."""
+    host = urlsplit(url if "://" in url else "https:" + url).hostname or ""
+    return host.lower() in FONT_HOSTS
 
 
 def check_url(url: str, line: int, out: list[Finding]) -> None:
@@ -328,7 +350,9 @@ def exposed_by_object_call(keep: str, blank: str) -> bool:
             depth += {"(": 1, "[": 1, "{": 1, ")": -1, "]": -1, "}": -1}.get(blank[j], 0)
             j += 1
         args = keep[m.end():j - 1]
-        if re.match(r"\s*(?:window|globalThis|self)\b", args) and re.search(r"\brenderAt\b", args):
+        target = re.match(r"\s*(?:window|globalThis|self)\s*,", args)  # exactly the global, then a comma
+        if target and (re.search(r"[{,]\s*['\"`]?renderAt['\"`]?\s*(?:[,}:]|$)", args[target.end():])
+                       or re.match(r"\s*['\"`]renderAt['\"`]", args[target.end():])):
             return True
     return False
 
@@ -382,7 +406,7 @@ def url_role(keep: str, m: re.Match) -> str:
     return "maybe"
 
 
-def guard_wraps(blank: str, keep: str, clock_pos: int) -> bool:
+def positional_guard(blank: str, keep: str, clock_pos: int) -> bool:
     """Does a ?t= guard actually keep this clock out of a frozen render?
 
     True when the clock sits after an `else` that follows a `.has('t')`/`.get('t')`
@@ -401,6 +425,44 @@ def guard_wraps(blank: str, keep: str, clock_pos: int) -> bool:
             return True
     s = T_SEARCH.search(keep)
     return bool(s and s.start() < clock_pos and re.search(r"\belse\b|\breturn\b|!", blank[max(0, s.start() - 8):clock_pos]))
+
+
+FUNC_HEAD = re.compile(
+    r"(?:\bfunction\s+([A-Za-z_$][\w$]*)\s*\([^)]*\)\s*"
+    r"|\b(?:const|let|var)\s+([A-Za-z_$][\w$]*)\s*=\s*(?:async\s*)?(?:function\b[^{]*|\([^)]*\)\s*=>\s*|[A-Za-z_$][\w$]*\s*=>\s*))$")
+
+
+def guard_wraps(blank: str, keep: str, clock_pos: int) -> bool:
+    """Positional guard, or a named loop function started only behind a guard.
+
+    `function loop(ts) { ...; requestAnimationFrame(loop); }` puts the rAF call
+    inside the function body, where no guard is visible; the guard sits where the
+    loop is started (`if (!q.has('t')) requestAnimationFrame(loop)`). So: find the
+    innermost enclosing named function, and accept when every reference to its
+    name outside its own body is itself positionally guarded (P20 round 7).
+    """
+    if positional_guard(blank, keep, clock_pos):
+        return True
+    stack = []
+    for i, c in enumerate(blank[:clock_pos]):
+        if c == "{":
+            stack.append(i)
+        elif c == "}" and stack:
+            stack.pop()
+    for open_pos in reversed(stack):
+        head = FUNC_HEAD.search(blank[max(0, open_pos - 200):open_pos])
+        if not head:
+            continue
+        name = head.group(1) or head.group(2)
+        depth, close = 1, open_pos + 1
+        while close < len(blank) and depth:
+            depth += {"{": 1, "}": -1}.get(blank[close], 0)
+            close += 1
+        decl = max(0, open_pos - 200) + head.start()
+        refs = [m.start() for m in re.finditer(rf"(?<![\w$.]){re.escape(name)}\b", blank)
+                if not (decl <= m.start() < close)]
+        return bool(refs) and all(positional_guard(blank, keep, r) for r in refs)
+    return False
 
 
 def lint_text(text: str, is_html: bool = True) -> list[Finding]:
@@ -527,6 +589,20 @@ def lint_text(text: str, is_html: bool = True) -> list[Finding]:
                     check_url(ref, line, findings)
                 else:
                     findings.append(Finding("MC07", "warn", line, f"local reference `{ref}`: the contract asks for one self-contained file"))
+
+    # G. executable HTML outside <script>: inline event handlers and srcdoc documents
+    if is_html:
+        outside = blank_blocks(text)
+        for m in ON_ATTR.finditer(outside):
+            code = htmllib.unescape(m.group(3))
+            _, blank = strip_js(code)
+            for rule, rx, label in JS_RULES:
+                for hit in rx.finditer(blank):
+                    findings.append(Finding(rule, "error", line_of(text, m.start()),
+                        f"{label} `{hit.group(0).strip()}` in an inline {m.group(1)} handler"))
+        for m in SRCDOC.finditer(outside):
+            for f in lint_text(htmllib.unescape(m.group(2)), is_html=True):
+                findings.append(Finding(f.rule, f.severity, line_of(text, m.start()), f"in srcdoc: {f.message}"))
 
     uses_webfont = bool(re.search(r"@font-face|fonts\.googleapis\.com|use\.typekit\.net|fonts\.bunny\.net", text))
     if uses_webfont and not FONTS_READY.search(all_js_blank + all_js_keep):

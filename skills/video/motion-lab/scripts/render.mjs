@@ -53,7 +53,7 @@
 
 import { createRequire } from 'node:module';
 import { pathToFileURL, fileURLToPath } from 'node:url';
-import { mkdirSync, writeFileSync, rmSync, existsSync, statSync, readdirSync, realpathSync } from 'node:fs';
+import { mkdirSync, writeFileSync, rmSync, existsSync, statSync, lstatSync, readdirSync, realpathSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
@@ -111,6 +111,17 @@ const LOOP_PROBE = `(() => {
   window.__mlRAF = raf;
   window.__mlCounts = { raf: 0, interval: 0 };
   window.requestAnimationFrame = function (cb) { window.__mlCounts.raf++; return raf(cb); };
+  // document.getAnimations() does not include animations inside shadow roots
+  // (P20 round 7): walk every open shadow root too.
+  const roots = () => {
+    const out = [document];
+    for (let i = 0; i < out.length; i++)
+      for (const el of out[i].querySelectorAll('*')) if (el.shadowRoot) out.push(el.shadowRoot);
+    return out;
+  };
+  window.__mlAllAnims = () => roots().flatMap((r) => r.getAnimations());
+  window.__mlAllSvgs = () => roots().flatMap((r) => [...r.querySelectorAll('svg')]);
+  window.__mlSmilCount = () => roots().reduce((n, r) => n + r.querySelectorAll('animate, animateTransform, animateMotion, set').length, 0);
   window.setInterval = function (...a) { window.__mlCounts.interval++; return si(...a); };
 })();`;
 
@@ -126,7 +137,7 @@ function withTimeout(promise, label) {
   return Promise.race([promise, timeout]).finally(() => clearTimeout(timer));
 }
 
-async function openAt(browser, o, url) {
+async function openAt(browser, o, url, probeTimes = []) {
   const page = await browser.newPage({ viewport: { width: o.width, height: o.height }, deviceScaleFactor: o.scale });
   await page.addInitScript(LOOP_PROBE);
   // Allowed: regular files whose REAL path (symlinks resolved) lies under the real
@@ -171,29 +182,50 @@ async function openAt(browser, o, url) {
     // renderAt positions) and the renderer leaves them alone; every other animation
     // is the renderer's and is seeked to t. Guessing "paused by the page = the
     // page's" froze any page that paused its CSS under ?t= (P20 round 6).
-    await withTimeout(page.evaluate(async (probeT) => {
-      await Promise.all(document.getAnimations().map((a) => a.ready.catch(() => {})));
+    await withTimeout(page.evaluate(async () => {
+      const anims = window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations();
+      await Promise.all(anims.map((a) => a.ready.catch(() => {})));
       const tick = window.__mlRAF || window.requestAnimationFrame.bind(window);
       for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));
-      const pageOwned = (window.__mlPageOwned = new WeakSet());
-      if (typeof window.renderAt !== 'function') return;
-      const sig = (a) => {
-        const tm = a.effect && a.effect.getTiming ? a.effect.getTiming() : {};
-        return [a.currentTime, tm.delay, tm.duration, tm.iterationStart].join('|');
-      };
-      await window.renderAt(0);
-      const before = new Map(document.getAnimations().map((a) => [a, sig(a)]));
-      await window.renderAt(probeT);
-      for (const a of document.getAnimations()) {
-        // a running animation's clock moves by itself, so only a PAUSED one whose
-        // timing changed was changed by renderAt
-        if (a.playState === 'paused' && before.get(a) !== sig(a)) pageOwned.add(a);
+      window.__mlPageOwned = new WeakSet();
+      window.__mlProbeSig = null;
+    }), 'warm-up');
+    // Ownership probe: call renderAt at EVERY frame time (no screenshots, so it is
+    // cheap) and mark as page-owned any paused animation whose timing renderAt
+    // changed between consecutive calls. Two sample times (t=0 and 0.37 x duration)
+    // missed a scrub renderAt only drives later in the timeline (P20 round 7).
+    // Each call has its own timeout; a throw is recorded and the probe goes on.
+    const hasRenderAt = await page.evaluate(() => typeof window.renderAt === 'function');
+    if (hasRenderAt) {
+      for (let i = 0; i < probeTimes.length; i++) {
+        const t = probeTimes[i];
+        try {
+          await withTimeout(page.evaluate(async (tt) => {
+            const sig = (a) => {
+              const tm = a.effect && a.effect.getTiming ? a.effect.getTiming() : {};
+              return [a.currentTime, tm.delay, tm.duration, tm.iterationStart].join('|');
+            };
+            await window.renderAt(tt);
+            const cur = new Map((window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations()).map((a) => [a, sig(a)]));
+            const prev = window.__mlProbeSig;
+            // a running animation's clock moves by itself, so only a PAUSED one
+            // whose timing changed was changed by renderAt
+            if (prev) for (const [a, sg] of cur) if (a.playState === 'paused' && prev.has(a) && prev.get(a) !== sg) window.__mlPageOwned.add(a);
+            window.__mlProbeSig = cur;
+          }, t), `warm-up probe t=${t}`);
+        } catch (e) {
+          const msg = String(e.message || e).split('\n')[0];
+          errors.push(msg.startsWith('warm-up probe') ? msg : `warm-up probe t=${t}: ${msg}`);
+          if (msg.includes('timed out after')) return { page, errors, blocked, aborted: true };
+        }
       }
-      for (const a of document.getAnimations()) {
+      await page.evaluate(() => {
+        window.__mlProbeSig = null;
         // a delay-positioned scrub must not carry the time it ran before renderAt paused it
-        if (pageOwned.has(a)) a.currentTime = 0;
-      }
-    }, o.seconds * 0.37), 'warm-up renderAt');
+        for (const a of (window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations()))
+          if (window.__mlPageOwned.has(a)) a.currentTime = 0;
+      });
+    }
     const first = await frameAt(page, 0, errors);
     if (first.timedOut) return { page, errors, blocked, aborted: true };
     await page.screenshot({ timeout: FRAME_TIMEOUT_MS });
@@ -237,7 +269,7 @@ async function frameAtUnsafe(page, t) {
     // itself (P20 round 5). Animations the warm-up probe found renderAt driving are
     // page-owned and left alone; the renderer seeks every other one.
     const pageOwned = window.__mlPageOwned || new WeakSet();
-    const anims = document.getAnimations();
+    const anims = window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations();
     let seeked = 0;
     for (const a of anims) {
       if (pageOwned.has(a)) continue;
@@ -246,10 +278,11 @@ async function frameAtUnsafe(page, t) {
       seeked++;
     }
     // SVG SMIL is not in getAnimations(): seek each <svg> document timeline.
-    for (const svg of document.querySelectorAll('svg')) {
+    for (const svg of (window.__mlAllSvgs ? window.__mlAllSvgs() : document.querySelectorAll('svg'))) {
       if (typeof svg.pauseAnimations === 'function') { svg.pauseAnimations(); svg.setCurrentTime(tt); }
     }
-    const smil = document.querySelectorAll('animate, animateTransform, animateMotion, set').length;
+    const smil = window.__mlSmilCount ? window.__mlSmilCount()
+      : document.querySelectorAll('animate, animateTransform, animateMotion, set').length;
     // A just-started CSS animation is still pending; seeking it and screenshotting
     // in the same frame can capture the pre-seek pose. Wait for every animation to
     // be ready before renderAt and the capture.
@@ -284,6 +317,11 @@ async function main() {
 
   const { chromium } = await loadPlaywright();
   // Only now touch the output: remove earlier frame PNGs (NNNN.png) and nothing else.
+  // Never delete THROUGH a symlink: a pre-existing out/frames link would point the
+  // cleanup at someone else's PNGs (P20 round 7).
+  if (existsSync(framesDir) && lstatSync(framesDir).isSymbolicLink()) {
+    throw new Error(`refusing to use ${framesDir}: it is a symlink`);
+  }
   mkdirSync(framesDir, { recursive: true });
   for (const f of readdirSync(framesDir)) if (/^\d{4,}\.png$/.test(f)) rmSync(path.join(framesDir, f));
   // and this renderer's own earlier outputs, so an aborted or --no-sheet run never
@@ -298,7 +336,8 @@ async function main() {
   const flags = { impure: false, errors: false, drift: false, static: false, mp4: false };
   let aborted = false;
   try {
-    const opened = await openAt(browser, o, url.href);
+    const probeTimes = Array.from({ length: N }, (_, i) => i / o.fps);
+    const opened = await openAt(browser, o, url.href, probeTimes);
     const { page, errors, blocked } = opened;
     manifest.page_errors = errors;
     manifest.blocked_requests = blocked;
@@ -384,19 +423,35 @@ async function main() {
       // impure page with zero mismatches. Reverse order breaks that replay.
       const picks = o.verifyAll ? Array.from({ length: N }, (_, i) => N - 1 - i)
         : [...new Set([0, Math.floor(N / 2), N - 1])].filter((i) => i >= 0);
-      const { page: p2 } = await openAt(browser, o, url.href);
+      const v = await openAt(browser, o, url.href, probeTimes);
+      errors.push(...v.errors.map((e) => `verify: ${e}`));
       const { readFileSync } = await import('node:fs');
       const mismatches = [];
+      let verifyAborted = v.aborted;
       for (const i of picks) {
-        await frameAt(p2, i / o.fps, errors);
-        const again = await p2.screenshot();
+        if (verifyAborted) break;
+        const info = await frameAt(v.page, i / o.fps, errors);
+        if (info.timedOut) { verifyAborted = true; break; }
+        let again;
+        try {
+          again = await v.page.screenshot({ timeout: FRAME_TIMEOUT_MS });
+        } catch (e) {
+          errors.push(`verify screenshot(${i}): ${String(e.message || e).split('\n')[0]}`);
+          verifyAborted = true;
+          break;
+        }
         if (!again.equals(readFileSync(framePath(i)))) mismatches.push(i);
       }
-      await p2.close();
+      if (!verifyAborted) await v.page.close();
       mismatches.sort((a, b) => a - b);
-      manifest.verify = { frames: [...picks].sort((a, b) => a - b), mismatches, pure: mismatches.length === 0,
-        scope: o.verifyAll ? `all ${N} frames` : `sampled ${picks.length} of ${N} frames` };
+      // pure is unknown (null) when the check did not finish
+      manifest.verify = { frames: [...picks].sort((a, b) => a - b), mismatches,
+        pure: verifyAborted ? null : mismatches.length === 0,
+        scope: o.verifyAll ? `all ${N} frames` : `sampled ${picks.length} of ${N} frames`,
+        ...(verifyAborted ? { aborted: true } : {}) };
+      // a timeout is a page error (exit 5), not evidence of impurity
       if (mismatches.length) flags.impure = true;
+      if (verifyAborted) aborted = true;
     }
     flags.errors = errors.length > 0;
 
@@ -422,6 +477,10 @@ async function main() {
       manifest.contact_sheet = path.join(outDir, 'contact.png');
       manifest.contact_frames = picks;
     }
+  } catch (e) {
+    // Anything unexpected still produces a manifest (exit 2), never a bare traceback.
+    manifest.fatal = String(e.message || e).split('\n')[0];
+    aborted = true;
   } finally {
     // A page stuck in a synchronous loop can stall a graceful close; do not wait forever.
     // unref: the fallback timer must not keep Node alive after a normal close.
@@ -439,7 +498,8 @@ async function main() {
 
   // One exit code, by precedence: impurity outranks a page error, which outranks
   // drift, a static page and a failed MP4.
-  const exitCode = flags.impure ? 3 : flags.errors ? 5 : flags.drift ? 7 : flags.static ? 6 : flags.mp4 ? 4 : 0;
+  const exitCode = manifest.fatal ? 2
+    : flags.impure ? 3 : flags.errors ? 5 : flags.drift ? 7 : flags.static ? 6 : flags.mp4 ? 4 : 0;
   manifest.exit_code = exitCode;
   writeFileSync(path.join(outDir, 'manifest.json'), JSON.stringify(manifest, null, 2));
   process.exitCode = exitCode;

@@ -393,6 +393,40 @@ class TestLintReviewRound6:
         assert [f.severity for f in ml.lint_text(html(src)) if f.rule == "MC01"] == ["warn"]
 
 
+class TestLintReviewRound7:
+    """Cases from P20 round 7 (Strata A and B), reproduced first."""
+
+    def test_a_lookalike_font_host_is_not_a_font_host(self):
+        doc = '<html><head><script src="https://fonts.googleapis.com.attacker.invalid/payload.js"></script></head><body></body></html>'
+        assert "MC06" in rules(ml.lint_text(doc), "error")
+
+    def test_inline_event_handlers_are_linted(self):
+        doc = html().replace("<body>", '<body onload="setInterval(() => document.body.style.opacity = Math.random(), 100)">')
+        assert {"MC02", "MC03"} <= rules(ml.lint_text(doc), "error")
+
+    def test_srcdoc_documents_are_linted(self):
+        doc = '<html><body><iframe srcdoc="&lt;script&gt;setTimeout(f, 9)&lt;/script&gt;"></iframe></body></html>'
+        assert "MC02" in rules(ml.lint_text(doc), "error")
+
+    def test_a_named_preview_loop_started_behind_a_guard_is_a_warning(self):
+        src = ("const q = new URLSearchParams(location.search); window.renderAt = t => {};"
+               " function loop(ts) { renderAt(ts / 1000 % 6); requestAnimationFrame(loop); }"
+               " if (!q.has('t')) requestAnimationFrame(loop); else renderAt(0);")
+        mc01 = [f for f in ml.lint_text(html(src)) if f.rule == "MC01"]
+        assert mc01 and all(f.severity == "warn" for f in mc01)  # both calls warn (same line, deduplicated)
+
+    def test_a_named_loop_started_unconditionally_stays_an_error(self):
+        src = ("const q = new URLSearchParams(location.search); window.renderAt = t => {};"
+               " function loop(ts) { renderAt(ts); requestAnimationFrame(loop); }"
+               " if (q.has('t')) renderAt(0); requestAnimationFrame(loop);")
+        assert "MC01" in rules(ml.lint_text(html(src)), "error")
+
+    def test_assigning_onto_a_different_object_does_not_expose_renderat(self):
+        src = ("const g = c.getContext('2d'); const draw = t => {}; Object.assign(window.app = app, { renderAt: draw });"
+               " const renderAt = draw; requestAnimationFrame(f);")
+        assert [f for f in ml.lint_text(html(src)) if f.rule == "MC04" and "not on window" in f.message]
+
+
 class TestRenderAtReachable:
     """renderAt must be callable from page.evaluate, i.e. live on window."""
 

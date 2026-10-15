@@ -98,8 +98,10 @@ and this skill is built to keep them:
    | MC09 | `@keyframes` animating width / height / top / left | WARN |
    | MC10 | something on its own clock: GSAP with no paused timeline or seek, an autoplaying `<video>`/`<audio>` | WARN |
 
-   It also lints a bare `.js` / `.tsx` module (a Remotion component), where MC04
-   does not apply but MC01–MC03 and MC06 do.
+   It also lints code outside `<script>`: inline `on*` event handlers and `srcdoc`
+   documents. It lints a bare `.js` / `.tsx` module (a Remotion component) too,
+   where MC04 does not apply but MC01–MC03 and MC06 do. Font hosts are matched by
+   exact hostname.
 
 4. **Render stills, a contact sheet, and verify purity.** From a project with
    Playwright installed (`npm i -D playwright && npx playwright install chromium`):
@@ -114,16 +116,19 @@ and this skill is built to keep them:
    SMIL timelines (`<animate>` is not in `getAnimations()`), then calls `renderAt(t)`
    last, so `renderAt` wins for anything it sets itself. Which animations are the
    page's is tested, not guessed: during the warm-up the renderer calls `renderAt`
-   at two times, and a paused animation whose timing changed between them is
-   driven by `renderAt` (a scrub through a negative `animation-delay`, a WAAPI
-   animation it positions) and is left alone (`driven_by.page_owned`). Every other
-   animation is seeked to t, including CSS the page froze under `?t=`. `--verify` reloads the page
+   at every frame time (no screenshots), and a paused animation whose timing
+   `renderAt` changed between consecutive calls is driven by it (a scrub through a
+   negative `animation-delay`, a WAAPI animation it positions, even one that starts
+   late in the timeline) and is left alone (`driven_by.page_owned`). Every other
+   animation is seeked to t, including CSS the page froze under `?t=` and
+   animations inside open shadow roots. `--verify` reloads the page
    and re-renders the first, middle and last frames; if any byte differs, a frame
    is not a pure function of t. This catches what the linter cannot, such as a
    `renderAt` that reads a counter. `--verify-all` re-renders every frame, in
    reverse order: a `renderAt` that depends on its call history replays identically
    when frames come in the same order, so an in-order check passes it. The manifest
-   records the scope (`sampled 3 of N frames` or `all N frames`). `--every N` puts
+   records the scope (`sampled 3 of N frames` or `all N frames`); if the check
+   could not finish (a timeout), `verify.pure` is `null` and the run exits 5. `--every N` puts
    every Nth frame on the contact sheet and always ends it on frame N-1, the seam. Add `--mp4` for an
    H.264 file (needs ffmpeg).
 
@@ -163,7 +168,8 @@ and this skill is built to keep them:
    file's directory, with no path segment below it starting with a dot (`.env`,
    `.git`). Directory URLs and everything else are blocked and listed in
    `manifest.blocked_requests`. A symlinked input renders from its target's
-   directory. Other files in that directory remain
+   directory. A `frames/` directory in `--out` that is a symlink is refused before
+   anything is deleted. Other files in that directory remain
    readable by the page, so render untrusted HTML from a directory that holds only
    its assets. Only `NNNN.png` files are removed from
    `out/frames/` before a render, and only after Playwright has loaded.

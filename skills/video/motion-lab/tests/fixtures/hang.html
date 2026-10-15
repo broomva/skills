@@ -1,7 +1,9 @@
 <!doctype html>
 <html><head><meta charset="utf-8"></head><body><canvas id="c" width="160" height="90"></canvas>
 <script>
-  // renderAt returns a promise that never settles from t = 0.5 on: past the
-  // warm-up probe (t = 0.37 x duration), so the hang lands in the frame loop.
-  window.renderAt = function (t) { if (t >= 0.5) return new Promise(() => {}); };
+  // From t = 0.5 on, renderAt's SECOND call at a given t never settles. The warm-up
+  // probe makes the first call at every frame time, so the hang lands in the frame
+  // loop and exercises its abort path.
+  const seen = {};
+  window.renderAt = function (t) { if (t >= 0.5 && seen[t]++) return new Promise(() => {}); seen[t] = seen[t] || 1; };
 </script></body></html>

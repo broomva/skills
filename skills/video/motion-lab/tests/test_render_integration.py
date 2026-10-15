@@ -258,6 +258,7 @@ class TestRender:
         ("paused_css.html", "paused_css_reference.html"),        # no renderAt, CSS paused under ?t=
         ("mixed_frozen.html", "mixed_reference.html"),           # renderAt + a decorative spinner the page froze
         ("scrub_negdelay_inline.html", "scrub_reference.html"),  # renderAt pauses and scrubs inline
+        ("shadow_frozen.html", "shadow_reference.html"),         # round 7: a spinner inside a shadow root
     ])
     def test_ownership_is_tested_not_guessed(self, tmp_path, fixture, reference):
         # round 6: "paused by the page = the page's" froze pages nothing drove, and
@@ -277,7 +278,8 @@ class TestRender:
                             "--fps", "12", "--width", "160", "--height", "90", "--out", str(tmp_path), "--no-sheet"],
                            cwd=NODE_DIR, env=env, capture_output=True, text=True, timeout=60)
         m = json.loads((tmp_path / "manifest.json").read_text())
-        assert r.returncode == 5 and m["aborted_at_frame"] == 0 and "timed out" in m["page_errors"][0]
+        timeouts = [e for e in m["page_errors"] if "timed out" in e]
+        assert r.returncode == 5 and m["aborted_at_frame"] == 0 and len(timeouts) == 1, m["page_errors"]
 
     def test_a_symlinked_input_renders(self, tmp_path):
         (tmp_path / "real").mkdir()
@@ -311,6 +313,42 @@ class TestRender:
         blocked = json.loads(r.stdout)["blocked_requests"]
         assert any(u.rstrip("/").endswith("/page") for u in blocked)
         assert any(u.rstrip("/").endswith("/page/assets") for u in blocked)  # a subdirectory listing, too
+
+    def test_a_scrub_that_starts_late_is_still_page_owned(self, tmp_path):
+        # round 7: probing only t=0 and 0.37 x duration missed a scrub renderAt drives
+        # from t=1.5 s; the probe now calls renderAt at every frame time
+        args = ["--seconds", "3", "--fps", "4", "--width", "160", "--height", "90", "--no-sheet"]
+        outs = {}
+        for name in ("scrub_late.html", "scrub_late_reference.html"):
+            out = tmp_path / name
+            r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / name), "--out", str(out), *args],
+                               cwd=NODE_DIR, capture_output=True, text=True, timeout=120)
+            assert r.returncode == 0, r.stdout + r.stderr
+            outs[name] = json.loads(r.stdout)
+        assert outs["scrub_late.html"]["driven_by"]["page_owned"] == 1
+        assert digests(tmp_path / "scrub_late.html") == digests(tmp_path / "scrub_late_reference.html")
+
+    def test_a_hang_inside_verify_aborts_with_a_manifest(self, tmp_path):
+        env = {**os.environ, "MOTION_LAB_FRAME_TIMEOUT_MS": "1500"}
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "hang_verify.html"), "--seconds", "1",
+                            "--fps", "8", "--width", "160", "--height", "90", "--out", str(tmp_path), "--no-sheet",
+                            "--verify-all"], cwd=NODE_DIR, env=env, capture_output=True, text=True, timeout=60)
+        m = json.loads((tmp_path / "manifest.json").read_text())
+        assert r.returncode == 5, m  # a timeout is a page error, not impurity
+        assert m["verify"]["aborted"] is True and m["verify"]["pure"] is None
+        # the frame timeout stops verify at once; a hung page is never screenshotted
+        assert not [e for e in m["page_errors"] if "verify screenshot" in e], m["page_errors"]
+
+    def test_a_symlinked_frames_dir_is_refused_and_nothing_is_deleted(self, tmp_path):
+        victim = tmp_path / "victim"
+        victim.mkdir()
+        (victim / "0000.png").write_bytes(b"not yours")
+        out = tmp_path / "out"
+        out.mkdir()
+        (out / "frames").symlink_to(victim)
+        r = render("good.html", out, "--no-sheet")
+        assert r.returncode == 2 and "symlink" in r.stderr
+        assert (victim / "0000.png").read_bytes() == b"not yours"
 
 
 needs_ffmpeg = pytest.mark.skipif(not shutil.which("ffmpeg"), reason="ffmpeg not installed")

@@ -1,7 +1,9 @@
 <!doctype html>
 <html><head><meta charset="utf-8"></head><body><canvas id="c" width="160" height="90"></canvas>
 <script>
-  // renderAt spins forever from t = 0.5 on (past the warm-up probe): a synchronous
-  // hang in the frame loop blocks the page itself, screenshots included.
-  window.renderAt = function (t) { if (t >= 0.5) { for (;;) {} } };
+  // From t = 0.5 on, renderAt's SECOND call at a given t spins forever (the warm-up
+  // probe makes the first): a synchronous hang in the frame loop blocks the page
+  // itself, screenshots included.
+  const seen = {};
+  window.renderAt = function (t) { if (t >= 0.5 && seen[t]++) { for (;;) {} } seen[t] = seen[t] || 1; };
 </script></body></html>
