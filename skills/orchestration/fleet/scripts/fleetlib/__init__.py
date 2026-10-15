@@ -1,4 +1,4 @@
-"""fleet-reconcile's library. fleet_reconcile.py is the only entry point.
+"""The fleet skill's library (its reconcile tick). fleet_reconcile.py is the only entry point.
 
     common     time, paths, the text guard, atomic writes
     config     the per-scope fleet config (~/.config/ctx/fleet.json)

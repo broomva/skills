@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Capture the surfaces fleet-reconcile parses, anonymized, as test fixtures.
+"""Capture the surfaces fleet's reconcile tick parses, anonymized, as test fixtures.
 
     python3 tests/capture_fixtures.py [--out tests/fixtures/cc-<version>]
 
