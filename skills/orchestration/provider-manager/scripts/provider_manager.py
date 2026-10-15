@@ -1587,6 +1587,18 @@ def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None,
             entry["usageStatus"] = "THROTTLED"
             entry["isActive"] = is_active
             out.append(entry)
+        elif status_code == 401:
+            out.append({
+                "id": acc_id,
+                "email": email,
+                "isActive": is_active,
+                "telemetry": "auth_expired",
+                "needsLogin": True,
+                "usageStatus": "NEEDS_LOGIN",
+                "error": err_msg,
+                "primary": None, "secondary": None, "credits": None, "resetCredits": None,
+                "isRateLimited": False,
+            })
         else:
             out.append({
                 "id": acc_id,
