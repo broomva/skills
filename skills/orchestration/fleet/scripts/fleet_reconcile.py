@@ -101,7 +101,7 @@ def cmd_reconcile(args: argparse.Namespace) -> int:
     """One tick now, through tick.sh (its kill switch, lock, tick number and
     alerts), with DRY_RUN=1: a tick run by hand is never live.
 
-    The scope is checked first: a scope the config doesn't hold exits 2 here,
+    The scope is checked first: a scope the config doesn't hold exits 1 here,
     before tick.sh would raise a config alert to the owner for it. tick.sh's
     one stdout line is passed through; a run that printed none ran no tick
     (the recursion guard, the kill switch off, or another tick holding the

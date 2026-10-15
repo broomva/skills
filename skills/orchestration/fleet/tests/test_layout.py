@@ -193,6 +193,16 @@ def test_close_out_finishes_a_session_with_no_work_of_its_own_without_asking_git
     assert ok.returncode == 0 and "no work of its own" in ok.stdout, ok.stderr
 
 
+def test_close_out_no_work_needs_the_branch_too_and_works_without_origin_head(close_out):
+    close_out.git("checkout", "-q", "--detach", "origin/main")   # moved off feat, which holds unpushed work
+    moved = close_out("[]")
+    assert moved.returncode == 1 and "NOT FINISHED" in moved.stderr
+    close_out.git("branch", "-q", "-f", "feat", "origin/main")
+    close_out.git("remote", "set-head", "origin", "--delete")    # no origin/HEAD: falls back to origin/main
+    ok = close_out("[]", STUB_GH_FAIL="1")
+    assert ok.returncode == 0 and "is in origin/main" in ok.stdout, ok.stderr
+
+
 @pytest.mark.parametrize("case", ["never pushed, no PR", "commit after the merge", "PR still open",
                                   "dirty tree", "gh fails", "a live child", "an unreadable registry file"])
 def test_close_out_refuses_what_is_not_finished(close_out, case):

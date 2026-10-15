@@ -64,8 +64,10 @@ def read(*argv):
 if read("git", "-C", wt, "status", "--porcelain").strip():
     sys.exit("NOT FINISHED: uncommitted changes in %s" % wt)
 head = read("git", "-C", wt, "rev-parse", "HEAD").strip()
-base = run("git", "-C", wt, "rev-parse", "--abbrev-ref", "origin/HEAD").stdout.strip() or "origin/main"
-if run("git", "-C", wt, "merge-base", "--is-ancestor", head, base).returncode == 0:
+r = run("git", "-C", wt, "rev-parse", "--abbrev-ref", "origin/HEAD")
+base = r.stdout.strip() if r.returncode == 0 else "origin/main"
+inside = lambda rev: run("git", "-C", wt, "merge-base", "--is-ancestor", rev, base).returncode == 0
+if inside(head) and (branch == "HEAD" or inside(branch)):   # the branch too: a worktree moved off it
     done = "no work of its own: HEAD %s is in %s" % (head[:12], base)
 else:
     prs = json.loads(read("gh", "pr", "list", "-R", repo, "--head", branch, "--state", "all",

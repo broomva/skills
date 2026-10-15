@@ -619,7 +619,7 @@ PROTECTIONS = [
      'at = [p for p in prs if p.get("headRefOid") == head]', "at = prs",
      [T + "test_layout.py", "-k", "close_out"]),
     ("close-out reads unmerged work as no work", "workflows/close-out.md",
-     'if run("git", "-C", wt, "merge-base", "--is-ancestor", head, base).returncode == 0:', "if True:",
+     'if inside(head) and (branch == "HEAD" or inside(branch)):', "if True:",
      [T + "test_layout.py", "-k", "close_out_refuses"]),
 ]
 
