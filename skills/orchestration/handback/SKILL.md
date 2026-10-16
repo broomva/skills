@@ -242,8 +242,9 @@ validator rules: `.control/asks/DECISION-LAYER.md`, "Decision layer v2".
 Before you emit, three checks: could the owner answer from the card alone, on a
 phone, in under a minute? Does every option the owner would want to *see* have a
 picture? Is every claim the options rest on one tap away? Then run
-`python3 scripts/ask_ledger.py validate <ledger>`; it fails an open ask with
-three or more options, or one about a spec or design, that has no summary.
+`python3 scripts/ask_ledger.py validate <ledger>`; it fails an open ask raised on
+or after 2026-10-17 with three or more options, or one about a spec or design, that
+has no summary.
 
 ## Anti-patterns
 
