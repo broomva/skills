@@ -15,8 +15,14 @@
 
 - A driven (`arc`) session's final message reads finished (base §5's
   "Finished" row).
-- An `owner` session from the [census](census.md) has been idle more than
-  12 h. At most 3 owner close-outs per tick, and only while usage allows (§7).
+- An `owner` session, started by the owner and listed in the snapshot's
+  `drive_due` section (base §3, §5), whose action is `archive` or
+  `clear_children`. That means it ended `ARC-STATUS: CLOSED` after the
+  coordinator drove it with the arc close, and the owner hasn't messaged it
+  for 24 h. The overlay sets the drive thresholds and the per-tick caps.
+- A model session of another provider (Antigravity, Codex) listed in
+  `other_sessions` with action `archive`: idle 24 h, with a finished worktree.
+  It is never prompted (base §5).
 - A session replaced by a [rollover](rollover.md) successor: a driven
   session once its successor is launched (base §11); the coordinator only
   through its successor, once that one verifies (the overlay).
@@ -26,7 +32,7 @@
 1. **Fully finished, all five** (base §6): the PRs are merged, or closed by the
    owner; the tree is clean, with no unpushed commit; every follow-up is a
    ticket; every owner decision it raised is in a `.control/asks` ledger; a
-   Maestro card tracking it is in `review` or `done`. Any one missing → it is
+   Maestro card tracking it is in `review`, `done` or `canceled`. Any one missing → it is
    not closed out: drive it, or put the gap in `open`.
 2. **Clear the cascade.** Archiving X archives every live agent labelled
    `paseo.parent-agent-id=X`. For each child that must survive:

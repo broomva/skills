@@ -1,5 +1,12 @@
 # Changelog: fleet (fleet-reconcile until 0.6.0)
 
+## [0.6.1] - 2026-10-16
+
+- close-out: owner-started sessions are driven to a close and archived from the
+  snapshot's `drive_due` action, and other-provider sessions from
+  `other_sessions`. This replaces the old "owner idle over 12 h" trigger (bstack
+  base ≥ 0.48.0, BRO-3154). A card in `canceled` also counts as settled.
+
 ## [0.6.0] - 2026-10-15
 
 The skill is renamed `fleet-reconcile` → `fleet`, and becomes an entry point
