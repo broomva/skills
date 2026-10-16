@@ -17,9 +17,11 @@
   "Finished" row).
 - An `owner` session, started by the owner and listed in the snapshot's
   `drive_due` section (base §3, §5), whose action is `archive` or
-  `clear_children`. That means it ended `ARC-STATUS: CLOSED` after the
-  coordinator drove it with the arc close, and the owner hasn't messaged it
-  for 24 h. The overlay sets the drive thresholds and the per-tick caps.
+  `clear_children`. For an owner session that appears only after the owner
+  approved its per-session archive ask in Maestro Decisions: the coordinator
+  drives it to `ARC-STATUS: CLOSED`, then asks (`ask_archive`); it never
+  archives an owner session on its own reading. The overlay sets the drive
+  thresholds and the per-tick caps.
 - A model session of another provider (Antigravity, Codex) listed in
   `other_sessions` with action `archive`: idle 24 h, with a finished worktree.
   It is never prompted (base §5).

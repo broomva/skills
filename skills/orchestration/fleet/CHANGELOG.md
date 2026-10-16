@@ -4,7 +4,8 @@
 
 - close-out: owner-started sessions are driven to a close and archived from the
   snapshot's `drive_due` action, and other-provider sessions from
-  `other_sessions`. This replaces the old "owner idle over 12 h" trigger (bstack
+  `other_sessions`; an owner session only after the owner approves its archive ask.
+  This replaces the old "owner idle over 12 h" trigger (bstack
   base ≥ 0.48.0, BRO-3154). A card in `canceled` also counts as settled.
 
 ## [0.6.0] - 2026-10-15
