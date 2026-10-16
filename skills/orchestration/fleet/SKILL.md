@@ -63,6 +63,14 @@ canonical text is bstack's `references/orchestrator-tick.md`, read from git;
 the workflow file names its trigger and its check and links there rather
 than copying it.
 
+A fleet ask written by the reconcile tick is an acknowledgement with one
+option, so it needs nothing beyond its headline. An ask a coordinator writes by
+hand into `.control/asks` (a close-out choice, a policy question) follows the
+decision layer: once it has three or more options, or is about a spec or a
+design, it carries a `summary`, a `tradeoffs` row per option and the `sources`
+it rests on, such as the PR, the ticket and the sessions involved (decision layer
+v2, `.control/asks/DECISION-LAYER.md`; the rubric is in `handback`).
+
 ## The CLI
 
 ```bash
