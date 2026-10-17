@@ -145,7 +145,10 @@ check the one you favor, take the recommended path, and write down why in the
 a credential or an authority grant comes only from a person, so those, and
 anything external, are batched into a single ask you raise yourself while the
 human is awake, after `.control/preauth.yaml` has been checked for a standing
-answer. That is the same hour-zero batch `/autonomous` reflex 1b describes,
+answer. Write that ask so it can be decided from the Maestro card alone, since nobody
+will be there to explain it: a summary, a tradeoff row per option and the sources
+you read, and a picture per option when the choice is visual (decision layer v2,
+`.control/asks/DECISION-LAYER.md`; the rubric is in `handback`). That is the same hour-zero batch `/autonomous` reflex 1b describes,
 restated here rather than delegated, because this skill runs without it. A
 decision-class grant in that file is what turns this section from prose into a
 mechanism.

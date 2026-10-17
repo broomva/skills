@@ -197,6 +197,55 @@ a confident decision the user never made is still architecture the user now owns
 Trivial discretion — internal naming, cosmetic calls — compresses to a one-line
 count; everything load-bearing gets a row.
 
+## In the ledger, an ask carries what it takes to decide it
+
+The ⛔ block is what the message says. The ask itself lives in
+`.control/asks/<arc>.yaml`, and Maestro serves it to the owner on a desktop card
+and on a phone. There the owner has nothing but the card, so a decision that is
+not a plain yes/no has to carry its own context. The owner, of an ask that asked
+him to approve a spec with no link to it and no picture: *"I cant really tell or
+make a decision."*
+
+Decision layer v2 gives an ask five optional fields, scaled to the decision:
+`summary` (2–4 plain sentences), `tradeoffs` (rows of option × cost, risk, time,
+reversibility), `sources` (the tickets, PRs, specs, docs, URLs and sessions you
+read), `media` (pictures or clips on the ask and on each option, which Maestro
+compares side by side) and `details` (markdown behind a disclosure). Spec and
+validator rules: `.control/asks/DECISION-LAYER.md`, "Decision layer v2".
+
+| The decision is… | Write |
+|---|---|
+| a yes/no on something reversible the reader already knows | nothing extra |
+| a choice among 3–4 paths | `summary` (required), a `tradeoffs` row per option, your `sources` |
+| approving a spec, a plan or a doc | `summary` (required), the doc as a `spec` source (required when the ask names it), ticket and PR, tradeoffs, 1–3 of the doc's own figures as option `media` |
+| a choice between visual variants | `summary` (required), one picture or clip per option, a caption saying what differs |
+| irreversible, money, or public | everything above that applies, plus `details`: what happens if it goes wrong |
+
+```yaml
+    # an illustrative ask between two renders (the paths are examples)
+    summary: >-
+      Two hero frames for act 1. A keeps the face in the light; B is darker and
+      matches the trailer. Either is one re-render to change later.
+    tradeoffs:
+      - { option: frame-a, cost: "$0.25 render", risk: "off-tone with the trailer" }
+      - { option: frame-b, cost: "$0.25 render", risk: "the face reads dark on phones" }
+    sources:
+      - { kind: ticket, ref: BRO-3130 }
+      - { kind: file, ref: "docs/reels/act1-notes.md" }
+    options:
+      - id: frame-a
+        # label, consequence, reversible, recommended…
+        media:
+          - { kind: image, path: "docs/reels/act1/frame-a.png", caption: "A: face lit" }
+```
+
+Before you emit, three checks: could the owner answer from the card alone, on a
+phone, in under a minute? Does every option the owner would want to *see* have a
+picture? Is every claim the options rest on one tap away? Then run
+`python3 scripts/ask_ledger.py validate <ledger>`; it fails an open ask raised on
+or after 2026-10-17 with three or more options, or one about a spec or design, that
+has no summary.
+
 ## Anti-patterns
 
 | Rationalization | Why it fails |
