@@ -3,7 +3,7 @@ name: fleet
 tier: D
 primitive: null
 category: orchestration
-version: 0.6.0
+version: 0.6.1
 description: |
   The Broomva fleet: every Claude Code and Paseo session, PR and loop the
   coordinators drive, and the workflows that manage it. reconcile is the
@@ -54,7 +54,7 @@ and the loop ledger read them.
 |---|---|---|---|
 | reconcile | launchd, hourly per scope; or `fleet reconcile` by hand | code: `scripts/tick.sh` and the `fleet` CLI | [workflows/reconcile.md](workflows/reconcile.md) |
 | census | every coordinator fire, before any launch, resume or archive | procedure: bstack base §4; the overlay's snapshot | [workflows/census.md](workflows/census.md) |
-| close-out | a driven session finished; an owner session idle over 12 h | procedure: bstack base §6 | [workflows/close-out.md](workflows/close-out.md) |
+| close-out | a driven session finished; an owner or other-provider session the snapshot marks `archive` (base ≥ 0.48.0: owner sessions are driven too) | procedure: bstack base §5–§6 | [workflows/close-out.md](workflows/close-out.md) |
 | rollover | a driven session over 600k context; the coordinator over 400k | procedure: bstack base §11; the overlay's Rollover | [workflows/rollover.md](workflows/rollover.md) |
 | launch | N peers to start: own worktrees, or one shared | routes to bstack: `bstack wave dispatch`, `bstack fleet up` | [workflows/launch.md](workflows/launch.md) |
 
