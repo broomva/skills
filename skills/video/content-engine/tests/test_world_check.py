@@ -174,7 +174,14 @@ def test_w11_reference_in_prose_is_fine(world):
 
 def test_w11_prompt_files(world):
     (world / "characters/wick-hero.prompt.md").write_text("---\njob: image\n---\nShot: Wick, Slow Caravans mood.\n")
-    assert "W11" in codes(world)
+    assert codes(world) == ["W11"]
+
+
+def test_prompt_files_are_not_sheets(world):
+    """P20 r1 #3: a clean prompt file beside a sheet is neither a sheet nor an unlisted asset."""
+    (world / "characters/wick-hero.prompt.md").write_text("---\njob: image\n---\nShot: Wick, chest-up.\n")
+    (world / "locations/the-square-dawn.prompt.md").write_text("Shot: the square at dawn.\n")
+    assert wc.check_world(world, complete=True) == []
 
 
 def test_w11_external_taste_file(world, tmp_path):
@@ -442,3 +449,78 @@ def test_canon_template_is_valid_yaml_with_default_tiers():
     data = yaml.safe_load((SKILL / "templates" / "canon.yaml").read_text())
     assert set(data["tiers"]) == set(wc.DEFAULT_TIERS)
     assert data["dna_cap"] == wc.DEFAULT_DNA_CAP
+
+
+# --- regressions from P20 round 1 (Codex, 2026-10-17) ----------------------------------------------
+
+
+def test_missing_explicit_taste_file_is_an_error(world, tmp_path, capsys):
+    """#1: a --taste path that does not exist must not silently disable W11."""
+    edit(world / "props/the-lantern.md", "a brass ring", "an Ilse Varnholt brass ring")
+    missing = tmp_path / "missing-private-taste.md"
+    with pytest.raises(FileNotFoundError):
+        wc.check_world(world, taste=missing)
+    assert wc.main(["check", str(world), "--taste", str(missing)]) == 2
+
+
+def test_unknown_lowercase_ask_id_is_not_external(table_world):
+    """#2: a misspelled ask id is unresolved (W03), and cannot lock a fact (W04)."""
+    edit(table_world / "canon.yaml", "source: round 0, r0-seed-alpha (build)", "source: round 0, r0-seed-misspelled (build)")
+    assert {"W03", "W04"} <= set(codes(table_world))
+
+
+def test_external_rule_still_counts(table_world):
+    assert "W03" not in codes(table_world)  # policy-owned cites another ledger, no local id
+
+
+def test_external_taste_satisfies_complete(world, tmp_path):
+    """#4: the contract allows owner-taste.md in the world or passed as --taste."""
+    outside = tmp_path / "private-taste.md"
+    shutil.move(world / "owner-taste.md", outside)
+    assert "W18" in codes(world, complete=True)
+    assert codes(world, complete=True, taste=outside) == []
+
+
+def test_blank_statement_fails(world):
+    """#5: a blank YAML statement is None, not the string 'None'."""
+    edit(world / "canon.yaml", 'statement: "A desert night market kept by moths, where every stall sells a kind of light."', "statement:")
+    assert "W02" in codes(world)
+
+
+def test_complete_requires_round_zero(world):
+    """#6: an empty decisions file and empty canon cannot pass --complete."""
+    (world / "decisions.md").write_text("# decisions\n\n## Round 0: seeds\n")
+    (world / "canon.yaml").write_text("version: 1\nfacts: []\n")
+    found = codes(world, complete=True)
+    assert "W13" in found and "W18" in found
+
+
+def test_unnamed_state_fails(world):
+    """#7: a state block needs a name, since it becomes states[<name>]."""
+    path = world / "locations/the-square.md"
+    path.write_text(path.read_text().replace("```state open", "```state").replace("```state sandstorm", "```state"))
+    assert "W15" in codes(world)
+
+
+def test_duplicate_state_names_fail(world):
+    edit(world / "locations/the-square.md", "```state sandstorm", "```state open")
+    assert "W15" in codes(world)
+
+
+def test_wardrobe_needs_a_default(world):
+    edit(world / "characters/wick.md", "```wardrobe default", "```wardrobe festival")
+    assert "W06" in codes(world)
+
+
+def test_manifest_sheet_column_is_validated(world):
+    """#8: the declared sheet path must be the one the kind requires."""
+    edit(world / "asset-manifest.md", "| characters/wick.md |", "| characters/missing.md |")
+    assert "W09" in codes(world)
+
+
+def test_format_mechanic_must_be_graded(world):
+    """#9: removing the Mechanics table cannot hide an ungraded mechanic a format uses."""
+    text = (world / "accounts.md").read_text()
+    start, end = text.index("## Mechanics"), text.index("## Lantern Market (working handle)")
+    (world / "accounts.md").write_text(text[:start] + text[end:])
+    assert "W19" in codes(world)

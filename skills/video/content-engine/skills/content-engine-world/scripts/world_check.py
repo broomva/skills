@@ -357,7 +357,7 @@ def field(item: Item, names: tuple[str, ...]) -> str:
     return ""
 
 
-def check_decisions(world: Path, out: list[Finding]) -> dict[str, str]:
+def check_decisions(world: Path, out: list[Finding], complete: bool = False) -> dict[str, str]:
     """Answer state by item id and by ask id."""
     path = world / "decisions.md"
     if not path.is_file():
@@ -381,7 +381,7 @@ def check_decisions(world: Path, out: list[Finding]) -> dict[str, str]:
 
     seeds = [it for it in items if it.round == 0 and it.type == "S"]
     later = [it for it in items if it.round >= 1]
-    if later or seeds:
+    if later or seeds or complete:
         if 0 not in rounds:
             out.append(Finding("W13", rel, "no '## Round 0' of divergent seeds; it comes before any convergent question"))
         elif not 4 <= len(seeds) <= 6:
@@ -424,14 +424,19 @@ def canon_tiers(data: dict) -> tuple[set[str], dict[str, str]]:
 
 
 def classify_source(source: str, states: dict[str, str]) -> tuple[str, list[str], list[str]]:
-    """('decision' | 'evidence' | 'external' | 'none', known ids cited, unknown R-ids cited)."""
+    """('decision' | 'evidence' | 'external' | 'unresolved' | 'none', known ids, unknown local ids)."""
     s = source.strip()
     if not s:
         return "none", [], []
     if s.lower().startswith("evidence:"):
         return "evidence", [], []
     known = [k for k in states if re.search(r"(?<![\w-])" + re.escape(k) + r"(?![\w-])", s)]
-    unknown = [r for r in re.findall(r"\bR\d+-[QSP]\d+\b", s) if r not in states]
+    # Local ids: item ids (R1-Q2) and round-prefixed ask ids (r1-world-rule). One that
+    # resolves to nothing is a typo or a missing record, never an outside authority.
+    local = re.findall(r"(?<![\w-])(R\d+-[QSP]\d+|r\d+-[a-z0-9]+(?:-[a-z0-9]+)*)(?![\w-])", s)
+    unknown = [r for r in dict.fromkeys(local) if r not in states]
+    if unknown:
+        return "unresolved", known, unknown
     return ("decision" if known else "external"), known, unknown
 
 
@@ -462,7 +467,8 @@ def check_canon(world: Path, states: dict[str, str], out: list[Finding]) -> set[
         elif fid in seen:
             out.append(Finding("W01", rel, f"{fid} is used twice"))
         seen.add(fid)
-        if not str(fact.get("statement", "")).strip():
+        statement = fact.get("statement")
+        if not isinstance(statement, str) or not statement.strip():
             out.append(Finding("W02", rel, f"{where}: empty statement"))
         tier = aliases.get(str(fact.get("tier")), str(fact.get("tier")))
         status = fact.get("status")
@@ -478,7 +484,7 @@ def check_canon(world: Path, states: dict[str, str], out: list[Finding]) -> set[
             kinds.add(kind)
             cited += known
             for r in unknown:
-                out.append(Finding("W03", rel, f"{where}: source {r} is not in decisions.md"))
+                out.append(Finding("W03", rel, f"{where}: source cites {r}, which is not in decisions.md"))
         if kinds <= {"none"}:
             out.append(Finding("W03", rel, f"{where}: no source; cite the decision or ask it came from"))
         if status == "locked":
@@ -495,8 +501,14 @@ def check_canon(world: Path, states: dict[str, str], out: list[Finding]) -> set[
 # --- sheets --------------------------------------------------------------------
 
 
+def sheets(world: Path, folder: str) -> list[Path]:
+    """The sheets in a folder: every .md except prompt files (*.prompt.md), which
+    may sit beside a sheet and are scanned for W11 only."""
+    return sorted(p for p in (world / folder).glob("*.md") if not p.name.endswith(".prompt.md"))
+
+
 def check_characters(world: Path, canon_ids: set[str], cap: int, out: list[Finding]) -> None:
-    for path in sorted((world / "characters").glob("*.md")):
+    for path in sheets(world, "characters"):
         rel = str(path.relative_to(world))
         meta, body = split_frontmatter(path.read_text(encoding="utf-8"))
         name = str(meta.get("name", "")).strip()
@@ -510,8 +522,9 @@ def check_characters(world: Path, canon_ids: set[str], cap: int, out: list[Findi
                 out.append(Finding("W05", rel, f"Fixed DNA is {len(text)} characters; this world's cap is {cap} (cut in the sheet's cut-priority order)"))
             if name and not text.lower().startswith(name.lower()):
                 out.append(Finding("W05", rel, f"Fixed DNA should open with the name '{name}:' so a pasted block names its subject"))
-        if not any(b.kind == "wardrobe" for b in blocks):
-            out.append(Finding("W06", rel, "no ```wardrobe block (write 'none' inside it for a character who wears nothing)"))
+        wardrobes = [b for b in blocks if b.kind == "wardrobe"]
+        if not any(b.label.split(" ")[0] == "default" for b in wardrobes):
+            out.append(Finding("W06", rel, "no ```wardrobe default block (write 'none' inside it for a character who wears nothing)"))
         if str(meta.get("likeness", "")).strip().lower() != "original":
             out.append(Finding("W07", rel, "frontmatter must declare 'likeness: original' (no real person's likeness)"))
         for cid in as_list(meta.get("canon")):
@@ -520,10 +533,16 @@ def check_characters(world: Path, canon_ids: set[str], cap: int, out: list[Findi
 
 
 def check_locations(world: Path, out: list[Finding]) -> None:
-    for path in sorted((world / "locations").glob("*.md")):
+    for path in sheets(world, "locations"):
         rel = str(path.relative_to(world))
         _, body = split_frontmatter(path.read_text(encoding="utf-8"))
-        kinds = [b.kind for b in fenced_blocks(body)]
+        blocks = fenced_blocks(body)
+        kinds = [b.kind for b in blocks]
+        labels = [b.label for b in blocks if b.kind == "state"]
+        if any(not label for label in labels):
+            out.append(Finding("W15", rel, "a ```state block has no name; write ```state <name> (it becomes states[<name>])"))
+        if len(set(labels)) != len(labels):
+            out.append(Finding("W15", rel, "two ```state blocks share a name"))
         if "lighting" not in kinds:
             out.append(Finding("W15", rel, "no ```lighting block"))
         if "state" not in kinds:
@@ -581,17 +600,20 @@ def check_manifest(world: Path, out: list[Finding]) -> None:
             out.append(Finding("W09", rel, f"{where} is listed twice"))
         listed.add((kind, slug))
         sheet_dir = SHEET_DIR.get(kind)
-        if sheet_dir:
-            sheet = world / sheet_dir / f"{slug}.md"
-            if not sheet.is_file():
-                out.append(Finding("W09", rel, f"{where}: no sheet at {sheet.relative_to(world)}"))
+        expected = f"{sheet_dir}/{slug}.md" if sheet_dir else None
+        declared = row.get("sheet", "").strip("` ")
+        if expected and declared and declared != expected:
+            out.append(Finding("W09", rel, f"{where}: sheet column says {declared!r}; a {kind} sheet lives at {expected}"))
+        target = expected or (declared if declared not in {"", "—", "-"} else None)
+        if target and not (world / target).is_file():
+            out.append(Finding("W09", rel, f"{where}: no sheet at {target}"))
         if kind == "character":
             raw = row.get("stills", "")
             m = re.match(r"^\s*(\d+)", raw)
             if not m or not STILLS_MIN <= int(m.group(1)) <= STILLS_MAX:
                 out.append(Finding("W10", rel, f"{where}: stills {raw!r}; skene locks a character on {STILLS_MIN} to {STILLS_MAX}"))
     for kind, folder in (("character", "characters"), ("location", "locations"), ("prop", "props")):
-        for sheet in sorted((world / folder).glob("*.md")):
+        for sheet in sheets(world, folder):
             slug = sheet.stem
             if not any((k, slug) in listed for k in ((kind, "ensemble") if kind == "character" else (kind,))):
                 out.append(Finding("W09", rel, f"{folder}/{slug}.md has no manifest row; an asset with no entry is never made"))
@@ -628,11 +650,19 @@ def check_mechanics(world: Path, out: list[Finding]) -> None:
     path = world / "accounts.md"
     if not path.is_file():
         return
-    rows = table_rows(path.read_text(encoding="utf-8"), ("mechanic", "evidence"))
-    for row in rows:
-        grade = row.get("evidence", "").strip("` ").lower().split(" ")[0]
+    text = path.read_text(encoding="utf-8")
+    graded: list[str] = []
+    for row in table_rows(text, ("mechanic", "evidence")):
+        grade = (row.get("evidence", "").strip("` ").lower().split(" ") or [""])[0]
         if grade not in EVIDENCE_GRADES:
             out.append(Finding("W19", "accounts.md", f"mechanic {row.get('mechanic', '?')!r}: evidence {grade!r} is not one of {sorted(EVIDENCE_GRADES)}"))
+        else:
+            graded.append(row.get("mechanic", "").lower())
+    # A format that leans on a mechanic must name one the Mechanics table grades.
+    for row in table_rows(text, ("format", "mechanic")):
+        used = row.get("mechanic", "").strip("` ").lower()
+        if used and used not in {"—", "-", "none"} and not any(used in g for g in graded):
+            out.append(Finding("W19", "accounts.md", f"format {row.get('format', '?')!r} uses mechanic {used!r}, which no graded Mechanics row names"))
 
 
 def pasted_texts(root: Path) -> list[tuple[str, str]]:
@@ -677,15 +707,21 @@ def check_world(world: Path, complete: bool = False, taste: Path | None = None,
                 dna_cap: int | None = None) -> list[Finding]:
     out: list[Finding] = []
     cap = dna_cap or world_dna_cap(world)
+    if taste is not None and not taste.is_file():
+        raise FileNotFoundError(f"--taste {taste}: no such file (an explicit taste file must exist)")
     if complete:
         for name in REQUIRED_FILES:
+            if name == "owner-taste.md" and taste is not None:
+                continue  # the profile lives outside the world and was passed in
             if not (world / name).is_file():
                 out.append(Finding("W18", name, "missing; the output contract needs it"))
         for folder in ("characters", "locations"):
-            if not any((world / folder).glob("*.md")):
+            if not sheets(world, folder):
                 out.append(Finding("W18", folder + "/", "empty; the output contract needs at least one sheet"))
-    states = check_decisions(world, out)
+    states = check_decisions(world, out, complete)
     canon_ids = check_canon(world, states, out)
+    if complete and (world / "canon.yaml").is_file() and not canon_ids:
+        out.append(Finding("W18", "canon.yaml", "no facts; a complete world has canon"))
     check_characters(world, canon_ids, cap, out)
     check_locations(world, out)
     check_manifest(world, out)
@@ -738,6 +774,9 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "check":
         if not args.world.is_dir():
             print(f"not a folder: {args.world}", file=sys.stderr)
+            return 2
+        if args.taste is not None and not args.taste.is_file():
+            print(f"--taste {args.taste}: no such file", file=sys.stderr)
             return 2
         return report(check_world(args.world, args.complete, args.taste, args.dna_cap), args.json, str(args.world))
     if not args.taste.is_file() or not args.public.is_dir():

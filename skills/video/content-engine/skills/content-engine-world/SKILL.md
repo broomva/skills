@@ -151,25 +151,26 @@ order for a block over the cap.
 |---|---|
 | W01 | a canon id is used twice |
 | W02 | a canon fact has no statement, or an unknown tier or status |
-| W03 | a source cites a decision that is not in decisions.md, or none at all |
+| W03 | a source cites a local id (R1-Q2, r1-ask-id) that is not in decisions.md, or no source at all |
 | W04 | a locked fact rests on a pending answer or on evidence alone; a hard tier rests on evidence |
 | W05 | a character has no single `fixed-dna` block, it exceeds the cap, or it does not open with the name |
-| W06 | a character has no `wardrobe` block |
+| W06 | a character has no `wardrobe default` block |
 | W07 | a character does not declare `likeness: original` |
 | W08 | a manifest entry's kind is not a skene library kind |
-| W09 | a manifest entry has no sheet, or a sheet has no manifest entry |
+| W09 | a manifest entry's sheet is missing or not at its kind's path, or a sheet has no manifest entry (`*.prompt.md` files are not sheets) |
 | W10 | a character plans fewer than 5 or more than 20 stills |
 | W11 | a taste reference appears in a pasted block or a prompt file |
 | W12 | a seed or question has no answer, or a paraphrased one |
-| W13 | round 0 is missing, has fewer than 4 or more than 6 seeds, no stretch seed, or comes after a later round |
+| W13 | round 0 is missing (always, under `--complete`), has fewer than 4 or more than 6 seeds, no stretch seed, or comes after a later round |
 | W14 | an answered round has no method notes |
-| W15 | a location lacks `description`, `lighting` or a named `state` |
+| W15 | a location lacks `description`, `lighting` or a named `state`, or two states share a name |
 | W16 | an account declares no disclosure |
 | W17 | a decision id is used twice |
-| W18 | (`--complete`) a contract file is missing |
-| W19 | a short-form mechanic has no evidence grade (measured, reported, heuristic, proposal) |
+| W18 | (`--complete`) a contract file is missing (`--taste` stands in for owner-taste.md), or canon has no facts |
+| W19 | a short-form mechanic has no evidence grade (measured, reported, heuristic, proposal), or a format uses a mechanic no graded row names |
 
-Tests: `python -m pytest tests/test_world_check.py` from content-engine's root.
+Tests: `python -m pytest tests/test_world_check.py` from content-engine's root. An explicit `--taste`
+that does not exist is a usage error (exit 2), never an empty reference list.
 
 ## Where content-engine's defaults bend (details: `references/content-engine-conflicts.md`)
 
