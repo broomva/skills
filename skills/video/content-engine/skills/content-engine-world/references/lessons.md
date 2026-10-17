@@ -23,5 +23,12 @@ names where it came from and what it changed in the skill. New instances append 
 | L15 | This skill's P20 review (rounds 1–3, 2026-10-17) | Three rounds found the same defect class at a new place each time: a reader that knew one exact shape skipped anything else, then passed because it had nothing to check (a missing taste file, a table headed "Ask ID", accounts in a table, a source reading "pending") | The structural fix: every reader reports what it could not read; columns match by prefix; outside sources must name a file. A world checker fails closed or it is decoration |
 | L14 | This skill's form asks (answered 2026-10-17) | The owner chose a content-engine modality, and answered the public-boundary ask "This can be all open source" | The skill ships in the public repo, lessons may name the instance; `leak` stays available for owners who want a private line |
 
-Rounds still to come in the live instance: the outcome of round 1, then cast, visual DNA, sound,
-formats, canon governance and the manifest. Their lessons will be added as they land.
+| L16 | Round 1 (answered 2026-10-17) | An Other answer on an *audience* question reframed the whole world: the owner's real answer was about structure (worlds of any type, one universe of ideas). Options that each assume the frame cannot catch that | Keep Other open (`allow_other`) on every early-round ask; read an Other answer as the decision, never mapped onto an option |
+| L17 | Round 1 | A later answer pulled against an earlier one (one look family vs worlds of any type). Both were recorded verbatim, the affected canon marked under review, and one reconciliation question asked with a recommended synthesis; it landed within a minute | The `review:` field in canon.yaml; the reconciliation step in `method.md` |
+| L18 | Round 1 | A dictated answer carried a slip ("where Jamie's are possible") | Ask back with the best reading recommended; never guess silently |
+| L19 | Round 1 | 7 of 9 answers took the recommendation, and every departure went one way: toward freedom per world over coherence across them | When departures share a direction, move the next round's recommendations that way; the shape node offers "a few shared laws, each account a world" beside "one world" |
+| L20 | Round 1 → round 2 fact-check | Checking the next round's premises found an error in a round-0 pitch the owner had already built on (no anglerfish at hadal depth) | Check the facts a hook depends on before pitching it, in round 0 too |
+| L21 | This skill's dogfood on round 1 | The checker flagged Maestro's Other answers (`**Other:** "…"`) as paraphrases | A short label before the quote is still verbatim |
+
+Rounds still to come in the live instance: round 2 (each world's logic, launch cast, render style),
+then sound, formats, canon governance and the manifest. Their lessons will be added as they land.

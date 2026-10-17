@@ -273,7 +273,10 @@ def answer_value(value: str, quoted_lines: bool = False) -> str:
     bare = v.strip("*_() ").lower()
     if re.match(r"^(pending|waiting)\b", bare):
         return "pending"
-    if quoted_lines or v.startswith(">") or v[:1] in {'"', "“", "«"}:
+    # A short label may precede the quote: Maestro writes an Other answer as
+    # **Other:** "the owner's words", and a note as **Note:** "…".
+    unlabelled = re.sub(r"^\*{0,2}[A-Za-z][\w ]{0,20}:\*{0,2}\s*", "", v)
+    if quoted_lines or v.startswith(">") or v[:1] in {'"', "“", "«"} or unlabelled[:1] in {'"', "“", "«"}:
         return "verbatim"
     return "paraphrase" if v else ""
 

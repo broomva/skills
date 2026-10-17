@@ -44,7 +44,9 @@ They change the pitches (motion transfer can cost many times what original motio
 
 ## 2. Round 0: diverge
 
-Pitch 4 to 6 genuinely different worlds. Each seed card:
+Pitch 4 to 6 genuinely different worlds. Check the facts each hook depends on before pitching
+it (a creature that lives at that depth, an event that really happens daily): an owner builds on a
+pitch, and a false premise found later costs a rebuild. Each seed card:
 
 | Field | What it says |
 |---|---|
@@ -63,7 +65,9 @@ Pitch 4 to 6 genuinely different worlds. Each seed card:
   it). A ledger ask allows 2–4 options, and per-seed answers let the owner mix seeds without a
   separate "which combination" question.
 - Ask the **shape question** in the same round, framed conditionally ("if you build on several,
-  should they share one world?"). Owners tend to answer the shape before the parts.
+  should they share one world?"). Owners tend to answer the shape before the parts. Offer more
+  than one world and many worlds: a universe of a few shared laws, where each account is a world
+  of its own genre and audience, is a shape owners pick.
 - Propose how the seeds could combine, as a proposal, not a premise.
 
 A seed ask, in ledger form:
@@ -99,6 +103,20 @@ record them in a "Facts gathered" table with a verdict (true, partly, false) and
 
 Each question: a number, the ask id, the question with its options, the recommendation, and a
 one-line reason tied to a taste id or a gathered fact.
+
+Keep **Other** open on every early-round ask. An Other answer to a narrow question can reframe the
+world; the owner's words are then the decision, read as written and never mapped onto an option.
+
+After the answers land:
+
+- **Look for a direction.** When the owner's departures from your recommendations all lean one
+  way (more freedom per part, more of the against-taste register), move the next round's
+  recommendations that way.
+- **Reconcile, don't overwrite.** When a later answer pulls against an earlier one, record both
+  verbatim, mark the affected canon facts `review: open — <ask id>`, and ask one reconciliation
+  question with a recommended synthesis. Resolve the field when it is answered.
+- **Ask back on a slip.** A dictated answer can carry a slip. Ask with the best reading
+  recommended; never guess silently.
 
 ### The design tree
 

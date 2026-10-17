@@ -689,3 +689,12 @@ def test_sheet_in_a_subfolder_is_reported(world):
 def test_character_without_a_name_is_reported(world):
     edit(world / "characters/wick.md", "name: Wick\n", "")
     assert "W05" in codes(world)
+
+
+def test_labelled_other_answer_is_verbatim(table_world):
+    """L21: Maestro records an Other answer as **Other:** "…"; a label before the quote is verbatim."""
+    edit(table_world / "decisions.md", '| Q2 `r0-seed-beta` | drop | "Drop it." | yes |',
+         '| Q2 `r0-seed-beta` | drop | **Other:** "all of these, as the series grows" | no |')
+    assert codes(table_world) == []
+    edit(table_world / "decisions.md", '**Other:** "all of these, as the series grows"', "**Other:** the owner wants more")
+    assert "W12" in codes(table_world)

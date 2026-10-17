@@ -18,6 +18,9 @@
 #     is never locked and never above apocrypha: assets on disk are evidence,
 #     not defaults.
 #
+# review (optional): when a later answer pulls against this fact, mark it
+# "open — <the reconciliation ask id>", then "resolved by <ask id> — <how>".
+#
 # world_check.py enforces W01-W04 on this file.
 version: 1
 world: "{world_slug}"

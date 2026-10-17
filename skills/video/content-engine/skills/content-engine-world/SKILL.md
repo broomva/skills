@@ -92,6 +92,11 @@ question that depends on another open question waits for the next round. Each ro
 **Proposals**: ideas the owner did not ask for (a character, a place, a recurring bit, a hidden
 detail, a cross-account mechanic), including one against the grain.
 
+Keep **Other** open on early asks: an Other answer to a narrow question can reframe the world. When
+answers land, look for the direction the owner's departures share and recommend that way next
+round. When a later answer pulls against an earlier one, record both, mark the canon fact
+`review: open`, and ask one reconciliation question with a recommended synthesis.
+
 Tree order, roughly: seed and premise → tone, genre, rating, audience → world rules (physics, magic
 or technology, who lives there, time) → setting and geography → factions → cast (want, flaw, voice,
 look, relationships) → visual DNA (render style, palette roles, light rule, camera, grade, texture)
