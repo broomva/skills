@@ -49,6 +49,44 @@ thumbnails."}
 confidence. Slightly reserved but warm. Never performative -- the camera
 catches them in a natural moment, not posing for it."}
 
+### Species and body (non-human characters)
+
+For an animal, creature, object or machine, fill this section and leave the
+human-only fields above (age range, ethnicity/heritage, skin tone below, the face
+embedding) blank. The slots follow the product Fixed-DNA slots in
+`skills/content-engine-dna/references/character-sheets.md`.
+
+**Subject:** {subject -- human | animal | creature | object | machine}
+
+**Species or type:** {species -- e.g., "spectacled bear, adult"}
+
+**Body plan:** {body_plan -- e.g., "quadruped that stands as a biped"}
+
+**Anthropomorphism:** {anthropomorphism -- 0 naturalistic, 1 expressive face, 2 biped posture with paws as hands, 3 full biped with human hands}
+
+**Scale:** {scale -- size against a named object, e.g., "the size of a teacup"}
+
+**Silhouette and proportions:** {silhouette -- head-to-body ratio, what reads in a black fill}
+
+**Surface and colour:** {surface -- fur, feathers, scales, shell or material, with finish and hex}
+
+**Face:** {face -- eyes, muzzle/beak/snout, ears}
+
+**Signature mark:** {signature_mark -- the one mark checked first in every close-up}
+
+### Fixed DNA (copy verbatim into every generation)
+
+At most {dna_cap} characters (default 600; a world sets its own). It opens with
+the name, holds identity only (no wardrobe, pose, light or render style), and is
+never edited per shot. Over the cap, cut in this order: words that belong
+elsewhere, adjectives that remove no ambiguity, restatements, secondary marks
+beyond the two most visible, fine texture. Never cut the name and kind, the
+silhouette, the primary colours, the signature mark or the face.
+
+```fixed-dna
+{Name}: {kind and scale}; {silhouette}; {surface and colour}; {face}; {signature mark}.
+```
+
 ---
 
 ## Consistency Anchors

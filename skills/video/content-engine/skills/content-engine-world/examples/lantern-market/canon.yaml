@@ -1,0 +1,35 @@
+version: 1
+world: lantern-market
+updated: "2026-01-06"
+dna_cap: 600
+facts:
+  - id: policy-ai-disclosed
+    statement: "Every post carries the platform's AI label and a caption disclosure."
+    tier: foundation
+    status: locked
+    source: "the example owner's rules file (Disclosure)"
+  - id: world-premise
+    statement: "A desert night market kept by moths, where every stall sells a kind of light."
+    tier: foundation
+    status: locked
+    source: R0-S1
+  - id: rule-light-currency
+    statement: "Light is the only currency in the market."
+    tier: foundation
+    status: locked
+    source: R1-Q2
+  - id: cast-keepers
+    statement: "Wick, a moth, and Old Shell, a tortoise who has kept the square for a century, keep the market; Old Shell never hurries."
+    tier: world
+    status: locked
+    source: R1-Q1
+  - id: prop-last-lamp
+    statement: "One lamp in the market is never sold."
+    tier: world
+    status: draft
+    source: R1-P1
+  - id: evidence-moth-renders
+    statement: "Two moth renders from an earlier test exist on disk."
+    tier: apocrypha
+    status: draft
+    source: "evidence: raw/tests/moth-01.png"

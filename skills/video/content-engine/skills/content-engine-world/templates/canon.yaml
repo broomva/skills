@@ -1,0 +1,72 @@
+# canon.yaml — every fact the world's posts must not contradict, one row each.
+#
+# Fields: id, statement, tier, status, source (+ superseded_by when retired).
+#
+# status: draft (proposed or recorded, not answered), locked (the owner
+# answered: every decision the source cites has a verbatim answer), retired
+# (superseded; keep the row and name its replacement).
+#
+# source, one of (a list may mix them):
+#   - a decision or ask id from decisions.md (R1-Q3, r1-world-rule); free text
+#     around it is fine ("round 0, r0-seed-hadal (build)")
+#   - an owner rule outside the world: another asks ledger and its ask id, or
+#     the owner's rules file ("studio-rules.md (Disclosure)")
+#   - "evidence: <path>" for an asset that predates the grill. Evidence alone
+#     is never locked and never above apocrypha: assets on disk are evidence,
+#     not defaults.
+#
+# world_check.py enforces W01-W04 on this file.
+version: 1
+world: "{world_slug}"
+updated: "{date}"
+# The Fixed-DNA cap for this world's characters, in characters. The owner's
+# choice (skene sets no limit); world_check.py reads it. Default 600.
+dna_cap: 600
+# Tiers, hardest first, with who may change a fact in each. Declare your own
+# here, or omit `tiers:` for these four (1, 2, 3 are accepted for the first three).
+tiers:
+  foundation: "premise, world rules, the map; only an owner answer changes it"
+  world: "places, cast, looks, recurring formats; owner-approved"
+  episode: "what happened in a post; agents may append, checked against the tiers above"
+  apocrypha: "not canon: lab parodies, experiments, test generations, assets that predate the grill"
+facts:
+  # ---------------------------------------------------------- inherited owner rules
+  - id: policy-owned-only
+    statement: "The world uses owned characters only; no other studio's characters and no real person's likeness."
+    tier: foundation
+    status: locked
+    source: "{ledger file} {ask id}; {owner rules file}"
+  - id: policy-ai-disclosed
+    statement: "Every post carries the platform's AI label and a disclosure in the caption; every crossover is disclosed fiction."
+    tier: foundation
+    status: locked
+    source: "{owner rules file} (Disclosure)"
+  # ---------------------------------------------------------- round 0
+  - id: world-premise
+    statement: "{the shape of the world in one sentence}"
+    tier: foundation
+    status: draft
+    source: "round 0, {r0 shape ask id}"
+  - id: seed-{slug}
+    statement: "{a seed the owner built on}"
+    tier: foundation
+    status: draft
+    source: "round 0, {r0 seed ask id} (build)"
+  - id: ingredient-{slug}
+    statement: "{a seed kept as an ingredient; none of it is canon until placed}"
+    tier: world
+    status: draft
+    source: "round 0, {r0 seed ask id} (ingredient)"
+  # ---------------------------------------------------------- evidence
+  - id: evidence-{slug}
+    statement: "{an asset that predates the grill, e.g. a random test generation}"
+    tier: apocrypha
+    status: draft
+    source: "evidence: {path}"
+  # ---------------------------------------------------------- retired example
+  # - id: rule-old
+  #   statement: "…"
+  #   tier: foundation
+  #   status: retired
+  #   source: R2-Q1
+  #   superseded_by: rule-new

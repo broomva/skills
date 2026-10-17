@@ -49,7 +49,7 @@ jobs:
           ffmpeg -version | head -1
           tesseract --version | head -1
       - name: Install deps
-        run: pip install pytest
+        run: pip install pytest pyyaml   # pyyaml: content-engine-world's world_check.py
       - name: Tests
         # -rs lists every skip with its reason, so a missing tool shows in the log.
         run: python -m pytest tests/ -q -rs
