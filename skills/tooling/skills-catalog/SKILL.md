@@ -2,7 +2,7 @@
 name: skills-catalog
 category: tooling
 description: >
-  Canonical reference inventory of the 107 agent skills in the broomva/skills monorepo,
+  Canonical reference inventory of the 108 agent skills in the broomva/skills monorepo,
   organized into 23 single-noun category buckets that mirror the skills/<category>/ directory
   layout, with a Remotion video showcase generator and X thread copy. Use when discovering
   available skills, browsing the full skills catalog, generating skills showcase content, or
@@ -23,7 +23,7 @@ Canonical inventory and showcase for the agent skills ecosystem.
 
 The full categorized reference lives in [references/skills-inventory.md](references/skills-inventory.md).
 
-107 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
+108 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
 
 | Category | Count | Key skills |
 |---|---|---|
@@ -35,7 +35,7 @@ The full categorized reference lives in [references/skills-inventory.md](referen
 | Strategy & decisions (`strategy`) | 5 | decision-log, phronesis, pre-mortem |
 | Operating cadence (`cadence`) | 4 | drift-check, morning-briefing, stakeholder-update |
 | Publishing & growth (`publishing`) | 7 | blog-post, content-creation, revenuecast |
-| Video & multimedia (`video`) | 6 | brainrot-for-good, content-engine, creative-review |
+| Video & multimedia (`video`) | 7 | brainrot-for-good, content-engine, creative-review |
 | Audio & music (`audio`) | 3 | livecoding, omnivoice |
 | Design & brand (`design`) | 7 | arcan-glass, broomva-design, design-engineering |
 | Finance & payments (`finance`) | 4 | finance-substrate, haima, investment-management |

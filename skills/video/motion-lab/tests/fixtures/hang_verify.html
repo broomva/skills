@@ -1,0 +1,16 @@
+<!doctype html>
+<html><head><meta charset="utf-8"></head><body><canvas id="c" width="160" height="90"></canvas>
+<script>
+  // Spins forever only on the step from the last frame (t = 7/8) straight to the
+  // one before it (t = 6/8): a sequence only --verify-all's reverse pass makes at
+  // 1 s x 8 fps. The first pass is clean, so this exercises a hang INSIDE verify,
+  // which must still abort with exit 5 and a manifest.
+  const ctx = document.getElementById('c').getContext('2d');
+  let prev = -1;
+  window.renderAt = function (t) {
+    if (Math.abs(prev - 7 / 8) < 1e-9 && Math.abs(t - 6 / 8) < 1e-9) { for (;;) {} }
+    prev = t;
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 160, 90);
+    ctx.fillStyle = '#000'; ctx.fillRect((t * 40) % 150, 40, 10, 10);
+  };
+</script></body></html>

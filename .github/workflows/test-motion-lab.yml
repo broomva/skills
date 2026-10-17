@@ -1,0 +1,64 @@
+name: test-motion-lab
+
+# Gate for the `motion-lab` skill (skills/video/motion-lab/).
+# Path-filtered: runs ONLY when skills/video/motion-lab/** changes.
+#
+# The render tests drive scripts/render.mjs through Playwright. They skip when
+# Playwright is missing, which in CI would be a false green, so this job sets
+# MOTION_LAB_REQUIRE_RENDER=1: a missing Playwright fails collection instead.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/video/motion-lab/**'
+      - '.github/workflows/test-motion-lab.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/video/motion-lab/**'
+      - '.github/workflows/test-motion-lab.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-motion-lab-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/video/motion-lab
+
+jobs:
+  test:
+    name: pytest + render E2E + mutation proof
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install test deps
+        run: |
+          pip install pytest
+          sudo apt-get update -qq && sudo apt-get install -y -qq ffmpeg  # the GIF timing receipt test
+      - name: Install Playwright (outside the skill tree)
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y > /dev/null
+          npm i playwright@1.64.0
+          npx playwright install --with-deps chromium
+      - name: Tests (render tests required)
+        env:
+          MOTION_LAB_NODE_DIR: ${{ runner.temp }}/pw
+          MOTION_LAB_REQUIRE_RENDER: '1'
+        run: python -m pytest tests/ -q
+      - name: Mutation proof (every load-bearing line is covered)
+        env:
+          MOTION_LAB_NODE_DIR: ${{ runner.temp }}/pw
+        run: python tests/mutation_proof.py
+      - name: Self-check (shipped assets and fixtures obey the linter)
+        run: |
+          python scripts/motion_lint.py assets/motion.js tests/fixtures/good.html
+          python scripts/motion_lint.py tests/fixtures/bad.html && exit 1 || test $? -eq 1

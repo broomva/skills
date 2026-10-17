@@ -1,0 +1,14 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;background:#fff}
+  .box{position:absolute;top:30px;left:0;width:20px;height:20px;background:#000;
+       animation:slide 1s linear infinite}
+  @keyframes slide{from{transform:translateX(0)}to{transform:translateX(120px)}}
+  /* A CSS-only page following "with ?t=, never start the preview": it pauses its
+     own animation under ?t=. Nothing on the page drives it, so the renderer must
+     seek it anyway; trusting "paused = page-owned" froze it (P20 round 6). */
+  html.frozen .box{animation-play-state:paused}
+</style></head>
+<body><div class="box"></div>
+<script>if (new URLSearchParams(location.search).has('t')) document.documentElement.classList.add('frozen');</script>
+</body></html>

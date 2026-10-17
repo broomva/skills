@@ -1,0 +1,42 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  html, body { margin: 0; background: #F4F1EC; }
+  canvas { display: block; }
+  /* the badge is CSS-driven: the renderer seeks it through getAnimations() */
+  .badge { position: absolute; left: 8px; top: 8px; width: 24px; height: 24px;
+           background: #D97757; animation: pulse 1s linear infinite; }
+  @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.5); } 100% { transform: scale(1); } }
+</style>
+</head>
+<body>
+<div class="badge"></div>
+<canvas id="c" width="160" height="90"></canvas>
+<script>
+  // Seeded PRNG, reseeded inside renderAt so every frame is a function of t alone.
+  function mulberry32(a) { return function () { a |= 0; a = a + 0x6D2B79F5 | 0; let t = Math.imul(a ^ a >>> 15, 1 | a);
+    t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+  const ctx = document.getElementById('c').getContext('2d');
+  const LOOP = 1.0;
+  window.renderAt = function (t) {
+    const phase = (t % LOOP) / LOOP;
+    const rand = mulberry32(7);
+    ctx.fillStyle = '#F4F1EC'; ctx.fillRect(0, 0, 160, 90);
+    for (let i = 0; i < 5; i++) {
+      const x = 20 + i * 30, y = 45 + 25 * Math.sin(2 * Math.PI * (phase + rand()));
+      ctx.fillStyle = '#1C1B1A'; ctx.fillRect(x, y - 4, 8, 8);
+    }
+  };
+  const q = new URLSearchParams(location.search);
+  if (q.has('t')) {
+    window.renderAt(parseFloat(q.get('t')) || 0);
+  } else {
+    // live preview only: the ?t= guard above keeps this clock out of a frozen render
+    const start = performance.now();
+    (function tick(now) { window.renderAt(((now - start) / 1000) % LOOP); requestAnimationFrame(tick); })(start);
+  }
+</script>
+</body>
+</html>
