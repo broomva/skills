@@ -1,6 +1,6 @@
 ---
-name: content-engine-world
-description: "World-building pre-production for a skene production: a /grill-me over a design tree that takes an owner from nothing to a documented world (bible, canon, cast, locations, props, look, sound, formats, timeline and an asset manifest skene can make). Distils the owner's taste first, opens with a divergent round of 4-6 world seeds before any convergent question, proposes ideas proactively, asks through the Maestro asks ledger, and writes the files as it goes; world_check.py gates the result. Generates nothing and spends nothing. Triggers on: 'build a world', 'world-building', 'universe bible', 'series bible', 'pre-production', 'create the universe', 'grill me on the world', 'cast and canon', 'content-engine world'. Not for compiling an existing brand from assets (content-engine-dna), generating shots (content-engine-cinema), or a single character sheet for a world that already exists (use the template directly)."
+name: content-engine-universe
+description: "World-building pre-production for a skene production: a /grill-me over a design tree that takes an owner from nothing to a documented world (bible, canon, cast, locations, props, look, sound, formats, timeline and an asset manifest skene can make). Distils the owner's taste first, opens with a divergent round of 4-6 world seeds before any convergent question, proposes ideas proactively, asks through the Maestro asks ledger, and writes the files as it goes; world_check.py gates the result. Generates nothing and spends nothing. Triggers on: 'build a world', 'world-building', 'universe bible', 'series bible', 'pre-production', 'create the universe', 'grill me on the world', 'cast and canon', 'content-engine universe'. Not for compiling an existing brand from assets (content-engine-dna), generating shots (content-engine-cinema), or a single character sheet for a world that already exists (use the template directly)."
 version: 0.1.0
 author: broomva
 tags:
@@ -17,7 +17,11 @@ compounding:
   - content-engine-loop
 ---
 
-# content-engine-world — world-building pre-production
+# content-engine-universe — world-building pre-production
+
+Invoked as `/content-engine universe`. A **universe** is what the owner builds: one or more
+**worlds** under a few shared laws (each account can be its own world). The files below describe
+one world folder, and `world_check.py` checks one world at a time.
 
 Build a fictional world with its owner, from scratch, and write it down so that a production can
 run on skene. The engine is `/grill-me`: rounds over a design tree, each round asking the whole
@@ -193,7 +197,7 @@ rule becomes a recorded exception per account.
 ## Files
 
 ```
-content-engine-world/
+content-engine-universe/
 ├── SKILL.md
 ├── CHANGELOG.md
 ├── references/

@@ -1,4 +1,4 @@
-"""Tests for content-engine-world's world_check.py.
+"""Tests for content-engine-universe's world_check.py.
 
 The fictional example world passes; each mutation of a copy proves one check can
 go red. A second fixture uses the table form a live grill used (questions and
@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 import yaml
 
-SKILL = Path(__file__).resolve().parent.parent / "skills" / "content-engine-world"
+SKILL = Path(__file__).resolve().parent.parent / "skills" / "content-engine-universe"
 sys.path.insert(0, str(SKILL / "scripts"))
 
 import world_check as wc  # noqa: E402

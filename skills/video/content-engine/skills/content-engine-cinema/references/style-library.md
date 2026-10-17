@@ -441,7 +441,7 @@ bright warm daylight, utopian but grounded, nature and technology in harmony
 
 **Visual characteristics:** Fully rendered 3D characters with appealing, exaggerated proportions (large heads and eyes, simplified hands), soft subsurface scattering on skin, fur and paper, rich but controlled colour, physically based light with a clear key, gentle depth of field, and hand-made-looking material textures. Reads as a feature film frame, not a toy or a product render.
 
-**When to use:** Fictional worlds with non-human or stylized casts, animal and creature characters, all-ages series and short-form universes, anywhere photoreal faces would drift or read uncanny. Pair it with a written style lock (content-engine-world's `templates/style-lock.md`): this entry gives the render language, the lock gives the world's palette and light rule.
+**When to use:** Fictional worlds with non-human or stylized casts, animal and creature characters, all-ages series and short-form universes, anywhere photoreal faces would drift or read uncanny. Pair it with a written style lock (content-engine-universe's `templates/style-lock.md`): this entry gives the render language, the lock gives the world's palette and light rule.
 
 **Prompt fragment:**
 ```

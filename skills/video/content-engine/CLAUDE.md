@@ -8,7 +8,7 @@ Full-stack AI content studio skill for the broomva workspace.
 content-engine/
 ├── SKILL.md                        # Orchestrator entry point
 ├── skills/
-│   ├── content-engine-world/       # World-building pre-production (grill → world folder; world_check.py)
+│   ├── content-engine-universe/       # World-building pre-production (grill → world folder; world_check.py)
 │   ├── content-engine-dna/         # Visual DNA Compiler
 │   ├── content-engine-cinema/      # Cinematic Generation Layer
 │   ├── content-engine-autopilot/   # Browser Orchestration

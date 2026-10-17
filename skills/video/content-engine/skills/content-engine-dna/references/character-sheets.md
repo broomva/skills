@@ -480,7 +480,7 @@ This is the same logic as the `sources` array with SHA-256 hashes in the [charac
 The identity-lock example above is photoreal by default ("Ultra-realistic … no stylization"), and the
 reference volume (5–12 images) and the 5-generation verification assume a paid, human workflow. For a
 stylized or non-human cast, built in a world-building grill that generates nothing, see
-`skills/content-engine-world/` (`references/content-engine-conflicts.md`): the render style moves to a
+`skills/content-engine-universe/` (`references/content-engine-conflicts.md`): the render style moves to a
 style lock, the Fixed DNA holds identity only and is capped (`dna_cap`, default 600), species fields
 replace the human ones, and verification moves to the production tool's metered asks.
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""world_check.py: the structural gate for a world built by content-engine-world.
+"""world_check.py: the structural gate for a world built by content-engine-universe.
 
 A world is a folder of Markdown and YAML written during a grill: decisions.md,
 canon.yaml, characters/, locations/, props/, styles/look.md, accounts.md and

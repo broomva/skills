@@ -18,7 +18,7 @@ WORLD runs first, and only for a fictional production that has no world yet.
 
 | Command | What it does |
 |---------|-------------|
-| `/content-engine world` | Grill an owner from nothing to a documented world (bible, canon, cast, locations, look, sound, formats, asset manifest) that skene can produce; generates nothing (content-engine-world) |
+| `/content-engine universe` | Grill an owner from nothing to a documented world (bible, canon, cast, locations, look, sound, formats, asset manifest) that skene can produce; generates nothing (content-engine-universe) |
 | `/content-engine compile` | Raw assets → compiled visual DNA (brand, character, style) |
 | `/content-engine lint` | Health-check compiled knowledge for consistency |
 | `/content-engine generate` | Create content using compiled identity + scene brief |
@@ -33,7 +33,7 @@ WORLD runs first, and only for a fictional production that has no world yet.
 Five sub-skills, each handling one layer:
 
 ```
-[content-engine-world]     World-Building Pre-Production
+[content-engine-universe]     World-Building Pre-Production
         ↓                  grill → bible, canon, species-aware sheets, style lock, asset manifest
 [content-engine-dna]       Visual DNA Compiler
         ↓                  raw/ → compiled/ (brand DNA, character sheets, style guides)
