@@ -126,8 +126,9 @@ light until…"). Names come late because a name chosen early anchors everything
 ### Proposals
 
 Each round may close with ideas the owner did not ask for, each with why it fits. Include one
-against the grain. A proposal is not a question: it needs no answer until it is asked, and it never
-enters canon as more than `draft`.
+against the grain. A proposal is not a question: it needs no answer until it is asked, and it enters
+canon as `draft`. Once it is asked and answered, it is a decision like any other and
+can lock a fact.
 
 ### Evidence grades for short-form mechanics
 

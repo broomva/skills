@@ -156,31 +156,50 @@ def flat(text: str) -> str:
 
 
 def reference_names(path: Path) -> list[str]:
-    """Names listed as `- **Name**` under any heading that mentions references,
-    plus every bullet under a `Private terms` heading."""
+    """Names under any heading that mentions references, and every bullet under a
+    `Private terms` heading.
+
+    A reference is a bullet `- **Maker** — *Work* (year): why`, or a table row whose
+    first cell is the maker and whose second, if italic, is the work. Italics after
+    the first colon are description, not names."""
     if not path.is_file():
         return []
     names: list[str] = []
     in_refs = in_private = False
+    table_row = 0
     for line in path.read_text(encoding="utf-8").splitlines():
         if line.startswith("#"):
             low = line.lower()
             in_private = "private terms" in low
             in_refs = "reference" in low and not in_private
+            table_row = 0
             continue
+        stripped = line.strip()
         if in_private:
             m = re.match(r"^\s*-\s+(.+?)\s*$", line)
             if m:
                 names.append(m.group(1).strip("*` "))
-        elif in_refs:
-            m = re.match(r"^\s*(?:-|\|(?:[^|]*\|)??)\s*\*\*(.+?)\*\*", line)
-            if m:
-                for part in re.split(r",|\band\b|&|/", m.group(1)):
-                    part = part.strip(" *_")
-                    if len(part) >= 3:
-                        names.append(part)
-            for title in re.findall(r"(?<!\*)\*([^*]{3,})\*(?!\*)", line):
-                names.append(title.strip())
+            continue
+        if not in_refs:
+            continue
+        if stripped.startswith("|"):
+            table_row += 1
+            cells = [c.strip() for c in stripped.strip("|").split("|")]
+            if table_row == 1 or all(re.match(r"^:?-{2,}:?$", c) for c in cells if c):
+                continue  # the header and the separator
+            makers, head = cells[0], " ".join(cells[1:2])
+        else:
+            table_row = 0
+            m = re.match(r"^\s*-\s+\*\*(.+?)\*\*(.*)$", line)
+            if not m:
+                continue
+            makers, head = m.group(1), m.group(2).split(":", 1)[0]
+        for part in re.split(r",|\band\b|&|/", makers):
+            part = part.strip(" *_`")
+            if len(part) >= 3:
+                names.append(part)
+        for title in re.findall(r"(?<!\*)\*([^*]{3,})\*(?!\*)", head):
+            names.append(title.strip())
     return list(dict.fromkeys(n for n in names if n))
 
 
@@ -201,7 +220,7 @@ def name_hits(text: str, names: list[str]) -> list[str]:
 #   tables         a questions table with `Ask` and `Question` columns, and an
 #                  answers table with `Ask` and `Answer …` columns, keyed by the
 #                  ask id (the Maestro ledger's id, in backticks).
-# An `### Answers` section that says "waiting" or "pending" marks the round's
+# An `### Answers` section with a line that opens "waiting" or "pending" marks the round's
 # unanswered items pending.
 
 
@@ -292,8 +311,8 @@ def parse_decisions(text: str) -> tuple[list[Item], dict[int, dict]]:
             continue
         if section == "notes" and current is not None and re.match(r"^\s*[-*]\s+\S", line):
             rounds[current]["notes"] = True
-        if section == "answers" and current is not None and re.search(r"\b(waiting|pending)\b", line, re.I) \
-                and not line.strip().startswith("|"):
+        if section == "answers" and current is not None \
+                and re.match(r"^(waiting|pending)\b", line.strip().strip("*_() "), re.I):
             rounds[current]["waiting"] = True
         if item is None:
             continue
@@ -491,9 +510,11 @@ def check_canon(world: Path, states: dict[str, str], out: list[Finding]) -> set[
             unanswered = [c for c in dict.fromkeys(cited) if states.get(c) != "verbatim"]
             if unanswered:
                 out.append(Finding("W04", rel, f"{where}: locked on {', '.join(unanswered)}, which has no verbatim answer"))
+            elif "unresolved" in kinds:
+                out.append(Finding("W04", rel, f"{where}: locked on a source that cites an unknown decision"))
             elif not ({"decision", "external"} & kinds):
                 out.append(Finding("W04", rel, f"{where}: locked with no decision behind it (evidence is never a default)"))
-        if tier not in SOFT_TIERS and not ({"decision", "external"} & kinds):
+        if tier not in SOFT_TIERS and not ({"decision", "external"} & kinds) and "unresolved" not in kinds:
             out.append(Finding("W04", rel, f"{where}: tier {tier} needs a decision or an owner rule as source; evidence alone is apocrypha"))
     return seen
 
@@ -623,15 +644,17 @@ ACCOUNT_FIELDS = {"role in the world", "platform", "platforms", "platform(s)", "
 
 
 def check_accounts(world: Path, out: list[Finding]) -> None:
-    """An H2 section that declares an account field (role, platform, characters)
-    is an account, and needs a non-empty Disclosure line."""
+    """A section (H2 to H4) that declares an account field (role, platform,
+    characters) is an account, and needs its own non-empty Disclosure line: one
+    account's disclosure never covers a sibling's."""
     path = world / "accounts.md"
     if not path.is_file():
         return
     sections: list[tuple[str, set[str], bool]] = []
     for line in path.read_text(encoding="utf-8").splitlines():
-        if line.startswith("## "):
-            sections.append((line[3:].strip(), set(), False))
+        heading = re.match(r"^#{2,4}\s+(.+)$", line)
+        if heading:
+            sections.append((heading.group(1).strip(), set(), False))
             continue
         fm = FIELD_RE.match(line)
         if fm and sections:
@@ -644,6 +667,12 @@ def check_accounts(world: Path, out: list[Finding]) -> None:
     for name, keys, disclosed in sections:
         if keys & ACCOUNT_FIELDS and not disclosed:
             out.append(Finding("W16", "accounts.md", f"account '{name}' has no '**Disclosure:**' line"))
+
+
+def mechanic_matches(used: str, graded: str) -> bool:
+    """A format names a mechanic by its full name, or by its first two or more words."""
+    words, full = re.findall(r"[\w'-]+", used), re.findall(r"[\w'-]+", graded)
+    return words == full or (len(words) >= 2 and full[:len(words)] == words)
 
 
 def check_mechanics(world: Path, out: list[Finding]) -> None:
@@ -660,9 +689,10 @@ def check_mechanics(world: Path, out: list[Finding]) -> None:
             graded.append(row.get("mechanic", "").lower())
     # A format that leans on a mechanic must name one the Mechanics table grades.
     for row in table_rows(text, ("format", "mechanic")):
-        used = row.get("mechanic", "").strip("` ").lower()
-        if used and used not in {"—", "-", "none"} and not any(used in g for g in graded):
-            out.append(Finding("W19", "accounts.md", f"format {row.get('format', '?')!r} uses mechanic {used!r}, which no graded Mechanics row names"))
+        for used in re.split(r"[,;+]", row.get("mechanic", "").strip("` ").lower()):
+            used = used.strip()
+            if used and used not in {"—", "-", "none"} and not any(mechanic_matches(used, g) for g in graded):
+                out.append(Finding("W19", "accounts.md", f"format {row.get('format', '?')!r} uses mechanic {used!r}, which no graded Mechanics row names"))
 
 
 def pasted_texts(root: Path) -> list[tuple[str, str]]:
@@ -690,23 +720,30 @@ def check_taste_in_prompts(world: Path, taste: Path | None, out: list[Finding]) 
             out.append(Finding("W11", where, f"taste reference '{hit}' is in a pasted block; references stay in the bible"))
 
 
-def world_dna_cap(world: Path) -> int:
+def world_dna_cap(world: Path, out: list[Finding]) -> int:
     path = world / "canon.yaml"
-    if path.is_file():
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
-        except yaml.YAMLError:
-            return DEFAULT_DNA_CAP
-        cap = data.get("dna_cap") if isinstance(data, dict) else None
-        if isinstance(cap, int) and cap > 0:
-            return cap
-    return DEFAULT_DNA_CAP
+    if not path.is_file():
+        return DEFAULT_DNA_CAP
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    except yaml.YAMLError:
+        return DEFAULT_DNA_CAP  # check_canon reports the YAML error
+    if not isinstance(data, dict) or "dna_cap" not in data:
+        return DEFAULT_DNA_CAP
+    cap = data["dna_cap"]
+    if isinstance(cap, bool) or not isinstance(cap, int) or cap <= 0:
+        out.append(Finding("W02", "canon.yaml", f"dna_cap {cap!r} must be a positive whole number of characters"))
+        return DEFAULT_DNA_CAP
+    return cap
 
 
 def check_world(world: Path, complete: bool = False, taste: Path | None = None,
                 dna_cap: int | None = None) -> list[Finding]:
     out: list[Finding] = []
-    cap = dna_cap or world_dna_cap(world)
+    if dna_cap is not None and dna_cap <= 0:
+        raise ValueError(f"--dna-cap {dna_cap}: must be a positive number of characters")
+    if taste is not None and taste.is_file() and not reference_names(taste):
+        raise ValueError(f"--taste {taste}: no reference names or private terms could be read from it")
     if taste is not None and not taste.is_file():
         raise FileNotFoundError(f"--taste {taste}: no such file (an explicit taste file must exist)")
     if complete:
@@ -718,6 +755,7 @@ def check_world(world: Path, complete: bool = False, taste: Path | None = None,
         for folder in ("characters", "locations"):
             if not sheets(world, folder):
                 out.append(Finding("W18", folder + "/", "empty; the output contract needs at least one sheet"))
+    cap = dna_cap if dna_cap is not None else world_dna_cap(world, out)
     states = check_decisions(world, out, complete)
     canon_ids = check_canon(world, states, out)
     if complete and (world / "canon.yaml").is_file() and not canon_ids:
@@ -775,12 +813,18 @@ def main(argv: list[str] | None = None) -> int:
         if not args.world.is_dir():
             print(f"not a folder: {args.world}", file=sys.stderr)
             return 2
-        if args.taste is not None and not args.taste.is_file():
-            print(f"--taste {args.taste}: no such file", file=sys.stderr)
+        try:
+            findings = check_world(args.world, args.complete, args.taste, args.dna_cap)
+        except (FileNotFoundError, ValueError) as exc:
+            print(exc, file=sys.stderr)
             return 2
-        return report(check_world(args.world, args.complete, args.taste, args.dna_cap), args.json, str(args.world))
+        return report(findings, args.json, str(args.world))
     if not args.taste.is_file() or not args.public.is_dir():
         print("leak needs an existing --taste file and public folder", file=sys.stderr)
+        return 2
+    if not reference_names(args.taste):
+        print(f"--taste {args.taste}: no reference names or private terms could be read from it; "
+              "nothing would be checked", file=sys.stderr)
         return 2
     return report(check_leak(args.public, args.taste), args.json, f"{args.public} against {args.taste.name}")
 

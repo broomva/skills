@@ -524,3 +524,69 @@ def test_format_mechanic_must_be_graded(world):
     start, end = text.index("## Mechanics"), text.index("## Lantern Market (working handle)")
     (world / "accounts.md").write_text(text[:start] + text[end:])
     assert "W19" in codes(world)
+
+
+# --- regressions from P20 round 2 (fresh-context reviewer, 2026-10-17) ------------------------------
+
+
+def test_nested_accounts_each_need_a_disclosure(world):
+    """MAJOR 1: one account's disclosure never covers a sibling under H3."""
+    edit(world / "accounts.md", "## Lantern Market (working handle)", "## Accounts\n\n### Lantern Market (working handle)")
+    assert codes(world) == []
+    path = world / "accounts.md"
+    path.write_text(path.read_text() + "\n### Old Shell's diary\n\n- **Platform:** instagram\n- **Role in the world:** Old Shell's own account\n")
+    assert "W16" in codes(world)
+
+
+def test_taste_file_with_no_names_is_an_error(world, tmp_path):
+    """MAJOR 2: an explicit taste file that parses to nothing must not pass silently."""
+    empty = tmp_path / "taste.md"
+    empty.write_text("# Taste\n\nNo references written in a readable shape.\n")
+    with pytest.raises(ValueError):
+        wc.check_world(world, taste=empty)
+    assert wc.main(["check", str(world), "--taste", str(empty)]) == 2
+    assert wc.main(["leak", str(world), "--taste", str(empty)]) == 2
+
+
+def test_reference_table_rows_are_read(tmp_path):
+    taste = tmp_path / "taste.md"
+    taste.write_text("## Taste references\n\n| Maker | Work |\n|---|---|\n| Ilse Varnholt | *The Paper Harbour* |\n")
+    assert wc.reference_names(taste) == ["Ilse Varnholt", "The Paper Harbour"]
+    public = tmp_path / "pub"
+    public.mkdir()
+    (public / "notes.md").write_text("Our look is pure Ilse Varnholt.\n")
+    assert [f.code for f in wc.check_leak(public, taste)] == ["L01"]
+
+
+def test_italics_in_a_reference_description_are_not_names(tmp_path):
+    taste = tmp_path / "taste.md"
+    taste.write_text("## Taste references\n\n- **Ilse Varnholt** — *The Paper Harbour* (1987): one *warm* light\n")
+    assert wc.reference_names(taste) == ["Ilse Varnholt", "The Paper Harbour"]
+
+
+def test_format_may_name_several_graded_mechanics(world):
+    edit(world / "accounts.md", "| Wick stares at a lamp | one silhouette |", "| Wick stares at a lamp | one silhouette, day-to-day moments |")
+    assert codes(world) == []
+
+
+def test_a_one_word_fragment_is_not_a_mechanic(world):
+    edit(world / "accounts.md", "| Wick stares at a lamp | one silhouette |", "| Wick stares at a lamp | one |")
+    assert "W19" in codes(world)
+
+
+@pytest.mark.parametrize("value", ['"100"', "true", "0", "-5"])
+def test_bad_dna_cap_in_canon_is_reported(world, value):
+    edit(world / "canon.yaml", "dna_cap: 600", f"dna_cap: {value}")
+    assert "W02" in codes(world)
+
+
+def test_bad_dna_cap_flag_is_a_usage_error(world):
+    assert wc.main(["check", str(world), "--dna-cap", "0"]) == 2
+    assert wc.main(["check", str(world), "--dna-cap", "-1"]) == 2
+
+
+def test_pending_in_answers_prose_does_not_mark_the_round_waiting(table_world):
+    edit(table_world / "decisions.md", "| Ask | Recommended | Answer (verbatim) | Matches? |",
+         "Nothing is pending from this round.\n\n| Ask | Recommended | Answer (verbatim) | Matches? |")
+    edit(table_world / "decisions.md", '| Q3 `r0-seed-gamma` | drop | "Drop it." | yes |\n', "")
+    assert "W12" in codes(table_world)
