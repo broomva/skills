@@ -1,7 +1,7 @@
 ---
 name: content-engine
 category: video
-description: "Full-stack AI content studio — orchestrates visual DNA compilation, cinematic generation (via Higgsfield CLI or MCP), browser-automated tool execution, and multi-platform distribution into a unified content pipeline. Compiles brand identity, character sheets, and style guides into persistent knowledge (Karpathy compile-then-query pattern), then generates premium cinematic content using Higgsfield (30+ models including Soul V2, Nano Banana 2, Veo 3.1, Kling 3.0, Seedance 2.0, Flux 2), Soul Cinema, Weavy, and ComfyUI with consistent character identity and intentional visual direction. Triggers on: 'content engine', 'generate campaign', 'compile brand', 'cinematic content', 'AI content studio', 'batch generate', 'content pipeline', 'visual DNA', 'character consistency', 'higgsfield', 'marketing studio', 'product photoshoot', 'soul character'."
+description: "Full-stack AI content studio — orchestrates visual DNA compilation, cinematic generation (via Higgsfield CLI or MCP), browser-automated tool execution, and multi-platform distribution into a unified content pipeline. Compiles brand identity, character sheets, and style guides into persistent knowledge (Karpathy compile-then-query pattern), then generates premium cinematic content using Higgsfield (30+ models including Soul V2, Nano Banana 2, Veo 3.1, Kling 3.0, Seedance 2.0, Flux 2), Soul Cinema, Weavy, and ComfyUI with consistent character identity and intentional visual direction. Triggers on: 'content engine', 'generate campaign', 'compile brand', 'cinematic content', 'AI content studio', 'batch generate', 'content pipeline', 'visual DNA', 'character consistency', 'higgsfield', 'marketing studio', 'product photoshoot', 'soul character', 'world-building', 'universe bible', 'pre-production'."
 ---
 
 # Content Engine
@@ -9,13 +9,16 @@ description: "Full-stack AI content studio — orchestrates visual DNA compilati
 Full-stack AI content studio: compile visual identity once, generate premium content at scale, distribute everywhere.
 
 ```
-COMPILE → GENERATE → POST-PRODUCE → LAYOUT GATE (9:16) → DISTRIBUTE → MEASURE → REFINE
+(WORLD) → COMPILE → GENERATE → POST-PRODUCE → LAYOUT GATE (9:16) → DISTRIBUTE → MEASURE → REFINE
 ```
+
+WORLD runs first, and only for a fictional production that has no world yet.
 
 ## Commands
 
 | Command | What it does |
 |---------|-------------|
+| `/content-engine universe` | Grill an owner from nothing to a documented world (bible, canon, cast, locations, look, sound, formats, asset manifest) that skene can produce; generates nothing (content-engine-universe) |
 | `/content-engine compile` | Raw assets → compiled visual DNA (brand, character, style) |
 | `/content-engine lint` | Health-check compiled knowledge for consistency |
 | `/content-engine generate` | Create content using compiled identity + scene brief |
@@ -27,9 +30,11 @@ COMPILE → GENERATE → POST-PRODUCE → LAYOUT GATE (9:16) → DISTRIBUTE → 
 
 ## Architecture
 
-Four sub-skills, each handling one layer:
+Five sub-skills, each handling one layer:
 
 ```
+[content-engine-universe]     World-Building Pre-Production
+        ↓                  grill → bible, canon, species-aware sheets, style lock, asset manifest
 [content-engine-dna]       Visual DNA Compiler
         ↓                  raw/ → compiled/ (brand DNA, character sheets, style guides)
 [content-engine-cinema]    Cinematic Generation Layer

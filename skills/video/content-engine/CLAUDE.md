@@ -8,6 +8,7 @@ Full-stack AI content studio skill for the broomva workspace.
 content-engine/
 ├── SKILL.md                        # Orchestrator entry point
 ├── skills/
+│   ├── content-engine-universe/       # World-building pre-production (grill → world folder; world_check.py)
 │   ├── content-engine-dna/         # Visual DNA Compiler
 │   ├── content-engine-cinema/      # Cinematic Generation Layer
 │   ├── content-engine-autopilot/   # Browser Orchestration
@@ -21,7 +22,7 @@ content-engine/
 ├── references/vertical-layout.md   # The contract's rules, source and checker limits
 ├── scripts/                        # Automation scripts (check_vertical_layout.py = 9:16 gate)
 ├── remotion/                       # ContentEngineVideo (16:9) + ContentEngineReel (9:16)
-├── tests/                          # pytest: layout gate (python -m pytest in this dir)
+├── tests/                          # pytest: layout gate, world_check (python -m pytest in this dir)
 └── extensions/                     # Plugin directory
 ```
 

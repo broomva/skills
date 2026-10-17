@@ -12,10 +12,11 @@ COMPILE → GENERATE → POST-PRODUCE → DISTRIBUTE → MEASURE → REFINE
 
 ## Architecture
 
-Four skills, each handling one layer:
+Five skills, each handling one layer:
 
 | Skill | Purpose |
 |-------|---------|
+| **content-engine-universe** | World-Building Pre-Production — a grill from nothing to a documented world (bible, canon, cast, look, asset manifest) for skene; `world_check.py` gates it |
 | **content-engine-dna** | Visual DNA Compiler — raw assets → compiled identity files |
 | **content-engine-cinema** | Cinematic Generation — start-frame doctrine, camera vocabulary, 25+ styles |
 | **content-engine-autopilot** | Browser Orchestration — Playwright-driven batch generation |
