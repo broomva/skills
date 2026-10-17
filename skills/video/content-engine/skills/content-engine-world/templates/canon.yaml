@@ -9,8 +9,11 @@
 # source, one of (a list may mix them):
 #   - a decision or ask id from decisions.md (R1-Q3, r1-world-rule); free text
 #     around it is fine ("round 0, r0-seed-hadal (build)")
-#   - an owner rule outside the world: another asks ledger and its ask id, or
-#     the owner's rules file ("studio-rules.md (Disclosure)")
+#   - an owner rule outside the world, naming the file that holds it: another
+#     asks ledger and its ask id ("studio.yaml ip-policy"), or the owner's rules
+#     file ("studio-rules.md (Disclosure)"). A source that names no file, a
+#     placeholder ("pending", "TBD") or a round named some other way ("round 1,
+#     P1") resolves to nothing (W03) and cannot lock a fact (W04).
 #   - "evidence: <path>" for an asset that predates the grill. Evidence alone
 #     is never locked and never above apocrypha: assets on disk are evidence,
 #     not defaults.
@@ -35,12 +38,12 @@ facts:
     statement: "The world uses owned characters only; no other studio's characters and no real person's likeness."
     tier: foundation
     status: locked
-    source: "{ledger file} {ask id}; {owner rules file}"
+    source: "{ledger}.yaml {ask id}; {rules}.md"
   - id: policy-ai-disclosed
     statement: "Every post carries the platform's AI label and a disclosure in the caption; every crossover is disclosed fiction."
     tier: foundation
     status: locked
-    source: "{owner rules file} (Disclosure)"
+    source: "{rules}.md (Disclosure)"
   # ---------------------------------------------------------- round 0
   - id: world-premise
     statement: "{the shape of the world in one sentence}"

@@ -590,3 +590,102 @@ def test_pending_in_answers_prose_does_not_mark_the_round_waiting(table_world):
          "Nothing is pending from this round.\n\n| Ask | Recommended | Answer (verbatim) | Matches? |")
     edit(table_world / "decisions.md", '| Q3 `r0-seed-gamma` | drop | "Drop it." | yes |\n', "")
     assert "W12" in codes(table_world)
+
+
+# --- regressions from P20 round 3 (fresh-context reviewer, 2026-10-17): unread shapes are findings ---
+
+
+def test_ask_id_header_is_read(table_world):
+    """M1: a questions table headed 'Ask ID' is read, not skipped."""
+    edit(table_world / "decisions.md", "| # | Ask | Question |", "| # | Ask ID | Question |")
+    items, _ = wc.parse_decisions((table_world / "decisions.md").read_text())
+    assert any(it.ask_id == "r1-rule" for it in items)
+
+
+def test_question_headings_are_read(world):
+    """M1: '### Question N' headings are items, so a paraphrased answer fails."""
+    path = world / "decisions.md"
+    path.write_text(path.read_text() + "\n## Round 2: sound\n\n### Question 1 — Chimes?\n\n- **Answer:** the owner liked chimes, I think\n")
+    assert "W12" in codes(world)
+
+
+def test_a_round_with_nothing_readable_fails(world):
+    path = world / "decisions.md"
+    path.write_text(path.read_text() + "\n## Round 2: sound\n\n### Chimes or drums\n\n- **Answer:** pending\n")
+    assert "W12" in codes(world)
+
+
+def test_accounts_table_needs_disclosures(world):
+    """M2: an accounts table with an empty Disclosure cell fails."""
+    (world / "accounts.md").write_text("# Accounts\n\n| Account | Platform | Disclosure |\n|---|---|---|\n| market | ig | |\n")
+    assert "W16" in codes(world)
+
+
+def test_colon_outside_the_bold_is_read(world):
+    """M2: '- **Role in the world**: …' declares an account too."""
+    edit(world / "accounts.md", "- **Role in the world:**", "- **Role in the world**:")
+    edit(world / "accounts.md", "- **Disclosure:** the platform's AI label on every post, and \"Made with AI\" in the bio.\n", "")
+    assert "W16" in codes(world)
+
+
+def test_complete_needs_a_readable_account(world):
+    (world / "accounts.md").write_text("# Accounts\n\nWe post on one account, disclosed.\n")
+    assert "W16" in codes(world, complete=True)
+
+
+def test_star_bullets_in_the_in_world_taste_file(world):
+    """M3: '* **Maker**' bullets are read in the in-world file, and a reference in DNA fails."""
+    for name in ("owner-taste.md", "styles/look.md"):
+        path = world / name
+        path.write_text(path.read_text().replace("- **Ilse", "* **Ilse").replace("- **Tomas", "* **Tomas"))
+    edit(world / "characters/wick.md", "in the lower edge", "in the manner of Ilse Varnholt, in the lower edge")
+    assert "W11" in codes(world)
+
+
+def test_unreadable_reference_line_is_a_finding(world):
+    edit(world / "owner-taste.md", "- **Tomas Reyk** — *Slow Caravans* (2003): long holds, small gestures.",
+         "- Tomas Reyk, Slow Caravans (2003)")
+    assert "W11" in codes(world)
+
+
+def test_leak_reports_unread_private_terms(tmp_path):
+    """M3: a partly readable taste file reports the lines it could not read."""
+    taste = tmp_path / "taste.md"
+    taste.write_text("## Taste references\n\n- **Mara Quell** — *Glass Tides*\n- Quell Street, unbolded\n")
+    public = tmp_path / "pub"
+    public.mkdir()
+    (public / "a.md").write_text("nothing\n")
+    assert [f.code for f in wc.check_leak(public, taste)] == ["L02"]
+
+
+@pytest.mark.parametrize("source", ["pending", "TBD", "round 1, P1", "R1 P1", "the owner said so"])
+def test_sources_that_resolve_to_nothing_cannot_lock(world, source):
+    """M4: placeholders, loosely named rounds and file-less rules are unresolved."""
+    edit(world / "canon.yaml", "status: draft\n    source: R1-P1", f"status: locked\n    source: \"{source}\"")
+    found = codes(world)
+    assert "W03" in found and "W04" in found
+
+
+def test_evidence_grade_header_is_read(world):
+    """M5: the Mechanics table headed 'Evidence grade' is still checked."""
+    edit(world / "accounts.md", "| Mechanic | Evidence | Source |", "| Mechanic | Evidence grade | Source |")
+    edit(world / "accounts.md", "| proposal | round 0 |", "| | round 0 |")
+    assert "W19" in codes(world)
+
+
+def test_full_mechanic_name_with_commas(world):
+    """m1: a format may name a graded mechanic in full, commas and all."""
+    edit(world / "accounts.md", "| Wick stares at a lamp | one silhouette |",
+         "| Wick stares at a lamp | One silhouette, no dialogue, reads in any language |")
+    assert codes(world) == []
+
+
+def test_sheet_in_a_subfolder_is_reported(world):
+    (world / "characters/wick").mkdir()
+    (world / "characters/wick/sheet.md").write_text("---\nname: Wick\n---\n")
+    assert "W09" in codes(world)
+
+
+def test_character_without_a_name_is_reported(world):
+    edit(world / "characters/wick.md", "name: Wick\n", "")
+    assert "W05" in codes(world)

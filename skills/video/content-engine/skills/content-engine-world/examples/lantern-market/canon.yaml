@@ -7,7 +7,7 @@ facts:
     statement: "Every post carries the platform's AI label and a caption disclosure."
     tier: foundation
     status: locked
-    source: "the example owner's rules file (Disclosure)"
+    source: "studio-rules.md (Disclosure), the example owner's rules file"
   - id: world-premise
     statement: "A desert night market kept by moths, where every stall sells a kind of light."
     tier: foundation

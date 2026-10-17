@@ -90,9 +90,9 @@ SEED_FIELDS = {  # label: accepted field names (lower case)
 }
 
 HEADED_RE = re.compile(
-    r"^#{3,4}\s+(?:(R(\d+)-([QSP])(\d+))|(Seed|Q|Proposal)\s*(\d+))\b\s*[·:—–-]?\s*(.*)$", re.I)
+    r"^#{3,4}\s+(?:(R(\d+)-([QSP])(\d+))|(Seed|Question|Q|Proposal)\s*(\d+))\b\s*[·:—–-]?\s*(.*)$", re.I)
 ROUND_RE = re.compile(r"^##\s+Round\s+(\d+)\b", re.I)
-FIELD_RE = re.compile(r"^\s*-\s+\*\*([^*]+?)[:.]\*\*\s*(.*)$")
+FIELD_RE = re.compile(r"^\s*[-*+]\s+\*\*([^*]+?)(?:[:.]\*\*|\*\*\s*:)\s*(.*)$")
 FENCE_RE = re.compile(r"^(```+|~~~+)\s*([A-Za-z][\w-]*)?(.*)$")
 SLUG_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 CANON_ID_RE = re.compile(r"^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$")
@@ -155,30 +155,39 @@ def flat(text: str) -> str:
     return " ".join(text.split())
 
 
-def reference_names(path: Path) -> list[str]:
-    """Names under any heading that mentions references, and every bullet under a
-    `Private terms` heading.
+BULLET_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+(.+?)\s*$")
 
-    A reference is a bullet `- **Maker** — *Work* (year): why`, or a table row whose
-    first cell is the maker and whose second, if italic, is the work. Italics after
-    the first colon are description, not names."""
+
+def reference_scan(path: Path) -> tuple[list[str], list[tuple[int, str]], bool]:
+    """(names, unread lines, has a references or private-terms heading).
+
+    Names come from any heading that mentions references, and from every bullet
+    under a `Private terms` heading. A reference is a bullet `- **Maker** — *Work*
+    (year): why` (any bullet marker), or a table row whose first cell is the maker
+    and whose second, if italic, is the work. Italics after the first colon are
+    description, not names. A bullet or table row in those sections that yields
+    no name is returned as unread, so a shape the reader does not know is
+    reported rather than skipped."""
     if not path.is_file():
-        return []
+        return [], [], False
     names: list[str] = []
-    in_refs = in_private = False
+    unread: list[tuple[int, str]] = []
+    in_refs = in_private = has_heading = False
     table_row = 0
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for n, line in enumerate(path.read_text(encoding="utf-8").splitlines(), 1):
         if line.startswith("#"):
             low = line.lower()
             in_private = "private terms" in low
             in_refs = "reference" in low and not in_private
+            has_heading = has_heading or in_private or in_refs
             table_row = 0
             continue
         stripped = line.strip()
         if in_private:
-            m = re.match(r"^\s*-\s+(.+?)\s*$", line)
+            m = BULLET_RE.match(line)
             if m:
-                names.append(m.group(1).strip("*` "))
+                term = m.group(1).strip("*_` ")
+                (names.append(term) if term else unread.append((n, stripped)))
             continue
         if not in_refs:
             continue
@@ -190,17 +199,39 @@ def reference_names(path: Path) -> list[str]:
             makers, head = cells[0], " ".join(cells[1:2])
         else:
             table_row = 0
-            m = re.match(r"^\s*-\s+\*\*(.+?)\*\*(.*)$", line)
+            m = BULLET_RE.match(line)
             if not m:
                 continue
-            makers, head = m.group(1), m.group(2).split(":", 1)[0]
+            bold = re.match(r"^\*\*(.+?)\*\*(.*)$", m.group(1))
+            if not bold:
+                unread.append((n, stripped))
+                continue
+            makers, head = bold.group(1), bold.group(2).split(":", 1)[0]
+        before = len(names)
         for part in re.split(r",|\band\b|&|/", makers):
             part = part.strip(" *_`")
             if len(part) >= 3:
                 names.append(part)
         for title in re.findall(r"(?<!\*)\*([^*]{3,})\*(?!\*)", head):
             names.append(title.strip())
-    return list(dict.fromkeys(n for n in names if n))
+        if len(names) == before:
+            unread.append((n, stripped))
+    return list(dict.fromkeys(x for x in names if x)), unread, has_heading
+
+
+def reference_names(path: Path) -> list[str]:
+    return reference_scan(path)[0]
+
+
+def taste_findings(path: Path, rel: str, code: str) -> list[Finding]:
+    """What the reader could not read in a taste or style file: unread lines, and
+    a references heading that yielded no name at all."""
+    names, unread, has_heading = reference_scan(path)
+    found = [Finding(code, f"{rel}:{n}", f"cannot read a name from {text[:60]!r}; write '- **Maker** — *Work*' "
+                                         "or a table row with the maker in the first cell") for n, text in unread]
+    if has_heading and not names and not unread:
+        found.append(Finding(code, rel, "has a references or private-terms heading but no name could be read under it"))
+    return found
 
 
 def name_hits(text: str, names: list[str]) -> list[str]:
@@ -299,7 +330,7 @@ def parse_decisions(text: str) -> tuple[list[Item], dict[int, dict]]:
             else:
                 word = hm.group(5).lower()
                 rnd, num = current, int(hm.group(6))
-                typ = {"seed": "S", "q": "Q", "proposal": "P"}[word]
+                typ = {"seed": "S", "question": "Q", "q": "Q", "proposal": "P"}[word]
             item = Item(f"R{rnd}-{typ}{num}", rnd, typ, num, n, hm.group(7).strip(), fields={})
             items.append(item)
             section, in_answer = "", False
@@ -333,11 +364,12 @@ def parse_decisions(text: str) -> tuple[list[Item], dict[int, dict]]:
 
     for start, header, rows in table_blocks(lines):
         rnd = round_at_line.get(start)
-        if rnd is None or "ask" not in header:
+        ask_col = column(header, "ask")
+        if rnd is None or ask_col is None:
             continue
-        ask_col = header.index("ask")
-        ans_col = next((i for i, h in enumerate(header) if h.startswith("answer")), None)
-        is_questions = "question" in header
+        ans_col = column(header, "answer")
+        q_col = column(header, "question")
+        is_questions = q_col is not None
         for line_no, cells in rows:
             if ask_col >= len(cells):
                 continue
@@ -347,7 +379,7 @@ def parse_decisions(text: str) -> tuple[list[Item], dict[int, dict]]:
                 num = int(m.group(1)) if m else num
             state = answer_value(cells[ans_col]) if ans_col is not None and ans_col < len(cells) else ""
             if is_questions and num is not None:
-                items.append(Item(f"R{rnd}-Q{num}", rnd, "Q", num, line_no, cells[header.index("question")],
+                items.append(Item(f"R{rnd}-Q{num}", rnd, "Q", num, line_no, cells[q_col] if q_col < len(cells) else "",
                                   ask_id=ask_id, fields={}, answer=state))
             elif state:
                 if ask_id:
@@ -398,6 +430,11 @@ def check_decisions(world: Path, out: list[Finding], complete: bool = False) -> 
         elif it.answer == "paraphrase":
             out.append(Finding("W12", rel, f"{it.id} (line {it.line}) answer is not quoted; copy the owner's words verbatim (> or \"…\") or write 'pending'"))
 
+    for r, info in sorted(rounds.items()):
+        if not any(it.round == r and it.type in "SQ" for it in items):
+            out.append(Finding("W12", rel, f"round {r} (line {info['line']}) has no seed or question the checker can read; "
+                                           "use '#### R<n>-Q<m>' items, '### Seed <m>' / '### Q<m>' sections, "
+                                           "or a table with Ask and Question columns"))
     seeds = [it for it in items if it.round == 0 and it.type == "S"]
     later = [it for it in items if it.round >= 1]
     if later or seeds or complete:
@@ -456,7 +493,17 @@ def classify_source(source: str, states: dict[str, str]) -> tuple[str, list[str]
     unknown = [r for r in dict.fromkeys(local) if r not in states]
     if unknown:
         return "unresolved", known, unknown
-    return ("decision" if known else "external"), known, unknown
+    if known:
+        return "decision", known, []
+    # Not a local id. A placeholder, or a round or question named some other way,
+    # is unresolved; an outside rule must name the file or ledger that holds it.
+    if re.match(r"^(pending|tbd|todo|unknown|n/?a|none|\?+)\b", s.lower().strip("*_() ")):
+        return "unresolved", [], [s]
+    if re.search(r"\bround\s*\d|\b[RQSP]\d+\b", s, re.I):
+        return "unresolved", [], [s]
+    if not re.search(r"[\w-]+\.(?:ya?ml|md|json|txt|html|toml)\b", s):
+        return "unresolved", [], [s]
+    return "external", [], []
 
 
 def check_canon(world: Path, states: dict[str, str], out: list[Finding]) -> set[str]:
@@ -503,7 +550,8 @@ def check_canon(world: Path, states: dict[str, str], out: list[Finding]) -> set[
             kinds.add(kind)
             cited += known
             for r in unknown:
-                out.append(Finding("W03", rel, f"{where}: source cites {r}, which is not in decisions.md"))
+                out.append(Finding("W03", rel, f"{where}: source {r!r} resolves to nothing: cite a decision or ask id "
+                                               "from decisions.md, or the file or ledger that holds an outside rule"))
         if kinds <= {"none"}:
             out.append(Finding("W03", rel, f"{where}: no source; cite the decision or ask it came from"))
         if status == "locked":
@@ -511,7 +559,7 @@ def check_canon(world: Path, states: dict[str, str], out: list[Finding]) -> set[
             if unanswered:
                 out.append(Finding("W04", rel, f"{where}: locked on {', '.join(unanswered)}, which has no verbatim answer"))
             elif "unresolved" in kinds:
-                out.append(Finding("W04", rel, f"{where}: locked on a source that cites an unknown decision"))
+                out.append(Finding("W04", rel, f"{where}: locked on a source that resolves to nothing"))
             elif not ({"decision", "external"} & kinds):
                 out.append(Finding("W04", rel, f"{where}: locked with no decision behind it (evidence is never a default)"))
         if tier not in SOFT_TIERS and not ({"decision", "external"} & kinds) and "unresolved" not in kinds:
@@ -528,6 +576,16 @@ def sheets(world: Path, folder: str) -> list[Path]:
     return sorted(p for p in (world / folder).glob("*.md") if not p.name.endswith(".prompt.md"))
 
 
+def check_sheet_layout(world: Path, out: list[Finding]) -> None:
+    """Sheets live at <folder>/<slug>.md. A sheet in a subfolder would be skipped
+    by every check, so it is a finding rather than a silent pass."""
+    for folder in ("characters", "locations", "props", "styles"):
+        for path in sorted((world / folder).glob("*/**/*.md")):
+            if not path.name.endswith(".prompt.md"):
+                out.append(Finding("W09", str(path.relative_to(world)),
+                                   f"sheets live at {folder}/<slug>.md; this file is in a subfolder and is not checked"))
+
+
 def check_characters(world: Path, canon_ids: set[str], cap: int, out: list[Finding]) -> None:
     for path in sheets(world, "characters"):
         rel = str(path.relative_to(world))
@@ -541,7 +599,9 @@ def check_characters(world: Path, canon_ids: set[str], cap: int, out: list[Findi
             text = flat(dna[0].text)
             if len(text) > cap:
                 out.append(Finding("W05", rel, f"Fixed DNA is {len(text)} characters; this world's cap is {cap} (cut in the sheet's cut-priority order)"))
-            if name and not text.lower().startswith(name.lower()):
+            if not name:
+                out.append(Finding("W05", rel, "frontmatter has no 'name'; the Fixed DNA must open with it"))
+            elif not text.lower().startswith(name.lower()):
                 out.append(Finding("W05", rel, f"Fixed DNA should open with the name '{name}:' so a pasted block names its subject"))
         wardrobes = [b for b in blocks if b.kind == "wardrobe"]
         if not any(b.label.split(" ")[0] == "default" for b in wardrobes):
@@ -576,10 +636,22 @@ def manifest_rows(text: str) -> list[dict]:
     return table_rows(text, ("kind", "slug"))
 
 
+def column(header: list[str], key: str) -> int | None:
+    """The first header cell that starts with key ("Ask ID" answers "ask",
+    "Evidence grade" answers "evidence", "Mechanics" answers "mechanic")."""
+    for i, cell in enumerate(header):
+        if cell.strip("*_` ").lower().startswith(key):
+            return i
+    return None
+
+
 def table_rows(text: str, needed: tuple[str, ...]) -> list[dict]:
-    """Rows of every Markdown table whose header holds all the needed columns."""
+    """Rows of every Markdown table whose header has a column for each needed key
+    (matched by prefix). Each row maps the needed keys, and every raw header
+    cell, to its value."""
     rows: list[dict] = []
     header: list[str] | None = None
+    index: dict[str, int] = {}
     for line in text.splitlines():
         s = line.strip()
         if not s.startswith("|"):
@@ -587,13 +659,15 @@ def table_rows(text: str, needed: tuple[str, ...]) -> list[dict]:
             continue
         cells = [c.strip() for c in s.strip("|").split("|")]
         if header is None:
-            low = [c.lower() for c in cells]
-            if all(col in low for col in needed):
-                header = low
+            found = {k: column(cells, k) for k in needed}
+            if all(v is not None for v in found.values()):
+                header, index = [c.lower() for c in cells], found
             continue
         if all(re.match(r"^:?-{2,}:?$", c) for c in cells if c):
             continue
-        rows.append(dict(zip(header, cells)))
+        row = dict(zip(header, cells))
+        row.update({k: cells[i] if i < len(cells) else "" for k, i in index.items()})
+        rows.append(row)
     return rows
 
 
@@ -643,15 +717,17 @@ def check_manifest(world: Path, out: list[Finding]) -> None:
 ACCOUNT_FIELDS = {"role in the world", "platform", "platforms", "platform(s)", "characters"}
 
 
-def check_accounts(world: Path, out: list[Finding]) -> None:
-    """A section (H2 to H4) that declares an account field (role, platform,
-    characters) is an account, and needs its own non-empty Disclosure line: one
-    account's disclosure never covers a sibling's."""
+def check_accounts(world: Path, out: list[Finding], complete: bool = False) -> None:
+    """Every account needs its own non-empty disclosure. An account is a section
+    (H2 to H4) that declares an account field (role, platform, characters), or a
+    row of a table with Account and Disclosure columns. A complete world has at
+    least one account the checker can read."""
     path = world / "accounts.md"
     if not path.is_file():
         return
+    text = path.read_text(encoding="utf-8")
     sections: list[tuple[str, set[str], bool]] = []
-    for line in path.read_text(encoding="utf-8").splitlines():
+    for line in text.splitlines():
         heading = re.match(r"^#{2,4}\s+(.+)$", line)
         if heading:
             sections.append((heading.group(1).strip(), set(), False))
@@ -664,9 +740,19 @@ def check_accounts(world: Path, out: list[Finding]) -> None:
             if key == "disclosure" and fm.group(2).strip():
                 disclosed = True
             sections[-1] = (name, keys, disclosed)
+    found = 0
     for name, keys, disclosed in sections:
-        if keys & ACCOUNT_FIELDS and not disclosed:
-            out.append(Finding("W16", "accounts.md", f"account '{name}' has no '**Disclosure:**' line"))
+        if keys & ACCOUNT_FIELDS:
+            found += 1
+            if not disclosed:
+                out.append(Finding("W16", "accounts.md", f"account '{name}' has no '**Disclosure:**' line"))
+    for row in table_rows(text, ("account", "disclosure")):
+        found += 1
+        if not row["disclosure"].strip("`*_ —-"):
+            out.append(Finding("W16", "accounts.md", f"account '{row['account']}' has an empty disclosure"))
+    if complete and not found:
+        out.append(Finding("W16", "accounts.md", "no account could be read; give each account a section with "
+                                                 "'**Role in the world:**' and '**Disclosure:**' lines"))
 
 
 def mechanic_matches(used: str, graded: str) -> bool:
@@ -689,7 +775,9 @@ def check_mechanics(world: Path, out: list[Finding]) -> None:
             graded.append(row.get("mechanic", "").lower())
     # A format that leans on a mechanic must name one the Mechanics table grades.
     for row in table_rows(text, ("format", "mechanic")):
-        for used in re.split(r"[,;+]", row.get("mechanic", "").strip("` ").lower()):
+        cell = row.get("mechanic", "").strip("` ").lower()
+        parts = [cell] if any(mechanic_matches(cell, g) for g in graded) else re.split(r"[,;+]", cell)
+        for used in parts:
             used = used.strip()
             if used and used not in {"—", "-", "none"} and not any(mechanic_matches(used, g) for g in graded):
                 out.append(Finding("W19", "accounts.md", f"format {row.get('format', '?')!r} uses mechanic {used!r}, which no graded Mechanics row names"))
@@ -711,8 +799,11 @@ def pasted_texts(root: Path) -> list[tuple[str, str]]:
 
 
 def check_taste_in_prompts(world: Path, taste: Path | None, out: list[Finding]) -> None:
-    names = reference_names(taste or world / "owner-taste.md") + reference_names(world / "styles" / "look.md")
-    names = list(dict.fromkeys(names))
+    taste_file = taste or world / "owner-taste.md"
+    look = world / "styles" / "look.md"
+    out.extend(taste_findings(taste_file, "owner-taste.md" if taste is None else str(taste), "W11"))
+    out.extend(taste_findings(look, "styles/look.md", "W11"))
+    names = list(dict.fromkeys(reference_names(taste_file) + reference_names(look)))
     if not names:
         return
     for where, text in pasted_texts(world):
@@ -763,7 +854,8 @@ def check_world(world: Path, complete: bool = False, taste: Path | None = None,
     check_characters(world, canon_ids, cap, out)
     check_locations(world, out)
     check_manifest(world, out)
-    check_accounts(world, out)
+    check_accounts(world, out, complete)
+    check_sheet_layout(world, out)
     check_mechanics(world, out)
     check_taste_in_prompts(world, taste, out)
     return out
@@ -771,7 +863,7 @@ def check_world(world: Path, complete: bool = False, taste: Path | None = None,
 
 def check_leak(public: Path, taste: Path) -> list[Finding]:
     names = reference_names(taste)
-    out: list[Finding] = []
+    out: list[Finding] = taste_findings(taste, taste.name, "L02")
     for path in sorted(p for p in public.rglob("*") if p.is_file()):
         try:
             text = path.read_text(encoding="utf-8")

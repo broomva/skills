@@ -151,23 +151,28 @@ order for a block over the cap.
 |---|---|
 | W01 | a canon id is used twice |
 | W02 | a canon fact has no statement, or an unknown tier or status |
-| W03 | a source cites a local id (R1-Q2, r1-ask-id) that is not in decisions.md, or no source at all |
+| W03 | a source resolves to nothing: an unknown local id (R1-Q2, r1-ask-id), a placeholder ("pending"), a round named loosely ("round 1, P1"), or an outside rule that names no file |
 | W04 | a locked fact rests on a pending answer or on evidence alone; a hard tier rests on evidence |
 | W05 | a character has no single `fixed-dna` block, it exceeds the cap, or it does not open with the name |
 | W06 | a character has no `wardrobe default` block |
 | W07 | a character does not declare `likeness: original` |
 | W08 | a manifest entry's kind is not a skene library kind |
-| W09 | a manifest entry's sheet is missing or not at its kind's path, or a sheet has no manifest entry (`*.prompt.md` files are not sheets) |
+| W09 | a manifest entry's sheet is missing or not at its kind's path, or a sheet has no manifest entry (`*.prompt.md` files are not sheets), or a sheet sits in a subfolder |
 | W10 | a character plans fewer than 5 or more than 20 stills |
-| W11 | a taste reference appears in a pasted block or a prompt file |
-| W12 | a seed or question has no answer, or a paraphrased one |
+| W11 | a taste reference appears in a pasted block or a prompt file, or a line under a references heading cannot be read as a name |
+| W12 | a seed or question has no answer or a paraphrased one, or a round holds nothing the checker can read |
 | W13 | round 0 is missing (always, under `--complete`), has fewer than 4 or more than 6 seeds, no stretch seed, or comes after a later round |
 | W14 | an answered round has no method notes |
 | W15 | a location lacks `description`, `lighting` or a named `state`, or two states share a name |
-| W16 | an account declares no disclosure |
+| W16 | an account (a section with account fields, or a row of an Account/Disclosure table) has no disclosure; under `--complete`, no account can be read |
 | W17 | a decision id is used twice |
 | W18 | (`--complete`) a contract file is missing (`--taste` stands in for owner-taste.md), or canon has no facts |
 | W19 | a short-form mechanic has no evidence grade (measured, reported, heuristic, proposal), or a format uses a mechanic no graded row names |
+
+**What the checker cannot read is a finding, never a pass.** A round with no readable question, a
+reference line with no readable name, a sheet in a subfolder, a source that resolves to nothing: each
+fails, so a shape the parser does not know cannot hide a gap. Table columns match by prefix
+("Ask ID", "Evidence grade"), and fields accept `**Key:**`, `**Key.**` and `**Key**:`.
 
 Tests: `python -m pytest tests/test_world_check.py` from content-engine's root. An explicit `--taste`
 that does not exist is a usage error (exit 2), never an empty reference list.
