@@ -224,7 +224,10 @@ def main(pm) -> None:
                 _print_claude_usage(pm, pm.fetch_all_usage(force_refresh=args.force), args.json)
         elif args.command == "balance":
             if args.provider == "codex":
-                res = pm.evaluate_codex_balance(threshold=args.threshold, dry_run=args.dry_run, reason=args.reason)
+                if args.auto:
+                    res = pm.run_auto_until_settled(reason=args.reason, signal=args.signal, provider="codex")
+                else:
+                    res = pm.evaluate_codex_balance(threshold=args.threshold, dry_run=args.dry_run, reason=args.reason)
                 if args.json:
                     print(json.dumps(res, indent=2))
                 else:
@@ -235,9 +238,43 @@ def main(pm) -> None:
                         print("Would switch Codex %s -> %s (%s)" % (res.get("previous"), res.get("target"), res.get("reason")))
                     else:
                         print("Codex balanced: %s" % res.get("reason"))
+            elif args.provider == "all":
+                if args.auto:
+                    res = pm.run_auto_until_settled(reason=args.reason, signal=args.signal, provider="all")
+                    if args.json:
+                        print(json.dumps(res, indent=2))
+                    else:
+                        c_res = res.get("claude", {}) if isinstance(res, dict) else {}
+                        x_res = res.get("codex", {}) if isinstance(res, dict) else {}
+                        print("[Claude Code] action=%s reason=%s" % (c_res.get("action"), c_res.get("reason")))
+                        print("[OpenAI Codex] action=%s reason=%s" % (x_res.get("action"), x_res.get("reason")))
+                else:
+                    c_res = pm.balance_accounts(threshold=args.threshold, dry_run=args.dry_run, verbose=not args.json,
+                                                source="manual_balance", signal=args.signal)
+                    x_res = pm.evaluate_codex_balance(threshold=args.threshold, dry_run=args.dry_run, reason=args.reason)
+                    if args.json:
+                        print(json.dumps({"claude": c_res, "codex": x_res}, indent=2))
+                    else:
+                        print("[Claude Code Balance]")
+                        c_act = c_res.get("action")
+                        if c_act == "switched":
+                            print("Balanced Claude: switched %s -> %s (%s)" % (c_res.get("fromAccount"), c_res.get("toAccount"), c_res.get("reason")))
+                        elif c_act == "would_switch":
+                            print("Would switch Claude: %s -> %s (%s)" % (c_res.get("fromAccount"), c_res.get("toAccount"), c_res.get("reason")))
+                        else:
+                            print("Claude balanced: %s" % c_res.get("reason"))
+
+                        print("\n[OpenAI Codex Balance]")
+                        x_act = x_res.get("action")
+                        if x_act == "switched":
+                            print("Balanced Codex: switched %s -> %s (%s)" % (x_res.get("previous"), x_res.get("active"), x_res.get("reason")))
+                        elif x_act == "would_switch":
+                            print("Would switch Codex %s -> %s (%s)" % (x_res.get("previous"), x_res.get("target"), x_res.get("reason")))
+                        else:
+                            print("Codex balanced: %s" % x_res.get("reason"))
             else:
                 if args.auto:
-                    res = pm.run_auto_until_settled(reason=args.reason, signal=args.signal)
+                    res = pm.run_auto_until_settled(reason=args.reason, signal=args.signal, provider="claude")
                 else:
                     res = pm.balance_accounts(threshold=args.threshold, dry_run=args.dry_run, verbose=not args.json,
                                            source="manual_balance", signal=args.signal)
