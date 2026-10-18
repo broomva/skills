@@ -224,7 +224,10 @@ def main(pm) -> None:
                 _print_claude_usage(pm, pm.fetch_all_usage(force_refresh=args.force), args.json)
         elif args.command == "balance":
             if args.provider == "codex":
-                res = pm.evaluate_codex_balance(threshold=args.threshold, dry_run=args.dry_run, reason=args.reason)
+                if args.auto:
+                    res = pm.run_auto_until_settled(reason=args.reason, signal=args.signal, provider="codex")
+                else:
+                    res = pm.evaluate_codex_balance(threshold=args.threshold, dry_run=args.dry_run, reason=args.reason)
                 if args.json:
                     print(json.dumps(res, indent=2))
                 else:

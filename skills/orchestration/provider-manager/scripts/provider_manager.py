@@ -1695,6 +1695,14 @@ def switch_codex_account(target: str, force: bool = False) -> Dict[str, Any]:
                             "email": target_email,
                             "method": "autonomous_browser_login"
                         })
+                        now = time.time()
+                        update_state(lambda s: s.__setitem__("lastCodexSwitch", {
+                            "at": now,
+                            "from": ctx["activeIdentity"].get("email") or "unknown",
+                            "to": target_email,
+                            "id": target_id,
+                            "method": "autonomous_browser_login",
+                        }))
                         return {
                             "status": "switched",
                             "active": target_email,
@@ -1817,6 +1825,14 @@ def evaluate_codex_balance(threshold: Optional[float] = None, dry_run: bool = Fa
 
     now = time.time()
     state = load_state()
+    if state.get("holdUntil", 0) > now:
+        return {
+            "action": "hold",
+            "reason": "Operator hold active",
+            "remainingSeconds": int(state["holdUntil"] - now),
+            "active": active_email,
+        }
+
     last_switch = state.get("lastCodexSwitch") or {}
     last_switch_at = last_switch.get("at", 0)
     cooldown = cfg.get("cooldownMinutes", 30.0) * 60.0
@@ -1856,7 +1872,9 @@ def evaluate_codex_balance(threshold: Optional[float] = None, dry_run: bool = Fa
         if arc_available:
             unauth_standbys = [
                 u for u in usage_list
-                if not u.get("isActive") and not u.get("isRateLimited")
+                if not u.get("isActive") and not u.get("isRateLimited") and (
+                    u.get("needsLogin") or u.get("telemetry") in ("auth_expired", "needs_login")
+                )
             ]
             if unauth_standbys:
                 best_candidate = unauth_standbys[0]
@@ -1872,12 +1890,12 @@ def evaluate_codex_balance(threshold: Optional[float] = None, dry_run: bool = Fa
     target_email = best_candidate["email"]
     target_id = best_candidate["id"]
 
-    if dry_run:
+    if dry_run or not cfg.get("autoBalance", True):
         return {
             "action": "would_switch",
             "previous": active_email,
             "target": target_email,
-            "reason": switch_reason,
+            "reason": switch_reason if cfg.get("autoBalance", True) else f"{switch_reason} (autoBalance disabled)",
             "candidateUsage": (best_candidate.get("primary") or {}).get("usedPercent"),
         }
 

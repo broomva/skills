@@ -45,7 +45,7 @@ def kick(reason: str, signal: str = None, force: bool = False) -> None:
             return
     pm.update_state(lambda s: s.__setitem__("lastKickAt", now))
     if os.environ.get("PROVIDER_MANAGER_INLINE") == "1":
-        pm.run_auto(reason=reason, signal=signal)
+        pm.run_auto(reason=reason, signal=signal, provider="all")
         return
     argv = [sys.executable] + (["-I"] if sys.flags.isolated else []) + [
         str(SCRIPT_DIR / "provider_manager.py"), "balance", "--auto", "--provider", "all", "--reason", reason]
