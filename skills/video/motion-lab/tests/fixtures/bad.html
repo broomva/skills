@@ -1,0 +1,26 @@
+<!doctype html>
+<html>
+<head>
+<link href="https://fonts.googleapis.com/css2?family=Geist+Mono" rel="stylesheet">
+<style>
+  .card { transition: transform 0.3s ease; }
+  @keyframes grow { from { width: 10px; } to { width: 100px; } }
+</style>
+<script type="importmap">
+{ "imports": { "three": "https://cdn.jsdelivr.net/npm/three@latest/build/three.module.js" } }
+</script>
+</head>
+<body>
+<canvas id="c"></canvas>
+<script src="helpers.js"></script>
+<script type="module">
+  import * as THREE from 'three';
+  const ctx = document.getElementById('c').getContext('2d');
+  let x = 0;
+  setInterval(() => { x += Math.random() * 4; }, 16);
+  fetch('https://api.example.com/data.json');
+  function loop() { ctx.fillRect(x, Date.now() % 90, 4, 4); requestAnimationFrame(loop); }
+  loop();
+</script>
+</body>
+</html>

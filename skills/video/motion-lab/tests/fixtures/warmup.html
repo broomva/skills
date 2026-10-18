@@ -1,0 +1,25 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  /* Several composited CSS animations at full size. Pausing them before the
+     compositor has started them leaves them rastered on the main thread, so the
+     first kept frame differs on antialiased edges. render.mjs awaits
+     animation.ready before any pause; this fixture is what proves it. */
+  html, body { margin: 0; background: #F4F1EC; font-family: sans-serif; }
+  .b { position: absolute; width: 120px; height: 120px; border-radius: 28px; background: #D97757; }
+  .b1 { left: 120px; top: 200px; animation: spin 2s linear infinite; }
+  .b2 { left: 480px; top: 200px; animation: grow 1.5s ease-in-out infinite; }
+  .b3 { left: 840px; top: 200px; animation: spin 3s linear infinite reverse; }
+  h1 { position: absolute; left: 120px; top: 600px; margin: 0; font-size: 64px; color: #1C1B1A;
+       animation: grow 2s ease-in-out infinite; transform-origin: left center; }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  @keyframes grow { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.25) rotate(8deg); } }
+</style>
+</head>
+<body>
+<div class="b b1"></div><div class="b b2"></div><div class="b b3"></div>
+<h1>Motion lab</h1>
+</body>
+</html>

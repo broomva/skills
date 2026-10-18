@@ -1,0 +1,22 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>html,body{margin:0;background:#fff}</style></head>
+<body><canvas id="c" width="100" height="90"></canvas><spin-badge></spin-badge>
+<script>
+  // A web component whose own CSS spinner it pauses under ?t=. Its animation lives
+  // in a shadow root, which document.getAnimations() does not list (P20 round 7).
+  customElements.define('spin-badge', class extends HTMLElement {
+    constructor() {
+      super();
+      const frozen = false;
+      this.attachShadow({ mode: 'open' }).innerHTML = `<style>
+        .s{position:absolute;left:110px;top:20px;width:30px;height:30px;background:#D97757;
+           animation:spin 1s linear infinite;${frozen ? 'animation-play-state:paused;' : ''}}
+        @keyframes spin{to{transform:rotate(360deg)}}</style><div class="s"></div>`;
+    }
+  });
+  const ctx = document.getElementById('c').getContext('2d');
+  window.renderAt = function (t) {
+    ctx.fillStyle = '#fff'; ctx.fillRect(0, 0, 100, 90);
+    ctx.fillStyle = '#000'; ctx.fillRect((t * 40) % 90, 40, 10, 10);
+  };
+</script></body></html>

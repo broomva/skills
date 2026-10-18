@@ -1,0 +1,7 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>html,body{margin:0;background:#fff}</style></head>
+<body>
+<!-- SMIL inside an <img>: its timeline is unreachable from the page, so nothing
+     the renderer seeks drives it, yet the frames change. Motion on its own clock. -->
+<img width="160" height="90" src="data:image/svg+xml;utf8,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='90'%3E%3Ccircle cx='80' cy='45' r='5' fill='%23D97757'%3E%3Canimate attributeName='r' from='5' to='40' dur='1s' repeatCount='indefinite'/%3E%3C/circle%3E%3C/svg%3E">
+</body></html>

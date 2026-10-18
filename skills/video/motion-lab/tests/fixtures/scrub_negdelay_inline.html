@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;background:#fff}
+  .box{position:absolute;top:30px;left:0;width:20px;height:20px;background:#000;
+       animation:slide 1s linear both}
+  @keyframes slide{from{transform:translateX(0)}to{transform:translateX(120px)}}
+</style></head>
+<body><div class="box"></div>
+<script>
+  // The scrub idiom with the pause set by renderAt itself, inline: the animation
+  // RUNS until renderAt first touches it. Deciding ownership before renderAt ran
+  // claimed it for the renderer and doubled its speed (P20 round 6).
+  const box = document.querySelector('.box');
+  window.renderAt = function (t) {
+    box.style.animationPlayState = 'paused';
+    box.style.animationDelay = (-t) + 's';
+  };
+</script></body></html>
