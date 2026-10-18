@@ -203,8 +203,7 @@ def test_switch_codex_account_success(monkeypatch, tmp_path):
 
 
 def test_evaluate_codex_balance(monkeypatch):
-    active_tokens = {"access_token": "tok_dev"}
-    standby_tokens = {"access_token": "tok_carlos"}
+    monkeypatch.setattr(pm, "load_state", lambda: {"lastCodexSwitch": {"at": 0}})
 
     # Case 1: Active is healthy (40% 5h) -> hold
     def fake_usage_healthy(force=False, ctx=None):
@@ -244,6 +243,68 @@ def test_evaluate_codex_balance(monkeypatch):
     dec2 = pm.evaluate_codex_balance(threshold=90.0, dry_run=True)
     assert dec2["action"] == "would_switch"
     assert dec2["target"] == "carlos@getstimulus.ai"
+
+
+def test_evaluate_codex_balance_arc_fallback(monkeypatch):
+    import pm_codex_login
+    monkeypatch.setattr(pm, "load_state", lambda: {"lastCodexSwitch": {"at": 0}})
+    monkeypatch.setattr(pm_codex_login, "is_arc_available", lambda: True)
+
+    def fake_usage_standby_needs_login(force=False, ctx=None):
+        return [
+            {
+                "id": "id_1", "email": "carlos@getstimulus.ai", "isActive": True,
+                "telemetry": "ok", "isRateLimited": True,
+                "primary": {"usedPercent": 100}, "secondary": {"usedPercent": 20},
+            },
+            {
+                "id": "id_2", "email": "devteam@getstimulus.ai", "isActive": False,
+                "telemetry": "auth_expired", "needsLogin": True, "isRateLimited": False,
+                "primary": None, "secondary": None,
+            }
+        ]
+
+    monkeypatch.setattr(pm, "fetch_codex_usage", fake_usage_standby_needs_login)
+    dec = pm.evaluate_codex_balance(threshold=90.0, dry_run=True)
+    assert dec["action"] == "would_switch"
+    assert dec["target"] == "devteam@getstimulus.ai"
+    assert "re-auth via Arc" in dec["reason"]
+
+
+def test_evaluate_codex_balance_cooldown(monkeypatch):
+    now = time.time()
+    monkeypatch.setattr(pm, "load_state", lambda: {"lastCodexSwitch": {"at": now - 300}})  # 5 min ago
+
+    def fake_usage_high(force=False, ctx=None):
+        return [
+            {
+                "id": "id_1", "email": "carlos@getstimulus.ai", "isActive": True,
+                "telemetry": "ok", "isRateLimited": False,
+                "primary": {"usedPercent": 95}, "secondary": {"usedPercent": 20},
+            },
+            {
+                "id": "id_2", "email": "devteam@getstimulus.ai", "isActive": False,
+                "telemetry": "ok", "isRateLimited": False,
+                "primary": {"usedPercent": 10}, "secondary": {"usedPercent": 5},
+            }
+        ]
+
+    monkeypatch.setattr(pm, "fetch_codex_usage", fake_usage_high)
+    dec = pm.evaluate_codex_balance(threshold=90.0, dry_run=True)
+    assert dec["action"] == "hold"
+    assert "cooldown active" in dec["reason"]
+
+
+def test_run_auto_all_providers(monkeypatch):
+    monkeypatch.setattr(pm, "load_state", lambda: {"lastEvalAt": 0, "lastCodexSwitch": {"at": 0}})
+    monkeypatch.setattr(pm, "balance_accounts", lambda **kw: {"action": "hold", "reason": "claude_ok"})
+    monkeypatch.setattr(pm, "evaluate_codex_balance", lambda **kw: {"action": "hold", "reason": "codex_ok"})
+
+    res = pm.run_auto(reason="test", provider="all")
+    assert "claude" in res
+    assert "codex" in res
+    assert res["claude"]["reason"] == "claude_ok"
+    assert res["codex"]["reason"] == "codex_ok"
 
 
 def test_write_codex_auth_file_mode(tmp_path):

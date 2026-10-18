@@ -48,7 +48,7 @@ def kick(reason: str, signal: str = None, force: bool = False) -> None:
         pm.run_auto(reason=reason, signal=signal)
         return
     argv = [sys.executable] + (["-I"] if sys.flags.isolated else []) + [
-        str(SCRIPT_DIR / "provider_manager.py"), "balance", "--auto", "--reason", reason]
+        str(SCRIPT_DIR / "provider_manager.py"), "balance", "--auto", "--provider", "all", "--reason", reason]
     if signal:
         argv += ["--signal", signal]
     pm_state.spawn_detached(argv)
@@ -71,6 +71,15 @@ def handle_session_start(payload: dict) -> None:
         gate = pm.gate_status()
         if gate:
             parts.append(gate)
+        try:
+            codex_auth = pm.read_codex_auth()
+            if codex_auth.status == "ok" and codex_auth.data:
+                ident = pm.extract_codex_identity(codex_auth.data.get("tokens") or codex_auth.data)
+                codex_email = ident.get("email")
+                if codex_email:
+                    parts.append("Codex: %s" % codex_email)
+        except Exception:
+            pass
         if parts:
             sys.stderr.write("[provider-manager] %s\n" % " | ".join(sorted(parts)))
     except Exception:  # noqa: BLE001 - a status line must never break a session

@@ -84,6 +84,7 @@ many sessions kick. It switches only when:
   `version_unverified`, shown in the session-start line and `usage`) until the drill is re-run and
   the version added (`verifiedClaudeVersions`). An account the probe confirmed limited is not a
   failover target for an hour.
+- **Codex balancing:** evaluate 5-hour utilization (≥ 90%) and rate limits. If the active account needs failover, the balancer picks an eligible standby and switches accounts, automatically falling back to autonomous browser re-authorization (Arc "Stimulus" space) if the standby's refresh token was invalidated by OpenAI's single-session OAuth constraint.
 
 Telemetry that cannot be read is never a rate limit. The usage endpoint answering 429 means
 `throttled` (back off, keep the last numbers marked stale). An expired token means `auth_expired`. A
@@ -126,6 +127,7 @@ python3 $PM login-headless --provider codex [--email X] # autonomous Codex re-lo
 python3 $PM usage --provider all       # display both Claude Code and OpenAI Codex telemetry
 python3 $PM status --provider all      # inspect authentication across both providers
 python3 $PM list --provider all        # list managed accounts across both providers
+python3 $PM balance --provider all     # evaluate and balance both Claude and Codex accounts
 ```
 
 `login-headless` for Claude accounts renews via browser cookies in Arc/Chrome without GUI interaction. For OpenAI Codex, `switch` and `login-headless` autonomously drive the OAuth code approval via Arc's browser session (selecting account and confirming workspace consent headlessly) whenever stored tokens need refresh, enabling zero-prompt continuous swapping between team members.

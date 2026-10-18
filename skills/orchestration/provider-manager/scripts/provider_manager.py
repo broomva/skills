@@ -1089,7 +1089,7 @@ def _do_switch(best, active, reason, dry_run, automatic, cfg, source, evidence) 
     return dict(res, success=bool(sw.get("success")), action="switched", switchResult=sw)
 
 
-def run_auto(reason: str = "hook", signal: Optional[str] = None) -> Dict[str, Any]:
+def run_auto(reason: str = "hook", signal: Optional[str] = None, provider: str = "claude") -> Dict[str, Any]:
     """The hooks' entry point (normally in a detached process): at most one evaluation per interval,
     machine-wide, and never while another provider-manager action runs."""
     cfg = load_config()
@@ -1104,31 +1104,47 @@ def run_auto(reason: str = "hook", signal: Optional[str] = None) -> Dict[str, An
         if not signal and time.time() - load_state().get("lastEvalAt", 0) < cfg["evalIntervalSeconds"]:
             return {"success": True, "action": "none", "reason": "recent_evaluation"}
         update_state(lambda s: s.__setitem__("lastEvalAt", time.time()))
-        return balance_accounts(source="auto_failover" if signal else "proactive_balance",
-                                signal=signal, blocking=False, automatic=True)
+
+        if provider == "claude":
+            return balance_accounts(source="auto_failover" if signal else "proactive_balance",
+                                    signal=signal, blocking=False, automatic=True)
+        elif provider == "codex":
+            return evaluate_codex_balance(reason=reason)
+        else:  # "all"
+            res: Dict[str, Any] = {}
+            res["claude"] = balance_accounts(source="auto_failover" if signal else "proactive_balance",
+                                             signal=signal, blocking=False, automatic=True)
+            try:
+                res["codex"] = evaluate_codex_balance(reason=reason)
+            except Exception as e:
+                res["codex"] = {"action": "error", "error": str(e)}
+            return res
 
 
 TRANSIENT_REFUSALS = ("store changed", "refreshing its token", "holds the balancer lock")
 
 
-def run_auto_until_settled(reason: str, signal: Optional[str], budget_seconds: float = 900.0) -> Dict[str, Any]:
+def run_auto_until_settled(reason: str, signal: Optional[str] = None, budget_seconds: float = 900.0,
+                           provider: str = "claude") -> Dict[str, Any]:
     """For a reported limit (detached process only): when the evaluation could not act yet (lock
     busy, inside the failover gap, an inconclusive probe, a transient refusal), wait and try again
     for up to 15 minutes. Sessions stalled on the limit send no prompts, so nothing else would start
     it again. One such loop per machine (the report is in the state for it), and it stops as soon as
     any switch has happened."""
+    call_kwargs = {} if provider == "claude" else {"provider": provider}
     if not signal:
-        return run_auto(reason=reason)
+        return run_auto(reason=reason, **call_kwargs)
     with pm_state.exclusive(SETTLE_LOCK_PATH) as mine:
         if not mine:
             return {"success": True, "action": "none", "reason": "settle_loop_running"}
         started = time.time()
         deadline = started + budget_seconds
         eval_started = time.time()
-        res = run_auto(reason=reason, signal=signal)
+        res = run_auto(reason=reason, signal=signal, **call_kwargs)
         while time.time() < deadline:
-            r = res.get("reason")
-            transient = r == "switch_refused" and any(t in (res.get("error") or "") for t in TRANSIENT_REFUSALS)
+            target_res = res.get("claude") if isinstance(res, dict) and "claude" in res else res
+            r = target_res.get("reason")
+            transient = r == "switch_refused" and any(t in (target_res.get("error") or "") for t in TRANSIENT_REFUSALS)
             switched = float((load_state().get("lastSwitch") or {}).get("at", 0) or 0) >= started
             if switched or (r not in ("busy", "cooldown", "probe_inconclusive") and not transient):
                 # a report that arrived during that evaluation was turned away by this loop's lock:
@@ -1137,12 +1153,12 @@ def run_auto_until_settled(reason: str, signal: Optional[str], budget_seconds: f
                 if not newer:
                     break
                 eval_started = time.time()
-                res = run_auto(reason=reason, signal=newer[-1].get("type"))
+                res = run_auto(reason=reason, signal=newer[-1].get("type"), **call_kwargs)
                 continue
-            wait = res.get("remainingSeconds") if r == "cooldown" else (35 if r == "probe_inconclusive" else 15)
+            wait = target_res.get("remainingSeconds") if r == "cooldown" else (35 if r == "probe_inconclusive" else 15)
             time.sleep(max(5.0, min(float(wait or 15) + 1.0, deadline - time.time())))
             eval_started = time.time()
-            res = run_auto(reason=reason, signal=signal)
+            res = run_auto(reason=reason, signal=signal, **call_kwargs)
         return res
 
 
@@ -1736,11 +1752,19 @@ def switch_codex_account(target: str, force: bool = False) -> Dict[str, Any]:
         s["activeCodexManagedAccountId"] = target_id
     _guarded_update(ORCA_DATA_PATH, update_orca_active)
 
+    now = time.time()
+    update_state(lambda s: s.__setitem__("lastCodexSwitch", {
+        "at": now,
+        "from": prev_email,
+        "to": target_email,
+        "id": target_id,
+    }))
+
     log_provider_event("codex.switch", {
         "previous": prev_email,
         "active": target_email,
         "targetId": target_id,
-        "timestamp": time.time(),
+        "timestamp": now,
     })
 
     return {
@@ -1791,6 +1815,26 @@ def evaluate_codex_balance(threshold: Optional[float] = None, dry_run: bool = Fa
             "active": active_email,
         }
 
+    now = time.time()
+    state = load_state()
+    last_switch = state.get("lastCodexSwitch") or {}
+    last_switch_at = last_switch.get("at", 0)
+    cooldown = cfg.get("cooldownMinutes", 30.0) * 60.0
+    min_gap = cfg.get("failoverMinGapMinutes", 5.0) * 60.0
+
+    if not active_limited and (now - last_switch_at < cooldown):
+        return {
+            "action": "hold",
+            "reason": f"Codex balance cooldown active ({int(cooldown - (now - last_switch_at))}s remaining)",
+            "active": active_email,
+        }
+    if active_limited and (now - last_switch_at < min_gap):
+        return {
+            "action": "hold",
+            "reason": f"Codex failover minimum gap active ({int(min_gap - (now - last_switch_at))}s remaining)",
+            "active": active_email,
+        }
+
     standbys = [u for u in usage_list if not u.get("isActive") and u.get("telemetry") == "ok" and not u.get("isRateLimited")]
     best_candidate = None
 
@@ -1799,6 +1843,24 @@ def evaluate_codex_balance(threshold: Optional[float] = None, dry_run: bool = Fa
         if s_prim <= standby_max and (active_limited or (active_primary is not None and (active_primary - s_prim) >= margin)):
             best_candidate = s
             break
+
+    # If no healthy standby with telemetry exists (e.g. OpenAI single-session invalidation),
+    # check if Arc browser session is available for autonomous re-auth.
+    if not best_candidate:
+        try:
+            import pm_codex_login
+            arc_available = pm_codex_login.is_arc_available()
+        except Exception:
+            arc_available = False
+
+        if arc_available:
+            unauth_standbys = [
+                u for u in usage_list
+                if not u.get("isActive") and not u.get("isRateLimited")
+            ]
+            if unauth_standbys:
+                best_candidate = unauth_standbys[0]
+                switch_reason += f" (standby {best_candidate.get('email')} will re-auth via Arc)"
 
     if not best_candidate:
         return {
@@ -1816,7 +1878,7 @@ def evaluate_codex_balance(threshold: Optional[float] = None, dry_run: bool = Fa
             "previous": active_email,
             "target": target_email,
             "reason": switch_reason,
-            "candidateUsage": best_candidate.get("primary", {}).get("usedPercent"),
+            "candidateUsage": (best_candidate.get("primary") or {}).get("usedPercent"),
         }
 
     res = switch_codex_account(target_id, force=True)
