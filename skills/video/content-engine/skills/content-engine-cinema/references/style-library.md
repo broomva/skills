@@ -437,6 +437,24 @@ bright warm daylight, utopian but grounded, nature and technology in harmony
 
 ---
 
+## 27. Stylized Feature Animation
+
+**Visual characteristics:** Fully rendered 3D characters with appealing, exaggerated proportions (large heads and eyes, simplified hands), soft subsurface scattering on skin, fur and paper, rich but controlled colour, physically based light with a clear key, gentle depth of field, and hand-made-looking material textures. Reads as a feature film frame, not a toy or a product render.
+
+**When to use:** Fictional worlds with non-human or stylized casts, animal and creature characters, all-ages series and short-form universes, anywhere photoreal faces would drift or read uncanny. Pair it with a written style lock (content-engine-universe's `templates/style-lock.md`): this entry gives the render language, the lock gives the world's palette and light rule.
+
+**Prompt fragment:**
+```
+stylized 3D feature animation, appealing exaggerated proportions, large expressive eyes,
+soft subsurface scattering, physically based lighting with a clear key light,
+gentle depth of field, rich controlled colour palette, hand-made material textures,
+cinematic composition, clean readable silhouettes
+```
+
+Name the technique, never a studio, film or artist: a reference name in a prompt imitates someone else's IP and drifts the look toward theirs. Keep references in the world's bible. Drop the photoreal negatives ("cartoon, anime, illustration") from any negative prompt used with this style.
+
+---
+
 ## Style Combination Patterns
 
 Styles can be combined for unique aesthetics. Some tested pairings:

@@ -475,6 +475,15 @@ Operational rule that protects everything above:
 
 This is the same logic as the `sources` array with SHA-256 hashes in the [character sheet frontmatter](#frontmatter) — the raw visual anchor is the irreplaceable asset and must survive any single tool's lifecycle. In content-engine terms: the hero portrait belongs in `knowledge/raw/character-refs/{slug}/` alongside the other references, hashed and recorded, *before* it is ever uploaded to a generation tool. The Fixed-DNA text block, the local hero image, and (when available) the tool-native anchor are three redundant copies of the same identity — the more tool-independent the copy, the more durable it is.
 
+### Stylized and non-human casts
+
+The identity-lock example above is photoreal by default ("Ultra-realistic … no stylization"), and the
+reference volume (5–12 images) and the 5-generation verification assume a paid, human workflow. For a
+stylized or non-human cast, built in a world-building grill that generates nothing, see
+`skills/content-engine-universe/` (`references/content-engine-conflicts.md`): the render style moves to a
+style lock, the Fixed DNA holds identity only and is capped (`dna_cap`, default 600), species fields
+replace the human ones, and verification moves to the production tool's metered asks.
+
 ### Product & non-human identity lock (generalizing the passport)
 
 Everything above is framed around a human face, but the **Master Prompt split is subject-agnostic** — it locks *any* recurring hero, and a **product** is the most common non-human case the face-only framing omits (the course's own product examples include the ZUFA-ZUFA energy drink and the snake-jewelry commercial). The mechanic is identical: a **Fixed DNA** that never changes + a **Variable Context** that changes per shot, anchored by **one canonical reference image**. Store a product's Fixed DNA in `knowledge/compiled/brands/{slug}.md` (or a `products/` sibling) — it is a character sheet for an object.
