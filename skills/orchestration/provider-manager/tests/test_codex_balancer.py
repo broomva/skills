@@ -189,7 +189,7 @@ def test_every_codex_balance_outcome_is_logged_with_its_reason(cx, monkeypatch):
     assert ev["action"] == "hold" and ev["code"] == "within_budget" and ev["reason"] == res["reason"]
     assert "revoked" in ev["standbys"][DEV] and ev["source"] == "hook" and ev["trace_id"]
 
-    cx.usage_pct["rt-carlos-1"] = 96
+    cx.limit_type["rt-carlos-1"] = "usage_limit_reached"
     res = pm.evaluate_codex_balance(reason="hook")
     assert res["code"] == "relogin_unavailable" and "Arc is not running" in res["reason"]
     assert _events("codex.balance.decision")[-1]["code"] == "relogin_unavailable"
@@ -239,7 +239,10 @@ def test_relogin_forces_the_account_chooser_in_the_configured_arc_space(cx, monk
     cx.login(DEV, "rt-dev-1")
     cx.revoked.add("rt-carlos-1")
     cx.usage_pct["rt-dev-1"] = 97
+    res = pm.evaluate_codex_balance(reason="hook")
+    assert res["code"] == "relogin_needs_a_limit" and calls == [], "97% still works: no seat revoked for it"
 
+    cx.limit_type["rt-dev-1"] = "usage_limit_reached"
     res = pm.evaluate_codex_balance(reason="hook")
     assert res["action"] == "switched" and res["method"] == "autonomous_browser_login"
     assert calls == [(CARLOS, "Carlos")]
@@ -249,7 +252,7 @@ def test_relogin_forces_the_account_chooser_in_the_configured_arc_space(cx, monk
 
     # a failed re-login is not retried on every kick (each opens an Arc tab)
     cx.login(DEV, "rt-dev-2")
-    cx.usage_pct["rt-dev-2"] = 97
+    cx.limit_type["rt-dev-2"] = "usage_limit_reached"
     cx.revoked.add("rt-carlos-new")
     pm.update_state(lambda s: s.update(lastCodexSwitch={"at": 0}, codexLoginAttempts={CARLOS: time.time()}))
     res = pm.evaluate_codex_balance(reason="hook")
@@ -334,7 +337,7 @@ def test_a_transient_standby_refresh_failure_is_not_a_relogin_candidate(cx, monk
     monkeypatch.setattr(pm_codex_login, "arc_usable", lambda timeout=3.0: pytest.fail("no re-login for a blip"))
     cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-1", ttl=10))
     cx.login(DEV, "rt-dev-1")
-    cx.usage_pct["rt-dev-1"] = 97
+    cx.limit_type["rt-dev-1"] = "usage_limit_reached"  # limited: the re-login fallback is reachable
     monkeypatch.setattr(pm, "refresh_codex_token", lambda rt, client_id=None, timeout=30: (None, None, "timed out"))
     rows = _rows()
     assert rows[CARLOS]["telemetry"] == "unavailable" and not rows[CARLOS]["needsLogin"]
@@ -397,7 +400,7 @@ def test_an_odd_standby_401_is_not_a_relogin_candidate(cx, monkeypatch):
     logins = _no_login(monkeypatch)
     cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-1"))
     cx.login(DEV, "rt-dev-1")
-    cx.usage_pct["rt-dev-1"] = 97
+    cx.limit_type["rt-dev-1"] = "usage_limit_reached"  # limited: the re-login fallback is reachable
     real_usage = cx._usage
     monkeypatch.setattr(pm, "fetch_codex_usage_raw", lambda at, acc: (401, None, "HTTP 401: <html>gateway</html>")
                         if pm_store.decode_jwt_unverified(at).get("rt") == "rt-carlos-1" else real_usage(at, acc))
@@ -414,7 +417,7 @@ def test_an_unreadable_copy_under_any_key_is_never_absent(cx, monkeypatch, error
     "no saved copy", a re-login reason. One reader now decides, for every caller."""
     logins = _no_login(monkeypatch)
     cx.login(DEV, "rt-dev-1")
-    cx.usage_pct["rt-dev-1"] = 97
+    cx.limit_type["rt-dev-1"] = "usage_limit_reached"  # limited: the re-login fallback is reachable
     real_read = cx._read
     monkeypatch.setattr(pm, "read_orca_codex", lambda k: pm_store.Read("error", None, "security rc 36")
                         if k in errored else real_read(k))
@@ -506,3 +509,15 @@ def test_a_dead_seat_known_to_be_in_another_workspace_may_still_be_relogged_in(c
     with pytest.raises(pm_store.StoreError, match="refused by the test"):
         pm.evaluate_codex_balance()
     assert logins and logins[0][0] == CARLOS
+
+
+def test_headless_login_that_moves_the_seat_records_a_switch(cx, monkeypatch):
+    """CodeRabbit (PR 288): a `login-headless` that moved the seat left the cooldown blind to it."""
+    import pm_codex_login
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login",
+                        lambda email, space_name="Stimulus": (cx.login(email, "rt-carlos-new") and (True, "ok")))
+    cx.login(DEV, "rt-dev-1")
+    pm.login_codex_headless(CARLOS)
+    last = pm.load_state()["lastCodexSwitch"]
+    assert last["to"] == CARLOS and last["from"] == DEV and last["method"] == "login_headless"
+    assert cx.kc[DEV_ID]["tokens"]["refresh_token"] == "rt-dev-1" and cx.kc[CARLOS_ID]["tokens"]["refresh_token"] == "rt-carlos-new"

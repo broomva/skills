@@ -1406,14 +1406,20 @@ def login_codex_headless(email: Optional[str] = None, space: Optional[str] = Non
                                                   holder="codex-login") as held:
         if not held:
             raise StoreError("another provider-manager action holds the balancer lock")
-        snapshot_codex_auth(build_codex_context(verify_identity=True))
+        before = build_codex_context(verify_identity=True)
+        snapshot_codex_auth(before)
         update_state(lambda s: s.setdefault("codexLoginAttempts", {}).__setitem__(target_email, time.time()))
         ok, msg = pm_codex_login.run_codex_autonomous_login(target_email, space_name=space)
         if not ok:
             log_provider_event("codex.login.failed", {"email": target_email, "space": space, "reason": msg[:300]})
             raise StoreError(f"Autonomous Codex login failed: {msg}")
-        saved = snapshot_codex_auth(build_codex_context(verify_identity=True))
+        after = build_codex_context(verify_identity=True)
+        saved = snapshot_codex_auth(after)
         log_provider_event("codex.login", {"email": target_email, "space": space, "saved": saved})
+        if after["activeAccountId"] and after["activeAccountId"] != before["activeAccountId"]:
+            # the seat moved: the balancer's cooldown and Orca's active id must know it
+            _record_codex_switch(before, after["activeAccountId"], target_email,
+                                 before["activeIdentity"].get("email") or "unknown", "login_headless")
     return {"success": True, "provider": "codex", "email": target_email, "space": space, "message": msg}
 
 
@@ -2097,6 +2103,12 @@ def _evaluate_codex_locked(threshold: Optional[float], dry_run: bool) -> Dict[st
 
     cands = [s for s in usage_list if not s.get("isActive") and not s.get("standbyReason") and margin_ok(s)]
     best = min(cands, key=lambda s: (s.get("primary") or {}).get("usedPercent") or 0) if cands else None
+    if not best and not active_limited:
+        # A browser re-login revokes the live seat, and a dead standby has no numbers to compare: over a
+        # threshold the seat still works, so only a limit is worth that (no seat ping-pong at 90%).
+        return dict(base, action="hold", code="relogin_needs_a_limit",
+                    reason=f"{switch_reason}, but no live standby; a re-login (which revokes this seat) "
+                           "is only started once it is limited")
     if not best:
         # No live standby: with one live seat at a time this is the usual case. A dead copy can still be
         # re-logged in through Arc, unless its workspace's exhausted credits make the move pointless.

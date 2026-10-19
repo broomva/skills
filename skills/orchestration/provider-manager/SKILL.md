@@ -124,7 +124,8 @@ What the balancer does with that:
   `standbyMax` and, for a balance, `margin` points lower. While the active seat is out of workspace
   credits, a standby in the same workspace, or of unknown workspace (no saved copy), is never a
   candidate and is never re-logged in; only one known to be in another workspace is.
-- With no live standby (the usual case), it re-logs in a standby whose grant is proven dead
+- With no live standby (the usual case) and the active seat limited (not merely over a threshold:
+  a re-login revokes a seat that still works), it re-logs in a standby whose grant is proven dead
   (`revoked`, `needs_login`) or that has no copy. A transient failure (network, a busy lock, a copy
   that changed or could not be read, a 401 without a revocation code) never starts a re-login, because
   a re-login revokes the live seat. The re-login runs through Arc, with `prompt=login`
