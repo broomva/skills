@@ -518,6 +518,6 @@ def test_headless_login_that_moves_the_seat_records_a_switch(cx, monkeypatch):
                         lambda email, space_name="Stimulus": (cx.login(email, "rt-carlos-new") and (True, "ok")))
     cx.login(DEV, "rt-dev-1")
     pm.login_codex_headless(CARLOS)
-    last = pm.load_state()["lastCodexSwitch"]
+    last = pm.load_state().get("lastCodexSwitch") or {}
     assert last["to"] == CARLOS and last["from"] == DEV and last["method"] == "login_headless"
     assert cx.kc[DEV_ID]["tokens"]["refresh_token"] == "rt-dev-1" and cx.kc[CARLOS_ID]["tokens"]["refresh_token"] == "rt-carlos-new"
