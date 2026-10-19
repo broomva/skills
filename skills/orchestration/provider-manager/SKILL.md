@@ -121,8 +121,9 @@ What the balancer does with that:
   `needs_login`). That grant is not sent to the usage or token endpoint again until new tokens replace it.
 - It moves the CLI when the active account is limited (readable numbers only: a usage 429 is
   `throttled`, never a limit) or over the 5-hour/7-day thresholds, to a live standby that is under
-  `standbyMax` and, for a balance, `margin` points lower. A standby in the same workspace as an active
-  seat that is out of credits is never a candidate.
+  `standbyMax` and, for a balance, `margin` points lower. While the active seat is out of workspace
+  credits, a standby in the same workspace, or of unknown workspace (no saved copy), is never a
+  candidate and is never re-logged in; only one known to be in another workspace is.
 - With no live standby (the usual case), it re-logs in a standby whose grant is proven dead
   (`revoked`, `needs_login`) or that has no copy. A transient failure (network, a busy lock, a copy
   that changed or could not be read, a 401 without a revocation code) never starts a re-login, because

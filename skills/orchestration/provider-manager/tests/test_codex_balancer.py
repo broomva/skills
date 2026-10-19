@@ -495,3 +495,14 @@ def test_a_seat_without_a_copy_is_not_relogged_in_when_the_workspace_is_out_of_c
         res = {"action": "raised", "code": str(e)}
     assert logins == [], "a re-login was tried inside a workspace out of credits"
     assert res["action"] == "hold" and res["code"] == "no_candidate"
+
+
+def test_a_dead_seat_known_to_be_in_another_workspace_may_still_be_relogged_in(cx, monkeypatch):
+    logins = _no_login(monkeypatch)
+    cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-1", ws="other-workspace"))
+    cx.login(DEV, "rt-dev-1")
+    cx.revoked.add("rt-carlos-1")
+    cx.limit_type["rt-dev-1"] = "workspace_credits_depleted"
+    with pytest.raises(pm_store.StoreError, match="refused by the test"):
+        pm.evaluate_codex_balance()
+    assert logins and logins[0][0] == CARLOS
