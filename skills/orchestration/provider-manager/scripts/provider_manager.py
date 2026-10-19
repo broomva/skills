@@ -1463,16 +1463,25 @@ def codex_roster() -> List[Dict[str, Any]]:
     return roster_accounts
 
 
+def read_codex_copy(acc_id: Optional[str], email: Optional[str]) -> Read:
+    """An account's saved Codex copy, under its roster id, else its email. "absent" only when no key
+    holds one; a read error under either key with no readable copy is "error", never "absent": an
+    unreadable copy is not a missing one, and a missing one can start a browser re-login."""
+    reads = [read_orca_codex(k) for k in dict.fromkeys(k for k in (acc_id, email) if k)]
+    for r in reads:
+        if r.status == "ok" and r.data:
+            return r
+    errors = [r for r in reads if r.status == "error"]
+    return errors[0] if errors else Read("absent", None)
+
+
 def build_codex_context(verify_identity: bool = True) -> Dict[str, Any]:
     accounts = codex_roster()
     copies = {}
     for acc in accounts:
         acc_id = acc.get("id")
         email = acc.get("email")
-        copy_read = read_orca_codex(acc_id)
-        if copy_read.status != "ok" and email:
-            copy_read = read_orca_codex(email)
-        copies[acc_id] = copy_read
+        copies[acc_id] = read_codex_copy(acc_id, email)
 
     store = read_codex_auth()
     store_tokens = store.data.get("tokens") if store.data else None
@@ -1702,8 +1711,8 @@ def _refresh_codex_copy_locked(acc_id: str, email: str, tokens: Dict[str, Any], 
         return None, dead.get("status") or "needs_login"
     code, data, err = refresh_codex_token(rt)
     if code != 200 or not isinstance(data, dict) or not data.get("access_token"):
-        if code in (400, 401):
-            why = _codex_error_code(err) or "http_%s" % code
+        why = _codex_error_code(err) if code in (400, 401) else ""
+        if why and re.search(r"invalid_grant|refresh_token_|revoked", why):  # the endpoint says the grant is dead
             status = _codex_dead_status(why)
             _mark_codex_health(acc_id, email, status, why, tokens)
             log_provider_event("refresh.failed", {"provider": "codex", "accountId": acc_id, "reason": why,
@@ -1810,6 +1819,10 @@ def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None,
 
         if not force and cached_entry and (now - cached_entry.get("cachedAt", 0)) < CACHE_TTL_SECONDS:
             out.append(dict(cached_entry, isActive=is_active))
+            continue
+        if not is_active and copy_read is not None and copy_read.status == "error":
+            out.append(_codex_entry(acc_id, email, is_active, "unavailable", needsLogin=False,
+                                    healthReason="copy unreadable: %s" % (copy_read.detail or "keychain error")))
             continue
         if not tokens or not tokens.get("access_token"):
             out.append(_codex_entry(acc_id, email, is_active, "needs_login", healthReason="no saved copy"))
@@ -1920,13 +1933,10 @@ def _switch_codex_locked(target: str, force: bool) -> Dict[str, Any]:
         return {"status": "already_active", "account": target_email, "id": target_id,
                 "message": f"{target_email} is already the active Codex account"}
 
-    target_read = read_orca_codex(target_id)
-    if target_read.status != "ok" or not target_read.data:
-        by_email = read_orca_codex(target_email)
-        if target_read.status == "error" and by_email.status != "ok":
-            raise StoreError(f"Cannot switch to {target_email}: its saved copy could not be read "
-                             f"({target_read.detail}); nothing was changed, retry")
-        target_read = by_email
+    target_read = read_codex_copy(target_id, target_email)
+    if target_read.status == "error":
+        raise StoreError(f"Cannot switch to {target_email}: its saved copy could not be read "
+                         f"({target_read.detail}); nothing was changed, retry")
     target_tokens = (target_read.data.get("tokens") or target_read.data) \
         if (target_read and target_read.status == "ok" and target_read.data) else None
 

@@ -405,3 +405,38 @@ def test_an_odd_standby_401_is_not_a_relogin_candidate(cx, monkeypatch):
     assert rows[CARLOS]["telemetry"] == "auth_expired" and "not re-logged in" in rows[CARLOS]["standbyReason"]
     res = pm.evaluate_codex_balance(reason="hook")
     assert res["code"] == "no_candidate" and logins == []
+
+
+@pytest.mark.parametrize("errored", [(CARLOS_ID,), (CARLOS,), (CARLOS_ID, CARLOS)],
+                         ids=["id-key", "email-key", "both-keys"])
+def test_an_unreadable_copy_under_any_key_is_never_absent(cx, monkeypatch, errored):
+    """Stratum B round 3: with the id key absent and the email key unreadable, the copy read as
+    "no saved copy", a re-login reason. One reader now decides, for every caller."""
+    logins = _no_login(monkeypatch)
+    cx.login(DEV, "rt-dev-1")
+    cx.usage_pct["rt-dev-1"] = 97
+    real_read = cx._read
+    monkeypatch.setattr(pm, "read_orca_codex", lambda k: pm_store.Read("error", None, "security rc 36")
+                        if k in errored else real_read(k))
+    assert pm.read_codex_copy(CARLOS_ID, CARLOS).status == "error"
+    rows = _rows()
+    assert rows[CARLOS]["telemetry"] == "unavailable" and not rows[CARLOS]["needsLogin"]
+    assert pm.evaluate_codex_balance(reason="hook")["code"] == "no_candidate"
+    with pytest.raises(pm_store.StoreError, match="could not be read"):
+        pm.switch_codex_account(CARLOS)
+    assert logins == [] and cx.auth_tokens()["refresh_token"] == "rt-dev-1"
+
+
+def test_a_missing_copy_reads_absent_and_may_be_relogged_in(cx):
+    assert pm.read_codex_copy(CARLOS_ID, CARLOS).status == "absent"
+    cx.save_copy(CARLOS, CARLOS, cx.tokens(CARLOS, "rt-carlos-1"))
+    assert pm.read_codex_copy(CARLOS_ID, CARLOS).status == "ok"
+
+
+def test_a_refresh_401_without_a_dead_grant_code_marks_nothing(cx, monkeypatch):
+    cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-1", ttl=10))
+    cx.login(DEV, "rt-dev-1")
+    monkeypatch.setattr(pm, "refresh_codex_token", lambda rt, client_id=None, timeout=30: (401, None, "HTTP 401: <html>gateway</html>"))
+    rows = _rows()
+    assert rows[CARLOS]["telemetry"] == "unavailable"
+    assert CARLOS_ID not in pm.load_state().get("codexHealth", {})
