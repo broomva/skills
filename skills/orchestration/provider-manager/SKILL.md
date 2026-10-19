@@ -123,7 +123,10 @@ What the balancer does with that:
   `throttled`, never a limit) or over the 5-hour/7-day thresholds, to a live standby that is under
   `standbyMax` and, for a balance, `margin` points lower. A standby in the same workspace as an active
   seat that is out of credits is never a candidate.
-- With no live standby (the usual case), it re-logs a dead one in through Arc, with `prompt=login`
+- With no live standby (the usual case), it re-logs in a standby whose grant is proven dead
+  (`revoked`, `needs_login`) or that has no copy. A transient failure (network, a busy lock, a copy
+  that changed or could not be read, a 401 without a revocation code) never starts a re-login, because
+  a re-login revokes the live seat. The re-login runs through Arc, with `prompt=login`
   forcing OpenAI's account chooser (without it, the Arc space's own web session is signed in, whoever
   that is) in the account's `arcSpace` (default `Stimulus`). A short AppleScript check runs first and
   reports "Arc not answering AppleScript" (a pending permission prompt hangs Arc) or "Arc is not

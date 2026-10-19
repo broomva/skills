@@ -1726,6 +1726,11 @@ def _refresh_codex_copy_locked(acc_id: str, email: str, tokens: Dict[str, Any], 
     return new, "ok"
 
 
+# The only reasons a switch may re-log an account in through the browser (which revokes the live
+# seat): no saved copy at all, or a grant the token endpoint itself proved dead.
+CODEX_RELOGIN_REASONS = ("no saved copy", "no_refresh_token", "revoked", "needs_login")
+
+
 def _codex_entry(acc_id: str, email: str, is_active: bool, telemetry: str, **extra: Any) -> Dict[str, Any]:
     entry = {"id": acc_id, "email": email, "isActive": is_active, "telemetry": telemetry,
              "usageStatus": telemetry.upper(), "needsLogin": telemetry in ("needs_login", "revoked", "auth_expired"),
@@ -1748,14 +1753,18 @@ def codex_standby_reason(u: Dict[str, Any], active: Optional[Dict[str, Any]], cf
     if t == "revoked":
         return ("revoked (%s): its saved copy is dead, a re-login is needed. Only one Codex CLI seat is "
                 "live at a time, so a login of the other seat revokes it" % (u.get("healthReason") or "token_revoked"))
-    if t in ("needs_login", "auth_expired") or u.get("needsLogin"):
+    if t == "auth_expired":
+        return ("auth_expired (%s): its token was refused without proof the grant is dead; it is not "
+                "re-logged in automatically" % (u.get("healthReason") or "usage endpoint 401"))
+    if t == "needs_login" or u.get("needsLogin"):
         return "%s (%s): a re-login is needed" % (t or "needs_login", u.get("healthReason") or u.get("usageStatus") or "no live copy")
     if active and _credits_exhausted(active) and u.get("workspaceId") \
             and u.get("workspaceId") == active.get("workspaceId"):
         return ("same workspace (%s) as the active seat, which is out of credits: workspace credits are "
                 "shared, so switching seats cannot help" % str(u["workspaceId"])[:8])
     if t != "ok":
-        return "telemetry %s: its numbers are unreadable" % (t or "unavailable")
+        return "telemetry %s%s: its numbers are unreadable" % (
+            t or "unavailable", " (%s)" % u["healthReason"] if u.get("healthReason") else "")
     if u.get("isRateLimited"):
         return "rate limited (%s)" % (u.get("rateLimitType") or "limited")
     fh = (u.get("primary") or {}).get("usedPercent")
@@ -1913,7 +1922,11 @@ def _switch_codex_locked(target: str, force: bool) -> Dict[str, Any]:
 
     target_read = read_orca_codex(target_id)
     if target_read.status != "ok" or not target_read.data:
-        target_read = read_orca_codex(target_email)
+        by_email = read_orca_codex(target_email)
+        if target_read.status == "error" and by_email.status != "ok":
+            raise StoreError(f"Cannot switch to {target_email}: its saved copy could not be read "
+                             f"({target_read.detail}); nothing was changed, retry")
+        target_read = by_email
     target_tokens = (target_read.data.get("tokens") or target_read.data) \
         if (target_read and target_read.status == "ok" and target_read.data) else None
 
@@ -1925,9 +1938,11 @@ def _switch_codex_locked(target: str, force: bool) -> Dict[str, Any]:
                          "holds (the running CLI's); nothing was changed")
     if why == "persist_failed":
         raise StoreError(f"Failed to persist refreshed credentials for {target_email} in Keychain; auth.json unchanged")
-    if why in ("auth_json_unreadable", "refresh_failed"):  # transient: a re-login would revoke the live seat
+    if not refreshed and why not in CODEX_RELOGIN_REASONS:
+        # anything else is transient (network, a busy lock, a copy that changed or could not be read):
+        # a browser re-login would revoke the live seat for nothing
         raise StoreError(f"Cannot switch to {target_email}: {why}; nothing was changed, retry")
-    if not refreshed:  # no copy, or its grant is dead (revoked / needs_login): only a re-login helps
+    if not refreshed:  # no copy, or its grant is proven dead: only a re-login helps
         return _codex_relogin(ctx, matched_acc, why)
 
     target_acc_id = target_tokens.get("account_id") or extract_codex_identity(refreshed).get("accountId")
@@ -2076,7 +2091,7 @@ def _evaluate_codex_locked(threshold: Optional[float], dry_run: bool) -> Dict[st
         # No live standby: with one live seat at a time this is the usual case. A dead copy can still be
         # re-logged in through Arc, unless its workspace's exhausted credits make the move pointless.
         relogin = [s for s in usage_list if not s.get("isActive")
-                   and s.get("telemetry") in ("revoked", "needs_login", "auth_expired")
+                   and s.get("telemetry") in ("revoked", "needs_login")  # proven dead, never an odd 401
                    and not (_credits_exhausted(active_entry) and s.get("workspaceId")
                             and s.get("workspaceId") == active_entry.get("workspaceId"))]
         if not relogin:

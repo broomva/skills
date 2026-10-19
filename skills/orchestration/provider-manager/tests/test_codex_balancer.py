@@ -348,3 +348,60 @@ def test_a_copy_rotated_by_another_writer_is_not_spent(cx):
     cx.login(DEV, "rt-dev-1")
     assert pm._refresh_codex_copy(CARLOS_ID, CARLOS, stale) == (None, "copy_changed")
     assert cx.refreshed == []
+
+
+def _no_login(monkeypatch):
+    import pm_codex_login
+    logins = []
+    monkeypatch.setattr(pm_codex_login, "arc_usable", lambda timeout=3.0: (True, "ok"))
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login",
+                        lambda *a, **k: logins.append(a) or (False, "refused by the test"))
+    return logins
+
+
+def test_a_switch_whose_target_copy_cannot_be_read_never_relogs_in(cx, monkeypatch):
+    """Stratum B round 2: a keychain read error is not an absent copy; treating it as one started a
+    browser login, which revokes the live seat."""
+    logins = _no_login(monkeypatch)
+    cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-1"))
+    cx.login(DEV, "rt-dev-1")
+    real_read = cx._read
+    monkeypatch.setattr(pm, "read_orca_codex", lambda k: pm_store.Read("error", None, "security rc 36")
+                        if k in (CARLOS_ID, CARLOS) else real_read(k))
+    with pytest.raises(pm_store.StoreError, match="could not be read"):
+        pm.switch_codex_account(CARLOS)
+    assert logins == [] and cx.auth_tokens()["refresh_token"] == "rt-dev-1"
+
+
+def test_a_switch_whose_target_copy_changed_meanwhile_never_relogs_in(cx, monkeypatch):
+    logins = _no_login(monkeypatch)
+    cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-1"))
+    cx.login(DEV, "rt-dev-1")
+    real_read = cx._read
+    reads = {"n": 0}
+
+    def rotating_read(key):  # another writer rotates carlos@'s copy right after the switch reads it
+        if key == CARLOS_ID:
+            reads["n"] += 1
+            if reads["n"] == 3:
+                cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-2"))
+        return real_read(key)
+
+    monkeypatch.setattr(pm, "read_orca_codex", rotating_read)
+    with pytest.raises(pm_store.StoreError, match="copy_changed"):
+        pm.switch_codex_account(CARLOS)
+    assert logins == [] and cx.refreshed == [] and cx.auth_tokens()["refresh_token"] == "rt-dev-1"
+
+
+def test_an_odd_standby_401_is_not_a_relogin_candidate(cx, monkeypatch):
+    logins = _no_login(monkeypatch)
+    cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-1"))
+    cx.login(DEV, "rt-dev-1")
+    cx.usage_pct["rt-dev-1"] = 97
+    real_usage = cx._usage
+    monkeypatch.setattr(pm, "fetch_codex_usage_raw", lambda at, acc: (401, None, "HTTP 401: <html>gateway</html>")
+                        if pm_store.decode_jwt_unverified(at).get("rt") == "rt-carlos-1" else real_usage(at, acc))
+    rows = _rows()
+    assert rows[CARLOS]["telemetry"] == "auth_expired" and "not re-logged in" in rows[CARLOS]["standbyReason"]
+    res = pm.evaluate_codex_balance(reason="hook")
+    assert res["code"] == "no_candidate" and logins == []

@@ -259,7 +259,7 @@ def test_evaluate_codex_balance_arc_fallback(monkeypatch):
             },
             {
                 "id": "id_2", "email": "devteam@getstimulus.ai", "isActive": False,
-                "telemetry": "auth_expired", "needsLogin": True, "isRateLimited": False,
+                "telemetry": "needs_login", "needsLogin": True, "isRateLimited": False,
                 "primary": None, "secondary": None,
             }
         ]
