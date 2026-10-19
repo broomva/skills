@@ -481,3 +481,17 @@ def test_a_switch_relogs_in_only_for_a_missing_copy_or_a_dead_grant(cx, monkeypa
     assert bool(logins) == may_relogin, (copy_state, outcome, logins)
     if not logins and not (copy_state == "ok" and outcome == "ok"):
         assert cx.auth_tokens()["refresh_token"] == "rt-dev-1", "the live seat was touched"
+
+
+def test_a_seat_without_a_copy_is_not_relogged_in_when_the_workspace_is_out_of_credits(cx, monkeypatch):
+    """Final Stratum B round: a standby with no saved copy has no known workspace, so the shared-credits
+    guard skipped it and a browser login (revoking the live seat) was tried for nothing."""
+    logins = _no_login(monkeypatch)
+    cx.login(DEV, "rt-dev-1")
+    cx.limit_type["rt-dev-1"] = "workspace_credits_depleted"
+    try:
+        res = pm.evaluate_codex_balance()
+    except pm_store.StoreError as e:
+        res = {"action": "raised", "code": str(e)}
+    assert logins == [], "a re-login was tried inside a workspace out of credits"
+    assert res["action"] == "hold" and res["code"] == "no_candidate"

@@ -2102,8 +2102,10 @@ def _evaluate_codex_locked(threshold: Optional[float], dry_run: bool) -> Dict[st
         # re-logged in through Arc, unless its workspace's exhausted credits make the move pointless.
         relogin = [s for s in usage_list if not s.get("isActive")
                    and s.get("telemetry") in ("revoked", "needs_login")  # proven dead, never an odd 401
-                   and not (_credits_exhausted(active_entry) and s.get("workspaceId")
-                            and s.get("workspaceId") == active_entry.get("workspaceId"))]
+                   # a seat with no copy has no known workspace: with the active seat out of
+                   # credits, only a standby known to be in ANOTHER workspace is worth a login
+                   and not (_credits_exhausted(active_entry)
+                            and s.get("workspaceId") in (None, "", active_entry.get("workspaceId")))]
         if not relogin:
             return dict(base, action="hold", code="no_candidate",
                         reason=f"{switch_reason}, but no standby is a candidate: " +
