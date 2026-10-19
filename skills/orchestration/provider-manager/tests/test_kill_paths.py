@@ -336,3 +336,24 @@ def test_k15_a_live_access_token_with_a_spent_refresh_token_never_reaches_the_st
 
     s.run(2)
     assert s.dead is None
+
+
+# K16 — BRO-3192: every evaluation and `usage` now snapshots ~/.codex/auth.json into a keychain copy, so
+# a copy can hold the running Codex CLI's own refresh token. OpenAI rotates refresh tokens on use:
+# spending that one (a standby refresh in the usage path, a switch's target refresh) logs the CLI out.
+# The shape seen on the owner's Mac: the old login code saved any login that was not devteam@ under
+# carlos@'s id, so carlos@'s "standby" copy could hold the CLI's live grant, near expiry.
+def test_k16_the_auth_json_snapshot_never_spends_the_codex_clis_refresh_token(monkeypatch):
+    from test_codex_balancer import CARLOS, CARLOS_ID, CodexWorld
+
+    cx = CodexWorld(monkeypatch)
+    cli = cx.login("ops@getstimulus.ai", "rt-cli-live", ttl=30)  # the CLI's grant, inside the refresh margin
+    cx.save_copy(CARLOS_ID, CARLOS, cli)
+    cx.save_copy(CARLOS, CARLOS, cli)
+    for _ in range(3):
+        _try(pm.fetch_codex_usage, force=True)
+        _try(pm.evaluate_codex_balance, dry_run=True)
+    _try(pm.switch_codex_account, CARLOS)
+
+    assert "rt-cli-live" not in cx.refreshed, "the Codex CLI's own refresh token was spent"
+    assert cx.auth_tokens()["refresh_token"] == "rt-cli-live"

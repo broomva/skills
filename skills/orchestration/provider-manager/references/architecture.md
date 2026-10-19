@@ -101,8 +101,24 @@
   ```
 * **Keychain Service**:
   `Orca Codex Managed Credentials`
-  * Account key: email or account UUID
+  * Account key: the roster id and the email (both are written)
   * Value: JSON containing `auth_mode`, `tokens`, `email`, and update timestamp.
+* **Snapshot**: every Codex evaluation and `usage` call writes auth.json into its account's copy when the
+  two differ (`codex.snapshot`, reason `copy_missing` or `tokens_changed`), so a raw `codex login` leaves a
+  saved copy. Keychain only: no refresh, no auth.json write; an unreadable copy is never overwritten.
+* **Refresh interlock**: a saved copy is refreshed only if its refresh token is not the one auth.json
+  holds (re-read just before the POST). That grant belongs to the running CLI; OpenAI rotates refresh
+  tokens, so spending it logs the CLI out (kill path K16).
+* **Measured limits (2026-10-19)**: one live CLI seat at a time (a login of one account revoked the
+  other's saved copy: usage 401 `token_revoked`), and one shared Team workspace for devteam@ and
+  carlos@ (`chatgpt_account_id` 45663a8d…), whose credits no seat switch can restore.
+* **Health** (`codexHealth` in the state): `revoked` (usage 401 `token_revoked`; a refresh refused as
+  reused/revoked/invalidated) or `needs_login` (other refresh refusals), tagged with a fingerprint of the
+  grant. That grant gets no usage call and no refresh until new tokens replace it.
+* **Re-login**: `codex login`, its authorize URL with `&prompt=login` (the account chooser; without it the
+  Arc space's own web session is signed in), opened in the account's Arc space (`codexAccounts.<email>.arcSpace`,
+  default `Stimulus`), after a 3-second check that Arc is running and answers AppleScript. A failed
+  automatic re-login is not retried for `cooldownMinutes` (`codexLoginAttempts`).
 * **Hot-Reload Invariant**:
   The native Codex binary (`@openai/codex-darwin-arm64`) watches `~/.codex/auth.json` and hot-reloads
   credentials on disk modification without restarting running processes. Writes use atomic
@@ -219,10 +235,24 @@ chain an Orca copy also holds. This version never writes it.
 
 ## 5. Telemetry, balancer, probe
 
-`fetch_account_usage` returns `telemetry`: `ok` (numbers), `throttled` (usage endpoint 429; backoff
-2→4→...→30 min, or `Retry-After`; the last numbers are kept and marked stale), `auth_expired`,
-`needs_login` (`invalid_grant` on the copy), `no_credentials`, or `unavailable`. Only `ok` numbers can
-mark an account limited (`locked_reason`, 5h or 7d ≥ 100%, or an active limit at 100%).
+`fetch_account_usage` returns `telemetry`: `ok` (numbers), `throttled` (usage endpoint 429; the last
+numbers are kept and marked stale), `auth_expired`, `needs_login` (`invalid_grant` on the copy),
+`no_credentials`, or `unavailable`. Only `ok` numbers can mark an account limited (`locked_reason`, 5h or
+7d ≥ 100%, or an active limit at 100%).
+
+**429 backoff.** `Retry-After` (seconds or an HTTP date) is honoured, floored at 60 s and capped at 6 h;
+without it the backoff is 2→4→8→16→30 min. It is persisted (`telemetry.<id>.backoffUntil`) and checked
+before every usage call, so kicks inside it never reach the endpoint. Measured 2026-10-19: the endpoint
+answered `Retry-After: 3600` to each hourly retry for the active account, so its numbers were over two
+hours old with the backoff working as designed. `usage` shows the age of the last good numbers and the
+time to the next try; `state` shows both under `claudeTelemetry`. Past `staleNumbersMinutes` the
+balance decision carries `telemetryNote`: balancing on numbers waits, StopFailure reports still fail
+over after the probe.
+
+**Dead grants.** An `invalid_grant` marks the account `needsLogin` with a fingerprint of that refresh
+token (`health.<id>.deadGrant`). Its refreshes are skipped while the copy still holds it, and the mark
+clears when new tokens work. Before this, a dead copy was refreshed at every evaluation (205 times in a
+day for one account).
 
 Decision rules and defaults: SKILL.md "The balancer". The probe runs `claude -p "Reply with the single
 word OK." --tools "" --strict-mcp-config --setting-sources project --no-session-persistence
@@ -259,7 +289,7 @@ scenario) or
 | Path | What |
 |---|---|
 | `~/.cache/broomva-provider-events.jsonl` | Events. Every line: `timestamp`, `iso`, `event`, `trace_id` (one evaluation or switch), `run_id` (one process), `pid`, `session_id` (the calling session). |
-| `~/.cache/broomva-provider-state.json` | `lastEvalAt`, `lastKickAt`, `lastSwitch {at, from, to, source, unverified?}`, `holdUntil`, `pendingSignals`, `telemetry {id: backoff}`, `health {id: needsLogin}`, `probes`, `claudeVersion`, `storeIdentity` (token fingerprint, never a token). Mode 0600. |
+| `~/.cache/broomva-provider-state.json` | `lastEvalAt`, `lastKickAt`, `lastSwitch {at, from, to, source, unverified?}`, `holdUntil`, `pendingSignals` (expired after 15 min at every evaluation), `telemetry {id: backoff}`, `health {id: needsLogin, deadGrant}`, `probes`, `claudeVersion`, `storeIdentity` (token fingerprint, never a token), `lastCodexSwitch`, `codexHealth {id: status, reason, grant}`, `codexLoginAttempts {email: at}`. Mode 0600. |
 | `~/.cache/broomva-provider-usage.json` | Usage cache (90 s TTL). |
 | `~/.cache/broomva-provider-stalled.jsonl` | StopFailure reports: `sessionId`, `cwd`, `transcriptPath`, `error`, `paseoAgentId`. |
 | `~/.cache/broomva-provider-balancer.lock` | The machine-wide lock; holds `{pid, since, holder}`. |
@@ -269,8 +299,11 @@ Events:
 - `switch.refused` (`target`, `reason`), `switch.unverified` (`error`), `switch.discard_unverified`;
 - `balance.decision` (`action`, `reason`, `telemetry`, `remainingSeconds`...);
 - `probe` (`result`), `probe.disagrees` (a session reported a limit and the probe says ok), `version_unverified` (`claudeVersion`);
+- `balance.decision` also carries `numbersAgeSeconds` and `telemetryNote` when the active account's numbers are stale;
 - `telemetry.throttled` (`backoffUntil`);
-- `refresh`, `refresh.refused` (`reason`), `refresh.deferred`, `refresh.failed` (`needsLogin`), `refresh.persist_failed` (critical);
+- `refresh`, `refresh.refused` (`reason`), `refresh.deferred`, `refresh.failed` (`needsLogin`), `refresh.persist_failed` (critical); Codex ones carry `provider: codex`;
+- `codex.balance.decision` (`action`, `code`, `reason`, `active`, `target`, `standbys {email: why not a candidate}`, `source`, `dryRun`), one per evaluation, holds included;
+- `codex.snapshot` (`reason`, `ok`), `codex.switch` (`method`), `codex.login`, `codex.login.failed` (`space`, `reason`);
 - `writeback.failed`, `session.stalled`, `login`, `hold`.
 
 Events and stalled-session logs are mode 0600.

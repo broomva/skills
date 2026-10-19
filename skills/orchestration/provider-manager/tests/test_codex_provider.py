@@ -248,7 +248,7 @@ def test_evaluate_codex_balance(monkeypatch):
 def test_evaluate_codex_balance_arc_fallback(monkeypatch):
     import pm_codex_login
     monkeypatch.setattr(pm, "load_state", lambda: {"lastCodexSwitch": {"at": 0}})
-    monkeypatch.setattr(pm_codex_login, "is_arc_available", lambda: True)
+    monkeypatch.setattr(pm_codex_login, "arc_usable", lambda timeout=3.0: (True, "ok"))
 
     def fake_usage_standby_needs_login(force=False, ctx=None):
         return [
@@ -415,7 +415,7 @@ def test_switch_codex_account_autonomous_fallback(monkeypatch, tmp_path):
         auth_path.write_text(json.dumps({"auth_mode": "chatgpt", "tokens": carlos_tokens}))
         return True, "autologin ok"
 
-    monkeypatch.setattr(pm_codex_login, "is_arc_available", lambda: True)
+    monkeypatch.setattr(pm_codex_login, "arc_usable", lambda timeout=3.0: (True, "ok"))
     monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", mock_auto_login)
     monkeypatch.setattr(pm, "_guarded_update", lambda path, fn: None)
 
@@ -423,5 +423,6 @@ def test_switch_codex_account_autonomous_fallback(monkeypatch, tmp_path):
     assert res["status"] == "switched"
     assert res["active"] == "carlos@getstimulus.ai"
     assert res["method"] == "autonomous_browser_login"
+
 
 

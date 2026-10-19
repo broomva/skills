@@ -23,6 +23,8 @@ ROOT = Path(__file__).resolve().parent.parent
 SCRIPTS = ROOT / "scripts"
 K = "tests/test_kill_paths.py::"
 U = "tests/test_provider_manager.py::"
+H = "tests/test_telemetry_hygiene.py::"
+X = "tests/test_codex_balancer.py::"
 
 # name: (description, [(file, old, new), ...], [tests that must fail])
 MUTATIONS = {
@@ -216,6 +218,46 @@ MUTATIONS = {
             [("provider_manager.py", "    return current is not None and current > at_probe + 60",
               "    return account.get(\"fiveHourResetsAt\") not in (None, probe.get(\"resetsAt\"))")],
             [U + "test_reset_detection_compares_times_not_strings_and_spares_per_model_caps"]),
+    # BRO-3192
+    "M39": ("a Codex copy holding auth.json's refresh token is refreshed (the CLI's grant spent)",
+            [("provider_manager.py", '    if same_token(rt, (((live.data or {}).get("tokens")) or {}).get("refresh_token")):',
+              "    if False:")],
+            [K + "test_k16_the_auth_json_snapshot_never_spends_the_codex_clis_refresh_token"]),
+    "M40": ("a dead Claude grant is refreshed again at every evaluation",
+            [("provider_manager.py", "        if not refusal and _dead_grant(account_id, oauth):", "        if False:")],
+            [H + "test_a_dead_grant_is_spent_once_then_skipped_until_new_tokens_arrive",
+             H + "test_a_switch_to_a_dead_grant_is_refused_without_spending_it_again"]),
+    "M41": ("pending StopFailure reports are never expired",
+            [("provider_manager.py", '    if any(now - p.get("at", 0) >= SIGNAL_TTL_SECONDS', '    if False and any(now - p.get("at", 0) >= SIGNAL_TTL_SECONDS')],
+            [H + "test_pending_signals_past_their_ttl_are_expired_on_every_evaluation"]),
+    "M42": ("Retry-After is taken as is (0 lets every kick call again)",
+            [("provider_manager.py", "min(RETRY_AFTER_CAP_SECONDS, max(RETRY_AFTER_FLOOR_SECONDS, hinted))", "hinted")],
+            [H + "test_retry_after_is_honoured_floored_and_capped_and_exponential_without_it"]),
+    "M43": ("the usage backoff is not checked (kicks reach a throttled endpoint)",
+            [("provider_manager.py", "    if backoff > now:\n        return done(_degraded_entry(account_id, \"throttled\"",
+              "    if False:\n        return done(_degraded_entry(account_id, \"throttled\"")],
+            [H + "test_kicks_inside_a_retry_after_backoff_never_call_the_usage_endpoint"]),
+    "M44": ("a revoked Codex grant keeps being sent to the usage endpoint",
+            [("provider_manager.py", "        if mark:  # this very grant is known dead: no refresh, no usage call", "        if False:")],
+            [X + "test_token_revoked_marks_the_copy_revoked_and_stops_spending_calls_on_it"]),
+    "M45": ("a Codex usage 429 counted as a rate limit",
+            [("provider_manager.py", 'out.append(_codex_entry(acc_id, email, is_active, "throttled", stale=True, workspaceId=workspace, **keep))',
+              'out.append(_codex_entry(acc_id, email, is_active, "ok", stale=True, isRateLimited=True, workspaceId=workspace, **keep))')],
+            [X + "test_codex_usage_429_is_never_a_rate_limit"]),
+    "M46": ("a seat move inside a workspace out of credits",
+            [("provider_manager.py", '    if active and _credits_exhausted(active) and u.get("workspaceId") \\\n',
+              '    if False and u.get("workspaceId") \\\n')],
+            [X + "test_shared_workspace_out_of_credits_never_switches_seats"]),
+    "M47": ("Codex balance holds are not logged",
+            [("provider_manager.py", '        log_provider_event("codex.balance.decision", {k: res.get(k) for k in (',
+              '        (lambda *a: None)("codex.balance.decision", {k: res.get(k) for k in (')],
+            [X + "test_every_codex_balance_outcome_is_logged_with_its_reason"]),
+    "M48": ("the Codex auth.json snapshot is skipped",
+            [("provider_manager.py", "    try:\n        snapshot_codex_auth(ctx)\n", "    try:\n        pass\n")],
+            [X + "test_a_raw_codex_login_is_snapshotted_into_its_copy_and_only_when_it_changes"]),
+    "M49": ("a failed Codex re-login is retried at every kick",
+            [("provider_manager.py", "        if now - last_try < retry_gap:", "        if False:")],
+            [X + "test_relogin_forces_the_account_chooser_in_the_configured_arc_space"]),
     "M16": ("StopFailure rate_limit does not start a failover",
             [("provider_manager_hook.py", '        kick("stop-failure", signal=signal, force=True)', "        pass")],
             [U + "test_stop_failure_rate_limit_records_the_session_and_fails_over_and_the_session_continues"]),

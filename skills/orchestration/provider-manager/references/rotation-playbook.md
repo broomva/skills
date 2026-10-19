@@ -50,6 +50,16 @@ Then act on what you see:
 After a failover, resume the sessions in `stalled`: send each a prompt (Paseo: its agent id), or
 `claude --resume <session>` from its cwd. Sessions that were still running moved without a restart.
 
+### Codex
+
+| You see | Do |
+|---|---|
+| `usage --provider codex`: a standby `REVOKED (token_revoked)` | Expected: only one Codex CLI seat is live, so the other account's copy dies at each login. Nothing to do until you want that account; then `login-headless --provider codex --email EMAIL`. |
+| The active seat limited by workspace credits | Switching cannot help: both accounts share the workspace. Wait for credits. |
+| `login-headless --provider codex` signs in the wrong account | The account chooser needs the target signed in to that Arc space's OpenAI session; set `codexAccounts.<email>.arcSpace`, or pass `--space`. |
+| "Arc not answering AppleScript" | A macOS permission prompt is probably pending in Arc; answer it, then retry. |
+| Why did nothing happen? | `history --all` shows a `codex.balance.decision` for every evaluation, with its reason. |
+
 ---
 
 ## 3. What a switch guarantees

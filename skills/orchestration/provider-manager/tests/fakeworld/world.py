@@ -55,8 +55,9 @@ class World:
         self.bin.mkdir(exist_ok=True)
         _shim(self.bin / "security", FAKEWORLD_DIR / "fake_security.py")
         _shim(self.bin / "claude", FAKEWORLD_DIR / "fake_claude.py")
-        (self.bin / "node").write_text("#!/bin/sh\necho 'fake node: refused (test guard)' >&2\nexit 99\n")
-        (self.bin / "node").chmod(0o755)
+        for name in ("node", "codex", "osascript", "pgrep"):
+            (self.bin / name).write_text("#!/bin/sh\necho 'fake %s: refused (test guard)' >&2\nexit 99\n" % name)
+            (self.bin / name).chmod(0o755)
         # the process table as provider-manager sees it: empty unless a test sets one
         self.ps_output = self.tmp / "ps.txt"
         self.ps_output.write_text("")

@@ -21,11 +21,12 @@ def _usage_status(a: Dict[str, Any]) -> str:
         return "NEEDS_LOGIN"
     if t == "ok":
         return "LIMITED" if a.get("isRateLimited") else (a.get("usageStatus") or "ok").upper()
-    age = ""
+    notes = []
     numbers_at = (a.get("usage") or {}).get("numbersAt")
-    if numbers_at:
-        age = " (numbers %dm old)" % int((time.time() - numbers_at) / 60)
-    return "%s%s" % ((t or "unavailable").upper(), age)
+    notes.append("numbers %dm old" % int((time.time() - numbers_at) / 60) if numbers_at else "no numbers yet")
+    if a.get("backoffRemainingSeconds"):
+        notes.append("next try in %dm" % max(1, int(a["backoffRemainingSeconds"] / 60)))
+    return "%s (%s)" % ((t or "unavailable").upper(), ", ".join(notes))
 
 
 def cmd_stalled(pm, hours: float, as_json: bool) -> None:
@@ -81,6 +82,10 @@ def _print_claude_usage(pm, accounts: list, as_json: bool) -> None:
         if a.get("sevenDayResetsAt"):
             sd += " (%s)" % a["sevenDayResetsAt"].split("T")[0]
         print("%-8s %-28s %-22s %-22s %s" % (" * " if a["isActive"] else "", a["email"], fh, sd, _usage_status(a)))
+    active = next((a for a in accounts if a.get("isActive")), None)
+    stale = pm.stale_numbers_note(active, pm.load_config()) if active else None
+    if stale:
+        print("\nNote: %s." % stale)
     gate = pm.gate_status()
     if gate:
         print("\nNote: %s." % gate)
@@ -90,22 +95,21 @@ def _print_codex_usage(accounts: list, as_json: bool) -> None:
     if as_json:
         print(json.dumps(accounts, indent=2))
         return
-    print("%-8s %-28s %-16s %-16s %-10s %s" % ("ACTIVE", "EMAIL", "5-HOUR UTIL", "7-DAY UTIL", "CREDITS", "STATUS"))
-    print("-" * 95)
+    print("%-8s %-28s %-12s %-12s %-8s %-14s %s" % ("ACTIVE", "EMAIL", "5-HOUR UTIL", "7-DAY UTIL", "CREDITS",
+                                                  "STATUS", "STANDBY"))
+    print("-" * 110)
     for a in accounts:
         pw = a.get("primary") or {}
         sw = a.get("secondary") or {}
         fh = _fmt_pct(pw.get("usedPercent"))
         sd = _fmt_pct(sw.get("usedPercent"))
         cr = (a.get("credits") or {}).get("balance") or "-"
-        print("%-8s %-28s %-16s %-16s %-10s %s" % (
-            " * " if a.get("isActive") else "",
-            a.get("email") or "-",
-            fh,
-            sd,
-            cr,
-            a.get("usageStatus", "-")
-        ))
+        status = a.get("usageStatus", "-")
+        if a.get("healthReason") and a.get("telemetry") != "ok":
+            status += " (%s)" % a["healthReason"]
+        standby = "active" if a.get("isActive") else (a.get("standbyReason") or "candidate")
+        print("%-8s %-28s %-12s %-12s %-8s %-14s %s" % (
+            " * " if a.get("isActive") else "", a.get("email") or "-", fh, sd, cr, status, standby))
 
 
 def main(pm) -> None:
@@ -134,6 +138,7 @@ def main(pm) -> None:
     p.add_argument("--browser", default="arc", choices=["arc", "chrome"])
     p.add_argument("--profile")
     p.add_argument("--force", action="store_true", help="Log in over an unidentifiable store credential")
+    p.add_argument("--space", help="Codex: the Arc space to log in from (default: codexAccounts.<email>.arcSpace, else Stimulus)")
     p = sub.add_parser("rotate", help="Failover for a reported rate limit (operator/orchestrator only)", parents=[common])
     p.add_argument("--reason", default="rate_limit")
     p.add_argument("--dry-run", action="store_true")
@@ -312,8 +317,9 @@ def main(pm) -> None:
                                                           "; saved the outgoing account's live tokens" if res.get("wroteBack") else ""))
         elif args.command == "login-headless":
             if getattr(args, "provider", "claude") == "codex":
-                res = pm.login_codex_headless(email=args.email)
-                print(json.dumps(res, indent=2) if args.json else "Logged in Codex %s." % res["email"])
+                res = pm.login_codex_headless(email=args.email, space=args.space)
+                print(json.dumps(res, indent=2) if args.json else "Logged in Codex %s (Arc space %s)." % (
+                    res["email"], res.get("space")))
             else:
                 res = pm.login_headless(email=args.email, browser=args.browser, profile=args.profile, force=args.force)
                 print(json.dumps(res, indent=2) if args.json else "Logged in %s (no switch)." % res["email"])
@@ -358,6 +364,7 @@ def main(pm) -> None:
             verified, version = pm.version_verified(st["config"])
             st["versionGate"] = {"claudeVersion": version, "automaticSwitching": "on" if verified else "paused"}
             st.pop("storeIdentity", None)
+            st["claudeTelemetry"] = pm.telemetry_summary(st)
             print(json.dumps(st, indent=2))
     except Exception as e:  # noqa: BLE001 - the CLI reports, it does not trace
         if args.json:
