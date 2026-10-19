@@ -1,9 +1,10 @@
 """Shared fixtures. Every test runs hermetically: no test can reach the login keychain, the real
 `claude`, or the network.
 
-- PATH starts with a guard dir whose `security`, `claude` and `node` refuse (exit 99) and whose `ps`
-  shows nothing, unless the test builds a `world`, whose fakes replace them.
-- HOME and every module path constant point into tmp.
+- PATH starts with a guard dir whose `security`, `claude`, `node`, `codex`, `osascript` and `pgrep`
+  refuse (exit 99) and whose `ps` shows nothing, unless the test builds a `world`, whose fakes replace
+  them. No test can reach the real Arc or the real Codex CLI.
+- HOME and every module path constant point into tmp, ~/.codex/auth.json included.
 - urllib is blocked unless a `world` routes it to the Anthropic stub.
 
 PM_IMPL_DIR=<dir> runs the suite against another copy of the scripts, for example origin/main's.
@@ -49,7 +50,7 @@ def pytest_collection_modifyitems(config, items):
 def hermetic(tmp_path, monkeypatch):
     guard_bin = tmp_path / "guard-bin"
     guard_bin.mkdir()
-    for name in ("security", "claude", "node"):
+    for name in ("security", "claude", "node", "codex", "osascript", "pgrep"):
         p = guard_bin / name
         p.write_text("#!/bin/sh\necho 'test guard: %s refused' >&2\nexit 99\n" % name)
         p.chmod(0o755)
@@ -69,6 +70,10 @@ def hermetic(tmp_path, monkeypatch):
     for name, value in default_paths(home).items():
         if hasattr(pm, name):
             monkeypatch.setattr(pm, name, value)
+    codex_auth = home / ".codex/auth.json"
+    for mod in (pm, sys.modules.get("pm_store")):
+        if mod is not None and hasattr(mod, "CODEX_AUTH_PATH"):
+            monkeypatch.setattr(mod, "CODEX_AUTH_PATH", codex_auth)
     yield
 
 

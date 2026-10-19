@@ -172,6 +172,13 @@ def usage(at):
         return 200, body
 
 
+def usage_retry_after(at):
+    """The Retry-After header a throttled usage call carries (set_account(email, retry_after="3600"))."""
+    with state() as d:
+        email = _bearer_account(d, at)
+        return d["accounts"][email].get("retry_after") if email else None
+
+
 def profile(at):
     with state() as d:
         email = _bearer_account(d, at)

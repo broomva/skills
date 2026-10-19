@@ -56,8 +56,13 @@ def fake_urlopen(req, data=None, timeout=None, **kw):
         status, payload = fake_anthropic.messages(_bearer(req))
     else:
         raise urllib.error.URLError("fake net: blocked request to %s" % url)
+    headers = {}
+    if url == USAGE_URL and status == 429:
+        retry_after = fake_anthropic.usage_retry_after(_bearer(req))
+        if retry_after is not None:
+            headers["Retry-After"] = retry_after
     if status >= 400:
-        raise urllib.error.HTTPError(url, status, "fake %d" % status, {}, io.BytesIO(json.dumps(payload).encode("utf-8")))
+        raise urllib.error.HTTPError(url, status, "fake %d" % status, headers, io.BytesIO(json.dumps(payload).encode("utf-8")))
     return _Resp(status, payload)
 
 

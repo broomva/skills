@@ -74,6 +74,7 @@ from pm_store import (  # noqa: E402
     refresh_codex_token,
     codex_token_expiring,
     extract_codex_identity,
+    Read,
 )
 
 HOME = Path.home()
@@ -97,6 +98,10 @@ CACHE_TTL_SECONDS = 90.0
 CLAUDE_LOCK_WAIT_SECONDS = 5.0
 LOCKED_IO_TIMEOUT = 5.0  # each keychain call made while holding Claude Code's refresh lock
 LIMITED_HOLD_SECONDS = 3600.0  # a probe-confirmed limited account is not a failover target for this long
+SIGNAL_TTL_SECONDS = 900.0  # a StopFailure report stays pending this long, then it is dropped from the state
+RETRY_AFTER_FLOOR_SECONDS = 60.0  # a usage 429 backs off at least this long, whatever Retry-After says
+RETRY_AFTER_CAP_SECONDS = 6 * 3600.0
+BACKOFF_CAP_SECONDS = 1800.0  # exponential backoff (no Retry-After): 2, 4, 8, 16, then 30 min
 MODEL_WEEKLY_BUCKETS = ("seven_day_opus", "seven_day_sonnet")  # per-model weekly caps in the usage payload
 _REFRESH_OUTCOME: Dict[str, str] = {}  # why the last refresh of an account did not happen (for messages)
 PROBE_TIMEOUT_SECONDS = 90.0
@@ -132,6 +137,8 @@ DEFAULT_CONFIG: Dict[str, Any] = {
     "probeModel": None,           # None: Claude Code's default model, the one sessions run without --model
     "versionGate": True,          # automatic switching only on a measured Claude Code version
     "verifiedClaudeVersions": [],  # versions measured since (added to MEASURED_CLAUDE_VERSIONS)
+    "staleNumbersMinutes": 30.0,  # older usage numbers: only StopFailure reports (probe-confirmed) can fail over
+    "codexAccounts": {},          # per Codex account email: {"arcSpace": "<Arc space for its re-login>"}
 }
 
 
@@ -404,21 +411,40 @@ def list_accounts(ctx: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
             "expiresAt": (copy or {}).get("expiresAt"),
             "isTokenFresh": bool(copy) and not expiring(copy, 0),
             "subscriptionType": (source or {}).get("subscriptionType"),
-            "needsLogin": bool((health.get(acc_id) or {}).get("needsLogin")),
+            "needsLogin": _needs_login(acc_id, copy, health),
         })
     return out
 
 
+def _needs_login(account_id: str, copy: Optional[Dict[str, Any]], health: Dict[str, Any]) -> bool:
+    h = health.get(account_id) or {}
+    if not h.get("needsLogin"):
+        return False
+    return not h.get("deadGrant") or _dead_grant(account_id, copy, health)  # new tokens since: not dead
+
+
 # -- refresh (never the store's chain) ------------------------------------------------------------
 
-def _mark_health(account_id: str, needs_login: bool, reason: str) -> None:
+def _mark_health(account_id: str, needs_login: bool, reason: str, dead_refresh_token: Any = None) -> None:
+    """needs_login marks one grant dead: the fingerprint of the refresh token that got invalid_grant.
+    Its refreshes are skipped until the copy holds another refresh token (a login, a switch, or Orca
+    writing new tokens), so a dead grant is spent once, not every evaluation."""
     def put(s):
         h = s.setdefault("health", {})
         if needs_login:
-            h[account_id] = {"needsLogin": True, "reason": reason, "since": time.time()}
+            h[account_id] = {"needsLogin": True, "reason": reason, "since": time.time(),
+                             "deadGrant": fingerprint(dead_refresh_token)}
         else:
             h.pop(account_id, None)
     update_state(put)
+
+
+def _dead_grant(account_id: str, oauth: Optional[Dict[str, Any]], health: Optional[Dict[str, Any]] = None) -> bool:
+    """Is this copy's refresh token the one that already got invalid_grant? An entry from before the
+    fingerprint was recorded is not trusted for this: its copy gets one more refresh, which records it."""
+    h = (health if health is not None else load_state().get("health", {})).get(account_id) or {}
+    rt = (oauth or {}).get("refreshToken")
+    return bool(h.get("needsLogin") and h.get("deadGrant") and rt and h["deadGrant"] == fingerprint(rt))
 
 
 def refresh_account_token(account_id: str, allow_unverified: bool = False) -> Optional[Dict[str, Any]]:
@@ -447,6 +473,9 @@ def refresh_account_token(account_id: str, allow_unverified: bool = False) -> Op
         oauth = oauth_of(copy.data) if copy is not None and copy.status == "ok" else None
         if not refusal and (not oauth or not oauth.get("refreshToken")):
             return None
+        if not refusal and _dead_grant(account_id, oauth):
+            _REFRESH_OUTCOME[account_id] = "invalid_grant"
+            return None  # already refused once; spending it again cannot work and only adds noise
         if not refusal and any(same_token(oauth["refreshToken"], rt) for rt in ctx["storeRts"]):
             refusal = "refresh_token_in_store"
         if not refusal and any(same_token(oauth["refreshToken"], rt) for rt in ctx["mirrorRts"]) \
@@ -465,7 +494,7 @@ def refresh_account_token(account_id: str, allow_unverified: bool = False) -> Op
                     log_provider_event("refresh.failed", {"accountId": account_id, "reason": "copy_changed_meanwhile"})
                     return None  # another writer refreshed this copy; it is not dead
                 _REFRESH_OUTCOME[account_id] = "invalid_grant"
-                _mark_health(account_id, True, "invalid_grant")
+                _mark_health(account_id, True, "invalid_grant", oauth["refreshToken"])
                 log_provider_event("refresh.failed", {"accountId": account_id, "reason": "invalid_grant", "needsLogin": True})
             else:
                 log_provider_event("refresh.failed", {"accountId": account_id, "reason": "http_%s" % code})
@@ -539,17 +568,37 @@ def _degraded_entry(account_id: str, telemetry: str, prev: Optional[Dict[str, An
     return entry
 
 
+def _retry_after_seconds(value: Optional[str], now: float) -> Optional[float]:
+    """Retry-After as seconds: delta-seconds or an HTTP date (RFC 9110). None when absent or unreadable."""
+    if not value:
+        return None
+    try:
+        return float(value)
+    except ValueError:
+        pass
+    try:
+        from email.utils import parsedate_to_datetime
+        return parsedate_to_datetime(value).timestamp() - now
+    except (TypeError, ValueError, IndexError, OverflowError):
+        return None
+
+
 def _note_429(account_id: str, retry_after: Optional[str], now: float) -> float:
+    """Persist a usage-endpoint backoff. Retry-After wins (floored at a minute, so "0" cannot make
+    every kick call again, and capped at 6 h); without it, 2, 4, 8, 16, then 30 minutes. Every caller
+    of the endpoint checks this first, so kicks inside the backoff never reach it."""
     holder: Dict[str, float] = {}
+    hinted = _retry_after_seconds(retry_after, now)
 
     def put(s):
         t = s.setdefault("telemetry", {}).setdefault(account_id, {})
         step = int(t.get("backoffStep", 0))
-        try:
-            wait = float(retry_after) if retry_after else min(1800.0, 120.0 * (2 ** step))
-        except ValueError:
-            wait = min(1800.0, 120.0 * (2 ** step))
-        t.update({"backoffUntil": now + wait, "backoffStep": step + 1, "last429At": now})
+        if hinted is not None:
+            wait = min(RETRY_AFTER_CAP_SECONDS, max(RETRY_AFTER_FLOOR_SECONDS, hinted))
+        else:
+            wait = min(BACKOFF_CAP_SECONDS, 120.0 * (2 ** min(step, 10)))
+        t.update({"backoffUntil": now + wait, "backoffStep": step + 1, "last429At": now,
+                  "retryAfter": retry_after if hinted is not None else None})
         holder["until"] = now + wait
     update_state(put)
     return holder["until"]
@@ -595,7 +644,7 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
         if expiring(oauth, 60_000):
             fresh = refresh_account_token(account_id) if ctx["storeReadable"] else None
             if not fresh:
-                needs = (load_state().get("health", {}).get(account_id) or {}).get("needsLogin")
+                needs = _needs_login(account_id, oauth, load_state().get("health", {}))
                 return done(_degraded_entry(account_id, "needs_login" if needs else "auth_expired", prev, now))
             oauth = fresh
 
@@ -604,6 +653,9 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
     entry = _numbers_entry(account_id, payload, now) if code == 200 and isinstance(payload, dict) else None
     if entry:
         _clear_backoff(account_id)
+        if not is_store_account and (load_state().get("health") or {}).get(account_id) \
+                and not _dead_grant(account_id, oauth):
+            _mark_health(account_id, False, "usage_ok")  # its copy holds new, working tokens
         return done(entry)
     if code == 200:
         return done(_degraded_entry(account_id, "unavailable", prev, now, "usage payload not understood"))
@@ -622,11 +674,14 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
 def fetch_all_usage(force_refresh: bool = False, ctx: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     ctx = ctx or build_context(verify_identity=True)
     results = []
+    now = time.time()
     for acc in list_accounts(ctx):
         usage = fetch_account_usage(acc["id"], force_refresh=force_refresh, ctx=ctx) or {}
+        backoff = float((load_state().get("telemetry", {}).get(acc["id"]) or {}).get("backoffUntil", 0) or 0)
         info = dict(acc)
         info["usage"] = usage or None
         info["telemetry"] = usage.get("telemetry", "unavailable")
+        info["needsLogin"] = bool(acc.get("needsLogin") or info["telemetry"] == "needs_login")
         info["fiveHourUtil"] = (usage.get("five_hour") or {}).get("utilization")
         info["sevenDayUtil"] = (usage.get("seven_day") or {}).get("utilization")
         info["fiveHourResetsAt"] = (usage.get("five_hour") or {}).get("resets_at")
@@ -634,8 +689,29 @@ def fetch_all_usage(force_refresh: bool = False, ctx: Optional[Dict[str, Any]] =
         info["usageStatus"] = usage.get("status", "unavailable")
         info["isRateLimited"] = bool(usage.get("isRateLimited")) and usage.get("telemetry") == "ok"
         info["stale"] = bool(usage.get("stale"))
+        numbers_at = usage.get("numbersAt")
+        info["numbersAgeSeconds"] = int(now - numbers_at) if numbers_at else None  # age of the last good numbers
+        info["backoffRemainingSeconds"] = int(backoff - now) if backoff > now else None
         results.append(info)
     return results
+
+
+def telemetry_summary(state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """Per Claude account, from the usage cache and the backoff state only (no network): telemetry,
+    the age of the last good numbers, and what is left of a usage-endpoint backoff."""
+    state = state if state is not None else load_state()
+    now = time.time()
+    cache = read_usage_cache().get("accounts", {})
+    out: Dict[str, Any] = {}
+    for acc in roster():
+        u = cache.get(acc.get("id")) or {}
+        until = float((state.get("telemetry", {}).get(acc.get("id")) or {}).get("backoffUntil", 0) or 0)
+        out[acc.get("email") or acc.get("id")] = {
+            "telemetry": u.get("telemetry", "unknown"),
+            "numbersAgeMinutes": int((now - u["numbersAt"]) / 60) if u.get("numbersAt") else None,
+            "backoffRemainingMinutes": int((until - now) / 60) if until > now else None,
+        }
+    return out
 
 
 # -- probe (is the active account really limited?) ------------------------------------------------
@@ -958,7 +1034,8 @@ def balance_accounts(threshold: Optional[float] = None, dry_run: bool = False, v
         res = _balance_locked(threshold, dry_run, verbose, source, signal, automatic)
         log_provider_event("balance.decision", {k: res.get(k) for k in (
             "action", "reason", "fromAccount", "toAccount", "activeAccount", "utilization",
-            "standbyUtilization", "telemetry", "probe", "remainingSeconds") if res.get(k) is not None}
+            "standbyUtilization", "telemetry", "probe", "remainingSeconds", "numbersAgeSeconds",
+            "telemetryNote") if res.get(k) is not None}
             | {"source": source, "signal": signal, "dryRun": dry_run})
         return res
 
@@ -968,12 +1045,12 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
     cfg = load_config()
     threshold = float(threshold if threshold is not None else cfg["threshold"])
     now = time.time()
-    state = load_state()
+    state = expire_signals(now)
     if state.get("holdUntil", 0) > now:
         return {"success": True, "action": "none", "reason": "hold", "remainingSeconds": int(state["holdUntil"] - now)}
     # A reported limit stays pending until an evaluation can act on it (a switch, or a probe showing
     # the account is fine) or it expires; a cooldown, a busy lock or a dry run must not swallow it.
-    pending = [p for p in state.get("pendingSignals", []) if now - p.get("at", 0) < 900]
+    pending = [p for p in state.get("pendingSignals", []) if now - p.get("at", 0) < SIGNAL_TTL_SECONDS]
     if pending:
         signal = signal or pending[-1].get("type")
 
@@ -1018,6 +1095,9 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
     over = readable and ((fh is not None and fh >= threshold) or (sd is not None and sd >= cfg["weeklyThreshold"]))
     reported = signal in ("rate_limit", "auth_failed")
     base = {"activeAccount": active.get("email"), "utilization": fh, "telemetry": active.get("telemetry")}
+    note = stale_numbers_note(active, cfg)
+    if note:
+        base.update(numbersAgeSeconds=active.get("numbersAgeSeconds"), telemetryNote=note)
     if not (limited_by_numbers or over or reported):
         reason = "within_budget" if readable else "telemetry_unavailable"
         return dict(base, success=True, action="none", reason=reason)
@@ -1062,9 +1142,36 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
         sys.stdout.write("[*] Balancing: %s (%s%%) -> %s (%s%%), %s\n" % (
             active.get("email"), fh, best.get("email"), best.get("fiveHourUtil"), reason))
     res = _do_switch(best, active, reason, dry_run, automatic, cfg, source, evidence)
+    if note:
+        res.update(numbersAgeSeconds=active.get("numbersAgeSeconds"), telemetryNote=note)
     if res.get("action") == "switched" and res.get("success"):
         resolve_signals()
     return res
+
+
+def expire_signals(now: Optional[float] = None) -> Dict[str, Any]:
+    """Drop StopFailure reports older than their 15-minute TTL from the state (every evaluation does
+    this first, so none outlives it however the evaluation ends) and return the state."""
+    now = time.time() if now is None else now
+    state = load_state()
+    if any(now - p.get("at", 0) >= SIGNAL_TTL_SECONDS for p in state.get("pendingSignals") or []):
+        state = update_state(lambda s: s.__setitem__("pendingSignals", [
+            p for p in s.get("pendingSignals") or [] if now - p.get("at", 0) < SIGNAL_TTL_SECONDS]))
+    return state
+
+
+def stale_numbers_note(active: Dict[str, Any], cfg: Dict[str, Any]) -> Optional[str]:
+    """When the active account's last good numbers are older than staleNumbersMinutes, say what the
+    balancer still does: proactive balancing waits for readable numbers, a StopFailure report still
+    fails over once the probe confirms it."""
+    if active.get("telemetry") == "ok":
+        return None
+    age = active.get("numbersAgeSeconds")
+    if age is not None and age < float(cfg.get("staleNumbersMinutes", 30.0)) * 60.0:
+        return None
+    return ("usage numbers %s (%s): balancing on numbers is paused; a StopFailure report still fails "
+            "over once the probe confirms it" % ("never read" if age is None else "%dm old" % (age // 60),
+                                                 active.get("telemetry") or "unavailable"))
 
 
 def _do_switch(best, active, reason, dry_run, automatic, cfg, source, evidence) -> Dict[str, Any]:
@@ -1286,14 +1393,34 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
                 "storeAccount": is_store_account, "switched": False}
 
 
-def login_codex_headless(email: Optional[str] = None, space: str = "Stimulus") -> Dict[str, Any]:
-    """Re-authorize a Codex account headlessly from an active Arc browser session."""
+def login_codex_headless(email: Optional[str] = None, space: Optional[str] = None) -> Dict[str, Any]:
+    """Log a Codex account into the CLI from an Arc browser session, with the account chooser forced
+    (`prompt=login`), in the account's Arc space (`codexAccounts.<email>.arcSpace`, else "Stimulus").
+    The CLI has one live seat: this login revokes the other account's saved copy. The outgoing auth.json
+    is snapshotted first and the new one after, so both end up saved."""
     import pm_codex_login
-    target_email = email or "devteam@getstimulus.ai"
-    ok, msg = pm_codex_login.run_codex_autonomous_login(target_email, space_name=space)
-    if not ok:
-        raise StoreError(f"Autonomous Codex login failed: {msg}")
-    return {"success": True, "provider": "codex", "email": target_email, "message": msg}
+
+    target_email = (email or "devteam@getstimulus.ai").strip().lower()
+    space = space or codex_arc_space(target_email)
+    with pm_state.trace(), pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=True, timeout=60.0,
+                                                  holder="codex-login") as held:
+        if not held:
+            raise StoreError("another provider-manager action holds the balancer lock")
+        before = build_codex_context(verify_identity=True)
+        snapshot_codex_auth(before)
+        update_state(lambda s: s.setdefault("codexLoginAttempts", {}).__setitem__(target_email, time.time()))
+        ok, msg = pm_codex_login.run_codex_autonomous_login(target_email, space_name=space)
+        if not ok:
+            log_provider_event("codex.login.failed", {"email": target_email, "space": space, "reason": msg[:300]})
+            raise StoreError(f"Autonomous Codex login failed: {msg}")
+        after = build_codex_context(verify_identity=True)
+        saved = snapshot_codex_auth(after)
+        log_provider_event("codex.login", {"email": target_email, "space": space, "saved": saved})
+        if after["activeAccountId"] and after["activeAccountId"] != before["activeAccountId"]:
+            # the seat moved: the balancer's cooldown and Orca's active id must know it
+            _record_codex_switch(before, after["activeAccountId"], target_email,
+                                 before["activeIdentity"].get("email") or "unknown", "login_headless")
+    return {"success": True, "provider": "codex", "email": target_email, "space": space, "message": msg}
 
 
 # -- OpenAI Codex provider implementation ---------------------------------------------------------
@@ -1342,16 +1469,25 @@ def codex_roster() -> List[Dict[str, Any]]:
     return roster_accounts
 
 
+def read_codex_copy(acc_id: Optional[str], email: Optional[str]) -> Read:
+    """An account's saved Codex copy, under its roster id, else its email. "absent" only when no key
+    holds one; a read error under either key with no readable copy is "error", never "absent": an
+    unreadable copy is not a missing one, and a missing one can start a browser re-login."""
+    reads = [read_orca_codex(k) for k in dict.fromkeys(k for k in (acc_id, email) if k)]
+    for r in reads:
+        if r.status == "ok" and r.data:
+            return r
+    errors = [r for r in reads if r.status == "error"]
+    return errors[0] if errors else Read("absent", None)
+
+
 def build_codex_context(verify_identity: bool = True) -> Dict[str, Any]:
     accounts = codex_roster()
     copies = {}
     for acc in accounts:
         acc_id = acc.get("id")
         email = acc.get("email")
-        copy_read = read_orca_codex(acc_id)
-        if copy_read.status != "ok" and email:
-            copy_read = read_orca_codex(email)
-        copies[acc_id] = copy_read
+        copies[acc_id] = read_codex_copy(acc_id, email)
 
     store = read_codex_auth()
     store_tokens = store.data.get("tokens") if store.data else None
@@ -1378,6 +1514,7 @@ def build_codex_context(verify_identity: bool = True) -> Dict[str, Any]:
 
 def list_codex_accounts(ctx: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     ctx = ctx or build_codex_context(verify_identity=False)
+    state = load_state()
     out = []
     for acc in ctx["accounts"]:
         acc_id = acc.get("id")
@@ -1389,6 +1526,7 @@ def list_codex_accounts(ctx: Optional[Dict[str, Any]] = None) -> List[Dict[str, 
         is_active = acc_id == ctx["activeAccountId"]
         source_tokens = ctx["storeTokens"] if is_active and ctx["storeTokens"] else copy_tokens
         ident = extract_codex_identity(source_tokens) if source_tokens else {}
+        mark = _codex_health(acc_id, source_tokens, state) if source_tokens else {}
 
         out.append({
             "id": acc_id,
@@ -1398,7 +1536,9 @@ def list_codex_accounts(ctx: Optional[Dict[str, Any]] = None) -> List[Dict[str, 
             "hasStoredCredentials": bool(copy_tokens and copy_tokens.get("access_token")),
             "isTokenFresh": bool(copy_tokens) and not codex_token_expiring(copy_tokens, 0),
             "subscriptionType": ident.get("planType") or acc.get("authMethod") or "team",
-            "needsLogin": not bool(copy_tokens or (is_active and source_tokens)),
+            "needsLogin": not bool(copy_tokens or (is_active and source_tokens)) or bool(mark),
+            "health": mark.get("status") or "ok",
+            "healthReason": mark.get("reason"),
         })
     return out
 
@@ -1443,303 +1583,399 @@ def fetch_codex_usage_raw(access_token: str, account_id: str, timeout: float = 1
             err_body = e.read().decode("utf-8")
         except Exception:
             err_body = ""
-        return e.code, None, "HTTP %d: %s" % (e.code, err_body[:200])
+        return e.code, None, "HTTP %d: %s" % (e.code, err_body[:2000])  # the error code can sit late in a long body
     except Exception as e:
         return None, None, str(e)
 
 
+# -- Codex: auth.json snapshot, guarded refresh, per-grant health ---------------------------------
+#
+# Measured on the owner's Mac, 2026-10-19, with two Google users in one ChatGPT Team workspace:
+# - only one Codex CLI seat is live at a time: logging one account into the CLI revoked the other's
+#   saved copy minutes after it was saved and read back (usage then answers 401 token_revoked), so a
+#   standby copy is usually dead and moving the CLI to another account is a re-login;
+# - both users share one workspace (one chatgpt_account_id), so "workspace out of credits" is shared:
+#   switching seats cannot fix it, only the per-user 5-hour window benefits.
+
+def _codex_grant(tokens: Optional[Dict[str, Any]]) -> Optional[str]:
+    """One-way tag for a saved Codex grant (refresh + access token); state files only."""
+    if not tokens or not (tokens.get("refresh_token") or tokens.get("access_token")):
+        return None
+    return fingerprint("%s|%s" % (tokens.get("refresh_token") or "", tokens.get("access_token") or ""))
+
+
+def _codex_health(acc_id: str, tokens: Optional[Dict[str, Any]], state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+    """The health mark (revoked | needs_login) for this account, if it is for these very tokens. A mark
+    belongs to one grant: new tokens from a login, a snapshot or a refresh leave it behind."""
+    h = ((state if state is not None else load_state()).get("codexHealth") or {}).get(acc_id) or {}
+    return h if h.get("grant") and h.get("grant") == _codex_grant(tokens) else {}
+
+
+def _mark_codex_health(acc_id: str, email: str, status: Optional[str], reason: str,
+                       tokens: Optional[Dict[str, Any]]) -> None:
+    def put(s):
+        h = s.setdefault("codexHealth", {})
+        if status:
+            h[acc_id] = {"status": status, "reason": reason, "email": email, "since": time.time(),
+                         "grant": _codex_grant(tokens)}
+        else:
+            h.pop(acc_id, None)
+    update_state(put)
+
+
+def _codex_error_code(err: str) -> str:
+    """The error code of an OpenAI error ("HTTP 401: {...}"), e.g. token_revoked. Error bodies carry
+    no tokens; only the code is kept."""
+    body = (err or "").split(": ", 1)[-1]
+    try:
+        data = json.loads(body)
+    except ValueError:
+        data = None
+    if isinstance(data, dict):
+        e = data.get("error")
+        if isinstance(e, dict) and (e.get("code") or e.get("type")):
+            return str(e.get("code") or e.get("type"))[:60]
+        if isinstance(e, str) and e:
+            return e[:60]
+        if data.get("code"):
+            return str(data["code"])[:60]
+    m = re.search(r"token_revoked|refresh_token_(?:reused|expired|invalidated)|invalid_grant", body)
+    return m.group(0) if m else ""
+
+
+def _codex_dead_status(code: str) -> str:
+    return "revoked" if any(w in code for w in ("revoked", "reused", "invalidated")) else "needs_login"
+
+
+def codex_arc_space(email: str) -> str:
+    """The Arc space whose OpenAI web session re-logs this account in: `codexAccounts.<email>.arcSpace`
+    in provider-manager.json, else "Stimulus"."""
+    accounts = load_config().get("codexAccounts") or {}
+    for key, conf in accounts.items() if isinstance(accounts, dict) else []:
+        if str(key).lower() == (email or "").lower() and isinstance(conf, dict) and conf.get("arcSpace"):
+            return str(conf["arcSpace"])
+    return "Stimulus"
+
+
+def snapshot_codex_auth(ctx: Dict[str, Any]) -> Optional[str]:
+    """Save ~/.codex/auth.json into its account's keychain copy (roster id and email) whenever the two
+    differ, so whatever logged the CLI in (a raw `codex login`, a switch, the CLI's own refresh) leaves
+    a saved copy. Writes the keychain only: it never refreshes anything and never writes auth.json.
+    Returns why it wrote ("copy_missing" | "tokens_changed"), or None."""
+    tokens = ctx.get("storeTokens")
+    acc_id = ctx.get("activeAccountId")
+    email = (ctx.get("activeIdentity") or {}).get("email")
+    if not tokens or not acc_id or not email or not tokens.get("access_token"):
+        return None
+    copy = ctx["copies"].get(acc_id)
+    if copy is not None and copy.status == "error":
+        return None  # a copy that cannot be read is never overwritten blind
+    copy_tokens = (copy.data or {}).get("tokens") if copy is not None and copy.status == "ok" else None
+    if copy_tokens and same_token(copy_tokens.get("refresh_token"), tokens.get("refresh_token")) \
+            and same_token(copy_tokens.get("access_token"), tokens.get("access_token")):
+        return None
+    why = "tokens_changed" if copy_tokens else "copy_missing"
+    rec = {"auth_mode": (ctx["store"].data or {}).get("auth_mode", "chatgpt"), "tokens": dict(tokens),
+           "email": email, "savedAt": int(time.time()), "source": "auth.json"}
+    ok = write_orca_codex(acc_id, rec) and write_orca_codex(email, rec)
+    log_provider_event("codex.snapshot", {"accountId": acc_id, "email": email, "reason": why, "ok": ok})
+    if not ok:
+        return None
+    ctx["copies"][acc_id] = Read("ok", rec)
+    _mark_codex_health(acc_id, email, None, "snapshot", tokens)
+    return why
+
+
+def _refresh_codex_copy(acc_id: str, email: str, tokens: Dict[str, Any]) -> Tuple[Optional[Dict[str, Any]], str]:
+    """Refresh a saved Codex copy and persist the rotated tokens to it (read back). Never a refresh
+    token ~/.codex/auth.json holds: that grant belongs to the running Codex CLI, and spending it
+    (OpenAI rotates refresh tokens) logs the CLI out. auth.json is re-read just before the POST. A
+    grant already marked dead is not spent again. Returns (new tokens, "ok") or (None, why)."""
+    rt = (tokens or {}).get("refresh_token")
+    if not rt:
+        return None, "no_refresh_token"
+    with pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=False, holder="codex-refresh") as held:
+        if not held:
+            return None, "balancer_busy"
+        return _refresh_codex_copy_locked(acc_id, email, tokens, rt)
+
+
+def _refresh_codex_copy_locked(acc_id: str, email: str, tokens: Dict[str, Any], rt: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    now_copy = read_orca_codex(acc_id)
+    now_rt = (((now_copy.data or {}).get("tokens")) or {}).get("refresh_token") if now_copy.status == "ok" else None
+    if now_copy.status == "error" or (now_rt and not same_token(now_rt, rt)):
+        return None, "copy_changed"  # another writer rotated it since it was read: never spend the old one
+    live = read_codex_auth()
+    if live.status == "error":
+        return None, "auth_json_unreadable"
+    if same_token(rt, (((live.data or {}).get("tokens")) or {}).get("refresh_token")):
+        log_provider_event("refresh.refused", {"provider": "codex", "accountId": acc_id,
+                                               "reason": "refresh_token_in_auth_json"})
+        return None, "refresh_token_in_auth_json"
+    dead = _codex_health(acc_id, tokens)
+    if dead:
+        return None, dead.get("status") or "needs_login"
+    code, data, err = refresh_codex_token(rt)
+    if code != 200 or not isinstance(data, dict) or not data.get("access_token"):
+        why = _codex_error_code(err) if code in (400, 401) else ""
+        if why and re.search(r"invalid_grant|refresh_token_|revoked", why):  # the endpoint says the grant is dead
+            status = _codex_dead_status(why)
+            _mark_codex_health(acc_id, email, status, why, tokens)
+            log_provider_event("refresh.failed", {"provider": "codex", "accountId": acc_id, "reason": why,
+                                                  "needsLogin": True})
+            return None, status
+        log_provider_event("refresh.failed", {"provider": "codex", "accountId": acc_id, "reason": "http_%s" % code})
+        return None, "refresh_failed"
+    new = {
+        "id_token": data.get("id_token") or tokens.get("id_token"),
+        "access_token": data["access_token"],
+        "refresh_token": data.get("refresh_token") or rt,
+        "account_id": tokens.get("account_id") or extract_codex_identity(data).get("accountId"),
+    }
+    rec = {"auth_mode": "chatgpt", "tokens": new, "email": email}
+    if not (write_orca_codex(acc_id, rec) and write_orca_codex(email, rec)):
+        log_provider_event("refresh.persist_failed", {"provider": "codex", "accountId": acc_id, "severity": "critical"})
+        return None, "persist_failed"
+    _mark_codex_health(acc_id, email, None, "refreshed", new)
+    log_provider_event("refresh", {"provider": "codex", "accountId": acc_id})
+    return new, "ok"
+
+
+# The only reasons a switch may re-log an account in through the browser (which revokes the live
+# seat): no saved copy at all, or a grant the token endpoint itself proved dead.
+CODEX_RELOGIN_REASONS = ("no saved copy", "no_refresh_token", "revoked", "needs_login")
+
+
+def _codex_entry(acc_id: str, email: str, is_active: bool, telemetry: str, **extra: Any) -> Dict[str, Any]:
+    entry = {"id": acc_id, "email": email, "isActive": is_active, "telemetry": telemetry,
+             "usageStatus": telemetry.upper(), "needsLogin": telemetry in ("needs_login", "revoked", "auth_expired"),
+             "primary": None, "secondary": None, "credits": None, "resetCredits": None, "isRateLimited": False}
+    entry.update(extra)
+    return entry
+
+
+def _credits_exhausted(entry: Optional[Dict[str, Any]]) -> bool:
+    """The active seat is limited by credits (a workspace's, shared by every seat in it)."""
+    return bool(entry and entry.get("isRateLimited") and "credit" in str(entry.get("rateLimitType") or "").lower())
+
+
+def codex_standby_reason(u: Dict[str, Any], active: Optional[Dict[str, Any]], cfg: Dict[str, Any]) -> Optional[str]:
+    """Why this standby is not a switch candidate, or None when it is one (before the balance margin,
+    which depends on why the active account needs to move)."""
+    if u.get("isActive"):
+        return None
+    t = u.get("telemetry")
+    if t == "revoked":
+        return ("revoked (%s): its saved copy is dead, a re-login is needed. Only one Codex CLI seat is "
+                "live at a time, so a login of the other seat revokes it" % (u.get("healthReason") or "token_revoked"))
+    if t == "auth_expired":
+        return ("auth_expired (%s): its token was refused without proof the grant is dead; it is not "
+                "re-logged in automatically" % (u.get("healthReason") or "usage endpoint 401"))
+    if t == "needs_login" or u.get("needsLogin"):
+        return "%s (%s): a re-login is needed" % (t or "needs_login", u.get("healthReason") or u.get("usageStatus") or "no live copy")
+    if active and _credits_exhausted(active) and u.get("workspaceId") \
+            and u.get("workspaceId") == active.get("workspaceId"):
+        return ("same workspace (%s) as the active seat, which is out of credits: workspace credits are "
+                "shared, so switching seats cannot help" % str(u["workspaceId"])[:8])
+    if t != "ok":
+        return "telemetry %s%s: its numbers are unreadable" % (
+            t or "unavailable", " (%s)" % u["healthReason"] if u.get("healthReason") else "")
+    if u.get("isRateLimited"):
+        return "rate limited (%s)" % (u.get("rateLimitType") or "limited")
+    fh = (u.get("primary") or {}).get("usedPercent")
+    sd = (u.get("secondary") or {}).get("usedPercent")
+    if fh is None:
+        return "no 5-hour reading"
+    if fh > cfg.get("standbyMax", 70.0):
+        return "5-hour %s%% is over standbyMax %s%%" % (fh, cfg.get("standbyMax", 70.0))
+    if sd is not None and sd >= cfg.get("standbyWeeklyMax", 95.0):
+        return "7-day %s%% is at or over standbyWeeklyMax %s%%" % (sd, cfg.get("standbyWeeklyMax", 95.0))
+    return None
+
+
 def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None, force_refresh: Optional[bool] = None) -> List[Dict[str, Any]]:
+    """5-hour/7-day usage per Codex account. Snapshots auth.json first (so a raw `codex login` leaves a
+    standby copy). Never refreshes the CLI's grant; a grant marked dead is neither refreshed nor sent
+    to the usage endpoint. Each standby carries `standbyReason`: why it is not a candidate."""
     if force_refresh is not None:
         force = force or force_refresh
     ctx = ctx or build_codex_context(verify_identity=True)
+    try:
+        snapshot_codex_auth(ctx)
+    except Exception as e:  # noqa: BLE001 - a failed snapshot must not hide telemetry
+        log_provider_event("codex.snapshot", {"ok": False, "error": type(e).__name__})
     out = []
-
     cache = _load_json(USAGE_CACHE_PATH, {})
+    cache = cache if isinstance(cache, dict) else {}
     now = time.time()
+    state = load_state()
+    cfg = load_config()
 
     for acc in ctx["accounts"]:
         acc_id = acc.get("id")
         email = (acc.get("email") or "").lower()
         is_active = acc_id == ctx["activeAccountId"]
-
         copy_read = ctx["copies"].get(acc_id)
         copy_data = copy_read.data if copy_read and copy_read.status == "ok" else None
         copy_tokens = copy_data.get("tokens") if isinstance(copy_data, dict) else None
-
         tokens = ctx["storeTokens"] if is_active and ctx["storeTokens"] else copy_tokens
+        workspace = (tokens or {}).get("account_id") or extract_codex_identity(tokens).get("accountId") or None
         cache_key = "codex:%s" % email
         cached_entry = cache.get(cache_key)
 
         if not force and cached_entry and (now - cached_entry.get("cachedAt", 0)) < CACHE_TTL_SECONDS:
-            entry = dict(cached_entry)
-            entry["isActive"] = is_active
-            out.append(entry)
+            out.append(dict(cached_entry, isActive=is_active))
             continue
-
+        if not is_active and copy_read is not None and copy_read.status == "error":
+            out.append(_codex_entry(acc_id, email, is_active, "unavailable", needsLogin=False,
+                                    healthReason="copy unreadable: %s" % (copy_read.detail or "keychain error")))
+            continue
         if not tokens or not tokens.get("access_token"):
-            out.append({
-                "id": acc_id,
-                "email": email,
-                "isActive": is_active,
-                "telemetry": "needs_login",
-                "needsLogin": True,
-                "usageStatus": "NEEDS_LOGIN",
-                "primary": None,
-                "secondary": None,
-                "credits": None,
-                "resetCredits": None,
-                "isRateLimited": False,
-            })
+            out.append(_codex_entry(acc_id, email, is_active, "needs_login", healthReason="no saved copy"))
+            continue
+        mark = _codex_health(acc_id, tokens, state)
+        if mark:  # this very grant is known dead: no refresh, no usage call
+            out.append(_codex_entry(acc_id, email, is_active, mark.get("status") or "needs_login",
+                                    healthReason=mark.get("reason"), healthSince=mark.get("since"),
+                                    workspaceId=workspace))
             continue
 
-        active_tokens = tokens
-        # Do not refresh the active account's tokens from the usage path; the running Codex CLI owns active token refresh.
-        if not is_active and codex_token_expiring(active_tokens, 60_000):
-            rf = active_tokens.get("refresh_token")
-            if rf:
-                code, new_data, err = refresh_codex_token(rf)
-                if code == 200 and new_data:
-                    active_tokens = {
-                        "id_token": new_data.get("id_token") or active_tokens.get("id_token"),
-                        "access_token": new_data.get("access_token"),
-                        "refresh_token": new_data.get("refresh_token") or rf,
-                        "account_id": active_tokens.get("account_id"),
-                    }
-                    write_orca_codex(email, {"auth_mode": "chatgpt", "tokens": active_tokens, "email": email})
-                    write_orca_codex(acc_id, {"auth_mode": "chatgpt", "tokens": active_tokens, "email": email})
-                else:
-                    out.append({
-                        "id": acc_id,
-                        "email": email,
-                        "isActive": is_active,
-                        "telemetry": "auth_expired",
-                        "needsLogin": True,
-                        "usageStatus": "AUTH_EXPIRED",
-                        "primary": None,
-                        "secondary": None,
-                        "credits": None,
-                        "resetCredits": None,
-                        "isRateLimited": False,
-                    })
-                    continue
+        live = tokens
+        # The active account's grant belongs to the running Codex CLI; only a standby copy is refreshed.
+        if not is_active and codex_token_expiring(live, 60_000):
+            fresh, why = _refresh_codex_copy(acc_id, email, live)
+            if not fresh:
+                # only a dead grant needs a login; a transient failure (network, a busy lock, a copy
+                # that changed meanwhile) is unreadable telemetry, never a re-login candidate
+                status = why if why in ("revoked", "needs_login") else ("needs_login" if why == "no_refresh_token" else "unavailable")
+                out.append(_codex_entry(acc_id, email, is_active, status, healthReason=why, workspaceId=workspace))
+                continue
+            live = fresh
 
-        if not active_tokens.get("access_token"):
-            out.append({
-                "id": acc_id,
-                "email": email,
-                "isActive": is_active,
-                "telemetry": "auth_expired",
-                "needsLogin": True,
-                "usageStatus": "AUTH_EXPIRED",
-                "primary": None,
-                "secondary": None,
-                "credits": None,
-                "resetCredits": None,
-                "isRateLimited": False,
-            })
-            continue
-
-        ident = extract_codex_identity(active_tokens)
-        acc_uuid = active_tokens.get("account_id") or ident.get("accountId")
+        acc_uuid = live.get("account_id") or extract_codex_identity(live).get("accountId")
         if not acc_uuid:
-            out.append({
-                "id": acc_id,
-                "email": email,
-                "isActive": is_active,
-                "telemetry": "error",
-                "needsLogin": False,
-                "usageStatus": "NO_ACCOUNT_ID",
-                "primary": None,
-                "secondary": None,
-                "credits": None,
-                "resetCredits": None,
-                "isRateLimited": False,
-            })
+            out.append(_codex_entry(acc_id, email, is_active, "error", usageStatus="NO_ACCOUNT_ID", needsLogin=False))
             continue
 
-        status_code, data, err_msg = fetch_codex_usage_raw(active_tokens["access_token"], acc_uuid)
+        status_code, data, err_msg = fetch_codex_usage_raw(live["access_token"], acc_uuid)
         if status_code == 200 and isinstance(data, dict):
             rl = data.get("rate_limit") or {}
             pw = rl.get("primary_window") or {}
             sw = rl.get("secondary_window") or {}
             cr = data.get("credits") or {}
             rc = data.get("rate_limit_reset_credits") or {}
-
-            is_limited = rl.get("limit_reached", False) or (rl.get("allowed") is False)
+            is_limited = bool(rl.get("limit_reached", False) or (rl.get("allowed") is False))
             lim_type = data.get("rate_limit_reached_type")
             if isinstance(lim_type, dict):
                 lim_type = lim_type.get("type")
-
-            entry = {
-                "id": acc_id,
-                "email": email,
-                "isActive": is_active,
-                "telemetry": "ok",
-                "needsLogin": False,
-                "usageStatus": "LIMITED" if is_limited else "OK",
-                "isRateLimited": is_limited,
-                "rateLimitType": lim_type,
-                "subscriptionType": data.get("plan_type") or ident.get("planType") or "team",
-                "primary": {
+            entry = _codex_entry(
+                acc_id, email, is_active, "ok", needsLogin=False,
+                usageStatus="LIMITED" if is_limited else "OK", isRateLimited=is_limited, rateLimitType=lim_type,
+                subscriptionType=data.get("plan_type") or extract_codex_identity(live).get("planType") or "team",
+                workspaceId=acc_uuid,
+                primary={
                     "usedPercent": pw.get("used_percent"),
                     "resetsAt": pw.get("reset_at"),
                     "resetAfterSeconds": pw.get("reset_after_seconds"),
                     "windowMinutes": int(pw.get("limit_window_seconds", 18000) / 60),
                 } if pw else None,
-                "secondary": {
+                secondary={
                     "usedPercent": sw.get("used_percent"),
                     "resetsAt": sw.get("reset_at"),
                     "resetAfterSeconds": sw.get("reset_after_seconds"),
                     "windowMinutes": int(sw.get("limit_window_seconds", 604800) / 60),
                 } if sw else None,
-                "credits": {
-                    "balance": cr.get("balance"),
-                    "hasCredits": cr.get("has_credits", False),
-                },
-                "resetCredits": {
-                    "availableCount": rc.get("available_count", 0),
-                },
-                "cachedAt": now,
-            }
+                credits={"balance": cr.get("balance"), "hasCredits": cr.get("has_credits", False)},
+                resetCredits={"availableCount": rc.get("available_count", 0)},
+                cachedAt=now,
+            )
             cache[cache_key] = entry
-            out.append(entry)
+            out.append(dict(entry))
         elif status_code == 429:
-            entry = cached_entry or {
-                "id": acc_id, "email": email, "isActive": is_active,
-                "primary": None, "secondary": None, "credits": None, "resetCredits": None,
-                "isRateLimited": True,
-            }
-            entry["telemetry"] = "throttled"
-            entry["usageStatus"] = "THROTTLED"
-            entry["isActive"] = is_active
-            out.append(entry)
+            # The usage endpoint throttled us: never a rate limit on the account (unreadable is not limited).
+            keep = {k: (cached_entry or {}).get(k) for k in ("primary", "secondary", "credits", "resetCredits")}
+            out.append(_codex_entry(acc_id, email, is_active, "throttled", stale=True, workspaceId=workspace, **keep))
         elif status_code == 401:
-            out.append({
-                "id": acc_id,
-                "email": email,
-                "isActive": is_active,
-                "telemetry": "auth_expired",
-                "needsLogin": True,
-                "usageStatus": "NEEDS_LOGIN",
-                "error": err_msg,
-                "primary": None, "secondary": None, "credits": None, "resetCredits": None,
-                "isRateLimited": False,
-            })
+            code = _codex_error_code(err_msg)
+            if "revoked" in code:
+                _mark_codex_health(acc_id, email, "revoked", code, live)
+                out.append(_codex_entry(acc_id, email, is_active, "revoked", healthReason=code, workspaceId=workspace))
+            else:
+                out.append(_codex_entry(acc_id, email, is_active, "auth_expired", usageStatus="NEEDS_LOGIN",
+                                        healthReason=code or "usage endpoint 401", error=err_msg, workspaceId=workspace))
         else:
-            out.append({
-                "id": acc_id,
-                "email": email,
-                "isActive": is_active,
-                "telemetry": "unavailable",
-                "usageStatus": "UNAVAILABLE",
-                "error": err_msg,
-                "primary": None, "secondary": None, "credits": None, "resetCredits": None,
-                "isRateLimited": False,
-            })
+            out.append(_codex_entry(acc_id, email, is_active, "unavailable", needsLogin=False, error=err_msg,
+                                    workspaceId=workspace))
 
-    _save_json(USAGE_CACHE_PATH, cache)
+    _save_json(USAGE_CACHE_PATH, cache, mode=0o600)
+    active = next((u for u in out if u.get("isActive")), None)
+    for u in out:
+        u["standbyReason"] = codex_standby_reason(u, active, cfg)
     return out
 
 
 def switch_codex_account(target: str, force: bool = False) -> Dict[str, Any]:
+    """Move the Codex CLI (~/.codex/auth.json) to another account, under the machine-wide lock. The
+    outgoing seat is snapshotted first. A live target copy is refreshed (never the CLI's own grant) and
+    written; a dead one needs a browser re-login (Arc, with the account chooser forced)."""
+    with pm_state.trace(), pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=True, timeout=60.0,
+                                                  holder="codex-switch") as held:
+        if not held:
+            raise StoreError("another provider-manager action holds the balancer lock")
+        return _switch_codex_locked(target, force)
+
+
+def _switch_codex_locked(target: str, force: bool) -> Dict[str, Any]:
     ctx = build_codex_context(verify_identity=True)
+    snapshot_codex_auth(ctx)  # the outgoing seat keeps a saved copy, whatever happens next
     target_clean = target.strip().lower()
-
-    matched_acc = None
-    for acc in ctx["accounts"]:
-        if acc.get("id") == target or (acc.get("email") or "").lower() == target_clean:
-            matched_acc = acc
-            break
-
+    matched_acc = next((a for a in ctx["accounts"]
+                        if a.get("id") == target or (a.get("email") or "").lower() == target_clean), None)
     if not matched_acc:
         raise StoreError(f"Target account '{target}' not found in Codex roster")
-
     target_id = matched_acc["id"]
     target_email = matched_acc["email"].lower()
-
     if target_id == ctx["activeAccountId"]:
-        return {
-            "status": "already_active",
-            "account": target_email,
-            "id": target_id,
-            "message": f"{target_email} is already the active Codex account"
-        }
+        return {"status": "already_active", "account": target_email, "id": target_id,
+                "message": f"{target_email} is already the active Codex account"}
 
-    target_read = read_orca_codex(target_id)
-    if target_read.status != "ok" or not target_read.data:
-        target_read = read_orca_codex(target_email)
+    target_read = read_codex_copy(target_id, target_email)
+    if target_read.status == "error":
+        raise StoreError(f"Cannot switch to {target_email}: its saved copy could not be read "
+                         f"({target_read.detail}); nothing was changed, retry")
+    target_tokens = (target_read.data.get("tokens") or target_read.data) \
+        if (target_read and target_read.status == "ok" and target_read.data) else None
 
-    target_tokens = (target_read.data.get("tokens") or target_read.data) if (target_read and target_read.status == "ok" and target_read.data) else None
-    rf = target_tokens.get("refresh_token") if target_tokens else None
+    refreshed, why = None, "no saved copy"
+    if target_tokens and target_tokens.get("refresh_token"):
+        refreshed, why = _refresh_codex_copy(target_id, target_email, target_tokens)
+    if why == "refresh_token_in_auth_json":
+        raise StoreError(f"Cannot switch to {target_email}: its saved copy holds the grant ~/.codex/auth.json "
+                         "holds (the running CLI's); nothing was changed")
+    if why == "persist_failed":
+        raise StoreError(f"Failed to persist refreshed credentials for {target_email} in Keychain; auth.json unchanged")
+    if not refreshed and why not in CODEX_RELOGIN_REASONS:
+        # anything else is transient (network, a busy lock, a copy that changed or could not be read):
+        # a browser re-login would revoke the live seat for nothing
+        raise StoreError(f"Cannot switch to {target_email}: {why}; nothing was changed, retry")
+    if not refreshed:  # no copy, or its grant is proven dead: only a re-login helps
+        return _codex_relogin(ctx, matched_acc, why)
 
-    refreshed = None
-    if rf:
-        code, refreshed, err = refresh_codex_token(rf)
-
-    if not refreshed:
-        # Autonomous login via browser session if stored credentials are missing or invalidated
-        try:
-            import pm_codex_login
-            if pm_codex_login.is_arc_available():
-                ok, msg = pm_codex_login.run_codex_autonomous_login(target_email)
-                if ok:
-                    new_auth = read_codex_auth()
-                    if new_auth.status == "ok" and new_auth.data:
-                        def update_orca_active(data):
-                            s = data.setdefault("settings", {})
-                            s["activeCodexManagedAccountId"] = target_id
-                        _guarded_update(ORCA_DATA_PATH, update_orca_active)
-                        log_provider_event("codex.switch", {
-                            "from": ctx["activeAccountId"],
-                            "to": target_id,
-                            "email": target_email,
-                            "method": "autonomous_browser_login"
-                        })
-                        now = time.time()
-                        update_state(lambda s: s.__setitem__("lastCodexSwitch", {
-                            "at": now,
-                            "from": ctx["activeIdentity"].get("email") or "unknown",
-                            "to": target_email,
-                            "id": target_id,
-                            "method": "autonomous_browser_login",
-                        }))
-                        return {
-                            "status": "switched",
-                            "active": target_email,
-                            "id": target_id,
-                            "previous": ctx["activeIdentity"].get("email") or "unknown",
-                            "method": "autonomous_browser_login"
-                        }
-        except Exception as e:
-            sys.stderr.write(f"Autonomous login attempt error: {e}\n")
-
-        raise StoreError(f"Cannot switch to {target_email}: refresh failed and autonomous login unavailable")
-
-    t_ident = extract_codex_identity(refreshed)
-    target_acc_id = target_tokens.get("account_id") or t_ident.get("accountId")
+    target_acc_id = target_tokens.get("account_id") or extract_codex_identity(refreshed).get("accountId")
     if not target_acc_id:
         id_tok = refreshed.get("id_token") or target_tokens.get("id_token")
         if id_tok:
-            id_claims = decode_jwt_unverified(id_tok)
-            target_acc_id = id_claims.get("chatgpt_account_id")
+            target_acc_id = decode_jwt_unverified(id_tok).get("chatgpt_account_id")
     if not target_acc_id:
         raise StoreError(f"Cannot switch to {target_email}: unable to determine accountId from credentials")
-
-    live_target_tokens = {
-        "id_token": refreshed.get("id_token") or target_tokens.get("id_token"),
-        "access_token": refreshed.get("access_token"),
-        "refresh_token": refreshed.get("refresh_token") or rf,
-        "account_id": target_acc_id,
-    }
-
+    live_target_tokens = dict(refreshed, account_id=target_acc_id)
     target_rec = {"auth_mode": "chatgpt", "tokens": live_target_tokens, "email": target_email}
     if not (write_orca_codex(target_id, target_rec) and write_orca_codex(target_email, target_rec)):
         raise StoreError(f"Failed to persist refreshed credentials for {target_email} in Keychain")
 
     prev_email = "unknown"
     if ctx["storeTokens"]:
-        active_ident = ctx["activeIdentity"]
-        prev_email = active_ident.get("email") or "unknown"
+        prev_email = ctx["activeIdentity"].get("email") or "unknown"
         prev_id = ctx["activeAccountId"] or prev_email
         prev_rec = {"auth_mode": "chatgpt", "tokens": ctx["storeTokens"], "email": prev_email}
         if not write_orca_codex(prev_id, prev_rec):
@@ -1748,160 +1984,165 @@ def switch_codex_account(target: str, force: bool = False) -> Dict[str, Any]:
             if not write_orca_codex(prev_email, prev_rec):
                 raise StoreError(f"Failed to back up outgoing Codex credentials ({prev_email}) to Keychain; auth.json unchanged")
 
-    new_auth = {
-        "auth_mode": "chatgpt",
-        "tokens": live_target_tokens
-    }
-    if not write_codex_auth(new_auth):
+    if not write_codex_auth({"auth_mode": "chatgpt", "tokens": live_target_tokens}):
         raise StoreError("Failed to write ~/.codex/auth.json")
+    return _record_codex_switch(ctx, target_id, target_email, prev_email, "refreshed_copy")
 
+
+def _record_codex_switch(ctx: Dict[str, Any], target_id: str, target_email: str, prev_email: str,
+                         method: str) -> Dict[str, Any]:
     def update_orca_active(data):
-        s = data.setdefault("settings", {})
-        s["activeCodexManagedAccountId"] = target_id
+        data.setdefault("settings", {})["activeCodexManagedAccountId"] = target_id
     _guarded_update(ORCA_DATA_PATH, update_orca_active)
-
     now = time.time()
     update_state(lambda s: s.__setitem__("lastCodexSwitch", {
-        "at": now,
-        "from": prev_email,
-        "to": target_email,
-        "id": target_id,
-    }))
+        "at": now, "from": prev_email, "to": target_email, "id": target_id, "method": method}))
+    log_provider_event("codex.switch", {"previous": prev_email, "active": target_email, "targetId": target_id,
+                                        "method": method})
+    return {"status": "switched", "previous": prev_email, "active": target_email, "id": target_id, "method": method}
 
-    log_provider_event("codex.switch", {
-        "previous": prev_email,
-        "active": target_email,
-        "targetId": target_id,
-        "timestamp": now,
-    })
 
-    return {
-        "status": "switched",
-        "previous": prev_email,
-        "active": target_email,
-        "id": target_id,
-    }
+def _codex_relogin(ctx: Dict[str, Any], acc: Dict[str, Any], why: str) -> Dict[str, Any]:
+    """The target's saved copy is dead (usually: the other seat's login revoked it). Log it in through
+    Arc with the account chooser forced (`prompt=login`), in its configured Arc space."""
+    import pm_codex_login
+
+    email = acc["email"].lower()
+    usable, detail = pm_codex_login.arc_usable()
+    if not usable:
+        raise StoreError(f"Cannot switch to {email}: its saved copy is {why} and the browser re-login is "
+                         f"unavailable: {detail}")
+    space = codex_arc_space(email)
+    update_state(lambda s: s.setdefault("codexLoginAttempts", {}).__setitem__(email, time.time()))
+    ok, msg = pm_codex_login.run_codex_autonomous_login(email, space_name=space)
+    if not ok:
+        log_provider_event("codex.login.failed", {"email": email, "space": space, "reason": msg[:300]})
+        raise StoreError(f"Cannot switch to {email}: re-login in Arc space '{space}' failed: {msg}")
+    after = build_codex_context(verify_identity=True)
+    if (after["activeIdentity"].get("email") or "").lower() != email:
+        raise StoreError(f"Cannot switch to {email}: after the re-login ~/.codex/auth.json holds "
+                         f"{after['activeIdentity'].get('email') or 'nobody'}")
+    snapshot_codex_auth(after)
+    prev = ctx["activeIdentity"].get("email") or "unknown"
+    return _record_codex_switch(ctx, acc["id"], email, prev, "autonomous_browser_login")
 
 
 def evaluate_codex_balance(threshold: Optional[float] = None, dry_run: bool = False,
                            reason: str = "operator") -> Dict[str, Any]:
+    """Decide whether to move the Codex CLI to another account, and do it if so. Every outcome, a hold
+    included, is logged as a `codex.balance.decision` event with its reason."""
+    with pm_state.trace(), pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=True, timeout=30.0,
+                                                  holder="codex-balance:%s" % reason) as held:
+        if not held:
+            res: Dict[str, Any] = {"action": "hold", "code": "busy",
+                                   "reason": "another provider-manager action holds the balancer lock"}
+        else:
+            try:
+                res = _evaluate_codex_locked(threshold, dry_run)
+            except Exception as e:  # noqa: BLE001 - logged, then reported by the caller
+                log_provider_event("codex.balance.decision", {"action": "error", "code": "error",
+                                                              "reason": str(e)[:300], "source": reason, "dryRun": dry_run})
+                raise
+        log_provider_event("codex.balance.decision", {k: res.get(k) for k in (
+            "action", "code", "reason", "active", "target", "previous", "activeUtilization", "candidateUsage",
+            "standbys", "remainingSeconds") if res.get(k) is not None} | {"source": reason, "dryRun": dry_run})
+        return res
+
+
+def _evaluate_codex_locked(threshold: Optional[float], dry_run: bool) -> Dict[str, Any]:
     cfg = load_config()
     thresh = threshold if threshold is not None else cfg.get("threshold", 90.0)
     weekly_thresh = cfg.get("weeklyThreshold", 97.0)
-    standby_max = cfg.get("standbyMax", 70.0)
     margin = cfg.get("margin", 25.0)
 
     ctx = build_codex_context(verify_identity=True)
     usage_list = fetch_codex_usage(force=True, ctx=ctx)
-
     active_entry = next((u for u in usage_list if u.get("isActive")), None)
     if not active_entry:
-        return {"action": "hold", "reason": "No active Codex account identified"}
+        return {"action": "hold", "code": "no_active_account", "reason": "No active Codex account identified"}
 
     active_email = active_entry.get("email")
     active_primary = (active_entry.get("primary") or {}).get("usedPercent")
     active_secondary = (active_entry.get("secondary") or {}).get("usedPercent")
-    active_limited = active_entry.get("isRateLimited", False)
-
-    needs_switch = False
-    switch_reason = ""
+    readable = active_entry.get("telemetry") == "ok"  # a throttled row keeps old numbers for display only
+    active_limited = bool(active_entry.get("isRateLimited")) and readable
+    for u in usage_list:
+        u["standbyReason"] = codex_standby_reason(u, active_entry, cfg)
+    standbys = {u.get("email"): u.get("standbyReason") or "candidate" for u in usage_list if not u.get("isActive")}
+    base = {"active": active_email, "activeUtilization": active_primary, "standbys": standbys}
 
     if active_limited:
-        needs_switch = True
-        switch_reason = f"Active account {active_email} is rate limited ({active_entry.get('rateLimitType', 'limited')})"
-    elif active_primary is not None and active_primary >= thresh:
-        needs_switch = True
+        switch_reason = f"Active account {active_email} is rate limited ({active_entry.get('rateLimitType') or 'limited'})"
+    elif readable and active_primary is not None and active_primary >= thresh:
         switch_reason = f"Active account {active_email} 5-hour usage is {active_primary}% (>= {thresh}%)"
-    elif active_secondary is not None and active_secondary >= weekly_thresh:
-        needs_switch = True
+    elif readable and active_secondary is not None and active_secondary >= weekly_thresh:
         switch_reason = f"Active account {active_email} weekly usage is {active_secondary}% (>= {weekly_thresh}%)"
-
-    if not needs_switch:
-        return {
-            "action": "hold",
-            "reason": f"Active account {active_email} usage is healthy ({active_primary}% 5h, {active_secondary}% 7d)",
-            "active": active_email,
-        }
+    else:
+        if not readable:
+            return dict(base, action="hold", code="telemetry_unavailable",
+                        reason=f"Active account {active_email} telemetry is {active_entry.get('telemetry')}; "
+                               "unreadable numbers are never a limit")
+        return dict(base, action="hold", code="within_budget",
+                    reason=f"Active account {active_email} usage is healthy ({active_primary}% 5h, {active_secondary}% 7d)")
 
     now = time.time()
     state = load_state()
     if state.get("holdUntil", 0) > now:
-        return {
-            "action": "hold",
-            "reason": "Operator hold active",
-            "remainingSeconds": int(state["holdUntil"] - now),
-            "active": active_email,
-        }
+        return dict(base, action="hold", code="hold", reason="Operator hold active",
+                    remainingSeconds=int(state["holdUntil"] - now))
+    last_switch_at = (state.get("lastCodexSwitch") or {}).get("at", 0)
+    gap = (cfg.get("failoverMinGapMinutes", 5.0) if active_limited else cfg.get("cooldownMinutes", 30.0)) * 60.0
+    if now - last_switch_at < gap:
+        kind = "failover minimum gap" if active_limited else "balance cooldown"
+        return dict(base, action="hold", code="cooldown", remainingSeconds=int(gap - (now - last_switch_at)),
+                    reason=f"Codex {kind} active ({int(gap - (now - last_switch_at))}s remaining)")
 
-    last_switch = state.get("lastCodexSwitch") or {}
-    last_switch_at = last_switch.get("at", 0)
-    cooldown = cfg.get("cooldownMinutes", 30.0) * 60.0
-    min_gap = cfg.get("failoverMinGapMinutes", 5.0) * 60.0
-
-    if not active_limited and (now - last_switch_at < cooldown):
-        return {
-            "action": "hold",
-            "reason": f"Codex balance cooldown active ({int(cooldown - (now - last_switch_at))}s remaining)",
-            "active": active_email,
-        }
-    if active_limited and (now - last_switch_at < min_gap):
-        return {
-            "action": "hold",
-            "reason": f"Codex failover minimum gap active ({int(min_gap - (now - last_switch_at))}s remaining)",
-            "active": active_email,
-        }
-
-    standbys = [u for u in usage_list if not u.get("isActive") and u.get("telemetry") == "ok" and not u.get("isRateLimited")]
-    best_candidate = None
-
-    for s in standbys:
+    def margin_ok(s):
         s_prim = (s.get("primary") or {}).get("usedPercent") or 0
-        if s_prim <= standby_max and (active_limited or (active_primary is not None and (active_primary - s_prim) >= margin)):
-            best_candidate = s
-            break
+        return active_limited or (active_primary is not None and active_primary - s_prim >= margin)
 
-    # If no healthy standby with telemetry exists (e.g. OpenAI single-session invalidation),
-    # check if Arc browser session is available for autonomous re-auth.
-    if not best_candidate:
-        try:
-            import pm_codex_login
-            arc_available = pm_codex_login.is_arc_available()
-        except Exception:
-            arc_available = False
-
-        if arc_available:
-            unauth_standbys = [
-                u for u in usage_list
-                if not u.get("isActive") and not u.get("isRateLimited") and (
-                    u.get("needsLogin") or u.get("telemetry") in ("auth_expired", "needs_login")
-                )
-            ]
-            if unauth_standbys:
-                best_candidate = unauth_standbys[0]
-                switch_reason += f" (standby {best_candidate.get('email')} will re-auth via Arc)"
-
-    if not best_candidate:
-        return {
-            "action": "hold",
-            "reason": f"Active account needs switch ({switch_reason}), but no eligible standby candidate found",
-            "active": active_email,
-        }
-
-    target_email = best_candidate["email"]
-    target_id = best_candidate["id"]
+    cands = [s for s in usage_list if not s.get("isActive") and not s.get("standbyReason") and margin_ok(s)]
+    best = min(cands, key=lambda s: (s.get("primary") or {}).get("usedPercent") or 0) if cands else None
+    if not best and not active_limited:
+        # A browser re-login revokes the live seat, and a dead standby has no numbers to compare: over a
+        # threshold the seat still works, so only a limit is worth that (no seat ping-pong at 90%).
+        return dict(base, action="hold", code="relogin_needs_a_limit",
+                    reason=f"{switch_reason}, but no live standby; a re-login (which revokes this seat) "
+                           "is only started once it is limited")
+    if not best:
+        # No live standby: with one live seat at a time this is the usual case. A dead copy can still be
+        # re-logged in through Arc, unless its workspace's exhausted credits make the move pointless.
+        relogin = [s for s in usage_list if not s.get("isActive")
+                   and s.get("telemetry") in ("revoked", "needs_login")  # proven dead, never an odd 401
+                   # a seat with no copy has no known workspace: with the active seat out of
+                   # credits, only a standby known to be in ANOTHER workspace is worth a login
+                   and not (_credits_exhausted(active_entry)
+                            and s.get("workspaceId") in (None, "", active_entry.get("workspaceId")))]
+        if not relogin:
+            return dict(base, action="hold", code="no_candidate",
+                        reason=f"{switch_reason}, but no standby is a candidate: " +
+                               "; ".join("%s: %s" % (e, r) for e, r in standbys.items()))
+        best = relogin[0]
+        last_try = float((state.get("codexLoginAttempts") or {}).get(best.get("email"), 0) or 0)
+        retry_gap = cfg.get("cooldownMinutes", 30.0) * 60.0
+        if now - last_try < retry_gap:
+            return dict(base, action="hold", code="relogin_recently_attempted",
+                        remainingSeconds=int(retry_gap - (now - last_try)),
+                        reason=f"{switch_reason}; a re-login of {best.get('email')} was tried "
+                               f"{int((now - last_try) // 60)}m ago")
+        import pm_codex_login
+        usable, detail = pm_codex_login.arc_usable()
+        if not usable:
+            return dict(base, action="hold", code="relogin_unavailable",
+                        reason=f"{switch_reason}; {best.get('email')} needs a re-login and Arc is unusable: {detail}")
+        switch_reason += f" (standby {best.get('email')} will re-auth via Arc space '{codex_arc_space(best.get('email'))}')"
 
     if dry_run or not cfg.get("autoBalance", True):
-        return {
-            "action": "would_switch",
-            "previous": active_email,
-            "target": target_email,
-            "reason": switch_reason if cfg.get("autoBalance", True) else f"{switch_reason} (autoBalance disabled)",
-            "candidateUsage": (best_candidate.get("primary") or {}).get("usedPercent"),
-        }
-
-    res = switch_codex_account(target_id, force=True)
-    res["action"] = "switched"
-    res["reason"] = switch_reason
+        return dict(base, action="would_switch", code="would_switch", previous=active_email, target=best["email"],
+                    reason=switch_reason if cfg.get("autoBalance", True) else f"{switch_reason} (autoBalance disabled)",
+                    candidateUsage=(best.get("primary") or {}).get("usedPercent"))
+    res = switch_codex_account(best["id"], force=True)
+    res.update(action="switched", code="switched", reason=switch_reason, target=best["email"])
     return res
 
 

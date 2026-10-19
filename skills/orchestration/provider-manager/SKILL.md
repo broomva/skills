@@ -76,7 +76,8 @@ many sessions kick. It switches only when:
 - **failover:** the active account is limited by readable numbers, or a session reported a rate
   limit (StopFailure), **and** a real probe confirms it. The probe is one tiny `claude -p` on the live
   store and the sessions' model, with no hooks, tools or MCP. The minimum gap is 5 minutes. A report
-  stays pending (up to 15 minutes) until an evaluation can act on it. A session that reported
+  stays pending (up to 15 minutes) until an evaluation can act on it; every evaluation drops reports
+  older than that from the state. A session that reported
   `authentication_failed` triggers the same failover when the probe shows Claude Code itself cannot
   refresh the store's credential.
 - **never on its own:** a store left empty (`/logout`) is not refilled. On a Claude Code version
@@ -84,17 +85,63 @@ many sessions kick. It switches only when:
   `version_unverified`, shown in the session-start line and `usage`) until the drill is re-run and
   the version added (`verifiedClaudeVersions`). An account the probe confirmed limited is not a
   failover target for an hour.
-- **Codex balancing:** evaluate 5-hour utilization (≥ 90%) and rate limits. If the active account needs failover, the balancer picks an eligible standby and switches accounts, automatically falling back to autonomous browser re-authorization (Arc "Stimulus" space) if the standby's refresh token was invalidated by OpenAI's single-session OAuth constraint.
+- **Codex balancing:** see "Codex accounts" below.
 
 Telemetry that cannot be read is never a rate limit. The usage endpoint answering 429 means
-`throttled` (back off, keep the last numbers marked stale). An expired token means `auth_expired`. A
-dead grant means `needs_login`. None of these switches anything, and a standby with any of them is
-not a candidate. Tool output (a GitHub API limit, a site's 429) is never read as a Claude limit.
+`throttled`: the last numbers are kept, marked stale, and the endpoint is not called again until the
+backoff ends (`Retry-After`, at least 1 minute and at most 6 hours; without it 2, 4, 8, 16, then 30
+minutes). The backoff is persisted, so no kick reaches the endpoint inside it. `usage` shows the age of
+the last good numbers and when the next try is (`THROTTLED (numbers 139m old, next try in 41m)`); past
+`staleNumbersMinutes` (30) the balancer says so in its decision (`telemetryNote`): balancing on numbers
+waits, and a StopFailure report still fails over once the probe confirms it. An expired token means
+`auth_expired`. A dead grant means `needs_login`: its refresh token is spent once, then skipped until
+a login, a switch or Orca writes new tokens. None of these switches anything, and a standby with any
+of them is not a candidate. Tool output (a GitHub API limit, a site's 429) is never read as a Claude
+limit.
+
+## Codex accounts (measured 2026-10-19)
+
+Two limits shape everything here:
+
+- **One live Codex CLI seat at a time.** Logging one account into the Codex CLI revoked the other
+  account's saved copy within minutes (its usage call then answers 401 `token_revoked`). A saved
+  standby is therefore usually dead, and moving the CLI to another account is a browser re-login,
+  which in turn revokes the seat it replaces.
+- **One shared workspace.** devteam@ and carlos@ are two users of one ChatGPT Team workspace (one
+  `chatgpt_account_id`). "Workspace out of credits" is shared: switching seats cannot fix it. Only the
+  per-user 5-hour window benefits from a switch.
+
+What the balancer does with that:
+
+- Every evaluation and every `usage` call snapshots `~/.codex/auth.json` into its account's keychain
+  copy when the two differ, so a raw `codex login` (which writes only auth.json) leaves a saved copy.
+  The snapshot never refreshes anything. No refresh ever spends a refresh token auth.json holds: it
+  belongs to the running CLI, and OpenAI rotates refresh tokens on use.
+- A copy answering `token_revoked` is marked `revoked` (a refresh refused with `invalid_grant` is
+  `needs_login`). That grant is not sent to the usage or token endpoint again until new tokens replace it.
+- It moves the CLI when the active account is limited (readable numbers only: a usage 429 is
+  `throttled`, never a limit) or over the 5-hour/7-day thresholds, to a live standby that is under
+  `standbyMax` and, for a balance, `margin` points lower. While the active seat is out of workspace
+  credits, a standby in the same workspace, or of unknown workspace (no saved copy), is never a
+  candidate and is never re-logged in; only one known to be in another workspace is.
+- With no live standby (the usual case) and the active seat limited (not merely over a threshold:
+  a re-login revokes a seat that still works), it re-logs in a standby whose grant is proven dead
+  (`revoked`, `needs_login`) or that has no copy. A transient failure (network, a busy lock, a copy
+  that changed or could not be read, a 401 without a revocation code) never starts a re-login, because
+  a re-login revokes the live seat. The re-login runs through Arc, with `prompt=login`
+  forcing OpenAI's account chooser (without it, the Arc space's own web session is signed in, whoever
+  that is) in the account's `arcSpace` (default `Stimulus`). A short AppleScript check runs first and
+  reports "Arc not answering AppleScript" (a pending permission prompt hangs Arc) or "Arc is not
+  running" instead of hanging. A failed re-login is not retried for `cooldownMinutes`.
+- Every outcome, holds included, is a `codex.balance.decision` event with its reason, and
+  `usage --provider codex` shows why each standby is not a candidate (the STANDBY column).
 
 Configuration: `~/.config/broomva/provider-manager.json` (keys: `autoBalance`, `threshold`,
 `weeklyThreshold`, `standbyMax`, `margin`, `cooldownMinutes`, `failoverMinGapMinutes`,
-`evalIntervalSeconds`, `probeTtlSeconds`, `probeModel`, `versionGate`, `verifiedClaudeVersions`). Set
-`"autoBalance": false` to log `would_switch` and never switch automatically.
+`evalIntervalSeconds`, `probeTtlSeconds`, `probeModel`, `versionGate`, `verifiedClaudeVersions`,
+`staleNumbersMinutes`, `codexAccounts`). Set `"autoBalance": false` to log `would_switch` and never
+switch automatically. `codexAccounts` names the Arc space each Codex account re-logs in from:
+`{"codexAccounts": {"carlos@getstimulus.ai": {"arcSpace": "Carlos"}}}`.
 
 ## Commands
 
@@ -118,10 +165,10 @@ python3 $PM login-headless --email X   # re-login X from browser session; --forc
 # OpenAI Codex commands
 python3 $PM list --provider codex                    # Codex accounts (devteam, carlos) & active store
 python3 $PM status --provider codex                  # active Codex auth mode, email, plan, token freshness
-python3 $PM usage --provider codex [--force]         # 5h/7d Codex utilization, reset credits, status
-python3 $PM switch --provider codex devteam@...      # safe Codex switch (backs up outgoing, updates auth.json; auto-browser login fallback)
+python3 $PM usage --provider codex [--force]         # 5h/7d Codex utilization, status, why a standby is not a candidate
+python3 $PM switch --provider codex devteam@...      # Codex switch: saves the outgoing seat; a dead target is re-logged in via Arc
 python3 $PM balance --provider codex [--dry-run]     # evaluate Codex balance (5h threshold / credits depleted)
-python3 $PM login-headless --provider codex [--email X] # autonomous Codex re-login via Arc browser session
+python3 $PM login-headless --provider codex [--email X] [--space S] # Codex re-login via Arc (account chooser forced)
 
 # Multi-provider aggregate commands
 python3 $PM usage --provider all       # display both Claude Code and OpenAI Codex telemetry
@@ -130,7 +177,11 @@ python3 $PM list --provider all        # list managed accounts across both provi
 python3 $PM balance --provider all     # evaluate and balance both Claude and Codex accounts
 ```
 
-`login-headless` for Claude accounts renews via browser cookies in Arc/Chrome without GUI interaction. For OpenAI Codex, `switch` and `login-headless` autonomously drive the OAuth code approval via Arc's browser session (selecting account and confirming workspace consent headlessly) whenever stored tokens need refresh, enabling zero-prompt continuous swapping between team members.
+`login-headless` for Claude accounts renews via browser cookies in Arc/Chrome without GUI interaction.
+For OpenAI Codex, `switch` and `login-headless` drive `codex login` through an Arc space: the account
+chooser (forced with `prompt=login`) and the consent page are clicked through, and the new auth.json is
+snapshotted. The target must be signed in to that space's OpenAI web session. Because only one CLI seat
+is live, every such login revokes the other account's saved copy.
 
 ## Hooks
 
@@ -147,7 +198,9 @@ readable usage numbers on a later prompt's evaluation. The wiring is in
 ## Tests and proof
 
 - `tests/test_kill_paths.py`: each observed kill or false rotation, end to end, with a running
-  session modelled on the binary. Against origin/main (`PM_IMPL_DIR=...`) all 15 fail; here all pass.
+  session modelled on the binary. K1–K15 fail against the code before BRO-2713 (`PM_IMPL_DIR=...`),
+  K16 (the auth.json snapshot never spends the Codex CLI's refresh token) against the code before
+  BRO-3192; here all pass.
 - `tests/mutation_check.py`: each guard disabled in a scratch copy turns its tests red.
 - `tests/drill/drill.py`: the real `claude` binary in a sandboxed scratch HOME (no keychain, network
   only to a local stub), with a switch made between two of its requests. Its `probe` scenario runs
