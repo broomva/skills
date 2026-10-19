@@ -22,10 +22,24 @@ decides on the worktree axis.
 
 | The peers… | Use |
 |---|---|
+| are launched by an orchestrator that runs inside T3 Code (the t3-code MCP tools are present) | T3 `delegate_task` or `t3_thread_launch`, a model chosen per lane: not `bstack wave` or `bstack fleet`. See [Under T3](#under-t3) below |
 | each need their own branch and worktree (one plan file per peer) | `bstack wave dispatch <plan...>` |
 | coordinate in ONE worktree (a roster with `owns` lanes) | `bstack fleet up <roster.jsonl>` |
 | are independent in-session subtasks | `Agent` calls in one message (Fanout P5), not a launcher |
 | are already running and need managing | not this workflow: [reconcile](reconcile.md), [census](census.md), [close-out](close-out.md) |
+
+**Under T3.** When the orchestrator runs inside T3 Code, launch through T3 and
+not through either bstack launcher. Child work goes through `delegate_task`
+(with `isolation: "worktree"` when it needs its own checkout). Continuing an
+existing worktree goes through `t3_thread_launch` with `workspaceStrategy
+{type: "existing_worktree"}`. Pick provider, model and effort per lane from
+`orchestrator_capabilities`: the strongest model for invariant-bearing or
+security work, a mid-tier model for UI from precise boards, and a cheap tier
+(Haiku 5.5, GPT-6-Luna, Gemini 3.8 Flash) for mechanical, spec-complete work and
+checklist verification. Cap concurrent implementing peers by machine memory: on
+2026-10-19 a 24 GB Mac crashed under 8 `claude --bg` peers plus a local dev
+stack, and those peers had been invisible in T3, all on one model, and stalled
+on permission prompts until relaunched in bypass mode.
 
 ## Steps
 

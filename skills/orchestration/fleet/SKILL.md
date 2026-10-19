@@ -37,7 +37,9 @@ is a **workflow** with its own trigger, steps and a check you can run.
 → `bstack wave dispatch`; peers share one worktree → `bstack fleet up`;
 manage what's running → `fleet reconcile` (and census, close-out, rollover).
 `bstack fleet` is bstack's launcher, a different command from this skill's
-`scripts/fleet`; this skill puts nothing named `fleet` on PATH.
+`scripts/fleet`; this skill puts nothing named `fleet` on PATH. Inside T3 Code
+the launch row in [workflows/launch.md](workflows/launch.md) sends peers through
+T3 (`delegate_task`, `t3_thread_launch`) instead of either bstack launcher.
 
 Named `fleet-reconcile` until 0.6.0 (BRO-3122). `fleet-reconcile` stays a
 deprecated alias for one release: `skills/orchestration/fleet-reconcile/`
