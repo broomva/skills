@@ -448,7 +448,7 @@ def refresh_codex_token(refresh_token: str, client_id: str = CODEX_CLIENT_ID,
             err_body = e.read().decode("utf-8")
         except Exception:
             err_body = ""
-        return e.code, None, "HTTP %d: %s" % (e.code, err_body[:200])
+        return e.code, None, "HTTP %d: %s" % (e.code, err_body[:2000])  # the error code can sit late in a long body
     except Exception as e:
         return None, None, str(e)
 

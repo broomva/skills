@@ -596,7 +596,7 @@ def _note_429(account_id: str, retry_after: Optional[str], now: float) -> float:
         if hinted is not None:
             wait = min(RETRY_AFTER_CAP_SECONDS, max(RETRY_AFTER_FLOOR_SECONDS, hinted))
         else:
-            wait = min(BACKOFF_CAP_SECONDS, 120.0 * (2 ** step))
+            wait = min(BACKOFF_CAP_SECONDS, 120.0 * (2 ** min(step, 10)))
         t.update({"backoffUntil": now + wait, "backoffStep": step + 1, "last429At": now,
                   "retryAfter": retry_after if hinted is not None else None})
         holder["until"] = now + wait
@@ -1568,7 +1568,7 @@ def fetch_codex_usage_raw(access_token: str, account_id: str, timeout: float = 1
             err_body = e.read().decode("utf-8")
         except Exception:
             err_body = ""
-        return e.code, None, "HTTP %d: %s" % (e.code, err_body[:200])
+        return e.code, None, "HTTP %d: %s" % (e.code, err_body[:2000])  # the error code can sit late in a long body
     except Exception as e:
         return None, None, str(e)
 
@@ -1679,6 +1679,17 @@ def _refresh_codex_copy(acc_id: str, email: str, tokens: Dict[str, Any]) -> Tupl
     rt = (tokens or {}).get("refresh_token")
     if not rt:
         return None, "no_refresh_token"
+    with pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=False, holder="codex-refresh") as held:
+        if not held:
+            return None, "balancer_busy"
+        return _refresh_codex_copy_locked(acc_id, email, tokens, rt)
+
+
+def _refresh_codex_copy_locked(acc_id: str, email: str, tokens: Dict[str, Any], rt: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    now_copy = read_orca_codex(acc_id)
+    now_rt = (((now_copy.data or {}).get("tokens")) or {}).get("refresh_token") if now_copy.status == "ok" else None
+    if now_copy.status == "error" or (now_rt and not same_token(now_rt, rt)):
+        return None, "copy_changed"  # another writer rotated it since it was read: never spend the old one
     live = read_codex_auth()
     if live.status == "error":
         return None, "auth_json_unreadable"
@@ -1806,7 +1817,9 @@ def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None,
         if not is_active and codex_token_expiring(live, 60_000):
             fresh, why = _refresh_codex_copy(acc_id, email, live)
             if not fresh:
-                status = why if why in ("revoked", "needs_login") else "auth_expired"
+                # only a dead grant needs a login; a transient failure (network, a busy lock, a copy
+                # that changed meanwhile) is unreadable telemetry, never a re-login candidate
+                status = why if why in ("revoked", "needs_login") else ("needs_login" if why == "no_refresh_token" else "unavailable")
                 out.append(_codex_entry(acc_id, email, is_active, status, healthReason=why, workspaceId=workspace))
                 continue
             live = fresh
@@ -2020,7 +2033,8 @@ def _evaluate_codex_locked(threshold: Optional[float], dry_run: bool) -> Dict[st
     active_email = active_entry.get("email")
     active_primary = (active_entry.get("primary") or {}).get("usedPercent")
     active_secondary = (active_entry.get("secondary") or {}).get("usedPercent")
-    active_limited = bool(active_entry.get("isRateLimited")) and active_entry.get("telemetry") == "ok"
+    readable = active_entry.get("telemetry") == "ok"  # a throttled row keeps old numbers for display only
+    active_limited = bool(active_entry.get("isRateLimited")) and readable
     for u in usage_list:
         u["standbyReason"] = codex_standby_reason(u, active_entry, cfg)
     standbys = {u.get("email"): u.get("standbyReason") or "candidate" for u in usage_list if not u.get("isActive")}
@@ -2028,12 +2042,12 @@ def _evaluate_codex_locked(threshold: Optional[float], dry_run: bool) -> Dict[st
 
     if active_limited:
         switch_reason = f"Active account {active_email} is rate limited ({active_entry.get('rateLimitType') or 'limited'})"
-    elif active_primary is not None and active_primary >= thresh:
+    elif readable and active_primary is not None and active_primary >= thresh:
         switch_reason = f"Active account {active_email} 5-hour usage is {active_primary}% (>= {thresh}%)"
-    elif active_secondary is not None and active_secondary >= weekly_thresh:
+    elif readable and active_secondary is not None and active_secondary >= weekly_thresh:
         switch_reason = f"Active account {active_email} weekly usage is {active_secondary}% (>= {weekly_thresh}%)"
     else:
-        if active_entry.get("telemetry") != "ok":
+        if not readable:
             return dict(base, action="hold", code="telemetry_unavailable",
                         reason=f"Active account {active_email} telemetry is {active_entry.get('telemetry')}; "
                                "unreadable numbers are never a limit")

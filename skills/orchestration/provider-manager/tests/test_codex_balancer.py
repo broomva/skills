@@ -300,3 +300,51 @@ def test_arc_not_running_is_reported_without_starting_it(monkeypatch):
     monkeypatch.setattr(mod.subprocess, "run", fake_run)
     assert mod.arc_usable() == (False, "Arc is not running")
     assert seen == ["pgrep"], "`tell application \"Arc\"` would launch it"
+
+
+def test_a_throttled_active_seat_is_never_moved_on_its_old_numbers(cx, monkeypatch):
+    """Stratum B (BRO-3192 review): a usage 429 keeps the last numbers for display; acting on them
+    started an Arc re-login (which revokes the live seat) from a 5-hour-old 96%."""
+    import pm_codex_login
+    monkeypatch.setattr(pm_codex_login, "arc_usable", lambda timeout=3.0: (True, "ok"))
+    logins = []
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login",
+                        lambda *a, **k: logins.append(a) or (False, "refused by the test"))
+    cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-1"))
+    cx.login(DEV, "rt-dev-1")
+    cx.revoked.add("rt-carlos-1")
+    cx.usage_pct["rt-dev-1"] = 96
+    assert _rows()[DEV]["primary"]["usedPercent"] == 96
+    cache = json.loads(Path(pm.USAGE_CACHE_PATH).read_text())
+    cache["codex:" + DEV]["cachedAt"] -= 5 * 3600
+    Path(pm.USAGE_CACHE_PATH).write_text(json.dumps(cache))
+    cx.throttled.add("rt-dev-1")
+    rows = _rows()
+    assert rows[DEV]["telemetry"] == "throttled" and rows[DEV]["primary"]["usedPercent"] == 96
+    try:
+        res = pm.evaluate_codex_balance(reason="hook")
+    except pm_store.StoreError as e:
+        res = {"action": "raised", "code": str(e)}
+    assert logins == [], "a re-login started on unreadable numbers"
+    assert res["action"] == "hold" and res["code"] == "telemetry_unavailable"
+
+
+def test_a_transient_standby_refresh_failure_is_not_a_relogin_candidate(cx, monkeypatch):
+    import pm_codex_login
+    monkeypatch.setattr(pm_codex_login, "arc_usable", lambda timeout=3.0: pytest.fail("no re-login for a blip"))
+    cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-1", ttl=10))
+    cx.login(DEV, "rt-dev-1")
+    cx.usage_pct["rt-dev-1"] = 97
+    monkeypatch.setattr(pm, "refresh_codex_token", lambda rt, client_id=None, timeout=30: (None, None, "timed out"))
+    rows = _rows()
+    assert rows[CARLOS]["telemetry"] == "unavailable" and not rows[CARLOS]["needsLogin"]
+    res = pm.evaluate_codex_balance(reason="hook")
+    assert res["action"] == "hold" and res["code"] == "no_candidate"
+
+
+def test_a_copy_rotated_by_another_writer_is_not_spent(cx):
+    stale = cx.tokens(CARLOS, "rt-carlos-1", ttl=10)
+    cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-2"))  # a switch rotated it meanwhile
+    cx.login(DEV, "rt-dev-1")
+    assert pm._refresh_codex_copy(CARLOS_ID, CARLOS, stale) == (None, "copy_changed")
+    assert cx.refreshed == []
