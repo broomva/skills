@@ -440,3 +440,44 @@ def test_a_refresh_401_without_a_dead_grant_code_marks_nothing(cx, monkeypatch):
     rows = _rows()
     assert rows[CARLOS]["telemetry"] == "unavailable"
     assert CARLOS_ID not in pm.load_state().get("codexHealth", {})
+
+
+_REFRESH_OUTCOMES = {
+    "ok": (200, None, ""),
+    "network": (None, None, "timed out"),
+    "server_5xx": (503, None, "HTTP 503: unavailable"),
+    "gateway_401": (401, None, "HTTP 401: <html>gateway</html>"),
+    "odd_400": (400, None, "HTTP 400: " + json.dumps({"error": {"code": "invalid_request"}})),
+    "invalid_grant": (400, None, "HTTP 400: " + json.dumps({"error": "invalid_grant"})),
+    "reused": (400, None, "HTTP 400: " + json.dumps({"error": {"code": "refresh_token_reused"}})),
+}
+_DEAD = {"invalid_grant", "reused"}
+
+
+@pytest.mark.parametrize("copy_state", ["ok", "absent", "error"])
+@pytest.mark.parametrize("outcome", sorted(_REFRESH_OUTCOMES))
+def test_a_switch_relogs_in_only_for_a_missing_copy_or_a_dead_grant(cx, monkeypatch, copy_state, outcome):
+    """The re-login invariant as a property (suggested by the continuation review): across every
+    keychain read status and every refresh outcome, a browser re-login (which revokes the live seat)
+    starts only when the copy is genuinely absent or the token endpoint named the grant dead."""
+    logins = _no_login(monkeypatch)
+    cx.login(DEV, "rt-dev-1")
+    if copy_state == "ok":
+        cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-1"))
+    elif copy_state == "error":
+        real_read = cx._read
+        monkeypatch.setattr(pm, "read_orca_codex", lambda k: pm_store.Read("error", None, "security rc 36")
+                            if k in (CARLOS_ID, CARLOS) else real_read(k))
+    code, data, err = _REFRESH_OUTCOMES[outcome]
+    if outcome == "ok":
+        new = cx.tokens(CARLOS, "rt-carlos-2")
+        data = {k: new[k] for k in ("id_token", "access_token", "refresh_token")}
+    monkeypatch.setattr(pm, "refresh_codex_token", lambda rt, client_id=None, timeout=30: (code, data, err))
+    try:
+        pm.switch_codex_account(CARLOS)
+    except pm_store.StoreError:
+        pass
+    may_relogin = copy_state == "absent" or (copy_state == "ok" and outcome in _DEAD)
+    assert bool(logins) == may_relogin, (copy_state, outcome, logins)
+    if not logins and not (copy_state == "ok" and outcome == "ok"):
+        assert cx.auth_tokens()["refresh_token"] == "rt-dev-1", "the live seat was touched"
