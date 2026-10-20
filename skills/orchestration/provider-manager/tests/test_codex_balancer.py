@@ -536,6 +536,33 @@ def test_the_pro_seat_is_the_failover_while_the_team_workspace_is_out_of_credits
     assert [l[0] for l in logins] == [TEAM]
 
 
+def test_the_real_roster_never_relogs_a_pro_seat_with_no_copy_while_credits_are_out(monkeypatch):
+    """P20 r1 on PR 289: with the default three-seat roster (no pin), a team@ that was never logged in
+    on this machine has no copy and so no known workspace. While the Team workspace is out of credits
+    it must not be re-logged in, since that would revoke the live seat for nothing (guard M54)."""
+    w = CodexWorld(monkeypatch, seats=(DEV, CARLOS, TEAM))
+    logins = _no_login(monkeypatch)
+    w.login(DEV, "rt-dev-1")
+    w.limit_type["rt-dev-1"] = "workspace_credits_depleted"
+    res = pm.evaluate_codex_balance()
+    assert logins == [], "a seat of unknown workspace was re-logged in while credits were out"
+    assert res["action"] == "hold"
+
+
+def test_an_orca_id_for_the_pro_seat_still_finds_its_copy_by_email(monkeypatch):
+    """P20 r1 on PR 289: if Orca lists team@ under its own id, codex_roster keeps Orca's record. The
+    copy is saved under both id and email, so the email key still finds it, and a live copy is not
+    read as "no copy" (which could start a re-login)."""
+    w = CodexWorld(monkeypatch, seats=(DEV, CARLOS, TEAM))
+    monkeypatch.setattr(pm, "get_orca_data", lambda: {"settings": {"codexManagedAccounts": [
+        {"id": "orca-own-team-id", "email": TEAM, "authMethod": "chatgpt"}]}})
+    w.save_copy(TEAM, TEAM, w.tokens(TEAM, "rt-team-1", ws=PRO_WS))
+    w.login(DEV, "rt-dev-1")
+    team = [a for a in pm.list_codex_accounts() if a["email"] == TEAM]
+    assert len(team) == 1 and team[0]["id"] == "orca-own-team-id"
+    assert team[0]["hasStoredCredentials"] and not team[0]["needsLogin"]
+
+
 def test_headless_login_that_moves_the_seat_records_a_switch(cx, monkeypatch):
     """CodeRabbit (PR 288): a `login-headless` that moved the seat left the cooldown blind to it."""
     import pm_codex_login
