@@ -95,6 +95,22 @@ def test_codex_roster(monkeypatch, tmp_path):
     emails = [a["email"].lower() for a in roster]
     assert "devteam@getstimulus.ai" in emails
     assert "carlos@getstimulus.ai" in emails
+    assert "team@getstimulus.ai" in emails
+
+
+def test_the_pro_seat_stays_in_the_roster_when_another_seat_is_active(monkeypatch):
+    """BRO-3222: team@ was in the pool only while it was the active seat (the auth.json fallback),
+    so it dropped out once the CLI moved to another account. Its id must stay the one that fallback
+    gave it, uuid5(NAMESPACE_DNS, email): that is the key its saved copy is stored under."""
+    import uuid
+    monkeypatch.setattr(pm, "get_orca_data", lambda: {"settings": {"codexManagedAccounts": []}})
+    active = {"id_token": _make_dummy_jwt({"email": "devteam@getstimulus.ai"}),
+              "access_token": _make_dummy_jwt({"exp": int(time.time()) + 3600}), "refresh_token": "rf"}
+    monkeypatch.setattr(pm, "read_codex_auth", lambda: pm_store.Read("ok", {"tokens": active}))
+
+    team = [a for a in pm.codex_roster() if a["email"] == "team@getstimulus.ai"]
+    assert len(team) == 1
+    assert team[0]["id"] == str(uuid.uuid5(uuid.NAMESPACE_DNS, "team@getstimulus.ai"))
 
 
 def test_get_codex_auth_status(monkeypatch):
