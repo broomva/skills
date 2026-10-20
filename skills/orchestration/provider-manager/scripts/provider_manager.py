@@ -1438,6 +1438,14 @@ DEFAULT_CODEX_ROSTER = [
         "organizationName": "Stimulus (carlos)",
         "authMethod": "chatgpt",
     },
+    # A ChatGPT Pro seat in its own workspace (BRO-3222). The id is uuid5(NAMESPACE_DNS, email),
+    # the key the active-seat fallback in codex_roster gave it, so its saved copy keeps its name.
+    {
+        "id": "85d13ea4-eb2b-58e3-acf9-e31e60aeb26e",
+        "email": "team@getstimulus.ai",
+        "organizationName": "Stimulus (team, Pro)",
+        "authMethod": "chatgpt",
+    },
 ]
 
 
@@ -1596,6 +1604,9 @@ def fetch_codex_usage_raw(access_token: str, account_id: str, timeout: float = 1
 #   standby copy is usually dead and moving the CLI to another account is a re-login;
 # - both users share one workspace (one chatgpt_account_id), so "workspace out of credits" is shared:
 #   switching seats cannot fix it, only the per-user 5-hour window benefits.
+# - team@ (added 2026-10-19, BRO-3222) is a Pro seat in its own workspace, so it stays a candidate
+#   while the Team workspace is out of credits. Its login revoked carlos@'s copy just the same: the
+#   one-live-seat limit is the CLI's, not the workspace's.
 
 def _codex_grant(tokens: Optional[Dict[str, Any]]) -> Optional[str]:
     """One-way tag for a saved Codex grant (refresh + access token); state files only."""

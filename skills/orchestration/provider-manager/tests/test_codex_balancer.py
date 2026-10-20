@@ -25,8 +25,18 @@ CARLOS_ID = "dc906358-ff8c-5ad9-8e71-86e423b49425"
 WS = "45663a8d-d52d-4b55-8dd3-2af5ce5e6779"
 
 
+TEAM = "team@getstimulus.ai"
+TEAM_ID = "85d13ea4-eb2b-58e3-acf9-e31e60aeb26e"
+PRO_WS = "e19a630b-pro-workspace"
+
+
 class CodexWorld:
-    def __init__(self, monkeypatch):
+    def __init__(self, monkeypatch, seats=(DEV, CARLOS)):
+        # The default world is the two Team-workspace seats these tests were measured on. The roster
+        # also holds team@ (BRO-3222), and a seat with no copy is a re-login candidate, so a test that
+        # did not pin the roster would find team@ where it expects "no candidate".
+        monkeypatch.setattr(pm, "DEFAULT_CODEX_ROSTER",
+                            [a for a in pm.DEFAULT_CODEX_ROSTER if a["email"] in seats])
         self.kc = {}
         self.writes = []
         self.refreshed = []
@@ -509,6 +519,21 @@ def test_a_dead_seat_known_to_be_in_another_workspace_may_still_be_relogged_in(c
     with pytest.raises(pm_store.StoreError, match="refused by the test"):
         pm.evaluate_codex_balance()
     assert logins and logins[0][0] == CARLOS
+
+
+def test_the_pro_seat_is_the_failover_while_the_team_workspace_is_out_of_credits(monkeypatch):
+    """BRO-3222: team@ sits in its own workspace, so with the Team workspace out of credits it is the
+    one standby worth a re-login, while carlos@ in the same workspace is still refused."""
+    w = CodexWorld(monkeypatch, seats=(DEV, CARLOS, TEAM))
+    logins = _no_login(monkeypatch)
+    w.save_copy(CARLOS_ID, CARLOS, w.tokens(CARLOS, "rt-carlos-1"))
+    w.save_copy(TEAM_ID, TEAM, w.tokens(TEAM, "rt-team-1", ws=PRO_WS))
+    w.login(DEV, "rt-dev-1")
+    w.revoked.update({"rt-carlos-1", "rt-team-1"})
+    w.limit_type["rt-dev-1"] = "workspace_credits_depleted"
+    with pytest.raises(pm_store.StoreError, match="refused by the test"):
+        pm.evaluate_codex_balance()
+    assert [l[0] for l in logins] == [TEAM]
 
 
 def test_headless_login_that_moves_the_seat_records_a_switch(cx, monkeypatch):

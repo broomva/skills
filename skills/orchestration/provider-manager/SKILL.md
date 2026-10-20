@@ -107,9 +107,12 @@ Two limits shape everything here:
   account's saved copy within minutes (its usage call then answers 401 `token_revoked`). A saved
   standby is therefore usually dead, and moving the CLI to another account is a browser re-login,
   which in turn revokes the seat it replaces.
-- **One shared workspace.** devteam@ and carlos@ are two users of one ChatGPT Team workspace (one
-  `chatgpt_account_id`). "Workspace out of credits" is shared: switching seats cannot fix it. Only the
-  per-user 5-hour window benefits from a switch.
+- **One shared workspace, plus one apart.** devteam@ and carlos@ are two users of one ChatGPT Team
+  workspace (one `chatgpt_account_id`). "Workspace out of credits" is shared: switching between them
+  cannot fix it, and only the per-user 5-hour window benefits. team@ (added 2026-10-19, BRO-3222) is
+  a ChatGPT Pro seat in its own workspace. It is the one candidate that still helps while the Team
+  workspace is out of credits. Logging it in still revokes the other seats' saved copies, because
+  the one-live-seat limit belongs to the CLI, not to the workspace.
 
 What the balancer does with that:
 
@@ -163,7 +166,7 @@ python3 $PM rotate [--force]           # failover now (orchestrator); probe-conf
 python3 $PM login-headless --email X   # re-login X from browser session; --force: over unidentifiable credential
 
 # OpenAI Codex commands
-python3 $PM list --provider codex                    # Codex accounts (devteam, carlos) & active store
+python3 $PM list --provider codex                    # Codex accounts (devteam, carlos, team) & active store
 python3 $PM status --provider codex                  # active Codex auth mode, email, plan, token freshness
 python3 $PM usage --provider codex [--force]         # 5h/7d Codex utilization, status, why a standby is not a candidate
 python3 $PM switch --provider codex devteam@...      # Codex switch: saves the outgoing seat; a dead target is re-logged in via Arc
