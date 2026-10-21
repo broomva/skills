@@ -109,20 +109,30 @@
 * **Refresh interlock**: a saved copy is refreshed only if its refresh token is not the one auth.json
   holds (re-read just before the POST). That grant belongs to the running CLI; OpenAI rotates refresh
   tokens, so spending it logs the CLI out (kill path K16).
-* **Measured limits (2026-10-19)**: one live CLI seat at a time (a login of one account revoked the
-  other's saved copy: usage 401 `token_revoked`), and one shared Team workspace for devteam@ and
-  carlos@ (`chatgpt_account_id` 45663a8d…), whose credits no seat switch can restore.
+* **Login revokes the outgoing account (BRO-3346)**: `codex login` first runs `logout_with_revoke` on
+  whatever its `CODEX_HOME` holds (`clear_existing_auth_before_login`, codex-rs/cli/src/login.rs),
+  posting the refresh token to `auth.openai.com/oauth/revoke`. Run in `~/.codex`, that killed the live
+  seat and its saved copy (usage 401 `token_revoked`), which on 2026-10-19 read as "one live seat at a
+  time". Every login now runs in an empty `mkdtemp` `CODEX_HOME` with `cli_auth_credentials_store="file"`;
+  the scratch auth.json is checked (the signed-in email must be the target), saved as the copy, and the
+  directory removed. `pm_codex_login` refuses the CLI's own home or a non-empty directory.
+* **Shared workspace (2026-10-19)**: one Team workspace for devteam@ and carlos@ (`chatgpt_account_id`
+  45663a8d…), whose credits no seat switch can restore.
 * **Health** (`codexHealth` in the state): `revoked` (usage 401 `token_revoked`; a refresh refused as
   reused/revoked/invalidated) or `needs_login` (other refresh refusals), tagged with a fingerprint of the
   grant. That grant gets no usage call and no refresh until new tokens replace it.
-* **Re-login**: `codex login`, its authorize URL with `&prompt=login` (the account chooser; without it the
+* **Re-login**: `codex login` in a scratch home (above), its authorize URL with `&prompt=login` (the account chooser; without it the
   Arc space's own web session is signed in), opened in the account's Arc space (`codexAccounts.<email>.arcSpace`,
   default `Stimulus`), after a 3-second check that Arc is running and answers AppleScript. A failed
   automatic re-login is not retried for `cooldownMinutes` (`codexLoginAttempts`).
-* **Hot-Reload Invariant**:
-  The native Codex binary (`@openai/codex-darwin-arm64`) watches `~/.codex/auth.json` and hot-reloads
-  credentials on disk modification without restarting running processes. Writes use atomic
-  temp-file replacement (`tmp` + `os.replace`) to prevent partial reads.
+* **Activation**: a switch saves the target's tokens as its copy, re-reads auth.json (the CLI may have
+  rotated it during a minute-long browser login) and saves that as the outgoing copy, then replaces
+  auth.json atomically (`tmp` + `os.replace`, so no reader sees a partial file).
+* **Running sessions**: a Codex session re-reads auth.json before it refreshes, and adopts it only if the
+  `chatgpt_account_id` (the workspace) is the one it runs on (`reload_if_account_id_matches`,
+  codex-rs/login/src/auth/manager.rs). A swap within a workspace (devteam@ ↔ carlos@) reaches running
+  sessions; a swap across workspaces (↔ team@) reaches new ones, and older sessions fail their next
+  refresh with an account mismatch, without writing auth.json.
 * **OAuth Refresh**:
   * Endpoint: `https://auth.openai.com/oauth/token`
   * Client ID: `app_EMoamEEZ73f0CkXaXp7hrann`

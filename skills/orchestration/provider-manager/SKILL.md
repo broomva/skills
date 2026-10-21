@@ -99,20 +99,26 @@ a login, a switch or Orca writes new tokens. None of these switches anything, an
 of them is not a candidate. Tool output (a GitHub API limit, a site's 429) is never read as a Claude
 limit.
 
-## Codex accounts (measured 2026-10-19)
+## Codex accounts (measured 2026-10-19, cause found 2026-10-21)
 
-Two limits shape everything here:
+Three facts shape everything here:
 
-- **One live Codex CLI seat at a time.** Logging one account into the Codex CLI revoked the other
-  account's saved copy within minutes (its usage call then answers 401 `token_revoked`). A saved
-  standby is therefore usually dead, and moving the CLI to another account is a browser re-login,
-  which in turn revokes the seat it replaces.
+- **`codex login` revokes the account it replaces.** Before it signs anyone in, it logs out the
+  account its `CODEX_HOME` holds, and that logout revokes the refresh token at OpenAI
+  (`clear_existing_auth_before_login` → `logout_with_revoke`, codex-rs/cli/src/login.rs, codex-cli
+  0.163.0). The saved copy holds the same grant, so it dies too (usage 401 `token_revoked`). That was
+  first read as "one live Codex seat at a time" (BRO-3346). It is not a limit: every login here runs in
+  an empty scratch `CODEX_HOME`, as Orca does with its home per account, so all saved copies stay live
+  and a switch is a swap of `~/.codex/auth.json`. **Never run a bare `codex login` to change accounts.**
+- **Running sessions follow a swap only within a workspace.** A Codex session re-reads `auth.json`
+  before a refresh and adopts it only if its `chatgpt_account_id` (the workspace) is unchanged. A
+  swap between devteam@ and carlos@ reaches running sessions. A swap to or from team@ reaches new
+  sessions; older ones fail their next refresh with an account mismatch (and never write auth.json).
 - **One shared workspace, plus one apart.** devteam@ and carlos@ are two users of one ChatGPT Team
   workspace (one `chatgpt_account_id`). "Workspace out of credits" is shared: switching between them
   cannot fix it, and only the per-user 5-hour window benefits. team@ (added 2026-10-19, BRO-3222) is
   a ChatGPT Pro seat in its own workspace. It is the one candidate that still helps while the Team
-  workspace is out of credits. Logging it in still revokes the other seats' saved copies, because
-  the one-live-seat limit belongs to the CLI, not to the workspace.
+  workspace is out of credits.
 
 What the balancer does with that:
 
@@ -127,11 +133,11 @@ What the balancer does with that:
   `standbyMax` and, for a balance, `margin` points lower. While the active seat is out of workspace
   credits, a standby in the same workspace, or of unknown workspace (no saved copy), is never a
   candidate and is never re-logged in; only one known to be in another workspace is.
-- With no live standby (the usual case) and the active seat limited (not merely over a threshold:
-  a re-login revokes a seat that still works), it re-logs in a standby whose grant is proven dead
-  (`revoked`, `needs_login`) or that has no copy. A transient failure (network, a busy lock, a copy
-  that changed or could not be read, a 401 without a revocation code) never starts a re-login, because
-  a re-login revokes the live seat. The re-login runs through Arc, with `prompt=login`
+- With no live standby and the active seat limited (not merely over a threshold: a browser login
+  is only worth starting for a seat that stopped working), it re-logs in a standby whose grant is
+  proven dead (`revoked`, `needs_login`) or that has no copy, then swaps auth.json to it. A transient
+  failure (network, a busy lock, a copy that changed or could not be read, a 401 without a revocation
+  code) never starts a re-login: the grant may well be live. The re-login runs through Arc, with `prompt=login`
   forcing OpenAI's account chooser (without it, the Arc space's own web session is signed in, whoever
   that is) in the account's `arcSpace` (default `Stimulus`). A short AppleScript check runs first and
   reports "Arc not answering AppleScript" (a pending permission prompt hangs Arc) or "Arc is not
@@ -171,7 +177,7 @@ python3 $PM status --provider codex                  # active Codex auth mode, e
 python3 $PM usage --provider codex [--force]         # 5h/7d Codex utilization, status, why a standby is not a candidate
 python3 $PM switch --provider codex devteam@...      # Codex switch: saves the outgoing seat; a dead target is re-logged in via Arc
 python3 $PM balance --provider codex [--dry-run]     # evaluate Codex balance (5h threshold / credits depleted)
-python3 $PM login-headless --provider codex [--email X] [--space S] # Codex re-login via Arc (account chooser forced)
+python3 $PM login-headless --provider codex [--email X] [--space S] # Codex login via Arc into X's saved copy; the CLI stays put
 
 # Multi-provider aggregate commands
 python3 $PM usage --provider all       # display both Claude Code and OpenAI Codex telemetry
@@ -181,10 +187,12 @@ python3 $PM balance --provider all     # evaluate and balance both Claude and Co
 ```
 
 `login-headless` for Claude accounts renews via browser cookies in Arc/Chrome without GUI interaction.
-For OpenAI Codex, `switch` and `login-headless` drive `codex login` through an Arc space: the account
-chooser (forced with `prompt=login`) and the consent page are clicked through, and the new auth.json is
-snapshotted. The target must be signed in to that space's OpenAI web session. Because only one CLI seat
-is live, every such login revokes the other account's saved copy.
+For OpenAI Codex, `switch` and `login-headless` drive `codex login` through an Arc space, in an empty
+scratch `CODEX_HOME` (file credential store forced): the account chooser (forced with `prompt=login`)
+and the consent page are clicked through, and the scratch auth.json is saved as the account's copy,
+then deleted. `~/.codex` is never touched by a login, so nothing is revoked. `login-headless` leaves the
+CLI on its account (unless it has none); `switch` swaps auth.json. The target must be signed in to that
+space's OpenAI web session.
 
 ## Hooks
 

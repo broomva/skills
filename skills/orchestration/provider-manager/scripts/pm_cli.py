@@ -318,8 +318,9 @@ def main(pm) -> None:
         elif args.command == "login-headless":
             if getattr(args, "provider", "claude") == "codex":
                 res = pm.login_codex_headless(email=args.email, space=args.space)
-                print(json.dumps(res, indent=2) if args.json else "Logged in Codex %s (Arc space %s)." % (
-                    res["email"], res.get("space")))
+                print(json.dumps(res, indent=2) if args.json else "Logged in Codex %s (Arc space %s); %s." % (
+                    res["email"], res.get("space"), "the CLI now uses it" if res.get("activated")
+                    else "copy saved, the CLI stays on %s (switch to move it)" % res.get("active")))
             else:
                 res = pm.login_headless(email=args.email, browser=args.browser, profile=args.profile, force=args.force)
                 print(json.dumps(res, indent=2) if args.json else "Logged in %s (no switch)." % res["email"])
