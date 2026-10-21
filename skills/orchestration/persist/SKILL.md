@@ -47,6 +47,8 @@ persist conformance             # run test battery
 
 The `{}` token in `--agent-cmd` is replaced with the prompt file's contents. Default agent is `claude -p '{}'`. Codex: `--agent-cmd "codex {}"`. Gemini CLI: `--agent-cmd "gemini -p '{}'"`.
 
+**Usage and rate limits don't burn the budget (BRO-3350).** Sometimes a run ends with the harness's own limit message in its last 20 lines, such as "You've hit your weekly limit", "usage limit reached", "would exceed your account's rate limit" or "out of credits". That run is not counted as an iteration. The loop records a `PAUSED` event with `reason: rate_limited`, waits, and retries the same iteration. The wait starts at `--limit-backoff-base` (60 s), doubles after each consecutive limited run, and is capped at `--limit-backoff-max` (3600 s). The wall-clock budget still applies, so a long limit ends the loop through `--max-wall-clock` and doesn't hot-loop. Before this fix, one weekly limit burned 80/80 and 160/160 iterations in minutes.
+
 ## Success conditions
 
 Three forms:

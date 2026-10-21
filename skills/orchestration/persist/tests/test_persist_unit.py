@@ -140,3 +140,60 @@ class TestCLI:
     def test_doctor_runs(self, persist):
         rc = persist.main(["doctor"])
         assert rc in (persist.EXIT_OK, persist.EXIT_DEGRADED)
+
+
+class TestRateLimitBackoff:
+    """BRO-3350: a provider limit must not burn iterations."""
+
+    LIMIT_MSG = "You've hit your weekly limit · resets Oct 26 at 7am (America/Bogota)"
+
+    def test_detects_harness_limit_messages(self, persist):
+        assert persist.is_rate_limited(self.LIMIT_MSG)
+        assert persist.is_rate_limited("API Error: This request would exceed your account's rate limit.")
+        assert persist.is_rate_limited("Claude usage limit reached. This turn is paused")
+
+    def test_ignores_ordinary_output(self, persist):
+        assert not persist.is_rate_limited("implemented the token bucket rate limiter; tests pass")
+        assert not persist.is_rate_limited("")
+
+    def test_only_the_tail_counts(self, persist):
+        body = self.LIMIT_MSG + "\n" + "\n".join(f"work line {i}" for i in range(50))
+        assert not persist.is_rate_limited(body)
+
+    def test_backoff_doubles_and_caps(self, persist):
+        assert [persist.limit_backoff(n, 60, 3600) for n in (1, 2, 3, 7, 20)] == [60, 120, 240, 3600, 3600]
+
+    def _run(self, persist, tmp_path, script_lines, max_iter):
+        prompt = tmp_path / "PROMPT.md"
+        prompt.write_text("x")
+        counter = tmp_path / "n"
+        counter.write_text("0")
+        agent = tmp_path / "agent.sh"
+        # call k prints script_lines[k] (last entry repeats); "DONE" creates the success file
+        cases = "\n".join(f'  {i}) echo "{line}";;' for i, line in enumerate(script_lines[:-1]))
+        agent.write_text(
+            "#!/bin/sh\n"
+            f'n=$(cat "{counter}"); echo $((n+1)) > "{counter}"\n'
+            f'case "$n" in\n{cases}\n  *) echo "{script_lines[-1]}"; touch "{tmp_path}/DONE";;\nesac\n'
+        )
+        agent.chmod(0o755)
+        sleeps = []
+        persist._sleep = sleeps.append
+        rc = persist.main(["iterate", str(prompt), "--max-iterations", str(max_iter),
+                           "--agent-cmd", f"sh {agent} #",
+                           "--success-condition", f"file-exists:{tmp_path}/DONE",
+                           "--limit-backoff-base", "1", "--limit-backoff-max", "4"])
+        return rc, int(counter.read_text()), sleeps
+
+    def test_limited_runs_do_not_consume_iterations(self, persist, tmp_path):
+        # three limited runs, then a working run: a budget of ONE iteration must suffice
+        rc, calls, sleeps = self._run(persist, tmp_path, [self.LIMIT_MSG] * 3 + ["did the work"], max_iter=1)
+        assert rc == persist.EXIT_OK
+        assert calls == 4
+        assert sleeps == [1, 2, 4]
+
+    def test_ordinary_failures_still_consume_iterations(self, persist, tmp_path):
+        rc, calls, sleeps = self._run(persist, tmp_path, ["build failed"] * 3 + ["did the work"], max_iter=2)
+        assert rc == persist.EXIT_BUDGET_EXHAUSTED
+        assert calls == 2
+        assert sleeps == []
