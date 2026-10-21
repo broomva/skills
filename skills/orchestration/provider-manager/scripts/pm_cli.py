@@ -135,6 +135,7 @@ def main(pm) -> None:
     p.add_argument("--force", action="store_true", help="Discard an unidentifiable store credential")
     p = sub.add_parser("login-headless", help="Re-authorize an account from a browser session", parents=[common])
     p.add_argument("--email")
+    p.add_argument("--repair-home", help="Codex: recover a retained home only after authority-confirmed token revocation")
     p.add_argument("--browser", default="arc", choices=["arc", "chrome"])
     p.add_argument("--profile")
     p.add_argument("--force", action="store_true", help="Log in over an unidentifiable store credential")
@@ -330,10 +331,13 @@ def main(pm) -> None:
                                                           "; saved the outgoing account's live tokens" if res.get("wroteBack") else ""))
         elif args.command == "login-headless":
             if getattr(args, "provider", "claude") == "codex":
-                res = pm.login_codex_headless(email=args.email, space=args.space)
-                print(json.dumps(res, indent=2) if args.json else "Logged in Codex %s (Arc space %s); %s." % (
-                    res["email"], res.get("space"), "new sessions now use it" if res.get("activated")
-                    else "home saved, new sessions stay on %s (switch to select it)" % res.get("active")))
+                res = pm.login_codex_headless(email=args.email, space=args.space, repair_home=args.repair_home)
+                if res.get("repairedHome") and not args.json:
+                    print("Repaired confirmed-revoked Codex home %s; native history and session pins retained." % res["repairedHome"])
+                else:
+                    print(json.dumps(res, indent=2) if args.json else "Logged in Codex %s (Arc space %s); %s." % (
+                        res["email"], res.get("space"), "new sessions now use it" if res.get("activated")
+                        else "home saved, new sessions stay on %s (switch to select it)" % res.get("active")))
             else:
                 res = pm.login_headless(email=args.email, browser=args.browser, profile=args.profile, force=args.force)
                 print(json.dumps(res, indent=2) if args.json else "Logged in %s (no switch)." % res["email"])

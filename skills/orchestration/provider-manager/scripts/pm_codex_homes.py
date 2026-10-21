@@ -22,6 +22,9 @@ def root():
 def registry():
     path = root() / "accounts.json"
     if not path.exists():
+        if any((root() / name).exists() and any((root() / name).iterdir())
+               for name in ("homes", "threads", "launches")):
+            raise pm_store.StoreError("Codex registry is missing while retained homes or session pins exist; restore accounts.json before refreshing any backup")
         return {"accounts": {}, "selected": None}
     try:
         data = json.loads(path.read_text())
@@ -95,6 +98,7 @@ def select(email):
 
 def new_home(email, auth, shared_home):
     """Create an unpublished generation. Never modify an existing home or duplicate its grant."""
+    save(registry())  # establish ownership metadata before any generation can exist
     folder = root() / "homes"
     folder.mkdir(parents=True, exist_ok=True, mode=0o700)
     tag = hashlib.sha256(email.lower().encode()).hexdigest()[:16]
@@ -163,19 +167,55 @@ def launch(binary, args):
     # User-supplied CODEX_HOME and credential-store config cannot redirect the pinned session.
     # Codex command-line -c values override config.toml; incompatible overrides are refused.
     position, command = 0, None
+    value_options = {"-c", "--config", "--enable", "--disable", "--remote", "--remote-auth-token-env",
+                     "-i", "--image", "-m", "--model", "--local-provider", "-p", "--profile",
+                     "-s", "--sandbox", "-a", "--ask-for-approval", "-C", "--cd", "--add-dir"}
+    switches = {"--oss", "--strict-config", "--approve-for-me", "--dangerously-bypass-approvals-and-sandbox",
+                "--dangerously-bypass-hook-trust", "--worktree", "--search", "--no-alt-screen",
+                "--no-daemon", "-h", "--help", "-V", "--version"}
     while position < len(args):
         value = args[position]
-        if value in ("-c", "--config"):
-            position += 2
+        if value == "--":
+            break  # remaining text is an interactive prompt, not a subcommand
+        option = value.split("=", 1)[0]
+        if option in value_options:
+            argument = value.split("=", 1)[1] if "=" in value else (args[position + 1] if position + 1 < len(args) else None)
+            if argument is None:
+                raise pm_store.StoreError("Missing value for Codex option %s" % option)
+            if option in ("-c", "--config") and argument.split("=", 1)[0].strip() == "cli_auth_credentials_store":
+                if argument.split("=", 1)[-1].strip().strip('"\'') != "file":
+                    raise pm_store.StoreError("Managed Codex sessions require the file credential store")
+            position += 1 if "=" in value else 2
+            if option in ("-i", "--image"):
+                commands = {"agents", "exec", "e", "review", "login", "logout", "mcp", "plugin", "app-server",
+                            "remote-control", "app", "completion", "update", "doctor", "sandbox", "debug",
+                            "apply", "a", "resume", "queue", "archive", "delete", "migrate-rollouts", "unarchive",
+                            "fork", "cloud", "exec-server", "features", "help"}
+                while position < len(args) and not args[position].startswith("-") and args[position] not in commands:
+                    position += 1
             continue
-        if value in ("login", "logout"):
-            raise pm_store.StoreError("Use provider-manager login-headless --provider codex; direct login/logout revokes this home's grant")
-        if not value.startswith("-"):
-            command = value
-            break
-        position += 1
-    for value in args:
-        if "cli_auth_credentials_store" in value and value.replace(" ", "").split("=", 1)[-1].strip('"\'') != "file":
+        if value in switches:
+            position += 1
+            continue
+        # Clap also accepts attached short option values, for example -pwork and -cmodel=x.
+        if value[:2] in value_options and len(value) > 2 and not value.startswith("--"):
+            if value[:2] == "-c" and value[2:].split("=", 1)[0].strip() == "cli_auth_credentials_store":
+                if value.split("=", 1)[-1].strip().strip('"\'') != "file":
+                    raise pm_store.StoreError("Managed Codex sessions require the file credential store")
+            position += 1
+            continue
+        if value.startswith("-"):
+            raise pm_store.StoreError("Unsupported global Codex option %s; update the account launcher" % value)
+        command = value
+        break
+    if command == "logout" or (command == "login" and args[position + 1:position + 2] != ["status"]):
+        raise pm_store.StoreError("Use provider-manager login-headless --provider codex; direct login/logout revokes this home's grant")
+    # Credential overrides after the subcommand are also parsed as config options by Codex.
+    for index, value in enumerate(args):
+        override = (args[index + 1] if index + 1 < len(args) else "") if value in ("-c", "--config") else (
+            value[2:] if value.startswith("-c") and not value.startswith("--") else
+            value[len("--config="):] if value.startswith("--config=") else "")
+        if override.split("=", 1)[0].strip() == "cli_auth_credentials_store" and override.split("=", 1)[-1].strip().strip('"\'') != "file":
             raise pm_store.StoreError("Managed Codex sessions require the file credential store")
     if command == "app-server":
         import pm_codex_proxy

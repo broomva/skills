@@ -1417,7 +1417,8 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
                 "storeAccount": is_store_account, "switched": False}
 
 
-def login_codex_headless(email: Optional[str] = None, space: Optional[str] = None) -> Dict[str, Any]:
+def login_codex_headless(email: Optional[str] = None, space: Optional[str] = None,
+                         repair_home: Optional[str] = None) -> Dict[str, Any]:
     """Log a Codex account in from an Arc browser session, with the account chooser forced
     (`prompt=login`), in the account's Arc space (`codexAccounts.<email>.arcSpace`, else "Stimulus"),
     and publish a new home generation. Existing sessions retain their home. A login of the selected
@@ -1432,15 +1433,45 @@ def login_codex_headless(email: Optional[str] = None, space: Optional[str] = Non
         before = build_codex_context(verify_identity=True)
         snapshot_codex_auth(before)
         acc_id = _codex_account_id(before, target_email)
-        tokens, msg = _login_codex_copy(acc_id, target_email, space)
-        activated = before["store"].status == "absent" or before["activeIdentity"].get("email") == target_email
-        if activated:
+        repair = _verified_dead_codex_home(repair_home, target_email) if repair_home else None
+        tokens, msg = _login_codex_copy(acc_id, target_email, space, publish=not repair)
+        if repair:
+            home, old_grant = repair
+            current = read_legacy_codex_auth(home / "auth.json")
+            if current.status != "ok" or _codex_grant((current.data or {}).get("tokens")) != old_grant:
+                raise StoreError("The revoked home changed during login; its credentials were not overwritten")
+            if not write_codex_auth({"auth_mode": "chatgpt", "tokens": tokens}, home / "auth.json"):
+                raise StoreError("Could not persist fresh credentials in the confirmed-revoked home")
+            log_provider_event("codex.home.repaired", {"email": target_email, "home": str(home)})
+        activated = not repair and (before["store"].status == "absent" or before["activeIdentity"].get("email") == target_email)
+        if activated and not repair:
             pm_codex_homes.select(target_email)
             _record_codex_switch(before, acc_id, target_email,
                                  before["activeIdentity"].get("email") or "unknown", "login_headless")
     active = target_email if activated else (before["activeIdentity"].get("email") or "nobody")
     return {"success": True, "provider": "codex", "email": target_email, "space": space, "message": msg,
-            "activated": activated, "active": active}
+            "activated": activated, "active": active, "repairedHome": str(repair[0]) if repair else None}
+
+
+def _verified_dead_codex_home(value: str, email: str):
+    """Recovery is the sole auth replacement: require authoritative revocation of this exact grant.
+
+    A fresh independent login grant goes only to the dead home, never also to a new generation.
+    Native history and durable pins stay in place. Expiry/telemetry failure alone is insufficient.
+    """
+    home = Path(value).expanduser().resolve(strict=True)
+    managed = (pm_codex_homes.root() / "homes").resolve()
+    if home != CODEX_AUTH_PATH.parent.resolve() and home.parent != managed:
+        raise StoreError("Repair home must be a retained managed generation or the legacy Codex home")
+    got = read_legacy_codex_auth(home / "auth.json")
+    tokens = (got.data or {}).get("tokens")
+    identity = extract_codex_identity(tokens)
+    if got.status != "ok" or identity.get("email") != email or not identity.get("accountId"):
+        raise StoreError("Repair home does not hold the requested Codex account")
+    code, _, error = fetch_codex_usage_raw(tokens["access_token"], identity["accountId"])
+    if code != 401 or "revoked" not in _codex_error_code(error):
+        raise StoreError("Repair refused: the authority has not confirmed this home's grant revoked; nothing was changed")
+    return home, _codex_grant(tokens)
 
 
 def _codex_account_id(ctx: Dict[str, Any], email: str) -> str:
@@ -1453,7 +1484,7 @@ def _codex_account_id(ctx: Dict[str, Any], email: str) -> str:
     return str(uuid.uuid5(uuid.NAMESPACE_DNS, email))
 
 
-def _login_codex_copy(acc_id: str, email: str, space: str) -> Tuple[Dict[str, Any], str]:
+def _login_codex_copy(acc_id: str, email: str, space: str, *, publish: bool = True) -> Tuple[Dict[str, Any], str]:
     """Log `email` in through Arc inside an empty scratch CODEX_HOME and save the new tokens as its
     copy. `codex login` revokes whatever account its home holds; here that home is empty, so no seat
     and no saved copy is revoked, and ~/.codex/auth.json is never read or written. The scratch home
@@ -1478,10 +1509,11 @@ def _login_codex_copy(acc_id: str, email: str, space: str) -> Tuple[Dict[str, An
                "email": email, "savedAt": int(time.time()), "source": "login"}
         if not (write_orca_codex(acc_id, rec) and write_orca_codex(email, rec)):
             raise StoreError(f"Codex login of {email} succeeded but its copy could not be saved in Keychain")
-        chosen = pm_codex_homes.selected()
-        new_home = pm_codex_homes.new_home(email, got.data, CODEX_AUTH_PATH.parent)
-        pm_codex_homes.register(email, acc_id, new_home,
-                                select=not chosen or chosen["email"] == email)
+        if publish:
+            chosen = pm_codex_homes.selected()
+            new_home = pm_codex_homes.new_home(email, got.data, CODEX_AUTH_PATH.parent)
+            pm_codex_homes.register(email, acc_id, new_home,
+                                    select=not chosen or chosen["email"] == email)
         _mark_codex_health(acc_id, email, None, "login", tokens)
         log_provider_event("codex.login", {"email": email, "space": space, "accountId": acc_id, "saved": True})
         return dict(tokens), msg
@@ -2004,8 +2036,8 @@ def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None,
 
 
 def switch_codex_account(target: str, force: bool = False) -> Dict[str, Any]:
-    """Move the Codex CLI (~/.codex/auth.json) to another account, under the machine-wide lock. The
-    Existing homes are never rewritten. A target without a home is bootstrapped from a standalone
+    """Move the Codex CLI (~/.codex/auth.json) to another account, under the machine-wide lock.
+    Existing live homes are never rewritten. A target without a home is bootstrapped from a standalone
     saved copy or a browser login; the selection manifest controls only future session launches."""
     with pm_state.trace(), pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=True, timeout=60.0,
                                                   holder="codex-switch") as held:

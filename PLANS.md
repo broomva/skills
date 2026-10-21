@@ -771,3 +771,11 @@ selected account preserves its old generation and selects the new one; new accou
 standby telemetry never spends a managed grant; launcher integrations use resolved homes.
 Validation: hermetic pytest + mutation proof; real non-mutating launcher/status probes; read-only
 Cross-Review (P20) A/C; required CI and p9 gates before merge. Existing sessions are never restarted.
+Checkpoint 2026-10-21: round 2 fixed the original credential-loss findings; Claude A=9/10,
+Codex C=6/10 found T3's provider-session multiplexing, thread read/archive ownership and missing-registry
+bootstrap. Replaced the single-home proxy with one child per account home: every thread/start resolves
+selection, thread/turn RPCs route their durable owner, permission IDs are namespaced, failed children
+stay isolated. Added authority-confirmed revoked-home repair (fresh grant in exactly one home).
+Evidence: native Codex 0.163 initialize + two thread/start + thread/read through ONE proxy on two
+synthetic accounts passed, without live credentials or model requests. Focused home/proxy/integration
+suite and full tests/mutations rerunning for round 3. Deployment remains after review and merge.

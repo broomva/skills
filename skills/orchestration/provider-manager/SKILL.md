@@ -136,14 +136,28 @@ python3 "$PM" codex-home                  # selected concrete home
 
 Set T3's Codex **Binary path** and Paseo's `agents.providers.codex.command` to the printed launcher.
 Do not replace the vendor executable or set `CODEX_HOME` to a mutable `current` symlink.
-The wrapper resolves selection once, forces file credentials, and rejects direct login/logout;
+The wrapper pins direct sessions, forces file credentials, and rejects credential-changing login/logout
+(read-only login status remains available);
 use `login-headless` for reauthorization. New homes copy config/instructions and share skills/rules;
 auth, databases and native session history are separate. Existing homes are retained.
 
 Paseo pins `PASEO_AGENT_ID` to its first home. The app-server proxy records native thread IDs and
-routes resume/fork to their original home; native threads predating installation resume in the
-legacy home. Once a thread is active, a cross-home resume in that server is refused. This prevents
+routes thread/turn RPCs to their original account child; new thread/start requests use current selection.
+It supports T3 sharing one server across threads; the provider account/usage display follows selection,
+while every thread continues receiving its own account's events. native threads predating installation resume in the
+legacy home. Multiple account children stay alive concurrently; server-originated permission IDs are namespaced. This prevents
 an app-server restart from silently moving an existing thread to the latest selection.
+
+A retained generation with a revoked grant can be recovered without moving its thread IDs:
+
+```bash
+python3 "$PM" login-headless --provider codex --email EMAIL --repair-home /absolute/retained/home
+```
+
+Repair requires the usage endpoint to confirm `token_revoked` for that exact home before login;
+expiry, an unreadable endpoint, or a grant that changed during the browser flow refuses repair.
+The fresh login grant is written **only** into the confirmed-dead home, preserving native history.
+Ordinary reauthorization publishes a new generation and leaves healthy old sessions alone.
 
 `scripts/pm_codex_integrations.py paseo --config PATH --launcher PATH` emits a candidate Paseo
 config preserving other settings; apply privately, then `paseo daemon reload --json`.

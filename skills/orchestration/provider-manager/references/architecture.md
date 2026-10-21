@@ -91,20 +91,23 @@
 * **Legacy adoption**: `~/.codex/auth.json` (or `CODEX_AUTH_PATH`) remains in its existing home,
   registered in place. Never duplicate the running CLI's grant into another home.
 * **Credential ownership**: each generation's `auth.json` belongs to its Codex sessions. Registry
-  selection never writes an auth file. Telemetry reads home credentials before Keychain copies,
+  selection never writes an auth file. Explicit repair is restricted to an authority-confirmed revoked
+  grant and writes its fresh independent login grant to that one dead home only. Telemetry reads home credentials before Keychain copies,
   and never refreshes a managed grant. A standalone saved copy can be refreshed only before its
   first home is published. Keychain service remains `Orca Codex Managed Credentials`.
 * **Login**: `codex login` revokes whatever its home holds, so every browser login runs in an empty
   scratch home with `cli_auth_credentials_store="file"`. Check returned email, persist a Keychain
   backup, publish a new generation home, register it, and clean up the scratch directory.
-  Reauthorizing the selected account selects the new generation. Old homes are never overwritten.
+  Reauthorizing the selected account selects the new generation. Ordinary login never overwrites old homes. Explicit confirmed-revoked-home repair retains its history and pins.
 * **Race eliminated**: Codex 0.163's token refresh can finish after a file swap and overwrite the
   target, or rotate between snapshot and backup. A re-read/CAS in provider-manager cannot serialize
   with the CLI's private semaphore. Separate homes remove the shared auth-file write instead.
 * **Launcher**: resolves a concrete home once; overrides `CODEX_HOME`, forces file credentials and
   execs the explicit real executable. Paseo agent IDs and native app-server thread IDs retain home
-  pins on resume. Unmapped legacy threads resume in the legacy home. Login/logout through the
-  launcher are refused; reauthorization must publish a new generation.
+  pins on resume. The proxy routes each thread/turn to an account child, including read/archive RPCs;
+  thread/start resolves current selection even in T3's shared provider session. Server-originated request
+  IDs are namespaced so approval replies reach the originating child. Unmapped legacy threads resume
+  in the legacy home. Credential-changing login/logout through the launcher are refused; reauthorization must publish a new generation.
 * **Shared files**: new homes copy config.toml (root file-store setting forced), managed config and
   AGENTS.md, and symlink skills/rules/prompts directories. Auth, databases, logs, and session state
   stay local to the generation. Nothing deletes retained generations automatically.

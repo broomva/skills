@@ -194,3 +194,68 @@ def test_launcher_rejects_auth_mutation_or_keyring_override(cx, monkeypatch, tmp
     monkeypatch.setattr(homes.os, "execve", lambda *a: pytest.fail("unsafe command must not exec"))
     with pytest.raises(pm_store.StoreError):
         homes.launch(str(binary), args)
+
+
+@pytest.mark.parametrize("prefix", [["--enable", "goals"], ["-p", "work"], ["--model=x"], ["-pwork"]])
+@pytest.mark.parametrize("command", ["login", "logout"])
+def test_global_option_values_cannot_bypass_auth_guard(cx, monkeypatch, prefix, command):
+    _register(cx, DEV, DEV_ID, "rt-dev-live", select=True)
+    monkeypatch.setattr(homes.os, "execve", lambda *a: pytest.fail("unsafe command was executed"))
+    with pytest.raises(pm_store.StoreError, match="login-headless"):
+        homes.launch(sys.executable, prefix + [command])
+
+
+def test_read_only_login_status_and_literal_config_prompt_are_allowed(cx, monkeypatch):
+    _register(cx, DEV, DEV_ID, "rt-dev-live", select=True)
+    calls = []
+    monkeypatch.setattr(homes.os, "execve", lambda *args: calls.append(args))
+    homes.launch(sys.executable, ["--enable", "goals", "login", "status"])
+    homes.launch(sys.executable, ["exec", "Explain cli_auth_credentials_store"])
+    assert len(calls) == 2
+
+
+def test_app_server_after_global_option_values_still_uses_proxy(cx, monkeypatch):
+    import pm_codex_proxy
+    chosen = _register(cx, DEV, DEV_ID, "rt-dev-live", select=True)
+    seen = []
+    monkeypatch.setattr(pm_codex_proxy, "run", lambda *args: seen.append(args) or 0)
+    monkeypatch.setattr(homes.os, "execve", lambda *args: pytest.fail("proxy bypassed"))
+    with pytest.raises(SystemExit) as result:
+        homes.launch(sys.executable, ["--enable", "goals", "app-server"])
+    assert result.value.code == 0 and seen[0][2] == chosen
+
+
+def test_missing_registry_with_retained_homes_cannot_spend_backup_grants(cx):
+    _register(cx, DEV, DEV_ID, "rt-dev-live", select=True)
+    old = _register(cx, CARLOS, CARLOS_ID, "rt-carlos-live")
+    (homes.root() / "accounts.json").unlink()
+    with pytest.raises(pm_store.StoreError, match="registry is missing"):
+        pm._refresh_codex_copy(CARLOS_ID, CARLOS, json.loads((old / "auth.json").read_text())["tokens"])
+    assert cx.refreshed == []
+
+
+def test_confirmed_revoked_generation_can_be_repaired_without_copying_its_new_grant(cx, monkeypatch):
+    import pm_codex_login
+    home = _register(cx, DEV, DEV_ID, "rt-dev-revoked", select=True)
+    (home / "sessions").mkdir()
+    (home / "sessions/fixture").write_text("retained conversation")
+    cx.revoked.add("rt-dev-revoked")
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", cx.fake_login("rt-dev-repaired"))
+    before = set((homes.root() / "homes").iterdir())
+    result = pm.login_codex_headless(DEV, repair_home=str(home))
+    assert result["repairedHome"] == str(home)
+    assert _token(home) == "rt-dev-repaired"
+    assert homes.selected()["home"] == str(home)
+    assert set((homes.root() / "homes").iterdir()) == before, "the fresh grant must have exactly one home"
+    assert (home / "sessions/fixture").read_text() == "retained conversation"
+    assert cx.refreshed == [], "repair never spends the old refresh grant"
+
+
+def test_repair_refuses_a_live_or_merely_expired_generation(cx, monkeypatch):
+    import pm_codex_login
+    home = _register(cx, DEV, DEV_ID, "rt-dev-live", select=True)
+    before = (home / "auth.json").read_bytes()
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", lambda *a, **k: pytest.fail("must prove revocation before login"))
+    with pytest.raises(pm_store.StoreError, match="not confirmed"):
+        pm.login_codex_headless(DEV, repair_home=str(home))
+    assert (home / "auth.json").read_bytes() == before

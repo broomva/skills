@@ -28,6 +28,7 @@ def world(tmp_path, monkeypatch):
     legacy = home(tmp_path / "legacy", "legacy@example.test")
     monkeypatch.setattr(proxy.pm_codex_homes, "root", lambda: tmp_path / "registry")
     monkeypatch.setattr(pm_store, "CODEX_AUTH_PATH", legacy / "auth.json")
+    monkeypatch.setattr(proxy.pm_codex_homes, "selected", lambda: {"home": str(selected), "email": "selected@example.test"})
     trace = tmp_path / "trace.jsonl"
     monkeypatch.setenv("PM_PROXY_TEST_TRACE", str(trace))
     peer = tmp_path / "peer.py"
@@ -44,13 +45,17 @@ for line in sys.stdin:
     if method=="model/list" and m.get("params",{}).get("hang"):
         print(json.dumps({"method":"test/discoveryWaiting"}),flush=True)
         continue
-    if method=="bad-json":
+    if method=="account/read" and m.get("params",{}).get("invalid"):
         print("not json",flush=True)
         continue
+    if method is None and m.get("id")==7:
+        print(json.dumps({"method":"test/approvalReceived","params":{"home":home,"id":m["id"],"result":m.get("result")}}),flush=True)
+        continue
     if "id" not in m: continue
-    if method=="fail":
+    if method=="model/list" and m.get("params",{}).get("fail"):
         print(json.dumps({"id":m["id"],"error":{"code":123,"message":"expected"}}),flush=True)
         continue
+    if method=="initialize" and os.path.basename(home)=="hang-init": continue
     if method=="initialize" and os.path.basename(home)=="bad-init":
         print(json.dumps({"id":m["id"],"error":{"code":123,"message":"init failed"}}),flush=True)
         continue
@@ -58,6 +63,10 @@ for line in sys.stdin:
         tid=m.get("params",{}).get("threadId","new-"+os.path.basename(home))
         if method=="thread/fork": tid="fork-"+tid
         result={"thread":{"id":tid},"home":home}
+    elif method=="turn/start":
+        if m.get("params",{}).get("approval"):
+            print(json.dumps({"id":7,"method":"item/commandExecution/requestApproval","params":{"threadId":m["params"]["threadId"]}}),flush=True)
+        result={"home":home,"turn":{"id":"turn-"+os.path.basename(home)}}
     else: result={"home":home}
     print(json.dumps({"id":m["id"],"result":result}),flush=True)
 ''')
@@ -96,7 +105,8 @@ def running(world):
         return json.loads(client_read.readline())
     try:
         send("initialize", 1, {"clientInfo": {"name": "test"}})
-        assert receive()["id"] == 1
+        initialized = receive()
+        assert initialized["id"] == 1 and "result" in initialized
         send("initialized")
         yield instance, send, receive, result, client_write
     finally:
@@ -145,31 +155,40 @@ def test_unmapped_thread_uses_legacy_home(world):
     assert all(e["args"][-2:] == ["-c", 'cli_auth_credentials_store="file"'] for e in legacy_events)
 
 
-def test_active_session_refuses_cross_account_resume(world):
+def test_two_threads_in_shared_app_server_follow_selection_and_keep_turn_ownership(world, monkeypatch):
     selected, old, _, _, _ = world
-    proxy.remember_thread("old-thread", {"home": str(old), "email": "old@example.test"})
     with running(world) as (_, send, receive, _, _):
         send("thread/start", 2, {})
-        receive()
-        send("thread/resume", 3, {"threadId": "old-thread"})
-        assert "error" in receive()
-        send("account/read", 4)
-        assert receive()["result"]["home"] == str(selected)
+        first = receive()["result"]["thread"]["id"]
+        monkeypatch.setattr(proxy.pm_codex_homes, "selected", lambda: {"home": str(old), "email": "old@example.test"})
+        send("thread/start", 3, {})
+        second = receive()["result"]["thread"]["id"]
+        assert first != second
+        for native, expected in [(first, selected), (second, old), (first, selected)]:
+            send("turn/start", 4, {"threadId": native})
+            assert receive()["result"]["home"] == str(expected)
+        send("account/read", 5)
+        assert receive()["result"]["home"] == str(old)
 
 
 def test_error_response_and_parse_error_are_forwarded(world):
     with running(world) as (_, send, receive, _, stream):
-        send("fail", 2)
+        send("model/list", 2, {"fail": True})
         assert receive() == {"id": 2, "error": {"code": 123, "message": "expected"}}
         stream.write(b"not json\n")
         assert receive()["error"]["code"] == -32700
 
 
-def test_invalid_child_protocol_stops_proxy(world):
-    with running(world) as (instance, send, _, result, _):
-        send("bad-json", 2)
-        assert instance.finished.wait(5)
-    assert isinstance(result[0], pm_store.StoreError)
+def test_invalid_child_protocol_fails_only_its_home(world, monkeypatch):
+    selected, old, _, _, _ = world
+    with running(world) as (_, send, receive, _, _):
+        send("account/read", 2, {"invalid": True})
+        assert "invalid JSON" in receive()["error"]["message"]
+        monkeypatch.setattr(proxy.pm_codex_homes, "selected", lambda: {"home": str(old), "email": "old@example.test"})
+        send("account/read", 3)
+        assert receive()["result"]["home"] == str(old)
+        send("thread/read", 4, {"threadId": "unmapped-legacy"})
+        assert receive()["result"]["home"] == str(world[2])
 
 
 def test_mapping_cannot_be_overwritten_or_redirected(world, tmp_path):
@@ -208,40 +227,110 @@ def test_pinned_grant_cannot_be_reauthorized_through_rpc(world, method):
     assert not any(json.loads(line)["method"] == method for line in world[4].read_text().splitlines())
 
 
-def test_resume_waits_for_discovery_then_restarts(world, tmp_path):
+def test_pending_discovery_does_not_block_other_home_resume(world, tmp_path):
     _, old, _, _, _ = world
     proxy.remember_thread("old-thread", {"home": str(old), "email": "old@example.test"})
     gate = tmp_path / "release-discovery"
     os.mkfifo(gate)
-    with running(world) as (instance, send, receive, _, _):
-        waiting = threading.Event()
-        receive_request = instance.receive
-        def observe(request):
-            receive_request(request)
-            if instance.waiting is not None:
-                waiting.set()
-        instance.receive = observe
+    with running(world) as (_, send, receive, _, _):
         send("model/list", 2, {"gate": str(gate)})
         assert receive()["method"] == "test/discoveryWaiting"
         send("thread/resume", 3, {"threadId": "old-thread"})
-        assert waiting.wait(5)
-        with gate.open("w") as release:
-            release.write("ready")
-        assert receive()["id"] == 2
         resumed = receive()
         assert resumed["id"] == 3
         assert resumed["result"]["home"] == str(old)
-        assert instance.waiting is None
+        with gate.open("w") as release:
+            release.write("ready")
+        assert receive()["id"] == 2
 
 
-def test_hung_discovery_gives_bounded_resume_error(world, monkeypatch):
-    _, old, _, _, _ = world
-    proxy.remember_thread("old-thread", {"home": str(old), "email": "old@example.test"})
-    monkeypatch.setattr(proxy, "DISCOVERY_DRAIN_SECONDS", 0.05)
+def test_initialization_timeout_is_bounded_and_does_not_reroute(world, monkeypatch):
+    selected, _, _, _, _ = world
+    hung = home(selected.parent / "hang-init", "hung@example.test")
+    proxy.remember_thread("hung-thread", {"home": str(hung), "email": "hung@example.test"})
     with running(world) as (_, send, receive, _, _):
-        send("model/list", 2, {"hang": True})
-        assert receive()["method"] == "test/discoveryWaiting"
-        send("thread/resume", 3, {"threadId": "old-thread"})
+        monkeypatch.setattr(proxy, "INITIALIZE_TIMEOUT", 0.05)
+        send("thread/resume", 3, {"threadId": "hung-thread"})
         reply = receive()
         assert reply["id"] == 3
-        assert "timeout" in reply["error"]["message"]
+        assert "timed out" in reply["error"]["message"]
+        send("account/read", 4)
+        assert receive()["result"]["home"] == str(selected)
+
+
+def test_all_thread_identity_operations_route_fresh_proxy_to_owner(world):
+    selected, old, _, _, _ = world
+    proxy.remember_thread("old-thread", {"home": str(old), "email": "old@example.test"})
+    with running(world) as (_, send, receive, _, _):
+        for method in ("thread/read", "thread/archive", "thread/unarchive", "turn/interrupt",
+                       "thread/goal/get", "mcpServer/tool/call", "feedback/upload", "app/list", "app/read",
+                       "thread/rollback", "thread/backgroundTerminals/list", "thread/backgroundTerminals/terminate"):
+            send(method, 2, {"threadId": "old-thread"})
+            assert receive()["result"]["home"] == str(old)
+
+
+def test_colliding_server_request_ids_route_responses_to_origin_child(world, monkeypatch):
+    selected, old, _, _, _ = world
+    # Both real peers intentionally use native server request ID 7.
+    with running(world) as (_, send, receive, _, stream):
+        send("thread/start", 2, {})
+        first = receive()["result"]["thread"]["id"]
+        monkeypatch.setattr(proxy.pm_codex_homes, "selected", lambda: {"home": str(old), "email": "old@example.test"})
+        send("thread/start", 3, {})
+        second = receive()["result"]["thread"]["id"]
+        send("turn/start", 4, {"threadId": first, "approval": True})
+        send("turn/start", 5, {"threadId": second, "approval": True})
+        messages = [receive() for _ in range(4)]
+        approvals = [m for m in messages if m.get("method") == "item/commandExecution/requestApproval"]
+        assert len(approvals) == 2
+        assert approvals[0]["id"] != approvals[1]["id"]
+        expected = {first: str(selected), second: str(old)}
+        for approval in reversed(approvals):
+            thread_id = approval["params"]["threadId"]
+            stream.write((json.dumps({"id": approval["id"], "result": {"decision": thread_id}}) + "\n").encode())
+            notification = receive()
+            assert notification["method"] == "test/approvalReceived"
+            assert notification["params"] == {"home": expected[thread_id], "id": 7,
+                                                "result": {"decision": thread_id}}
+
+
+@pytest.mark.parametrize("method", ["config/value/write", "config/batchWrite", "command/exec", "new/unknown"])
+def test_unsupported_global_writes_fail_closed(world, method):
+    with running(world) as (_, send, receive, _, _):
+        send(method, 2, {"threadId": "spoofed"})
+        assert "Unsupported" in receive()["error"]["message"]
+    assert not any(json.loads(line)["method"] == method for line in world[4].read_text().splitlines())
+
+
+def test_paseo_startup_discovery_then_resume_uses_native_owner(world):
+    selected, old, _, _, trace = world
+    proxy.remember_thread("paseo-thread", {"home": str(old), "email": "old@example.test"})
+    with running(world) as (_, send, receive, _, _):
+        for method in ("config/read", "collaborationMode/list", "skills/list", "thread/loaded/list",
+                       "getUserSavedConfig"):
+            send(method, 2, {})
+            assert receive()["result"]["home"] == str(selected)
+        send("thread/resume", 3, {"threadId": "paseo-thread"})
+        assert receive()["result"]["home"] == str(old)
+        send("thread/read", 4, {"threadId": "paseo-thread"})
+        assert receive()["result"]["home"] == str(old)
+    methods = [json.loads(line)["method"] for line in trace.read_text().splitlines()]
+    assert methods[:7] == ["initialize", "initialized", "config/read", "collaborationMode/list",
+                           "skills/list", "thread/loaded/list", "getUserSavedConfig"]
+
+
+def test_account_display_notifications_follow_selection_but_thread_events_all_flow(world):
+    import io
+    selected, old, _, _, _ = world
+    output = io.BytesIO()
+    instance = proxy.Proxy(sys.executable, [], selected, {"email": "selected@example.test"},
+                           io.BytesIO(), output)
+    old_child = {"account": proxy._identity(old), "failed": False}
+    chosen_child = {"account": proxy._identity(selected), "failed": False}
+    instance.response(old_child, {"method": "account/updated", "params": {"fixture": "old"}})
+    instance.response(chosen_child, {"method": "account/updated", "params": {"fixture": "chosen"}})
+    instance.response(old_child, {"method": "item/completed", "params": {"threadId": "old-thread"}})
+    messages = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert len(messages) == 2
+    assert messages[0]["params"]["fixture"] == "chosen"
+    assert messages[1]["params"]["threadId"] == "old-thread"
