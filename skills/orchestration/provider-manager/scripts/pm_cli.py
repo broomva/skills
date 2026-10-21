@@ -151,13 +151,26 @@ def main(pm) -> None:
     p = sub.add_parser("hold", help="Pause automatic switching", parents=[common])
     p.add_argument("--minutes", type=float, default=30.0)
     p.add_argument("--clear", action="store_true")
+    p = sub.add_parser("codex-home", help="Show the selected immutable Codex home", parents=[common])
+    p.add_argument("--email")
+    p = sub.add_parser("codex-launcher", help="Install a separate account-selection launcher", parents=[common])
+    p.add_argument("--binary", required=True, help="Absolute path of the real Codex executable")
     sub.add_parser("state", help="Balancer state: lock, cooldown, hold, health", parents=[common])
     args = parser.parse_args()
     args.json = getattr(args, "json", False)
     args.provider = getattr(args, "provider", "claude")
 
     try:
-        if args.command == "list":
+        if args.command in ("codex-home", "codex-launcher"):
+            import pm_codex_homes
+            if args.command == "codex-launcher":
+                result = {"launcher": pm_codex_homes.install_launcher(args.binary)}
+            else:
+                result = pm_codex_homes.entry(args.email) if args.email else pm_codex_homes.selected()
+                if not result:
+                    raise pm.StoreError("No isolated Codex home; select or log in the account first")
+            print(json.dumps(result, indent=2) if args.json else result.get("home", result.get("launcher")))
+        elif args.command == "list":
             if args.provider == "codex":
                 _print_codex_list(pm.list_codex_accounts(), args.json)
             elif args.provider == "all":
@@ -319,8 +332,8 @@ def main(pm) -> None:
             if getattr(args, "provider", "claude") == "codex":
                 res = pm.login_codex_headless(email=args.email, space=args.space)
                 print(json.dumps(res, indent=2) if args.json else "Logged in Codex %s (Arc space %s); %s." % (
-                    res["email"], res.get("space"), "the CLI now uses it" if res.get("activated")
-                    else "copy saved, the CLI stays on %s (switch to move it)" % res.get("active")))
+                    res["email"], res.get("space"), "new sessions now use it" if res.get("activated")
+                    else "home saved, new sessions stay on %s (switch to select it)" % res.get("active")))
             else:
                 res = pm.login_headless(email=args.email, browser=args.browser, profile=args.profile, force=args.force)
                 print(json.dumps(res, indent=2) if args.json else "Logged in %s (no switch)." % res["email"])

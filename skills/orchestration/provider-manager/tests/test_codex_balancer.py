@@ -273,13 +273,14 @@ def test_relogin_forces_the_account_chooser_in_the_configured_arc_space(cx, monk
     assert res["action"] == "switched" and res["method"] == "autonomous_browser_login"
     assert calls == [(CARLOS, "Carlos")]
     assert cx.kc[CARLOS_ID]["tokens"]["refresh_token"] == "rt-carlos-new"
-    assert cx.kc[DEV_ID]["tokens"]["refresh_token"] == "rt-dev-1", "the outgoing seat was saved first"
+    assert cx.auth_tokens()["refresh_token"] == "rt-dev-1", "the outgoing home remains authoritative"
     assert "rt-dev-1" not in cx.revoked, "the login revoked the outgoing seat (BRO-3346)"
-    assert cx.auth_tokens()["refresh_token"] == "rt-carlos-new"
+    assert pm.read_codex_auth().data["tokens"]["refresh_token"] == "rt-carlos-new"
     assert "rt-carlos-1" not in cx.refreshed, "a revoked grant is never spent"
 
     # a failed re-login is not retried on every kick (each opens an Arc tab)
     cx.login(DEV, "rt-dev-2")
+    pm.switch_codex_account(DEV)
     cx.limit_type["rt-dev-2"] = "usage_limit_reached"
     cx.revoked.add("rt-carlos-new")
     pm.update_state(lambda s: s.update(lastCodexSwitch={"at": 0}, codexLoginAttempts={CARLOS: time.time()}))
@@ -598,7 +599,7 @@ def test_a_login_never_revokes_the_cli_seat(cx, monkeypatch):
     assert cx.auth_tokens()["refresh_token"] == "rt-dev-1", "a login leaves the CLI on its account"
     assert res["activated"] is False and res["active"] == DEV
     assert cx.kc[CARLOS_ID]["tokens"]["refresh_token"] == "rt-carlos-new" == cx.kc[CARLOS]["tokens"]["refresh_token"]
-    assert cx.kc[DEV_ID]["tokens"]["refresh_token"] == "rt-dev-1", "the CLI's seat is snapshotted first"
+    assert pm.read_codex_copy(DEV_ID, DEV).data["tokens"]["refresh_token"] == "rt-dev-1"
     assert homes and homes[0] != cx.auth.parent and not homes[0].exists(), "the scratch home (tokens) is removed"
     assert (pm.load_state().get("lastCodexSwitch") or {}).get("to") != CARLOS, "no seat moved, no switch"
     rows = _rows()
@@ -609,21 +610,20 @@ def test_a_login_into_a_cli_without_auth_json_makes_it_active(cx, monkeypatch):
     import pm_codex_login
     monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", cx.fake_login("rt-carlos-new"))
     res = pm.login_codex_headless(CARLOS)
-    assert res["activated"] is True and cx.auth_tokens()["refresh_token"] == "rt-carlos-new"
+    assert res["activated"] is True and pm.read_codex_auth().data["tokens"]["refresh_token"] == "rt-carlos-new"
     assert (pm.load_state().get("lastCodexSwitch") or {}).get("method") == "login_headless"
 
 
 def test_a_seat_rotated_during_the_login_is_saved_with_its_new_grant(cx, monkeypatch):
-    """The browser flow takes most of a minute. If the running CLI rotates its refresh token meanwhile,
-    backing up the token read before the login would save a spent grant as the outgoing copy."""
+    """A refresh during login stays in the outgoing home; selection never overwrites that home."""
     import pm_codex_login
     monkeypatch.setattr(pm_codex_login, "arc_usable", lambda timeout=3.0: (True, "ok"))
     monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login",
                         cx.fake_login("rt-carlos-new", during=lambda: cx.login(DEV, "rt-dev-2")))
     cx.login(DEV, "rt-dev-1")
     res = pm.switch_codex_account(CARLOS)
-    assert res["method"] == "autonomous_browser_login" and cx.auth_tokens()["refresh_token"] == "rt-carlos-new"
-    assert cx.kc[DEV_ID]["tokens"]["refresh_token"] == "rt-dev-2", "the outgoing copy holds a spent grant"
+    assert res["method"] == "autonomous_browser_login" and pm.read_codex_auth().data["tokens"]["refresh_token"] == "rt-carlos-new"
+    assert pm.read_codex_copy(DEV_ID, DEV).data["tokens"]["refresh_token"] == "rt-dev-2", "read the outgoing home, never a spent saved copy"
     assert not ({"rt-dev-1", "rt-dev-2"} & cx.revoked)
 
 

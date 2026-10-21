@@ -37,6 +37,7 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 
 import pm_state  # noqa: E402
+import pm_codex_homes  # noqa: E402
 from pm_store import (  # noqa: E402
     LockBusy,
     StoreBusy,
@@ -66,7 +67,7 @@ from pm_store import (  # noqa: E402
     CODEX_TOKEN_URL,
     CODEX_USAGE_URL,
     decode_jwt_unverified,
-    read_codex_auth,
+    read_codex_auth as read_legacy_codex_auth,
     write_codex_auth,
     read_orca_codex,
     write_orca_codex,
@@ -76,6 +77,29 @@ from pm_store import (  # noqa: E402
     extract_codex_identity,
     Read,
 )
+
+def read_codex_auth(path=None):
+    """Read the selected concrete home, falling back to the untouched legacy CLI home."""
+    if path is not None:
+        return read_legacy_codex_auth(path)
+    chosen = pm_codex_homes.selected()
+    got = read_legacy_codex_auth(Path(chosen["home"]) / "auth.json" if chosen else CODEX_AUTH_PATH)
+    if chosen and got.status == "ok" and extract_codex_identity((got.data or {}).get("tokens")).get("email") != chosen["email"]:
+        return Read("error", None, "selected Codex home changed identity")
+    return got
+
+
+def _adopt_legacy_codex_home():
+    """Existing sessions keep owning this file. Register its path, never copy its refresh grant."""
+    got = read_legacy_codex_auth(CODEX_AUTH_PATH)
+    ident = extract_codex_identity((got.data or {}).get("tokens"))
+    email = ident.get("email")
+    if email and not pm_codex_homes.entry(email):
+        import uuid
+        account_id = next((a["id"] for a in codex_roster() if a.get("email") == email),
+                          str(uuid.uuid5(uuid.NAMESPACE_DNS, email)))
+        pm_codex_homes.register(email, account_id, CODEX_AUTH_PATH.parent)
+
 
 HOME = Path.home()
 ORCA_DATA_PATH = HOME / "Library/Application Support/orca/profiles/local-default/orca-data.json"
@@ -1396,23 +1420,24 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
 def login_codex_headless(email: Optional[str] = None, space: Optional[str] = None) -> Dict[str, Any]:
     """Log a Codex account in from an Arc browser session, with the account chooser forced
     (`prompt=login`), in the account's Arc space (`codexAccounts.<email>.arcSpace`, else "Stimulus"),
-    and save its tokens as the account's copy. The login runs in an empty scratch CODEX_HOME, so it
-    revokes nothing (BRO-3346) and leaves the CLI on the account it holds: `switch` moves it. Only a CLI
-    holding no auth.json at all is given the new account."""
+    and publish a new home generation. Existing sessions retain their home. A login of the selected
+    account selects its new generation; a standby login leaves selection alone."""
     target_email = (email or "devteam@getstimulus.ai").strip().lower()
     space = space or codex_arc_space(target_email)
     with pm_state.trace(), pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=True, timeout=60.0,
                                                   holder="codex-login") as held:
         if not held:
             raise StoreError("another provider-manager action holds the balancer lock")
+        _adopt_legacy_codex_home()
         before = build_codex_context(verify_identity=True)
         snapshot_codex_auth(before)
         acc_id = _codex_account_id(before, target_email)
         tokens, msg = _login_codex_copy(acc_id, target_email, space)
-        activated = False
-        if before["store"].status == "absent":
-            _activate_codex_tokens(before, acc_id, target_email, tokens, "login_headless")
-            activated = True
+        activated = before["store"].status == "absent" or before["activeIdentity"].get("email") == target_email
+        if activated:
+            pm_codex_homes.select(target_email)
+            _record_codex_switch(before, acc_id, target_email,
+                                 before["activeIdentity"].get("email") or "unknown", "login_headless")
     active = target_email if activated else (before["activeIdentity"].get("email") or "nobody")
     return {"success": True, "provider": "codex", "email": target_email, "space": space, "message": msg,
             "activated": activated, "active": active}
@@ -1453,6 +1478,10 @@ def _login_codex_copy(acc_id: str, email: str, space: str) -> Tuple[Dict[str, An
                "email": email, "savedAt": int(time.time()), "source": "login"}
         if not (write_orca_codex(acc_id, rec) and write_orca_codex(email, rec)):
             raise StoreError(f"Codex login of {email} succeeded but its copy could not be saved in Keychain")
+        chosen = pm_codex_homes.selected()
+        new_home = pm_codex_homes.new_home(email, got.data, CODEX_AUTH_PATH.parent)
+        pm_codex_homes.register(email, acc_id, new_home,
+                                select=not chosen or chosen["email"] == email)
         _mark_codex_health(acc_id, email, None, "login", tokens)
         log_provider_event("codex.login", {"email": email, "space": space, "accountId": acc_id, "saved": True})
         return dict(tokens), msg
@@ -1496,6 +1525,11 @@ def codex_roster() -> List[Dict[str, Any]]:
             roster_accounts.append(dict(default_acc))
             known_emails.add(default_acc["email"].lower())
 
+    for email, home in pm_codex_homes.registry()["accounts"].items():
+        if email not in known_emails:
+            roster_accounts.append({"id": home["id"], "email": email, "authMethod": "chatgpt"})
+            known_emails.add(email)
+
     store = read_codex_auth()
     if store.data:
         ident = extract_codex_identity(store.data.get("tokens"))
@@ -1518,6 +1552,14 @@ def read_codex_copy(acc_id: Optional[str], email: Optional[str]) -> Read:
     """An account's saved Codex copy, under its roster id, else its email. "absent" only when no key
     holds one; a read error under either key with no readable copy is "error", never "absent": an
     unreadable copy is not a missing one, and a missing one can start a browser re-login."""
+    managed = pm_codex_homes.entry(email) if email else None
+    if managed:
+        got = read_legacy_codex_auth(Path(managed["home"]) / "auth.json")
+        if got.status != "ok":
+            return Read("error", None, "managed home auth unreadable: " + got.detail)
+        if extract_codex_identity((got.data or {}).get("tokens")).get("email") != email.lower():
+            return Read("error", None, "managed home identity changed")
+        return got
     reads = [read_orca_codex(k) for k in dict.fromkeys(k for k in (acc_id, email) if k)]
     for r in reads:
         if r.status == "ok" and r.data:
@@ -1635,20 +1677,10 @@ def fetch_codex_usage_raw(access_token: str, account_id: str, timeout: float = 1
 
 # -- Codex: auth.json snapshot, guarded refresh, per-grant health ---------------------------------
 #
-# Measured on the owner's Mac, 2026-10-19, with two Google users in one ChatGPT Team workspace:
-# - logging one account into the CLI revoked the other's saved copy (usage then answers 401
-#   token_revoked). Read then as "one live seat at a time"; the cause is the CLI's own login, which
-#   first logs out, and revokes at OpenAI, whatever account its CODEX_HOME holds
-#   (codex-rs/cli/src/login.rs `clear_existing_auth_before_login`, BRO-3346). Logins now run in an
-#   empty scratch CODEX_HOME (_login_codex_copy), so every saved copy stays live;
-# - both users share one workspace (one chatgpt_account_id), so "workspace out of credits" is shared:
-#   switching seats cannot fix it, only the per-user 5-hour window benefits.
-# - team@ (added 2026-10-19, BRO-3222) is a Pro seat in its own workspace, so it stays a candidate
-#   while the Team workspace is out of credits.
-# - a running Codex session re-reads auth.json before a refresh and adopts it only when its
-#   chatgpt_account_id (the workspace) is unchanged (codex-rs/login/src/auth/manager.rs
-#   `reload_if_account_id_matches`): a swap between devteam@ and carlos@ reaches running sessions; a
-#   swap to or from team@ reaches new sessions, and older ones fail their next refresh (never writing).
+# Codex login revokes its home before signing in (BRO-3346). Scratch login prevents revocation;
+# immutable per-account home generations prevent concurrent CLI refreshes from overwriting a
+# selection. Selection only controls new sessions. Managed-home refresh grants belong to Codex,
+# even when their account is not selected; see pm_codex_homes and references/architecture.md.
 
 def _codex_grant(tokens: Optional[Dict[str, Any]]) -> Optional[str]:
     """One-way tag for a saved Codex grant (refresh + access token); state files only."""
@@ -1754,6 +1786,10 @@ def _refresh_codex_copy(acc_id: str, email: str, tokens: Dict[str, Any]) -> Tupl
 
 
 def _refresh_codex_copy_locked(acc_id: str, email: str, tokens: Dict[str, Any], rt: str) -> Tuple[Optional[Dict[str, Any]], str]:
+    if pm_codex_homes.entry(email):
+        return None, "managed_home_owns_refresh"
+    if extract_codex_identity(tokens).get("email") != email:
+        return None, "copy_identity_mismatch"
     now_copy = read_orca_codex(acc_id)
     now_rt = (((now_copy.data or {}).get("tokens")) or {}).get("refresh_token") if now_copy.status == "ok" else None
     if now_copy.status == "error" or (now_rt and not same_token(now_rt, rt)):
@@ -1895,7 +1931,7 @@ def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None,
 
         live = tokens
         # The active account's grant belongs to the running Codex CLI; only a standby copy is refreshed.
-        if not is_active and codex_token_expiring(live, 60_000):
+        if not is_active and not pm_codex_homes.entry(email) and codex_token_expiring(live, 60_000):
             fresh, why = _refresh_codex_copy(acc_id, email, live)
             if not fresh:
                 # only a dead grant needs a login; a transient failure (network, a busy lock, a copy
@@ -1969,8 +2005,8 @@ def fetch_codex_usage(force: bool = False, ctx: Optional[Dict[str, Any]] = None,
 
 def switch_codex_account(target: str, force: bool = False) -> Dict[str, Any]:
     """Move the Codex CLI (~/.codex/auth.json) to another account, under the machine-wide lock. The
-    outgoing seat is snapshotted first. A live target copy is refreshed (never the CLI's own grant) and
-    written; a dead one needs a browser re-login (Arc, with the account chooser forced)."""
+    Existing homes are never rewritten. A target without a home is bootstrapped from a standalone
+    saved copy or a browser login; the selection manifest controls only future session launches."""
     with pm_state.trace(), pm_state.balancer_lock(BALANCER_LOCK_PATH, blocking=True, timeout=60.0,
                                                   holder="codex-switch") as held:
         if not held:
@@ -1979,6 +2015,7 @@ def switch_codex_account(target: str, force: bool = False) -> Dict[str, Any]:
 
 
 def _switch_codex_locked(target: str, force: bool) -> Dict[str, Any]:
+    _adopt_legacy_codex_home()
     ctx = build_codex_context(verify_identity=True)
     snapshot_codex_auth(ctx)  # the outgoing seat keeps a saved copy, whatever happens next
     target_clean = target.strip().lower()
@@ -1991,6 +2028,18 @@ def _switch_codex_locked(target: str, force: bool) -> Dict[str, Any]:
     if target_id == ctx["activeAccountId"]:
         return {"status": "already_active", "account": target_email, "id": target_id,
                 "message": f"{target_email} is already the active Codex account"}
+
+    managed = pm_codex_homes.entry(target_email)
+    if managed:
+        got = read_codex_copy(target_id, target_email)
+        if got.status != "ok":
+            raise StoreError("Cannot select %s: %s" % (target_email, got.detail))
+        mark = _codex_health(target_id, (got.data or {}).get("tokens"))
+        if mark:
+            return _codex_relogin(ctx, matched_acc, mark.get("status", "needs_login"))
+        pm_codex_homes.select(target_email)
+        return _record_codex_switch(ctx, target_id, target_email,
+                                     ctx["activeIdentity"].get("email") or "unknown", "isolated_home")
 
     target_read = read_codex_copy(target_id, target_email)
     if target_read.status == "error":
@@ -2020,37 +2069,20 @@ def _switch_codex_locked(target: str, force: bool) -> Dict[str, Any]:
 
 def _activate_codex_tokens(ctx: Dict[str, Any], target_id: str, target_email: str, tokens: Dict[str, Any],
                            method: str) -> Dict[str, Any]:
-    """Make live `tokens` the CLI's account: save them as the target's copy, save the outgoing auth.json
-    to its copy, then write auth.json atomically. auth.json is re-read here, not taken from `ctx`: the
-    running CLI may have rotated its refresh token since (a browser login takes most of a minute), and
-    backing up the older one would leave the outgoing copy holding a spent grant."""
-    target_acc_id = tokens.get("account_id") or extract_codex_identity(tokens).get("accountId")
-    if not target_acc_id and tokens.get("id_token"):
-        target_acc_id = decode_jwt_unverified(tokens["id_token"]).get("chatgpt_account_id")
-    if not target_acc_id:
-        raise StoreError(f"Cannot switch to {target_email}: unable to determine accountId from credentials")
-    live_target_tokens = dict(tokens, account_id=target_acc_id)
-    target_rec = {"auth_mode": "chatgpt", "tokens": live_target_tokens, "email": target_email}
-    if not (write_orca_codex(target_id, target_rec) and write_orca_codex(target_email, target_rec)):
-        raise StoreError(f"Failed to persist refreshed credentials for {target_email} in Keychain")
-
-    now_ctx = build_codex_context(verify_identity=True)
-    if now_ctx["store"].status == "error":
-        raise StoreError("~/.codex/auth.json became unreadable; auth.json unchanged")
-    prev_email = "unknown"
-    if now_ctx["storeTokens"]:
-        prev_email = now_ctx["activeIdentity"].get("email") or "unknown"
-        prev_id = now_ctx["activeAccountId"] or prev_email
-        prev_rec = {"auth_mode": "chatgpt", "tokens": now_ctx["storeTokens"], "email": prev_email}
-        if not write_orca_codex(prev_id, prev_rec):
-            raise StoreError(f"Failed to back up outgoing Codex credentials ({prev_id}) to Keychain; auth.json unchanged")
-        if prev_email and prev_email != "unknown" and prev_email != prev_id:
-            if not write_orca_codex(prev_email, prev_rec):
-                raise StoreError(f"Failed to back up outgoing Codex credentials ({prev_email}) to Keychain; auth.json unchanged")
-
-    if not write_codex_auth({"auth_mode": "chatgpt", "tokens": live_target_tokens}):
-        raise StoreError("Failed to write ~/.codex/auth.json")
-    return _record_codex_switch(ctx, target_id, target_email, prev_email, method)
+    """Publish a home once; switching only selects it. No existing auth file is replaced."""
+    _adopt_legacy_codex_home()
+    if extract_codex_identity(tokens).get("email") != target_email:
+        raise StoreError("Cannot select Codex credentials belonging to another account")
+    managed = pm_codex_homes.entry(target_email)
+    if not managed:
+        auth = {"auth_mode": "chatgpt", "tokens": dict(tokens)}
+        if not extract_codex_identity(tokens).get("accountId"):
+            raise StoreError("Cannot switch to %s: unable to determine accountId from credentials" % target_email)
+        home = pm_codex_homes.new_home(target_email, auth, CODEX_AUTH_PATH.parent)
+        pm_codex_homes.register(target_email, target_id, home)
+    pm_codex_homes.select(target_email)
+    return _record_codex_switch(ctx, target_id, target_email,
+                                 ctx["activeIdentity"].get("email") or "unknown", method)
 
 
 def _record_codex_switch(ctx: Dict[str, Any], target_id: str, target_email: str, prev_email: str,
@@ -2069,7 +2101,7 @@ def _record_codex_switch(ctx: Dict[str, Any], target_id: str, target_email: str,
 def _codex_relogin(ctx: Dict[str, Any], acc: Dict[str, Any], why: str) -> Dict[str, Any]:
     """The target has no live saved copy. Log it in through Arc (account chooser forced,
     `prompt=login`) in its configured Arc space, inside a scratch CODEX_HOME so the outgoing seat is
-    not revoked, then swap auth.json to it."""
+    not revoked, then select the newly published account home."""
     import pm_codex_login
 
     email = acc["email"].lower()

@@ -749,3 +749,25 @@ labelling sheet next, then the PR. Phase 2 (dry run) follows on its own branch.
 
 - `python3 -m pytest tests/` in both skills; both mutation checks at 0 survivors.
 - `bash -n` and shellcheck on the scripts; the catalog, SKILL.md and version lints.
+
+## provider-manager: per-account Codex homes (BRO-3346)
+
+Status: implementation; user selected Orca-style isolation after round 1 reproduced refresh races.
+Snapshot (P15): clean worktree at d514546, skills PR #291 draft; legacy ~/.codex remains owned by
+existing sessions. Three live accounts verified; no live account swap performed.
+Dep-Chain (P14): pm_store file/keychain I/O -> new pm_codex_homes registry/launcher ->
+provider_manager login, roster, telemetry and selection -> pm_cli -> T3/Paseo executable configuration.
+A selection updates a private atomic manifest only. Every launched process resolves one concrete
+home once; no auth symlink or mutable CODEX_HOME alias. Reauthorization creates a new generation.
+Legacy auth is adopted in place, never copied to a second refresh owner. Managed home credentials
+are authoritative; provider-manager never refreshes their grants or overwrites their auth.json.
+Files that change: PLANS.md; skills/orchestration/provider-manager/{SKILL.md,references/architecture.md,
+references/rotation-playbook.md,scripts/pm_codex_homes.py,scripts/provider_manager.py,scripts/pm_cli.py,
+scripts/pm_codex_login.py,scripts/pm_codex_integrations.py,scripts/pm_codex_proxy.py,
+tests/test_codex_homes.py,tests/test_codex_integrations.py,tests/test_codex_proxy.py,tests/test_codex_balancer.py,
+tests/test_codex_provider.py,tests/mutation_check.py}.
+Acceptance: two stub sessions stay on distinct homes through selection and refresh; re-login of the
+selected account preserves its old generation and selects the new one; new accounts are selectable;
+standby telemetry never spends a managed grant; launcher integrations use resolved homes.
+Validation: hermetic pytest + mutation proof; real non-mutating launcher/status probes; read-only
+Cross-Review (P20) A/C; required CI and p9 gates before merge. Existing sessions are never restarted.

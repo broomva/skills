@@ -99,51 +99,57 @@ a login, a switch or Orca writes new tokens. None of these switches anything, an
 of them is not a candidate. Tool output (a GitHub API limit, a site's 429) is never read as a Claude
 limit.
 
-## Codex accounts (measured 2026-10-19, cause found 2026-10-21)
+## Codex accounts (BRO-3346)
 
-Three facts shape everything here:
+Codex uses **a concrete home per account generation**. `switch --provider codex` changes the
+selection for new sessions; it never replaces an existing home's `auth.json`. Existing sessions
+keep their account, including across workspaces. A late refresh writes only its original home.
 
-- **`codex login` revokes the account it replaces.** Before it signs anyone in, it logs out the
-  account its `CODEX_HOME` holds, and that logout revokes the refresh token at OpenAI
-  (`clear_existing_auth_before_login` → `logout_with_revoke`, codex-rs/cli/src/login.rs, codex-cli
-  0.163.0). The saved copy holds the same grant, so it dies too (usage 401 `token_revoked`). That was
-  first read as "one live Codex seat at a time" (BRO-3346). It is not a limit: every login here runs in
-  an empty scratch `CODEX_HOME`, as Orca does with its home per account, so all saved copies stay live
-  and a switch is a swap of `~/.codex/auth.json`. **Never run a bare `codex login` to change accounts.**
-- **Running sessions follow a swap only within a workspace.** A Codex session re-reads `auth.json`
-  before a refresh and adopts it only if its `chatgpt_account_id` (the workspace) is unchanged. A
-  swap between devteam@ and carlos@ reaches running sessions. A swap to or from team@ reaches new
-  sessions; older ones fail their next refresh with an account mismatch (and never write auth.json).
-- **One shared workspace, plus one apart.** devteam@ and carlos@ are two users of one ChatGPT Team
-  workspace (one `chatgpt_account_id`). "Workspace out of credits" is shared: switching between them
-  cannot fix it, and only the per-user 5-hour window benefits. team@ (added 2026-10-19, BRO-3222) is
-  a ChatGPT Pro seat in its own workspace. It is the one candidate that still helps while the Team
-  workspace is out of credits.
+- `codex login` first logs out and revokes the account its `CODEX_HOME` holds
+  (`clear_existing_auth_before_login` → `logout_with_revoke`, Codex 0.163.0). The former
+  "one live seat" limit was this login behavior, not an OpenAI account limit. Every managed login
+  runs in an empty scratch home with the file store forced. Its email is checked before publication.
+- Homes and the private atomic registry live under `~/.local/share/broomva/codex/` (override:
+  `PROVIDER_MANAGER_CODEX_ROOT`). Reauthorizing an account creates a **new generation**, preserving
+  its prior home for existing sessions. Reauthorizing the selected account selects its new generation.
+  Logging in a new email registers it, so it remains selectable after another account is selected.
+- The existing `~/.codex` home (`CODEX_AUTH_PATH` override) is adopted **in place**. Its grant is
+  never copied into another live home. Existing sessions keep using it; nothing restarts them.
+- Managed homes are the authoritative credentials. Telemetry reads each home's latest access token;
+  provider-manager never refreshes a managed grant, including an inactive account's. Its Codex
+  sessions own refresh. An expired access token may make telemetry unreadable until Codex renews it;
+  unreadable numbers never justify automatic switching. Keychain copies are bootstrap/backup data.
+- Switching to an account without a home first refreshes its saved standby copy (never a grant owned
+  by a home) or re-logs it in if proven dead, then publishes a home and selects it. All outcomes are
+  `codex.balance.decision` events. Usage thresholds, cooldown, Arc chooser and telemetry guards apply.
+- devteam@ and carlos@ share one Team workspace; changing user cannot restore exhausted workspace
+  credits. team@ is a Pro account in another workspace and can help in that case.
 
-What the balancer does with that:
+### Session launchers
 
-- Every evaluation and every `usage` call snapshots `~/.codex/auth.json` into its account's keychain
-  copy when the two differ, so a raw `codex login` (which writes only auth.json) leaves a saved copy.
-  The snapshot never refreshes anything. No refresh ever spends a refresh token auth.json holds: it
-  belongs to the running CLI, and OpenAI rotates refresh tokens on use.
-- A copy answering `token_revoked` is marked `revoked` (a refresh refused with `invalid_grant` is
-  `needs_login`). That grant is not sent to the usage or token endpoint again until new tokens replace it.
-- It moves the CLI when the active account is limited (readable numbers only: a usage 429 is
-  `throttled`, never a limit) or over the 5-hour/7-day thresholds, to a live standby that is under
-  `standbyMax` and, for a balance, `margin` points lower. While the active seat is out of workspace
-  credits, a standby in the same workspace, or of unknown workspace (no saved copy), is never a
-  candidate and is never re-logged in; only one known to be in another workspace is.
-- With no live standby and the active seat limited (not merely over a threshold: a browser login
-  is only worth starting for a seat that stopped working), it re-logs in a standby whose grant is
-  proven dead (`revoked`, `needs_login`) or that has no copy, then swaps auth.json to it. A transient
-  failure (network, a busy lock, a copy that changed or could not be read, a 401 without a revocation
-  code) never starts a re-login: the grant may well be live. The re-login runs through Arc, with `prompt=login`
-  forcing OpenAI's account chooser (without it, the Arc space's own web session is signed in, whoever
-  that is) in the account's `arcSpace` (default `Stimulus`). A short AppleScript check runs first and
-  reports "Arc not answering AppleScript" (a pending permission prompt hangs Arc) or "Arc is not
-  running" instead of hanging. A failed re-login is not retried for `cooldownMinutes`.
-- Every outcome, holds included, is a `codex.balance.decision` event with its reason, and
-  `usage --provider codex` shows why each standby is not a candidate (the STANDBY column).
+Install the separate launcher, preserving the real vendor executable:
+
+```bash
+python3 "$PM" codex-launcher --binary /absolute/path/to/real/codex
+python3 "$PM" codex-home                  # selected concrete home
+```
+
+Set T3's Codex **Binary path** and Paseo's `agents.providers.codex.command` to the printed launcher.
+Do not replace the vendor executable or set `CODEX_HOME` to a mutable `current` symlink.
+The wrapper resolves selection once, forces file credentials, and rejects direct login/logout;
+use `login-headless` for reauthorization. New homes copy config/instructions and share skills/rules;
+auth, databases and native session history are separate. Existing homes are retained.
+
+Paseo pins `PASEO_AGENT_ID` to its first home. The app-server proxy records native thread IDs and
+routes resume/fork to their original home; native threads predating installation resume in the
+legacy home. Once a thread is active, a cross-home resume in that server is refused. This prevents
+an app-server restart from silently moving an existing thread to the latest selection.
+
+`scripts/pm_codex_integrations.py paseo --config PATH --launcher PATH` emits a candidate Paseo
+config preserving other settings; apply privately, then `paseo daemon reload --json`.
+The `t3 --binary REAL` command alternatively emits create-only per-generation provider-instance
+requests for T3's native settings client. Those fixed instances are useful for an explicit account
+picker; the selection launcher handles automatic selection. Existing provider defaults are preserved.
 
 Configuration: `~/.config/broomva/provider-manager.json` (keys: `autoBalance`, `threshold`,
 `weeklyThreshold`, `standbyMax`, `margin`, `cooldownMinutes`, `failoverMinGapMinutes`,
@@ -175,7 +181,7 @@ python3 $PM login-headless --email X   # re-login X from browser session; --forc
 python3 $PM list --provider codex                    # Codex accounts (devteam, carlos, team) & active store
 python3 $PM status --provider codex                  # active Codex auth mode, email, plan, token freshness
 python3 $PM usage --provider codex [--force]         # 5h/7d Codex utilization, status, why a standby is not a candidate
-python3 $PM switch --provider codex devteam@...      # Codex switch: saves the outgoing seat; a dead target is re-logged in via Arc
+python3 $PM switch --provider codex devteam@...      # Codex selection: new sessions use this account; existing sessions retain theirs
 python3 $PM balance --provider codex [--dry-run]     # evaluate Codex balance (5h threshold / credits depleted)
 python3 $PM login-headless --provider codex [--email X] [--space S] # Codex login via Arc into X's saved copy; the CLI stays put
 
@@ -191,7 +197,7 @@ For OpenAI Codex, `switch` and `login-headless` drive `codex login` through an A
 scratch `CODEX_HOME` (file credential store forced): the account chooser (forced with `prompt=login`)
 and the consent page are clicked through, and the scratch auth.json is saved as the account's copy,
 then deleted. `~/.codex` is never touched by a login, so nothing is revoked. `login-headless` leaves the
-CLI on its account (unless it has none); `switch` swaps auth.json. The target must be signed in to that
+selected account unchanged unless it is being reauthorized or none is selected; `switch` selects a home. The target must be signed in to that
 space's OpenAI web session.
 
 ## Hooks

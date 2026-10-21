@@ -85,54 +85,33 @@
   old cross-item merge let the stale mirror's Linear tokens overwrite the live ones (D28).
 
 ### D. OpenAI Codex Storage & Credentials
-* **Store File**:
-  `~/.codex/auth.json` (or `CODEX_AUTH_PATH` override)
-* **Schema**:
-  ```json
-  {
-    "auth_mode": "chatgpt",
-    "tokens": {
-      "id_token": "<jwt>",
-      "access_token": "<jwt>",
-      "refresh_token": "<rt>",
-      "account_id": "45663a8d-d52d-4b55-8dd3-2af5ce5e6779"
-    }
-  }
-  ```
-* **Keychain Service**:
-  `Orca Codex Managed Credentials`
-  * Account key: the roster id and the email (both are written)
-  * Value: JSON containing `auth_mode`, `tokens`, `email`, and update timestamp.
-* **Snapshot**: every Codex evaluation and `usage` call writes auth.json into its account's copy when the
-  two differ (`codex.snapshot`, reason `copy_missing` or `tokens_changed`), so a raw `codex login` leaves a
-  saved copy. Keychain only: no refresh, no auth.json write; an unreadable copy is never overwritten.
-* **Refresh interlock**: a saved copy is refreshed only if its refresh token is not the one auth.json
-  holds (re-read just before the POST). That grant belongs to the running CLI; OpenAI rotates refresh
-  tokens, so spending it logs the CLI out (kill path K16).
-* **Login revokes the outgoing account (BRO-3346)**: `codex login` first runs `logout_with_revoke` on
-  whatever its `CODEX_HOME` holds (`clear_existing_auth_before_login`, codex-rs/cli/src/login.rs),
-  posting the refresh token to `auth.openai.com/oauth/revoke`. Run in `~/.codex`, that killed the live
-  seat and its saved copy (usage 401 `token_revoked`), which on 2026-10-19 read as "one live seat at a
-  time". Every login now runs in an empty `mkdtemp` `CODEX_HOME` with `cli_auth_credentials_store="file"`;
-  the scratch auth.json is checked (the signed-in email must be the target), saved as the copy, and the
-  directory removed. `pm_codex_login` refuses the CLI's own home or a non-empty directory.
-* **Shared workspace (2026-10-19)**: one Team workspace for devteam@ and carlos@ (`chatgpt_account_id`
-  45663a8d…), whose credits no seat switch can restore.
-* **Health** (`codexHealth` in the state): `revoked` (usage 401 `token_revoked`; a refresh refused as
-  reused/revoked/invalidated) or `needs_login` (other refresh refusals), tagged with a fingerprint of the
-  grant. That grant gets no usage call and no refresh until new tokens replace it.
-* **Re-login**: `codex login` in a scratch home (above), its authorize URL with `&prompt=login` (the account chooser; without it the
-  Arc space's own web session is signed in), opened in the account's Arc space (`codexAccounts.<email>.arcSpace`,
-  default `Stimulus`), after a 3-second check that Arc is running and answers AppleScript. A failed
-  automatic re-login is not retried for `cooldownMinutes` (`codexLoginAttempts`).
-* **Activation**: a switch saves the target's tokens as its copy, re-reads auth.json (the CLI may have
-  rotated it during a minute-long browser login) and saves that as the outgoing copy, then replaces
-  auth.json atomically (`tmp` + `os.replace`, so no reader sees a partial file).
-* **Running sessions**: a Codex session re-reads auth.json before it refreshes, and adopts it only if the
-  `chatgpt_account_id` (the workspace) is the one it runs on (`reload_if_account_id_matches`,
-  codex-rs/login/src/auth/manager.rs). A swap within a workspace (devteam@ ↔ carlos@) reaches running
-  sessions; a swap across workspaces (↔ team@) reaches new ones, and older sessions fail their next
-  refresh with an account mismatch, without writing auth.json.
+* **Homes and selection**: `~/.local/share/broomva/codex/accounts.json` maps email → immutable
+  generation home and contains the selected email. Registry writes are atomic and mode 0600;
+  directories and generation homes are mode 0700. `PROVIDER_MANAGER_CODEX_ROOT` overrides the root.
+* **Legacy adoption**: `~/.codex/auth.json` (or `CODEX_AUTH_PATH`) remains in its existing home,
+  registered in place. Never duplicate the running CLI's grant into another home.
+* **Credential ownership**: each generation's `auth.json` belongs to its Codex sessions. Registry
+  selection never writes an auth file. Telemetry reads home credentials before Keychain copies,
+  and never refreshes a managed grant. A standalone saved copy can be refreshed only before its
+  first home is published. Keychain service remains `Orca Codex Managed Credentials`.
+* **Login**: `codex login` revokes whatever its home holds, so every browser login runs in an empty
+  scratch home with `cli_auth_credentials_store="file"`. Check returned email, persist a Keychain
+  backup, publish a new generation home, register it, and clean up the scratch directory.
+  Reauthorizing the selected account selects the new generation. Old homes are never overwritten.
+* **Race eliminated**: Codex 0.163's token refresh can finish after a file swap and overwrite the
+  target, or rotate between snapshot and backup. A re-read/CAS in provider-manager cannot serialize
+  with the CLI's private semaphore. Separate homes remove the shared auth-file write instead.
+* **Launcher**: resolves a concrete home once; overrides `CODEX_HOME`, forces file credentials and
+  execs the explicit real executable. Paseo agent IDs and native app-server thread IDs retain home
+  pins on resume. Unmapped legacy threads resume in the legacy home. Login/logout through the
+  launcher are refused; reauthorization must publish a new generation.
+* **Shared files**: new homes copy config.toml (root file-store setting forced), managed config and
+  AGENTS.md, and symlink skills/rules/prompts directories. Auth, databases, logs, and session state
+  stay local to the generation. Nothing deletes retained generations automatically.
+* **Workspace credits**: devteam@ and carlos@ share Team credits; team@ is in another workspace.
+  The balancer skips same/unknown-workspace candidates when the selected workspace is exhausted.
+* **Health**: per-grant fingerprints retain revoked/needs_login marks; fresh login generations clear
+  them. Transient network or telemetry failures never start browser login.
 * **OAuth Refresh**:
   * Endpoint: `https://auth.openai.com/oauth/token`
   * Client ID: `app_EMoamEEZ73f0CkXaXp7hrann`

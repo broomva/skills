@@ -210,12 +210,13 @@ def test_switch_codex_account_success(monkeypatch, tmp_path):
     assert res["active"] == "carlos@getstimulus.ai"
     assert res["previous"] == "devteam@getstimulus.ai"
 
-    # Verify auth.json was rewritten with new tokens
-    current_auth = json.loads(auth_path.read_text())
+    # The selected home uses the target; the legacy session keeps its original auth file.
+    assert json.loads(auth_path.read_text())["tokens"] == outgoing_tokens
+    current_auth = pm.read_codex_auth().data
     assert current_auth["tokens"]["refresh_token"] == "rf_carlos_new"
 
-    # Verify outgoing tokens were backed up
-    assert "devteam@getstimulus.ai" in keychain_db
+    # Outgoing tokens remain authoritative in the original home.
+    assert pm.read_codex_copy(None, "devteam@getstimulus.ai").data["tokens"] == outgoing_tokens
 
 
 def test_evaluate_codex_balance(monkeypatch):
@@ -446,7 +447,7 @@ def test_switch_codex_account_autonomous_fallback(monkeypatch, tmp_path):
     assert res["status"] == "switched"
     assert res["active"] == "carlos@getstimulus.ai"
     assert res["method"] == "autonomous_browser_login"
-    assert json.loads(auth_path.read_text())["tokens"]["refresh_token"] == "rf_carlos_auto"
+    assert pm.read_codex_auth().data["tokens"]["refresh_token"] == "rf_carlos_auto"
 
 
 
