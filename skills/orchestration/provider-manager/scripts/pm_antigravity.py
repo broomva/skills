@@ -23,7 +23,10 @@ def runtime_fingerprint(binary):
     values = []
     for candidate in (path, path.parent / 'localharness_external'):
         with candidate.open('rb') as stream:
-            values.append(hashlib.file_digest(stream, 'sha256').hexdigest())
+            digest = hashlib.sha256()
+            for chunk in iter(lambda: stream.read(1024 * 1024), b''):
+                digest.update(chunk)
+            values.append(digest.hexdigest())
     return tuple(values)
 
 

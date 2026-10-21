@@ -139,5 +139,19 @@ class RoutingTests(unittest.TestCase):
         self.assertEqual((Path(self.temp.name) / 'registry.json').stat().st_mode & 0o777, 0o600)
 
 
+class RuntimeHashTests(unittest.TestCase):
+    def test_binary_and_harness_content_are_both_bound(self):
+        import hashlib
+        with tempfile.TemporaryDirectory() as directory:
+            binary = Path(directory) / 'agy'
+            binary.write_bytes(b'vendor')
+            harness = Path(directory) / 'localharness_external'
+            harness.write_bytes(b'harness')
+            expected = tuple(hashlib.sha256(value).hexdigest() for value in (b'vendor', b'harness'))
+            self.assertEqual(ag.runtime_fingerprint(binary), expected)
+            harness.write_bytes(b'upgraded')
+            self.assertNotEqual(ag.runtime_fingerprint(binary), expected)
+
+
 if __name__ == '__main__':
     unittest.main()
