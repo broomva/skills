@@ -105,7 +105,9 @@ _TRANSITIONS: set[tuple[LoopState, LoopState]] = {
     (LoopState.ITERATING, LoopState.PAUSED),
     (LoopState.ITERATING, LoopState.SUCCESS),
     (LoopState.ITERATING, LoopState.BUDGET_EXHAUSTED),
+    (LoopState.SPAWNED, LoopState.BUDGET_EXHAUSTED),
     (LoopState.PAUSED, LoopState.ITERATING),
+    (LoopState.PAUSED, LoopState.BUDGET_EXHAUSTED),
     (LoopState.PAUSED, LoopState.ABANDONED),
     (LoopState.SPAWNED, LoopState.ABANDONED),
     (LoopState.ITERATING, LoopState.ABANDONED),
@@ -239,18 +241,27 @@ def open_loops() -> list[dict[str, Any]]:
 # the tail of a run is checked, so a long productive run that merely discusses rate
 # limiting in its middle is not misread.
 LIMIT_PATTERNS = re.compile(
-    r"you'?ve hit your (?:\w+[ -])?limit"
-    r"|claude (?:ai )?usage limit reached"
+    r"you(?:'ve| have) (?:hit|reached|exceeded) your (?:\w+[ -])?(?:usage )?limit"
+    r"|claude (?:(?:ai|code) )?usage limit reached"
     r"|would exceed your account'?s rate limit"
-    r"|rate limit reached\. try again later"
+    r"|rate limit (?:reached|exceeded)(?:\. try again later)?"
     r"|you have run out of credits|out of credits"
-    r"|usage_limit_reached|rate_limit_error",
+    r"|usage_limit_reached|rate_limit_error|resource_exhausted"
+    r"|\b429(?: too many requests)?\b",
     re.IGNORECASE,
 )
 LIMIT_TAIL_LINES = 20
 
 
-def is_rate_limited(tail: str) -> bool:
+def is_rate_limited(tail: str, exit_code: int) -> bool:
+    """Recognize a provider limit failure, without pausing for successful prose.
+
+    Agent output shares stdout with provider diagnostics. A completed agent may
+    legitimately mention a limit string in its answer, so a textual match only
+    indicates a limit when the command also failed.
+    """
+    if exit_code == 0:
+        return False
     lines = tail.splitlines()[-LIMIT_TAIL_LINES:]
     return bool(LIMIT_PATTERNS.search("\n".join(lines)))
 
@@ -316,7 +327,7 @@ def cmd_iterate(args: argparse.Namespace) -> int:
 
     while iteration < budget.max_iterations:
         elapsed = time.monotonic() - started_at
-        if elapsed > budget.max_wall_clock_s:
+        if elapsed >= budget.max_wall_clock_s:
             append_event(LoopEvent(
                 ts=_utcnow(), loop_id=loop_id,
                 prompt_file=str(prompt_path.resolve()), iteration=iteration,
@@ -344,6 +355,42 @@ def cmd_iterate(args: argparse.Namespace) -> int:
         # prompt_file at the end of iteration to reflect new state.
         rc, tail = _run_agent(args.agent_cmd, prompt_path, args.verbose)
 
+        # A limit failure takes precedence over a success predicate: a provider
+        # can create a sentinel before reporting that no work was done.
+        if is_rate_limited(tail, rc):
+            # Not an iteration: the agent never worked. Wait, then retry the same one.
+            iteration -= 1
+            consecutive_limits += 1
+            backoff = limit_backoff(consecutive_limits, backoff_base, backoff_max)
+            remaining = budget.max_wall_clock_s - (time.monotonic() - started_at)
+            wait = min(backoff, max(0.0, remaining))
+            append_event(LoopEvent(
+                ts=_utcnow(), loop_id=loop_id,
+                prompt_file=str(prompt_path.resolve()), iteration=iteration,
+                from_state=last_state.value,
+                to_state=LoopState.PAUSED.value,
+                extra={"reason": "rate_limited", "exit_code": rc,
+                       "consecutive": consecutive_limits, "backoff_s": backoff,
+                       "sleep_s": wait},
+            ))
+            last_state = LoopState.PAUSED
+            print(f"persist: agent hit a usage/rate limit; not counted as an iteration. "
+                  f"Waiting {wait}s (limited run #{consecutive_limits} in a row)")
+            if wait <= 0:
+                append_event(LoopEvent(
+                    ts=_utcnow(), loop_id=loop_id,
+                    prompt_file=str(prompt_path.resolve()), iteration=iteration,
+                    from_state=last_state.value,
+                    to_state=LoopState.BUDGET_EXHAUSTED.value,
+                    extra={"reason": "wall-clock", "elapsed_s": budget.max_wall_clock_s},
+                ))
+                print(f"persist: wall-clock budget exhausted ({budget.max_wall_clock_s}s); "
+                      f"loop {loop_id} terminated")
+                return EXIT_BUDGET_EXHAUSTED
+            _sleep(wait)
+            continue
+        consecutive_limits = 0
+
         # Check success condition (file presence / grep / exit code)
         if args.success_condition:
             if _check_success_condition(args.success_condition, prompt_path, rc):
@@ -356,26 +403,6 @@ def cmd_iterate(args: argparse.Namespace) -> int:
                 ))
                 print(f"persist: loop {loop_id} SUCCESS at iteration {iteration}")
                 return EXIT_OK
-
-        if is_rate_limited(tail):
-            # Not an iteration: the agent never worked. Wait, then retry the same one.
-            iteration -= 1
-            consecutive_limits += 1
-            wait = limit_backoff(consecutive_limits, backoff_base, backoff_max)
-            append_event(LoopEvent(
-                ts=_utcnow(), loop_id=loop_id,
-                prompt_file=str(prompt_path.resolve()), iteration=iteration,
-                from_state=last_state.value,
-                to_state=LoopState.PAUSED.value,
-                extra={"reason": "rate_limited", "exit_code": rc,
-                       "consecutive": consecutive_limits, "sleep_s": wait},
-            ))
-            last_state = LoopState.PAUSED
-            print(f"persist: agent hit a usage/rate limit; not counted as an iteration. "
-                  f"Waiting {wait}s (limited run #{consecutive_limits} in a row)")
-            _sleep(wait)
-            continue
-        consecutive_limits = 0
 
     # Iteration ceiling
     append_event(LoopEvent(
