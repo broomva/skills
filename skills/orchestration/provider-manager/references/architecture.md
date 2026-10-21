@@ -319,3 +319,28 @@ before it acts. In the detached process, a reported limit that cannot be acted o
 the 5-minute gap, an inconclusive probe, a transient refusal) is retried for up to 15 minutes, because
 stalled sessions send no prompts. One such loop runs per machine (`broomva-provider-settle.lock`), and
 it stops once any switch has happened. A resolved evaluation clears only the reports it saw.
+
+## Antigravity ACP isolation
+
+`pm_antigravity.py` owns only an atomic, mode-0600 registry containing profile references, grant
+fingerprints, sanitized quota readings, per-family selections/cooldowns and stable thread pins.
+`pm_antigravity_quota.py` verifies Google userinfo identity before retrieving both official quota
+summaries. Unknown/disabled data remains explicit; fallback model windows retain model families.
+Google's refresh exchange is documented at
+https://developers.google.com/identity/protocols/oauth2/native-app#offline.
+The native profile is never rewritten by telemetry; unexpected refresh-token rotation places a
+credential-free fingerprint refusal marker in `~/.cache/broomva-provider-antigravity/`.
+
+`pm_antigravity_launch.py` uses the supported T3 `acp-mcp-call` bootstrap before native exec.
+T3 registers its MCP thread scope before spawning the ACP runtime. Capabilities identify the caller;
+thread inspection checks provider/model identity, run/item history and fork lineage. New pins are
+committed before exec and retained across process restarts. File storage is forced and ambient
+Google API credentials removed. Native ACP 1.3.0 and its harness are hash-pinned after an offline,
+network-denied initialize probe established load/resume support and no fork support.
+
+This integration routes only the newly configured generic ACP provider, not native T3 Antigravity
+instances or desktop/Go CLI global authentication. No ACP protocol proxy, replay or server-ID rewrite
+is involved. T3 discovery has no thread scope and intentionally fails closed; explicit custom models
+allow the warning-state provider to be selected. Existing unpinned conversations require an explicit,
+verified migration design rather than guessing an account. Quota summaries do not prove inference
+availability, and runtime limit errors are surfaced without automatic request replay.

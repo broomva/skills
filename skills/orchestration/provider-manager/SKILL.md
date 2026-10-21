@@ -2,7 +2,7 @@
 name: provider-manager
 category: orchestration
 description: >
-  Subscription account manager for macOS (Claude Code CLI & OpenAI Codex CLI, Orca, Keychain): account
+  Subscription account manager for macOS (Claude Code CLI, OpenAI Codex CLI, Antigravity ACP, Orca, Keychain): account
   discovery, usage telemetry, machine-wide balancer that fails over without killing running sessions,
   safe switching, and browser-session re-login. Use when: inspecting quotas or which account is active,
   switching or rotating Claude or Codex accounts, re-authorizing an account, listing sessions stalled
@@ -14,7 +14,7 @@ license: MIT
 
 # Provider Manager
 
-Claude and OpenAI Codex subscription accounts on one Mac: telemetry, balancing, and safe switching
+Claude, OpenAI Codex and Antigravity ACP subscription accounts on one Mac: telemetry, balancing, and safe switching
 that never kills running sessions.
 
 ## Agents: a rate limit is not yours to fix
@@ -174,7 +174,7 @@ switch automatically. `codexAccounts` names the Arc space each Codex account re-
 
 ## Commands
 
-All commands accept `--provider {claude,codex,all}` (default: `claude`):
+All commands accept `--provider {claude,codex,antigravity,all}` (default: `claude`):
 
 ```bash
 PM=~/.agents/skills/provider-manager/scripts/provider_manager.py
@@ -243,3 +243,49 @@ readable usage numbers on a later prompt's evaluation. The wiring is in
   the store, the switch protocol, events, hook wiring.
 * [references/rotation-playbook.md](references/rotation-playbook.md): what to do on a rate limit
   (agents, orchestrator, operator).
+
+## Antigravity accounts (BRO-3349)
+
+Antigravity **ACP** accounts use separate concrete file profiles. This is distinct from Gemini CLI
+and the native Antigravity desktop/Go CLI's shared Keychain login. Those global logins are not swapped.
+
+1. Sign in each account through a fresh native T3 Antigravity instance. Its private profile is
+   `~/.t3/userdata/providers/antigravity/<sha256(instance-id)>`. Register that profile **in place**:
+   `python3 "$PM" antigravity-register --email EMAIL --profile ABSOLUTE_PROFILE --binary ABSOLUTE_ACP_BINARY`.
+   Identity and quota must verify before registration; no grants are copied. Fresh official ACP
+   `initialize` + `authenticate(methodId=oauth-personal)` is also supported for a new concrete profile.
+2. `python3 "$PM" antigravity-launcher` installs a separate launcher. Create a **new local ACP**
+   T3 provider instance using its printed path, `authMethodId: oauth-personal`, and explicit custom
+   model IDs from the native Antigravity provider. Preserve existing native instances as overrides.
+3. Select this new provider for managed threads. Native Antigravity instances keep their fixed
+   account; existing native conversations are not migrated. The launcher obtains the host thread
+   identity through T3's supported MCP bootstrap, atomically pins its first account, then execs the
+   official ACP binary unchanged. Resume uses the saved pin. Missing context, imported/history-bearing
+   conversations without a pin, and forks fail closed. Discovery probes lack thread context and show
+   a warning; configured custom models remain available. The launcher intentionally refuses direct
+   non-T3 use without a stable supported host context.
+
+Commands: `list`, `status`, `usage`, `balance [--dry-run]`, and `switch EMAIL` accept
+`--provider antigravity`. Aggregate `--provider all` includes Antigravity. These commands currently
+emit sanitized JSON for this provider. `balance --auto` and new-session selection honor the shared
+`autoBalance` setting. A manual switch selects the conservative all-family route; model-specific
+new threads use independent Gemini / shared-third-party selections.
+
+Each launch refreshes telemetry at most once per five minutes. Readings older than 30 minutes,
+identity errors, missing applicable quotas and unknown amounts are ineligible. Disabled buckets are
+inapplicable, rather than zero usage. Both official quota endpoints merge conservatively. Selection
+changes when current use is at least 90%, a standby is at most 70% and 25 points lower, with a
+30-minute cooldown. Unknown models require both families. A bucket's actual reset/cadence is retained.
+Provider quota summaries are telemetry, not a guarantee that an inference request will succeed;
+a runtime rejection may differ from the displayed quota. There is no automatic runtime-error replay
+or migration of an existing conversation to another account.
+
+Only the verified **ACP 1.3.0 darwin-arm64** executable and matching harness hashes are accepted.
+Its initialize response supports load/resume and does not advertise fork. An upgrade requires a new
+contract check before adding hashes. Registry/pins live privately under
+`~/.local/share/broomva/antigravity` (`PROVIDER_MANAGER_ANTIGRAVITY_ROOT` override).
+The fingerprint binds the native grant and project, ignoring access-token/serialization metadata.
+Native ACP refresh owns its profile; telemetry uses Google's documented refresh exchange, never
+writes native credentials, and permanently refuses a grant if unexpected refresh-token rotation
+is returned. Reauthorization must use a new profile; registered profiles are immutable. Existing
+pins refuse altered grants/runtimes instead of silently changing identity.

@@ -116,7 +116,7 @@ def main(pm) -> None:
     common = argparse.ArgumentParser(add_help=False)
     # SUPPRESS: a subparser's default would otherwise erase a --json given before the subcommand
     common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output results in JSON format")
-    common.add_argument("--provider", choices=["claude", "codex", "all"], default=argparse.SUPPRESS,
+    common.add_argument("--provider", choices=["claude", "codex", "antigravity", "all"], default=argparse.SUPPRESS,
                         help="Target provider (claude, codex, or all; default: claude)")
     parser = argparse.ArgumentParser(description="Subscription account manager (Claude Code & OpenAI Codex)", parents=[common])
     sub = parser.add_subparsers(dest="command", required=True)
@@ -156,12 +156,34 @@ def main(pm) -> None:
     p.add_argument("--email")
     p = sub.add_parser("codex-launcher", help="Install a separate account-selection launcher", parents=[common])
     p.add_argument("--binary", required=True, help="Absolute path of the real Codex executable")
+    sub.add_parser("antigravity-launcher", help="Install a T3 account-pinning ACP launcher", parents=[common])
+    p = sub.add_parser("antigravity-register", help="Register a verified native ACP profile in place", parents=[common])
+    p.add_argument("--email", required=True)
+    p.add_argument("--profile", required=True)
+    p.add_argument("--binary", required=True)
     sub.add_parser("state", help="Balancer state: lock, cooldown, hold, health", parents=[common])
     args = parser.parse_args()
     args.json = getattr(args, "json", False)
     args.provider = getattr(args, "provider", "claude")
 
+    import pm_antigravity
     try:
+        if args.provider == "antigravity" or args.command in ("antigravity-register", "antigravity-launcher"):
+            import pm_antigravity as ag
+            if args.command == "antigravity-launcher":
+                result = ag.install_launcher()
+            elif args.command == "antigravity-register":
+                result = ag.register(args.email, args.profile, args.binary)
+            elif args.command in ("list", "status", "usage"):
+                result = ag.accounts(force=getattr(args, "force", False), refresh=args.command != "list")
+            elif args.command == "balance":
+                result = ag.balance(dry_run=args.dry_run, automatic=args.auto)
+            elif args.command == "switch":
+                result = ag.switch(args.account)
+            else:
+                raise pm.StoreError("Antigravity supports list/status/usage/balance/switch; sign in through a fresh T3 instance")
+            print(json.dumps(result, indent=2))
+            return
         if args.command in ("codex-home", "codex-launcher"):
             import pm_codex_homes
             if args.command == "codex-launcher":
@@ -179,12 +201,14 @@ def main(pm) -> None:
                     print(json.dumps({
                         "claude": pm.list_accounts(),
                         "codex": pm.list_codex_accounts(),
+                        "antigravity": pm_antigravity.accounts(),
                     }, indent=2))
                 else:
                     print("[Claude Code Accounts]")
                     _print_claude_list(pm.list_accounts(), False)
                     print("\n[OpenAI Codex Accounts]")
                     _print_codex_list(pm.list_codex_accounts(), False)
+                    print("\n[Antigravity]\n" + json.dumps(pm_antigravity.accounts(), indent=2))
             else:
                 _print_claude_list(pm.list_accounts(), args.json)
         elif args.command == "status":
@@ -203,7 +227,7 @@ def main(pm) -> None:
                 c_status = pm.get_claude_auth_status()
                 x_status = pm.get_codex_auth_status()
                 if args.json:
-                    print(json.dumps({"claude": c_status, "codex": x_status}, indent=2))
+                    print(json.dumps({"claude": c_status, "codex": x_status, "antigravity": pm_antigravity.accounts(refresh=True)}, indent=2))
                 else:
                     print("[Claude Code]")
                     print("Logged In:     %s" % c_status.get("loggedIn"))
@@ -216,6 +240,7 @@ def main(pm) -> None:
                     print("Plan Type:     %s" % (x_status.get("planType") or "-"))
                     print("Account ID:    %s" % (x_status.get("accountId") or "-"))
                     print("Token Fresh:   %s" % x_status.get("tokenFresh"))
+                    print("\n[Antigravity]\n" + json.dumps(pm_antigravity.accounts(refresh=True), indent=2))
             else:
                 status = pm.get_claude_auth_status()
                 if args.json:
@@ -233,12 +258,14 @@ def main(pm) -> None:
                     print(json.dumps({
                         "claude": pm.fetch_all_usage(force_refresh=args.force),
                         "codex": pm.fetch_codex_usage(force=args.force),
+                        "antigravity": pm_antigravity.accounts(refresh=True, force=args.force),
                     }, indent=2))
                 else:
                     print("[Claude Code Usage]")
                     _print_claude_usage(pm, pm.fetch_all_usage(force_refresh=args.force), False)
                     print("\n[OpenAI Codex Usage]")
                     _print_codex_usage(pm.fetch_codex_usage(force=args.force), False)
+                    print("\n[Antigravity]\n" + json.dumps(pm_antigravity.accounts(refresh=True, force=args.force), indent=2))
             else:
                 _print_claude_usage(pm, pm.fetch_all_usage(force_refresh=args.force), args.json)
         elif args.command == "balance":
@@ -260,6 +287,7 @@ def main(pm) -> None:
             elif args.provider == "all":
                 if args.auto:
                     res = pm.run_auto_until_settled(reason=args.reason, signal=args.signal, provider="all")
+                    res["antigravity"] = pm_antigravity.balance(dry_run=args.dry_run, automatic=True)
                     if args.json:
                         print(json.dumps(res, indent=2))
                     else:
@@ -267,13 +295,16 @@ def main(pm) -> None:
                         x_res = res.get("codex", {}) if isinstance(res, dict) else {}
                         print("[Claude Code] action=%s reason=%s" % (c_res.get("action"), c_res.get("reason")))
                         print("[OpenAI Codex] action=%s reason=%s" % (x_res.get("action"), x_res.get("reason")))
+                        print("[Antigravity] " + json.dumps(res["antigravity"]))
                 else:
                     c_res = pm.balance_accounts(threshold=args.threshold, dry_run=args.dry_run, verbose=not args.json,
                                                 source="manual_balance", signal=args.signal)
                     x_res = pm.evaluate_codex_balance(threshold=args.threshold, dry_run=args.dry_run, reason=args.reason)
+                    a_res = pm_antigravity.balance(dry_run=args.dry_run)
                     if args.json:
-                        print(json.dumps({"claude": c_res, "codex": x_res}, indent=2))
+                        print(json.dumps({"claude": c_res, "codex": x_res, "antigravity": a_res}, indent=2))
                     else:
+                        print("[Antigravity] " + json.dumps(a_res))
                         print("[Claude Code Balance]")
                         c_act = c_res.get("action")
                         if c_act == "switched":

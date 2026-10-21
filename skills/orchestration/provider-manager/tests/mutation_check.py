@@ -25,6 +25,9 @@ K = "tests/test_kill_paths.py::"
 U = "tests/test_provider_manager.py::"
 H = "tests/test_telemetry_hygiene.py::"
 X = "tests/test_codex_balancer.py::"
+A = "tests/test_antigravity.py::RoutingTests::"
+Q = "tests/test_antigravity_quota.py::"
+C = "tests/test_antigravity_cli.py::"
 
 # name: (description, [(file, old, new), ...], [tests that must fail])
 MUTATIONS = {
@@ -336,6 +339,36 @@ MUTATIONS = {
     "M74": ("failed child leaves host permissions pending",
             [("pm_codex_proxy.py", 'self.emit({"method": "serverRequest/resolved", "params": {"requestId": ident, "threadId": thread_id}})', 'pass')],
             ["tests/test_codex_proxy.py::test_native_resolutions_translate_ids_and_failure_finishes_only_its_turns"]),
+    # BRO-3349: fresh, verified quota drives new sessions; existing account pins are immutable.
+    "M75": ("stale Antigravity quota is treated as current eligible telemetry",
+            [("pm_antigravity.py", " or now - usage['numbersAt'] > 1800:", ":")],
+            [A + "test_unknown_stale_disabled_and_nonfinite_never_candidates"]),
+    "M76": ("Antigravity resumed host thread discards its durable account pin",
+            [("pm_antigravity.py", "        pinned = state['pins'].get(session_key)", "        pinned = None")],
+            [A + "test_new_threads_balance_and_resume_keeps_original_account"]),
+    "M77": ("unknown existing Antigravity conversation silently selects a new account",
+            [("pm_antigravity.py", "        if require_existing:", "        if False:")],
+            [A + "test_existing_unknown_thread_refuses_new_selection"]),
+    "M78": ("Antigravity resume accepts changed native account credentials",
+            [("pm_antigravity.py", "            if not entry or fingerprint(entry['profile']) != entry['fingerprint']:",
+              "            if not entry:")],
+            [A + "test_changed_grant_refuses_resume"]),
+    "M79": ("Google identity mismatch is recorded but quota requests continue",
+            [("pm_antigravity_quota.py", '            raise ProbeError("identity_mismatch")',
+              '            result["reason"] = "identity_mismatch"')],
+            [Q + "test_identity_mismatch_prevents_all_quota_calls"]),
+    "M80": ("Google OAuth transport follows redirects instead of refusing them",
+            [("pm_antigravity_quota.py", "urllib.request.build_opener(_NoRedirect()).open(request, timeout=TIMEOUT)",
+              "urllib.request.build_opener(urllib.request.HTTPRedirectHandler()).open(request, timeout=TIMEOUT)")],
+            [Q + "test_transport_errors_disclose_no_error_body_or_credentials"]),
+    "M81": ("all-provider text listing prints an empty Antigravity section without dispatching",
+            [("pm_cli.py", '                    print("\\n[Antigravity]\\n" + json.dumps(pm_antigravity.accounts(), indent=2))',
+              '                    print("\\n[Antigravity]\\n[]")')],
+            [C + "test_all_includes_antigravity_in_text_and_json[text-list]"]),
+    "M82": ("Antigravity CLI auto mode bypasses automatic-balancing config guard",
+            [("pm_cli.py", "result = ag.balance(dry_run=args.dry_run, automatic=args.auto)",
+              "result = ag.balance(dry_run=args.dry_run, automatic=False)")],
+            [C + "test_cli_auto_honors_disabled_config"]),
     "M16": ("StopFailure rate_limit does not start a failover",
             [("provider_manager_hook.py", '        kick("stop-failure", signal=signal, force=True)', "        pass")],
             [U + "test_stop_failure_rate_limit_records_the_session_and_fails_over_and_the_session_continues"]),
