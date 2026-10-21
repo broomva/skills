@@ -15,7 +15,8 @@ from test_codex_provider import _make_dummy_jwt
 pytestmark = pytest.mark.new_only
 # A small fake Codex machine: a dict keychain, ~/.codex/auth.json in the scratch HOME (conftest), the
 # token and usage endpoints stubbed. Measured 2026-10-19: devteam@ and carlos@ are two users of one
-# Team workspace, and only one of them holds a live Codex CLI seat at a time.
+# Team workspace. `codex login` revokes the account its CODEX_HOME holds (BRO-3346): codex_login models
+# that, so a login run in the CLI's own home kills the seat here as it did on the Mac.
 
 
 DEV = "devteam@getstimulus.ai"
@@ -68,6 +69,27 @@ class CodexWorld:
         self.auth.parent.mkdir(parents=True, exist_ok=True)
         self.auth.write_text(json.dumps({"auth_mode": "chatgpt", "tokens": tokens}))
         return tokens
+
+    def codex_login(self, home, email, rt, **kw):
+        """The real `codex login` in CODEX_HOME=home: it first revokes the account home/auth.json holds
+        (clear_existing_auth_before_login), then writes the new tokens there."""
+        auth = Path(home) / "auth.json"
+        if auth.exists():
+            self.revoked.add(json.loads(auth.read_text())["tokens"]["refresh_token"])
+        tokens = self.tokens(email, rt, **kw)
+        auth.write_text(json.dumps({"auth_mode": "chatgpt", "tokens": tokens}))
+        return tokens
+
+    def fake_login(self, rt, calls=None, during=None):
+        """A stand-in for pm_codex_login.run_codex_autonomous_login that logs in as `rt`."""
+        def login(email, space_name="Stimulus", timeout=40.0, *, codex_home):
+            if calls is not None:
+                calls.append((email, space_name))
+            if during:
+                during()
+            self.codex_login(codex_home, email, rt)
+            return True, "ok"
+        return login
 
     def save_copy(self, key, email, tokens):
         self.kc[key] = {"auth_mode": "chatgpt", "tokens": _copy.deepcopy(tokens), "email": email}
@@ -147,12 +169,12 @@ def test_token_revoked_marks_the_copy_revoked_and_stops_spending_calls_on_it(cx)
     dev = cx.tokens(DEV, "rt-dev-1")
     cx.save_copy(DEV_ID, DEV, dev)
     cx.login(CARLOS, "rt-carlos-1")
-    cx.revoked.add("rt-dev-1")  # carlos@'s login revoked devteam@'s seat
+    cx.revoked.add("rt-dev-1")  # a pre-BRO-3346 login of carlos@ in ~/.codex revoked devteam@'s seat
     rows = _rows()
     assert rows[DEV]["telemetry"] == "revoked" and rows[DEV]["usageStatus"] == "REVOKED"
     assert rows[DEV]["healthReason"] == "token_revoked" and rows[DEV]["needsLogin"]
     assert "revoked (token_revoked)" in rows[DEV]["standbyReason"]
-    assert "one Codex CLI seat" in rows[DEV]["standbyReason"]
+    assert "revokes the account it replaces" in rows[DEV]["standbyReason"]
     assert pm.load_state()["codexHealth"][DEV_ID]["status"] == "revoked"
     assert [a for a in pm.list_codex_accounts() if a["email"] == DEV][0]["health"] == "revoked"
     calls = cx.usage_calls.count("rt-dev-1")
@@ -237,14 +259,8 @@ def test_relogin_forces_the_account_chooser_in_the_configured_arc_space(cx, monk
     pm.CONFIG_PATH.parent.mkdir(parents=True, exist_ok=True)
     pm.CONFIG_PATH.write_text(json.dumps({"codexAccounts": {CARLOS: {"arcSpace": "Carlos"}}}))
     calls = []
-
-    def fake_login(email, space_name="Stimulus"):
-        calls.append((email, space_name))
-        cx.login(email, "rt-carlos-new")
-        return True, "ok"
-
     monkeypatch.setattr(pm_codex_login, "arc_usable", lambda timeout=3.0: (True, "ok"))
-    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", fake_login)
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", cx.fake_login("rt-carlos-new", calls))
     cx.save_copy(CARLOS_ID, CARLOS, cx.tokens(CARLOS, "rt-carlos-1"))
     cx.login(DEV, "rt-dev-1")
     cx.revoked.add("rt-carlos-1")
@@ -257,11 +273,14 @@ def test_relogin_forces_the_account_chooser_in_the_configured_arc_space(cx, monk
     assert res["action"] == "switched" and res["method"] == "autonomous_browser_login"
     assert calls == [(CARLOS, "Carlos")]
     assert cx.kc[CARLOS_ID]["tokens"]["refresh_token"] == "rt-carlos-new"
-    assert cx.kc[DEV_ID]["tokens"]["refresh_token"] == "rt-dev-1", "the outgoing seat was saved first"
+    assert cx.auth_tokens()["refresh_token"] == "rt-dev-1", "the outgoing home remains authoritative"
+    assert "rt-dev-1" not in cx.revoked, "the login revoked the outgoing seat (BRO-3346)"
+    assert pm.read_codex_auth().data["tokens"]["refresh_token"] == "rt-carlos-new"
     assert "rt-carlos-1" not in cx.refreshed, "a revoked grant is never spent"
 
     # a failed re-login is not retried on every kick (each opens an Arc tab)
     cx.login(DEV, "rt-dev-2")
+    pm.switch_codex_account(DEV)
     cx.limit_type["rt-dev-2"] = "usage_limit_reached"
     cx.revoked.add("rt-carlos-new")
     pm.update_state(lambda s: s.update(lastCodexSwitch={"at": 0}, codexLoginAttempts={CARLOS: time.time()}))
@@ -280,7 +299,7 @@ def pm_codex_login_mod():
     return pm_codex_login
 
 
-def test_an_unanswering_arc_is_reported_in_seconds_and_no_login_starts(monkeypatch):
+def test_an_unanswering_arc_is_reported_in_seconds_and_no_login_starts(monkeypatch, tmp_path):
     import subprocess as sp
     mod = pm_codex_login_mod()
 
@@ -296,7 +315,9 @@ def test_an_unanswering_arc_is_reported_in_seconds_and_no_login_starts(monkeypat
     monkeypatch.setattr(mod.subprocess, "Popen", lambda *a, **k: pytest.fail("codex login must not start"))
     ok, why = mod.arc_usable()
     assert not ok and why.startswith("Arc not answering AppleScript")
-    ok, msg = mod.run_codex_autonomous_login(CARLOS, space_name="Carlos")
+    scratch = tmp_path / "scratch-home"
+    scratch.mkdir()
+    ok, msg = mod.run_codex_autonomous_login(CARLOS, space_name="Carlos", codex_home=scratch)
     assert not ok and "Arc not answering AppleScript" in msg
 
 
@@ -563,13 +584,80 @@ def test_an_orca_id_for_the_pro_seat_still_finds_its_copy_by_email(monkeypatch):
     assert team[0]["hasStoredCredentials"] and not team[0]["needsLogin"]
 
 
-def test_headless_login_that_moves_the_seat_records_a_switch(cx, monkeypatch):
-    """CodeRabbit (PR 288): a `login-headless` that moved the seat left the cooldown blind to it."""
+def test_a_login_never_revokes_the_cli_seat(cx, monkeypatch):
+    """BRO-3346: `codex login` revokes the account its CODEX_HOME holds. Run in ~/.codex it killed the
+    live seat and the saved copy sharing its grant, which read as "one live Codex seat at a time"."""
     import pm_codex_login
+    homes = []
+    login = cx.fake_login("rt-carlos-new")
     monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login",
-                        lambda email, space_name="Stimulus": (cx.login(email, "rt-carlos-new") and (True, "ok")))
+                        lambda email, space_name="Stimulus", timeout=40.0, *, codex_home:
+                        homes.append(Path(codex_home)) or login(email, space_name, codex_home=codex_home))
     cx.login(DEV, "rt-dev-1")
-    pm.login_codex_headless(CARLOS)
-    last = pm.load_state().get("lastCodexSwitch") or {}
-    assert (last.get("to"), last.get("from"), last.get("method")) == (CARLOS, DEV, "login_headless")
-    assert cx.kc[DEV_ID]["tokens"]["refresh_token"] == "rt-dev-1" and cx.kc[CARLOS_ID]["tokens"]["refresh_token"] == "rt-carlos-new"
+    res = pm.login_codex_headless(CARLOS)
+    assert "rt-dev-1" not in cx.revoked, "the login revoked the CLI's seat"
+    assert cx.auth_tokens()["refresh_token"] == "rt-dev-1", "a login leaves the CLI on its account"
+    assert res["activated"] is False and res["active"] == DEV
+    assert cx.kc[CARLOS_ID]["tokens"]["refresh_token"] == "rt-carlos-new" == cx.kc[CARLOS]["tokens"]["refresh_token"]
+    assert pm.read_codex_copy(DEV_ID, DEV).data["tokens"]["refresh_token"] == "rt-dev-1"
+    assert homes and homes[0] != cx.auth.parent and not homes[0].exists(), "the scratch home (tokens) is removed"
+    assert (pm.load_state().get("lastCodexSwitch") or {}).get("to") != CARLOS, "no seat moved, no switch"
+    rows = _rows()
+    assert rows[DEV]["telemetry"] == "ok" and rows[CARLOS]["telemetry"] == "ok", "both seats live at once"
+
+
+def test_a_login_into_a_cli_without_auth_json_makes_it_active(cx, monkeypatch):
+    import pm_codex_login
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", cx.fake_login("rt-carlos-new"))
+    res = pm.login_codex_headless(CARLOS)
+    assert res["activated"] is True and pm.read_codex_auth().data["tokens"]["refresh_token"] == "rt-carlos-new"
+    assert (pm.load_state().get("lastCodexSwitch") or {}).get("method") == "login_headless"
+
+
+def test_a_seat_rotated_during_the_login_is_saved_with_its_new_grant(cx, monkeypatch):
+    """A refresh during login stays in the outgoing home; selection never overwrites that home."""
+    import pm_codex_login
+    monkeypatch.setattr(pm_codex_login, "arc_usable", lambda timeout=3.0: (True, "ok"))
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login",
+                        cx.fake_login("rt-carlos-new", during=lambda: cx.login(DEV, "rt-dev-2")))
+    cx.login(DEV, "rt-dev-1")
+    res = pm.switch_codex_account(CARLOS)
+    assert res["method"] == "autonomous_browser_login" and pm.read_codex_auth().data["tokens"]["refresh_token"] == "rt-carlos-new"
+    assert pm.read_codex_copy(DEV_ID, DEV).data["tokens"]["refresh_token"] == "rt-dev-2", "read the outgoing home, never a spent saved copy"
+    assert not ({"rt-dev-1", "rt-dev-2"} & cx.revoked)
+
+
+def test_a_login_signing_in_the_wrong_account_saves_nothing(cx, monkeypatch):
+    import pm_codex_login
+    wrong = cx.fake_login("rt-dev-x")
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login",
+                        lambda email, space_name="Stimulus", timeout=40.0, *, codex_home:
+                        wrong(DEV, space_name, codex_home=codex_home))
+    cx.login(DEV, "rt-dev-1")
+    with pytest.raises(pm_store.StoreError, match="not carlos"):
+        pm.login_codex_headless(CARLOS)
+    assert CARLOS_ID not in cx.kc and cx.auth_tokens()["refresh_token"] == "rt-dev-1"
+
+
+def test_a_login_refuses_the_cli_home_and_a_used_dir(monkeypatch, tmp_path):
+    mod = pm_codex_login_mod()
+    monkeypatch.setattr(mod, "arc_usable", lambda timeout=3.0: (True, "ok"))
+
+    def no_popen(*a, **k):
+        raise AssertionError("codex login must not start")
+    monkeypatch.setattr(mod.subprocess, "Popen", no_popen)
+    real = pm_store.CODEX_AUTH_PATH.parent
+    real.mkdir(parents=True, exist_ok=True)
+    ok, msg = mod.run_codex_autonomous_login(CARLOS, codex_home=real)
+    assert not ok and msg.startswith("refusing to log in inside the Codex CLI's own home"), msg
+    used = tmp_path / "used-home"
+    used.mkdir()
+    (used / "auth.json").write_text("{}")
+    ok, msg = mod.run_codex_autonomous_login(CARLOS, codex_home=used)
+    assert not ok and "is not empty" in msg, msg
+
+
+def test_the_login_command_is_confined_to_the_scratch_home(tmp_path):
+    cmd, env = pm_codex_login_mod().codex_login_command(tmp_path)
+    assert env.get("CODEX_HOME") == str(tmp_path)
+    assert cmd == ["codex", "-c", 'cli_auth_credentials_store="file"', "login"]

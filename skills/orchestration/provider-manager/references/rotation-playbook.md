@@ -54,7 +54,7 @@ After a failover, resume the sessions in `stalled`: send each a prompt (Paseo: i
 
 | You see | Do |
 |---|---|
-| `usage --provider codex`: a standby `REVOKED (token_revoked)` | Expected: only one Codex CLI seat is live, so the other account's copy dies at each login. Nothing to do until you want that account; then `login-headless --provider codex --email EMAIL`. |
+| `usage --provider codex`: a standby `REVOKED (token_revoked)` | Its grant was revoked, usually by a `codex login` run in `~/.codex` (a bare one, or provider-manager before BRO-3346), which revokes the account it replaces. `login-headless --provider codex --email EMAIL` restores the copy without touching the CLI's seat. Never change accounts with a bare `codex login`. |
 | The active seat limited by workspace credits | A standby in the same workspace (devteam@ and carlos@ share one) cannot help: wait for credits. Only a standby known to be in another workspace is switched to. |
 | `login-headless --provider codex` signs in the wrong account | The account chooser needs the target signed in to that Arc space's OpenAI session; set `codexAccounts.<email>.arcSpace`, or pass `--space`. |
 | "Arc not answering AppleScript" | A macOS permission prompt is probably pending in Arc; answer it, then retry. |

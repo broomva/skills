@@ -749,3 +749,43 @@ labelling sheet next, then the PR. Phase 2 (dry run) follows on its own branch.
 
 - `python3 -m pytest tests/` in both skills; both mutation checks at 0 survivors.
 - `bash -n` and shellcheck on the scripts; the catalog, SKILL.md and version lints.
+
+## provider-manager: per-account Codex homes (BRO-3346)
+
+Status: implementation; user selected Orca-style isolation after round 1 reproduced refresh races.
+Snapshot (P15): clean worktree at d514546, skills PR #291 draft; legacy ~/.codex remains owned by
+existing sessions. Three live accounts verified; no live account swap performed.
+Dep-Chain (P14): pm_store file/keychain I/O -> new pm_codex_homes registry/launcher ->
+provider_manager login, roster, telemetry and selection -> pm_cli -> T3/Paseo executable configuration.
+A selection updates a private atomic manifest only. Every launched process resolves one concrete
+home once; no auth symlink or mutable CODEX_HOME alias. Reauthorization creates a new generation.
+Legacy auth is adopted in place, never copied to a second refresh owner. Managed home credentials
+are authoritative; provider-manager never refreshes their grants or overwrites their auth.json.
+Files that change: PLANS.md; skills/orchestration/provider-manager/{SKILL.md,references/architecture.md,
+references/rotation-playbook.md,scripts/pm_codex_homes.py,scripts/provider_manager.py,scripts/pm_cli.py,
+scripts/pm_codex_login.py,scripts/pm_codex_integrations.py,scripts/pm_codex_proxy.py,
+tests/test_codex_homes.py,tests/test_codex_integrations.py,tests/test_codex_proxy.py,tests/test_codex_balancer.py,
+tests/test_codex_provider.py,tests/mutation_check.py}.
+Acceptance: two stub sessions stay on distinct homes through selection and refresh; re-login of the
+selected account preserves its old generation and selects the new one; new accounts are selectable;
+standby telemetry never spends a managed grant; launcher integrations use resolved homes.
+Validation: hermetic pytest + mutation proof; real non-mutating launcher/status probes; read-only
+Cross-Review (P20) A/C; required CI and p9 gates before merge. Existing sessions are never restarted.
+Checkpoint 2026-10-21: round 2 fixed the original credential-loss findings; Claude A=9/10,
+Codex C=6/10 found T3's provider-session multiplexing, thread read/archive ownership and missing-registry
+bootstrap. Replaced the single-home proxy with one child per account home: every thread/start resolves
+selection, thread/turn RPCs route their durable owner, permission IDs are namespaced, failed children
+stay isolated. Added authority-confirmed revoked-home repair (fresh grant in exactly one home).
+Evidence: native Codex 0.163 initialize + two thread/start + thread/read through ONE proxy on two
+synthetic accounts passed, without live credentials or model requests. Focused home/proxy/integration
+suite and full tests/mutations rerunning for round 3. Deployment remains after review and merge.
+
+Checkpoint 2026-10-21, final adapter correction: round 3 A=10/10, C=6/10 reproduced
+Paseo dropping string permission IDs and T3 retaining active turns after child failure.
+Independent continuation authorized one bounded round. Proxy now uses safe numeric host IDs,
+translates serverRequest/resolved IDs, resolves failed-child permissions with their threadId,
+and emits schema-valid failed turn/completed events. Installed Paseo handleLine reports
+handlers=1 replies=1; installed permission handler reports resolved=1 pending=0; extracted
+installed T3 handlers report turnStillActive=false terminalNotifications=1. Both invented
+notifications validate against native Codex 0.163 generated schemas. Named mutants M71–M74
+cover each guard; final A/C review binds to the committed implementation before deployment.

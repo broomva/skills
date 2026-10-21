@@ -85,44 +85,36 @@
   old cross-item merge let the stale mirror's Linear tokens overwrite the live ones (D28).
 
 ### D. OpenAI Codex Storage & Credentials
-* **Store File**:
-  `~/.codex/auth.json` (or `CODEX_AUTH_PATH` override)
-* **Schema**:
-  ```json
-  {
-    "auth_mode": "chatgpt",
-    "tokens": {
-      "id_token": "<jwt>",
-      "access_token": "<jwt>",
-      "refresh_token": "<rt>",
-      "account_id": "45663a8d-d52d-4b55-8dd3-2af5ce5e6779"
-    }
-  }
-  ```
-* **Keychain Service**:
-  `Orca Codex Managed Credentials`
-  * Account key: the roster id and the email (both are written)
-  * Value: JSON containing `auth_mode`, `tokens`, `email`, and update timestamp.
-* **Snapshot**: every Codex evaluation and `usage` call writes auth.json into its account's copy when the
-  two differ (`codex.snapshot`, reason `copy_missing` or `tokens_changed`), so a raw `codex login` leaves a
-  saved copy. Keychain only: no refresh, no auth.json write; an unreadable copy is never overwritten.
-* **Refresh interlock**: a saved copy is refreshed only if its refresh token is not the one auth.json
-  holds (re-read just before the POST). That grant belongs to the running CLI; OpenAI rotates refresh
-  tokens, so spending it logs the CLI out (kill path K16).
-* **Measured limits (2026-10-19)**: one live CLI seat at a time (a login of one account revoked the
-  other's saved copy: usage 401 `token_revoked`), and one shared Team workspace for devteam@ and
-  carlos@ (`chatgpt_account_id` 45663a8d…), whose credits no seat switch can restore.
-* **Health** (`codexHealth` in the state): `revoked` (usage 401 `token_revoked`; a refresh refused as
-  reused/revoked/invalidated) or `needs_login` (other refresh refusals), tagged with a fingerprint of the
-  grant. That grant gets no usage call and no refresh until new tokens replace it.
-* **Re-login**: `codex login`, its authorize URL with `&prompt=login` (the account chooser; without it the
-  Arc space's own web session is signed in), opened in the account's Arc space (`codexAccounts.<email>.arcSpace`,
-  default `Stimulus`), after a 3-second check that Arc is running and answers AppleScript. A failed
-  automatic re-login is not retried for `cooldownMinutes` (`codexLoginAttempts`).
-* **Hot-Reload Invariant**:
-  The native Codex binary (`@openai/codex-darwin-arm64`) watches `~/.codex/auth.json` and hot-reloads
-  credentials on disk modification without restarting running processes. Writes use atomic
-  temp-file replacement (`tmp` + `os.replace`) to prevent partial reads.
+* **Homes and selection**: `~/.local/share/broomva/codex/accounts.json` maps email → immutable
+  generation home and contains the selected email. Registry writes are atomic and mode 0600;
+  directories and generation homes are mode 0700. `PROVIDER_MANAGER_CODEX_ROOT` overrides the root.
+* **Legacy adoption**: `~/.codex/auth.json` (or `CODEX_AUTH_PATH`) remains in its existing home,
+  registered in place. Never duplicate the running CLI's grant into another home.
+* **Credential ownership**: each generation's `auth.json` belongs to its Codex sessions. Registry
+  selection never writes an auth file. Explicit repair is restricted to an authority-confirmed revoked
+  grant and writes its fresh independent login grant to that one dead home only. Telemetry reads home credentials before Keychain copies,
+  and never refreshes a managed grant. A standalone saved copy can be refreshed only before its
+  first home is published. Keychain service remains `Orca Codex Managed Credentials`.
+* **Login**: `codex login` revokes whatever its home holds, so every browser login runs in an empty
+  scratch home with `cli_auth_credentials_store="file"`. Check returned email, persist a Keychain
+  backup, publish a new generation home, register it, and clean up the scratch directory.
+  Reauthorizing the selected account selects the new generation. Ordinary login never overwrites old homes. Explicit confirmed-revoked-home repair retains its history and pins.
+* **Race eliminated**: Codex 0.163's token refresh can finish after a file swap and overwrite the
+  target, or rotate between snapshot and backup. A re-read/CAS in provider-manager cannot serialize
+  with the CLI's private semaphore. Separate homes remove the shared auth-file write instead.
+* **Launcher**: resolves a concrete home once; overrides `CODEX_HOME`, forces file credentials and
+  execs the explicit real executable. Paseo agent IDs and native app-server thread IDs retain home
+  pins on resume. The proxy routes each thread/turn to an account child, including read/archive RPCs;
+  thread/start resolves current selection even in T3's shared provider session. Server-originated request
+  IDs are namespaced so approval replies reach the originating child. Unmapped legacy threads resume
+  in the legacy home. Credential-changing login/logout through the launcher are refused; reauthorization must publish a new generation.
+* **Shared files**: new homes copy config.toml (root file-store setting forced), managed config and
+  AGENTS.md, and symlink skills/rules/prompts directories. Auth, databases, logs, and session state
+  stay local to the generation. Nothing deletes retained generations automatically.
+* **Workspace credits**: devteam@ and carlos@ share Team credits; team@ is in another workspace.
+  The balancer skips same/unknown-workspace candidates when the selected workspace is exhausted.
+* **Health**: per-grant fingerprints retain revoked/needs_login marks; fresh login generations clear
+  them. Transient network or telemetry failures never start browser login.
 * **OAuth Refresh**:
   * Endpoint: `https://auth.openai.com/oauth/token`
   * Client ID: `app_EMoamEEZ73f0CkXaXp7hrann`

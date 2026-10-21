@@ -210,12 +210,13 @@ def test_switch_codex_account_success(monkeypatch, tmp_path):
     assert res["active"] == "carlos@getstimulus.ai"
     assert res["previous"] == "devteam@getstimulus.ai"
 
-    # Verify auth.json was rewritten with new tokens
-    current_auth = json.loads(auth_path.read_text())
+    # The selected home uses the target; the legacy session keeps its original auth file.
+    assert json.loads(auth_path.read_text())["tokens"] == outgoing_tokens
+    current_auth = pm.read_codex_auth().data
     assert current_auth["tokens"]["refresh_token"] == "rf_carlos_new"
 
-    # Verify outgoing tokens were backed up
-    assert "devteam@getstimulus.ai" in keychain_db
+    # Outgoing tokens remain authoritative in the original home.
+    assert pm.read_codex_copy(None, "devteam@getstimulus.ai").data["tokens"] == outgoing_tokens
 
 
 def test_evaluate_codex_balance(monkeypatch):
@@ -401,8 +402,14 @@ def test_switch_codex_account_aborts_on_keychain_write_failure(monkeypatch, tmp_
 
 def test_login_codex_headless(monkeypatch):
     import pm_codex_login
-    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login",
-                        lambda email, space_name="Stimulus": (True, f"Logged in {email}"))
+    def fake_login(email, space_name="Stimulus", timeout=40.0, *, codex_home):
+        tokens = {"id_token": _make_dummy_jwt({"email": email}), "refresh_token": "rf_carlos",
+                  "access_token": _make_dummy_jwt({"exp": int(time.time()) + 3600}), "account_id": "acc_stimulus"}
+        (codex_home / "auth.json").write_text(json.dumps({"auth_mode": "chatgpt", "tokens": tokens}))
+        return True, f"Logged in {email}"
+    monkeypatch.setattr(pm, "write_orca_codex", lambda k, d, timeout=30: True)
+    monkeypatch.setattr(pm, "_guarded_update", lambda path, fn: None)
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", fake_login)
     res = pm.login_codex_headless("carlos@getstimulus.ai")
     assert res["success"] is True
     assert res["email"] == "carlos@getstimulus.ai"
@@ -420,25 +427,27 @@ def test_switch_codex_account_autonomous_fallback(monkeypatch, tmp_path):
     monkeypatch.setattr(pm_store, "CODEX_AUTH_PATH", auth_path)
     monkeypatch.setattr(pm, "CODEX_AUTH_PATH", auth_path)
 
-    # Mock autonomous login to write new auth
-    def mock_auto_login(email, space_name="Stimulus"):
+    # Mock autonomous login: tokens land in the scratch CODEX_HOME, never in ~/.codex
+    def mock_auto_login(email, space_name="Stimulus", timeout=40.0, *, codex_home):
         carlos_tokens = {
             "id_token": _make_dummy_jwt({"email": "carlos@getstimulus.ai"}),
             "access_token": _make_dummy_jwt({"exp": int(time.time()) + 3600}),
             "refresh_token": "rf_carlos_auto",
             "account_id": "acc_stimulus",
         }
-        auth_path.write_text(json.dumps({"auth_mode": "chatgpt", "tokens": carlos_tokens}))
+        (codex_home / "auth.json").write_text(json.dumps({"auth_mode": "chatgpt", "tokens": carlos_tokens}))
         return True, "autologin ok"
 
     monkeypatch.setattr(pm_codex_login, "arc_usable", lambda timeout=3.0: (True, "ok"))
     monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", mock_auto_login)
     monkeypatch.setattr(pm, "_guarded_update", lambda path, fn: None)
 
+    monkeypatch.setattr(pm, "write_orca_codex", lambda k, d, timeout=30: True)
     res = pm.switch_codex_account("carlos@getstimulus.ai")
     assert res["status"] == "switched"
     assert res["active"] == "carlos@getstimulus.ai"
     assert res["method"] == "autonomous_browser_login"
+    assert pm.read_codex_auth().data["tokens"]["refresh_token"] == "rf_carlos_auto"
 
 
 

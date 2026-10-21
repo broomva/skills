@@ -6,10 +6,14 @@ and the consent page. Measured 2026-10-19:
 - without `prompt=login` OpenAI signs in whichever account the Arc space's web session holds, so a
   login for any other account fails with an email mismatch; with it, the account chooser is shown;
 - Arc's AppleScript can hang while a macOS permission prompt is pending, so a short responsiveness
-  check runs before anything is opened;
-- the CLI has one live seat: this login revokes the other account's saved copy.
+  check runs before anything is opened.
 
-Writes no keychain item itself: the caller snapshots ~/.codex/auth.json into the right account.
+Every `codex login` first logs out the account its CODEX_HOME holds, and that logout revokes the
+account's refresh token at OpenAI (`clear_existing_auth_before_login` -> `logout_with_revoke`,
+codex-rs/cli/src/login.rs, codex-cli 0.163.0). Run against ~/.codex, it killed the outgoing seat and
+the saved copy holding the same grant: what was once read as "one live Codex seat" (BRO-3346). So
+the login runs in an empty scratch CODEX_HOME with the file credential store forced, and the caller
+reads the new auth.json from there. Writes no keychain item and never touches ~/.codex.
 """
 
 import json
@@ -80,13 +84,38 @@ def with_account_chooser(auth_url: str) -> str:
     return auth_url + ("&" if "?" in auth_url else "?") + "prompt=login"
 
 
+def scratch_home_problem(codex_home: Path) -> Optional[str]:
+    """Why `codex_home` may not host a login, or None. A login revokes the account its home holds, so
+    the home must be an existing, empty directory that is not the CLI's real one."""
+    home = Path(os.path.realpath(str(codex_home)))
+    real = Path(os.path.realpath(os.environ.get("CODEX_HOME") or str(Path.home() / ".codex")))
+    if home == real or home == Path(os.path.realpath(str(pm_store.CODEX_AUTH_PATH))).parent:
+        return "refusing to log in inside the Codex CLI's own home (%s): the login would revoke its seat" % home
+    if not home.is_dir():
+        return "scratch Codex home %s does not exist" % home
+    if any(home.iterdir()):
+        return "scratch Codex home %s is not empty" % home
+    return None
+
+
+def codex_login_command(codex_home: Path) -> Tuple[list, dict]:
+    """`codex login` confined to `codex_home`, with tokens written to its auth.json (never a keyring
+    entry the caller cannot read back)."""
+    env = dict(os.environ, CODEX_HOME=str(codex_home))
+    return ["codex", "-c", 'cli_auth_credentials_store="file"', "login"], env
+
+
 def run_codex_autonomous_login(target_email: str, space_name: str = "Stimulus",
-                               timeout: float = 40.0) -> Tuple[bool, str]:
-    """Execute `codex login` and autonomously approve the OAuth flow in Arc browser.
-    
+                               timeout: float = 40.0, *, codex_home: Path) -> Tuple[bool, str]:
+    """Run `codex login` in the empty scratch `codex_home` and approve the OAuth flow in Arc. The new
+    tokens land in `codex_home`/auth.json, for the caller to save; ~/.codex is never touched.
+
     Returns (success, message).
     """
     target_email = target_email.strip().lower()
+    problem = scratch_home_problem(codex_home)
+    if problem:
+        return False, problem
     usable, detail = arc_usable()
     if not usable:
         return False, detail
@@ -94,9 +123,11 @@ def run_codex_autonomous_login(target_email: str, space_name: str = "Stimulus",
     sys.stdout.write(f"[*] Starting autonomous Codex login for {target_email} in Arc space '{space_name}'...\n")
     sys.stdout.flush()
 
+    cmd, env = codex_login_command(codex_home)
     try:
         proc = subprocess.Popen(
-            ["codex", "login"],
+            cmd,
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -210,9 +241,9 @@ def run_codex_autonomous_login(target_email: str, space_name: str = "Stimulus",
         proc.kill()
 
     # Read and verify newly saved tokens
-    auth_res = pm_store.read_codex_auth()
+    auth_res = pm_store.read_codex_auth(Path(codex_home) / "auth.json")
     if auth_res.status != "ok" or not auth_res.data:
-        return False, "Login completed but ~/.codex/auth.json was not updated"
+        return False, "Login completed but wrote no auth.json in the scratch Codex home"
 
     tokens = auth_res.data.get("tokens", {})
     ident = pm_store.extract_codex_identity(tokens)
@@ -221,4 +252,4 @@ def run_codex_autonomous_login(target_email: str, space_name: str = "Stimulus",
     if logged_email != target_email:
         return False, f"Logged in email '{logged_email}' does not match target '{target_email}'"
 
-    return True, f"Logged the Codex CLI in as {logged_email} (Arc space '{space_name}')"
+    return True, f"Logged {logged_email} in (Arc space '{space_name}')"
