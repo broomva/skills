@@ -109,6 +109,7 @@ class Proxy:
         self.events = queue.Queue()
         self.children = {}
         self.server_requests = {}
+        self.server_sequence = 0
         self.sequence = 0
         self.initialize = None
         self.initialized = None
@@ -116,6 +117,20 @@ class Proxy:
     def next_id(self, prefix):
         self.sequence += 1
         return "provider-manager-%s-%s" % (prefix, self.sequence)
+
+    def server_id(self):
+        # Paseo accepts numeric IDs only. Never recycle one while this proxy lives.
+        if self.server_sequence >= 2**53 - 1:
+            raise pm_store.StoreError("Codex server request ID space exhausted")
+        self.server_sequence += 1
+        return self.server_sequence
+
+    def resolve_server_request(self, child, native_id):
+        for host_id, (origin, ident, _) in list(self.server_requests.items()):
+            if origin is child and ident == native_id:
+                del self.server_requests[host_id]
+                return host_id
+        return None
 
     def emit(self, message):
         self.output.write((json.dumps(message) + "\n").encode())
@@ -199,10 +214,14 @@ class Proxy:
         for thread_id, turn_id in child["turns"].items():
             self.emit({"method": "error", "params": {"threadId": thread_id, "turnId": turn_id,
                        "willRetry": False, "error": {"message": message}}})
+            self.emit({"method": "turn/completed", "params": {"threadId": thread_id,
+                       "turn": {"id": turn_id, "items": [], "status": "failed",
+                                "error": {"message": message}, "completedAt": int(time.time())}}})
         child["turns"].clear()
-        for ident, (origin, _) in list(self.server_requests.items()):
+        for ident, (origin, _, thread_id) in list(self.server_requests.items()):
             if origin is child:
                 del self.server_requests[ident]
+                self.emit({"method": "serverRequest/resolved", "params": {"requestId": ident, "threadId": thread_id}})
         self.stop_child(child)
 
     def flush(self, child):
@@ -234,7 +253,7 @@ class Proxy:
         if method is None:
             binding = self.server_requests.pop(request.get("id"), None)
             if binding:
-                child, ident = binding
+                child, ident, _ = binding
                 if not child["failed"]:
                     self.send(child, dict(request, id=ident))
             return
@@ -321,9 +340,17 @@ class Proxy:
                     self.send(child, {"id": ident, "error": {"code": -32001,
                               "message": "Use provider-manager reauthorization for this account home"}})
                     return
-                proxy_id = self.next_id("server")
-                self.server_requests[proxy_id] = (child, ident)
+                try:
+                    proxy_id = self.server_id()
+                except pm_store.StoreError as exc:
+                    self.fail_child(child, str(exc))
+                    return
+                self.server_requests[proxy_id] = (child, ident, params.get("threadId", ""))
                 self.emit(dict(message, id=proxy_id))
+            elif method == "serverRequest/resolved":
+                host_id = self.resolve_server_request(child, params.get("requestId"))
+                if host_id is not None:
+                    self.emit(dict(message, params=dict(params, requestId=host_id)))
             else:
                 self.emit(message)
             return

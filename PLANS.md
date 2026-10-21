@@ -779,3 +779,13 @@ stay isolated. Added authority-confirmed revoked-home repair (fresh grant in exa
 Evidence: native Codex 0.163 initialize + two thread/start + thread/read through ONE proxy on two
 synthetic accounts passed, without live credentials or model requests. Focused home/proxy/integration
 suite and full tests/mutations rerunning for round 3. Deployment remains after review and merge.
+
+Checkpoint 2026-10-21, final adapter correction: round 3 A=10/10, C=6/10 reproduced
+Paseo dropping string permission IDs and T3 retaining active turns after child failure.
+Independent continuation authorized one bounded round. Proxy now uses safe numeric host IDs,
+translates serverRequest/resolved IDs, resolves failed-child permissions with their threadId,
+and emits schema-valid failed turn/completed events. Installed Paseo handleLine reports
+handlers=1 replies=1; installed permission handler reports resolved=1 pending=0; extracted
+installed T3 handlers report turnStillActive=false terminalNotifications=1. Both invented
+notifications validate against native Codex 0.163 generated schemas. Named mutants M71–M74
+cover each guard; final A/C review binds to the committed implementation before deployment.

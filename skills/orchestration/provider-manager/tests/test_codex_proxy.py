@@ -283,6 +283,7 @@ def test_colliding_server_request_ids_route_responses_to_origin_child(world, mon
         messages = [receive() for _ in range(4)]
         approvals = [m for m in messages if m.get("method") == "item/commandExecution/requestApproval"]
         assert len(approvals) == 2
+        assert all(type(m["id"]) is int and 0 < m["id"] < 2**53 for m in approvals)
         assert approvals[0]["id"] != approvals[1]["id"]
         expected = {first: str(selected), second: str(old)}
         for approval in reversed(approvals):
@@ -334,3 +335,41 @@ def test_account_display_notifications_follow_selection_but_thread_events_all_fl
     assert len(messages) == 2
     assert messages[0]["params"]["fixture"] == "chosen"
     assert messages[1]["params"]["threadId"] == "old-thread"
+
+
+def test_native_resolutions_translate_ids_and_failure_finishes_only_its_turns(world, monkeypatch):
+    import io
+    selected, old, _, _, _ = world
+    output = io.BytesIO()
+    instance = proxy.Proxy(sys.executable, [], selected, {"email": "selected@example.test"},
+                           io.BytesIO(), output)
+    monkeypatch.setattr(instance, "stop_child", lambda child: None)
+    def child(path, thread):
+        return {"account": proxy._identity(path), "failed": False, "initial_request": None,
+                "pending": {}, "queued": [], "turns": {thread: "turn-" + thread}}
+    first, second = child(selected, "first"), child(old, "second")
+    for origin in (first, second):
+        instance.response(origin, {"id": 7, "method": "item/commandExecution/requestApproval",
+                                   "params": {"threadId": next(iter(origin["turns"]))}})
+    approvals = [json.loads(line) for line in output.getvalue().splitlines()]
+    first_id, second_id = [m["id"] for m in approvals]
+    output.seek(0); output.truncate()
+    instance.response(first, {"method": "serverRequest/resolved", "params": {"requestId": 7, "threadId": "first"}})
+    instance.response(first, {"method": "serverRequest/resolved", "params": {"requestId": 999}})
+    instance.fail_child(second, "peer exited")
+    messages = [json.loads(line) for line in output.getvalue().splitlines()]
+    assert [m["method"] for m in messages] == ["serverRequest/resolved", "error", "turn/completed", "serverRequest/resolved"]
+    assert messages[0]["params"]["requestId"] == first_id
+    assert messages[3]["params"] == {"requestId": second_id, "threadId": "second"}
+    assert messages[1]["params"]["threadId"] == "second"
+    assert messages[1]["params"]["willRetry"] is False
+    terminal = messages[2]["params"]
+    assert terminal["threadId"] == "second"
+    assert terminal["turn"]["id"] == "turn-second"
+    assert terminal["turn"]["status"] == "failed"
+    assert terminal["turn"]["items"] == []
+    assert terminal["turn"]["error"]["message"] == "peer exited"
+    assert type(terminal["turn"]["completedAt"]) is int
+    assert first["turns"] == {"first": "turn-first"} and not first["failed"]
+    assert second["turns"] == {} and second["failed"]
+    assert instance.server_requests == {}
