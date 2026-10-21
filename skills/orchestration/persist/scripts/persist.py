@@ -31,6 +31,7 @@ CLI:
 from __future__ import annotations
 
 import argparse
+import collections
 import contextlib
 import dataclasses
 import datetime as _dt
@@ -39,6 +40,7 @@ import errno
 import fcntl
 import json
 import os
+import re
 import subprocess
 import sys
 import time
@@ -103,7 +105,9 @@ _TRANSITIONS: set[tuple[LoopState, LoopState]] = {
     (LoopState.ITERATING, LoopState.PAUSED),
     (LoopState.ITERATING, LoopState.SUCCESS),
     (LoopState.ITERATING, LoopState.BUDGET_EXHAUSTED),
+    (LoopState.SPAWNED, LoopState.BUDGET_EXHAUSTED),
     (LoopState.PAUSED, LoopState.ITERATING),
+    (LoopState.PAUSED, LoopState.BUDGET_EXHAUSTED),
     (LoopState.PAUSED, LoopState.ABANDONED),
     (LoopState.SPAWNED, LoopState.ABANDONED),
     (LoopState.ITERATING, LoopState.ABANDONED),
@@ -231,6 +235,46 @@ def open_loops() -> list[dict[str, Any]]:
 
 
 # ── Subcommands ─────────────────────────────────────────────────────────────
+# A provider usage/rate limit makes the agent exit within seconds. Counting that as an
+# iteration turned one limit into a hot loop that burned the whole budget (BRO-3350:
+# 80/80 and 160/160 iterations gone in minutes). These are the harness's own words; only
+# the tail of a run is checked, so a long productive run that merely discusses rate
+# limiting in its middle is not misread.
+LIMIT_PATTERNS = re.compile(
+    r"you(?:'ve| have) (?:hit|reached|exceeded) your (?:\w+[ -])?(?:usage )?limit"
+    r"|claude (?:(?:ai|code) )?usage limit reached"
+    r"|would exceed your account'?s rate limit"
+    r"|rate limit (?:reached|exceeded)(?:\. try again later)?"
+    r"|you have run out of credits|out of credits"
+    r"|usage_limit_reached|rate_limit_error|resource_exhausted"
+    r"|\b429(?: too many requests)?\b",
+    re.IGNORECASE,
+)
+LIMIT_TAIL_LINES = 20
+
+
+def is_rate_limited(tail: str, exit_code: int) -> bool:
+    """Recognize a provider limit failure, without pausing for successful prose.
+
+    Agent output shares stdout with provider diagnostics. A completed agent may
+    legitimately mention a limit string in its answer, so a textual match only
+    indicates a limit when the command also failed.
+    """
+    if exit_code == 0:
+        return False
+    lines = tail.splitlines()[-LIMIT_TAIL_LINES:]
+    return bool(LIMIT_PATTERNS.search("\n".join(lines)))
+
+
+def limit_backoff(consecutive: int, base_s: int, max_s: int) -> int:
+    """Seconds to wait after the `consecutive`-th limited run in a row (1-based)."""
+    return int(min(max_s, base_s * (2 ** max(0, consecutive - 1))))
+
+
+def _sleep(seconds: float) -> None:  # seam for tests
+    time.sleep(seconds)
+
+
 def cmd_iterate(args: argparse.Namespace) -> int:
     """Spawn a fresh-context loop driven by prompt-file.
 
@@ -277,10 +321,13 @@ def cmd_iterate(args: argparse.Namespace) -> int:
     started_at = time.monotonic()
     iteration = 0
     last_state = LoopState.SPAWNED
+    consecutive_limits = 0
+    backoff_base = getattr(args, "limit_backoff_base", 60)
+    backoff_max = getattr(args, "limit_backoff_max", 3600)
 
     while iteration < budget.max_iterations:
         elapsed = time.monotonic() - started_at
-        if elapsed > budget.max_wall_clock_s:
+        if elapsed >= budget.max_wall_clock_s:
             append_event(LoopEvent(
                 ts=_utcnow(), loop_id=loop_id,
                 prompt_file=str(prompt_path.resolve()), iteration=iteration,
@@ -306,7 +353,43 @@ def cmd_iterate(args: argparse.Namespace) -> int:
 
         # Spawn a fresh agent context. Agent is responsible for updating
         # prompt_file at the end of iteration to reflect new state.
-        rc = _spawn_agent(args.agent_cmd, prompt_path, args.verbose)
+        rc, tail = _run_agent(args.agent_cmd, prompt_path, args.verbose)
+
+        # A limit failure takes precedence over a success predicate: a provider
+        # can create a sentinel before reporting that no work was done.
+        if is_rate_limited(tail, rc):
+            # Not an iteration: the agent never worked. Wait, then retry the same one.
+            iteration -= 1
+            consecutive_limits += 1
+            backoff = limit_backoff(consecutive_limits, backoff_base, backoff_max)
+            remaining = budget.max_wall_clock_s - (time.monotonic() - started_at)
+            wait = min(backoff, max(0.0, remaining))
+            append_event(LoopEvent(
+                ts=_utcnow(), loop_id=loop_id,
+                prompt_file=str(prompt_path.resolve()), iteration=iteration,
+                from_state=last_state.value,
+                to_state=LoopState.PAUSED.value,
+                extra={"reason": "rate_limited", "exit_code": rc,
+                       "consecutive": consecutive_limits, "backoff_s": backoff,
+                       "sleep_s": wait},
+            ))
+            last_state = LoopState.PAUSED
+            print(f"persist: agent hit a usage/rate limit; not counted as an iteration. "
+                  f"Waiting {wait}s (limited run #{consecutive_limits} in a row)")
+            if wait <= 0:
+                append_event(LoopEvent(
+                    ts=_utcnow(), loop_id=loop_id,
+                    prompt_file=str(prompt_path.resolve()), iteration=iteration,
+                    from_state=last_state.value,
+                    to_state=LoopState.BUDGET_EXHAUSTED.value,
+                    extra={"reason": "wall-clock", "elapsed_s": budget.max_wall_clock_s},
+                ))
+                print(f"persist: wall-clock budget exhausted ({budget.max_wall_clock_s}s); "
+                      f"loop {loop_id} terminated")
+                return EXIT_BUDGET_EXHAUSTED
+            _sleep(wait)
+            continue
+        consecutive_limits = 0
 
         # Check success condition (file presence / grep / exit code)
         if args.success_condition:
@@ -333,26 +416,26 @@ def cmd_iterate(args: argparse.Namespace) -> int:
     return EXIT_BUDGET_EXHAUSTED
 
 
-def _spawn_agent(agent_cmd: str, prompt_path: Path, verbose: bool) -> int:
-    """Run the agent CLI with the prompt file's contents.
-
-    Default agent_cmd is `claude -p {}` where {} is replaced with the prompt
-    contents. Other CLIs supported: `codex {}`, `gemini -p {}`, etc.
-    """
+def _run_agent(agent_cmd: str, prompt_path: Path, verbose: bool) -> tuple[int, str]:
+    """Run the agent, streaming its output live and returning (exit code, output tail)."""
     prompt_text = prompt_path.read_text(encoding="utf-8")
     cmd_template = agent_cmd.replace("{}", prompt_text) if "{}" in agent_cmd \
         else f"{agent_cmd} {prompt_text}"
-
     if verbose:
         print(f"  spawning: {agent_cmd}")
+    tail: collections.deque[str] = collections.deque(maxlen=200)
     try:
-        result = subprocess.run(
-            cmd_template, shell=True, check=False,
-        )
-        return result.returncode
+        proc = subprocess.Popen(cmd_template, shell=True, stdout=subprocess.PIPE,
+                                stderr=subprocess.STDOUT, text=True, errors="replace")
     except FileNotFoundError as e:
         print(f"persist: agent command not found: {e}", file=sys.stderr)
-        return 127
+        return 127, ""
+    assert proc.stdout is not None
+    for line in proc.stdout:
+        sys.stdout.write(line)
+        sys.stdout.flush()
+        tail.append(line)
+    return proc.wait(), "".join(tail)
 
 
 def _check_success_condition(condition: str, prompt_path: Path, last_rc: int) -> bool:
@@ -495,6 +578,10 @@ def build_parser() -> argparse.ArgumentParser:
     pi.add_argument("--dry-run", action="store_true",
                     help="Register the loop in state.jsonl but don't spawn the agent")
     pi.add_argument("--verbose", "-v", action="store_true")
+    pi.add_argument("--limit-backoff-base", type=int, default=60,
+                    help="seconds to wait after a run that hit a usage/rate limit (doubles each time)")
+    pi.add_argument("--limit-backoff-max", type=int, default=3600,
+                    help="cap on the usage/rate-limit wait")
     pi.set_defaults(func=cmd_iterate)
 
     ps = sub.add_parser("status", help="Show open loops")
