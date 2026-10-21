@@ -89,10 +89,16 @@ def routing(monkeypatch, tmp_path):
     config.write_text(json.dumps({"autoBalance": False}))
     with ag.registry() as state:
         for email, used in (("first@example.test", 95), ("second@example.test", 10)):
-            state["accounts"][email] = {"usage": {
+            profile = str(tmp_path / email)
+            stamp = "synthetic-%s" % email
+            identity = ag.generation_id(email, profile, stamp)
+            entry = {"email": email, "generation": identity, "profile": profile,
+                "fingerprint": stamp, "binary": "/synthetic/agent", "usage": {
                 "status": "ok", "numbersAt": time.time(), "windows": [
                     {"family": "gemini", "usedPercent": used},
                     {"family": "third_party", "usedPercent": used}]}}
+            state["accounts"][email] = entry
+            state["generations"][identity] = entry
         state["selected"] = dict.fromkeys(("all", "gemini", "third_party"), "first@example.test")
     return config
 
@@ -140,3 +146,55 @@ def test_register_and_launcher_commands_dispatch_without_provider_flag(monkeypat
     run_cli(monkeypatch, providers, ["antigravity-launcher"])
     launcher.assert_called_once_with()
     assert json.loads(capsys.readouterr().out)["launcher"] == "/fake/launcher"
+
+
+@pytest.mark.parametrize("model", ["gemini-4-argon-medium", "claude-opus-5-5"])
+@pytest.mark.parametrize("command", ["balance", "switch"])
+def test_antigravity_model_family_reaches_backend(monkeypatch, providers, capsys, model, command):
+    operation = Mock(return_value={"action": "hold"})
+    monkeypatch.setattr(ag, command, operation)
+    options = [command, "--provider", "antigravity", "--model", model, "--json"]
+    if command == "switch":
+        options.append("test@example.test")
+    run_cli(monkeypatch, providers, options)
+    if command == "switch":
+        operation.assert_called_once_with("test@example.test", model=model)
+    else:
+        operation.assert_called_once_with(dry_run=False, automatic=False, model=model)
+    assert json.loads(capsys.readouterr().out)["action"] == "hold"
+
+
+@pytest.mark.parametrize("automatic", [False, True])
+def test_aggregate_model_routes_only_to_antigravity(monkeypatch, providers, capsys, automatic):
+    balance = Mock(return_value={"action": "would_switch"})
+    monkeypatch.setattr(ag, "balance", balance)
+    options = ["balance", "--provider", "all", "--model", "gemini-4-argon-medium", "--dry-run", "--json"]
+    if automatic:
+        options.append("--auto")
+    run_cli(monkeypatch, providers, options)
+    expected = {"dry_run": True, "model": "gemini-4-argon-medium"}
+    if automatic:
+        expected["automatic"] = True
+    balance.assert_called_once_with(**expected)
+    for operation in (providers.run_auto_until_settled, providers.balance_accounts, providers.evaluate_codex_balance):
+        for call in operation.call_args_list:
+            assert "model" not in call.kwargs
+    assert json.loads(capsys.readouterr().out)["antigravity"]["action"] == "would_switch"
+
+
+@pytest.mark.parametrize("provider", ["claude", "codex"])
+def test_antigravity_model_option_rejects_other_providers(monkeypatch, providers, capsys, provider):
+    with pytest.raises(SystemExit) as exc:
+        run_cli(monkeypatch, providers, ["balance", "--provider", provider, "--model", "gemini-4-argon-medium"])
+    assert exc.value.code == 2
+    providers.balance_accounts.assert_not_called()
+    providers.evaluate_codex_balance.assert_not_called()
+    assert "--model applies only to Antigravity" in capsys.readouterr().err
+
+
+def test_no_model_switch_retains_all_family_backend_default(monkeypatch, providers, capsys):
+    switch = Mock(return_value={"active": "test@example.test"})
+    monkeypatch.setattr(ag, "switch", switch)
+    run_cli(monkeypatch, providers, ["switch", "--provider", "antigravity", "test@example.test", "--json"])
+    switch.assert_called_once_with("test@example.test")
+    assert json.loads(capsys.readouterr().out)["active"] == "test@example.test"

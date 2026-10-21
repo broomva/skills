@@ -28,6 +28,7 @@ X = "tests/test_codex_balancer.py::"
 A = "tests/test_antigravity.py::RoutingTests::"
 Q = "tests/test_antigravity_quota.py::"
 C = "tests/test_antigravity_cli.py::"
+G = "tests/test_antigravity_generations.py::"
 
 # name: (description, [(file, old, new), ...], [tests that must fail])
 MUTATIONS = {
@@ -366,9 +367,29 @@ MUTATIONS = {
               '                    print("\\n[Antigravity]\\n[]")')],
             [C + "test_all_includes_antigravity_in_text_and_json[text-list]"]),
     "M82": ("Antigravity CLI auto mode bypasses automatic-balancing config guard",
-            [("pm_cli.py", "result = ag.balance(dry_run=args.dry_run, automatic=args.auto)",
-              "result = ag.balance(dry_run=args.dry_run, automatic=False)")],
+            [("pm_cli.py", "result = ag.balance(dry_run=args.dry_run, automatic=args.auto, **antigravity_model)",
+              "result = ag.balance(dry_run=args.dry_run, automatic=False, **antigravity_model)")],
             [C + "test_cli_auto_honors_disabled_config"]),
+    "M83": ("pinned Antigravity generation resolves through latest same-email profile",
+            [("pm_antigravity.py", "            entry = state['generations'].get(pinned)",
+              "            entry = state['accounts'].get(state['generations'].get(pinned, {}).get('email'))")],
+            [G + "test_reauthorization_publishes_new_generation_while_old_thread_retains_its_profile"]),
+    "M84": ("v1 migration assigns every session to the first known generation",
+            [("pm_antigravity.py", "            pins[key] = state['accounts'][email]['generation']",
+              "            pins[key] = next(iter(generations))")],
+            [G + "test_v1_migration_maps_each_legacy_thread_to_its_own_generation"]),
+    "M85": ("same native profile may replace the refresh grant of a pinned generation",
+            [("pm_antigravity.py", "            if old['profile'] == profile and (old['email'] != email or old['fingerprint'] != stamp):",
+              "            if False:")],
+            [G + "test_reauthorization_cannot_replace_a_grant_inside_an_existing_profile"]),
+    "M86": ("one native Google refresh grant may be registered in multiple profile directories",
+            [("pm_antigravity.py", "            if old['profile'] != profile and old['fingerprint'] == stamp:",
+              "            if False:")],
+            [G + "test_native_grant_cannot_be_registered_in_two_profiles"]),
+    "M87": ("registering a retained generation rolls new sessions back to the historical profile",
+            [("pm_antigravity.py", "            state['generations'][identity]['usage'] = result",
+              "            state['generations'][identity]['usage'] = result\n            state['accounts'][email] = state['generations'][identity]")],
+            [G + "test_registering_retained_generation_does_not_roll_latest_back"]),
     "M16": ("StopFailure rate_limit does not start a failover",
             [("provider_manager_hook.py", '        kick("stop-failure", signal=signal, force=True)', "        pass")],
             [U + "test_stop_failure_rate_limit_records_the_session_and_fails_over_and_the_session_continues"]),

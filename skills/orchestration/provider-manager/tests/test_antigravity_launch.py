@@ -111,6 +111,28 @@ def test_supported_t3_cli_transport_uses_env_not_argument_credentials(monkeypatc
     assert kwargs["timeout"] == 15
 
 
+@pytest.mark.parametrize("content", [None, "private-invalid-context", {}, 7, False])
+def test_malformed_mcp_content_raises_sanitized_launch_error(content):
+    with pytest.raises(launcher.LaunchError, match="malformed launcher context content") as exc:
+        launcher._structured({"content": content})
+    assert "private-invalid-context" not in str(exc.value)
+
+
+def test_structured_mcp_context_takes_precedence_over_unused_content():
+    assert launcher._structured({"structuredContent": {"threadId": "one"}, "content": None}) == {"threadId": "one"}
+
+
+def test_malformed_context_cli_error_has_no_traceback(monkeypatch, capsys):
+    def malformed(*args, **kwargs):
+        launcher._structured({"content": None})
+    monkeypatch.setattr(launcher, "launch", malformed)
+    assert launcher.main() == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Traceback" not in captured.err
+    assert "launch refused" in captured.err
+
+
 @pytest.mark.parametrize("mutation", ["symlink", "wrong-auth", "missing-harness"])
 def test_invalid_profile_or_pair_refuses_exec(tmp_path, mutation):
     entry = profile(tmp_path)

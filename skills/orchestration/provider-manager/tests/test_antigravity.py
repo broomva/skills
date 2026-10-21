@@ -40,8 +40,12 @@ class RoutingTests(unittest.TestCase):
                 profile = Path(self.temp.name) / email
                 (profile / 'antigravity-acp').mkdir(parents=True)
                 (profile / 'antigravity-acp/acp_token.json').write_text('{}')
-                state['accounts'][email] = {'profile': str(profile), 'binary': '/bin/true',
-                    'fingerprint': ag.fingerprint(profile), 'runtimeFingerprint': ['binary', 'harness'], 'usage': used}
+                stamp = ag.fingerprint(profile)
+                identity = ag.generation_id(email, str(profile), stamp)
+                entry = {'email': email, 'generation': identity, 'profile': str(profile), 'binary': '/bin/true',
+                    'fingerprint': stamp, 'runtimeFingerprint': ['binary', 'harness'], 'usage': used}
+                state['accounts'][email] = entry
+                state['generations'][identity] = entry
                 self.profiles[email] = profile
             state['selected'] = dict.fromkeys(['all', 'gemini', 'third_party'], 'a')
 
@@ -134,6 +138,24 @@ class RoutingTests(unittest.TestCase):
         with patch.object(ag, 'runtime_fingerprint', return_value=('upgraded', 'harness')):
             with self.assertRaisesRegex(ag.AntigravityError, 'runtime changed'):
                 ag.pin_session('old-runtime')
+
+    def test_switch_without_model_updates_every_launch_family(self):
+        ag.switch('b')
+        for model in (None, 'gemini-4', 'claude'):
+            self.assertEqual(ag.pin_session('switch-' + str(model), model)['email'], 'b')
+
+    def test_explicit_model_switch_does_not_change_other_family(self):
+        with ag.registry() as state:
+            state['accounts']['a']['usage'] = usage(50, 50)
+        ag.switch('b', model='gemini-4')
+        self.assertEqual(ag.pin_session('gemini-switch', 'gemini-4')['email'], 'b')
+        self.assertEqual(ag.pin_session('claude-unchanged', 'claude')['email'], 'a')
+
+    def test_malformed_pinned_profile_refuses_without_parser_errors(self):
+        entry = ag.pin_session('malformed-profile')
+        (Path(entry['profile']) / 'antigravity-acp/acp_token.json').write_text('[]')
+        with self.assertRaisesRegex(ag.AntigravityError, 'unreadable'):
+            ag.pin_session('malformed-profile')
 
     def test_private_registry_mode(self):
         self.assertEqual((Path(self.temp.name) / 'registry.json').stat().st_mode & 0o777, 0o600)

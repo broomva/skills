@@ -22,7 +22,10 @@ def _structured(result):
         raise LaunchError("T3 rejected the launcher context request")
     if isinstance(result.get("structuredContent"), dict):
         return result["structuredContent"]
-    for content in result.get("content", []):
+    contents = result.get("content", [])
+    if not isinstance(contents, list):
+        raise LaunchError("T3 returned malformed launcher context content")
+    for content in contents:
         if isinstance(content, dict) and content.get("type") == "text":
             try:
                 value = json.loads(content["text"])

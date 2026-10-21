@@ -323,7 +323,11 @@ it stops once any switch has happened. A resolved evaluation clears only the rep
 ## Antigravity ACP isolation
 
 `pm_antigravity.py` owns only an atomic, mode-0600 registry containing profile references, grant
-fingerprints, sanitized quota readings, per-family selections/cooldowns and stable thread pins.
+fingerprints, sanitized quota readings, per-family selections/cooldowns and stable thread pins. Schema v2 keeps immutable generation
+records, a latest-generation view per email and generation-owned pins. V1 migration preserves the
+exact email-to-profile ownership of existing pins before any new registration is published.
+Reauthorization into a fresh profile publishes a new generation without rewriting retained profiles;
+idempotent registration of an older generation never replaces the latest one.
 `pm_antigravity_quota.py` verifies Google userinfo identity before retrieving both official quota
 summaries. Unknown/disabled data remains explicit; fallback model windows retain model families.
 Google's refresh exchange is documented at

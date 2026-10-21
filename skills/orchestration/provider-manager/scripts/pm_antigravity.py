@@ -40,9 +40,61 @@ def root():
 
 
 def fingerprint(profile):
-    token = json.loads((Path(profile) / 'antigravity-acp/acp_token.json').read_text())
-    identity = {k: token.get(k) for k in ('client_id', 'client_secret', 'refresh_token', 'project_id')}
-    return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    try:
+        token = json.loads((Path(profile) / 'antigravity-acp/acp_token.json').read_text())
+        identity = {k: token.get(k) for k in ('client_id', 'client_secret', 'refresh_token', 'project_id')}
+        return hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise AntigravityError('Native profile credentials are unreadable') from exc
+
+
+def generation_id(email, profile, stamp):
+    return hashlib.sha256(json.dumps([email, profile, stamp]).encode()).hexdigest()
+
+
+def _migrate(state):
+    if not isinstance(state, dict) or any(not isinstance(state.get(k), dict)
+            for k in ('accounts', 'selected', 'pins', 'lastSwitch')):
+        raise AntigravityError('Invalid Antigravity registry')
+    if state.get('version') == 1:
+        generations = {}
+        for email, entry in state['accounts'].items():
+            if not isinstance(entry, dict) or not all(isinstance(entry.get(k), str)
+                    for k in ('profile', 'fingerprint', 'binary')):
+                raise AntigravityError('Invalid legacy Antigravity account')
+            identity = generation_id(email, entry['profile'], entry['fingerprint'])
+            entry.update(email=email, generation=identity)
+            generations[identity] = entry
+        pins = {}
+        for key, email in state['pins'].items():
+            if not isinstance(email, str) or email not in state['accounts']:
+                raise AntigravityError('Legacy session pin has no known account')
+            pins[key] = state['accounts'][email]['generation']
+        state.update(version=2, generations=generations, pins=pins)
+    if state.get('version') != 2 or not isinstance(state.get('generations'), dict):
+        raise AntigravityError('Invalid Antigravity registry version')
+    for identity, entry in state['generations'].items():
+        if (not isinstance(entry, dict) or entry.get('generation') != identity or
+                not all(isinstance(entry.get(k), str) and entry[k]
+                        for k in ('email', 'profile', 'fingerprint', 'binary')) or
+                generation_id(entry['email'], entry['profile'], entry['fingerprint']) != identity):
+            raise AntigravityError('Invalid immutable Antigravity generation')
+    for email, entry in state['accounts'].items():
+        if not isinstance(entry, dict):
+            raise AntigravityError('Invalid Antigravity account')
+        identity = entry.get('generation')
+        historic = state['generations'].get(identity) if isinstance(identity, str) else None
+        if not isinstance(historic, dict) or historic != entry or historic.get('email') != email:
+            raise AntigravityError('Latest account does not match its generation')
+        # Keep the latest-account view and canonical generation in sync within the lock.
+        state['accounts'][email] = historic
+    if any(not isinstance(identity, str) or identity not in state['generations']
+           for identity in state['pins'].values()):
+        raise AntigravityError('Session pin has no known generation')
+    if any(not isinstance(email, str) or email not in state['accounts']
+           for email in state['selected'].values()):
+        raise AntigravityError('Selected account is unknown')
+    return state
 
 
 @contextlib.contextmanager
@@ -55,12 +107,10 @@ def registry():
         path = base / 'registry.json'
         try:
             state = json.loads(path.read_text()) if path.exists() else {
-                'version': 1, 'accounts': {}, 'selected': {}, 'pins': {}, 'lastSwitch': {}}
+                'version': 2, 'accounts': {}, 'generations': {}, 'selected': {}, 'pins': {}, 'lastSwitch': {}}
         except (ValueError, OSError) as exc:
             raise AntigravityError('Unreadable Antigravity registry; selection refused') from exc
-        if (state.get('version') != 1 or any(not isinstance(state.get(k), dict)
-                for k in ('accounts', 'selected', 'pins', 'lastSwitch'))):
-            raise AntigravityError('Invalid Antigravity registry')
+        state = _migrate(state)
         yield state
         fd, temporary = tempfile.mkstemp(dir=base, prefix='.registry-')
         try:
@@ -91,22 +141,29 @@ def register(email, profile, binary):
     if runtime != VERIFIED_RUNTIME:
         raise AntigravityError('ACP release has no verified session isolation contract')
     stamp = fingerprint(profile)
-    result = pm_antigravity_quota.probe(profile, email)
-    if result.get('email') != email or result.get('status') != 'ok':
-        raise AntigravityError('Profile identity and quota must verify before registration')
-    if stamp != fingerprint(profile):
-        raise AntigravityError('Profile changed during verification')
+    identity = generation_id(email, profile, stamp)
     with registry() as state:
-        existing = state['accounts'].get(email)
-        if existing and (existing['profile'] != profile or existing['fingerprint'] != stamp):
-            raise AntigravityError('Registered profile is immutable; use a new account generation')
-        if any(a['profile'] == profile and key != email for key, a in state['accounts'].items()):
-            raise AntigravityError('Profile already belongs to another account')
-        state['accounts'][email] = {'profile': profile, 'binary': binary,
-                                    'fingerprint': stamp, 'runtimeFingerprint': list(runtime), 'usage': result}
+        for old in state['generations'].values():
+            if old['profile'] == profile and (old['email'] != email or old['fingerprint'] != stamp):
+                raise AntigravityError('Registered profile is immutable; authenticate into a fresh profile')
+            if old['profile'] != profile and old['fingerprint'] == stamp:
+                raise AntigravityError('One native grant cannot be registered in multiple profiles')
+        result = pm_antigravity_quota.probe(profile, email)
+        if result.get('email') != email or result.get('status') != 'ok':
+            raise AntigravityError('Profile identity and quota must verify before registration')
+        if stamp != fingerprint(profile):
+            raise AntigravityError('Profile changed during verification')
+        if identity not in state['generations']:
+            entry = {'email': email, 'generation': identity, 'profile': profile, 'binary': binary,
+                     'fingerprint': stamp, 'runtimeFingerprint': list(runtime), 'usage': result}
+            state['generations'][identity] = entry
+            state['accounts'][email] = entry
+        else:
+            # Idempotent registration of a retained generation never rolls the latest one back.
+            state['generations'][identity]['usage'] = result
         for family in ('gemini', 'third_party', 'all'):
             state['selected'].setdefault(family, email)
-    return {'email': email, 'profile': profile, 'status': 'registered'}
+    return {'email': email, 'profile': profile, 'generation': identity, 'status': 'registered'}
 
 
 def _refresh(state, force=False):
@@ -123,7 +180,7 @@ def _refresh(state, force=False):
                 if fingerprint(entry['profile']) != entry['fingerprint']:
                     result = {'email': email, 'status': 'profile_changed', 'numbersAt': None, 'windows': []}
                 entry['usage'] = result
-        except (OSError, ValueError):
+        except (OSError, ValueError, AntigravityError):
             entry['usage'] = {'email': email, 'status': 'unavailable', 'numbersAt': None, 'windows': []}
 
 
@@ -131,7 +188,7 @@ def accounts(force=False, refresh=False):
     with registry() as state:
         if refresh:
             _refresh(state, force)
-        return [dict(email=email, profile=a['profile'], usage=a.get('usage'),
+        return [dict(email=email, profile=a['profile'], generation=a['generation'], usage=a.get('usage'),
                      selectedFor=[f for f, selected in state['selected'].items() if selected == email])
                 for email, a in state['accounts'].items()]
 
@@ -140,7 +197,7 @@ def model_family(model):
     name = (model or '').lower()
     if 'gemini' in name:
         return 'gemini'
-    if 'claude' in name or 'gpt' in name:
+    if name == 'third_party' or 'claude' in name or 'gpt' in name:
         return 'third_party'
     return 'all'
 
@@ -208,12 +265,13 @@ def switch(email, model=None):
         if email not in state['accounts']:
             raise AntigravityError('Unknown Antigravity account')
         _refresh(state)
-        family = model_family(model)
-        if utilization(state['accounts'][email], family, time.time()) is None:
+        families = (model_family(model),) if model is not None else ('all', 'gemini', 'third_party')
+        if any(utilization(state['accounts'][email], family, time.time()) is None for family in families):
             raise AntigravityError('Target quota/identity is unreadable')
-        state['selected'][family] = email
-        state['lastSwitch'][family] = time.time()
-        return {'active': email, 'family': family}
+        for family in families:
+            state['selected'][family] = email
+            state['lastSwitch'][family] = time.time()
+        return {'active': email, 'family': families[0], 'families': list(families)}
 
 
 def pin_session(session_key, model=None, require_existing=False):
@@ -222,12 +280,12 @@ def pin_session(session_key, model=None, require_existing=False):
     with registry() as state:
         pinned = state['pins'].get(session_key)
         if pinned:
-            entry = state['accounts'].get(pinned)
+            entry = state['generations'].get(pinned)
             if not entry or fingerprint(entry['profile']) != entry['fingerprint']:
                 raise AntigravityError('Pinned account profile changed; resume refused')
             if tuple(entry.get('runtimeFingerprint', ())) != runtime_fingerprint(entry['binary']):
                 raise AntigravityError('Pinned ACP runtime changed; resume refused')
-            return dict(entry, email=pinned)
+            return dict(entry)
         if require_existing:
             raise AntigravityError("Existing session has no account pin; explicit mapping required")
         _refresh(state)
@@ -240,8 +298,8 @@ def pin_session(session_key, model=None, require_existing=False):
         if tuple(entry.get('runtimeFingerprint', ())) != runtime_fingerprint(entry['binary']):
             raise AntigravityError('Registered ACP runtime changed; launch refused')
         validate_profile(entry)
-        state['pins'][session_key] = selected
-        return dict(entry, email=selected)
+        state['pins'][session_key] = entry['generation']
+        return dict(entry)
 
 
 def install_launcher():

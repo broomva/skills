@@ -268,8 +268,12 @@ and the native Antigravity desktop/Go CLI's shared Keychain login. Those global 
 Commands: `list`, `status`, `usage`, `balance [--dry-run]`, and `switch EMAIL` accept
 `--provider antigravity`. Aggregate `--provider all` includes Antigravity. These commands currently
 emit sanitized JSON for this provider. `balance --auto` and new-session selection honor the shared
-`autoBalance` setting. A manual switch selects the conservative all-family route; model-specific
-new threads use independent Gemini / shared-third-party selections.
+`autoBalance` setting. A manual switch without `--model` updates every family selection; `--model gemini-4-argon-high`
+or `--model claude` targets one family. Balance accepts the same option; omitted, it evaluates
+the conservative all-family route used for unknown models. Use `balance --provider antigravity
+--model gemini` or `--model claude` to explicitly update a known-model family selection.
+Model-specific new threads automatically evaluate their own independent Gemini /
+shared-third-party selections.
 
 Each launch refreshes telemetry at most once per five minutes. Readings older than 30 minutes,
 identity errors, missing applicable quotas and unknown amounts are ineligible. Disabled buckets are
@@ -287,5 +291,10 @@ contract check before adding hashes. Registry/pins live privately under
 The fingerprint binds the native grant and project, ignoring access-token/serialization metadata.
 Native ACP refresh owns its profile; telemetry uses Google's documented refresh exchange, never
 writes native credentials, and permanently refuses a grant if unexpected refresh-token rotation
-is returned. Reauthorization must use a new profile; registered profiles are immutable. Existing
-pins refuse altered grants/runtimes instead of silently changing identity.
+is returned. Reauthorization must use a new profile; registered profiles are immutable. Sign in through a
+**fresh native T3 instance ID**, then run `antigravity-register` with the same email and new profile.
+This publishes an immutable account generation and makes it the latest for new sessions. Existing
+pins retain their original generation, including across subsequent registrations. Re-registering
+a retained profile is idempotent and does not roll the latest generation backward. Never sign in
+over a registered profile. V1 registries migrate atomically, preserving selections and pin ownership.
+Existing pins refuse altered grants/runtimes instead of silently changing identity.

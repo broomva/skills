@@ -130,9 +130,11 @@ def main(pm) -> None:
     p.add_argument("--auto", action="store_true", help="Hook mode: one evaluation per interval, machine-wide")
     p.add_argument("--reason", default="hook")
     p.add_argument("--signal", choices=["rate_limit", "auth_failed"], default=None)
+    p.add_argument("--model", help="Antigravity model whose quota family to balance (default: conservative unknown-model route)")
     p = sub.add_parser("switch", help="Switch the active account (safely)", parents=[common])
     p.add_argument("account", help="Account email or UUID")
     p.add_argument("--force", action="store_true", help="Discard an unidentifiable store credential")
+    p.add_argument("--model", help="Antigravity model whose quota family to switch (default: all families)")
     p = sub.add_parser("login-headless", help="Re-authorize an account from a browser session", parents=[common])
     p.add_argument("--email")
     p.add_argument("--repair-home", help="Codex: recover a retained home only after authority-confirmed token revocation")
@@ -165,6 +167,11 @@ def main(pm) -> None:
     args = parser.parse_args()
     args.json = getattr(args, "json", False)
     args.provider = getattr(args, "provider", "claude")
+    model = getattr(args, "model", None)
+    if model is not None and not (args.provider == "antigravity" or
+                                 (args.command == "balance" and args.provider == "all")):
+        parser.error("--model applies only to Antigravity, including balance --provider all")
+    antigravity_model = {"model": model} if model is not None else {}
 
     import pm_antigravity
     try:
@@ -177,9 +184,9 @@ def main(pm) -> None:
             elif args.command in ("list", "status", "usage"):
                 result = ag.accounts(force=getattr(args, "force", False), refresh=args.command != "list")
             elif args.command == "balance":
-                result = ag.balance(dry_run=args.dry_run, automatic=args.auto)
+                result = ag.balance(dry_run=args.dry_run, automatic=args.auto, **antigravity_model)
             elif args.command == "switch":
-                result = ag.switch(args.account)
+                result = ag.switch(args.account, **antigravity_model)
             else:
                 raise pm.StoreError("Antigravity supports list/status/usage/balance/switch; sign in through a fresh T3 instance")
             print(json.dumps(result, indent=2))
@@ -287,7 +294,7 @@ def main(pm) -> None:
             elif args.provider == "all":
                 if args.auto:
                     res = pm.run_auto_until_settled(reason=args.reason, signal=args.signal, provider="all")
-                    res["antigravity"] = pm_antigravity.balance(dry_run=args.dry_run, automatic=True)
+                    res["antigravity"] = pm_antigravity.balance(dry_run=args.dry_run, automatic=True, **antigravity_model)
                     if args.json:
                         print(json.dumps(res, indent=2))
                     else:
@@ -300,7 +307,7 @@ def main(pm) -> None:
                     c_res = pm.balance_accounts(threshold=args.threshold, dry_run=args.dry_run, verbose=not args.json,
                                                 source="manual_balance", signal=args.signal)
                     x_res = pm.evaluate_codex_balance(threshold=args.threshold, dry_run=args.dry_run, reason=args.reason)
-                    a_res = pm_antigravity.balance(dry_run=args.dry_run)
+                    a_res = pm_antigravity.balance(dry_run=args.dry_run, **antigravity_model)
                     if args.json:
                         print(json.dumps({"claude": c_res, "codex": x_res, "antigravity": a_res}, indent=2))
                     else:
