@@ -255,7 +255,9 @@ def test_repair_refuses_a_live_or_merely_expired_generation(cx, monkeypatch):
     import pm_codex_login
     home = _register(cx, DEV, DEV_ID, "rt-dev-live", select=True)
     before = (home / "auth.json").read_bytes()
-    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", lambda *a, **k: pytest.fail("must prove revocation before login"))
+    calls = []
+    monkeypatch.setattr(pm_codex_login, "run_codex_autonomous_login", cx.fake_login("rt-dev-new", calls=calls))
     with pytest.raises(pm_store.StoreError, match="not confirmed"):
         pm.login_codex_headless(DEV, repair_home=str(home))
     assert (home / "auth.json").read_bytes() == before
+    assert calls == [], "must prove revocation before login"
