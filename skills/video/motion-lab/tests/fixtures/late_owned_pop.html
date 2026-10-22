@@ -15,6 +15,10 @@
         anim.pause();
       }
       anim.currentTime = (t - 0.9) * 1000;
+    } else if (anim) {
+      // without this, an earlier frame drawn after a later one keeps its pose
+      anim.cancel();
+      anim = null;
     }
   };
 </script></body></html>

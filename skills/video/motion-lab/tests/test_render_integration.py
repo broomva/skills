@@ -115,9 +115,11 @@ class TestRender:
         assert m["aborted_at_frame"] == 0
 
     def test_an_animation_renderat_creates_late_and_leaves_paused_passes(self, tmp_path):
-        r = render("late_owned_pop.html", tmp_path, "--no-sheet")
+        # --verify-all proves the page pure, so a pass here is not a missed impurity
+        r = render("late_owned_pop.html", tmp_path, "--no-sheet", "--verify-all")
+        m = json.loads(r.stdout)
         assert r.returncode == 0, r.stdout + r.stderr
-        assert "renderat_running_animations" not in json.loads(r.stdout)
+        assert m["verify"]["mismatches"] == [] and "renderat_running_animations" not in m
 
     def test_a_single_frame_async_owned_render_passes(self, tmp_path):
         # One frame means one probe call: nothing can be learned across calls.
