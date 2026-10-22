@@ -119,10 +119,13 @@ and this skill is built to keep them:
    at every frame time (no screenshots), and a paused animation whose timing
    `renderAt` changed between consecutive calls is driven by it (a scrub through a
    negative `animation-delay`, a WAAPI animation it positions, even one that starts
-   late in the timeline) and is left alone (`driven_by.page_owned`). Any animation
-   that first appears after a `renderAt(t)` call fails the render (exit 3, listed
+   late in the timeline) and is left alone (`driven_by.page_owned`). An animation
+   that first appears during a `renderAt(t)` call, in the probe or in a capture
+   call, and that `renderAt` does not then own fails the render (exit 3, listed
    with its frame time in `renderat_created_animations`): toggling a class there
-   starts its timeline on the wall clock. Create the
+   starts its timeline on the wall clock. One that load code creates while an async
+   `renderAt` waits for it, and that `renderAt` then seeks, is page-owned and
+   passes. Create the
    animation at load, pause and seek it from `renderAt`, or set the pose directly
    in `renderAt` instead. Every other animation is seeked to t, including CSS the
    page froze under `?t=` and animations inside open shadow roots. `--verify` reloads the page
@@ -140,7 +143,7 @@ and this skill is built to keep them:
    |---|---|
    | 0 | rendered |
    | 2 | usage or runtime error (including a duration that rounds to zero frames) |
-   | 3 | `--verify` found an impure frame (listed in the manifest); the ownership probe saw `renderAt` create an animation (listed with its frame time); or the frames change although nothing the renderer seeks drives them (motion on its own clock) |
+   | 3 | `--verify` found an impure frame (listed in the manifest); a `renderAt` call created an animation it does not own (listed with its frame time, also when a later call timed out); or the frames change although nothing the renderer seeks drives them (motion on its own clock) |
    | 4 | `--mp4` failed |
    | 5 | the page threw, or a `renderAt` call did not finish within 30 s (`page_errors` in the manifest; `MOTION_LAB_FRAME_TIMEOUT_MS` overrides) |
    | 6 | nothing drives motion, so every frame is the same image (`--allow-static` for a still) |
@@ -255,8 +258,8 @@ later. Ambient motion stays under 5% of the hero's travel.
 
 - The linter is static. It cannot tell whether `renderAt` reads only `t`, whether
   a seeded generator is reseeded per frame, or a clock reached through an alias it
-  does not know. The ownership probe rejects an animation that renderAt creates
-  after a call, but `render.mjs --verify` is still the runtime check for other
+  does not know. The renderer rejects an animation that a renderAt call creates
+  and does not own, but `render.mjs --verify` is still the runtime check for other
   impurities, and it samples three
   frames in one session, not all of them. A clock that changes slower than the
   verify window (the minute of the hour, say) passes both gates.

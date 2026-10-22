@@ -86,6 +86,34 @@ class TestRender:
         assert m["renderat_created_animations"][0]["frame_time"] == 0.5
         assert "frame t=0.5" in m["warning"]
 
+    def test_an_animation_renderat_awaits_and_owns_is_not_reported(self, tmp_path):
+        # It appears during the first renderAt call, but load code created it and
+        # renderAt seeks it, so it is page-owned, not wall-clock motion.
+        r = render("async_owned_pop.html", tmp_path, "--no-sheet")
+        m = json.loads(r.stdout)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "renderat_created_animations" not in m
+
+    def test_a_capture_call_that_creates_a_keyframe_fails(self, tmp_path):
+        # renderAt reads a call counter, so the probe sees nothing; the capture
+        # call at frame 3 creates the keyframe and must be reported.
+        r = render("history_creates_keyframe.html", tmp_path, "--no-sheet")
+        m = json.loads(r.stdout)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert m["renderat_created_animations"][0]["frame_time"] == 0.25
+        assert m["drift"]["drifting"] == []  # the drift samples alone would miss it
+
+    def test_a_finding_survives_a_later_probe_timeout(self, tmp_path):
+        env = {**os.environ, "MOTION_LAB_FRAME_TIMEOUT_MS": "1500"}
+        r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), str(FIX / "created_then_hang.html"),
+                            "--seconds", "1", "--fps", "12", "--width", "160", "--height", "90",
+                            "--out", str(tmp_path), "--no-sheet"],
+                           cwd=NODE_DIR, env=env, capture_output=True, text=True, timeout=60)
+        m = json.loads((tmp_path / "manifest.json").read_text())
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert m["renderat_created_animations"][0]["frame_time"] == 0.5
+        assert m["aborted_at_frame"] == 0
+
     def test_seekable_pop_matches_the_direct_pose(self, tmp_path):
         # Linear easing makes the WAAPI and direct forms byte-identical.
         for fixture, out in (("seekable_pop.html", tmp_path / "seekable"),
