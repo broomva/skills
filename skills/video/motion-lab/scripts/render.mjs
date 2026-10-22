@@ -232,7 +232,7 @@ async function openAt(browser, o, url, probeTimes = []) {
             // cannot drop them. (Animations that existed before the call are the
             // renderer's and still run here; the capture check covers them.)
             const fresh = [];
-            for (const a of cur.keys()) if (!before.has(a) && a.playState === 'running') fresh.push(animationFinding(a));
+            for (const a of cur.keys()) if (!before.has(a) && a.playState === 'running' && a.playbackRate !== 0) fresh.push(animationFinding(a));
             const prev = window.__mlProbeSig;
             // a running animation's clock moves by itself, so only a PAUSED one
             // whose timing changed was changed by renderAt
@@ -325,15 +325,16 @@ async function frameAtUnsafe(page, t) {
     await Promise.all(anims.map((a) => a.ready.catch(() => {})));
     let drew = false;
     const created = [];
-    if (typeof window.renderAt === 'function') {
-      await window.renderAt(tt);
-      drew = true;
-      // The renderer has paused every animation it drives, so one still running
-      // after renderAt was started or resumed by renderAt and runs on the wall
-      // clock: a new one (a class toggle, a call-history renderAt) or a page-owned
-      // one renderAt plays on some frames.
+    if (typeof window.renderAt === 'function') { await window.renderAt(tt); drew = true; }
+    for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));
+    // Checked here, right before the capture, not when renderAt returns: a play()
+    // renderAt queues in a promise it does not await lands in between (P20 round
+    // 11). The renderer has paused every animation it drives, so one running now
+    // (and actually advancing: playbackRate 0 freezes a running animation) was
+    // started or resumed by renderAt and runs on the wall clock.
+    if (drew) {
       for (const a of (window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations())) {
-        if (a.playState !== 'running') continue;
+        if (a.playState !== 'running' || a.playbackRate === 0) continue;
         const target = a.effect && a.effect.target;
         created.push({
           frame_time: tt,
@@ -344,7 +345,6 @@ async function frameAtUnsafe(page, t) {
         });
       }
     }
-    for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));
     return { drew, anims: anims.length, smil, page_owned: anims.length - seeked, created };
   }, t);
 }

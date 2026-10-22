@@ -133,6 +133,18 @@ class TestRender:
         assert r.returncode == 3, r.stdout + r.stderr
         assert m["renderat_running_animations"][0]["frame_time"] == 0.25
 
+    def test_a_play_queued_in_an_unawaited_promise_fails(self, tmp_path):
+        # The check runs right before the capture, after the queued play() landed.
+        r = render("plays_from_unawaited_promise.html", tmp_path, "--no-sheet")
+        m = json.loads(r.stdout)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert m["renderat_running_animations"][0]["frame_time"] == 0.25
+
+    def test_a_rate_zero_animation_posed_by_renderat_passes(self, tmp_path):
+        r = render("rate_zero_pose.html", tmp_path, "--no-sheet")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "renderat_running_animations" not in json.loads(r.stdout)
+
     def test_seekable_pop_matches_the_direct_pose(self, tmp_path):
         # Linear easing makes the WAAPI and direct forms byte-identical.
         for fixture, out in (("seekable_pop.html", tmp_path / "seekable"),

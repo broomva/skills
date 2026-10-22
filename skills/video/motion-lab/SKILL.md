@@ -121,8 +121,9 @@ and this skill is built to keep them:
    negative `animation-delay`, a WAAPI animation it positions, even one that starts
    late in the timeline) and is left alone (`driven_by.page_owned`). Before each
    frame's `renderAt` call the renderer pauses every animation it drives, so an
-   animation still **running** when `renderAt` returns runs on the wall clock and
-   fails the render (exit 3, listed with its frame time in
+   animation **running** (and advancing: `playbackRate` 0 freezes it) when the
+   frame is captured, including one a `renderAt` promise played after it
+   returned, runs on the wall clock and fails the render (exit 3, listed with its frame time in
    `renderat_running_animations`). The probe applies the same rule to animations
    that first appear during a call. This catches a class toggle that starts a
    keyframe and a `renderAt` that plays an animation on some frames. An animation
@@ -264,6 +265,9 @@ later. Ambient motion stays under 5% of the hero's travel.
   impurities, and it samples three
   frames in one session, not all of them. A clock that changes slower than the
   verify window (the minute of the hour, say) passes both gates.
+- Animations inside a **closed** shadow root are out of reach: page JavaScript
+  cannot list them, so the renderer neither seeks them nor sees them running. Use
+  open shadow roots, or `--verify-all`.
 - The linter scans JavaScript with a small tokenizer, not a parser. A regex literal
   that contains a quote or a backtick (``s.replace(/`/g, "'")``) can hide the code
   after it; the runtime checks still see what that code does.
