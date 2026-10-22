@@ -77,6 +77,23 @@ class TestRender:
         assert r.returncode == 3
         assert json.loads(r.stdout)["verify"]["mismatches"]
 
+    def test_renderat_that_creates_a_css_keyframe_fails_by_default(self, tmp_path):
+        # The ownership probe must reject a CSS Animation that first appears when
+        # renderAt toggles its class, even without --verify or --verify-all.
+        r = render("renderat_creates_keyframe.html", tmp_path, "--no-sheet")
+        m = json.loads(r.stdout)
+        assert r.returncode == 3, r.stdout + r.stderr
+        assert m["renderat_created_animations"][0]["frame_time"] == 0.5
+        assert "frame t=0.5" in m["warning"]
+
+    def test_seekable_pop_matches_the_direct_pose(self, tmp_path):
+        # Linear easing makes the WAAPI and direct forms byte-identical.
+        for fixture, out in (("seekable_pop.html", tmp_path / "seekable"),
+                             ("direct_pop.html", tmp_path / "direct")):
+            r = render(fixture, out, "--no-sheet")
+            assert r.returncode == 0, r.stdout + r.stderr
+        assert digests(tmp_path / "seekable") == digests(tmp_path / "direct")
+
     def test_usage_error(self, tmp_path):
         r = subprocess.run(["node", str(SKILL / "scripts" / "render.mjs"), "--fps", "0", str(FIX / "good.html")],
                            cwd=NODE_DIR, capture_output=True, text=True)

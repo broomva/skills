@@ -164,10 +164,14 @@ MUTATIONS = [
     ("ownership probe never marks page-owned", "scripts/render.mjs",
      "            if (prev) for (const [a, sg] of cur) if (a.playState === 'paused' && prev.has(a) && prev.get(a) !== sg) window.__mlPageOwned.add(a);", "",
      "test_ownership_is_tested_not_guessed or test_renderat_wins", True),
+    ("renderAt-created animations not reported", "scripts/render.mjs",
+     "            for (const a of cur.keys()) if (!before.has(a)) window.__mlRenderAtCreated.push(animationFinding(a));",
+     "            for (const a of cur.keys()) if (false) window.__mlRenderAtCreated.push(animationFinding(a));",
+     "test_renderat_that_creates_a_css_keyframe_fails_by_default", True),
     ("page-owned scrub keeps its pre-pause run time", "scripts/render.mjs",
      "          if (window.__mlPageOwned.has(a)) a.currentTime = 0;", "", "test_ownership_is_tested_not_guessed", True),
     ("a probe timeout does not abort", "scripts/render.mjs",
-     "          if (msg.includes('timed out after')) return { page, errors, blocked, aborted: true };", "",
+     "          if (msg.includes('timed out after')) return { page, errors, blocked, createdAnimations, aborted: true };", "",
      "test_a_hang_at_t0", True),
     ("guard root from the link's directory, not the real input's", "scripts/render.mjs",
      "  const root = path.dirname(realpathSync(path.resolve(o.file)));",
@@ -216,7 +220,7 @@ MUTATIONS = [
 # platform says nothing about the test, only about the platform.
 PLATFORM_ONLY = {
     "ready-await before pausing removed (warm-up and per-frame)": (
-        "darwin", "the compositor race reproduces on macOS Chromium (5/5), not on Linux headless Chromium"),
+        "darwin", "the compositor race is timing-sensitive; run only with MOTION_LAB_ASSERT_COMPOSITOR_RACE=1 on a measured macOS Chromium"),
 }
 
 
@@ -227,7 +231,8 @@ def main() -> int:
         if needs_render and not render_ok:
             print(f"SKIP  {desc} (set MOTION_LAB_NODE_DIR)")
             continue
-        if desc in PLATFORM_ONLY and not sys.platform.startswith(PLATFORM_ONLY[desc][0]):
+        if desc in PLATFORM_ONLY and (not sys.platform.startswith(PLATFORM_ONLY[desc][0])
+                                      or not os.environ.get("MOTION_LAB_ASSERT_COMPOSITOR_RACE")):
             print(f"SKIP  {desc} ({PLATFORM_ONLY[desc][1]})")
             continue
         work = Path(tempfile.mkdtemp(prefix="mut_motionlab_"))

@@ -26,7 +26,8 @@
 // three frames on one machine: a pass is evidence, not proof, of purity, and the
 // manifest says so (verify.scope). --verify-all re-renders every frame.
 //
-// Exit codes: 0 ok; 2 usage or runtime error; 3 --verify found an impure frame;
+// Exit codes: 0 ok; 2 usage or runtime error; 3 --verify found an impure frame,
+// or the ownership probe saw renderAt create an Animation;
 // 4 --mp4 failed; 5 the page threw, or a renderAt call timed out (the render stops
 // there and the manifest is still written; page_errors lists it); 6 nothing drives
 // motion (no renderAt, no animations, no SMIL) and every frame is the same image
@@ -161,6 +162,7 @@ async function openAt(browser, o, url, probeTimes = []) {
     return route.abort();
   });
   const errors = [];
+  const createdAnimations = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(url, { waitUntil: 'load' });
   await page.evaluate(async () => {
@@ -189,24 +191,44 @@ async function openAt(browser, o, url, probeTimes = []) {
       for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));
       window.__mlPageOwned = new WeakSet();
       window.__mlProbeSig = null;
+      window.__mlRenderAtCreated = [];
     }), 'warm-up');
     // Ownership probe: call renderAt at EVERY frame time (no screenshots, so it is
     // cheap) and mark as page-owned any paused animation whose timing renderAt
-    // changed between consecutive calls. Two sample times (t=0 and 0.37 x duration)
-    // missed a scrub renderAt only drives later in the timeline (P20 round 7).
-    // Each call has its own timeout; a throw is recorded and the probe goes on.
+    // changed between consecutive calls. An animation that first appears after a
+    // call is a different finding: renderAt started it on the wall clock, so a
+    // frame cannot be a pure function of t. Two sample times (t=0 and 0.37 x
+    // duration) missed a scrub renderAt only drives later in the timeline (P20
+    // round 7). Each call has its own timeout; a throw is recorded and the probe
+    // goes on.
     const hasRenderAt = await page.evaluate(() => typeof window.renderAt === 'function');
     if (hasRenderAt) {
       for (let i = 0; i < probeTimes.length; i++) {
         const t = probeTimes[i];
         try {
           await withTimeout(page.evaluate(async (tt) => {
+            const all = () => window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations();
             const sig = (a) => {
               const tm = a.effect && a.effect.getTiming ? a.effect.getTiming() : {};
               return [a.currentTime, tm.delay, tm.duration, tm.iterationStart].join('|');
             };
+            const animationFinding = (a) => {
+              const target = a.effect && a.effect.target;
+              return {
+                frame_time: tt,
+                animationName: typeof a.animationName === 'string' && a.animationName ? a.animationName : null,
+                id: typeof a.id === 'string' && a.id ? a.id : null,
+                target: target && target.tagName
+                  ? `${target.tagName.toLowerCase()}${target.id ? `#${target.id}` : ''}` : null,
+              };
+            };
+            const before = new Set(all());
             await window.renderAt(tt);
-            const cur = new Map((window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations()).map((a) => [a, sig(a)]));
+            const cur = new Map(all().map((a) => [a, sig(a)]));
+            // MUTATION_ANCHOR: a newly-created Animation begins from wall-clock
+            // time; even if a later call cancels and recreates it, that new identity
+            // is another finding.
+            for (const a of cur.keys()) if (!before.has(a)) window.__mlRenderAtCreated.push(animationFinding(a));
             const prev = window.__mlProbeSig;
             // a running animation's clock moves by itself, so only a PAUSED one
             // whose timing changed was changed by renderAt
@@ -216,7 +238,7 @@ async function openAt(browser, o, url, probeTimes = []) {
         } catch (e) {
           const msg = String(e.message || e).split('\n')[0];
           errors.push(msg.startsWith('warm-up probe') ? msg : `warm-up probe t=${t}: ${msg}`);
-          if (msg.includes('timed out after')) return { page, errors, blocked, aborted: true };
+          if (msg.includes('timed out after')) return { page, errors, blocked, createdAnimations, aborted: true };
         }
       }
       await page.evaluate(() => {
@@ -225,15 +247,22 @@ async function openAt(browser, o, url, probeTimes = []) {
         for (const a of (window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations()))
           if (window.__mlPageOwned.has(a)) a.currentTime = 0;
       });
+      createdAnimations.push(...await page.evaluate(() => window.__mlRenderAtCreated || []));
     }
     const first = await frameAt(page, 0, errors);
-    if (first.timedOut) return { page, errors, blocked, aborted: true };
+    if (first.timedOut) return { page, errors, blocked, createdAnimations, aborted: true };
     await page.screenshot({ timeout: FRAME_TIMEOUT_MS });
   } catch (e) {
     errors.push(String(e.message || e).split('\n')[0]);
-    return { page, errors, blocked, aborted: true };
+    return { page, errors, blocked, createdAnimations, aborted: true };
   }
-  return { page, errors, blocked, aborted: false };
+  return { page, errors, blocked, createdAnimations, aborted: false };
+}
+
+function describeCreatedAnimation(finding) {
+  const identity = finding.animationName ? `CSS animation "${finding.animationName}"`
+    : finding.id ? `animation id "${finding.id}"` : 'unnamed animation';
+  return `${identity}${finding.target ? ` on ${finding.target}` : ''}`;
 }
 
 async function frameAt(page, t, errors = []) {
@@ -338,9 +367,14 @@ async function main() {
   try {
     const probeTimes = Array.from({ length: N }, (_, i) => i / o.fps);
     const opened = await openAt(browser, o, url.href, probeTimes);
-    const { page, errors, blocked } = opened;
+    const { page, errors, blocked, createdAnimations } = opened;
     manifest.page_errors = errors;
     manifest.blocked_requests = blocked;
+    if (createdAnimations.length) {
+      manifest.renderat_created_animations = createdAnimations;
+      manifest.warning = `renderAt created ${describeCreatedAnimation(createdAnimations[0])} after frame t=${createdAnimations[0].frame_time}; the animation depends on the wall clock`;
+      flags.impure = true;
+    }
     if (opened.aborted) { aborted = true; manifest.aborted_at_frame = 0; }
     // Early drift sample, before the frame loop: a one-shot intro that plays for a
     // while after load and then stops corrupts the first frames and is gone by the

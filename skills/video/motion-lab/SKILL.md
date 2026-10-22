@@ -119,9 +119,12 @@ and this skill is built to keep them:
    at every frame time (no screenshots), and a paused animation whose timing
    `renderAt` changed between consecutive calls is driven by it (a scrub through a
    negative `animation-delay`, a WAAPI animation it positions, even one that starts
-   late in the timeline) and is left alone (`driven_by.page_owned`). Every other
-   animation is seeked to t, including CSS the page froze under `?t=` and
-   animations inside open shadow roots. `--verify` reloads the page
+   late in the timeline) and is left alone (`driven_by.page_owned`). Any animation
+   that first appears after a `renderAt(t)` call is rejected immediately (exit 3):
+   toggling a class there starts its timeline on the wall clock. Create the
+   animation at load, pause and seek it from `renderAt`, or set the pose directly
+   in `renderAt` instead. Every other animation is seeked to t, including CSS the
+   page froze under `?t=` and animations inside open shadow roots. `--verify` reloads the page
    and re-renders the first, middle and last frames; if any byte differs, a frame
    is not a pure function of t. This catches what the linter cannot, such as a
    `renderAt` that reads a counter. `--verify-all` re-renders every frame, in
@@ -136,7 +139,7 @@ and this skill is built to keep them:
    |---|---|
    | 0 | rendered |
    | 2 | usage or runtime error (including a duration that rounds to zero frames) |
-   | 3 | `--verify` found an impure frame (listed in the manifest), or the frames change although nothing the renderer seeks drives them (motion on its own clock) |
+   | 3 | `--verify` found an impure frame (listed in the manifest); the ownership probe saw `renderAt` create an animation (listed with its frame time); or the frames change although nothing the renderer seeks drives them (motion on its own clock) |
    | 4 | `--mp4` failed |
    | 5 | the page threw, or a `renderAt` call did not finish within 30 s (`page_errors` in the manifest; `MOTION_LAB_FRAME_TIMEOUT_MS` overrides) |
    | 6 | nothing drives motion, so every frame is the same image (`--allow-static` for a still) |
@@ -222,6 +225,7 @@ Every frame must be a pure function of time t, in seconds.
 If JavaScript drives any motion, expose window.renderAt(t) that draws exactly that frame.
 With ?t= in the URL, draw that frame and never start requestAnimationFrame.
 Animate with CSS keyframes, the Web Animations API, SVG, Canvas 2D or WebGL. No CSS transitions.
+Never start a CSS keyframe inside renderAt by toggling a class. Create the animation at load and pause/seek it from renderAt, or set the pose directly in renderAt.
 No Date.now, no setTimeout or setInterval starts, no unseeded Math.random.
 Loops: render frames 0 to N-1 only, and frame N-1 must flow into frame 0.
 If the page needs time to load (fonts, textures), set window.__ready = true when done.
@@ -250,7 +254,9 @@ later. Ambient motion stays under 5% of the hero's travel.
 
 - The linter is static. It cannot tell whether `renderAt` reads only `t`, whether
   a seeded generator is reseeded per frame, or a clock reached through an alias it
-  does not know. `render.mjs --verify` is the runtime check, and it samples three
+  does not know. The ownership probe rejects an animation that renderAt creates
+  after a call, but `render.mjs --verify` is still the runtime check for other
+  impurities, and it samples three
   frames in one session, not all of them. A clock that changes slower than the
   verify window (the minute of the hour, say) passes both gates.
 - The linter scans JavaScript with a small tokenizer, not a parser. A regex literal
