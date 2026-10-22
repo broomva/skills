@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;background:#fff}
+  .box{position:absolute;top:30px;left:0;width:20px;height:20px;background:#000}
+</style></head>
+<body><div class="box"></div><script>
+  // A running animation frozen with playbackRate 0 and posed by currentTime does
+  // not advance on the wall clock: a pure page (P20 round 11). renderAt creates
+  // it on the first call and plays it on every call, so it is running (at rate 0)
+  // both when the probe first sees it and when each frame is captured.
+  let anim = null;
+  window.renderAt = t => {
+    if (!anim) {
+      anim = document.querySelector('.box').animate(
+        [{transform:'translateX(0px)'},{transform:'translateX(100px)'}], {duration:1000, fill:'both'});
+    }
+    anim.playbackRate = 0;
+    anim.play();
+    anim.currentTime = t * 1000;
+  };
+</script></body></html>

@@ -26,7 +26,8 @@
 // three frames on one machine: a pass is evidence, not proof, of purity, and the
 // manifest says so (verify.scope). --verify-all re-renders every frame.
 //
-// Exit codes: 0 ok; 2 usage or runtime error; 3 --verify found an impure frame;
+// Exit codes: 0 ok; 2 usage or runtime error; 3 --verify found an impure frame,
+// or an Animation was running after a renderAt call;
 // 4 --mp4 failed; 5 the page threw, or a renderAt call timed out (the render stops
 // there and the manifest is still written; page_errors lists it); 6 nothing drives
 // motion (no renderAt, no animations, no SMIL) and every frame is the same image
@@ -161,6 +162,8 @@ async function openAt(browser, o, url, probeTimes = []) {
     return route.abort();
   });
   const errors = [];
+  const createdAnimations = [];
+  const candidates = [];
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(url, { waitUntil: 'load' });
   await page.evaluate(async () => {
@@ -192,31 +195,59 @@ async function openAt(browser, o, url, probeTimes = []) {
     }), 'warm-up');
     // Ownership probe: call renderAt at EVERY frame time (no screenshots, so it is
     // cheap) and mark as page-owned any paused animation whose timing renderAt
-    // changed between consecutive calls. Two sample times (t=0 and 0.37 x duration)
-    // missed a scrub renderAt only drives later in the timeline (P20 round 7).
-    // Each call has its own timeout; a throw is recorded and the probe goes on.
+    // changed between consecutive calls. An animation that first appears during a
+    // call and is RUNNING when the call returns is a different finding: it runs on
+    // the wall clock, so a frame cannot be a pure function of t. One renderAt left
+    // paused is renderAt's to seek, however it was created (P20 rounds 9-10: an
+    // ownership guess across calls failed both ways). Two sample times (t=0 and 0.37 x
+    // duration) missed a scrub renderAt only drives later in the timeline (P20
+    // round 7). Each call has its own timeout; a throw is recorded and the probe
+    // goes on.
     const hasRenderAt = await page.evaluate(() => typeof window.renderAt === 'function');
     if (hasRenderAt) {
       for (let i = 0; i < probeTimes.length; i++) {
         const t = probeTimes[i];
         try {
           await withTimeout(page.evaluate(async (tt) => {
+            const all = () => window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations();
             const sig = (a) => {
               const tm = a.effect && a.effect.getTiming ? a.effect.getTiming() : {};
               return [a.currentTime, tm.delay, tm.duration, tm.iterationStart].join('|');
             };
+            const animationFinding = (a) => {
+              const target = a.effect && a.effect.target;
+              return {
+                frame_time: tt,
+                animationName: typeof a.animationName === 'string' && a.animationName ? a.animationName : null,
+                id: typeof a.id === 'string' && a.id ? a.id : null,
+                target: target && target.tagName
+                  ? `${target.tagName.toLowerCase()}${target.id ? `#${target.id}` : ''}` : null,
+              };
+            };
+            const before = new Set(all());
             await window.renderAt(tt);
-            const cur = new Map((window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations()).map((a) => [a, sig(a)]));
+            // judge state after the same two rAF ticks the capture waits, so a
+            // pause or play renderAt queues has landed (P20 round 12)
+            const tick = window.__mlRAF || window.requestAnimationFrame.bind(window);
+            for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));
+            const cur = new Map(all().map((a) => [a, sig(a)]));
+            // MUTATION_ANCHOR: a new Animation still running after the call runs
+            // on the wall clock. Findings are returned per call, so a later timeout
+            // cannot drop them. (Animations that existed before the call are the
+            // renderer's and still run here; the capture check covers them.)
+            const fresh = [];
+            for (const a of cur.keys()) if (!before.has(a) && a.playState === 'running' && a.playbackRate !== 0) fresh.push(animationFinding(a));
             const prev = window.__mlProbeSig;
             // a running animation's clock moves by itself, so only a PAUSED one
             // whose timing changed was changed by renderAt
             if (prev) for (const [a, sg] of cur) if (a.playState === 'paused' && prev.has(a) && prev.get(a) !== sg) window.__mlPageOwned.add(a);
             window.__mlProbeSig = cur;
-          }, t), `warm-up probe t=${t}`);
+            return fresh;
+          }, t), `warm-up probe t=${t}`).then((fresh) => { candidates.push(...fresh); });
         } catch (e) {
           const msg = String(e.message || e).split('\n')[0];
           errors.push(msg.startsWith('warm-up probe') ? msg : `warm-up probe t=${t}: ${msg}`);
-          if (msg.includes('timed out after')) return { page, errors, blocked, aborted: true };
+          if (msg.includes('timed out after')) return { page, errors, blocked, createdAnimations: candidates, aborted: true };
         }
       }
       await page.evaluate(() => {
@@ -225,20 +256,29 @@ async function openAt(browser, o, url, probeTimes = []) {
         for (const a of (window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations()))
           if (window.__mlPageOwned.has(a)) a.currentTime = 0;
       });
+      createdAnimations.push(...candidates);
     }
     const first = await frameAt(page, 0, errors);
-    if (first.timedOut) return { page, errors, blocked, aborted: true };
+    if (first.timedOut) return { page, errors, blocked, createdAnimations, aborted: true };
     await page.screenshot({ timeout: FRAME_TIMEOUT_MS });
   } catch (e) {
     errors.push(String(e.message || e).split('\n')[0]);
-    return { page, errors, blocked, aborted: true };
+    return { page, errors, blocked, createdAnimations, aborted: true };
   }
-  return { page, errors, blocked, aborted: false };
+  return { page, errors, blocked, createdAnimations, aborted: false };
+}
+
+function describeCreatedAnimation(finding) {
+  const identity = finding.animationName ? `CSS animation "${finding.animationName}"`
+    : finding.id ? `animation id "${finding.id}"` : 'unnamed animation';
+  return `${identity}${finding.target ? ` on ${finding.target}` : ''}`;
 }
 
 async function frameAt(page, t, errors = []) {
   try {
-    return await withTimeout(frameAtUnsafe(page, t), 'renderAt');
+    const info = await withTimeout(frameAtUnsafe(page, t), 'renderAt');
+    if (info.created && info.created.length) (page.__mlCaptureCreated ||= []).push(...info.created);
+    return info;
   } catch (e) {
     // renderAt threw for this t: record it (exit 5) instead of aborting the render
     const msg = String(e.message || e).split('\n')[0];
@@ -288,9 +328,28 @@ async function frameAtUnsafe(page, t) {
     // be ready before renderAt and the capture.
     await Promise.all(anims.map((a) => a.ready.catch(() => {})));
     let drew = false;
+    const created = [];
     if (typeof window.renderAt === 'function') { await window.renderAt(tt); drew = true; }
     for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));
-    return { drew, anims: anims.length, smil, page_owned: anims.length - seeked };
+    // Checked here, right before the capture, not when renderAt returns: a play()
+    // renderAt queues in a promise it does not await lands in between (P20 round
+    // 11). The renderer has paused every animation it drives, so one running now
+    // (and actually advancing: playbackRate 0 freezes a running animation) was
+    // started or resumed by renderAt and runs on the wall clock.
+    if (drew) {
+      for (const a of (window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations())) {
+        if (a.playState !== 'running' || a.playbackRate === 0) continue;
+        const target = a.effect && a.effect.target;
+        created.push({
+          frame_time: tt,
+          animationName: typeof a.animationName === 'string' && a.animationName ? a.animationName : null,
+          id: typeof a.id === 'string' && a.id ? a.id : null,
+          target: target && target.tagName
+            ? `${target.tagName.toLowerCase()}${target.id ? `#${target.id}` : ''}` : null,
+        });
+      }
+    }
+    return { drew, anims: anims.length, smil, page_owned: anims.length - seeked, created };
   }, t);
 }
 
@@ -338,7 +397,7 @@ async function main() {
   try {
     const probeTimes = Array.from({ length: N }, (_, i) => i / o.fps);
     const opened = await openAt(browser, o, url.href, probeTimes);
-    const { page, errors, blocked } = opened;
+    const { page, errors, blocked, createdAnimations } = opened;
     manifest.page_errors = errors;
     manifest.blocked_requests = blocked;
     if (opened.aborted) { aborted = true; manifest.aborted_at_frame = 0; }
@@ -372,6 +431,13 @@ async function main() {
     }
     manifest.driven_by = drive
       ? { renderAt: drive.drew, animations: drive.anims, smil: drive.smil, page_owned: drive.page_owned } : null;
+    // the probe's findings first, then the capture calls'
+    const created = [...createdAnimations, ...(page.__mlCaptureCreated || [])];
+    if (created.length) {
+      manifest.renderat_running_animations = created;
+      manifest.warning = `${describeCreatedAnimation(created[0])} was running after the renderAt call at frame t=${created[0].frame_time}: it runs on the wall clock`;
+      flags.impure = true;
+    }
 
     if (!aborted) {
       const after = await page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }));

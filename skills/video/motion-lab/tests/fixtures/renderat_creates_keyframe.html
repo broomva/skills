@@ -1,0 +1,12 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;background:#fff}
+  .badge{position:absolute;left:60px;top:25px;width:40px;height:40px;background:#000;opacity:0}
+  .badge.in{opacity:1;animation:pop 0.5s linear both}
+  @keyframes pop{from{transform:scale(0)}to{transform:scale(1)}}
+</style></head>
+<body><div class="badge"></div><script>
+  const badge = document.querySelector('.badge');
+  // Deliberately bad: this creates a fresh CSS Animation during renderAt.
+  window.renderAt = t => { badge.classList.toggle('in', t >= 0.5 && t < 0.95); };
+</script></body></html>

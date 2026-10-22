@@ -1,0 +1,21 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;background:#fff}
+  .badge{position:absolute;left:60px;top:25px;width:40px;height:40px;background:#000}
+</style></head>
+<body><div class="badge"></div><script>
+  // Load code creates the animation late; an async renderAt waits for it and then
+  // seeks it. It appears during a renderAt call but renderAt owns it, so the probe
+  // must not report it (P20 round 9, stratum B). Timers here are deliberate: they
+  // are the simplest way to make load-time creation land inside the first call.
+  const badge = document.querySelector('.badge'); let pop;
+  setTimeout(() => {
+    pop = badge.animate([{transform:'scale(0)'},{transform:'scale(1)'}],
+      {duration:500, delay:500, fill:'both', easing:'linear'});
+    pop.pause();
+  }, 50);
+  window.renderAt = async t => {
+    while (!pop) await new Promise(r => setTimeout(r, 1));
+    pop.currentTime = t * 1000;
+  };
+</script></body></html>

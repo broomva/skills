@@ -11,7 +11,7 @@
 | blurry or shimmering text | sub-pixel resting positions | Snap resting text to whole pixels. Render at 2x and scale down (`--scale 2`). |
 | text moves before it can be read | hold too short | Hold every text state 0.3 s per word plus 0.5 s before it moves. |
 | everything moves at once | no hierarchy | One hero move at a time. Others start 150 ms later at 60% of its travel. |
-| `render.mjs --verify` exits 3 | renderAt depends on something besides t | Find the state renderAt mutates or reads (a counter, an accumulator, a lazily built cache) and derive it from t instead. |
+| `render.mjs` exits 3 | renderAt depends on something besides t, or creates an animation by toggling a class | Derive mutated or read state from t. Do not start keyframes in renderAt: create the animation at load, pause and seek it, or set the pose directly. |
 
 ## Review prompts that point at frames, not feelings
 

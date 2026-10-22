@@ -1,0 +1,17 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;background:#fff}
+  .badge{position:absolute;left:60px;top:25px;width:40px;height:40px;background:#000}
+</style></head>
+<body><div class="badge"></div><script>
+  // Deliberately bad: at t=0.25 renderAt queues play() in a promise chain it does
+  // not await, so the animation is still paused when renderAt returns and runs
+  // on the wall clock by the time the frame is captured (P20 round 11).
+  const badge = document.querySelector('.badge');
+  const anim = badge.animate([{transform:'scale(0)'},{transform:'scale(1)'}], {duration:500, fill:'both'});
+  anim.pause();
+  window.renderAt = t => {
+    if (t === 0.25) Promise.resolve().then(() => Promise.resolve()).then(() => anim.play());
+    else { anim.pause(); anim.currentTime = Math.max(0, t - 0.25) * 1000; }
+  };
+</script></body></html>
