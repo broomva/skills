@@ -435,7 +435,7 @@ async function main() {
     const created = [...createdAnimations, ...(page.__mlCaptureCreated || [])];
     if (created.length) {
       manifest.renderat_created_animations = created;
-      manifest.warning = `renderAt created ${describeCreatedAnimation(created[0])} after frame t=${created[0].frame_time}; the animation depends on the wall clock`;
+      manifest.warning = `${describeCreatedAnimation(created[0])} appeared during the renderAt call at frame t=${created[0].frame_time} and renderAt does not own it: it runs on the wall clock`;
       flags.impure = true;
     }
 
