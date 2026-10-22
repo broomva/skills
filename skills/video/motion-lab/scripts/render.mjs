@@ -226,6 +226,10 @@ async function openAt(browser, o, url, probeTimes = []) {
             };
             const before = new Set(all());
             await window.renderAt(tt);
+            // judge state after the same two rAF ticks the capture waits, so a
+            // pause or play renderAt queues has landed (P20 round 12)
+            const tick = window.__mlRAF || window.requestAnimationFrame.bind(window);
+            for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));
             const cur = new Map(all().map((a) => [a, sig(a)]));
             // MUTATION_ANCHOR: a new Animation still running after the call runs
             // on the wall clock. Findings are returned per call, so a later timeout

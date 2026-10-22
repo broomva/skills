@@ -147,6 +147,17 @@ class TestRender:
         assert r.returncode == 0, r.stdout + r.stderr
         assert "renderat_running_animations" not in json.loads(r.stdout)
 
+    def test_a_pause_that_lands_after_renderat_returns_passes(self, tmp_path):
+        r = render("pauses_after_return.html", tmp_path, "--no-sheet")
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert "renderat_running_animations" not in json.loads(r.stdout)
+
+    def test_a_rate_set_by_update_playback_rate_zero_passes(self, tmp_path):
+        r = render("update_rate_zero.html", tmp_path, "--no-sheet", "--verify-all")
+        m = json.loads(r.stdout)
+        assert r.returncode == 0, r.stdout + r.stderr
+        assert m["verify"]["mismatches"] == [] and "renderat_running_animations" not in m
+
     def test_seekable_pop_matches_the_direct_pose(self, tmp_path):
         # Linear easing makes the WAAPI and direct forms byte-identical.
         for fixture, out in (("seekable_pop.html", tmp_path / "seekable"),

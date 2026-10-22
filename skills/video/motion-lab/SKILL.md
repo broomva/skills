@@ -124,8 +124,9 @@ and this skill is built to keep them:
    animation **running** (and advancing: `playbackRate` 0 freezes it) when the
    frame is captured, including one a `renderAt` promise played after it
    returned, runs on the wall clock and fails the render (exit 3, listed with its frame time in
-   `renderat_running_animations`). The probe applies the same rule to animations
-   that first appear during a call. This catches a class toggle that starts a
+   `renderat_running_animations`). The probe applies the same rule, at the same
+   moment (two animation frames after the call), to animations that first appear
+   during a call. This catches a class toggle that starts a
    keyframe and a `renderAt` that plays an animation on some frames. An animation
    `renderAt` creates or awaits and leaves paused is its own to seek, and passes. Create the
    animation at load, pause and seek it from `renderAt`, or set the pose directly
