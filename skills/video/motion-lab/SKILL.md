@@ -120,8 +120,9 @@ and this skill is built to keep them:
    `renderAt` changed between consecutive calls is driven by it (a scrub through a
    negative `animation-delay`, a WAAPI animation it positions, even one that starts
    late in the timeline) and is left alone (`driven_by.page_owned`). Any animation
-   that first appears after a `renderAt(t)` call is rejected immediately (exit 3):
-   toggling a class there starts its timeline on the wall clock. Create the
+   that first appears after a `renderAt(t)` call fails the render (exit 3, listed
+   with its frame time in `renderat_created_animations`): toggling a class there
+   starts its timeline on the wall clock. Create the
    animation at load, pause and seek it from `renderAt`, or set the pose directly
    in `renderAt` instead. Every other animation is seeked to t, including CSS the
    page froze under `?t=` and animations inside open shadow roots. `--verify` reloads the page

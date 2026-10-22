@@ -220,7 +220,7 @@ MUTATIONS = [
 # platform says nothing about the test, only about the platform.
 PLATFORM_ONLY = {
     "ready-await before pausing removed (warm-up and per-frame)": (
-        "darwin", "the compositor race is timing-sensitive; run only with MOTION_LAB_ASSERT_COMPOSITOR_RACE=1 on a measured macOS Chromium"),
+        "darwin", "the compositor race reproduces on macOS Chromium (5/5), not on Linux headless Chromium"),
 }
 
 
@@ -231,8 +231,7 @@ def main() -> int:
         if needs_render and not render_ok:
             print(f"SKIP  {desc} (set MOTION_LAB_NODE_DIR)")
             continue
-        if desc in PLATFORM_ONLY and (not sys.platform.startswith(PLATFORM_ONLY[desc][0])
-                                      or not os.environ.get("MOTION_LAB_ASSERT_COMPOSITOR_RACE")):
+        if desc in PLATFORM_ONLY and not sys.platform.startswith(PLATFORM_ONLY[desc][0]):
             print(f"SKIP  {desc} ({PLATFORM_ONLY[desc][1]})")
             continue
         work = Path(tempfile.mkdtemp(prefix="mut_motionlab_"))
