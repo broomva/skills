@@ -1,0 +1,18 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;background:#fff}
+  .badge{position:absolute;left:60px;top:25px;width:40px;height:40px;background:#000}
+</style></head>
+<body><div class="badge"></div><script>
+  // Deliberately bad: the animation exists from load and renderAt pauses and
+  // seeks it, so the probe marks it page-owned, but at t=0.25 renderAt plays it
+  // and frame 3 runs on the wall clock (P20 round 10, stratum B). It is not new
+  // in any call, so only the capture check can see it.
+  const badge = document.querySelector('.badge');
+  const anim = badge.animate([{transform:'scale(0)'},{transform:'scale(1)'}], {duration:500, fill:'both'});
+  anim.pause();
+  window.renderAt = t => {
+    if (t === 0.25) anim.play();
+    else { anim.pause(); anim.currentTime = Math.max(0, t - 0.25) * 1000; }
+  };
+</script></body></html>

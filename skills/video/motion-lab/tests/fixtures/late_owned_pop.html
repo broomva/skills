@@ -1,0 +1,20 @@
+<!doctype html>
+<html><head><meta charset="utf-8"><style>
+  html,body{margin:0;background:#fff}
+  .badge{position:absolute;left:60px;top:25px;width:40px;height:40px;background:#000}
+</style></head>
+<body><div class="badge"></div><script>
+  // renderAt creates the animation lazily on the last frame and leaves it paused
+  // and seeked: a pure page that an ownership guess across calls failed (P20
+  // round 10, stratum B).
+  const badge = document.querySelector('.badge'); let anim;
+  window.renderAt = t => {
+    if (t >= 0.9) {
+      if (!anim) {
+        anim = badge.animate([{transform:'scale(0)'},{transform:'scale(1)'}], {duration:500, fill:'both'});
+        anim.pause();
+      }
+      anim.currentTime = (t - 0.9) * 1000;
+    }
+  };
+</script></body></html>

@@ -27,7 +27,7 @@
 // manifest says so (verify.scope). --verify-all re-renders every frame.
 //
 // Exit codes: 0 ok; 2 usage or runtime error; 3 --verify found an impure frame,
-// or a renderAt call created an Animation it does not own;
+// or an Animation was running after a renderAt call;
 // 4 --mp4 failed; 5 the page threw, or a renderAt call timed out (the render stops
 // there and the manifest is still written; page_errors lists it); 6 nothing drives
 // motion (no renderAt, no animations, no SMIL) and every frame is the same image
@@ -164,7 +164,6 @@ async function openAt(browser, o, url, probeTimes = []) {
   const errors = [];
   const createdAnimations = [];
   const candidates = [];
-  const strip = (list) => list.map(({ ref, ...finding }) => finding);
   page.on('pageerror', (e) => errors.push(String(e)));
   await page.goto(url, { waitUntil: 'load' });
   await page.evaluate(async () => {
@@ -193,16 +192,14 @@ async function openAt(browser, o, url, probeTimes = []) {
       for (let k = 0; k < 2; k++) await new Promise((r) => tick(() => r()));
       window.__mlPageOwned = new WeakSet();
       window.__mlProbeSig = null;
-      window.__mlCreatedRefs = [];
     }), 'warm-up');
     // Ownership probe: call renderAt at EVERY frame time (no screenshots, so it is
     // cheap) and mark as page-owned any paused animation whose timing renderAt
     // changed between consecutive calls. An animation that first appears during a
-    // call and that renderAt does not then own (paused, its timing moved by later
-    // calls) is a different finding: it runs on the wall clock, so a frame cannot
-    // be a pure function of t. Appearing during the call is not enough on its own:
-    // an async renderAt can await an animation that load code creates, and then
-    // seek it (P20 round 9). Two sample times (t=0 and 0.37 x
+    // call and is RUNNING when the call returns is a different finding: it runs on
+    // the wall clock, so a frame cannot be a pure function of t. One renderAt left
+    // paused is renderAt's to seek, however it was created (P20 rounds 9-10: an
+    // ownership guess across calls failed both ways). Two sample times (t=0 and 0.37 x
     // duration) missed a scrub renderAt only drives later in the timeline (P20
     // round 7). Each call has its own timeout; a throw is recorded and the probe
     // goes on.
@@ -230,12 +227,12 @@ async function openAt(browser, o, url, probeTimes = []) {
             const before = new Set(all());
             await window.renderAt(tt);
             const cur = new Map(all().map((a) => [a, sig(a)]));
-            // MUTATION_ANCHOR: a newly-created Animation begins from wall-clock
-            // time; even if a later call cancels and recreates it, that new identity
-            // is another candidate. Candidates are returned per call, so a later
-            // timeout cannot drop them.
+            // MUTATION_ANCHOR: a new Animation still running after the call runs
+            // on the wall clock. Findings are returned per call, so a later timeout
+            // cannot drop them. (Animations that existed before the call are the
+            // renderer's and still run here; the capture check covers them.)
             const fresh = [];
-            for (const a of cur.keys()) if (!before.has(a)) fresh.push({ ref: window.__mlCreatedRefs.push(a) - 1, ...animationFinding(a) });
+            for (const a of cur.keys()) if (!before.has(a) && a.playState === 'running') fresh.push(animationFinding(a));
             const prev = window.__mlProbeSig;
             // a running animation's clock moves by itself, so only a PAUSED one
             // whose timing changed was changed by renderAt
@@ -246,7 +243,7 @@ async function openAt(browser, o, url, probeTimes = []) {
         } catch (e) {
           const msg = String(e.message || e).split('\n')[0];
           errors.push(msg.startsWith('warm-up probe') ? msg : `warm-up probe t=${t}: ${msg}`);
-          if (msg.includes('timed out after')) return { page, errors, blocked, createdAnimations: strip(candidates), aborted: true };
+          if (msg.includes('timed out after')) return { page, errors, blocked, createdAnimations: candidates, aborted: true };
         }
       }
       await page.evaluate(() => {
@@ -255,9 +252,7 @@ async function openAt(browser, o, url, probeTimes = []) {
         for (const a of (window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations()))
           if (window.__mlPageOwned.has(a)) a.currentTime = 0;
       });
-      // keep only the candidates renderAt does not own
-      const owned = await page.evaluate(() => window.__mlCreatedRefs.map((a) => window.__mlPageOwned.has(a)));
-      createdAnimations.push(...strip(candidates.filter((c) => !owned[c.ref])));
+      createdAnimations.push(...candidates);
     }
     const first = await frameAt(page, 0, errors);
     if (first.timedOut) return { page, errors, blocked, createdAnimations, aborted: true };
@@ -331,13 +326,14 @@ async function frameAtUnsafe(page, t) {
     let drew = false;
     const created = [];
     if (typeof window.renderAt === 'function') {
-      const before = new Set(window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations());
       await window.renderAt(tt);
       drew = true;
-      // An animation a capture call creates was never seeked: the same finding
-      // as in the probe, for a renderAt whose behaviour depends on call history.
+      // The renderer has paused every animation it drives, so one still running
+      // after renderAt was started or resumed by renderAt and runs on the wall
+      // clock: a new one (a class toggle, a call-history renderAt) or a page-owned
+      // one renderAt plays on some frames.
       for (const a of (window.__mlAllAnims ? window.__mlAllAnims() : document.getAnimations())) {
-        if (before.has(a) || pageOwned.has(a)) continue;
+        if (a.playState !== 'running') continue;
         const target = a.effect && a.effect.target;
         created.push({
           frame_time: tt,
@@ -431,11 +427,11 @@ async function main() {
     }
     manifest.driven_by = drive
       ? { renderAt: drive.drew, animations: drive.anims, smil: drive.smil, page_owned: drive.page_owned } : null;
-    // the probe's findings first, then any a capture call created
+    // the probe's findings first, then the capture calls'
     const created = [...createdAnimations, ...(page.__mlCaptureCreated || [])];
     if (created.length) {
-      manifest.renderat_created_animations = created;
-      manifest.warning = `${describeCreatedAnimation(created[0])} appeared during the renderAt call at frame t=${created[0].frame_time} and renderAt does not own it: it runs on the wall clock`;
+      manifest.renderat_running_animations = created;
+      manifest.warning = `${describeCreatedAnimation(created[0])} was running after the renderAt call at frame t=${created[0].frame_time}: it runs on the wall clock`;
       flags.impure = true;
     }
 
