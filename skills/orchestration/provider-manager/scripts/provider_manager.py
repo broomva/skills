@@ -672,7 +672,7 @@ def _throttled_entry(account_id: str, prev: Optional[Dict[str, Any]], now: float
 
 
 def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retries: int = 1,
-                        ctx: Optional[Dict[str, Any]] = None) -> Optional[Dict[str, Any]]:
+                        ctx: Optional[Dict[str, Any]] = None, claimed: bool = False) -> Optional[Dict[str, Any]]:
     """5-hour/7-day usage for one account, with a `telemetry` status: ok | throttled | auth_expired
     | unavailable | no_credentials | needs_login. Only `ok` numbers can mark an account limited."""
     now = time.time()
@@ -688,7 +688,7 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
         save_usage_cache(cache)
         return entry
 
-    if not _claim_usage_call(account_id, now):
+    if not claimed and not _claim_usage_call(account_id, now):
         return done(_throttled_entry(account_id, prev, now, "usage endpoint 429; backing off"))
 
     is_store_account = account_id == ctx["storeAccountId"]
@@ -726,7 +726,8 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
         return done(_throttled_entry(account_id, prev, now, "usage endpoint 429"))
     if code == 401 and not is_store_account and max_retries > 0 and ctx["storeReadable"]:
         if refresh_account_token(account_id):
-            return fetch_account_usage(account_id, True, max_retries - 1, build_context(verify_identity=False))
+            return fetch_account_usage(account_id, True, max_retries - 1, build_context(verify_identity=False),
+                                       claimed=True)  # this call's own claim: the retry is part of it
     if code == 401:
         return done(_degraded_entry(account_id, "auth_expired", prev, now, "usage endpoint 401"))
     return done(_degraded_entry(account_id, "unavailable", prev, now, "usage endpoint %s" % code))
@@ -846,17 +847,19 @@ def _run_probe() -> Tuple[str, str, Optional[Dict[str, Any]]]:
     lines = text.strip().splitlines()
     readout = _probe_readout(lines)
     result = None
-    for line in reversed(lines):  # the final `result` message, as with --output-format json
+    for line in reversed(lines):  # the `result` message; stream-json opens with an `init` event
         try:
-            result = json.loads(line)
-            break
+            ev = json.loads(line)
         except ValueError:
             continue
-    if res.returncode == 0 and isinstance(result, dict) and not result.get("is_error"):
+        if isinstance(ev, dict) and ev.get("type", "result") == "result":
+            result = ev
+            break
+    if res.returncode == 0 and result is not None and not result.get("is_error"):
         return "ok", "probe answered", readout
     if isinstance(result, dict) and result.get("api_error_status") == 429:
         return "limited", "probe got HTTP 429 (%s)" % str(result.get("result") or "")[:80], readout
-    message = str(result.get("result") or "") if isinstance(result, dict) else text[-400:]
+    message = str(result.get("result") or "") if result is not None else text[-400:]
     blob = " ".join([message, (res.stderr or "")[-400:]])
     if LIMIT_RE.search(blob):
         return "limited", "probe hit a limit", readout
@@ -1178,7 +1181,7 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
         return (a.get("fiveHourUtil"), a.get("sevenDayUtil") or 0.0)
 
     active = next((a for a in accounts if a.get("isActive")), None)
-    if active and active.get("id") == ctx["storeAccountId"] and (
+    if active and not dry_run and active.get("id") == ctx["storeAccountId"] and (
             active.get("telemetry") == "throttled" or (active.get("usage") or {}).get("endpoint") == "throttled"):
         entry = readout_numbers(active, cfg, now)
         if entry:
@@ -1272,10 +1275,20 @@ def readout_numbers(active: Dict[str, Any], cfg: Dict[str, Any], now: float) -> 
     if now - float(rec.get("at", 0) or 0) >= interval:
         probe_cached(acc_id, 0.0)
         rec = (load_state().get("probes") or {}).get(acc_id) or {}
+        if not rec.get("readout"):
+            if rec.get("result") == "ok":  # it answered, and printed no windows: a changed Claude Code?
+                log_provider_event("telemetry.readout_missing", {"accountId": acc_id, "claudeVersion": claude_version()})
+            return None
         if build_context(verify_identity=False)["storeAccountId"] != acc_id:
             return None  # the store changed hands while the probe ran: whose numbers these are is unknown
+        five = rec["readout"].get("five_hour") or {}
+        rec = dict(rec, readoutFor=acc_id)
+        update_state(lambda s: s.setdefault("probes", {}).get(acc_id, {}).update(
+            readoutFor=acc_id, fiveHourAtProbe=round(float(five.get("utilization", 0)) * 100.0, 1),
+            resetsAt=_iso(five.get("resetsAt"))))  # lets _window_reset_since release a limit at the reset
     readout = rec.get("readout")
-    if not readout or float(rec.get("at", 0) or 0) <= numbers_at:
+    # only a readout this function attributed (another path's probe never checked whose store it read)
+    if not readout or rec.get("readoutFor") != acc_id or float(rec.get("at", 0) or 0) <= numbers_at:
         return None
     entry = _readout_entry(acc_id, readout, float(rec["at"]), now)
     if not entry:
@@ -1288,16 +1301,26 @@ def readout_numbers(active: Dict[str, Any], cfg: Dict[str, Any], now: float) -> 
     return entry
 
 
-def _readout_entry(account_id: str, readout: Dict[str, Any], at: float, now: float) -> Optional[Dict[str, Any]]:
+def _iso(epoch: Any) -> Optional[str]:
     from datetime import datetime, timezone
+    try:
+        return datetime.fromtimestamp(int(epoch), timezone.utc).isoformat()
+    except (TypeError, ValueError, OverflowError, OSError):
+        return None
 
+
+def _readout_entry(account_id: str, readout: Dict[str, Any], at: float, now: float) -> Optional[Dict[str, Any]]:
+    """Per-model weekly caps (seven_day_opus/sonnet) are not in the readout; the probe runs on the
+    sessions' model, so a cap it hits comes back as a 429 (`limited`) or `status: rejected`."""
     def window(key):
         w = readout[key]
-        return {"utilization": float(w["utilization"]) * 100.0,
-                "resets_at": datetime.fromtimestamp(int(w["resetsAt"]), timezone.utc).isoformat()}
+        resets = _iso(w["resetsAt"])
+        if resets is None:
+            raise ValueError(key)
+        return {"utilization": float(w["utilization"]) * 100.0, "resets_at": resets}
     try:
         data = {"five_hour": window("five_hour"), "seven_day": window("seven_day")}
-    except (KeyError, TypeError, ValueError, OverflowError, OSError):
+    except (KeyError, TypeError, ValueError):
         return None
     if readout.get("status") == "rejected":
         data["five_hour"]["locked_reason"] = "probe_rejected"

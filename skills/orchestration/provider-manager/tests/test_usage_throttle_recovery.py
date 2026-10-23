@@ -271,3 +271,62 @@ def test_another_accounts_login_leaves_the_backoff_alone(world, monkeypatch):
     _login_world(world, monkeypatch, B)
     assert pm.login_headless(email=B)["success"]
     assert pm.load_state()["telemetry"][acc]["backoffUntil"] > time.time() + 3000
+
+
+# -- P20 round 1 ----------------------------------------------------------------------------------
+
+def test_stream_json_framing_never_hides_the_result_or_a_limit(world, monkeypatch):
+    from unittest.mock import MagicMock
+    init = json.dumps({"type": "system", "subtype": "init", "session_id": "x"})
+    assistant = json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": "OK"}]}})
+    cases = {
+        "limited": (1, init + "\nClaude AI usage limit reached|1792752600\n"),  # plain text after init
+        "unknown": (0, init + "\n" + assistant + "\n"),  # cut off before its result: not an answer
+        "ok": (0, "\n".join([init, json.dumps(MEASURED_EVENT), assistant,
+                             json.dumps({"type": "result", "is_error": False, "result": "OK"})])),
+    }
+    for label, (rc, out) in cases.items():
+        monkeypatch.setattr(pm.subprocess, "run", lambda *a, **k: MagicMock(returncode=rc, stdout=out, stderr=""))
+        assert pm._run_probe()[0] == label, label
+    assert pm._run_probe()[2]["five_hour"]["utilization"] == 0.05
+
+
+def test_a_standby_401_inside_its_own_retry_refreshes_and_reads(world):
+    world.add_account(A)
+    world.add_account(B, five_hour=33.0)
+    world.activate(A)
+    pm.fetch_all_usage(force_refresh=True)
+    acc = world.accounts[B]["id"]
+    pm._note_429(acc, "3600", time.time())
+    _end_backoff(acc)
+    fake_anthropic.expire_access(world.orca_creds(B)["claudeAiOauth"]["accessToken"])
+    _age_cache()
+    row = _rows()[B]
+    assert row["telemetry"] == "ok" and row["fiveHourUtil"] == 33.0, \
+        "the 401 retry is part of the claimed call, not a second caller to hold off"
+
+
+def test_a_readout_from_a_probe_the_readout_did_not_attribute_is_never_used(world):
+    acc = _throttled_world(world)
+    stray = {"status": "allowed", "five_hour": {"utilization": 0.9, "resetsAt": int(time.time()) + 3600},
+             "seven_day": {"utilization": 0.9, "resetsAt": int(time.time()) + 86400}}
+    pm.update_state(lambda s: s.setdefault("probes", {}).__setitem__(
+        acc, {"at": time.time(), "result": "ok", "detail": "limited-path probe", "readout": stray}))
+    pm.balance_accounts()
+    assert _rows()[A]["numbersSource"] != "probe" and _probe_calls(A) == []
+
+
+def test_a_readout_probe_records_the_reset_so_a_limit_it_found_can_end_with_it(world):
+    acc = _throttled_world(world)
+    pm.balance_accounts()
+    rec = pm.load_state()["probes"][acc]
+    assert rec["readoutFor"] == acc and rec["fiveHourAtProbe"] == 40.0
+    assert pm._parse_ts(rec["resetsAt"]) > time.time()
+
+
+def test_a_missing_readout_is_logged_and_a_dry_run_never_probes(world):
+    acc = _throttled_world(world, readout=False)
+    pm.balance_accounts(dry_run=True)
+    assert _probe_calls(A) == [], "a dry run makes no request"
+    pm.balance_accounts()
+    assert [e["accountId"] for e in world.events("telemetry.readout_missing")] == [acc]

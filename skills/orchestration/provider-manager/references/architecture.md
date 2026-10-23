@@ -261,7 +261,11 @@ and `endpoint: throttled` (`status: rejected` becomes a lock, so a limit fails o
 probe-confirmed path). While the endpoint stays in backoff that entry is kept until
 `staleNumbersMinutes`, then it degrades to `throttled` like any other old numbers. Never for a standby
 (the probe only reaches the store), and discarded when `build_context` no longer identifies the store
-as that account after the probe. A malformed or missing event is no readout.
+as that account after the probe; only a probe record this path attributed (`readoutFor`) is ever reused,
+and it records the five-hour `resetsAt`/`fiveHourAtProbe` so a limit it found ends with that window. A
+malformed or missing event is no readout, and a probe that answered without one logs
+`telemetry.readout_missing` (with `claudeVersion`). A dry run never probes. The result line is the last
+`type: result` event (stream-json opens with `init`); with none, the raw text is classified as before.
 
 **Dead grants.** An `invalid_grant` marks the account `needsLogin` with a fingerprint of that refresh
 token (`health.<id>.deadGrant`). Its refreshes are skipped while the copy still holds it, and the mark
@@ -314,7 +318,7 @@ Events:
 - `balance.decision` (`action`, `reason`, `telemetry`, `remainingSeconds`...);
 - `probe` (`result`), `probe.disagrees` (a session reported a limit and the probe says ok), `version_unverified` (`claudeVersion`);
 - `balance.decision` also carries `numbersAgeSeconds` and `telemetryNote` when the active account's numbers are stale;
-- `telemetry.throttled` (`backoffUntil`), `telemetry.readout` (`fiveHour`, `sevenDay`: the active account's numbers taken from a probe);
+- `telemetry.throttled` (`backoffUntil`), `telemetry.readout` (`fiveHour`, `sevenDay`: the active account's numbers taken from a probe), `telemetry.readout_missing` (`claudeVersion`);
 - `refresh`, `refresh.refused` (`reason`), `refresh.deferred`, `refresh.failed` (`needsLogin`), `refresh.persist_failed` (critical); Codex ones carry `provider: codex`;
 - `codex.balance.decision` (`action`, `code`, `reason`, `active`, `target`, `standbys {email: why not a candidate}`, `source`, `dryRun`), one per evaluation, holds included;
 - `codex.snapshot` (`reason`, `ok`), `codex.switch` (`method`), `codex.login`, `codex.login.failed` (`space`, `reason`);
