@@ -130,6 +130,7 @@ USAGE_CLAIM_SECONDS = 60.0  # when a backoff ends, the one process that claimed 
 MODEL_WEEKLY_BUCKETS = ("seven_day_opus", "seven_day_sonnet")  # per-model weekly caps in the usage payload
 _REFRESH_OUTCOME: Dict[str, str] = {}  # why the last refresh of an account did not happen (for messages)
 PROBE_TIMEOUT_SECONDS = 90.0
+PROBE_READOUT_STATUSES = ("allowed", "allowed_warning", "rejected")  # 2.1.306's rate_limit_info.status enum
 PROBE_PROMPT = "Reply with the single word OK."
 # The probe reads Claude Code's structured result first (`api_error_status`). These phrases are the
 # fallback, matched against the result text and stderr only (never the whole JSON, whose numbers
@@ -616,6 +617,9 @@ def _note_429(account_id: str, retry_after: Optional[str], now: float) -> float:
     hinted = _retry_after_seconds(retry_after, now)
 
     def put(s):
+        if float((s.get("telemetryFence") or {}).get(account_id, 0) or 0) > now:
+            holder["until"] = 0.0  # this call started before a login: its 429 is the old grant's
+            return
         t = s.setdefault("telemetry", {}).setdefault(account_id, {})
         step = int(t.get("backoffStep", 0))
         if hinted is not None:
@@ -629,8 +633,17 @@ def _note_429(account_id: str, retry_after: Optional[str], now: float) -> float:
     return holder["until"]
 
 
-def _clear_backoff(account_id: str) -> None:
-    if (load_state().get("telemetry") or {}).get(account_id):
+def _clear_backoff(account_id: str, fence: bool = False) -> None:
+    """Drop the account's usage backoff. fence=True (a login): a usage call that started before now,
+    with the old grant, cannot put one back when its 429 lands later (_note_429 checks the fence)."""
+    if fence:
+        at = time.time()
+
+        def put(s):
+            s.setdefault("telemetry", {}).pop(account_id, None)
+            s.setdefault("telemetryFence", {})[account_id] = at
+        update_state(put)
+    elif (load_state().get("telemetry") or {}).get(account_id):
         update_state(lambda s: s.setdefault("telemetry", {}).pop(account_id, None))
 
 
@@ -814,12 +827,16 @@ def _probe_readout(lines: List[str]) -> Optional[Dict[str, Any]]:
             continue
         if not isinstance(ev, dict) or ev.get("type") != "rate_limit_event":
             continue
-        info = ev.get("rate_limit_info") or {}
-        windows = info.get("unifiedWindows") or {}
-        out: Dict[str, Any] = {"status": info.get("status")}
+        info = ev.get("rate_limit_info")
+        windows = info.get("unifiedWindows") if isinstance(info, dict) else None
+        if not isinstance(windows, dict) or info.get("status") not in PROBE_READOUT_STATUSES:
+            return None
+        out: Dict[str, Any] = {"status": info["status"]}
         try:
             for key in ("five_hour", "seven_day"):
                 w = windows[key]
+                if not isinstance(w, dict):
+                    return None
                 frac, resets = float(w["utilization"]), int(w["resetsAt"])
                 if not 0.0 <= frac <= 1.0:
                     return None
@@ -852,7 +869,7 @@ def _run_probe() -> Tuple[str, str, Optional[Dict[str, Any]]]:
             ev = json.loads(line)
         except ValueError:
             continue
-        if isinstance(ev, dict) and ev.get("type", "result") == "result":
+        if isinstance(ev, dict) and ev.get("type") == "result":
             result = ev
             break
     if res.returncode == 0 and result is not None and not result.get("is_error"):
@@ -1561,7 +1578,7 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
         if not write_orca_oauth(target_id, fresh):
             raise RuntimeError("Failed to sync credentials to Orca Keychain for %s." % target_id)
         _mark_health(target_id, False, "login")
-        _clear_backoff(target_id)  # a new grant: its usage backoff is not this grant's (BRO-3405)
+        _clear_backoff(target_id, fence=True)  # a new grant: its usage backoff is not this grant's (BRO-3405)
         def stamp(orca):
             for acc in orca.get("settings", {}).get("claudeManagedAccounts", []):
                 if acc.get("id") == target_id:

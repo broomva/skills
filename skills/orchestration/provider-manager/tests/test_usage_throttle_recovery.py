@@ -330,3 +330,38 @@ def test_a_missing_readout_is_logged_and_a_dry_run_never_probes(world):
     assert _probe_calls(A) == [], "a dry run makes no request"
     pm.balance_accounts()
     assert [e["accountId"] for e in world.events("telemetry.readout_missing")] == [acc]
+
+
+# -- P20 round 2 ----------------------------------------------------------------------------------
+
+@pytest.mark.parametrize("info", [
+    "unexpected",                                                              # not an object
+    {"status": "unexpected", "unifiedWindows": MEASURED_EVENT["rate_limit_info"]["unifiedWindows"]},
+    {"unifiedWindows": MEASURED_EVENT["rate_limit_info"]["unifiedWindows"]},   # no status
+    {"status": "allowed", "unifiedWindows": "x"},
+    {"status": "allowed", "unifiedWindows": {"five_hour": "x", "seven_day": "y"}},
+])
+def test_a_malformed_rate_limit_event_is_no_readout_and_never_raises(info):
+    try:
+        readout = pm._probe_readout([json.dumps({"type": "rate_limit_event", "rate_limit_info": info})])
+    except Exception as e:  # noqa: BLE001 - a raise here would abort the balancer's evaluation
+        raise AssertionError("malformed telemetry raised %r" % e)
+    assert readout is None
+
+
+def test_an_untyped_line_is_never_the_probes_answer(world, monkeypatch):
+    from unittest.mock import MagicMock
+    out = '{"future_stream_event": true}\n'
+    monkeypatch.setattr(pm.subprocess, "run", lambda *a, **k: MagicMock(returncode=0, stdout=out, stderr=""))
+    assert pm._run_probe()[0] == "unknown"
+
+
+def test_a_429_that_began_before_the_login_cannot_restore_the_backoff(world, monkeypatch):
+    acc = _throttled_world(world)
+    began = time.time() - 1  # a `usage` call with the old grant, in flight across the login
+    _login_world(world, monkeypatch, A)
+    assert pm.login_headless(email=A)["success"]
+    pm._note_429(acc, "3600", began)
+    assert acc not in (pm.load_state().get("telemetry") or {})
+    pm._note_429(acc, "3600", time.time())  # a 429 for the new grant still backs off
+    assert pm.load_state()["telemetry"][acc]["backoffUntil"] > time.time() + 3500

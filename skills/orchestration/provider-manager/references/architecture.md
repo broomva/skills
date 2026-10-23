@@ -245,7 +245,9 @@ over after the probe.
 state lock and pushes `backoffUntil` out by `USAGE_CLAIM_SECONDS` (60 s, with `claimedAt`/`claimedBy`),
 so every other kick, from any session, still sees a backoff. A 429 replaces the claim with the new
 window, a good read clears the entry, any other failure lets the claim lapse after a minute. A login
-(`login-headless`) clears the account's entry: a new grant starts with one call.
+(`login-headless`) clears the account's entry and fences it (`telemetryFence.<id>`): a 429 from a call
+that started before the login is the old grant's and cannot put the backoff back. A new grant starts
+with one call.
 
 **Probe readout (BRO-3405).** Measured 2026-10-22/23: after team@ was logged in again and made active,
 the endpoint answered 429 with `Retry-After: 3600` to every retry (00:48, 01:52, 02:53, 03:54, 04:57,
@@ -263,9 +265,9 @@ probe-confirmed path). While the endpoint stays in backoff that entry is kept un
 (the probe only reaches the store), and discarded when `build_context` no longer identifies the store
 as that account after the probe; only a probe record this path attributed (`readoutFor`) is ever reused,
 and it records the five-hour `resetsAt`/`fiveHourAtProbe` so a limit it found ends with that window. A
-malformed or missing event is no readout, and a probe that answered without one logs
+malformed or missing event, or a `status` outside `allowed`/`allowed_warning`/`rejected`, is no readout, and a probe that answered without one logs
 `telemetry.readout_missing` (with `claudeVersion`). A dry run never probes. The result line is the last
-`type: result` event (stream-json opens with `init`); with none, the raw text is classified as before.
+event typed `result` (an untyped line never is) (stream-json opens with `init`); with none, the raw text is classified as before.
 
 **Dead grants.** An `invalid_grant` marks the account `needsLogin` with a fingerprint of that refresh
 token (`health.<id>.deadGrant`). Its refreshes are skipped while the copy still holds it, and the mark
