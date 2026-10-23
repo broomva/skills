@@ -384,3 +384,17 @@ def test_a_direct_login_the_orca_hint_still_names_the_old_account_is_no_readout(
     assert world.store_email() == B, "the fixture really put B's tokens in the store"
     assert not world.events("telemetry.readout")
     assert _rows()[A]["numbersSource"] != "probe"
+
+
+def test_the_probe_finds_claude_in_local_bin_when_the_hooks_path_lacks_it(world, monkeypatch):
+    """Live, 2026-10-23 07:55Z: the first readout probe, from a detached hook, failed with
+    FileNotFoundError: that process's PATH had no `claude`. Claude Code installs to ~/.local/bin."""
+    local_bin = Path(world.home) / ".local/bin"
+    local_bin.mkdir(parents=True, exist_ok=True)
+    (local_bin / "claude").symlink_to(world.bin / "claude")
+    monkeypatch.setattr(pm, "HOME", Path(world.home))
+    world.add_account(A)
+    world.activate(A)
+    monkeypatch.setenv("PATH", "/usr/bin:/bin")
+    result, detail, readout = pm._run_probe()
+    assert (result, detail) == ("ok", "probe answered") and readout is not None

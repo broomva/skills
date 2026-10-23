@@ -415,6 +415,10 @@ MUTATIONS = {
                '        after = build_context(verify_identity=False)\n'
                '        if after["storeAccountId"] != acc_id:')],
              [R + "test_a_direct_login_the_orca_hint_still_names_the_old_account_is_no_readout"]),
+    "M106": ("the probe resolves claude from PATH only (a detached hook cannot run it)",
+             [("provider_manager.py", '    claude = _claude_binary() or "claude"  # a detached hook',
+               '    claude = shutil.which("claude", path=os.environ.get("PATH")) or "claude"  # a detached hook')],
+             [R + "test_the_probe_finds_claude_in_local_bin_when_the_hooks_path_lacks_it"]),
     "M90": ("a probe that read nothing is re-run every evaluation",
             [("provider_manager.py", "    if now - float(rec.get(\"at\", 0) or 0) >= interval:", "    if True:")],
             [R + "test_without_a_readout_the_numbers_stay_stale_and_say_so"]),

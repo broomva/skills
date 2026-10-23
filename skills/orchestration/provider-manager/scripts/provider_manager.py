@@ -848,7 +848,7 @@ def _probe_readout(lines: List[str]) -> Optional[Dict[str, Any]]:
 
 
 def _run_probe() -> Tuple[str, str, Optional[Dict[str, Any]]]:
-    claude = shutil.which("claude", path=os.environ.get("PATH")) or "claude"
+    claude = _claude_binary() or "claude"  # a detached hook's PATH may lack it (07:55Z 10-23: FileNotFoundError)
     cmd = [claude, "-p", PROBE_PROMPT, "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
            "--no-session-persistence", "--output-format", "stream-json", "--verbose"]
     model = load_config().get("probeModel")
