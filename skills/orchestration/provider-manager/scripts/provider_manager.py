@@ -1296,7 +1296,8 @@ def readout_numbers(active: Dict[str, Any], cfg: Dict[str, Any], now: float) -> 
             if rec.get("result") == "ok":  # it answered, and printed no windows: a changed Claude Code?
                 log_provider_event("telemetry.readout_missing", {"accountId": acc_id, "claudeVersion": claude_version()})
             return None
-        if build_context(verify_identity=False)["storeAccountId"] != acc_id:
+        after = build_context(verify_identity=True)  # an Orca hint is not proof of whose tokens these are
+        if after["storeAccountId"] != acc_id or after["storeIdentity"] not in VERIFIED_IDENTITY:
             return None  # the store changed hands while the probe ran: whose numbers these are is unknown
         five = rec["readout"].get("five_hour") or {}
         rec = dict(rec, readoutFor=acc_id)

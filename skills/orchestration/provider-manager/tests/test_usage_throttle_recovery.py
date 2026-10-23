@@ -365,3 +365,22 @@ def test_a_429_that_began_before_the_login_cannot_restore_the_backoff(world, mon
     assert acc not in (pm.load_state().get("telemetry") or {})
     pm._note_429(acc, "3600", time.time())  # a 429 for the new grant still backs off
     assert pm.load_state()["telemetry"][acc]["backoffUntil"] > time.time() + 3500
+
+
+def test_a_direct_login_the_orca_hint_still_names_the_old_account_is_no_readout(world, monkeypatch):
+    import keychain_db
+    _throttled_world(world)
+    real = pm._run_probe
+
+    def probe_then_direct_login():
+        out = real()
+        fresh = {"claudeAiOauth": fake_anthropic.mint(B)}  # `/login` as B: no Orca copy holds these tokens
+        primary, mirrors = world.store_items()
+        for item in [primary] + list(mirrors):
+            keychain_db.write_json(world.db, item, "tester", fresh)  # world.USER
+        return out
+    monkeypatch.setattr(pm, "_run_probe", probe_then_direct_login)
+    pm.balance_accounts()
+    assert world.store_email() == B, "the fixture really put B's tokens in the store"
+    assert not world.events("telemetry.readout")
+    assert _rows()[A]["numbersSource"] != "probe"
