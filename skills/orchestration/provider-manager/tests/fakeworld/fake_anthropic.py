@@ -179,6 +179,19 @@ def usage_retry_after(at):
         return d["accounts"][email].get("retry_after") if email else None
 
 
+def windows_for_access(at):
+    """The unified windows a real response carries, as Claude Code's rate_limit_event reports them.
+    set_account(email, readout=False) makes the probe print none (an older Claude Code)."""
+    with state() as d:
+        email = _bearer_account(d, at)
+        acct = d["accounts"].get(email) if email else None
+        if not acct or acct.get("readout") is False:
+            return None
+        five = acct.get("probe_five_hour", acct["five_hour"])
+        return {"five_hour": {"utilization": five / 100.0, "resetsAt": int(time.time()) + 3 * 3600},
+                "seven_day": {"utilization": acct["seven_day"] / 100.0, "resetsAt": int(time.time()) + 5 * 86400}}
+
+
 def profile(at):
     with state() as d:
         email = _bearer_account(d, at)

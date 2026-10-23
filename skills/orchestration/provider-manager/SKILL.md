@@ -93,7 +93,17 @@ backoff ends (`Retry-After`, at least 1 minute and at most 6 hours; without it 2
 minutes). The backoff is persisted, so no kick reaches the endpoint inside it. `usage` shows the age of
 the last good numbers and when the next try is (`THROTTLED (numbers 139m old, next try in 41m)`); past
 `staleNumbersMinutes` (30) the balancer says so in its decision (`telemetryNote`): balancing on numbers
-waits, and a StopFailure report still fails over once the probe confirms it. An expired token means
+waits, and a StopFailure report still fails over once the probe confirms it. When a backoff ends,
+exactly one process gets the retry (a 60-second claim taken under the state lock), and a login clears
+that account's backoff.
+
+The endpoint can refuse the **active** account for hours: every Claude Code session on that account
+calls it too, so the budget is gone before the one retry per window lands (BRO-3405: 429 with
+`Retry-After: 3600` six hours running). The probe's own response carries the same two windows, so
+while the endpoint refuses the active account, the balancer refreshes its numbers from one probe each
+time they reach half of `staleNumbersMinutes`: `OK (via probe, numbers 3m old, endpoint throttled,
+next try in 41m)`. Probe numbers are never held past `staleNumbersMinutes`, never taken for a standby,
+and dropped if the store changed hands while the probe ran. An expired token means
 `auth_expired`. A dead grant means `needs_login`: its refresh token is spent once, then skipped until
 a login, a switch or Orca writes new tokens. None of these switches anything, and a standby with any
 of them is not a candidate. Tool output (a GitHub API limit, a site's 429) is never read as a Claude

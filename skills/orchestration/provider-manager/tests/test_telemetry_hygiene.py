@@ -107,7 +107,7 @@ def test_stale_numbers_hold_says_so_and_a_stopfailure_report_still_fails_over(wo
     world.add_account(B, five_hour=10.0)
     world.activate(A)
     pm.fetch_all_usage(force_refresh=True)
-    world.set_usage(A, usage_mode="429", retry_after="3600")
+    world.set_usage(A, usage_mode="429", retry_after="3600", readout=False)  # no probe readout either
     pm.fetch_all_usage(force_refresh=True)
     _age_numbers(world.accounts[A]["id"], 139 * 60)
     _age_usage_cache()

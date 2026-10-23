@@ -426,7 +426,7 @@ def test_balance_does_not_act_on_an_inconclusive_probe(world, monkeypatch):
     world.add_account(A, five_hour=100.0)
     world.add_account(B, five_hour=20.0)
     world.activate(A)
-    monkeypatch.setattr(pm, "probe_active_account", lambda: ("unknown", "probe rc 1"))
+    monkeypatch.setattr(pm, "_run_probe", lambda: ("unknown", "probe rc 1", None))
     assert pm.balance_accounts()["reason"] == "probe_inconclusive"
     assert world.switches() == []
 
@@ -936,7 +936,7 @@ def test_a_report_newer_than_the_cached_probe_gets_a_new_probe(world):
 
 
 def test_an_unknown_probe_is_cached_for_seconds_not_minutes(world, monkeypatch):
-    monkeypatch.setattr(pm, "probe_active_account", lambda: ("ok", "fresh"))
+    monkeypatch.setattr(pm, "_run_probe", lambda: ("ok", "fresh", None))
     pm.update_state(lambda s: s.__setitem__("probes", {"x": {"at": time.time() - 40, "result": "unknown"}}))
     assert pm.probe_cached("x", 600.0) == ("ok", "fresh")
 
@@ -1013,9 +1013,9 @@ def test_a_store_proven_dead_is_not_written_back_over_the_copy(world):
 def test_a_probe_is_stamped_with_its_start_so_a_report_during_it_is_reprobed(world, monkeypatch):
     def slow_probe():
         time.sleep(0.05)
-        return "ok", "probe answered"
+        return "ok", "probe answered", None
 
-    monkeypatch.setattr(pm, "probe_active_account", slow_probe)
+    monkeypatch.setattr(pm, "_run_probe", slow_probe)
     t0 = time.time()
     pm.probe_cached("x", 600.0)
     assert pm.load_state()["probes"]["x"]["at"] < t0 + 0.05
