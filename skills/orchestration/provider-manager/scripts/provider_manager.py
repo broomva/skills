@@ -126,6 +126,7 @@ SIGNAL_TTL_SECONDS = 900.0  # a StopFailure report stays pending this long, then
 RETRY_AFTER_FLOOR_SECONDS = 60.0  # a usage 429 backs off at least this long, whatever Retry-After says
 RETRY_AFTER_CAP_SECONDS = 6 * 3600.0
 BACKOFF_CAP_SECONDS = 1800.0  # exponential backoff (no Retry-After): 2, 4, 8, 16, then 30 min
+USAGE_CLAIM_SECONDS = 60.0  # when a backoff ends, the one process that claimed its retry owns it this long
 MODEL_WEEKLY_BUCKETS = ("seven_day_opus", "seven_day_sonnet")  # per-model weekly caps in the usage payload
 _REFRESH_OUTCOME: Dict[str, str] = {}  # why the last refresh of an account did not happen (for messages)
 PROBE_TIMEOUT_SECONDS = 90.0
@@ -629,8 +630,45 @@ def _note_429(account_id: str, retry_after: Optional[str], now: float) -> float:
 
 
 def _clear_backoff(account_id: str) -> None:
-    if (load_state().get("telemetry", {}).get(account_id) or {}).get("backoffStep"):
+    if (load_state().get("telemetry") or {}).get(account_id):
         update_state(lambda s: s.setdefault("telemetry", {}).pop(account_id, None))
+
+
+def _claim_usage_call(account_id: str, now: float) -> bool:
+    """May this process call the usage endpoint for the account now? Outside any backoff, yes (the
+    90 s cache paces those calls). Inside one, no. When one has just ended, exactly one process gets
+    its retry: the claim is taken under the state lock and pushes the window out by a short lease, so
+    every other kick that lands meanwhile, from any session, still sees a backoff (BRO-3405)."""
+    t = (load_state().get("telemetry") or {}).get(account_id)
+    if not t:
+        return True
+    if float(t.get("backoffUntil", 0) or 0) > now:
+        return False
+    won: Dict[str, bool] = {}
+
+    def put(s):
+        cur = s.setdefault("telemetry", {}).get(account_id)
+        if cur is None:  # cleared meanwhile (a good read, or a login): nothing to claim
+            won["ok"] = True
+        elif float(cur.get("backoffUntil", 0) or 0) <= now:
+            cur.update(backoffUntil=now + USAGE_CLAIM_SECONDS, claimedAt=now, claimedBy=os.getpid())
+            won["ok"] = True
+    update_state(put)
+    return bool(won.get("ok"))
+
+
+def _probe_numbers_hold(prev: Optional[Dict[str, Any]], now: float) -> bool:
+    """A probe readout (numbers Claude Code itself was sent with a real response) stays the account's
+    numbers while the endpoint refuses, until it is staleNumbersMinutes old."""
+    if not prev or prev.get("numbersSource") != "probe" or prev.get("telemetry") != "ok":
+        return False
+    return now - float(prev.get("numbersAt") or 0) < float(load_config().get("staleNumbersMinutes", 30.0)) * 60.0
+
+
+def _throttled_entry(account_id: str, prev: Optional[Dict[str, Any]], now: float, error: str) -> Dict[str, Any]:
+    if _probe_numbers_hold(prev, now):
+        return dict(prev, cachedAt=now, endpoint="throttled")
+    return _degraded_entry(account_id, "throttled", prev, now, error)
 
 
 def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retries: int = 1,
@@ -650,9 +688,8 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
         save_usage_cache(cache)
         return entry
 
-    backoff = (load_state().get("telemetry", {}).get(account_id) or {}).get("backoffUntil", 0)
-    if backoff > now:
-        return done(_degraded_entry(account_id, "throttled", prev, now, "usage endpoint 429; backing off"))
+    if not _claim_usage_call(account_id, now):
+        return done(_throttled_entry(account_id, prev, now, "usage endpoint 429; backing off"))
 
     is_store_account = account_id == ctx["storeAccountId"]
     if is_store_account:
@@ -686,7 +723,7 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
     if code == 429:
         until = _note_429(account_id, headers.get("Retry-After") or headers.get("retry-after"), now)
         log_provider_event("telemetry.throttled", {"accountId": account_id, "backoffUntil": int(until)})
-        return done(_degraded_entry(account_id, "throttled", prev, now, "usage endpoint 429"))
+        return done(_throttled_entry(account_id, prev, now, "usage endpoint 429"))
     if code == 401 and not is_store_account and max_retries > 0 and ctx["storeReadable"]:
         if refresh_account_token(account_id):
             return fetch_account_usage(account_id, True, max_retries - 1, build_context(verify_identity=False))
@@ -697,27 +734,29 @@ def fetch_account_usage(account_id: str, force_refresh: bool = False, max_retrie
 
 def fetch_all_usage(force_refresh: bool = False, ctx: Optional[Dict[str, Any]] = None) -> List[Dict[str, Any]]:
     ctx = ctx or build_context(verify_identity=True)
-    results = []
+    return [_usage_row(acc, fetch_account_usage(acc["id"], force_refresh=force_refresh, ctx=ctx) or {})
+            for acc in list_accounts(ctx)]
+
+
+def _usage_row(acc: Dict[str, Any], usage: Dict[str, Any]) -> Dict[str, Any]:
     now = time.time()
-    for acc in list_accounts(ctx):
-        usage = fetch_account_usage(acc["id"], force_refresh=force_refresh, ctx=ctx) or {}
-        backoff = float((load_state().get("telemetry", {}).get(acc["id"]) or {}).get("backoffUntil", 0) or 0)
-        info = dict(acc)
-        info["usage"] = usage or None
-        info["telemetry"] = usage.get("telemetry", "unavailable")
-        info["needsLogin"] = bool(acc.get("needsLogin") or info["telemetry"] == "needs_login")
-        info["fiveHourUtil"] = (usage.get("five_hour") or {}).get("utilization")
-        info["sevenDayUtil"] = (usage.get("seven_day") or {}).get("utilization")
-        info["fiveHourResetsAt"] = (usage.get("five_hour") or {}).get("resets_at")
-        info["sevenDayResetsAt"] = (usage.get("seven_day") or {}).get("resets_at")
-        info["usageStatus"] = usage.get("status", "unavailable")
-        info["isRateLimited"] = bool(usage.get("isRateLimited")) and usage.get("telemetry") == "ok"
-        info["stale"] = bool(usage.get("stale"))
-        numbers_at = usage.get("numbersAt")
-        info["numbersAgeSeconds"] = int(now - numbers_at) if numbers_at else None  # age of the last good numbers
-        info["backoffRemainingSeconds"] = int(backoff - now) if backoff > now else None
-        results.append(info)
-    return results
+    backoff = float((load_state().get("telemetry", {}).get(acc["id"]) or {}).get("backoffUntil", 0) or 0)
+    info = dict(acc)
+    info["usage"] = usage or None
+    info["telemetry"] = usage.get("telemetry", "unavailable")
+    info["needsLogin"] = bool(acc.get("needsLogin") or info["telemetry"] == "needs_login")
+    info["fiveHourUtil"] = (usage.get("five_hour") or {}).get("utilization")
+    info["sevenDayUtil"] = (usage.get("seven_day") or {}).get("utilization")
+    info["fiveHourResetsAt"] = (usage.get("five_hour") or {}).get("resets_at")
+    info["sevenDayResetsAt"] = (usage.get("seven_day") or {}).get("resets_at")
+    info["usageStatus"] = usage.get("status", "unavailable")
+    info["isRateLimited"] = bool(usage.get("isRateLimited")) and usage.get("telemetry") == "ok"
+    info["stale"] = bool(usage.get("stale"))
+    numbers_at = usage.get("numbersAt")
+    info["numbersAgeSeconds"] = int(now - numbers_at) if numbers_at else None  # age of the last good numbers
+    info["backoffRemainingSeconds"] = int(backoff - now) if backoff > now else None
+    info["numbersSource"] = usage.get("numbersSource") or ("endpoint" if info["telemetry"] == "ok" else None)
+    return info
 
 
 def telemetry_summary(state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
@@ -732,6 +771,7 @@ def telemetry_summary(state: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         until = float((state.get("telemetry", {}).get(acc.get("id")) or {}).get("backoffUntil", 0) or 0)
         out[acc.get("email") or acc.get("id")] = {
             "telemetry": u.get("telemetry", "unknown"),
+            "numbersSource": u.get("numbersSource") or ("endpoint" if u.get("telemetry") == "ok" else None),
             "numbersAgeMinutes": int((now - u["numbersAt"]) / 60) if u.get("numbersAt") else None,
             "backoffRemainingMinutes": int((until - now) / 60) if until > now else None,
         }
@@ -757,9 +797,42 @@ def probe_active_account() -> Tuple[str, str]:
     a per-model weekly cap must not hide behind a cheaper model). Returns ("ok" | "limited" |
     "auth_dead" | "unknown", detail). "auth_dead": Claude Code itself was refused the store's refresh
     token, so that credential is dead."""
+    result, detail, _ = _run_probe()
+    return result, detail
+
+
+def _probe_readout(lines: List[str]) -> Optional[Dict[str, Any]]:
+    """The usage windows Claude Code was sent with the probe's response: its stream-json
+    `rate_limit_event` carries `unifiedWindows.{five_hour,seven_day}` = {utilization, resetsAt}, a
+    0-1 fraction (Claude Code clamps the unified-ratelimit header to [0, 1]) and epoch seconds.
+    Measured on 2.1.306 on 2026-10-23. None unless both windows are there and well-formed."""
+    for line in reversed(lines):
+        try:
+            ev = json.loads(line)
+        except ValueError:
+            continue
+        if not isinstance(ev, dict) or ev.get("type") != "rate_limit_event":
+            continue
+        info = ev.get("rate_limit_info") or {}
+        windows = info.get("unifiedWindows") or {}
+        out: Dict[str, Any] = {"status": info.get("status")}
+        try:
+            for key in ("five_hour", "seven_day"):
+                w = windows[key]
+                frac, resets = float(w["utilization"]), int(w["resetsAt"])
+                if not 0.0 <= frac <= 1.0:
+                    return None
+                out[key] = {"utilization": frac, "resetsAt": resets}
+        except (KeyError, TypeError, ValueError):
+            return None
+        return out
+    return None
+
+
+def _run_probe() -> Tuple[str, str, Optional[Dict[str, Any]]]:
     claude = shutil.which("claude", path=os.environ.get("PATH")) or "claude"
     cmd = [claude, "-p", PROBE_PROMPT, "--tools", "", "--strict-mcp-config", "--setting-sources", "project",
-           "--no-session-persistence", "--output-format", "json"]
+           "--no-session-persistence", "--output-format", "stream-json", "--verbose"]
     model = load_config().get("probeModel")
     if model:
         cmd += ["--model", str(model)]
@@ -768,26 +841,28 @@ def probe_active_account() -> Tuple[str, str]:
             res = subprocess.run(cmd, cwd=cwd, env=_probe_env(), text=True, capture_output=True,
                                  timeout=PROBE_TIMEOUT_SECONDS)
     except (OSError, subprocess.SubprocessError) as e:
-        return "unknown", "probe failed to run: %s" % type(e).__name__
+        return "unknown", "probe failed to run: %s" % type(e).__name__, None
     text = res.stdout or ""
+    lines = text.strip().splitlines()
+    readout = _probe_readout(lines)
     result = None
-    for line in reversed(text.strip().splitlines()):
+    for line in reversed(lines):  # the final `result` message, as with --output-format json
         try:
             result = json.loads(line)
             break
         except ValueError:
             continue
     if res.returncode == 0 and isinstance(result, dict) and not result.get("is_error"):
-        return "ok", "probe answered"
+        return "ok", "probe answered", readout
     if isinstance(result, dict) and result.get("api_error_status") == 429:
-        return "limited", "probe got HTTP 429 (%s)" % str(result.get("result") or "")[:80]
+        return "limited", "probe got HTTP 429 (%s)" % str(result.get("result") or "")[:80], readout
     message = str(result.get("result") or "") if isinstance(result, dict) else text[-400:]
     blob = " ".join([message, (res.stderr or "")[-400:]])
     if LIMIT_RE.search(blob):
-        return "limited", "probe hit a limit"
+        return "limited", "probe hit a limit", readout
     if AUTH_DEAD_RE.search(blob):
-        return "auth_dead", "Claude Code could not refresh the store's credential"
-    return "unknown", "probe rc %d" % res.returncode
+        return "auth_dead", "Claude Code could not refresh the store's credential", None
+    return "unknown", "probe rc %d" % res.returncode, None
 
 
 def probe_cached(account_id: str, ttl: float, fresh_after: float = 0.0,
@@ -800,10 +875,10 @@ def probe_cached(account_id: str, ttl: float, fresh_after: float = 0.0,
     if p and age_ok and p.get("at", 0) >= fresh_after:
         return p.get("result", "unknown"), "cached"
     started = time.time()
-    result, detail = probe_active_account()
+    result, detail, readout = _run_probe()
     update_state(lambda s: s.setdefault("probes", {}).__setitem__(
         account_id, {"at": started, "result": result, "detail": detail, "resetsAt": resets_at,
-                     "fiveHourAtProbe": five_hour}))
+                     "fiveHourAtProbe": five_hour, "readout": readout}))
     log_provider_event("probe", {"accountId": account_id, "result": result, "detail": detail})
     return result, detail
 
@@ -1103,6 +1178,11 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
         return (a.get("fiveHourUtil"), a.get("sevenDayUtil") or 0.0)
 
     active = next((a for a in accounts if a.get("isActive")), None)
+    if active and active.get("id") == ctx["storeAccountId"] and (
+            active.get("telemetry") == "throttled" or (active.get("usage") or {}).get("endpoint") == "throttled"):
+        entry = readout_numbers(active, cfg, now)
+        if entry:
+            accounts[accounts.index(active)] = active = _usage_row(active, entry)
     if not active:
         if automatic:  # an empty store may be a deliberate /logout; never log back in on our own
             return {"success": True, "action": "none", "reason": "no_active_account"}
@@ -1171,6 +1251,60 @@ def _balance_locked(threshold: Optional[float], dry_run: bool, verbose: bool, so
     if res.get("action") == "switched" and res.get("success"):
         resolve_signals()
     return res
+
+
+def readout_numbers(active: Dict[str, Any], cfg: Dict[str, Any], now: float) -> Optional[Dict[str, Any]]:
+    """BRO-3405: the usage endpoint can refuse the active account for hours. Every Claude Code session
+    on it calls the same endpoint with the same account (2.1.306 does, on several paths), so the
+    per-account budget is spent before our one call per Retry-After window lands; measured
+    2026-10-23: team@ got 429 + Retry-After 3600 at 00:48, 01:52, 02:53, 03:54, 04:57 and 05:57Z.
+    The probe's real response carries the same two windows (see _probe_readout), so when the active
+    account's numbers are half staleNumbersMinutes old, one probe (run under the balancer lock, so one
+    per interval machine-wide) refreshes them. Marked numbersSource=probe; never for a standby, never
+    when the store changed hands during the probe. Returns the new cache entry, or None."""
+    interval = float(cfg.get("staleNumbersMinutes", 30.0)) * 60.0 / 2.0
+    age = active.get("numbersAgeSeconds")
+    if age is not None and age < interval:
+        return None
+    acc_id = active["id"]
+    numbers_at = float((active.get("usage") or {}).get("numbersAt") or 0)
+    rec = (load_state().get("probes") or {}).get(acc_id) or {}
+    if now - float(rec.get("at", 0) or 0) >= interval:
+        probe_cached(acc_id, 0.0)
+        rec = (load_state().get("probes") or {}).get(acc_id) or {}
+        if build_context(verify_identity=False)["storeAccountId"] != acc_id:
+            return None  # the store changed hands while the probe ran: whose numbers these are is unknown
+    readout = rec.get("readout")
+    if not readout or float(rec.get("at", 0) or 0) <= numbers_at:
+        return None
+    entry = _readout_entry(acc_id, readout, float(rec["at"]), now)
+    if not entry:
+        return None
+    cache = read_usage_cache()
+    cache.setdefault("accounts", {})[acc_id] = entry
+    save_usage_cache(cache)
+    log_provider_event("telemetry.readout", {"accountId": acc_id, "fiveHour": entry["five_hour"]["utilization"],
+                                             "sevenDay": entry["seven_day"]["utilization"]})
+    return entry
+
+
+def _readout_entry(account_id: str, readout: Dict[str, Any], at: float, now: float) -> Optional[Dict[str, Any]]:
+    from datetime import datetime, timezone
+
+    def window(key):
+        w = readout[key]
+        return {"utilization": float(w["utilization"]) * 100.0,
+                "resets_at": datetime.fromtimestamp(int(w["resetsAt"]), timezone.utc).isoformat()}
+    try:
+        data = {"five_hour": window("five_hour"), "seven_day": window("seven_day")}
+    except (KeyError, TypeError, ValueError, OverflowError, OSError):
+        return None
+    if readout.get("status") == "rejected":
+        data["five_hour"]["locked_reason"] = "probe_rejected"
+    entry = _numbers_entry(account_id, data, at)
+    if entry:
+        entry.update(cachedAt=now, numbersSource="probe", endpoint="throttled")
+    return entry
 
 
 def expire_signals(now: Optional[float] = None) -> Dict[str, Any]:
@@ -1404,6 +1538,7 @@ def login_headless(email: Optional[str] = None, browser: str = "arc", profile: O
         if not write_orca_oauth(target_id, fresh):
             raise RuntimeError("Failed to sync credentials to Orca Keychain for %s." % target_id)
         _mark_health(target_id, False, "login")
+        _clear_backoff(target_id)  # a new grant: its usage backoff is not this grant's (BRO-3405)
         def stamp(orca):
             for acc in orca.get("settings", {}).get("claudeManagedAccounts", []):
                 if acc.get("id") == target_id:

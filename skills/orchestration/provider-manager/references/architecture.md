@@ -241,6 +241,28 @@ time to the next try; `state` shows both under `claudeTelemetry`. Past `staleNum
 balance decision carries `telemetryNote`: balancing on numbers waits, StopFailure reports still fail
 over after the probe.
 
+**One retry per window.** When `backoffUntil` has passed, `_claim_usage_call` takes the retry under the
+state lock and pushes `backoffUntil` out by `USAGE_CLAIM_SECONDS` (60 s, with `claimedAt`/`claimedBy`),
+so every other kick, from any session, still sees a backoff. A 429 replaces the claim with the new
+window, a good read clears the entry, any other failure lets the claim lapse after a minute. A login
+(`login-headless`) clears the account's entry: a new grant starts with one call.
+
+**Probe readout (BRO-3405).** Measured 2026-10-22/23: after team@ was logged in again and made active,
+the endpoint answered 429 with `Retry-After: 3600` to every retry (00:48, 01:52, 02:53, 03:54, 04:57,
+05:57Z), one call per window, for six hours. The backoff was working; the budget is per account and
+Claude Code 2.1.306 spends it (it calls `/api/oauth/usage` itself, on several paths). The probe runs
+with `--output-format stream-json --verbose`, and 2.1.306 prints a `rate_limit_event` whose
+`rate_limit_info.unifiedWindows.{five_hour,seven_day}` carry `utilization` (a 0-1 fraction: Claude
+Code clamps the unified-ratelimit header to [0, 1]) and `resetsAt` (epoch seconds), taken from that
+real response's headers. `readout_numbers` (in the balancer, under its lock) runs one probe when the
+active account's endpoint is throttled and its numbers are at least half of `staleNumbersMinutes` old
+(and the last probe at least that old). It writes an `ok` cache entry marked `numbersSource: probe`
+and `endpoint: throttled` (`status: rejected` becomes a lock, so a limit fails over through the usual
+probe-confirmed path). While the endpoint stays in backoff that entry is kept until
+`staleNumbersMinutes`, then it degrades to `throttled` like any other old numbers. Never for a standby
+(the probe only reaches the store), and discarded when `build_context` no longer identifies the store
+as that account after the probe. A malformed or missing event is no readout.
+
 **Dead grants.** An `invalid_grant` marks the account `needsLogin` with a fingerprint of that refresh
 token (`health.<id>.deadGrant`). Its refreshes are skipped while the copy still holds it, and the mark
 clears when new tokens work. Before this, a dead copy was refreshed at every evaluation (205 times in a
@@ -248,7 +270,7 @@ day for one account).
 
 Decision rules and defaults: SKILL.md "The balancer". The probe runs `claude -p "Reply with the single
 word OK." --tools "" --strict-mcp-config --setting-sources project --no-session-persistence
---output-format json` (plus `--model <probeModel>` only if configured: by default it uses the same
+--output-format stream-json --verbose` (plus `--model <probeModel>` only if configured: by default it uses the same
 default model as the sessions), from an empty temp dir. Its environment drops `CLAUDECODE`,
 `CLAUDE_CODE_*`, `CLAUDE_PID` and `ANTHROPIC_*` auth overrides, keeps `CLAUDE_CONFIG_DIR` as the
 sessions have it, and sets `PROVIDER_MANAGER_PROBE=1` (the hook no-ops on it).
@@ -292,7 +314,7 @@ Events:
 - `balance.decision` (`action`, `reason`, `telemetry`, `remainingSeconds`...);
 - `probe` (`result`), `probe.disagrees` (a session reported a limit and the probe says ok), `version_unverified` (`claudeVersion`);
 - `balance.decision` also carries `numbersAgeSeconds` and `telemetryNote` when the active account's numbers are stale;
-- `telemetry.throttled` (`backoffUntil`);
+- `telemetry.throttled` (`backoffUntil`), `telemetry.readout` (`fiveHour`, `sevenDay`: the active account's numbers taken from a probe);
 - `refresh`, `refresh.refused` (`reason`), `refresh.deferred`, `refresh.failed` (`needsLogin`), `refresh.persist_failed` (critical); Codex ones carry `provider: codex`;
 - `codex.balance.decision` (`action`, `code`, `reason`, `active`, `target`, `standbys {email: why not a candidate}`, `source`, `dryRun`), one per evaluation, holds included;
 - `codex.snapshot` (`reason`, `ok`), `codex.switch` (`method`), `codex.login`, `codex.login.failed` (`space`, `reason`);

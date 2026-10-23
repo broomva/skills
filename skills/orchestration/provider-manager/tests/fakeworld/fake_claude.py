@@ -76,6 +76,15 @@ def auth_login(argv):
     return 0
 
 
+def _rate_limit_event(at, status):
+    """What 2.1.306 prints in stream-json before the result (measured 2026-10-23): both unified
+    windows as a 0-1 fraction and epoch seconds, from the response's own ratelimit headers."""
+    w = fake_anthropic.windows_for_access(at)
+    return {"type": "rate_limit_event", "rate_limit_info": {
+        "status": "rejected" if status == 429 else "allowed", "rateLimitType": "five_hour",
+        "unifiedWindows": w}, "session_id": "fake"}
+
+
 def main(argv):
     if argv[:1] == ["--version"]:
         print("%s (Claude Code)" % os.environ.get("FAKE_CLAUDE_VERSION", "2.1.280"))
@@ -117,6 +126,8 @@ def main(argv):
                 keychain_db.update_json(os.environ["FAKE_SECURITY_DB"], store_item_name(), os.environ.get("USER", ""),
                                         lambda cur: dict(cur or {}, claudeAiOauth=oauth))
                 status, body = fake_anthropic.messages(oauth["accessToken"], kind="probe")
+        if status in (200, 429) and "stream-json" in argv:
+            print(json.dumps(_rate_limit_event(oauth.get("accessToken"), status)))
         if status == 200:
             print(json.dumps({"type": "result", "subtype": "success", "is_error": False, "result": "OK"}))
             return 0

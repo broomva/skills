@@ -20,7 +20,13 @@ def _usage_status(a: Dict[str, Any]) -> str:
     if a.get("needsLogin"):
         return "NEEDS_LOGIN"
     if t == "ok":
-        return "LIMITED" if a.get("isRateLimited") else (a.get("usageStatus") or "ok").upper()
+        status = "LIMITED" if a.get("isRateLimited") else (a.get("usageStatus") or "ok").upper()
+        if a.get("numbersSource") != "probe":
+            return status
+        notes = ["via probe, numbers %dm old" % int((a.get("numbersAgeSeconds") or 0) / 60), "endpoint throttled"]
+        if a.get("backoffRemainingSeconds"):
+            notes.append("next try in %dm" % max(1, int(a["backoffRemainingSeconds"] / 60)))
+        return "%s (%s)" % (status, ", ".join(notes))
     notes = []
     numbers_at = (a.get("usage") or {}).get("numbersAt")
     notes.append("numbers %dm old" % int((time.time() - numbers_at) / 60) if numbers_at else "no numbers yet")
