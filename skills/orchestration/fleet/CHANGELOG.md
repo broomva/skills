@@ -1,5 +1,17 @@
 # Changelog: fleet (fleet-reconcile until 0.6.0)
 
+## [0.6.2] - 2026-10-24
+
+- tick: an access step (`fleet fs-check`) runs before observe, on a 30 s
+  budget of its own (`FLEET_FS_CHECK_S`). It opens each registered repo's HEAD,
+  as observe's placement does. When the launchd job has no macOS privacy (TCC)
+  access to the repos' volume, the read is denied, or under Homebrew's
+  app-bundled Python it blocks on a consent prompt nobody answers. Either way
+  the tick now skips observe and report, raises `tick-access` naming the grant
+  (Full Disk Access for `/bin/bash`), and finishes in seconds. Before, it burned
+  the whole 15 min budget at observe (BRO-3449: the workspace moved to an
+  external SSD).
+
 ## [0.6.1] - 2026-10-16
 
 - close-out: owner-started sessions are driven to a close and archived from the

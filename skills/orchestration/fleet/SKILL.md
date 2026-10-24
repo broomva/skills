@@ -3,7 +3,7 @@ name: fleet
 tier: D
 primitive: null
 category: orchestration
-version: 0.6.1
+version: 0.6.2
 description: |
   The Broomva fleet: every Claude Code and Paseo session, PR and loop the
   coordinators drive, and the workflows that manage it. reconcile is the
