@@ -122,9 +122,9 @@ def main(pm) -> None:
     common = argparse.ArgumentParser(add_help=False)
     # SUPPRESS: a subparser's default would otherwise erase a --json given before the subcommand
     common.add_argument("--json", action="store_true", default=argparse.SUPPRESS, help="Output results in JSON format")
-    common.add_argument("--provider", choices=["claude", "codex", "antigravity", "all"], default=argparse.SUPPRESS,
-                        help="Target provider (claude, codex, or all; default: claude)")
-    parser = argparse.ArgumentParser(description="Subscription account manager (Claude Code & OpenAI Codex)", parents=[common])
+    common.add_argument("--provider", choices=["claude", "codex", "antigravity", "grok", "all"], default=argparse.SUPPRESS,
+                        help="Target provider (claude, codex, antigravity, grok, or all; default: claude)")
+    parser = argparse.ArgumentParser(description="Subscription account manager (Claude Code, OpenAI Codex, Antigravity; Grok read-only usage)", parents=[common])
     sub = parser.add_subparsers(dest="command", required=True)
     sub.add_parser("list", help="List managed accounts", parents=[common])
     sub.add_parser("status", help="Show active provider and auth status", parents=[common])
@@ -180,7 +180,15 @@ def main(pm) -> None:
     antigravity_model = {"model": model} if model is not None else {}
 
     import pm_antigravity
+    import pm_grok
     try:
+        if args.provider == "grok":
+            # One xAI account: read-only telemetry, nothing to balance, switch or log in.
+            if args.command not in ("list", "status", "usage"):
+                raise pm.StoreError("Grok is one account with read-only telemetry: list, status and usage only")
+            rows = pm_grok.accounts() if args.command == "list" else pm_grok.usage(force=getattr(args, "force", False))
+            print(json.dumps(rows, indent=2) if args.json or args.command == "list" else pm_grok.format_rows(rows))
+            return
         if args.provider == "antigravity" or args.command in ("antigravity-register", "antigravity-launcher"):
             import pm_antigravity as ag
             if args.command == "antigravity-launcher":
@@ -215,6 +223,7 @@ def main(pm) -> None:
                         "claude": pm.list_accounts(),
                         "codex": pm.list_codex_accounts(),
                         "antigravity": pm_antigravity.accounts(),
+                        "grok": pm_grok.accounts(),
                     }, indent=2))
                 else:
                     print("[Claude Code Accounts]")
@@ -222,6 +231,7 @@ def main(pm) -> None:
                     print("\n[OpenAI Codex Accounts]")
                     _print_codex_list(pm.list_codex_accounts(), False)
                     print("\n[Antigravity]\n" + json.dumps(pm_antigravity.accounts(), indent=2))
+                    print("\n[Grok]\n" + json.dumps(pm_grok.accounts(), indent=2))
             else:
                 _print_claude_list(pm.list_accounts(), args.json)
         elif args.command == "status":
@@ -240,7 +250,8 @@ def main(pm) -> None:
                 c_status = pm.get_claude_auth_status()
                 x_status = pm.get_codex_auth_status()
                 if args.json:
-                    print(json.dumps({"claude": c_status, "codex": x_status, "antigravity": pm_antigravity.accounts(refresh=True)}, indent=2))
+                    print(json.dumps({"claude": c_status, "codex": x_status, "antigravity": pm_antigravity.accounts(refresh=True),
+                                      "grok": pm_grok.usage()}, indent=2))
                 else:
                     print("[Claude Code]")
                     print("Logged In:     %s" % c_status.get("loggedIn"))
@@ -254,6 +265,7 @@ def main(pm) -> None:
                     print("Account ID:    %s" % (x_status.get("accountId") or "-"))
                     print("Token Fresh:   %s" % x_status.get("tokenFresh"))
                     print("\n[Antigravity]\n" + json.dumps(pm_antigravity.accounts(refresh=True), indent=2))
+                    print("\n[Grok]\n" + pm_grok.format_rows(pm_grok.usage()))
             else:
                 status = pm.get_claude_auth_status()
                 if args.json:
@@ -272,6 +284,7 @@ def main(pm) -> None:
                         "claude": pm.fetch_all_usage(force_refresh=args.force),
                         "codex": pm.fetch_codex_usage(force=args.force),
                         "antigravity": pm_antigravity.accounts(refresh=True, force=args.force),
+                        "grok": pm_grok.usage(force=args.force),
                     }, indent=2))
                 else:
                     print("[Claude Code Usage]")
@@ -279,6 +292,7 @@ def main(pm) -> None:
                     print("\n[OpenAI Codex Usage]")
                     _print_codex_usage(pm.fetch_codex_usage(force=args.force), False)
                     print("\n[Antigravity]\n" + json.dumps(pm_antigravity.accounts(refresh=True, force=args.force), indent=2))
+                    print("\n[Grok Usage]\n" + pm_grok.format_rows(pm_grok.usage(force=args.force)))
             else:
                 _print_claude_usage(pm, pm.fetch_all_usage(force_refresh=args.force), args.json)
         elif args.command == "balance":

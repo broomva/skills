@@ -30,6 +30,7 @@ Q = "tests/test_antigravity_quota.py::"
 C = "tests/test_antigravity_cli.py::"
 G = "tests/test_antigravity_generations.py::"
 R = "tests/test_usage_throttle_recovery.py::"
+GK = "tests/test_grok.py::"
 
 # name: (description, [(file, old, new), ...], [tests that must fail])
 MUTATIONS = {
@@ -483,6 +484,55 @@ MUTATIONS = {
              [("provider_manager.py", '        if float((s.get("telemetryFence") or {}).get(account_id, 0) or 0) > now:',
                "        if False:")],
              [R + "test_a_429_that_began_before_the_login_cannot_restore_the_backoff"]),
+    # BRO-3466: Grok usage is read-only telemetry; nothing unmeasured is ever a number.
+    "M107": ("Grok identity mismatch is ignored and the usage call proceeds",
+             [("pm_grok.py", '            raise ProbeError("identity_mismatch")', '            pass')],
+             [GK + "test_identity_mismatch_stops_before_the_usage_call"]),
+    "M108": ("a spent Grok window is reported OK",
+             [("pm_grok.py", "    spent = [w[\"usedPercent\"] for w in windows] + [", "    spent = [] + [")],
+             [GK + "test_a_spent_window_is_limited"]),
+    "M109": ("an expired Grok access token is sent anyway",
+             [("pm_grok.py", "        if expires.timestamp() <= now:", "        if False:")],
+             [GK + "test_an_expired_access_token_makes_no_request_and_says_so"]),
+    "M110": ("an unreadable Grok usage percent becomes 0%",
+             [("pm_grok.py", "    if used is None:\n        return None", "    if used is None:\n        used = 0.0")],
+             [GK + "test_a_response_without_a_measured_percent_is_unavailable_never_zero"]),
+    "M111": ("the Grok probe follows redirects with the bearer token",
+             [("pm_grok.py", "urllib.request.build_opener(_NoRedirect()).open(request, timeout=TIMEOUT)",
+               "urllib.request.build_opener(urllib.request.HTTPRedirectHandler()).open(request, timeout=TIMEOUT)")],
+             [GK + "test_transport_errors_disclose_no_body_and_refuse_redirects"]),
+    "M112": ("a failed Grok read serves cached numbers as current telemetry",
+             [("pm_grok.py", '        result["lastKnown"] = {',
+               '        result.update(windows=cached["windows"], telemetry="ok")\n        result["lastKnown"] = {')],
+             [GK + "test_a_failed_read_keeps_old_numbers_only_as_last_known"]),
+    "M113": ("a rejected Grok token is not NEEDS_LOGIN",
+             [("pm_grok.py", 'if reason in ("not_logged_in", "auth_rejected"):', 'if reason == "not_logged_in":')],
+             [GK + "test_a_rejected_token_is_needs_login"]),
+    "M114": ("usage --provider all --json omits Grok",
+             [("pm_cli.py", '                        "grok": pm_grok.usage(force=args.force),\n', '')],
+             [GK + "test_cli_usage_all_includes_grok[json]"]),
+    "M115": ("Grok accepts balance/switch/rotate/login commands",
+             [("pm_cli.py", '            if args.command not in ("list", "status", "usage"):', '            if False:')],
+             [GK + "test_cli_refuses_anything_but_read_only_commands_for_grok[command0]"]),
+    "M116": ("another Grok login's cached numbers are served as this account's",
+             [("pm_grok.py", '    if cached and cached["email"] != current:', "    if False:")],
+             [GK + "test_another_logins_cache_is_never_served"]),
+    "M117": ("a Grok result carrying the bearer token is returned as is",
+             [("pm_grok.py", "    if token and _carries(json.dumps(result), token):", "    if False:")],
+             [GK + "test_no_result_field_carries_the_token"]),
+    "M118": ("a spent Grok product reads OK under the overall percent",
+             [("pm_grok.py", ' + [p["usedPercent"] for w in windows for p in w.get("products", [])]', "")],
+             [GK + "test_a_spent_product_is_limited_even_under_the_overall_percent"]),
+    "M119": ("a Grok parser crash escapes and takes down --provider all",
+             [("pm_grok.py", "    except (TypeError, ValueError, KeyError, AttributeError, RecursionError):",
+               "    except RecursionError:")],
+             [GK + "test_a_parser_crash_is_unavailable_not_an_exception"]),
+    "M120": ("a reflected Grok token prefix survives the whole-token scrub",
+             [("pm_grok.py", "    return token in text or any(", "    return token in text or False and any(")],
+             [GK + "test_a_reflected_token_prefix_is_never_returned_or_cached"]),
+    "M121": ("a blocked Grok account with an unreadable window reads UNAVAILABLE",
+             [("pm_grok.py", "        if window is None and not blocked:", "        if window is None:")],
+             [GK + "test_a_blocked_account_without_a_readable_window_is_still_limited"]),
 }
 
 

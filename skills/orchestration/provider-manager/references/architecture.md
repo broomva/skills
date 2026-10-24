@@ -376,3 +376,14 @@ is involved. T3 discovery has no thread scope and intentionally fails closed; ex
 allow the warning-state provider to be selected. Existing unpinned conversations require an explicit,
 verified migration design rather than guessing an account. Quota summaries do not prove inference
 availability, and runtime limit errors are surfaced without automatic request replay.
+
+## Grok read-only usage
+
+`pm_grok.py` owns Grok telemetry and nothing else. It reads the grok CLI's `~/.grok/auth.json`
+(one `https://auth.x.ai::*` login) for the email and the OIDC access token, and never writes it or
+uses the refresh token. With the token it calls `cli-chat-proxy.grok.com/v1/user?include=subscription`
+(the identity must match, and the tier) and then `/billing?format=credits` (the plan window), refusing
+redirects and keeping response bodies out of errors. The result is one account row. Its
+credential-free last good reading is cached in `~/.cache/broomva-provider-grok/`. `pm_cli.py`
+dispatches `--provider grok` there before any balancer code, and adds Grok to `--provider all` for
+list, status and usage only.
