@@ -13,7 +13,8 @@
 # owner's cadence) and the inner resume tick (phase 2's resume verb).
 #
 # PHASE 1 runs deterministic code only and acts on no session. Per tick:
-# kill switch, config-check, lock, the tick number, observe, report
+# kill switch, config-check, lock, the tick number, an access check (can it
+# read the scope's repos? BRO-3449), observe, report
 # (classes, count check, asks), the core comparison once a day, the owner's
 # asks (fleet act ask --show: the scope's ask ledger, answered in Maestro's
 # Decisions), and the ledger's tick_fire and runner_exit.
@@ -28,6 +29,7 @@
 # DRY_RUN (any value but 0 forces dry; no value makes a tick live, only the
 # config's dry_run 0 with live_accepted does); FLEET_PYTHON. Test seams: FLEET_TICK_TIMEOUT_S,
 # FLEET_ALERT_TIMEOUT_S and FLEET_KILL_GRACE_S (the bash fallback's watchdog),
+# FLEET_FS_CHECK_S (the access check's budget, 30 s),
 # FLEET_NOTIFY=0, FLEET_MAESTRO_BIN (or FLEET_MAESTRO_BUN and FLEET_MAESTRO_CLI), FLEET_ASK_REPO.
 set -uo pipefail
 
@@ -382,11 +384,27 @@ export FLEET_GH_AUTH="$GH_AUTH" FLEET_RELEASE="$RELEASE"
 # Intents a dead tick left open are closed first, from what happened (§5.7).
 step recover "$FLEET" recover --scope "$SCOPE" --tick "$N"; RCS="recover=$RC"
 [ "$RC" = "0" ] || FAILED="recover"
-step observe "$FLEET" observe --scope "$SCOPE" --tick "$N"; RCS="$RCS observe=$RC"
-[ "$RC" = "0" ] || FAILED="${FAILED:-observe}"
-if [ "$RC" = "0" ]; then
-  step report "$FLEET" report --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS report=$RC"
-  [ "$RC" = "0" ] || FAILED="${FAILED:-report}"
+# Can the tick read the scope's repos? Without macOS privacy (TCC) access to
+# their volume, observe's first .git read blocks on a consent prompt until the
+# watchdog ends the whole tick (BRO-3449). Checked first, on a short budget of
+# its own, so a missing grant costs seconds and says what it is; observe and
+# report wait for it.
+FS_S=${FLEET_FS_CHECK_S:-30}
+case "$FS_S" in (""|*[!0-9]*) FS_S=30 ;; esac
+TICK_DEADLINE=$DEADLINE
+[ $(($(date +%s) + FS_S)) -lt "$DEADLINE" ] && DEADLINE=$(($(date +%s) + FS_S))
+step access "$FLEET" fs-check --scope "$SCOPE"; RCS="$RCS access=$RC"
+DEADLINE=$TICK_DEADLINE
+if [ "$RC" != "0" ]; then
+  FAILED="${FAILED:-access}"
+  log "step observe skipped: the scope's repos can't be read (step access)"
+else
+  step observe "$FLEET" observe --scope "$SCOPE" --tick "$N"; RCS="$RCS observe=$RC"
+  [ "$RC" = "0" ] || FAILED="${FAILED:-observe}"
+  if [ "$RC" = "0" ]; then
+    step report "$FLEET" report --scope "$SCOPE" --tick "$N" --dry-run "$DRY"; RCS="$RCS report=$RC"
+    [ "$RC" = "0" ] || FAILED="${FAILED:-report}"
+  fi
 fi
 # The coordinator, in act mode only, after a clean recover, observe and report;
 # it acts only through fleet act. A tool list that fails the posture check
@@ -417,7 +435,9 @@ trap - EXIT
 release
 echo "[$(date -u +%FT%TZ)] fleet-reconcile $SCOPE tick $N: $RCS"   # launchd's log: one line per run
 if [ -n "$FAILED" ]; then
-  alert "tick-$FAILED" "tick $N failed at $FAILED ($RCS)"
+  MSG="tick $N failed at $FAILED ($RCS)"
+  [ "$FAILED" = "access" ] && MSG="$MSG: it can't read the scope's repos; fs-check in tick.log names them and the grant (macOS privacy access)"
+  alert "tick-$FAILED" "$MSG"
   exit 1
 fi
 exit 0

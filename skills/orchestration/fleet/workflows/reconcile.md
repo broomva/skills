@@ -127,7 +127,12 @@ Trash; the config, the releases and the state dir stay.
    alerts and runs no tick, and every verb stays dry without it. The note
    records a deliberate second edit; requiring the ticket ids keeps a bare
    "no" or "TODO" from passing (it still doesn't check the work itself).
-6. `fleet recover` (closes intents a dead tick left open), `fleet observe`,
+6. `fleet recover` (closes intents a dead tick left open), `fleet fs-check`
+   (can the tick read the scope's repos? On a 30 s budget of its own: a
+   launchd job with no macOS privacy access to their volume is denied, or
+   blocks on a consent prompt, and observe would hang the same way; when it
+   fails, observe and report are skipped and the alert names the grant,
+   BRO-3449), `fleet observe`,
    `fleet report`, in act mode `fleet coordinator` (only after the three
    before it succeeded), and `fleet
    core-compare` (the core's comparison, once a day from `compare_hour`),
@@ -139,7 +144,7 @@ Trash; the config, the releases and the state dir stay.
    ask ledger Maestro's Decisions reads), and one line on stdout for launchd's log.
 
 **A failed tick is loud.** An unreadable config, a failed `config-check`, or
-observe or report failing, or a lock held for over 2 h, writes a alert
+the access check, observe or report failing, or a lock held for over 2 h, writes a alert
 in the scope's ask ledger (a Maestro item from bash when Python is what broke),
 at most once per 6 h per kind, and exits 1, so launchd's last exit shows it.
 

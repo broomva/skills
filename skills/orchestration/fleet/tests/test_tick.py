@@ -184,6 +184,7 @@ def rig(fresh_world, tmp_path):
 def test_a_tick_observes_reports_asks_and_records_itself(rig):
     r = rig.tick()
     assert r.returncode == 0, r.stderr
+    assert "recover=0 access=0 observe=0 report=0" in r.stdout, r.stdout
     sd = rig.world.state["broomva"]
     assert (sd / "tick-counter").read_text().strip() == "1"
     td = sd / "ticks" / "00001"
@@ -321,7 +322,7 @@ def test_a_lock_held_past_two_hours_alerts_the_owner(rig):
 def test_each_run_leaves_one_line_on_stdout_for_launchds_log(rig):
     r = rig.tick()
     lines = r.stdout.strip().splitlines()
-    assert len(lines) == 1 and re.search(r"fleet-reconcile broomva tick 1: recover=0 observe=0 report=0 compare=\d ask=0$",
+    assert len(lines) == 1 and re.search(r"fleet-reconcile broomva tick 1: recover=0 access=0 observe=0 report=0 compare=\d ask=0$",
                                          lines[0]), r.stdout
     assert r.returncode == 0  # the core comparison's own verdict doesn't fail the tick
 
@@ -386,6 +387,51 @@ def test_a_hung_step_is_stopped_by_the_watchdog_children_included(rig):
     time.sleep(0.5)
     left = subprocess.run(["pgrep", "-f", "sleep 33"], capture_output=True, text=True).stdout.split()
     assert left == [], "the hung stub's child outlived the tick"
+
+
+def _swap_head(rig, make):
+    """Replace the workspace repo's HEAD with what make(path) leaves there; restore it after."""
+    head = rig.world.home / "broomva" / ".git" / "HEAD"
+    saved = head.read_bytes()
+    head.unlink()
+    make(head)
+
+    def restore():
+        if head.is_file():
+            head.chmod(0o644)
+        head.unlink()
+        head.write_bytes(saved)
+    return restore
+
+
+def test_a_repo_the_tick_cant_read_fails_its_access_step_and_skips_observe(rig):
+    # BRO-3449: a launchd job with no macOS privacy access to the repos' volume. Its reads are denied.
+    restore = _swap_head(rig, lambda p: (p.write_text("ref: refs/heads/main\n"), p.chmod(0)))
+    try:
+        r = rig.tick()
+    finally:
+        restore()
+    assert r.returncode == 1
+    assert "access=3 compare=" in r.stdout and "observe=" not in r.stdout, r.stdout
+    assert "fleet fs-check: can't read" in rig.log() and "Full Disk Access" in rig.log()
+    assert not (rig.world.state["broomva"] / "ticks" / "00001" / "snapshot.json").exists()
+    (alert,) = rig.alerts("tick-access")
+    assert "failed at access" in alert["headline"] and alert["blocking"] is False
+
+
+def test_a_read_that_blocks_costs_the_access_steps_budget_not_the_tick(rig):
+    # BRO-3449: under an app-bundled Python the same read blocks on a consent prompt nobody answers.
+    # A FIFO's open() blocks the same way until something opens its other end.
+    restore = _swap_head(rig, lambda p: os.mkfifo(p))
+    t0 = time.monotonic()
+    try:
+        r = rig.tick(FLEET_FS_CHECK_S="2", FLEET_TICK_TIMEOUT_S="120")
+    finally:
+        restore()
+    assert time.monotonic() - t0 < 60 and r.returncode == 1, rig.log()
+    assert "access=143 compare=0 ask=0" in r.stdout, r.stdout
+    assert "step access over the tick's budget" in rig.log()
+    rig.alerts("tick-access")
 
 
 def test_each_ask_is_one_ledger_entry_and_the_owners_answer_comes_back_once(rig):
@@ -654,7 +700,7 @@ def test_in_act_mode_the_tick_recovers_then_runs_the_coordinator_with_the_send_g
     rig.world.write_config(mode="act")
     r = rig.tick()
     assert r.returncode == 0, rig.log()
-    assert re.search(r"recover=0 observe=0 report=0 coordinator=0 compare=\d ask=0$", r.stdout.strip())
+    assert re.search(r"recover=0 access=0 observe=0 report=0 coordinator=0 compare=\d ask=0$", r.stdout.strip())
     sd = rig.world.state["broomva"]
     assert '"subtype": "init"' in (sd / "ticks" / "00001" / "coordinator.jsonl").read_text()
     hooks = json.loads((sd / "coordinator-settings.json").read_text())["hooks"]
@@ -723,7 +769,7 @@ def test_fleet_reconcile_runs_one_tick_by_hand_and_it_is_dry_even_when_the_confi
     rig.world.write_config(dry_run=0, live_accepted="phase 3, BRO-2755 and BRO-2756 done (test)")
     r = rig.fleet("reconcile", "--scope", "broomva")
     assert r.returncode == 0, r.stdout + r.stderr
-    assert re.search(r"fleet-reconcile broomva tick 1: recover=0 observe=0 report=0", r.stdout), r.stdout
+    assert re.search(r"fleet-reconcile broomva tick 1: recover=0 access=0 observe=0 report=0", r.stdout), r.stdout
     td = rig.world.state["broomva"] / "ticks" / "00001"
     assert (td / "report.md").is_file() and json.loads((td / "report.json").read_text())["dry_run"] is True
     assert [x for x in rig.ledger() if x["kind"] == "tick_fire"][0]["dry_run"] is True

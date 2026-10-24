@@ -592,6 +592,36 @@ def cmd_janitor_run(args: argparse.Namespace) -> int:
     return 0 if res.get("removed") or (not args.remove and not res.get("aborted")) else 1
 
 
+def cmd_fs_check(args: argparse.Namespace) -> int:
+    """Can this process read the repos a tick places sessions in? Opens each
+    registered repo's HEAD, the read observe's placement makes (ctx.locate).
+    On macOS a launchd job with no privacy (TCC) access to a volume gets EPERM
+    there, or, under an app-bundled Python, an open() that blocks on a consent
+    prompt nobody answers; tick.sh bounds this step so that costs seconds, not
+    the tick (BRO-3449). Exit 0 when every repo can be read (a missing one is
+    not this check's business), 3 when any is denied."""
+    import ctx
+
+    _sec(args)
+    denied = []
+    for repo in sorted(ctx.load_scopes().by_repo):
+        try:
+            with open(os.path.join(repo, "HEAD"), "rb") as fh:
+                fh.read(1)
+        except PermissionError as exc:
+            denied.append("%s (%s)" % (repo, exc.strerror))
+        except OSError:
+            continue
+    for d in denied:
+        print("fleet fs-check: can't read %s" % d)
+    if denied:
+        print("fleet fs-check: this process has no access there; on macOS, grant Full Disk Access to the "
+              "launchd job's program (/bin/bash) in System Settings > Privacy & Security")
+        return 3
+    print("fleet fs-check: ok")
+    return 0
+
+
 def cmd_next_tick(args: argparse.Namespace) -> int:
     """The next tick number: one past both the counter file and the ledger's
     last tick_fire, so a lost counter can't reuse a number. Writes the counter.
@@ -751,6 +781,8 @@ def main(argv=None) -> int:
     p.set_defaults(func=cmd_ack)
     p = scoped(sub.add_parser("next-tick"))
     p.set_defaults(func=cmd_next_tick)
+    p = scoped(sub.add_parser("fs-check", help="can this process read the scope's repos (macOS privacy access)"))
+    p.set_defaults(func=cmd_fs_check)
     p = scoped(sub.add_parser("ledger-append"))
     p.add_argument("what", choices=("fire", "exit", "b-step"))
     p.add_argument("--tick", type=int, required=True)
