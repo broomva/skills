@@ -10,6 +10,7 @@ import pytest
 from conftest import IMPL_DIR
 import pm_antigravity as ag
 import pm_cli
+import pm_grok
 
 pytestmark = pytest.mark.new_only
 
@@ -45,6 +46,8 @@ def test_all_includes_antigravity_in_text_and_json(monkeypatch, providers, capsy
     balance = Mock(return_value={"action": "hold", "reason": "fake-antigravity"})
     monkeypatch.setattr(ag, "accounts", accounts)
     monkeypatch.setattr(ag, "balance", balance)
+    monkeypatch.setattr(pm_grok, "accounts", Mock(return_value=[{"email": "grok-account@example.test"}]))
+    monkeypatch.setattr(pm_grok, "usage", Mock(return_value=[]))
     options = [command, "--provider", "all"] + (["--json"] if as_json else [])
     if command == "usage":
         options += ["--force"]
@@ -61,7 +64,7 @@ def test_all_includes_antigravity_in_text_and_json(monkeypatch, providers, capsy
         accounts.assert_called_once_with(**expected)
     if as_json:
         parsed = json.loads(output)
-        assert set(parsed) == {"claude", "codex", "antigravity"}
+        assert set(parsed) == {"claude", "codex", "antigravity"} | ({"grok"} if command != "balance" else set())
         assert parsed["antigravity"] == (balance.return_value if command == "balance" else accounts.return_value)
     else:
         assert "[Antigravity]" in output

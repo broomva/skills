@@ -67,6 +67,8 @@ def hermetic(tmp_path, monkeypatch):
               "CLAUDE_SECURESTORAGE_CONFIG_DIR", "PROVIDER_MANAGER_INLINE"):
         monkeypatch.delenv(k, raising=False)
     monkeypatch.setattr(urllib.request, "urlopen", fake_net.blocked_urlopen)
+    # Probes that build their own opener (no-redirect handlers) bypass urlopen: refuse those too.
+    monkeypatch.setattr(urllib.request.OpenerDirector, "open", fake_net.blocked_urlopen)
     for name, value in default_paths(home).items():
         if hasattr(pm, name):
             monkeypatch.setattr(pm, name, value)

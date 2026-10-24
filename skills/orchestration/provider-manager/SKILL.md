@@ -3,12 +3,12 @@ name: provider-manager
 category: orchestration
 description: >
   Subscription account manager for macOS (Claude Code CLI, OpenAI Codex CLI, Antigravity ACP, Orca, Keychain): account
-  discovery, usage telemetry, machine-wide balancer that fails over without killing running sessions,
+  discovery, usage telemetry (Grok too, read-only), machine-wide balancer that fails over without killing running sessions,
   safe switching, and browser-session re-login. Use when: inspecting quotas or which account is active,
   switching or rotating Claude or Codex accounts, re-authorizing an account, listing sessions stalled
   by a rate limit, or balancing multi-account quotas across providers. Triggers: "switch claude account",
   "switch codex account", "provider usage", "codex usage", "rate limit reached", "login headless",
-  "orca credentials", "provider-manager", "stalled sessions", "subscription limit".
+  "orca credentials", "provider-manager", "stalled sessions", "subscription limit", "grok usage".
 license: MIT
 ---
 
@@ -184,7 +184,7 @@ switch automatically. `codexAccounts` names the Arc space each Codex account re-
 
 ## Commands
 
-All commands accept `--provider {claude,codex,antigravity,all}` (default: `claude`):
+All commands accept `--provider {claude,codex,antigravity,grok,all}` (default: `claude`; `grok` takes only `list`, `status` and `usage`):
 
 ```bash
 PM=~/.agents/skills/provider-manager/scripts/provider_manager.py
@@ -210,7 +210,8 @@ python3 $PM balance --provider codex [--dry-run]     # evaluate Codex balance (5
 python3 $PM login-headless --provider codex [--email X] [--space S] # Codex login via Arc into X's saved copy; the CLI stays put
 
 # Multi-provider aggregate commands
-python3 $PM usage --provider all       # display both Claude Code and OpenAI Codex telemetry
+python3 $PM usage --provider grok [--force] [--json] # Grok: weekly window %, reset, tier, status (read-only)
+python3 $PM usage --provider all       # Claude Code, OpenAI Codex, Antigravity and Grok telemetry
 python3 $PM status --provider all      # inspect authentication across both providers
 python3 $PM list --provider all        # list managed accounts across both providers
 python3 $PM balance --provider all     # evaluate and balance both Claude and Codex accounts
@@ -308,3 +309,20 @@ pins retain their original generation, including across subsequent registrations
 a retained profile is idempotent and does not roll the latest generation backward. Never sign in
 over a registered profile. V1 registries migrate atomically, preserving selections and pin ownership.
 Existing pins refuse altered grants/runtimes instead of silently changing identity.
+
+## Grok usage (BRO-3466)
+
+There is one xAI account (`~/.grok/auth.json`, written only by the grok CLI), so Grok has **no
+balancing, switching or login** here: `list`, `status` and `usage` with `--provider grok` are
+read-only, and `--provider all` includes it. Anything else with `--provider grok` is refused.
+
+The numbers come from the endpoint behind grok 1.0.70's own billing pane, found in the binary and
+measured on 2026-10-24: `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` (the plan's
+`currentPeriod` and `creditUsagePercent`, which was weekly at the time, plus per-product percents) and `/user?include=subscription`
+(the email, which must match auth.json, and `subscriptionTier`). Both use the CLI's OIDC access token as a
+bearer, with redirects refused. Status is `OK`, `LIMITED` (the window is at 100% or more, or the account is blocked),
+`NEEDS_LOGIN` (no login, or the token was rejected) or `UNAVAILABLE`. A status other than OK or LIMITED prints
+`telemetry unavailable: <reason>`. An expired access token is reported, not refreshed. Any grok run, for example
+`grok models`, refreshes it. Readings are cached for 60 s in `~/.cache/broomva-provider-grok/usage.json`
+(`--force` re-reads). After a failed read the last good numbers appear only as `lastKnown`, with their age,
+and never as current. An unreadable percent is never a zero.
