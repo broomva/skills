@@ -9,6 +9,7 @@ The grok CLI stays the only reader of the refresh token and the only writer of a
 access token is reported, never refreshed here (any grok run refreshes it). Numbers come only from
 those responses; anything unreadable is `telemetry unavailable: <reason>`, never a zero.
 """
+import http.client
 import json
 import math
 import os
@@ -60,7 +61,7 @@ def _request(path, token):
         # Do not read/log the response body, URL, request or exception text.
         raise ProbeError({401: "auth_rejected", 403: "auth_rejected", 429: "endpoint_throttled"}.get(
             exc.code, "redirect_refused" if 300 <= exc.code < 400 else "http_%d" % exc.code)) from None
-    except (OSError, ValueError, TypeError):
+    except (OSError, ValueError, TypeError, RecursionError, http.client.HTTPException):
         raise ProbeError("transport_unavailable") from None
 
 
@@ -75,8 +76,10 @@ def _text(value):
 def _instant(value):
     if not isinstance(value, str):
         return None
+    # Python 3.9's fromisoformat takes only 3- or 6-digit fractions: normalise to 6.
+    value = re.sub(r"\.(\d+)", lambda m: "." + (m.group(1) + "000000")[:6], value.replace("Z", "+00:00"), count=1)
     try:
-        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        parsed = datetime.fromisoformat(value)
     except (ValueError, OverflowError):
         return None
     return parsed.astimezone(timezone.utc) if parsed.tzinfo else None
@@ -101,12 +104,13 @@ def parse_credits(data):
         return None
     start = _instant(period.get("start") or config.get("billingPeriodStart"))
     end = _instant(period.get("end") or config.get("billingPeriodEnd"))
-    kind = PERIODS.get(period.get("type"), "other")
+    kind = PERIODS.get(period.get("type"), "other") if isinstance(period.get("type"), str) else "other"
     window = {"id": kind, "kind": kind, "usedPercent": used, "startsAt": _iso(start), "resetsAt": _iso(end)}
     if start and end and end > start:
         window["windowDurationMins"] = int((end - start).total_seconds() // 60)
     products = []
-    for item in config.get("productUsage") or []:
+    items = config.get("productUsage")
+    for item in items if isinstance(items, list) else []:
         if isinstance(item, dict) and _text(item.get("product")) and _percent(item.get("usagePercent")) is not None:
             products.append({"product": _text(item["product"]), "usedPercent": _percent(item["usagePercent"])})
     if products:
@@ -136,25 +140,35 @@ def _read_auth(auth_path):
 
 
 def _load_cache(cache_path):
+    """The last good reading, or None unless every window still carries a measured percent."""
     try:
         cached = json.loads(cache_path.read_text())
-        return cached if isinstance(cached, dict) and _number(cached.get("numbersAt")) else None
-    except (OSError, ValueError):
+    except (OSError, ValueError, RecursionError):
         return None
+    if not isinstance(cached, dict) or not _number(cached.get("numbersAt")) or not isinstance(cached.get("email"), str):
+        return None
+    windows = cached.get("windows")
+    if not isinstance(windows, list) or not windows or not all(
+            isinstance(w, dict) and _percent(w.get("usedPercent")) is not None for w in windows):
+        return None
+    return cached
 
 
 def _save_cache(cache_path, result):
     try:
         cache_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         tmp = cache_path.with_suffix(".tmp")
-        tmp.write_text(json.dumps(result))
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+        with os.fdopen(fd, "w") as out:
+            out.write(json.dumps(result))
         os.replace(tmp, cache_path)
     except OSError:
         pass  # a cache that cannot be written only costs a re-read
 
 
 def _status(windows, blocked):
-    if blocked or any(w["usedPercent"] >= 100 for w in windows):
+    spent = [w["usedPercent"] for w in windows] + [p["usedPercent"] for w in windows for p in w.get("products", [])]
+    if blocked or any(used >= 100 for used in spent):
         return "LIMITED"
     return "OK"
 
@@ -170,7 +184,9 @@ def probe(now=None):
     try:
         email, token, expires = _read_auth(auth_path)
         result["email"] = email
-        if expires is None or expires.timestamp() <= now:
+        if expires is None:
+            raise ProbeError("token_expiry_unreadable")
+        if expires.timestamp() <= now:
             raise ProbeError("access_token_expired")
         user = _request("/user?include=subscription", token)
         if _text(user.get("email")).lower() != email:
@@ -188,9 +204,13 @@ def probe(now=None):
         result["reason"] = reason
         if reason in ("not_logged_in", "auth_rejected"):
             result["status"] = "NEEDS_LOGIN"
-    text = json.dumps(result)
-    if token and token in text:  # defence in depth: no field may carry the bearer token
-        raise RuntimeError("grok probe result carried a credential")
+    except (TypeError, ValueError, KeyError, AttributeError, RecursionError):
+        # A response this parser does not understand is unavailable, never a crash of `--provider all`.
+        result.update(windows=[], telemetry="unavailable", numbersAt=None, status="UNAVAILABLE",
+                      reason="invalid_response")
+    if token and token in json.dumps(result):  # defence in depth: no field may carry the bearer token
+        result = {"provider": "grok", "email": None, "tier": None, "isActive": True, "status": "UNAVAILABLE",
+                  "telemetry": "unavailable", "windows": [], "numbersAt": None, "reason": "credential_in_result"}
     return result
 
 
@@ -198,17 +218,23 @@ def usage(force=False, now=None):
     """[account] with the plan window. Cached CACHE_SECONDS; a failed read keeps the last good
     numbers only as `lastKnown`, labelled with their age, never as current telemetry."""
     now = time.time() if now is None else now
-    _, cache_path = _paths()
+    auth_path, cache_path = _paths()
     cached = _load_cache(cache_path)
+    try:
+        current = _read_auth(auth_path)[0]
+    except ProbeError:
+        current = None
+    if cached and cached["email"] != current:
+        cached = None  # another login's numbers are never this account's
     if cached and not force and 0 <= now - cached["numbersAt"] < CACHE_SECONDS:
         return [dict(cached, numbersAgeSeconds=int(now - cached["numbersAt"]))]
     result = probe(now)
     if result["telemetry"] == "ok":
         _save_cache(cache_path, result)
         result["numbersAgeSeconds"] = 0
-    elif cached and cached.get("email") == result.get("email"):
-        result["lastKnown"] = {"windows": cached.get("windows", []), "numbersAt": cached["numbersAt"],
-                               "numbersAgeSeconds": int(now - cached["numbersAt"])}
+    elif cached and cached["email"] == result.get("email"):
+        result["lastKnown"] = {"windows": cached["windows"], "numbersAt": cached["numbersAt"],
+                               "numbersAgeSeconds": max(0, int(now - cached["numbersAt"]))}
     return [result]
 
 

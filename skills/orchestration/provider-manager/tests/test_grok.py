@@ -166,8 +166,76 @@ def test_transport_errors_disclose_no_body_and_refuse_redirects(monkeypatch):
 def test_no_result_field_carries_the_token(monkeypatch):
     write_auth()
     stub(monkeypatch, user=dict(USER, subscriptionTier=TOKEN))
-    with pytest.raises(RuntimeError):
-        grok.usage(now=NOW)
+    row = grok.usage(now=NOW)[0]
+    assert TOKEN not in json.dumps(row) and row.get("reason") == "credential_in_result"
+    assert row["status"] == "UNAVAILABLE" and row["windows"] == []
+
+
+@pytest.mark.parametrize("bad", [
+    {"config": {"creditUsagePercent": 5, "currentPeriod": {"type": [1]}}},
+    {"config": {"creditUsagePercent": 5, "productUsage": 5}},
+    {"config": {"creditUsagePercent": 5, "productUsage": [5, None, {"product": 1}]}},
+    {"config": {"creditUsagePercent": 5, "currentPeriod": "weekly"}}])
+def test_odd_shapes_never_crash_and_never_invent_a_window_kind(monkeypatch, bad):
+    write_auth()
+    stub(monkeypatch, credits=bad)
+    row = grok.usage(now=NOW)[0]
+    assert row["status"] == "OK" and row["windows"][0]["usedPercent"] == 5 and row["windows"][0]["kind"] == "other"
+    assert "products" not in row["windows"][0]
+    grok.format_rows([row])
+
+
+def test_a_parser_crash_is_unavailable_not_an_exception(monkeypatch):
+    write_auth()
+    stub(monkeypatch)
+    monkeypatch.setattr(grok, "parse_credits", Mock(side_effect=TypeError("boom")))
+    try:
+        row = grok.usage(now=NOW)[0]
+    except TypeError:
+        raise AssertionError("a parser crash escaped the probe") from None
+    assert row["status"] == "UNAVAILABLE" and row.get("reason") == "invalid_response" and row["windows"] == []
+
+
+def test_a_spent_product_is_limited_even_under_the_overall_percent(monkeypatch):
+    write_auth()
+    spent = json.loads(json.dumps(CREDITS))
+    spent["config"]["productUsage"] = [{"product": "GrokBot", "usagePercent": 100}]
+    stub(monkeypatch, credits=spent)
+    assert grok.usage(now=NOW)[0]["status"] == "LIMITED"
+
+
+def test_nanosecond_and_unreadable_expiry(monkeypatch):
+    write_auth(expires="2026-10-25T02:00:29.803441123Z")
+    stub(monkeypatch)
+    assert grok.usage(now=NOW, force=True)[0]["status"] == "OK"
+    write_auth(expires="soon")
+    row = grok.usage(now=NOW, force=True)[0]
+    assert row.get("reason") == "token_expiry_unreadable" and row["status"] == "UNAVAILABLE"
+
+
+def test_another_logins_cache_is_never_served(monkeypatch):
+    write_auth()
+    calls = stub(monkeypatch)
+    grok.usage(now=NOW)
+    write_auth(email="other@example.test")
+    stub(monkeypatch, user=dict(USER, email="other@example.test"), credits=grok.ProbeError("endpoint_throttled"))
+    row = grok.usage(now=NOW + 5)[0]
+    assert row["email"] == "other@example.test" and row["status"] == "UNAVAILABLE"
+    assert "lastKnown" not in row and row.get("numbersAgeSeconds") is None
+    assert len(calls) == 2
+
+
+def test_a_malformed_cache_is_ignored_and_the_cache_is_private(monkeypatch):
+    write_auth()
+    stub(monkeypatch)
+    grok.usage(now=NOW)
+    cache = grok._paths()[1]
+    assert cache.stat().st_mode & 0o077 == 0
+    cache.write_text(json.dumps({"email": EMAIL, "numbersAt": NOW, "windows": [{"usedPercent": None}]}))
+    stub(monkeypatch, credits=grok.ProbeError("endpoint_throttled"))
+    row = grok.usage(now=NOW + 5)[0]
+    assert row["status"] == "UNAVAILABLE" and "lastKnown" not in row
+    grok.format_rows([row])
 
 
 def providers():

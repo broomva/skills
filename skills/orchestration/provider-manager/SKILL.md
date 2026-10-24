@@ -320,9 +320,10 @@ The numbers come from the endpoint behind grok 1.0.70's own billing pane, found 
 measured on 2026-10-24: `GET https://cli-chat-proxy.grok.com/v1/billing?format=credits` (the plan's
 `currentPeriod` and `creditUsagePercent`, which was weekly at the time, plus per-product percents) and `/user?include=subscription`
 (the email, which must match auth.json, and `subscriptionTier`). Both use the CLI's OIDC access token as a
-bearer, with redirects refused. Status is `OK`, `LIMITED` (the window is at 100% or more, or the account is blocked),
+bearer, with redirects refused. Status is `OK`, `LIMITED` (the window or any product in it is at 100% or more, or the account is blocked),
 `NEEDS_LOGIN` (no login, or the token was rejected) or `UNAVAILABLE`. A status other than OK or LIMITED prints
 `telemetry unavailable: <reason>`. An expired access token is reported, not refreshed. Any grok run, for example
 `grok models`, refreshes it. Readings are cached for 60 s in `~/.cache/broomva-provider-grok/usage.json`
 (`--force` re-reads). After a failed read the last good numbers appear only as `lastKnown`, with their age,
-and never as current. An unreadable percent is never a zero.
+and never as current. An unreadable percent is never a zero, and a response the parser does not understand is
+`invalid_response`, so it never takes down `--provider all`.
