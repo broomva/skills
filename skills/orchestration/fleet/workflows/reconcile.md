@@ -128,7 +128,7 @@ Trash; the config, the releases and the state dir stay.
    records a deliberate second edit; requiring the ticket ids keeps a bare
    "no" or "TODO" from passing (it still doesn't check the work itself).
 6. `fleet recover` (closes intents a dead tick left open), `fleet fs-check`
-   (can the tick read the scope's repos? On a 30 s budget of its own: a
+   (can the tick read the registered repos? On a 30 s budget of its own: a
    launchd job with no macOS privacy access to their volume is denied, or
    blocks on a consent prompt, and observe would hang the same way; when it
    fails, observe and report are skipped and the alert names the grant,

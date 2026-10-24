@@ -431,7 +431,10 @@ def test_a_read_that_blocks_costs_the_access_steps_budget_not_the_tick(rig):
     assert time.monotonic() - t0 < 60 and r.returncode == 1, rig.log()
     assert "access=143 compare=0 ask=0" in r.stdout, r.stdout
     assert "step access over the tick's budget" in rig.log()
-    rig.alerts("tick-access")
+    # Killed mid-read, fs-check printed no remedy: the log names the repo it was reading, the alert the grant.
+    assert "fleet fs-check: reading " in rig.log() and "fleet fs-check: can't read" not in rig.log()
+    (alert,) = rig.alerts("tick-access")
+    assert "Full Disk Access to /bin/bash" in json.dumps(alert), alert
 
 
 def test_each_ask_is_one_ledger_entry_and_the_owners_answer_comes_back_once(rig):

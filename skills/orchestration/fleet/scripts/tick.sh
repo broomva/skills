@@ -14,7 +14,7 @@
 #
 # PHASE 1 runs deterministic code only and acts on no session. Per tick:
 # kill switch, config-check, lock, the tick number, an access check (can it
-# read the scope's repos? BRO-3449), observe, report
+# read the registered repos? BRO-3449), observe, report
 # (classes, count check, asks), the core comparison once a day, the owner's
 # asks (fleet act ask --show: the scope's ask ledger, answered in Maestro's
 # Decisions), and the ledger's tick_fire and runner_exit.
@@ -384,20 +384,20 @@ export FLEET_GH_AUTH="$GH_AUTH" FLEET_RELEASE="$RELEASE"
 # Intents a dead tick left open are closed first, from what happened (§5.7).
 step recover "$FLEET" recover --scope "$SCOPE" --tick "$N"; RCS="recover=$RC"
 [ "$RC" = "0" ] || FAILED="recover"
-# Can the tick read the scope's repos? Without macOS privacy (TCC) access to
+# Can the tick read the registered repos? Without macOS privacy (TCC) access to
 # their volume, observe's first .git read blocks on a consent prompt until the
 # watchdog ends the whole tick (BRO-3449). Checked first, on a short budget of
 # its own, so a missing grant costs seconds and says what it is; observe and
 # report wait for it.
 FS_S=${FLEET_FS_CHECK_S:-30}
-case "$FS_S" in (""|*[!0-9]*) FS_S=30 ;; esac
+case "$FS_S" in (""|*[!0-9]*|0) FS_S=30 ;; esac
 TICK_DEADLINE=$DEADLINE
 [ $(($(date +%s) + FS_S)) -lt "$DEADLINE" ] && DEADLINE=$(($(date +%s) + FS_S))
 step access "$FLEET" fs-check --scope "$SCOPE"; RCS="$RCS access=$RC"
 DEADLINE=$TICK_DEADLINE
 if [ "$RC" != "0" ]; then
   FAILED="${FAILED:-access}"
-  log "step observe skipped: the scope's repos can't be read (step access)"
+  log "step observe skipped: the registered repos can't be read (step access)"
 else
   step observe "$FLEET" observe --scope "$SCOPE" --tick "$N"; RCS="$RCS observe=$RC"
   [ "$RC" = "0" ] || FAILED="${FAILED:-observe}"
@@ -436,7 +436,8 @@ release
 echo "[$(date -u +%FT%TZ)] fleet-reconcile $SCOPE tick $N: $RCS"   # launchd's log: one line per run
 if [ -n "$FAILED" ]; then
   MSG="tick $N failed at $FAILED ($RCS)"
-  [ "$FAILED" = "access" ] && MSG="$MSG: it can't read the scope's repos; fs-check in tick.log names them and the grant (macOS privacy access)"
+  # The remedy is in the alert itself: a read that blocks is killed before fs-check can print it.
+  [ "$FAILED" = "access" ] && MSG="$MSG: it can't read the registered repos (fs-check in tick.log names the last one); on macOS grant Full Disk Access to /bin/bash, the launchd job's program, in System Settings > Privacy & Security"
   alert "tick-$FAILED" "$MSG"
   exit 1
 fi
