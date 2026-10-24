@@ -218,11 +218,39 @@ def test_another_logins_cache_is_never_served(monkeypatch):
     calls = stub(monkeypatch)
     grok.usage(now=NOW)
     write_auth(email="other@example.test")
-    stub(monkeypatch, user=dict(USER, email="other@example.test"), credits=grok.ProbeError("endpoint_throttled"))
+    second = stub(monkeypatch, user=dict(USER, email="other@example.test"), credits=grok.ProbeError("endpoint_throttled"))
     row = grok.usage(now=NOW + 5)[0]
     assert row["email"] == "other@example.test" and row["status"] == "UNAVAILABLE"
     assert "lastKnown" not in row and row.get("numbersAgeSeconds") is None
-    assert len(calls) == 2
+    assert len(calls) == 2 and len(second) == 2  # the new login was read, not served from cache
+
+
+def test_a_blocked_account_without_a_readable_window_is_still_limited(monkeypatch):
+    write_auth()
+    stub(monkeypatch, user=dict(USER, userBlockedReason="spend_cap"), credits={"config": {}})
+    row = grok.usage(now=NOW)[0]
+    assert row["status"] == "LIMITED" and row.get("reason") == "account_blocked" and row["windows"] == []
+    assert "LIMITED (telemetry unavailable: account_blocked)" in grok.format_rows([row])
+
+
+def test_a_reflected_token_prefix_is_never_returned_or_cached(monkeypatch):
+    long_token = "x" * 40 + "fake-private-grok-access-token" * 6
+    write_auth()
+    auth = Path.home() / ".grok" / "auth.json"
+    data = json.loads(auth.read_text())
+    next(iter(data.values()))["key"] = long_token
+    auth.write_text(json.dumps(data))
+    monkeypatch.setattr(grok, "_request", lambda path, token: dict(USER, subscriptionTier=token)
+                        if path.startswith("/user") else CREDITS)
+    row = grok.usage(now=NOW)[0]
+    assert row.get("reason") == "credential_in_result" and long_token[:16] not in json.dumps(row)
+    assert not grok._paths()[1].exists()
+
+
+def test_list_does_not_call_an_expired_login_logged_in():
+    write_auth(expires="2020-01-01T00:00:00Z")
+    [row] = grok.accounts()
+    assert row["status"] == "UNAVAILABLE" and row.get("reason") == "access_token_expired"
 
 
 def test_a_malformed_cache_is_ignored_and_the_cache_is_private(monkeypatch):

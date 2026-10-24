@@ -518,7 +518,7 @@ MUTATIONS = {
              [("pm_grok.py", '    if cached and cached["email"] != current:', "    if False:")],
              [GK + "test_another_logins_cache_is_never_served"]),
     "M117": ("a Grok result carrying the bearer token is returned as is",
-             [("pm_grok.py", "    if token and token in json.dumps(result):", "    if False:")],
+             [("pm_grok.py", "    if token and _carries(json.dumps(result), token):", "    if False:")],
              [GK + "test_no_result_field_carries_the_token"]),
     "M118": ("a spent Grok product reads OK under the overall percent",
              [("pm_grok.py", ' + [p["usedPercent"] for w in windows for p in w.get("products", [])]', "")],
@@ -527,6 +527,12 @@ MUTATIONS = {
              [("pm_grok.py", "    except (TypeError, ValueError, KeyError, AttributeError, RecursionError):",
                "    except RecursionError:")],
              [GK + "test_a_parser_crash_is_unavailable_not_an_exception"]),
+    "M120": ("a reflected Grok token prefix survives the whole-token scrub",
+             [("pm_grok.py", "    return token in text or any(", "    return token in text or False and any(")],
+             [GK + "test_a_reflected_token_prefix_is_never_returned_or_cached"]),
+    "M121": ("a blocked Grok account with an unreadable window reads UNAVAILABLE",
+             [("pm_grok.py", "        if window is None and not blocked:", "        if window is None:")],
+             [GK + "test_a_blocked_account_without_a_readable_window_is_still_limited"]),
 }
 
 

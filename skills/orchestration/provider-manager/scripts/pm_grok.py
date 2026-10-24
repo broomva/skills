@@ -166,6 +166,12 @@ def _save_cache(cache_path, result):
         pass  # a cache that cannot be written only costs a re-read
 
 
+def _carries(text, token):
+    """True when any 16-character run of the token appears (fields are truncated, so a whole-token
+    match alone would miss a reflected prefix)."""
+    return token in text or any(token[i:i + 16] in text for i in range(0, max(1, len(token) - 15), 4))
+
+
 def _status(windows, blocked):
     spent = [w["usedPercent"] for w in windows] + [p["usedPercent"] for w in windows for p in w.get("products", [])]
     if blocked or any(used >= 100 for used in spent):
@@ -194,9 +200,12 @@ def probe(now=None):
         result["tier"] = _text(user.get("subscriptionTier")) or None
         blocked = bool(user.get("userBlockedReason")) or bool(user.get("teamBlockedReasons"))
         window = parse_credits(_request("/billing?format=credits", token))
-        if window is None:
+        if window is None and not blocked:
             raise ProbeError("usage_not_reported")
-        result.update(windows=[window], telemetry="ok", numbersAt=now, status=_status([window], blocked))
+        if window is None:  # a block is a measured fact even when the window is unreadable
+            result["status"] = "LIMITED"
+        else:
+            result.update(windows=[window], telemetry="ok", numbersAt=now, status=_status([window], blocked))
         if blocked:
             result["reason"] = "account_blocked"
     except ProbeError as exc:
@@ -208,7 +217,7 @@ def probe(now=None):
         # A response this parser does not understand is unavailable, never a crash of `--provider all`.
         result.update(windows=[], telemetry="unavailable", numbersAt=None, status="UNAVAILABLE",
                       reason="invalid_response")
-    if token and token in json.dumps(result):  # defence in depth: no field may carry the bearer token
+    if token and _carries(json.dumps(result), token):  # defence in depth: no field may carry the bearer token
         result = {"provider": "grok", "email": None, "tier": None, "isActive": True, "status": "UNAVAILABLE",
                   "telemetry": "unavailable", "windows": [], "numbersAt": None, "reason": "credential_in_result"}
     return result
@@ -243,8 +252,11 @@ def accounts():
     auth_path, _ = _paths()
     try:
         email, _, expires = _read_auth(auth_path)
-        return [{"provider": "grok", "email": email, "isActive": True,
-                 "tokenExpiresAt": _iso(expires), "status": "LOGGED_IN"}]
+        row = {"provider": "grok", "email": email, "isActive": True, "tokenExpiresAt": _iso(expires),
+               "status": "LOGGED_IN"}
+        if expires is None or expires.timestamp() <= time.time():
+            row.update(status="UNAVAILABLE", reason="access_token_expired" if expires else "token_expiry_unreadable")
+        return [row]
     except ProbeError as exc:
         return [{"provider": "grok", "email": None, "isActive": True,
                  "status": "NEEDS_LOGIN" if str(exc) == "not_logged_in" else "UNAVAILABLE", "reason": str(exc)}]
