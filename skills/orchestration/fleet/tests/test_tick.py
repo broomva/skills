@@ -404,6 +404,7 @@ def _swap_head(rig, make):
     return restore
 
 
+@pytest.mark.skipif(hasattr(os, "geteuid") and os.geteuid() == 0, reason="root reads a mode-0 file")
 def test_a_repo_the_tick_cant_read_fails_its_access_step_and_skips_observe(rig):
     # BRO-3449: a launchd job with no macOS privacy access to the repos' volume. Its reads are denied.
     restore = _swap_head(rig, lambda p: (p.write_text("ref: refs/heads/main\n"), p.chmod(0)))
