@@ -166,7 +166,7 @@ When invoked, the agent runs this pipeline by default. Steps may be skipped only
 ### Plan phase
 
 7. **Linear ticket (P3)** — create or claim the ticket. Wire dependencies via `blocks` / `blocked_by`.
-8. **Parallel decomposition (P5)** — identify independent streams. Dispatch parallel agents via single message with multiple `Agent` calls. Each agent gets a worktree if writing code.
+8. **Parallel decomposition (P5)** — identify independent streams. Dispatch parallel agents via single message with multiple `Agent` calls. Each agent gets a worktree if writing code. **Every delegation is tiered, per bstack `references/delegation.md`:** before dispatching, assess each stream's tier (`python3 scripts/delegation.py assess …` in the broomva workspace; elsewhere apply the rules in that reference) and pass the model explicitly on every `Agent` call (`model`, the ladder's `agent` alias) or Paseo launch (`model`, `thinkingOptionId`) — never let a subagent silently inherit the orchestrator's model. Work big enough to need a spec (>200 LOC, a public API, or more than three non-test files) and with none gets a frontier spec/plan first, and standard executors work from it — a fix plus its test is reviewed, not specced; multi-node work is an agent graph validated with `delegation.py plan`. Every brief carries the delegation block (`delegation.py brief`, or `assess --done … --brief`), which each child copies into the briefs it writes, with its own tier. Raises at any depth are allowed and are stated as `TIER-RAISE: <from> -> <to>: <why>` lines; re-plan on them rather than forbidding them. P20 reviewers, and Explore runs that serve a review, stay at frontier or cross-vendor.
 9. **Brainstorm-or-not (gate per `superpowers:brainstorming`)** — apply this two-condition test, not vibes:
 
    a. Did the user **enumerate the steps** in their message? *Yes* → skip brainstorming.
@@ -250,6 +250,7 @@ Section A is the original generic anti-rationalization battery. Section B is *du
 |---|---|
 | "User just said 'fix it' — they don't want all this overhead" | Bare directives in execution mode expand to full discipline. That IS what they want — they created this skill explicitly to stop repeating the discipline. |
 | "Skipping validation will be faster" | P11 exists because compile-time success ≠ deploy correctness. Skip = silent corruption. |
+| "Subagents can just inherit my model; tiering is overhead" | Unassigned tiers are why 83% of 706 fleet agents ran on Opus (measured 2026-10-15, BRO-3118). Assessment is one deterministic call, and raises keep a low first guess safe. |
 | "I'll add docs after merge" | Docs-after-merge = docs-never. Update BEFORE push, in the same PR. |
 | "The spec has all the sections, so it's done" | Sections are shape. `spec_check.py` decides shape; the rubric decides whether the documented decisions are the expensive ones and whether the alternatives are real. A doc passing all fourteen checks can still be an implementation manual. |
 | "Just sleep until CI finishes" | P7 explicit ban. `p9 watch --background` + pull from wait-queue. |
