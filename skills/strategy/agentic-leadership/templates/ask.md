@@ -8,6 +8,7 @@ Options:
   C. <option>: <trade-off>.
 
 Default: if there is no answer by <time>, I do <A>, only if it is already
-         authorized, within the explicit budget, and neither irreversible nor
-         external; otherwise I wait and report. Silence never authorizes a
-         costly action outside its budget, or an irreversible or external action.
+         authorized, neither irreversible nor external, and either free or
+         within an explicit budget; otherwise I wait and report. Silence never
+         authorizes a costly action outside its budget, or an irreversible or
+         external action.

@@ -226,10 +226,11 @@ Context: <two or three sentences, with links>.
 Options:
   A. <option>: <trade-off>.  (recommended, because <reason>)
   B. <option>: <trade-off>.
-Default: if no answer by <time>, I do A (only if A is within my bounds and
-         already authorized, within an explicit budget, and neither irreversible
-         nor external; otherwise I wait and report). Silence never authorizes
-         costly work outside its budget, or irreversible or external work.
+Default: if no answer by <time>, I do A (only if A is within my bounds,
+         already authorized, neither irreversible nor external, and either free
+         or within an explicit budget; otherwise I wait and report). Silence
+         never authorizes costly work outside its budget, or irreversible or
+         external work.
 ```
 
 Agents escalate on the conditions in their contract and on anything
