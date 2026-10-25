@@ -95,8 +95,8 @@ A one-hour task gets five lines. A two-week initiative gets a page.
 Intent:     <the outcome that should be true> because <why it matters>.
 Not in scope: <what this is explicitly not about>.
 Bounds:     may <actions allowed without asking>;
-            must ask before <irreversible or costly actions>;
-            budget <time / money / tokens>.
+            may take costly actions only inside <an explicit budget>;
+            must get explicit approval before <irreversible or external actions>.
 Evidence:   done means <observable check>, shown by <receipt>.
 Escalation: stop and ask when <condition>; otherwise decide and note why.
 Review:     <who> reviews <what>, before <ship / merge / send>.
@@ -177,7 +177,8 @@ Rules that keep bounds real:
 - Put bounds where they are enforced, not only where they are written. A rule an
   agent can ignore is a wish. Gates, permissions and checks are the bounds.
 - Give every autonomous run a budget: iterations, time, money and a stop
-  condition for "no progress".
+  condition for "no progress". If none is stated, do not infer one: prepare
+  reversible work or ask for it.
 - Keep a kill switch, and know where it is before you need it.
 
 ---
@@ -224,7 +225,9 @@ Options:
   A. <option>: <trade-off>.  (recommended, because <reason>)
   B. <option>: <trade-off>.
 Default: if no answer by <time>, I do A (only if A is within my bounds and
-         needs no approval; otherwise I wait and report).
+         already authorized, within an explicit budget, and neither irreversible
+         nor external; otherwise I wait and report). Silence never authorizes
+         costly work outside its budget, or irreversible or external work.
 ```
 
 Agents escalate on the conditions in their contract and on anything

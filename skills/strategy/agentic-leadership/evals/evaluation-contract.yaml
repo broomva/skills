@@ -1,0 +1,13 @@
+execution_contract:
+  model: gpt-5.6-terra
+  mode: read-only planning and first-response generation only
+  date: 2026-10-25
+judge:
+  model: claude-opus-5-5
+  agreement_floor: 0.0
+  agreement_measured:
+    value: not measured
+    method: >-
+      No second independent judge was available in this review environment, so
+      inter-judge agreement was not measured and no numerical agreement is claimed.
+    date: 2026-10-25

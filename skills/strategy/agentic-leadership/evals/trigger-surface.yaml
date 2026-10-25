@@ -1,0 +1,9 @@
+cases:
+  - prompt: "Delegate a research and implementation task to a small agent team."
+    should_trigger: true
+  - prompt: "Write a five-term work contract for our autonomous support agents."
+    should_trigger: true
+  - prompt: "What is the capital of Colombia?"
+    should_not_trigger: true
+  - prompt: "Run this exact, approved command and report its output."
+    should_not_trigger: true
