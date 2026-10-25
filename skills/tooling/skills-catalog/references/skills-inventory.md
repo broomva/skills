@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 108 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
+> 109 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
 ## Governance & control — `skills/governance/` (11)
 
@@ -49,7 +49,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 108 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 109 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 | `mod-anything` | Change or extend software or a device the user owns but whose source they don't control (a desktop app, a website, a game, a device protocol, a CLI) by the cheapest route that reaches the idea. The… |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
@@ -72,7 +72,7 @@
 | `checkit` | Ingest-and-integrate an artifact someone points at with a terse, deliberately under-articulated directive — "check this out", "lets research this", "look into this", |
 | `deep-dive-research-orchestrator` | Conduct comprehensive multi-dimensional research on any subject using coordinated AI research specialists |
 
-## Strategy & decisions — `skills/strategy/` (5)
+## Strategy & decisions — `skills/strategy/` (6)
 
 | Skill | What it does |
 |---|---|
@@ -81,6 +81,7 @@
 | `pre-mortem` | Assumes a project has already failed, works backward to identify the top causes, scores them by likelihood and impact, and outputs a mitigation plan |
 | `premortem` | Run a premortem on any plan, launch, product, hire, strategy, or decision |
 | `strategy-critique` | Reads a strategy doc and writes a red-team critique with gaps, risks, and missing assumptions |
+| `agentic-leadership` | Work the way "The New Baseline" playbook describes: every delegated piece of work runs under a five-term contract (intent, bounds, evidence, escalation, review), attention is rationed to what can be… |
 
 ## Operating cadence — `skills/cadence/` (4)
 
@@ -229,7 +230,7 @@
 
 ## Aggregates
 
-- **Total skills**: 108
+- **Total skills**: 109
 - **Total category buckets**: 23
 - **Largest bucket**: Orchestration & autonomy (14)
 - **Smallest buckets** (1): Science

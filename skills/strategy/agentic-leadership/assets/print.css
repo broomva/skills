@@ -1,0 +1,21 @@
+@page { size: A4; margin: 22mm 20mm 22mm 20mm; }
+html { background: #FAF9F6; }
+body { font-family: Georgia, "Times New Roman", serif; color: #141414; font-size: 10.5pt; line-height: 1.5; max-width: 100%; }
+h1 { font-size: 30pt; font-weight: 400; margin: 0 0 4mm; }
+h2 { font-size: 16pt; font-weight: 400; margin: 9mm 0 3mm; break-after: avoid; border-top: 0.4pt solid #DAD8D1; padding-top: 4mm; }
+h3 { font-size: 11.5pt; margin: 5mm 0 2mm; break-after: avoid; }
+p, li { orphans: 3; widows: 3; }
+em { color: #3a3936; }
+code, pre { font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 8.6pt; }
+pre { background: #F1EFE9; border-left: 2pt solid #C2372B; padding: 3mm 4mm; white-space: pre-wrap; break-inside: avoid; }
+table { border-collapse: collapse; width: 100%; font-size: 9pt; margin: 3mm 0; break-inside: avoid; }
+th, td { border-bottom: 0.4pt solid #DAD8D1; padding: 1.6mm 2mm; text-align: left; vertical-align: top; }
+th { font-family: ui-monospace, Menlo, monospace; font-size: 8pt; text-transform: uppercase; letter-spacing: 0.04em; color: #6B6A65; }
+hr { border: 0; border-top: 0.4pt solid #DAD8D1; margin: 6mm 0; }
+.cover { break-after: page; padding-top: 18mm; }
+.cover .kicker { font-family: ui-monospace, Menlo, monospace; font-size: 9pt; color: #6B6A65; letter-spacing: 0.04em; }
+.cover h1 { font-size: 40pt; margin: 3mm 0 2mm; }
+.cover .sub { font-size: 14pt; color: #3a3936; margin-bottom: 10mm; }
+.cover img { width: 100%; margin: 4mm 0 8mm; }
+.cover .by { font-family: ui-monospace, Menlo, monospace; font-size: 9pt; color: #6B6A65; }
+.cover .install { font-family: ui-monospace, Menlo, monospace; font-size: 9pt; background: #F1EFE9; padding: 2mm 3mm; display: inline-block; margin-top: 3mm; }

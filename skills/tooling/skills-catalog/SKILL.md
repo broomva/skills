@@ -2,7 +2,7 @@
 name: skills-catalog
 category: tooling
 description: >
-  Canonical reference inventory of the 108 agent skills in the broomva/skills monorepo,
+  Canonical reference inventory of the 109 agent skills in the broomva/skills monorepo,
   organized into 23 single-noun category buckets that mirror the skills/<category>/ directory
   layout, with a Remotion video showcase generator and X thread copy. Use when discovering
   available skills, browsing the full skills catalog, generating skills showcase content, or
@@ -23,7 +23,7 @@ Canonical inventory and showcase for the agent skills ecosystem.
 
 The full categorized reference lives in [references/skills-inventory.md](references/skills-inventory.md).
 
-108 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
+109 skills across 23 category buckets (mirroring the `skills/<category>/` directory layout):
 
 | Category | Count | Key skills |
 |---|---|---|
@@ -32,7 +32,7 @@ The full categorized reference lives in [references/skills-inventory.md](referen
 | Skill & prompt tooling (`tooling`) | 10 | audit-harness-usage, broomva-cli, make-spec |
 | Knowledge & memory (`knowledge`) | 8 | bookkeeping, braindump, colombia-conflict |
 | Research (`research`) | 2 | checkit, deep-dive-research-orchestrator |
-| Strategy & decisions (`strategy`) | 5 | decision-log, phronesis, pre-mortem |
+| Strategy & decisions (`strategy`) | 6 | decision-log, phronesis, pre-mortem |
 | Operating cadence (`cadence`) | 4 | drift-check, morning-briefing, stakeholder-update |
 | Publishing & growth (`publishing`) | 7 | blog-post, content-creation, revenuecast |
 | Video & multimedia (`video`) | 7 | brainrot-for-good, content-engine, creative-review |
