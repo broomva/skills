@@ -61,8 +61,8 @@ Classify each action before taking it:
 | Class | Examples | Rule |
 |---|---|---|
 | Reversible | drafts, research, branches, local runs | act, and note what you did |
-| Costly | spending money, long compute, group messages | act only inside the stated budget |
-| Irreversible or external | publish, delete, merge to production, contact people | ask first, every time |
+| Costly | long compute, many iterations | act only inside the stated budget |
+| Irreversible or external | spend money, send group messages, publish, delete, merge to production, contact people | ask first, every time |
 
 Never treat a workspace's stricter policy, permission prompt or gate as
 optional; those win over this skill. Respect stop conditions: a budget, an
@@ -81,8 +81,10 @@ iteration cap, or no progress across two attempts means stop and report.
 
 Use [`templates/ask.md`](templates/ask.md). Every ask carries: the context in two
 or three sentences with links, two or three options with trade-offs, your
-recommendation, and what you will do by default if there is no answer.
-One decision per ask.
+recommendation, and what you will do by default if there is no answer. The
+default must be an action you are already allowed to take without approval;
+silence never authorizes an irreversible or external action. If no such default
+exists, the default is to wait and report. One decision per ask.
 
 ## 5. Prove it before you call it done
 

@@ -7,4 +7,5 @@ Options:
   B. <option>: <trade-off>.
   C. <option>: <trade-off>.
 
-Default: if there is no answer by <time>, I do <A>.
+Default: if there is no answer by <time>, I do <A>, only if it is within the
+         contract's bounds and needs no approval; otherwise I wait and report.

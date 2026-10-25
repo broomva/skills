@@ -169,8 +169,8 @@ Sort actions by how hard they are to undo, and let autonomy follow:
 | Class | Examples | Default |
 |---|---|---|
 | **Reversible** | drafts, research, branches, local experiments | act freely, note what you did |
-| **Costly** | spending money, long compute, messaging a group | act inside an explicit budget, report after |
-| **Irreversible or external** | publishing, deleting data, merging to production, contacting customers | ask first, every time |
+| **Costly** | long compute, many iterations | act inside an explicit budget, report after |
+| **Irreversible or external** | spending money, messaging a group, publishing, deleting data, merging to production, contacting customers | ask first, every time |
 
 Rules that keep bounds real:
 
@@ -212,7 +212,9 @@ Asks are expensive: they spend someone else's attention. A good ask:
 - carries its own context: what is happening, what you already checked, links;
 - offers options with trade-offs and a recommendation;
 - asks for one decision, not a review of everything;
-- says what happens by default if nobody answers, and when.
+- says what happens by default if nobody answers, and when. The default must be
+  something you are already allowed to do: silence never approves an
+  irreversible or external action. If there is no such default, wait.
 
 ```markdown
 ## Ask: <one-line decision>
@@ -221,7 +223,8 @@ Context: <two or three sentences, with links>.
 Options:
   A. <option>: <trade-off>.  (recommended, because <reason>)
   B. <option>: <trade-off>.
-Default: if no answer by <time>, I do A.
+Default: if no answer by <time>, I do A (only if A is within my bounds and
+         needs no approval; otherwise I wait and report).
 ```
 
 Agents escalate on the conditions in their contract and on anything
