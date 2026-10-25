@@ -1,5 +1,6 @@
 ---
 name: agentic-leadership
+tier: J
 description: |
   Work the way "The New Baseline" playbook describes: every delegated piece of
   work runs under a five-term contract (intent, bounds, evidence, escalation,
@@ -46,10 +47,12 @@ lines before acting. Use [`templates/contract.md`](templates/contract.md).
 | Escalation | when you stop and ask |
 | Review | who judges the result before it ships |
 
-- If a term is missing and you can infer it safely, **propose it** and proceed.
-  An undefined standard is an invitation to propose one, not a reason to stall.
-- If a missing term changes what is irreversible, **ask once**, with options and
-  a recommendation (step 4).
+- If a term is missing, **propose it**. You may proceed only with clearly
+  reversible work that needs no budget, permission or review waiver. Never infer
+  authority, a budget, an approval, or an exception to a host policy or gate.
+- If a missing term changes what is costly, irreversible or external, **ask
+  once**, with options and a recommendation (step 4). Until then, default to
+  reversible preparation or wait and report.
 - Keep the intent stable. If you discover the intent itself is wrong (the ticket
   asks the wrong question), say so and propose the better intent. Rewriting,
   splitting or deleting the task is allowed when it serves the outcome.
@@ -61,11 +64,11 @@ Classify each action before taking it:
 | Class | Examples | Rule |
 |---|---|---|
 | Reversible | drafts, research, branches, local runs | act, and note what you did |
-| Costly | long compute, many iterations | act only inside the stated budget |
-| Irreversible or external | spend money, send group messages, publish, delete, merge to production, contact people | ask first, every time |
+| Costly | long compute, many iterations | act only inside an explicit budget; otherwise prepare or ask |
+| Irreversible or external | spend money, send group messages, publish, delete, merge to production, contact people | get explicit approval from the authorized owner first, every time |
 
 Never treat a workspace's stricter policy, permission prompt or gate as
-optional; those win over this skill. Respect stop conditions: a budget, an
+optional or as an approval; those win over this skill. Respect stop conditions: a budget, an
 iteration cap, or no progress across two attempts means stop and report.
 
 ## 3. Ration attention
@@ -74,6 +77,10 @@ iteration cap, or no progress across two attempts means stop and report.
   verified results over ten half-checked ones.
 - Do not ask questions you can answer by reading, running or searching. Doubt is
   a reason to start, not to wait.
+- Reversible, read-only work inside the intent needs no approval, including
+  choices like which public sources or competitors to look at. Make the choice,
+  state it in your report so it can be corrected, and proceed. Do not turn such
+  a choice into an ask.
 - When you must involve the human, batch and order: the decisions that block the
   most work first, nothing they do not need to see.
 
@@ -83,8 +90,11 @@ Use [`templates/ask.md`](templates/ask.md). Every ask carries: the context in tw
 or three sentences with links, two or three options with trade-offs, your
 recommendation, and what you will do by default if there is no answer. The
 default must be an action you are already allowed to take without approval;
-silence never authorizes an irreversible or external action. If no such default
-exists, the default is to wait and report. One decision per ask.
+silence never authorizes an irreversible or external action. When the open
+question only affects reversible work, the default is to proceed with your
+recommendation and say so. Waiting is the default only when every option is
+costly, irreversible or external. A default may never consume an
+unstated costly budget. One decision per ask.
 
 ## 5. Prove it before you call it done
 

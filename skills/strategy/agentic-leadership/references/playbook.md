@@ -95,8 +95,8 @@ A one-hour task gets five lines. A two-week initiative gets a page.
 Intent:     <the outcome that should be true> because <why it matters>.
 Not in scope: <what this is explicitly not about>.
 Bounds:     may <actions allowed without asking>;
-            must ask before <irreversible or costly actions>;
-            budget <time / money / tokens>.
+            may take costly actions only inside <an explicit budget>;
+            must get explicit approval before <irreversible or external actions>.
 Evidence:   done means <observable check>, shown by <receipt>.
 Escalation: stop and ask when <condition>; otherwise decide and note why.
 Review:     <who> reviews <what>, before <ship / merge / send>.
@@ -177,7 +177,8 @@ Rules that keep bounds real:
 - Put bounds where they are enforced, not only where they are written. A rule an
   agent can ignore is a wish. Gates, permissions and checks are the bounds.
 - Give every autonomous run a budget: iterations, time, money and a stop
-  condition for "no progress".
+  condition for "no progress". If none is stated, do not infer one: prepare
+  reversible work or ask for it.
 - Keep a kill switch, and know where it is before you need it.
 
 ---
@@ -214,7 +215,9 @@ Asks are expensive: they spend someone else's attention. A good ask:
 - asks for one decision, not a review of everything;
 - says what happens by default if nobody answers, and when. The default must be
   something you are already allowed to do: silence never approves an
-  irreversible or external action. If there is no such default, wait.
+  irreversible or external action. If the question only affects reversible
+  work, the default is to proceed with your recommendation and say so; wait
+  only when every option is costly, irreversible or external.
 
 ```markdown
 ## Ask: <one-line decision>
@@ -223,8 +226,11 @@ Context: <two or three sentences, with links>.
 Options:
   A. <option>: <trade-off>.  (recommended, because <reason>)
   B. <option>: <trade-off>.
-Default: if no answer by <time>, I do A (only if A is within my bounds and
-         needs no approval; otherwise I wait and report).
+Default: if no answer by <time>, I do A (only if A is within my bounds,
+         already authorized, neither irreversible nor external, and either free
+         or within an explicit budget; otherwise I wait and report). Silence
+         never authorizes costly work outside its budget, or irreversible or
+         external work.
 ```
 
 Agents escalate on the conditions in their contract and on anything

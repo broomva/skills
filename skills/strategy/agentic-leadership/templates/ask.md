@@ -7,5 +7,8 @@ Options:
   B. <option>: <trade-off>.
   C. <option>: <trade-off>.
 
-Default: if there is no answer by <time>, I do <A>, only if it is within the
-         contract's bounds and needs no approval; otherwise I wait and report.
+Default: if there is no answer by <time>, I do <A>, only if it is already
+         authorized, neither irreversible nor external, and either free or
+         within an explicit budget; otherwise I wait and report. Silence never
+         authorizes a costly action outside its budget, or an irreversible or
+         external action.

@@ -1,0 +1,3 @@
+Plan: identify the five closest competitors, review only their public pricing pages, and summarize each entry tier’s price, billing basis, and included limits with links and access date. No outreach, trials, purchases, or account creation.
+
+First response: “I can prepare this by 4pm. Please confirm the five competitors—or the criteria for selecting them—and your preferred currency/region, since pricing and limits can vary by market.”
