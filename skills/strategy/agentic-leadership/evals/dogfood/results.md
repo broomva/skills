@@ -31,3 +31,24 @@ with clearly reversible work, but they must not infer authority or a budget.
 Future regression dogfood should check that a public research task proceeds
 under declared selection criteria rather than asking an owner to choose every
 input.
+
+
+## Addendum: cross-model judge pass and over-asking fix (2026-10-25)
+
+An independent judge (claude-opus-5-5) re-scored all 12 committed raw outputs on
+the same rubric. Totals: without 51/84 (Codex judge: 44), with 71/84 (Codex
+judge: 68). Both judges agree on the direction of all 6 cases; 11 of 12 case
+scores are within 2 points (mean absolute difference 1.17). Recorded in
+`../evaluation-contract.yaml` as `judge.agreement_measured`.
+
+Both judges flagged case 01 (public competitor scan) for asking approval to
+choose competitors. SKILL.md and the playbook now say that reversible,
+read-only choices inside the intent need no approval, and that when an open
+question only affects reversible work the default is to proceed with the
+recommendation. Two re-runs (`raw/with/01-competitor-pricing-rerun-{1,2}.md`)
+still ask which competitors, but that ask is an information gap (the agent does
+not know which company "our" refers to), not an authorization request; run 1
+now gives options with a recommended provisional selection. Re-scored by the
+Claude judge: run 1 = 11/14 (was 9), run 2 = 9/14. The residual risk is
+stated, not claimed fixed: ambiguous ownership terms ("our", "closest") still
+draw an ask.

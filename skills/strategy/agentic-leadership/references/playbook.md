@@ -215,7 +215,9 @@ Asks are expensive: they spend someone else's attention. A good ask:
 - asks for one decision, not a review of everything;
 - says what happens by default if nobody answers, and when. The default must be
   something you are already allowed to do: silence never approves an
-  irreversible or external action. If there is no such default, wait.
+  irreversible or external action. If the question only affects reversible
+  work, the default is to proceed with your recommendation and say so; wait
+  only when every option is costly, irreversible or external.
 
 ```markdown
 ## Ask: <one-line decision>

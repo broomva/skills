@@ -77,6 +77,10 @@ iteration cap, or no progress across two attempts means stop and report.
   verified results over ten half-checked ones.
 - Do not ask questions you can answer by reading, running or searching. Doubt is
   a reason to start, not to wait.
+- Reversible, read-only work inside the intent needs no approval, including
+  choices like which public sources or competitors to look at. Make the choice,
+  state it in your report so it can be corrected, and proceed. Do not turn such
+  a choice into an ask.
 - When you must involve the human, batch and order: the decisions that block the
   most work first, nothing they do not need to see.
 
@@ -86,8 +90,10 @@ Use [`templates/ask.md`](templates/ask.md). Every ask carries: the context in tw
 or three sentences with links, two or three options with trade-offs, your
 recommendation, and what you will do by default if there is no answer. The
 default must be an action you are already allowed to take without approval;
-silence never authorizes an irreversible or external action. If no such default
-exists, the default is to wait and report. A default may never consume an
+silence never authorizes an irreversible or external action. When the open
+question only affects reversible work, the default is to proceed with your
+recommendation and say so. Waiting is the default only when every option is
+costly, irreversible or external. A default may never consume an
 unstated costly budget. One decision per ask.
 
 ## 5. Prove it before you call it done
