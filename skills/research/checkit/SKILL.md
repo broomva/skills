@@ -228,7 +228,6 @@ note-taking tools in sequence; it does **not** reimplement them.
 | "I confirmed the repo/page exists — that's verification." | Existence ≠ contents. `[HIGH]` requires reading the canonical text; a tag naming a source you didn't open is false provenance. |
 | "This artifact isn't obviously about our work." | For a focused builder/researcher it almost always is — find the link to active work before defaulting to a neutral read. |
 | "Let me just kick off the deep multi-agent run on this guess." | Costly/irreversible on an inference → surface it as a next step instead (the carve-out). |
-| "I'll spawn a subagent for this step / to double-check." | A subagent must earn its context window: bulk reading with a compact result, parallel disjoint work, or black-box verification. Name the condition before spawning, or do it inline. See `references/checkit-lens.md` §A subagent must earn its context window. |
 
 ## Scope
 
@@ -246,9 +245,7 @@ existing knowledge was searched first; **the primary source was traversed to its
 primitives and read verbatim (not a landing-page/search summary), with every
 `[HIGH]` claim tracing to that verbatim read**; deep research ran with every URL
 verified; ≥1 link to existing knowledge was made; ≥1 finding was filed
-proactively; a ranked next-steps list ties the finding to active work; and every
-subagent spawned named the condition that earned its context window, with the
-count stated in the final report (zero is a valid count). (Full
+proactively; and a ranked next-steps list ties the finding to active work. (Full
 checklist: [`references/checkit-lens.md`](references/checkit-lens.md).)
 
 ## References
