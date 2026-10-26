@@ -75,23 +75,34 @@ If review findings start landing on your scaffolding rather than on your claims,
 ### A subagent must earn its context window (BRO-3473)
 
 Before spawning a subagent, name the condition it meets. If it meets none, do the
-work inline in the main loop:
+work inline in the main loop. An Antigravity offload (`video_agy.py`) counts as a
+subagent; it meets condition 1.
 
 1. **Bulk reading with a compact result.** The work would read far more than the
-   main loop needs afterwards (a large repo tree, a long transcript), or the main
-   context is measurably degrading. The subagent hands back only the result.
+   main loop needs afterwards (a large repo tree, a long video, a long transcript),
+   or the main context is measurably degrading. The subagent hands back only the
+   result.
 2. **Parallel disjoint work.** Independent sources are read side by side in contexts
    that are thrown away afterwards.
-3. **Black-box verification.** This is the claims review the chosen path calls for,
-   and nothing more.
+3. **Black-box verification.** One independent claims review, cross-vendor where
+   available, when the chosen proportionality path calls for it. This condition
+   allows that review; it never replaces a review configuration P20 requires.
 
 Split by context, never by pipeline step or problem type. A subagent per step
 re-sends the same artifact through lossy handoffs, which is slower and loses detail.
 Agreement between same-model subagents widens coverage but does not add confidence.
 Write each spawn's condition in the response, and put the subagent count in the
-final report. Source: Anthropic, "When to fold subagents into your main agent loop"
-(2026-10-22) and its `single-agent-loop-kit`. In a bstack workspace see
-`research/entities/pattern/subagent-must-earn-its-context.md`.
+final report.
+
+Provenance: Anthropic, "When to fold subagents into your main agent loop"
+(2026-10-22), gives three reasons to keep a subagent: measured context-bloat
+degradation (condition 1), parallel work in discardable contexts (condition 2), and
+tool-selection trouble or conflicting system-prompt instructions. The last does not
+arise in a single /checkit task, so it is not listed. Condition 3 is a /checkit
+adaptation. The article names black-box verification as a good place to split work,
+and its `single-agent-loop-kit` README counts independent verification and "work that
+reads far more than the main agent needs afterwards" as reasons to keep one. In a
+bstack workspace see `research/entities/pattern/subagent-must-earn-its-context.md`.
 
 ## Procedure
 
