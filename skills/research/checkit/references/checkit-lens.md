@@ -72,6 +72,27 @@ Size a /checkit to what rides on it, before the first tool call:
 
 If review findings start landing on your scaffolding rather than on your claims, delete the scaffolding. Hardening it is the failure mode: BRO-2829 spent about 3.3M tokens, 14 review subagents and 3 hours on a Low-priority reel whose finding was known 8 minutes in.
 
+### A subagent must earn its context window (BRO-3473)
+
+Before spawning a subagent, name the condition it meets. If it meets none, do the
+work inline in the main loop:
+
+1. **Bulk reading with a compact result.** The work would read far more than the
+   main loop needs afterwards (a large repo tree, a long transcript), or the main
+   context is measurably degrading. The subagent hands back only the result.
+2. **Parallel disjoint work.** Independent sources are read side by side in contexts
+   that are thrown away afterwards.
+3. **Black-box verification.** This is the claims review the chosen path calls for,
+   and nothing more.
+
+Split by context, never by pipeline step or problem type. A subagent per step
+re-sends the same artifact through lossy handoffs, which is slower and loses detail.
+Agreement between same-model subagents widens coverage but does not add confidence.
+Write each spawn's condition in the response, and put the subagent count in the
+final report. Source: Anthropic, "When to fold subagents into your main agent loop"
+(2026-10-22) and its `single-agent-loop-kit`. In a bstack workspace see
+`research/entities/pattern/subagent-must-earn-its-context.md`.
+
 ## Procedure
 
 1. **Classify** (artifact-gate) then **infer + declare intent** in one line:
@@ -127,6 +148,9 @@ If review findings start landing on your scaffolding rather than on your claims,
 11. **Scaffolding as proof** — adding a checker with mutation tests "so the entity is
     airtight" on the light path. Each script becomes review surface and invites its
     own findings; the S/D/P page plus its captured sources is the proof.
+12. **Unearned subagent** — spawning a subagent per pipeline step, or to "double
+    check" a finding already in hand, when none of the three conditions above holds.
+    Each one is a handoff that loses detail and adds a model loop.
 
 ## Self-test
 
@@ -147,3 +171,6 @@ A checkit response is well-formed iff:
 - [ ] ≥1 link to existing knowledge was made.
 - [ ] ≥1 finding was filed proactively — reported, not asked.
 - [ ] A ranked next-steps list ties the finding to active work.
+- [ ] Every subagent spawned names the condition that earned its context window
+      (bulk reading, parallel disjoint work, black-box verification), and the
+      final report states the count. Zero is a valid count.
