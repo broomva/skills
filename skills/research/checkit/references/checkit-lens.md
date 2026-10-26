@@ -97,8 +97,8 @@ final report.
 Provenance: Anthropic, "When to fold subagents into your main agent loop"
 (2026-10-22), gives three reasons to keep a subagent: measured context-bloat
 degradation (condition 1), parallel work in discardable contexts (condition 2), and
-tool-selection trouble or conflicting system-prompt instructions. The last does not
-arise in a single /checkit task, so it is not listed. Condition 3 is a /checkit
+tool-selection trouble or conflicting system-prompt instructions. The last is outside
+this rule, which governs how /checkit splits its own work, so it is not listed. Condition 3 is a /checkit
 adaptation. The article names black-box verification as a good place to split work,
 and its `single-agent-loop-kit` README counts independent verification and "work that
 reads far more than the main agent needs afterwards" as reasons to keep one. In a
