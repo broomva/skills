@@ -144,12 +144,13 @@ matches score 0.8.
 
 - Live mode reads the run ids from the PR's own failing checks (`gh pr checks
   --json bucket,link`). Only links into the PR's repo's Actions count.
-- Each failing run is classified on its own. The PR heals only when every
-  failing run is this type; one run with a real error escalates the PR.
+- Each failing job of each run is classified on its own (the admission lease
+  is per job). The PR heals only when every failing job is this type; one job
+  with a real error escalates the PR.
 - With `--log-file` (or `-` for stdin), pass `--run-id`. Without a run id the
   heal refuses.
-- `--apply` also needs the type in the policy's
-  `ci_heal.classified_failure_types`.
+- **Opt-in.** The type is not in the built-in `classified_failure_types`
+  defaults. `--apply` heals it only when the governing policy lists it.
 - The caller decides *when*: do not re-run while the host's admission gate is
   red or a host hold is active. The re-run would queue on the same lease.
 

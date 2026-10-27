@@ -314,7 +314,9 @@ class TestHealApply:
 
     _ADMISSION = str(_FIXTURES / "failures" / "runner_admission_timeout.txt")
 
-    def test_run_scoped_heal_refuses_without_run_id(self, p9, capsys, allow_admission):
+    def test_run_scoped_heal_refuses_without_run_id(self, p9, capsys, monkeypatch,
+                                                     allow_admission):
+        monkeypatch.setenv("BROOMVA_P9_REPO", "-")
         rc = p9.main(["heal", "42", "--apply", "--dry-run", "--log-file", self._ADMISSION])
         assert rc == p9.EXIT_DEGRADED
         assert "needs the failing run id" in capsys.readouterr().out
@@ -336,6 +338,7 @@ class TestHealApply:
 
     def test_run_scoped_heal_runs_every_run_and_reports_failure(
             self, p9, monkeypatch, capsys, allow_admission):
+        monkeypatch.setenv("BROOMVA_P9_REPO", "-")  # no repo: no --repo suffix
         import subprocess as _sp
         ran = []
 
@@ -375,7 +378,7 @@ class TestHealApply:
         assert rc == p9.EXIT_DEGRADED
         out = json.loads(capsys.readouterr().out)
         assert out["classified"] is False and out["commands"] == []
-        assert "111=runner_admission_timeout" in out["rationale"]
+        assert "111/test-lock verify=runner_admission_timeout" in out["rationale"]
         assert "222=type" in out["rationale"]
 
     def test_fetch_failure_is_reported_not_unclassified(self, p9, monkeypatch, capsys):
@@ -384,7 +387,7 @@ class TestHealApply:
         rc = p9.main(["heal", "42", "--repo", "o/r", "--classify"])
         assert rc == p9.EXIT_DEGRADED
         out = json.loads(capsys.readouterr().out)
-        assert out["failure_type"] == "unavailable" and "HTTP 401" in out["reason"]
+        assert out["failure_type"] == "unavailable" and "HTTP 401" in out["rationale"]
 
     def test_classify_shows_expanded_commands(self, p9, monkeypatch, capsys):
         log = (_FIXTURES / "failures" / "runner_admission_timeout.txt").read_text()
@@ -392,6 +395,76 @@ class TestHealApply:
         assert p9.main(["heal", "42", "--repo", "o/r", "--classify"]) == 0
         out = json.loads(capsys.readouterr().out)
         assert out["commands"] == ["gh run rerun 111 --failed --repo o/r"]
+
+    def test_one_run_two_jobs_does_not_mask(self, p9, monkeypatch, capsys, allow_admission):
+        # The admission lease is per job: one run can hold a timed-out job and
+        # a job that ran and failed for real.
+        admission = (_FIXTURES / "failures" / "runner_admission_timeout.txt").read_text()
+        real = "typecheck\tRun tsc\tsrc/a.ts(3,1): error TS2322: bad\n" \
+               "typecheck\tRun tsc\t##[error]Process completed with exit code 2.\n"
+        monkeypatch.setattr(p9, "_gh_log_failed",
+                            lambda pr, repo: ({"111": admission + real}, None))
+        rc = p9.main(["heal", "42", "--repo", "o/r", "--apply", "--dry-run"])
+        assert rc == p9.EXIT_DEGRADED
+        out = json.loads(capsys.readouterr().out)
+        assert out["classified"] is False
+        assert "111/test-lock verify=runner_admission_timeout" in out["rationale"]
+        assert "111/typecheck=type" in out["rationale"]
+
+    def test_empty_input_is_unavailable(self, p9):
+        assert p9.classify_runs({}).failure_type == "unavailable"
+
+    def test_no_policy_file_does_not_opt_in(self, p9, monkeypatch, capsys, tmp_path):
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(tmp_path / "absent.yaml"))
+        rc = p9.main(["heal", "42", "--apply", "--dry-run", "--run-id", "111",
+                      "--repo", "o/r", "--log-file", self._ADMISSION])
+        assert rc == p9.EXIT_DEGRADED
+        assert "does not allow 'runner_admission_timeout'" in capsys.readouterr().out
+        # The original types still heal on the defaults.
+        assert p9.main(["heal", "42", "--apply", "--dry-run", "--log-file",
+                        str(_FIXTURES / "failures" / "lint.txt")]) == 0
+
+    def test_malformed_policy_refuses(self, p9, monkeypatch, capsys, tmp_path):
+        pol = tmp_path / "policy.yaml"
+        pol.write_text("ci_watch:\n  enabled: true\n")  # no ci_heal block
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(pol))
+        rc = p9.main(["heal", "42", "--apply", "--dry-run", "--log-file",
+                      str(_FIXTURES / "failures" / "lint.txt")])
+        assert rc == p9.EXIT_DEGRADED
+        assert "policy unreadable" in capsys.readouterr().out
+
+    def test_disabled_heal_policy_refuses(self, p9, monkeypatch, capsys, tmp_path):
+        text = (_FIXTURES / "policy-good.yaml").read_text()
+        head, sep, tail = text.partition("ci_heal:\n  enabled: true")
+        assert sep, "fixture layout changed"
+        pol = tmp_path / "policy.yaml"
+        pol.write_text(head + "ci_heal:\n  enabled: false" + tail)
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(pol))
+        rc = p9.main(["heal", "42", "--apply", "--dry-run", "--log-file",
+                      str(_FIXTURES / "failures" / "lint.txt")])
+        assert rc == p9.EXIT_DEGRADED
+        assert "enabled=False" in capsys.readouterr().out
+
+    def test_gh_checks_timeout_is_unavailable(self, p9, monkeypatch, capsys):
+        import subprocess as _sp
+
+        def fake_run(cmd, *a, **kw):
+            raise _sp.TimeoutExpired(cmd, 60)
+
+        monkeypatch.setattr(p9.subprocess, "run", fake_run)
+        rc = p9.main(["heal", "42", "--repo", "o/r", "--classify"])
+        assert rc == p9.EXIT_DEGRADED
+        out = json.loads(capsys.readouterr().out)
+        assert out["failure_type"] == "unavailable" and "timed out" in out["rationale"]
+        assert {"confidence", "signature_hash", "commands"} <= set(out)
+
+    def test_repo_is_resolved_when_flag_omitted(self, p9, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_REPO", "o/r")
+        seen = {}
+        monkeypatch.setattr(p9, "_gh_log_failed",
+                            lambda pr, repo: seen.setdefault("repo", repo) and ({}, "stop"))
+        p9.main(["heal", "42", "--classify"])
+        assert seen["repo"] == "o/r"
 
     def test_live_mode_reads_the_prs_failing_runs(self, p9, monkeypatch):
         import subprocess as _sp

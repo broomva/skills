@@ -800,7 +800,8 @@ class CIHealPolicy:
     stability_floor: float = 0.3
     classified_failure_types: tuple[str, ...] = (
         "lint", "format", "test_flaky", "codegen_drift", "import_missing",
-        "runner_admission_timeout",
+        # runner_admission_timeout is deliberately absent: re-running a job
+        # takes shared CI capacity, so a policy must list it to opt in.
     )
     escalation_channel: EscalationChannel = field(default_factory=EscalationChannel)
 
@@ -4119,25 +4120,24 @@ def cmd_heal(args: argparse.Namespace) -> int:
               file=sys.stderr)
         return EXIT_USAGE
     run_ids = list(getattr(args, "run_id", None) or [])
+    repo = resolve_repo(args.repo) or None
     source = "file"
     if args.log_file == "-":
-        log, source = sys.stdin.read(), "stdin"
-        result = classify(log)
+        result, source = classify_runs({"stdin": sys.stdin.read()}), "stdin"
     elif args.log_file:
-        result = classify(Path(args.log_file).read_text(encoding="utf-8"))
+        result = classify_runs({"file": Path(args.log_file).read_text(encoding="utf-8")})
     else:
         # Live mode. Not gated on "stdin is not a TTY": an agent or cron caller
         # never has one, so that test silently classified an empty log.
         source = "live"
-        logs, err = _gh_log_failed(args.pr, args.repo)
+        logs, err = _gh_log_failed(args.pr, repo)
         if err:
-            print(json.dumps({"failure_type": "unavailable", "classified": False,
-                              "heal_command": None, "source": source, "run_ids": [],
-                              "reason": err}, indent=2))
+            print(json.dumps({**dataclasses.asdict(_unavailable(err)), "source": source,
+                              "run_ids": [], "commands": []}, indent=2))
             return EXIT_DEGRADED
         result = classify_runs(logs)
         run_ids = run_ids or list(logs)
-    commands = (_expand_heal_command(result.heal_command, run_ids, args.repo)
+    commands = (_expand_heal_command(result.heal_command, run_ids, repo)
                 if result.heal_command else [])
     base = {**dataclasses.asdict(result), "source": source,
             "run_ids": run_ids, "commands": commands}
@@ -4152,15 +4152,18 @@ def cmd_heal(args: argparse.Namespace) -> int:
         print(json.dumps({**base, "applied": False,
                           "reason": "not auto-classifiable — escalate"}, indent=2))
         return EXIT_DEGRADED
-    # The policy decides which classified types may heal. Without a policy file
-    # the built-in defaults apply; a policy that cannot be parsed refuses.
-    try:
-        heal_policy = load_policy(validate_auto_merge=False).ci_heal
-    except PolicyError as e:
-        if "not found" not in str(e):
+    # The policy decides which classified types may heal. With no policy file
+    # the built-in defaults apply (they omit opt-in types such as re-runs); a
+    # policy file that cannot be parsed refuses.
+    policy_file = policy_yaml_path()
+    if policy_file.exists():
+        try:
+            heal_policy = load_policy(policy_file, validate_auto_merge=False).ci_heal
+        except PolicyError as e:
             print(json.dumps({**base, "applied": False,
                               "reason": f"policy unreadable: {e}"}, indent=2))
             return EXIT_DEGRADED
+    else:
         heal_policy = CIHealPolicy()
     if not heal_policy.enabled or result.failure_type not in heal_policy.classified_failure_types:
         print(json.dumps({**base, "applied": False,
@@ -5034,29 +5037,57 @@ def _gh_log_failed(pr: int, repo: str | None) -> tuple[dict[str, str], str | Non
     return logs, None
 
 
-def classify_runs(logs: dict[str, str]) -> ClassifierResult:
-    """Classify each failing run on its own; heal only a uniform, healable set.
+def _split_jobs(log: str) -> dict[str, str]:
+    """Split a `gh run view --log-failed` log by job (its first tab field).
 
-    Classifying the concatenated logs let one run's strong match (an admission
-    timeout at 0.8) outrank another run's real error (a type error at 0.7), and
-    the whole PR was "healed" by a re-run. Here every run must classify as the
-    same healable type, or the PR escalates with the per-run breakdown.
+    The host admission lease is taken per job, so one run can hold a job that
+    timed out on admission next to a job that really failed. A log with no job
+    column (an attempt-log zip, a hand-made file) stays one unit.
     """
-    per_run = {rid: classify(log) for rid, log in logs.items()}
-    types = {r.failure_type for r in per_run.values()}
-    first = next(iter(per_run.values()))
+    jobs: dict[str, list[str]] = {}
+    for line in log.splitlines():
+        if not line.strip():
+            continue
+        job, sep, _ = line.partition("\t")
+        if not sep:
+            return {"": log}
+        jobs.setdefault(job, []).append(line)
+    return {j: "\n".join(lines) for j, lines in jobs.items()} or {"": log}
+
+
+def _unavailable(reason: str) -> ClassifierResult:
+    return ClassifierResult(failure_type="unavailable", classified=False, confidence=0.0,
+                            heal_command=None, signature_hash="", rationale=reason)
+
+
+def classify_runs(logs: dict[str, str]) -> ClassifierResult:
+    """Classify every failing job of every run on its own; heal only a uniform,
+    healable set.
+
+    Classifying concatenated logs let one strong match (an admission timeout
+    at 0.8) outrank a real error elsewhere (a type error at 0.7), and the whole
+    PR was "healed" by a re-run. Every unit must classify as the same healable
+    type, or the PR escalates with the per-unit breakdown.
+    """
+    units = {(f"{rid}/{job}" if job else rid): text
+             for rid, log in logs.items() for job, text in _split_jobs(log).items()}
+    if not units:
+        return _unavailable("no failure logs to classify")
+    per_unit = {key: classify(text) for key, text in units.items()}
+    types = {r.failure_type for r in per_unit.values()}
+    first = next(iter(per_unit.values()))
     if len(types) == 1 and first.classified:
         return dataclasses.replace(
-            first, rationale=f"{first.rationale}; all {len(per_run)} failing run(s)")
-    breakdown = ", ".join(f"{rid}={r.failure_type}" for rid, r in per_run.items())
+            first, rationale=f"{first.rationale}; all {len(per_unit)} failing job(s)")
+    breakdown = ", ".join(f"{key}={r.failure_type}" for key, r in per_unit.items())
     return ClassifierResult(
         failure_type="unclassified" if len(types) > 1 else first.failure_type,
         classified=False,
-        confidence=min(r.confidence for r in per_run.values()),
+        confidence=min(r.confidence for r in per_unit.values()),
         heal_command=None,
-        signature_hash=_signature_hash("\n".join(logs.values())),
-        rationale=(f"failing runs disagree or need escalation ({breakdown})"
-                   if len(per_run) > 1 else first.rationale),
+        signature_hash=_signature_hash("\n".join(units.values())),
+        rationale=(f"failing jobs disagree or need escalation ({breakdown})"
+                   if len(per_unit) > 1 else first.rationale),
     )
 
 

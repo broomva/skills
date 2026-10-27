@@ -254,10 +254,11 @@ could not.
   prints the command. `--classify` stays read-only and shows the run ids and
   the exact `commands` a heal would run. With no `--log-file`, heal reads the
   failed-step logs of the PR's own failing runs, also from an agent with no TTY
-  (`--log-file -` reads stdin). Each failing run is classified on its own; the
-  PR heals only when all of them agree on one healable type. `--apply` also
-  requires the type in the policy's `ci_heal.classified_failure_types`. A
-  run-scoped heal (`runner_admission_timeout`: the job-start hook exited 75
+  (`--log-file -` reads stdin). Each failing job of each run is classified on
+  its own; the PR heals only when all of them agree on one healable type.
+  `--apply` also requires the type in the policy's
+  `ci_heal.classified_failure_types`. A run-scoped heal is opt-in: it is not in
+  the defaults. A run-scoped heal (`runner_admission_timeout`: the job-start hook exited 75
   waiting for host admission, so nothing ran) re-runs each failing run once.
   Re-run only when the host gate is not red.
 
