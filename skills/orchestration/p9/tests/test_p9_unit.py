@@ -85,6 +85,20 @@ class TestClassifier:
                "##[error]Process completed with exit code 75.\n")
         assert p9.classify(log).failure_type == "unclassified"
 
+    def test_hook_that_succeeded_then_a_step_exiting_75_is_not_admission(self, p9):
+        # Whole-job log ("UNKNOWN STEP"): the hook ran fine, a later step exited 75.
+        log = ("j\tUNKNOWN STEP\t##[group]Run '/x/host-hooks/h/job-start.sh'\n"
+               "j\tUNKNOWN STEP\tadmitted\n"
+               "j\tUNKNOWN STEP\t##[endgroup]\n"
+               "j\tUNKNOWN STEP\t##[group]Run ./scripts/test.sh\n"
+               "j\tUNKNOWN STEP\t##[error]Process completed with exit code 75.\n")
+        assert p9.classify(log).failure_type == "unclassified"
+
+    def test_hook_error_other_than_75_then_a_75_is_not_admission(self, p9):
+        log = ("##[group]Run '/x/job-start.sh'\n##[error]Process completed with exit code 1.\n"
+               "##[group]Run make\n##[error]Process completed with exit code 75.\n")
+        assert p9.classify(log).failure_type == "unclassified"
+
     def test_admission_timeout_heal_is_run_scoped(self, p9):
         result = p9.classify(_read_fixture("runner_admission_timeout.txt"))
         assert result.heal_command == "gh run rerun {run_id} --failed"

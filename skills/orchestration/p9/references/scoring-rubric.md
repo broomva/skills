@@ -133,8 +133,11 @@ times out, and exits 75 (EX_TEMPFAIL). The check shows red, but no step of the
 PR was executed; the following steps are reported as skipped.
 
 **Detection signatures (both required, floor `0.75`):**
-- `##\[group\]Run '[^'\n]*/job-start\.sh'` (the runner invoking its own hook,
-  not any line that names the file)
+- the hook step's own error: `##[group]Run '…/job-start.sh'` followed by
+  `##[error]Process completed with exit code 75` with no other step
+  (`##[group]Run `) or error in between. A hook that succeeded followed by a
+  later step exiting 75 does not match. `gh run view --log-failed` can return
+  whole job logs ("UNKNOWN STEP") in which the successful hook is present.
 - `##\[error\]Process completed with exit code 75\b`
 
 One signature alone scores 0.7, stays below the floor, and escalates. Two

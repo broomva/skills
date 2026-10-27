@@ -2088,8 +2088,14 @@ def _builtin_rubric() -> tuple[RubricEntry, ...]:
             # "exit code 75" from a test step is not this.
             failure_type="runner_admission_timeout",
             patterns=(
-                # The runner's own hook invocation, not any line naming the file.
-                re.compile(r"##\[group\]Run '[^'\n]*/job-start\.sh'"),
+                # The hook step's own error: after the runner invokes job-start.sh,
+                # the first step error is exit 75 and no other step started in
+                # between. Not "the hook ran and something later exited 75":
+                # `gh run view --log-failed` falls back to whole job logs
+                # ("UNKNOWN STEP"), where a successful hook precedes the steps.
+                re.compile(r"##\[group\]Run '[^'\n]*/job-start\.sh'"
+                           r"(?:(?!##\[group\]Run |##\[error\]).)*"
+                           r"##\[error\]Process completed with exit code 75\b", re.DOTALL),
                 re.compile(r"##\[error\]Process completed with exit code 75\b"),
             ),
             heal_command="gh run rerun {run_id} --failed",
