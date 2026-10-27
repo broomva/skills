@@ -5039,7 +5039,12 @@ def _gh_log_failed(pr: int, repo: str | None) -> tuple[dict[str, str], str | Non
             out = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
         except subprocess.TimeoutExpired:
             return {}, f"gh run view {rid} --log-failed timed out"
-        logs[rid] = out.stdout or out.stderr or ""
+        if out.returncode != 0:
+            # e.g. "run N is still in progress; logs will be available when it
+            # is complete". gh's message is not a failure log: classifying it
+            # called an undiagnosed run "unclassified".
+            return {}, f"gh run view {rid}: {(out.stderr or out.stdout or '').strip()[:200]}"
+        logs[rid] = out.stdout or ""
     return logs, None
 
 

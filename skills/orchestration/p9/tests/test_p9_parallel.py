@@ -466,6 +466,21 @@ class TestHealApply:
         p9.main(["heal", "42", "--classify"])
         assert seen["repo"] == "o/r"
 
+    def test_run_still_in_progress_is_unavailable(self, p9, monkeypatch):
+        import subprocess as _sp
+        checks = json.dumps([{"bucket": "fail",
+                              "link": "https://github.com/o/r/actions/runs/111/job/9"}])
+
+        def fake_run(cmd, *a, **kw):
+            if cmd[:3] == ["gh", "pr", "checks"]:
+                return _sp.CompletedProcess(cmd, 1, stdout=checks, stderr="")
+            return _sp.CompletedProcess(cmd, 1, stdout="", stderr=(
+                "run 111 is still in progress; logs will be available when it is complete"))
+
+        monkeypatch.setattr(p9.subprocess, "run", fake_run)
+        logs, err = p9._gh_log_failed(42, "o/r")
+        assert logs == {} and "still in progress" in err
+
     def test_live_mode_reads_the_prs_failing_runs(self, p9, monkeypatch):
         import subprocess as _sp
         checks = json.dumps([
