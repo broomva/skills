@@ -79,6 +79,12 @@ class TestClassifier:
         assert result.failure_type == "unclassified"
         assert result.heal_command is None
 
+    def test_a_test_step_naming_the_hook_is_not_admission(self, p9):
+        # A step that prints the hook path and exits 75 is not the runner's hook.
+        log = ("step\techo /x/job-start.sh\n/x/job-start.sh: queue full\n"
+               "##[error]Process completed with exit code 75.\n")
+        assert p9.classify(log).failure_type == "unclassified"
+
     def test_admission_timeout_heal_is_run_scoped(self, p9):
         result = p9.classify(_read_fixture("runner_admission_timeout.txt"))
         assert result.heal_command == "gh run rerun {run_id} --failed"

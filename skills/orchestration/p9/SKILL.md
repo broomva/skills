@@ -251,12 +251,15 @@ could not.
 - **`p9 heal <pr> --apply`** — run the classified `heal_command` under
   `heal.lock` (serialized workspace-wide, so a heal in a parallel session can't
   race on shared codegen/cache). Auto-classifiable failures only; `--dry-run`
-  prints the command. `--classify` stays read-only. With no `--log-file`, heal
-  reads the failed-step logs of the PR's own failing runs, also from an agent
-  with no TTY (`--log-file -` reads stdin). A run-scoped heal
-  (`runner_admission_timeout`: the job-start hook exited 75 waiting for host
-  admission, so nothing ran) re-runs each failing run once. Re-run it only when
-  the host gate is not red.
+  prints the command. `--classify` stays read-only and shows the run ids and
+  the exact `commands` a heal would run. With no `--log-file`, heal reads the
+  failed-step logs of the PR's own failing runs, also from an agent with no TTY
+  (`--log-file -` reads stdin). Each failing run is classified on its own; the
+  PR heals only when all of them agree on one healable type. `--apply` also
+  requires the type in the policy's `ci_heal.classified_failure_types`. A
+  run-scoped heal (`runner_admission_timeout`: the job-start hook exited 75
+  waiting for host admission, so nothing ran) re-runs each failing run once.
+  Re-run only when the host gate is not red.
 
 ## Wait-time work selection (priority order)
 
@@ -292,7 +295,8 @@ When the bg task notification fires:
 2. parse `to_state`:
    - GREEN          → p9 merge-ready <n>; defer to control metalayer
    - RED_CLASSIFIED → p9 heal <n> --classify; if classified+evaluator-positive,
-                      apply heal_command (in PR scope only); push amend; loop
+                      p9 heal <n> --apply (runs its `commands`; a run-scoped
+                      heal such as a re-run needs no amend); loop
    - RED_UNCLASSIFIED, ESCALATED → notify user via Linear ticket; stop healing,
                                     keep watcher alive in case human pushes a fix
    - ABANDONED      → surface failure to user; remove watcher; skip cleanup

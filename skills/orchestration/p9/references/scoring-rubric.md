@@ -133,20 +133,28 @@ times out, and exits 75 (EX_TEMPFAIL). The check shows red, but no step of the
 PR was executed; the following steps are reported as skipped.
 
 **Detection signatures (both required, floor `0.75`):**
-- `job-start\.sh`
-- `Process completed with exit code 75\b`
+- `##\[group\]Run '[^'\n]*/job-start\.sh'` (the runner invoking its own hook,
+  not any line that names the file)
+- `##\[error\]Process completed with exit code 75\b`
 
-A bare "exit code 75" from a test step matches only one signature (score
-0.7), stays below the floor, and escalates. Two matches score 0.8.
+One signature alone scores 0.7, stays below the floor, and escalates. Two
+matches score 0.8.
 
-**Heal command:** `gh run rerun {run_id} --failed`, once per failing run. Live
-mode reads the run ids from the PR's own failing checks (`gh pr checks
---json bucket,link`). With `--log-file` or stdin, pass `--run-id`. Without a
-run id the heal refuses instead of guessing. The caller decides *when*: do
-not re-run while the host's own admission gate is red or a host hold is
-active. The re-run would queue on the same lease.
+**Heal command:** `gh run rerun {run_id} --failed`, once per failing run.
 
-**Idempotent:** yes (re-running failed jobs is safe).
+- Live mode reads the run ids from the PR's own failing checks (`gh pr checks
+  --json bucket,link`). Only links into the PR's repo's Actions count.
+- Each failing run is classified on its own. The PR heals only when every
+  failing run is this type; one run with a real error escalates the PR.
+- With `--log-file` (or `-` for stdin), pass `--run-id`. Without a run id the
+  heal refuses.
+- `--apply` also needs the type in the policy's
+  `ci_heal.classified_failure_types`.
+- The caller decides *when*: do not re-run while the host's admission gate is
+  red or a host hold is active. The re-run would queue on the same lease.
+
+**Idempotent:** safe to repeat, but not free. Each re-run creates a new run
+attempt and waits for host admission again.
 
 ---
 
