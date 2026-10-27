@@ -10,6 +10,7 @@ liveness reaping, and watcher de-dup.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -299,6 +300,79 @@ class TestHealApply:
         assert rc == p9.EXIT_DEGRADED
         out = capsys.readouterr().out
         assert "escalate" in out
+
+    def test_run_scoped_heal_refuses_without_run_id(self, p9, capsys):
+        rc = p9.main(["heal", "42", "--apply", "--dry-run", "--log-file",
+                      str(_FIXTURES / "failures" / "runner_admission_timeout.txt")])
+        assert rc == p9.EXIT_DEGRADED
+        assert "needs the failing run id" in capsys.readouterr().out
+
+    def test_run_scoped_heal_expands_each_run_id(self, p9, capsys):
+        rc = p9.main(["heal", "42", "--apply", "--dry-run", "--repo", "o/r",
+                      "--run-id", "111", "--run-id", "222", "--log-file",
+                      str(_FIXTURES / "failures" / "runner_admission_timeout.txt")])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["would_run"] == ["gh run rerun 111 --failed --repo o/r",
+                                    "gh run rerun 222 --failed --repo o/r"]
+
+    def test_run_scoped_heal_runs_every_run_and_reports_failure(self, p9, monkeypatch, capsys):
+        import subprocess as _sp
+        ran = []
+
+        def fake_run(cmd, *a, **kw):
+            if isinstance(cmd, str) and cmd.startswith("gh run rerun"):
+                ran.append(cmd)
+                return _sp.CompletedProcess(cmd, 1 if "111" in cmd else 0)
+            raise AssertionError(f"unexpected command {cmd!r}")
+
+        monkeypatch.setattr(p9.subprocess, "run", fake_run)
+        rc = p9.main(["heal", "42", "--apply", "--run-id", "111", "--run-id", "222",
+                      "--log-file", str(_FIXTURES / "failures" / "runner_admission_timeout.txt")])
+        assert ran == ["gh run rerun 111 --failed", "gh run rerun 222 --failed"]
+        assert rc == p9.EXIT_DEGRADED
+        assert json.loads(capsys.readouterr().out)["heal_exit_code"] == 1
+
+    def test_live_mode_reads_the_prs_failing_runs(self, p9, monkeypatch):
+        import subprocess as _sp
+        checks = json.dumps([
+            {"bucket": "fail", "link": "https://github.com/o/r/actions/runs/111/job/9"},
+            {"bucket": "pass", "link": "https://github.com/o/r/actions/runs/333/job/1"},
+            {"bucket": "fail", "link": "https://github.com/o/r/actions/runs/111/job/10"},
+            {"bucket": "fail", "link": "https://github.com/o/r/actions/runs/222/job/3"},
+            {"bucket": "fail", "link": "https://coderabbit.ai/x"},
+        ])
+        seen = []
+
+        def fake_run(cmd, *a, **kw):
+            seen.append(cmd)
+            if cmd[:3] == ["gh", "pr", "checks"]:
+                return _sp.CompletedProcess(cmd, 1, stdout=checks, stderr="")
+            if cmd[:3] == ["gh", "run", "view"]:
+                return _sp.CompletedProcess(cmd, 0, stdout=f"log of {cmd[3]}", stderr="")
+            raise AssertionError(f"unexpected command {cmd!r}")
+
+        monkeypatch.setattr(p9.subprocess, "run", fake_run)
+        log, ids = p9._gh_log_failed(42, "o/r")
+        assert ids == ["111", "222"]
+        assert "log of 111" in log and "log of 222" in log
+        assert ["gh", "pr", "checks", "42", "--json", "bucket,link", "--repo", "o/r"] in seen
+
+    def test_classify_without_tty_still_reads_the_pr(self, p9, monkeypatch, capsys):
+        # Agents run with a non-TTY stdin; that must not replace the live read.
+        import io
+        monkeypatch.setattr(p9.sys, "stdin", io.StringIO(""))
+        log = (_FIXTURES / "failures" / "runner_admission_timeout.txt").read_text()
+        monkeypatch.setattr(p9, "_gh_log_failed", lambda pr, repo: (log, ["111"]))
+        assert p9.main(["heal", "42", "--repo", "o/r", "--classify"]) == 0
+        assert json.loads(capsys.readouterr().out)["failure_type"] == "runner_admission_timeout"
+
+    def test_log_file_dash_reads_stdin(self, p9, monkeypatch, capsys):
+        import io
+        log = (_FIXTURES / "failures" / "lint.txt").read_text()
+        monkeypatch.setattr(p9.sys, "stdin", io.StringIO(log))
+        assert p9.main(["heal", "42", "--classify", "--log-file", "-"]) == 0
+        assert json.loads(capsys.readouterr().out)["failure_type"] == "lint"
 
     def test_apply_runs_under_lock(self, p9, monkeypatch):
         # Stub the heal command to a trivially-true classified result by

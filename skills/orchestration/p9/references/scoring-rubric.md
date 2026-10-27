@@ -125,7 +125,32 @@ high blast radius (which package version? which lockfile?). Escalate.
 
 ---
 
-### 7. `unclassified` (terminal)
+### 7. `runner_admission_timeout`
+
+**What it catches:** a job that never ran. A self-hosted runner's job-start
+hook waits for host admission (for example a single shared heavy-job lease),
+times out, and exits 75 (EX_TEMPFAIL). The check shows red, but no step of the
+PR was executed; the following steps are reported as skipped.
+
+**Detection signatures (both required, floor `0.75`):**
+- `job-start\.sh`
+- `Process completed with exit code 75\b`
+
+A bare "exit code 75" from a test step matches only one signature (score
+0.7), stays below the floor, and escalates. Two matches score 0.8.
+
+**Heal command:** `gh run rerun {run_id} --failed`, once per failing run. Live
+mode reads the run ids from the PR's own failing checks (`gh pr checks
+--json bucket,link`). With `--log-file` or stdin, pass `--run-id`. Without a
+run id the heal refuses instead of guessing. The caller decides *when*: do
+not re-run while the host's own admission gate is red or a host hold is
+active. The re-run would queue on the same lease.
+
+**Idempotent:** yes (re-running failed jobs is safe).
+
+---
+
+### 8. `unclassified` (terminal)
 
 Anything not matched above with confidence ≥ floor. **Always escalates** —
 no heal attempt, no retry, no guessing. Creates a Linear ticket immediately.

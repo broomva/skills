@@ -251,7 +251,12 @@ could not.
 - **`p9 heal <pr> --apply`** — run the classified `heal_command` under
   `heal.lock` (serialized workspace-wide, so a heal in a parallel session can't
   race on shared codegen/cache). Auto-classifiable failures only; `--dry-run`
-  prints the command. `--classify` stays read-only.
+  prints the command. `--classify` stays read-only. With no `--log-file`, heal
+  reads the failed-step logs of the PR's own failing runs, also from an agent
+  with no TTY (`--log-file -` reads stdin). A run-scoped heal
+  (`runner_admission_timeout`: the job-start hook exited 75 waiting for host
+  admission, so nothing ran) re-runs each failing run once. Re-run it only when
+  the host gate is not red.
 
 ## Wait-time work selection (priority order)
 

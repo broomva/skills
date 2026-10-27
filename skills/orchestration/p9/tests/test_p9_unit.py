@@ -53,6 +53,7 @@ class TestClassifier:
             ("type.txt", "type", False),  # type errors → escalate
             ("codegen_drift.txt", "codegen_drift", True),
             ("import_missing.txt", "import_missing", False),  # complex; escalate v1
+            ("runner_admission_timeout.txt", "runner_admission_timeout", True),
             ("unclassified.txt", "unclassified", False),
         ],
     )
@@ -70,6 +71,17 @@ class TestClassifier:
         result = p9.classify(log)
         assert result.confidence < 0.7
         assert result.heal_command is None
+
+    def test_exit_75_without_the_job_start_hook_is_not_admission(self, p9):
+        # One signature alone scores 0.7, below the entry's 0.75 floor.
+        log = "  test step\n##[error]Process completed with exit code 75.\n"
+        result = p9.classify(log)
+        assert result.failure_type == "unclassified"
+        assert result.heal_command is None
+
+    def test_admission_timeout_heal_is_run_scoped(self, p9):
+        result = p9.classify(_read_fixture("runner_admission_timeout.txt"))
+        assert result.heal_command == "gh run rerun {run_id} --failed"
 
     def test_classified_lint_has_heal_command(self, p9):
         log = _read_fixture("lint.txt")

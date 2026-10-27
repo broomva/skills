@@ -31,6 +31,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -799,6 +800,7 @@ class CIHealPolicy:
     stability_floor: float = 0.3
     classified_failure_types: tuple[str, ...] = (
         "lint", "format", "test_flaky", "codegen_drift", "import_missing",
+        "runner_admission_timeout",
     )
     escalation_channel: EscalationChannel = field(default_factory=EscalationChannel)
 
@@ -2075,6 +2077,21 @@ def _builtin_rubric() -> tuple[RubricEntry, ...]:
             ),
             heal_command="gh run rerun --failed",
             confidence_floor=0.9,  # only confident if history confirms flakiness
+        ),
+        RubricEntry(
+            # The job never ran: a self-hosted runner's job-start hook waited for
+            # host admission (the shared heavy-job lease) and gave up with
+            # EX_TEMPFAIL. Nothing in the PR failed, so the heal is a re-run of
+            # the failed jobs. Both signatures are required (floor 0.75, between
+            # one match at 0.7 and two at 0.8 with float headroom): a bare
+            # "exit code 75" from a test step is not this.
+            failure_type="runner_admission_timeout",
+            patterns=(
+                re.compile(r"job-start\.sh"),
+                re.compile(r"Process completed with exit code 75\b"),
+            ),
+            heal_command="gh run rerun {run_id} --failed",
+            confidence_floor=0.75,
         ),
         RubricEntry(
             failure_type="codegen_drift",
@@ -4100,13 +4117,17 @@ def cmd_heal(args: argparse.Namespace) -> int:
         print("p9 heal requires --classify (read-only) or --apply (run heal)",
               file=sys.stderr)
         return EXIT_USAGE
-    if args.log_file:
-        log = Path(args.log_file).read_text(encoding="utf-8")
-    elif not sys.stdin.isatty():
+    run_ids = list(getattr(args, "run_id", None) or [])
+    if args.log_file == "-":
         log = sys.stdin.read()
+    elif args.log_file:
+        log = Path(args.log_file).read_text(encoding="utf-8")
     else:
-        # Live mode: pull from gh
-        log = _gh_log_failed(args.pr, args.repo)
+        # Not "stdin is not a TTY": an agent or cron caller never has a TTY, so
+        # that test silently classified an empty log instead of the PR's.
+        # Live mode: pull the PR's failing runs from gh
+        log, live_ids = _gh_log_failed(args.pr, args.repo)
+        run_ids = run_ids or live_ids
     result = classify(log)
 
     if not apply:
@@ -4120,9 +4141,16 @@ def cmd_heal(args: argparse.Namespace) -> int:
         print(json.dumps({**base, "applied": False,
                           "reason": "not auto-classifiable — escalate"}, indent=2))
         return EXIT_DEGRADED
+    commands = _expand_heal_command(result.heal_command, run_ids, args.repo)
+    if not commands:
+        print(json.dumps({**base, "applied": False,
+                          "reason": "run-scoped heal needs the failing run id(s): "
+                                    "run live against the PR or pass --run-id"}, indent=2))
+        return EXIT_DEGRADED
     if args.dry_run:
         print(json.dumps({**base, "applied": False, "dry_run": True,
-                          "would_run": result.heal_command}, indent=2))
+                          "would_run": commands[0] if len(commands) == 1 else commands},
+                         indent=2))
         return EXIT_OK
 
     # Serialize heal execution workspace-wide (spec §5.7 / heal.lock). Heal
@@ -4132,7 +4160,9 @@ def cmd_heal(args: argparse.Namespace) -> int:
     timeout = float(getattr(args, "lock_timeout", 30.0) or 30.0)
     try:
         with file_lock(heal_lock_path(), timeout_s=timeout):
-            rc = subprocess.run(result.heal_command, shell=True, check=False).returncode
+            codes = [subprocess.run(command, shell=True, check=False).returncode
+                     for command in commands]
+            rc = next((c for c in codes if c != 0), 0)
     except P9Error as e:
         print(f"heal lock contention: {e}", file=sys.stderr)
         return EXIT_HEAL_LOCK_TIMEOUT
@@ -4922,12 +4952,52 @@ def _detect_repo() -> str | None:
     return resolve_repo() or None
 
 
-def _gh_log_failed(pr: int, repo: str | None) -> str:
-    cmd = ["gh", "run", "view", "--log-failed"]
+_RUN_ID_RE = re.compile(r"/actions/runs/(\d+)(?:/|$)")
+
+
+def _pr_failed_run_ids(pr: int, repo: str | None) -> list[str]:
+    """Workflow run ids behind the PR's failing checks, in first-seen order."""
+    cmd = ["gh", "pr", "checks", str(pr), "--json", "bucket,link"]
     if repo:
         cmd += ["--repo", repo]
     out = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
-    return out.stdout or out.stderr or ""
+    try:
+        rows = json.loads(out.stdout or "[]")
+    except json.JSONDecodeError:
+        return []
+    ids: list[str] = []
+    for row in rows if isinstance(rows, list) else []:
+        if row.get("bucket") != "fail":
+            continue
+        m = _RUN_ID_RE.search(str(row.get("link") or ""))
+        if m and m.group(1) not in ids:
+            ids.append(m.group(1))
+    return ids
+
+
+def _gh_log_failed(pr: int, repo: str | None) -> tuple[str, list[str]]:
+    """Failed-step logs for the PR's failing runs, plus those run ids.
+
+    A bare `gh run view --log-failed` names no run, so it never read this PR's
+    logs; the run ids come from the PR's own failing checks.
+    """
+    run_ids = _pr_failed_run_ids(pr, repo)
+    logs = []
+    for rid in run_ids:
+        cmd = ["gh", "run", "view", rid, "--log-failed"]
+        if repo:
+            cmd += ["--repo", repo]
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+        logs.append(out.stdout or out.stderr or "")
+    return "\n".join(logs), run_ids
+
+
+def _expand_heal_command(command: str, run_ids: list[str], repo: str | None) -> list[str]:
+    """One shell command per failed run when the heal is run-scoped."""
+    if "{run_id}" not in command:
+        return [command]
+    suffix = f" --repo {shlex.quote(repo)}" if repo else ""
+    return [command.replace("{run_id}", shlex.quote(rid)) + suffix for rid in run_ids]
 
 
 _DURATION_RE = re.compile(r"^(\d+)([smhd])$")
@@ -5034,7 +5104,11 @@ def build_parser() -> argparse.ArgumentParser:
     ph.add_argument("--lock-timeout", type=float, default=30.0,
                     help="Seconds to wait for heal.lock before giving up (default 30)")
     ph.add_argument("--log-file", default=None,
-                    help="Read failure log from file instead of `gh run view`")
+                    help="Read failure log from a file ('-' = stdin) instead of the "
+                         "PR's failing runs")
+    ph.add_argument("--run-id", action="append", default=None,
+                    help="Failing workflow run id for a run-scoped heal (repeatable); "
+                         "live mode reads them from the PR's failing checks")
     ph.set_defaults(func=cmd_heal)
 
     prp = sub.add_parser("reap",

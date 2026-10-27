@@ -1,0 +1,8 @@
+test-lock verify	Set up job	2026-10-27T05:02:06.1819490Z Current runner version: '2.338.0'
+test-lock verify	Set up job	2026-10-27T05:02:07.8112060Z Complete job name: test-lock verify
+test-lock verify	Set up runner	2026-10-27T05:02:07.8438170Z A job started hook has been configured by the self-hosted runner administrator
+test-lock verify	Set up runner	2026-10-27T05:02:07.8552920Z ##[group]Run '/home/runner/.config/ci-runner/host-hooks/0000000000000000/job-start.sh'
+test-lock verify	Set up runner	2026-10-27T05:02:07.8609670Z shell: /usr/bin/bash --noprofile --norc -e -o pipefail {0}
+test-lock verify	Set up runner	2026-10-27T05:02:07.8610590Z ##[endgroup]
+test-lock verify	Set up runner	2026-10-27T05:32:08.0806070Z ##[error]Process completed with exit code 75.
+test-lock verify	Complete runner	2026-10-27T05:32:08.1101890Z A job completed hook has been configured by the self-hosted runner administrator
