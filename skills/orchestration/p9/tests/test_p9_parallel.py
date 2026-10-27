@@ -10,6 +10,7 @@ liveness reaping, and watcher de-dup.
 from __future__ import annotations
 
 import importlib
+import json
 import os
 import sys
 from pathlib import Path
@@ -299,6 +300,229 @@ class TestHealApply:
         assert rc == p9.EXIT_DEGRADED
         out = capsys.readouterr().out
         assert "escalate" in out
+
+    # Run-scoped heals (runner_admission_timeout). policy-good.yaml predates the
+    # type, so these tests pin a policy that allows it unless they test refusal.
+    @pytest.fixture
+    def allow_admission(self, monkeypatch, tmp_path):
+        pol = tmp_path / "policy.yaml"
+        pol.write_text((_FIXTURES / "policy-good.yaml").read_text().replace(
+            "classified_failure_types: [lint, format, test_flaky, codegen_drift, import_missing]",
+            "classified_failure_types: [lint, runner_admission_timeout]"))
+        assert "runner_admission_timeout" in pol.read_text()
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(pol))
+
+    _ADMISSION = str(_FIXTURES / "failures" / "runner_admission_timeout.txt")
+
+    def test_run_scoped_heal_refuses_without_run_id(self, p9, capsys, monkeypatch,
+                                                     allow_admission):
+        monkeypatch.setenv("BROOMVA_P9_REPO", "-")
+        rc = p9.main(["heal", "42", "--apply", "--dry-run", "--log-file", self._ADMISSION])
+        assert rc == p9.EXIT_DEGRADED
+        assert "needs the failing run id" in capsys.readouterr().out
+
+    def test_policy_that_omits_the_type_refuses(self, p9, capsys):
+        # policy-good.yaml lists the five original types only.
+        rc = p9.main(["heal", "42", "--apply", "--dry-run", "--run-id", "111",
+                      "--log-file", self._ADMISSION])
+        assert rc == p9.EXIT_DEGRADED
+        assert "does not allow 'runner_admission_timeout'" in capsys.readouterr().out
+
+    def test_run_scoped_heal_expands_each_run_id(self, p9, capsys, allow_admission):
+        rc = p9.main(["heal", "42", "--apply", "--dry-run", "--repo", "o/r",
+                      "--run-id", "111", "--run-id", "222", "--log-file", self._ADMISSION])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["would_run"] == ["gh run rerun 111 --failed --repo o/r",
+                                    "gh run rerun 222 --failed --repo o/r"]
+
+    def test_run_scoped_heal_runs_every_run_and_reports_failure(
+            self, p9, monkeypatch, capsys, allow_admission):
+        monkeypatch.setenv("BROOMVA_P9_REPO", "-")  # no repo: no --repo suffix
+        import subprocess as _sp
+        ran = []
+
+        def fake_run(cmd, *a, **kw):
+            if isinstance(cmd, str) and cmd.startswith("gh run rerun"):
+                ran.append(cmd)
+                return _sp.CompletedProcess(cmd, 1 if "111" in cmd else 0)
+            raise AssertionError(f"unexpected command {cmd!r}")
+
+        monkeypatch.setattr(p9.subprocess, "run", fake_run)
+        rc = p9.main(["heal", "42", "--apply", "--run-id", "111", "--run-id", "222",
+                      "--log-file", self._ADMISSION])
+        assert ran == ["gh run rerun 111 --failed", "gh run rerun 222 --failed"]
+        assert rc == p9.EXIT_DEGRADED
+        assert json.loads(capsys.readouterr().out)["heal_exit_code"] == 1
+
+    def test_live_ids_flow_into_apply(self, p9, monkeypatch, capsys, allow_admission):
+        log = (_FIXTURES / "failures" / "runner_admission_timeout.txt").read_text()
+        monkeypatch.setattr(p9, "_gh_log_failed",
+                            lambda pr, repo: ({"111": log, "222": log}, None))
+        rc = p9.main(["heal", "42", "--repo", "o/r", "--apply", "--dry-run"])
+        assert rc == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["source"] == "live" and out["run_ids"] == ["111", "222"]
+        assert out["would_run"] == ["gh run rerun 111 --failed --repo o/r",
+                                    "gh run rerun 222 --failed --repo o/r"]
+
+    def test_one_timeout_does_not_mask_a_real_failure(self, p9, monkeypatch, capsys,
+                                                      allow_admission):
+        # Run 111 timed out on admission; run 222 has a type error. Classified
+        # together, the 0.8 admission match used to win and "heal" the PR.
+        admission = (_FIXTURES / "failures" / "runner_admission_timeout.txt").read_text()
+        type_err = (_FIXTURES / "failures" / "type.txt").read_text()
+        monkeypatch.setattr(p9, "_gh_log_failed",
+                            lambda pr, repo: ({"111": admission, "222": type_err}, None))
+        rc = p9.main(["heal", "42", "--repo", "o/r", "--apply", "--dry-run"])
+        assert rc == p9.EXIT_DEGRADED
+        out = json.loads(capsys.readouterr().out)
+        assert out["classified"] is False and out["commands"] == []
+        assert "111/test-lock verify=runner_admission_timeout" in out["rationale"]
+        assert "222=type" in out["rationale"]
+
+    def test_fetch_failure_is_reported_not_unclassified(self, p9, monkeypatch, capsys):
+        monkeypatch.setattr(p9, "_gh_log_failed",
+                            lambda pr, repo: ({}, "gh pr checks failed: HTTP 401"))
+        rc = p9.main(["heal", "42", "--repo", "o/r", "--classify"])
+        assert rc == p9.EXIT_DEGRADED
+        out = json.loads(capsys.readouterr().out)
+        assert out["failure_type"] == "unavailable" and "HTTP 401" in out["rationale"]
+
+    def test_classify_shows_expanded_commands(self, p9, monkeypatch, capsys):
+        log = (_FIXTURES / "failures" / "runner_admission_timeout.txt").read_text()
+        monkeypatch.setattr(p9, "_gh_log_failed", lambda pr, repo: ({"111": log}, None))
+        assert p9.main(["heal", "42", "--repo", "o/r", "--classify"]) == 0
+        out = json.loads(capsys.readouterr().out)
+        assert out["commands"] == ["gh run rerun 111 --failed --repo o/r"]
+
+    def test_one_run_two_jobs_does_not_mask(self, p9, monkeypatch, capsys, allow_admission):
+        # The admission lease is per job: one run can hold a timed-out job and
+        # a job that ran and failed for real.
+        admission = (_FIXTURES / "failures" / "runner_admission_timeout.txt").read_text()
+        real = "typecheck\tRun tsc\tsrc/a.ts(3,1): error TS2322: bad\n" \
+               "typecheck\tRun tsc\t##[error]Process completed with exit code 2.\n"
+        monkeypatch.setattr(p9, "_gh_log_failed",
+                            lambda pr, repo: ({"111": admission + real}, None))
+        rc = p9.main(["heal", "42", "--repo", "o/r", "--apply", "--dry-run"])
+        assert rc == p9.EXIT_DEGRADED
+        out = json.loads(capsys.readouterr().out)
+        assert out["classified"] is False
+        assert "111/test-lock verify=runner_admission_timeout" in out["rationale"]
+        assert "111/typecheck=type" in out["rationale"]
+
+    def test_empty_input_is_unavailable(self, p9):
+        assert p9.classify_runs({}).failure_type == "unavailable"
+
+    def test_no_policy_file_does_not_opt_in(self, p9, monkeypatch, capsys, tmp_path):
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(tmp_path / "absent.yaml"))
+        rc = p9.main(["heal", "42", "--apply", "--dry-run", "--run-id", "111",
+                      "--repo", "o/r", "--log-file", self._ADMISSION])
+        assert rc == p9.EXIT_DEGRADED
+        assert "does not allow 'runner_admission_timeout'" in capsys.readouterr().out
+        # The original types still heal on the defaults.
+        assert p9.main(["heal", "42", "--apply", "--dry-run", "--log-file",
+                        str(_FIXTURES / "failures" / "lint.txt")]) == 0
+
+    def test_malformed_policy_refuses(self, p9, monkeypatch, capsys, tmp_path):
+        pol = tmp_path / "policy.yaml"
+        pol.write_text("ci_watch:\n  enabled: true\n")  # no ci_heal block
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(pol))
+        rc = p9.main(["heal", "42", "--apply", "--dry-run", "--log-file",
+                      str(_FIXTURES / "failures" / "lint.txt")])
+        assert rc == p9.EXIT_DEGRADED
+        assert "policy unreadable" in capsys.readouterr().out
+
+    def test_disabled_heal_policy_refuses(self, p9, monkeypatch, capsys, tmp_path):
+        text = (_FIXTURES / "policy-good.yaml").read_text()
+        head, sep, tail = text.partition("ci_heal:\n  enabled: true")
+        assert sep, "fixture layout changed"
+        pol = tmp_path / "policy.yaml"
+        pol.write_text(head + "ci_heal:\n  enabled: false" + tail)
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(pol))
+        rc = p9.main(["heal", "42", "--apply", "--dry-run", "--log-file",
+                      str(_FIXTURES / "failures" / "lint.txt")])
+        assert rc == p9.EXIT_DEGRADED
+        assert "enabled=False" in capsys.readouterr().out
+
+    def test_gh_checks_timeout_is_unavailable(self, p9, monkeypatch, capsys):
+        import subprocess as _sp
+
+        def fake_run(cmd, *a, **kw):
+            raise _sp.TimeoutExpired(cmd, 60)
+
+        monkeypatch.setattr(p9.subprocess, "run", fake_run)
+        rc = p9.main(["heal", "42", "--repo", "o/r", "--classify"])
+        assert rc == p9.EXIT_DEGRADED
+        out = json.loads(capsys.readouterr().out)
+        assert out["failure_type"] == "unavailable" and "timed out" in out["rationale"]
+        assert {"confidence", "signature_hash", "commands"} <= set(out)
+
+    def test_repo_is_resolved_when_flag_omitted(self, p9, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_REPO", "o/r")
+        seen = {}
+        monkeypatch.setattr(p9, "_gh_log_failed",
+                            lambda pr, repo: seen.setdefault("repo", repo) and ({}, "stop"))
+        p9.main(["heal", "42", "--classify"])
+        assert seen["repo"] == "o/r"
+
+    def test_run_still_in_progress_is_unavailable(self, p9, monkeypatch):
+        import subprocess as _sp
+        checks = json.dumps([{"bucket": "fail",
+                              "link": "https://github.com/o/r/actions/runs/111/job/9"}])
+
+        def fake_run(cmd, *a, **kw):
+            if cmd[:3] == ["gh", "pr", "checks"]:
+                return _sp.CompletedProcess(cmd, 1, stdout=checks, stderr="")
+            return _sp.CompletedProcess(cmd, 1, stdout="", stderr=(
+                "run 111 is still in progress; logs will be available when it is complete"))
+
+        monkeypatch.setattr(p9.subprocess, "run", fake_run)
+        logs, err = p9._gh_log_failed(42, "o/r")
+        assert logs == {} and "still in progress" in err
+
+    def test_live_mode_reads_the_prs_failing_runs(self, p9, monkeypatch):
+        import subprocess as _sp
+        checks = json.dumps([
+            {"bucket": "fail", "link": "https://github.com/o/r/actions/runs/111/job/9"},
+            {"bucket": "pass", "link": "https://github.com/o/r/actions/runs/333/job/1"},
+            {"bucket": "fail", "link": "https://github.com/o/r/actions/runs/111/job/10"},
+            {"bucket": "fail", "link": "https://github.com/o/r/actions/runs/222/job/3"},
+            {"bucket": "fail", "link": "https://github.com/other/repo/actions/runs/999/job/1"},
+            {"bucket": "fail", "link": "https://evil.example/o/r/actions/runs/888/"},
+            {"bucket": "fail", "link": "https://coderabbit.ai/x"},
+        ])
+        seen = []
+
+        def fake_run(cmd, *a, **kw):
+            seen.append(cmd)
+            if cmd[:3] == ["gh", "pr", "checks"]:
+                return _sp.CompletedProcess(cmd, 1, stdout=checks, stderr="")
+            if cmd[:3] == ["gh", "run", "view"]:
+                return _sp.CompletedProcess(cmd, 0, stdout=f"log of {cmd[3]}", stderr="")
+            raise AssertionError(f"unexpected command {cmd!r}")
+
+        monkeypatch.setattr(p9.subprocess, "run", fake_run)
+        logs, err = p9._gh_log_failed(42, "o/r")
+        assert err is None
+        assert logs == {"111": "log of 111", "222": "log of 222"}
+        assert ["gh", "pr", "checks", "42", "--json", "bucket,link", "--repo", "o/r"] in seen
+
+    def test_classify_without_tty_still_reads_the_pr(self, p9, monkeypatch, capsys):
+        # Agents run with a non-TTY stdin; that must not replace the live read.
+        import io
+        monkeypatch.setattr(p9.sys, "stdin", io.StringIO(""))
+        log = (_FIXTURES / "failures" / "runner_admission_timeout.txt").read_text()
+        monkeypatch.setattr(p9, "_gh_log_failed", lambda pr, repo: ({"111": log}, None))
+        assert p9.main(["heal", "42", "--repo", "o/r", "--classify"]) == 0
+        assert json.loads(capsys.readouterr().out)["failure_type"] == "runner_admission_timeout"
+
+    def test_log_file_dash_reads_stdin(self, p9, monkeypatch, capsys):
+        import io
+        log = (_FIXTURES / "failures" / "lint.txt").read_text()
+        monkeypatch.setattr(p9.sys, "stdin", io.StringIO(log))
+        assert p9.main(["heal", "42", "--classify", "--log-file", "-"]) == 0
+        assert json.loads(capsys.readouterr().out)["failure_type"] == "lint"
 
     def test_apply_runs_under_lock(self, p9, monkeypatch):
         # Stub the heal command to a trivially-true classified result by

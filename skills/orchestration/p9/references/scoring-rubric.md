@@ -125,7 +125,44 @@ high blast radius (which package version? which lockfile?). Escalate.
 
 ---
 
-### 7. `unclassified` (terminal)
+### 7. `runner_admission_timeout`
+
+**What it catches:** a job that never ran. A self-hosted runner's job-start
+hook waits for host admission (for example a single shared heavy-job lease),
+times out, and exits 75 (EX_TEMPFAIL). The check shows red, but no step of the
+PR was executed; the following steps are reported as skipped.
+
+**Detection signatures (both required, floor `0.75`):**
+- the hook step's own error: `##[group]Run '…/job-start.sh'` followed by
+  `##[error]Process completed with exit code 75` with no other step
+  (`##[group]Run `) or error in between. A hook that succeeded followed by a
+  later step exiting 75 does not match. `gh run view --log-failed` can return
+  whole job logs ("UNKNOWN STEP") in which the successful hook is present.
+- `##\[error\]Process completed with exit code 75\b`
+
+One signature alone scores 0.7, stays below the floor, and escalates. Two
+matches score 0.8.
+
+**Heal command:** `gh run rerun {run_id} --failed`, once per failing run.
+
+- Live mode reads the run ids from the PR's own failing checks (`gh pr checks
+  --json bucket,link`). Only links into the PR's repo's Actions count.
+- Each failing job of each run is classified on its own (the admission lease
+  is per job). The PR heals only when every failing job is this type; one job
+  with a real error escalates the PR.
+- With `--log-file` (or `-` for stdin), pass `--run-id`. Without a run id the
+  heal refuses.
+- **Opt-in.** The type is not in the built-in `classified_failure_types`
+  defaults. `--apply` heals it only when the governing policy lists it.
+- The caller decides *when*: do not re-run while the host's admission gate is
+  red or a host hold is active. The re-run would queue on the same lease.
+
+**Idempotent:** safe to repeat, but not free. Each re-run creates a new run
+attempt and waits for host admission again.
+
+---
+
+### 8. `unclassified` (terminal)
 
 Anything not matched above with confidence ≥ floor. **Always escalates** —
 no heal attempt, no retry, no guessing. Creates a Linear ticket immediately.

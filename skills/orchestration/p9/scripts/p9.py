@@ -31,6 +31,7 @@ import hashlib
 import json
 import os
 import re
+import shlex
 import signal
 import subprocess
 import sys
@@ -799,6 +800,8 @@ class CIHealPolicy:
     stability_floor: float = 0.3
     classified_failure_types: tuple[str, ...] = (
         "lint", "format", "test_flaky", "codegen_drift", "import_missing",
+        # runner_admission_timeout is deliberately absent: re-running a job
+        # takes shared CI capacity, so a policy must list it to opt in.
     )
     escalation_channel: EscalationChannel = field(default_factory=EscalationChannel)
 
@@ -2075,6 +2078,28 @@ def _builtin_rubric() -> tuple[RubricEntry, ...]:
             ),
             heal_command="gh run rerun --failed",
             confidence_floor=0.9,  # only confident if history confirms flakiness
+        ),
+        RubricEntry(
+            # The job never ran: a self-hosted runner's job-start hook waited for
+            # host admission (the shared heavy-job lease) and gave up with
+            # EX_TEMPFAIL. Nothing in the PR failed, so the heal is a re-run of
+            # the failed jobs. Both signatures are required (floor 0.75, between
+            # one match at 0.7 and two at 0.8 with float headroom): a bare
+            # "exit code 75" from a test step is not this.
+            failure_type="runner_admission_timeout",
+            patterns=(
+                # The hook step's own error: after the runner invokes job-start.sh,
+                # the first step error is exit 75 and no other step started in
+                # between. Not "the hook ran and something later exited 75":
+                # `gh run view --log-failed` falls back to whole job logs
+                # ("UNKNOWN STEP"), where a successful hook precedes the steps.
+                re.compile(r"##\[group\]Run '[^'\n]*/job-start\.sh'"
+                           r"(?:(?!##\[group\]Run |##\[error\]).)*"
+                           r"##\[error\]Process completed with exit code 75\b", re.DOTALL),
+                re.compile(r"##\[error\]Process completed with exit code 75\b"),
+            ),
+            heal_command="gh run rerun {run_id} --failed",
+            confidence_floor=0.75,
         ),
         RubricEntry(
             failure_type="codegen_drift",
@@ -4100,29 +4125,66 @@ def cmd_heal(args: argparse.Namespace) -> int:
         print("p9 heal requires --classify (read-only) or --apply (run heal)",
               file=sys.stderr)
         return EXIT_USAGE
-    if args.log_file:
-        log = Path(args.log_file).read_text(encoding="utf-8")
-    elif not sys.stdin.isatty():
-        log = sys.stdin.read()
+    run_ids = list(getattr(args, "run_id", None) or [])
+    repo = resolve_repo(args.repo) or None
+    source = "file"
+    if args.log_file == "-":
+        result, source = classify_runs({"stdin": sys.stdin.read()}), "stdin"
+    elif args.log_file:
+        result = classify_runs({"file": Path(args.log_file).read_text(encoding="utf-8")})
     else:
-        # Live mode: pull from gh
-        log = _gh_log_failed(args.pr, args.repo)
-    result = classify(log)
+        # Live mode. Not gated on "stdin is not a TTY": an agent or cron caller
+        # never has one, so that test silently classified an empty log.
+        source = "live"
+        logs, err = _gh_log_failed(args.pr, repo)
+        if err:
+            print(json.dumps({**dataclasses.asdict(_unavailable(err)), "source": source,
+                              "run_ids": [], "commands": []}, indent=2))
+            return EXIT_DEGRADED
+        result = classify_runs(logs)
+        run_ids = run_ids or list(logs)
+    commands = (_expand_heal_command(result.heal_command, run_ids, repo)
+                if result.heal_command else [])
+    base = {**dataclasses.asdict(result), "source": source,
+            "run_ids": run_ids, "commands": commands}
 
     if not apply:
-        print(json.dumps(dataclasses.asdict(result), indent=2))
+        print(json.dumps(base, indent=2))
         return EXIT_OK
 
     # --apply path. Only auto-classifiable failures with a heal_command run;
     # everything else is an escalation (refuse, no action).
-    base = dataclasses.asdict(result)
     if not result.classified or not result.heal_command:
         print(json.dumps({**base, "applied": False,
                           "reason": "not auto-classifiable — escalate"}, indent=2))
         return EXIT_DEGRADED
+    # The policy decides which classified types may heal. With no policy file
+    # the built-in defaults apply (they omit opt-in types such as re-runs); a
+    # policy file that cannot be parsed refuses.
+    policy_file = policy_yaml_path()
+    if policy_file.exists():
+        try:
+            heal_policy = load_policy(policy_file, validate_auto_merge=False).ci_heal
+        except PolicyError as e:
+            print(json.dumps({**base, "applied": False,
+                              "reason": f"policy unreadable: {e}"}, indent=2))
+            return EXIT_DEGRADED
+    else:
+        heal_policy = CIHealPolicy()
+    if not heal_policy.enabled or result.failure_type not in heal_policy.classified_failure_types:
+        print(json.dumps({**base, "applied": False,
+                          "reason": f"policy ci_heal does not allow {result.failure_type!r} "
+                                    f"(enabled={heal_policy.enabled}, allowed="
+                                    f"{list(heal_policy.classified_failure_types)})"}, indent=2))
+        return EXIT_DEGRADED
+    if not commands:
+        print(json.dumps({**base, "applied": False,
+                          "reason": "run-scoped heal needs the failing run id(s): "
+                                    "run live against the PR or pass --run-id"}, indent=2))
+        return EXIT_DEGRADED
     if args.dry_run:
         print(json.dumps({**base, "applied": False, "dry_run": True,
-                          "would_run": result.heal_command}, indent=2))
+                          "would_run": commands}, indent=2))
         return EXIT_OK
 
     # Serialize heal execution workspace-wide (spec §5.7 / heal.lock). Heal
@@ -4132,7 +4194,9 @@ def cmd_heal(args: argparse.Namespace) -> int:
     timeout = float(getattr(args, "lock_timeout", 30.0) or 30.0)
     try:
         with file_lock(heal_lock_path(), timeout_s=timeout):
-            rc = subprocess.run(result.heal_command, shell=True, check=False).returncode
+            codes = [subprocess.run(command, shell=True, check=False).returncode
+                     for command in commands]
+            rc = next((c for c in codes if c != 0), 0)
     except P9Error as e:
         print(f"heal lock contention: {e}", file=sys.stderr)
         return EXIT_HEAL_LOCK_TIMEOUT
@@ -4922,12 +4986,128 @@ def _detect_repo() -> str | None:
     return resolve_repo() or None
 
 
-def _gh_log_failed(pr: int, repo: str | None) -> str:
-    cmd = ["gh", "run", "view", "--log-failed"]
+def _run_id_pattern(repo: str | None) -> re.Pattern[str]:
+    """Run ids only from this repo's own Actions URLs (a status check may link
+    anywhere; its numbers must not be re-run against this repo)."""
+    if repo:
+        return re.compile(r"^https://github\.com/" + re.escape(repo) +
+                          r"/actions/runs/(\d+)(?:/|$)", re.IGNORECASE)
+    return re.compile(r"^https://github\.com/[^/]+/[^/]+/actions/runs/(\d+)(?:/|$)")
+
+
+def _pr_failed_run_ids(pr: int, repo: str | None) -> tuple[list[str], str | None]:
+    """Run ids behind the PR's failing checks (first-seen order), or an error."""
+    cmd = ["gh", "pr", "checks", str(pr), "--json", "bucket,link"]
     if repo:
         cmd += ["--repo", repo]
-    out = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
-    return out.stdout or out.stderr or ""
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=60, check=False)
+    except subprocess.TimeoutExpired:
+        return [], "gh pr checks timed out"
+    try:
+        rows = json.loads(out.stdout or "")
+    except json.JSONDecodeError:
+        return [], f"gh pr checks failed: {(out.stderr or '').strip()[:200] or 'no output'}"
+    pat = _run_id_pattern(repo)
+    ids: list[str] = []
+    for row in rows if isinstance(rows, list) else []:
+        if row.get("bucket") != "fail":
+            continue
+        m = pat.search(str(row.get("link") or ""))
+        if m and m.group(1) not in ids:
+            ids.append(m.group(1))
+    return ids, None
+
+
+def _gh_log_failed(pr: int, repo: str | None) -> tuple[dict[str, str], str | None]:
+    """Failed-step log per failing run of the PR, or the reason there is none.
+
+    A bare `gh run view --log-failed` names no run, so it never read this PR's
+    logs; the run ids come from the PR's own failing checks.
+    """
+    run_ids, err = _pr_failed_run_ids(pr, repo)
+    if err:
+        return {}, err
+    if not run_ids:
+        return {}, "no failing GitHub Actions runs on this PR"
+    logs: dict[str, str] = {}
+    for rid in run_ids:
+        cmd = ["gh", "run", "view", rid, "--log-failed"]
+        if repo:
+            cmd += ["--repo", repo]
+        try:
+            out = subprocess.run(cmd, capture_output=True, text=True, timeout=120, check=False)
+        except subprocess.TimeoutExpired:
+            return {}, f"gh run view {rid} --log-failed timed out"
+        if out.returncode != 0:
+            # e.g. "run N is still in progress; logs will be available when it
+            # is complete". gh's message is not a failure log: classifying it
+            # called an undiagnosed run "unclassified".
+            return {}, f"gh run view {rid}: {(out.stderr or out.stdout or '').strip()[:200]}"
+        logs[rid] = out.stdout or ""
+    return logs, None
+
+
+def _split_jobs(log: str) -> dict[str, str]:
+    """Split a `gh run view --log-failed` log by job (its first tab field).
+
+    The host admission lease is taken per job, so one run can hold a job that
+    timed out on admission next to a job that really failed. A log with no job
+    column (an attempt-log zip, a hand-made file) stays one unit.
+    """
+    jobs: dict[str, list[str]] = {}
+    for line in log.splitlines():
+        if not line.strip():
+            continue
+        job, sep, _ = line.partition("\t")
+        if not sep:
+            return {"": log}
+        jobs.setdefault(job, []).append(line)
+    return {j: "\n".join(lines) for j, lines in jobs.items()} or {"": log}
+
+
+def _unavailable(reason: str) -> ClassifierResult:
+    return ClassifierResult(failure_type="unavailable", classified=False, confidence=0.0,
+                            heal_command=None, signature_hash="", rationale=reason)
+
+
+def classify_runs(logs: dict[str, str]) -> ClassifierResult:
+    """Classify every failing job of every run on its own; heal only a uniform,
+    healable set.
+
+    Classifying concatenated logs let one strong match (an admission timeout
+    at 0.8) outrank a real error elsewhere (a type error at 0.7), and the whole
+    PR was "healed" by a re-run. Every unit must classify as the same healable
+    type, or the PR escalates with the per-unit breakdown.
+    """
+    units = {(f"{rid}/{job}" if job else rid): text
+             for rid, log in logs.items() for job, text in _split_jobs(log).items()}
+    if not units:
+        return _unavailable("no failure logs to classify")
+    per_unit = {key: classify(text) for key, text in units.items()}
+    types = {r.failure_type for r in per_unit.values()}
+    first = next(iter(per_unit.values()))
+    if len(types) == 1 and first.classified:
+        return dataclasses.replace(
+            first, rationale=f"{first.rationale}; all {len(per_unit)} failing job(s)")
+    breakdown = ", ".join(f"{key}={r.failure_type}" for key, r in per_unit.items())
+    return ClassifierResult(
+        failure_type="unclassified" if len(types) > 1 else first.failure_type,
+        classified=False,
+        confidence=min(r.confidence for r in per_unit.values()),
+        heal_command=None,
+        signature_hash=_signature_hash("\n".join(units.values())),
+        rationale=(f"failing jobs disagree or need escalation ({breakdown})"
+                   if len(per_unit) > 1 else first.rationale),
+    )
+
+
+def _expand_heal_command(command: str, run_ids: list[str], repo: str | None) -> list[str]:
+    """One shell command per failed run when the heal is run-scoped."""
+    if "{run_id}" not in command:
+        return [command]
+    suffix = f" --repo {shlex.quote(repo)}" if repo else ""
+    return [command.replace("{run_id}", shlex.quote(rid)) + suffix for rid in run_ids]
 
 
 _DURATION_RE = re.compile(r"^(\d+)([smhd])$")
@@ -5034,7 +5214,11 @@ def build_parser() -> argparse.ArgumentParser:
     ph.add_argument("--lock-timeout", type=float, default=30.0,
                     help="Seconds to wait for heal.lock before giving up (default 30)")
     ph.add_argument("--log-file", default=None,
-                    help="Read failure log from file instead of `gh run view`")
+                    help="Read failure log from a file ('-' = stdin) instead of the "
+                         "PR's failing runs")
+    ph.add_argument("--run-id", action="append", default=None,
+                    help="Failing workflow run id for a run-scoped heal (repeatable); "
+                         "live mode reads them from the PR's failing checks")
     ph.set_defaults(func=cmd_heal)
 
     prp = sub.add_parser("reap",
