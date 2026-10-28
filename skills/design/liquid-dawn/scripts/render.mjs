@@ -70,6 +70,9 @@ export async function render(o, deps = {}) {
           throw new Error(`page never set window.__ready${errors.length ? `: ${errors.join(" | ")}` : ""}`);
         }
         if (errors.length) throw new Error(`page errors: ${errors.join(" | ")}`);
+        // settle before capture: every web font the DOM uses (not only the ones the kit preloads) and two frames,
+        // so a late font swap or an uncomposited canvas cannot make two captures of the same t differ
+        await page.evaluate(() => document.fonts.ready.then(() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))));
         const tag = `${mode}-t${t}`;
         if (o.shots === "all" || o.shots === "full") {
           const f = join(o.out, `${tag}-full.png`);

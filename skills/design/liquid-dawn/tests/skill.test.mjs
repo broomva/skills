@@ -512,6 +512,7 @@ test("specimen renders in both modes, deterministically, and moves over time", {
       await p.goto(`${url}/specimen/paper.html?${query}`);
       await p.waitForFunction(() => window.__ready === true);
       if (seek !== undefined) await p.evaluate((t) => window.renderAt(t), seek);
+      await p.evaluate(() => document.fonts.ready.then(() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))));
       const out = {};
       for (const sel of [".hero", "#screen", ".cards"]) {
         const el = await p.$(sel);
