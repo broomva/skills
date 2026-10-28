@@ -2,10 +2,19 @@
 // Minimal static server for Liquid Midnight pages (ES modules need http). Loopback only; refuses dotfiles, `..` and
 // malformed escapes. Works on Node >= 18 and Bun.
 //   node serve.mjs <root-dir> [port]      → http://127.0.0.1:<port>/
+import { realpathSync } from "node:fs";
 import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
+/* entry-point check that survives symlinked paths (macOS /var -> /private/var, npm bin links) */
+const isMain = (url) => {
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(url));
+  } catch {
+    return false;
+  }
+};
 
 const TYPES = {
   ".html": "text/html; charset=utf-8",
@@ -63,11 +72,14 @@ export async function startServer(root, port = 0) {
   });
   return new Promise((ok, bad) => {
     server.once("error", bad); // e.g. EADDRINUSE: reject instead of throwing out of the listener
-    server.listen(port, "127.0.0.1", () => ok({ port: server.address().port, stop: () => server.close(), server }));
+    server.listen(port, "127.0.0.1", () => {
+      server.off("error", bad); // after start, errors must surface, not vanish into a settled promise
+      ok({ port: server.address().port, stop: () => server.close(), server });
+    });
   });
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   const root = resolve(process.argv[2] || ".");
   try {
     const s = await startServer(root, process.argv[3] !== undefined ? Number(process.argv[3]) : 4317); // explicit 0 = ephemeral

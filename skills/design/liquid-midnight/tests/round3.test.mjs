@@ -1,7 +1,7 @@
 // Regression tests for the P20 round-3 findings (starters, linter coverage, CLI arguments, server safety, template).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -243,8 +243,10 @@ test("threads: trails gated, rgb %, quoted url(), lch/negative hue, selector lin
   assert.ok(codes(".x{color:rgb(20% 8% 36%)}").includes("LM001"), "percent channels are scaled before the hue check");
   assert.deepEqual(lint('.x{fill:url("#a3f")} .y{mask:url( "#a3f0" )}'), []);
   assert.ok(codes(".x{color:oklch(.5 .2 -60)}").includes("LM001"));
-  assert.ok(codes(".x{color:lch(50 60 300)}").includes("LM001"));
-  assert.deepEqual(lint(".x{color:oklch(0.71 0.15 252)} .y{color:lch(60 40 250)}"), []);
+  assert.ok(codes(".x{color:oklch(.5 .2 660)}").includes("LM001"), "wrapped oklch hue 300");
+  for (const blue of ["lch(29.6 131.2 301.4)", "lch(44.8 78.5 285.6)", "lch(54.6 66.4 277.6)", "lch(58.6 64.9 277.8)"])
+    assert.deepEqual(lint(`.x{color:${blue}}`), [], `CIE lch blue ${blue} is not a purple`);
+  assert.deepEqual(lint(".x{color:oklch(0.71 0.15 252)}"), []);
   const f = lint("a{b:c}\n\n.orb {\n background: radial-gradient(red,blue) }").find((x) => x.code === "LM004");
   assert.equal(f.line, 3, "LM004 reports the selector's own line");
   assert.deepEqual(lint(".orb { background: radial-gradient(red,blue) } /* lm-ignore */"), []);
@@ -273,10 +275,15 @@ test("threads: sync refuses a source missing a mapped path, before deleting anyt
   mkdirSync(join(d, "kit"));
   writeFileSync(join(d, "kit/index.js"), "x");
   spawnSync("git", ["init", "-q", d]);
-  const before = readFileSync(join(ASSETS, "manifest.json"), "utf8");
-  const r = spawnSync(process.execPath, [join(SKILL, "scripts/sync_from_repo.mjs"), d], { encoding: "utf8" });
+  // run a COPY of the skill, so a regression in the preflight can never wipe the real assets
+  const copy = join(tmp(), "skill");
+  cpSync(SKILL, copy, { recursive: true, filter: (p) => !p.includes("node_modules") });
+  const before = readFileSync(join(copy, "assets/manifest.json"), "utf8");
+  const r = spawnSync(process.execPath, [join(copy, "scripts/sync_from_repo.mjs"), d], { encoding: "utf8" });
   assert.equal(r.status, 1);
   assert.match(r.stderr, /refusing: the source lacks/);
-  assert.equal(readFileSync(join(ASSETS, "manifest.json"), "utf8"), before);
+  assert.equal(readFileSync(join(copy, "assets/manifest.json"), "utf8"), before);
+  assert.ok(existsSync(join(copy, "assets/kit/index.js")), "nothing was deleted");
+  rmSync(dirname(copy), { recursive: true });
   rmSync(d, { recursive: true });
 });

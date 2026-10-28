@@ -4,11 +4,19 @@
 // Serves <root-dir> on 127.0.0.1 (dotfiles refused), opens <page>?t=..&format=..&mode=.. and waits for window.__ready
 // (pages built on kit/loop.js set it after renderAt). Needs Playwright with Chromium:
 //   npm i -D playwright && npx playwright install chromium      (or set LM_PLAYWRIGHT_DIR to a dir that has it)
-import { mkdirSync } from "node:fs";
+import { mkdirSync, realpathSync } from "node:fs";
 import { createRequire } from "node:module";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { startServer } from "./serve.mjs";
+/* entry-point check that survives symlinked paths (macOS /var -> /private/var, npm bin links) */
+const isMain = (url) => {
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(url));
+  } catch {
+    return false;
+  }
+};
 
 function loadPlaywright() {
   const bases = [process.env.LM_PLAYWRIGHT_DIR, process.cwd()].filter(Boolean);
@@ -38,7 +46,7 @@ export function parseArgs(argv) {
   return o;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   let o;
   try {
     o = parseArgs(process.argv.slice(2));

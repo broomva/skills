@@ -9,9 +9,17 @@
 // Telling selectors from values reliably needs a real CSS/JS parser, and a heuristic here missed real purples in JSX.
 // Heuristics, not proof: a clean run means none of these patterns appear, not that the work is on-style.
 // Always render and look (scripts/render.mjs).
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+/* entry-point check that survives symlinked paths (macOS /var -> /private/var, npm bin links) */
+const isMain = (url) => {
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(url));
+  } catch {
+    return false;
+  }
+};
 
 const EXT = new Set([".html", ".htm", ".css", ".scss", ".js", ".mjs", ".jsx", ".ts", ".tsx", ".vue", ".svelte", ".md"]);
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "build", ".next", "fonts"]);
@@ -106,13 +114,14 @@ export function lint(text, file = "<input>") {
     const { C, H } = hexToOklch(hex);
     if (inPurple(H, C, MIN_CHROMA.hex)) add("LM001", "error", m.index, `purple cast: ${m[0]}) (OKLCH hue ${H.toFixed(0)})`);
   }
-  // lch() / oklch() with negative or wrapped hues (e.g. oklch(.5 .2 -60) is hue 300)
-  for (const m of text.matchAll(/\b(ok)?lch\(\s*([\d.]+%?)\s+([\d.]+)\s+(-?[\d.]+)(deg)?/gi)) {
-    const H = ((Number(m[4]) % 360) + 360) % 360;
-    const C = m[1] ? Number(m[3]) : Number(m[3]) / 150; // CIE LCH chroma ~0-150 vs OKLCH ~0-0.4
-    // plain oklch() with an in-range hue is already handled above; this adds lch() and wrapped/negative hues
-    if ((H !== Number(m[4]) || !m[1]) && inPurple(H, C, MIN_CHROMA.oklch)) add("LM001", "error", m.index, `purple cast: ${m[0]}) (hue ${H})`);
+  // oklch() with a negative or wrapped hue (oklch(.5 .2 -60) is hue 300); CIE lch() is not checked: its hue scale
+  // differs from OKLCH (blues sit near 280-305 there), so reading it on the OKLCH band would flag real blues
+  for (const m of text.matchAll(/\boklch\(\s*([\d.]+%?)\s+([\d.]+)\s+(-?[\d.]+)(deg)?/gi)) {
+    const raw = Number(m[3]);
+    const H = ((raw % 360) + 360) % 360;
+    if (H !== raw && inPurple(H, Number(m[2]), MIN_CHROMA.oklch)) add("LM001", "error", m.index, `purple cast: ${m[0]}) (hue ${H})`);
   }
+
   for (const m of text.matchAll(/(?<![\w-])(rebeccapurple|blueviolet|darkviolet|darkorchid|mediumpurple|mediumorchid|purple|violet|indigo|fuchsia|magenta|orchid|plum)(?![\w-])/gi)) {
     const ctx = text.slice(Math.max(0, m.index - 40), m.index);
     if (/(color|background|fill|stroke|border|shadow|gradient)[^;{}]*$/i.test(ctx)) add("LM001", "error", m.index, `purple cast: named colour ${m[0]}`);
@@ -151,7 +160,7 @@ export function files(paths) {
   return out;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   const args = process.argv.slice(2);
   const json = args.includes("--json");
   const paths = args.filter((a) => a !== "--json");

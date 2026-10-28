@@ -10,10 +10,18 @@
 // them, and `install` keeps an existing starter unless --force.
 // Pure Node (>= 18), no dependencies.
 import { createHash } from "node:crypto";
-import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { readManifest, writeManifest } from "./sync_from_repo.mjs";
+/* entry-point check that survives symlinked paths (macOS /var -> /private/var, npm bin links) */
+const isMain = (url) => {
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(url));
+  } catch {
+    return false;
+  }
+};
 
 const SKILL = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ASSETS = join(SKILL, "assets");
@@ -114,7 +122,7 @@ function parse(argv) {
   return o;
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url)) {
+if (isMain(import.meta.url)) {
   try {
     const o = parse(process.argv.slice(2));
     if (o.cmd === "list") {

@@ -6,9 +6,17 @@
 // The skill's tests fail when a vendored file no longer matches the manifest, so edits go to the source repo first.
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, join, relative } from "node:path";
 import { fileURLToPath } from "node:url";
+/* entry-point check that survives symlinked paths (macOS /var -> /private/var, npm bin links) */
+const isMain = (url) => {
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(url));
+  } catch {
+    return false;
+  }
+};
 
 const SKILL = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ASSETS = join(SKILL, "assets");
@@ -56,14 +64,14 @@ export function buildManifest(source) {
   return { name: "liquid-midnight", source, files };
 }
 
-if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "--rehash") {
+if (isMain(import.meta.url) && process.argv[2] === "--rehash") {
   // re-pin after editing a skill-authored asset (e.g. templates/): keeps the recorded source commit
   const prev = readManifest(join(ASSETS, "manifest.json"));
   const manifest = buildManifest(prev.source);
   manifest.files["../DESIGN.md"] = sha256(join(SKILL, "DESIGN.md"));
   writeManifest(join(ASSETS, "manifest.json"), manifest);
   console.log(`rehashed ${Object.keys(manifest.files).length} files (source ${prev.source.commit})`);
-} else if (process.argv[1] === fileURLToPath(import.meta.url)) {
+} else if (isMain(import.meta.url)) {
   const repo = process.argv[2];
   if (!repo || !existsSync(join(repo, "DESIGN.md")) || !existsSync(join(repo, "kit/index.js"))) {
     console.error("usage: node scripts/sync_from_repo.mjs /path/to/liquid-midnight");
