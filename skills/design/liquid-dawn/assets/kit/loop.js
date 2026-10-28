@@ -15,9 +15,10 @@ export function uaSpeed(el = document.documentElement) {
   return Number.isFinite(v) ? v : 24;
 }
 
-/** Set the CSS clock for time t: --ua and the three breath phases (each in −1..1). */
+/** Set the CSS clock for time t: --ua and the three breath phases (each in −1..1). Under reduced motion the pearl
+ *  holds at 0° (an inline value would otherwise override the stylesheet's freeze). */
 export function setClock(t, el = document.documentElement, degPerSecond = uaSpeed(el)) {
-  el.style.setProperty("--ua", `${((t * degPerSecond) % 360).toFixed(2)}deg`);
+  el.style.setProperty("--ua", `${MOTION ? ((t * degPerSecond) % 360).toFixed(2) : "0.00"}deg`);
   BREATH.forEach((p, i) => el.style.setProperty(`--ld-b${i + 1}`, Math.sin((t / p) * Math.PI * 2).toFixed(4)));
 }
 
@@ -81,10 +82,17 @@ export function createLoop({ init = () => {}, step = () => {}, paint = () => {},
       speed = uaSpeed();
       if (!MOTION) seek(still);
       dirty = true;
+      let wasMoving = MOTION;
       last = performance.now();
       const tick = (now) => {
         const dt = Math.min(0.1, (now - last) / 1000);
         last = now;
+        if (MOTION !== wasMoving) {
+          // the OS preference changed mid-run: settle on the still frame when motion stops, and repaint either way
+          if (!MOTION) seek(still);
+          wasMoving = MOTION;
+          dirty = true;
+        }
         if (MOTION) {
           acc += dt;
           while (acc >= STEP) {

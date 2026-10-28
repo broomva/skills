@@ -29,8 +29,9 @@ Everything moves slowly, on one clock, and every frame is a pure function of `t`
 
 ## 2. Principles
 
-1. **Calm is a number.** Field terms advance at ≤ 0.2 rad/s (`FIELD_SPEED_MAX`), field density caps at .7 (`CAP`),
-   and there is no per-frame random draw anywhere. Calm here is measured, not an adjective.
+1. **Calm is a number.** Every field time term advances at ≤ 0.2 rad/s (`FIELD_SPEED_MAX`), breeze gusts are measured
+   at ≤ 40 px/s, field density caps at .7 (`CAP`), and there is no per-frame random draw anywhere. Calm here is
+   measured, not an adjective.
 2. **Paper first.** Dawn is the default and the reference. Dusk is a full mode, not an inversion: it has its own
    ground (sea-slate, hue 228) and its own glass recipe.
 3. **Glass bends, metal walks.** Every floating surface is dew glass with the pearl rim. Over a kit field the
@@ -125,8 +126,8 @@ All rims share one mechanism: a `::after` ring with 1.25 px padding, `mask-compo
 ### 6.1 Fields (`fields.js`, pure)
 | Field | Signature | Character |
 |---|---|---|
-| `tide` | `(x, y, t, {scale=520, speed=.11})` | Iterated domain-warp caustics with a slow fbm warp (breaks the 2π tiling) and a depth term (shallows vs deeps). Ramp `RAMP.water` ` ·-~≈=` (`=` reserved). |
-| `breeze` | `(x, y, t) → {v, lean}` | Gusts travel at ~33 px/s; `bladeGlyph(v, lean)` picks `' , ! \| ) / \`. Ramp `RAMP.blades`. |
+| `tide` | `(x, y, t, {scale=520, speed=.18})` | `speed` is the rad/s of the fastest term (the base clock runs at speed / 2.5). Iterated domain-warp caustics with a slow fbm warp (breaks the 2π tiling) and a depth term (shallows vs deeps). Ramp `RAMP.water` ` ·-~≈=` (`=` reserved). |
+| `breeze` | `(x, y, t, {speed=.2}) → {v, lean}` | Gust phase at .2 rad/s, so gusts travel at ≈ 33 px/s (21–32 measured; the warp slows some rows); `bladeGlyph(v, lean)` picks `' , ! \| ) / \`. Ramp `RAMP.blades`. |
 | `cloud` | `(x, y, t, {scale})` | fbm cumulus drifting east at ~7 px/s. Ramp `RAMP.cloud` ` ·.:°o`. |
 | `rippleField({w, h, n, period, seed, base})` | `→ (x, y, t)` | Pebble ring pairs at 26 px/s; `base` keeps a faint one-glyph lattice (the Claude FM halftone idea). Ramp `RAMP.dots` ` ·•`. |
 | `clearing(x, y, cx, cy, rx, ry)` | mask 0 → 1 | The quiet hero centre. |
@@ -187,7 +188,7 @@ Fonts are vendored in `assets/fonts/` (all SIL OFL 1.1). Manrope is variable (20
 |---|---|
 | Pearl `--ua` | `(t · 24) mod 360`°; rings 2×; 0° under reduced motion |
 | Light pools | `--ld-b1..3 = sin(2πt / [7.2, 11.6, 18.8])` |
-| Fields | ≤ 0.2 rad/s; tide .11, cloud .02 |
+| Fields | every time term ≤ 0.2 rad/s: tide .18 (fastest term), breeze .2 (≈ 33 px/s); cloud drifts ≈ 7 px/s |
 | Creatures | 8–22 px/s, lattice-snapped; islands 3 px/s |
 | Pebble | a drop every 9 s; rings 34 px/s; settles in 9 s |
 | Springs | `Sp.step(dt, r, z)`: default r .5 z 1; playful r .8 z .9 |
@@ -212,7 +213,8 @@ Fonts are vendored in `assets/fonts/` (all SIL OFL 1.1). Manrope is variable (20
 - Text tokens pass 4.5:1 on paper and surface in both modes (table in §4; enforced by the tests).
 - **Reduced transparency:** glass becomes `--ld-glass-heavy` with no backdrop filter; the wash hides.
 - **More contrast:** glass becomes opaque `--ld-surface` with a 1.5 px ink2 outline; rims, grid and wash hide.
-- **Reduced motion:** the loop holds a settled still (6 s), `--ua` freezes, springs snap. Capture pages pin motion on.
+- **Reduced motion:** the loop holds a settled still (6 s), also when the OS preference flips mid-run; `--ua` holds at
+  0°; springs snap. Capture pages pin motion on.
 - **Focus:** 2 px `--ld-tide` outline, 2 px offset. Never remove it.
 - Field canvases are decorative (`aria-hidden`); text drawn on canvas (pages, flow) must also exist as real text if
   it carries meaning (the specimen's pages are illustrative).

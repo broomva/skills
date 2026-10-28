@@ -28,10 +28,12 @@ const GLYPHS = { fish: "~≈-", minnow: "-~", ray: "≈~", bird: "^v", leaf: "/'
 
 /**
  * createShoal({ w, h, seed, kinds, count, cell }) → { at(t) → cells[] } for ascii.tiles().
- *  kinds: list of mask names (repeat a name to weight it); add "coral" to put exactly ONE coral creature in.
- *  Creatures cross the width at 8-22 px/s and bob ≤ 1.5 cells, wrapping off-screen; facing follows direction.
+ *  kinds: mask names from MASKS (repeat a name to weight it); an unknown name throws. coral: true recolours the
+ *  first creature coral, so a scene has exactly one. Creatures cross the width at 8-22 px/s and bob ≤ 1.5 cells,
+ *  wrapping fully off-screen (the margin is the creature's own width plus a cell); facing follows direction.
  */
 export function createShoal({ w, h, seed = 21, kinds = ["fish", "minnow", "minnow", "ray"], count = 7, cell = 12, coral = true, colors }) {
+  for (const k of kinds) if (!MASKS[k]) throw new Error(`createShoal: unknown kind "${k}" (one of ${Object.keys(MASKS).join(", ")})`);
   const r = prng(seed);
   const C = colors;
   const list = Array.from({ length: count }, (_, i) => {
@@ -44,7 +46,7 @@ export function createShoal({ w, h, seed = 21, kinds = ["fish", "minnow", "minno
       dir,
       mask: MASKS[kind],
       speed: (8 + r() * 14) * dir,
-      x0: r() * (w + 240) - 120,
+      x0: r() * w,
       y0: (0.08 + r() * 0.84) * h,
       bob: (0.4 + r() * 1.1) * cell,
       bobW: 0.18 + r() * 0.2,
@@ -58,14 +60,15 @@ export function createShoal({ w, h, seed = 21, kinds = ["fish", "minnow", "minno
     for (let j = 1; j <= m; j++)
       list.push({ ...k, tone: "minnow", x0: k.x0 - k.dir * j * (5 + r() * 3) * cell, y0: k.y0 + (r() - 0.5) * 6 * cell, ph: k.ph + j * 0.6, seed: Math.floor(r() * 1e9) });
   }
-  const span = w + 240;
   return {
     list,
     at(t) {
       const out = [];
       for (const k of list) {
+        const margin = (k.mask[0].length + 1) * cell;
+        const span = w + 2 * margin;
         const raw = k.x0 + k.speed * t;
-        const x = ((((raw + 120) % span) + span) % span) - 120;
+        const x = ((((raw + margin) % span) + span) % span) - margin;
         const y = k.y0 + Math.sin(t * k.bobW + k.ph) * k.bob;
         const sx = Math.round(x / cell) * cell;
         const sy = Math.round(y / cell) * cell;
@@ -107,12 +110,13 @@ export function createIslands({ w, h, seed = 5, n = 4, cell = 12, colors, drift 
     ry: (3 + r() * 5) * cell,
     s: Math.floor(r() * 1000),
   }));
-  const span = w + 400;
   return {
     at(t) {
       const out = [];
       for (const I of isl) {
-        const ox = ((((I.cx + drift * t + 200) % span) + span) % span) - 200;
+        const margin = I.rx + 4 * cell;
+        const span = w + 2 * margin;
+        const ox = ((((I.cx + drift * t + margin) % span) + span) % span) - margin;
         const bx = Math.round(ox / cell) * cell;
         const by = Math.round(I.cy / cell) * cell;
         for (let j = -Math.ceil(I.ry / cell) - 2; j <= Math.ceil(I.ry / cell) + 2; j++)

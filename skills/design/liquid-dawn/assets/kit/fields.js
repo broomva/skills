@@ -7,11 +7,17 @@ import { clamp, fbm, noise2, prng, smoothstep, TAU } from "./core.js";
 
 export const CAP = 0.7;
 export const FIELD_SPEED_MAX = 0.2;
+/** The caustic iteration count and its per-iteration clock factors |1 − 3.5/(n+1)|; the fastest sets the divisor. */
+export const TIDE_ITER = 4;
+export const TIDE_FACTORS = Array.from({ length: TIDE_ITER }, (_, n) => Math.abs(1 - 3.5 / (n + 1)));
+const TIDE_FASTEST = Math.max(...TIDE_FACTORS);
 
 /** Tide: water caustics seen through a shallow lagoon. An iterated domain warp (the classic caustic construction)
- *  run slowly: bright filaments form and dissolve over ~10 s. scale = px per caustic cell. */
-export function tide(x, y, t, { scale = 520, speed = 0.11 } = {}) {
-  const T = t * speed + 23;
+ *  run slowly: bright filaments form and dissolve over ~10 s. scale = px per caustic cell.
+ *  speed is the phase rate of the FASTEST term in rad/s: the base clock runs at speed / max(TIDE_FACTORS)
+ *  (factors 2.5, .75, .17, .125). */
+export function tide(x, y, t, { scale = 520, speed = 0.18 } = {}) {
+  const T = (t * speed) / TIDE_FASTEST + 23;
   // The construction is 2π-periodic, so a plain grid would tile every `scale` px. A slow low-frequency domain warp
   // breaks the period. The far offset (as in the classic construction) keeps every 1/length term bounded (< .8).
   const wx = (fbm(x / (scale * 1.9), y / (scale * 1.9), 2, 5) - 0.5) * 5;
@@ -22,7 +28,7 @@ export function tide(x, y, t, { scale = 520, speed = 0.11 } = {}) {
   let iy = py;
   let c = 1;
   const inten = 0.005;
-  for (let n = 0; n < 4; n++) {
+  for (let n = 0; n < TIDE_ITER; n++) {
     const tt = T * (1 - 3.5 / (n + 1));
     const nx = px + Math.cos(tt - ix) + Math.sin(tt + iy);
     const ny = py + Math.sin(tt - iy) + Math.cos(tt + ix);
@@ -30,18 +36,19 @@ export function tide(x, y, t, { scale = 520, speed = 0.11 } = {}) {
     iy = ny;
     c += 1 / Math.hypot(px / (Math.sin(ix + tt) / inten), py / (Math.cos(iy + tt) / inten));
   }
-  c /= 5;
+  c /= TIDE_ITER + 1;
   c = 1.17 - c ** 1.4;
   // depth: slow shallows (bright, busy) and deeps (quiet), so the water has places, not a uniform texture
-  const depth = smoothstep(0.3, 0.72, fbm(x / (scale * 2.4) + t * 0.004, y / (scale * 2.4), 3, 41));
+  const depth = smoothstep(0.3, 0.72, fbm(x / (scale * 2.4) + t * speed * 0.022, y / (scale * 2.4), 3, 41));
   return Math.min(CAP, smoothstep(0.2, 0.72, Math.abs(c) ** 8) * (0.08 + 0.92 * depth) * 1.15);
 }
 
 /** Breeze: wind moving through a meadow. Returns { v, lean } where lean is the blade angle from vertical (rad,
- *  + leans right). Gusts travel left→right at ~33 px/s; blades sway, never strobe. */
+ *  + leans right). The gust phase advances at `speed` rad/s over a 0.006 rad/px wave, so gusts travel left→right at
+ *  speed / 0.006 ≈ 33 px/s; blades sway, never strobe. */
 export function breeze(x, y, t, { speed = 0.2, seed = 3 } = {}) {
   const g = fbm(x * 0.0035, y * 0.009, 3, seed);
-  const gust = Math.sin(x * 0.006 - t * speed * 2.6 + g * 4.2) * 0.5 + 0.5;
+  const gust = Math.sin(x * 0.006 - t * speed + g * 4.2) * 0.5 + 0.5;
   const lean = -0.18 + 0.62 * gust ** 1.6 + (noise2(x * 0.05, y * 0.05, seed + 9) - 0.5) * 0.18;
   const v = smoothstep(0.32, 0.8, g) * (0.45 + 0.55 * gust);
   return { v: Math.min(CAP, v * 0.85), lean };

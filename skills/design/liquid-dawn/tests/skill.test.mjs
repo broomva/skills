@@ -109,9 +109,51 @@ test("no per-frame randomness in the kit (Math.random, Date.now, performance.now
   }
 });
 
-test("default field speeds stay at or under FIELD_SPEED_MAX", () => {
-  const src = readFileSync(join(KIT, "fields.js"), "utf8");
-  for (const m of src.matchAll(/speed = ([\d.]+)/g)) assert.ok(Number(m[1]) <= fields.FIELD_SPEED_MAX, `default speed ${m[1]}`);
+test("tide: speed is its only time scale, and the default fastest term is under FIELD_SPEED_MAX", () => {
+  // the default equals an explicit .18 …
+  for (const [x, y, t] of [[10, 20, 3], [700, 400, 11.5]]) assert.equal(fields.tide(x, y, t), fields.tide(x, y, t, { speed: 0.18 }));
+  assert.ok(0.18 <= fields.FIELD_SPEED_MAX);
+  // … the clock divisor is the fastest iteration factor (2.5 for n = 0) …
+  assert.equal(Math.max(...fields.TIDE_FACTORS), 2.5);
+  // … and time enters only through speed·t, so halving speed is the same field at twice the time
+  for (const [x, y, t] of [[10, 20, 3], [700, 400, 11.5], [1300, 800, 40]])
+    assert.ok(Math.abs(fields.tide(x, y, t, { speed: 0.09 }) - fields.tide(x, y, t / 2)) < 1e-9);
+});
+
+test("breeze gusts travel at most 40 px/s (measured by cross-correlating the smoothed lean profile 2 s apart)", () => {
+  const corr = (a, b) => {
+    const n = a.length;
+    const ma = a.reduce((s, v) => s + v, 0) / n;
+    const mb = b.reduce((s, v) => s + v, 0) / n;
+    let c = 0;
+    let va = 0;
+    let vb = 0;
+    for (let i = 0; i < n; i++) {
+      c += (a[i] - ma) * (b[i] - mb);
+      va += (a[i] - ma) ** 2;
+      vb += (b[i] - mb) ** 2;
+    }
+    return c / Math.sqrt(va * vb);
+  };
+  const smoothRow = (y, t) => {
+    const raw = Array.from({ length: 2000 }, (_, i) => fields.breeze(i, y, t).lean);
+    return raw.map((_, i) => {
+      let s = 0;
+      let n = 0;
+      for (let j = Math.max(0, i - 40); j <= Math.min(raw.length - 1, i + 40); j++, n++) s += raw[j];
+      return s / n;
+    });
+  };
+  for (const y of [100, 300, 600]) {
+    const a = smoothRow(y, 10);
+    const b = smoothRow(y, 12);
+    let best = [-1, 0];
+    for (let s = 0; s <= 250; s += 2) {
+      const c = corr(a.slice(300, 1500), b.slice(300 + s, 1500 + s));
+      if (c > best[0]) best = [c, s / 2];
+    }
+    assert.ok(best[1] > 5 && best[1] <= 40, `row ${y}: gusts at ${best[1]} px/s`);
+  }
 });
 
 test("tide is neither empty nor a uniform texture: it has quiet water and busy shallows", () => {
@@ -186,6 +228,33 @@ test("shoals are deterministic, lattice-snapped, schooling, with exactly one cor
   assert.notDeepEqual(a.at(0), a.at(10), "creatures move");
 });
 
+test("an unknown creature kind is a clear error, not a crash in at()", () => {
+  assert.throws(() => shoal.createShoal({ w: 800, h: 600, kinds: ["coral"], coral: false, colors }), /unknown kind "coral"/);
+});
+
+test("creatures and islands wrap fully off-screen: no tile pops in or out at the edge", () => {
+  const visible = (cells, w, cell) => cells.some((c) => c.x + cell / 2 > 0 && c.x - cell / 2 < w);
+  const check = (make, w, cell, dt, T) => {
+    let prev = make.at(0);
+    for (let t = dt; t <= T; t += dt) {
+      const cur = make.at(t);
+      const jump = Math.abs(Math.min(...cur.map((c) => c.x)) - Math.min(...prev.map((c) => c.x))) > w / 2;
+      if (jump) assert.ok(!visible(prev, w, cell) && !visible(cur, w, cell), `visible across a wrap at t=${t.toFixed(2)}`);
+      prev = cur;
+    }
+  };
+  for (const seed of [0, 1, 2, 3, 4, 5])
+    for (const kind of ["fish", "ray", "minnow"]) {
+      // a minnow school wraps member by member, so check each creature on its own (at() reads the live list)
+      const s = shoal.createShoal({ w: 1440, h: 900, seed, count: 1, kinds: [kind], coral: false, colors });
+      for (const k of [...s.list]) {
+        s.list.splice(0, s.list.length, k);
+        check(s, 1440, 12, 0.1, 220);
+      }
+    }
+  for (const seed of [0, 1, 2]) check(shoal.createIslands({ w: 1440, h: 900, seed, n: 1, colors }), 1440, 12, 1, 700);
+});
+
 test("creatures drift calmly: no creature moves more than 25 px/s", () => {
   const s = shoal.createShoal({ w: 1440, h: 900, seed: 9, count: 12, colors });
   for (const k of s.list) assert.ok(Math.abs(k.speed) <= 25, `speed ${k.speed}`);
@@ -230,6 +299,45 @@ test("pretext is vendored with its licence and exposes the calls the kit uses", 
   for (const k of ["prepareWithSegments", "layoutWithLines", "layoutNextLineRange", "materializeLineRange"]) assert.equal(typeof pt[k], "function", k);
 });
 
+// ── loop: reduced motion ──
+test("reduced motion holds the still frame with the pearl at 0°, also when motion stops mid-run", async () => {
+  const core = await import(join(KIT, "core.js"));
+  const props = {};
+  let scheduled;
+  globalThis.document = { documentElement: { style: { setProperty: (k, v) => (props[k] = v) }, dataset: {} } };
+  globalThis.getComputedStyle = () => ({ getPropertyValue: () => "24" });
+  globalThis.requestAnimationFrame = (cb) => ((scheduled = cb), 1);
+  globalThis.cancelAnimationFrame = () => {};
+  try {
+    const { createLoop } = await import(join(KIT, "loop.js"));
+    const painted = [];
+    core.setMotion(false);
+    const loop = createLoop({ paint: (t) => painted.push(t) });
+    loop.start();
+    scheduled(16);
+    assert.equal(props["--ua"], "0.00deg");
+    assert.ok(Math.abs(painted.at(-1) - 6) < 1e-9, `still frame at ${painted.at(-1)}`);
+    const n = painted.length;
+    scheduled(32);
+    assert.equal(painted.length, n, "nothing repaints while held");
+    core.setMotion(true);
+    for (let k = 1; k <= 120; k++) scheduled(32 + k * 16.67);
+    assert.ok(painted.at(-1) > 7, "motion resumes from the still");
+    assert.notEqual(props["--ua"], "0.00deg");
+    core.setMotion(false);
+    scheduled(32 + 121 * 16.67);
+    assert.ok(Math.abs(painted.at(-1) - 6) < 1e-9, "stopping motion mid-run settles on the still and repaints");
+    assert.equal(props["--ua"], "0.00deg");
+    loop.stop();
+  } finally {
+    core.setMotion(null);
+    delete globalThis.document;
+    delete globalThis.getComputedStyle;
+    delete globalThis.requestAnimationFrame;
+    delete globalThis.cancelAnimationFrame;
+  }
+});
+
 // ── scripts ──
 test("serve resolves only files inside the root", () => {
   const root = mkdtempSync(join(tmpdir(), "ld-serve-"));
@@ -255,6 +363,10 @@ test("render parseArgs validates its options", () => {
   assert.throws(() => parseArgs(["a", "b", "--t", "x"]), /not a time/);
   assert.throws(() => parseArgs(["a", "b", "--bogus", "1"]), /unknown option/);
   assert.throws(() => parseArgs(["a", "b", "--t"]), /needs a value/);
+  assert.throws(() => parseArgs(["a", "b", "--t", "Infinity"]), /not a time/);
+  assert.throws(() => parseArgs(["a", "b", "--t", "4000"]), /not a time/);
+  assert.throws(() => parseArgs(["a", "b", "--shots", "hero; rm"]), /--shots/);
+  assert.throws(() => parseArgs(["a", "b", "--width", "10"]), /--width/);
 });
 
 // ── render E2E ──
@@ -273,4 +385,5 @@ test("specimen renders in both modes, deterministically, and moves over time", {
   assert.equal(h(pick(a, "dawn-t6-hero.png")), h(pick(b, "dawn-t6-hero.png")), "same t, same pixels");
   assert.notEqual(h(pick(a, "dawn-t6-hero.png")), h(pick(c, "dawn-t0-hero.png")), "the hero moves between t=0 and t=6");
   assert.notEqual(h(pick(a, "dawn-t6-hero.png")), h(pick(a, "dusk-t6-hero.png")), "dusk differs from dawn");
+  await assert.rejects(render({ ...opts, shots: "nope", t: ["0"], mode: ["dawn"], out: join(out, "d") }), /no \[data-shot\] element named: nope/);
 });

@@ -31,7 +31,9 @@ export function parseArgs(argv) {
     if (v === undefined || v.startsWith("--")) throw new Error(`--${k} needs a value`);
     o[k] = k === "t" || k === "mode" ? v.split(",").filter(Boolean) : v;
   }
-  for (const t of o.t) if (!(Number(t) >= 0)) throw new Error(`--t: not a time: ${t}`);
+  for (const t of o.t) if (!(Number(t) >= 0 && Number(t) <= 3600)) throw new Error(`--t: not a time in [0, 3600]: ${t}`);
+  if (!/^(all|full|[a-z0-9-]+(,[a-z0-9-]+)*)$/.test(o.shots)) throw new Error(`--shots: all, full or a comma list of names, got ${o.shots}`);
+  if (!(Number(o.width) >= 240 && Number(o.width) <= 4096)) throw new Error(`--width: 240..4096, got ${o.width}`);
   for (const m of o.mode) if (!["dawn", "dusk"].includes(m)) throw new Error(`--mode: dawn or dusk, got ${m}`);
   return o;
 }
@@ -45,9 +47,10 @@ export async function render(o) {
   const rootDir = resolve(o.root);
   const rel = relative(rootDir, resolve(rootDir, o.page)).split("\\").join("/");
   const { server, url } = await startServer(rootDir);
-  const browser = await pw.chromium.launch();
+  let browser;
   const written = [];
   try {
+    browser = await pw.chromium.launch();
     mkdirSync(o.out, { recursive: true });
     for (const mode of o.mode)
       for (const t of o.t) {
@@ -70,18 +73,22 @@ export async function render(o) {
         }
         if (o.shots !== "full") {
           const want = o.shots === "all" ? null : o.shots.split(",");
+          const found = new Set();
           for (const el of await page.$$("[data-shot]")) {
             const name = await el.getAttribute("data-shot");
             if (want && !want.includes(name)) continue;
+            found.add(name);
             const f = join(o.out, `${tag}-${name}.png`);
             await el.screenshot({ path: f });
             written.push(f);
           }
+          const missing = want ? want.filter((n) => !found.has(n)) : [];
+          if (missing.length) throw new Error(`no [data-shot] element named: ${missing.join(", ")}`);
         }
         await page.close();
       }
   } finally {
-    await browser.close();
+    await browser?.close();
     server.close();
   }
   return written;
