@@ -1,0 +1,403 @@
+<!doctype html>
+<html lang="en" data-ld-mode="dawn" data-ld-type="manrope">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Liquid Dawn · paper</title>
+<link rel="stylesheet" href="../tokens/tokens.css" />
+<link rel="stylesheet" href="../css/materials.css" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { background: var(--ld-paper, #f7f7f5); color: var(--ld-ink, #17191c); font-family: var(--ld-font-text); -webkit-font-smoothing: antialiased; }
+  html[data-ld-mode="dusk"] .hero::after { background: radial-gradient(38% 30% at 50% 50%, rgba(18,22,28,.85), rgba(18,22,28,0) 70%); }
+  html[data-ld-mode="dusk"] .q { color: var(--ld-ink); }
+  canvas { display: block; }
+  .wrap { width: min(1240px, calc(100% - 64px)); margin: 0 auto; }
+  .kick { font: 500 11px/1 var(--ld-font-mono); letter-spacing: .16em; text-transform: uppercase; color: #8a8f96; }
+
+  /* 1 · hero: paper, a faint grid, greyscale glyph sharks, one thin question, a frosted composer */
+  .hero { position: relative; height: 920px; overflow: hidden;
+    background-image: linear-gradient(rgba(20,24,30,.035) 1px, transparent 1px), linear-gradient(90deg, rgba(20,24,30,.035) 1px, transparent 1px);
+    background-size: 12px 12px; }
+  .hero::after { content: ""; position: absolute; inset: 0; pointer-events: none; background: radial-gradient(38% 30% at 50% 50%, rgba(255,255,255,.85), rgba(255,255,255,0) 70%); }
+  .hero canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .pill { position: absolute; z-index: 3; top: 26px; left: 50%; transform: translateX(-50%); display: inline-flex; align-items: center; gap: 10px; height: 44px; padding: 0 18px; border-radius: 14px;
+    font: 400 15px/1 var(--ld-font-text); color: #3b3f45; background: rgba(250,250,249,.72); -webkit-backdrop-filter: blur(14px); backdrop-filter: blur(14px);
+    box-shadow: 0 10px 30px -14px rgba(30,34,40,.25), inset 0 0 0 1px rgba(20,24,30,.06), inset 0 1px 0 #fff; }
+  .pill svg { width: 16px; height: 16px; }
+  .center { position: absolute; inset: 0; z-index: 2; display: grid; place-content: center; justify-items: center; gap: 30px; pointer-events: none; }
+  .q { margin: 0; font-family: var(--ld-font-display); font-weight: 200; font-size: 88px; line-height: 1; letter-spacing: -0.05em; color: #141619; text-transform: lowercase; }
+  .composer { pointer-events: auto; width: min(980px, 82vw); height: 140px; border-radius: 22px; padding: 22px 18px 14px 24px; display: grid; grid-template-rows: 1fr auto;
+    background: rgba(246,246,244,.5); -webkit-backdrop-filter: blur(16px) saturate(110%); backdrop-filter: blur(16px) saturate(110%);
+    box-shadow: 0 30px 60px -30px rgba(30,34,40,.22), inset 0 0 0 1px rgba(20,24,30,.07), inset 0 1px 0 rgba(255,255,255,.9); }
+  .composer:focus-within { box-shadow: 0 30px 60px -30px rgba(30,34,40,.22), 0 0 0 2px var(--ld-tide), inset 0 1px 0 rgba(255,255,255,.9); }
+  .seg button:focus-visible, footer a:focus-visible { outline: 2px solid var(--ld-tide); outline-offset: 2px; border-radius: 8px; }
+  .composer input { all: unset; font: 300 22px/1.2 var(--ld-font-text); color: #222; }
+  .composer input::placeholder { color: #a3a7ad; }
+  .composer .row { display: flex; align-items: center; justify-content: space-between; color: #6b7077; }
+  .composer .icons { display: flex; gap: 22px; align-items: center; }
+  .composer .icons svg { width: 20px; height: 20px; }
+  .composer .hint { display: flex; align-items: center; gap: 18px; font: 400 13px/1 var(--ld-font-mono); color: #9da1a7; }
+  .send { width: 48px; height: 48px; border-radius: 12px; display: grid; place-items: center; background: linear-gradient(#e9e9e7, #dcdcda); box-shadow: inset 0 1px 0 #fff, 0 1px 2px rgba(0,0,0,.08); color: #8a8e94; }
+
+  /* sections */
+  section.band { padding: 120px 0; }
+  .head { display: grid; gap: 14px; margin-bottom: 48px; max-width: 760px; }
+  .head h2 { margin: 0; font-family: var(--ld-font-display); font-weight: 200; font-size: 64px; line-height: 1; letter-spacing: -0.045em; }
+  .head p { margin: 0; font: 300 19px/1.55 var(--ld-font-text); color: #5f646b; }
+
+  /* 2 · lens: the 1-12 phone */
+  .lensrow { display: grid; grid-template-columns: 420px 1fr; gap: 72px; align-items: center; }
+  .phone { position: relative; width: 390px; height: 800px; border-radius: 58px; padding: 12px; background: #0d0e10; box-shadow: 0 40px 80px -40px rgba(0,0,0,.45), inset 0 0 0 2px #2a2c30; }
+  .screen { position: relative; width: 100%; height: 100%; border-radius: 47px; overflow: hidden; background: #f6e9e6; touch-action: none; cursor: grab; }
+  .screen canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .island { position: absolute; z-index: 4; top: 12px; left: 50%; transform: translateX(-50%); width: 112px; height: 32px; border-radius: 20px; background: #0d0e10; }
+  .status { position: absolute; z-index: 4; top: 18px; left: 34px; right: 30px; display: flex; justify-content: space-between; font: 600 14px/1 var(--ld-font-text); color: #2b2b2b; }
+  .ctas { position: absolute; z-index: 4; left: 22px; right: 22px; bottom: 44px; display: grid; gap: 12px; }
+  .cta { height: 54px; border-radius: 27px; display: flex; align-items: center; justify-content: center; gap: 10px; font: 500 16px/1 var(--ld-font-text); }
+  .cta.light { background: rgba(255,255,255,.86); color: #222; box-shadow: 0 1px 0 #fff inset, 0 6px 20px -12px rgba(0,0,0,.3); }
+  .cta.dark { background: #141516; color: #fff; }
+  .notes { display: grid; gap: 22px; }
+  .note code { font: 400 14px var(--ld-font-mono); }
+  .note { display: grid; grid-template-columns: 120px 1fr; gap: 16px; font: 300 16px/1.6 var(--ld-font-text); color: #4e535a; }
+  .note b { font: 500 11px/1.6 var(--ld-font-mono); letter-spacing: .14em; text-transform: uppercase; color: #8a8f96; }
+
+  /* 3 · agent: the 2-5 orb */
+  .agent { position: relative; height: 380px; border-radius: 36px; overflow: hidden; background: #0c0d10; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), 0 40px 80px -40px rgba(0,0,0,.5); }
+  .agent canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .agent .say { position: absolute; left: 300px; top: 50%; transform: translateY(-50%); font-family: var(--ld-font-display); font-weight: 300; font-size: 64px; letter-spacing: -0.04em;
+    background: linear-gradient(90deg, #4a4f57 0%, #4a4f57 35%, #e9f0fb 50%, #4a4f57 65%, #4a4f57 100%); background-size: 300% 100%; background-position: var(--sh, 0%) 0;
+    -webkit-background-clip: text; background-clip: text; color: transparent; }
+  .agent .sub { position: absolute; left: 304px; top: calc(50% + 50px); font: 400 13px/1 var(--ld-font-mono); color: #5d636c; letter-spacing: .06em; }
+
+  /* 4 · cards */
+  .cards { display: grid; grid-template-columns: 340px 1fr; grid-template-rows: auto auto; gap: 24px; }
+  .card { position: relative; border-radius: 30px; overflow: hidden; box-shadow: 0 30px 60px -32px rgba(20,24,30,.35); }
+  .card canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .dither { height: 480px; grid-row: span 2; color: #fff; }
+  .dither .top { position: absolute; top: 22px; left: 0; right: 0; text-align: center; font: 500 18px/1 var(--ld-font-text); text-shadow: 0 1px 12px rgba(0,0,0,.25); }
+  .dither .low { position: absolute; left: 0; right: 0; bottom: 0; height: 58%; padding: 0 22px 20px; display: flex; flex-direction: column; justify-content: flex-end; gap: 16px;
+    -webkit-backdrop-filter: blur(10px); backdrop-filter: blur(10px); mask-image: linear-gradient(transparent, #000 38%); -webkit-mask-image: linear-gradient(transparent, #000 38%);
+    background: linear-gradient(transparent, rgba(40,52,58,.35)); }
+  .dither .times { display: flex; justify-content: space-between; align-items: end; }
+  .dither .times b { display: block; font: 600 30px/1 var(--ld-font-text); letter-spacing: -0.02em; }
+  .dither .times span { font: 400 15px/1.5 var(--ld-font-text); opacity: .9; }
+  .dither .times small { display: block; font: 400 13px/1.4 var(--ld-font-text); opacity: .7; }
+  .dither .wave { flex: 1; height: 26px; margin: 0 14px; }
+  .dither hr { border: 0; border-top: 1px solid rgba(255,255,255,.22); margin: 0; }
+  .seg { position: relative; display: grid; grid-template-columns: 1fr 1fr; height: 40px; padding: 4px; border-radius: 12px; background: rgba(255,255,255,.16); }
+  .seg button { all: unset; position: relative; z-index: 1; text-align: center; font: 500 14px/32px var(--ld-font-text); color: #fff; cursor: pointer; }
+  .seg button.on { color: #1d1f22; }
+  .seg i { position: absolute; top: 4px; bottom: 4px; left: 4px; width: calc(50% - 4px); border-radius: 9px; background: #fff; box-shadow: 0 2px 8px rgba(0,0,0,.18); transform: translateX(var(--x, 0px)); }
+  .glassnum { height: 300px; }
+  .glass-type { position: absolute; inset: 0; -webkit-backdrop-filter: blur(5px) saturate(150%) brightness(1.28); backdrop-filter: blur(5px) saturate(150%) brightness(1.28); background: rgba(255,255,255,.22);
+    -webkit-mask-size: 100% 100%; mask-size: 100% 100%; }
+  .glassnum .cap { position: absolute; left: 0; right: 0; bottom: 34px; text-align: center; font: 500 14px/1.5 var(--ld-font-mono); color: #fff; }
+  .glassnum .cap span { padding: 6px 12px; border-radius: 8px; background: rgba(28,44,110,.62); -webkit-backdrop-filter: blur(6px); backdrop-filter: blur(6px); }
+  .glassnum .rule { position: absolute; left: 34%; right: 34%; bottom: 82px; border-top: 1px solid rgba(255,255,255,.55); }
+  .onboard { height: 156px; display: grid; place-items: center; }
+  .checklist { position: relative; width: 86%; padding: 16px 20px; border-radius: 18px; display: grid; grid-template-columns: 1fr 120px; gap: 10px 20px; align-items: center; color: #e9edf2;
+    background: rgba(14,16,20,.86); box-shadow: 0 20px 40px -20px rgba(0,0,0,.6), inset 0 0 0 1px rgba(255,255,255,.08); }
+  .checklist ol { margin: 0; padding: 0; list-style: none; display: grid; gap: 9px; font: 400 13.5px/1.3 var(--ld-font-text); }
+  .checklist li { display: flex; gap: 10px; align-items: center; opacity: .82; }
+  .checklist li::before { content: "✓"; width: 18px; height: 18px; border-radius: 9px; display: grid; place-items: center; font-size: 10px; background: rgba(255,255,255,.12); }
+  .checklist li.now { opacity: 1; }
+  .checklist li.now::before { content: "3"; background: #fff; color: #111; font-weight: 700; }
+  .checklist canvas { position: relative; width: 120px; height: 120px; }
+
+  /* 5 · scenic footer: cobalt engraving on cream */
+  footer { position: relative; height: 640px; overflow: hidden; }
+  footer canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  footer .cols { position: relative; z-index: 2; display: grid; grid-template-columns: 1.2fr repeat(4, 1fr); gap: 32px; padding: 90px 72px 0; color: #1d2433; }
+  footer h4 { margin: 0 0 22px; font: 500 17px/1 var(--ld-font-text); }
+  footer a { display: block; margin: 0 0 15px; font: 400 14px/1 var(--ld-font-text); color: #2e3646; text-decoration: none; }
+  footer .brand { font: 400 30px/1 var(--ld-font-display); letter-spacing: -0.03em; display: flex; gap: 12px; align-items: center; }
+</style>
+</head>
+<body>
+<section class="hero" data-shot="hero">
+  <canvas id="cv-hero" aria-hidden="true"></canvas>
+  <div class="pill"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M3 12a9 9 0 1 0 3-6.7L3 8"/><path d="M3 3v5h5M12 7v5l3 2"/></svg>History<svg viewBox="0 0 24 24" fill="none" stroke="#9aa0a7" stroke-width="1.6" stroke-linecap="round" style="width:12px"><path d="m6 9 6 6 6-6"/></svg></div>
+  <div class="center">
+    <h1 class="q">what feels calm today?</h1>
+    <div class="composer">
+      <input placeholder="Ask dawn anything…" aria-label="Message" />
+      <div class="row">
+        <div class="icons"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></div>
+        <div class="hint"><span>↵ send</span><span>·</span><span>⇧↵ newline</span><span class="send"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><path d="M7 17 17 7M9 7h8v8"/></svg></span></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" data-shot="lens">
+  <div class="wrap lensrow">
+    <div class="phone">
+      <div class="screen" id="screen" role="img" aria-label="A liquid glass lens bending the words: Meet Dawn. The calm software paper. Drag to move it.">
+        <canvas id="cv-paper" aria-hidden="true"></canvas>
+        <canvas id="cv-lens" aria-hidden="true"></canvas>
+        <div class="island"></div>
+        <div class="status"><span id="clock">6:12</span><span>●●● ◔</span></div>
+        <div class="ctas"><div class="cta light">Continue with email</div><div class="cta dark">Continue with Apple</div></div>
+      </div>
+    </div>
+    <div>
+      <div class="head"><span class="kick">Liquid lens</span><h2>A drop of glass you can hold.</h2><p>The lens bends what is under it: the centre magnifies, the rim folds the page round its edge, and the three channels part into a thin rainbow. Drag it; press to squash it.</p></div>
+      <div class="notes">
+        <div class="note"><b>Refraction</b><span>WebGL over the page's own canvas; the same maths as <code>lensRefract()</code>.</span></div>
+        <div class="note"><b>Dispersion</b>Red, green and blue refract 6% apart, so only the rim shows colour.</div>
+        <div class="note"><b>Spring</b>Follows the finger at response .32, damping .86; a press squashes 8%.</div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" data-shot="agent" style="padding-top:0">
+  <div class="wrap">
+    <div class="head"><span class="kick">Agent</span><h2>Presence, not decoration.</h2></div>
+    <div class="agent"><canvas id="cv-orb" aria-hidden="true"></canvas><div class="say" id="say">Calculating…</div><div class="sub">reading 14 sources · 2.4 s</div></div>
+  </div>
+</section>
+
+<section class="band" data-shot="cards" style="padding-top:0">
+  <div class="wrap">
+    <div class="head"><span class="kick">Cards</span><h2>Pictures, printed.</h2><p>Dither and engraving turn any picture into print: two inks, no gradients, the grain left visible.</p></div>
+    <div class="cards">
+      <div class="card dither"><canvas id="cv-dither" aria-hidden="true"></canvas>
+        <div class="top">Morning tide</div>
+        <div class="low">
+          <div class="times"><div><b>06:12</b><small>Sunrise</small></div><svg class="wave" viewBox="0 0 120 26" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round"><path d="M2 16c12-10 22-10 34 0s22 10 34 0 22-10 34 0 10 6 14 4"/></svg><div style="text-align:right"><b>18:44</b><small>Sunset</small></div></div>
+          <hr />
+          <div class="seg" id="seg" role="group" aria-label="Mode"><i></i><button class="on" aria-pressed="true">Dawn</button><button aria-pressed="false">Dusk</button></div>
+        </div>
+      </div>
+      <div class="card glassnum"><canvas id="cv-engrave" aria-hidden="true"></canvas><div class="glass-type" id="gt"></div><div class="rule"></div><div class="cap"><span>The tide turns at dawn. Let it carry you back.</span></div></div>
+      <div class="card onboard"><canvas id="cv-sky" aria-hidden="true"></canvas>
+        <div class="checklist ld-capsule" style="border-radius:18px;display:grid"><ol><li>Create a key to sign your requests</li><li>Add a little credit to start</li><li class="now">Send your first calm request →</li></ol><canvas id="cv-mini" aria-hidden="true"></canvas></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<footer data-shot="footer">
+  <canvas id="cv-foot" aria-hidden="true"></canvas>
+  <div class="cols">
+    <div><div class="brand">✦ Dawn</div></div>
+    <div><h4>Navigation</h4><a href="#features">Features</a><a href="#testimonials">Testimonials</a><a href="#pricing">Pricing</a><a href="#integrations">Integrations</a></div>
+    <div><h4>Solutions</h4><a href="#self-service">Self-service</a><a href="#ideation">Ideation</a><a href="#engagement">Engagement</a><a href="#support">Support</a></div>
+    <div><h4>Resources</h4><a href="#community">Community</a><a href="#stories">Stories</a><a href="#journal">Journal</a><a href="#help-centre">Help centre</a></div>
+    <div><h4>Company</h4><a href="#terms">Terms</a><a href="#privacy">Privacy</a><a href="#processing">Processing</a></div>
+  </div>
+</footer>
+
+<script type="module">
+import { setMotion, createLoop, fitCanvas, fontsReady, Sp } from "../kit/index.js";
+import { mosaic, paintShark } from "../kit/mosaic.js";
+import { createLens, dragLens } from "../kit/lens.js";
+import { sparkField, sparkOrb } from "../kit/spark.js";
+import { printInto, coastScene, cloudSky, DUOTONES } from "../kit/engrave.js";
+
+const q = new URLSearchParams(location.search);
+const capture = q.has("t");
+if (q.get("mode") === "dusk") document.documentElement.dataset.ldMode = "dusk";
+if (capture) setMotion(true);
+const $ = (id) => document.getElementById(id);
+const S = {};
+const CELL = 14;
+
+function build() {
+  for (const k of ["hero", "paper", "orb", "dither", "engrave", "sky", "mini", "foot"]) S[k] = fitCanvas($(`cv-${k}`));
+  const H = S.hero;
+  S.cols = Math.ceil(H.w / CELL);
+  S.rows = Math.ceil(H.h / CELL);
+  S.scratch = S.scratch ?? document.createElement("canvas");
+  S.scratch.width = S.cols;
+  S.scratch.height = S.rows;
+  S.lens = S.lens ?? createLens($("cv-lens"), $("cv-paper"), { preserve: capture, r: 96, mag: 0.7, bend: 0.62, disp: 0.07 });
+  S.spark = S.spark ?? sparkField(900, 25);
+  S.sparkMini = S.sparkMini ?? sparkField(320, 8);
+  glassType($("gt"), "06:12");
+  S.printed = {};
+}
+
+// glass numerals: a mask made from real type, so the backdrop shows through the letters only
+function glassType(el, text) {
+  const b = el.getBoundingClientRect();
+  const c = document.createElement("canvas");
+  c.width = b.width * 2;
+  c.height = b.height * 2;
+  const x = c.getContext("2d");
+  x.scale(2, 2);
+  x.fillStyle = "#000";
+  x.textAlign = "center";
+  x.textBaseline = "middle";
+  x.font = `600 ${b.height * 0.6}px Manrope, sans-serif`;
+  x.fillText(text, b.width / 2, b.height * 0.4);
+  const url = `url(${c.toDataURL()})`;
+  el.style.maskImage = url;
+  el.style.webkitMaskImage = url;
+}
+
+// the haj hero: three sharks, each painted at one pixel per cell, then read back as a glyph mosaic
+const SHARKS = [
+  { x0: 0.88, y0: 0.24, ang: -1.0, len: 40, vx: 0.003, vy: -0.0045, phase: 0 },
+  { x0: 0.53, y0: 0.6, ang: -1.52, len: 28, vx: 0, vy: -0.003, phase: 0.33 },
+  { x0: 0.17, y0: 0.86, ang: -0.3, len: 38, vx: 0.004, vy: -0.0014, phase: 0.66 },
+  { x0: 0.18, y0: 0.44, ang: -1.38, len: 24, vx: 0.001, vy: -0.0035, phase: 0.15 },
+];
+function paintHero(t) {
+  const { cx, w, h } = S.hero;
+  cx.clearRect(0, 0, w, h);
+  const sx = S.scratch.getContext("2d", { willReadFrequently: true });
+  sx.clearRect(0, 0, S.cols, S.rows);
+  for (const s of SHARKS) {
+    const wrap = (v) => ((v % 1.4) + 1.4) % 1.4 - 0.2;
+    const x = wrap(s.x0 + s.vx * t) * S.cols;
+    const y = wrap(s.y0 + s.vy * t) * S.rows;
+    paintShark(sx, { x, y, len: s.len, ang: s.ang, t, phase: s.phase });
+  }
+  mosaic(cx, S.scratch, { cell: CELL, gap: 1.5, seed: 7, font: '600 11px "JetBrains Mono", monospace', tint: (h) => (h > 0.985 ? [176, 196, 186] : h < 0.012 ? [190, 196, 214] : null) });
+  // a few loose dashes in the margins, as in the reference
+  cx.fillStyle = "rgba(60,64,70,.55)";
+  cx.font = '500 9px "JetBrains Mono", monospace';
+  for (let i = 0; i < 70; i++) {
+    const hx = Math.sin(i * 12.9898) * 43758.5453;
+    const hy = Math.sin(i * 78.233) * 12543.123;
+    const fx = hx - Math.floor(hx);
+    const fy = hy - Math.floor(hy);
+    const X = Math.round((fx < 0.5 ? fx * 0.16 : 0.84 + (fx - 0.5) * 0.32) * w / CELL) * CELL;
+    const Y = Math.round(fy * h / CELL) * CELL;
+    cx.fillText(i % 3 ? "-" : "- -", X, Y);
+  }
+}
+
+// the phone: pale paper with a fine dot screen and the headline, which the lens bends
+function paintPaper(t) {
+  const { cx, w, h } = S.paper;
+  cx.fillStyle = "#f6e9e6";
+  cx.fillRect(0, 0, w, h);
+  cx.fillStyle = "rgba(120,90,90,.16)";
+  for (let y = 2; y < h; y += 4) for (let x = (y / 4) % 2 ? 2 : 0; x < w; x += 4) cx.fillRect(x, y, 1, 1);
+  cx.fillStyle = "#111";
+  cx.textAlign = "center";
+  cx.textBaseline = "alphabetic";
+  cx.font = `400 34px ${getComputedStyle(document.body).getPropertyValue("--ld-font-display")}`;
+  cx.fillText("Meet Dawn.", w / 2, h * 0.53);
+  cx.font = `300 26px ${getComputedStyle(document.body).getPropertyValue("--ld-font-display")}`;
+  cx.fillText("The calm software paper.", w / 2, h * 0.53 + 40);
+}
+let held = () => false;
+function stepLens(dt, t) {
+  const { w, h } = S.paper;
+  if (!held()) S.lens.follow(w / 2 + Math.sin(t * 0.5) * w * 0.22, h * 0.53 + Math.sin(t * 0.37 + 1) * 70);
+  S.lens.step(dt);
+}
+
+function paintOrb(t) {
+  const { cx, w, h } = S.orb;
+  cx.clearRect(0, 0, w, h);
+  const busy = 0.5 + 0.5 * Math.sin(t * 0.4);
+  sparkOrb(cx, S.spark, { x: 160, y: h / 2, R: 86, t, busy });
+  $("say").style.setProperty("--sh", `${(100 - ((t * 22) % 140)).toFixed(1)}%`);
+}
+
+// Prints are pure functions of a QUANTISED time (cards: whole seconds; footer: 4 s), so a frame depends only on t,
+// never on which frames were painted before it. Live, a print is redone only when its quantum changes and it is on
+// screen; a capture (renderAt) always prints.
+const onScreen = new Set();
+const io = new IntersectionObserver((es) => es.forEach((e) => (e.isIntersecting ? onScreen.add(e.target.id) : onScreen.delete(e.target.id))));
+for (const id of ["cv-dither", "cv-engrave", "cv-sky", "cv-foot"]) io.observe(document.getElementById(id));
+const visible = (id) => capture || onScreen.has(id);
+function paintPrints(t) {
+  const tq = Math.floor(t);
+  if (S.printed.k === tq || !(visible("cv-dither") || visible("cv-engrave") || visible("cv-sky"))) return;
+  S.printed.k = tq;
+  t = tq;
+  const D = S.dither;
+  const dc = coastScene(D.w, D.h, t, { seed: 21 });
+  const duo = seg.mode === 1 ? DUOTONES.slate : DUOTONES.teal;
+  printInto(D.cx, (x, y) => dc(x, y * 1.55) * 0.92, { w: D.w, h: D.h, mode: "dither", scale: 1.5, ...duo });
+  const E = S.engrave;
+  const coast = coastScene(E.w, E.h, t, { seed: 9 });
+  printInto(E.cx, (x, y) => coast(x, y) * 0.78, { w: E.w, h: E.h, mode: "engrave", pitch: 3.2, ...DUOTONES.cobalt });
+  const K = S.sky;
+  printInto(K.cx, cloudSky(K.w, K.h, t + 30, { seed: 11 }), { w: K.w, h: K.h, mode: "dither", scale: 2, ink: [92, 118, 132], paper: [214, 224, 226] });
+}
+function paintFoot(t) {
+  const tq = Math.floor(t / 4) * 4;
+  if (S.printed.f === tq || !visible("cv-foot")) return;
+  S.printed.f = tq;
+  t = tq;
+  const F = S.foot;
+  printInto(F.cx, coastScene(F.w, F.h, t, { seed: 3 }), { w: F.w, h: F.h, mode: "engrave", pitch: 3.6, ...DUOTONES.cobalt });
+}
+function paintMini(t) {
+  const { cx, w, h } = S.mini;
+  cx.clearRect(0, 0, w, h);
+  sparkOrb(cx, S.sparkMini, { x: w / 2, y: h / 2, R: 40, t, busy: 0.3 });
+}
+
+const seg = { x: new Sp(0), mode: document.documentElement.dataset.ldMode === "dusk" ? 1 : 0 };
+if (seg.mode === 1) {
+  $("seg").querySelectorAll("button").forEach((x, i) => {
+    x.classList.toggle("on", i === 1);
+    x.setAttribute("aria-pressed", String(i === 1));
+  });
+}
+$("seg").addEventListener("click", (e) => {
+  const b = e.target.closest("button");
+  if (!b) return;
+  const on = [...$("seg").querySelectorAll("button")].indexOf(b);
+  seg.mode = on;
+  S.printed.k = null;
+  $("seg").querySelectorAll("button").forEach((x, i) => {
+    x.classList.toggle("on", i === on);
+    x.setAttribute("aria-pressed", String(i === on));
+  });
+  seg.x.set(on * ($("seg").clientWidth / 2 - 4));
+  loop.invalidate();
+});
+
+const loop = createLoop({
+  // a reset (t = 0, and before every backwards seek) puts every spring back at its start
+  init() {
+    if (S.paper) S.lens.snap(S.paper.w / 2, S.paper.h * 0.53);
+    seg.x.snap(seg.mode * (($("seg").clientWidth || 300) / 2 - 4));
+  },
+  step(dt, t) {
+    stepLens(dt, t);
+    seg.x.step(dt, 0.4, 1);
+  },
+  paint(t) {
+    paintHero(t);
+    paintPaper(t);
+    if (!q.has("nolens")) S.lens.paint();
+    paintOrb(t);
+    paintMini(t);
+    paintPrints(t);
+    paintFoot(t);
+    $("seg").style.setProperty("--x", `${seg.x.v}px`);
+  },
+});
+
+await fontsReady();
+await document.fonts.load('200 88px Manrope');
+build();
+const sw = S.paper;
+S.lens.snap(sw.w / 2, sw.h * 0.53);
+held = dragLens($("screen"), S.lens, () => loop.invalidate());
+addEventListener("resize", () => {
+  build();
+  if (capture) loop.renderAt(Number(q.get("t")));
+  else loop.invalidate();
+});
+window.renderAt = (t) => loop.renderAt(t);
+window.__lens = S.lens;
+if (capture) {
+  loop.renderAt(Number(q.get("t")));
+  window.__ready = true;
+} else loop.start();
+</script>
+</body>
+</html>

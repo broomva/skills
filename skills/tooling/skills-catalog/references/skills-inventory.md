@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 110 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
+> 111 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
 ## Governance & control — `skills/governance/` (11)
 
@@ -49,7 +49,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 110 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 111 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 | `mod-anything` | Change or extend software or a device the user owns but whose source they don't control (a desktop app, a website, a game, a device protocol, a CLI) by the cheapest route that reaches the idea. The… |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
@@ -124,7 +124,7 @@
 | `omnivoice` | Local TTS, voice cloning, voice design, and video dubbing via the OmniVoice Studio MCP server (open-source ElevenLabs alternative; nothing leaves the machine, runs on |
 | `talkback` | Speak an explanation out loud while working in any project — tiered text-to-speech with a pluggable backend (ElevenLabs by default and quota-guarded, macOS `say` via `--fast` for free instant local… |
 
-## Design & brand — `skills/design/` (8)
+## Design & brand — `skills/design/` (9)
 
 | Skill | What it does |
 |---|---|
@@ -136,6 +136,7 @@
 | `tekton` | Tekton — the shared architecture-intent substrate for co-designing systems with the agent |
 | `unslop` | Remove the vibecoded / AI-slop look from any frontend codebase at the root, autonomously — full-repo survey with root-cause attribution, substance tells, and a deterministic crafted-floor gate; composes the impeccable detector |
 | `liquid-midnight` | Build or restyle anything in Liquid Midnight. The look: Apple Midnight blue-black grounds (hue 245-252, never purple), liquid glass rimmed in travelling liquid metal (a conic chrome edge with cyan… |
+| `liquid-dawn` | Build or restyle anything in Liquid Dawn, the calm daylight sibling of Liquid Midnight. The look: warm paper grounds (Dawn, primary) and a sea-slate Dusk mode; nature drawn in type (lagoon caustics… |
 
 ## Finance & payments — `skills/finance/` (4)
 
@@ -231,7 +232,7 @@
 
 ## Aggregates
 
-- **Total skills**: 110
+- **Total skills**: 111
 - **Total category buckets**: 23
 - **Largest bucket**: Orchestration & autonomy (14)
 - **Smallest buckets** (1): Science

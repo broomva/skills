@@ -1,0 +1,31 @@
+<!doctype html>
+<html><head><meta charset="utf-8" /><style>
+  html, body { margin: 0; background: rgb(250, 248, 240); }
+  #box { position: relative; width: 400px; height: 300px; }
+  #box canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+</style></head>
+<body>
+<!-- a TRANSPARENT source (a field canvas) under the lens: the drop must not turn into a black disc -->
+<div id="box"><canvas id="src"></canvas><canvas id="ov"></canvas></div>
+<script type="module">
+import { createLens } from "../../assets/kit/lens.js";
+const src = document.getElementById("src");
+src.width = 400; src.height = 300;
+const x = src.getContext("2d");
+x.fillStyle = "rgb(20, 60, 160)";
+x.fillRect(300, 0, 100, 300); // ink only at the far right; the centre is transparent
+// a 4 px mark at 0.85 r right of centre (x 266..270, the lens is at 200 with r 80). Refraction samples that pixel
+// from ~0.9 r (x ≈ 272), outside the mark, so the mark must NOT be visible there: if it is, the unbent source is
+// showing through the glass (a double image)
+x.fillStyle = "rgb(0, 0, 0)";
+x.fillRect(266, 148, 4, 4);
+const lens = createLens(document.getElementById("ov"), src, { r: 80, preserve: true });
+lens.paint(); // never placed: it must centre itself
+const gl = document.getElementById("ov").getContext("webgl");
+const px = (X, Y) => { const p = new Uint8Array(4); gl.readPixels(X, gl.drawingBufferHeight - 1 - Y, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, p); return [...p]; };
+// the right rim, where R, G and B refract from x ≈ 297, 299 and 302 across the ink edge at x = 300
+const rim = [];
+for (let X = 262; X <= 282; X++) rim.push(px(X, 150));
+window.__result = { centre: px(200, 150), corner: px(5, 5), mark: px(268, 150), rim, supported: lens.supported };
+</script>
+</body></html>

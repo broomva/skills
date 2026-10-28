@@ -1,0 +1,28 @@
+<!doctype html>
+<html><head><meta charset="utf-8" />
+<link rel="stylesheet" href="../../assets/tokens/tokens.css" />
+<link rel="stylesheet" href="../../assets/css/materials.css" />
+<style>#box { position: relative; width: 400px; height: 300px; } #box canvas { position: absolute; inset: 0; width: 100%; height: 100%; }</style>
+</head>
+<!-- a real Liquid Dawn page: body.ld-ground takes --ld-paper, which computes to oklch(), not rgb() -->
+<body class="ld-ground"><div id="box"><canvas id="src"></canvas><canvas id="ov"></canvas></div>
+<script type="module">
+import { createLens } from "../../assets/kit/lens.js";
+const q = new URLSearchParams(location.search);
+if (q.get("mode") === "dusk") document.documentElement.dataset.ldMode = "dusk";
+// bg=gradient: the page paints a gradient (no flat ground); bg=none: nothing paints a background at all
+// (an opaque colour UNDER the gradient, as real pages have: the image, not the colour, must decide)
+if (q.get("bg") === "gradient") document.body.style.background = "linear-gradient(#eef, #fee) rgb(238, 238, 250)";
+if (q.get("bg") === "none") { document.body.className = ""; document.body.style.background = "transparent"; document.documentElement.style.background = "transparent"; }
+const src = document.getElementById("src");
+src.width = 400; src.height = 300; // left transparent: the drop must show the paper, not white
+const lens = createLens(document.getElementById("ov"), src, { r: 80, preserve: true });
+lens.paint();
+const gl = document.getElementById("ov").getContext("webgl");
+const p = new Uint8Array(4);
+gl.readPixels(200, gl.drawingBufferHeight - 1 - 150, 1, 1, gl.RGBA, gl.UNSIGNED_BYTE, p);
+const probe = document.createElement("canvas").getContext("2d");
+probe.fillStyle = getComputedStyle(document.body).backgroundColor;
+probe.fillRect(0, 0, 1, 1);
+window.__result = { centre: [...p], paper: [...probe.getImageData(0, 0, 1, 1).data], computed: getComputedStyle(document.body).backgroundColor };
+</script></body></html>

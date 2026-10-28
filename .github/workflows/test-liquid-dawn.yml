@@ -1,0 +1,59 @@
+name: test-liquid-dawn
+
+# Gate for the `liquid-dawn` skill (skills/design/liquid-dawn/).
+# Path-filtered. The render E2E drives scripts/render.mjs through Playwright; LD_REQUIRE_RENDER=1 makes a missing
+# Playwright a failure instead of a skip (a skipped render would be a false green).
+
+on:
+  pull_request:
+    paths:
+      - 'skills/design/liquid-dawn/**'
+      - '.github/workflows/test-liquid-dawn.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/design/liquid-dawn/**'
+      - '.github/workflows/test-liquid-dawn.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-liquid-dawn-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    working-directory: skills/design/liquid-dawn
+
+jobs:
+  test:
+    name: node --test + render E2E
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Playwright (outside the skill tree)
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y > /dev/null
+          npm i playwright@1.62.0
+          npx playwright install --with-deps chromium
+      - name: Tests (render E2E required)
+        env:
+          LD_PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
+          LD_REQUIRE_RENDER: '1'
+          LD_RENDER_OUT: ${{ runner.temp }}/ld-renders
+        run: node --test tests/*.test.mjs
+      - name: Upload renders (on failure, to look at what differed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: liquid-dawn-renders
+          path: ${{ runner.temp }}/ld-renders
+          retention-days: 7

@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en" data-ld-mode="dawn">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Liquid Dawn · hero recipes</title>
+<link rel="stylesheet" href="../tokens/tokens.css" />
+<link rel="stylesheet" href="../css/materials.css" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { min-width: 1100px; }
+  .hero { position: relative; overflow: hidden; height: 900px; display: grid; place-items: center; }
+  .hero + .hero { border-top: 1px solid var(--ld-line2); }
+  .hero .center { position: relative; z-index: 2; display: grid; justify-items: center; gap: 22px; text-align: center; margin-top: -20px; }
+  .hero .ld-lede { max-width: 36em; }
+  .label { position: absolute; z-index: 3; top: 24px; left: 28px; display: grid; gap: 6px; }
+  .label b { font: 400 22px/1.1 var(--ld-font-display); letter-spacing: -0.02em; color: var(--ld-ink); }
+  .label span { font: 400 13px/1.4 var(--ld-font-text); color: var(--ld-ink2); max-width: 30em; }
+</style>
+</head>
+<body class="ld-ground">
+<template id="copy">
+  <div class="center">
+    <span class="ld-kicker">Liquid Dawn</span>
+    <h1 class="ld-hero">Calm is a <em>material</em>.</h1>
+    <p class="ld-lede">Paper grounds, dew glass and pearl metal over fields that breathe, drawn in type.</p>
+    <div class="ld-lens ld-composer">
+      <input placeholder="What should feel calm today?" aria-label="Message" />
+      <div class="row"><span>＋ &nbsp; ◎ voice</span><span>↵ send · ⇧↵ newline</span></div>
+    </div>
+  </div>
+</template>
+<!-- one section per recipe; the script adds the ground, canvases and copy -->
+<section class="hero" data-recipe="dawn" data-shot="hero-dawn"><div class="label"><b>Dawn · default</b><span>Caustic light rising from below, glyph currents over it, fish riding two currents, type inside the glass.</span></div></section>
+<section class="hero" data-recipe="caustic" data-shot="hero-caustic"><div class="label"><b>Caustic light</b><span>No glyphs in the room: soft pool-floor light. Type appears only where the glass is.</span></div></section>
+<section class="hero" data-recipe="currents" data-shot="hero-currents"><div class="label"><b>Currents</b><span>The leanest: a few glyph streamlines with slow pulses travelling along them; fish ride two of them.</span></div></section>
+<section class="hero" data-recipe="lagoon" data-shot="hero-lagoon"><div class="label"><b>Lagoon</b><span>Aqua water, a one-glyph dot lattice lit by caustics, fish in tiles. Closest to the shark references.</span></div></section>
+<section class="hero" data-recipe="horizon" data-shot="hero-horizon"><div class="label"><b>Horizon</b><span>Dawn literally: cumulus in type, a sun of dotted rings on the waterline, its reflection in the tide.</span></div></section>
+<section class="hero" data-recipe="tide" data-shot="hero-tide"><div class="label"><b>Tide</b><span>The first hero: tide glyphs, islands and a shoal in tiles.</span></div></section>
+
+<script type="module">
+import { C, readColors, setMotion, createLoop, fitCanvas, sheen, fontsReady, resetAtlases, createHero } from "../kit/index.js";
+
+const q = new URLSearchParams(location.search);
+const capture = q.has("t");
+if (q.get("mode") === "dusk") document.documentElement.dataset.ldMode = "dusk";
+if (capture) setMotion(true);
+
+const tpl = document.getElementById("copy");
+const heroes = [...document.querySelectorAll(".hero")].map((s) => {
+  const name = s.dataset.recipe;
+  s.insertAdjacentHTML(
+    "afterbegin",
+    `<div class="ld-hero-bg" data-recipe="${name}"></div>${["currents", "tide"].includes(name) ? '<div class="ld-wash"></div>' : ""}` +
+      '<canvas class="ld-field ld-soft" aria-hidden="true"></canvas><canvas class="ld-field" aria-hidden="true"></canvas>',
+  );
+  s.append(tpl.content.cloneNode(true));
+  const [soft, sharp] = s.querySelectorAll("canvas");
+  return { name, s, cv: { soft, sharp }, lensEl: s.querySelector(".ld-composer") };
+});
+
+function build() {
+  readColors();
+  resetAtlases();
+  for (const H of heroes) {
+    H.soft = fitCanvas(H.cv.soft);
+    H.sharp = fitCanvas(H.cv.sharp);
+    const hr = H.cv.sharp.getBoundingClientRect();
+    const r = H.lensEl.getBoundingClientRect();
+    H.lens = { x: r.left - hr.left, y: r.top - hr.top, w: r.width, h: r.height, r: 22, opts: { mag: 1.12, bevel: 0.3, bend: 0.9 } };
+    H.recipe = createHero(H.name, { w: H.sharp.w, h: H.sharp.h, colors: C });
+    if (!H.recipe.layers.includes("soft")) H.soft.cx.clearRect(0, 0, H.soft.w, H.soft.h);
+  }
+}
+
+const loop = createLoop({
+  paint(t) {
+    for (const H of heroes) H.recipe.paint({ soft: H.soft, sharp: H.sharp }, t, H.lens);
+  },
+});
+
+await fontsReady();
+build();
+sheen();
+addEventListener("resize", () => {
+  build();
+  if (capture) loop.renderAt(Number(q.get("t"))); // a capture never runs the live loop: repaint the frame
+  else loop.invalidate();
+});
+window.renderAt = (t) => loop.renderAt(t);
+if (capture) {
+  loop.renderAt(Number(q.get("t")));
+  window.__ready = true;
+} else loop.start();
+</script>
+</body>
+</html>
