@@ -218,3 +218,8 @@ test("final delta: braces in strings/comments do not hide rules; spaced fragment
   assert.deepEqual(lint('<a href = "#a3f">x</a> <use xlink:href= "#a3f"/>'), []);
   assert.throws(() => install(tmp(), { without: ["typo"] }), /unknown --without/);
 });
+
+test("final: markdown prose numbers are not colours; the same hex in CSS still is", () => {
+  assert.deepEqual(lint("Fixed in PR #808 and issue #a0f.", "notes.md"), []);
+  assert.ok(codes(".x{color:#808}").includes("LM001"));
+});

@@ -96,7 +96,7 @@ node "$SKILL_DIR/scripts/check_style.mjs" src/ liquid-midnight/templates/      #
 node "$SKILL_DIR/scripts/render.mjs" . liquid-midnight/templates/scene.html --t 0,2,6 --format keynote,reel --mode night,day --out renders
 ```
 
-`check_style` is a heuristic. It has one deliberate false positive: an ID selector whose name reads as a purple hex (`#a3f { … }`). Silence it with `lm-ignore` on that line.
+`check_style` is a heuristic. It has one deliberate false positive: an ID or anchor name that reads as a purple-leaning hex (`#a3f`, `#dad`, `#cafe`, `#c0de`, `#e2e`, `#b2b`) used as a selector or in code. Silence it with `lm-ignore` on that line. Markdown files are exempt from the hex rule (issue and PR numbers like `#808`).
 
 `render.mjs` needs Playwright with Chromium; it says how to install it if missing. **Open every PNG and look at it** against DESIGN.md §13's references: the keynote frames, the reel, orbloom for the orb. The style linter only catches patterns. Acceptance comes from the render, in both modes. Fix what you see, then re-render.
 

@@ -83,7 +83,9 @@ export function lint(text, file = "<input>") {
     const H = Number(m[3]);
     if (inPurple(H, C, MIN_CHROMA.oklch)) add("LM001", "error", m.index, `purple cast: ${m[0]}) (hue ${H}, chroma ${C}); Midnight grounds and accents stay at hue 225-262`);
   }
-  for (const m of text.matchAll(/#([0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{4}|[0-9a-f]{3})(?![0-9a-z_-])/gi)) {
+  // prose (markdown) is full of `#808`-style issue and PR numbers: the hex rule applies to code and markup only
+  const prose = /\.md$/i.test(file);
+  for (const m of prose ? [] : text.matchAll(/#([0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{4}|[0-9a-f]{3})(?![0-9a-z_-])/gi)) {
     const prev = text.slice(Math.max(0, m.index - 6), m.index);
     if (/&$|url\($|(?:href|xlink:href|for|aria-(?:controls|labelledby|describedby|owns|activedescendant|details|flowto))\s*=\s*["']?$/i.test(prev.length < 6 ? prev : text.slice(Math.max(0, m.index - 24), m.index))) continue; // entities, fragment links and attribute references
     const { C, H } = hexToOklch(m[0]);
