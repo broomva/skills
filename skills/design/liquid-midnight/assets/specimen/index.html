@@ -1,0 +1,370 @@
+<!doctype html>
+<html lang="en" data-lm-mode="night">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<meta name="color-scheme" content="dark light">
+<title>Liquid Midnight · specimen</title>
+<link rel="stylesheet" href="../tokens/tokens.css">
+<link rel="stylesheet" href="../css/materials.css">
+<style>
+@font-face{font-family:'Inter';font-weight:300 700;font-display:swap;src:url(../fonts/Inter-400.woff2) format('woff2')}
+@font-face{font-family:'Raleway';font-weight:200 600;font-display:swap;src:url(../fonts/Raleway-300.woff2) format('woff2')}
+@font-face{font-family:'JetBrains Mono';font-weight:300 700;font-display:swap;src:url(../fonts/JetBrainsMono-400.woff2) format('woff2')}
+@font-face{font-family:'Roboto Flex';font-weight:400 600;font-display:swap;src:url(../fonts/RobotoFlex-Regular.ttf) format('truetype')}
+*{box-sizing:border-box;margin:0}
+html,body{min-height:100%}
+body{overflow-x:hidden}
+main{position:relative;z-index:2;max-width:1440px;margin:0 auto;padding:0 72px 120px}
+section{position:relative;padding:96px 0 40px}
+section>header{margin-bottom:40px}
+section>header .lm-title{margin-top:20px;font-size:64px}
+.lm-lede{margin-top:18px}
+.grid{display:grid;gap:24px}
+.g2{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
+/* top bar */
+.bar{position:sticky;top:16px;z-index:10;display:flex;justify-content:space-between;align-items:center;max-width:1440px;margin:16px auto 0;padding:0 56px}
+@media (max-width:760px){.bar{flex-wrap:wrap;justify-content:center;gap:10px;padding:0 12px}main{padding:0 20px 80px}.hero{grid-template-columns:1fr}.hero .lm-hero{font-size:64px}.g2,.g3,.g4{grid-template-columns:1fr}}
+.brand{display:flex;align-items:center;gap:6px;padding:6px 14px 6px 6px;font:500 14px/1 var(--lm-font-sans);color:var(--lm-t1)}
+.brand canvas{width:40px;height:40px;display:block}
+/* hero */
+.hero{display:grid;grid-template-columns:minmax(0,1.1fr) minmax(0,.9fr);gap:24px;align-items:center;min-height:860px;padding-top:40px}
+.hero .lm-hero{margin-top:30px;font-size:118px}
+.hero .lm-hero em{white-space:normal}
+.hero-orb{position:relative}
+.hero canvas#heroCv{width:100%;aspect-ratio:1;display:block}
+/* swatches */
+.sw{border-radius:18px;overflow:hidden;padding:0}
+.sw i{display:block;height:84px;background:var(--c)}
+.sw div{padding:12px 14px 14px}
+.sw b{display:block;font:500 15px/1.2 var(--lm-font-sans)}
+.sw code{display:block;margin-top:6px;font:400 11.5px/1.45 var(--lm-font-mono);color:var(--lm-t3);letter-spacing:-.01em}
+/* type */
+.type-row{display:grid;grid-template-columns:220px 1fr;gap:24px;align-items:baseline;padding:22px 0;border-bottom:1px solid var(--lm-line)}
+.type-row .lm-tag{align-self:start;padding-top:10px}
+/* materials */
+.mat{min-height:240px;padding:28px 30px;display:flex;flex-direction:column;justify-content:space-between}
+.mat p{color:var(--lm-t2);font-size:16px;line-height:1.5;margin-top:10px}
+.stack{display:flex;flex-wrap:wrap;gap:16px;align-items:center}
+/* components */
+.cap-demo{display:flex;justify-content:center;padding:40px 0}
+/* canvases */
+.cvwrap{position:relative;border-radius:28px;overflow:hidden}
+.cvwrap canvas{display:block;width:100%}
+.cvwrap .lm-glass{position:absolute}
+/* formats */
+.fmt{display:flex;gap:32px;align-items:flex-end;flex-wrap:wrap}
+.frame{position:relative;border-radius:14px;overflow:hidden;background:var(--lm-deep);box-shadow:0 0 0 1px var(--lm-line2),var(--lm-shadow)}
+.frame .safe{position:absolute;border:1.5px dashed color-mix(in oklab,var(--lm-blue) 70%,transparent);border-radius:6px}
+.frame .lbl{position:absolute;left:12px;bottom:10px;font:500 11px/1 var(--lm-font-mono);letter-spacing:.14em;text-transform:uppercase;color:var(--lm-t3)}
+.frame .k{position:absolute;font:500 9px/1 var(--lm-font-mono);letter-spacing:.16em;text-transform:uppercase;color:var(--lm-blue)}
+.frame .h{position:absolute;font:300 30px/1 var(--lm-font-display);letter-spacing:-.034em;color:var(--lm-t1)}
+.frame .h em{font-style:normal;font-weight:400;color:var(--lm-blue)}
+.note{font:400 15px/1.55 var(--lm-font-sans);color:var(--lm-t2)}
+.note code{font:400 13px/1 var(--lm-font-mono);color:var(--lm-t1)}
+.motion-list{columns:2;column-gap:48px}
+.motion-list li{break-inside:avoid;margin-bottom:12px}
+</style>
+</head>
+<body class="lm-ground">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="lm-metal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6f8fc"/><stop offset=".42" stop-color="#9ea7b8"/><stop offset=".58" stop-color="#e6ebf3"/><stop offset="1" stop-color="#5c6577"/></linearGradient>
+    <linearGradient id="lm-metal-day" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#58606f"/><stop offset=".45" stop-color="#232833"/><stop offset=".6" stop-color="#6d7585"/><stop offset="1" stop-color="#1b1f27"/></linearGradient>
+  </defs>
+</svg>
+<div class="lm-ambient" aria-hidden="true"><i></i><i></i><i></i></div>
+<canvas class="lm-ascii-bg" id="bg" aria-hidden="true"></canvas>
+
+<nav class="bar" aria-label="Specimen controls">
+  <div class="brand lm-capsule"><canvas id="brandOrb" width="80" height="80" aria-hidden="true"></canvas>Liquid Midnight</div>
+  <div class="lm-capsule lm-seg" id="modeSeg" role="group" aria-label="Mode">
+    <i class="lm-thumb" aria-hidden="true"></i>
+    <button aria-pressed="true" data-mode="night">Night</button>
+    <button aria-pressed="false" data-mode="day">Day · paper</button>
+  </div>
+  <div class="lm-capsule">
+    <button class="lm-chip" id="motionBtn" aria-pressed="true"><svg class="lm-icon" viewBox="0 0 24 24"><path d="M5 12h3l2-6 4 12 2-6h3"/></svg><span>Motion</span></button>
+    <button class="lm-chip" id="metalBtn" aria-pressed="true"><svg class="lm-icon" viewBox="0 0 24 24"><circle cx="12" cy="12" r="7"/><path d="M8.5 8.5l2 2"/></svg><span>Metal</span></button>
+  </div>
+</nav>
+
+<main>
+  <!-- 0 · hero -->
+  <section class="hero" id="s-hero">
+    <div>
+      <div class="lm-kicker">Liquid Midnight · style system</div>
+      <h1 class="lm-hero">Glass that <em>moves like metal.</em></h1>
+      <p class="lm-lede">Apple Midnight grounds, liquid glass with a travelling chrome rim, a real WebGL plasma orb and a quiet ASCII shader. Every frame is a function of time.</p>
+      <div class="stack" style="margin-top:40px">
+        <div class="lm-glass lm-counter"><small>Sessions</small><b id="cA">000</b></div>
+        <div class="lm-glass lm-counter is-gain"><small>Retained</small><b id="cB">000</b></div>
+        <div class="lm-glass lm-counter is-loss"><small>Lost</small><b id="cC">000</b></div>
+      </div>
+    </div>
+    <div class="hero-orb"><canvas id="heroCv" width="1300" height="1300" aria-label="WebGL glass plasma orb inside liquid-metal rings and an ASCII text ring"></canvas></div>
+  </section>
+
+  <!-- 1 · palette -->
+  <section id="s-palette">
+    <header><div class="lm-kicker">01 · Palette</div><h2 class="lm-title">Midnight, <em>never purple.</em></h2>
+      <p class="lm-lede">Cool blue-black grounds at hue 245–252. One accent, blue. Meaning colours are scarce: green retains, coral loses, gold is proven.</p></header>
+    <div class="grid g4" id="swatches"></div>
+    <h3 class="lm-tag" style="margin:40px 0 18px">Liquid-metal palette</h3>
+    <div class="grid g4" id="metalSwatches"></div>
+  </section>
+
+  <!-- 2 · type -->
+  <section id="s-type">
+    <header><div class="lm-kicker">02 · Typography</div><h2 class="lm-title">Light display, <em>one blue phrase.</em></h2></header>
+    <div class="type-row"><span class="lm-tag">Hero · Raleway 300 · 156/0.98 · −0.045em</span><div class="lm-hero" style="font-size:112px">The workspace <em>is the product.</em></div></div>
+    <div class="type-row"><span class="lm-tag">Title · Raleway 300 · 76/1.04 · −0.032em</span><div class="lm-title">Six layers an agent reads <em>before it writes.</em></div></div>
+    <div class="type-row"><span class="lm-tag">Card title · Raleway 400 · 34</span><div class="lm-card-title">Primer</div></div>
+    <div class="type-row"><span class="lm-tag">Lede · Inter 400 · 26/1.45</span><p class="lm-lede" style="margin:0">Philosophy, routes and hard boundaries. One file, byte-identical copies for every harness.</p></div>
+    <div class="type-row"><span class="lm-tag">Kicker · JetBrains Mono 500 · 15 · .16em</span><div class="lm-kicker">I · Workspaces</div></div>
+    <div class="type-row"><span class="lm-tag">Counter · Mono 500 · 38</span><div class="lm-glass lm-counter" style="justify-self:start"><small>Retained</small><b style="color:var(--lm-green)">042</b></div></div>
+    <div class="type-row"><span class="lm-tag">Caption · Roboto Flex 500 · 64</span><div><span class="lm-caption" style="font-size:44px"><mark>memory,</mark> and record that survive the task.</span></div></div>
+    <div class="type-row"><span class="lm-tag">Metal text</span><div class="lm-hero lm-metal-text" style="font-size:96px;font-weight:400">Liquid metal</div></div>
+  </section>
+
+  <!-- 3 · materials -->
+  <section id="s-materials">
+    <header><div class="lm-kicker">03 · Materials</div><h2 class="lm-title">Glass <em>plus</em> metal.</h2>
+      <p class="lm-lede">A flat glass panel is not the material. Every floating surface carries the chrome rim whose specular travels around its edge.</p></header>
+    <div class="grid g3">
+      <div class="lm-glass mat"><div><span class="lm-tag"><b></b>Liquid glass card</span><p>Thin tint, 9px blur, saturate 220%, bright top edge, cyan caustic along the bottom, travelling metal rim.</p></div><div class="lm-card-title">Primer</div></div>
+      <div class="lm-glass mat" style="justify-content:center;align-items:center;gap:26px">
+        <div class="lm-capsule lm-seg" id="demoSeg" role="group" aria-label="Demo segmented control"><i class="lm-thumb" aria-hidden="true"></i><button aria-pressed="true">Agent workspace</button><button aria-pressed="false">Agentic workspace</button></div>
+        <div class="lm-capsule"><button class="lm-chip" aria-pressed="true">Run</button><button class="lm-chip">Review</button><button class="lm-chip">Ship</button></div>
+        <span class="lm-tag">Capsule · segmented · raised chips</span>
+      </div>
+      <div class="lm-glass mat" style="justify-content:center;align-items:center;gap:22px">
+        <div class="stack" style="gap:26px">
+          <button class="lm-orb-button lm-ring" aria-label="Previous"><svg class="lm-icon" viewBox="0 0 24 24"><path d="M15 6l-6 6 6 6"/></svg></button>
+          <button class="lm-orb-button lm-ring" aria-label="Play"><svg class="lm-icon" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z"/></svg></button>
+          <button class="lm-orb-button lm-ring" aria-label="Next"><svg class="lm-icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
+        </div>
+        <span class="lm-tag">Chrome ring · metal icons</span>
+      </div>
+    </div>
+    <div class="grid g2" style="margin-top:24px">
+      <div class="lm-glass mat"><span class="lm-tag"><b style="--c:var(--lm-cyan)"></b>Day · paper gel (set the Day mode)</span><p>In day mode the same card becomes milky paper glass: gel inset, brand-hued shadow ink instead of black, pointer sheen.</p><div class="lm-glass lm-gel lm-card" style="margin-top:16px"><div class="lm-card-title">Paper gel</div><p>Shown as gel only in the Day mode.</p></div></div>
+      <div class="lm-glass mat" style="justify-content:flex-start"><span class="lm-tag"><b style="--c:var(--lm-gold)"></b>Accessibility fallbacks</span><p>Reduced transparency: heavy glass, no backdrop blur. More contrast: opaque surface, 1.5px outline, no rim. Reduced motion: springs snap, the rim angle and the ASCII flow freeze, ambient light stops drifting.</p></div>
+    </div>
+  </section>
+
+  <!-- 4 · living diagram -->
+  <section id="s-canvas">
+    <header><div class="lm-kicker">04 · Orb · ASCII · metal</div><h2 class="lm-title">A living diagram, <em>rendered from t.</em></h2>
+      <p class="lm-lede">Metal ribbons with a sweeping specular and spectral fringes, edge particles, orbiting WebGL orbs that leave ASCII glyph trails, a dotted ASCII orbit and a liquid-metal ring.</p></header>
+    <div class="cvwrap lm-glass" style="padding:0">
+      <canvas id="diagCv" width="2592" height="1240" aria-label="Animated diagram"></canvas>
+      <div class="lm-glass lm-card" style="left:calc(50% - 210px);bottom:28px;width:420px"><span class="lm-tag"><b></b>Node · glass over canvas</span><div class="lm-card-title" style="margin-top:10px">Second brain</div><p style="font-size:16px">The glass sits above the canvas, so the field reads through it.</p></div>
+    </div>
+  </section>
+
+  <!-- 5 · breaker -->
+  <section id="s-breaker">
+    <header><div class="lm-kicker">05 · Act breaker</div><h2 class="lm-title">Quirky ASCII, <em>under frosted glass.</em></h2></header>
+    <div class="cvwrap" style="background:var(--lm-deep)">
+      <canvas id="brkCv" width="2592" height="1240" aria-label="Act breaker: ASCII verbs streaming around a liquid-metal ring"></canvas>
+      <div class="lm-glass" style="left:50%;top:50%;transform:translate(-50%,-50%);width:640px;padding:40px 44px;text-align:center;border-radius:28px">
+        <div class="lm-kicker" style="justify-content:center">Act VI</div><div class="lm-breaker" style="font-size:84px;margin-top:14px">Fleets</div><p class="lm-lede" style="margin:16px auto 0;font-size:22px">One loop, many hands.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- 6 · motion -->
+  <section id="s-motion">
+    <header><div class="lm-kicker">06 · Motion</div><h2 class="lm-title">Springs, sweeps, <em>one clock.</em></h2></header>
+    <div class="grid g2">
+      <div class="lm-glass lm-card"><canvas id="springCv" width="1240" height="520" style="width:100%;display:block" aria-label="Spring response curves"></canvas></div>
+      <div class="lm-glass lm-card note"><ul class="motion-list">
+        <li><code>--ua</code> 40°/s around every rim; focal rings 2×.</li>
+        <li>Springs: response <code>.5</code>, damping <code>1</code> default; scene <code>.34</code>; thumb <code>.4</code>; panel <code>.6</code>; playful <code>.8/.9</code>.</li>
+        <li>Press: <code>scale(.96)</code>; chips <code>.97</code>; no CSS transitions on buttons.</li>
+        <li>Metal sweep: one pass ≈ 6.2 s per path, seeded offsets.</li>
+        <li>Ambient blobs drift 44/56/60 s, blur 90px.</li>
+        <li>ASCII flow: alpha .15 night / .12 day, cell 15, glyph 11.</li>
+        <li>Entrances ease-out <code>cubic-bezier(.22,1,.36,1)</code>; exits ≈45% shorter.</li>
+        <li><code>renderAt(t)</code>: fixed 1/60 s steps from 0; seeded PRNG.</li>
+      </ul></div>
+    </div>
+  </section>
+
+  <!-- 7 · formats -->
+  <section id="s-formats">
+    <header><div class="lm-kicker">07 · Formats</div><h2 class="lm-title">16:9, 9:16, <em>4:5.</em></h2>
+      <p class="lm-lede">Dashed lines are the safe zones. Reels: top 250, bottom 480, left 64, right 150 at 1080×1920.</p></header>
+    <div class="fmt">
+      <div class="frame" style="width:560px;height:315px"><div class="safe" style="left:40.8px;top:33.8px;right:40.8px;bottom:33.8px"></div><div class="k" style="left:50px;top:46px">I · Workspaces</div><div class="h" style="left:50px;top:62px;font-size:26px">Six layers <em>before it writes.</em></div><span class="lbl">Keynote 1920×1080 · margin 140/116</span></div>
+      <div class="frame" style="width:270px;height:480px"><div class="safe" style="left:16px;top:62.5px;right:37.5px;bottom:120px"></div><div class="k" style="left:24px;top:72px">01 · Workspaces</div><div class="h" style="left:24px;top:88px;font-size:24px;width:200px">A folder is not <em>a workspace.</em></div><span class="lbl">Reel 1080×1920</span></div>
+      <div class="frame" style="width:384px;height:480px"><div class="safe" style="left:22.8px;top:28.4px;right:22.8px;bottom:42.7px"></div><div class="k" style="left:31px;top:40px">Feed</div><div class="h" style="left:31px;top:56px">Glass that <em>moves.</em></div><span class="lbl">Feed 1080×1350</span></div>
+    </div>
+  </section>
+</main>
+
+<script type="module">
+import { along, asciiBackground, atlas, beat, bend, bz, C, checkTime, clamp, createLoop, dot, dotRing, Flow, FONT, fontsReady,glyph, glyphTrail, hc, installAlphaClamp, lerp, METAL, MOTION, metalRing, ORB, 
+  orb, readColors, reseed,resetAtlases, ribbon, ringText, rnd, Sp, 
+  setMetal, setMotion, setUA, T, TAU, use } from "../kit/index.js";
+
+const root = document.documentElement;
+const Q = new URLSearchParams(location.search);
+if (Q.get("mode")) root.dataset.lmMode = Q.get("mode");
+const CAPTURE = Q.has("t");
+if (CAPTURE) root.setAttribute("data-lm-capture", "");
+if (Q.get("motion") === "0") setMotion(false);
+else if (CAPTURE) setMotion(true); // captures are identical on every machine, whatever its OS motion setting
+installAlphaClamp();
+readColors();
+
+/* ── palette swatches, read live from the tokens ── */
+const NAMES = { deep: "Deep", surface: "Surface", elev: "Elevated", t1: "Text 1", t2: "Text 2", t3: "Text 3", blue: "Blue · accent", ai: "AI", cyan: "Cyan", violet: "Steel (violet)", green: "Green · retained", coral: "Coral · loss", gold: "Gold · proven", warm: "Warm", line2: "Line 2", glass: "Glass" };
+const METALN = { "metal-steel": "Steel", "metal-shine": "Shine", "metal-fringe-a": "Fringe A · cyan", "metal-fringe-b": "Fringe B · magenta", "metal-fringe-c": "Fringe C · gold" };
+function swatches() {
+  const s = getComputedStyle(root);
+  const card = ([k, n]) => `<div class="lm-glass sw" style="--c:var(--lm-${k})"><i></i><div><b>${n}</b><code>--lm-${k}<br>${s.getPropertyValue(`--lm-${k}`).trim()}</code></div></div>`;
+  document.getElementById("swatches").innerHTML = Object.entries(NAMES).map(card).join("");
+  document.getElementById("metalSwatches").innerHTML = Object.entries(METALN).map(card).join("");
+}
+
+/* ── canvases at device scale ── */
+function prep(id) { const cv = document.getElementById(id); const x = cv.getContext("2d"); const W = +cv.width, H = +cv.height; return { cv, x, W, H }; }
+const hero = prep("heroCv"), diag = prep("diagCv"), brk = prep("brkCv"), spring = prep("springCv"), brand = prep("brandOrb");
+const BG = asciiBackground(document.getElementById("bg"), { day: () => C.day });
+
+/* ── springs that drive DOM (segmented thumbs, counters) ── */
+function segCtl(el, onPick) {
+  const thumb = el.querySelector(".lm-thumb"), btns = [...el.querySelectorAll("button")];
+  const x = new Sp(0), w = new Sp(0); let i = btns.findIndex((b) => b.getAttribute("aria-pressed") === "true");
+  const place = (snap) => { const b = btns[i]; const L = b.offsetLeft - 6, W = b.offsetWidth; snap ? (x.snap(L), w.snap(W)) : (x.set(L), w.set(W)); };
+  btns.forEach((b, k) => b.addEventListener("click", () => { i = k; btns.forEach((o, j) => o.setAttribute("aria-pressed", String(j === k))); place(false); onPick?.(b, k); }));
+  return { step(dt) { if (!w.t) place(true); x.step(dt, 0.4, 1); w.step(dt, 0.4, 1); thumb.style.transform = `translateX(${x.v.toFixed(2)}px)`; thumb.style.width = `${w.v.toFixed(2)}px`; }, pick(k) { btns[k].click(); }, init() { w.t = 0; } };
+}
+/* controls start in the page's real state: the mode from ?mode=, motion from the OS reduced-motion setting */
+{
+  const day = root.dataset.lmMode === "day";
+  for (const b of document.querySelectorAll("#modeSeg button")) b.setAttribute("aria-pressed", String((b.dataset.mode === "day") === day));
+  document.getElementById("motionBtn").setAttribute("aria-pressed", String(MOTION));
+}
+const modeSeg = segCtl(document.getElementById("modeSeg"), (b) => { root.dataset.lmMode = b.dataset.mode; readColors(); resetAtlases(); swatches(); loop?.invalidate(); });
+const demoSeg = segCtl(document.getElementById("demoSeg"));
+const counters = [["cA", 128, 0.5], ["cB", 96, 0.9], ["cC", 32, 1.3]].map(([id, to, at]) => ({ el: document.getElementById(id), to, at, sp: new Sp(0) }));
+
+for (const [id, set] of [["motionBtn", setMotion], ["metalBtn", setMetal]]) {
+  const b = document.getElementById(id);
+  b.addEventListener("click", () => { const on = b.getAttribute("aria-pressed") !== "true"; b.setAttribute("aria-pressed", String(on)); set(on); loop?.invalidate(); });
+}
+ORB.onChange(() => (CAPTURE ? loop.renderAt(loop.t) : loop?.invalidate())); // repaint after a GPU context restore
+/* pointer-tracked specular on glass */
+addEventListener("pointermove", (e) => { for (const g of document.querySelectorAll(".lm-glass")) { const r = g.getBoundingClientRect(); g.style.setProperty("--mx", `${e.clientX - r.left}px`); g.style.setProperty("--my", `${e.clientY - r.top}px`); } }, { passive: true });
+
+/* ── scene state (integrated in fixed steps) ── */
+let flows;
+function init() {
+  reseed(0x5eed);
+  modeSeg.init(); demoSeg.init();
+  for (const c of counters) c.sp.snap(0);
+  const P = paths();
+  flows = P.map((p, i) => new Flow(3 + i, () => ({ u: 0, v: rnd(0.18, 0.32), o: rnd(-0.5, 0.5) }), 8));
+}
+function step(dt, t) {
+  modeSeg.step(dt); demoSeg.step(dt);
+  for (const c of counters) { c.sp.set(t > c.at ? c.to : 0).step(dt, 0.8, 1); }
+}
+
+/* diagram geometry in canvas px (2592×1240) */
+function paths() {
+  const hub = [1560, 620];
+  return [[260, 230], [260, 620], [260, 1010]].map((s) => hc(s, hub, 0.55)).concat([bend(hub, [2380, 300], 0.12), bend(hub, [2380, 940], -0.12)]);
+}
+const COLS = () => [C.blue, C.cyan, C.violet, C.green, C.gold];
+
+/* ── paint (pure in t) ── */
+function paintHero(t) {
+  const { cv, x, W, H } = hero; use(x); x.clearRect(0, 0, W, H);
+  ORB.attach(cv); ORB.begin(x);
+  const cx = W / 2, cy = H / 2;
+  dotRing(cx, cy, 600, 600, C.t3, 220, 0.4, -t * 0.04);
+  for (let k = 0; k < 3; k++) metalRing(cx, cy, 430 + k * 16, t * (1 + k * 0.2) + k * 2, k ? 1.2 : 3, k ? 0.45 : 1, 430 + k * 16, 0.7);
+  ringText("liquid · glass · metal · orb · ascii · ", cx, cy, 520, t, C.t1, { fs: 24 });
+  for (let i = 0; i < 3; i++) {
+    const a = t * (0.22 + i * 0.03) + (i / 3) * TAU, rr = 330, ry = 120, c = [C.cyan, C.green, C.gold][i];
+    glyphTrail((k) => { const b = a - k * 0.05; return [cx + Math.cos(b) * rr, cy + Math.sin(b) * ry + 260]; }, c, 12, 16);
+    orb(cx + Math.cos(a) * rr, cy + Math.sin(a) * ry + 260, 44, c, t + i);
+  }
+  orb(cx, cy, 500, C.blue, t);
+  ORB.end();
+}
+function paintDiag(t) {
+  const { cv, x, W, H } = diag; use(x); x.clearRect(0, 0, W, H);
+  ORB.attach(cv); ORB.begin(x);
+  const P = paths(), cols = COLS();
+  P.forEach((p, i) => {
+    ribbon(p, 5, 26, 6, cols[i], C.blue, 0.75, t, 6, 1.4);
+    flows[i].draw((q) => along(p, q.u, q.o * 14), (q, [px, py]) => dot(px, py, 3, cols[i], 4));
+  });
+  dotRing(1560, 620, 360, 150, C.t3, 160, 0.5, t * 0.05);
+  metalRing(1560, 620, 360, t, 1.6, 0.7, 150, 0.6);
+  for (let i = 0; i < 5; i++) {
+    const a = t * (0.16 + i * 0.012) + (i / 5) * TAU, front = Math.sin(a) > 0, c = [C.blue, C.cyan, C.violet][i % 3];
+    glyphTrail((k) => { const b = a - k * 0.03; return [1560 + Math.cos(b) * 360, 620 + Math.sin(b) * 150]; }, c, 12, 18);
+    orb(1560 + Math.cos(a) * 360, 620 + Math.sin(a) * 150, (front ? 40 : 26) + (i % 3) * 4, c, t + i, front ? 1 : 0.55);
+  }
+  orb(1560, 620, 120, C.blue, t);
+  [[260, 230, "files"], [260, 620, "memory"], [260, 1010, "skills"]].forEach(([px, py, s], i) => { dot(px, py, 7, cols[i], 5); T(s.toUpperCase(), px + 30, py, { s: 22, c: C.t2, ls: 3 }); });
+  T("SHIPPED", 2380, 300 - 46, { s: 20, c: C.green, al: "center", ls: 3 }); dot(2380, 300, 8, C.green, 5);
+  T("LEDGER", 2380, 940 + 46, { s: 20, c: C.gold, al: "center", ls: 3 }); dot(2380, 940, 8, C.gold, 5);
+  ORB.end();
+}
+function paintBreaker(t) {
+  const { x, W, H } = brk; use(x); x.clearRect(0, 0, W, H);
+  const cx = W / 2, cy = H / 2;
+  const A = atlas(13, C.day ? "oklch(0.45 0.05 245)" : "oklch(0.78 0.06 245)");
+  x.globalAlpha = 0.22;
+  for (let r = 0; r < H / 18; r++) for (let c = 0; c < W / 18; c++) {
+    const X = c * 18, Y = r * 18, d = Math.hypot(X - cx, (Y - cy) * 1.6) / 900;
+    const v = (0.5 + 0.5 * Math.sin(d * 14 - t * 1.1)) * Math.max(0, 1 - d) ** 1.4;
+    if (v > 0.05) glyph(A, Math.min(A.n - 1, 1 + Math.floor(v * (A.n - 1))), X, Y);
+  }
+  x.globalAlpha = 1;
+  for (let k = 0; k < 3; k++) metalRing(cx, cy, 470 + k * 14, t * (1 + k * 0.2) + k * 2, k ? 1 : 3, k ? 0.45 : 1, 470 + k * 14, 0.7);
+  ringText("capture · score · link · index · load · act · ", cx, cy, 540, t, C.t1, { fs: 22 });
+}
+function paintSpring(t) {
+  const { x, W, H } = spring; use(x); x.clearRect(0, 0, W, H);
+  const pad = 40, plot = (fn, c, lab, li) => { x.strokeStyle = c; x.lineWidth = 3; x.beginPath(); for (let i = 0; i <= 200; i++) { const s = i / 200 * 1.6, v = fn(s); const X = pad + (i / 200) * (W - pad * 2), Y = H - pad - v * (H - pad * 2.6); i ? x.lineTo(X, Y) : x.moveTo(X, Y); } x.stroke(); T(lab, W - pad, 40 + li * 32, { s: 20, c, al: "right" }); };
+  x.strokeStyle = C.line2; x.lineWidth = 1; x.setLineDash([4, 6]); const y1 = H - pad - (H - pad * 2.6); x.beginPath(); x.moveTo(pad, y1); x.lineTo(W - pad, y1); x.stroke(); x.setLineDash([]);
+  const sim = (r, z) => (s) => { const sp = new Sp(0); sp.set(1); const motion = MOTION; let v = 0; for (let u = 0; u < s; u += 1 / 240) v = sp.step(1 / 240, r, z); return motion ? v : 1; };
+  plot(sim(0.34, 1), C.cyan, "scene .34 / 1", 0); plot(sim(0.5, 1), C.blue, "default .5 / 1", 1); plot(sim(0.8, 0.9), C.gold, "soft .8 / .9", 2);
+  const m = (t % 4) / 4 * 1.6, X = pad + (m / 1.6) * (W - pad * 2); x.strokeStyle = C.t3; x.beginPath(); x.moveTo(X, pad); x.lineTo(X, H - pad); x.stroke();
+  T("t (s) →", pad, H - 14, { s: 16, c: C.t3 });
+}
+function paintBrand(t) { const { x, W, H } = brand; use(x); x.clearRect(0, 0, W, H); orb(W / 2, H / 2, 46, C.blue, t); }
+
+function paint(t) {
+  BG.draw(t);
+  for (const c of counters) c.el.textContent = String(Math.round(c.sp.v)).padStart(3, "0");
+  paintHero(t); paintDiag(t); paintBreaker(t); paintSpring(t); paintBrand(t);
+}
+
+/* the deck integrates flows inside paint; here they advance in step() so paint stays a pure function of state + t */
+var loop = createLoop({ init, step: (dt, t) => { step(dt, t); for (const f of flows) f.advance(dt); }, paint });
+
+await fontsReady();
+await document.fonts.ready;
+swatches();
+BG.fit();
+addEventListener("resize", () => { BG.fit(); CAPTURE ? loop.renderAt(loop.t) : loop.invalidate(); }); // fit() clears the canvas
+window.renderAt = (t) => loop.renderAt(t);
+if (CAPTURE) {
+  // lay out the segmented thumbs before painting: a ?t=0 capture paints without running step()
+  modeSeg.init(); demoSeg.init(); modeSeg.step(0); demoSeg.step(0);
+  loop.renderAt(checkTime(Q.get("t")));
+  window.__ready = true;
+}
+else loop.start();
+</script>
+</body>
+</html>

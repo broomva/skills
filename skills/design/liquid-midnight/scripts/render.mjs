@@ -1,0 +1,102 @@
+#!/usr/bin/env node
+// Render Liquid Midnight pages to PNG at chosen times, formats and modes, so the work can be LOOKED AT (DESIGN.md §13).
+//   node render.mjs <root-dir> <page.html> [--t 0,2.5,6] [--format keynote,reel,feed] [--mode night,day] [--out dir]
+// Serves <root-dir> on 127.0.0.1 (dotfiles refused), opens <page>?t=..&format=..&mode=.. and waits for window.__ready
+// (pages built on kit/loop.js set it after renderAt). Needs Playwright with Chromium:
+//   npm i -D playwright && npx playwright install chromium      (or set LM_PLAYWRIGHT_DIR to a dir that has it)
+import { mkdirSync, realpathSync } from "node:fs";
+import { createRequire } from "node:module";
+import { join, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { startServer } from "./serve.mjs";
+/* entry-point check that survives symlinked paths (macOS /var -> /private/var, npm bin links) */
+const isMain = (url) => {
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(url));
+  } catch {
+    return false;
+  }
+};
+
+function loadPlaywright() {
+  const bases = [process.env.LM_PLAYWRIGHT_DIR, process.cwd()].filter(Boolean);
+  for (const b of bases) {
+    try {
+      return createRequire(join(resolve(b), "noop.js"))("playwright");
+    } catch {}
+  }
+  console.error("render.mjs needs Playwright: `npm i -D playwright && npx playwright install chromium` (or set LM_PLAYWRIGHT_DIR)");
+  process.exit(3);
+}
+
+const list = (v, d) => (v ? v.split(",").filter(Boolean) : d);
+export function parseArgs(argv) {
+  const [root, page, ...rest] = argv;
+  const o = { root, page, t: ["0", "2", "6"], format: ["keynote"], mode: ["night", "day"], out: "renders" };
+  for (let i = 0; i < rest.length; i++) {
+    const k = rest[i].replace(/^--/, "");
+    if (!(k in o) || k === "root" || k === "page") throw new Error(`unknown option ${rest[i]}`);
+    const v = rest[++i];
+    if (v === undefined || v.startsWith("--")) throw new Error(`--${k} needs a value`);
+    o[k] = k === "out" ? v : list(v, o[k]);
+  }
+  for (const k of ["t", "format", "mode"]) if (!o[k].length) throw new Error(`--${k} needs at least one value`);
+  for (const f of o.format) if (!["keynote", "reel", "feed"].includes(f)) throw new Error(`--format must be keynote, reel or feed, got ${f}`);
+  for (const m of o.mode) if (!["night", "day"].includes(m)) throw new Error(`--mode must be night or day, got ${m}`);
+  for (const t of o.t) if (!Number.isFinite(Number(t)) || Number(t) < 0 || Number(t) > 3600) throw new Error(`--t values must be seconds in [0, 3600], got ${t}`);
+  return o;
+}
+
+if (isMain(import.meta.url)) {
+  let o;
+  try {
+    o = parseArgs(process.argv.slice(2));
+    if (!o.root || !o.page) throw new Error("usage: render.mjs <root-dir> <page.html> [--t 0,2,6] [--format keynote,reel,feed] [--mode night,day] [--out dir]");
+  } catch (e) {
+    console.error(e.message);
+    process.exit(2);
+  }
+  const { chromium } = loadPlaywright();
+  let server;
+  try {
+    server = await startServer(resolve(o.root), 0);
+  } catch (e) {
+    console.error(e.message);
+    process.exit(2);
+  }
+  const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
+  const errors = [];
+  mkdirSync(o.out, { recursive: true });
+  const SIZE = { keynote: [1920, 1080], reel: [1080, 1920], feed: [1080, 1350] };
+  try {
+    for (const format of o.format)
+      for (const mode of o.mode) {
+        const [w, h] = SIZE[format] ?? SIZE.keynote;
+        const page = await browser.newPage({ viewport: { width: w, height: h } });
+        page.on("pageerror", (e) => errors.push(`${format}/${mode}: ${e.message}`));
+        for (const t of o.t) {
+          const res = await page.goto(`http://127.0.0.1:${server.port}/${o.page.replace(/^\//, "")}?t=${t}&format=${format}&mode=${mode}`);
+          if (!res || res.status() !== 200) throw new Error(`${o.page}: HTTP ${res?.status() ?? "no response"} (is the path relative to <root-dir>?)`);
+          try {
+            await page.waitForFunction(() => window.__ready === true, null, { timeout: 30000 });
+          } catch {
+            throw new Error(`${o.page} never set window.__ready (format ${format}, mode ${mode}, t ${t})${errors.length ? `; page errors:\n  ${errors.join("\n  ")}` : "; it must call renderAt and set window.__ready = true in capture mode"}`);
+          }
+          const file = join(o.out, `${o.page.replace(/[^a-z0-9]+/gi, "-").replace(/-html$/, "")}-${format}-${mode}-t${t}.png`);
+          await page.screenshot({ path: file });
+          console.log(`rendered ${file}`);
+        }
+        await page.close();
+      }
+  } catch (e) {
+    console.error(e.message);
+    process.exitCode = 1;
+  } finally {
+    await browser.close();
+    server.stop(true);
+  }
+  if (errors.length) {
+    console.error(`page errors:\n${errors.join("\n")}`);
+    process.exit(1);
+  }
+}

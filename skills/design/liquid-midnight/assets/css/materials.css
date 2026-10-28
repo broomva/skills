@@ -1,0 +1,559 @@
+/* Liquid Midnight materials. Requires tokens/tokens.css. Every recipe is lifted from the Agent Workspaces keynote,
+   broomva/agent-workspaces deck/index.html @187972f; line numbers point at that file.
+   The travelling rim angle --ua is set on :root by kit/loop.js (40deg/s). Without JS it rests at 0deg: still a chrome rim. */
+
+@property --ua {
+  syntax: "<angle>";
+  inherits: true;
+  initial-value: 0deg;
+}
+
+/* ── ground: page colour + drifting ambient light (deck :52-59) ── */
+.lm-ground {
+  background: var(--lm-deep);
+  color: var(--lm-t1);
+  font: 400 21px / 1.5 var(--lm-font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+}
+.lm-ground ::selection {
+  background: color-mix(in oklab, var(--lm-blue) 35%, transparent);
+}
+.lm-ambient {
+  position: fixed;
+  inset: -20%;
+  pointer-events: none;
+  z-index: 0;
+  filter: blur(var(--lm-blur-ambient));
+  opacity: 0.5;
+}
+[data-lm-mode="day"] .lm-ambient {
+  opacity: 0.38;
+}
+.lm-ambient i {
+  position: absolute;
+  width: 52vmax;
+  height: 52vmax;
+  border-radius: 50%;
+}
+.lm-ambient i:nth-child(1) {
+  left: -6%;
+  top: -10%;
+  background: radial-gradient(circle, color-mix(in oklab, var(--lm-blue) 45%, transparent), transparent 62%);
+  animation: lm-drift1 44s ease-in-out infinite alternate;
+}
+.lm-ambient i:nth-child(2) {
+  right: -10%;
+  top: 18%;
+  background: radial-gradient(circle, color-mix(in oklab, var(--lm-violet) 32%, transparent), transparent 60%);
+  animation: lm-drift2 56s ease-in-out infinite alternate;
+}
+.lm-ambient i:nth-child(3) {
+  left: 28%;
+  bottom: -24%;
+  background: radial-gradient(circle, color-mix(in oklab, var(--lm-ai) 34%, transparent), transparent 60%);
+  animation: lm-drift3 60s ease-in-out infinite alternate;
+}
+@keyframes lm-drift1 {
+  to {
+    transform: translate(14vmax, 9vmax) scale(1.15);
+  }
+}
+@keyframes lm-drift2 {
+  to {
+    transform: translate(-12vmax, 8vmax) scale(0.9);
+  }
+}
+@keyframes lm-drift3 {
+  to {
+    transform: translate(-8vmax, -10vmax) scale(1.1);
+  }
+}
+/* render-to-video: wall-clock CSS animation breaks frames = f(t); freeze it (or drive transforms from t) */
+[data-lm-capture] .lm-ambient i {
+  animation: none;
+}
+
+/* the ASCII background canvas sits under every glass surface so the glass frosts it (deck :289-290) */
+.lm-ascii-bg {
+  position: fixed;
+  inset: 0;
+  width: 100vw;
+  height: 100vh;
+  z-index: 1;
+  pointer-events: none;
+}
+
+/* ── type (deck :72-80) ── */
+.lm-kicker {
+  font: 500 15px / 1 var(--lm-font-mono);
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+  color: var(--lm-blue);
+  display: flex;
+  align-items: center;
+  gap: 14px;
+}
+.lm-kicker::before {
+  content: "";
+  width: 28px;
+  height: 1.5px;
+  background: currentColor;
+  opacity: 0.8;
+  border-radius: 2px;
+}
+.lm-hero {
+  font: 300 156px / 0.98 var(--lm-font-display);
+  letter-spacing: -0.045em;
+}
+.lm-title {
+  font: 300 76px / 1.04 var(--lm-font-display);
+  letter-spacing: -0.032em;
+}
+.lm-hero em,
+.lm-title em,
+.lm-breaker em {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--lm-blue);
+  white-space: nowrap;
+}
+.lm-breaker {
+  font: 300 104px / 1 var(--lm-font-display);
+  letter-spacing: -0.04em;
+}
+.lm-lede {
+  font: 400 26px / 1.45 var(--lm-font-sans);
+  letter-spacing: -0.011em;
+  color: var(--lm-t2);
+  max-width: 820px;
+}
+.lm-card-title {
+  font: 400 34px / 1.12 var(--lm-font-display);
+  letter-spacing: -0.02em;
+}
+.lm-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 13px / 1 var(--lm-font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--lm-t3);
+}
+.lm-tag b {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--c, var(--lm-blue));
+  box-shadow: 0 0 14px var(--c, var(--lm-blue));
+}
+/* metal text: a chrome gradient clipped to glyphs (deck :347-348) */
+.lm-metal-text {
+  background: linear-gradient(180deg, #f7f9fd 0%, #c9d0dc 45%, #eef2f8 58%, #9aa3b4 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+[data-lm-mode="day"] .lm-metal-text {
+  background: linear-gradient(180deg, #3a414d, #1d2129 55%, #525a68);
+  -webkit-background-clip: text;
+  background-clip: text;
+}
+
+/* ── shared: the liquid-metal rim. A conic chrome gradient masked to a 1.2px ring; its bright stops (70deg, 250deg)
+   travel with --ua; cyan (215), blue (250) and gold (85) fringes sit just behind each highlight. (deck :315-317, :325-326) ── */
+.lm-glass::after,
+.lm-capsule::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.2px;
+  pointer-events: none;
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+
+/* ── liquid glass card: thin tint so the live field reads through a light blur, vertical thickness gradient,
+   bright top edge, cyan caustic along the bottom, travelling metal rim (deck :322-327) ── */
+.lm-glass {
+  position: relative;
+  isolation: isolate;
+  border-radius: var(--lm-radius-card);
+  background: linear-gradient(180deg, oklch(0.36 0.03 248 / 0.3), oklch(0.2 0.03 250 / 0.26) 55%, oklch(0.17 0.03 250 / 0.34));
+  -webkit-backdrop-filter: blur(9px) saturate(220%) brightness(1.12);
+  backdrop-filter: blur(9px) saturate(220%) brightness(1.12);
+  box-shadow:
+    0 30px 80px -30px oklch(0.04 0.02 250 / 0.85),
+    0 8px 22px -12px oklch(0.04 0.02 250 / 0.6),
+    inset 0 1px 0 oklch(1 0 0 / 0.2),
+    inset 0 14px 28px -18px oklch(1 0 0 / 0.1),
+    inset 0 -22px 34px -26px oklch(0.8 0.12 222 / 0.22),
+    inset 0 0 0 1px oklch(1 0 0 / 0.045);
+}
+.lm-glass::before {
+  /* pointer-tracked specular: set --mx/--my from JS (deck :86-87) */
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  background: radial-gradient(480px circle at var(--mx, 22%) var(--my, -10%), var(--lm-spec), transparent 62%);
+}
+.lm-glass::after {
+  opacity: 0.62;
+  background: conic-gradient(
+    from var(--ua, 0deg),
+    oklch(0.4 0.012 250 / 0.5) 0deg,
+    oklch(0.62 0.014 245 / 0.6) 48deg,
+    oklch(0.97 0.01 240 / 0.92) 70deg,
+    oklch(0.82 0.12 215 / 0.8) 77deg,
+    oklch(0.62 0.014 245 / 0.55) 98deg,
+    oklch(0.32 0.01 250 / 0.4) 168deg,
+    oklch(0.56 0.014 245 / 0.55) 228deg,
+    oklch(0.92 0.01 240 / 0.82) 250deg,
+    oklch(0.86 0.1 85 / 0.55) 256deg,
+    oklch(0.5 0.014 245 / 0.5) 278deg,
+    oklch(0.4 0.012 250 / 0.5) 360deg
+  );
+}
+[data-lm-mode="day"] .lm-glass {
+  background: linear-gradient(180deg, oklch(1 0 0 / 0.62), oklch(0.97 0.006 250 / 0.44) 55%, oklch(0.95 0.01 250 / 0.52));
+  box-shadow:
+    0 24px 60px -30px oklch(0.3 0.04 255 / 0.4),
+    0 6px 16px -10px oklch(0.3 0.04 255 / 0.24),
+    inset 0 1px 0 oklch(1 0 0 / 0.95),
+    inset 0 -18px 30px -24px oklch(0.6 0.12 230 / 0.16);
+}
+[data-lm-mode="day"] .lm-glass::after {
+  opacity: 0.55;
+}
+/* paper gel: the landing's milky day glass. Brand-hued shadow ink, gel inset, light blur (see DESIGN.md §5.3) */
+[data-lm-mode="day"] .lm-glass.lm-gel {
+  background:
+    radial-gradient(140px circle at var(--mx, 30%) var(--my, -70%), oklch(1 0 0 / 0.8), oklch(1 0 0 / 0) 62%),
+    linear-gradient(180deg, oklch(1 0 0 / 0.58), oklch(1 0 0 / 0.16) 52%, oklch(1 0 0 / 0.3));
+  -webkit-backdrop-filter: blur(8px) saturate(220%) brightness(1.05);
+  backdrop-filter: blur(8px) saturate(220%) brightness(1.05);
+  box-shadow:
+    inset 0 1px 1px oklch(1 0 0 / 0.95),
+    inset 0 -1px 1.5px oklch(1 0 0 / 0.55),
+    inset 0 0 12px oklch(1 0 0 / 0.45),
+    0 0 0 0.5px oklch(0.26 0.045 250 / 0.14),
+    0 2px 6px oklch(0.3 0.08 250 / 0.08),
+    0 10px 22px -8px oklch(0.3 0.08 250 / 0.18);
+}
+.lm-card {
+  padding: 32px 36px;
+}
+.lm-card p {
+  color: var(--lm-t2);
+  margin-top: 12px;
+  font-size: 20px;
+  line-height: 1.5;
+}
+
+/* ── capsule: dark, thick glass for segmented controls and the nav pill; raised chips inside (deck :309-318) ── */
+.lm-capsule {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 6px;
+  border-radius: 999px;
+  background: linear-gradient(180deg, oklch(0.29 0.022 250 / 0.66), oklch(0.185 0.024 250 / 0.74));
+  -webkit-backdrop-filter: blur(26px) saturate(180%);
+  backdrop-filter: blur(26px) saturate(180%);
+  box-shadow:
+    0 22px 60px -20px oklch(0.03 0.02 250 / 0.92),
+    0 3px 8px -3px oklch(0 0 0 / 0.55),
+    inset 0 1px 0 oklch(1 0 0 / 0.16),
+    inset 0 -1px 0 oklch(0 0 0 / 0.4),
+    inset 0 0 0 1px oklch(1 0 0 / 0.035);
+}
+.lm-capsule::after {
+  opacity: 0.9;
+  background: conic-gradient(
+    from var(--ua, 0deg),
+    oklch(0.4 0.012 250 / 0.55) 0deg,
+    oklch(0.6 0.014 245 / 0.6) 48deg,
+    oklch(0.97 0.01 240 / 0.95) 70deg,
+    oklch(0.82 0.12 215 / 0.85) 76deg,
+    oklch(0.78 0.13 250 / 0.7) 80deg,
+    oklch(0.62 0.014 245 / 0.55) 98deg,
+    oklch(0.32 0.01 250 / 0.45) 168deg,
+    oklch(0.55 0.014 245 / 0.55) 228deg,
+    oklch(0.92 0.01 240 / 0.85) 250deg,
+    oklch(0.86 0.1 85 / 0.65) 256deg,
+    oklch(0.5 0.014 245 / 0.5) 278deg,
+    oklch(0.4 0.012 250 / 0.55) 360deg
+  );
+}
+[data-lm-mode="day"] .lm-capsule {
+  background: linear-gradient(180deg, oklch(1 0 0 / 0.78), oklch(0.95 0.005 250 / 0.7));
+  box-shadow:
+    0 18px 44px -22px oklch(0.3 0.04 255 / 0.38),
+    0 2px 6px -3px oklch(0.3 0.04 255 / 0.25),
+    inset 0 1px 0 oklch(1 0 0 / 0.95),
+    inset 0 -1px 0 oklch(0.3 0.04 255 / 0.1);
+}
+[data-lm-mode="day"] .lm-capsule::after {
+  opacity: 0.75;
+}
+
+/* segmented control: buttons over a spring-driven thumb (deck :98-106, :366) */
+.lm-seg {
+  gap: 2px;
+}
+.lm-seg button {
+  all: unset;
+  position: relative;
+  z-index: 1;
+  cursor: pointer;
+  font: 500 17px / 1 var(--lm-font-sans);
+  color: var(--lm-t2);
+  padding: 14px 24px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.lm-seg button:active {
+  transform: scale(0.96);
+}
+.lm-seg button[aria-pressed="true"] {
+  color: var(--lm-t1);
+}
+.lm-seg .lm-thumb {
+  position: absolute;
+  top: 6px;
+  bottom: 6px;
+  left: 6px;
+  width: 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, oklch(1 0 0 / 0.16), oklch(1 0 0 / 0.05));
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.22),
+    inset 0 0 0 1px oklch(0.9 0.02 240 / 0.16),
+    0 4px 14px -4px oklch(0 0 0 / 0.55);
+}
+[data-lm-mode="day"] .lm-seg .lm-thumb {
+  background: oklch(1 0 0);
+  box-shadow:
+    inset 0 0 0 1px oklch(0.3 0.03 255 / 0.08),
+    0 3px 10px -4px oklch(0.3 0.04 255 / 0.3);
+}
+
+/* raised glass chip inside a capsule (deck :332-343) */
+.lm-chip {
+  all: unset;
+  box-sizing: border-box;
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  height: 40px;
+  padding: 0 16px;
+  border-radius: 999px;
+  font: 500 14px / 1 var(--lm-font-sans);
+  color: var(--lm-t1);
+  white-space: nowrap;
+  background: linear-gradient(180deg, oklch(1 0 0 / 0.075), oklch(1 0 0 / 0.018));
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.11),
+    inset 0 0 0 1px oklch(1 0 0 / 0.05),
+    0 1px 2px oklch(0 0 0 / 0.35);
+}
+.lm-chip:hover {
+  background: linear-gradient(180deg, oklch(1 0 0 / 0.12), oklch(1 0 0 / 0.035));
+}
+.lm-chip:active {
+  transform: scale(0.97);
+}
+.lm-chip[aria-pressed="true"] {
+  background: linear-gradient(180deg, oklch(0.72 0.12 250 / 0.32), oklch(0.55 0.14 255 / 0.16));
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.2),
+    inset 0 0 0 1px oklch(0.8 0.1 245 / 0.3),
+    0 0 18px -4px oklch(0.7 0.15 252 / 0.6);
+}
+[data-lm-mode="day"] .lm-chip {
+  background: linear-gradient(180deg, oklch(1 0 0 / 0.95), oklch(0.96 0.004 250 / 0.9));
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0),
+    inset 0 0 0 1px oklch(0.3 0.03 255 / 0.1),
+    0 1px 2px oklch(0.3 0.04 255 / 0.15);
+}
+
+/* chrome ring on focal round buttons: rotates at 2x --ua (deck :359-363) */
+.lm-ring {
+  position: relative;
+  border-radius: 50%;
+}
+.lm-ring::after {
+  content: "";
+  position: absolute;
+  inset: -2px;
+  border-radius: 50%;
+  padding: 2px;
+  pointer-events: none;
+  background: conic-gradient(
+    from calc(var(--ua, 0deg) * 2),
+    oklch(0.38 0.01 250) 0deg,
+    oklch(0.7 0.012 245) 40deg,
+    oklch(0.99 0.008 240) 64deg,
+    oklch(0.84 0.13 215) 70deg,
+    oklch(0.78 0.15 250) 74deg,
+    oklch(0.86 0.12 85) 78deg,
+    oklch(0.66 0.012 245) 96deg,
+    oklch(0.3 0.01 250) 170deg,
+    oklch(0.58 0.012 245) 236deg,
+    oklch(0.95 0.008 240) 256deg,
+    oklch(0.55 0.012 245) 280deg,
+    oklch(0.38 0.01 250) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+}
+.lm-orb-button {
+  all: unset;
+  box-sizing: border-box;
+  cursor: pointer;
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  position: relative; /* restated after all: unset so the .lm-ring ::after anchors to the button, not the card */
+  border-radius: 50%;
+  background: radial-gradient(circle at 50% 30%, oklch(0.34 0.02 250), oklch(0.16 0.02 250) 70%);
+  box-shadow:
+    inset 0 1px 0 oklch(1 0 0 / 0.14),
+    0 2px 6px oklch(0 0 0 / 0.5);
+}
+[data-lm-mode="day"] .lm-orb-button {
+  background: radial-gradient(circle at 50% 30%, oklch(1 0 0), oklch(0.93 0.006 250) 75%);
+}
+
+/* metal-stroked icon: needs the <svg> gradient defs from specimen/index.html (#lm-metal / #lm-metal-day) */
+.lm-icon {
+  width: 19px;
+  height: 19px;
+  flex: none;
+  fill: none;
+  stroke: url(#lm-metal);
+  stroke-width: 1.7;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  filter: drop-shadow(0 1px 0 oklch(0 0 0 / 0.45));
+}
+[data-lm-mode="day"] .lm-icon {
+  stroke: url(#lm-metal-day);
+  filter: drop-shadow(0 1px 0 oklch(1 0 0 / 0.8));
+}
+
+/* counter: mono label + mono value on a glass chip (reels/r01-folder.html .ctr) */
+.lm-counter {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 16px;
+  padding: 18px 26px;
+}
+.lm-counter small {
+  font: 500 16px / 1 var(--lm-font-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--lm-t3);
+}
+.lm-counter b {
+  font: 500 38px / 1 var(--lm-font-mono);
+  letter-spacing: 0.04em;
+  font-variant-numeric: tabular-nums;
+}
+.lm-counter.is-gain b {
+  color: var(--lm-green);
+}
+.lm-counter.is-loss b {
+  color: var(--lm-coral);
+}
+
+/* intent caption box for reels: translucent Midnight, Roboto Flex; the spoken keyword in blue */
+.lm-caption {
+  display: inline-block;
+  max-width: 22ch;
+  padding: 14px 24px 16px;
+  border-radius: 14px;
+  background: oklch(0.155 0.028 250 / 0.72);
+  font: 500 64px / 1.2 var(--lm-font-caption);
+  /* the box is always Midnight, so its text keeps the night colours in day mode too (burned-in captions) */
+  color: oklch(0.975 0.004 250);
+  text-align: center;
+}
+.lm-caption mark {
+  background: none;
+  color: oklch(0.71 0.15 252);
+}
+
+/* focus: always visible, never removed */
+.lm-seg button:focus-visible,
+.lm-chip:focus-visible,
+.lm-orb-button:focus-visible {
+  outline: 2px solid var(--lm-blue);
+  outline-offset: 2px;
+}
+
+/* ── accessibility fallbacks: restated last so no material beats them (deck :330-331) ── */
+@media (prefers-reduced-transparency: reduce) {
+  .lm-glass,
+  .lm-capsule,
+  [data-lm-mode="day"] .lm-glass.lm-gel {
+    background: var(--lm-glass-heavy) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+}
+@media (prefers-contrast: more) {
+  .lm-glass,
+  .lm-capsule,
+  [data-lm-mode="day"] .lm-glass.lm-gel,
+  .lm-orb-button {
+    background: var(--lm-surface) !important;
+    box-shadow: 0 0 0 1.5px var(--lm-t2) !important;
+  }
+  .lm-glass,
+  .lm-capsule,
+  .lm-chip,
+  .lm-seg .lm-thumb {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .lm-chip,
+  .lm-seg .lm-thumb {
+    background: var(--lm-elev) !important;
+    box-shadow: 0 0 0 1px var(--lm-t3) !important;
+  }
+  .lm-chip[aria-pressed="true"] {
+    box-shadow: 0 0 0 2px var(--lm-blue) !important;
+  }
+  .lm-glass::before,
+  .lm-glass::after,
+  .lm-capsule::after,
+  .lm-ring::after {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lm-ambient i {
+    animation: none;
+  }
+}
+/* the kit's motion switch (setMotion) stops CSS motion too */
+[data-lm-motion="off"] .lm-ambient i {
+  animation: none;
+}

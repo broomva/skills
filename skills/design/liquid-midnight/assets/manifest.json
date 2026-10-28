@@ -1,0 +1,105 @@
+{
+  "name": "liquid-midnight",
+  "source": {
+    "repo": "https://github.com/broomva/liquid-midnight",
+    "commit": "ed3a0f1"
+  },
+  "files": [
+    {
+      "path": "css/materials.css",
+      "sha256": "a17cf00362081e1bd32bed2d9be0c11b7523c5134b6d25cbc0d357b91fc617d3"
+    },
+    {
+      "path": "fonts/Inter-400.woff2",
+      "sha256": "c940764593d0fe5d596be327ca7558855e018039fb78509aa21921fd3644c3e4"
+    },
+    {
+      "path": "fonts/Inter-OFL.txt",
+      "sha256": "5dd548d31a85f756e01d63e00d7faf1e324103ed3e9102fcbbabf2cc2db6dd39"
+    },
+    {
+      "path": "fonts/JetBrainsMono-400.woff2",
+      "sha256": "2c32b9b3ee358c119e210f6f5195f9bd34894d78a785ff2e95d60e718e400af4"
+    },
+    {
+      "path": "fonts/JetBrainsMono-OFL.txt",
+      "sha256": "b2fe5e8987594e9ffd1d2ca52a2f5d73eb8335243893c5d6254b5ad69269591d"
+    },
+    {
+      "path": "fonts/Raleway-300.woff2",
+      "sha256": "10f1a0ef3f3497901c1c3e9987d0cb97d092a6ce1ff45669a1aed503cf67e6ef"
+    },
+    {
+      "path": "fonts/Raleway-OFL.txt",
+      "sha256": "c62d0f4b78825cbf2d99ac7ea3dd163f645210efa032243731184c9f86a6eab6"
+    },
+    {
+      "path": "fonts/RobotoFlex-OFL.txt",
+      "sha256": "454ec26838f2b8f2e2588e759dd3742577e0d305d3359a7b81c86641fcab7d21"
+    },
+    {
+      "path": "fonts/RobotoFlex-Regular.ttf",
+      "sha256": "5e4826cb478e0f4e94896f48b29dd0e74eb750e1a267f6ec2b88b46fc84112ad"
+    },
+    {
+      "path": "kit/ascii.js",
+      "sha256": "a966980055b09d23deb98d9e18fd3ce4bc9381096da01303c5ab9b20520d8f2d"
+    },
+    {
+      "path": "kit/core.js",
+      "sha256": "38d133ccd8c7e52f2bfaf49dfbafde3c3eca73219f8a8bd0958d3b9405363e38"
+    },
+    {
+      "path": "kit/index.js",
+      "sha256": "2fb30d6245a94f2d7c84e537c87928e0739c375ec2cb8caee2ce441869b8144c"
+    },
+    {
+      "path": "kit/loop.js",
+      "sha256": "c7a4043fa82373c8e098b88825f827ab838f334cf41b4117ec929cac09908e0a"
+    },
+    {
+      "path": "kit/metal.js",
+      "sha256": "40982ed946f87a5d8c220cc5e12784396fab2fac14b9cbbc1e64263d725985f7"
+    },
+    {
+      "path": "kit/orb-shaders.js",
+      "sha256": "8484b4db6d656cf72afb8ead1959d81782212fe3a1aabadeb858164fe4e22465"
+    },
+    {
+      "path": "kit/orb.js",
+      "sha256": "894f66ac3e06bf322c8268cd48f14aaf67264b59eebb799e332c2605abd6cef8"
+    },
+    {
+      "path": "shaders/ascii-atlas.png",
+      "sha256": "1f34f4447e30e8610fe23ed53269169e3ea63d85d1c536cc6f8986e578a33223"
+    },
+    {
+      "path": "shaders/ascii.glsl",
+      "sha256": "d801ed67b79a9cea48c8f902dfab36ecbeae2e2954d10a274a0408c815b1ed83"
+    },
+    {
+      "path": "shaders/orb.glsl",
+      "sha256": "fca27bc2440563957b4b01051b2f8def724a0e711f9590364b696bfb1eb91ad7"
+    },
+    {
+      "path": "specimen/index.html",
+      "sha256": "ccc377055fa1b71139c1a434d34c5432f3868417dc848cf8f49a0fffdd7b7d1c"
+    },
+    {
+      "path": "templates/scene.html",
+      "sha256": "6fde95b366a84205ce120d00a92d23cf89de978ca7c2d158efc193b81f58ab95"
+    },
+    {
+      "path": "tokens/tokens.css",
+      "sha256": "8a17246d148d831a247d41db8062f45e5cd5a67fd31fdfd607498644b1b0fafc"
+    },
+    {
+      "path": "tokens/tokens.json",
+      "sha256": "761f6bb6ffda377374fff862466c986725ad1a0cbd5ff4143d0725a5c74b7f99"
+    },
+    {
+      "path": "../DESIGN.md",
+      "sha256": "00080c3c84353b9c328afc8672dfdd1465a2a9079c80943f6148b84c25ff6d79"
+    }
+  ]
+}
