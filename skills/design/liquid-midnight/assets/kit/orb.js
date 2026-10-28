@@ -205,6 +205,19 @@ export const ORB = (() => {
   /* one batch layer + renderer per source canvas, so several canvases can batch in the same frame */
   const layers = new Map();
   let target = null;
+  /* release a layer as soon as its canvas leaves the DOM (SPA unmounts), not only on the next attach() */
+  let watcher = null;
+  const watch = (orb) => {
+    if (watcher || typeof MutationObserver === "undefined") return;
+    watcher = new MutationObserver(() => {
+      for (const [k] of layers) if (!k.isConnected) orb.detach(k);
+      if (!layers.size) {
+        watcher.disconnect();
+        watcher = null;
+      }
+    });
+    watcher.observe(document.documentElement, { childList: true, subtree: true });
+  };
   const queue = [];
   return {
     rgb,
@@ -230,17 +243,23 @@ export const ORB = (() => {
         layer.setAttribute("aria-hidden", "true");
         e = { layer, LR: renderer(layer) };
         layers.set(cv, e);
+        watch(this);
       }
       const { layer } = e;
       if (layer.previousElementSibling !== cv) cv.after(layer);
       const cs = getComputedStyle(cv);
       const px = (k) => Number.parseFloat(cs[k]) || 0;
       const st = layer.style;
-      st.position = "absolute";
+      // a fixed canvas gets a fixed layer at its viewport box; everything else rides the canvas's offset box.
+      // Not supported: CSS transforms on the canvas or its ancestors between it and the offset parent (the layer
+      // would not follow them). Put transforms on a wrapper that contains both, or use the sprite path (no attach).
+      const fixed = cs.position === "fixed";
+      st.position = fixed ? "fixed" : "absolute";
       st.pointerEvents = "none";
       st.margin = "0";
-      st.left = `${cv.offsetLeft + cv.clientLeft + px("paddingLeft")}px`;
-      st.top = `${cv.offsetTop + cv.clientTop + px("paddingTop")}px`;
+      const box = fixed ? cv.getBoundingClientRect() : { left: cv.offsetLeft, top: cv.offsetTop };
+      st.left = `${box.left + cv.clientLeft + px("paddingLeft")}px`;
+      st.top = `${box.top + cv.clientTop + px("paddingTop")}px`;
       st.width = `${cv.clientWidth - px("paddingLeft") - px("paddingRight")}px`;
       st.height = `${cv.clientHeight - px("paddingTop") - px("paddingBottom")}px`;
       st.opacity = cs.opacity;

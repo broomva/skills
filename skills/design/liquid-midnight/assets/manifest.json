@@ -2,7 +2,7 @@
   "name": "liquid-midnight",
   "source": {
     "repo": "https://github.com/broomva/liquid-midnight",
-    "commit": "982b127"
+    "commit": "d066feb"
   },
   "files": [
     {
@@ -55,7 +55,7 @@
     },
     {
       "path": "kit/loop.js",
-      "sha256": "22a85f0b12224607076f86b444e0896eab95fd5694a756b1d51209f15596922a"
+      "sha256": "d2f16f0c64250b74dabedd8a138d76e1b51a730618c8b137004df539a7f811f0"
     },
     {
       "path": "kit/metal.js",
@@ -67,7 +67,7 @@
     },
     {
       "path": "kit/orb.js",
-      "sha256": "90d79bf2bdb26b53d01197f736d5dac92028b21779178b24f8732a819f7b9189"
+      "sha256": "649b9486ae2241dfb84b648ccec81b2c2ea6cfb17607c7d94d02b0043ab993ef"
     },
     {
       "path": "shaders/ascii-atlas.png",
@@ -83,11 +83,11 @@
     },
     {
       "path": "specimen/index.html",
-      "sha256": "ddbe6e596f15ca64f4277eb0f68ad22baddcebe0af6a9918d6e430a6670fe75f"
+      "sha256": "013d9ca237f428ef64070bef81ccd13456caf0d7b63c65ea974360a5d31ac0df"
     },
     {
       "path": "templates/scene.html",
-      "sha256": "e76d2bed183c4518d42dfe52bd51b32b22a0765abab70e7ea519b2e38b869b4f"
+      "sha256": "796cc79d9892bbafb833e4d81b998bbf4b68d1e9185d7d0a7cc2f9ec5b02551c"
     },
     {
       "path": "tokens/tokens.css",
@@ -99,7 +99,7 @@
     },
     {
       "path": "../DESIGN.md",
-      "sha256": "c0973fd6e1ee036f10db21fa161644384d170d6cba4c931d051e5eb0daf72962"
+      "sha256": "c131d0c12988a03914f69fe3d6b50aa5947eb5684064460adeccd2f75067125b"
     }
   ]
 }

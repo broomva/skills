@@ -2,7 +2,7 @@
 // Minimal static server for Liquid Midnight pages (ES modules need http). Loopback only; refuses dotfiles, `..` and
 // malformed escapes. Works on Node >= 18 and Bun.
 //   node serve.mjs <root-dir> [port]      → http://127.0.0.1:<port>/
-import { readFile, stat } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { extname, join, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -36,12 +36,18 @@ export function resolveSafe(root, urlPath) {
 }
 
 export function startServer(root, port = 0) {
+  const realRoot = realpath(root);
   const server = createServer(async (req, res) => {
     const file = resolveSafe(root, req.url || "/");
     try {
+      if (req.method !== "GET" && req.method !== "HEAD") throw new Error("method");
+      const host = (req.headers.host || "").replace(/:\d+$/, "");
+      if (host !== "127.0.0.1" && host !== "localhost") throw new Error("host"); // DNS rebinding
       if (!file) throw new Error("refused");
       const st = await stat(file);
-      const target = st.isDirectory() ? join(file, "index.html") : file;
+      const target = await realpath(st.isDirectory() ? join(file, "index.html") : file);
+      const r = await realRoot;
+      if (target !== r && !target.startsWith(r + sep)) throw new Error("symlink escape");
       const body = await readFile(target);
       res.writeHead(200, { "content-type": TYPES[extname(target)] ?? "application/octet-stream" });
       res.end(body);

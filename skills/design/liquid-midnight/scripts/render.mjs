@@ -56,14 +56,22 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         const page = await browser.newPage({ viewport: { width: w, height: h } });
         page.on("pageerror", (e) => errors.push(`${format}/${mode}: ${e.message}`));
         for (const t of o.t) {
-          await page.goto(`http://127.0.0.1:${server.port}/${o.page.replace(/^\//, "")}?t=${t}&format=${format}&mode=${mode}`);
-          await page.waitForFunction(() => window.__ready === true, null, { timeout: 30000 });
+          const res = await page.goto(`http://127.0.0.1:${server.port}/${o.page.replace(/^\//, "")}?t=${t}&format=${format}&mode=${mode}`);
+          if (!res || res.status() !== 200) throw new Error(`${o.page}: HTTP ${res?.status() ?? "no response"} (is the path relative to <root-dir>?)`);
+          try {
+            await page.waitForFunction(() => window.__ready === true, null, { timeout: 30000 });
+          } catch {
+            throw new Error(`${o.page} never set window.__ready (format ${format}, mode ${mode}, t ${t})${errors.length ? `; page errors:\n  ${errors.join("\n  ")}` : "; it must call renderAt and set window.__ready = true in capture mode"}`);
+          }
           const file = join(o.out, `${o.page.replace(/[^a-z0-9]+/gi, "-").replace(/-html$/, "")}-${format}-${mode}-t${t}.png`);
           await page.screenshot({ path: file });
           console.log(`rendered ${file}`);
         }
         await page.close();
       }
+  } catch (e) {
+    console.error(e.message);
+    process.exitCode = 1;
   } finally {
     await browser.close();
     server.stop(true);

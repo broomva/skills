@@ -5,6 +5,8 @@
 //   node materialize.mjs list
 // Core (always): tokens, css, kit, fonts. Optional: specimen, shaders (Pencil fills), templates (starter scene).
 // Writes <target>/<dir>/LIQUID_MIDNIGHT.json (source commit + sha256 per file) so `verify` can detect edits or drift.
+// templates/ are STARTERS: copied once and meant to be edited in place. They are not hash-tracked, `verify` ignores
+// them, and `install` keeps an existing starter unless --force.
 // Pure Node (>= 18), no dependencies.
 import { createHash } from "node:crypto";
 import { copyFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -16,6 +18,8 @@ const SKILL = join(dirname(fileURLToPath(import.meta.url)), "..");
 const ASSETS = join(SKILL, "assets");
 export const CORE = ["tokens/", "css/", "kit/", "fonts/"];
 export const OPTIONAL = { specimen: "specimen/", shaders: "shaders/", templates: "templates/" };
+export const STARTERS = ["templates/"];
+const isStarter = (f) => STARTERS.some((p) => f.startsWith(p));
 const RECEIPT = "LIQUID_MIDNIGHT.json";
 
 const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex");
@@ -35,23 +39,31 @@ export function install(target, { dir = "liquid-midnight", withList = [], dryRun
   const dest = resolve(target, dir);
   const prev = existsSync(join(dest, RECEIPT)) ? readManifest(join(dest, RECEIPT)) : null;
   const edited = [];
+  const kept = [];
   for (const f of files) {
     const p = join(dest, f);
     if (!existsSync(p)) continue;
+    if (isStarter(f)) {
+      if (!force) kept.push(f);
+      continue;
+    }
     const known = prev?.files?.[f];
     const now = sha256(p);
     if (now !== m.files[f] && now !== known) edited.push(f);
   }
-  if (edited.length && !force) return { ok: false, dest, edited, copied: [] };
+  if (edited.length && !force) return { ok: false, dest, edited, kept, copied: [] };
+  const copied = files.filter((f) => !kept.includes(f));
   if (!dryRun) {
-    for (const f of files) {
+    for (const f of copied) {
       mkdirSync(dirname(join(dest, f)), { recursive: true });
       copyFileSync(join(ASSETS, f), join(dest, f));
     }
-    const receipt = { name: "liquid-midnight", source: m.source, with: withList, files: Object.fromEntries(files.map((f) => [f, m.files[f]])) };
+    const tracked = files.filter((f) => !isStarter(f));
+    const starters = [...new Set([...(prev?.starters ?? []), ...files.filter(isStarter)])];
+    const receipt = { name: "liquid-midnight", source: m.source, with: withList, starters, files: Object.fromEntries(tracked.map((f) => [f, m.files[f]])) };
     writeManifest(join(dest, RECEIPT), receipt);
   }
-  return { ok: true, dest, edited, copied: files, dryRun };
+  return { ok: true, dest, edited, kept, copied, dryRun };
 }
 
 /** Compare an install against its receipt: missing or modified files are reported. */
@@ -76,8 +88,15 @@ function parse(argv) {
   const o = { cmd, target, dir: "liquid-midnight", withList: [], dryRun: false, force: false };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
-    if (a === "--dir") o.dir = rest[++i];
-    else if (a === "--with") o.withList = rest[++i].split(",").filter(Boolean);
+    if (a === "--with") {
+      const v = rest[++i];
+      if (!v || v.startsWith("--")) throw new Error("--with needs a value: specimen,shaders,templates");
+      o.withList = v.split(",").filter(Boolean);
+    } else if (a === "--dir") {
+      const v = rest[++i];
+      if (!v || v.startsWith("--")) throw new Error("--dir needs a value");
+      o.dir = v;
+    }
     else if (a === "--dry-run") o.dryRun = true;
     else if (a === "--force") o.force = true;
     else throw new Error(`unknown argument ${a}`);
@@ -91,7 +110,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     if (o.cmd === "list") {
       const m = manifest();
       console.log(`liquid-midnight@${m.source.commit}\ncore: ${CORE.join(" ")}\noptional (--with): ${Object.keys(OPTIONAL).join(", ")}`);
-      for (const f of Object.keys(m.files)) console.log(`  ${f}`);
+      for (const f of Object.keys(m.files)) if (!f.startsWith("../")) console.log(`  ${f}${isStarter(f) ? "  (starter: copied once, edit freely)" : ""}`);
     } else if (o.cmd === "install" && o.target) {
       const r = install(o.target, o);
       if (!r.ok) {
@@ -99,6 +118,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         process.exit(1);
       }
       console.log(`${r.dryRun ? "would copy" : "copied"} ${r.copied.length} files to ${r.dest}`);
+      if (r.kept.length) console.log(`kept your edited starter(s): ${r.kept.join(", ")} (pass --force to replace)`);
     } else if (o.cmd === "verify" && o.target) {
       const r = verify(o.target, o);
       if (r.error) {

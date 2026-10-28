@@ -50,7 +50,14 @@ This writes `./liquid-midnight/` with:
 - `fonts/`;
 - `LIQUID_MIDNIGHT.json`, a receipt with the source commit and per-file hashes.
 
-It refuses to overwrite files you edited locally unless you pass `--force`. Use `--dir` to install somewhere other than `liquid-midnight/`, and `--dry-run` to preview.
+It refuses to overwrite core files you edited locally unless you pass `--force`; `verify` reports any it finds.
+
+`templates/` are **starters**:
+- copied once, and meant to be edited in place;
+- not hash-tracked, and ignored by `verify`;
+- never replaced on a later `install` unless you pass `--force`.
+
+Use `--dir` to install somewhere other than `liquid-midnight/`, and `--dry-run` to preview.
 
 ## 3. Build with the grammar, not around it
 
@@ -62,7 +69,7 @@ Load `tokens/tokens.css` and then `css/materials.css`. Use these classes and mod
 | Living background | `asciiBackground(canvas)` from `kit/ascii.js` under every glass surface (alpha .15 night / .12 day) |
 | Floating surface | `.lm-glass` (+ `.lm-card`): thin tint, 9 px blur, cyan caustic, **travelling chrome rim** |
 | Nav pill / segmented control | `.lm-capsule`, `.lm-seg` with `.lm-thumb` (drive x/width with `Sp`, response .4), `.lm-chip` |
-| Focal round button | `.lm-orb-button.lm-ring` with metal-stroked `.lm-icon` (needs the `#lm-metal` SVG gradient, see `templates/scene.html` or `specimen/`) |
+| Focal round button | `.lm-orb-button.lm-ring` with metal-stroked `.lm-icon`. Icons need the `#lm-metal` / `#lm-metal-day` SVG gradient defs: copy the `<svg><defs>` block at the top of `templates/scene.html` |
 | Headline | `.lm-kicker`, then `.lm-title` / `.lm-hero` / `.lm-breaker`; payoff phrase in `<em>` (Raleway 400, blue, never italic) |
 | Numbers | `.lm-glass.lm-counter` (`.is-gain` green, `.is-loss` coral), zero-padded mono |
 | Reel captions | `.lm-caption` with `<mark>` on the spoken keyword (Roboto Flex 64, ≤ 22 chars/line) |
@@ -71,7 +78,7 @@ Load `tokens/tokens.css` and then `css/materials.css`. Use these classes and mod
 | ASCII pieces | `glyphTrail`, `dotRing`, `ringText`, `asciiField` + `atlas` |
 | Motion | `createLoop({init, step, paint})`. Integrate in `step` (fixed 1/60 s), keep `paint(t)` pure, expose `window.renderAt` |
 
-Start from `liquid-midnight/templates/scene.html`. It handles `?format=keynote|reel|feed`, `?mode=day`, `?guides=1` (safe zones) and `?t=` (deterministic frame). Edit its CONTENT block and `paint()`. For the format recipes, follow the checklists in DESIGN.md §12: keynote scene, reel, landing section, app card.
+Start from the starter `liquid-midnight/templates/scene.html`. Edit it in place, or copy it to a sibling folder such as `scenes/` and change its `../` asset paths to `../liquid-midnight/`. Capture mode pins motion on. It handles `?format=keynote|reel|feed`, `?mode=day`, `?guides=1` (safe zones) and `?t=` (deterministic frame). Edit its CONTENT block and `paint()`. For the format recipes, follow the checklists in DESIGN.md §12: keynote scene, reel, landing section, app card.
 
 **Never ship these** (each was rejected on sight, DESIGN.md §3):
 - a purple cast;
@@ -85,7 +92,7 @@ Start from `liquid-midnight/templates/scene.html`. It handles `?format=keynote|r
 ## 4. Check, then render and look
 
 ```bash
-node "$SKILL_DIR/scripts/check_style.mjs" src/ liquid-midnight/templates/      # LM001 purple, LM002 arcan-glass (errors); LM003-5 warnings
+node "$SKILL_DIR/scripts/check_style.mjs" src/ liquid-midnight/templates/      # LM001 purple (oklch/hex/hsl/rgb/named/Tailwind), LM002 arcan-glass (errors); LM003-5 warnings
 node "$SKILL_DIR/scripts/render.mjs" . liquid-midnight/templates/scene.html --t 0,2,6 --format keynote,reel --mode night,day --out renders
 ```
 

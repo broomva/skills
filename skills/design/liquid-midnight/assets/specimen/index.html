@@ -214,6 +214,7 @@ if (Q.get("mode")) root.dataset.lmMode = Q.get("mode");
 const CAPTURE = Q.has("t");
 if (CAPTURE) root.setAttribute("data-lm-capture", "");
 if (Q.get("motion") === "0") setMotion(false);
+else if (CAPTURE) setMotion(true); // captures are identical on every machine, whatever its OS motion setting
 installAlphaClamp();
 readColors();
 

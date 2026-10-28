@@ -34,6 +34,13 @@ html,body{height:100%;overflow:hidden}
 </style>
 </head>
 <body class="lm-ground">
+<!-- metal gradients for .lm-icon strokes (night #lm-metal, day #lm-metal-day; deck #mtl / #mtlDay) -->
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <defs>
+    <linearGradient id="lm-metal" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#f6f8fc"/><stop offset=".42" stop-color="#9ea7b8"/><stop offset=".58" stop-color="#e6ebf3"/><stop offset="1" stop-color="#5c6577"/></linearGradient>
+    <linearGradient id="lm-metal-day" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#58606f"/><stop offset=".45" stop-color="#232833"/><stop offset=".6" stop-color="#6d7585"/><stop offset="1" stop-color="#1b1f27"/></linearGradient>
+  </defs>
+</svg>
 <div id="stage">
   <div class="lm-ambient" aria-hidden="true"><i></i><i></i><i></i></div>
   <canvas id="bg" aria-hidden="true"></canvas>
@@ -58,13 +65,16 @@ html,body{height:100%;overflow:hidden}
 </div>
 
 <script type="module">
-import { C, checkTime, createLoop, asciiBackground, beat, fontsReady, hc, installAlphaClamp, metalRing, ORB, orb, readColors, ribbon, Sp, use, glyphTrail, dotRing, TAU } from "../kit/index.js";
+import { C, checkTime, createLoop, setMotion, asciiBackground, beat, fontsReady, hc, installAlphaClamp, metalRing, ORB, orb, readColors, ribbon, Sp, use, glyphTrail, dotRing, TAU } from "../kit/index.js";
 
 const Q = new URLSearchParams(location.search);
 const root = document.documentElement;
 if (Q.get("mode")) root.dataset.lmMode = Q.get("mode");
 if (Q.has("guides")) root.setAttribute("data-guides", "");
-if (Q.has("t")) root.setAttribute("data-lm-capture", "");
+if (Q.has("t")) {
+  root.setAttribute("data-lm-capture", "");
+  setMotion(Q.get("motion") !== "0"); // captures are identical on every machine unless the reduced-motion still is asked for
+}
 
 /* formats and safe zones (tokens.json format.*): content stays inside the safe rect */
 const FORMATS = {

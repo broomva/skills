@@ -6,6 +6,8 @@
 // Reduced motion (deck lines 2786-2800): the live loop seeks once to a settled still frame (`still`, 5 s by default) and
 // then holds t there. It keeps calling step(0, t) every frame, so springs (which snap when MOTION is off) still follow
 // interaction (a clicked segment, a toggled mode) while nothing animates. renderAt still seeks: a capture asks for a frame.
+// Captures are machine-independent only with motion ON: a page in capture mode (?t=) should setMotion(true) unless the
+// capture explicitly asks for the reduced-motion still (the specimen and the skill's template do this).
 import { MOTION, reseed } from "./core.js";
 
 export const STEP = 1 / 60;
