@@ -1,0 +1,218 @@
+<!doctype html>
+<html lang="en" data-ld-mode="dawn">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Liquid Dawn · hero directions</title>
+<link rel="stylesheet" href="../tokens/tokens.css" />
+<link rel="stylesheet" href="../css/materials.css" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { min-width: 1100px; }
+  .hero { position: relative; overflow: hidden; height: 900px; display: grid; place-items: center; }
+  .hero + .hero { border-top: 1px solid var(--ld-line2); }
+  .hero .center { position: relative; z-index: 2; display: grid; justify-items: center; gap: 22px; text-align: center; margin-top: -20px; }
+  .hero .ld-lede { max-width: 36em; }
+  .label { position: absolute; z-index: 3; top: 24px; left: 28px; display: grid; gap: 6px; }
+  .label b { font: 400 22px/1.1 var(--ld-font-display); letter-spacing: -0.02em; color: var(--ld-ink); }
+  .label span { font: 400 13px/1.4 var(--ld-font-text); color: var(--ld-ink2); max-width: 28em; }
+  .bg { position: absolute; inset: 0; }
+  canvas.ld-field.soft { filter: blur(7px) saturate(120%); }
+  /* A · lagoon water */
+  #a .bg { background: linear-gradient(180deg, oklch(0.95 0.035 200), oklch(0.88 0.065 205) 55%, oklch(0.8 0.085 215)); }
+  [data-ld-mode="dusk"] #a .bg { background: linear-gradient(180deg, oklch(0.26 0.04 215), oklch(0.22 0.045 220) 55%, oklch(0.18 0.04 228)); }
+  /* B · horizon at dawn */
+  #b .bg { background: linear-gradient(180deg, oklch(0.95 0.02 230) 0%, oklch(0.97 0.03 85) 72%, oklch(0.93 0.03 210) 76%, oklch(0.88 0.04 215) 100%); }
+  [data-ld-mode="dusk"] #b .bg { background: linear-gradient(180deg, oklch(0.2 0.03 245) 0%, oklch(0.3 0.05 60) 72%, oklch(0.22 0.03 225) 76%, oklch(0.17 0.025 228) 100%); }
+  /* E · caustic light */
+  #e .bg { background: radial-gradient(120% 90% at 50% 40%, oklch(0.93 0.05 200), oklch(0.82 0.08 210)); }
+  [data-ld-mode="dusk"] #e .bg { background: radial-gradient(120% 90% at 50% 40%, oklch(0.27 0.05 210), oklch(0.17 0.04 228)); }
+</style>
+</head>
+<body class="ld-ground">
+<template id="copy">
+  <div class="center">
+    <span class="ld-kicker">Liquid Dawn</span>
+    <h1 class="ld-hero">Calm is a <em>material</em>.</h1>
+    <p class="ld-lede">Paper grounds, dew glass and pearl metal over fields that breathe, drawn in type.</p>
+    <div class="ld-lens ld-composer">
+      <input placeholder="What should feel calm today?" aria-label="Message" />
+      <div class="row"><span>＋ &nbsp; ◎ voice</span><span>↵ send · ⇧↵ newline</span></div>
+    </div>
+  </div>
+</template>
+
+<section class="hero" id="a" data-shot="hero-a"><div class="bg"></div><canvas class="ld-field"></canvas><div class="label"><b>A · Lagoon</b><span>Aqua water, a one-glyph dot lattice lit by caustics, fish in tiles. Closest to the shark references.</span></div></section>
+<section class="hero" id="b" data-shot="hero-b"><div class="bg"></div><canvas class="ld-field"></canvas><div class="label"><b>B · Horizon</b><span>Dawn literally: cumulus in type above, a sun of dotted rings at the waterline, its reflection in the tide.</span></div></section>
+<section class="hero" id="c" data-shot="hero-c"><div class="ld-wash"></div><canvas class="ld-field"></canvas><div class="label"><b>C · Meadow</b><span>Paper sky; grass blades rise in the lower third and lean with each gust; a few leaves drift.</span></div></section>
+<section class="hero" id="d" data-shot="hero-d"><canvas class="ld-field"></canvas><div class="ld-grid"></div><div class="label"><b>D · Pond</b><span>Still paper water: pebble rings on a faint dot lattice, lily pads, one coral koi.</span></div></section>
+<section class="hero" id="e" data-shot="hero-e"><div class="bg"></div><canvas class="ld-field soft"></canvas><canvas class="ld-field sharp"></canvas><div class="label"><b>E · Caustic light</b><span>No glyphs in the room: soft pool-floor light. Type appears only where the glass is.</span></div></section>
+<section class="hero" id="f" data-shot="hero-f"><div class="ld-wash"></div><canvas class="ld-field"></canvas><div class="label"><b>F · Currents</b><span>The leanest: a few streamlines of glyphs with slow pulses travelling along them; fish ride two of them.</span></div></section>
+
+<script type="module">
+import {
+  C, readColors, setMotion, createLoop, fitCanvas, sheen, field, tiles, RAMP, fontsReady, resetAtlases,
+  tide, breeze, cloud, rippleField, clearing, bladeGlyph, createShoal, createIslands, smoothstep, prng,
+} from "../kit/index.js";
+
+const q = new URLSearchParams(location.search);
+const capture = q.has("t");
+if (q.get("mode") === "dusk") document.documentElement.dataset.ldMode = "dusk";
+if (capture) setMotion(true);
+
+const tpl = document.getElementById("copy");
+const heroes = [...document.querySelectorAll(".hero")].map((s) => {
+  s.append(tpl.content.cloneNode(true));
+  return { id: s.id, s, cv: s.querySelector("canvas.ld-field:not(.sharp)"), cv2: s.querySelector("canvas.sharp"), lensEl: s.querySelector(".ld-composer") };
+});
+const S = {};
+
+function build() {
+  readColors();
+  resetAtlases();
+  for (const H of heroes) {
+    Object.assign(H, fitCanvas(H.cv));
+    if (H.cv2) H.sharp = fitCanvas(H.cv2);
+    const hr = H.cv.getBoundingClientRect();
+    const r = H.lensEl.getBoundingClientRect();
+    H.lens = { x: r.left - hr.left, y: r.top - hr.top, w: r.width, h: r.height, r: 22, opts: { mag: 1.12, bevel: 0.3, bend: 0.9 } };
+  }
+  const { w, h } = heroes[0];
+  S.fishA = createShoal({ w, h, seed: 31, count: 7, kinds: ["fish", "minnow", "ray"], colors: C });
+  S.birds = createShoal({ w, h: h * 0.5, seed: 4, kinds: ["bird"], count: 4, coral: false, colors: C });
+  S.leaves = createShoal({ w, h: h * 0.7, seed: 9, kinds: ["leaf"], count: 4, coral: false, colors: C });
+  S.pads = createIslands({ w, h, seed: 3, n: 7, cell: 6, colors: C, drift: 1.5 });
+  S.koi = createShoal({ w, h, seed: 12, kinds: ["fish"], count: 3, colors: C });
+  S.pond = rippleField({ w, h, n: 6, period: 11, seed: 5, base: 0.05 });
+  const r = prng(77);
+  S.currents = Array.from({ length: 7 }, (_, i) => ({ y0: h * (0.12 + i * 0.125) + (r() - 0.5) * 40, A: 18 + r() * 30, k: 0.0025 + r() * 0.002, ph: r() * 6.28, w: 0.05 + r() * 0.06 }));
+  S.riders = createShoal({ w, h, seed: 44, kinds: ["minnow"], count: 2, coral: false, colors: C });
+}
+
+const ink = () => (C.dusk ? C.lagoon : C.tide);
+const shade = () => (C.dusk ? C.paper : C.shadow);
+const calm = (H, x, y, rx = 470, ry = 210) => clearing(x, y, H.w / 2, H.h / 2 - 60, rx, ry, 0.9);
+const fishOut = (H, cells) => cells.filter((c) => calm(H, c.x, c.y, 520, 260) > 0.5);
+
+const paint = {
+  a(H, t) {
+    const { cx, w, h } = H;
+    field(cx, { w, h, cell: 9, fs: 11, ramp: RAMP.dots, color: C.dusk ? C.lagoon : "oklch(0.99 0.01 200)", alpha: 1, weight: 500,
+      fn: (x, y) => Math.min(0.7, 0.1 + tide(x, y, t, { scale: 460 }) * 1.4), mask: (x, y) => 0.3 + 0.7 * calm(H, x, y),
+      lenses: [H.lens], fringe: [C["metal-fringe-a"], C["metal-fringe-b"]] });
+    tiles(cx, fishOut(H, S.fishA.at(t)), { cell: 12, shadow: C.dusk ? "oklch(0.1 0.03 228)" : "oklch(0.45 0.08 215)", shadowAlpha: 0.22 });
+  },
+  b(H, t) {
+    const { cx, w, h } = H;
+    const hz = h * 0.76;
+    const sx = w * 0.76;
+    field(cx, { w, h: hz - 20, cell: 12, fs: 12, ramp: RAMP.cloud, color: C.dusk ? C.sky : C.stone, alpha: 0.7,
+      fn: (x, y) => cloud(x, y, t, { scale: 1.1 }) * smoothstep(hz, hz * 0.45, y), mask: (x, y) => calm(H, x, y, 420, 150) });
+    // the sun: concentric dotted rings, half above the waterline, breathing slowly
+    field(cx, { x: sx - 180, y: hz - 180, w: 360, h: 180, cell: 7, fs: 9, weight: 500, ramp: RAMP.dots, color: C.dusk ? C.sand : "oklch(0.72 0.11 70)", alpha: 0.85,
+      fn: (x, y) => {
+        const d = Math.hypot(x - sx, y - hz);
+        if (d > 150) return 0;
+        const ring = 0.5 + 0.5 * Math.cos(d * 0.16 - t * 0.18);
+        return 0.12 + 0.55 * ring ** 3;
+      } });
+    // the water, stretched flat, with the sun's reflection as a swaying column
+    field(cx, { y: hz + 8, w, h: h - hz - 8, cell: 12, fs: 12, ramp: RAMP.water, color: ink(), alpha: 0.75,
+      fn: (x, y) => {
+        const v = tide(x, (y - hz) * 3.2 + hz, t, { scale: 420 }) * 0.9;
+        const col = Math.exp(-(((x - sx + Math.sin(y * 0.05 - t * 0.2) * 14) / (90 + (y - hz) * 0.5)) ** 2));
+        return Math.min(0.7, v + col * 0.5 * smoothstep(h, hz, y));
+      }, lenses: [H.lens], fringe: [C["metal-fringe-a"], C["metal-fringe-b"]] });
+    cx.fillStyle = C.line2;
+    cx.fillRect(0, hz, w, 1);
+    tiles(cx, S.birds.at(t).filter((c) => calm(H, c.x, c.y, 430, 170) > 0.5), { cell: 9, fs: 7, shadow: shade(), shadowAlpha: 0.08 });
+  },
+  c(H, t) {
+    const { cx, w, h } = H;
+    field(cx, { w, h, cell: 11, fs: 12, ramp: RAMP.blades, color: C.moss, alpha: 0.8,
+      fn: (x, y) => {
+        const b = breeze(x, y, t);
+        const top = h * (0.7 + 0.12 * (Math.sin(x * 0.011) * 0.5 + Math.sin(x * 0.0037 + 2) * 0.5));
+        const rise = smoothstep(top, top + 110, y);
+        return bladeGlyph(Math.min(0.7, (b.v * 0.7 + 0.15) * rise), b.lean);
+      }, lenses: [H.lens] });
+    field(cx, { w, h: h * 0.4, cell: 12, fs: 12, ramp: RAMP.cloud, color: C.stone, alpha: 0.35, fn: (x, y) => cloud(x, y, t, { scale: 1.4 }) * 0.7, mask: (x, y) => calm(H, x, y) });
+    tiles(cx, S.leaves.at(t).filter((c) => calm(H, c.x, c.y, 470, 230) > 0.5), { cell: 10, fs: 8, shadow: shade(), shadowAlpha: 0.12 });
+  },
+  d(H, t) {
+    const { cx, w, h } = H;
+    field(cx, { w, h, cell: 9, fs: 10, ramp: RAMP.dots, color: ink(), alpha: 0.7, fn: (x, y) => S.pond(x, y, t), mask: (x, y) => 0.35 + 0.65 * calm(H, x, y), lenses: [H.lens], fringe: [C["metal-fringe-a"], C["metal-fringe-b"]] });
+    tiles(cx, S.pads.at(t).filter((c) => calm(H, c.x, c.y, 500, 240) > 0.5 && !(c.x < 420 && c.y < 120)).map((c) => ({ ...c, fill: c.fill === C.sand ? C.moss : c.fill, ch: "", a: 0.75 })), { cell: 6, radius: 3, gap: 0.5, shadow: shade(), shadowAlpha: 0.1, dx: 2, dy: 2 });
+    tiles(cx, fishOut(H, S.koi.at(t)), { cell: 10, fs: 8, shadow: shade(), shadowAlpha: 0.14 });
+  },
+  e(H, t) {
+    const { cx, w, h } = H;
+    // soft pool-floor light: big cells of white, blurred by CSS into caustic light
+    cx.fillStyle = C.dusk ? "oklch(0.85 0.08 200)" : "oklch(1 0 0)";
+    for (let y = 0; y < h; y += 10)
+      for (let x = 0; x < w; x += 10) {
+        const v = tide(x, y, t, { scale: 380 });
+        if (v < 0.04) continue;
+        cx.globalAlpha = Math.min(1, v * (C.dusk ? 0.55 : 1.1));
+        cx.fillRect(x, y, 10, 10);
+      }
+    cx.globalAlpha = 1;
+    // type only where the glass is
+    const S2 = H.sharp;
+    S2.cx.clearRect(0, 0, S2.w, S2.h);
+    const L = H.lens;
+    field(S2.cx, { x: L.x - 20, y: L.y - 20, w: L.w + 40, h: L.h + 40, cell: 9, fs: 10, ramp: RAMP.water, color: ink(), alpha: 0.75,
+      fn: (x, y) => (x > L.x && x < L.x + L.w && y > L.y && y < L.y + L.h ? 0.1 + tide(x, y, t, { scale: 380 }) : 0),
+      lenses: [L], lensAlpha: 1, fringe: [C["metal-fringe-a"], C["metal-fringe-b"]] });
+  },
+  f(H, t) {
+    const { cx, w, h } = H;
+    cx.font = `400 13px ${getComputedStyle(document.body).getPropertyValue("--ld-font-mono")}`;
+    cx.textAlign = "center";
+    cx.textBaseline = "middle";
+    S.currents.forEach((c, i) => {
+      for (let x = 6; x < w; x += 13) {
+        const y = c.y0 + Math.sin(x * c.k + t * c.w + c.ph) * c.A;
+        const pulse = smoothstep(0.55, 1, 0.5 + 0.5 * Math.sin(x * 0.004 - t * (0.12 + i * 0.01) + c.ph));
+        const a = (0.12 + 0.6 * pulse) * calm(H, x, y, 470, 200);
+        if (a < 0.04) continue;
+        const slope = Math.cos(x * c.k + t * c.w + c.ph) * c.A * c.k;
+        cx.globalAlpha = a;
+        cx.fillStyle = i % 3 === 1 ? C.moss : ink();
+        cx.fillText(pulse > 0.7 ? "≈" : Math.abs(slope) > 0.05 ? (slope > 0 ? "\\" : "/") : "~", x, y);
+      }
+    });
+    cx.globalAlpha = 1;
+    const ride = S.riders.at(t).map((cell, j) => {
+      const c = S.currents[j % 2 === 0 ? 1 : 5];
+      return { ...cell, y: Math.round((c.y0 + Math.sin(cell.x * c.k + t * c.w + c.ph) * c.A + (cell.y % 36) - 12) / 12) * 12 };
+    });
+    tiles(cx, fishOut(H, ride), { cell: 12, shadow: shade(), shadowAlpha: 0.14 });
+  },
+};
+
+const loop = createLoop({
+  paint(t) {
+    for (const H of heroes) {
+      H.cx.clearRect(0, 0, H.w, H.h);
+      paint[H.id](H, t);
+    }
+  },
+});
+
+await fontsReady();
+build();
+sheen();
+addEventListener("resize", () => {
+  build();
+  loop.invalidate();
+});
+window.renderAt = (t) => loop.renderAt(t);
+if (capture) {
+  loop.renderAt(Number(q.get("t")));
+  window.__ready = true;
+} else loop.start();
+</script>
+</body>
+</html>

@@ -120,6 +120,20 @@ export class Sp {
   }
 }
 
+/** Follow the OS colour scheme: sets data-ld-mode to "dawn" or "dusk" on el now and on every change, then calls
+ *  onChange(mode) (re-read colours, rebuild atlases, invalidate the loop there). Returns an unsubscribe function.
+ *  This is the only "auto" mode: the CSS keys Dusk on the literal attribute, so the attribute is always resolved. */
+export function followOS(el = document.documentElement, onChange = () => {}) {
+  const mq = typeof matchMedia === "function" ? matchMedia("(prefers-color-scheme: dark)") : null;
+  const apply = () => {
+    el.dataset.ldMode = mq?.matches ? "dusk" : "dawn";
+    onChange(el.dataset.ldMode);
+  };
+  apply();
+  mq?.addEventListener?.("change", apply);
+  return () => mq?.removeEventListener?.("change", apply);
+}
+
 /** Resolve the --ld-* colour tokens for canvas use. Call again after a mode switch. */
 export const C = {};
 export function readColors(el = document.documentElement) {

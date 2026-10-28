@@ -31,6 +31,8 @@ export function parseArgs(argv) {
     if (v === undefined || v.startsWith("--")) throw new Error(`--${k} needs a value`);
     o[k] = k === "t" || k === "mode" ? v.split(",").filter(Boolean) : v;
   }
+  if (!o.t.length) throw new Error("--t: at least one time");
+  if (!o.mode.length) throw new Error("--mode: at least one of dawn, dusk");
   for (const t of o.t) if (!(Number(t) >= 0 && Number(t) <= 3600)) throw new Error(`--t: not a time in [0, 3600]: ${t}`);
   if (!/^(all|full|[a-z0-9-]+(,[a-z0-9-]+)*)$/.test(o.shots)) throw new Error(`--shots: all, full or a comma list of names, got ${o.shots}`);
   if (!(Number(o.width) >= 240 && Number(o.width) <= 4096)) throw new Error(`--width: 240..4096, got ${o.width}`);
@@ -38,8 +40,10 @@ export function parseArgs(argv) {
   return o;
 }
 
-export async function render(o) {
-  const pw = loadPlaywright();
+/** render(o, deps) — deps.pw overrides the Playwright module and deps.onServer(server) observes the preview server
+ *  (both for tests: a failing browser launch must still close the server). */
+export async function render(o, deps = {}) {
+  const pw = deps.pw ?? loadPlaywright();
   if (!pw) {
     console.error("render.mjs needs Playwright: `npm i -D playwright && npx playwright install chromium` (or set LD_PLAYWRIGHT_DIR)");
     process.exit(3);
@@ -47,6 +51,7 @@ export async function render(o) {
   const rootDir = resolve(o.root);
   const rel = relative(rootDir, resolve(rootDir, o.page)).split("\\").join("/");
   const { server, url } = await startServer(rootDir);
+  deps.onServer?.(server);
   let browser;
   const written = [];
   try {

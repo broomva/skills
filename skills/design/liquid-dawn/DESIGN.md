@@ -75,7 +75,8 @@ Everything moves slowly, on one clock, and every frame is a pure function of `t`
 
 OKLCH is canonical; `assets/tokens/tokens.css` (generated from `tokens.json` by `scripts/build_tokens.mjs`) emits an
 sRGB hex fallback first and the OKLCH value inside `@supports`. Modes: **dawn** (`:root`, default), **dusk**
-(`[data-ld-mode="dusk"]`), **auto** (`[data-ld-mode="auto"]` follows `prefers-color-scheme`).
+(`[data-ld-mode="dusk"]`). To follow the OS, the kit's `followOS()` resolves the attribute to dawn or dusk and
+calls back on every change; there is no CSS-only auto, because every Dusk material rule keys on the literal attribute.
 
 | Token | Dawn | Dusk | Role |
 |---|---|---|---|

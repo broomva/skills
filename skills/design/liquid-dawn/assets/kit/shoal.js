@@ -33,6 +33,7 @@ const GLYPHS = { fish: "~≈-", minnow: "-~", ray: "≈~", bird: "^v", leaf: "/'
  *  wrapping fully off-screen (the margin is the creature's own width plus a cell); facing follows direction.
  */
 export function createShoal({ w, h, seed = 21, kinds = ["fish", "minnow", "minnow", "ray"], count = 7, cell = 12, coral = true, colors }) {
+  if (!kinds.length) throw new Error("createShoal: kinds is empty");
   for (const k of kinds) if (!MASKS[k]) throw new Error(`createShoal: unknown kind "${k}" (one of ${Object.keys(MASKS).join(", ")})`);
   const r = prng(seed);
   const C = colors;

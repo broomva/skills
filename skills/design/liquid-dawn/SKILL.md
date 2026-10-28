@@ -7,7 +7,7 @@ description: |
   pearl liquid metal; refraction drawn by the field itself under glass; Manrope Light with one tide-blue payoff
   phrase; real proportional text laid out by pretext that ripples or reflows round moving shapes; and slow motion
   where every frame is a pure function of t.
-  Ships tokens (OKLCH + hex, dawn/dusk/auto), materials CSS, a framework-agnostic canvas kit (fields, ASCII + lenses,
+  Ships tokens (OKLCH + hex, dawn and dusk modes), materials CSS, a framework-agnostic canvas kit (fields, ASCII + lenses,
   shoals, pretext pages, render loop), a live specimen, and a render-and-look tool.
   Use for calm landing pages and heroes, composer and chat surfaces, showcase moments, living backgrounds, reels and
   posts that should feel quiet, natural and premium.
@@ -48,7 +48,7 @@ mkdir -p liquid-dawn && cp -R "$SKILL_DIR/assets/." liquid-dawn/
 ```
 
 Load `liquid-dawn/tokens/tokens.css`, then `liquid-dawn/css/materials.css`, and import the kit as ES modules from
-`liquid-dawn/kit/index.js`. Modes: set `data-ld-mode="dawn" | "dusk" | "auto"` on `<html>`.
+`liquid-dawn/kit/index.js`. Modes: set `data-ld-mode="dawn"` or `"dusk"` on `<html>`; to follow the OS, call `followOS(document.documentElement, rebuild)` from the kit (it resolves the attribute and calls you back on every change).
 
 ## 3. Build with the grammar
 

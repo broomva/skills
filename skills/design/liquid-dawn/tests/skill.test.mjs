@@ -230,6 +230,7 @@ test("shoals are deterministic, lattice-snapped, schooling, with exactly one cor
 
 test("an unknown creature kind is a clear error, not a crash in at()", () => {
   assert.throws(() => shoal.createShoal({ w: 800, h: 600, kinds: ["coral"], coral: false, colors }), /unknown kind "coral"/);
+  assert.throws(() => shoal.createShoal({ w: 800, h: 600, kinds: [], colors }), /kinds is empty/);
 });
 
 test("creatures and islands wrap fully off-screen: no tile pops in or out at the edge", () => {
@@ -367,6 +368,42 @@ test("render parseArgs validates its options", () => {
   assert.throws(() => parseArgs(["a", "b", "--t", "4000"]), /not a time/);
   assert.throws(() => parseArgs(["a", "b", "--shots", "hero; rm"]), /--shots/);
   assert.throws(() => parseArgs(["a", "b", "--width", "10"]), /--width/);
+  assert.throws(() => parseArgs(["a", "b", "--t", ","]), /at least one time/);
+  assert.throws(() => parseArgs(["a", "b", "--mode", ","]), /at least one of dawn, dusk/);
+});
+
+test("a failing browser launch still closes the preview server", async () => {
+  let server;
+  const pw = { chromium: { launch: () => Promise.reject(new Error("no browser")) } };
+  await assert.rejects(render(parseArgs([join(SKILL, "assets"), "specimen/index.html"]), { pw, onServer: (s) => (server = s) }), /no browser/);
+  assert.ok(server, "the server was started");
+  await new Promise((ok) => setImmediate(ok));
+  assert.equal(server.listening, false, "and closed again");
+});
+
+test("followOS resolves the mode attribute from the OS and follows changes", async () => {
+  const core = await import(join(KIT, "core.js"));
+  let listener;
+  const mq = { matches: true, addEventListener: (_, f) => (listener = f), removeEventListener: () => (listener = null) };
+  globalThis.matchMedia = () => mq;
+  try {
+    const el = { dataset: {} };
+    const seen = [];
+    const off = core.followOS(el, (m) => seen.push(m));
+    assert.equal(el.dataset.ldMode, "dusk");
+    mq.matches = false;
+    listener();
+    assert.equal(el.dataset.ldMode, "dawn");
+    assert.deepEqual(seen, ["dusk", "dawn"]);
+    off();
+    assert.equal(listener, null);
+  } finally {
+    delete globalThis.matchMedia;
+  }
+});
+
+test("tokens.css has no CSS-only auto mode (materials key Dusk on the literal attribute)", () => {
+  assert.doesNotMatch(readFileSync(join(SKILL, "assets/tokens/tokens.css"), "utf8"), /data-ld-mode="auto"/);
 });
 
 // ── render E2E ──

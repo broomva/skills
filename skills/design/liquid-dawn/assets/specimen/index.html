@@ -13,7 +13,8 @@
   section { position: relative; overflow: hidden; }
   .wrap { width: min(1240px, calc(100% - 96px)); margin: 0 auto; position: relative; }
   .hero { height: 900px; display: grid; place-items: center; }
-  .hero .nav { position: absolute; top: 24px; left: 50%; transform: translateX(-50%); z-index: 3; }
+  .nav { position: fixed; top: 20px; left: 50%; transform: translateX(-50%); z-index: 20; }
+  [id] { scroll-margin-top: 96px; }
   .hero .center { position: relative; z-index: 2; display: grid; justify-items: center; gap: 22px; text-align: center; margin-top: -20px; }
   .hero .ld-lede { max-width: 36em; }
   .hero .meta { position: absolute; z-index: 2; bottom: 28px; left: 48px; right: 48px; display: flex; justify-content: space-between; }
@@ -61,10 +62,10 @@
   <div class="ld-grid" aria-hidden="true"></div>
   <div class="ld-clearing" aria-hidden="true"></div>
   <nav class="ld-capsule nav" aria-label="Sections">
-    <button class="ld-chip is-on" aria-pressed="true">Field</button>
-    <button class="ld-chip">Glass</button>
-    <button class="ld-chip">Type</button>
-    <button class="ld-chip">Pages</button>
+    <button class="ld-chip" data-target="fields" aria-pressed="false">Field</button>
+    <button class="ld-chip" data-target="pages" aria-pressed="false">Pages</button>
+    <button class="ld-chip" data-target="words" aria-pressed="false">Flow</button>
+    <button class="ld-chip" data-target="materials" aria-pressed="false">Glass</button>
     <button class="ld-chip" id="mode" aria-label="Toggle dawn and dusk">Dusk</button>
   </nav>
   <div class="center">
@@ -89,7 +90,7 @@
 </section>
 
 <!-- 2 · FIELDS -->
-<section class="band" data-shot="fields">
+<section class="band" id="fields" data-shot="fields">
   <div class="wrap">
     <div class="head">
       <span class="ld-kicker">Fields</span>
@@ -106,7 +107,7 @@
 </section>
 
 <!-- 3 · PAGES: pretext layout warped by a pebble, and a well -->
-<section class="band" data-shot="pages" style="padding-top: 0">
+<section class="band" id="pages" data-shot="pages" style="padding-top: 0">
   <div class="wrap">
     <div class="head">
       <span class="ld-kicker">Pages</span>
@@ -121,7 +122,7 @@
 </section>
 
 <!-- 4 · FLOW: a paragraph re-flowed around a drifting lens each frame (pretext layoutNextLineRange per span) -->
-<section class="band" data-shot="flow" style="padding-top: 0">
+<section class="band" id="words" data-shot="flow" style="padding-top: 0">
   <div class="wrap">
     <div class="head">
       <span class="ld-kicker">Flow</span>
@@ -132,7 +133,7 @@
 </section>
 
 <!-- 5 · MATERIALS + TYPE -->
-<section class="band" data-shot="materials" style="padding-top: 0">
+<section class="band" id="materials" data-shot="materials" style="padding-top: 0">
   <div class="wrap">
     <div class="head">
       <span class="ld-kicker">Materials</span>
@@ -319,6 +320,27 @@ els("mode").addEventListener("click", () => {
   loop.invalidate();
 });
 addEventListener("resize", () => { build(); loop.invalidate(); });
+
+// nav: each chip scrolls to its section; the chip of the section nearest the top is pressed (none over the hero)
+const chips = [...document.querySelectorAll(".nav [data-target]")];
+const press = (id) => {
+  for (const c of chips) {
+    c.setAttribute("aria-pressed", String(c.dataset.target === id));
+    c.classList.toggle("is-on", c.dataset.target === id);
+  }
+};
+for (const c of chips)
+  c.addEventListener("click", () => {
+    els(c.dataset.target).scrollIntoView({ behavior: matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth", block: "start" });
+    press(c.dataset.target);
+  });
+const syncNav = () => {
+  let cur = null;
+  for (const c of chips) if (els(c.dataset.target).getBoundingClientRect().top < innerHeight * 0.4) cur = c.dataset.target;
+  press(cur);
+};
+addEventListener("scroll", syncNav, { passive: true });
+syncNav();
 window.renderAt = (t) => loop.renderAt(t);
 if (capture) {
   loop.renderAt(Number(q.get("t")));
