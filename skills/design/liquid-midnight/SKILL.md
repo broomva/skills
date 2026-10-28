@@ -92,7 +92,7 @@ Start from the starter `liquid-midnight/templates/scene.html`. Edit it in place,
 ## 4. Check, then render and look
 
 ```bash
-node "$SKILL_DIR/scripts/check_style.mjs" src/ liquid-midnight/templates/      # LM001 purple (oklch/hex/hsl/rgb/named/Tailwind), LM002 arcan-glass (errors); LM003-5 warnings
+node "$SKILL_DIR/scripts/check_style.mjs" src/ liquid-midnight/templates/      # LM001 purple (oklch/hex/hsl/rgb/named/Tailwind), LM002 the rejected glass skill (errors); LM003-5 warnings
 node "$SKILL_DIR/scripts/render.mjs" . liquid-midnight/templates/scene.html --t 0,2,6 --format keynote,reel --mode night,day --out renders
 ```
 

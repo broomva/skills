@@ -287,3 +287,15 @@ test("threads: sync refuses a source missing a mapped path, before deleting anyt
   rmSync(dirname(copy), { recursive: true });
   rmSync(d, { recursive: true });
 });
+
+test("coderabbit: CSS in template literals is linted; markdown fences are code; own-property option checks; empty lists", async () => {
+  assert.ok(codes("const css = `.orb { background: radial-gradient(red, blue) }`;").includes("LM004"));
+  const md = "Never use the arcan-glass look. Fixed in PR #808.\n\n```js\nimport 'arcan-glass/globals.css'\nconst c = '#7c3aed'\n```\n";
+  const f = lint(md, "guide.md").map((x) => `${x.code}:${x.line}`);
+  assert.deepEqual(f.sort(), ["LM001:5", "LM002:4"], "only the fenced code is linted, on its real lines");
+  assert.deepEqual(lint("Never use the arcan-glass look. See #808.", "SKILL.md"), []);
+  assert.throws(() => install(tmp(), { without: ["constructor"] }), /unknown --without/);
+  assert.throws(() => install(tmp(), { withList: ["constructor"] }), /unknown --with/);
+  const { parseArgs } = await import("../scripts/render.mjs");
+  for (const k of ["--format", "--mode", "--t"]) assert.throws(() => parseArgs(["r", "p.html", k, ","]), /needs at least one value/);
+});

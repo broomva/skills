@@ -35,7 +35,7 @@ const sha256 = (p) => createHash("sha256").update(readFileSync(p)).digest("hex")
 export const manifest = () => readManifest(join(ASSETS, "manifest.json"));
 
 export function selection(withList = []) {
-  const unknown = withList.filter((w) => !(w in OPTIONAL));
+  const unknown = withList.filter((w) => !Object.hasOwn(OPTIONAL, w));
   if (unknown.length) throw new Error(`unknown --with value(s): ${unknown.join(", ")}; choose from ${Object.keys(OPTIONAL).join(", ")}`);
   const prefixes = [...CORE, ...withList.map((w) => OPTIONAL[w])];
   return Object.keys(manifest().files).filter((f) => prefixes.some((p) => f.startsWith(p)));
@@ -43,14 +43,14 @@ export function selection(withList = []) {
 
 /** Copy the selection into target/dir; refuses to overwrite locally edited files unless force. Returns a report. */
 export function install(target, { dir = "liquid-midnight", withList, without = [], dryRun = false, force = false } = {}) {
-  const badWithout = without.filter((w) => !(w in OPTIONAL));
+  const badWithout = without.filter((w) => !Object.hasOwn(OPTIONAL, w));
   if (badWithout.length) throw new Error(`unknown --without value(s): ${badWithout.join(", ")}; choose from ${Object.keys(OPTIONAL).join(", ")}`);
   const m = manifest();
   const dest = resolve(target, dir);
   const prev = existsSync(join(dest, RECEIPT)) ? readManifest(join(dest, RECEIPT)) : null;
   // an update keeps the optional sets installed earlier: --with adds to them, it never silently drops them
   // (entries a newer skill no longer ships are dropped; --without removes a set from the install)
-  withList = [...new Set([...(prev?.with ?? []).filter((w) => w in OPTIONAL), ...(withList ?? [])])].filter((w) => !without.includes(w));
+  withList = [...new Set([...(prev?.with ?? []).filter((w) => Object.hasOwn(OPTIONAL, w)), ...(withList ?? [])])].filter((w) => !without.includes(w));
   const files = selection(withList);
   const edited = [];
   const kept = [];

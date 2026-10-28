@@ -55,7 +55,8 @@ export function rules(text) {
   for (let i = 0; i < text.length; i++) {
     const ch = text.charCodeAt(i);
     // skip quoted strings (with escapes) and /* comments */: braces inside them are not blocks
-    if (ch === 34 || ch === 39 || ch === 96 /* " ' ` */) {
+    // skip "…" and '…' (braces inside are text); template literals are NOT skipped: CSS-in-JS lives there
+    if (ch === 34 || ch === 39 /* " ' */) {
       for (i++; i < text.length && text.charCodeAt(i) !== ch; i++) if (text.charCodeAt(i) === 92 /* \ */) i++;
       continue;
     }
@@ -81,9 +82,10 @@ export function rules(text) {
 }
 
 export function lint(text, file = "<input>") {
+  const source = text; // `lines` (for lm-ignore and ✕) always reads the original text
   const out = [];
   const lineOf = (i) => text.slice(0, i).split("\n").length;
-  const lines = text.split("\n");
+  const lines = source.split("\n");
   // a line can opt out with `lm-ignore`; lines marked ✕ are prohibitions (do/don't lists) and never findings
   const add = (code, level, i, msg) => {
     const line = lineOf(i);
@@ -95,8 +97,20 @@ export function lint(text, file = "<input>") {
     const H = Number(m[3]);
     if (inPurple(H, C, MIN_CHROMA.oklch)) add("LM001", "error", m.index, `purple cast: ${m[0]}) (hue ${H}, chroma ${C}); Midnight grounds and accents stay at hue 225-262`);
   }
-  // prose (markdown) is full of `#808`-style issue and PR numbers: the hex rule applies to code and markup only
-  const prose = /\.md$/i.test(file);
+  // markdown: prose is full of `#808` issue numbers and may forbid arcan-glass, so only fenced code is linted there.
+  // Prose is blanked out (newlines kept, so line numbers stay true) and the fences are linted as code.
+  if (/\.md$/i.test(file)) {
+    const fences = [];
+    for (const m of text.matchAll(/^(```|~~~)[^\n]*\n([\s\S]*?)^\1[ \t]*$/gm)) fences.push([m.index + m[0].indexOf("\n") + 1, m.index + m[0].lastIndexOf("\n")]);
+    let masked = "";
+    let at = 0;
+    for (const [a, b] of fences) {
+      masked += text.slice(at, a).replace(/[^\n]/g, " ") + text.slice(a, b);
+      at = b;
+    }
+    text = masked + text.slice(at).replace(/[^\n]/g, " ");
+  }
+  const prose = false;
   for (const m of prose ? [] : text.matchAll(/#([0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{4}|[0-9a-f]{3})(?![0-9a-z_-])/gi)) {
     const prev = text.slice(Math.max(0, m.index - 6), m.index);
     if (/&$|url\(\s*["']?$|(?:href|xlink:href|for|aria-(?:controls|labelledby|describedby|owns|activedescendant|details|flowto))\s*=\s*["']?$/i.test(prev.length < 6 ? prev : text.slice(Math.max(0, m.index - 24), m.index))) continue; // entities, fragment links and attribute references
@@ -131,7 +145,8 @@ export function lint(text, file = "<input>") {
   // docs may forbid arcan-glass; code must not use it
   for (const m of prose ? [] : text.matchAll(/arcan[-_ ]?glass/gi)) add("LM002", "error", m.index, "arcan-glass look/skill referenced; it was rejected for this style");
   const hasBlur = /backdrop-filter\s*:\s*[^;]*blur/i.test(text);
-  const hasRim = /conic-gradient\(\s*from\s+var\(--ua/i.test(text) || /\blm-(glass|capsule|ring)\b/.test(text) || /materials\.css/.test(text);
+  // the rim may be defined anywhere in the file (a design doc describes it in prose next to a fenced recipe)
+  const hasRim = /conic-gradient\(\s*from\s+var\(--ua/i.test(source) || /\blm-(glass|capsule|ring)\b/.test(source) || /materials\.css/.test(source);
   if (hasBlur && !hasRim) add("LM003", "warning", text.search(/backdrop-filter/i), "glass without the travelling metal rim (.lm-glass / conic-gradient(from var(--ua))); a flat glass panel was rejected");
   const ruleList = rules(text);
   for (const r of ruleList) {

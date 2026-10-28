@@ -40,6 +40,7 @@ export function parseArgs(argv) {
     if (v === undefined || v.startsWith("--")) throw new Error(`--${k} needs a value`);
     o[k] = k === "out" ? v : list(v, o[k]);
   }
+  for (const k of ["t", "format", "mode"]) if (!o[k].length) throw new Error(`--${k} needs at least one value`);
   for (const f of o.format) if (!["keynote", "reel", "feed"].includes(f)) throw new Error(`--format must be keynote, reel or feed, got ${f}`);
   for (const m of o.mode) if (!["night", "day"].includes(m)) throw new Error(`--mode must be night or day, got ${m}`);
   for (const t of o.t) if (!Number.isFinite(Number(t)) || Number(t) < 0 || Number(t) > 3600) throw new Error(`--t values must be seconds in [0, 3600], got ${t}`);
