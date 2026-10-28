@@ -253,8 +253,8 @@ export const ORB = (() => {
         layer.setAttribute("aria-hidden", "true");
         e = { layer, LR: renderer(layer) };
         layers.set(cv, e);
-        watch(this, cv);
       }
+      watch(this, cv); // every attach: the canvas may have moved into a (new) shadow root since its layer was made
       const { layer } = e;
       if (layer.previousElementSibling !== cv) cv.after(layer);
       const cs = getComputedStyle(cv);

@@ -171,3 +171,19 @@ test("round 4: serve refuses a file as its root", async () => {
   srv.stop(); // never leave a live server behind (it would keep the test process running)
   assert.fail("startServer accepted a file as its root");
 });
+
+test("delta: ID selectors with pseudo-classes are selectors; data-* colours are colours", () => {
+  assert.deepEqual(lint("#a3f:hover { color:#54a5fc } #a3f::before { content:'' }"), []);
+  assert.ok(codes('<div data-color="#a3f"></div>').includes("LM001"));
+  assert.deepEqual(lint('<a href="#a3f">x</a>'), []);
+});
+
+test("delta: rule ranges come from one forward pass (large stylesheets stay fast, nested blocks handled)", async () => {
+  const { rules } = await import("../scripts/check_style.mjs");
+  const css = ".a{color:#54a5fc}\n".repeat(30000) + "@media (x){ .orb{background:radial-gradient(red,blue)} }";
+  const t0 = performance.now();
+  const r = rules(css);
+  assert.ok(performance.now() - t0 < 500, "30k rules parse well under half a second");
+  assert.equal(r.length, 30001);
+  assert.ok(codes(css.slice(-80)).includes("LM004"), "the rule inside @media is found");
+});

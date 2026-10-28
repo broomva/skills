@@ -35,6 +35,26 @@ export function hexToOklch(hex) {
 
 const inPurple = (H, C, min) => C >= min && H >= PURPLE[0] && H <= PURPLE[1];
 
+/** Rule ranges in ONE forward pass with a brace stack: { index, selector, body } for innermost blocks only. */
+export function rules(text) {
+  const out = [];
+  const stack = []; // { open, selStart, hasChild }
+  let boundary = -1; // last `{` or `}` position: a selector starts right after it
+  for (let i = 0; i < text.length; i++) {
+    const ch = text.charCodeAt(i);
+    if (ch === 123 /* { */) {
+      if (stack.length) stack[stack.length - 1].hasChild = true;
+      stack.push({ open: i, selStart: boundary + 1, hasChild: false });
+      boundary = i;
+    } else if (ch === 125 /* } */) {
+      const b = stack.pop();
+      if (b && !b.hasChild) out.push({ index: b.selStart, selector: text.slice(Math.max(b.selStart, b.open - 300), b.open), body: text.slice(b.open + 1, i) });
+      boundary = i;
+    }
+  }
+  return out;
+}
+
 export function lint(text, file = "<input>") {
   const out = [];
   /* a #token is a selector when it sits where a rule's selector list sits: after a rule boundary (start, `}` or a tag's
@@ -44,7 +64,7 @@ export function lint(text, file = "<input>") {
     const last = Math.max(...["{", "}", ";", ":", ">"].map((c) => before.lastIndexOf(c)));
     const ch = last < 0 ? "" : before[last];
     if (!(last < 0 || ch === "}" || ch === ">" || ch === "{")) return false;
-    return /^[^;:{}]*\{/.test(text.slice(end, end + 200));
+    return /^[^;{}]*\{/.test(text.slice(end, end + 200)); // `#id:hover {` is still a selector
   };
   const lineOf = (i) => text.slice(0, i).split("\n").length;
   const lines = text.split("\n");
@@ -61,7 +81,7 @@ export function lint(text, file = "<input>") {
   }
   for (const m of text.matchAll(/#([0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{4}|[0-9a-f]{3})(?![0-9a-z_-])/gi)) {
     const prev = text.slice(Math.max(0, m.index - 6), m.index);
-    if (/&$|url\($|(?:href|xlink:href|src|for|aria-\w+|data-[\w-]+)=["']?$/i.test(prev.length < 6 ? prev : text.slice(Math.max(0, m.index - 24), m.index))) continue; // entities, fragment links and attribute references
+    if (/&$|url\($|(?:href|xlink:href|for|aria-(?:controls|labelledby|describedby|owns|activedescendant|details|flowto))=["']?$/i.test(prev.length < 6 ? prev : text.slice(Math.max(0, m.index - 24), m.index))) continue; // entities, fragment links and attribute references
     if (inSelector(m.index, m.index + m[0].length)) continue; // an ID selector, not a colour
     const { C, H } = hexToOklch(m[0]);
     if (inPurple(H, C, MIN_CHROMA.hex)) add("LM001", "error", m.index, `purple cast: ${m[0]} (OKLCH hue ${H.toFixed(0)}, chroma ${C.toFixed(3)})`);
@@ -86,18 +106,8 @@ export function lint(text, file = "<input>") {
   const hasBlur = /backdrop-filter\s*:\s*[^;]*blur/i.test(text);
   const hasRim = /conic-gradient\(\s*from\s+var\(--ua/i.test(text) || /\blm-(glass|capsule|ring)\b/.test(text) || /materials\.css/.test(text);
   if (hasBlur && !hasRim) add("LM003", "warning", text.search(/backdrop-filter/i), "glass without the travelling metal rim (.lm-glass / conic-gradient(from var(--ua))); a flat glass panel was rejected");
-  /* CSS-ish rules found in one linear pass over the `{` positions (regexes like /([^{}]*)\{/ backtrack quadratically on
-     long prose with no braces) */
-  const rules = [];
-  for (let at = text.indexOf("{"); at !== -1; at = text.indexOf("{", at + 1)) {
-    const from = Math.max(text.lastIndexOf("}", at - 1), text.lastIndexOf("{", at - 1)) + 1;
-    const close = text.indexOf("}", at + 1);
-    const nextOpen = text.indexOf("{", at + 1);
-    if (close === -1) break;
-    if (nextOpen !== -1 && nextOpen < close) continue; // nested block (e.g. @media): the inner rules are visited next
-    rules.push({ index: from, selector: text.slice(Math.max(from, at - 300), at), body: text.slice(at + 1, close) });
-  }
-  for (const r of rules) {
+  const ruleList = rules(text);
+  for (const r of ruleList) {
     if (!/\borb\b/i.test(r.selector) || /lm-orb-button|lm-orb-layer/.test(r.selector)) continue;
     if (/radial-gradient/i.test(r.body)) add("LM004", "warning", r.index, "radial-gradient glow orb; use the WebGL glass plasma orb (kit/orb.js) instead");
   }
@@ -106,7 +116,7 @@ export function lint(text, file = "<input>") {
     add("LM004", "warning", m.index, "inline radial-gradient glow orb; use the WebGL glass plasma orb (kit/orb.js) instead");
   if (/createRadialGradient/.test(text) && /\borb/i.test(text) && !/from\s+["'][^"']*kit[^"']*["']|\bORB\.|orb2d\(/.test(text))
     add("LM004", "warning", text.search(/createRadialGradient/), "canvas radial-gradient orb without the kit; use orb() from kit/orb.js");
-  for (const r of rules)
+  for (const r of ruleList)
     if (/(?:^|[\s,>+~])(?:em|h[1-3])\b/i.test(r.selector) && /font-style\s*:\s*italic/i.test(r.body))
       add("LM005", "warning", r.index, "italic emphasis; emphasis is Raleway 400 in --lm-blue, never italic");
   return out;
