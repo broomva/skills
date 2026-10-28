@@ -485,6 +485,44 @@ test("tokens.css has no CSS-only auto mode (materials key Dusk on the literal at
 // ── render E2E ──
 const pw = loadPlaywright();
 const required = process.env.LD_REQUIRE_RENDER === "1";
+
+/** Compare two PNGs in a browser: differing pixel count, largest channel delta, and their bounding box. */
+async function pngDiff(fa, fb) {
+  const browser = await pw.chromium.launch();
+  try {
+    const p = await browser.newPage();
+    return await p.evaluate(
+      async ([A, B]) => {
+        const load = (src) => new Promise((ok) => { const i = new Image(); i.onload = () => ok(i); i.src = src; });
+        const [ia, ib] = await Promise.all([load(A), load(B)]);
+        const read = (img) => {
+          const c = document.createElement("canvas");
+          c.width = img.width;
+          c.height = img.height;
+          const x = c.getContext("2d");
+          x.drawImage(img, 0, 0);
+          return x.getImageData(0, 0, img.width, img.height).data;
+        };
+        const da = read(ia);
+        const db = read(ib);
+        let count = 0, max = 0, x0 = 1e9, y0 = 1e9, x1 = -1, y1 = -1;
+        for (let i = 0; i < da.length; i += 4) {
+          const m = Math.max(Math.abs(da[i] - db[i]), Math.abs(da[i + 1] - db[i + 1]), Math.abs(da[i + 2] - db[i + 2]));
+          if (!m) continue;
+          count++;
+          max = Math.max(max, m);
+          const X = (i / 4) % ia.width;
+          const Y = Math.floor(i / 4 / ia.width);
+          x0 = Math.min(x0, X); x1 = Math.max(x1, X); y0 = Math.min(y0, Y); y1 = Math.max(y1, Y);
+        }
+        return { count, max, x0, x1, y0, y1, size: [ia.width, ia.height, ib.width, ib.height] };
+      },
+      [`data:image/png;base64,${readFileSync(fa).toString("base64")}`, `data:image/png;base64,${readFileSync(fb).toString("base64")}`],
+    );
+  } finally {
+    await browser.close();
+  }
+}
 test("specimen renders in both modes, deterministically, and moves over time", { skip: !pw && !required && "Playwright not installed" }, async () => {
   assert.ok(pw, "LD_REQUIRE_RENDER=1 but Playwright is missing");
   const out = mkdtempSync(join(tmpdir(), "ld-render-"));
@@ -495,7 +533,11 @@ test("specimen renders in both modes, deterministically, and moves over time", {
   assert.equal(a.length, 4);
   const h = (f) => createHash("sha256").update(readFileSync(f)).digest("hex");
   const pick = (list, s) => list.find((f) => f.endsWith(s));
-  assert.equal(h(pick(a, "dawn-t6-hero.png")), h(pick(b, "dawn-t6-hero.png")), "same t, same pixels");
+  if (h(pick(a, "dawn-t6-hero.png")) !== h(pick(b, "dawn-t6-hero.png"))) {
+    // say WHERE the two frames differ, so a CI-only flake is diagnosable from the log
+    const d = await pngDiff(pick(a, "dawn-t6-hero.png"), pick(b, "dawn-t6-hero.png"));
+    assert.fail(`same t, same pixels: ${d.count} px differ (max Δ ${d.max}) in box x ${d.x0}-${d.x1}, y ${d.y0}-${d.y1}`);
+  }
   assert.notEqual(h(pick(a, "dawn-t6-hero.png")), h(pick(c, "dawn-t0-hero.png")), "the hero moves between t=0 and t=6");
   assert.notEqual(h(pick(a, "dawn-t6-hero.png")), h(pick(a, "dusk-t6-hero.png")), "dusk differs from dawn");
   const paper = await render({ root: join(SKILL, "assets"), page: "specimen/paper.html", width: "1440", shots: "hero,lens,footer", t: ["6"], mode: ["dawn"], out: join(out, "p") });
