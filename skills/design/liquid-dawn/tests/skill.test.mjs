@@ -534,10 +534,34 @@ test("specimen renders in both modes, deterministically, and moves over time", {
   assert.equal(a.length, 4);
   const h = (f) => createHash("sha256").update(readFileSync(f)).digest("hex");
   const pick = (list, s) => list.find((f) => f.endsWith(s));
+  // The render contract is about what the KIT draws: every canvas must be byte-identical for the same t. The
+  // composited screenshot also contains the browser's own glass (backdrop-filter over separately composited layers),
+  // which Linux CI composites non-deterministically by a few dozen pixels where the composer's glass meets its send
+  // button (seen in CI: 3445 px, max Δ 37, box 801-999 × 511-601). So the screenshot gets a small tolerance and the
+  // canvases get none.
+  const canvases = async (t) => {
+    const { chromium } = pw;
+    const { startServer } = await import("../scripts/serve.mjs");
+    const { server, url } = await startServer(join(SKILL, "assets"));
+    const browser = await chromium.launch();
+    try {
+      const p = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+      await p.goto(`${url}/specimen/index.html?t=${t}&mode=dawn`);
+      await p.waitForFunction(() => window.__ready === true);
+      const urls = await p.evaluate(() => [...document.querySelectorAll("canvas")].map((c) => c.toDataURL()));
+      return urls.map((u) => createHash("sha256").update(u).digest("hex"));
+    } finally {
+      await browser.close();
+      server.close();
+    }
+  };
+  const [c1, c2] = [await canvases(6), await canvases(6)];
+  assert.ok(c1.length >= 8, "the specimen's canvases were read");
+  assert.deepEqual(c1, c2, "same t, same canvas pixels");
   if (h(pick(a, "dawn-t6-hero.png")) !== h(pick(b, "dawn-t6-hero.png"))) {
-    // say WHERE the two frames differ, so a CI-only flake is diagnosable from the log
     const d = await pngDiff(pick(a, "dawn-t6-hero.png"), pick(b, "dawn-t6-hero.png"));
-    assert.fail(`same t, same pixels: ${d.count} px differ (max Δ ${d.max}) in box x ${d.x0}-${d.x1}, y ${d.y0}-${d.y1}`);
+    const area = d.size[0] * d.size[1];
+    assert.ok(d.count <= area * 0.005 && d.max <= 64, `same t, composited frames differ beyond compositor noise: ${d.count} px (max Δ ${d.max}) in box x ${d.x0}-${d.x1}, y ${d.y0}-${d.y1}`);
   }
   assert.notEqual(h(pick(a, "dawn-t6-hero.png")), h(pick(c, "dawn-t0-hero.png")), "the hero moves between t=0 and t=6");
   assert.notEqual(h(pick(a, "dawn-t6-hero.png")), h(pick(a, "dusk-t6-hero.png")), "dusk differs from dawn");
@@ -556,12 +580,12 @@ test("specimen renders in both modes, deterministically, and moves over time", {
       await p.waitForFunction(() => window.__ready === true);
       if (seek !== undefined) await p.evaluate((t) => window.renderAt(t), seek);
       await p.evaluate(() => document.fonts.ready.then(() => new Promise((ok) => requestAnimationFrame(() => requestAnimationFrame(ok)))));
+      // compare what the kit drew (each region's canvases), not the browser's glass compositing (see above)
       const out = {};
-      for (const sel of [".hero", "#screen", ".cards"]) {
-        const el = await p.$(sel);
-        await el.scrollIntoViewIfNeeded();
-        out[sel] = createHash("sha256").update(await el.screenshot()).digest("hex");
-      }
+      for (const sel of [".hero", "#screen", ".cards"])
+        out[sel] = createHash("sha256")
+          .update((await p.$$eval(`${sel} canvas`, (cs) => cs.map((c) => c.toDataURL()))).join("|"))
+          .digest("hex");
       out.lens = await p.evaluate(() => ({ supported: window.__lens.supported, tainted: window.__lens.tainted, mismatch: window.__lens.mismatch }));
       await p.close();
       return out;
