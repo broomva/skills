@@ -151,3 +151,23 @@ test("round 4: serve and render fail cleanly on a bad root", async () => {
   assert.match(r.stderr, /not a readable directory/);
   assert.doesNotMatch(r.stderr, /at .*\(/, "no stack trace");
 });
+
+test("round 4: a colour in a JS value followed by a later block is still a colour", () => {
+  assert.ok(codes('let a = 1;\nconst c = "#a3f"\nfunction f() {}').includes("LM001"));
+});
+
+test("round 4: serve refuses a file as its root", async () => {
+  const d = tmp();
+  writeFileSync(join(d, "f.txt"), "x");
+  let srv;
+  try {
+    srv = await startServer(join(d, "f.txt"), 0);
+  } catch (e) {
+    assert.match(e.message, /not a readable directory/);
+    return;
+  } finally {
+    rmSync(d, { recursive: true });
+  }
+  srv.stop(); // never leave a live server behind (it would keep the test process running)
+  assert.fail("startServer accepted a file as its root");
+});
