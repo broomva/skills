@@ -61,15 +61,16 @@ export async function startServer(root, port = 0) {
       res.end("not found");
     }
   });
-  return new Promise((ok) =>
-    server.listen(port, "127.0.0.1", () => ok({ port: server.address().port, stop: () => server.close(), server })),
-  );
+  return new Promise((ok, bad) => {
+    server.once("error", bad); // e.g. EADDRINUSE: reject instead of throwing out of the listener
+    server.listen(port, "127.0.0.1", () => ok({ port: server.address().port, stop: () => server.close(), server }));
+  });
 }
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = resolve(process.argv[2] || ".");
   try {
-    const s = await startServer(root, Number(process.argv[3]) || 4317);
+    const s = await startServer(root, process.argv[3] !== undefined ? Number(process.argv[3]) : 4317); // explicit 0 = ephemeral
     console.log(`serving ${root} at http://127.0.0.1:${s.port}/`);
   } catch (e) {
     console.error(e.message);

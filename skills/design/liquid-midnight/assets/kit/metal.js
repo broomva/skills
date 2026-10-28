@@ -148,6 +148,7 @@ export function metalRing(x, y, R, t, lw = 2, a = 1, ry = R, spd = 0.9) {
       ]) {
         ctx.globalAlpha = g * a * v * 0.55;
         ctx.strokeStyle = c;
+        if (R + d <= 0 || ry + (d * ry) / R <= 0) continue; // a ring thinner than its fringe offset: skip that fringe
         ctx.beginPath();
         ctx.ellipse(x, y, R + d, ry + (d * ry) / R, 0, a0, a1);
         ctx.stroke();

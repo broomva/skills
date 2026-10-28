@@ -236,3 +236,47 @@ test("round 7: render validates option values", async () => {
   assert.throws(() => parseArgs(["r", "p.html", "--t"]), /needs a value/);
   assert.deepEqual(parseArgs(["r", "p.html", "--format", "reel,feed", "--mode", "day"]).format, ["reel", "feed"]);
 });
+
+test("threads: trails gated, rgb %, quoted url(), lch/negative hue, selector line, ENOENT, listen errors, port 0", async () => {
+  assert.match(readFileSync(join(ASSETS, "templates/scene.html"), "utf8"), /x\.globalAlpha = a;[^\n]*\n\s*glyphTrail/);
+  assert.ok(codes(".x{color:rgb(49% 23% 93%)}").includes("LM001"));
+  assert.ok(codes(".x{color:rgb(20% 8% 36%)}").includes("LM001"), "percent channels are scaled before the hue check");
+  assert.deepEqual(lint('.x{fill:url("#a3f")} .y{mask:url( "#a3f0" )}'), []);
+  assert.ok(codes(".x{color:oklch(.5 .2 -60)}").includes("LM001"));
+  assert.ok(codes(".x{color:lch(50 60 300)}").includes("LM001"));
+  assert.deepEqual(lint(".x{color:oklch(0.71 0.15 252)} .y{color:lch(60 40 250)}"), []);
+  const f = lint("a{b:c}\n\n.orb {\n background: radial-gradient(red,blue) }").find((x) => x.code === "LM004");
+  assert.equal(f.line, 3, "LM004 reports the selector's own line");
+  assert.deepEqual(lint(".orb { background: radial-gradient(red,blue) } /* lm-ignore */"), []);
+  const r = spawnSync(process.execPath, [join(SKILL, "scripts/check_style.mjs"), "/nonexistent-lm.css"], { encoding: "utf8" });
+  assert.equal(r.status, 2);
+  assert.doesNotMatch(r.stderr, /at .*\(/);
+  const d = tmp();
+  writeFileSync(join(d, "index.html"), "ok");
+  const a = await startServer(d, 0);
+  try {
+    await assert.rejects(() => startServer(d, a.port), /EADDRINUSE/);
+  } finally {
+    a.stop();
+    rmSync(d, { recursive: true });
+  }
+});
+
+test("threads: long selector lists keep their .orb", () => {
+  const sel = Array.from({ length: 60 }, (_, i) => `.item-${i}`).join(", ");
+  assert.ok(codes(`.orb, ${sel} { background: radial-gradient(red, blue) }`).includes("LM004"));
+});
+
+test("threads: sync refuses a source missing a mapped path, before deleting anything", () => {
+  const d = tmp();
+  writeFileSync(join(d, "DESIGN.md"), "x");
+  mkdirSync(join(d, "kit"));
+  writeFileSync(join(d, "kit/index.js"), "x");
+  spawnSync("git", ["init", "-q", d]);
+  const before = readFileSync(join(ASSETS, "manifest.json"), "utf8");
+  const r = spawnSync(process.execPath, [join(SKILL, "scripts/sync_from_repo.mjs"), d], { encoding: "utf8" });
+  assert.equal(r.status, 1);
+  assert.match(r.stderr, /refusing: the source lacks/);
+  assert.equal(readFileSync(join(ASSETS, "manifest.json"), "utf8"), before);
+  rmSync(d, { recursive: true });
+});

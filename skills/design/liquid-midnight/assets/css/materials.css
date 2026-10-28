@@ -553,3 +553,7 @@
     animation: none;
   }
 }
+/* the kit's motion switch (setMotion) stops CSS motion too */
+[data-lm-motion="off"] .lm-ambient i {
+  animation: none;
+}

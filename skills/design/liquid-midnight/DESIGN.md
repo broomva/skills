@@ -17,7 +17,7 @@ Apple **Midnight** blue-black grounds (hue 245–252, never purple), with one bl
 
 Type is **Raleway Light** with tight tracking, and the key phrase is set in Raleway Regular blue. Motion is **springs and slow sweeps on one clock**. Every frame is a pure function of `t`, so a page can be rendered to video.
 
-![Cover board](https://raw.githubusercontent.com/broomva/liquid-midnight/ec1138e/docs/renders/pen/00-cover.png)
+![Cover board](https://raw.githubusercontent.com/broomva/liquid-midnight/39523b3/docs/renders/pen/00-cover.png)
 
 ---
 
@@ -75,7 +75,7 @@ OKLCH is canonical. Hex values are sRGB fallbacks, emitted first in `tokens/toke
 | `--lm-cyan` | `oklch(0.81 0.12 225)` | `#5cd1fb` | `oklch(0.6 0.13 225)` | `#008fba` | Caustics, secondary flows, glass bottom edge. |
 | `--lm-green` | `oklch(0.76 0.19 148)` | `#43d066` | `oklch(0.6 0.17 148)` | `#0e9a3f` | Retained / positive / write path. |
 | `--lm-coral` | `oklch(0.67 0.21 28)` | `#fc5045` | `oklch(0.58 0.21 28)` | `#db2d27` | Loss / failure counters. |
-| `--lm-gold` | `oklch(0.86 0.12 88)` | `#f2cd6f` | `oklch(0.66 0.13 80)` | `#bb881a` | Proven, built or ledgered paths only; merge commits. |
+| `--lm-gold` | `oklch(0.86 0.12 88)` | `#f2cd6f` | `oklch(0.62 0.13 80)` | `#af7c00` | Proven, built or ledgered paths only; merge commits. |
 | `--lm-warm` | `oklch(0.79 0.16 65)` | `#ffa234` | `oklch(0.68 0.17 60)` | `#e27900` | Warnings, human attention. |
 | `--lm-glass` | `oklch(0.24 0.03 248 / 0.5)` | `#14212d80` | `oklch(1 0 0 / 0.56)` | `#ffffff8f` | Base glass tint (HUD glass). |
 | `--lm-glass-heavy` | `oklch(0.24 0.03 248 / 0.86)` | `#14212ddb` | `oklch(1 0 0 / 0.82)` | `#ffffffd1` | Reduced-transparency glass. |
@@ -101,6 +101,8 @@ Liquid-metal palette:
 ---
 
 ## 5. Materials (exact CSS: `css/materials.css`)
+
+The material recipes use literal `oklch()` colours (gradients and shadows with alpha), so they need an OKLCH-capable browser: Safari 15.4+, Chrome/Edge 111+, Firefox 113+. The tokens carry hex fallbacks; the materials do not, by choice (duplicating every gradient in hex would double the file for browsers this showcase style does not target).
 
 All rims share one mechanism:
 - a `::after` ring with 1.2 px padding;
@@ -163,7 +165,7 @@ All drift `ease-in-out infinite alternate`. In capture mode, freeze them or driv
 
 ## 6. Orb, ASCII and field recipes (`kit/`)
 
-![Orb · ASCII board](https://raw.githubusercontent.com/broomva/liquid-midnight/ec1138e/docs/renders/pen/05-orb-ascii.png)
+![Orb · ASCII board](https://raw.githubusercontent.com/broomva/liquid-midnight/39523b3/docs/renders/pen/05-orb-ascii.png)
 
 ### 6.1 WebGL glass plasma orb (`kit/orb.js`, shaders in `kit/orb-shaders.js`)
 - **Look** (reference: vault.rickybharti.com/orbloom): a thick glass sphere around a plasma core.
@@ -175,6 +177,7 @@ All drift `ease-in-out infinite alternate`. In capture mode, freeze them or driv
   ORB.attach(canvas); ORB.begin(ctx); orb(x, y, r, C.blue, t); ORB.end();
   ```
   This batches every orb in one WebGL pass. Called outside a batch, `orb()` renders a 256² sprite. With no WebGL it calls `orb2d()`.
+- **Limits:** outside a batch, an orb renders through one shared 256² sprite, so a sprite orb larger than about 128 css px at 2× DPR is upscaled and softens. Batch large hero orbs. Batched orbs follow translation and uniform scale only: a rotated or non-uniformly scaled context is not supported (draw orbs before applying such transforms).
 - **Sizing:** the visible sphere radius is .62 r; the sprite spans ±1.7 sphere radii, so its side is 3.4 × the sphere radius (1.7 × its diameter). The batch layer is an absolutely positioned overlay at the canvas's content box, inserted right after it, so the canvas's offset parent must be positioned (e.g. a `position: relative` wrapper); a `position: fixed` canvas gets a fixed layer. Each source canvas gets its own layer, released when the canvas leaves the DOM, shadow roots included (or with `ORB.detach(cv)`). CSS transforms on the canvas are not followed: transform a wrapper that contains both, or skip `attach` and use the sprite path.
 - **Pencil:** `design/shaders/orb.glsl` is the same shader as a pen.dev shader fill. Use a **square** node whose side is 3.4 × the sphere radius you want; non-square nodes draw an ellipse.
 
@@ -232,7 +235,7 @@ Vendored in `fonts/`, all SIL OFL 1.1: Inter, Raleway, JetBrains Mono (variable 
 
 Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or 1080 × 1920). For the web, scale them with `clamp()`, keeping the ratios.
 
-![Typography board](https://raw.githubusercontent.com/broomva/liquid-midnight/ec1138e/docs/renders/pen/02-typography.png)
+![Typography board](https://raw.githubusercontent.com/broomva/liquid-midnight/39523b3/docs/renders/pen/02-typography.png)
 
 ---
 
@@ -255,7 +258,7 @@ Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or
 | Scroll stories | one clock scrubbed by scroll (`t = T · progress`), smoothed by a critically damped follower (τ ≈ 120 ms); no CSS view timelines |
 | Render contract | `createLoop({init, step, paint}).renderAt(t)` replays fixed 1/60 s steps from 0 with `reseed()`. A headless browser renders any frame (see `?t=` in the specimen). Capture pages pin motion on (`setMotion(true)`), so frames do not depend on the capturing machine's reduced-motion setting |
 
-![Motion board](https://raw.githubusercontent.com/broomva/liquid-midnight/ec1138e/docs/renders/pen/06-motion.png)
+![Motion board](https://raw.githubusercontent.com/broomva/liquid-midnight/39523b3/docs/renders/pen/06-motion.png)
 
 ---
 
@@ -268,7 +271,7 @@ Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or
 | Feed 4:5 | 1080 × 1350 | top 80, bottom 120, sides 64 | the same stage grammar, cropped |
 | Landing | fluid | max widths 1180 (hero) and 960; body ≤ 625 px | hero `min-height: 100vh`; nav capsule 62 px |
 
-![Formats board](https://raw.githubusercontent.com/broomva/liquid-midnight/ec1138e/docs/renders/pen/07-formats.png)
+![Formats board](https://raw.githubusercontent.com/broomva/liquid-midnight/39523b3/docs/renders/pen/07-formats.png)
 
 ---
 
@@ -292,9 +295,9 @@ Measured contrast (WCAG 2), text on ground and on surface:
 | blue | 7.6 | 6.9 | 4.5 | 4.8 |
 | green | 9.7 | 8.9 | **3.4** | 3.6 |
 | coral | 5.9 | 5.4 | 4.3 | 4.7 |
-| gold | 12.8 | 11.7 | **2.9** | 3.1 |
+| gold | 12.8 | 11.7 | 3.4 | 3.6 |
 
-- In day mode, use `t3`, green, coral and gold only for large text (≥ 24 px, 3:1) or with a label. For small metadata, put `t3` on `surface`.
+- In day mode, `green` and `gold` reach only 3:1 on the ground, so use them for large text (≥ 24 px) or as non-text marks; never for body or small labels. `t3` and `coral` sit just under 4.5:1 on the day ground: large text there, or small text on `surface` (≥ 4.6:1). A label next to a colour does not make low-contrast text readable; it only stops colour being the sole carrier of meaning.
 - Glass sits on a live field, so check contrast against the *darkest and brightest* frames. Keep text on glass at t1/t2. If the field gets bright, raise the tint, do not shrink the type.
 - **Reduced transparency:** glass becomes `--lm-glass-heavy` with no backdrop filter (restated last in the CSS, so no material beats it).
 - **More contrast:** opaque `--lm-surface`, a 1.5 px `t2` outline, and no rim.
@@ -345,7 +348,7 @@ The owner judges the **rendered result** against named references. Code review i
 - References: the Agent Workspaces keynote frames; the reel `reel-01-folder-v2`; vault.rickybharti.com/orbloom for the orb; the basit_designs liquid-glass nav pill for capsules and metal icons.
 - The specimen (`specimen/index.html`, rendered by `bun run render`) and the Pencil boards (`design/liquid-midnight.pen`) are the visual contract. Re-render both whenever tokens or materials change.
 
-![Specimen · hero](https://raw.githubusercontent.com/broomva/liquid-midnight/ec1138e/docs/renders/night-hero.png)
+![Specimen · hero](https://raw.githubusercontent.com/broomva/liquid-midnight/39523b3/docs/renders/night-hero.png)
 
 ---
 

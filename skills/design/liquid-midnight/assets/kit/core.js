@@ -32,9 +32,16 @@ let motionPinned = false;
 export function setMotion(on) {
   motionPinned = on !== null && on !== undefined;
   MOTION = motionPinned ? !!on : RMQ ? !RMQ.matches : true;
+  reflectMotion();
 }
+/* mirror the state on <html data-lm-motion="on|off"> so CSS motion (ambient drift) follows the kit, not only the OS */
+function reflectMotion() {
+  if (typeof document !== "undefined" && document.documentElement?.dataset) document.documentElement.dataset.lmMotion = MOTION ? "on" : "off";
+}
+reflectMotion();
 RMQ?.addEventListener?.("change", (e) => {
   if (!motionPinned) MOTION = !e.matches;
+  reflectMotion();
 });
 
 export const TAU = Math.PI * 2;

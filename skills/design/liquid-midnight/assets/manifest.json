@@ -2,12 +2,12 @@
   "name": "liquid-midnight",
   "source": {
     "repo": "https://github.com/broomva/liquid-midnight",
-    "commit": "ec1138e"
+    "commit": "39523b3"
   },
   "files": [
     {
       "path": "css/materials.css",
-      "sha256": "4128c3228380dec461f9bb3d346cc879780672d974d80f6565a12279783d4cfc"
+      "sha256": "a17cf00362081e1bd32bed2d9be0c11b7523c5134b6d25cbc0d357b91fc617d3"
     },
     {
       "path": "fonts/Inter-400.woff2",
@@ -47,7 +47,7 @@
     },
     {
       "path": "kit/core.js",
-      "sha256": "32bcc2e65456f24f2ee92338bbcc908177496805ca3b3a0cdc7fa03d3583cff1"
+      "sha256": "38d133ccd8c7e52f2bfaf49dfbafde3c3eca73219f8a8bd0958d3b9405363e38"
     },
     {
       "path": "kit/index.js",
@@ -59,7 +59,7 @@
     },
     {
       "path": "kit/metal.js",
-      "sha256": "1cc1055820794c0c83b6fdd23ce9061e161fb9aa6374753ab893655bc7c87a96"
+      "sha256": "40982ed946f87a5d8c220cc5e12784396fab2fac14b9cbbc1e64263d725985f7"
     },
     {
       "path": "kit/orb-shaders.js",
@@ -83,23 +83,23 @@
     },
     {
       "path": "specimen/index.html",
-      "sha256": "161ee480d5a264b9c0dc4e174109289159d73605acb1bc0543444ac0a5220bb5"
+      "sha256": "ccc377055fa1b71139c1a434d34c5432f3868417dc848cf8f49a0fffdd7b7d1c"
     },
     {
       "path": "templates/scene.html",
-      "sha256": "5ab7b432d6a9ae1af378f97cc12508253629e91e4ef4828be544b62d5d2e8556"
+      "sha256": "6fde95b366a84205ce120d00a92d23cf89de978ca7c2d158efc193b81f58ab95"
     },
     {
       "path": "tokens/tokens.css",
-      "sha256": "0cf4336dba29db9000442858515498894a51563886f10f0c4fd5bb8899d04d3e"
+      "sha256": "8a17246d148d831a247d41db8062f45e5cd5a67fd31fdfd607498644b1b0fafc"
     },
     {
       "path": "tokens/tokens.json",
-      "sha256": "2a9c0e83325594b9ece475eb88421548a6f8ae3038fe4c77854e6f43e353e3d7"
+      "sha256": "761f6bb6ffda377374fff862466c986725ad1a0cbd5ff4143d0725a5c74b7f99"
     },
     {
       "path": "../DESIGN.md",
-      "sha256": "24542bc0d59689e1ad60e574691adf0d5d5d204425806855838a7d1acd4990b7"
+      "sha256": "69e29cedf551cbcd39bcb01e45899d1a28dba53d70b2988c9abe22052be599c5"
     }
   ]
 }

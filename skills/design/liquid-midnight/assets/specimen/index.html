@@ -24,6 +24,7 @@ section>header .lm-title{margin-top:20px;font-size:64px}
 .g2{grid-template-columns:repeat(2,1fr)}.g3{grid-template-columns:repeat(3,1fr)}.g4{grid-template-columns:repeat(4,1fr)}
 /* top bar */
 .bar{position:sticky;top:16px;z-index:10;display:flex;justify-content:space-between;align-items:center;max-width:1440px;margin:16px auto 0;padding:0 56px}
+@media (max-width:760px){.bar{flex-wrap:wrap;justify-content:center;gap:10px;padding:0 12px}main{padding:0 20px 80px}.hero{grid-template-columns:1fr}.hero .lm-hero{font-size:64px}.g2,.g3,.g4{grid-template-columns:1fr}}
 .brand{display:flex;align-items:center;gap:6px;padding:6px 14px 6px 6px;font:500 14px/1 var(--lm-font-sans);color:var(--lm-t1)}
 .brand canvas{width:40px;height:40px;display:block}
 /* hero */
@@ -357,7 +358,12 @@ swatches();
 BG.fit();
 addEventListener("resize", () => { BG.fit(); CAPTURE ? loop.renderAt(loop.t) : loop.invalidate(); }); // fit() clears the canvas
 window.renderAt = (t) => loop.renderAt(t);
-if (CAPTURE) { loop.renderAt(checkTime(Q.get("t"))); window.__ready = true; }
+if (CAPTURE) {
+  // lay out the segmented thumbs before painting: a ?t=0 capture paints without running step()
+  modeSeg.init(); demoSeg.init(); modeSeg.step(0); demoSeg.step(0);
+  loop.renderAt(checkTime(Q.get("t")));
+  window.__ready = true;
+}
 else loop.start();
 </script>
 </body>

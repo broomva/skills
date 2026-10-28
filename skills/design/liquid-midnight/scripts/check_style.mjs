@@ -61,7 +61,11 @@ export function rules(text) {
       boundary = i;
     } else if (ch === 125 /* } */) {
       const b = stack.pop();
-      if (b) out.push({ index: b.selStart, selector: text.slice(Math.max(b.selStart, b.open - 300), b.open), body: text.slice(b.open + 1, i) });
+      if (b) {
+        let at = b.selStart;
+        while (at < b.open && /\s/.test(text[at])) at++; // report the selector's own line, not the previous rule's
+        out.push({ index: at, selector: text.slice(b.selStart, b.open), body: text.slice(b.open + 1, i) });
+      }
       boundary = i;
     } else if (ch === 59 /* ; */) boundary = i;
   }
@@ -87,7 +91,7 @@ export function lint(text, file = "<input>") {
   const prose = /\.md$/i.test(file);
   for (const m of prose ? [] : text.matchAll(/#([0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{4}|[0-9a-f]{3})(?![0-9a-z_-])/gi)) {
     const prev = text.slice(Math.max(0, m.index - 6), m.index);
-    if (/&$|url\($|(?:href|xlink:href|for|aria-(?:controls|labelledby|describedby|owns|activedescendant|details|flowto))\s*=\s*["']?$/i.test(prev.length < 6 ? prev : text.slice(Math.max(0, m.index - 24), m.index))) continue; // entities, fragment links and attribute references
+    if (/&$|url\(\s*["']?$|(?:href|xlink:href|for|aria-(?:controls|labelledby|describedby|owns|activedescendant|details|flowto))\s*=\s*["']?$/i.test(prev.length < 6 ? prev : text.slice(Math.max(0, m.index - 24), m.index))) continue; // entities, fragment links and attribute references
     const { C, H } = hexToOklch(m[0]);
     if (inPurple(H, C, MIN_CHROMA.hex)) add("LM001", "error", m.index, `purple cast: ${m[0]} (OKLCH hue ${H.toFixed(0)}, chroma ${C.toFixed(3)})`);
   }
@@ -96,10 +100,18 @@ export function lint(text, file = "<input>") {
     // hsl hue 255-320 with real saturation is violet/purple (OKLCH ~275-335)
     if (Number(m[3]) >= 25 && H >= 255 && H <= 320) add("LM001", "error", m.index, `purple cast: ${m[0]}…) (hsl hue ${H})`);
   }
-  for (const m of text.matchAll(/rgba?\(\s*(\d+)[\s,]+(\d+)[\s,]+(\d+)/gi)) {
-    const hex = `#${[m[1], m[2], m[3]].map((v) => Math.min(255, Number(v)).toString(16).padStart(2, "0")).join("")}`;
+  for (const m of text.matchAll(/rgba?\(\s*([\d.]+)(%?)[\s,]+([\d.]+)(%?)[\s,]+([\d.]+)(%?)/gi)) {
+    const ch = [[m[1], m[2]], [m[3], m[4]], [m[5], m[6]]].map(([v, pct]) => Math.round(Math.min(255, pct ? (Number(v) / 100) * 255 : Number(v))));
+    const hex = `#${ch.map((v) => v.toString(16).padStart(2, "0")).join("")}`;
     const { C, H } = hexToOklch(hex);
     if (inPurple(H, C, MIN_CHROMA.hex)) add("LM001", "error", m.index, `purple cast: ${m[0]}) (OKLCH hue ${H.toFixed(0)})`);
+  }
+  // lch() / oklch() with negative or wrapped hues (e.g. oklch(.5 .2 -60) is hue 300)
+  for (const m of text.matchAll(/\b(ok)?lch\(\s*([\d.]+%?)\s+([\d.]+)\s+(-?[\d.]+)(deg)?/gi)) {
+    const H = ((Number(m[4]) % 360) + 360) % 360;
+    const C = m[1] ? Number(m[3]) : Number(m[3]) / 150; // CIE LCH chroma ~0-150 vs OKLCH ~0-0.4
+    // plain oklch() with an in-range hue is already handled above; this adds lch() and wrapped/negative hues
+    if ((H !== Number(m[4]) || !m[1]) && inPurple(H, C, MIN_CHROMA.oklch)) add("LM001", "error", m.index, `purple cast: ${m[0]}) (hue ${H})`);
   }
   for (const m of text.matchAll(/(?<![\w-])(rebeccapurple|blueviolet|darkviolet|darkorchid|mediumpurple|mediumorchid|purple|violet|indigo|fuchsia|magenta|orchid|plum)(?![\w-])/gi)) {
     const ctx = text.slice(Math.max(0, m.index - 40), m.index);
@@ -147,7 +159,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     console.error("usage: check_style.mjs <file|dir>... [--json]");
     process.exit(2);
   }
-  const findings = files(paths).flatMap((f) => lint(readFileSync(f, "utf8"), f));
+  let findings;
+  try {
+    findings = files(paths).flatMap((f) => lint(readFileSync(f, "utf8"), f));
+  } catch (e) {
+    console.error(`check_style: ${e.code === "ENOENT" ? `no such file or directory: ${e.path}` : e.message}`);
+    process.exit(2); // 2 = could not run, distinct from 1 = style errors found
+  }
   if (json) console.log(JSON.stringify(findings, null, 2));
   else for (const f of findings) console.log(`${f.file}:${f.line}  ${f.level.toUpperCase()} ${f.code}  ${f.msg}`);
   const errors = findings.filter((f) => f.level === "error").length;

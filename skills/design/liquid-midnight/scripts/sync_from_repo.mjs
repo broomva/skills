@@ -69,6 +69,11 @@ if (process.argv[1] === fileURLToPath(import.meta.url) && process.argv[2] === "-
     console.error("usage: node scripts/sync_from_repo.mjs /path/to/liquid-midnight");
     process.exit(2);
   }
+  const missing = MAP.filter(([src]) => !existsSync(join(repo, src))).map(([src]) => src);
+  if (missing.length) {
+    console.error(`refusing: the source lacks ${missing.join(", ")}; nothing was changed`);
+    process.exit(1);
+  }
   const commit = execFileSync("git", ["-C", repo, "rev-parse", "--short", "HEAD"], { encoding: "utf8" }).trim();
   const dirty = execFileSync("git", ["-C", repo, "status", "--porcelain", "--", ...MAP.map(([s]) => s), "DESIGN.md"], { encoding: "utf8" }).trim();
   if (dirty) {

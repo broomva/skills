@@ -137,7 +137,9 @@ function paint(t) {
   metalRing(O[0], O[1], R, t, 1.8, a, R * 0.42, 0.6);
   for (let i = 0; i < 3; i++) {
     const th = t * 0.18 + (i / 3) * TAU, c = [C.blue, C.cyan, C.gold][i];
+    x.globalAlpha = a; // trails reveal with their orbs (nothing loose on the first frame)
     glyphTrail((k) => [O[0] + Math.cos(th - k * 0.03) * R, O[1] + Math.sin(th - k * 0.03) * R * 0.42], c, 12, 15);
+    x.globalAlpha = 1;
     orb(O[0] + Math.cos(th) * R, O[1] + Math.sin(th) * R * 0.42, 34, c, t + i, a);
   }
   orb(O[0], O[1], reel ? 150 : 130, C.blue, t, a);
