@@ -15,13 +15,13 @@ export function lensRefract(d, { mag = 0.72, bend = 0.55, disp = 0.06, channel =
 const VS = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0., 1.); }`;
 const FS = `precision highp float;
 uniform sampler2D src; uniform vec2 res; uniform vec2 c; uniform vec2 rad; uniform float mag, bend, disp, frost;
-float sampleRefract(vec2 q, float d, float ch, int k){
-  float s = d * mag + pow(d, 4.) * bend * (1. + disp * ch);
+vec4 sampleRefract(vec2 q, float d, float ch){
+  float s = d * mag + pow(d, 4.) * bend * (1. + disp * ch);   // = lensRefract() in JS; keep the two in step
   vec2 dir = d > 1e-4 ? q / d : vec2(0.);
-  vec2 uv = (c + dir * s * rad) / res;
-  vec4 t = texture2D(src, uv);
-  return k == 0 ? t.r : k == 1 ? t.g : t.b;
+  return texture2D(src, (c + dir * s * rad) / res);
 }
+// premultiplied "over": a layer of colour l (premultiplied) and alpha la, over (c, a)
+void over(inout vec3 col, inout float a, vec3 l, float la){ col = l + col * (1. - la); a = la + a * (1. - la); }
 void main(){
   vec2 q = (gl_FragCoord.xy - c) / rad; float d = length(q);
   if (d > 1.18) discard;
@@ -29,23 +29,31 @@ void main(){
     vec2 qs = (gl_FragCoord.xy - c - vec2(0., -rad.y * .07)) / rad; float ds = length(qs);
     float a = (1. - smoothstep(.98, 1.16, ds)) * .16; gl_FragColor = vec4(vec3(.18, .2, .24) * a, a); return;
   }
-  vec3 col = vec3(sampleRefract(q, d, -1., 0), sampleRefract(q, d, 0., 1), sampleRefract(q, d, 1., 2));
+  // the refracted source keeps its own (premultiplied) alpha: a transparent source stays transparent under the
+  // glass, so a field canvas over a CSS ground shows the ground through the drop instead of a black disc
+  vec4 tg = sampleRefract(q, d, 0.);
+  vec3 col = vec3(sampleRefract(q, d, -1.).r, tg.g, sampleRefract(q, d, 1.).b);
+  float a = tg.a;
   float z = sqrt(max(0., 1. - d * d));
-  col = mix(col, vec3(1.), frost * (.25 + .35 * (1. - z)));                 // a whisper of milk, thicker toward the rim
-  col *= 1. - .12 * smoothstep(.55, 1., d) * smoothstep(-.2, .9, -q.y);       // inner shadow along the lower rim
-  float rim = smoothstep(.9, 1., d);
-  col = mix(col, vec3(1.), rim * .55 * (.6 + .4 * q.y));                     // bright rim, brighter on top
-  float spec = smoothstep(.42, .0, length(q - vec2(-.38, .46)));
-  col += vec3(spec * .55);                                                    // the top-left specular
+  float milk = frost * (.25 + .35 * (1. - z));                              // a whisper of milk, thicker toward the rim
+  over(col, a, vec3(milk), milk);
+  float sh = .12 * smoothstep(.55, 1., d) * smoothstep(-.2, .9, -q.y);       // inner shadow along the lower rim
+  over(col, a, vec3(0.), sh);
+  float rim = smoothstep(.9, 1., d) * .55 * (.6 + .4 * q.y);                 // bright rim, brighter on top
+  over(col, a, vec3(rim), rim);
+  float spec = smoothstep(.42, .0, length(q - vec2(-.38, .46))) * .55;       // the top-left specular
+  over(col, a, vec3(spec), spec);
   float aa = 1. - smoothstep(.985, 1., d);
-  gl_FragColor = vec4(col * aa, aa);
+  gl_FragColor = vec4(col * aa, a * aa);
 }`;
 
 /**
  * createLens(overlay, source, opts) → { paint(state), follow(x, y), press(on), step(dt), state, supported }
  *  overlay: a canvas over `source`, same CSS box (the lens draws here; the rest stays transparent). If the boxes
  *           differ, paint() draws nothing and sets lens.mismatch; a tainted source sets lens.tainted.
- *  Call step(dt) in the loop's step and paint() in its paint, after the source canvas is drawn.
+ *  Call step(dt) in the loop's step and paint() in its paint, after the source canvas is drawn. Place it with
+ *  snap(x, y) or follow(x, y) (CSS px in the overlay); unplaced, it starts at the centre. The source may be
+ *  transparent: the glass bends what the source draws, and the CSS ground shows through unbent.
  *  source:  the canvas whose pixels the lens bends (re-uploaded each paint).
  *  opts: { r, mag, bend, disp, frost } — r in CSS px.
  */
@@ -89,11 +97,14 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
+  let placed = false;
   L.follow = (x, y) => {
+    placed = true;
     pos.x.set(x);
     pos.y.set(y);
   };
   L.snap = (x, y) => {
+    placed = true;
     pos.x.snap(x);
     pos.y.snap(y);
   };
@@ -116,6 +127,7 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
       overlay.width = Math.round(w * d);
       overlay.height = Math.round(h * d);
     }
+    if (!placed) L.snap(w / 2, h / 2); // a lens nobody placed starts at the centre, not the corner
     gl.viewport(0, 0, overlay.width, overlay.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);

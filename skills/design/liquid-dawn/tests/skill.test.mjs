@@ -368,7 +368,8 @@ test("dissolve thresholds are deterministic, uniformly spread, and turn cells pr
 });
 
 test("normaliseLuma stretches a pale frame across the ramp; glyphForLuma maps dark to heavy", () => {
-  const pale = Float32Array.from({ length: 200 }, (_, i) => 0.8 + (i / 199) * 0.15);
+  // a pale dawn frame (span .2, above the ×6 cap) still spans the whole ramp
+  const pale = Float32Array.from({ length: 200 }, (_, i) => 0.78 + (i / 199) * 0.2);
   const n = cine.normaliseLuma(pale);
   assert.ok(Math.min(...n) === 0 && Math.max(...n) === 1);
   assert.equal(cine.glyphForLuma(0), cine.FILM_RAMP.length - 1);
@@ -532,6 +533,22 @@ test("specimen renders in both modes, deterministically, and moves over time", {
     assert.equal(stepped[".cards"], fresh[".cards"], "a print depends on history, not on t");
     // and within the OLD half-second cache key (6 → 6.25), which a time-keyed cache without quantisation got wrong
     assert.equal((await shot("t=6", 6.25))[".cards"], (await shot("t=6.25"))[".cards"], "a print depends on history, not on t (6 → 6.25)");
+    // a lens over a TRANSPARENT source is not a black disc, and an unplaced lens centres itself
+    const fx = await browser.newPage({ viewport: { width: 400, height: 300 } });
+    const { server: s2, url: u2 } = await startServer(SKILL);
+    try {
+      await fx.goto(`${u2}/tests/fixtures/lens-transparent.html`);
+      await fx.waitForFunction(() => window.__result);
+      const r = await fx.evaluate(() => window.__result);
+      assert.equal(r.supported, true);
+      const [cr, cg, cb, ca] = r.centre;
+      assert.ok(ca > 0, "the lens is drawn at the centre (it centred itself)");
+      assert.ok(!(ca > 200 && cr < 40 && cg < 40 && cb < 40), `the centre is not an opaque black disc: ${r.centre}`);
+      assert.equal(r.corner[3], 0, "outside the lens the overlay stays transparent");
+    } finally {
+      await fx.close();
+      s2.close();
+    }
     const noLens = await shot("t=6.5&nolens=1");
     assert.notEqual(noLens["#screen"], fresh["#screen"], "the lens draws");
   } finally {

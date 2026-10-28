@@ -89,10 +89,11 @@ const lerp3 = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, 
 
 /**
  * printInto(cx, L, { x, y, w, h, mode, ink, paper, pitch, scale, grain, resolution }) — render L as "engrave" or
- * "dither": two inks, plus a faint paper grain (±grain/2 per channel; grain: 0 for strictly two colours). `scale` > 1
+ * "dither": two inks plus a faint paper grain (±grain/2 per channel). Dither with grain: 0 is strictly two colours;
+ * engraving anti-aliases its line edges (blends of the two inks) unless aa: false. `scale` > 1
  * coarsens the dither grain (3-7's visible print grain). L is a function; for a picture use imageLuma(img, w, h).
  */
-export function printInto(cx, L, { x = 0, y = 0, w, h, mode = "engrave", ink = [42, 82, 190], paper = [242, 236, 222], pitch = 4, scale = 1, seed = 0, grain = 8, resolution = 1 }) {
+export function printInto(cx, L, { x = 0, y = 0, w, h, mode = "engrave", ink = [42, 82, 190], paper = [242, 236, 222], pitch = 4, scale = 1, seed = 0, grain = 8, resolution = 1, aa = true }) {
   // printed at `resolution` × CSS px (default 1, not the device ratio: a print's grain is coarse anyway, and 1× costs a
   // quarter of the work at 2× DPR), then copied up with smoothing off so the lines and dots stay crisp
   const d = resolution;
@@ -110,7 +111,10 @@ export function printInto(cx, L, { x = 0, y = 0, w, h, mode = "engrave", ink = [
         const gx = Math.floor(i / (scale * d));
         const gy = Math.floor(j / (scale * d));
         k = ditherBit(l, gx, gy);
-      } else k = engraveInk(l, X, Y, { pitch, seed });
+      } else {
+        k = engraveInk(l, X, Y, { pitch, seed });
+        if (!aa) k = k >= 0.5 ? 1 : 0; // hard-edged lines: strictly two inks (with grain: 0)
+      }
       const gr = grain ? (noise2(i * 0.9, j * 0.9, 77) - 0.5) * grain : 0;
       const c = lerp3(paper, ink, k);
       const o = (j * W + i) * 4;

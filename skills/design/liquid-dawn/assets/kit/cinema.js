@@ -49,13 +49,18 @@ export function glyphForLuma(l, n = FILM_RAMP.length) {
 }
 
 /** Stretch a frame's luminance between its 4th and 96th percentiles, so a pale dawn frame still spans the whole
- *  ramp (otherwise everything maps to the lightest glyphs and the picture's structure is lost). Pure. */
+ *  ramp (otherwise everything maps to the lightest glyphs and the picture's structure is lost). The stretch is capped
+ *  at ×6 so a nearly flat frame stays flat rather than turning into static. Pure. */
 export function normaliseLuma(lum) {
   const s = Float32Array.from(lum).sort();
   const lo = s[Math.floor(s.length * 0.04)];
   const hi = s[Math.floor(s.length * 0.96)];
-  const span = Math.max(1e-3, hi - lo);
-  return lum.map((v) => clamp((v - lo) / span));
+  // a nearly flat frame (a blank poster, a fade) must not be stretched into static: the stretch is capped at ×6,
+  // and a capped frame keeps its own mean brightness instead of spanning the whole ramp
+  const span = hi - lo;
+  if (span >= 1 / 6) return lum.map((v) => clamp((v - lo) / span));
+  const mid = (lo + hi) / 2;
+  return lum.map((v) => clamp(mid + (v - mid) * 6));
 }
 
 /** object-fit: cover — the part of a (sw × sh) source that a (dw × dh) box shows, centred (object-position 50% 50%).

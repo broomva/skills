@@ -50,6 +50,8 @@ const colors = Object.fromEntries(
   ["paper", "surface", "sunk", "ink", "ink2", "ink3", "line", "line2", "tide", "shadow", "sky", "lagoon", "moss", "sand", "stone", "coral", "metal-fringe-a", "metal-fringe-b"].map((k) => [k, `#${k.length}${k.length}${k.length}`]),
 );
 const heroes = await import(join(KIT, "heroes.js"));
+globalThis.__ascii = await import(join(KIT, "ascii.js"));
+const eng = await import(join(KIT, "engrave.js"));
 const lens = { x: 500, y: 400, w: 420, h: 120, r: 22, opts: { mag: 1.12, bevel: 0.3, bend: 0.9 } };
 const layer = () => ({ cx: fakeContext(), w: 1000, h: 640 });
 const run = (name, t) => {
@@ -66,17 +68,65 @@ for (const name of heroes.HERO_RECIPES)
     assert.notDeepEqual(a, run(name, 14), "the picture moves");
   });
 
-test("recipes that put a field under the lens refract it: their output changes when the lens moves", () => {
+test("recipes respond to their lens: one paint each, the lens moved, the output differs", () => {
   for (const name of heroes.HERO_RECIPES) {
+    const h = heroes.createHero(name, { w: 1000, h: 640, colors });
+    // horizon's lens sits on its water band; for every other recipe move the lens anywhere
+    const [A, B] = name === "horizon" ? [{ ...lens, y: 520, h: 60 }, { ...lens, y: 560, h: 60 }] : [lens, { ...lens, y: lens.y + 140, x: lens.x + 60 }];
     const L1 = { soft: layer(), sharp: layer() };
     const L2 = { soft: layer(), sharp: layer() };
-    const h = heroes.createHero(name, { w: 1000, h: 640, colors });
-    h.paint(L1, 6, lens);
-    // horizon's lens sits on its water band; for every other recipe move the lens anywhere
-    h.paint(L2, 6, name === "horizon" ? { ...lens, y: 560, h: 60 } : { ...lens, y: lens.y + 140, x: lens.x + 60 });
-    if (name === "horizon") h.paint(L1, 6, { ...lens, y: 520, h: 60 });
+    h.paint(L1, 6, A);
+    h.paint(L2, 6, B);
+    assert.equal(L1.sharp.cx.log.length > 0 && L2.sharp.cx.log.length > 0, true);
     assert.notDeepEqual(L1.sharp.cx.log, L2.sharp.cx.log, `${name} ignores its lens`);
   }
+});
+
+test("field() refracts under a lens: identical outside it, changed inside it", () => {
+  const ascii = globalThis.__ascii;
+  const glyphs = (lenses) => {
+    const cx = fakeContext();
+    ascii.field(cx, { w: 400, h: 200, cell: 10, fs: 10, color: "#000", fn: (x, y) => ((Math.floor(x / 23) + Math.floor(y / 17)) % 3) * 0.3, lenses });
+    // key on WHICH glyph (its atlas offset) lands WHERE: refraction changes the glyph a cell samples
+    return cx.log.filter(([k]) => k === "drawImage").map(([, , sx, , , , X, Y]) => `${X},${Y},${sx}`);
+  };
+  const L = { x: 100, y: 50, w: 160, h: 100, r: 20 };
+  const plain = new Set(glyphs([]));
+  const bent = new Set(glyphs([L]));
+  const inside = (k) => {
+    const [X, Y] = k.split(",").map(Number);
+    return X > L.x - 10 && X < L.x + L.w + 10 && Y > L.y - 10 && Y < L.y + L.h + 10;
+  };
+  assert.deepEqual([...plain].filter((k) => !inside(k)).sort(), [...bent].filter((k) => !inside(k)).sort(), "outside the lens nothing changes");
+  assert.notDeepEqual([...plain].filter(inside).sort(), [...bent].filter(inside).sort(), "inside the lens the field is resampled");
+});
+
+test("engraving with aa: false and grain: 0 is strictly two inks; with aa it blends at line edges", () => {
+  const colours = (aa) => {
+    let img;
+    const cx = new Proxy(fakeContext(), {
+      get(t, k) {
+        if (k === "putImageData") return (i) => (img = i);
+        if (k === "getTransform") return () => ({ a: 1 });
+        return t[k];
+      },
+    });
+    eng.printInto(cx, eng.coastScene(200, 100, 2), { w: 200, h: 100, mode: "engrave", ink: [10, 20, 30], paper: [240, 230, 220], grain: 0, aa });
+    const set = new Set();
+    for (let i = 0; i < img.data.length; i += 4) set.add(`${img.data[i]},${img.data[i + 1]},${img.data[i + 2]}`);
+    return set.size;
+  };
+  assert.equal(colours(false), 2);
+  assert.ok(colours(true) > 2);
+});
+
+test("normaliseLuma leaves a nearly flat frame flat (no static) and stretches a real one", () => {
+  const flat = Float32Array.from({ length: 880 }, (_, i) => 0.9 + ((i * 37) % 17) / 1000);
+  const heavy = [...cine.normaliseLuma(flat)].filter((v) => cine.glyphForLuma(v) >= 7).length;
+  assert.equal(heavy, 0, "a blank poster does not become heavy glyphs");
+  const real = Float32Array.from({ length: 880 }, (_, i) => 0.3 + 0.4 * ((i * 37) % 101) / 100);
+  const n = cine.normaliseLuma(real);
+  assert.ok(Math.min(...n) === 0 && Math.max(...n) === 1);
 });
 
 const cine = await import(join(KIT, "cinema.js"));
@@ -189,7 +239,6 @@ test("sparkField is deterministic, on the unit sphere, and sparkOrb paints more 
   assert.ok(strokes(0) > 50);
 });
 
-const eng = await import(join(KIT, "engrave.js"));
 test("engraving: paper stays bare, darker tones carry more ink; dither is a threshold on Bayer", () => {
   const ink = (l) => {
     let s = 0;

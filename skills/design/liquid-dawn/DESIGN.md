@@ -65,8 +65,10 @@ Everything moves slowly, on one clock, and every frame is a pure function of `t`
   (`tide` already modulates shallows and deeps) or a clearing.
 - ✕ Heavy frost (blur > 22 px on glass); ✕ glass stacked on glass; ✕ a frosted panel with no pearl rim.
 - ✕ Soft radial "glow orbs" as subjects; light pools live only in `.ld-wash`.
-- ✕ Magenta fringes: pearl uses lagoon, sand and sky only.
-- ✕ Fast motion: nothing crosses the screen faster than ~25 px/s except a deliberate interaction.
+- ✕ Magenta fringes on pearl: rims use lagoon, sand and sky only. (The liquid lens is the one exception: its fringe
+  is optical dispersion, R/G/B parting at the very rim, and shows the natural spectrum.)
+- ✕ Fast motion: creatures and drifting things stay at or under ~25 px/s; travelling light (gusts, pulses, ripple and
+  pebble rings) at or under ~40 px/s. A deliberate interaction is the only exception.
 - ✕ The black-hole `well` as a default: use it once per story at most. The `pebble` is the default lens.
 
 ---
@@ -197,7 +199,7 @@ The direction the owner pointed at (the haj sharks, the Metricra scenic footer, 
 | Glyph mosaic | `mosaic.js` | `mosaic(cx, src, {cell, keyLight})`: a picture painted at one pixel per cell becomes greyscale tiles, each with a glyph from `:;t%SX#8@` by tone, its edge fraying into loose dots. `paintImage()` takes a photo (with `keyLight` keying its white ground); `paintShark()` is a procedural stand-in. |
 | Liquid lens | `lens.js` | `createLens(overlay, source)`: WebGL. The centre magnifies (×1.4), the rim bends the page round its edge, R/G/B refract 6–7% apart so only the rim shows a rainbow; rim light, top-left specular, inner and drop shadow. `dragLens()` springs it to the finger (r .32, z .86) and squashes it 8% on press. |
 | Agent orb | `spark.js` | `sparkOrb(cx, sparkField(n))`: a sphere of short radial light streaks round a white core, turning slowly; `busy` lengthens the streaks and sends a pulse outward. Lives on a dark chip. |
-| Print | `engrave.js` | `printInto(cx, L, {mode})`: `engrave` (lines whose width is the tone, bare paper for the lightest tones, cross-hatch in the deepest) or `dither` (4×4 Bayer between two inks). Two inks plus a faint paper grain (`grain: 0` for strictly two). Printed at 1× CSS px and copied up crisp. `L` is a luminance function: `imageLuma(img, w, h)` makes one from any picture (cover-cropped; null if CORS-tainted); `coastScene()` and `cloudSky()` are procedural subjects. `DUOTONES`: cobalt, teal, slate. |
+| Print | `engrave.js` | `printInto(cx, L, {mode})`: `engrave` (lines whose width is the tone, bare paper for the lightest tones, cross-hatch in the deepest) or `dither` (4×4 Bayer between two inks). Two inks plus a faint paper grain: dither with `grain: 0` is strictly two colours; engraving anti-aliases its line edges unless `aa: false`. Printed at 1× CSS px and copied up crisp. `L` is a luminance function: `imageLuma(img, w, h)` makes one from any picture (cover-cropped; null if CORS-tainted); `coastScene()` and `cloudSky()` are procedural subjects. `DUOTONES`: cobalt, teal, slate. |
 | Glass numerals | page CSS | a backdrop-filtered layer masked by real type (rendered once to a canvas), so the picture shows frosted through the letters only. |
 
 Photographs replace the procedural subjects where they exist (shark cut-outs for the mosaic, a toile engraving and a
@@ -250,7 +252,7 @@ painting canvas text or measuring with pretext: it loads the ACTIVE theme's face
 |---|---|
 | Pearl `--ua` | `(t · 24) mod 360`°; rings 2×; 0° under reduced motion |
 | Light pools | `--ld-b1..3 = sin(2πt / [7.2, 11.6, 18.8])` |
-| Fields | every time term ≤ 0.2 rad/s: tide .18 (fastest term), breeze .2 (≈ 33 px/s); cloud drifts ≈ 7 px/s |
+| Fields | every time term ≤ 0.2 rad/s: tide .18 (fastest term), breeze .2 (≈ 33 px/s); cloud drifts ≈ 7 px/s; hero current pulses 20–29 px/s |
 | Creatures | 8–22 px/s, lattice-snapped; islands 3 px/s |
 | Pebble | a drop every 9 s; rings 34 px/s; settles in 9 s |
 | Springs | `Sp.step(dt, r, z)`: default r .5 z 1; playful r .8 z .9 |

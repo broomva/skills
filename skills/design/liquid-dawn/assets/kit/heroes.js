@@ -38,7 +38,7 @@ export function createHero(name, { w, h, colors: C, seed = 21, calm } = {}) {
     k: 0.0025 + r() * 0.002,
     ph: r() * 6.28,
     w: 0.05 + r() * 0.06,
-    pulse: 0.12 + i * 0.01,
+    pulse: 0.08 + i * 0.006, // pulses travel at pulse / 0.004 rad/px = 20–29 px/s (DESIGN §8: travelling light ≤ 40)
   }));
   const S = {
     fish: createShoal({ w, h, seed: seed + 10, count: 7, kinds: ["fish", "minnow", "ray"], colors: C }),

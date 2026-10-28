@@ -52,6 +52,9 @@ Load `liquid-dawn/tokens/tokens.css`, then `liquid-dawn/css/materials.css`, and 
 
 ## 3. Build with the grammar
 
+Before any canvas drawing, `await fontsReady()` and call `readColors()` (again after every mode switch): the kit's
+colour table `C` is empty until then, and everything below reads its colours from it.
+
 | Need | Use |
 |---|---|
 | Ground | `body.ld-ground`; in a hero: `.ld-wash`, a field `<canvas class="ld-field">`, `.ld-grid`, `.ld-clearing` |
@@ -65,9 +68,9 @@ Load `liquid-dawn/tokens/tokens.css`, then `liquid-dawn/css/materials.css`, and 
 | Hero background | `createHero("dawn" \| "caustic" \| "currents" \| "lagoon" \| "horizon" \| "tide", { w, h, colors: C })` over `<div class="ld-hero-bg" data-recipe=…>` + a soft and a sharp canvas; see `assets/specimen/heroes.html` |
 | Film background | a `scroll-cinema` film with `sampleFrame` + `seamDissolve` + `filmType` from `kit/cinema.js`: the picture turns to type at every page break (DESIGN.md §6.6) |
 | Photo as tiles | each frame: clear a scratch canvas of `cols × rows` px, `paintImage(scratch2d, img, { x, y, len, ang })` (cells), then `mosaic(cx, scratch, { cell: 14, keyLight: 0.93 })`; it returns false for a CORS-tainted photo |
-| Liquid lens | `const lens = createLens(overlayCanvas, sourceCanvas, { r: 96 })` (both canvases in one CSS box); `dragLens(el, lens)`; in the loop `step: lens.step(dt)`, `paint:` draw the source, then `lens.paint()` |
+| Liquid lens | `const lens = createLens(overlayCanvas, sourceCanvas, { r: 96 })` (both canvases in one CSS box); `lens.snap(x, y)` to place it (else it starts centred); `dragLens(el, lens)`; in the loop `step: lens.step(dt)`, `paint:` draw the source, then `lens.paint()`. A transparent source is fine: the CSS ground shows through unbent |
 | Agent presence | `sparkOrb(cx, sparkField(900), { x, y, R: 86, t, busy })` on a dark chip |
-| Pictures as print | `printInto(cx, L, { w, h, mode: "engrave" \| "dither", ...DUOTONES.cobalt })` where `L` is `imageLuma(img, w, h)` or a scene such as `coastScene(w, h, t)` |
+| Pictures as print | `printInto(cx, L, { w, h, mode: "engrave" \| "dither", ...DUOTONES.cobalt })` where `L` is `imageLuma(img, w, h)` or a scene such as `coastScene(w, h, t)`. **Costly** (≈150 ms for 1440 × 360): print when its input changes, never every frame; quantise t and cache, as `specimen/paper.html` does |
 | Text as a field | `layoutPage` + `lensPage` (pebble by default, well at most once per story); `flowAround` to reflow round a moving obstacle |
 | Headline | `.ld-kicker`, then `.ld-hero` / `.ld-title` with the payoff in `<em>` |
 | Voice | `data-ld-type="manrope" \| "inter-tight" \| "geist" \| "instrument"` on `<html>`; `await fontsReady()` before canvas text, or `await fontsReady(el)` when the theme is set on a subtree `el` |
