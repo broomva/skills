@@ -14,7 +14,7 @@ export function lensRefract(d, { mag = 0.72, bend = 0.55, disp = 0.06, channel =
 
 const VS = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0., 1.); }`;
 const FS = `precision highp float;
-uniform sampler2D src; uniform vec2 res; uniform vec2 c; uniform vec2 rad; uniform float mag, bend, disp, frost;
+uniform sampler2D src; uniform vec2 res; uniform vec2 c; uniform vec2 rad; uniform float mag, bend, disp, frost; uniform vec3 ground;
 vec4 sampleRefract(vec2 q, float d, float ch){
   float s = d * mag + pow(d, 4.) * bend * (1. + disp * ch);   // = lensRefract() in JS; keep the two in step
   vec2 dir = d > 1e-4 ? q / d : vec2(0.);
@@ -29,11 +29,16 @@ void main(){
     vec2 qs = (gl_FragCoord.xy - c - vec2(0., -rad.y * .07)) / rad; float ds = length(qs);
     float a = (1. - smoothstep(.98, 1.16, ds)) * .16; gl_FragColor = vec4(vec3(.18, .2, .24) * a, a); return;
   }
-  // the refracted source keeps its own (premultiplied) alpha: a transparent source stays transparent under the
-  // glass, so a field canvas over a CSS ground shows the ground through the drop instead of a black disc
-  vec4 tg = sampleRefract(q, d, 0.);
-  vec3 col = vec3(sampleRefract(q, d, -1.).r, tg.g, sampleRefract(q, d, 1.).b);
-  float a = tg.a;
+  // the glass covers what it bends: start from the page ground (opaque), then lay the refracted source over it with
+  // the source's own premultiplied alpha. A transparent source therefore shows the ground, bent content only, and
+  // never the unbent source through the drop (no double image) and never a black disc.
+  // Each channel refracts from its own position, so each is composited over the ground with ITS OWN coverage
+  // (a single shared alpha would add ink onto ground where only one channel hits an edge: a halo).
+  vec4 sr = sampleRefract(q, d, -1.);
+  vec4 sg = sampleRefract(q, d, 0.);
+  vec4 sb = sampleRefract(q, d, 1.);
+  vec3 col = vec3(sr.r + ground.r * (1. - sr.a), sg.g + ground.g * (1. - sg.a), sb.b + ground.b * (1. - sb.a));
+  float a = 1.;
   float z = sqrt(max(0., 1. - d * d));
   float milk = frost * (.25 + .35 * (1. - z));                              // a whisper of milk, thicker toward the rim
   over(col, a, vec3(milk), milk);
@@ -53,11 +58,12 @@ void main(){
  *           differ, paint() draws nothing and sets lens.mismatch; a tainted source sets lens.tainted.
  *  Call step(dt) in the loop's step and paint() in its paint, after the source canvas is drawn. Place it with
  *  snap(x, y) or follow(x, y) (CSS px in the overlay); unplaced, it starts at the centre. The source may be
- *  transparent: the glass bends what the source draws, and the CSS ground shows through unbent.
+ *  transparent: under the drop the lens paints `ground` (an [r, g, b] 0..255; default: the first opaque background
+ *  of the overlay's ancestors) and lays the refracted source over it, so the glass covers what it bends.
  *  source:  the canvas whose pixels the lens bends (re-uploaded each paint).
  *  opts: { r, mag, bend, disp, frost } — r in CSS px.
  */
-export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, disp = 0.06, frost = 0.06, preserve = false } = {}) {
+export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, disp = 0.06, frost = 0.06, preserve = false, ground = null } = {}) {
   r = Math.max(1, r); // a zero radius would divide by zero in the shader
   const gl = overlay.getContext("webgl", { premultipliedAlpha: true, alpha: true, antialias: true, preserveDrawingBuffer: preserve });
   const pos = { x: new Sp(0), y: new Sp(0), sx: new Sp(1), sy: new Sp(1) };
@@ -93,7 +99,7 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
     gl.texParameteri(gl.TEXTURE_2D, k, v);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-  const U = Object.fromEntries(["src", "res", "c", "rad", "mag", "bend", "disp", "frost"].map((n) => [n, gl.getUniformLocation(prog, n)]));
+  const U = Object.fromEntries(["src", "res", "c", "rad", "mag", "bend", "disp", "frost", "ground"].map((n) => [n, gl.getUniformLocation(prog, n)]));
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -107,6 +113,7 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
     placed = true;
     pos.x.snap(x);
     pos.y.snap(y);
+    Object.assign(L.state, { x, y });
   };
   L.press = (on) => {
     pos.sx.set(on ? 1.08 : 1);
@@ -150,10 +157,21 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
     gl.uniform1f(U.mag, mag);
     gl.uniform1f(U.bend, bend);
     gl.uniform1f(U.disp, disp);
+    const g = ground ?? pageGround(overlay);
+    gl.uniform3f(U.ground, g[0] / 255, g[1] / 255, g[2] / 255);
     gl.uniform1f(U.frost, frost);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   };
   return L;
+}
+
+/** The colour the page shows behind `el`: its nearest ancestor with an opaque background (else white). */
+export function pageGround(el) {
+  for (let n = el?.parentElement; n; n = n.parentElement) {
+    const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/.exec(getComputedStyle(n).backgroundColor);
+    if (m && (m[4] === undefined || Number(m[4]) > 0.99)) return [Number(m[1]), Number(m[2]), Number(m[3])];
+  }
+  return [255, 255, 255];
 }
 
 /** Wire pointer drag onto an element: the lens follows while held, and squashes on press. Live preview only. */

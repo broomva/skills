@@ -545,6 +545,14 @@ test("specimen renders in both modes, deterministically, and moves over time", {
       assert.ok(ca > 0, "the lens is drawn at the centre (it centred itself)");
       assert.ok(!(ca > 200 && cr < 40 && cg < 40 && cb < 40), `the centre is not an opaque black disc: ${r.centre}`);
       assert.equal(r.corner[3], 0, "outside the lens the overlay stays transparent");
+      // the glass covers what it bends: at the mark the overlay is opaque page ground, so the unbent mark under it
+      // cannot show through (no double image)
+      const [mr, mg, mb, ma] = r.mark;
+      assert.ok(ma > 240 && mr > 180 && mg > 180 && mb > 170, `the unbent source shows through the glass: ${r.mark}`);
+      // at the dispersive rim each channel is its own coverage over the ground: blue can never exceed what the
+      // ground (240) or the ink (160) gives, lifted by the white rim (≤ ~246). A shared alpha adds ink on top of
+      // ground and clips blue to 255 (a halo).
+      for (const [i, p] of r.rim.entries()) assert.ok(p[2] <= 248, `halo at rim x=${262 + i}: ${p}`);
     } finally {
       await fx.close();
       s2.close();
