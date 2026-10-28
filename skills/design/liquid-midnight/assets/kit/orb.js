@@ -220,8 +220,10 @@ export const ORB = (() => {
     }
     // always the document (it sees a shadow HOST being removed), plus every shadow root up the host chain (removals
     // inside shadow DOM are invisible to the document observer)
-    const targets = [document.documentElement];
-    for (let root = cv.getRootNode(); root instanceof ShadowRoot; root = root.host.getRootNode()) targets.push(root);
+    // the canvas's OWN document (a same-origin iframe has its own), plus every shadow root up the host chain. Shadow
+    // roots are detected without instanceof, which fails across realms (iframes): a DocumentFragment (11) with a host
+    const targets = [(cv.ownerDocument || document).documentElement];
+    for (let root = cv.getRootNode(); root && root.nodeType === 11 && root.host; root = root.host.getRootNode()) targets.push(root);
     for (const target of targets) {
       if (watched.has(target)) continue;
       watched.add(target);
