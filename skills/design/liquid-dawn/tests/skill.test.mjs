@@ -499,5 +499,42 @@ test("specimen renders in both modes, deterministically, and moves over time", {
   assert.notEqual(h(pick(a, "dawn-t6-hero.png")), h(pick(a, "dusk-t6-hero.png")), "dusk differs from dawn");
   const paper = await render({ root: join(SKILL, "assets"), page: "specimen/paper.html", width: "1440", shots: "hero,lens,footer", t: ["6"], mode: ["dawn"], out: join(out, "p") });
   assert.equal(paper.length, 3, "the paper page renders its hero, lens and footer without page errors");
+  // a frame is a function of t alone: seeking back from t = 10 to t = 6 paints what a fresh page at t = 6 paints,
+  // and the lens really draws (the phone differs with the lens hidden)
+  const { chromium } = loadPlaywright();
+  const { startServer } = await import("../scripts/serve.mjs");
+  const { server, url } = await startServer(join(SKILL, "assets"));
+  const browser = await chromium.launch();
+  try {
+    const shot = async (query, seek) => {
+      const p = await browser.newPage({ viewport: { width: 1440, height: 900 }, deviceScaleFactor: 1 });
+      await p.goto(`${url}/specimen/paper.html?${query}`);
+      await p.waitForFunction(() => window.__ready === true);
+      if (seek !== undefined) await p.evaluate((t) => window.renderAt(t), seek);
+      const out = {};
+      for (const sel of [".hero", "#screen", ".cards"]) {
+        const el = await p.$(sel);
+        await el.scrollIntoViewIfNeeded();
+        out[sel] = createHash("sha256").update(await el.screenshot()).digest("hex");
+      }
+      out.lens = await p.evaluate(() => ({ supported: window.__lens.supported, tainted: window.__lens.tainted, mismatch: window.__lens.mismatch }));
+      await p.close();
+      return out;
+    };
+    // early t: the lens spring has not converged, so a seek that skipped the reset would land elsewhere
+    const early = await shot("t=0.25");
+    const back = await shot("t=10", 0.25);
+    assert.deepEqual(early.lens, { supported: true, tainted: false, mismatch: false });
+    for (const sel of [".hero", "#screen", ".cards"]) assert.equal(back[sel], early[sel], `${sel}: reverse seek differs from a fresh render`);
+    // within one print quantum: 6 then 6.5 must print what a fresh 6.5 prints (prints follow t, not history)
+    const fresh = await shot("t=6.5");
+    const stepped = await shot("t=6", 6.5);
+    assert.equal(stepped[".cards"], fresh[".cards"], "a print depends on history, not on t");
+    const noLens = await shot("t=6.5&nolens=1");
+    assert.notEqual(noLens["#screen"], fresh["#screen"], "the lens draws");
+  } finally {
+    await browser.close();
+    server.close();
+  }
   await assert.rejects(render({ ...opts, shots: "nope", t: ["0"], mode: ["dawn"], out: join(out, "d") }), /no \[data-shot\] element named: nope/);
 });

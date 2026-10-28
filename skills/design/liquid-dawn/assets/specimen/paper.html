@@ -29,6 +29,8 @@
   .composer { pointer-events: auto; width: min(980px, 82vw); height: 140px; border-radius: 22px; padding: 22px 18px 14px 24px; display: grid; grid-template-rows: 1fr auto;
     background: rgba(246,246,244,.5); -webkit-backdrop-filter: blur(16px) saturate(110%); backdrop-filter: blur(16px) saturate(110%);
     box-shadow: 0 30px 60px -30px rgba(30,34,40,.22), inset 0 0 0 1px rgba(20,24,30,.07), inset 0 1px 0 rgba(255,255,255,.9); }
+  .composer:focus-within { box-shadow: 0 30px 60px -30px rgba(30,34,40,.22), 0 0 0 2px var(--ld-tide), inset 0 1px 0 rgba(255,255,255,.9); }
+  .seg button:focus-visible, footer a:focus-visible { outline: 2px solid var(--ld-tide); outline-offset: 2px; border-radius: 8px; }
   .composer input { all: unset; font: 300 22px/1.2 var(--ld-font-text); color: #222; }
   .composer input::placeholder { color: #a3a7ad; }
   .composer .row { display: flex; align-items: center; justify-content: space-between; color: #6b7077; }
@@ -130,7 +132,7 @@
 <section class="band" data-shot="lens">
   <div class="wrap lensrow">
     <div class="phone">
-      <div class="screen" id="screen">
+      <div class="screen" id="screen" role="img" aria-label="A liquid glass lens bending the words: Meet Dawn. The calm software paper. Drag to move it.">
         <canvas id="cv-paper" aria-hidden="true"></canvas>
         <canvas id="cv-lens" aria-hidden="true"></canvas>
         <div class="island"></div>
@@ -165,7 +167,7 @@
         <div class="low">
           <div class="times"><div><b>06:12</b><small>Sunrise</small></div><svg class="wave" viewBox="0 0 120 26" fill="none" stroke="#fff" stroke-width="1.4" stroke-linecap="round"><path d="M2 16c12-10 22-10 34 0s22 10 34 0 22-10 34 0 10 6 14 4"/></svg><div style="text-align:right"><b>18:44</b><small>Sunset</small></div></div>
           <hr />
-          <div class="seg" id="seg"><i></i><button class="on">Dawn</button><button>Dusk</button></div>
+          <div class="seg" id="seg" role="group" aria-label="Mode"><i></i><button class="on" aria-pressed="true">Dawn</button><button aria-pressed="false">Dusk</button></div>
         </div>
       </div>
       <div class="card glassnum"><canvas id="cv-engrave" aria-hidden="true"></canvas><div class="glass-type" id="gt"></div><div class="rule"></div><div class="cap"><span>The tide turns at dawn. Let it carry you back.</span></div></div>
@@ -180,10 +182,10 @@
   <canvas id="cv-foot" aria-hidden="true"></canvas>
   <div class="cols">
     <div><div class="brand">✦ Dawn</div></div>
-    <div><h4>Navigation</h4><a>Features</a><a>Testimonials</a><a>Pricing</a><a>Integrations</a></div>
-    <div><h4>Solutions</h4><a>Self-service</a><a>Ideation</a><a>Engagement</a><a>Support</a></div>
-    <div><h4>Resources</h4><a>Community</a><a>Stories</a><a>Journal</a><a>Help centre</a></div>
-    <div><h4>Company</h4><a>Terms</a><a>Privacy</a><a>Processing</a></div>
+    <div><h4>Navigation</h4><a href="#features">Features</a><a href="#testimonials">Testimonials</a><a href="#pricing">Pricing</a><a href="#integrations">Integrations</a></div>
+    <div><h4>Solutions</h4><a href="#self-service">Self-service</a><a href="#ideation">Ideation</a><a href="#engagement">Engagement</a><a href="#support">Support</a></div>
+    <div><h4>Resources</h4><a href="#community">Community</a><a href="#stories">Stories</a><a href="#journal">Journal</a><a href="#help-centre">Help centre</a></div>
+    <div><h4>Company</h4><a href="#terms">Terms</a><a href="#privacy">Privacy</a><a href="#processing">Processing</a></div>
   </div>
 </footer>
 
@@ -209,7 +211,7 @@ function build() {
   S.scratch = S.scratch ?? document.createElement("canvas");
   S.scratch.width = S.cols;
   S.scratch.height = S.rows;
-  S.lens = S.lens ?? createLens($("cv-lens"), $("cv-paper"), { r: 96, mag: 0.7, bend: 0.62, disp: 0.07 });
+  S.lens = S.lens ?? createLens($("cv-lens"), $("cv-paper"), { preserve: capture, r: 96, mag: 0.7, bend: 0.62, disp: 0.07 });
   S.spark = S.spark ?? sparkField(900, 25);
   S.sparkMini = S.sparkMini ?? sparkField(320, 8);
   glassType($("gt"), "06:12");
@@ -297,11 +299,18 @@ function paintOrb(t) {
   $("say").style.setProperty("--sh", `${(100 - ((t * 22) % 140)).toFixed(1)}%`);
 }
 
+// Prints are pure functions of a QUANTISED time (cards: whole seconds; footer: 4 s), so a frame depends only on t,
+// never on which frames were painted before it. Live, a print is redone only when its quantum changes and it is on
+// screen; a capture (renderAt) always prints.
+const onScreen = new Set();
+const io = new IntersectionObserver((es) => es.forEach((e) => (e.isIntersecting ? onScreen.add(e.target.id) : onScreen.delete(e.target.id))));
+for (const id of ["cv-dither", "cv-engrave", "cv-sky", "cv-foot"]) io.observe(document.getElementById(id));
+const visible = (id) => capture || onScreen.has(id);
 function paintPrints(t) {
-  // dither card and engraving are static per half-second, so they re-print at most twice a second
-  const k = Math.floor(t * 2);
-  if (S.printed.k === k) return;
-  S.printed.k = k;
+  const tq = Math.floor(t);
+  if (S.printed.k === tq || !(visible("cv-dither") || visible("cv-engrave") || visible("cv-sky"))) return;
+  S.printed.k = tq;
+  t = tq;
   const D = S.dither;
   const dc = coastScene(D.w, D.h, t, { seed: 21 });
   printInto(D.cx, (x, y) => dc(x, y * 1.55) * 0.92, { w: D.w, h: D.h, mode: "dither", scale: 1.5, ...DUOTONES.teal });
@@ -312,9 +321,10 @@ function paintPrints(t) {
   printInto(K.cx, cloudSky(K.w, K.h, t + 30, { seed: 11 }), { w: K.w, h: K.h, mode: "dither", scale: 2, ink: [92, 118, 132], paper: [214, 224, 226] });
 }
 function paintFoot(t) {
-  const k = Math.floor(t);
-  if (S.printed.f === k) return;
-  S.printed.f = k;
+  const tq = Math.floor(t / 4) * 4;
+  if (S.printed.f === tq || !visible("cv-foot")) return;
+  S.printed.f = tq;
+  t = tq;
   const F = S.foot;
   printInto(F.cx, coastScene(F.w, F.h, t, { seed: 3 }), { w: F.w, h: F.h, mode: "engrave", pitch: 3.6, ...DUOTONES.cobalt });
 }
@@ -329,11 +339,19 @@ $("seg").addEventListener("click", (e) => {
   const b = e.target.closest("button");
   if (!b) return;
   const on = [...$("seg").querySelectorAll("button")].indexOf(b);
-  $("seg").querySelectorAll("button").forEach((x, i) => x.classList.toggle("on", i === on));
+  $("seg").querySelectorAll("button").forEach((x, i) => {
+    x.classList.toggle("on", i === on);
+    x.setAttribute("aria-pressed", String(i === on));
+  });
   seg.x.set(on * ($("seg").clientWidth / 2 - 4));
 });
 
 const loop = createLoop({
+  // a reset (t = 0, and before every backwards seek) puts every spring back at its start
+  init() {
+    if (S.paper) S.lens.snap(S.paper.w / 2, S.paper.h * 0.53);
+    seg.x.snap(0);
+  },
   step(dt, t) {
     stepLens(dt, t);
     seg.x.step(dt, 0.4, 1);
@@ -341,7 +359,7 @@ const loop = createLoop({
   paint(t) {
     paintHero(t);
     paintPaper(t);
-    S.lens.paint();
+    if (!q.has("nolens")) S.lens.paint();
     paintOrb(t);
     paintMini(t);
     paintPrints(t);
@@ -358,6 +376,7 @@ S.lens.snap(sw.w / 2, sw.h * 0.53);
 held = dragLens($("screen"), S.lens, () => loop.invalidate());
 addEventListener("resize", () => { build(); loop.invalidate(); });
 window.renderAt = (t) => loop.renderAt(t);
+window.__lens = S.lens;
 if (capture) {
   loop.renderAt(Number(q.get("t")));
   window.__ready = true;

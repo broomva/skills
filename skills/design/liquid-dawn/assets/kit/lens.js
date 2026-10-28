@@ -43,14 +43,17 @@ void main(){
 
 /**
  * createLens(overlay, source, opts) → { paint(state), follow(x, y), press(on), step(dt), state, supported }
- *  overlay: a canvas over `source`, same CSS box (the lens draws here; the rest stays transparent).
+ *  overlay: a canvas over `source`, same CSS box (the lens draws here; the rest stays transparent). If the boxes
+ *           differ, paint() draws nothing and sets lens.mismatch; a tainted source sets lens.tainted.
+ *  Call step(dt) in the loop's step and paint() in its paint, after the source canvas is drawn.
  *  source:  the canvas whose pixels the lens bends (re-uploaded each paint).
  *  opts: { r, mag, bend, disp, frost } — r in CSS px.
  */
-export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, disp = 0.06, frost = 0.06 } = {}) {
-  const gl = overlay.getContext("webgl", { premultipliedAlpha: true, alpha: true, antialias: true });
+export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, disp = 0.06, frost = 0.06, preserve = false } = {}) {
+  r = Math.max(1, r); // a zero radius would divide by zero in the shader
+  const gl = overlay.getContext("webgl", { premultipliedAlpha: true, alpha: true, antialias: true, preserveDrawingBuffer: preserve });
   const pos = { x: new Sp(0), y: new Sp(0), sx: new Sp(1), sy: new Sp(1) };
-  const L = { supported: !!gl, state: { x: 0, y: 0, r, squash: 0 } };
+  const L = { supported: !!gl, tainted: false, mismatch: false, state: { x: 0, y: 0, r, squash: 0 } };
   if (!gl) {
     L.paint = () => {};
     L.step = () => {};
@@ -116,8 +119,17 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
     gl.viewport(0, 0, overlay.width, overlay.height);
     gl.clearColor(0, 0, 0, 0);
     gl.clear(gl.COLOR_BUFFER_BIT);
+    // the texture is sampled in the overlay's coordinates, so the two must share a CSS box
+    L.mismatch = Math.abs(source.clientWidth - w) > 0.5 || Math.abs(source.clientHeight - h) > 0.5;
+    if (L.mismatch) return;
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    try {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    } catch {
+      L.tainted = true; // a source canvas tainted by cross-origin media cannot be uploaded: show no lens, keep running
+      return;
+    }
+    L.tainted = false;
     // source and overlay share a CSS box; the texture spans the source's pixels, the overlay's own resolution maps 1:1
     gl.uniform1i(U.src, 0);
     gl.uniform2f(U.res, overlay.width, overlay.height);

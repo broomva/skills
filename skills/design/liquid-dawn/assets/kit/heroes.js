@@ -2,10 +2,10 @@
 // `.ld-hero-bg[data-recipe=<name>]`), an optional soft canvas (`.ld-field.ld-soft`, blurred by CSS into light), and a
 // sharp canvas for glyphs and tiles. Every recipe is pure in t and its seed, keeps a clearing behind the hero copy,
 // and, where it draws a field under the hero's lens (the composer or CTA glass), refracts that field through it:
-// dawn, caustic, lagoon and tide refract; horizon refracts only the water band; currents draws no field under the lens.
+// every recipe refracts what it draws under the lens (horizon: its water band, which is where its lens sits).
 // Owner-chosen directions (2026-10-28): caustic light, currents, lagoon, horizon; "dawn" blends the first three and is
 // the default. "tide" is the first hero, kept as a recipe.
-import { clearing, cloud, tide } from "./fields.js";
+import { clearing, cloud, refract, tide } from "./fields.js";
 import { field, RAMP, tiles } from "./ascii.js";
 import { prng, smoothstep } from "./core.js";
 import { createIslands, createShoal } from "./shoal.js";
@@ -71,15 +71,18 @@ export function createHero(name, { w, h, colors: C, seed = 21, calm } = {}) {
       lenses: [lens], lensAlpha: 1, fringe: fringe(),
     });
   };
-  /** glyph streamlines with pulses travelling along them */
-  const currents = (L, t, alpha = 1) => {
+  /** glyph streamlines with pulses travelling along them; under the lens the streams are drawn through refract() */
+  const streamY = (c, x, t) => c.y0 + Math.sin(x * c.k + t * c.w + c.ph) * c.A;
+  const inLens = (lens, x, y) => lens && x > lens.x && x < lens.x + lens.w && y > lens.y && y < lens.y + lens.h;
+  const currents = (L, t, alpha = 1, lens = null) => {
     const { cx } = L;
     cx.font = `400 13px "JetBrains Mono", ui-monospace, Menlo, monospace`;
     cx.textAlign = "center";
     cx.textBaseline = "middle";
     streams.forEach((c, i) => {
       for (let x = 6; x < w; x += 13) {
-        const y = c.y0 + Math.sin(x * c.k + t * c.w + c.ph) * c.A;
+        const y = streamY(c, x, t);
+        if (inLens(lens, x, y)) continue;
         const pulse = smoothstep(0.55, 1, 0.5 + 0.5 * Math.sin(x * 0.004 - t * c.pulse + c.ph));
         const a = (0.12 + 0.6 * pulse) * quiet(x, y) * alpha;
         if (a < 0.04) continue;
@@ -89,6 +92,21 @@ export function createHero(name, { w, h, colors: C, seed = 21, calm } = {}) {
         cx.fillText(pulse > 0.7 ? "≈" : Math.abs(slope) > 0.05 ? (slope > 0 ? "\\" : "/") : "~", x, y);
       }
     });
+    if (lens) {
+      // inside the glass: each cell samples the streams at its refracted position, so they bend and magnify
+      for (let Y = lens.y + 6; Y < lens.y + lens.h; Y += 12)
+        for (let X = lens.x + 6; X < lens.x + lens.w; X += 12) {
+          const q = refract(X, Y, lens, lens.opts);
+          if (!q) continue;
+          streams.forEach((c, i) => {
+            if (Math.abs(q.sy - streamY(c, q.sx, t)) > 5) return;
+            const pulse = smoothstep(0.55, 1, 0.5 + 0.5 * Math.sin(q.sx * 0.004 - t * c.pulse + c.ph));
+            cx.globalAlpha = (0.2 + 0.7 * pulse) * alpha;
+            cx.fillStyle = i % 3 === 1 ? C.moss : ink();
+            cx.fillText(pulse > 0.7 ? "≈" : "~", X, Y);
+          });
+        }
+    }
     cx.globalAlpha = 1;
   };
   /** fish riding two of the streams, snapped to the 12 px tile lattice */
@@ -105,7 +123,7 @@ export function createHero(name, { w, h, colors: C, seed = 21, calm } = {}) {
     dawn({ soft, sharp }, t, lens) {
       causticLight(soft, t, (y) => smoothstep(h * 0.2, h * 0.85, y), 0.9);
       sharp.cx.clearRect(0, 0, w, h);
-      currents(sharp, t, 0.85);
+      currents(sharp, t, 0.85, lens);
       riders(sharp, t);
       lensType(sharp, t, lens);
     },
@@ -114,9 +132,9 @@ export function createHero(name, { w, h, colors: C, seed = 21, calm } = {}) {
       sharp.cx.clearRect(0, 0, w, h);
       lensType(sharp, t, lens);
     },
-    currents({ sharp }, t) {
+    currents({ sharp }, t, lens) {
       sharp.cx.clearRect(0, 0, w, h);
-      currents(sharp, t);
+      currents(sharp, t, 1, lens);
       riders(sharp, t);
     },
     lagoon({ sharp }, t, lens) {

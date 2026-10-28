@@ -88,11 +88,14 @@ export function cloudSky(w, h, t = 0, { seed = 4 } = {}) {
 const lerp3 = (a, b, k) => [a[0] + (b[0] - a[0]) * k, a[1] + (b[1] - a[1]) * k, a[2] + (b[2] - a[2]) * k];
 
 /**
- * printInto(cx, L, { x, y, w, h, mode, ink, paper, pitch, scale }) — render L as "engrave" or "dither" (two inks).
- * Works through ImageData at device resolution; `scale` > 1 coarsens the dither grain (3-7's visible print grain).
+ * printInto(cx, L, { x, y, w, h, mode, ink, paper, pitch, scale, grain, resolution }) — render L as "engrave" or
+ * "dither": two inks, plus a faint paper grain (±grain/2 per channel; grain: 0 for strictly two colours). `scale` > 1
+ * coarsens the dither grain (3-7's visible print grain). L is a function; for a picture use imageLuma(img, w, h).
  */
-export function printInto(cx, L, { x = 0, y = 0, w, h, mode = "engrave", ink = [42, 82, 190], paper = [242, 236, 222], pitch = 4, scale = 1, seed = 0 }) {
-  const d = Math.round(cx.getTransform().a) || 1;
+export function printInto(cx, L, { x = 0, y = 0, w, h, mode = "engrave", ink = [42, 82, 190], paper = [242, 236, 222], pitch = 4, scale = 1, seed = 0, grain = 8, resolution = 1 }) {
+  // printed at `resolution` × CSS px (default 1, not the device ratio: a print's grain is coarse anyway, and 1× costs a
+  // quarter of the work at 2× DPR), then copied up with smoothing off so the lines and dots stay crisp
+  const d = resolution;
   const W = Math.round(w * d);
   const H = Math.round(h * d);
   const img = cx.createImageData(W, H);
@@ -108,15 +111,74 @@ export function printInto(cx, L, { x = 0, y = 0, w, h, mode = "engrave", ink = [
         const gy = Math.floor(j / (scale * d));
         k = ditherBit(l, gx, gy);
       } else k = engraveInk(l, X, Y, { pitch, seed });
-      const grain = (noise2(i * 0.9, j * 0.9, 77) - 0.5) * 10;
+      const gr = grain ? (noise2(i * 0.9, j * 0.9, 77) - 0.5) * grain : 0;
       const c = lerp3(paper, ink, k);
       const o = (j * W + i) * 4;
-      px[o] = c[0] + grain;
-      px[o + 1] = c[1] + grain;
-      px[o + 2] = c[2] + grain;
+      px[o] = c[0] + gr;
+      px[o + 1] = c[1] + gr;
+      px[o + 2] = c[2] + gr;
       px[o + 3] = 255;
     }
-  cx.putImageData(img, Math.round(x * d), Math.round(y * d));
+  const dev = cx.getTransform().a || 1;
+  if (Math.abs(dev - d) < 1e-6 || typeof document === "undefined") {
+    cx.putImageData(img, Math.round(x * dev), Math.round(y * dev));
+    return;
+  }
+  const off = document.createElement("canvas");
+  off.width = W;
+  off.height = H;
+  off.getContext("2d").putImageData(img, 0, 0);
+  const smooth = cx.imageSmoothingEnabled;
+  cx.imageSmoothingEnabled = false;
+  cx.drawImage(off, x, y, w, h);
+  cx.imageSmoothingEnabled = smooth;
+}
+
+/**
+ * imageLuma(img, w, h) → L(x, y) | null: turn a picture (<img>, <video>, canvas) into the luminance function the
+ * printers take, cropped as object-fit: cover to a w × h box and sampled bilinearly. Returns null for cross-origin
+ * media without CORS (the canvas would be tainted).
+ */
+export function imageLuma(img, w, h, { res = 0.5 } = {}) {
+  const sw = img.naturalWidth || img.videoWidth || img.width;
+  const sh = img.naturalHeight || img.videoHeight || img.height;
+  if (!sw || !sh) return null;
+  const W = Math.max(2, Math.round(w * res));
+  const H = Math.max(2, Math.round(h * res));
+  const c = document.createElement("canvas");
+  c.width = W;
+  c.height = H;
+  const x = c.getContext("2d", { willReadFrequently: true });
+  const s = Math.max(w / sw, h / sh);
+  const cw = w / s;
+  const ch = h / s;
+  let px;
+  try {
+    x.drawImage(img, (sw - cw) / 2, (sh - ch) / 2, cw, ch, 0, 0, W, H);
+    px = x.getImageData(0, 0, W, H).data;
+  } catch {
+    return null;
+  }
+  const lum = new Float32Array(W * H);
+  for (let i = 0; i < W * H; i++) lum[i] = (0.2126 * px[i * 4] + 0.7152 * px[i * 4 + 1] + 0.0722 * px[i * 4 + 2]) / 255;
+  return lumaSampler(lum, W, H, w, h);
+}
+
+/** Bilinear sampler over a W × H luminance grid spanning a w × h box. Pure; tested. */
+export function lumaSampler(lum, W, H, w, h) {
+  return (x, y) => {
+    const fx = clamp((x / w) * W - 0.5, 0, W - 1);
+    const fy = clamp((y / h) * H - 0.5, 0, H - 1);
+    const x0 = Math.floor(fx);
+    const y0 = Math.floor(fy);
+    const x1 = Math.min(W - 1, x0 + 1);
+    const y1 = Math.min(H - 1, y0 + 1);
+    const tx = fx - x0;
+    const ty = fy - y0;
+    const a = lum[y0 * W + x0] * (1 - tx) + lum[y0 * W + x1] * tx;
+    const b = lum[y1 * W + x0] * (1 - tx) + lum[y1 * W + x1] * tx;
+    return a * (1 - ty) + b * ty;
+  };
 }
 
 /** A duotone ramp for dither cards that keeps both ends in the image: shadows in `lo`, lights in `hi`. Returns L and

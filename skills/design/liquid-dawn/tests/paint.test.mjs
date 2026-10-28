@@ -67,12 +67,14 @@ for (const name of heroes.HERO_RECIPES)
   });
 
 test("recipes that put a field under the lens refract it: their output changes when the lens moves", () => {
-  for (const name of ["dawn", "caustic", "lagoon", "horizon", "tide"]) {
+  for (const name of heroes.HERO_RECIPES) {
     const L1 = { soft: layer(), sharp: layer() };
     const L2 = { soft: layer(), sharp: layer() };
     const h = heroes.createHero(name, { w: 1000, h: 640, colors });
     h.paint(L1, 6, lens);
-    h.paint(L2, 6, { ...lens, y: lens.y + (name === "horizon" ? 0 : 140), x: lens.x + 60 });
+    // horizon's lens sits on its water band; for every other recipe move the lens anywhere
+    h.paint(L2, 6, name === "horizon" ? { ...lens, y: 560, h: 60 } : { ...lens, y: lens.y + 140, x: lens.x + 60 });
+    if (name === "horizon") h.paint(L1, 6, { ...lens, y: 520, h: 60 });
     assert.notDeepEqual(L1.sharp.cx.log, L2.sharp.cx.log, `${name} ignores its lens`);
   }
 });
@@ -210,4 +212,71 @@ test("engraving: paper stays bare, darker tones carry more ink; dither is a thre
     assert.ok(v >= 0 && v <= 1);
     assert.equal(v, eng.coastScene(800, 400, 2)(x, y));
   }
+});
+
+test("filmType: no type at d = 0, a paper backing and glyphs when dissolving, the glass veil only inside the lens", () => {
+  const cols = 8;
+  const rows = 4;
+  const frame = { lum: new Float32Array(cols * rows).fill(0.3), rgb: new Uint8ClampedArray(cols * rows * 3).fill(120), cols, rows };
+  const th = cine.dissolveThresholds(cols, rows);
+  const draw = (d, lensRect) => {
+    const cx = fakeContext();
+    const back = fakeContext();
+    cine.filmType(cx, frame, { w: 80, h: 40, d, thresholds: th, paper: "#eee", lens: lensRect, back });
+    return { glyphs: cx.log.filter(([k]) => k === "fillText").length, backing: back.log.filter(([k]) => k === "fillRect").length };
+  };
+  assert.deepEqual(draw(0), { glyphs: 0, backing: 0 });
+  const full = draw(1);
+  assert.equal(full.glyphs, cols * rows);
+  assert.equal(full.backing, cols * rows, "the backing goes on the backing context");
+  // 10 px cells: a 20 × 10 lens at the origin covers exactly cells (0,0) and (1,0)
+  assert.equal(draw(0, { x: 0, y: 0, w: 20, h: 10 }).glyphs, 2, "inside a section only the lens cells show type");
+});
+
+test("printInto: two inks, a pure function of L; grain 0 leaves exactly two colours", () => {
+  const out = () => {
+    let img;
+    const cx = new Proxy(fakeContext(), {
+      get(t, k) {
+        if (k === "putImageData") return (i) => (img = i);
+        if (k === "getTransform") return () => ({ a: 1 });
+        return t[k];
+      },
+    });
+    eng.printInto(cx, (x) => x / 40, { w: 40, h: 8, mode: "dither", ink: [10, 20, 30], paper: [240, 230, 220], grain: 0 });
+    return img.data;
+  };
+  const a = out();
+  assert.deepEqual(a, out());
+  const colours = new Set();
+  for (let i = 0; i < a.length; i += 4) colours.add(`${a[i]},${a[i + 1]},${a[i + 2]}`);
+  assert.deepEqual([...colours].sort(), ["10,20,30", "240,230,220"]);
+  const inkLeft = [...Array(8)].reduce((n, _, y) => n + (a[(y * 40 + 1) * 4] === 10), 0);
+  const inkRight = [...Array(8)].reduce((n, _, y) => n + (a[(y * 40 + 38) * 4] === 10), 0);
+  assert.ok(inkLeft > inkRight, "the dark side carries more ink");
+});
+
+test("lumaSampler interpolates bilinearly and clamps at the edges", () => {
+  const L = eng.lumaSampler(Float32Array.from([0, 1, 0, 1]), 2, 2, 100, 100);
+  assert.equal(L(0, 50), 0);
+  assert.equal(L(100, 50), 1);
+  assert.ok(Math.abs(L(50, 50) - 0.5) < 1e-6);
+  assert.equal(L(-50, -50), 0);
+});
+
+test("mosaic returns false and draws nothing when its source is tainted", () => {
+  const src = { width: 4, height: 4, getContext: () => ({ getImageData() { throw new Error("SecurityError"); } }) };
+  const cx = fakeContext();
+  assert.equal(mosaic.mosaic(cx, src, { cell: 10 }), false);
+  assert.equal(cx.log.filter(([k]) => k === "fillRect").length, 0);
+});
+
+test("currents draws nothing unrefracted inside the glass: every glyph in the lens sits on the lens's own grid", () => {
+  const L = { sharp: layer() };
+  // outside the hero's quiet clearing (centred at 500,260), where the streams at y ≈ 477 and 557 are fully drawn
+  const box = { x: 20, y: 440, w: 300, h: 160, r: 22, opts: { mag: 1.12, bevel: 0.3, bend: 0.9 } };
+  heroes.createHero("currents", { w: 1000, h: 640, colors }).paint(L, 6, box);
+  const inside = L.sharp.cx.log.filter(([k, , x, y]) => k === "fillText" && x > box.x && x < box.x + box.w && y > box.y && y < box.y + box.h);
+  assert.ok(inside.length > 0, "the streams continue through the glass");
+  for (const [, , x, y] of inside) assert.ok((x - box.x - 6) % 12 === 0 && (y - box.y - 6) % 12 === 0, `glyph at ${x},${y} is not a refracted cell`);
 });

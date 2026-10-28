@@ -56,13 +56,19 @@ export function edgeKeep(alpha, h) {
  * mosaic(cx, src, { x, y, cell, gap, seed, ink, paper, tint })
  * src: a canvas painted at one pixel per cell (its width × height = cols × rows). Draws the tiles at (x, y).
  * tint: optional (h) => [r, g, b] | null to colour a few tiles faintly (the reference keeps colour rare).
+ * Returns false (and draws nothing) when `src` is tainted by cross-origin media; true otherwise.
  * keyLight: for photographs on a white ground (a cut-out): luminance above this keys out to transparent, so only the
  *   subject becomes tiles. Leave null for canvases with real alpha.
  */
 export function mosaic(cx, src, { x = 0, y = 0, cell = 10, gap = 1, seed = 1, ink = [40, 42, 46], dot = [120, 124, 130], tint = null, font = '600 8px "JetBrains Mono", monospace', alpha = 1, keyLight = null } = {}) {
   const sx = src.getContext("2d", { willReadFrequently: true });
   const { width: cols, height: rows } = src;
-  const px = sx.getImageData(0, 0, cols, rows).data;
+  let px;
+  try {
+    px = sx.getImageData(0, 0, cols, rows).data;
+  } catch {
+    return false; // a cross-origin picture without CORS taints the scratch canvas: draw nothing rather than throw
+  }
   const s = cell - gap;
   const g0 = cx.globalAlpha;
   cx.font = font;
@@ -98,6 +104,7 @@ export function mosaic(cx, src, { x = 0, y = 0, cell = 10, gap = 1, seed = 1, in
       cx.fillText(t.glyph, X + s / 2, Y + s / 2 + 0.5);
     }
   cx.globalAlpha = g0;
+  return true;
 }
 
 /**
