@@ -17,7 +17,7 @@ Apple **Midnight** blue-black grounds (hue 245–252, never purple), with one bl
 
 Type is **Raleway Light** with tight tracking, and the key phrase is set in Raleway Regular blue. Motion is **springs and slow sweeps on one clock**. Every frame is a pure function of `t`, so a page can be rendered to video.
 
-![Cover board](https://raw.githubusercontent.com/broomva/liquid-midnight/d066feb/docs/renders/pen/00-cover.png)
+![Cover board](https://raw.githubusercontent.com/broomva/liquid-midnight/803b53c/docs/renders/pen/00-cover.png)
 
 ---
 
@@ -163,7 +163,7 @@ All drift `ease-in-out infinite alternate`. In capture mode, freeze them or driv
 
 ## 6. Orb, ASCII and field recipes (`kit/`)
 
-![Orb · ASCII board](https://raw.githubusercontent.com/broomva/liquid-midnight/d066feb/docs/renders/pen/05-orb-ascii.png)
+![Orb · ASCII board](https://raw.githubusercontent.com/broomva/liquid-midnight/803b53c/docs/renders/pen/05-orb-ascii.png)
 
 ### 6.1 WebGL glass plasma orb (`kit/orb.js`, shaders in `kit/orb-shaders.js`)
 - **Look** (reference: vault.rickybharti.com/orbloom): a thick glass sphere around a plasma core.
@@ -175,7 +175,7 @@ All drift `ease-in-out infinite alternate`. In capture mode, freeze them or driv
   ORB.attach(canvas); ORB.begin(ctx); orb(x, y, r, C.blue, t); ORB.end();
   ```
   This batches every orb in one WebGL pass. Called outside a batch, `orb()` renders a 256² sprite. With no WebGL it calls `orb2d()`.
-- **Sizing:** the visible sphere radius is .62 r; the sprite spans ±1.7 sphere radii, so its side is 3.4 × the sphere radius (1.7 × its diameter). The batch layer is an absolutely positioned overlay at the canvas's content box, inserted right after it, so the canvas's offset parent must be positioned (e.g. a `position: relative` wrapper); a `position: fixed` canvas gets a fixed layer. Each source canvas gets its own layer, released when the canvas leaves the DOM (or with `ORB.detach(cv)`). CSS transforms on the canvas are not followed: transform a wrapper that contains both, or skip `attach` and use the sprite path.
+- **Sizing:** the visible sphere radius is .62 r; the sprite spans ±1.7 sphere radii, so its side is 3.4 × the sphere radius (1.7 × its diameter). The batch layer is an absolutely positioned overlay at the canvas's content box, inserted right after it, so the canvas's offset parent must be positioned (e.g. a `position: relative` wrapper); a `position: fixed` canvas gets a fixed layer. Each source canvas gets its own layer, released when the canvas leaves the DOM, shadow roots included (or with `ORB.detach(cv)`). CSS transforms on the canvas are not followed: transform a wrapper that contains both, or skip `attach` and use the sprite path.
 - **Pencil:** `design/shaders/orb.glsl` is the same shader as a pen.dev shader fill. Use a **square** node whose side is 3.4 × the sphere radius you want; non-square nodes draw an ellipse.
 
 ### 6.2 ASCII text shader (`kit/ascii.js`)
@@ -232,7 +232,7 @@ Vendored in `fonts/`, all SIL OFL 1.1: Inter, Raleway, JetBrains Mono (variable 
 
 Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or 1080 × 1920). For the web, scale them with `clamp()`, keeping the ratios.
 
-![Typography board](https://raw.githubusercontent.com/broomva/liquid-midnight/d066feb/docs/renders/pen/02-typography.png)
+![Typography board](https://raw.githubusercontent.com/broomva/liquid-midnight/803b53c/docs/renders/pen/02-typography.png)
 
 ---
 
@@ -255,7 +255,7 @@ Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or
 | Scroll stories | one clock scrubbed by scroll (`t = T · progress`), smoothed by a critically damped follower (τ ≈ 120 ms); no CSS view timelines |
 | Render contract | `createLoop({init, step, paint}).renderAt(t)` replays fixed 1/60 s steps from 0 with `reseed()`. A headless browser renders any frame (see `?t=` in the specimen). Capture pages pin motion on (`setMotion(true)`), so frames do not depend on the capturing machine's reduced-motion setting |
 
-![Motion board](https://raw.githubusercontent.com/broomva/liquid-midnight/d066feb/docs/renders/pen/06-motion.png)
+![Motion board](https://raw.githubusercontent.com/broomva/liquid-midnight/803b53c/docs/renders/pen/06-motion.png)
 
 ---
 
@@ -268,7 +268,7 @@ Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or
 | Feed 4:5 | 1080 × 1350 | top 80, bottom 120, sides 64 | the same stage grammar, cropped |
 | Landing | fluid | max widths 1180 (hero) and 960; body ≤ 625 px | hero `min-height: 100vh`; nav capsule 62 px |
 
-![Formats board](https://raw.githubusercontent.com/broomva/liquid-midnight/d066feb/docs/renders/pen/07-formats.png)
+![Formats board](https://raw.githubusercontent.com/broomva/liquid-midnight/803b53c/docs/renders/pen/07-formats.png)
 
 ---
 
@@ -345,7 +345,7 @@ The owner judges the **rendered result** against named references. Code review i
 - References: the Agent Workspaces keynote frames; the reel `reel-01-folder-v2`; vault.rickybharti.com/orbloom for the orb; the basit_designs liquid-glass nav pill for capsules and metal icons.
 - The specimen (`specimen/index.html`, rendered by `bun run render`) and the Pencil boards (`design/liquid-midnight.pen`) are the visual contract. Re-render both whenever tokens or materials change.
 
-![Specimen · hero](https://raw.githubusercontent.com/broomva/liquid-midnight/d066feb/docs/renders/night-hero.png)
+![Specimen · hero](https://raw.githubusercontent.com/broomva/liquid-midnight/803b53c/docs/renders/night-hero.png)
 
 ---
 

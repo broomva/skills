@@ -33,11 +33,13 @@ export function selection(withList = []) {
 }
 
 /** Copy the selection into target/dir; refuses to overwrite locally edited files unless force. Returns a report. */
-export function install(target, { dir = "liquid-midnight", withList = [], dryRun = false, force = false } = {}) {
+export function install(target, { dir = "liquid-midnight", withList, dryRun = false, force = false } = {}) {
   const m = manifest();
-  const files = selection(withList);
   const dest = resolve(target, dir);
   const prev = existsSync(join(dest, RECEIPT)) ? readManifest(join(dest, RECEIPT)) : null;
+  // an update keeps the optional sets installed earlier: --with adds to them, it never silently drops them
+  withList = [...new Set([...(prev?.with ?? []), ...(withList ?? [])])];
+  const files = selection(withList);
   const edited = [];
   const kept = [];
   for (const f of files) {
@@ -85,7 +87,7 @@ export function verify(target, { dir = "liquid-midnight" } = {}) {
 
 function parse(argv) {
   const [cmd, target, ...rest] = argv;
-  const o = { cmd, target, dir: "liquid-midnight", withList: [], dryRun: false, force: false };
+  const o = { cmd, target, dir: "liquid-midnight", withList: undefined, dryRun: false, force: false };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === "--with") {
@@ -118,7 +120,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
         process.exit(1);
       }
       console.log(`${r.dryRun ? "would copy" : "copied"} ${r.copied.length} files to ${r.dest}`);
-      if (r.kept.length) console.log(`kept your edited starter(s): ${r.kept.join(", ")} (pass --force to replace)`);
+      if (r.kept.length) console.log(`kept existing starter(s): ${r.kept.join(", ")} (pass --force to replace them)`);
     } else if (o.cmd === "verify" && o.target) {
       const r = verify(o.target, o);
       if (r.error) {

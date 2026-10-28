@@ -207,16 +207,26 @@ export const ORB = (() => {
   let target = null;
   /* release a layer as soon as its canvas leaves the DOM (SPA unmounts), not only on the next attach() */
   let watcher = null;
-  const watch = (orb) => {
-    if (watcher || typeof MutationObserver === "undefined") return;
-    watcher = new MutationObserver(() => {
-      for (const [k] of layers) if (!k.isConnected) orb.detach(k);
-      if (!layers.size) {
-        watcher.disconnect();
-        watcher = null;
-      }
-    });
-    watcher.observe(document.documentElement, { childList: true, subtree: true });
+  let watched = new WeakSet();
+  /* observes the document and every shadow root that holds a batched canvas (document observers do not see inside
+     shadow DOM) */
+  const watch = (orb, cv) => {
+    if (typeof MutationObserver === "undefined") return;
+    if (!watcher) {
+      watcher = new MutationObserver(() => {
+        for (const [k] of layers) if (!k.isConnected) orb.detach(k);
+        if (!layers.size) {
+          watcher.disconnect();
+          watcher = null;
+          watched = new WeakSet();
+        }
+      });
+    }
+    const root = cv.getRootNode();
+    const target = root instanceof ShadowRoot ? root : document.documentElement;
+    if (watched.has(target)) return;
+    watched.add(target);
+    watcher.observe(target, { childList: true, subtree: true });
   };
   const queue = [];
   return {
@@ -243,7 +253,7 @@ export const ORB = (() => {
         layer.setAttribute("aria-hidden", "true");
         e = { layer, LR: renderer(layer) };
         layers.set(cv, e);
-        watch(this);
+        watch(this, cv);
       }
       const { layer } = e;
       if (layer.previousElementSibling !== cv) cv.after(layer);

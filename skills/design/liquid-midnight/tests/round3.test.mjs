@@ -67,6 +67,7 @@ test("LM004 catches inline and canvas glow orbs, not orbits or kit users", () =>
 test("ID selectors are not colours", () => {
   assert.deepEqual(lint("#a0f-section{padding:4px} #a3f{margin:0} #a3f, #b4e {color:#54a5fc}"), []);
   assert.ok(codes(".x{color:#a3f}").includes("LM001"), "the same hex as a value is a purple");
+  assert.deepEqual(lint('<a href="#a3f">jump</a> <use xlink:href="#a3f"/> <label for="#a3f">'), [], "fragment references are not colours");
 });
 
 test("CLI: --with without a value fails cleanly; list hides internal entries", () => {
@@ -118,4 +119,35 @@ test("the template ships the metal icon gradients and pins motion in capture", (
   assert.match(html, /id="lm-metal"/);
   assert.match(html, /id="lm-metal-day"/);
   assert.match(html, /setMotion\(Q\.get\("motion"\) !== "0"\)/);
+});
+
+test("round 4: gradient and shadow purples are values, not selectors", () => {
+  assert.ok(codes(".x{background:linear-gradient(#7c3aed, #0b1020)}").includes("LM001"));
+  assert.ok(codes(".x{box-shadow:0 0 8px #a855f7, 0 0 2px #000}").includes("LM001"));
+  assert.deepEqual(lint("@media (min-width:1px){ #a3f, #b4e { color:#54a5fc } }"), [], "ID selectors inside @media");
+});
+
+test("round 4: LM004 stays linear on long prose", () => {
+  const prose = "The orb is a WebGL sphere. ".repeat(2000);
+  const t0 = performance.now();
+  lint(prose);
+  assert.ok(performance.now() - t0 < 1000, "lint of ~50 KB prose stays well under a second");
+});
+
+test("round 4: re-install keeps optional sets installed earlier", () => {
+  const d = tmp();
+  install(d, { withList: ["specimen"] });
+  const sp = join(d, "liquid-midnight/specimen/index.html");
+  writeFileSync(sp, `${readFileSync(sp, "utf8")}<!-- edit -->`);
+  assert.equal(install(d).ok, false, "the edited specimen is still tracked, so an update refuses to clobber it");
+  assert.deepEqual(verify(d).modified, ["specimen/index.html"]);
+  rmSync(d, { recursive: true });
+});
+
+test("round 4: serve and render fail cleanly on a bad root", async () => {
+  await assert.rejects(() => startServer("/nonexistent-lm-root", 0), /not a readable directory/);
+  const r = spawnSync(process.execPath, [join(SKILL, "scripts/serve.mjs"), "/nonexistent-lm-root", "0"], { encoding: "utf8", timeout: 10000 });
+  assert.equal(r.status, 2);
+  assert.match(r.stderr, /not a readable directory/);
+  assert.doesNotMatch(r.stderr, /at .*\(/, "no stack trace");
 });

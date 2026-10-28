@@ -44,7 +44,13 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
     process.exit(2);
   }
   const { chromium } = loadPlaywright();
-  const server = await startServer(resolve(o.root), 0);
+  let server;
+  try {
+    server = await startServer(resolve(o.root), 0);
+  } catch (e) {
+    console.error(e.message);
+    process.exit(2);
+  }
   const browser = await chromium.launch({ args: ["--use-angle=swiftshader", "--enable-unsafe-swiftshader"] });
   const errors = [];
   mkdirSync(o.out, { recursive: true });

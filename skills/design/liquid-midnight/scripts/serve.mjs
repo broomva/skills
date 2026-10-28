@@ -35,8 +35,14 @@ export function resolveSafe(root, urlPath) {
   return p.endsWith("/") || !parts.length ? join(full, "index.html") : full;
 }
 
-export function startServer(root, port = 0) {
-  const realRoot = realpath(root);
+export async function startServer(root, port = 0) {
+  let r;
+  try {
+    r = await realpath(root);
+    if (!(await stat(r)).isDirectory()) throw new Error();
+  } catch {
+    throw new Error(`serve: root is not a readable directory: ${root}`);
+  }
   const server = createServer(async (req, res) => {
     const file = resolveSafe(root, req.url || "/");
     try {
@@ -46,7 +52,6 @@ export function startServer(root, port = 0) {
       if (!file) throw new Error("refused");
       const st = await stat(file);
       const target = await realpath(st.isDirectory() ? join(file, "index.html") : file);
-      const r = await realRoot;
       if (target !== r && !target.startsWith(r + sep)) throw new Error("symlink escape");
       const body = await readFile(target);
       res.writeHead(200, { "content-type": TYPES[extname(target)] ?? "application/octet-stream" });
@@ -63,6 +68,11 @@ export function startServer(root, port = 0) {
 
 if (process.argv[1] === fileURLToPath(import.meta.url)) {
   const root = resolve(process.argv[2] || ".");
-  const s = await startServer(root, Number(process.argv[3]) || 4317);
-  console.log(`serving ${root} at http://127.0.0.1:${s.port}/`);
+  try {
+    const s = await startServer(root, Number(process.argv[3]) || 4317);
+    console.log(`serving ${root} at http://127.0.0.1:${s.port}/`);
+  } catch (e) {
+    console.error(e.message);
+    process.exit(2);
+  }
 }

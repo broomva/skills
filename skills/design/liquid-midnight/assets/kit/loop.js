@@ -38,7 +38,9 @@ export function checkTime(t) {
  *  step(dt, t)      advance integrating state by one fixed step (springs, flows)
  *  paint(t)         draw the frame for time t (pure: reads state + t)
  *  still            the settled time shown under reduced motion (default 5 s)
- * Returns { start(), stop(), renderAt(t), t }.
+ * Returns { start(), stop(), renderAt(t), invalidate(), t }.
+ * Under reduced motion the live loop repaints only when invalidated (start, a motion toggle, or invalidate() after a
+ * state change that affects the canvases, e.g. a theme switch); DOM driven from step() keeps updating every frame.
  */
 export function createLoop({ init = () => {}, step = () => {}, paint = () => {}, seed = 0x5eed, still = 5 } = {}) {
   let t = 0;
@@ -54,6 +56,8 @@ export function createLoop({ init = () => {}, step = () => {}, paint = () => {},
     init();
   };
   let speed = 40;
+  let needsPaint = true;
+  let lastMotion = MOTION;
   const frame = (tt) => {
     setUA(MOTION ? tt : 0, document.documentElement, speed);
     paint(tt);
@@ -77,12 +81,17 @@ export function createLoop({ init = () => {}, step = () => {}, paint = () => {},
       seek(target);
       frame(t);
     },
+    /** ask the reduced-motion loop to repaint the held frame once (no effect on the running clock) */
+    invalidate() {
+      needsPaint = true;
+    },
     /** real-time preview: same fixed steps, driven by requestAnimationFrame; the clock holds under reduced motion */
     start() {
       if (raf) return;
       reset();
       speed = uaSpeed(); // read the token once per start, not per frame
       if (!MOTION) seek(still);
+      needsPaint = true;
       last = performance.now();
       const tick = (now) => {
         const dt = Math.min(0.1, (now - last) / 1000);
@@ -96,7 +105,12 @@ export function createLoop({ init = () => {}, step = () => {}, paint = () => {},
             acc -= STEP;
           }
         } else step(0, t); // springs snap to their targets; nothing advances in time
-        frame(t);
+        if (MOTION !== lastMotion) needsPaint = true;
+        lastMotion = MOTION;
+        if (MOTION || needsPaint) {
+          frame(t);
+          needsPaint = false;
+        }
         raf = requestAnimationFrame(tick);
       };
       raf = requestAnimationFrame(tick);

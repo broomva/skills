@@ -247,13 +247,13 @@ function segCtl(el, onPick) {
   for (const b of document.querySelectorAll("#modeSeg button")) b.setAttribute("aria-pressed", String((b.dataset.mode === "day") === day));
   document.getElementById("motionBtn").setAttribute("aria-pressed", String(MOTION));
 }
-const modeSeg = segCtl(document.getElementById("modeSeg"), (b) => { root.dataset.lmMode = b.dataset.mode; readColors(); resetAtlases(); swatches(); });
+const modeSeg = segCtl(document.getElementById("modeSeg"), (b) => { root.dataset.lmMode = b.dataset.mode; readColors(); resetAtlases(); swatches(); loop?.invalidate(); });
 const demoSeg = segCtl(document.getElementById("demoSeg"));
 const counters = [["cA", 128, 0.5], ["cB", 96, 0.9], ["cC", 32, 1.3]].map(([id, to, at]) => ({ el: document.getElementById(id), to, at, sp: new Sp(0) }));
 
 for (const [id, set] of [["motionBtn", setMotion], ["metalBtn", setMetal]]) {
   const b = document.getElementById(id);
-  b.addEventListener("click", () => { const on = b.getAttribute("aria-pressed") !== "true"; b.setAttribute("aria-pressed", String(on)); set(on); });
+  b.addEventListener("click", () => { const on = b.getAttribute("aria-pressed") !== "true"; b.setAttribute("aria-pressed", String(on)); set(on); loop?.invalidate(); });
 }
 ORB.onChange(() => { if (CAPTURE) loop.renderAt(loop.t); });
 /* pointer-tracked specular on glass */
@@ -349,7 +349,7 @@ function paint(t) {
 }
 
 /* the deck integrates flows inside paint; here they advance in step() so paint stays a pure function of state + t */
-const loop = createLoop({ init, step: (dt, t) => { step(dt, t); for (const f of flows) f.advance(dt); }, paint });
+var loop = createLoop({ init, step: (dt, t) => { step(dt, t); for (const f of flows) f.advance(dt); }, paint });
 
 await fontsReady();
 await document.fonts.ready;
