@@ -6,7 +6,7 @@ All notable changes to the `liquid-dawn` skill. Format: [Keep a Changelog](https
 
 ### Added
 - DESIGN.md contract for Liquid Dawn, the calm daylight sibling of Liquid Midnight (BRO-3570).
-- Tokens (`tokens.json` → generated `tokens.css`): Dawn, Dusk and auto modes, nature palette, pearl metal.
+- Tokens (`tokens.json` → generated `tokens.css`): Dawn and Dusk modes (followOS() follows the OS), nature palette, pearl metal.
 - `materials.css`: dew glass, pearl rim, capsule and chips, refractive lens (+ SVG lens), ring button, wash, grid,
   clearing, composer, type, and reduced-transparency / more-contrast / reduced-motion fallbacks.
 - Render kit: pure nature fields (tide, breeze, cloud, ripple, clearing, refract), ASCII field with lenses and
