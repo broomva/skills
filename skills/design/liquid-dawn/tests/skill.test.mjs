@@ -562,6 +562,14 @@ test("specimen renders in both modes, deterministically, and moves over time", {
         // the centre carries a whisper of milk (frost) and the specular's tail, so allow a small lift, never white
         assert.ok(Math.max(...off) <= 24, `${mode}: drop ground ${g.centre} vs paper ${g.paper} (${g.computed})`);
       }
+      // no flat ground (a gradient, or no background at all): never a white disc; the drop keeps the (empty) source's
+      // coverage, so only the glass's own whisper of milk, rim and specular is drawn
+      for (const bg of ["gradient", "none"]) {
+        await fx.goto(`${u2}/tests/fixtures/lens-ground.html?bg=${bg}`);
+        await fx.waitForFunction(() => window.__result);
+        const g = await fx.evaluate(() => window.__result);
+        assert.ok(g.centre[3] < 60, `bg=${bg}: the lens painted an opaque disc ${g.centre}`);
+      }
     } finally {
       await fx.close();
       s2.close();

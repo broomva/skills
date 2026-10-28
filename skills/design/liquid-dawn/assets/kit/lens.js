@@ -14,7 +14,7 @@ export function lensRefract(d, { mag = 0.72, bend = 0.55, disp = 0.06, channel =
 
 const VS = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0., 1.); }`;
 const FS = `precision highp float;
-uniform sampler2D src; uniform vec2 res; uniform vec2 c; uniform vec2 rad; uniform float mag, bend, disp, frost; uniform vec3 ground;
+uniform sampler2D src; uniform vec2 res; uniform vec2 c; uniform vec2 rad; uniform float mag, bend, disp, frost; uniform vec3 ground; uniform float useGround;
 vec4 sampleRefract(vec2 q, float d, float ch){
   float s = d * mag + pow(d, 4.) * bend * (1. + disp * ch);   // = lensRefract() in JS; keep the two in step
   vec2 dir = d > 1e-4 ? q / d : vec2(0.);
@@ -37,8 +37,10 @@ void main(){
   vec4 sr = sampleRefract(q, d, -1.);
   vec4 sg = sampleRefract(q, d, 0.);
   vec4 sb = sampleRefract(q, d, 1.);
-  vec3 col = vec3(sr.r + ground.r * (1. - sr.a), sg.g + ground.g * (1. - sg.a), sb.b + ground.b * (1. - sb.a));
-  float a = 1.;
+  vec3 col = vec3(sr.r + ground.r * (1. - sr.a), sg.g + ground.g * (1. - sg.a), sb.b + ground.b * (1. - sb.a)) * useGround
+           + vec3(sr.r, sg.g, sb.b) * (1. - useGround);
+  // no flat ground known: keep the source's own coverage (max of the three, so every channel stays ≤ alpha)
+  float a = mix(max(sr.a, max(sg.a, sb.a)), 1., useGround);
   float z = sqrt(max(0., 1. - d * d));
   float milk = frost * (.25 + .35 * (1. - z));                              // a whisper of milk, thicker toward the rim
   over(col, a, vec3(milk), milk);
@@ -58,10 +60,11 @@ void main(){
  *           differ, paint() draws nothing and sets lens.mismatch; a tainted source sets lens.tainted.
  *  Call step(dt) in the loop's step and paint() in its paint, after the source canvas is drawn. Place it with
  *  snap(x, y) or follow(x, y) (CSS px in the overlay); unplaced, it starts at the centre. The source may be
- *  transparent: under the drop the lens paints `ground` (an [r, g, b] 0..255; default: the first opaque background
- *  of the overlay's ancestors, in any colour syntax, re-read each paint so a mode switch follows) and lays the
- *  refracted source over it, so the glass covers what it bends. The ground is flat: if the page shows a wash or a
- *  grid behind a transparent source, draw them into the source so the drop bends them too.
+ *  transparent: under the drop the lens paints `ground` (an [r, g, b] 0..255; default: the page's flat colour from
+ *  pageGround(), in any colour syntax, re-read each paint so a mode switch follows) and lays the refracted source
+ *  over it, so the glass covers what it bends. With no flat ground (a gradient, image or transparent page) it keeps
+ *  the source's own coverage: the backdrop then shows through unbent, so give such a lens an OPAQUE source that
+ *  draws the backdrop itself (a wash or grid too, if the drop should bend them).
  *  source:  the canvas whose pixels the lens bends (re-uploaded each paint).
  *  opts: { r, mag, bend, disp, frost } — r in CSS px.
  */
@@ -101,7 +104,7 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
     gl.texParameteri(gl.TEXTURE_2D, k, v);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-  const U = Object.fromEntries(["src", "res", "c", "rad", "mag", "bend", "disp", "frost", "ground"].map((n) => [n, gl.getUniformLocation(prog, n)]));
+  const U = Object.fromEntries(["src", "res", "c", "rad", "mag", "bend", "disp", "frost", "ground", "useGround"].map((n) => [n, gl.getUniformLocation(prog, n)]));
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -160,15 +163,17 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
     gl.uniform1f(U.bend, bend);
     gl.uniform1f(U.disp, disp);
     const g = ground ?? pageGround(overlay);
-    gl.uniform3f(U.ground, g[0] / 255, g[1] / 255, g[2] / 255);
+    gl.uniform3f(U.ground, (g?.[0] ?? 0) / 255, (g?.[1] ?? 0) / 255, (g?.[2] ?? 0) / 255);
+    gl.uniform1f(U.useGround, g ? 1 : 0);
     gl.uniform1f(U.frost, frost);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   };
   return L;
 }
 
-/** The colour the page shows behind `el`: its nearest ancestor with an opaque background (else white). Any CSS colour
- *  syntax works (oklch, color(), hex, named): the computed value is resolved by painting it into a 1 × 1 canvas. */
+/** The flat colour the page shows behind `el`, or null when it has none (a transparent page, a translucent colour, a
+ *  gradient or image). Any CSS colour syntax works (oklch, color(), hex, named): the computed value is resolved by
+ *  painting it into a 1 × 1 canvas. */
 const groundCache = new Map();
 export function cssColorToRGBA(css) {
   let v = groundCache.get(css);
@@ -186,13 +191,19 @@ export function cssColorToRGBA(css) {
   return v;
 }
 export function pageGround(el) {
+  // the first ancestor that paints anything decides: a flat opaque colour is the ground; a translucent colour or a
+  // background image (gradient, photo) cannot be flattened, so there is no ground (null) and the lens keeps the
+  // source's own coverage instead of painting a wrong disc
   for (let n = el?.parentElement; n; n = n.parentElement) {
-    const bg = getComputedStyle(n).backgroundColor;
-    if (!bg || bg === "transparent") continue;
-    const [r, g, b, a] = cssColorToRGBA(bg);
+    const cs = getComputedStyle(n);
+    const image = cs.backgroundImage && cs.backgroundImage !== "none";
+    const bg = cs.backgroundColor;
+    const [r, g, b, a] = bg && bg !== "transparent" ? cssColorToRGBA(bg) : [0, 0, 0, 0];
+    if (image) return null;
     if (a >= 254) return [r, g, b];
+    if (a > 0) return null;
   }
-  return [255, 255, 255];
+  return null;
 }
 
 /** Wire pointer drag onto an element: the lens follows while held, and squashes on press. Live preview only. */
