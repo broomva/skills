@@ -1,0 +1,460 @@
+/* Liquid Dawn · materials. Load after tokens/tokens.css. DESIGN.md §5 is the contract for every recipe below.
+   Literal oklch() colours inside gradients and shadows need an OKLCH-capable browser (Safari 15.4+, Chrome 111+,
+   Firefox 113+); the tokens carry hex fallbacks, the material recipes do not. */
+
+@font-face {
+  font-family: Manrope;
+  src: url("../fonts/Manrope-wght.woff2") format("woff2-variations"), url("../fonts/Manrope-wght.woff2") format("woff2");
+  font-weight: 200 800;
+  font-display: swap;
+}
+@font-face {
+  font-family: Inter;
+  src: url("../fonts/Inter-400.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "JetBrains Mono";
+  src: url("../fonts/JetBrainsMono-400.woff2") format("woff2");
+  font-weight: 100 800;
+  font-display: swap;
+}
+
+/* the travelling pearl angle, advanced by kit/loop.js#setUA from t (24°/s); registered so it interpolates */
+@property --ua {
+  syntax: "<angle>";
+  inherits: true;
+  initial-value: 0deg;
+}
+
+/* ───────────────────────── ground ───────────────────────── */
+.ld-ground {
+  background: var(--ld-paper);
+  color: var(--ld-ink);
+  font-family: var(--ld-font-text);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+/* the faint survey grid seen under the paper reference: 1 px hairlines on a 24 px pitch, masked to fade at the edges */
+.ld-grid {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background-image: linear-gradient(var(--ld-line) 1px, transparent 1px), linear-gradient(90deg, var(--ld-line) 1px, transparent 1px);
+  background-size: 24px 24px;
+  opacity: 0.55;
+  mask-image: radial-gradient(120% 90% at 50% 45%, #000 40%, transparent 100%);
+}
+[data-ld-mode="dusk"] .ld-grid {
+  opacity: 0.28;
+}
+/* the clearing: a soft paper bloom that keeps the centre calm behind hero content */
+.ld-clearing {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  background: radial-gradient(42% 38% at 50% 50%, oklch(1 0 0 / 0.92), oklch(1 0 0 / 0.5) 45%, transparent 75%);
+}
+[data-ld-mode="dusk"] .ld-clearing {
+  background: radial-gradient(42% 38% at 50% 50%, oklch(0.2 0.02 228 / 0.88), oklch(0.2 0.02 228 / 0.45) 45%, transparent 75%);
+}
+/* the wash: three slow light pools (sky, lagoon, sand) — light, not blobs. Driven from t by kit/loop.js (--ld-b1..3). */
+.ld-wash {
+  position: absolute;
+  inset: -10%;
+  pointer-events: none;
+  filter: blur(80px);
+  opacity: 0.55;
+  background:
+    radial-gradient(38% 34% at calc(22% + var(--ld-b1, 0) * 6%) 18%, var(--ld-sky), transparent 70%),
+    radial-gradient(34% 30% at calc(80% - var(--ld-b2, 0) * 5%) 72%, var(--ld-lagoon), transparent 70%),
+    radial-gradient(30% 26% at 62% calc(14% + var(--ld-b3, 0) * 6%), var(--ld-sand), transparent 70%);
+}
+[data-ld-mode="dusk"] .ld-wash {
+  opacity: 0.32;
+}
+
+/* ───────────────────────── dew glass ─────────────────────────
+   Milky, thick, quiet. Blur 14 px: the field must stay readable through it. A pearl rim travels the edge. */
+.ld-glass {
+  position: relative;
+  isolation: isolate;
+  border-radius: var(--ld-r-card);
+  background: linear-gradient(180deg, oklch(1 0 0 / 0.66), oklch(1 0 0 / 0.36) 52%, oklch(1 0 0 / 0.5));
+  -webkit-backdrop-filter: blur(14px) saturate(160%) brightness(1.04);
+  backdrop-filter: blur(14px) saturate(160%) brightness(1.04);
+  box-shadow:
+    0 24px 60px -28px oklch(0.35 0.05 230 / 0.28),
+    0 6px 18px -10px oklch(0.35 0.05 230 / 0.16),
+    inset 0 1px 1px oklch(1 0 0 / 0.95),
+    inset 0 -1px 1.5px oklch(1 0 0 / 0.55),
+    inset 0 0 14px oklch(1 0 0 / 0.42),
+    inset 0 -18px 28px -22px oklch(0.82 0.085 200 / 0.35);
+}
+[data-ld-mode="dusk"] .ld-glass {
+  background: linear-gradient(180deg, oklch(0.38 0.022 225 / 0.42), oklch(0.26 0.022 228 / 0.3) 55%, oklch(0.22 0.02 228 / 0.42));
+  -webkit-backdrop-filter: blur(14px) saturate(150%) brightness(1.08);
+  backdrop-filter: blur(14px) saturate(150%) brightness(1.08);
+  box-shadow:
+    0 28px 70px -30px oklch(0.08 0.02 228 / 0.8),
+    0 8px 20px -12px oklch(0.08 0.02 228 / 0.55),
+    inset 0 1px 0 oklch(1 0 0 / 0.16),
+    inset 0 12px 24px -18px oklch(1 0 0 / 0.08),
+    inset 0 -18px 30px -22px oklch(0.8 0.1 205 / 0.28),
+    inset 0 0 0 1px oklch(1 0 0 / 0.04);
+}
+/* pointer sheen (set --mx/--my from pointer events; the kit does this for .ld-glass under kit/sheen) */
+.ld-glass::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  pointer-events: none;
+  z-index: -1;
+  background: radial-gradient(220px circle at var(--mx, 30%) var(--my, 0%), oklch(1 0 0 / 0.55), transparent 62%);
+  opacity: 0.8;
+}
+[data-ld-mode="dusk"] .ld-glass::before {
+  background: radial-gradient(260px circle at var(--mx, 30%) var(--my, 0%), oklch(0.95 0.02 210 / 0.12), transparent 62%);
+}
+
+/* ───────────────────────── pearl rim (liquid metal, daylight) ─────────────────────────
+   One mechanism for every rim: a 1.25 px masked ring of conic pearl. Two bright speculars at 60° and 240° travel with
+   --ua; each is chased by thin lagoon/sand/sky fringes; a dark glint at 150° and 330° gives the edge its depth on paper. */
+.ld-glass::after,
+.ld-capsule::after,
+.ld-lens::after,
+.ld-ring::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.25px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--ua),
+    var(--ld-metal-steel) 0deg,
+    var(--ld-metal-shine) 52deg,
+    var(--ld-metal-fringe-a) 64deg,
+    var(--ld-metal-fringe-b) 72deg,
+    var(--ld-metal-steel) 96deg,
+    var(--ld-metal-glint) 150deg,
+    var(--ld-metal-steel) 196deg,
+    var(--ld-metal-shine) 232deg,
+    var(--ld-metal-fringe-c) 244deg,
+    var(--ld-metal-fringe-a) 252deg,
+    var(--ld-metal-steel) 276deg,
+    var(--ld-metal-glint) 330deg,
+    var(--ld-metal-steel) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  opacity: 0.85;
+}
+[data-ld-mode="dusk"] .ld-glass::after,
+[data-ld-mode="dusk"] .ld-capsule::after,
+[data-ld-mode="dusk"] .ld-lens::after {
+  opacity: 0.6;
+}
+
+/* ───────────────────────── capsule (nav pill, composer, segmented) ───────────────────────── */
+.ld-capsule {
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px;
+  border-radius: var(--ld-r-capsule);
+  background: linear-gradient(180deg, oklch(1 0 0 / 0.72), oklch(1 0 0 / 0.46));
+  -webkit-backdrop-filter: blur(22px) saturate(170%);
+  backdrop-filter: blur(22px) saturate(170%);
+  box-shadow:
+    0 14px 34px -18px oklch(0.35 0.05 230 / 0.3),
+    inset 0 1px 1px oklch(1 0 0 / 0.95),
+    inset 0 -1px 1px oklch(0.35 0.05 230 / 0.06);
+}
+[data-ld-mode="dusk"] .ld-capsule {
+  background: linear-gradient(180deg, oklch(0.34 0.02 225 / 0.62), oklch(0.24 0.02 228 / 0.7));
+  box-shadow:
+    0 16px 36px -18px oklch(0.08 0.02 228 / 0.8),
+    inset 0 1px 0 oklch(1 0 0 / 0.14),
+    inset 0 -1px 0 oklch(0 0 0 / 0.25);
+}
+.ld-chip {
+  appearance: none;
+  border: 0;
+  height: 36px;
+  padding: 0 16px;
+  border-radius: var(--ld-r-capsule);
+  font: 500 14px/1 var(--ld-font-text);
+  color: var(--ld-ink2);
+  background: transparent;
+  cursor: pointer;
+}
+.ld-chip[aria-pressed="true"],
+.ld-chip.is-on {
+  color: var(--ld-ink);
+  background: linear-gradient(180deg, oklch(1 0 0 / 0.95), oklch(1 0 0 / 0.7));
+  box-shadow:
+    0 4px 12px -6px oklch(0.35 0.05 230 / 0.3),
+    inset 0 1px 0 oklch(1 0 0);
+}
+[data-ld-mode="dusk"] .ld-chip[aria-pressed="true"],
+[data-ld-mode="dusk"] .ld-chip.is-on {
+  background: linear-gradient(180deg, oklch(1 0 0 / 0.14), oklch(1 0 0 / 0.05));
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 0.18);
+}
+.ld-chip:active {
+  transform: scale(0.97);
+}
+
+/* ───────────────────────── lens (refractive glass) ─────────────────────────
+   "Bend, don't blur." Over a kit field canvas, the canvas itself draws the refraction (kit/ascii.js lenses), so the
+   CSS lens is only body + rim + caustic with almost no blur. Over DOM/photo content, add .ld-lens--svg to bend the
+   backdrop through the #ld-lens SVG filter (Chromium only; elsewhere it falls back to a light blur). */
+.ld-lens {
+  position: relative;
+  isolation: isolate;
+  border-radius: var(--ld-r-lens);
+  background:
+    radial-gradient(120% 80% at 50% 0%, oklch(1 0 0 / 0.38), transparent 60%),
+    linear-gradient(180deg, oklch(1 0 0 / 0.16), oklch(1 0 0 / 0.04) 60%, oklch(1 0 0 / 0.14));
+  -webkit-backdrop-filter: blur(1.5px) saturate(140%);
+  backdrop-filter: blur(1.5px) saturate(140%);
+  box-shadow:
+    0 30px 60px -30px oklch(0.35 0.05 230 / 0.35),
+    inset 0 2px 2px oklch(1 0 0 / 0.95),
+    inset 0 -2px 3px oklch(1 0 0 / 0.5),
+    inset 0 0 0 1px oklch(1 0 0 / 0.25),
+    inset 14px 0 22px -18px oklch(0.8 0.1 205 / 0.45),
+    inset -14px 0 22px -18px oklch(0.86 0.09 85 / 0.45),
+    inset 0 -22px 30px -24px oklch(0.82 0.085 200 / 0.5);
+}
+[data-ld-mode="dusk"] .ld-lens {
+  background:
+    radial-gradient(120% 80% at 50% 0%, oklch(1 0 0 / 0.12), transparent 60%),
+    linear-gradient(180deg, oklch(0.4 0.02 225 / 0.18), oklch(0.2 0.02 228 / 0.08));
+  box-shadow:
+    0 30px 70px -30px oklch(0.06 0.02 228 / 0.85),
+    inset 0 1.5px 1px oklch(1 0 0 / 0.3),
+    inset 0 -2px 3px oklch(1 0 0 / 0.08),
+    inset 14px 0 22px -18px oklch(0.8 0.1 205 / 0.35),
+    inset -14px 0 22px -18px oklch(0.86 0.09 85 / 0.3),
+    inset 0 -22px 30px -24px oklch(0.8 0.1 205 / 0.35);
+}
+@supports (backdrop-filter: url(#ld-lens)) {
+  .ld-lens--svg {
+    -webkit-backdrop-filter: url(#ld-lens) saturate(150%);
+    backdrop-filter: url(#ld-lens) saturate(150%);
+  }
+}
+
+/* ───────────────────────── round button with a pearl ring ───────────────────────── */
+.ld-ring {
+  position: relative;
+  display: inline-grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 0;
+  border-radius: 50%;
+  color: var(--ld-ink);
+  background: radial-gradient(70% 70% at 35% 30%, oklch(1 0 0), oklch(0.95 0.006 95));
+  box-shadow:
+    0 8px 18px -10px oklch(0.35 0.05 230 / 0.45),
+    inset 0 -2px 3px oklch(0.35 0.05 230 / 0.08);
+  cursor: pointer;
+}
+.ld-ring::after {
+  padding: 1.5px;
+  background: conic-gradient(
+    from calc(var(--ua) * 2),
+    var(--ld-metal-steel),
+    var(--ld-metal-shine) 60deg,
+    var(--ld-metal-fringe-a) 74deg,
+    var(--ld-metal-glint) 160deg,
+    var(--ld-metal-shine) 240deg,
+    var(--ld-metal-fringe-b) 254deg,
+    var(--ld-metal-steel)
+  );
+}
+[data-ld-mode="dusk"] .ld-ring {
+  color: var(--ld-ink);
+  background: radial-gradient(70% 70% at 35% 30%, oklch(0.36 0.02 225), oklch(0.22 0.02 228));
+}
+.ld-ring:active {
+  transform: scale(0.96);
+}
+.ld-ring svg {
+  width: 18px;
+  height: 18px;
+}
+
+/* ───────────────────────── type ───────────────────────── */
+.ld-kicker {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font: 500 12px/1 var(--ld-font-mono);
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--ld-tide);
+}
+.ld-kicker::before {
+  content: "";
+  width: 22px;
+  height: 1px;
+  background: currentColor;
+}
+.ld-hero,
+.ld-title,
+.ld-heading {
+  font-family: var(--ld-font-display);
+  font-weight: 300;
+  color: var(--ld-ink);
+  text-wrap: balance;
+  margin: 0;
+}
+.ld-hero {
+  font-size: clamp(48px, 6.4vw, 104px);
+  line-height: 1;
+  letter-spacing: -0.045em;
+}
+.ld-title {
+  font-size: clamp(36px, 4.2vw, 64px);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+}
+.ld-heading {
+  font-size: 26px;
+  line-height: 1.15;
+  font-weight: 400;
+  letter-spacing: -0.02em;
+}
+.ld-hero em,
+.ld-title em,
+.ld-heading em {
+  font-style: normal;
+  font-weight: 400;
+  color: var(--ld-tide);
+}
+.ld-lede {
+  font: 400 clamp(17px, 1.4vw, 21px) / 1.55 var(--ld-font-text);
+  letter-spacing: -0.01em;
+  color: var(--ld-ink2);
+  max-width: 40em;
+  margin: 0;
+}
+.ld-body {
+  font: 400 16px/1.6 var(--ld-font-text);
+  color: var(--ld-ink2);
+}
+.ld-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font: 500 11px/1 var(--ld-font-mono);
+  letter-spacing: 0.14em;
+  text-transform: uppercase;
+  color: var(--ld-ink3);
+}
+.ld-tag::before {
+  content: "";
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ld-tag, var(--ld-tide));
+}
+.ld-num {
+  font: 400 34px/1 var(--ld-font-display);
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
+  color: var(--ld-ink);
+}
+
+/* ───────────────────────── composer (the calm input) ───────────────────────── */
+.ld-composer {
+  display: grid;
+  gap: 10px;
+  width: min(560px, 92vw);
+  padding: 16px 16px 12px 20px;
+  border-radius: 22px;
+  text-align: left;
+}
+.ld-composer input {
+  all: unset;
+  text-align: left;
+  font: 400 16px/1.4 var(--ld-font-text);
+  color: var(--ld-ink);
+}
+.ld-composer input::placeholder {
+  color: var(--ld-ink3);
+}
+.ld-composer .row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  font: 400 11px/1 var(--ld-font-mono);
+  color: var(--ld-ink3);
+}
+
+/* ───────────────────────── canvas layers ───────────────────────── */
+.ld-field {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+/* ───────────────────────── focus ───────────────────────── */
+:where(.ld-ground) :focus-visible {
+  outline: 2px solid var(--ld-tide);
+  outline-offset: 2px;
+}
+
+/* ───────────────────────── accessibility fallbacks (restated last so nothing beats them) ───────────────────────── */
+@media (prefers-reduced-transparency: reduce) {
+  .ld-glass,
+  .ld-capsule,
+  .ld-lens {
+    background: var(--ld-glass-heavy) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .ld-wash {
+    display: none;
+  }
+}
+@media (prefers-contrast: more) {
+  .ld-glass,
+  .ld-capsule,
+  .ld-lens {
+    background: var(--ld-surface) !important;
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+    outline: 1.5px solid var(--ld-ink2);
+  }
+  .ld-glass::after,
+  .ld-capsule::after,
+  .ld-lens::after,
+  .ld-ring::after {
+    display: none;
+  }
+  .ld-grid,
+  .ld-wash {
+    display: none;
+  }
+}
+html[data-ld-motion="off"] {
+  --ua: 0deg;
+}

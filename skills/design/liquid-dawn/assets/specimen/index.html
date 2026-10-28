@@ -1,0 +1,329 @@
+<!doctype html>
+<html lang="en" data-ld-mode="dawn">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Liquid Dawn · specimen</title>
+<link rel="stylesheet" href="../tokens/tokens.css" />
+<link rel="stylesheet" href="../css/materials.css" />
+<style>
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body { min-width: 1100px; }
+  section { position: relative; overflow: hidden; }
+  .wrap { width: min(1240px, calc(100% - 96px)); margin: 0 auto; position: relative; }
+  .hero { height: 900px; display: grid; place-items: center; }
+  .hero .nav { position: absolute; top: 24px; left: 50%; transform: translateX(-50%); z-index: 3; }
+  .hero .center { position: relative; z-index: 2; display: grid; justify-items: center; gap: 22px; text-align: center; margin-top: -20px; }
+  .hero .ld-lede { max-width: 36em; }
+  .hero .meta { position: absolute; z-index: 2; bottom: 28px; left: 48px; right: 48px; display: flex; justify-content: space-between; }
+  .band { padding: 112px 0; }
+  .head { display: grid; gap: 14px; margin-bottom: 44px; max-width: 760px; }
+  .grid4 { display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; }
+  .panel { position: relative; height: 340px; border-radius: var(--ld-r-card); overflow: hidden; background: var(--ld-sunk); box-shadow: inset 0 0 0 1px var(--ld-line); }
+  .panel canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .panel .cap { position: absolute; left: 14px; right: 14px; bottom: 14px; padding: 14px 16px; border-radius: 18px; display: grid; gap: 6px; }
+  .panel .cap b { font: 400 18px/1.2 var(--ld-font-display); letter-spacing: -0.02em; color: var(--ld-ink); }
+  .panel .cap span { font: 400 12.5px/1.45 var(--ld-font-text); color: var(--ld-ink2); }
+  .pages { display: grid; grid-template-columns: 1.55fr 1fr; gap: 20px; }
+  .pages .panel { height: 520px; background: var(--ld-surface); }
+  .flow { height: 460px; background: var(--ld-surface); }
+  .disc { position: absolute; width: 168px; height: 168px; border-radius: 50%; z-index: 2; }
+  .mat { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; align-items: start; }
+  .board { position: relative; border-radius: var(--ld-r-card); overflow: hidden; min-height: 520px; padding: 36px; background: var(--ld-sunk); box-shadow: inset 0 0 0 1px var(--ld-line); }
+  .board > canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .board > .in { position: relative; z-index: 1; display: grid; gap: 22px; }
+  .card { padding: 26px 28px; display: grid; gap: 12px; }
+  .row { display: flex; gap: 14px; align-items: center; flex-wrap: wrap; }
+  .sw { display: grid; grid-template-columns: repeat(6, 1fr); gap: 10px; }
+  .sw div { height: 64px; border-radius: 14px; box-shadow: inset 0 0 0 1px var(--ld-line); display: flex; align-items: flex-end; padding: 6px; }
+  .sw span { font: 500 9.5px/1 var(--ld-font-mono); letter-spacing: .08em; text-transform: uppercase; color: var(--ld-ink); background: var(--ld-glass-heavy); padding: 4px 6px; border-radius: 6px; }
+  .type { display: grid; gap: 18px; }
+  .type .s { display: grid; grid-template-columns: 120px 1fr; align-items: baseline; gap: 18px; }
+  .type .k { font: 500 10.5px/1 var(--ld-font-mono); letter-spacing: .14em; text-transform: uppercase; color: var(--ld-ink3); }
+  footer { padding: 40px 0 64px; }
+</style>
+</head>
+<body class="ld-ground">
+<svg width="0" height="0" style="position:absolute" aria-hidden="true">
+  <!-- the SVG lens for .ld-lens--svg over DOM or photo content (Chromium backdrop-filter: url()) -->
+  <filter id="ld-lens" x="0" y="0" width="100%" height="100%" color-interpolation-filters="sRGB">
+    <feTurbulence type="fractalNoise" baseFrequency="0.008 0.012" numOctaves="2" seed="7" result="n" />
+    <feGaussianBlur in="n" stdDeviation="3" result="nb" />
+    <feDisplacementMap in="SourceGraphic" in2="nb" scale="28" xChannelSelector="R" yChannelSelector="G" />
+  </filter>
+</svg>
+
+<!-- 1 · HERO: tide field, islands and a shoal under a refracting composer -->
+<section class="hero" id="hero" data-shot="hero">
+  <div class="ld-wash" aria-hidden="true"></div>
+  <canvas class="ld-field" id="cv-hero" aria-hidden="true"></canvas>
+  <div class="ld-grid" aria-hidden="true"></div>
+  <div class="ld-clearing" aria-hidden="true"></div>
+  <nav class="ld-capsule nav" aria-label="Sections">
+    <button class="ld-chip is-on" aria-pressed="true">Field</button>
+    <button class="ld-chip">Glass</button>
+    <button class="ld-chip">Type</button>
+    <button class="ld-chip">Pages</button>
+    <button class="ld-chip" id="mode" aria-label="Toggle dawn and dusk">Dusk</button>
+  </nav>
+  <div class="center">
+    <span class="ld-kicker">Liquid Dawn</span>
+    <h1 class="ld-hero">Calm is a <em>material</em>.</h1>
+    <p class="ld-lede">Paper grounds, dew glass and pearl metal over fields that breathe: tide, breeze, cloud and ripple, drawn in type.</p>
+    <div class="ld-lens ld-composer" id="composer">
+      <input placeholder="What should feel calm today?" aria-label="Message" />
+      <div class="row">
+        <span>＋ &nbsp; ◎ voice</span>
+        <span>↵ send · ⇧↵ newline &nbsp;
+          <button class="ld-ring" aria-label="Send" style="width:30px;height:30px;vertical-align:middle">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" style="width:14px;height:14px"><path d="M7 17 17 7M9 7h8v8"/></svg>
+          </button></span>
+      </div>
+    </div>
+  </div>
+  <div class="meta">
+    <span class="ld-tag">Tide · caustics at 0.11 rad/s</span>
+    <span class="ld-tag" style="--ld-tag: var(--ld-moss)">Shoal · lattice 12 px</span>
+  </div>
+</section>
+
+<!-- 2 · FIELDS -->
+<section class="band" data-shot="fields">
+  <div class="wrap">
+    <div class="head">
+      <span class="ld-kicker">Fields</span>
+      <h2 class="ld-title">Four kinds of <em>weather</em>, all type.</h2>
+      <p class="ld-lede">Each field is a pure function of position and time. Nothing moves faster than 0.2 rad/s, nothing exceeds 70% density, and nothing flickers.</p>
+    </div>
+    <div class="grid4">
+      <div class="panel"><canvas id="cv-tide" aria-hidden="true"></canvas><div class="ld-glass cap"><b>Tide</b><span>Caustics through a shallow lagoon. Ramp <code>·-~≈</code></span></div></div>
+      <div class="panel"><canvas id="cv-breeze" aria-hidden="true"></canvas><div class="ld-glass cap"><b>Breeze</b><span>Blades lean with each gust. Glyph by angle <code>|)/\</code></span></div></div>
+      <div class="panel"><canvas id="cv-cloud" aria-hidden="true"></canvas><div class="ld-glass cap"><b>Cloud</b><span>Cumulus at 7 px/s, a few birds in tiles.</span></div></div>
+      <div class="panel"><canvas id="cv-ripple" aria-hidden="true"></canvas><div class="ld-glass cap"><b>Ripple</b><span>Pebbles in still water. Dots <code>·•</code>, after the one-glyph lattice.</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 3 · PAGES: pretext layout warped by a pebble, and a well -->
+<section class="band" data-shot="pages" style="padding-top: 0">
+  <div class="wrap">
+    <div class="head">
+      <span class="ld-kicker">Pages</span>
+      <h2 class="ld-title">Text that the light can <em>move</em>.</h2>
+      <p class="ld-lede">Real proportional type laid out by pretext, then displaced glyph by glyph: a pebble dropped into a page, and, sparingly, a well.</p>
+    </div>
+    <div class="pages">
+      <div class="panel"><canvas id="cv-pebble" aria-hidden="true"></canvas><div class="ld-glass cap" style="right:auto"><b>Pebble</b><span>Rings at 34 px/s, fading over 9 s.</span></div></div>
+      <div class="panel"><canvas id="cv-well" aria-hidden="true"></canvas><div class="ld-glass cap" style="right:auto"><b>Well</b><span>Point-lens deflection; use once per story.</span></div></div>
+    </div>
+  </div>
+</section>
+
+<!-- 4 · FLOW: a paragraph re-flowed around a drifting lens each frame (pretext layoutNextLineRange per span) -->
+<section class="band" data-shot="flow" style="padding-top: 0">
+  <div class="wrap">
+    <div class="head">
+      <span class="ld-kicker">Flow</span>
+      <h2 class="ld-title">Words <em>make room</em>.</h2>
+    </div>
+    <div class="panel flow" id="flow"><canvas id="cv-flow" aria-hidden="true"></canvas><div class="ld-lens disc" id="disc"></div></div>
+  </div>
+</section>
+
+<!-- 5 · MATERIALS + TYPE -->
+<section class="band" data-shot="materials" style="padding-top: 0">
+  <div class="wrap">
+    <div class="head">
+      <span class="ld-kicker">Materials</span>
+      <h2 class="ld-title">Dew glass, <em>pearl</em> metal.</h2>
+    </div>
+    <div class="mat">
+      <div class="board"><canvas id="cv-board" aria-hidden="true"></canvas>
+        <div class="in">
+          <div class="ld-glass card">
+            <span class="ld-tag">Retained this week</span>
+            <div class="row" style="justify-content:space-between"><span class="ld-num">042</span><span class="ld-tag" style="--ld-tag:var(--ld-moss)">Steady</span></div>
+            <p class="ld-body" style="margin:0">Glass is the body; the pearl rim travelling its edge is what makes it Liquid Dawn.</p>
+          </div>
+          <div class="row">
+            <div class="ld-capsule" role="group" aria-label="Mode">
+              <button class="ld-chip is-on" aria-pressed="true">Dawn</button><button class="ld-chip">Dusk</button><button class="ld-chip">Auto</button>
+            </div>
+            <button class="ld-ring" aria-label="Play"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M8 5.5v13l10-6.5z"/></svg></button>
+            <button class="ld-ring" aria-label="Voice"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+          </div>
+          <div class="ld-lens card" style="height:120px;place-content:center"><span class="ld-tag">Lens · bends, barely blurs</span></div>
+        </div>
+      </div>
+      <div class="board" style="background:var(--ld-surface)">
+        <div class="in">
+          <div class="sw" id="sw"></div>
+          <div class="type">
+            <div class="s"><span class="k">Hero 300</span><span class="ld-title" style="font-size:52px">Still <em>water</em></span></div>
+            <div class="s"><span class="k">Heading 400</span><span class="ld-heading">A quiet surface for loud work</span></div>
+            <div class="s"><span class="k">Lede</span><span class="ld-lede" style="font-size:18px">Inter 400, ink 2, 1.55 leading.</span></div>
+            <div class="s"><span class="k">Kicker</span><span class="ld-kicker">Tide · 0.11 rad/s</span></div>
+            <div class="s"><span class="k">Field glyphs</span><span style="font:400 18px var(--ld-font-mono);color:var(--ld-ink2);letter-spacing:.3em">·-~≈ ·.:°o ',!|)/\ ·•</span></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+<footer class="wrap"><span class="ld-tag">Liquid Dawn v0.1 · tokens, materials and kit in skills/design/liquid-dawn</span></footer>
+
+<script type="module">
+import {
+  C, readColors, setMotion, createLoop, fitCanvas, sheen, field, tiles, RAMP, fontsReady, resetAtlases,
+  tide, breeze, cloud, rippleField, clearing, bladeGlyph, createShoal, createIslands,
+  layoutPage, lensPage, prepareWithSegments, flowAround, beat,
+} from "../kit/index.js";
+
+const q = new URLSearchParams(location.search);
+const capture = q.has("t");
+if (q.get("mode") === "dusk") {
+  document.documentElement.dataset.ldMode = "dusk";
+  document.getElementById("mode").textContent = "Dawn";
+}
+if (capture) setMotion(true);
+
+const PAGE_TEXT = `Every morning the lake is a page nobody has written on yet. Light arrives at a low angle and lies down across it, and the first thing it does is show you the shape of the wind. Small things move first: a reed, a ring where a fish turned, the drift of one leaf that has been travelling since before you woke. None of it is in a hurry. A surface this still is not empty; it is listening. Drop one pebble into it and every line on the page answers, a little, and then lets go. The rings widen and soften and the words come back to where they were, as if they had only leaned out to look. That is the whole lesson of water: respond completely, then return. Glass learns it from the lake. It does not hide what is behind it; it bends it, gently, so you notice it again. Metal learns it from the light, a single bright edge that walks slowly around whatever it holds. Paper learns it from patience. Put these three together and you have a surface that can carry serious work without raising its voice.`;
+const FLOW_TEXT = (PAGE_TEXT + " ").repeat(2);
+
+const els = (id) => document.getElementById(id);
+const canv = {};
+for (const id of ["hero", "tide", "breeze", "cloud", "ripple", "pebble", "well", "flow", "board"]) canv[id] = { cv: els(`cv-${id}`) };
+let scene = {};
+
+function build() {
+  readColors();
+  resetAtlases();
+  for (const k in canv) Object.assign(canv[k], fitCanvas(canv[k].cv));
+  const H = canv.hero;
+  const hr = H.cv.getBoundingClientRect();
+  const r = els("composer").getBoundingClientRect();
+  scene.lens = { x: r.left - hr.left, y: r.top - hr.top, w: r.width, h: r.height, r: 22, opts: { mag: 1.12, bevel: 0.3, bend: 0.9 } };
+  scene.shoal = createShoal({ w: H.w, h: H.h, seed: 21, count: 9, colors: C });
+  scene.islands = createIslands({ w: H.w, h: H.h, seed: 8, n: 4, colors: C });
+  scene.birds = createShoal({ w: canv.cloud.w, h: canv.cloud.h * 0.7, seed: 4, kinds: ["bird"], count: 3, coral: false, colors: C });
+  scene.ripple = rippleField({ w: canv.ripple.w, h: canv.ripple.h, n: 3, seed: 13 });
+  const P = canv.pebble;
+  scene.pageFont = `400 13px ${getComputedStyle(document.body).getPropertyValue("--ld-font-text")}`;
+  scene.pageLines = layoutPage(PAGE_TEXT.repeat(2), scene.pageFont, P.w - 72, 21);
+  scene.wellLines = layoutPage(PAGE_TEXT.repeat(2), scene.pageFont, canv.well.w - 56, 21).slice(0, Math.floor((canv.well.h - 60) / 21));
+  scene.pageLines = scene.pageLines.slice(0, Math.floor((P.h - 60) / 21));
+  scene.flowPrepared = prepareWithSegments(FLOW_TEXT, `400 17px ${getComputedStyle(document.body).getPropertyValue("--ld-font-text")}`);
+  sw();
+}
+
+function sw() {
+  const names = ["paper", "surface", "ink", "tide", "sky", "lagoon", "moss", "sand", "stone", "coral", "metal-steel", "metal-glint"];
+  els("sw").innerHTML = names
+    .map((n) => `<div style="background:var(--ld-${n})"><span>${n.replace("metal-", "")}</span></div>`)
+    .join("");
+}
+
+const glyphInk = () => (C.dusk ? C.lagoon : C.tide);
+
+function paintHero(t) {
+  const { cx, w, h } = canv.hero;
+  cx.clearRect(0, 0, w, h);
+  const L = scene.lens;
+  field(cx, {
+    w, h, cell: 14, fs: 13, ramp: RAMP.water, color: glyphInk(), alpha: C.dusk ? 0.55 : 0.68,
+    fn: (x, y) => tide(x, y, t), lenses: [L], fringe: [C["metal-fringe-a"], C["metal-fringe-b"]],
+    mask: (x, y) => clearing(x, y, w / 2, h / 2 - 90, 470, 190, 0.9),
+  });
+  const shade = C.dusk ? C.paper : C.shadow;
+  tiles(cx, scene.islands.at(t), { cell: 12, shadow: shade, shadowAlpha: C.dusk ? 0.45 : 0.14 });
+  const fish = scene.shoal.at(t).filter((c) => clearing(c.x, c.y, w / 2, h / 2 - 60, 500, 250, 0.4) > 0.5);
+  tiles(cx, fish, { cell: 12, shadow: shade, shadowAlpha: C.dusk ? 0.45 : 0.16 });
+}
+
+function paintPanel(id, fn, opts = {}) {
+  const { cx, w, h } = canv[id];
+  cx.clearRect(0, 0, w, h);
+  field(cx, { w, h, cell: 13, fs: 11, color: glyphInk(), alpha: 0.55, ...opts, fn });
+}
+
+function paintPebble(t) {
+  const { cx, w, h } = canv.pebble;
+  cx.clearRect(0, 0, w, h);
+  // a pebble lands every 9 s at a seeded spot; the page settles in between
+  const k = Math.floor(t / 9);
+  const spots = [[0.58, 0.42], [0.36, 0.55], [0.7, 0.3], [0.48, 0.62]];
+  const [sx, sy] = spots[k % spots.length];
+  lensPage(cx, { lines: scene.pageLines, font: scene.pageFont, x: 36, y: 30, lineHeight: 21, color: C.ink2, accent: C.tide, t, lens: { x: sx * w, y: sy * h, kind: "pebble", t0: k * 9 + 0.6 }, warp: { amp: 9 } });
+}
+
+function paintWell(t) {
+  const { cx, w, h } = canv.well;
+  cx.clearRect(0, 0, w, h);
+  const lens = { x: w * 0.56, y: h * 0.44, kind: "well", rs: 46 };
+  lensPage(cx, { lines: scene.wellLines, font: scene.pageFont, x: 28, y: 30, lineHeight: 21, color: C.ink2, accent: C.ink, t, lens, warp: { spin: t * 0.05 } });
+  // a dotted accretion ring, one glyph wide
+  field(cx, { w, h, cell: 6, fs: 7, ramp: RAMP.dots, color: C.ink, alpha: 0.6, fn: (x, y) => {
+    const d = Math.hypot(x - lens.x, y - lens.y);
+    const a = Math.atan2(y - lens.y, x - lens.x);
+    const band = Math.exp(-((d - lens.rs * 1.55) ** 2) / 18);
+    return band * (0.45 + 0.25 * Math.sin(a * 3 - t * 0.2));
+  } });
+}
+
+function paintFlow(t) {
+  const { cx, w, h } = canv.flow;
+  cx.clearRect(0, 0, w, h);
+  const R = 84;
+  const ox = w * 0.5 + Math.sin(t * 0.16) * w * 0.3;
+  const oy = h * 0.5 + Math.sin(t * 0.23 + 1) * h * 0.18;
+  const d = els("disc");
+  d.style.left = `${ox - R}px`;
+  d.style.top = `${oy - R}px`;
+  // a drop of the lagoon under the disc, so the lens has something to bend
+  field(cx, { x: ox - R, y: oy - R, w: 2 * R, h: 2 * R, cell: 9, fs: 10, ramp: RAMP.water, color: glyphInk(), alpha: 0.6,
+    fn: (x, y) => (Math.hypot(x - ox, y - oy) < R ? 0.12 + tide(x * 1.6, y * 1.6, t, { scale: 200 }) : 0),
+    lenses: [{ x: ox - R, y: oy - R, w: 2 * R, h: 2 * R, r: R, opts: { mag: 1.25, bevel: 0.4, bend: 1 } }], fringe: [C["metal-fringe-a"], C["metal-fringe-b"]] });
+  flowAround(cx, { prepared: scene.flowPrepared, font: `400 17px ${getComputedStyle(document.body).getPropertyValue("--ld-font-text")}`, x: 44, y: 36, w: w - 88, h: h - 64, lineHeight: 27, obstacles: [{ x: ox, y: oy, r: R }], color: C.ink2, gap: 18 });
+}
+
+function paintBoard(t) {
+  const { cx, w, h } = canv.board;
+  cx.clearRect(0, 0, w, h);
+  field(cx, { w, h, cell: 12, fs: 11, ramp: RAMP.blades, color: C.dusk ? C.moss : C.moss, alpha: 0.6, fn: (x, y) => { const b = breeze(x, y, t); return bladeGlyph(b.v, b.lean); } });
+}
+
+const loop = createLoop({
+  paint(t) {
+    paintHero(t);
+    paintPanel("tide", (x, y) => tide(x, y, t, { scale: 210 }), { ramp: RAMP.water, alpha: 0.8, cell: 11, fs: 12 });
+    paintPanel("breeze", (x, y) => { const b = breeze(x, y, t); return bladeGlyph(b.v, b.lean); }, { ramp: RAMP.blades, color: C.moss, alpha: 0.7, cell: 11 });
+    paintPanel("cloud", (x, y) => cloud(x, y, t, { scale: 0.32 }), { ramp: RAMP.cloud, color: C.dusk ? C.sky : C.stone, alpha: 0.85, cell: 11, fs: 12 });
+    tiles(canv.cloud.cx, scene.birds.at(t), { cell: 9, fs: 7, shadow: C.shadow, shadowAlpha: 0.1 });
+    paintPanel("ripple", (x, y) => scene.ripple(x, y, t), { ramp: RAMP.dots, cell: 8, fs: 9, alpha: 0.75 });
+    paintPebble(t);
+    paintWell(t);
+    paintFlow(t);
+    paintBoard(t);
+  },
+});
+
+await fontsReady();
+build();
+sheen();
+els("mode").addEventListener("click", () => {
+  const html = document.documentElement;
+  html.dataset.ldMode = html.dataset.ldMode === "dusk" ? "dawn" : "dusk";
+  els("mode").textContent = html.dataset.ldMode === "dusk" ? "Dawn" : "Dusk";
+  build();
+  loop.invalidate();
+});
+addEventListener("resize", () => { build(); loop.invalidate(); });
+window.renderAt = (t) => loop.renderAt(t);
+if (capture) {
+  loop.renderAt(Number(q.get("t")));
+  window.__ready = true;
+} else loop.start();
+</script>
+</body>
+</html>
