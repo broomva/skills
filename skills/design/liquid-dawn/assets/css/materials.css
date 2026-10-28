@@ -407,6 +407,42 @@
   color: var(--ld-ink3);
 }
 
+/* ───────────────────────── hero recipes (kit/heroes.js) ─────────────────────────
+   The ground of each recipe; the canvases sit on top. currents and tide use the plain paper ground + .ld-wash. */
+.ld-hero-bg {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+.ld-hero-bg[data-recipe="dawn"] {
+  background: linear-gradient(180deg, var(--ld-paper) 0%, oklch(0.955 0.025 200) 48%, oklch(0.88 0.06 205) 100%);
+}
+[data-ld-mode="dusk"] .ld-hero-bg[data-recipe="dawn"] {
+  background: linear-gradient(180deg, var(--ld-paper) 0%, oklch(0.23 0.035 215) 55%, oklch(0.19 0.045 220) 100%);
+}
+.ld-hero-bg[data-recipe="caustic"] {
+  background: radial-gradient(120% 90% at 50% 40%, oklch(0.93 0.05 200), oklch(0.82 0.08 210));
+}
+[data-ld-mode="dusk"] .ld-hero-bg[data-recipe="caustic"] {
+  background: radial-gradient(120% 90% at 50% 40%, oklch(0.27 0.05 210), oklch(0.17 0.04 228));
+}
+.ld-hero-bg[data-recipe="lagoon"] {
+  background: linear-gradient(180deg, oklch(0.95 0.035 200), oklch(0.88 0.065 205) 55%, oklch(0.8 0.085 215));
+}
+[data-ld-mode="dusk"] .ld-hero-bg[data-recipe="lagoon"] {
+  background: linear-gradient(180deg, oklch(0.26 0.04 215), oklch(0.22 0.045 220) 55%, oklch(0.18 0.04 228));
+}
+.ld-hero-bg[data-recipe="horizon"] {
+  background: linear-gradient(180deg, oklch(0.95 0.02 230) 0%, oklch(0.97 0.03 85) 72%, oklch(0.93 0.03 210) 76%, oklch(0.88 0.04 215) 100%);
+}
+[data-ld-mode="dusk"] .ld-hero-bg[data-recipe="horizon"] {
+  background: linear-gradient(180deg, oklch(0.2 0.03 245) 0%, oklch(0.3 0.05 60) 72%, oklch(0.22 0.03 225) 76%, oklch(0.17 0.025 228) 100%);
+}
+/* the soft layer: big cells blurred into light (caustic and dawn recipes) */
+.ld-field.ld-soft {
+  filter: blur(7px) saturate(120%);
+}
+
 /* ───────────────────────── canvas layers ───────────────────────── */
 .ld-field {
   position: absolute;

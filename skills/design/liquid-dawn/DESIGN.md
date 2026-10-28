@@ -156,7 +156,38 @@ All rims share one mechanism: a `::after` ring with 1.25 px padding, `mask-compo
 - Pretext is vendored at `kit/vendor/pretext.js` (v1.0.0, MIT, Cheng Lou). Measure spaces with
   `{whiteSpace: "pre-wrap"}` if you lay out a lone space (a known pretext trap).
 
-### 6.5 Loop (`loop.js`) and core (`core.js`)
+### 6.5 Hero recipes (`heroes.js`)
+`createHero(name, {w, h, colors, seed, calm}).paint({soft, sharp}, t, lens)`, a CSS ground
+(`.ld-hero-bg[data-recipe=name]`), an optional soft canvas (`.ld-field.ld-soft`, CSS-blurred into light) and a sharp
+canvas. Owner-chosen directions (2026-10-28):
+
+| Recipe | Layers | Look |
+|---|---|---|
+| `dawn` (default) | soft + sharp | caustic light rising from below, glyph currents over it, fish riding two currents, type inside the glass |
+| `caustic` | soft + sharp | no glyphs in the room: pool-floor light; type appears only where the glass is |
+| `currents` | sharp | the leanest: glyph streamlines with travelling pulses; riders |
+| `lagoon` | sharp | aqua water, a one-glyph dot lattice lit by caustics, tile fish (closest to the shark references) |
+| `horizon` | sharp | a literal dawn: type cumulus, a dotted-ring sun on the waterline, its reflection in the tide |
+| `tide` | sharp | the first hero: tide glyphs, islands, a shoal |
+
+`assets/specimen/heroes.html` shows all six.
+
+### 6.6 Cinema (`cinema.js`): the shader on a scroll-scrubbed film
+For a page with a `scroll-cinema` film (`@broomva/scroll-cinema`: N clips, N+1 posters, endpoints pinned). The
+ASCII shader runs on the film itself:
+- `sampleFrame(stage, cols, rows, scratch)` samples the visible video frame (or poster) into a grid; luminance is
+  stretched between the 4th and 96th percentiles (`normaliseLuma`), so a pale dawn frame still spans the ramp.
+- `seamDissolve(p, {seams, width, end, base})`: how much of the frame is type at scroll progress p: 0 inside a
+  section (the film stays a photograph), 1 at a page break (a clip seam or a chapter break), and 1 from `end` on,
+  where the film hands off to the paper.
+- `dissolveThresholds(cols, rows, {seed})`: tide-ordered, rank-normalised per-cell thresholds, so the dissolve
+  spreads like water and half the frame is type at d = .5. `cellDissolve(d, th)` softens each cell's turn.
+- `filmType(cx, frame, {d, thresholds, paper, ink, lens, back})` draws the glyphs in the frame's own colours pulled
+  toward ink. Give it a CSS-blurred `back` canvas and the photograph frosts into paper before the type sharpens.
+- **The film keeps its own grade in both modes** (as the SRI landing does): a dawn-graded film under Dusk paper
+  fails. Either generate a dusk-graded film for Dusk, or hold the cinema section in Dawn.
+
+### 6.7 Loop (`loop.js`) and core (`core.js`)
 - `createLoop({init, step, paint, seed, still})` → `{start, stop, renderAt, invalidate}`; `setClock(t)` sets `--ua` and
   `--ld-b1..3` (breath periods 7.2 / 11.6 / 18.8 s: non-commensurate, so the light never visibly repeats).
 - `fitCanvas`, `sheen` (pointer specular on glass), `Sp` springs (response/damping), `beat`, `prng`, `noise2`, `fbm`,

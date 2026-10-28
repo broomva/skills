@@ -300,6 +300,49 @@ test("pretext is vendored with its licence and exposes the calls the kit uses", 
   for (const k of ["prepareWithSegments", "layoutWithLines", "layoutNextLineRange", "materializeLineRange"]) assert.equal(typeof pt[k], "function", k);
 });
 
+// ── hero recipes and cinema ──
+const heroes = await import(join(KIT, "heroes.js"));
+const cine = await import(join(KIT, "cinema.js"));
+
+test("hero recipes: every listed recipe has layers, the default is listed, unknown names are clear errors", () => {
+  assert.deepEqual(Object.keys(heroes.HERO_LAYERS).sort(), [...heroes.HERO_RECIPES].sort());
+  assert.ok(heroes.HERO_RECIPES.includes(heroes.HERO_DEFAULT));
+  assert.throws(() => heroes.createHero("meadow", { w: 100, h: 100, colors }), /unknown recipe "meadow"/);
+  const h = heroes.createHero("dawn", { w: 1440, h: 900, colors });
+  assert.deepEqual(h.layers, ["soft", "sharp"]);
+  assert.equal(typeof h.paint, "function");
+});
+
+test("seamDissolve: photographic inside sections, full type at a seam, and type to the end after `end`", () => {
+  const o = { seams: [0.5], width: 0.08, end: 0.86 };
+  assert.equal(cine.seamDissolve(0.2, o), 0);
+  assert.equal(cine.seamDissolve(0.5, o), 1);
+  assert.ok(cine.seamDissolve(0.46, o) > 0 && cine.seamDissolve(0.46, o) < 1);
+  assert.equal(cine.seamDissolve(1, o), 1);
+  assert.equal(cine.seamDissolve(0.2, { ...o, base: 0.3 }), 0.3);
+});
+
+test("dissolve thresholds are deterministic, uniformly spread, and turn cells progressively", () => {
+  const a = cine.dissolveThresholds(40, 22, { seed: 3 });
+  assert.deepEqual(a, cine.dissolveThresholds(40, 22, { seed: 3 }));
+  assert.notDeepEqual(a, cine.dissolveThresholds(40, 22, { seed: 4 }));
+  const s = Float32Array.from(a).sort();
+  assert.ok(Math.abs(s[0] - 0.08) < 1e-6 && Math.abs(s.at(-1) - 0.92) < 1e-6);
+  const turned = (d) => [...a].filter((x) => cine.cellDissolve(d, x) > 0.5).length / a.length;
+  assert.equal(turned(0), 0);
+  assert.equal(turned(1), 1);
+  assert.ok(turned(0.25) < turned(0.5) && turned(0.5) < turned(0.75));
+  assert.ok(Math.abs(turned(0.5) - 0.5) < 0.1, "half the frame is type at d = .5");
+});
+
+test("normaliseLuma stretches a pale frame across the ramp; glyphForLuma maps dark to heavy", () => {
+  const pale = Float32Array.from({ length: 200 }, (_, i) => 0.8 + (i / 199) * 0.15);
+  const n = cine.normaliseLuma(pale);
+  assert.ok(Math.min(...n) === 0 && Math.max(...n) === 1);
+  assert.equal(cine.glyphForLuma(0), cine.FILM_RAMP.length - 1);
+  assert.equal(cine.glyphForLuma(1), 1);
+});
+
 // ── loop: reduced motion ──
 test("reduced motion holds the still frame with the pearl at 0°, also when motion stops mid-run", async () => {
   const core = await import(join(KIT, "core.js"));

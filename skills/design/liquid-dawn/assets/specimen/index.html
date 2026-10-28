@@ -55,11 +55,11 @@
   </filter>
 </svg>
 
-<!-- 1 · HERO: tide field, islands and a shoal under a refracting composer -->
+<!-- 1 · HERO: the default "dawn" recipe (kit/heroes.js): caustic light, glyph currents, riders, type in the glass -->
 <section class="hero" id="hero" data-shot="hero">
-  <div class="ld-wash" aria-hidden="true"></div>
+  <div class="ld-hero-bg" data-recipe="dawn" aria-hidden="true"></div>
+  <canvas class="ld-field ld-soft" id="cv-hero-soft" aria-hidden="true"></canvas>
   <canvas class="ld-field" id="cv-hero" aria-hidden="true"></canvas>
-  <div class="ld-grid" aria-hidden="true"></div>
   <div class="ld-clearing" aria-hidden="true"></div>
   <nav class="ld-capsule nav" aria-label="Sections">
     <button class="ld-chip" data-target="fields" aria-pressed="false">Field</button>
@@ -84,8 +84,8 @@
     </div>
   </div>
   <div class="meta">
-    <span class="ld-tag">Tide · caustics at 0.18 rad/s</span>
-    <span class="ld-tag" style="--ld-tag: var(--ld-moss)">Shoal · lattice 12 px</span>
+    <span class="ld-tag">Recipe · dawn</span>
+    <span class="ld-tag" style="--ld-tag: var(--ld-moss)">Caustic light · currents · riders</span>
   </div>
 </section>
 
@@ -177,7 +177,7 @@
 <script type="module">
 import {
   C, readColors, setMotion, createLoop, fitCanvas, sheen, field, tiles, RAMP, fontsReady, resetAtlases,
-  tide, breeze, cloud, rippleField, clearing, bladeGlyph, createShoal, createIslands,
+  tide, breeze, cloud, rippleField, bladeGlyph, createShoal, createHero,
   layoutPage, lensPage, prepareWithSegments, flowAround, beat,
 } from "../kit/index.js";
 
@@ -205,8 +205,8 @@ function build() {
   const hr = H.cv.getBoundingClientRect();
   const r = els("composer").getBoundingClientRect();
   scene.lens = { x: r.left - hr.left, y: r.top - hr.top, w: r.width, h: r.height, r: 22, opts: { mag: 1.12, bevel: 0.3, bend: 0.9 } };
-  scene.shoal = createShoal({ w: H.w, h: H.h, seed: 21, count: 9, colors: C });
-  scene.islands = createIslands({ w: H.w, h: H.h, seed: 8, n: 4, colors: C });
+  scene.heroSoft = fitCanvas(els("cv-hero-soft"));
+  scene.hero = createHero("dawn", { w: H.w, h: H.h, colors: C });
   scene.birds = createShoal({ w: canv.cloud.w, h: canv.cloud.h * 0.7, seed: 4, kinds: ["bird"], count: 3, coral: false, colors: C });
   scene.ripple = rippleField({ w: canv.ripple.w, h: canv.ripple.h, n: 3, seed: 13 });
   const P = canv.pebble;
@@ -228,18 +228,7 @@ function sw() {
 const glyphInk = () => (C.dusk ? C.lagoon : C.tide);
 
 function paintHero(t) {
-  const { cx, w, h } = canv.hero;
-  cx.clearRect(0, 0, w, h);
-  const L = scene.lens;
-  field(cx, {
-    w, h, cell: 14, fs: 13, ramp: RAMP.water, color: glyphInk(), alpha: C.dusk ? 0.55 : 0.68,
-    fn: (x, y) => tide(x, y, t), lenses: [L], fringe: [C["metal-fringe-a"], C["metal-fringe-b"]],
-    mask: (x, y) => clearing(x, y, w / 2, h / 2 - 90, 470, 190, 0.9),
-  });
-  const shade = C.dusk ? C.paper : C.shadow;
-  tiles(cx, scene.islands.at(t), { cell: 12, shadow: shade, shadowAlpha: C.dusk ? 0.45 : 0.14 });
-  const fish = scene.shoal.at(t).filter((c) => clearing(c.x, c.y, w / 2, h / 2 - 60, 500, 250, 0.4) > 0.5);
-  tiles(cx, fish, { cell: 12, shadow: shade, shadowAlpha: C.dusk ? 0.45 : 0.16 });
+  scene.hero.paint({ soft: scene.heroSoft, sharp: canv.hero }, t, scene.lens);
 }
 
 function paintPanel(id, fn, opts = {}) {

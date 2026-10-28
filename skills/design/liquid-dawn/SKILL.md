@@ -62,6 +62,8 @@ Load `liquid-dawn/tokens/tokens.css`, then `liquid-dawn/css/materials.css`, and 
 | Round actions | `.ld-ring` with an inline SVG icon |
 | Composer | `.ld-lens.ld-composer` with an `<input>` and a `.row` hint line |
 | Life | `createShoal({ w, h, colors: C }).at(t)` and `createIslands(...)`, drawn with `tiles(cx, cells, { shadow: C.shadow })` |
+| Hero background | `createHero("dawn" \| "caustic" \| "currents" \| "lagoon" \| "horizon" \| "tide", { w, h, colors: C })` over `<div class="ld-hero-bg" data-recipe=…>` + a soft and a sharp canvas; see `assets/specimen/heroes.html` |
+| Film background | a `scroll-cinema` film with `sampleFrame` + `seamDissolve` + `filmType` from `kit/cinema.js`: the picture turns to type at every page break (DESIGN.md §6.6) |
 | Text as a field | `layoutPage` + `lensPage` (pebble by default, well at most once per story); `flowAround` to reflow round a moving obstacle |
 | Headline | `.ld-kicker`, then `.ld-hero` / `.ld-title` with the payoff in `<em>` |
 | Motion | `createLoop({ paint(t) { … } })`; expose `window.renderAt = (t) => loop.renderAt(t)` and set `window.__ready = true` after a capture frame |
