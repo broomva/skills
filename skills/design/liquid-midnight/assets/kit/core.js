@@ -276,10 +276,11 @@ export class Flow {
       }
     }
   }
+  /* spawn tolerance: n × (1/60) at rate 60 sums to 0.99999… in floating point, which would lose a spawn */
   /** integrate only (fixed-step loops): spawn by rate, move by v, recycle at u ≥ 1 unless end(q) returns false */
   advance(dt, end) {
     this.acc += dt * this.rate;
-    while (this.acc >= 1) {
+    while (this.acc >= 1 - 1e-9) {
       this.acc--;
       const q = this.mk();
       if (q) this.p.push(q);
@@ -305,7 +306,7 @@ export class Flow {
   /** the deck's combined form: integrate and paint in one call */
   run(dt, path, draw, end) {
     this.acc += dt * this.rate;
-    while (this.acc >= 1) {
+    while (this.acc >= 1 - 1e-9) {
       this.acc--;
       const q = this.mk();
       if (q) this.p.push(q);

@@ -17,7 +17,7 @@ Apple **Midnight** blue-black grounds (hue 245–252, never purple), with one bl
 
 Type is **Raleway Light** with tight tracking, and the key phrase is set in Raleway Regular blue. Motion is **springs and slow sweeps on one clock**. Every frame is a pure function of `t`, so a page can be rendered to video.
 
-![Cover board](https://raw.githubusercontent.com/broomva/liquid-midnight/306dc13/docs/renders/pen/00-cover.png)
+![Cover board](https://raw.githubusercontent.com/broomva/liquid-midnight/982b127/docs/renders/pen/00-cover.png)
 
 ---
 
@@ -163,13 +163,13 @@ All drift `ease-in-out infinite alternate`. In capture mode, freeze them or driv
 
 ## 6. Orb, ASCII and field recipes (`kit/`)
 
-![Orb · ASCII board](https://raw.githubusercontent.com/broomva/liquid-midnight/306dc13/docs/renders/pen/05-orb-ascii.png)
+![Orb · ASCII board](https://raw.githubusercontent.com/broomva/liquid-midnight/982b127/docs/renders/pen/05-orb-ascii.png)
 
 ### 6.1 WebGL glass plasma orb (`kit/orb.js`, shaders in `kit/orb-shaders.js`)
 - **Look** (reference: vault.rickybharti.com/orbloom): a thick glass sphere around a plasma core.
   - Plasma: two noise-bent filament arms (pow 14 / 22), 11 rays, two caustic layers, a rim flare and a hot core.
   - Glass: refraction `k = 1 − .4·r^2.4`, chromatic split only where r > .8, fresnel `(1 − z)³`, a bottom caustic, a top-left specular at (−.36, .44), a thin rim glint and a bloom out to 1.68 r.
-- **Colour:** pass any token. A = the colour lifted 40% toward cyan (filaments); B = colour × .8 (body). Blue orbs get a rim tint of .45 and other hues .08. That small blue-violet lift at the fresnel edge is part of the approved look; do not raise it.
+- **Colour:** pass any token. A = the colour lifted 40% toward cyan (filaments); B = the colour × (.8, .8, .85) per RGB channel (body). Blue orbs get a rim tint of .45 and other hues .08. That small blue-violet lift at the fresnel edge is part of the approved look; do not raise it.
 - **Use:**
   ```js
   ORB.attach(canvas); ORB.begin(ctx); orb(x, y, r, C.blue, t); ORB.end();
@@ -232,7 +232,7 @@ Vendored in `fonts/`, all SIL OFL 1.1: Inter, Raleway, JetBrains Mono (variable 
 
 Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or 1080 × 1920). For the web, scale them with `clamp()`, keeping the ratios.
 
-![Typography board](https://raw.githubusercontent.com/broomva/liquid-midnight/306dc13/docs/renders/pen/02-typography.png)
+![Typography board](https://raw.githubusercontent.com/broomva/liquid-midnight/982b127/docs/renders/pen/02-typography.png)
 
 ---
 
@@ -255,7 +255,7 @@ Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or
 | Scroll stories | one clock scrubbed by scroll (`t = T · progress`), smoothed by a critically damped follower (τ ≈ 120 ms); no CSS view timelines |
 | Render contract | `createLoop({init, step, paint}).renderAt(t)` replays fixed 1/60 s steps from 0 with `reseed()`. A headless browser renders any frame (see `?t=` in the specimen) |
 
-![Motion board](https://raw.githubusercontent.com/broomva/liquid-midnight/306dc13/docs/renders/pen/06-motion.png)
+![Motion board](https://raw.githubusercontent.com/broomva/liquid-midnight/982b127/docs/renders/pen/06-motion.png)
 
 ---
 
@@ -268,7 +268,7 @@ Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or
 | Feed 4:5 | 1080 × 1350 | top 80, bottom 120, sides 64 | the same stage grammar, cropped |
 | Landing | fluid | max widths 1180 (hero) and 960; body ≤ 625 px | hero `min-height: 100vh`; nav capsule 62 px |
 
-![Formats board](https://raw.githubusercontent.com/broomva/liquid-midnight/306dc13/docs/renders/pen/07-formats.png)
+![Formats board](https://raw.githubusercontent.com/broomva/liquid-midnight/982b127/docs/renders/pen/07-formats.png)
 
 ---
 
@@ -289,9 +289,9 @@ Measured contrast (WCAG 2), text on ground and on surface:
 | t1 | 18.2 | 16.6 | 15.8 | 17.0 |
 | t2 | 11.5 | 10.5 | 7.8 | 8.3 |
 | t3 | 6.1 | 5.5 | **4.4** | 4.8 |
-| blue | 7.6 | 6.9 | 4.5 | 4.9 |
+| blue | 7.6 | 6.9 | 4.5 | 4.8 |
 | green | 9.7 | 8.9 | **3.4** | 3.6 |
-| coral | 5.9 | 5.4 | 4.4 | 4.7 |
+| coral | 5.9 | 5.4 | 4.3 | 4.7 |
 | gold | 12.8 | 11.7 | **2.9** | 3.1 |
 
 - In day mode, use `t3`, green, coral and gold only for large text (≥ 24 px, 3:1) or with a label. For small metadata, put `t3` on `surface`.
@@ -345,7 +345,7 @@ The owner judges the **rendered result** against named references. Code review i
 - References: the Agent Workspaces keynote frames; the reel `reel-01-folder-v2`; vault.rickybharti.com/orbloom for the orb; the basit_designs liquid-glass nav pill for capsules and metal icons.
 - The specimen (`specimen/index.html`, rendered by `bun run render`) and the Pencil boards (`design/liquid-midnight.pen`) are the visual contract. Re-render both whenever tokens or materials change.
 
-![Specimen · hero](https://raw.githubusercontent.com/broomva/liquid-midnight/306dc13/docs/renders/night-hero.png)
+![Specimen · hero](https://raw.githubusercontent.com/broomva/liquid-midnight/982b127/docs/renders/night-hero.png)
 
 ---
 

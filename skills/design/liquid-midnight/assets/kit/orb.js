@@ -215,10 +215,14 @@ export const ORB = (() => {
     get ok() {
       return spriteRenderer().ready();
     },
-    /** Overlay a WebGL layer exactly on canvas `cv` (same pixel size, absolutely positioned at its offset box, inserted
-     *  right after it so it stacks above the canvas and below later siblings such as glass cards). Call once per frame
-     *  before begin(); it is cheap when nothing changed. */
+    /** Overlay a WebGL layer on canvas `cv`'s drawing area (inside its border and padding), absolutely positioned and
+     *  inserted right after it. Stacking: the orbs paint above everything drawn on that canvas, and below later
+     *  POSITIONED siblings (e.g. `.lm-glass` cards). Non-positioned later siblings paint below the layer.
+     *  The layer mirrors the canvas's opacity, visibility and z-index, so fading the canvas fades its orbs.
+     *  Call once per frame before begin(). Layers of canvases that left the DOM are released automatically;
+     *  call detach(cv) to release one explicitly (browsers cap live WebGL contexts at about 16). */
     attach(cv) {
+      for (const [k] of layers) if (k !== cv && !k.isConnected) this.detach(k);
       let e = layers.get(cv);
       if (!e) {
         const layer = document.createElement("canvas");
@@ -229,19 +233,37 @@ export const ORB = (() => {
       }
       const { layer } = e;
       if (layer.previousElementSibling !== cv) cv.after(layer);
+      const cs = getComputedStyle(cv);
+      const px = (k) => Number.parseFloat(cs[k]) || 0;
       const st = layer.style;
       st.position = "absolute";
       st.pointerEvents = "none";
       st.margin = "0";
-      st.left = `${cv.offsetLeft}px`;
-      st.top = `${cv.offsetTop}px`;
-      st.width = `${cv.offsetWidth}px`;
-      st.height = `${cv.offsetHeight}px`;
+      st.left = `${cv.offsetLeft + cv.clientLeft + px("paddingLeft")}px`;
+      st.top = `${cv.offsetTop + cv.clientTop + px("paddingTop")}px`;
+      st.width = `${cv.clientWidth - px("paddingLeft") - px("paddingRight")}px`;
+      st.height = `${cv.clientHeight - px("paddingTop") - px("paddingBottom")}px`;
+      st.opacity = cs.opacity;
+      st.visibility = cs.visibility;
+      st.zIndex = cs.zIndex;
       if (layer.width !== cv.width || layer.height !== cv.height) {
         layer.width = cv.width;
         layer.height = cv.height;
       }
       return layer;
+    },
+    /** Release canvas `cv`'s layer: lose its WebGL context and remove it from the DOM. */
+    detach(cv) {
+      const e = layers.get(cv);
+      if (!e) return;
+      e.LR.gl?.getExtension("WEBGL_lose_context")?.loseContext();
+      e.layer.remove();
+      layers.delete(cv);
+      if (target?.e === e) target = null;
+    },
+    /** number of live batch layers (diagnostics, tests) */
+    get layers() {
+      return layers.size;
     },
     begin(c2d) {
       const e = layers.get(c2d.canvas);

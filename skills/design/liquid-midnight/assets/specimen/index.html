@@ -143,7 +143,7 @@ section>header .lm-title{margin-top:20px;font-size:64px}
           <button class="lm-orb-button lm-ring" aria-label="Play"><svg class="lm-icon" viewBox="0 0 24 24"><path d="M8 5l11 7-11 7z"/></svg></button>
           <button class="lm-orb-button lm-ring" aria-label="Next"><svg class="lm-icon" viewBox="0 0 24 24"><path d="M9 6l6 6-6 6"/></svg></button>
         </div>
-        <span class="lm-tag">Chrome ring · metal icons · 2× rim speed</span>
+        <span class="lm-tag">Chrome ring · metal icons</span>
       </div>
     </div>
     <div class="grid g2" style="margin-top:24px">
@@ -239,6 +239,12 @@ function segCtl(el, onPick) {
   const place = (snap) => { const b = btns[i]; const L = b.offsetLeft - 6, W = b.offsetWidth; snap ? (x.snap(L), w.snap(W)) : (x.set(L), w.set(W)); };
   btns.forEach((b, k) => b.addEventListener("click", () => { i = k; btns.forEach((o, j) => o.setAttribute("aria-pressed", String(j === k))); place(false); onPick?.(b, k); }));
   return { step(dt) { if (!w.t) place(true); x.step(dt, 0.4, 1); w.step(dt, 0.4, 1); thumb.style.transform = `translateX(${x.v.toFixed(2)}px)`; thumb.style.width = `${w.v.toFixed(2)}px`; }, pick(k) { btns[k].click(); }, init() { w.t = 0; } };
+}
+/* controls start in the page's real state: the mode from ?mode=, motion from the OS reduced-motion setting */
+{
+  const day = root.dataset.lmMode === "day";
+  for (const b of document.querySelectorAll("#modeSeg button")) b.setAttribute("aria-pressed", String((b.dataset.mode === "day") === day));
+  document.getElementById("motionBtn").setAttribute("aria-pressed", String(MOTION));
 }
 const modeSeg = segCtl(document.getElementById("modeSeg"), (b) => { root.dataset.lmMode = b.dataset.mode; readColors(); resetAtlases(); swatches(); });
 const demoSeg = segCtl(document.getElementById("demoSeg"));

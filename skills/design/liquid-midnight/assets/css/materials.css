@@ -526,6 +526,22 @@
     background: var(--lm-surface) !important;
     box-shadow: 0 0 0 1.5px var(--lm-t2) !important;
   }
+  .lm-glass,
+  .lm-capsule,
+  .lm-chip,
+  .lm-seg .lm-thumb {
+    -webkit-backdrop-filter: none !important;
+    backdrop-filter: none !important;
+  }
+  .lm-chip,
+  .lm-seg .lm-thumb {
+    background: var(--lm-elev) !important;
+    box-shadow: 0 0 0 1px var(--lm-t3) !important;
+  }
+  .lm-chip[aria-pressed="true"] {
+    box-shadow: 0 0 0 2px var(--lm-blue) !important;
+  }
+  .lm-glass::before,
   .lm-glass::after,
   .lm-capsule::after,
   .lm-ring::after {

@@ -56,9 +56,10 @@ export function fringe(p, c, t, seed) {
 /** Multi-strand ribbon along bézier p: n strands spreading from s0 to s1 px, breathing by amp px.
  *  In metal mode the strands carry the travelling specular, a bright core fringe and ±1.2 px spectral fringes. */
 export function ribbon(p, n, s0, s1, cA, cB, a, t, amp = 5, lw = 1, dash) {
-  if (a <= 0.004) return;
   const g0 = ctx.globalAlpha; // the caller's alpha: everything below multiplies it and it is restored at the end
+  const a0 = a; // the ribbon's own alpha, before the caller's fade
   a *= g0;
+  if (a <= 0.004) return;
   const dx = p[3][0] - p[0][0];
   const dy = p[3][1] - p[0][1];
   const L = Math.hypot(dx, dy) || 1;
@@ -91,7 +92,7 @@ export function ribbon(p, n, s0, s1, cA, cB, a, t, amp = 5, lw = 1, dash) {
   ctx.setLineDash([]);
   if (METAL && !dash) {
     ctx.strokeStyle = fringe(p, C.shine, t, seed);
-    ctx.globalAlpha = Math.min(1, a * 2.6);
+    ctx.globalAlpha = g0 * Math.min(1, a0 * 2.6);
     ctx.lineWidth = lw * 1.7;
     path(0, 0, 0, 0);
     ctx.stroke();

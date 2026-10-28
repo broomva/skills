@@ -60,7 +60,7 @@
   }
 }
 
-[data-lm-tone=graphite] {
+[data-lm-tone=graphite]:not([data-lm-mode=day], [data-lm-mode=day] *) {
   --lm-deep: #090a0c;
   --lm-surface: #131518;
   --lm-elev: #1c1e21;
@@ -68,7 +68,7 @@
   --lm-t3: #8c8f94;
 }
 @supports (color: oklch(0 0 0)) {
-  [data-lm-tone=graphite] {
+  [data-lm-tone=graphite]:not([data-lm-mode=day], [data-lm-mode=day] *) {
     --lm-deep: oklch(0.145 0.004 255);
     --lm-surface: oklch(0.195 0.006 255);
     --lm-elev: oklch(0.235 0.007 255);
@@ -77,7 +77,7 @@
   }
 }
 
-[data-lm-tone=abyss] {
+[data-lm-tone=abyss]:not([data-lm-mode=day], [data-lm-mode=day] *) {
   --lm-deep: #000d17;
   --lm-surface: #001925;
   --lm-elev: #05232f;
@@ -85,7 +85,7 @@
   --lm-t3: #7d939e;
 }
 @supports (color: oklch(0 0 0)) {
-  [data-lm-tone=abyss] {
+  [data-lm-tone=abyss]:not([data-lm-mode=day], [data-lm-mode=day] *) {
     --lm-deep: oklch(0.15 0.036 230);
     --lm-surface: oklch(0.2 0.04 230);
     --lm-elev: oklch(0.24 0.042 230);

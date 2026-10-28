@@ -2,12 +2,12 @@
   "name": "liquid-midnight",
   "source": {
     "repo": "https://github.com/broomva/liquid-midnight",
-    "commit": "306dc13"
+    "commit": "982b127"
   },
   "files": [
     {
       "path": "css/materials.css",
-      "sha256": "b76a9a1f7d570000a9099d15fb67d54c8f1cf510ea4adbb21629c69a780b3891"
+      "sha256": "4128c3228380dec461f9bb3d346cc879780672d974d80f6565a12279783d4cfc"
     },
     {
       "path": "fonts/Inter-400.woff2",
@@ -47,7 +47,7 @@
     },
     {
       "path": "kit/core.js",
-      "sha256": "30213b09677475fafd04124c9a3f8d9e3bd74b712ae9f0c20657bb79e470e7b0"
+      "sha256": "32bcc2e65456f24f2ee92338bbcc908177496805ca3b3a0cdc7fa03d3583cff1"
     },
     {
       "path": "kit/index.js",
@@ -55,11 +55,11 @@
     },
     {
       "path": "kit/loop.js",
-      "sha256": "20edec417b8cd5771a39150f6e7f9132ba99931afd209af4f2f7d60efb8e5773"
+      "sha256": "22a85f0b12224607076f86b444e0896eab95fd5694a756b1d51209f15596922a"
     },
     {
       "path": "kit/metal.js",
-      "sha256": "131828872fa0b0fe13e9ee72a96f1b9aa8fe95ebab13757834815099128b8c41"
+      "sha256": "1cc1055820794c0c83b6fdd23ce9061e161fb9aa6374753ab893655bc7c87a96"
     },
     {
       "path": "kit/orb-shaders.js",
@@ -67,7 +67,7 @@
     },
     {
       "path": "kit/orb.js",
-      "sha256": "17944ecf063846bb08eb147f9f6727bfd625c23aefba2ef93cb89e55f63c1d12"
+      "sha256": "90d79bf2bdb26b53d01197f736d5dac92028b21779178b24f8732a819f7b9189"
     },
     {
       "path": "shaders/ascii-atlas.png",
@@ -79,11 +79,11 @@
     },
     {
       "path": "shaders/orb.glsl",
-      "sha256": "aab017135a23945eebb66789af86202a79ed7d33be18b2fdb1dcad13eaa25a1c"
+      "sha256": "fca27bc2440563957b4b01051b2f8def724a0e711f9590364b696bfb1eb91ad7"
     },
     {
       "path": "specimen/index.html",
-      "sha256": "074f4c3dc9d9ec38c26400fecc36152bd8babba656b6ab17381aac8499893d5d"
+      "sha256": "ddbe6e596f15ca64f4277eb0f68ad22baddcebe0af6a9918d6e430a6670fe75f"
     },
     {
       "path": "templates/scene.html",
@@ -91,7 +91,7 @@
     },
     {
       "path": "tokens/tokens.css",
-      "sha256": "566e201e7f3f8a5db500a184cd90ccd5afbbcf3406cb9f923712d65f15f9cf99"
+      "sha256": "0cf4336dba29db9000442858515498894a51563886f10f0c4fd5bb8899d04d3e"
     },
     {
       "path": "tokens/tokens.json",
@@ -99,7 +99,7 @@
     },
     {
       "path": "../DESIGN.md",
-      "sha256": "c39fcdf5a086b8d86a51b1328587c188d3f7657428f410f70330b928d16ccbe2"
+      "sha256": "c0973fd6e1ee036f10db21fa161644384d170d6cba4c931d051e5eb0daf72962"
     }
   ]
 }
