@@ -59,7 +59,9 @@ void main(){
  *  Call step(dt) in the loop's step and paint() in its paint, after the source canvas is drawn. Place it with
  *  snap(x, y) or follow(x, y) (CSS px in the overlay); unplaced, it starts at the centre. The source may be
  *  transparent: under the drop the lens paints `ground` (an [r, g, b] 0..255; default: the first opaque background
- *  of the overlay's ancestors) and lays the refracted source over it, so the glass covers what it bends.
+ *  of the overlay's ancestors, in any colour syntax, re-read each paint so a mode switch follows) and lays the
+ *  refracted source over it, so the glass covers what it bends. The ground is flat: if the page shows a wash or a
+ *  grid behind a transparent source, draw them into the source so the drop bends them too.
  *  source:  the canvas whose pixels the lens bends (re-uploaded each paint).
  *  opts: { r, mag, bend, disp, frost } — r in CSS px.
  */
@@ -165,11 +167,30 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
   return L;
 }
 
-/** The colour the page shows behind `el`: its nearest ancestor with an opaque background (else white). */
+/** The colour the page shows behind `el`: its nearest ancestor with an opaque background (else white). Any CSS colour
+ *  syntax works (oklch, color(), hex, named): the computed value is resolved by painting it into a 1 × 1 canvas. */
+const groundCache = new Map();
+export function cssColorToRGBA(css) {
+  let v = groundCache.get(css);
+  if (v) return v;
+  const c = document.createElement("canvas");
+  c.width = c.height = 1;
+  const x = c.getContext("2d", { willReadFrequently: true });
+  x.clearRect(0, 0, 1, 1);
+  x.fillStyle = "#000";
+  x.fillStyle = css; // an invalid colour leaves the previous fill
+  x.fillRect(0, 0, 1, 1);
+  const d = x.getImageData(0, 0, 1, 1).data;
+  v = [d[0], d[1], d[2], d[3]];
+  groundCache.set(css, v);
+  return v;
+}
 export function pageGround(el) {
   for (let n = el?.parentElement; n; n = n.parentElement) {
-    const m = /rgba?\(([\d.]+),\s*([\d.]+),\s*([\d.]+)(?:,\s*([\d.]+))?\)/.exec(getComputedStyle(n).backgroundColor);
-    if (m && (m[4] === undefined || Number(m[4]) > 0.99)) return [Number(m[1]), Number(m[2]), Number(m[3])];
+    const bg = getComputedStyle(n).backgroundColor;
+    if (!bg || bg === "transparent") continue;
+    const [r, g, b, a] = cssColorToRGBA(bg);
+    if (a >= 254) return [r, g, b];
   }
   return [255, 255, 255];
 }

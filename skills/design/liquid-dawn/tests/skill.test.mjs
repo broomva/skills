@@ -553,6 +553,15 @@ test("specimen renders in both modes, deterministically, and moves over time", {
       // ground (240) or the ink (160) gives, lifted by the white rim (≤ ~246). A shared alpha adds ink on top of
       // ground and clips blue to 255 (a halo).
       for (const [i, p] of r.rim.entries()) assert.ok(p[2] <= 248, `halo at rim x=${262 + i}: ${p}`);
+      // on a real Liquid Dawn page (oklch paper) in both modes, the drop's ground IS the paper, never white
+      for (const mode of ["dawn", "dusk"]) {
+        await fx.goto(`${u2}/tests/fixtures/lens-ground.html?mode=${mode}`);
+        await fx.waitForFunction(() => window.__result);
+        const g = await fx.evaluate(() => window.__result);
+        const off = g.centre.slice(0, 3).map((v, i) => Math.abs(v - g.paper[i]));
+        // the centre carries a whisper of milk (frost) and the specular's tail, so allow a small lift, never white
+        assert.ok(Math.max(...off) <= 24, `${mode}: drop ground ${g.centre} vs paper ${g.paper} (${g.computed})`);
+      }
     } finally {
       await fx.close();
       s2.close();
