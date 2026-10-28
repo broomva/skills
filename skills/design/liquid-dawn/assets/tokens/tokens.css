@@ -4,6 +4,12 @@
   --ld-font-display: Manrope, "SF Pro Display", ui-sans-serif, system-ui, sans-serif;
   --ld-font-text: Inter, "SF Pro Text", ui-sans-serif, system-ui, sans-serif;
   --ld-font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --ld-display-weight: 300;
+  --ld-display-tracking: -0.045em;
+  --ld-em-font: var(--ld-font-display);
+  --ld-em-weight: 400;
+  --ld-em-style: normal;
+  --ld-em-scale: 1;
   --ld-r-chip: 14px;
   --ld-r-card: 26px;
   --ld-r-lens: 32px;
@@ -13,6 +19,51 @@
 }
 [data-ld-mode="dusk"] {
   color-scheme: dark;
+}
+/* Type themes: [data-ld-type=…] on <html> (or any subtree) swaps the whole voice. */
+[data-ld-type="manrope"] {
+  --ld-font-display: Manrope, "SF Pro Display", ui-sans-serif, system-ui, sans-serif;
+  --ld-font-text: Inter, "SF Pro Text", ui-sans-serif, system-ui, sans-serif;
+  --ld-font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --ld-display-weight: 300;
+  --ld-display-tracking: -0.045em;
+  --ld-em-font: var(--ld-font-display);
+  --ld-em-weight: 400;
+  --ld-em-style: normal;
+  --ld-em-scale: 1;
+}
+[data-ld-type="inter-tight"] {
+  --ld-font-display: "Inter Tight", "SF Pro Display", ui-sans-serif, system-ui, sans-serif;
+  --ld-font-text: Inter, "SF Pro Text", ui-sans-serif, system-ui, sans-serif;
+  --ld-font-mono: "JetBrains Mono", ui-monospace, Menlo, monospace;
+  --ld-display-weight: 300;
+  --ld-display-tracking: -0.04em;
+  --ld-em-font: var(--ld-font-display);
+  --ld-em-weight: 500;
+  --ld-em-style: normal;
+  --ld-em-scale: 1;
+}
+[data-ld-type="geist"] {
+  --ld-font-display: Geist, ui-sans-serif, system-ui, sans-serif;
+  --ld-font-text: Geist, ui-sans-serif, system-ui, sans-serif;
+  --ld-font-mono: "Geist Mono", ui-monospace, Menlo, monospace;
+  --ld-display-weight: 300;
+  --ld-display-tracking: -0.045em;
+  --ld-em-font: var(--ld-font-display);
+  --ld-em-weight: 400;
+  --ld-em-style: normal;
+  --ld-em-scale: 1;
+}
+[data-ld-type="instrument"] {
+  --ld-font-display: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --ld-font-text: "Instrument Sans", ui-sans-serif, system-ui, sans-serif;
+  --ld-font-mono: "Geist Mono", ui-monospace, Menlo, monospace;
+  --ld-display-weight: 400;
+  --ld-display-tracking: -0.035em;
+  --ld-em-font: "Instrument Serif", ui-serif, Georgia, serif;
+  --ld-em-weight: 400;
+  --ld-em-style: italic;
+  --ld-em-scale: 1.08;
 }
 :root {
   --ld-paper: #f7f6f1;

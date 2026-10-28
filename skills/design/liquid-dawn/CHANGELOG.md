@@ -15,3 +15,4 @@ All notable changes to the `liquid-dawn` skill. Format: [Keep a Changelog](https
 - Specimen page, `serve.mjs`, `render.mjs`, `build_tokens.mjs`, and tests.
 - Hero recipes (`kit/heroes.js`: dawn, caustic, currents, lagoon, horizon, tide) and the recipe gallery.
 - Cinema (`kit/cinema.js`): the ASCII shader on a scroll-scrubbed film, dissolving to type at page breaks.
+- Type themes (`data-ld-type`: manrope, inter-tight, geist, instrument) with vendored OFL faces and a type gallery.

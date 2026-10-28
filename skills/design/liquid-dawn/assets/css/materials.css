@@ -15,6 +15,43 @@
   font-display: swap;
 }
 @font-face {
+  font-family: "Inter Tight";
+  src: url("../fonts/InterTight-wght.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: Geist;
+  src: url("../fonts/Geist-wght.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Geist Mono";
+  src: url("../fonts/GeistMono-wght.woff2") format("woff2");
+  font-weight: 100 900;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Instrument Sans";
+  src: url("../fonts/InstrumentSans-wght.woff2") format("woff2");
+  font-weight: 400 700;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("../fonts/InstrumentSerif-400.woff2") format("woff2");
+  font-weight: 400;
+  font-display: swap;
+}
+@font-face {
+  font-family: "Instrument Serif";
+  src: url("../fonts/InstrumentSerif-400-italic.woff2") format("woff2");
+  font-weight: 400;
+  font-style: italic;
+  font-display: swap;
+}
+@font-face {
   font-family: "JetBrains Mono";
   src: url("../fonts/JetBrainsMono-400.woff2") format("woff2");
   font-weight: 100 800;
@@ -314,11 +351,12 @@
   height: 1px;
   background: currentColor;
 }
+/* the voice comes from the type theme ([data-ld-type]): display family, weight and tracking, and the payoff style */
 .ld-hero,
 .ld-title,
 .ld-heading {
   font-family: var(--ld-font-display);
-  font-weight: 300;
+  font-weight: var(--ld-display-weight, 300);
   color: var(--ld-ink);
   text-wrap: balance;
   margin: 0;
@@ -326,24 +364,26 @@
 .ld-hero {
   font-size: clamp(48px, 6.4vw, 104px);
   line-height: 1;
-  letter-spacing: -0.045em;
+  letter-spacing: var(--ld-display-tracking, -0.045em);
 }
 .ld-title {
   font-size: clamp(36px, 4.2vw, 64px);
   line-height: 1.04;
-  letter-spacing: -0.035em;
+  letter-spacing: calc(var(--ld-display-tracking, -0.045em) * 0.78);
 }
 .ld-heading {
   font-size: 26px;
   line-height: 1.15;
-  font-weight: 400;
-  letter-spacing: -0.02em;
+  font-weight: calc(var(--ld-display-weight, 300) + 100);
+  letter-spacing: calc(var(--ld-display-tracking, -0.045em) * 0.45);
 }
 .ld-hero em,
 .ld-title em,
 .ld-heading em {
-  font-style: normal;
-  font-weight: 400;
+  font-family: var(--ld-em-font, var(--ld-font-display));
+  font-style: var(--ld-em-style, normal);
+  font-weight: var(--ld-em-weight, 400);
+  font-size: calc(1em * var(--ld-em-scale, 1));
   color: var(--ld-tide);
 }
 .ld-lede {

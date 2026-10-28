@@ -44,13 +44,24 @@ export function atlas(cx, fs, color, set = RAMP.general, weight = 400) {
 export function resetAtlases() {
   cache.clear();
 }
-/** Load the faces before baking: hidden text never requests a face, so fonts.ready can resolve too early. */
-export const fontsReady = () =>
-  Promise.all(
-    ['400 11px "JetBrains Mono"', '500 11px "JetBrains Mono"', "300 64px Manrope", "400 64px Manrope", "400 16px Inter"].map((f) =>
-      typeof document !== "undefined" ? document.fonts?.load(f).catch(() => null) : null,
-    ),
-  ).then(resetAtlases);
+/** Load the faces before baking or measuring: hidden text never requests a face, so fonts.ready can resolve too
+ *  early. Loads the field mono plus the ACTIVE type theme's display, payoff, text and mono families (read from the
+ *  computed --ld-font-* / --ld-em-* properties of `el`), so pretext measures the voice that will paint. */
+export const fontsReady = (el = typeof document !== "undefined" ? document.documentElement : null) => {
+  if (!el) return Promise.resolve();
+  const s = getComputedStyle(el);
+  const v = (k) => s.getPropertyValue(k).trim();
+  const em = v("--ld-em-font").startsWith("var(") ? v("--ld-font-display") : v("--ld-em-font");
+  const faces = [
+    '400 11px "JetBrains Mono"',
+    '500 11px "JetBrains Mono"',
+    `${v("--ld-display-weight") || 300} 64px ${v("--ld-font-display")}`,
+    `${v("--ld-em-style") === "italic" ? "italic " : ""}${v("--ld-em-weight") || 400} 64px ${em}`,
+    `400 16px ${v("--ld-font-text")}`,
+    `500 12px ${v("--ld-font-mono")}`,
+  ];
+  return Promise.all(faces.map((f) => document.fonts?.load(f).catch(() => null))).then(resetAtlases);
+};
 
 /** Draw glyph i of atlas A centred in the cell at (X, Y). */
 export function glyph(cx, A, i, X, Y) {

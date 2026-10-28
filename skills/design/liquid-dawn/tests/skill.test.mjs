@@ -75,6 +75,30 @@ test("no purple or magenta anywhere in the palette (hue 280-345 with real chroma
     }
 });
 
+// ── type themes ──
+test("every type theme is complete, emitted in tokens.css, and its faces are vendored with an OFL licence", () => {
+  const css = readFileSync(join(SKILL, "assets/tokens/tokens.css"), "utf8");
+  const materials = readFileSync(join(SKILL, "assets/css/materials.css"), "utf8");
+  assert.ok(tokens.typeThemes[tokens.typeDefault], "the default theme exists");
+  for (const [name, th] of Object.entries(tokens.typeThemes)) {
+    for (const k of ["display", "text", "mono", "displayWeight", "displayTracking"]) assert.ok(th[k] !== undefined, `${name}.${k}`);
+    for (const k of ["font", "weight", "style", "scale"]) assert.ok(th.em[k] !== undefined, `${name}.em.${k}`);
+    assert.notEqual(th.em.font, "inherit", "a custom property set to `inherit` inherits the property, not a value");
+    assert.match(css, new RegExp(`\\[data-ld-type="${name}"\\]`));
+    // every family the theme names first must have an @font-face whose file exists
+    for (const fam of [th.display, th.text, th.mono, th.em.font.startsWith("var(") ? th.display : th.em.font].map((f) => f.split(",")[0].replace(/"/g, "").trim())) {
+      const faces = [...materials.matchAll(/@font-face\s*\{[^}]*font-family:\s*"?([^";]+)"?;[^}]*url\("\.\.\/fonts\/([^"]+)"\)/g)].filter((m) => m[1] === fam);
+      assert.ok(faces.length, `no @font-face for ${fam} (${name})`);
+      for (const m of faces) assert.ok(readFileSync(join(SKILL, "assets/fonts", m[2])).length > 1000, `${m[2]} missing`);
+    }
+  }
+  for (const f of readdirSync(join(SKILL, "assets/fonts")).filter((f) => f.endsWith(".woff2"))) {
+    const family = f.replace(/-(wght|400|400-italic)\.woff2$/, "");
+    assert.ok(readdirSync(join(SKILL, "assets/fonts")).includes(`${family}-OFL.txt`), `${f} has no ${family}-OFL.txt`);
+    assert.match(readFileSync(join(SKILL, "assets/fonts", `${family}-OFL.txt`), "utf8"), /SIL Open Font License/);
+  }
+});
+
 // ── fields: calm is a number ──
 const sample = (f, w = 1440, h = 900, step = 15) => {
   const a = [];
@@ -254,6 +278,14 @@ test("creatures and islands wrap fully off-screen: no tile pops in or out at the
       }
     }
   for (const seed of [0, 1, 2]) check(shoal.createIslands({ w: 1440, h: 900, seed, n: 1, colors }), 1440, 12, 1, 700);
+});
+
+test("shoal tiles carry their creature id and a mask row centred on the creature", () => {
+  const s = shoal.createShoal({ w: 1440, h: 900, seed: 5, count: 3, kinds: ["fish"], coral: false, colors });
+  const cells = s.at(2);
+  assert.deepEqual([...new Set(cells.map((c) => c.id))].sort(), [0, 1, 2]);
+  const rows = cells.filter((c) => c.id === 0).map((c) => c.row);
+  assert.equal(Math.min(...rows), -Math.max(...rows), "rows are centred on the creature");
 });
 
 test("creatures drift calmly: no creature moves more than 25 px/s", () => {

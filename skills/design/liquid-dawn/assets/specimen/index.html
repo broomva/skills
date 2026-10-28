@@ -66,6 +66,7 @@
     <button class="ld-chip" data-target="pages" aria-pressed="false">Pages</button>
     <button class="ld-chip" data-target="words" aria-pressed="false">Flow</button>
     <button class="ld-chip" data-target="materials" aria-pressed="false">Glass</button>
+    <button class="ld-chip" id="type" aria-label="Cycle the type theme">Aa</button>
     <button class="ld-chip" id="mode" aria-label="Toggle dawn and dusk">Dusk</button>
   </nav>
   <div class="center">
@@ -188,6 +189,8 @@ if (q.get("mode") === "dusk") {
   document.getElementById("mode").textContent = "Dawn";
 }
 if (capture) setMotion(true);
+const TYPES = ["manrope", "inter-tight", "geist", "instrument"];
+if (TYPES.includes(q.get("type"))) document.documentElement.dataset.ldType = q.get("type");
 
 const PAGE_TEXT = `Every morning the lake is a page nobody has written on yet. Light arrives at a low angle and lies down across it, and the first thing it does is show you the shape of the wind. Small things move first: a reed, a ring where a fish turned, the drift of one leaf that has been travelling since before you woke. None of it is in a hurry. A surface this still is not empty; it is listening. Drop one pebble into it and every line on the page answers, a little, and then lets go. The rings widen and soften and the words come back to where they were, as if they had only leaned out to look. That is the whole lesson of water: respond completely, then return. Glass learns it from the lake. It does not hide what is behind it; it bends it, gently, so you notice it again. Metal learns it from the light, a single bright edge that walks slowly around whatever it holds. Paper learns it from patience. Put these three together and you have a surface that can carry serious work without raising its voice.`;
 const FLOW_TEXT = (PAGE_TEXT + " ").repeat(2);
@@ -309,6 +312,14 @@ els("mode").addEventListener("click", () => {
   loop.invalidate();
 });
 addEventListener("resize", () => { build(); loop.invalidate(); });
+els("type").addEventListener("click", async () => {
+  const html = document.documentElement;
+  html.dataset.ldType = TYPES[(TYPES.indexOf(html.dataset.ldType ?? "manrope") + 1) % TYPES.length];
+  els("type").title = html.dataset.ldType;
+  await fontsReady();
+  build();
+  loop.invalidate();
+});
 
 // nav: each chip scrolls to its section; the chip of the section nearest the top is pressed (none over the hero)
 const chips = [...document.querySelectorAll(".nav [data-target]")];

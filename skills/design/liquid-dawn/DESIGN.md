@@ -21,8 +21,8 @@ minnow schools, rays, birds and islands, each a mosaic of small rounded tiles wi
 tile cast onto the water. Floating surfaces are **dew glass**: milky, thick and quiet, rimmed in **pearl**, a liquid
 metal whose white specular and dark glint walk slowly round the edge with thin lagoon, sand and sky fringes. Where
 glass sits on a field, the field **bends** through it (magnified body, outward-bent bevel, fringes at the rim)
-rather than only blurring. Type is **Manrope Light** with tight tracking; the payoff phrase is Manrope Regular in
-**tide**, the single accent. Real proportional text is laid out by **pretext**, so a page can ripple or make room.
+rather than only blurring. Type is light and tightly tracked, in one of four voices (§7; Manrope Light by default),
+with the payoff phrase in **tide**, the single accent. Real proportional text is laid out by **pretext**, so a page can ripple or make room.
 Everything moves slowly, on one clock, and every frame is a pure function of `t`.
 
 ---
@@ -195,22 +195,36 @@ ASCII shader runs on the film itself:
 
 ---
 
-## 7. Typography
+## 7. Typography: four type themes
 
-| Role | Family | Weight | Size / lh | Tracking |
-|---|---|---:|---|---|
-| Hero | Manrope | 300 | clamp(48, 6.4vw, 104) / 1 | −.045em |
-| Title | Manrope | 300 | clamp(36, 4.2vw, 64) / 1.04 | −.035em |
-| Heading | Manrope | 400 | 26 / 1.15 | −.02em |
-| Payoff `<em>` | Manrope | 400 | inherit | tide, never italic |
-| Lede | Inter | 400 | clamp(17, 1.4vw, 21) / 1.55 | −.01em |
-| Body | Inter | 400 | 16 / 1.6 | 0 |
-| Kicker | JetBrains Mono | 500 | 12 / 1 | .18em uppercase, 22 px rule |
-| Tag | JetBrains Mono | 500 | 11 / 1 | .14em uppercase, 6 px dot |
-| Number | Manrope | 400 | 34 / 1 | −.03em, tabular |
-| Field glyphs | JetBrains Mono | 400 | 7–13 | atlas-baked |
+The voice is a parameter, like the mode. `data-ld-type` on `<html>` (or any subtree) swaps the display, text and
+mono families, the display weight and tracking, and the payoff style together; `--ld-display-tracking` scales to
+titles (×.78) and headings (×.45). Default: `manrope`. Owner kept all four (2026-10-28). See
+`assets/specimen/type.html`; the specimen's **Aa** chip cycles them.
 
-Fonts are vendored in `assets/fonts/` (all SIL OFL 1.1). Manrope is variable (200–800).
+| Theme | Display | Payoff `<em>` | Text | Mono | Character |
+|---|---|---|---|---|---|
+| `manrope` (default) | Manrope 300, −.045em | Manrope 400, tide | Inter | JetBrains Mono | geometric, light, airy |
+| `inter-tight` | Inter Tight 300, −.04em | Inter Tight 500, tide | Inter | JetBrains Mono | closest to SF Pro; Apple-neutral |
+| `geist` | Geist 300, −.045em | Geist 400, tide | Geist | Geist Mono | precise, technical calm |
+| `instrument` | Instrument Sans 400, −.035em | **Instrument Serif italic** 400, ×1.08, tide | Instrument Sans | Geist Mono | soft and warm |
+
+`instrument` is the only theme with italic emphasis (Liquid Midnight forbids it); the payoff is one serif word.
+
+| Role | Size / lh | Notes |
+|---|---|---|
+| Hero | clamp(48, 6.4vw, 104) / 1 | theme weight and tracking |
+| Title | clamp(36, 4.2vw, 64) / 1.04 | tracking × .78 |
+| Heading | 26 / 1.15 | weight + 100, tracking × .45 |
+| Lede | clamp(17, 1.4vw, 21) / 1.55 | text family, ink2 |
+| Body | 16 / 1.6 | text family |
+| Kicker | 12 / 1, .18em uppercase | theme mono, tide, 22 px rule |
+| Tag | 11 / 1, .14em uppercase | theme mono, 6 px dot |
+| Number | 34 / 1, tabular | display family |
+| Field glyphs | 7–13 | always JetBrains Mono (the ramps are tuned to its widths) |
+
+Fonts are vendored in `assets/fonts/`, each with its SIL OFL licence (tested). Call `fontsReady()` (kit) before
+painting canvas text or measuring with pretext: it loads the ACTIVE theme's faces.
 
 ---
 

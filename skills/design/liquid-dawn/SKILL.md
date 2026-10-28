@@ -4,8 +4,8 @@ description: |
   Build or restyle anything in Liquid Dawn, the calm daylight sibling of Liquid Midnight. The look: warm paper grounds
   (Dawn, primary) and a sea-slate Dusk mode; nature drawn in type (lagoon caustics, meadow breeze, cumulus, pebble
   ripples on a one-glyph lattice); glyph-tile shoals of fish, birds and islands with cast shadows; dew glass rimmed in
-  pearl liquid metal; refraction drawn by the field itself under glass; Manrope Light with one tide-blue payoff
-  phrase; real proportional text laid out by pretext that ripples or reflows round moving shapes; and slow motion
+  pearl liquid metal; refraction drawn by the field itself under glass; light, tight type in four switchable voices
+  (Manrope, Inter Tight, Geist, Instrument) with one tide-blue payoff phrase; real proportional text laid out by pretext that ripples or reflows round moving shapes; and slow motion
   where every frame is a pure function of t.
   Ships tokens (OKLCH + hex, dawn and dusk modes), materials CSS, a framework-agnostic canvas kit (fields, ASCII + lenses,
   shoals, pretext pages, render loop), a live specimen, and a render-and-look tool.
@@ -66,6 +66,7 @@ Load `liquid-dawn/tokens/tokens.css`, then `liquid-dawn/css/materials.css`, and 
 | Film background | a `scroll-cinema` film with `sampleFrame` + `seamDissolve` + `filmType` from `kit/cinema.js`: the picture turns to type at every page break (DESIGN.md §6.6) |
 | Text as a field | `layoutPage` + `lensPage` (pebble by default, well at most once per story); `flowAround` to reflow round a moving obstacle |
 | Headline | `.ld-kicker`, then `.ld-hero` / `.ld-title` with the payoff in `<em>` |
+| Voice | `data-ld-type="manrope" \| "inter-tight" \| "geist" \| "instrument"` on `<html>`; `await fontsReady()` before canvas text |
 | Motion | `createLoop({ paint(t) { … } })`; expose `window.renderAt = (t) => loop.renderAt(t)` and set `window.__ready = true` after a capture frame |
 
 Read `assets/specimen/index.html`: it is a working example of every row above (hero, fields, pages, flow, materials),

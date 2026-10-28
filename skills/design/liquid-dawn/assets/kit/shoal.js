@@ -65,7 +65,7 @@ export function createShoal({ w, h, seed = 21, kinds = ["fish", "minnow", "minno
     list,
     at(t) {
       const out = [];
-      for (const k of list) {
+      list.forEach((k, id) => {
         const margin = (k.mask[0].length + 1) * cell;
         const span = w + 2 * margin;
         const raw = k.x0 + k.speed * t;
@@ -82,6 +82,8 @@ export function createShoal({ w, h, seed = 21, kinds = ["fish", "minnow", "minno
             const col = k.dir > 0 ? i : row.length - 1 - i;
             const pick = rr();
             out.push({
+              id,
+              row: j - (k.mask.length - 1) / 2,
               x: sx + col * cell,
               y: sy + j * cell,
               fill: C[tones[ch]] ?? C.stone,
@@ -91,7 +93,7 @@ export function createShoal({ w, h, seed = 21, kinds = ["fish", "minnow", "minno
             });
           });
         });
-      }
+      });
       return out;
     },
   };

@@ -72,13 +72,26 @@ function block(selector, vars, mode, fmt) {
   return `${selector} {\n${vars.map(([n, v]) => `  ${n}: ${fmt(v[mode])};`).join("\n")}\n}\n`;
 }
 
+/** The custom properties of one type theme (display/text/mono families, display weight and tracking, payoff style). */
+export function typeVars(th) {
+  return [
+    `  --ld-font-display: ${th.display};`,
+    `  --ld-font-text: ${th.text};`,
+    `  --ld-font-mono: ${th.mono};`,
+    `  --ld-display-weight: ${th.displayWeight};`,
+    `  --ld-display-tracking: ${th.displayTracking};`,
+    `  --ld-em-font: ${th.em.font};`,
+    `  --ld-em-weight: ${th.em.weight};`,
+    `  --ld-em-style: ${th.em.style};`,
+    `  --ld-em-scale: ${th.em.scale};`,
+  ];
+}
+
 export function buildCss(tokens) {
   const vars = colorVars(tokens);
   const id = (v) => v;
   const statics = [
-    `  --ld-font-display: ${tokens.type.display};`,
-    `  --ld-font-text: ${tokens.type.text};`,
-    `  --ld-font-mono: ${tokens.type.mono};`,
+    ...typeVars(tokens.typeThemes[tokens.typeDefault]),
     ...Object.entries(tokens.radius).map(([k, v]) => `  --ld-r-${k}: ${v}px;`),
     `  --ld-ua-speed: ${tokens.motion.ua.degPerSecond};`,
   ].join("\n");
@@ -88,6 +101,8 @@ export function buildCss(tokens) {
     "/* Modes: dawn (default, :root) · dusk ([data-ld-mode=dusk]). To follow the OS, call followOS() from the kit. */",
     `:root {\n${statics}\n  color-scheme: light;\n}`,
     `${dusk} {\n  color-scheme: dark;\n}`,
+    "/* Type themes: [data-ld-type=…] on <html> (or any subtree) swaps the whole voice. */",
+    ...Object.entries(tokens.typeThemes).map(([k, th]) => `[data-ld-type="${k}"] {\n${typeVars(th).join("\n")}\n}`),
     block(":root", vars, "dawn", oklchToHex),
     block(dusk, vars, "dusk", oklchToHex),
     "@supports (color: oklch(0 0 0)) {",

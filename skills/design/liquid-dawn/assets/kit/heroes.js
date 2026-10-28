@@ -92,9 +92,10 @@ export function createHero(name, { w, h, colors: C, seed = 21, calm } = {}) {
   };
   /** fish riding two of the streams, snapped to the 12 px tile lattice */
   const riders = (L, t) => {
-    const cells = S.riders.at(t).map((cell, j) => {
-      const c = streams[j % 2 === 0 ? 1 : 5];
-      return { ...cell, y: Math.round((c.y0 + Math.sin(cell.x * c.k + t * c.w + c.ph) * c.A + (cell.y % 36) - 12) / 12) * 12 };
+    // each creature (cell.id) rides one stream; its tiles follow the stream's curve, offset by their mask row
+    const cells = S.riders.at(t).map((cell) => {
+      const c = streams[cell.id % 2 === 0 ? 1 : 5];
+      return { ...cell, y: Math.round((c.y0 + Math.sin(cell.x * c.k + t * c.w + c.ph) * c.A + cell.row * 12) / 12) * 12 };
     });
     tiles(L.cx, out(cells), { cell: 12, shadow: shade(), shadowAlpha: 0.14 });
   };
