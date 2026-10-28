@@ -255,7 +255,7 @@ for (const [id, set] of [["motionBtn", setMotion], ["metalBtn", setMetal]]) {
   const b = document.getElementById(id);
   b.addEventListener("click", () => { const on = b.getAttribute("aria-pressed") !== "true"; b.setAttribute("aria-pressed", String(on)); set(on); loop?.invalidate(); });
 }
-ORB.onChange(() => { if (CAPTURE) loop.renderAt(loop.t); });
+ORB.onChange(() => (CAPTURE ? loop.renderAt(loop.t) : loop?.invalidate())); // repaint after a GPU context restore
 /* pointer-tracked specular on glass */
 addEventListener("pointermove", (e) => { for (const g of document.querySelectorAll(".lm-glass")) { const r = g.getBoundingClientRect(); g.style.setProperty("--mx", `${e.clientX - r.left}px`); g.style.setProperty("--my", `${e.clientY - r.top}px`); } }, { passive: true });
 
@@ -355,7 +355,7 @@ await fontsReady();
 await document.fonts.ready;
 swatches();
 BG.fit();
-addEventListener("resize", () => BG.fit());
+addEventListener("resize", () => { BG.fit(); loop.invalidate(); }); // fit() clears the canvas
 window.renderAt = (t) => loop.renderAt(t);
 if (CAPTURE) { loop.renderAt(checkTime(Q.get("t"))); window.__ready = true; }
 else loop.start();

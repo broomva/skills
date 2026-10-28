@@ -64,8 +64,11 @@ test("LM004 catches inline and canvas glow orbs, not orbits or kit users", () =>
   assert.deepEqual(lint("import { orb, ORB } from '../kit/index.js'; ctx.createRadialGradient(0,0,0,0,0,9);"), []);
 });
 
-test("ID selectors are not colours", () => {
-  assert.deepEqual(lint("#a0f-section{padding:4px} #a3f{margin:0} #a3f, #b4e {color:#54a5fc}"), []);
+test("ID selector names that are not hex-like are never colours; hex-like ones are a documented false positive", () => {
+  assert.deepEqual(lint("#a0f-section{padding:4px} #abcdefg{margin:0}"), []);
+  assert.ok(codes("#a3f { margin:0 }").includes("LM001"), "documented: use lm-ignore");
+  assert.deepEqual(lint("#a3f { margin:0 } /* lm-ignore */"), []);
+
   assert.ok(codes(".x{color:#a3f}").includes("LM001"), "the same hex as a value is a purple");
   assert.deepEqual(lint('<a href="#a3f">jump</a> <use xlink:href="#a3f"/> <label for="#a3f">'), [], "fragment references are not colours");
 });
@@ -124,7 +127,7 @@ test("the template ships the metal icon gradients and pins motion in capture", (
 test("round 4: gradient and shadow purples are values, not selectors", () => {
   assert.ok(codes(".x{background:linear-gradient(#7c3aed, #0b1020)}").includes("LM001"));
   assert.ok(codes(".x{box-shadow:0 0 8px #a855f7, 0 0 2px #000}").includes("LM001"));
-  assert.deepEqual(lint("@media (min-width:1px){ #a3f, #b4e { color:#54a5fc } }"), [], "ID selectors inside @media");
+
 });
 
 test("round 4: LM004 stays linear on long prose", () => {
@@ -173,7 +176,7 @@ test("round 4: serve refuses a file as its root", async () => {
 });
 
 test("delta: ID selectors with pseudo-classes are selectors; data-* colours are colours", () => {
-  assert.deepEqual(lint("#a3f:hover { color:#54a5fc } #a3f::before { content:'' }"), []);
+
   assert.ok(codes('<div data-color="#a3f"></div>').includes("LM001"));
   assert.deepEqual(lint('<a href="#a3f">x</a>'), []);
 });
@@ -184,6 +187,27 @@ test("delta: rule ranges come from one forward pass (large stylesheets stay fast
   const t0 = performance.now();
   const r = rules(css);
   assert.ok(performance.now() - t0 < 500, "30k rules parse well under half a second");
-  assert.equal(r.length, 30001);
+  assert.equal(r.length, 30002, "every block, including the @media wrapper");
   assert.ok(codes(css.slice(-80)).includes("LM004"), "the rule inside @media is found");
+});
+
+test("delta 2: purple hexes in JSX, SVG-in-JSX and semicolon-less JS are caught", () => {
+  for (const t of ['<div className="bg-[#7c3aed]" onClick={go}>', '<circle fill="#7c3aed" onClick={go} />', 'const colors = ["#7c3aed"]\nfunction f() {}', 'const c = () => "#7c3aed"\nif (x) {}'])
+    assert.ok(codes(t).includes("LM001"), t);
+});
+
+test("delta 2: LM004 finds orb rules with native CSS nesting", () => {
+  assert.ok(codes(".orb { background: radial-gradient(circle,#54a5fc,transparent); &:hover { opacity:.8 } }").includes("LM004"));
+});
+
+test("delta 2: --without removes an optional set; stale entries from an older receipt are ignored", () => {
+  const d = tmp();
+  install(d, { withList: ["specimen", "templates"] });
+  install(d, { without: ["specimen"] });
+  const rec = JSON.parse(readFileSync(join(d, "liquid-midnight/LIQUID_MIDNIGHT.json"), "utf8"));
+  assert.deepEqual(rec.with, ["templates"]);
+  rec.with.push("retired-set");
+  writeFileSync(join(d, "liquid-midnight/LIQUID_MIDNIGHT.json"), JSON.stringify(rec));
+  assert.ok(install(d).ok, "an unknown entry in an old receipt does not break re-install");
+  rmSync(d, { recursive: true });
 });

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // Install the Liquid Midnight assets into a target project, verify an install, or list what would be copied.
-//   node materialize.mjs install <target> [--dir liquid-midnight] [--with specimen,shaders,templates] [--dry-run] [--force]
+//   node materialize.mjs install <target> [--dir liquid-midnight] [--with specimen,shaders,templates] [--without …] [--dry-run] [--force]
+//   (optional sets installed earlier are kept on update; --without removes one; its files stay on disk, untracked)
 //   node materialize.mjs verify  <target> [--dir liquid-midnight]
 //   node materialize.mjs list
 // Core (always): tokens, css, kit, fonts. Optional: specimen, shaders (Pencil fills), templates (starter scene).
@@ -33,12 +34,13 @@ export function selection(withList = []) {
 }
 
 /** Copy the selection into target/dir; refuses to overwrite locally edited files unless force. Returns a report. */
-export function install(target, { dir = "liquid-midnight", withList, dryRun = false, force = false } = {}) {
+export function install(target, { dir = "liquid-midnight", withList, without = [], dryRun = false, force = false } = {}) {
   const m = manifest();
   const dest = resolve(target, dir);
   const prev = existsSync(join(dest, RECEIPT)) ? readManifest(join(dest, RECEIPT)) : null;
   // an update keeps the optional sets installed earlier: --with adds to them, it never silently drops them
-  withList = [...new Set([...(prev?.with ?? []), ...(withList ?? [])])];
+  // (entries a newer skill no longer ships are dropped; --without removes a set from the install)
+  withList = [...new Set([...(prev?.with ?? []).filter((w) => w in OPTIONAL), ...(withList ?? [])])].filter((w) => !without.includes(w));
   const files = selection(withList);
   const edited = [];
   const kept = [];
@@ -87,13 +89,17 @@ export function verify(target, { dir = "liquid-midnight" } = {}) {
 
 function parse(argv) {
   const [cmd, target, ...rest] = argv;
-  const o = { cmd, target, dir: "liquid-midnight", withList: undefined, dryRun: false, force: false };
+  const o = { cmd, target, dir: "liquid-midnight", withList: undefined, without: [], dryRun: false, force: false };
   for (let i = 0; i < rest.length; i++) {
     const a = rest[i];
     if (a === "--with") {
       const v = rest[++i];
       if (!v || v.startsWith("--")) throw new Error("--with needs a value: specimen,shaders,templates");
       o.withList = v.split(",").filter(Boolean);
+    } else if (a === "--without") {
+      const v = rest[++i];
+      if (!v || v.startsWith("--")) throw new Error("--without needs a value: specimen,shaders,templates");
+      o.without = v.split(",").filter(Boolean);
     } else if (a === "--dir") {
       const v = rest[++i];
       if (!v || v.startsWith("--")) throw new Error("--dir needs a value");

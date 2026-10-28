@@ -222,11 +222,15 @@ export const ORB = (() => {
         }
       });
     }
-    const root = cv.getRootNode();
-    const target = root instanceof ShadowRoot ? root : document.documentElement;
-    if (watched.has(target)) return;
-    watched.add(target);
-    watcher.observe(target, { childList: true, subtree: true });
+    // always the document (it sees a shadow HOST being removed), plus every shadow root up the host chain (removals
+    // inside shadow DOM are invisible to the document observer)
+    const targets = [document.documentElement];
+    for (let root = cv.getRootNode(); root instanceof ShadowRoot; root = root.host.getRootNode()) targets.push(root);
+    for (const target of targets) {
+      if (watched.has(target)) continue;
+      watched.add(target);
+      watcher.observe(target, { childList: true, subtree: true });
+    }
   };
   const queue = [];
   return {
@@ -289,6 +293,11 @@ export const ORB = (() => {
       e.layer.remove();
       layers.delete(cv);
       if (target?.e === e) target = null;
+      if (!layers.size && watcher) {
+        watcher.disconnect();
+        watcher = null;
+        watched = new WeakSet();
+      }
     },
     /** number of live batch layers (diagnostics, tests) */
     get layers() {

@@ -145,6 +145,9 @@ function paint(t) {
 }
 
 const loop = createLoop({ init, step, paint });
+/* after a GPU context restore: re-render the captured frame, or ask the reduced-motion loop to repaint its held frame.
+   Any other canvas change made outside step() must call loop.invalidate() too (DESIGN.md, reduced motion). */
+ORB.onChange(() => (Q.has("t") ? loop.renderAt(loop.t) : loop.invalidate()));
 await fontsReady();
 await document.fonts.ready;
 window.renderAt = (t) => loop.renderAt(t);

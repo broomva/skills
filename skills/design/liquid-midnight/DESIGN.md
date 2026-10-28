@@ -17,7 +17,7 @@ Apple **Midnight** blue-black grounds (hue 245–252, never purple), with one bl
 
 Type is **Raleway Light** with tight tracking, and the key phrase is set in Raleway Regular blue. Motion is **springs and slow sweeps on one clock**. Every frame is a pure function of `t`, so a page can be rendered to video.
 
-![Cover board](https://raw.githubusercontent.com/broomva/liquid-midnight/a9ac3c5/docs/renders/pen/00-cover.png)
+![Cover board](https://raw.githubusercontent.com/broomva/liquid-midnight/f531479/docs/renders/pen/00-cover.png)
 
 ---
 
@@ -163,7 +163,7 @@ All drift `ease-in-out infinite alternate`. In capture mode, freeze them or driv
 
 ## 6. Orb, ASCII and field recipes (`kit/`)
 
-![Orb · ASCII board](https://raw.githubusercontent.com/broomva/liquid-midnight/a9ac3c5/docs/renders/pen/05-orb-ascii.png)
+![Orb · ASCII board](https://raw.githubusercontent.com/broomva/liquid-midnight/f531479/docs/renders/pen/05-orb-ascii.png)
 
 ### 6.1 WebGL glass plasma orb (`kit/orb.js`, shaders in `kit/orb-shaders.js`)
 - **Look** (reference: vault.rickybharti.com/orbloom): a thick glass sphere around a plasma core.
@@ -232,7 +232,7 @@ Vendored in `fonts/`, all SIL OFL 1.1: Inter, Raleway, JetBrains Mono (variable 
 
 Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or 1080 × 1920). For the web, scale them with `clamp()`, keeping the ratios.
 
-![Typography board](https://raw.githubusercontent.com/broomva/liquid-midnight/a9ac3c5/docs/renders/pen/02-typography.png)
+![Typography board](https://raw.githubusercontent.com/broomva/liquid-midnight/f531479/docs/renders/pen/02-typography.png)
 
 ---
 
@@ -255,7 +255,7 @@ Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or
 | Scroll stories | one clock scrubbed by scroll (`t = T · progress`), smoothed by a critically damped follower (τ ≈ 120 ms); no CSS view timelines |
 | Render contract | `createLoop({init, step, paint}).renderAt(t)` replays fixed 1/60 s steps from 0 with `reseed()`. A headless browser renders any frame (see `?t=` in the specimen). Capture pages pin motion on (`setMotion(true)`), so frames do not depend on the capturing machine's reduced-motion setting |
 
-![Motion board](https://raw.githubusercontent.com/broomva/liquid-midnight/a9ac3c5/docs/renders/pen/06-motion.png)
+![Motion board](https://raw.githubusercontent.com/broomva/liquid-midnight/f531479/docs/renders/pen/06-motion.png)
 
 ---
 
@@ -268,7 +268,7 @@ Tracking tightens as size grows. Sizes are given at stage scale (1920 × 1080 or
 | Feed 4:5 | 1080 × 1350 | top 80, bottom 120, sides 64 | the same stage grammar, cropped |
 | Landing | fluid | max widths 1180 (hero) and 960; body ≤ 625 px | hero `min-height: 100vh`; nav capsule 62 px |
 
-![Formats board](https://raw.githubusercontent.com/broomva/liquid-midnight/a9ac3c5/docs/renders/pen/07-formats.png)
+![Formats board](https://raw.githubusercontent.com/broomva/liquid-midnight/f531479/docs/renders/pen/07-formats.png)
 
 ---
 
@@ -298,7 +298,7 @@ Measured contrast (WCAG 2), text on ground and on surface:
 - Glass sits on a live field, so check contrast against the *darkest and brightest* frames. Keep text on glass at t1/t2. If the field gets bright, raise the tint, do not shrink the type.
 - **Reduced transparency:** glass becomes `--lm-glass-heavy` with no backdrop filter (restated last in the CSS, so no material beats it).
 - **More contrast:** opaque `--lm-surface`, a 1.5 px `t2` outline, and no rim.
-- **Reduced motion:** the live clock holds still (`createLoop().start()` stops advancing `t`, as the deck did), springs snap, `--ua` and the ASCII flow freeze, and the ambient light stops. `MOTION` follows the OS setting live; `setMotion(true|false)` pins it and `setMotion(null)` hands it back. `renderAt(t)` still seeks, because a capture asks for that frame explicitly.
+- **Reduced motion:** the live clock holds still (`createLoop().start()` stops advancing `t`, as the deck did), springs snap, `--ua` and the ASCII flow freeze, and the ambient light stops. `MOTION` follows the OS setting live; `setMotion(true|false)` pins it and `setMotion(null)` hands it back. `renderAt(t)` still seeks, because a capture asks for that frame explicitly. Under reduced motion the live loop repaints only when something changes: DOM driven from `step()` updates every frame, but **any canvas change made outside `step()` must call `loop.invalidate()`**. Typical triggers are a resize or `fit()` (it clears the canvas), a theme switch, new data, a font swap, and a GPU context restore (`ORB.onChange(() => loop.invalidate())`).
 - **Focus:** a 2 px `--lm-blue` outline with 2 px offset. Never remove it.
 - Canvases and orbs are decorative (`aria-hidden`) unless they carry data; diagrams that do carry data get a text equivalent.
 - Render-to-video: burn captions in (OpenCaptions-style box) and keep them inside the reel safe zone.
@@ -345,7 +345,7 @@ The owner judges the **rendered result** against named references. Code review i
 - References: the Agent Workspaces keynote frames; the reel `reel-01-folder-v2`; vault.rickybharti.com/orbloom for the orb; the basit_designs liquid-glass nav pill for capsules and metal icons.
 - The specimen (`specimen/index.html`, rendered by `bun run render`) and the Pencil boards (`design/liquid-midnight.pen`) are the visual contract. Re-render both whenever tokens or materials change.
 
-![Specimen · hero](https://raw.githubusercontent.com/broomva/liquid-midnight/a9ac3c5/docs/renders/night-hero.png)
+![Specimen · hero](https://raw.githubusercontent.com/broomva/liquid-midnight/f531479/docs/renders/night-hero.png)
 
 ---
 

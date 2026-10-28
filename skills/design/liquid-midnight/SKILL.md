@@ -57,7 +57,7 @@ It refuses to overwrite core files you edited locally unless you pass `--force`;
 - not hash-tracked, and ignored by `verify`;
 - never replaced on a later `install` unless you pass `--force`.
 
-Use `--dir` to install somewhere other than `liquid-midnight/`, and `--dry-run` to preview.
+Updates keep the optional sets you installed before; remove one with `--without specimen`. Use `--dir` to install somewhere other than `liquid-midnight/`, and `--dry-run` to preview.
 
 ## 3. Build with the grammar, not around it
 
@@ -76,7 +76,7 @@ Load `tokens/tokens.css` and then `css/materials.css`. Use these classes and mod
 | Orbs | `ORB.attach(canvas); ORB.begin(ctx); orb(x, y, r, C.blue, t); ORB.end()`. The canvas needs a positioned offset parent |
 | Metal on lines / rings | `ribbon(...)`, `metalRing(...)` from `kit/metal.js` |
 | ASCII pieces | `glyphTrail`, `dotRing`, `ringText`, `asciiField` + `atlas` |
-| Motion | `createLoop({init, step, paint})`. Integrate in `step` (fixed 1/60 s), keep `paint(t)` pure, expose `window.renderAt` |
+| Motion | `createLoop({init, step, paint})`. Integrate in `step` (fixed 1/60 s), keep `paint(t)` pure, expose `window.renderAt`. Under reduced motion the loop repaints only when invalidated: after any canvas change outside `step()` (resize/fit, theme, data, GPU context restore), call `loop.invalidate()` |
 
 Start from the starter `liquid-midnight/templates/scene.html`. Edit it in place, or copy it to a sibling folder such as `scenes/` and change its `../` asset paths to `../liquid-midnight/`. Capture mode pins motion on. It handles `?format=keynote|reel|feed`, `?mode=day`, `?guides=1` (safe zones) and `?t=` (deterministic frame). Edit its CONTENT block and `paint()`. For the format recipes, follow the checklists in DESIGN.md §12: keynote scene, reel, landing section, app card.
 
@@ -95,6 +95,8 @@ Start from the starter `liquid-midnight/templates/scene.html`. Edit it in place,
 node "$SKILL_DIR/scripts/check_style.mjs" src/ liquid-midnight/templates/      # LM001 purple (oklch/hex/hsl/rgb/named/Tailwind), LM002 arcan-glass (errors); LM003-5 warnings
 node "$SKILL_DIR/scripts/render.mjs" . liquid-midnight/templates/scene.html --t 0,2,6 --format keynote,reel --mode night,day --out renders
 ```
+
+`check_style` is a heuristic. It has one deliberate false positive: an ID selector whose name reads as a purple hex (`#a3f { … }`). Silence it with `lm-ignore` on that line.
 
 `render.mjs` needs Playwright with Chromium; it says how to install it if missing. **Open every PNG and look at it** against DESIGN.md §13's references: the keynote frames, the reel, orbloom for the orb. The style linter only catches patterns. Acceptance comes from the render, in both modes. Fix what you see, then re-render.
 

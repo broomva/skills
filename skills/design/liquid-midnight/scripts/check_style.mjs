@@ -5,6 +5,8 @@
 // warnings (exit 0): LM003 backdrop-filter glass with no conic metal rim in the same file
 //                    LM004 radial-gradient "glow orb" rule (use the WebGL orb)        LM005 italic emphasis
 // Suppress a finding with `lm-ignore` on its line; lines containing ✕ (prohibition lists) are skipped.
+// Known false positive, by choice: an ID selector whose name reads as a purple hex (`#a3f { … }`); add `lm-ignore`.
+// Telling selectors from values reliably needs a real CSS/JS parser, and a heuristic here missed real purples in JSX.
 // Heuristics, not proof: a clean run means none of these patterns appear, not that the work is on-style.
 // Always render and look (scripts/render.mjs).
 import { readdirSync, readFileSync, statSync } from "node:fs";
@@ -35,37 +37,29 @@ export function hexToOklch(hex) {
 
 const inPurple = (H, C, min) => C >= min && H >= PURPLE[0] && H <= PURPLE[1];
 
-/** Rule ranges in ONE forward pass with a brace stack: { index, selector, body } for innermost blocks only. */
+/** Rule ranges in ONE forward pass with a brace stack: { index, selector, body } for EVERY block, so native CSS
+ *  nesting (`.orb { …; &:hover { … } }`) and @media/@supports wrappers are both covered. A selector runs from the
+ *  last `{`, `}` or `;` to its `{`; a body is the block's full inner text. */
 export function rules(text) {
   const out = [];
-  const stack = []; // { open, selStart, hasChild }
-  let boundary = -1; // last `{` or `}` position: a selector starts right after it
+  const stack = []; // { open, selStart }
+  let boundary = -1; // last `{`, `}` or `;` position: a selector starts right after it
   for (let i = 0; i < text.length; i++) {
     const ch = text.charCodeAt(i);
     if (ch === 123 /* { */) {
-      if (stack.length) stack[stack.length - 1].hasChild = true;
-      stack.push({ open: i, selStart: boundary + 1, hasChild: false });
+      stack.push({ open: i, selStart: boundary + 1 });
       boundary = i;
     } else if (ch === 125 /* } */) {
       const b = stack.pop();
-      if (b && !b.hasChild) out.push({ index: b.selStart, selector: text.slice(Math.max(b.selStart, b.open - 300), b.open), body: text.slice(b.open + 1, i) });
+      if (b) out.push({ index: b.selStart, selector: text.slice(Math.max(b.selStart, b.open - 300), b.open), body: text.slice(b.open + 1, i) });
       boundary = i;
-    }
+    } else if (ch === 59 /* ; */) boundary = i;
   }
   return out;
 }
 
 export function lint(text, file = "<input>") {
   const out = [];
-  /* a #token is a selector when it sits where a rule's selector list sits: after a rule boundary (start, `}` or a tag's
-     `>`), with a `{` ahead before any `;` or `:`. `linear-gradient(#7c3aed, #0b1020)` is a value, not a selector. */
-  const inSelector = (start, end) => {
-    const before = text.slice(Math.max(0, start - 400), start);
-    const last = Math.max(...["{", "}", ";", ":", ">"].map((c) => before.lastIndexOf(c)));
-    const ch = last < 0 ? "" : before[last];
-    if (!(last < 0 || ch === "}" || ch === ">" || ch === "{")) return false;
-    return /^[^;{}]*\{/.test(text.slice(end, end + 200)); // `#id:hover {` is still a selector
-  };
   const lineOf = (i) => text.slice(0, i).split("\n").length;
   const lines = text.split("\n");
   // a line can opt out with `lm-ignore`; lines marked ✕ are prohibitions (do/don't lists) and never findings
@@ -82,7 +76,6 @@ export function lint(text, file = "<input>") {
   for (const m of text.matchAll(/#([0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{4}|[0-9a-f]{3})(?![0-9a-z_-])/gi)) {
     const prev = text.slice(Math.max(0, m.index - 6), m.index);
     if (/&$|url\($|(?:href|xlink:href|for|aria-(?:controls|labelledby|describedby|owns|activedescendant|details|flowto))=["']?$/i.test(prev.length < 6 ? prev : text.slice(Math.max(0, m.index - 24), m.index))) continue; // entities, fragment links and attribute references
-    if (inSelector(m.index, m.index + m[0].length)) continue; // an ID selector, not a colour
     const { C, H } = hexToOklch(m[0]);
     if (inPurple(H, C, MIN_CHROMA.hex)) add("LM001", "error", m.index, `purple cast: ${m[0]} (OKLCH hue ${H.toFixed(0)}, chroma ${C.toFixed(3)})`);
   }
