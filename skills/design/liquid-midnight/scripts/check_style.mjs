@@ -107,7 +107,7 @@ export function lint(text, file = "<input>") {
   }
   for (const m of text.matchAll(/\b(?:bg|text|from|via|to|border|ring|fill|stroke|shadow|outline|decoration|accent|caret)-(purple|violet|fuchsia|indigo)-\d{2,3}\b/g))
     add("LM001", "error", m.index, `purple cast: Tailwind ${m[0]}`);
-  for (const m of text.matchAll(/arcan[-_ ]?glass/gi)) add("LM002", "error", m.index, "arcan-glass look/skill referenced; it was rejected for this style");
+  for (const m of prose ? [] : text.matchAll(/arcan[-_ ]?glass/gi)) // docs may forbid it; code must not use it add("LM002", "error", m.index, "arcan-glass look/skill referenced; it was rejected for this style");
   const hasBlur = /backdrop-filter\s*:\s*[^;]*blur/i.test(text);
   const hasRim = /conic-gradient\(\s*from\s+var\(--ua/i.test(text) || /\blm-(glass|capsule|ring)\b/.test(text) || /materials\.css/.test(text);
   if (hasBlur && !hasRim) add("LM003", "warning", text.search(/backdrop-filter/i), "glass without the travelling metal rim (.lm-glass / conic-gradient(from var(--ua))); a flat glass panel was rejected");

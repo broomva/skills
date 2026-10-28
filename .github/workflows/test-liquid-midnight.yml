@@ -46,6 +46,6 @@ jobs:
         run: node --test tests/*.test.mjs
       - name: Style self-check (shipped assets obey the linter; a purple fixture fails it)
         run: |
-          node scripts/check_style.mjs assets DESIGN.md
+          node scripts/check_style.mjs assets DESIGN.md SKILL.md references
           printf '.x{background:oklch(0.55 0.2 300)}' > "$RUNNER_TEMP/purple.css"
           node scripts/check_style.mjs "$RUNNER_TEMP/purple.css" && exit 1 || test $? -eq 1

@@ -223,3 +223,8 @@ test("final: markdown prose numbers are not colours; the same hex in CSS still i
   assert.deepEqual(lint("Fixed in PR #808 and issue #a0f.", "notes.md"), []);
   assert.ok(codes(".x{color:#808}").includes("LM001"));
 });
+
+test("final: docs may forbid arcan-glass; code that uses it is flagged", () => {
+  assert.deepEqual(lint("Never use the arcan-glass look.", "SKILL.md"), []);
+  assert.ok(codes("import 'arcan-glass/globals.css'").includes("LM002"));
+});
