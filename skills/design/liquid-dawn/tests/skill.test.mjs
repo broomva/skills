@@ -530,6 +530,8 @@ test("specimen renders in both modes, deterministically, and moves over time", {
     const fresh = await shot("t=6.5");
     const stepped = await shot("t=6", 6.5);
     assert.equal(stepped[".cards"], fresh[".cards"], "a print depends on history, not on t");
+    // and within the OLD half-second cache key (6 → 6.25), which a time-keyed cache without quantisation got wrong
+    assert.equal((await shot("t=6", 6.25))[".cards"], (await shot("t=6.25"))[".cards"], "a print depends on history, not on t (6 → 6.25)");
     const noLens = await shot("t=6.5&nolens=1");
     assert.notEqual(noLens["#screen"], fresh["#screen"], "the lens draws");
   } finally {
