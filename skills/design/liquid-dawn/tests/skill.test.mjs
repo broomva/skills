@@ -4,7 +4,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { test } from "node:test";
@@ -525,7 +525,8 @@ async function pngDiff(fa, fb) {
 }
 test("specimen renders in both modes, deterministically, and moves over time", { skip: !pw && !required && "Playwright not installed" }, async () => {
   assert.ok(pw, "LD_REQUIRE_RENDER=1 but Playwright is missing");
-  const out = mkdtempSync(join(tmpdir(), "ld-render-"));
+  // LD_RENDER_OUT keeps the frames (CI uploads them on failure, so a CI-only difference can be looked at)
+  const out = process.env.LD_RENDER_OUT ? (mkdirSync(process.env.LD_RENDER_OUT, { recursive: true }), process.env.LD_RENDER_OUT) : mkdtempSync(join(tmpdir(), "ld-render-"));
   const opts = { root: join(SKILL, "assets"), page: "specimen/index.html", width: "1440", shots: "hero,pages" };
   const a = await render({ ...opts, t: ["6"], mode: ["dawn", "dusk"], out: join(out, "a") });
   const b = await render({ ...opts, t: ["6"], mode: ["dawn"], out: join(out, "b") });

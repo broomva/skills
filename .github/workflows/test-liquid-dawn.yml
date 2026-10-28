@@ -48,4 +48,12 @@ jobs:
         env:
           LD_PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
           LD_REQUIRE_RENDER: '1'
+          LD_RENDER_OUT: ${{ runner.temp }}/ld-renders
         run: node --test tests/*.test.mjs
+      - name: Upload renders (on failure, to look at what differed)
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: liquid-dawn-renders
+          path: ${{ runner.temp }}/ld-renders
+          retention-days: 7
