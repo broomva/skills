@@ -2,7 +2,7 @@
   "name": "liquid-midnight",
   "source": {
     "repo": "https://github.com/broomva/liquid-midnight",
-    "commit": "343be80"
+    "commit": "9727e63"
   },
   "files": [
     {
@@ -83,7 +83,7 @@
     },
     {
       "path": "specimen/index.html",
-      "sha256": "2a87e7e2b1e3eab17c0509b1fa2e023fea6cd7e2459d9e919ea50ee1ad1e964b"
+      "sha256": "161ee480d5a264b9c0dc4e174109289159d73605acb1bc0543444ac0a5220bb5"
     },
     {
       "path": "templates/scene.html",
@@ -99,7 +99,7 @@
     },
     {
       "path": "../DESIGN.md",
-      "sha256": "ec00f002521ea18543286aa32f04dfb19b6ce23aab305a852fd54a0cae4290a2"
+      "sha256": "3cf7885a7d4485f94ceec1647f17134faa06d5d2732b5b48f3a6c640eb6df225"
     }
   ]
 }

@@ -35,6 +35,8 @@ export function selection(withList = []) {
 
 /** Copy the selection into target/dir; refuses to overwrite locally edited files unless force. Returns a report. */
 export function install(target, { dir = "liquid-midnight", withList, without = [], dryRun = false, force = false } = {}) {
+  const badWithout = without.filter((w) => !(w in OPTIONAL));
+  if (badWithout.length) throw new Error(`unknown --without value(s): ${badWithout.join(", ")}; choose from ${Object.keys(OPTIONAL).join(", ")}`);
   const m = manifest();
   const dest = resolve(target, dir);
   const prev = existsSync(join(dest, RECEIPT)) ? readManifest(join(dest, RECEIPT)) : null;
@@ -139,7 +141,7 @@ if (process.argv[1] === fileURLToPath(import.meta.url)) {
       console.log(r.ok ? "verify: ok" : "verify: FAILED");
       process.exit(r.ok ? 0 : 1);
     } else {
-      console.error("usage: materialize.mjs install <target> [--dir d] [--with specimen,shaders,templates] [--dry-run] [--force] | verify <target> [--dir d] | list");
+      console.error("usage: materialize.mjs install <target> [--dir d] [--with specimen,shaders,templates] [--without …] [--dry-run] [--force] | verify <target> [--dir d] | list");
       process.exit(2);
     }
   } catch (e) {

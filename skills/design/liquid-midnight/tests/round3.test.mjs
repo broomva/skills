@@ -211,3 +211,10 @@ test("delta 2: --without removes an optional set; stale entries from an older re
   assert.ok(install(d).ok, "an unknown entry in an old receipt does not break re-install");
   rmSync(d, { recursive: true });
 });
+
+test("final delta: braces in strings/comments do not hide rules; spaced fragment attributes; --without validates", () => {
+  assert.ok(codes('.orb::before { content: "}"; background: radial-gradient(red, blue); }').includes("LM004"));
+  assert.ok(codes(".orb { /* } */ background: radial-gradient(red, blue); }").includes("LM004"));
+  assert.deepEqual(lint('<a href = "#a3f">x</a> <use xlink:href= "#a3f"/>'), []);
+  assert.throws(() => install(tmp(), { without: ["typo"] }), /unknown --without/);
+});

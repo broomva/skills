@@ -355,7 +355,7 @@ await fontsReady();
 await document.fonts.ready;
 swatches();
 BG.fit();
-addEventListener("resize", () => { BG.fit(); loop.invalidate(); }); // fit() clears the canvas
+addEventListener("resize", () => { BG.fit(); CAPTURE ? loop.renderAt(loop.t) : loop.invalidate(); }); // fit() clears the canvas
 window.renderAt = (t) => loop.renderAt(t);
 if (CAPTURE) { loop.renderAt(checkTime(Q.get("t"))); window.__ready = true; }
 else loop.start();

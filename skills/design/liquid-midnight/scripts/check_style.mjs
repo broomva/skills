@@ -46,6 +46,16 @@ export function rules(text) {
   let boundary = -1; // last `{`, `}` or `;` position: a selector starts right after it
   for (let i = 0; i < text.length; i++) {
     const ch = text.charCodeAt(i);
+    // skip quoted strings (with escapes) and /* comments */: braces inside them are not blocks
+    if (ch === 34 || ch === 39 || ch === 96 /* " ' ` */) {
+      for (i++; i < text.length && text.charCodeAt(i) !== ch; i++) if (text.charCodeAt(i) === 92 /* \ */) i++;
+      continue;
+    }
+    if (ch === 47 /* / */ && text.charCodeAt(i + 1) === 42 /* * */) {
+      const end = text.indexOf("*/", i + 2);
+      i = end === -1 ? text.length : end + 1;
+      continue;
+    }
     if (ch === 123 /* { */) {
       stack.push({ open: i, selStart: boundary + 1 });
       boundary = i;
@@ -75,7 +85,7 @@ export function lint(text, file = "<input>") {
   }
   for (const m of text.matchAll(/#([0-9a-f]{8}|[0-9a-f]{6}|[0-9a-f]{4}|[0-9a-f]{3})(?![0-9a-z_-])/gi)) {
     const prev = text.slice(Math.max(0, m.index - 6), m.index);
-    if (/&$|url\($|(?:href|xlink:href|for|aria-(?:controls|labelledby|describedby|owns|activedescendant|details|flowto))=["']?$/i.test(prev.length < 6 ? prev : text.slice(Math.max(0, m.index - 24), m.index))) continue; // entities, fragment links and attribute references
+    if (/&$|url\($|(?:href|xlink:href|for|aria-(?:controls|labelledby|describedby|owns|activedescendant|details|flowto))\s*=\s*["']?$/i.test(prev.length < 6 ? prev : text.slice(Math.max(0, m.index - 24), m.index))) continue; // entities, fragment links and attribute references
     const { C, H } = hexToOklch(m[0]);
     if (inPurple(H, C, MIN_CHROMA.hex)) add("LM001", "error", m.index, `purple cast: ${m[0]} (OKLCH hue ${H.toFixed(0)}, chroma ${C.toFixed(3)})`);
   }
