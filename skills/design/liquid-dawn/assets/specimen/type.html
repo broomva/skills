@@ -55,7 +55,7 @@ if (q.get("mode") === "dusk") document.documentElement.dataset.ldMode = "dusk";
 if (q.has("t")) setMotion(true);
 const tpl = document.getElementById("body");
 const panels = [...document.querySelectorAll(".t")].map((s) => {
-  s.insertAdjacentHTML("afterbegin", '<div class="ld-hero-bg" data-recipe="dawn"></div><canvas class="ld-field ld-soft"></canvas><canvas class="ld-field"></canvas>');
+  s.insertAdjacentHTML("afterbegin", '<div class="ld-hero-bg" data-recipe="dawn"></div><canvas class="ld-field ld-soft" aria-hidden="true"></canvas><canvas class="ld-field" aria-hidden="true"></canvas>');
   s.append(tpl.content.cloneNode(true));
   const [soft, sharp] = s.querySelectorAll("canvas");
   return { s, cv: { soft, sharp }, lensEl: s.querySelector(".ld-composer") };

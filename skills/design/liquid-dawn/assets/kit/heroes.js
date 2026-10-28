@@ -1,7 +1,8 @@
 // Liquid Dawn kit · hero recipes. A hero background is a recipe: a CSS ground (materials.css,
 // `.ld-hero-bg[data-recipe=<name>]`), an optional soft canvas (`.ld-field.ld-soft`, blurred by CSS into light), and a
 // sharp canvas for glyphs and tiles. Every recipe is pure in t and its seed, keeps a clearing behind the hero copy,
-// and draws the refraction under the hero's lens (the composer or CTA glass).
+// and, where it draws a field under the hero's lens (the composer or CTA glass), refracts that field through it:
+// dawn, caustic, lagoon and tide refract; horizon refracts only the water band; currents draws no field under the lens.
 // Owner-chosen directions (2026-10-28): caustic light, currents, lagoon, horizon; "dawn" blends the first three and is
 // the default. "tide" is the first hero, kept as a recipe.
 import { clearing, cloud, tide } from "./fields.js";

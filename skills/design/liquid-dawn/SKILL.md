@@ -64,9 +64,13 @@ Load `liquid-dawn/tokens/tokens.css`, then `liquid-dawn/css/materials.css`, and 
 | Life | `createShoal({ w, h, colors: C }).at(t)` and `createIslands(...)`, drawn with `tiles(cx, cells, { shadow: C.shadow })` |
 | Hero background | `createHero("dawn" \| "caustic" \| "currents" \| "lagoon" \| "horizon" \| "tide", { w, h, colors: C })` over `<div class="ld-hero-bg" data-recipe=…>` + a soft and a sharp canvas; see `assets/specimen/heroes.html` |
 | Film background | a `scroll-cinema` film with `sampleFrame` + `seamDissolve` + `filmType` from `kit/cinema.js`: the picture turns to type at every page break (DESIGN.md §6.6) |
+| Photo as tiles | `paintImage(scratch, img, …)` then `mosaic(cx, scratch, { cell: 14, keyLight: .93 })` (DESIGN.md §6.7) |
+| Liquid lens | `createLens(overlay, sourceCanvas)` + `dragLens(el, lens)`: real refraction with a rainbow rim |
+| Agent presence | `sparkOrb(cx, sparkField(900), { busy })` on a dark chip |
+| Pictures as print | `printInto(cx, L, { mode: "engrave" \| "dither", ...DUOTONES.cobalt })` |
 | Text as a field | `layoutPage` + `lensPage` (pebble by default, well at most once per story); `flowAround` to reflow round a moving obstacle |
 | Headline | `.ld-kicker`, then `.ld-hero` / `.ld-title` with the payoff in `<em>` |
-| Voice | `data-ld-type="manrope" \| "inter-tight" \| "geist" \| "instrument"` on `<html>`; `await fontsReady()` before canvas text |
+| Voice | `data-ld-type="manrope" \| "inter-tight" \| "geist" \| "instrument"` on `<html>`; `await fontsReady()` before canvas text, or `await fontsReady(el)` when the theme is set on a subtree `el` |
 | Motion | `createLoop({ paint(t) { … } })`; expose `window.renderAt = (t) => loop.renderAt(t)` and set `window.__ready = true` after a capture frame |
 
 Read `assets/specimen/index.html`: it is a working example of every row above (hero, fields, pages, flow, materials),

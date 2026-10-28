@@ -16,3 +16,5 @@ All notable changes to the `liquid-dawn` skill. Format: [Keep a Changelog](https
 - Hero recipes (`kit/heroes.js`: dawn, caustic, currents, lagoon, horizon, tide) and the recipe gallery.
 - Cinema (`kit/cinema.js`): the ASCII shader on a scroll-scrubbed film, dissolving to type at page breaks.
 - Type themes (`data-ld-type`: manrope, inter-tight, geist, instrument) with vendored OFL faces and a type gallery.
+- Paper direction (`specimen/paper.html`): glyph mosaics from pictures (`mosaic.js`), a WebGL liquid lens with
+  dispersion (`lens.js`), the spark orb for agents (`spark.js`), engraving and dither print (`engrave.js`).

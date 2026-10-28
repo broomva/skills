@@ -58,37 +58,68 @@ export function normaliseLuma(lum) {
   return lum.map((v) => clamp((v - lo) / span));
 }
 
-/** Sample the visible frame of a scroll-cinema stage (the most opaque ready <video>, else a poster <img>) into a
- *  cols × rows grid: { lum: Float32Array, rgb: Uint8ClampedArray } or null when nothing is drawable yet. */
+/** object-fit: cover — the part of a (sw × sh) source that a (dw × dh) box shows, centred (object-position 50% 50%).
+ *  Returns the source rect { x, y, w, h }. Pure. */
+export function coverRect(sw, sh, dw, dh) {
+  const s = Math.max(dw / sw, dh / sh);
+  const w = dw / s;
+  const h = dh / s;
+  return { x: (sw - w) / 2, y: (sh - h) / 2, w, h };
+}
+
+/** Sample the visible frame of a scroll-cinema stage into a cols × rows grid: the most visible ready <video>, else the
+ *  most visible poster <img>, cropped as object-fit: cover crops it. Returns { lum, rgb, cols, rows }, or null when
+ *  nothing is drawable yet or the media is cross-origin without CORS (a tainted canvas). */
 export function sampleFrame(stage, cols, rows, scratch) {
+  const opacity = (el) => {
+    const cs = getComputedStyle(el);
+    return cs.display === "none" || cs.visibility === "hidden" ? 0 : Number.parseFloat(cs.opacity);
+  };
+  // the most visible decoded layer: a ready <video>, else the most visible loaded poster <img>
   let src = null;
-  let best = -1;
+  let best = 0.05;
   for (const v of stage.querySelectorAll("video")) {
-    const o = Number.parseFloat(getComputedStyle(v).opacity);
+    const o = opacity(v);
     if (v.readyState >= 2 && o > best) {
       best = o;
       src = v;
     }
   }
-  if (!src || best < 0.05) src = [...stage.querySelectorAll("img")].find((i) => i.complete && i.naturalWidth) ?? src;
+  if (!src) {
+    best = 0.05;
+    for (const i of stage.querySelectorAll("img")) {
+      const o = opacity(i);
+      if (i.complete && i.naturalWidth && o > best) {
+        best = o;
+        src = i;
+      }
+    }
+  }
   if (!src) return null;
+  const sw = src.videoWidth || src.naturalWidth;
+  const sh = src.videoHeight || src.naturalHeight;
+  const box = src.getBoundingClientRect();
+  if (!sw || !sh || !box.width || !box.height) return null;
+  // sample what the viewer sees: the cover-cropped part of the source, not the whole squeezed frame
+  const r = coverRect(sw, sh, box.width, box.height);
   scratch.width = cols;
   scratch.height = rows;
   const x = scratch.getContext("2d", { willReadFrequently: true });
+  let px;
   try {
-    x.drawImage(src, 0, 0, cols, rows);
+    x.drawImage(src, r.x, r.y, r.w, r.h, 0, 0, cols, rows);
+    px = x.getImageData(0, 0, cols, rows).data; // throws SecurityError on cross-origin media without CORS
   } catch {
     return null;
   }
-  const px = x.getImageData(0, 0, cols, rows).data;
   const lum = new Float32Array(cols * rows);
   const rgb = new Uint8ClampedArray(cols * rows * 3);
   for (let i = 0; i < cols * rows; i++) {
-    const r = px[i * 4];
-    const g = px[i * 4 + 1];
-    const b = px[i * 4 + 2];
-    rgb.set([r, g, b], i * 3);
-    lum[i] = (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255;
+    const R = px[i * 4];
+    const G = px[i * 4 + 1];
+    const B = px[i * 4 + 2];
+    rgb.set([R, G, B], i * 3);
+    lum[i] = (0.2126 * R + 0.7152 * G + 0.0722 * B) / 255;
   }
   return { lum: normaliseLuma(lum), rgb, cols, rows };
 }

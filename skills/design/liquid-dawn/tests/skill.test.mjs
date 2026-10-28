@@ -497,5 +497,7 @@ test("specimen renders in both modes, deterministically, and moves over time", {
   assert.equal(h(pick(a, "dawn-t6-hero.png")), h(pick(b, "dawn-t6-hero.png")), "same t, same pixels");
   assert.notEqual(h(pick(a, "dawn-t6-hero.png")), h(pick(c, "dawn-t0-hero.png")), "the hero moves between t=0 and t=6");
   assert.notEqual(h(pick(a, "dawn-t6-hero.png")), h(pick(a, "dusk-t6-hero.png")), "dusk differs from dawn");
+  const paper = await render({ root: join(SKILL, "assets"), page: "specimen/paper.html", width: "1440", shots: "hero,lens,footer", t: ["6"], mode: ["dawn"], out: join(out, "p") });
+  assert.equal(paper.length, 3, "the paper page renders its hero, lens and footer without page errors");
   await assert.rejects(render({ ...opts, shots: "nope", t: ["0"], mode: ["dawn"], out: join(out, "d") }), /no \[data-shot\] element named: nope/);
 });

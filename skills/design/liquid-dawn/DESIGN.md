@@ -187,7 +187,23 @@ ASCII shader runs on the film itself:
 - **The film keeps its own grade in both modes** (as the SRI landing does): a dawn-graded film under Dusk paper
   fails. Either generate a dusk-graded film for Dusk, or hold the cinema section in Dawn.
 
-### 6.7 Loop (`loop.js`) and core (`core.js`)
+### 6.7 Paper: photographs in print (owner references, 2026-10-28)
+The direction the owner pointed at (the haj sharks, the Metricra scenic footer, Wafer, the 404 page, the 3-7 card, the
+2-5 orb, the 1-12 lens): near-white paper, pictures turned into PRINT, real refraction, very thin type. Live in
+`assets/specimen/paper.html`.
+
+| Piece | Module | What it does |
+|---|---|---|
+| Glyph mosaic | `mosaic.js` | `mosaic(cx, src, {cell, keyLight})`: a picture painted at one pixel per cell becomes greyscale tiles, each with a glyph from `:;t%SX#8@` by tone, its edge fraying into loose dots. `paintImage()` takes a photo (with `keyLight` keying its white ground); `paintShark()` is a procedural stand-in. |
+| Liquid lens | `lens.js` | `createLens(overlay, source)`: WebGL. The centre magnifies (×1.4), the rim bends the page round its edge, R/G/B refract 6–7% apart so only the rim shows a rainbow; rim light, top-left specular, inner and drop shadow. `dragLens()` springs it to the finger (r .32, z .86) and squashes it 8% on press. |
+| Agent orb | `spark.js` | `sparkOrb(cx, sparkField(n))`: a sphere of short radial light streaks round a white core, turning slowly; `busy` lengthens the streaks and sends a pulse outward. Lives on a dark chip. |
+| Print | `engrave.js` | `printInto(cx, L, {mode})`: `engrave` (lines whose width is the tone, bare paper for the lightest tones, cross-hatch in the deepest) or `dither` (4×4 Bayer between two inks). `coastScene()` and `cloudSky()` are procedural subjects; any image works as `L`. `DUOTONES`: cobalt, teal, slate. |
+| Glass numerals | page CSS | a backdrop-filtered layer masked by real type (rendered once to a canvas), so the picture shows frosted through the letters only. |
+
+Photographs replace the procedural subjects where they exist (shark cut-outs for the mosaic, a toile engraving and a
+painted sky); the procedural versions remain the fallback and the test fixtures.
+
+### 6.8 Loop (`loop.js`) and core (`core.js`)
 - `createLoop({init, step, paint, seed, still})` → `{start, stop, renderAt, invalidate}`; `setClock(t)` sets `--ua` and
   `--ld-b1..3` (breath periods 7.2 / 11.6 / 18.8 s: non-commensurate, so the light never visibly repeats).
 - `fitCanvas`, `sheen` (pointer specular on glass), `Sp` springs (response/damping), `beat`, `prng`, `noise2`, `fbm`,
