@@ -51,9 +51,22 @@ export function startServer(root, port = 0) {
       res.writeHead(404).end("not found");
       return;
     }
-    res.writeHead(200, { "content-type": TYPES[extname(f)] || "application/octet-stream", "cache-control": "no-store" });
-    if (req.method === "HEAD") res.end();
-    else createReadStream(f).pipe(res);
+    const headers = { "content-type": TYPES[extname(f)] || "application/octet-stream", "cache-control": "no-store" };
+    if (req.method === "HEAD") {
+      res.writeHead(200, headers).end();
+      return;
+    }
+    // open first, answer second: a file that vanished or became unreadable gets a 500, never an unhandled
+    // stream error that kills the server
+    const s = createReadStream(f);
+    s.once("open", () => {
+      res.writeHead(200, headers);
+      s.pipe(res);
+    });
+    s.once("error", () => {
+      if (!res.headersSent) res.writeHead(500).end("read error");
+      else res.destroy();
+    });
   });
   return new Promise((ok) => server.listen(port, "127.0.0.1", () => ok({ server, url: `http://127.0.0.1:${server.address().port}` })));
 }

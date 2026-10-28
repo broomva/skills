@@ -183,7 +183,7 @@ export function createHero(name, { w, h, colors: C, seed = 21, calm } = {}) {
         w, h, cell: 14, fs: 13, ramp: RAMP.water, color: ink(), alpha: C.dusk ? 0.55 : 0.68,
         fn: (x, y) => tide(x, y, t), lenses: lens ? [lens] : [], fringe: fringe(), mask: (x, y) => quiet(x, y),
       });
-      tiles(cx, S.islands.at(t), { cell: 12, shadow: shade(), shadowAlpha: C.dusk ? 0.45 : 0.14 });
+      tiles(cx, out(S.islands.at(t)), { cell: 12, shadow: shade(), shadowAlpha: C.dusk ? 0.45 : 0.14 });
       tiles(cx, out(S.shoal.at(t)), { cell: 12, shadow: shade(), shadowAlpha: C.dusk ? 0.45 : 0.16 });
     },
   };

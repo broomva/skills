@@ -532,5 +532,5 @@
   }
 }
 html[data-ld-motion="off"] {
-  --ua: 0deg;
+  --ua: 0deg !important; /* beats an inline --ua written by an earlier frame */
 }

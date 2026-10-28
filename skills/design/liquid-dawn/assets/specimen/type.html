@@ -62,19 +62,28 @@ const panels = [...document.querySelectorAll(".t")].map((s) => {
 });
 await Promise.all([...document.querySelectorAll(".t")].map((p) => fontsReady(p)));
 await fontsReady();
-readColors();
-resetAtlases();
-for (const P of panels) {
-  P.soft = fitCanvas(P.cv.soft);
-  P.sharp = fitCanvas(P.cv.sharp);
-  const hr = P.cv.sharp.getBoundingClientRect();
-  const r = P.lensEl.getBoundingClientRect();
-  P.lens = { x: r.left - hr.left, y: r.top - hr.top, w: r.width, h: r.height, r: 22, opts: { mag: 1.12, bevel: 0.3, bend: 0.9 } };
-  const c = P.s.querySelector(".copy").getBoundingClientRect();
-  P.recipe = createHero("dawn", { w: P.sharp.w, h: P.sharp.h, colors: C, calm: { cx: c.left - hr.left + c.width / 2, cy: c.top - hr.top + c.height / 2, rx: c.width * 0.62, ry: c.height * 0.62 } });
+function layout() {
+  readColors();
+  resetAtlases();
+  for (const P of panels) {
+    P.soft = fitCanvas(P.cv.soft);
+    P.sharp = fitCanvas(P.cv.sharp);
+    const hr = P.cv.sharp.getBoundingClientRect();
+    const r = P.lensEl.getBoundingClientRect();
+    P.lens = { x: r.left - hr.left, y: r.top - hr.top, w: r.width, h: r.height, r: 22, opts: { mag: 1.12, bevel: 0.3, bend: 0.9 } };
+    const c = P.s.querySelector(".copy").getBoundingClientRect();
+    P.recipe = createHero("dawn", { w: P.sharp.w, h: P.sharp.h, colors: C, calm: { cx: c.left - hr.left + c.width / 2, cy: c.top - hr.top + c.height / 2, rx: c.width * 0.62, ry: c.height * 0.62 } });
+  }
 }
+layout();
 const loop = createLoop({ paint(t) { for (const P of panels) P.recipe.paint({ soft: P.soft, sharp: P.sharp }, t, P.lens); } });
 window.renderAt = (t) => loop.renderAt(t);
+// geometry follows the viewport: re-fit canvases, lens and clearing bounds, then repaint
+addEventListener("resize", () => {
+  layout();
+  if (q.has("t")) loop.renderAt(Number(q.get("t")));
+  else loop.invalidate();
+});
 if (q.has("t")) { loop.renderAt(Number(q.get("t"))); window.__ready = true; } else loop.start();
 </script>
 </body>

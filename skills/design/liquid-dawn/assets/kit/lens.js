@@ -74,9 +74,11 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
   const pos = { x: new Sp(0), y: new Sp(0), sx: new Sp(1), sy: new Sp(1) };
   const L = { supported: !!gl, tainted: false, mismatch: false, state: { x: 0, y: 0, r, squash: 0 } };
   if (!gl) {
+    // no WebGL: a complete no-op lens, so callers (snap at start-up, drag wiring) keep running
     L.paint = () => {};
     L.step = () => {};
     L.follow = () => {};
+    L.snap = (x, y) => Object.assign(L.state, { x, y });
     L.press = () => {};
     return L;
   }

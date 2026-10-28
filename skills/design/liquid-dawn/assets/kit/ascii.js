@@ -72,7 +72,8 @@ export function glyph(cx, A, i, X, Y) {
  * field(cx, opts) — fill a rect with glyphs from a scalar field.
  *  fn(X, Y) → number 0..1 (a ramp index) or a string (a glyph that must be in `ramp`); ≤ .02 or "" leaves it empty.
  *  lenses: [{x, y, w, h, r}] in the same px space. Cells inside sample fn through refract(); the rim adds fringes.
- *  mask(X, Y) → 0..1 multiplies the field (use fields.clearing for a quiet hero centre).
+ *  mask(X, Y) → 0..1 multiplies the field OUTSIDE lenses (use fields.clearing for a quiet hero centre). Inside a lens the
+ *  glass shows the refracted field unmasked: a composer sits in the clearing, and the drop must still bend something.
  */
 export function field(
   cx,

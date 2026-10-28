@@ -85,7 +85,8 @@ build();
 sheen();
 addEventListener("resize", () => {
   build();
-  loop.invalidate();
+  if (capture) loop.renderAt(Number(q.get("t"))); // a capture never runs the live loop: repaint the frame
+  else loop.invalidate();
 });
 window.renderAt = (t) => loop.renderAt(t);
 if (capture) {

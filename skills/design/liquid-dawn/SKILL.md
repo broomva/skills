@@ -44,6 +44,7 @@ The skill is self-contained: copy `assets/` into the target (keep its folder lay
 `../fonts/` and the kit imports `./vendor/pretext.js`).
 
 ```bash
+SKILL_DIR=/path/to/skills/design/liquid-dawn   # the directory that contains this SKILL.md
 mkdir -p liquid-dawn && cp -R "$SKILL_DIR/assets/." liquid-dawn/
 ```
 
@@ -76,8 +77,12 @@ colour table `C` is empty until then, and everything below reads its colours fro
 | Voice | `data-ld-type="manrope" \| "inter-tight" \| "geist" \| "instrument"` on `<html>`; `await fontsReady()` before canvas text, or `await fontsReady(el)` when the theme is set on a subtree `el` |
 | Motion | `createLoop({ paint(t) { … } })`; expose `window.renderAt = (t) => loop.renderAt(t)` and set `window.__ready = true` after a capture frame |
 
-Read `assets/specimen/index.html`: it is a working example of every row above (hero, fields, pages, flow, materials),
-with `?mode=dusk` and `?t=6` for a deterministic frame. Copy its structure rather than starting blank.
+Working examples to copy (each takes `?mode=dusk` and `?t=6` for a deterministic frame):
+- `assets/specimen/index.html`: ground, fields, glass, capsule, ring, composer, shoals, text as a field, motion, and
+  the default hero recipe;
+- `assets/specimen/heroes.html`: every hero recipe; `assets/specimen/type.html`: every voice;
+- `assets/specimen/paper.html`: photo as tiles, the liquid lens, agent presence, pictures as print.
+The film background has no shipped example: wire it from DESIGN.md §6.6 and `kit/cinema.js`.
 
 **Never ship these** (DESIGN.md §3): pure white or grey grounds; purple; editorial serif display; a field that reads
 as uniform texture or rain; heavy frost; glass on glass; a frosted panel with no pearl rim; glow-orb subjects;

@@ -311,7 +311,11 @@ els("mode").addEventListener("click", () => {
   build();
   loop.invalidate();
 });
-addEventListener("resize", () => { build(); loop.invalidate(); });
+addEventListener("resize", () => {
+  build();
+  if (capture) loop.renderAt(Number(q.get("t"))); // a capture never runs the live loop: repaint the frame
+  else loop.invalidate();
+});
 els("type").addEventListener("click", async () => {
   const html = document.documentElement;
   html.dataset.ldType = TYPES[(TYPES.indexOf(html.dataset.ldType ?? "manrope") + 1) % TYPES.length];
