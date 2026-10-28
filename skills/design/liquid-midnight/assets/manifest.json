@@ -2,7 +2,7 @@
   "name": "liquid-midnight",
   "source": {
     "repo": "https://github.com/broomva/liquid-midnight",
-    "commit": "f531479"
+    "commit": "343be80"
   },
   "files": [
     {
@@ -67,7 +67,7 @@
     },
     {
       "path": "kit/orb.js",
-      "sha256": "74d310a7df15d4efb7ab38ae8bac5b3a4b3972d025ff093f062b0b197ef8688c"
+      "sha256": "bc037669f1a6b19ebbc0dc7b3a62088d8643dd4781505390f839d167d168d276"
     },
     {
       "path": "shaders/ascii-atlas.png",
@@ -99,7 +99,7 @@
     },
     {
       "path": "../DESIGN.md",
-      "sha256": "9aa79f667a89438ee3bc7ae7767d68aabbe0d5708da4947ef00995afe8730a17"
+      "sha256": "ec00f002521ea18543286aa32f04dfb19b6ce23aab305a852fd54a0cae4290a2"
     }
   ]
 }

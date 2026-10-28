@@ -213,13 +213,9 @@ export const ORB = (() => {
   const watch = (orb, cv) => {
     if (typeof MutationObserver === "undefined") return;
     if (!watcher) {
+      // detach() disconnects and resets the observer when the last layer goes, so nothing else here may touch it
       watcher = new MutationObserver(() => {
         for (const [k] of layers) if (!k.isConnected) orb.detach(k);
-        if (!layers.size) {
-          watcher.disconnect();
-          watcher = null;
-          watched = new WeakSet();
-        }
       });
     }
     // always the document (it sees a shadow HOST being removed), plus every shadow root up the host chain (removals
