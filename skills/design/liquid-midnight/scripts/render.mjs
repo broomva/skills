@@ -27,9 +27,13 @@ export function parseArgs(argv) {
   const o = { root, page, t: ["0", "2", "6"], format: ["keynote"], mode: ["night", "day"], out: "renders" };
   for (let i = 0; i < rest.length; i++) {
     const k = rest[i].replace(/^--/, "");
-    if (!(k in o)) throw new Error(`unknown option ${rest[i]}`);
-    o[k] = k === "out" ? rest[++i] : list(rest[++i], o[k]);
+    if (!(k in o) || k === "root" || k === "page") throw new Error(`unknown option ${rest[i]}`);
+    const v = rest[++i];
+    if (v === undefined || v.startsWith("--")) throw new Error(`--${k} needs a value`);
+    o[k] = k === "out" ? v : list(v, o[k]);
   }
+  for (const f of o.format) if (!["keynote", "reel", "feed"].includes(f)) throw new Error(`--format must be keynote, reel or feed, got ${f}`);
+  for (const m of o.mode) if (!["night", "day"].includes(m)) throw new Error(`--mode must be night or day, got ${m}`);
   for (const t of o.t) if (!Number.isFinite(Number(t)) || Number(t) < 0 || Number(t) > 3600) throw new Error(`--t values must be seconds in [0, 3600], got ${t}`);
   return o;
 }

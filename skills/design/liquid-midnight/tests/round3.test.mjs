@@ -228,3 +228,11 @@ test("final: docs may forbid arcan-glass; code that uses it is flagged", () => {
   assert.deepEqual(lint("Never use the arcan-glass look.", "SKILL.md"), []);
   assert.ok(codes("import 'arcan-glass/globals.css'").includes("LM002"));
 });
+
+test("round 7: render validates option values", async () => {
+  const { parseArgs } = await import("../scripts/render.mjs");
+  assert.throws(() => parseArgs(["r", "p.html", "--format", "typo"]), /--format must be/);
+  assert.throws(() => parseArgs(["r", "p.html", "--mode", "dusk"]), /--mode must be/);
+  assert.throws(() => parseArgs(["r", "p.html", "--t"]), /needs a value/);
+  assert.deepEqual(parseArgs(["r", "p.html", "--format", "reel,feed", "--mode", "day"]).format, ["reel", "feed"]);
+});

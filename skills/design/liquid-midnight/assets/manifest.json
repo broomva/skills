@@ -2,7 +2,7 @@
   "name": "liquid-midnight",
   "source": {
     "repo": "https://github.com/broomva/liquid-midnight",
-    "commit": "9727e63"
+    "commit": "ec1138e"
   },
   "files": [
     {
@@ -99,7 +99,7 @@
     },
     {
       "path": "../DESIGN.md",
-      "sha256": "3cf7885a7d4485f94ceec1647f17134faa06d5d2732b5b48f3a6c640eb6df225"
+      "sha256": "24542bc0d59689e1ad60e574691adf0d5d5d204425806855838a7d1acd4990b7"
     }
   ]
 }
