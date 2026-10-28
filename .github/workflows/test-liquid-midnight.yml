@@ -1,0 +1,51 @@
+name: test-liquid-midnight
+
+# Gate for the `liquid-midnight` skill (skills/design/liquid-midnight/).
+# Path-filtered. The render E2E drives scripts/render.mjs through Playwright; LM_REQUIRE_RENDER=1 makes a missing
+# Playwright a failure instead of a skip (a skipped render would be a false green).
+
+on:
+  pull_request:
+    paths:
+      - 'skills/design/liquid-midnight/**'
+      - '.github/workflows/test-liquid-midnight.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/design/liquid-midnight/**'
+      - '.github/workflows/test-liquid-midnight.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-liquid-midnight-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/design/liquid-midnight
+
+jobs:
+  test:
+    name: node --test + render E2E + style self-check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install Playwright (outside the skill tree)
+        run: |
+          mkdir -p "$RUNNER_TEMP/pw" && cd "$RUNNER_TEMP/pw"
+          npm init -y > /dev/null
+          npm i playwright@1.62.0
+          npx playwright install --with-deps chromium
+      - name: Tests (render E2E required)
+        env:
+          LM_PLAYWRIGHT_DIR: ${{ runner.temp }}/pw
+          LM_REQUIRE_RENDER: '1'
+        run: node --test tests/*.test.mjs
+      - name: Style self-check (shipped assets obey the linter; a purple fixture fails it)
+        run: |
+          node scripts/check_style.mjs assets DESIGN.md
+          printf '.x{background:oklch(0.55 0.2 300)}' > "$RUNNER_TEMP/purple.css"
+          node scripts/check_style.mjs "$RUNNER_TEMP/purple.css" && exit 1 || test $? -eq 1
