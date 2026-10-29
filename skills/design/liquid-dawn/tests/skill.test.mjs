@@ -693,12 +693,14 @@ test("paper: orb optics, film controls, bundled decoding and reduced-motion post
       const cdp=await p.context().newCDPSession(p);
       for (const feature of [{name:"prefers-contrast",value:"more"},{name:"prefers-reduced-transparency",value:"reduce"}]) {
         await cdp.send("Emulation.setEmulatedMedia", {features:[feature]});
-        const ratio=await p.locator(".cta.dark").evaluate(e => {
+        for (const selector of [".cta.light", ".cta.dark"]) {
+        const ratio=await p.locator(selector).evaluate(e => {
           const cs=getComputedStyle(e), x=document.createElement("canvas").getContext("2d");
           function luminance(color) { x.fillStyle=color; x.fillRect(0,0,1,1); return [...x.getImageData(0,0,1,1).data].slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((v,c,i)=>v+c*[.2126,.7152,.0722][i],0); }
           const a=luminance(cs.color), b=luminance(cs.backgroundColor); return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
         });
-        assert.ok(ratio>=4.5, `${mode} ${feature.name}: CTA contrast ${ratio}`);
+        assert.ok(ratio>=4.5, `${mode} ${selector} ${feature.name}: CTA contrast ${ratio}`);
+        }
       }
       await cdp.send("Emulation.setEmulatedMedia", {features:[]}); await cdp.detach();
       const pictures = [];
