@@ -4,6 +4,8 @@ All notable changes to the `liquid-dawn` skill. Format: [Keep a Changelog](https
 
 ## Unreleased
 
+- Preview server: byte-range video seeking, explicit capture failures, and regression checks for decoded frame changes.
+- Accessibility/performance: readable smoked CTA fallbacks, accumulating keyboard placement, offscreen paint culling and a bounded 15 Hz film veil.
 - Phone specimen: clear and smoked liquid-metal glass sign-in surfaces.
 - Orb studies: clear dew, deforming liquid metal and circulating ASCII tide, with bounded live optical controls.
 - Research: first-party glass implementation notes and explicit limits on unverified reference internals.

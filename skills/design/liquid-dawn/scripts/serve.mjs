@@ -15,6 +15,8 @@ const TYPES = {
   ".json": "application/json",
   ".woff2": "font/woff2",
   ".png": "image/png",
+  ".jpg": "image/jpeg",
+  ".mp4": "video/mp4",
   ".svg": "image/svg+xml",
 };
 
@@ -51,16 +53,35 @@ export function startServer(root, port = 0) {
       res.writeHead(404).end("not found");
       return;
     }
-    const headers = { "content-type": TYPES[extname(f)] || "application/octet-stream", "cache-control": "no-store" };
-    if (req.method === "HEAD") {
-      res.writeHead(200, headers).end();
-      return;
+    let size;
+    try { size = statSync(f).size; } catch { res.writeHead(500).end("read error"); return; }
+    const headers = { "content-type": TYPES[extname(f)] || "application/octet-stream", "cache-control": "no-store", "accept-ranges": "bytes", "content-length": size };
+    let status = 200, start = 0, end = size - 1;
+    // Single byte ranges let media decoders seek without downloading the complete file again.
+    if (req.method === "GET" && req.headers.range) {
+      const m = /^bytes=(\d*)-(\d*)$/.exec(req.headers.range);
+      let valid = !!m && !!(m[1] || m[2]) && size > 0;
+      if (valid) {
+        if (!m[1]) {
+          const suffix = Number(m[2]);
+          valid = Number.isSafeInteger(suffix) && suffix > 0;
+          start = Math.max(0, size - suffix);
+        } else {
+          start = Number(m[1]);
+          end = m[2] ? Math.min(Number(m[2]), size - 1) : size - 1;
+          valid = Number.isSafeInteger(start) && Number.isSafeInteger(end) && start < size && end >= start;
+        }
+      }
+      if (!valid) { res.writeHead(416, { "content-range": `bytes */${size}`, "content-length": 0 }).end(); return; }
+      status = 206;
+      headers["content-range"] = `bytes ${start}-${end}/${size}`;
+      headers["content-length"] = end - start + 1;
     }
-    // open first, answer second: a file that vanished or became unreadable gets a 500, never an unhandled
-    // stream error that kills the server
-    const s = createReadStream(f);
+    if (req.method === "HEAD") { res.writeHead(200, headers).end(); return; }
+    // Open first, answer second: a missing file must not kill the preview server.
+    const s = createReadStream(f, status === 206 ? { start, end } : undefined);
     s.once("open", () => {
-      res.writeHead(200, headers);
+      res.writeHead(status, headers);
       s.pipe(res);
     });
     s.once("error", () => {

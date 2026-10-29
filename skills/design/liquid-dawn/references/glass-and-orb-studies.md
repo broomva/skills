@@ -42,5 +42,5 @@ the type handoff between their unrelated scenes is a visual study, not a verifie
 scroll-cinema keyframe chain.
 
 The paper E2E checks actual variant pixel changes, both decoded clips, the manual dissolve,
-Dawn/Dusk, metallic button rims, reduced-motion posters and mobile overflow. Shared unit/render
+Dawn/Dusk, metallic button rims, accessible CTA contrast, reduced-motion posters, actual decoded seeks and mobile overflow. Performance probes require live sampling to stay bounded and offscreen orb/material paint calls to stop. Shared unit/render
 tests continue to cover the existing lens and deterministic kit.

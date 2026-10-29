@@ -680,6 +680,27 @@ test("paper: orb optics, film controls, bundled decoding and reduced-motion post
       await p.waitForFunction(() => window.__ready === true);
       assert.equal(await p.evaluate(() => window.__orbLens.supported), true);
       assert.ok(await p.locator(".cine-card video").evaluateAll(vs => vs.every(v => v.readyState >= 2 && !v.error)));
+      await p.evaluate(() => window.renderAt(2));
+      assert.ok(await p.locator(".cine-card video").evaluateAll(vs => vs.every(v => Math.abs(v.currentTime-2)<.05 && v.seekable.length>0)), "all films must actually seek");
+      const decoded = () => p.locator(".cine-card video").first().evaluate(v => {
+        const c=document.createElement("canvas"); c.width=64; c.height=36;
+        c.getContext("2d").drawImage(v,0,0,64,36); return c.toDataURL();
+      });
+      const frame2 = await decoded();
+      await p.evaluate(() => window.renderAt(3));
+      assert.notEqual(frame2, await decoded(), "decoded film pixels must change, not only the dissolve");
+      await p.evaluate(() => window.renderAt(6));
+      const cdp=await p.context().newCDPSession(p);
+      for (const feature of [{name:"prefers-contrast",value:"more"},{name:"prefers-reduced-transparency",value:"reduce"}]) {
+        await cdp.send("Emulation.setEmulatedMedia", {features:[feature]});
+        const ratio=await p.locator(".cta.dark").evaluate(e => {
+          const cs=getComputedStyle(e), x=document.createElement("canvas").getContext("2d");
+          function luminance(color) { x.fillStyle=color; x.fillRect(0,0,1,1); return [...x.getImageData(0,0,1,1).data].slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((v,c,i)=>v+c*[.2126,.7152,.0722][i],0); }
+          const a=luminance(cs.color), b=luminance(cs.backgroundColor); return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+        });
+        assert.ok(ratio>=4.5, `${mode} ${feature.name}: CTA contrast ${ratio}`);
+      }
+      await cdp.send("Emulation.setEmulatedMedia", {features:[]}); await cdp.detach();
       const pictures = [];
       for (const variant of ["calm", "think", "prism"]) {
         await p.locator(`[data-orb="${variant}"]`).click();
@@ -716,8 +737,50 @@ test("paper: orb optics, film controls, bundled decoding and reduced-motion post
     await p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
     assert.equal((await at()).x, down.x, "ambient drift must not override keyboard placement");
     await p.close();
+    const live=await browser.newPage({viewport:{width:1024,height:900}});
+    await live.goto(`${url}/specimen/paper.html`); await live.waitForFunction(()=>window.__ready);
+    await live.locator("#stage-blend").scrollIntoViewIfNeeded();
+    await live.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+    const rate=await live.evaluate(()=>new Promise(resolve=>{
+      const proto=CanvasRenderingContext2D.prototype, original=proto.getImageData;
+      let reads=0; proto.getImageData=function(...args){ reads++; return original.apply(this,args); };
+      const start=performance.now();
+      function frame(){ if(performance.now()-start<800) requestAnimationFrame(frame); else { proto.getImageData=original; resolve(reads*1000/(performance.now()-start)); } }
+      requestAnimationFrame(frame);
+    }));
+    assert.ok(rate>0 && rate<=60, `decorative film sampling must be active but bounded: ${rate}/s`);
+    await live.locator("footer").scrollIntoViewIfNeeded();
+    await live.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+    const offscreen=await live.evaluate(()=>new Promise(resolve=>{
+      const proto=CanvasRenderingContext2D.prototype, original=proto.fillRect;
+      let paints=0; proto.fillRect=function(...args){ if(["cv-orb-src","cv-morph"].includes(this.canvas.id)) paints++; return original.apply(this,args); };
+      let frames=0; function tick(){ if(++frames<12) requestAnimationFrame(tick); else { proto.fillRect=original; resolve(paints); } } requestAnimationFrame(tick);
+    }));
+    assert.equal(offscreen,0,"orb and morph canvas painting must stop offscreen");
+    await live.close();
   } finally {
     await browser?.close();
     await new Promise(resolve => server.close(resolve));
   }
+});
+
+test("preview server supports byte ranges, suffixes, HEAD and unsatisfiable requests", async () => {
+  const { startServer } = await import("../scripts/serve.mjs");
+  const root = mkdtempSync(join(tmpdir(), "ld-range-"));
+  writeFileSync(join(root, "sample.mp4"), "0123456789");
+  const { server, url } = await startServer(root);
+  try {
+    for (const [range, body, contentRange] of [["bytes=2-5", "2345", "bytes 2-5/10"], ["bytes=7-", "789", "bytes 7-9/10"], ["bytes=-3", "789", "bytes 7-9/10"]]) {
+      const r = await fetch(`${url}/sample.mp4`, { headers: { Range: range } });
+      assert.equal(r.status, 206); assert.equal(r.headers.get("accept-ranges"), "bytes");
+      assert.equal(r.headers.get("content-range"), contentRange); assert.equal(await r.text(), body);
+      assert.equal(r.headers.get("content-type"), "video/mp4");
+    }
+    const head = await fetch(`${url}/sample.mp4`, { method: "HEAD" });
+    assert.equal(head.status, 200); assert.equal(head.headers.get("content-length"), "10"); assert.equal(await head.text(), "");
+    for (const range of ["bytes=99-", "bytes=5-2", "bytes=-0", "bytes=1-2,4-5"]) {
+      const r = await fetch(`${url}/sample.mp4`, { headers: { Range: range } });
+      assert.equal(r.status, 416); assert.equal(r.headers.get("content-range"), "bytes */10"); await r.arrayBuffer();
+    }
+  } finally { await new Promise(resolve => server.close(resolve)); }
 });

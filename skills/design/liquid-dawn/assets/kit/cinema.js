@@ -75,7 +75,7 @@ export function coverRect(sw, sh, dw, dh) {
 /** Sample the visible frame of a scroll-cinema stage into a cols × rows grid: the most visible ready <video>, else the
  *  most visible poster <img>, cropped as object-fit: cover crops it. Returns { lum, rgb, cols, rows }, or null when
  *  nothing is drawable yet or the media is cross-origin without CORS (a tainted canvas). */
-export function sampleFrame(stage, cols, rows, scratch) {
+export function sampleFrame(stage, cols, rows, scratch, size = null) {
   const opacity = (el) => {
     const cs = getComputedStyle(el);
     return cs.display === "none" || cs.visibility === "hidden" ? 0 : Number.parseFloat(cs.opacity);
@@ -103,7 +103,7 @@ export function sampleFrame(stage, cols, rows, scratch) {
   if (!src) return null;
   const sw = src.videoWidth || src.naturalWidth;
   const sh = src.videoHeight || src.naturalHeight;
-  const box = src.getBoundingClientRect();
+  const box = size ?? src.getBoundingClientRect();
   if (!sw || !sh || !box.width || !box.height) return null;
   // sample what the viewer sees: the cover-cropped part of the source, not the whole squeezed frame
   const r = coverRect(sw, sh, box.width, box.height);
