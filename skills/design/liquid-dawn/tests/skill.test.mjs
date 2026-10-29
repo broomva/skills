@@ -650,3 +650,63 @@ test("specimen renders in both modes, deterministically, and moves over time", {
   }
   await assert.rejects(render({ ...opts, shots: "nope", t: ["0"], mode: ["dawn"], out: join(out, "d") }), /no \[data-shot\] element named: nope/);
 });
+
+test("lens optical controls reject non-finite or unstable surfaces", async () => {
+  const { lensOptics } = await import(join(KIT, "lens.js"));
+  for (const patch of [{ morph: NaN }, { phase: Infinity }, { morph: .5 }, { mag: 0 }, { disp: -1 }]) assert.throws(() => lensOptics(patch), RangeError);
+  assert.equal(lensOptics().morph, 0); // existing spherical lenses keep their original surface
+});
+
+test("bundled cinema media match their provenance hashes", () => {
+  const dir = join(SKILL, "assets/media/cinema");
+  const manifest = JSON.parse(readFileSync(join(dir, "provenance.json"), "utf8"));
+  assert.equal(Object.keys(manifest.sha256).length, 6);
+  for (const [file, sha] of Object.entries(manifest.sha256)) assert.equal(createHash("sha256").update(readFileSync(join(dir, file))).digest("hex"), sha, file);
+});
+
+test("paper: orb optics, film controls, bundled decoding and reduced-motion posters", { skip: !pw && !required && "Playwright not installed" }, async () => {
+  assert.ok(pw);
+  const { startServer } = await import("../scripts/serve.mjs");
+  const { server, url } = await startServer(join(SKILL, "assets"));
+  let browser;
+  try {
+    browser = await pw.chromium.launch();
+    for (const mode of ["dawn", "dusk"]) {
+      const p = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+      const errors = [];
+      p.on("pageerror", e => errors.push(e.message));
+      p.on("response", r => { if (r.status() >= 400) errors.push(`${r.status()} ${r.url()}`); });
+      await p.goto(`${url}/specimen/paper.html?t=6&mode=${mode}`);
+      await p.waitForFunction(() => window.__ready === true);
+      assert.equal(await p.evaluate(() => window.__orbLens.supported), true);
+      assert.ok(await p.locator(".cine-card video").evaluateAll(vs => vs.every(v => v.readyState >= 2 && !v.error)));
+      const pictures = [];
+      for (const variant of ["calm", "think", "prism"]) {
+        await p.locator(`[data-orb="${variant}"]`).click();
+        await p.evaluate(() => window.renderAt(6));
+        pictures.push(await p.locator("#cv-orb-src").evaluate(c => c.toDataURL()));
+      }
+      assert.equal(new Set(pictures).size, 3, "each orb variant must change actual pixels");
+      await p.locator('[data-cmode="lens"]').click(); await p.evaluate(() => window.renderAt(6));
+      const clear = await p.locator("#cv-toile").evaluate(c => c.toDataURL());
+      await p.locator('[data-cmode="seam"]').click(); await p.evaluate(() => window.renderAt(6));
+      assert.notEqual(clear, await p.locator("#cv-toile").evaluate(c => c.toDataURL()));
+      await p.locator("#cine-range").fill("42"); await p.locator("#cine-range").dispatchEvent("input");
+      await p.evaluate(() => window.renderAt(6));
+      assert.equal(await p.locator("#cine-val").textContent(), "42%");
+      assert.ok(await p.locator(".ctas .cta").evaluateAll(es => es.every(e => getComputedStyle(e, "::after").backgroundImage.includes("conic-gradient"))));
+      assert.deepEqual(errors, []);
+      await p.close();
+    }
+    const p = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
+    await p.goto(`${url}/specimen/paper.html`); await p.waitForFunction(() => window.__ready === true);
+    await p.locator('[data-shot="cinema"]').scrollIntoViewIfNeeded();
+    assert.ok(await p.locator(".cine-card video").evaluateAll(vs => vs.every(v => v.paused && getComputedStyle(v).display === "none")));
+    assert.ok(await p.locator(".cine-card .poster").evaluateAll(es => es.every(e => e.complete && e.naturalWidth > 0)));
+    assert.ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await p.close();
+  } finally {
+    await browser?.close();
+    await new Promise(resolve => server.close(resolve));
+  }
+});

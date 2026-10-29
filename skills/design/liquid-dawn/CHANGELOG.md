@@ -2,6 +2,15 @@
 
 All notable changes to the `liquid-dawn` skill. Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
+## Unreleased
+
+- Phone specimen: clear and smoked liquid-metal glass sign-in surfaces.
+- Orb studies: clear dew, deforming liquid metal and circulating ASCII tide, with bounded live optical controls.
+- Research: first-party glass implementation notes and explicit limits on unverified reference internals.
+- Paper specimen: refractive daylight agent core, four glass/metal surfaces, and three video-to-type treatments.
+- Film controls support manual dissolve, glass windows and a type bridge; playback pauses offscreen and uses posters under reduced motion.
+- The cinema study bundles the generated toile/sky clips and compressed posters under `assets/media/cinema/`, with source provenance and hashes.
+
 ## [0.1.0] - 2026-10-28
 
 ### Added

@@ -26,10 +26,19 @@ export function sparkField(n = 900, seed = 25) {
  * sparkOrb(cx, field, { x, y, R, t, busy, tint })
  * busy ∈ [0, 1]: 0 at rest (a calm glowing sphere), 1 thinking (streaks lengthen, a pulse travels outward).
  */
-export function sparkOrb(cx, field, { x, y, R, t, busy = 0, tint = [196, 220, 255] }) {
+export function sparkOrb(cx, field, { x, y, R, t, busy = 0, tint = [196, 220, 255], light = false }) {
   const g0 = cx.globalAlpha;
   const op = cx.globalCompositeOperation;
-  cx.globalCompositeOperation = "lighter";
+  if (light) {
+    // Daylight glass mode: a soft pearl-lagoon aura so bright cobalt/tide & white streaks read with high contrast
+    const aura = cx.createRadialGradient(x, y, 0, x, y, R * 1.45);
+    aura.addColorStop(0, "rgba(18, 92, 118, 0.22)");
+    aura.addColorStop(0.55, "rgba(38, 128, 165, 0.12)");
+    aura.addColorStop(1, "rgba(38, 128, 165, 0)");
+    cx.fillStyle = aura;
+    cx.fillRect(x - R * 1.5, y - R * 1.5, R * 3, R * 3);
+  }
+  cx.globalCompositeOperation = light ? "source-over" : "lighter";
   // halo + core
   const halo = cx.createRadialGradient(x, y, 0, x, y, R * 1.6);
   halo.addColorStop(0, `rgba(${tint[0]},${tint[1]},${tint[2]},0.32)`);

@@ -12,9 +12,20 @@ export function lensRefract(d, { mag = 0.72, bend = 0.55, disp = 0.06, channel =
   return d * mag + d ** 4 * k;
 }
 
+/** Validated optical controls, shared by the live lens and non-WebGL fallback. */
+export function lensOptics({ mag = 0.72, bend = 0.55, disp = 0.06, frost = 0.06, morph = 0, phase = 0 } = {}) {
+  const values = { mag, bend, disp, frost, morph, phase };
+  const ranges = { mag: [0.1, 2], bend: [0, 2], disp: [0, .25], frost: [0, 1], morph: [0, .12] };
+  for (const [key, value] of Object.entries(values)) {
+    const range = ranges[key];
+    if (!Number.isFinite(value) || (range && (value < range[0] || value > range[1]))) throw new RangeError(`lens optics: invalid ${key}`);
+  }
+  return values;
+}
+
 const VS = `attribute vec2 p; void main(){ gl_Position = vec4(p, 0., 1.); }`;
 const FS = `precision highp float;
-uniform sampler2D src; uniform vec2 res; uniform vec2 c; uniform vec2 rad; uniform float mag, bend, disp, frost; uniform vec3 ground; uniform float useGround;
+uniform sampler2D src; uniform vec2 res; uniform vec2 c; uniform vec2 rad; uniform float mag, bend, disp, frost, morph, phase; uniform vec3 ground; uniform float useGround;
 vec4 sampleRefract(vec2 q, float d, float ch){
   float s = d * mag + pow(d, 4.) * bend * (1. + disp * ch);   // = lensRefract() in JS; keep the two in step
   vec2 dir = d > 1e-4 ? q / d : vec2(0.);
@@ -23,7 +34,11 @@ vec4 sampleRefract(vec2 q, float d, float ch){
 // premultiplied "over": a layer of colour l (premultiplied) and alpha la, over (c, a)
 void over(inout vec3 col, inout float a, vec3 l, float la){ col = l + col * (1. - la); a = la + a * (1. - la); }
 void main(){
-  vec2 q = (gl_FragCoord.xy - c) / rad; float d = length(q);
+  vec2 q = (gl_FragCoord.xy - c) / rad;
+  // A small, bounded three-lobe surface wave; morph=0 preserves the original spherical lens.
+  float wave = 1. + morph * sin(3. * atan(q.y, q.x) + phase);
+  q /= wave;
+  float d = length(q);
   if (d > 1.18) discard;
   if (d > 1.) {               // soft drop shadow, offset down
     vec2 qs = (gl_FragCoord.xy - c - vec2(0., -rad.y * .07)) / rad; float ds = length(qs);
@@ -72,7 +87,10 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
   r = Math.max(1, r); // a zero radius would divide by zero in the shader
   const gl = overlay.getContext("webgl", { premultipliedAlpha: true, alpha: true, antialias: true, preserveDrawingBuffer: preserve });
   const pos = { x: new Sp(0), y: new Sp(0), sx: new Sp(1), sy: new Sp(1) };
+  let optics = lensOptics({ mag, bend, disp, frost });
   const L = { supported: !!gl, tainted: false, mismatch: false, state: { x: 0, y: 0, r, squash: 0 } };
+  L.setOptics = patch => { optics = lensOptics({ ...optics, ...patch }); L.state.optics = { ...optics }; };
+  L.state.optics = { ...optics };
   if (!gl) {
     // no WebGL: a complete no-op lens, so callers (snap at start-up, drag wiring) keep running
     L.paint = () => {};
@@ -106,7 +124,7 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
     gl.texParameteri(gl.TEXTURE_2D, k, v);
   gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
   gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, true);
-  const U = Object.fromEntries(["src", "res", "c", "rad", "mag", "bend", "disp", "frost", "ground", "useGround"].map((n) => [n, gl.getUniformLocation(prog, n)]));
+  const U = Object.fromEntries(["src", "res", "c", "rad", "mag", "bend", "disp", "frost", "morph", "phase", "ground", "useGround"].map((n) => [n, gl.getUniformLocation(prog, n)]));
   gl.enable(gl.BLEND);
   gl.blendFunc(gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
 
@@ -161,13 +179,15 @@ export function createLens(overlay, source, { r = 74, mag = 0.72, bend = 0.55, d
     gl.uniform2f(U.res, overlay.width, overlay.height);
     gl.uniform2f(U.c, pos.x.v * d, overlay.height - pos.y.v * d);
     gl.uniform2f(U.rad, r * d * pos.sx.v, r * d * pos.sy.v);
-    gl.uniform1f(U.mag, mag);
-    gl.uniform1f(U.bend, bend);
-    gl.uniform1f(U.disp, disp);
+    gl.uniform1f(U.mag, optics.mag);
+    gl.uniform1f(U.bend, optics.bend);
+    gl.uniform1f(U.disp, optics.disp);
+    gl.uniform1f(U.morph, optics.morph);
+    gl.uniform1f(U.phase, optics.phase);
     const g = ground ?? pageGround(overlay);
     gl.uniform3f(U.ground, (g?.[0] ?? 0) / 255, (g?.[1] ?? 0) / 255, (g?.[2] ?? 0) / 255);
     gl.uniform1f(U.useGround, g ? 1 : 0);
-    gl.uniform1f(U.frost, frost);
+    gl.uniform1f(U.frost, optics.frost);
     gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
   };
   return L;

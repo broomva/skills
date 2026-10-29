@@ -294,6 +294,85 @@
   }
 }
 
+/* ───────────────────────── liquid metal & prism morphism variants ───────────────────────── */
+.ld-glass-metal,
+.ld-glass-prism {
+  position: relative;
+  isolation: isolate;
+  border-radius: var(--ld-r-card);
+}
+.ld-glass-metal {
+  background:
+    radial-gradient(110% 90% at var(--mx, 30%) var(--my, 15%), oklch(1 0 0 / 0.78), transparent 58%),
+    linear-gradient(155deg, oklch(0.99 0.004 220 / 0.82) 0%, oklch(0.92 0.014 215 / 0.44) 48%, oklch(0.97 0.01 90 / 0.74) 100%);
+  -webkit-backdrop-filter: blur(18px) saturate(180%) brightness(1.06);
+  backdrop-filter: blur(18px) saturate(180%) brightness(1.06);
+  box-shadow:
+    0 28px 64px -28px oklch(0.32 0.05 230 / 0.32),
+    inset 0 2px 2px oklch(1 0 0 / 0.98),
+    inset 0 -2px 3px oklch(0.42 0.04 230 / 0.18),
+    inset 0 0 22px oklch(1 0 0 / 0.55);
+}
+[data-ld-mode="dusk"] .ld-glass-metal {
+  background:
+    radial-gradient(110% 90% at var(--mx, 30%) var(--my, 15%), oklch(0.55 0.04 210 / 0.28), transparent 58%),
+    linear-gradient(155deg, oklch(0.38 0.025 225 / 0.62) 0%, oklch(0.22 0.02 228 / 0.46) 52%, oklch(0.32 0.03 215 / 0.58) 100%);
+  box-shadow:
+    0 30px 70px -28px oklch(0.06 0.02 228 / 0.85),
+    inset 0 1.5px 1.5px oklch(1 0 0 / 0.34),
+    inset 0 -2px 3px oklch(0 0 0 / 0.45),
+    inset 0 0 18px oklch(0.8 0.08 205 / 0.14);
+}
+.ld-glass-metal::after,
+.ld-glass-prism::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: inherit;
+  padding: 1.75px;
+  pointer-events: none;
+  background: conic-gradient(
+    from var(--ua),
+    var(--ld-metal-steel) 0deg,
+    var(--ld-metal-shine) 42deg,
+    var(--ld-metal-fringe-a) 58deg,
+    var(--ld-metal-fringe-b) 74deg,
+    var(--ld-metal-glint) 138deg,
+    var(--ld-metal-steel) 180deg,
+    var(--ld-metal-shine) 222deg,
+    var(--ld-metal-fringe-c) 238deg,
+    var(--ld-metal-fringe-a) 256deg,
+    var(--ld-metal-glint) 318deg,
+    var(--ld-metal-steel) 360deg
+  );
+  -webkit-mask:
+    linear-gradient(#000 0 0) content-box,
+    linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask:
+    linear-gradient(#000 0 0) content-box exclude,
+    linear-gradient(#000 0 0);
+  opacity: 0.96;
+}
+.ld-glass-prism {
+  background:
+    radial-gradient(90% 80% at var(--mx, 50%) var(--my, 20%), oklch(1 0 0 / 0.52), transparent 64%),
+    linear-gradient(180deg, oklch(1 0 0 / 0.28), oklch(1 0 0 / 0.08) 55%, oklch(1 0 0 / 0.24));
+  -webkit-backdrop-filter: blur(6px) saturate(190%) contrast(1.04);
+  backdrop-filter: blur(6px) saturate(190%) contrast(1.04);
+  box-shadow:
+    0 28px 64px -28px oklch(0.32 0.05 230 / 0.3),
+    inset 0 2px 1.5px oklch(1 0 0 / 0.96),
+    inset 18px 0 28px -18px oklch(0.78 0.12 205 / 0.52),
+    inset -18px 0 28px -18px oklch(0.84 0.11 75 / 0.48),
+    inset 0 -20px 32px -20px oklch(0.76 0.11 235 / 0.45);
+}
+[data-ld-mode="dusk"] .ld-glass-prism {
+  background:
+    radial-gradient(90% 80% at var(--mx, 50%) var(--my, 20%), oklch(0.85 0.06 205 / 0.18), transparent 64%),
+    linear-gradient(180deg, oklch(0.36 0.025 225 / 0.26), oklch(0.2 0.02 228 / 0.12));
+}
+
 /* ───────────────────────── round button with a pearl ring ───────────────────────── */
 .ld-ring {
   position: relative;
@@ -502,6 +581,8 @@
 @media (prefers-reduced-transparency: reduce) {
   .ld-glass,
   .ld-capsule,
+  .ld-glass-metal,
+  .ld-glass-prism,
   .ld-lens {
     background: var(--ld-glass-heavy) !important;
     -webkit-backdrop-filter: none !important;
@@ -514,6 +595,8 @@
 @media (prefers-contrast: more) {
   .ld-glass,
   .ld-capsule,
+  .ld-glass-metal,
+  .ld-glass-prism,
   .ld-lens {
     background: var(--ld-surface) !important;
     -webkit-backdrop-filter: none !important;
@@ -522,6 +605,8 @@
   }
   .ld-glass::after,
   .ld-capsule::after,
+  .ld-glass-metal::after,
+  .ld-glass-prism::after,
   .ld-lens::after,
   .ld-ring::after {
     display: none;
