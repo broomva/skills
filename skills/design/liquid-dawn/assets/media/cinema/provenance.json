@@ -1,0 +1,27 @@
+{
+  "description": "Generated Liquid Dawn nature footage and keyframes. No performers or third-party uploads.",
+  "stills": {
+    "provider": "Higgsfield",
+    "model": "SOUL Cinema",
+    "date": "2026-10-28"
+  },
+  "clips": {
+    "provider": "Higgsfield",
+    "model": "Kling 3.0 Pro",
+    "date": "2026-10-28",
+    "duration_seconds": 5,
+    "sources": {
+      "toile-transition.mp4": "Skene liquid-dawn-cinema / m02-toile-transition / r-0008",
+      "sky-transition.mp4": "Skene liquid-dawn-cinema / m03-sky-transition / r-0009"
+    }
+  },
+  "processing": "Videos conformed for browser playback; PNG keyframes resized to JPEG posters.",
+  "sha256": {
+    "toile-01.jpg": "a21ee3ae8869fe49ce7f85597d523883c13503089d79fe4d724efdb93c8bbebc",
+    "toile-02.jpg": "f2d77f9716556653a14c3fccb81efaf70f5364f3d3b1a668b5d0c4072613b09f",
+    "sky-02.jpg": "b54ab5a9f6bb7686276f800833aa7a4910f88014d5cb671512922eb6cbdccb2a",
+    "sky-01.jpg": "722129b2545030f86d2df152c84f7cc474d5d8e0f6fc68e91269e64c8a1e463e",
+    "sky-transition.mp4": "c120a4389594cb003bc6d52ab650d99921fed3333c4894577be50e32567f275e",
+    "toile-transition.mp4": "9b7dbf81b9de746e0e5d1ae1e476397e517f025ab36fc976533b8b486b4575c1"
+  }
+}

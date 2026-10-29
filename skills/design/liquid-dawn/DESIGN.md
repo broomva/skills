@@ -177,7 +177,7 @@ canvas. Owner-chosen directions (2026-10-28):
 ### 6.6 Cinema (`cinema.js`): the shader on a scroll-scrubbed film
 For a page with a `scroll-cinema` film (`@broomva/scroll-cinema`: N clips, N+1 posters, endpoints pinned). The
 ASCII shader runs on the film itself:
-- `sampleFrame(stage, cols, rows, scratch)` samples the visible video frame (or poster) into a grid; luminance is
+- `sampleFrame(stage, cols, rows, scratch, size?)` samples the visible video frame (or poster) into a grid; luminance is
   stretched between the 4th and 96th percentiles (`normaliseLuma`), so a pale dawn frame still spans the ramp.
 - `seamDissolve(p, {seams, width, end, base})`: how much of the frame is type at scroll progress p: 0 inside a
   section (the film stays a photograph), 1 at a page break (a clip seam or a chapter break), and 1 from `end` on,
@@ -204,6 +204,15 @@ The direction the owner pointed at (the haj sharks, the Metricra scenic footer, 
 
 Photographs replace the procedural subjects where they exist (shark cut-outs for the mosaic, a toile engraving and a
 painted sky); the procedural versions remain the fallback and the test fixtures.
+
+`createLens()` also exposes `setOptics({ mag, bend, disp, frost, morph, phase })`. Patches retain unspecified
+values and validate finite numbers: mag .1–2, bend 0–2, dispersion 0–.25, frost 0–1, morph 0–.12.
+`morph=0` preserves the spherical lens; a nonzero value adds a small three-lobe deformation.
+`phase` is a finite angle in radians. `sparkOrb(..., { light: true })` uses source-over strokes for daylight.
+
+The bundled paper film studies cache relative lens geometry on resize and sample their decorative type veil at
+15 Hz. Offscreen canvases stop painting. Deterministic capture seeks the clips through the preview server's
+byte-range support and rejects failed seeks rather than silently capturing frame zero.
 
 ### 6.8 Loop (`loop.js`) and core (`core.js`)
 - `createLoop({init, step, paint, seed, still})` → `{start, stop, renderAt, invalidate}`; `setClock(t)` sets `--ua` and

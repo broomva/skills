@@ -61,7 +61,7 @@ colour table `C` is empty until then, and everything below reads its colours fro
 | Ground | `body.ld-ground`; in a hero: `.ld-wash`, a field `<canvas class="ld-field">`, `.ld-grid`, `.ld-clearing` |
 | A living field | `field(cx, { fn: (x, y) => tide(x, y, t), ramp: RAMP.water, color: C.tide, mask: (x, y) => clearing(...) })`; also `breeze` + `bladeGlyph`, `cloud`, `rippleField` |
 | Glass that bends the field | DOM `.ld-lens` over the canvas **and** pass its rect as `lenses: [{x, y, w, h, r}]` to `field()`, with `fringe: [C["metal-fringe-a"], C["metal-fringe-b"]]` |
-| Cards, captions | `.ld-glass` (pearl rim included) |
+| Cards, captions | `.ld-glass` (pearl rim included); `.ld-glass-metal` for a pearl chrome bevel, `.ld-glass-prism` for a clearer cyan/sand edge |
 | Nav, segmented | `.ld-capsule` with `.ld-chip` (`aria-pressed="true"` for the active one) |
 | Round actions | `.ld-ring` with an inline SVG icon |
 | Composer | `.ld-lens.ld-composer` with an `<input>` and a `.row` hint line |
@@ -82,7 +82,7 @@ Working examples to copy (each takes `?mode=dusk` and `?t=6` for a deterministic
   the default hero recipe;
 - `assets/specimen/heroes.html`: every hero recipe; `assets/specimen/type.html`: every voice;
 - `assets/specimen/paper.html`: photo as tiles, the liquid lens, agent presence, pictures as print.
-The film background has no shipped example: wire it from DESIGN.md §6.6 and `kit/cinema.js`.
+`paper.html` also includes bundled toile/sky film-to-type studies; these are ambient material options, not a continuous scroll-cinema chain. Wire a scroll background from DESIGN.md §6.6 and `kit/cinema.js`. See [the glass/orb research notes](references/glass-and-orb-studies.md) for implementation provenance and limits.
 
 **Never ship these** (DESIGN.md §3): pure white or grey grounds; purple; editorial serif display; a field that reads
 as uniform texture or rain; heavy frost; glass on glass; a frosted panel with no pearl rim; glow-orb subjects;

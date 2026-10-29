@@ -56,20 +56,55 @@
   .status { position: absolute; z-index: 4; top: 18px; left: 34px; right: 30px; display: flex; justify-content: space-between; font: 600 14px/1 var(--ld-font-text); color: #2b2b2b; }
   .ctas { position: absolute; z-index: 4; left: 22px; right: 22px; bottom: 44px; display: grid; gap: 12px; }
   .cta { height: 54px; border-radius: 27px; display: flex; align-items: center; justify-content: center; gap: 10px; font: 500 16px/1 var(--ld-font-text); }
-  .cta.light { background: rgba(255,255,255,.86); color: #222; box-shadow: 0 1px 0 #fff inset, 0 6px 20px -12px rgba(0,0,0,.3); }
-  .cta.dark { background: #141516; color: #fff; }
+  .cta.light { color: #222; --ld-r-card: 27px; }
+  .cta.dark { color: #fff; --ld-r-card: 27px;
+    background: radial-gradient(100% 180% at 20% 0%, rgba(170,198,206,.34), transparent 65%), linear-gradient(145deg, rgba(29,38,43,.86), rgba(15,22,26,.64) 55%, rgba(72,82,85,.76));
+    box-shadow: inset 0 1.5px 2px rgba(255,255,255,.55), inset 0 -2px 3px rgba(0,0,0,.4), 0 10px 24px -14px rgba(12,24,32,.5);
+  }
   .notes { display: grid; gap: 22px; }
   .note code { font: 400 14px var(--ld-font-mono); }
   .note { display: grid; grid-template-columns: 120px 1fr; gap: 16px; font: 300 16px/1.6 var(--ld-font-text); color: #4e535a; }
   .note b { font: 500 11px/1.6 var(--ld-font-mono); letter-spacing: .14em; text-transform: uppercase; color: #8a8f96; }
 
-  /* 3 · agent: the 2-5 orb */
-  .agent { position: relative; height: 380px; border-radius: 36px; overflow: hidden; background: #0c0d10; box-shadow: inset 0 0 0 1px rgba(255,255,255,.06), 0 40px 80px -40px rgba(0,0,0,.5); }
+  /* 3 · agent: refractive liquid-glass morph orb over live caustic paper field */
+  .agent { position: relative; height: 390px; border-radius: 36px; overflow: hidden; cursor: grab; touch-action: none;
+    background: linear-gradient(155deg, rgba(252,248,244,.82), rgba(235,244,248,.62) 52%, rgba(246,240,234,.78));
+    box-shadow: 0 36px 72px -34px rgba(24,34,46,.24), inset 0 2px 2px rgba(255,255,255,.95), inset 0 -2px 3px rgba(24,34,46,.08); }
+  html[data-ld-mode="dusk"] .agent {
+    background: linear-gradient(155deg, rgba(26,34,42,.82), rgba(18,24,30,.72) 52%, rgba(22,30,38,.8));
+    box-shadow: 0 40px 80px -36px rgba(0,0,0,.7), inset 0 1.5px 1px rgba(255,255,255,.22); }
   .agent canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-  .agent .say { position: absolute; left: 300px; top: 50%; transform: translateY(-50%); font-family: var(--ld-font-display); font-weight: 300; font-size: 64px; letter-spacing: -0.04em;
-    background: linear-gradient(90deg, #4a4f57 0%, #4a4f57 35%, #e9f0fb 50%, #4a4f57 65%, #4a4f57 100%); background-size: 300% 100%; background-position: var(--sh, 0%) 0;
-    -webkit-background-clip: text; background-clip: text; color: transparent; }
-  .agent .sub { position: absolute; left: 304px; top: calc(50% + 50px); font: 400 13px/1 var(--ld-font-mono); color: #5d636c; letter-spacing: .06em; }
+  .agent-hud { position: absolute; z-index: 3; right: 32px; top: 28px; bottom: 28px; width: min(440px, 44%); border-radius: 26px; padding: 24px 26px;
+    display: flex; flex-direction: column; justify-content: space-between; pointer-events: none; }
+  .agent-hud .metrics { display: grid; grid-template-columns: repeat(3, 1fr); gap: 12px; padding-top: 14px; border-top: 1px solid rgba(20,28,36,.08); font: 500 11px/1.4 var(--ld-font-mono); color: #5a6470; }
+  html[data-ld-mode="dusk"] .agent-hud .metrics { border-top-color: rgba(255,255,255,.1); color: #9aa6b4; }
+  .agent-hud .metrics b { display: block; font: 500 18px/1.1 var(--ld-font-display); color: var(--ld-ink); margin-top: 4px; }
+  .agent-chips { position: absolute; z-index: 4; left: 28px; bottom: 24px; display: flex; gap: 8px; }
+
+  /* 3b · liquid metal & glass morphism mix deck */
+  .morph-stage { position: relative; min-height: 440px; border-radius: 36px; padding: 36px; overflow: hidden; display: grid; grid-template-columns: repeat(4, 1fr); gap: 20px; align-items: stretch; }
+  .morph-stage > canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .mcard { position: relative; z-index: 2; padding: 24px 22px; border-radius: 26px; display: flex; flex-direction: column; justify-content: space-between; gap: 18px; transition: transform .28s cubic-bezier(.2,.9,.2,1); }
+  .mcard:hover { transform: translateY(-4px); }
+  .mcard .mhead { display: flex; justify-content: space-between; align-items: center; }
+  .mcard h3 { margin: 8px 0 6px; font: 400 24px/1.1 var(--ld-font-display); letter-spacing: -0.03em; }
+  .mcard p { margin: 0; font: 300 14px/1.5 var(--ld-font-text); color: var(--ld-ink2); }
+  .mcard .spec { font: 400 11px/1.4 var(--ld-font-mono); color: var(--ld-ink3); padding-top: 12px; border-top: 1px solid rgba(20,28,36,.08); display: flex; justify-content: space-between; }
+
+  /* 4b · skene cinema + ascii shader transition options */
+  .cine-toolbar { display: flex; flex-wrap: wrap; justify-content: space-between; align-items: center; gap: 16px; margin-bottom: 24px; }
+  .cine-scrub { display: flex; align-items: center; gap: 12px; font: 500 12px/1 var(--ld-font-mono); color: var(--ld-ink2); padding: 8px 16px; border-radius: 999px; }
+  .cine-scrub input[type="range"] { width: 160px; accent-color: var(--ld-tide); cursor: pointer; }
+  .cine-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; }
+  .cine-card { position: relative; height: 440px; border-radius: 32px; overflow: hidden; box-shadow: 0 32px 68px -32px rgba(18,24,32,.32); background: #ece8de; }
+  .cine-card.wide { grid-column: span 2; height: 480px; }
+  .cine-card video, .cine-card img.poster { position: absolute; inset: 0; width: 100%; height: 100%; object-fit: cover; }
+  .cine-card video { opacity: 0.96; }
+  .cine-card canvas { position: absolute; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+  .cine-overlay { position: absolute; z-index: 3; left: 24px; right: 24px; bottom: 24px; padding: 22px 26px; border-radius: 24px; display: flex; justify-content: space-between; align-items: flex-end; gap: 20px; }
+  .cine-overlay h3 { margin: 6px 0 4px; font: 300 28px/1.05 var(--ld-font-display); letter-spacing: -0.03em; color: var(--ld-ink); }
+  .cine-overlay p { margin: 0; font: 400 14px/1.45 var(--ld-font-text); color: var(--ld-ink2); max-width: 46ch; }
+  .cine-pill { font: 500 11px/1 var(--ld-font-mono); padding: 7px 12px; border-radius: 999px; white-space: nowrap; }
 
   /* 4 · cards */
   .cards { display: grid; grid-template-columns: 340px 1fr; grid-template-rows: auto auto; gap: 24px; }
@@ -113,6 +148,62 @@
   footer h4 { margin: 0 0 22px; font: 500 17px/1 var(--ld-font-text); }
   footer a { display: block; margin: 0 0 15px; font: 400 14px/1 var(--ld-font-text); color: #2e3646; text-decoration: none; }
   footer .brand { font: 400 30px/1 var(--ld-font-display); letter-spacing: -0.03em; display: flex; gap: 12px; align-items: center; }
+
+  .kick, .note b { color: var(--ld-ink3); }
+  .head p, .note { color: var(--ld-ink2); }
+  .ld-chip[aria-pressed="true"] { color: var(--ld-tide); }
+  .agent-stage:focus-visible, .agent:focus-visible { outline: 2px solid var(--ld-tide); outline-offset: 4px; }
+  .cine-card .poster { opacity: 1; }
+  .morph-stage { background: linear-gradient(140deg, var(--ld-paper), var(--ld-sunk)); }
+  .mcard { min-width: 0; }
+  .cine-overlay { align-items: start; background-color: color-mix(in srgb, var(--ld-surface) 72%, transparent); }
+  .cine-overlay .cine-pill { display: none; }
+  .cine-overlay p { font-size: 13px; }
+  .mcard .spec { flex-wrap: wrap; gap: 8px; }
+  @media (max-width: 1000px) {
+    .morph-stage { grid-template-columns: repeat(2,1fr); }
+    .lensrow { grid-template-columns: 1fr; justify-items:center; }
+    .cine-grid { grid-template-columns: 1fr; }
+    .cine-card.wide { grid-column:auto; }
+    .cards { grid-template-columns: minmax(0,1fr); }
+  }
+  @media (max-width: 600px) {
+    .wrap { width: calc(100% - 32px); }
+    section.band { padding: 64px 0; }
+    .head h2 { font-size:40px; }
+    .head p { font-size:16px; }
+    .q { font-size:44px; }
+    .hero { height:650px; }
+    .phone { width:min(350px,100%); }
+    .agent { height:580px; }
+    .agent-hud { top:auto; bottom:74px; left:16px; right:16px; width:auto; padding:18px; }
+    .agent-hud .metrics { display:none; }
+    .agent-chips { left:12px; right:12px; bottom:16px; gap:0; justify-content:center; }
+    .agent-chips button { padding:8px; font-size:10px; }
+    .morph-stage { padding:16px; gap:12px; }
+    .mcard { padding:18px 14px; }
+    .mcard h3 { font-size:22px; }
+    .mcard p { font-size:13px; }
+    .mcard .mhead .ld-tag { font-size:9px; letter-spacing:.04em; }
+    .mcard .ld-ring { display:none; }
+    .cine-overlay { left:12px; right:12px; bottom:12px; padding:18px; }
+    .cine-overlay h3 { font-size:24px; }
+    .cine-overlay .ld-tag { font-size:9px; letter-spacing:.06em; }
+    .cine-card, .cine-card.wide { height:460px; }
+    .cine-scrub input[type="range"] { width:120px; }
+    footer .cols { padding:40px 20px; grid-template-columns:repeat(2,1fr); gap:24px; }
+    .note { grid-template-columns:1fr; gap:8px; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .cine-card video { display:none; }
+    .mcard { transition:none; }
+    .mcard:hover { transform:none; }
+  }
+  @media (prefers-reduced-transparency: reduce), (prefers-contrast: more) {
+    .cta.light, .cta.dark { color:var(--ld-ink); }
+    .agent-hud, .cine-overlay, .mcard { background:var(--ld-surface); backdrop-filter:none; -webkit-backdrop-filter:none; }
+  }
+
 </style>
 </head>
 <body>
@@ -139,7 +230,7 @@
         <canvas id="cv-lens" aria-hidden="true"></canvas>
         <div class="island"></div>
         <div class="status"><span id="clock">6:12</span><span>●●● ◔</span></div>
-        <div class="ctas"><div class="cta light">Continue with email</div><div class="cta dark">Continue with Apple</div></div>
+        <div class="ctas"><div class="cta light ld-glass-prism">Continue with email</div><div class="cta dark ld-glass-metal">Continue with Apple</div></div>
       </div>
     </div>
     <div>
@@ -155,8 +246,65 @@
 
 <section class="band" data-shot="agent" style="padding-top:0">
   <div class="wrap">
-    <div class="head"><span class="kick">Agent</span><h2>Presence, not decoration.</h2></div>
-    <div class="agent"><canvas id="cv-orb" aria-hidden="true"></canvas><div class="say" id="say">Calculating…</div><div class="sub">reading 14 sources · 2.4 s</div></div>
+    <div class="head"><span class="kick">Agent · Liquid Glass Orb</span><h2>Presence you can see through.</h2><p>Clear dew, liquid metal, or a circulating tide of type. Three optical studies over the same living field. Drag the lens to bend the words and light beneath it.</p></div>
+    <div class="agent" id="agent-stage" tabindex="0" role="group" aria-label="Interactive liquid glass orb refracting an agent spark burst and a quiet headline. Use arrow keys to move the lens; Escape resumes its drift.">
+      <canvas id="cv-orb-src" aria-hidden="true"></canvas>
+      <canvas id="cv-orb" aria-hidden="true"></canvas>
+      <div class="agent-chips ld-capsule" id="orb-modes">
+        <button class="ld-chip" data-orb="calm" aria-pressed="true">Clear dew</button>
+        <button class="ld-chip" data-orb="think" aria-pressed="false">Liquid metal</button>
+        <button class="ld-chip" data-orb="prism" aria-pressed="false">ASCII tide</button>
+      </div>
+      <div class="agent-hud ld-glass-metal">
+        <div>
+          <span class="ld-tag" style="--ld-tag:var(--ld-tide)">Drag to explore</span>
+          <h3 id="agent-title" style="margin:10px 0 6px;font:300 28px/1.1 var(--ld-font-display);letter-spacing:-0.03em">Refractive Agent Core</h3>
+          <p id="agent-description" style="margin:0;font:300 14px/1.5 var(--ld-font-text);color:var(--ld-ink2)">A little light, a moving tide, and a lens that carries both. Find a moment of focus in the flow.</p>
+        </div>
+        <div class="metrics"><div>SURFACE<b>Live lens</b></div><div>LIGHT<b>Pearl rim</b></div><div>MOTION<b>Slow tide</b></div></div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section class="band" data-shot="morphisms" style="padding-top:0">
+  <div class="wrap">
+    <div class="head"><span class="kick">Materials & Morphisms</span><h2>Four grades of liquid glass & pearl metal.</h2><p>Soft dew, clear lenses, pearl chrome and tinted prism edges—four surfaces over a living tide of type. Move your pointer across the cards to shift the specular sheen.</p></div>
+    <div class="morph-stage">
+      <canvas id="cv-morph" aria-hidden="true"></canvas>
+      <article class="mcard ld-glass">
+        <div>
+          <div class="mhead"><span class="ld-tag">01 · Dew Glass</span><span class="ld-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 2.69l5.66 5.66a8 8 0 1 1-11.31 0z"/></svg></span></div>
+          <h3>Milky Dew</h3>
+          <p>Softly frosted, with a warm inner bloom. The tide stays visible beneath the surface.</p>
+        </div>
+        <div class="spec"><span>blur(14px)</span><span>.ld-glass</span></div>
+      </article>
+      <article class="mcard ld-lens">
+        <div>
+          <div class="mhead"><span class="ld-tag" style="--ld-tag:var(--ld-lagoon)">02 · Clear Drop</span><span class="ld-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><circle cx="12" cy="12" r="8"/><path d="M9 9c1.5-1.5 4-1.5 5.5 0"/></svg></span></div>
+          <h3>Refractive Lens</h3>
+          <p>A clear window into the tide. Magnified glyphs bend toward a fine pearl edge.</p>
+        </div>
+        <div class="spec"><span>mag 1.14×</span><span>.ld-lens</span></div>
+      </article>
+      <article class="mcard ld-glass-metal">
+        <div>
+          <div class="mhead"><span class="ld-tag" style="--ld-tag:var(--ld-coral)">03 · Liquid Metal</span><span class="ld-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg></span></div>
+          <h3>Pearl Chrome</h3>
+          <p>Double-specular conic metallic bevel with lagoon/sand/sky fringes travelling at 24°/s and pointer-tracked highlights.</p>
+        </div>
+        <div class="spec"><span>conic(--ua)</span><span>.ld-glass-metal</span></div>
+      </article>
+      <article class="mcard ld-glass-prism">
+        <div>
+          <div class="mhead"><span class="ld-tag" style="--ld-tag:var(--ld-sky)">04 · Spectral Prism</span><span class="ld-ring" aria-hidden="true"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M12 3L2 21h20L12 3z"/></svg></span></div>
+          <h3>Chromatic Split</h3>
+          <p>Cyan and sand highlights catch opposite edges. The refracted tide keeps its colour beneath a clearer surface.</p>
+        </div>
+        <div class="spec"><span>blur(6px)</span><span>.ld-glass-prism</span></div>
+      </article>
+    </div>
   </div>
 </section>
 
@@ -180,6 +328,67 @@
   </div>
 </section>
 
+<section class="band" data-shot="cinema" style="padding-top:0">
+  <div class="wrap">
+    <div class="cine-toolbar">
+      <div class="head" style="margin-bottom:0"><span class="kick">Skene Cinema × ASCII Shaders</span><h2>Three ways film dissolves into type.</h2><p>A coast in ink. A sky in paint. Let each moving image become a field of type, then bring it gently back.</p></div>
+      <div class=" style-controls" style="display:flex;gap:12px;align-items:center;flex-wrap:wrap">
+        <div class="ld-capsule" id="cine-mode">
+          <button class="ld-chip" data-cmode="auto" aria-pressed="true">Auto Wave</button>
+          <button class="ld-chip" data-cmode="lens" aria-pressed="false">Glass X-Ray</button>
+          <button class="ld-chip" data-cmode="seam" aria-pressed="false">Full Type Seam</button>
+        </div>
+        <label class="cine-scrub ld-capsule"><span>DISSOLVE</span><input id="cine-range" type="range" min="0" max="100" value="38" /><span id="cine-val">Auto</span></label>
+      </div>
+    </div>
+    <div class="cine-grid">
+      <article class="cine-card" id="stage-toile">
+        <img class="poster" src="../media/cinema/toile-01.jpg" alt="Coastal toile engraving" />
+        <video src="../media/cinema/toile-transition.mp4" poster="../media/cinema/toile-01.jpg" muted loop playsinline preload="metadata"></video>
+        <canvas id="cv-toile-back" style="filter:blur(6px)" aria-hidden="true"></canvas>
+        <canvas id="cv-toile" aria-hidden="true"></canvas>
+        <div class="cine-overlay ld-glass-metal" id="lens-toile">
+          <div>
+            <span class="ld-tag">Option A · Toile Engraving Transition</span>
+            <h3>Coastal Glide → Tide Lattice</h3>
+            <p>The coast becomes a field of cobalt glyphs, with a pearl-metal caption floating above the moving water.</p>
+          </div>
+          <span class="cine-pill ld-capsule">m02-toile · 5.0s</span>
+        </div>
+      </article>
+      <article class="cine-card" id="stage-sky">
+        <img class="poster" src="../media/cinema/sky-01.jpg" alt="Painted aqueduct sky" />
+        <video src="../media/cinema/sky-transition.mp4" poster="../media/cinema/sky-01.jpg" muted loop playsinline preload="metadata"></video>
+        <canvas id="cv-sky-back" style="filter:blur(6px)" aria-hidden="true"></canvas>
+        <canvas id="cv-sky-cine" aria-hidden="true"></canvas>
+        <div class="cine-overlay ld-lens" id="lens-sky">
+          <div>
+            <span class="ld-tag" style="--ld-tag:var(--ld-lagoon)">Option B · Aqueduct Sky Drift</span>
+            <h3>Cloud Drift → Refractive Lens</h3>
+            <p>Clouds and painted hills resolve into type beneath a clear glass caption.</p>
+          </div>
+          <span class="cine-pill ld-capsule">m03-sky · 5.0s</span>
+        </div>
+      </article>
+      <article class="cine-card wide" id="stage-blend">
+        <img class="poster" src="../media/cinema/toile-02.jpg" alt="Horizon seam blend" />
+        <video id="vid-blend-a" src="../media/cinema/toile-transition.mp4" poster="../media/cinema/toile-02.jpg" muted loop playsinline preload="metadata"></video>
+        <video id="vid-blend-b" src="../media/cinema/sky-transition.mp4" poster="../media/cinema/sky-02.jpg" muted loop playsinline preload="metadata" style="opacity:0"></video>
+        <canvas id="cv-blend-back" style="filter:blur(7px)" aria-hidden="true"></canvas>
+        <canvas id="cv-blend" aria-hidden="true"></canvas>
+        <div class="cine-overlay ld-glass-prism" id="lens-blend">
+          <div>
+            <span class="ld-tag" style="--ld-tag:var(--ld-coral)">Option C · A bridge in type</span>
+            <h3>Toile ↔ Sky Seam Dissolve</h3>
+            <p>The coast gives way to a tide of type. The sky emerges on the other side.</p>
+          </div>
+          <span class="cine-pill ld-capsule" id="blend-status">Phase · Toile → Type</span>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
 <footer data-shot="footer">
   <canvas id="cv-foot" aria-hidden="true"></canvas>
   <div class="cols">
@@ -192,7 +401,7 @@
 </footer>
 
 <script type="module">
-import { setMotion, createLoop, fitCanvas, fontsReady, Sp } from "../kit/index.js";
+import { setMotion, createLoop, fitCanvas, fontsReady, Sp, checkTime, readColors, C, field, tide, RAMP, sampleFrame, filmType, dissolveThresholds } from "../kit/index.js";
 import { mosaic, paintShark } from "../kit/mosaic.js";
 import { createLens, dragLens } from "../kit/lens.js";
 import { sparkField, sparkOrb } from "../kit/spark.js";
@@ -207,7 +416,8 @@ const S = {};
 const CELL = 14;
 
 function build() {
-  for (const k of ["hero", "paper", "orb", "dither", "engrave", "sky", "mini", "foot"]) S[k] = fitCanvas($(`cv-${k}`));
+  for (const k of ["hero", "paper", "orb-src", "morph", "toile", "toile-back", "sky-cine", "sky-back", "blend", "blend-back", "dither", "engrave", "sky", "mini", "foot"]) S[k] = fitCanvas($(`cv-${k}`));
+  readColors();
   const H = S.hero;
   S.cols = Math.ceil(H.w / CELL);
   S.rows = Math.ceil(H.h / CELL);
@@ -215,6 +425,21 @@ function build() {
   S.scratch.width = S.cols;
   S.scratch.height = S.rows;
   S.lens = S.lens ?? createLens($("cv-lens"), $("cv-paper"), { preserve: capture, r: 96, mag: 0.7, bend: 0.62, disp: 0.07 });
+  S.orbLens = S.orbLens ?? createLens($("cv-orb"), $("cv-orb-src"), { preserve: capture, r: 106, mag: 0.68, bend: 0.7, disp: 0.085 });
+  for (const [key, stage, ink] of [["toile", "stage-toile", [32,56,116]], ["sky-cine", "stage-sky", [26,69,83]], ["blend", "stage-blend", [32,56,116]]]) {
+    const size = S[key];
+    const cols = Math.ceil(size.w / 14), rows = Math.ceil(size.h / 16);
+    const box = $(stage).getBoundingClientRect();
+    const overlay = $(stage).querySelector(".cine-overlay").getBoundingClientRect();
+    S[`film-${key}`] = { stage: $(stage), cols, rows, ink, scratch: document.createElement("canvas"), thresholds: dissolveThresholds(cols, rows, { seed: 12 }),
+      box:{width:size.w,height:size.h}, lens:{x:overlay.left-box.left,y:overlay.top-box.top,w:overlay.width,h:overlay.height} };
+  }
+  const box = $("cv-morph").getBoundingClientRect();
+  S.morphLenses = [...document.querySelectorAll(".mcard")].slice(1).map(el => {
+    const b = el.getBoundingClientRect();
+    return {x:b.left-box.left,y:b.top-box.top,w:b.width,h:b.height,r:26};
+  });
+  cinema.dirty = true;
   S.spark = S.spark ?? sparkField(900, 25);
   S.sparkMini = S.sparkMini ?? sparkField(320, 8);
   glassType($("gt"), "06:12");
@@ -294,20 +519,139 @@ function stepLens(dt, t) {
   S.lens.step(dt);
 }
 
+let orbMode = "calm";
+let orbHeld = () => false;
+let orbManual = false;
 function paintOrb(t) {
-  const { cx, w, h } = S.orb;
-  cx.clearRect(0, 0, w, h);
-  const busy = 0.5 + 0.5 * Math.sin(t * 0.4);
-  sparkOrb(cx, S.spark, { x: 160, y: h / 2, R: 86, t, busy });
-  $("say").style.setProperty("--sh", `${(100 - ((t * 22) % 140)).toFixed(1)}%`);
+  const { cx, w, h } = S["orb-src"];
+  const dusk = document.documentElement.dataset.ldMode === "dusk";
+  cx.fillStyle = C.paper;
+  cx.fillRect(0, 0, w, h);
+  const wash = cx.createLinearGradient(0, 0, w, h);
+  wash.addColorStop(0, dusk ? "rgba(42,106,125,.3)" : "rgba(146,209,210,.3)");
+  wash.addColorStop(1, dusk ? "rgba(135,123,90,.12)" : "rgba(236,210,164,.3)");
+  cx.fillStyle = wash;
+  cx.fillRect(0, 0, w, h);
+  field(cx, { w, h, cell: 13, color: C.tide, alpha: .52, ramp: RAMP.water, fn: (x,y) => tide(x,y,t) });
+  const x = w < 600 ? w * .5 : w * .23;
+  const ox = S.orbLens.state.x || x, oy = S.orbLens.state.y || h * .47;
+  const presets = {
+    calm: { mag:.68, bend:.7, disp:.085, frost:.06, morph:0 },
+    think: { mag:.84, bend:.9, disp:.025, frost:.015, morph:.065 },
+    prism: { mag:.76, bend:.58, disp:.11, frost:.025, morph:.025 },
+  };
+  S.orbLens.setOptics({ ...presets[orbMode], phase: t*.18 });
+  if (orbMode === "calm") {
+    sparkOrb(cx, S.spark, { x, y:h*.47, R:80, t, busy:.25, tint:dusk ? [170,211,226] : [67,116,146], light:!dusk });
+  } else if (orbMode === "think") {
+    // An authored reflection environment: broad cream/steel bands, not a photographic HDRI.
+    const chrome=cx.createLinearGradient(ox-105,oy-100,ox+100,oy+105);
+    [[0,"#eaf6f3"],[.18,"#a6bcbc"],[.33,"#253d46"],[.43,"#dbe6df"],[.5,"#faf2d9"],[.59,"#4b656a"],[.78,"#b7d0cb"],[1,"#eff6ed"]].forEach(([stop,color])=>chrome.addColorStop(stop,color));
+    cx.save();cx.beginPath();cx.arc(ox,oy,98,0,Math.PI*2);cx.clip();cx.fillStyle=chrome;cx.fillRect(ox-100,oy-100,200,200);
+    field(cx,{x:ox-100,y:oy-100,w:200,h:200,cell:11,color:C.tide,alpha:.4,fn:(X,Y)=>tide(X,Y,t)});
+    cx.restore();
+  } else {
+    cx.save();cx.translate(ox,oy);cx.font='500 12px "JetBrains Mono"';cx.textAlign="center";cx.textBaseline="middle";
+    for(let ring=0;ring<7;ring++) for(let i=0;i<28;i++) {
+      const angle=i/28*Math.PI*2+t*.14+ring*.21;
+      const radius=30+ring*11+Math.sin(angle*3-t*.15)*4;
+      cx.fillStyle=ring%2 ? C.tide : C.ink2;
+      cx.globalAlpha=.35+ring*.08;
+      cx.fillText(["·","≈","+","~"][ (i+ring)%4 ],Math.cos(angle)*radius,Math.sin(angle)*radius*.8);
+    }
+    cx.restore();
+  }
+  cx.fillStyle = C.ink;
+  cx.font = `300 ${w < 600 ? 28 : 40}px Manrope`;
+  cx.textAlign = "center";
+  cx.fillText(orbMode === "think" ? "Light, held in motion." : orbMode === "prism" ? "A tide made of type." : "A quieter kind of clarity.", x, h * .48);
+  if (!q.has("nolens")) S.orbLens.paint();
+
 }
+function paintMorph(t) {
+  const { cx, w, h } = S.morph;
+  cx.fillStyle = C.paper;
+  cx.fillRect(0, 0, w, h);
+  field(cx, { w, h, color:C.tide, alpha:.75, cell:12, ramp:RAMP.water, lenses:S.morphLenses,
+    fringe:[C["metal-fringe-a"], C["metal-fringe-b"]], fn:(x,y)=>tide(x,y,t) });
+}
+
+const cinema = { mode: "auto", amount: .38, tick: -1, dirty: true };
+const reduceMotion = matchMedia("(prefers-reduced-motion: reduce)");
+const films = [...document.querySelectorAll(".cine-card video")];
+function syncPlayback() {
+  for (const v of films) {
+    if (capture || reduceMotion.matches || !v.closest(".cine-card").matches("[data-visible]")) v.pause();
+    else v.play().catch(() => {});
+  }
+}
+const filmObserver = new IntersectionObserver(entries => {
+  for (const e of entries) e.target.toggleAttribute("data-visible", e.isIntersecting);
+  syncPlayback();
+  cinema.dirty = true;
+  loop.invalidate();
+}, { rootMargin: "160px" });
+for (const card of document.querySelectorAll(".cine-card")) filmObserver.observe(card);
+reduceMotion.addEventListener("change", () => { syncPlayback(); loop.invalidate(); });
+function paintCinema(t) {
+  // Video stays native-rate; the decorative type veil samples at 15 Hz, only while visible.
+  const tick = Math.floor(t * 15);
+  if (!capture && tick === cinema.tick && !cinema.dirty) return;
+  cinema.tick = tick;
+  cinema.dirty = false;
+  const dissolve = cinema.mode === "manual" ? cinema.amount : cinema.mode === "seam" ? 1 : cinema.mode === "lens" ? 0 : .5 + .5 * Math.sin(t * .18 - .5);
+  for (const key of ["toile", "sky-cine", "blend"]) {
+    const f = S[`film-${key}`];
+    if (!capture && !f.stage.hasAttribute("data-visible")) continue;
+    const { cx, w, h } = S[key];
+    let d = dissolve;
+    if (key === "blend") {
+      const phase = .5 + .5 * Math.sin(t * .1 - Math.PI/2);
+      $("vid-blend-a").style.opacity = phase < .5 ? "1" : "0";
+      $("vid-blend-b").style.opacity = phase >= .5 ? "1" : "0";
+      if (cinema.mode === "auto") d = 1 - Math.abs(phase - .5) * 2;
+      $("blend-status").textContent = phase < .5 ? "Coast → type" : "Type → sky";
+    }
+    const frame = sampleFrame(f.stage, f.cols, f.rows, f.scratch, f.box);
+    if (!frame) continue;
+    filmType(cx, frame, { w, h, d, thresholds:f.thresholds, paper:C.paper, ink:f.ink,
+      back:S[key === "sky-cine" ? "sky-back" : `${key}-back`].cx,
+      lens:f.lens,
+      lensVeil:cinema.mode === "lens" ? .92 : .45 });
+  }
+  $("cine-val").textContent = `${Math.round(dissolve*100)}%`;
+  if (cinema.mode !== "manual") $("cine-range").value = String(Math.round(dissolve*100));
+}
+function setCinemaMode(mode) {
+  cinema.mode = mode;
+  cinema.dirty = true;
+  $("cine-mode").querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", String(b.dataset.cmode === mode)));
+  loop.invalidate();
+}
+$("cine-mode").addEventListener("click", e => { const b=e.target.closest("button"); if(b) setCinemaMode(b.dataset.cmode); });
+$("cine-range").addEventListener("input", e => { cinema.amount=Number(e.target.value)/100; setCinemaMode("manual"); });
+$("orb-modes").addEventListener("click", e => {
+  const b=e.target.closest("button"); if(!b) return;
+  orbMode=b.dataset.orb;
+  const description = { calm:["Clear dew", "A little light, a moving tide, and a lens that carries both."], think:["Liquid metal", "Softly deforming glass over bands of reflected paper, lagoon and steel."], prism:["ASCII tide", "A circulating field of glyphs, gathered into one clear, refractive surface."] }[orbMode];
+  $("agent-title").textContent=description[0];
+  $("agent-description").textContent=description[1];
+  $("orb-modes").querySelectorAll("button").forEach(x=>x.setAttribute("aria-pressed",String(x===b)));
+  loop.invalidate();
+});
+for (const el of document.querySelectorAll(".mcard")) el.addEventListener("pointermove", e => {
+  if (reduceMotion.matches) return;
+  const b=el.getBoundingClientRect();
+  el.style.setProperty("--mx", `${(e.clientX-b.left)/b.width*100}%`);
+  el.style.setProperty("--my", `${(e.clientY-b.top)/b.height*100}%`);
+});
 
 // Prints are pure functions of a QUANTISED time (cards: whole seconds; footer: 4 s), so a frame depends only on t,
 // never on which frames were painted before it. Live, a print is redone only when its quantum changes and it is on
 // screen; a capture (renderAt) always prints.
 const onScreen = new Set();
-const io = new IntersectionObserver((es) => es.forEach((e) => (e.isIntersecting ? onScreen.add(e.target.id) : onScreen.delete(e.target.id))));
-for (const id of ["cv-dither", "cv-engrave", "cv-sky", "cv-foot"]) io.observe(document.getElementById(id));
+const io = new IntersectionObserver(es => { es.forEach(e => e.isIntersecting ? onScreen.add(e.target.id) : onScreen.delete(e.target.id)); loop.invalidate(); }, { rootMargin:"120px" });
+for (const id of ["cv-hero", "cv-paper", "cv-orb-src", "cv-morph", "cv-mini", "cv-dither", "cv-engrave", "cv-sky", "cv-foot"]) io.observe(document.getElementById(id));
 const visible = (id) => capture || onScreen.has(id);
 function paintPrints(t) {
   const tq = Math.floor(t);
@@ -363,18 +707,26 @@ const loop = createLoop({
   // a reset (t = 0, and before every backwards seek) puts every spring back at its start
   init() {
     if (S.paper) S.lens.snap(S.paper.w / 2, S.paper.h * 0.53);
+    if (S["orb-src"]) S.orbLens.snap(S["orb-src"].w < 600 ? S["orb-src"].w*.5 : S["orb-src"].w*.23, S["orb-src"].h*.47);
     seg.x.snap(seg.mode * (($("seg").clientWidth || 300) / 2 - 4));
   },
   step(dt, t) {
     stepLens(dt, t);
+    const O=S["orb-src"];
+    if (!orbHeld() && !orbManual) S.orbLens.follow((O.w < 600 ? O.w*.5 : O.w*.23) + Math.sin(t*.18)*24, O.h*.47 + Math.sin(t*.14)*20);
+    S.orbLens.step(dt);
     seg.x.step(dt, 0.4, 1);
   },
   paint(t) {
-    paintHero(t);
-    paintPaper(t);
-    if (!q.has("nolens")) S.lens.paint();
-    paintOrb(t);
-    paintMini(t);
+    if (visible("cv-hero")) paintHero(t);
+    if (visible("cv-paper")) {
+      paintPaper(t);
+      if (!q.has("nolens")) S.lens.paint();
+    }
+    if (visible("cv-orb-src")) paintOrb(t);
+    if (visible("cv-morph")) paintMorph(t);
+    paintCinema(t);
+    if (visible("cv-mini")) paintMini(t);
     paintPrints(t);
     paintFoot(t);
     $("seg").style.setProperty("--x", `${seg.x.v}px`);
@@ -387,17 +739,54 @@ build();
 const sw = S.paper;
 S.lens.snap(sw.w / 2, sw.h * 0.53);
 held = dragLens($("screen"), S.lens, () => loop.invalidate());
+orbHeld = dragLens($("cv-orb"), S.orbLens, () => { orbManual = true; loop.invalidate(); });
+$("agent-stage").addEventListener("keydown", e => {
+  if (e.key === "Escape" && e.target === $("agent-stage")) { orbManual = false; loop.invalidate(); return; }
+  const delta = { ArrowLeft:[-16,0], ArrowRight:[16,0], ArrowUp:[0,-16], ArrowDown:[0,16] }[e.key];
+  if (!delta || e.target !== $("agent-stage")) return;
+  e.preventDefault();
+  orbManual = true;
+  const { x, y, r } = S.orbLens.state;
+  const clamp = (v, size) => Math.max(Math.min(r, size/2), Math.min(size-Math.min(r, size/2), v));
+  S.orbLens.snap(clamp(x+delta[0], S["orb-src"].w), clamp(y+delta[1], S["orb-src"].h));
+  loop.invalidate();
+});
 addEventListener("resize", () => {
   build();
   if (capture) loop.renderAt(Number(q.get("t")));
   else loop.invalidate();
 });
-window.renderAt = (t) => loop.renderAt(t);
+async function seekFilms(t) {
+  await Promise.all(films.map(v => new Promise((resolve, reject) => {
+    if (v.error || v.readyState < 1 || !Number.isFinite(v.duration)) return reject(new Error(`Film metadata unavailable: ${v.getAttribute("src")}`));
+    const target = Math.min(t % v.duration, v.duration - .05);
+    if (Math.abs(v.currentTime-target)<.01 && v.readyState>=2) return resolve();
+    const timer = setTimeout(() => done(new Error(`Film seek timed out: ${v.getAttribute("src")}`)), 3000);
+    function done(error) {
+      clearTimeout(timer);
+      v.removeEventListener("seeked", settled);
+      if (error) reject(error); else resolve();
+    }
+    function settled() {
+      done(Math.abs(v.currentTime-target) > .05 || v.readyState < 2 ? new Error(`Film seek failed: wanted ${target}, got ${v.currentTime}`) : null);
+    }
+    v.addEventListener("seeked", settled, {once:true});
+    v.currentTime=target;
+  })));
+}
+window.renderAt = async t => { t = checkTime(t); if(capture) await seekFilms(t); loop.renderAt(t); };
+window.__orbLens = S.orbLens;
 window.__lens = S.lens;
 if (capture) {
-  loop.renderAt(Number(q.get("t")));
+  await Promise.all(films.map(v => new Promise(resolve => {
+    if(v.readyState>=2 || v.error) return resolve();
+    v.addEventListener("loadeddata",resolve,{once:true});
+    v.addEventListener("error",resolve,{once:true});
+    setTimeout(resolve,3000);
+  })));
+  await window.renderAt(Number(q.get("t")));
   window.__ready = true;
-} else loop.start();
+} else { loop.start(); window.__ready = true; }
 </script>
 </body>
 </html>

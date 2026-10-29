@@ -650,3 +650,139 @@ test("specimen renders in both modes, deterministically, and moves over time", {
   }
   await assert.rejects(render({ ...opts, shots: "nope", t: ["0"], mode: ["dawn"], out: join(out, "d") }), /no \[data-shot\] element named: nope/);
 });
+
+test("lens optical controls reject non-finite or unstable surfaces", async () => {
+  const { lensOptics } = await import(join(KIT, "lens.js"));
+  for (const patch of [{ morph: NaN }, { phase: Infinity }, { morph: .5 }, { mag: 0 }, { disp: -1 }]) assert.throws(() => lensOptics(patch), RangeError);
+  assert.equal(lensOptics().morph, 0); // existing spherical lenses keep their original surface
+});
+
+test("bundled cinema media match their provenance hashes", () => {
+  const dir = join(SKILL, "assets/media/cinema");
+  const manifest = JSON.parse(readFileSync(join(dir, "provenance.json"), "utf8"));
+  assert.equal(Object.keys(manifest.sha256).length, 6);
+  for (const [file, sha] of Object.entries(manifest.sha256)) assert.equal(createHash("sha256").update(readFileSync(join(dir, file))).digest("hex"), sha, file);
+});
+
+test("paper: orb optics, film controls, bundled decoding and reduced-motion posters", { skip: !pw && !required && "Playwright not installed" }, async () => {
+  assert.ok(pw);
+  const { startServer } = await import("../scripts/serve.mjs");
+  const { server, url } = await startServer(join(SKILL, "assets"));
+  let browser;
+  try {
+    browser = await pw.chromium.launch();
+    for (const mode of ["dawn", "dusk"]) {
+      const p = await browser.newPage({ viewport: { width: 1024, height: 900 } });
+      const errors = [];
+      p.on("pageerror", e => errors.push(e.message));
+      p.on("response", r => { if (r.status() >= 400) errors.push(`${r.status()} ${r.url()}`); });
+      await p.goto(`${url}/specimen/paper.html?t=6&mode=${mode}`);
+      await p.waitForFunction(() => window.__ready === true);
+      assert.equal(await p.evaluate(() => window.__orbLens.supported), true);
+      assert.ok(await p.locator(".cine-card video").evaluateAll(vs => vs.every(v => v.readyState >= 2 && !v.error)));
+      await p.evaluate(() => window.renderAt(2));
+      assert.ok(await p.locator(".cine-card video").evaluateAll(vs => vs.every(v => Math.abs(v.currentTime-2)<.05 && v.seekable.length>0)), "all films must actually seek");
+      const decoded = () => p.locator(".cine-card video").first().evaluate(v => {
+        const c=document.createElement("canvas"); c.width=64; c.height=36;
+        c.getContext("2d").drawImage(v,0,0,64,36); return c.toDataURL();
+      });
+      const frame2 = await decoded();
+      await p.evaluate(() => window.renderAt(3));
+      assert.notEqual(frame2, await decoded(), "decoded film pixels must change, not only the dissolve");
+      await p.evaluate(() => window.renderAt(6));
+      const cdp=await p.context().newCDPSession(p);
+      for (const feature of [{name:"prefers-contrast",value:"more"},{name:"prefers-reduced-transparency",value:"reduce"}]) {
+        await cdp.send("Emulation.setEmulatedMedia", {features:[feature]});
+        for (const selector of [".cta.light", ".cta.dark"]) {
+        const ratio=await p.locator(selector).evaluate(e => {
+          const cs=getComputedStyle(e), x=document.createElement("canvas").getContext("2d");
+          function luminance(color) { x.fillStyle=color; x.fillRect(0,0,1,1); return [...x.getImageData(0,0,1,1).data].slice(0,3).map(v=>v/255).map(v=>v<=.04045?v/12.92:((v+.055)/1.055)**2.4).reduce((v,c,i)=>v+c*[.2126,.7152,.0722][i],0); }
+          const a=luminance(cs.color), b=luminance(cs.backgroundColor); return (Math.max(a,b)+.05)/(Math.min(a,b)+.05);
+        });
+        assert.ok(ratio>=4.5, `${mode} ${selector} ${feature.name}: CTA contrast ${ratio}`);
+        }
+      }
+      await cdp.send("Emulation.setEmulatedMedia", {features:[]}); await cdp.detach();
+      const pictures = [];
+      for (const variant of ["calm", "think", "prism"]) {
+        await p.locator(`[data-orb="${variant}"]`).click();
+        await p.evaluate(() => window.renderAt(6));
+        pictures.push(await p.locator("#cv-orb-src").evaluate(c => c.toDataURL()));
+      }
+      assert.equal(new Set(pictures).size, 3, "each orb variant must change actual pixels");
+      await p.locator('[data-cmode="lens"]').click(); await p.evaluate(() => window.renderAt(6));
+      const clear = await p.locator("#cv-toile").evaluate(c => c.toDataURL());
+      await p.locator('[data-cmode="seam"]').click(); await p.evaluate(() => window.renderAt(6));
+      assert.notEqual(clear, await p.locator("#cv-toile").evaluate(c => c.toDataURL()));
+      await p.locator("#cine-range").fill("42"); await p.locator("#cine-range").dispatchEvent("input");
+      await p.evaluate(() => window.renderAt(6));
+      assert.equal(await p.locator("#cine-val").textContent(), "42%");
+      assert.ok(await p.locator(".ctas .cta").evaluateAll(es => es.every(e => getComputedStyle(e, "::after").backgroundImage.includes("conic-gradient"))));
+      assert.deepEqual(errors, []);
+      await p.close();
+    }
+    const p = await browser.newPage({ viewport: { width: 390, height: 844 }, reducedMotion: "reduce" });
+    await p.goto(`${url}/specimen/paper.html`); await p.waitForFunction(() => window.__ready === true);
+    await p.locator('[data-shot="cinema"]').scrollIntoViewIfNeeded();
+    assert.ok(await p.locator(".cine-card video").evaluateAll(vs => vs.every(v => v.paused && getComputedStyle(v).display === "none")));
+    assert.ok(await p.locator(".cine-card .poster").evaluateAll(es => es.every(e => e.complete && e.naturalWidth > 0)));
+    assert.ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await p.locator("#agent-stage").focus();
+    const at = () => p.evaluate(() => ({ ...window.__orbLens.state }));
+    const initial = await at();
+    await p.keyboard.press("ArrowRight"); const once = await at();
+    await p.keyboard.press("ArrowRight"); const twice = await at();
+    assert.ok(once.x > initial.x && twice.x > once.x, "repeated Right must accumulate on mobile");
+    await p.keyboard.press("ArrowDown"); const down = await at();
+    assert.equal(down.x, twice.x, "Down must preserve horizontal placement");
+    assert.ok(down.y > twice.y);
+    await p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    assert.equal((await at()).x, down.x, "ambient drift must not override keyboard placement");
+    await p.close();
+    const live=await browser.newPage({viewport:{width:1024,height:900}});
+    await live.goto(`${url}/specimen/paper.html`); await live.waitForFunction(()=>window.__ready);
+    await live.locator("#stage-blend").scrollIntoViewIfNeeded();
+    await live.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+    const rate=await live.evaluate(()=>new Promise(resolve=>{
+      const proto=CanvasRenderingContext2D.prototype, original=proto.getImageData;
+      let reads=0; proto.getImageData=function(...args){ reads++; return original.apply(this,args); };
+      const start=performance.now();
+      function frame(){ if(performance.now()-start<800) requestAnimationFrame(frame); else { proto.getImageData=original; resolve(reads*1000/(performance.now()-start)); } }
+      requestAnimationFrame(frame);
+    }));
+    assert.ok(rate>0 && rate<=60, `decorative film sampling must be active but bounded: ${rate}/s`);
+    await live.locator("footer").scrollIntoViewIfNeeded();
+    await live.evaluate(()=>new Promise(r=>requestAnimationFrame(()=>requestAnimationFrame(r))));
+    const offscreen=await live.evaluate(()=>new Promise(resolve=>{
+      const proto=CanvasRenderingContext2D.prototype, original=proto.fillRect;
+      let paints=0; proto.fillRect=function(...args){ if(["cv-orb-src","cv-morph"].includes(this.canvas.id)) paints++; return original.apply(this,args); };
+      let frames=0; function tick(){ if(++frames<12) requestAnimationFrame(tick); else { proto.fillRect=original; resolve(paints); } } requestAnimationFrame(tick);
+    }));
+    assert.equal(offscreen,0,"orb and morph canvas painting must stop offscreen");
+    await live.close();
+  } finally {
+    await browser?.close();
+    await new Promise(resolve => server.close(resolve));
+  }
+});
+
+test("preview server supports byte ranges, suffixes, HEAD and unsatisfiable requests", async () => {
+  const { startServer } = await import("../scripts/serve.mjs");
+  const root = mkdtempSync(join(tmpdir(), "ld-range-"));
+  writeFileSync(join(root, "sample.mp4"), "0123456789");
+  const { server, url } = await startServer(root);
+  try {
+    for (const [range, body, contentRange] of [["bytes=2-5", "2345", "bytes 2-5/10"], ["bytes=7-", "789", "bytes 7-9/10"], ["bytes=-3", "789", "bytes 7-9/10"]]) {
+      const r = await fetch(`${url}/sample.mp4`, { headers: { Range: range } });
+      assert.equal(r.status, 206); assert.equal(r.headers.get("accept-ranges"), "bytes");
+      assert.equal(r.headers.get("content-range"), contentRange); assert.equal(await r.text(), body);
+      assert.equal(r.headers.get("content-type"), "video/mp4");
+    }
+    const head = await fetch(`${url}/sample.mp4`, { method: "HEAD" });
+    assert.equal(head.status, 200); assert.equal(head.headers.get("content-length"), "10"); assert.equal(await head.text(), "");
+    for (const range of ["bytes=99-", "bytes=5-2", "bytes=-0", "bytes=1-2,4-5"]) {
+      const r = await fetch(`${url}/sample.mp4`, { headers: { Range: range } });
+      assert.equal(r.status, 416); assert.equal(r.headers.get("content-range"), "bytes */10"); await r.arrayBuffer();
+    }
+  } finally { await new Promise(resolve => server.close(resolve)); }
+});
