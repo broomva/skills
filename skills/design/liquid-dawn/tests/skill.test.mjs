@@ -704,6 +704,17 @@ test("paper: orb optics, film controls, bundled decoding and reduced-motion post
     assert.ok(await p.locator(".cine-card video").evaluateAll(vs => vs.every(v => v.paused && getComputedStyle(v).display === "none")));
     assert.ok(await p.locator(".cine-card .poster").evaluateAll(es => es.every(e => e.complete && e.naturalWidth > 0)));
     assert.ok(await p.evaluate(() => document.documentElement.scrollWidth <= innerWidth));
+    await p.locator("#agent-stage").focus();
+    const at = () => p.evaluate(() => ({ ...window.__orbLens.state }));
+    const initial = await at();
+    await p.keyboard.press("ArrowRight"); const once = await at();
+    await p.keyboard.press("ArrowRight"); const twice = await at();
+    assert.ok(once.x > initial.x && twice.x > once.x, "repeated Right must accumulate on mobile");
+    await p.keyboard.press("ArrowDown"); const down = await at();
+    assert.equal(down.x, twice.x, "Down must preserve horizontal placement");
+    assert.ok(down.y > twice.y);
+    await p.evaluate(() => new Promise(r => requestAnimationFrame(() => requestAnimationFrame(r))));
+    assert.equal((await at()).x, down.x, "ambient drift must not override keyboard placement");
     await p.close();
   } finally {
     await browser?.close();

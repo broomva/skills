@@ -246,7 +246,7 @@
 <section class="band" data-shot="agent" style="padding-top:0">
   <div class="wrap">
     <div class="head"><span class="kick">Agent · Liquid Glass Orb</span><h2>Presence you can see through.</h2><p>Clear dew, liquid metal, or a circulating tide of type. Three optical studies over the same living field. Drag the lens to bend the words and light beneath it.</p></div>
-    <div class="agent" id="agent-stage" tabindex="0" role="group" aria-label="Interactive liquid glass orb refracting an agent spark burst and a quiet headline. Use the arrow keys to move the lens.">
+    <div class="agent" id="agent-stage" tabindex="0" role="group" aria-label="Interactive liquid glass orb refracting an agent spark burst and a quiet headline. Use arrow keys to move the lens; Escape resumes its drift.">
       <canvas id="cv-orb-src" aria-hidden="true"></canvas>
       <canvas id="cv-orb" aria-hidden="true"></canvas>
       <div class="agent-chips ld-capsule" id="orb-modes">
@@ -511,6 +511,7 @@ function stepLens(dt, t) {
 
 let orbMode = "calm";
 let orbHeld = () => false;
+let orbManual = false;
 function paintOrb(t) {
   const { cx, w, h } = S["orb-src"];
   const dusk = document.documentElement.dataset.ldMode === "dusk";
@@ -700,7 +701,7 @@ const loop = createLoop({
   step(dt, t) {
     stepLens(dt, t);
     const O=S["orb-src"];
-    if (!orbHeld()) S.orbLens.follow((O.w < 600 ? O.w*.5 : O.w*.23) + Math.sin(t*.18)*24, O.h*.47 + Math.sin(t*.14)*20);
+    if (!orbHeld() && !orbManual) S.orbLens.follow((O.w < 600 ? O.w*.5 : O.w*.23) + Math.sin(t*.18)*24, O.h*.47 + Math.sin(t*.14)*20);
     S.orbLens.step(dt);
     seg.x.step(dt, 0.4, 1);
   },
@@ -724,12 +725,16 @@ build();
 const sw = S.paper;
 S.lens.snap(sw.w / 2, sw.h * 0.53);
 held = dragLens($("screen"), S.lens, () => loop.invalidate());
-orbHeld = dragLens($("cv-orb"), S.orbLens, () => loop.invalidate());
+orbHeld = dragLens($("cv-orb"), S.orbLens, () => { orbManual = true; loop.invalidate(); });
 $("agent-stage").addEventListener("keydown", e => {
+  if (e.key === "Escape" && e.target === $("agent-stage")) { orbManual = false; loop.invalidate(); return; }
   const delta = { ArrowLeft:[-16,0], ArrowRight:[16,0], ArrowUp:[0,-16], ArrowDown:[0,16] }[e.key];
   if (!delta || e.target !== $("agent-stage")) return;
   e.preventDefault();
-  S.orbLens.snap(S["orb-src"].w*.23+delta[0], S["orb-src"].h*.47+delta[1]);
+  orbManual = true;
+  const { x, y, r } = S.orbLens.state;
+  const clamp = (v, size) => Math.max(Math.min(r, size/2), Math.min(size-Math.min(r, size/2), v));
+  S.orbLens.snap(clamp(x+delta[0], S["orb-src"].w), clamp(y+delta[1], S["orb-src"].h));
   loop.invalidate();
 });
 addEventListener("resize", () => {
