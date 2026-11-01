@@ -317,11 +317,22 @@ def observed(key: str, rep: Dict[str, Any]) -> bool:
     if kind in ("fleet-shaped-unledgered", "spawn-duplicate"):
         return ok("listing")
     if kind in ("t3-wait", "t3-failing"):
-        # A thread id holds colons (`mcp:...`); a wait's key ends in its request tag. A thread T3 still
-        # lists but that couldn't be placed (its repo unreadable this tick) is unknown, not resolved.
-        tid = rest.rsplit(":", 1)[0] if kind == "t3-wait" else rest
+        # A thread id holds colons (`mcp:...`); a wait's key ends in its request tag. Only a thread T3
+        # still lists whose scope couldn't be placed this tick (its repo unreadable) AND whose condition
+        # this reading still shows true is unknown. Where the reading shows the condition over (the
+        # request answered, the schedule off, the streak broken), that is a reading: the ask resolves,
+        # so an acked occurrence can't swallow the next one.
+        if not ok("t3"):
+            return False
+        tid, tag = rest.rsplit(":", 1) if kind == "t3-wait" else (rest, None)
         row = next((r for r in rep.get("t3_threads") or [] if r["thread_id"] == tid), None)
-        return ok("t3") and not (row is not None and row.get("scope") is None)
+        if row is None or row.get("scope") is not None:
+            return True
+        if row.get("schedule") is None:
+            return True
+        if kind == "t3-wait":
+            return not (row.get("waiting") and _tag(row["waiting"]["request_id"]) == tag)
+        return row.get("failing_streak", 0) < t3.FAILS_TO_ASK
     if kind == "rules":
         slug = rest.split(":", 1)[0]
         mine = [r for r in rep["repos"] if (r.get("slug") or common.tilde(r["repo"])) == slug]

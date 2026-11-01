@@ -311,17 +311,38 @@ def test_the_scenario_capture_alone_raises_no_t3_ask(world):
     assert not any(k.startswith("t3-") for k in _keys(_rep(world, healthy=True)))
 
 
-def test_a_thread_that_could_not_be_placed_resolves_none_of_its_asks(world):
-    rep = _rep(world)
-    key = next(k for k in _keys(rep) if k.startswith("t3-wait:%s:" % BROOMVA_ORCH))
-    failing = "t3-failing:%s" % SRI_ORCH
+def _unplaced(rep):
     for r in rep["t3_threads"]:
         if r["thread_id"] in (BROOMVA_ORCH, SRI_ORCH):
             r["scope"] = None  # its worktree and project root unreadable this tick: placement unknown
+    return {r["thread_id"]: r for r in rep["t3_threads"]}
+
+
+def test_an_unplaced_thread_whose_condition_still_holds_keeps_its_asks_open(world):
+    rep = _rep(world)
+    key = next(k for k in _keys(rep) if k.startswith("t3-wait:%s:" % BROOMVA_ORCH))
+    failing = "t3-failing:%s" % SRI_ORCH
+    _unplaced(rep)
     assert not report.observed(key, rep) and not report.observed(failing, rep)
     assert key not in report.resolved_keys([], [], rep)
     rep["t3_threads"] = [r for r in rep["t3_threads"] if r["thread_id"] != BROOMVA_ORCH]
     assert report.observed(key, rep)  # no longer listed at all: a reading, so the wait resolves
+
+
+def test_an_unplaced_thread_whose_condition_ended_resolves_its_asks(world):
+    # Unknown placement keeps an ask open only while the reading still shows it true; once the reading shows
+    # it over, it resolves, so an acked occurrence can't suppress the next one (round-4 finding).
+    rep = _rep(world)
+    key = next(k for k in _keys(rep) if k.startswith("t3-wait:%s:" % BROOMVA_ORCH))
+    failing = "t3-failing:%s" % SRI_ORCH
+    by = _unplaced(rep)
+    by[BROOMVA_ORCH]["waiting"] = None  # the request was answered
+    by[SRI_ORCH]["failing_streak"] = 0  # a run completed
+    assert report.observed(key, rep) and report.observed(failing, rep)
+    by[BROOMVA_ORCH]["waiting"] = {"request_id": "a-later-request", "age_s": 60}  # a new wait is a new key
+    assert report.observed(key, rep)
+    by[SRI_ORCH]["failing_streak"], by[SRI_ORCH]["schedule"] = 2, None  # its schedule was turned off
+    assert report.observed(failing, rep)
 
 
 def test_a_wait_that_ended_resolves_from_a_reading(world):

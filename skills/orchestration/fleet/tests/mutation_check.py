@@ -699,13 +699,25 @@ PROTECTIONS = [
      [T + "test_t3.py", "-k", "retry_is_already"]),
     # BRO-3376 P20 round 3 (Codex).
     ("an unplaced T3 thread resolves its asks", REP,
-     '        return ok("t3") and not (row is not None and row.get("scope") is None)', '        return ok("t3")',
-     [T + "test_t3.py", "-k", "could_not_be_placed"]),
+     '        if row is None or row.get("scope") is not None:\n            return True',
+     '        if True:\n            return True',
+     [T + "test_t3.py", "-k", "still_holds"]),
+    # Round 4 (Codex): unknown placement may not keep an ask the reading shows is over.
+    ("an unplaced T3 thread's answered wait stays open", REP,
+     '            return not (row.get("waiting") and _tag(row["waiting"]["request_id"]) == tag)',
+     "            return False",
+     [T + "test_t3.py", "-k", "condition_ended"]),
+    ("an unplaced T3 thread's broken streak stays open", REP,
+     "        return row.get(\"failing_streak\", 0) < t3.FAILS_TO_ASK", "        return False",
+     [T + "test_t3.py", "-k", "condition_ended"]),
+    ("an unplaced T3 thread's dropped schedule stays open", REP,
+     '        if row.get("schedule") is None:\n            return True', '        if False:\n            return True',
+     [T + "test_t3.py", "-k", "condition_ended"]),
     ("another scope's T3 thread is asked about", REP,
      'if r.get("scope") == rep["scope"]]', 'if True]',
      [T + "test_t3.py", "-k", "never_asked"]),
     ("an unread T3 surface resolves its keys", REP,
-     'return ok("t3") and not (row is not None', 'return True and not (row is not None',
+     '        if not ok("t3"):\n            return False', '        if False:\n            return False',
      [T + "test_t3.py", "-k", "unread_t3"]),
 ]
 
