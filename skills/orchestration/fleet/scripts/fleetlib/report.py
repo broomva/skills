@@ -219,8 +219,17 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
                       "%s, latest: %s. tick.log has the detail." % (
                           cmp_["failed_in_a_row"], rep["scope"], common.safe_text(cmp_["error"], 160))))
     # T3 threads (BRO-3376): only this scope's; another scope's are listed, never asked about.
-    for f in t3.findings([r for r in rep.get("t3_threads") or [] if r.get("scope") == rep["scope"]],
-                         rep.get("t3_wait_ask_min", 30)):
+    cands.extend(t3_candidates(rep, [r for r in rep.get("t3_threads") or [] if r.get("scope") == rep["scope"]]))
+    # Scheduled work is an inventory, report-only in phase 1: its readings
+    # (staleness, exit codes) are in the report's table, not the owner's dialog.
+    return cands
+
+
+def t3_candidates(rep: Dict[str, Any], rows: List[Dict[str, Any]]) -> List[Tuple[str, str, str]]:
+    """(key, class, question) for each T3 condition true in these rows. One predicate, used twice: the
+    scope's asks (its own rows), and whether an open T3 key may resolve (every listed row, any scope)."""
+    cands: List[Tuple[str, str, str]] = []
+    for f in t3.findings(rows, rep.get("t3_wait_ask_min", 30)):
         r = f["row"]
         label = "%s (%s, %s)" % (r["title"] or "-", short_thread(r["thread_id"]), r["provider"] or "?")
         every = r["schedule"]["every_s"]
@@ -239,8 +248,6 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
                               "A retry is running or queued now; it is still an ask until a run completes."
                               if r["active"] or r["queued"] else
                               "No retry is running or queued; the next scheduled fire is the next attempt.")))
-    # Scheduled work is an inventory, report-only in phase 1: its readings
-    # (staleness, exit codes) are in the report's table, not the owner's dialog.
     return cands
 
 
@@ -317,22 +324,11 @@ def observed(key: str, rep: Dict[str, Any]) -> bool:
     if kind in ("fleet-shaped-unledgered", "spawn-duplicate"):
         return ok("listing")
     if kind in ("t3-wait", "t3-failing"):
-        # A thread id holds colons (`mcp:...`); a wait's key ends in its request tag. Only a thread T3
-        # still lists whose scope couldn't be placed this tick (its repo unreadable) AND whose condition
-        # this reading still shows true is unknown. Where the reading shows the condition over (the
-        # request answered, the schedule off, the streak broken), that is a reading: the ask resolves,
-        # so an acked occurrence can't swallow the next one.
-        if not ok("t3"):
-            return False
-        tid, tag = rest.rsplit(":", 1) if kind == "t3-wait" else (rest, None)
-        row = next((r for r in rep.get("t3_threads") or [] if r["thread_id"] == tid), None)
-        if row is None or row.get("scope") is not None:
-            return True
-        if row.get("schedule") is None:
-            return True
-        if kind == "t3-wait":
-            return not (row.get("waiting") and _tag(row["waiting"]["request_id"]) == tag)
-        return row.get("failing_streak", 0) < t3.FAILS_TO_ASK
+        # Resolved only by a T3 reading in which the very predicate that raises it, run over every listed
+        # thread in any scope (an unplaced one included), no longer yields the key. A condition still true
+        # where placement is unknown stays open; one the reading shows over resolves, so an acked
+        # occurrence can't swallow the next. One rule, not a second copy of it.
+        return ok("t3") and key not in {k for k, _, _ in t3_candidates(rep, rep.get("t3_threads") or [])}
     if kind == "rules":
         slug = rest.split(":", 1)[0]
         mine = [r for r in rep["repos"] if (r.get("slug") or common.tilde(r["repo"])) == slug]

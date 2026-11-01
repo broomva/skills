@@ -345,6 +345,19 @@ def test_an_unplaced_thread_whose_condition_ended_resolves_its_asks(world):
     assert report.observed(failing, rep)
 
 
+def test_an_unplaced_wait_under_a_raised_threshold_resolves_so_its_ack_cannot_hide_the_next(world):
+    # Round 5: acked at 30 min; the threshold raised to 90 while the thread is unplaced. The wait is now
+    # under threshold, so the key resolves; when the same request passes 90 it is a new occurrence.
+    rep = _rep(world)
+    key = next(k for k in _keys(rep) if k.startswith("t3-wait:%s:" % BROOMVA_ORCH))
+    _unplaced(rep)
+    assert not report.observed(key, rep)
+    rep["t3_wait_ask_min"] = 90  # the 75 min wait is now under it
+    assert report.observed(key, rep)
+    rep["t3_wait_ask_min"] = 60  # over it again: still unknown, kept open
+    assert not report.observed(key, rep)
+
+
 def test_a_wait_that_ended_resolves_from_a_reading(world):
     rep = _rep(world, healthy=True)
     assert not any(k.startswith("t3-wait:") for k in _keys(rep))
