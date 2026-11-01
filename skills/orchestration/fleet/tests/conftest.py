@@ -263,5 +263,8 @@ def env_for(repos=None, now: float = NOW, scope: str = "broomva"):
 
 @pytest.fixture(autouse=True)
 def _ask_ledger_locks(tmp_path, monkeypatch):
-    """Every test's ask-ledger lock (spec §5.5) goes to scratch, never the real control-asks/locks."""
+    """Every test's ask-ledger lock (spec §5.5) goes to scratch, never the real control-asks/locks; and
+    no test reads the machine's T3 state (a T3 session exports T3CODE_HOME)."""
     monkeypatch.setenv("MAESTRO_PASEO_ASK_LOCKS", str(tmp_path / "ask-ledger-locks"))
+    for var in ("T3CODE_HOME", "FLEET_T3_STATE"):
+        monkeypatch.delenv(var, raising=False)

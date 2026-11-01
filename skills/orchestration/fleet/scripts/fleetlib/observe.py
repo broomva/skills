@@ -18,7 +18,7 @@ from typing import Any, Dict, List, Optional, Tuple
 
 import ctx
 
-from . import common, config, ledger, parsers, scheduled
+from . import common, config, ledger, parsers, scheduled, t3
 from .sources import SourceError, Sources
 
 
@@ -299,6 +299,26 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
 
     # Scheduled work (report-only seam) -----------------------------------------
     snap["scheduled"] = scheduled.inventory(sec, src, by_repo, now)
+
+    # T3 threads: scheduled ones, ones waiting on a user-input request, ones with
+    # a run active or queued (BRO-3376). Placed by their worktree or project root.
+    snap["t3_threads"] = []
+    snap["t3_wait_ask_min"] = int(sec.get("t3_wait_ask_min", 30))
+    try:
+        state = t3.parse_state(src.t3_state(now))
+        for row in t3.threads(state, now):
+            # The thread's worktree first; a removed worktree places through its project root.
+            row["scope"] = None
+            for p in (row["path"], row.pop("project_root")):
+                if p and row["scope"] is None:
+                    row["scope"] = place(p, None, None, by_repo)[0]
+            row["path"] = common.safe_path(row["path"])
+            snap["t3_threads"].append(row)
+        surf["t3"] = _surface(True, installed=state.get("installed", True), threads=len(state["threads"]),
+                              listed=len(snap["t3_threads"]),
+                              open_requests=len(state["requests"]))
+    except (SourceError, t3.T3Unread) as exc:
+        surf["t3"] = _surface(False, error=_err(exc))
     snap["drift"] = sorted(set(snap["drift"]))
     return snap
 

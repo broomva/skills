@@ -225,6 +225,16 @@ class Sources:
         for p in sorted(root.glob("*.json")):
             yield p.name, p.read_text(encoding="utf-8", errors="replace")
 
+    # T3 Code (read-only, from its state database) -------------------------
+    def t3_state(self, now: float) -> str:
+        """fleetlib/t3.py's rows as JSON text (BRO-3376); SourceError when unread."""
+        from . import t3
+
+        try:
+            return t3.read_state(t3.default_path(), now)
+        except t3.T3Unread as exc:
+            raise SourceError(str(exc))
+
     # git and GitHub ------------------------------------------------------
     def origin_url(self, common_dir: str) -> str:
         return _run(["git", "--git-dir", common_dir, "remote", "get-url", "origin"], 10).strip()
@@ -365,6 +375,9 @@ class FixtureSources(Sources):
 
     def paseo_dir(self) -> Path:
         return self.root / "paseo"
+
+    def t3_state(self, now: float) -> str:
+        return self._read("t3/state.json")
 
     def origin_url(self, common_dir: str) -> str:
         remotes = json.loads(self._read("git/remotes.json"))

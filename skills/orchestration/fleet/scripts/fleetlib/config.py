@@ -58,6 +58,7 @@ SCOPE_KEYS: Dict[str, Tuple[str, Any]] = {
     "maestro_bun": ("str_or_null", None),
     "ask_repo": ("str_or_null", None),
     "ask_raise_after_min": ("int", 50),          # an ask reaches the ask ledger once it is this old (0: at once)
+    "t3_wait_ask_min": ("int", 30),              # a scheduled T3 thread waiting on a user-input request this long is an ask
 }
 CAP_KEYS = ("fleet_sessions", "active_sessions", "active_window_min", "research_spawns_per_day")
 CAP_DEFAULTS = {"fleet_sessions": 8, "active_sessions": 12, "active_window_min": 30, "research_spawns_per_day": 4}

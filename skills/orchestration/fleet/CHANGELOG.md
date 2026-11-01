@@ -1,5 +1,30 @@
 # Changelog: fleet (fleet-reconcile until 0.6.0)
 
+## [0.7.0] - 2026-11-01
+
+- observe reads T3 Code (BRO-3376, the T3 half; Codex rollouts and account
+  status stay on the ticket). `fleetlib/t3.py` opens T3's `statev2.sqlite`
+  read-only with its columns pinned and reads only the live threads that are
+  scheduled, waiting on a user-input request, or have a run active or queued,
+  placed by their worktree, else their project root. The report gains a T3
+  threads table, and two asks for this scope's threads: `t3-wait` (class 7)
+  for a scheduled thread whose run has waited `t3_wait_ask_min` (new, default
+  30) minutes on a user-input request, written on the tick that finds it
+  (`ask_raise_after_min` would stack on the wait), and `t3-failing` for a
+  scheduled thread whose last 2 finished runs failed (interrupted, cancelled
+  and rolled-back runs skipped). The surface fails closed over 200 threads or
+  200 open user-input requests, on an unreadable request time, and when the
+  database is missing while T3's home (`T3CODE_HOME`, else `~/.t3`) is there
+  or `FLEET_T3_STATE` names it. All queries read one snapshot.
+- tick: `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR` are unset with the
+  tokens: an inherited one placed every path in one repo. T3 records
+  Claude's AskUserQuestion and Codex's requestUserInput both as `user_input`,
+  so the check covers every provider. Measured over T3's requests table
+  (2026-10-18 to 11-01): orchestrator threads held one open past 60 min 21
+  times, the longest 478 min; on 10-25 one such wait queued four ticks and
+  idled the fleet for 3.5 h. No database at all reads as a host without T3,
+  not as a failed surface.
+
 ## [0.6.2] - 2026-10-24
 
 - tick: an access step (`fleet fs-check`) runs before observe, on a 30 s

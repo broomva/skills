@@ -295,7 +295,8 @@ def _ask_raise(args: argparse.Namespace, sec: dict, sd: Path, records: list,
     waiting = 0
     for key, v in open_now.items():
         asked = common.parse_iso(v.get("ts"))
-        if asked is not None and now - asked < sec.get("ask_raise_after_min", 50) * 60:
+        if asked is not None and now - asked < sec.get("ask_raise_after_min", 50) * 60 \
+                and not report.pre_aged(key):
             waiting += 1
             continue
         ready[key] = v
