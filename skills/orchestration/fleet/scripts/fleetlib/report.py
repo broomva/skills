@@ -21,7 +21,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
-from . import classify, common, ledger
+from . import classify, common, ledger, t3
 
 
 
@@ -31,6 +31,11 @@ def tick_dir(state_dir: Path, tick: int) -> Path:
 
 def short(sid: Optional[str]) -> str:
     return (sid or "-")[:8]
+
+
+def short_thread(tid: Optional[str]) -> str:
+    """A T3 thread id's first 8 after its `mcp:` prefix, as T3's own links show it."""
+    return short((tid or "-").rsplit(":", 1)[-1])
 
 
 # --------------------------------------------------------------------------
@@ -70,6 +75,8 @@ def build(snap: Dict[str, Any], records: List[Dict[str, Any]], dry_run: bool,
         "spawn_pause": classify.spawn_pause(snap, results),
         "repos": [_repo_summary(r) for r in snap.get("repos") or []],
         "scheduled": snap.get("scheduled") or {},
+        "t3_threads": snap.get("t3_threads") or [],
+        "t3_wait_ask_min": snap.get("t3_wait_ask_min", 30),
         "core_compare": _guarded(compare),
     }
     # §5.7: two or more sessions under one fleet name is an ask, while they are
@@ -211,6 +218,25 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
         cands.append(("compare:failing", "observe", "The core comparison couldn't run its last %d attempts in scope "
                       "%s, latest: %s. tick.log has the detail." % (
                           cmp_["failed_in_a_row"], rep["scope"], common.safe_text(cmp_["error"], 160))))
+    # T3 threads (BRO-3376): only this scope's; another scope's are listed, never asked about.
+    for f in t3.findings([r for r in rep.get("t3_threads") or [] if r.get("scope") == rep["scope"]],
+                         rep.get("t3_wait_ask_min", 30)):
+        r = f["row"]
+        label = "%s (%s, %s)" % (r["title"] or "-", short_thread(r["thread_id"]), r["provider"] or "?")
+        every = r["schedule"]["every_s"]
+        if f["kind"] == "wait":
+            # Keyed on the request: the next one the thread raises is a new ask.
+            cands.append(("t3-wait:%s:%s" % (r["thread_id"], _tag(r["waiting"]["request_id"])), "7",
+                          "T3 thread %s has waited %s on a user-input request; its schedule (%s) keeps firing "
+                          "and the fires queue behind it (%d queued). Answer it in that thread, or relay the "
+                          "question and interrupt the run." % (
+                              label, common.age(r["waiting"]["age_s"]),
+                              "every %s" % common.age(every) if every else "interval unknown", r["queued"])))
+        else:
+            cands.append(("t3-failing:%s" % r["thread_id"], "t3",
+                          "T3 thread %s: its last %d runs failed (schedule: %s; last runs %s). Its loop does "
+                          "no work until the cause is fixed." % (
+                              label, r["failing_streak"], r["schedule"]["title"], ", ".join(r["last_runs"][:4]))))
     # Scheduled work is an inventory, report-only in phase 1: its readings
     # (staleness, exit codes) are in the report's table, not the owner's dialog.
     return cands
@@ -279,6 +305,8 @@ def observed(key: str, rep: Dict[str, Any]) -> bool:
         return ok("listing", "paseo_records")
     if kind in ("fleet-shaped-unledgered", "spawn-duplicate"):
         return ok("listing")
+    if kind in ("t3-wait", "t3-failing"):
+        return ok("t3")
     if kind == "rules":
         slug = rest.split(":", 1)[0]
         mine = [r for r in rep["repos"] if (r.get("slug") or common.tilde(r["repo"])) == slug]
@@ -445,6 +473,24 @@ def render_md(rep: Dict[str, Any]) -> str:
             else "-", _cell(it.get("last_result")),
             common.ts(it["next_run"])[:16] + "Z" if it.get("next_run") else "-",
             {True: "**yes**", False: "no", None: "-"}[it.get("stale")]))
+    L.append("")
+    L.append("## T3 threads (scheduled, waiting on you, or running)")
+    L.append("")
+    t3s = (rep["surfaces"].get("t3") or {})
+    if not t3s.get("ok"):
+        L.append("NOT read: %s" % t3s.get("error", "?"))
+    elif t3s.get("installed") is False:
+        L.append("T3 is not installed on this host (no state database).")
+    else:
+        L.append("| thread | title | provider | scope | schedule | last runs | queued | waiting on you |")
+        L.append("|---|---|---|---|---|---|---|---|")
+        for r in rep.get("t3_threads") or []:
+            sc = r.get("schedule")
+            L.append("| %s | %s | %s | %s | %s | %s | %d | %s |" % (
+                short_thread(r["thread_id"]), _cell(r["title"]), _cell(r["provider"]), _cell(r.get("scope")),
+                "every %s" % common.age(sc["every_s"]) if sc and sc.get("every_s") else ("yes" if sc else "-"),
+                _cell(", ".join(r["last_runs"][:3])), r["queued"],
+                "**%s**" % common.age(r["waiting"]["age_s"]) if r.get("waiting") else "-"))
     L.append("")
     if rep.get("core_compare"):
         c = rep["core_compare"]

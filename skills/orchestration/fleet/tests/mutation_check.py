@@ -35,6 +35,7 @@ CLS, OBS, PAR, REP, COM, TICK = ("scripts/fleetlib/classify.py", "scripts/fleetl
                                  "scripts/fleetlib/parsers.py", "scripts/fleetlib/report.py",
                                  "scripts/fleetlib/common.py", "scripts/tick.sh")
 ACT = "scripts/fleetlib/act.py"
+T3 = "scripts/fleetlib/t3.py"
 T = "tests/"
 
 PROTECTIONS = [
@@ -622,7 +623,38 @@ PROTECTIONS = [
      [T + "test_layout.py", "-k", "close_out"]),
     ("close-out reads unmerged work as no work", "workflows/close-out.md",
      'if inside(head) and (branch == "HEAD" or inside(branch)):', "if True:",
-     [T + "test_layout.py", "-k", "close_out_refuses"]),
+     [T + "test_layout.py", "-k", "close_out_refuses"]),    # BRO-3376: the T3 source and its two asks.
+    ("a closed user-input request reads as open", T3,
+     '"where resolved_at is null and status not in (%s) "', '"where 1 = 1 and ? || ? || ? is not null "',
+     [T + "test_t3.py", "-k", "keeps_open"]),
+    ("a missing pinned T3 column reads as empty", T3,
+     "        if missing:\n            raise", "        if False:\n            raise",
+     [T + "test_t3.py", "-k", "missing_pinned"]),
+    ("a command approval reads as a user-input wait", T3,
+     '        if r.get("kind") != "user_input":\n            continue', '        if False:\n            continue',
+     [T + "test_t3.py", "-k", "placed_by_scope"]),
+    ("an unscheduled thread's wait is an ask", T3,
+     '        if r["schedule"] is None:\n            continue', '        if False:\n            continue',
+     [T + "test_t3.py", "-k", "blocking_ask"]),
+    ("the T3 wait threshold is ignored", T3,
+     'if r["waiting"] and r["waiting"]["age_s"] >= wait_ask_min * 60:', 'if r["waiting"]:',
+     [T + "test_t3.py", "-k", "under_the_threshold"]),
+    ("a host without T3 reads as an unread surface", T3,
+     "    if not os.path.exists(path):\n        return json.dumps(", "    if False:\n        return json.dumps(",
+     [T + "test_t3.py", "-k", "missing_pinned"]),
+    ("the T3 thread cap is ignored", T3,
+     "        if len(wanted) > MAX_THREADS:", "        if False:",
+     [T + "test_t3.py", "-k", "than_the_cap"]),
+    ("a busy unscheduled T3 thread is not read", T3,
+     "{r[\"thread_id\"] for r in requests} | set(busy)", "{r[\"thread_id\"] for r in requests}",
+     [T + "test_t3.py", "-k", "keeps_open"]),
+    ("another scope's T3 thread is asked about", REP,
+     'if r.get("scope") == rep["scope"]]', 'if True]',
+     [T + "test_t3.py", "-k", "never_asked"]),
+    ("an unread T3 surface resolves its keys", REP,
+     '    if kind in ("t3-wait", "t3-failing"):\n        return ok("t3")',
+     '    if kind in ("t3-wait", "t3-failing"):\n        return True',
+     [T + "test_t3.py", "-k", "unread_t3"]),
 ]
 
 

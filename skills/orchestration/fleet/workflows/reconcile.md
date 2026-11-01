@@ -22,8 +22,8 @@ should still route here (the `fleet` SKILL.md carries a shorter version):
 > phase 2 adds the coordinator and its verbs under dry run.
 > Each tick reads every Claude Code session (claude agents --json --all and the
 > background job files), Paseo's agent records and schedules from disk, the
-> ctx-core board, transcript times, and GitHub (open PRs and the effective
-> branch rules of every repo in the scope). It classifies each session with the
+> ctx-core board, transcript times, T3 Code's threads (0.7.0), and GitHub (open
+> PRs and the effective branch rules of every repo in the scope). It classifies each session with the
 > spec's class table, runs the count check, inventories scheduled work
 > (Paseo schedules, com.broomva.* LaunchAgents, bookkeeping, Dream), and writes
 > a markdown and JSON report plus one batch of owner asks, written to the
@@ -161,6 +161,7 @@ By hand: `fleet reconcile --scope broomva` (it runs `scripts/tick.sh` with
 | Paseo | `~/.paseo/agents/*/*.json`, `~/.paseo/schedules/*.json` (read-only) | reported; the count check says it could not run |
 | The board | ctx-core's `events.jsonl`, rebuilt in memory (no cache write) | reported and asked per scope; that scope's sessions that would be 9, 9a or 10 read unknown, since 2, 4, 7 and 8 couldn't be checked |
 | GitHub | per repo: slug from `origin`, `repos/<r>` default branch, `rules/branches/<b>`, `gh pr list` | **that repo** is reported as not observed. A slug that doesn't resolve, a gh error or a PR list at `pr_list_cap` never reads as zero PRs |
+| T3 threads | `~/.t3/userdata/statev2.sqlite` (`FLEET_T3_STATE` overrides), opened read-only with its columns pinned (`fleetlib/t3.py`): the threads that are scheduled, waiting on a user-input request, or have a run active or queued; their last 5 runs; open user-input requests. Never a schedule's prompt or webhook secret, a message, or a request's question | a pinned column or table missing, or over 200 such threads: reported and asked (`surface:t3`); nothing is listed. No database at all is a host without T3: read, empty |
 
 The parsers are pinned to Claude Code 2.1.295: its listing and job files are
 captured in `tests/fixtures/cc-2.1.295/` and must parse with no drift. The
@@ -211,7 +212,12 @@ fleet name.
 An ask is per occurrence of a condition. Candidates: a session waiting at a
 prompt or blocked on the owner, a repo without a pull_request rule or with
 unpinned checks, a repo not observed, a surface not read, drift, records
-with no process. A key is asked once, stays open until the owner answers it or
+with no process; and in this scope's T3 threads (0.7.0, BRO-3376), a scheduled
+thread whose run has waited `t3_wait_ask_min` (30) minutes or more on a
+user-input request (`t3-wait:<thread>:<request>`, class 7, so it counts in
+Needs you: its schedule keeps firing and the fires queue behind the waiting
+run) and a scheduled thread whose last 2 runs failed (`t3-failing:<thread>`).
+Another scope's threads are listed, never asked about. A key is asked once, stays open until the owner answers it or
 a tick finds it no longer true (a resolution record), and an answer holds for
 as long as the condition does; a condition that ends and comes back is a new
 ask. A tick resolves a key only when it read the surfaces that raise it: the
@@ -397,6 +403,7 @@ python3 tests/capture_fixtures.py    # recapture on a new Claude Code version (a
 | `test_classify.py` | A positive case per class; the spec's five ordering tests; 41 rule pairs that can both match, the earlier winning; a grid proving the other 14 pairs can't; the arc and death currency rules; the spawn pause; the count check; the overlap pass |
 | `test_observe.py` | The pipeline over the capture in a scratch HOME; a 200-row listing fails closed unless the job files show it complete; one unparsed job file degrades only its session; an unresolvable slug, a gh error and a PR list at the cap fail only their repo; the bearer never reaches a snapshot or report; activity found past a last line larger than the first tail window (ctx-core's reader); an inherited GH_TOKEN or GITHUB_TOKEN dropped, so gh reads the owner's login |
 | `test_report.py` | Every section; withheld crm/ paths and tokens; per-occurrence asks (once, then still open; an answer holds while true; a recurrence is new; a different question is new), answers per batch, stable count keys, failed-surface asks, a resolution only from the surfaces that raise the key (for a session that still classifies, too), open asks not re-checked still listed, a wait's key holding while its subagents write, a failing comparison asked after three runs with its error guarded, the ack wording, the ruleset wording, scheduled work as inventory only, a duplicate fleet name asked while it lasts (and not resolved without a listing); the labelling sheet (distinct sessions only) |
+| `test_t3.py` | The T3 reader over a database with the pinned columns: open requests only, an archived or idle unscheduled thread not read, a prompt and webhook secret never read, a missing column named as drift, over the cap failing closed, the file left unchanged; no database read as a host without T3; the rows placed by scope; the wait ask (class 7) and its threshold, an unscheduled thread's wait and another scope's thread never asked, the failing-run ask, an unread surface resolving no T3 key, a wait that ended resolving from a reading |
 | `test_ledger.py` | Validation, distinct owner ids within one millisecond, corrupt-line counting, 4 processes × 50 appends lose nothing, the ask and spawn folds |
 | `test_ledger_ask.py` | The owner channel as a ledger (BRO-2908): one entry per open occurrence, never written twice; a waiting session blocks, the rest do not; an open question refreshed, a resolved one withdrawn, an answer never touched; a condition that comes back is a new entry beside the old answer; an answer read back with its batch and ask, alerts apart; one open alert per kind, a new one after an answer; a line outside the one-line-JSON subset (plain YAML, a block scalar) fails the step and is not written over; the spec §5.5 lock keyed as Maestro keys it, a live holder kept, a dead one reclaimed, a fresh one waited on; an ask answered from a terminal closed in the ledger and not read back as Maestro's |
 | `test_tick.py` | tick.sh end to end with stub claude/gh/maestro: kill switch, a bad config alerting once and exiting 1, a failed step alerting, dry falls toward dry, live and stale locks and the reclaim mutex, the recursion guard, the watchdog killing the step's children, no token reaching any step (one configured or inherited included), recover and a live coordinator on the owner's login, tick numbers past a lost counter, the lock released before a tick-number alert, a lock held over 2 h alerting, each ask one entry in the scope's ask ledger (a waiting session blocking) and the owner's answer read back once, an answer in words alone, a terminal ack closing its entry, an alert the ledger can't take logged and retried, an ask written only once it lasted, an alert written once per 6 h, refreshed while open and new once answered, the bash fallback raising at most one per 6 h whatever Maestro answers, tried again when nothing reached Maestro (not listening, a CLI that didn't run), and stopped with its children when it hangs (or its leader dies), reaching Maestro with its state dir broken, live mode refused until `live_accepted` names BRO-2755 and BRO-2756 and every verb dry (at the CLI too: is-dry, act label/spawn, the coordinator child's DRY_RUN) without it, an unusable state dir alerting its own kind not a misread config-check, the bash fallback classifying a refusal in memory when mktemp fails, alerts as ledger entries, a failed compare not using up the day and the prototype's compare line refused and asked about, ack refused inside a session, refused verbs, the labelling sheet |
