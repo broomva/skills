@@ -496,6 +496,31 @@ def test_an_ask_reaches_the_ledger_only_once_it_has_lasted(rig):
     assert len(rig.asks()) == 4
 
 
+def test_a_t3_wait_reaches_the_ledger_at_once_having_lasted_its_own_threshold(rig, tmp_path):
+    # BRO-3376: a t3-wait is a candidate only after t3_wait_ask_min; the ledger's delay would stack on it.
+    import sqlite3
+
+    from fleetlib import t3
+
+    db = tmp_path / "statev2.sqlite"
+    c = sqlite3.connect(str(db))
+    for table, cols in t3.COLUMNS.items():
+        c.execute("create table %s (%s)" % (table, ", ".join(cols)))
+    c.execute("insert into projection_projects values ('p1', ?, null)", (os.path.realpath(str(rig.world.home / "broomva")),))
+    c.execute("insert into orchestration_v2_projection_threads values ('t-orch', 'p1', 'Orchestrator', 'codex', ?, null, "
+              "null, '{}')", (common.ts(time.time()),))
+    c.execute("insert into scheduled_tasks values ('s1', 'tick', 1, '{\"everyMs\": 7200000}', 't-orch', 'succeeded', null)")
+    c.execute("insert into orchestration_v2_projection_runtime_requests values ('r1', 't-orch', 'user_input', 'pending', "
+              "?, null)", (common.ts(time.time() - 2 * 3600),))
+    c.commit()
+    c.close()
+    rig.world.write_config(ask_raise_after_min=50)
+    r = rig.tick(FLEET_T3_STATE=str(db))
+    asks = rig.asks()
+    assert r.returncode == 0 and "4 waiting" in rig.log(), rig.log()
+    assert [a["fleet"]["key"].split(":")[0] for a in asks] == ["t3-wait"] and asks[0]["blocking"] is True
+
+
 @pytest.mark.parametrize("extra", [{}, {"STUB_NEW_EXIT": "3"}])
 def test_the_bash_fallback_raises_at_most_one_alert_per_6_h_even_queued_or_unconfirmed(rig, extra):
     # It can't adopt an open item or read Maestro's words, so a made item or an unclear answer counts (else one more

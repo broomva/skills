@@ -56,6 +56,10 @@ CLOSED_REQUEST_STATES = ("resolved", "cancelled", "expired")
 #: Runs in these states hold the thread: a fire of its schedule queues behind them.
 ACTIVE_RUN_STATES = ("running", "starting", "preparing", "waiting")
 
+#: Terminal run states that say nothing about whether the loop works: a person or the host stopped the
+#: run, or T3 rolled it back. A failing streak skips them; `completed` ends it; `failed` counts.
+NEUTRAL_RUN_STATES = ("interrupted", "cancelled", "rolled_back")
+
 
 class T3Unread(RuntimeError):
     pass
@@ -91,7 +95,7 @@ def read_state(path: str, now: float) -> str:  # noqa: ARG001 (now: the Sources 
     fleet also runs where T3 doesn't), so there are no threads to list."""
     if not os.path.exists(path):
         return json.dumps({"installed": False, "threads": [], "projects": {}, "schedules": [], "requests": [],
-                           "runs": {}, "queued": {}})
+                           "runs": {}, "queued": {}, "active": {}})
     try:
         c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
     except sqlite3.Error as exc:
@@ -102,12 +106,17 @@ def read_state(path: str, now: float) -> str:  # noqa: ARG001 (now: the Sources 
                                 "next_run_at"), r))
                      for r in c.execute("select task_id, title, enabled, schedule_json, thread_id, last_run_status, "
                                         "next_run_at from scheduled_tasks where enabled = 1 and thread_id is not null")]
+        # Only user inputs: a command approval is not a wait this module reports. One over the cap is
+        # read, so a cut list fails the surface instead of reading as complete.
         requests = [dict(zip(("request_id", "thread_id", "kind", "status", "created_at"), r))
                     for r in c.execute("select runtime_request_id, thread_id, kind, status, created_at "
                                        "from orchestration_v2_projection_runtime_requests "
-                                       "where resolved_at is null and status not in (%s) "
+                                       "where kind = 'user_input' and resolved_at is null and status not in (%s) "
                                        "order by created_at limit ?" % ",".join("?" * len(CLOSED_REQUEST_STATES)),
-                                       CLOSED_REQUEST_STATES + (MAX_REQUESTS,))]
+                                       CLOSED_REQUEST_STATES + (MAX_REQUESTS + 1,))]
+        if len(requests) > MAX_REQUESTS:
+            raise T3Unread("T3 state: over %d open user-input requests: the read may be cut, so none is listed"
+                           % MAX_REQUESTS)
         busy = [t for (t,) in c.execute("select distinct thread_id from orchestration_v2_projection_runs "
                                         "where status in (%s)" % ",".join("?" * (len(ACTIVE_RUN_STATES) + 1)),
                                         ACTIVE_RUN_STATES + ("queued",))]
@@ -123,20 +132,27 @@ def read_state(path: str, now: float) -> str:  # noqa: ARG001 (now: the Sources 
                     "worktree": _worktree(pj)} for t, p, ti, pr, u, pj in rows]
         projects = {p: root for p, root in c.execute(
             "select project_id, workspace_root from projection_projects where deleted_at is null")}
+        # The latest terminal runs, read apart from active and queued ones, which would otherwise fill
+        # the window and hide a failing streak.
+        pending = ACTIVE_RUN_STATES + ("queued",)
         runs: Dict[str, List[Dict[str, Any]]] = {}
         for t in sorted(wanted):
             runs[t] = [dict(zip(("ordinal", "status", "requested_at", "completed_at"), r))
                        for r in c.execute("select ordinal, status, requested_at, completed_at "
                                           "from orchestration_v2_projection_runs where thread_id = ? "
-                                          "order by ordinal desc limit ?", (t, RUNS_PER_THREAD))]
+                                          "and status not in (%s) order by ordinal desc limit ?"
+                                          % ",".join("?" * len(pending)), (t,) + pending + (RUNS_PER_THREAD,))]
         queued = dict(c.execute("select thread_id, count(*) from orchestration_v2_projection_runs "
                                 "where status = 'queued' group by thread_id"))
+        active = dict(c.execute("select thread_id, count(*) from orchestration_v2_projection_runs "
+                                "where status in (%s) group by thread_id" % ",".join("?" * len(ACTIVE_RUN_STATES)),
+                                ACTIVE_RUN_STATES))
     except sqlite3.Error as exc:
         raise T3Unread("T3 state: %s" % exc)
     finally:
         c.close()
     return json.dumps({"installed": True, "threads": threads, "projects": projects, "schedules": schedules,
-                       "requests": requests, "runs": runs, "queued": queued})
+                       "requests": requests, "runs": runs, "queued": queued, "active": active})
 
 
 def parse_state(text: str) -> Dict[str, Any]:
@@ -148,7 +164,7 @@ def parse_state(text: str) -> Dict[str, Any]:
     if not isinstance(d, dict):
         raise T3Unread("T3 state: not an object")
     for key, typ in (("threads", list), ("projects", dict), ("schedules", list), ("requests", list),
-                     ("runs", dict), ("queued", dict)):
+                     ("runs", dict), ("queued", dict), ("active", dict)):
         if not isinstance(d.get(key), typ):
             raise T3Unread("T3 state: %s is not a %s" % (key, typ.__name__))
     return d
@@ -164,11 +180,12 @@ def _every_s(schedule_json: Any) -> Optional[float]:
 
 
 def failing_streak(runs: List[Dict[str, Any]]) -> int:
-    """Consecutive `failed` runs, newest first; a run still queued or active doesn't break or count."""
+    """Consecutive `failed` runs among the latest terminal ones, newest first. A neutral one (stopped,
+    interrupted, rolled back) neither counts nor breaks it; `completed`, or any state not named, ends it."""
     n = 0
     for r in runs:
         st = r.get("status")
-        if st == "queued" or st in ACTIVE_RUN_STATES:
+        if st in NEUTRAL_RUN_STATES or st == "queued" or st in ACTIVE_RUN_STATES:
             continue
         if st != "failed":
             break
@@ -181,9 +198,7 @@ def threads(state: Dict[str, Any], now: float) -> List[Dict[str, Any]]:
     The title is shown through the guard; nothing a thread said is read."""
     sched = {s["thread_id"]: s for s in state["schedules"]}
     waiting: Dict[str, Dict[str, Any]] = {}
-    for r in state["requests"]:
-        if r.get("kind") != "user_input":
-            continue
+    for r in state["requests"]:  # user inputs only: read_state keeps no other kind
         t0 = common.parse_iso(r.get("created_at"))
         if t0 is None:
             continue
@@ -194,7 +209,7 @@ def threads(state: Dict[str, Any], now: float) -> List[Dict[str, Any]]:
     for t in state["threads"]:
         tid = t["thread_id"]
         runs = state["runs"].get(tid) or []
-        active = [r for r in runs if r.get("status") in ACTIVE_RUN_STATES]
+        active = int(state["active"].get(tid) or 0)
         queued = int(state["queued"].get(tid) or 0)
         if tid not in sched and tid not in waiting and not active and not queued:
             continue
@@ -203,12 +218,13 @@ def threads(state: Dict[str, Any], now: float) -> List[Dict[str, Any]]:
         out.append({
             "thread_id": tid, "title": common.safe_text(t.get("title"), 80), "provider": t.get("provider"),
             "path": t.get("worktree") or state["projects"].get(t.get("project_id")),
+            "project_root": state["projects"].get(t.get("project_id")),
             "schedule": None if s is None else {"title": common.safe_text(s.get("title"), 80),
                                                 "every_s": _every_s(s.get("schedule_json")),
                                                 "last_run_status": s.get("last_run_status"),
                                                 "next_run_at": s.get("next_run_at")},
             "last_runs": [r.get("status") for r in runs],
-            "active": len(active), "queued": queued, "failing_streak": failing_streak(runs),
+            "active": active, "queued": queued, "failing_streak": failing_streak(runs),
             "waiting": None if w is None else {"request_id": w["request_id"], "age_s": round(now - w["since"])},
         })
     out.sort(key=lambda r: (r["schedule"] is None, -(r["waiting"] or {}).get("age_s", -1), r["thread_id"]))

@@ -307,7 +307,11 @@ def observe(sec: Dict[str, Any], src: Sources, tick: int, now: Optional[float] =
     try:
         state = t3.parse_state(src.t3_state(now))
         for row in t3.threads(state, now):
-            row["scope"] = place(row["path"], None, None, by_repo)[0] if row["path"] else None
+            # The thread's worktree first; a removed worktree places through its project root.
+            row["scope"] = None
+            for p in (row["path"], row.pop("project_root")):
+                if p and row["scope"] is None:
+                    row["scope"] = place(p, None, None, by_repo)[0]
             row["path"] = common.safe_path(row["path"])
             snap["t3_threads"].append(row)
         surf["t3"] = _surface(True, installed=state.get("installed", True), threads=len(state["threads"]),

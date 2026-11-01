@@ -48,7 +48,10 @@ def _db(path, drop=None):
                   "created_at%s) values (?, 't-orch', 'user_input', ?, '2026-09-30T22:00:00.000Z'%s)"
                   % ((", resolved_at", ", ?") if drop is None else ("", "")),
                   (rid, status, resolved) if drop is None else (rid, status))
-    for n, st in enumerate(("completed", "failed", "running", "queued"), 1):
+    c.execute("insert into orchestration_v2_projection_runtime_requests (runtime_request_id, thread_id, kind, status, "
+              "created_at) values ('cmd', 't-orch', 'command', 'pending', '2026-09-30T22:00:00.000Z')")
+    # Two failures, then more queued and active runs than the window holds: the streak must still be seen.
+    for n, st in enumerate(("completed", "failed", "failed") + ("queued",) * 6 + ("running",), 1):
         c.execute("insert into orchestration_v2_projection_runs values ('t-orch', ?, ?, '2026-09-30T22:00:00.000Z', "
                   "null)", (n, st))
     c.commit()
@@ -61,12 +64,15 @@ def test_the_reader_keeps_open_requests_and_reads_no_prompt_or_secret(tmp_path):
     text = t3.read_state(str(db), NOW)
     assert "THE PROMPT TEXT" not in text and "THE-SECRET" not in text
     st = t3.parse_state(text)
-    assert [r["request_id"] for r in st["requests"]] == ["open"]  # resolved, cancelled, expired are over
+    # Resolved, cancelled and expired are over; a command approval is not a user input.
+    assert [r["request_id"] for r in st["requests"]] == ["open"]
     # Read: the scheduled thread and a busy one. Not read: an archived thread, an idle unscheduled one.
     assert sorted(t["thread_id"] for t in st["threads"]) == ["t-busy", "t-orch"]
     assert st["threads"][0]["worktree"] == "/w/broomva/wt"
-    assert [r["status"] for r in st["runs"]["t-orch"]] == ["queued", "running", "failed", "completed"]
-    assert st["queued"] == {"t-orch": 1}
+    # The latest terminal runs, past six queued and one active: the window can't be filled by pending runs.
+    assert [r["status"] for r in st["runs"]["t-orch"]] == ["failed", "failed", "completed"]
+    assert st["queued"] == {"t-orch": 6} and st["active"] == {"t-orch": 1, "t-busy": 1}
+    assert t3.failing_streak(st["runs"]["t-orch"]) == 2
 
 
 def test_a_missing_pinned_column_fails_the_surface_never_reads_as_empty(tmp_path, monkeypatch):
@@ -100,11 +106,28 @@ def test_the_reader_opens_the_database_read_only(tmp_path):
     assert not (tmp_path / "statev2.sqlite-wal").exists()
 
 
-def test_a_failing_streak_counts_failed_runs_in_a_row_past_active_ones():
+def test_a_failing_streak_counts_failed_runs_in_a_row_past_neutral_ones():
     runs = lambda *s: [{"status": x} for x in s]  # noqa: E731
-    assert t3.failing_streak(runs("queued", "running", "failed", "failed", "completed")) == 2
+    assert t3.failing_streak(runs("failed", "failed", "completed")) == 2
+    # Interrupted, cancelled and rolled back say nothing about the loop: skipped, neither counted nor breaking.
+    assert t3.failing_streak(runs("failed", "interrupted", "cancelled", "rolled_back", "failed")) == 2
     assert t3.failing_streak(runs("completed", "failed", "failed")) == 0
+    assert t3.failing_streak(runs("failed", "some-new-state", "failed")) == 1  # an unknown state ends it
     assert t3.failing_streak(runs()) == 0
+
+
+def test_more_open_user_inputs_than_the_cap_fail_the_surface(tmp_path, monkeypatch):
+    db = tmp_path / "statev2.sqlite"
+    _db(db)
+    monkeypatch.setattr(t3, "MAX_REQUESTS", 1)  # one open user input: at the cap, read; the command is not counted
+    assert len(t3.parse_state(t3.read_state(str(db), NOW))["requests"]) == 1
+    c = sqlite3.connect(str(db))
+    c.execute("insert into orchestration_v2_projection_runtime_requests (runtime_request_id, thread_id, kind, status, "
+              "created_at) values ('open2', 't-orch', 'user_input', 'pending', '2026-09-30T22:05:00.000Z')")
+    c.commit()
+    c.close()
+    with pytest.raises(t3.T3Unread, match="over 1 open user-input"):
+        t3.read_state(str(db), NOW)
 
 
 # Observe and report over the scenario capture ------------------------------------
@@ -117,8 +140,7 @@ def _conditions(world):
     st = json.loads(p.read_text())
     st["requests"].append({"request_id": "rr-broomva-1", "thread_id": BROOMVA_ORCH, "kind": "user_input",
                            "status": "pending", "created_at": "2026-09-30T22:40:47.000Z"})
-    st["runs"][BROOMVA_ORCH].insert(0, {"ordinal": 13, "status": "running", "requested_at": "2026-09-30T22:39:00.000Z",
-                                        "completed_at": None})
+    st["active"][BROOMVA_ORCH] = 1
     st["queued"][BROOMVA_ORCH] = 2
     st["runs"][SRI_ORCH][0]["status"] = "failed"
     p.write_text(json.dumps(st))
@@ -143,9 +165,27 @@ def test_t3_threads_are_read_and_placed_by_scope(world):
     assert set(by) == {BROOMVA_ORCH, META, SRI_ORCH, INTERACTIVE}  # the idle, unscheduled thread is not listed
     assert by[BROOMVA_ORCH]["scope"] == "broomva" and by[SRI_ORCH]["scope"] == "sri"
     assert by[BROOMVA_ORCH]["waiting"]["age_s"] == 75 * 60 and by[BROOMVA_ORCH]["queued"] == 2
-    assert by[META]["waiting"] is None  # its open request is a command approval, not a user input
+    assert by[META]["waiting"] is None
     md = report.render_md(rep)
     assert "## T3 threads" in md and "| aaaa1111 | Broomva Orchestrator |" in md and "**75m**" in md
+
+
+def test_a_removed_worktree_places_the_thread_through_its_project_root(world):
+    p = world.fixture / "t3" / "state.json"
+    st = json.loads(p.read_text())
+    for t in st["threads"]:
+        if t["thread_id"] == BROOMVA_ORCH:
+            t["worktree"] = str(world.home / "wt" / "removed-after-merge")
+    p.write_text(json.dumps(st))
+    rep = _rep(world)
+    row = {r["thread_id"]: r for r in rep["t3_threads"]}[BROOMVA_ORCH]
+    assert row["scope"] == "broomva" and "project_root" not in row
+    assert any(k.startswith("t3-wait:%s:" % BROOMVA_ORCH) for k in _keys(rep))
+
+
+def test_only_a_t3_wait_skips_the_ledgers_raise_delay():
+    assert report.pre_aged("t3-wait:t:abc") and not report.pre_aged("t3-failing:t")
+    assert not report.pre_aged("prompt:s:abc") and not report.pre_aged("surface:t3")
 
 
 def test_a_scheduled_thread_waiting_past_the_threshold_is_a_blocking_ask(world):

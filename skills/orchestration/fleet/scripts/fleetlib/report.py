@@ -257,6 +257,15 @@ COMPARE_REFUSALS = {
 }
 
 
+#: Keys whose condition has already lasted its own threshold before it is a candidate (a T3 wait, at
+#: t3_wait_ask_min): the ledger's ask_raise_after_min delay would only stack a second wait on top of it.
+PRE_AGED = ("t3-wait:",)
+
+
+def pre_aged(key: str) -> bool:
+    return key.startswith(PRE_AGED)
+
+
 def make_asks(rep: Dict[str, Any], records: List[Dict[str, Any]],
               now: float) -> Tuple[List[Dict[str, Any]], List[Dict[str, Any]], List[Dict[str, Any]]]:
     """(new asks for this tick's batch, asks still open from earlier batches,
