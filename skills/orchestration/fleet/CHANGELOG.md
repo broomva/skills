@@ -13,8 +13,9 @@
   (`ask_raise_after_min` would stack on the wait), and `t3-failing` for a
   scheduled thread whose last 2 finished runs failed (interrupted, cancelled
   and rolled-back runs skipped). The surface fails closed over 200 threads or
-  200 open user-input requests, on an unreadable request time, and when T3's
-  data directory is there without the database.
+  200 open user-input requests, on an unreadable request time, and when the
+  database is missing while T3's home (`T3CODE_HOME`, else `~/.t3`) is there
+  or `FLEET_T3_STATE` names it. All queries read one snapshot.
 - tick: `GIT_DIR`, `GIT_WORK_TREE` and `GIT_COMMON_DIR` are unset with the
   tokens: an inherited one placed every path in one repo. T3 records
   Claude's AskUserQuestion and Codex's requestUserInput both as `user_input`,

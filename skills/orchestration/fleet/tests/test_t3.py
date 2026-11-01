@@ -57,7 +57,8 @@ def _db(path, drop=None):
     c.execute("insert into orchestration_v2_projection_runtime_requests (runtime_request_id, thread_id, kind, status, "
               "created_at) values ('cmd', 't-orch', 'command', 'pending', '2026-09-30T22:00:00.000Z')")
     # Two failures, then more queued and active runs than the window holds: the streak must still be seen.
-    for n, st in enumerate(("completed", "failed", "failed") + ("queued",) * 6 + ("running",), 1):
+    for n, st in enumerate(("completed", "failed", "failed") + ("interrupted", "cancelled", "rolled_back") * 2
+                           + ("queued",) * 6 + ("running",), 1):
         c.execute("insert into orchestration_v2_projection_runs values ('t-orch', ?, ?, '2026-09-30T22:00:00.000Z', "
                   "null)", (n, st))
     c.commit()
@@ -77,7 +78,7 @@ def test_the_reader_keeps_open_requests_and_reads_no_prompt_or_secret(tmp_path):
     assert {t["thread_id"]: t for t in st["threads"]}["t-orch"]["worktree"] == "/w/broomva/wt"
     assert "gone-open" not in [r["request_id"] for r in st["requests"]]  # an archived thread's request is not read
     assert [s["task_id"] for s in st["schedules"]] == ["s1"]
-    # The latest terminal runs, past six queued and one active: the window can't be filled by pending runs.
+    # The latest finished runs past six neutral, six queued and one active: none of those can fill the window.
     assert [r["status"] for r in st["runs"]["t-orch"]] == ["failed", "failed", "completed"]
     assert st["queued"] == {"t-orch": 6} and st["active"] == {"t-orch": 1, "t-busy": 1}
     assert t3.failing_streak(st["runs"]["t-orch"]) == 2
@@ -92,12 +93,25 @@ def test_a_missing_pinned_column_fails_the_surface_never_reads_as_empty(tmp_path
     monkeypatch.setenv(t3.STATE_ENV, str(db))
     with pytest.raises(SourceError, match="lacks resolved_at"):
         sources.Sources().t3_state(NOW)
-    # No T3 data directory at all is a host without T3: read, with nothing in it; never an ask every tick.
-    absent = t3.parse_state(t3.read_state(str(tmp_path / "no-t3" / "userdata" / "statev2.sqlite"), NOW))
+    # A path named by FLEET_T3_STATE that isn't there: a failure, never "no threads" (that resolves T3 asks),
+    # even with no T3 home on the host.
+    monkeypatch.setenv("T3CODE_HOME", str(tmp_path / "no-t3-home"))
+    monkeypatch.setenv(t3.STATE_ENV, str(tmp_path / "gone" / "statev2.sqlite"))
+    with pytest.raises(t3.T3Unread, match="is missing"):
+        t3.read_state(t3.default_path(), NOW)
+    monkeypatch.delenv(t3.STATE_ENV)
+
+
+def test_a_missing_database_is_t3_not_installed_only_without_a_t3_home(tmp_path, monkeypatch):
+    monkeypatch.setenv("T3CODE_HOME", str(tmp_path / "t3"))
+    absent = t3.parse_state(t3.read_state(t3.default_path(), NOW))  # no T3 home: a host without T3
     assert absent["installed"] is False and absent["threads"] == [] and absent["requests"] == []
-    # Its directory there and the file not: moved or renamed. Reading "no threads" would resolve every T3 ask.
-    with pytest.raises(t3.T3Unread, match="missing, though its directory is there"):
-        t3.read_state(str(tmp_path / "absent.sqlite"), NOW)
+    (tmp_path / "t3").mkdir()  # T3's home there, its userdata (or just the file) not: moved or renamed
+    with pytest.raises(t3.T3Unread, match="is missing"):
+        t3.read_state(t3.default_path(), NOW)
+    (tmp_path / "t3" / "userdata").mkdir()
+    with pytest.raises(t3.T3Unread, match="is missing"):
+        t3.read_state(t3.default_path(), NOW)
 
 
 def test_more_threads_than_the_cap_fail_the_surface_rather_than_list_part(tmp_path, monkeypatch):
@@ -120,6 +134,29 @@ def test_the_reader_opens_the_database_read_only(tmp_path):
     with pytest.raises(sqlite3.OperationalError, match="readonly"):
         c.execute("insert into projection_projects values ('p2', '/x', null)")
     c.close()
+
+
+def test_the_reader_reads_one_snapshot_and_sees_wal_data_not_yet_checkpointed(tmp_path, monkeypatch):
+    db = tmp_path / "statev2.sqlite"
+    _db(db)
+    w = sqlite3.connect(str(db))  # a writer that stays open, its WAL never checkpointed
+    w.execute("pragma wal_autocheckpoint=0")
+    w.execute("insert into orchestration_v2_projection_runtime_requests values ('late', 't-orch', 'user_input', "
+              "'pending', '2026-09-30T22:30:00.000Z', null)")
+    w.commit()
+    seen = []
+    real = t3._connect
+
+    def traced(path):
+        c = real(path)
+        c.set_trace_callback(seen.append)
+        return c
+
+    monkeypatch.setattr(t3, "_connect", traced)
+    st = t3.parse_state(t3.read_state(str(db), NOW))
+    w.close()
+    assert "late" in [r["request_id"] for r in st["requests"]]
+    assert seen[0].strip().lower() == "begin"  # one read transaction: every query reads one snapshot
 
 
 def test_a_value_json_cannot_encode_fails_the_surface(tmp_path):
@@ -233,11 +270,11 @@ def test_a_failing_ask_says_when_a_retry_is_already_queued(world):
     st["queued"][SRI_ORCH] = 1
     p.write_text(json.dumps(st))
     q = _keys(_rep(world, "sri", healthy=True))["t3-failing:%s" % SRI_ORCH][1]
-    assert "A retry is running or queued" in q and "does no work" not in q
+    assert "A retry is running or queued" in q and "No retry" not in q
 
 
 def test_a_failing_ask_with_no_retry_says_the_loop_is_stopped(world):
-    assert "does no work" in _keys(_rep(world, "sri"))["t3-failing:%s" % SRI_ORCH][1]
+    assert "No retry is running or queued" in _keys(_rep(world, "sri"))["t3-failing:%s" % SRI_ORCH][1]
 
 
 def test_a_scheduled_thread_waiting_past_the_threshold_is_a_blocking_ask(world):

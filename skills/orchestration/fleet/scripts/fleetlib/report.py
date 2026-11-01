@@ -238,7 +238,7 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
                               label, r["failing_streak"], r["schedule"]["title"], ", ".join(r["last_runs"][:4]),
                               "A retry is running or queued now; it is still an ask until a run completes."
                               if r["active"] or r["queued"] else
-                              "Its loop does no work until the cause is fixed.")))
+                              "No retry is running or queued; the next scheduled fire is the next attempt.")))
     # Scheduled work is an inventory, report-only in phase 1: its readings
     # (staleness, exit codes) are in the report's table, not the owner's dialog.
     return cands

@@ -65,8 +65,12 @@ class T3Unread(RuntimeError):
     pass
 
 
+def t3_home() -> str:
+    return os.environ.get("T3CODE_HOME") or str(common.home() / ".t3")
+
+
 def default_path() -> str:
-    return os.environ.get(STATE_ENV) or str(common.home() / ".t3" / "userdata" / "statev2.sqlite")
+    return os.environ.get(STATE_ENV) or os.path.join(t3_home(), "userdata", "statev2.sqlite")
 
 
 def _check_schema(c: sqlite3.Connection) -> None:
@@ -102,15 +106,18 @@ _LIVE = ("select thread_id from orchestration_v2_projection_threads "
 
 
 def read_state(path: str, now: float) -> str:  # noqa: ARG001 (now: the Sources signature; nothing here is aged)
-    """The rows this module reads, as JSON text. Raises T3Unread when the
-    database can't be opened or read, its schema lacks a pinned column, or a
-    cap is passed. No T3 data directory at all is a reading, not a failure: T3
-    is not installed on this host (the fleet also runs where T3 doesn't). A data
-    directory without the database is a failure: the file moved or was renamed,
-    and reading that as "no threads" would resolve every open T3 ask."""
+    """The rows this module reads, as JSON text, from one read transaction (one
+    WAL snapshot: a request committed between two queries can't make a waiting
+    thread read as not waiting). Raises T3Unread when the database can't be
+    opened or read, its schema lacks a pinned column, or a cap is passed.
+
+    A missing database is a reading only on a host where T3 was never installed:
+    no T3 home (T3CODE_HOME, else ~/.t3). With a T3 home, or a path named by
+    FLEET_T3_STATE, a missing file is a failure: it moved or was renamed, and
+    reading that as "no threads" would resolve every open T3 ask."""
     if not os.path.exists(path):
-        if os.path.isdir(os.path.dirname(path) or "."):
-            raise T3Unread("T3 state: %s is missing, though its directory is there" % common.tilde(path))
+        if os.environ.get(STATE_ENV) or os.path.isdir(t3_home()):
+            raise T3Unread("T3 state: %s is missing" % common.tilde(path))
         return json.dumps({"installed": False, "threads": [], "projects": {}, "schedules": [], "requests": [],
                            "runs": {}, "queued": {}, "active": {}})
     try:
@@ -119,6 +126,7 @@ def read_state(path: str, now: float) -> str:  # noqa: ARG001 (now: the Sources 
         raise T3Unread("T3 state: %s" % exc)
     pending = ACTIVE_RUN_STATES + ("queued",)
     try:
+        c.execute("begin")  # every query below reads the same snapshot
         _check_schema(c)
         # Only user inputs on live threads: a command approval is not a wait this module reports. One
         # over the cap is read, so a cut list fails the surface instead of reading as complete.
@@ -155,15 +163,16 @@ def read_state(path: str, now: float) -> str:  # noqa: ARG001 (now: the Sources 
                      if r[4] in wanted]
         projects = {p: root for p, root in c.execute(
             "select project_id, workspace_root from projection_projects where deleted_at is null")}
-        # The latest terminal runs, read apart from active and queued ones, which would otherwise fill
-        # the window and hide a failing streak.
+        # The latest finished runs that say something about the loop: active, queued and neutral ones
+        # are left out before the limit, so they can't fill the window and hide a failing streak.
+        skip = pending + NEUTRAL_RUN_STATES
         runs: Dict[str, List[Dict[str, Any]]] = {}
         for t in sorted(wanted):
             runs[t] = [dict(zip(("ordinal", "status", "requested_at", "completed_at"), r))
                        for r in c.execute("select ordinal, status, requested_at, completed_at "
                                           "from orchestration_v2_projection_runs where thread_id = ? "
                                           "and status not in (%s) order by ordinal desc limit ?"
-                                          % ",".join("?" * len(pending)), (t,) + pending + (RUNS_PER_THREAD,))]
+                                          % ",".join("?" * len(skip)), (t,) + skip + (RUNS_PER_THREAD,))]
         queued = {t: n for t, n in c.execute("select thread_id, count(*) from orchestration_v2_projection_runs "
                                              "where status = 'queued' group by thread_id") if t in wanted}
         active = {t: n for t, n in c.execute(
