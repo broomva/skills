@@ -311,6 +311,19 @@ def test_the_scenario_capture_alone_raises_no_t3_ask(world):
     assert not any(k.startswith("t3-") for k in _keys(_rep(world, healthy=True)))
 
 
+def test_a_thread_that_could_not_be_placed_resolves_none_of_its_asks(world):
+    rep = _rep(world)
+    key = next(k for k in _keys(rep) if k.startswith("t3-wait:%s:" % BROOMVA_ORCH))
+    failing = "t3-failing:%s" % SRI_ORCH
+    for r in rep["t3_threads"]:
+        if r["thread_id"] in (BROOMVA_ORCH, SRI_ORCH):
+            r["scope"] = None  # its worktree and project root unreadable this tick: placement unknown
+    assert not report.observed(key, rep) and not report.observed(failing, rep)
+    assert key not in report.resolved_keys([], [], rep)
+    rep["t3_threads"] = [r for r in rep["t3_threads"] if r["thread_id"] != BROOMVA_ORCH]
+    assert report.observed(key, rep)  # no longer listed at all: a reading, so the wait resolves
+
+
 def test_a_wait_that_ended_resolves_from_a_reading(world):
     rep = _rep(world, healthy=True)
     assert not any(k.startswith("t3-wait:") for k in _keys(rep))

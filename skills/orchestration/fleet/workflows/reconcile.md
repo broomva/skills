@@ -219,7 +219,10 @@ Needs you: its schedule keeps firing and the fires queue behind the waiting
 run) and a scheduled thread whose last 2 finished runs failed, interrupted,
 cancelled and rolled-back runs skipped (`t3-failing:<thread>`; its text says
 when a retry is already running or queued).
-Another scope's threads are listed, never asked about. A key is asked once, stays open until the owner answers it or
+Another scope's threads are listed, never asked about. A T3 key resolves only
+from a read T3 surface where its thread is placed in a scope or no longer
+listed: a thread T3 still lists but whose repo couldn't be read this tick is
+unknown, and its ask stays open. A key is asked once, stays open until the owner answers it or
 a tick finds it no longer true (a resolution record), and an answer holds for
 as long as the condition does; a condition that ends and comes back is a new
 ask. A tick resolves a key only when it read the surfaces that raise it: the

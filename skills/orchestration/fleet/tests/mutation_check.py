@@ -697,12 +697,15 @@ PROTECTIONS = [
     ("the failing ask overclaims during a retry", REP,
      'if r["active"] or r["queued"] else', "if False else",
      [T + "test_t3.py", "-k", "retry_is_already"]),
+    # BRO-3376 P20 round 3 (Codex).
+    ("an unplaced T3 thread resolves its asks", REP,
+     '        return ok("t3") and not (row is not None and row.get("scope") is None)', '        return ok("t3")',
+     [T + "test_t3.py", "-k", "could_not_be_placed"]),
     ("another scope's T3 thread is asked about", REP,
      'if r.get("scope") == rep["scope"]]', 'if True]',
      [T + "test_t3.py", "-k", "never_asked"]),
     ("an unread T3 surface resolves its keys", REP,
-     '    if kind in ("t3-wait", "t3-failing"):\n        return ok("t3")',
-     '    if kind in ("t3-wait", "t3-failing"):\n        return True',
+     'return ok("t3") and not (row is not None', 'return True and not (row is not None',
      [T + "test_t3.py", "-k", "unread_t3"]),
 ]
 

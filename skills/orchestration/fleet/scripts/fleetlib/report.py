@@ -317,7 +317,11 @@ def observed(key: str, rep: Dict[str, Any]) -> bool:
     if kind in ("fleet-shaped-unledgered", "spawn-duplicate"):
         return ok("listing")
     if kind in ("t3-wait", "t3-failing"):
-        return ok("t3")
+        # A thread id holds colons (`mcp:...`); a wait's key ends in its request tag. A thread T3 still
+        # lists but that couldn't be placed (its repo unreadable this tick) is unknown, not resolved.
+        tid = rest.rsplit(":", 1)[0] if kind == "t3-wait" else rest
+        row = next((r for r in rep.get("t3_threads") or [] if r["thread_id"] == tid), None)
+        return ok("t3") and not (row is not None and row.get("scope") is None)
     if kind == "rules":
         slug = rest.split(":", 1)[0]
         mine = [r for r in rep["repos"] if (r.get("slug") or common.tilde(r["repo"])) == slug]
