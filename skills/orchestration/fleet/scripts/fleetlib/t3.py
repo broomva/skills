@@ -1,9 +1,9 @@
 """T3 Code's threads, scheduled tasks, runs and open user-input requests
 (BRO-3376), read from T3's own state database.
 
-The database is T3's, not ours: it is opened read-only (`mode=ro`, so WAL is
-never checkpointed and nothing is written), and every column read is pinned in
-COLUMNS. A missing table or column raises T3Unread, so the surface reads as
+The database is T3's, not ours: it is opened read-only (`mode=ro`: its file is
+never written and its WAL never checkpointed; see _connect for the `-shm` mark
+every reader keeps), and every column read is pinned in COLUMNS. A missing table or column raises T3Unread, so the surface reads as
 not read, never as empty. No model and no network.
 
 What is NOT read is part of the contract: a scheduled task's prompt and its
@@ -88,53 +88,75 @@ def _worktree(payload: Any) -> Optional[str]:
     return v if isinstance(v, str) and v else None
 
 
+def _connect(path: str) -> sqlite3.Connection:
+    """Read-only (`mode=ro`): T3's database file is never written and a read-only connection can't
+    checkpoint the WAL. SQLite still keeps a reader's mark in the `-shm` file, and creates the `-shm`
+    and `-wal` files when they are missing; that is the WAL protocol for any reader, not a write to
+    T3's data. Never `immutable=1`: it ignores the WAL and would read a stale snapshot."""
+    return sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+
+
+#: The threads a finding or the report can name are the live ones (neither archived nor deleted).
+_LIVE = ("select thread_id from orchestration_v2_projection_threads "
+         "where deleted_at is null and archived_at is null")
+
+
 def read_state(path: str, now: float) -> str:  # noqa: ARG001 (now: the Sources signature; nothing here is aged)
     """The rows this module reads, as JSON text. Raises T3Unread when the
-    database can't be opened or its schema lacks a pinned column. No database
-    at all is a reading, not a failure: T3 is not installed on this host (the
-    fleet also runs where T3 doesn't), so there are no threads to list."""
+    database can't be opened or read, its schema lacks a pinned column, or a
+    cap is passed. No T3 data directory at all is a reading, not a failure: T3
+    is not installed on this host (the fleet also runs where T3 doesn't). A data
+    directory without the database is a failure: the file moved or was renamed,
+    and reading that as "no threads" would resolve every open T3 ask."""
     if not os.path.exists(path):
+        if os.path.isdir(os.path.dirname(path) or "."):
+            raise T3Unread("T3 state: %s is missing, though its directory is there" % common.tilde(path))
         return json.dumps({"installed": False, "threads": [], "projects": {}, "schedules": [], "requests": [],
                            "runs": {}, "queued": {}, "active": {}})
     try:
-        c = sqlite3.connect("file:%s?mode=ro" % path, uri=True, timeout=5)
+        c = _connect(path)
     except sqlite3.Error as exc:
         raise T3Unread("T3 state: %s" % exc)
+    pending = ACTIVE_RUN_STATES + ("queued",)
     try:
         _check_schema(c)
-        schedules = [dict(zip(("task_id", "title", "enabled", "schedule_json", "thread_id", "last_run_status",
-                                "next_run_at"), r))
-                     for r in c.execute("select task_id, title, enabled, schedule_json, thread_id, last_run_status, "
-                                        "next_run_at from scheduled_tasks where enabled = 1 and thread_id is not null")]
-        # Only user inputs: a command approval is not a wait this module reports. One over the cap is
-        # read, so a cut list fails the surface instead of reading as complete.
+        # Only user inputs on live threads: a command approval is not a wait this module reports. One
+        # over the cap is read, so a cut list fails the surface instead of reading as complete.
         requests = [dict(zip(("request_id", "thread_id", "kind", "status", "created_at"), r))
                     for r in c.execute("select runtime_request_id, thread_id, kind, status, created_at "
                                        "from orchestration_v2_projection_runtime_requests "
                                        "where kind = 'user_input' and resolved_at is null and status not in (%s) "
-                                       "order by created_at limit ?" % ",".join("?" * len(CLOSED_REQUEST_STATES)),
+                                       "and thread_id in (%s) order by created_at limit ?"
+                                       % (",".join("?" * len(CLOSED_REQUEST_STATES)), _LIVE),
                                        CLOSED_REQUEST_STATES + (MAX_REQUESTS + 1,))]
         if len(requests) > MAX_REQUESTS:
             raise T3Unread("T3 state: over %d open user-input requests: the read may be cut, so none is listed"
                            % MAX_REQUESTS)
-        busy = [t for (t,) in c.execute("select distinct thread_id from orchestration_v2_projection_runs "
-                                        "where status in (%s)" % ",".join("?" * (len(ACTIVE_RUN_STATES) + 1)),
-                                        ACTIVE_RUN_STATES + ("queued",))]
-        wanted = {s["thread_id"] for s in schedules} | {r["thread_id"] for r in requests} | set(busy)
-        if len(wanted) > MAX_THREADS:
-            raise T3Unread("T3 state: %d threads are scheduled, waiting or busy, over the cap of %d: the read "
-                           "may be cut, so none is listed" % (len(wanted), MAX_THREADS))
-        rows = c.execute("select thread_id, project_id, title, provider_instance_id, updated_at, payload_json "
-                         "from orchestration_v2_projection_threads where deleted_at is null and archived_at is null "
-                         "and thread_id in (%s)" % ",".join("?" * len(wanted)), tuple(sorted(wanted))).fetchall() \
-            if wanted else []
+        # The live threads that are scheduled, waiting on a user input, or have a run active or queued.
+        rows = c.execute(
+            "select thread_id, project_id, title, provider_instance_id, updated_at, payload_json "
+            "from orchestration_v2_projection_threads where deleted_at is null and archived_at is null and ("
+            "thread_id in (select thread_id from scheduled_tasks where enabled = 1) or "
+            "thread_id in (select thread_id from orchestration_v2_projection_runtime_requests where "
+            "kind = 'user_input' and resolved_at is null and status not in (%s)) or "
+            "thread_id in (select thread_id from orchestration_v2_projection_runs where status in (%s))"
+            ") order by thread_id limit ?" % (",".join("?" * len(CLOSED_REQUEST_STATES)), ",".join("?" * len(pending))),
+            CLOSED_REQUEST_STATES + pending + (MAX_THREADS + 1,)).fetchall()
+        if len(rows) > MAX_THREADS:
+            raise T3Unread("T3 state: over %d threads are scheduled, waiting or busy: the read may be cut, so "
+                           "none is listed" % MAX_THREADS)
+        wanted = {r[0] for r in rows}
         threads = [{"thread_id": t, "project_id": p, "title": ti, "provider": pr, "updated_at": u,
                     "worktree": _worktree(pj)} for t, p, ti, pr, u, pj in rows]
+        schedules = [dict(zip(("task_id", "title", "enabled", "schedule_json", "thread_id", "last_run_status",
+                                "next_run_at"), r))
+                     for r in c.execute("select task_id, title, enabled, schedule_json, thread_id, last_run_status, "
+                                        "next_run_at from scheduled_tasks where enabled = 1 and thread_id is not null")
+                     if r[4] in wanted]
         projects = {p: root for p, root in c.execute(
             "select project_id, workspace_root from projection_projects where deleted_at is null")}
         # The latest terminal runs, read apart from active and queued ones, which would otherwise fill
         # the window and hide a failing streak.
-        pending = ACTIVE_RUN_STATES + ("queued",)
         runs: Dict[str, List[Dict[str, Any]]] = {}
         for t in sorted(wanted):
             runs[t] = [dict(zip(("ordinal", "status", "requested_at", "completed_at"), r))
@@ -142,17 +164,18 @@ def read_state(path: str, now: float) -> str:  # noqa: ARG001 (now: the Sources 
                                           "from orchestration_v2_projection_runs where thread_id = ? "
                                           "and status not in (%s) order by ordinal desc limit ?"
                                           % ",".join("?" * len(pending)), (t,) + pending + (RUNS_PER_THREAD,))]
-        queued = dict(c.execute("select thread_id, count(*) from orchestration_v2_projection_runs "
-                                "where status = 'queued' group by thread_id"))
-        active = dict(c.execute("select thread_id, count(*) from orchestration_v2_projection_runs "
-                                "where status in (%s) group by thread_id" % ",".join("?" * len(ACTIVE_RUN_STATES)),
-                                ACTIVE_RUN_STATES))
-    except sqlite3.Error as exc:
-        raise T3Unread("T3 state: %s" % exc)
+        queued = {t: n for t, n in c.execute("select thread_id, count(*) from orchestration_v2_projection_runs "
+                                             "where status = 'queued' group by thread_id") if t in wanted}
+        active = {t: n for t, n in c.execute(
+            "select thread_id, count(*) from orchestration_v2_projection_runs where status in (%s) "
+            "group by thread_id" % ",".join("?" * len(ACTIVE_RUN_STATES)), ACTIVE_RUN_STATES) if t in wanted}
+        # Inside the handler: a column holding something JSON can't encode (a BLOB) fails the surface.
+        return json.dumps({"installed": True, "threads": threads, "projects": projects, "schedules": schedules,
+                           "requests": requests, "runs": runs, "queued": queued, "active": active})
+    except (sqlite3.Error, TypeError, ValueError) as exc:
+        raise T3Unread("T3 state: %s" % common.safe_text(str(exc), 160))
     finally:
         c.close()
-    return json.dumps({"installed": True, "threads": threads, "projects": projects, "schedules": schedules,
-                       "requests": requests, "runs": runs, "queued": queued, "active": active})
 
 
 def parse_state(text: str) -> Dict[str, Any]:
@@ -200,8 +223,8 @@ def threads(state: Dict[str, Any], now: float) -> List[Dict[str, Any]]:
     waiting: Dict[str, Dict[str, Any]] = {}
     for r in state["requests"]:  # user inputs only: read_state keeps no other kind
         t0 = common.parse_iso(r.get("created_at"))
-        if t0 is None:
-            continue
+        if t0 is None:  # skipping it would read as "not waiting" and resolve the thread's open ask
+            raise T3Unread("T3 state: an open user-input request has an unreadable created_at")
         cur = waiting.get(r["thread_id"])
         if cur is None or t0 < cur["since"]:  # the oldest open request is how long the run has waited
             waiting[r["thread_id"]] = {"request_id": r["request_id"], "since": t0}

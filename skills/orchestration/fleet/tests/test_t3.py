@@ -24,6 +24,7 @@ INTERACTIVE = "dddd4444-0000-4000-8000-000000000004"
 
 def _db(path, drop=None):
     c = sqlite3.connect(str(path))
+    c.execute("pragma journal_mode=wal")  # T3's own mode: the reader must leave its file unwritten under WAL
     for table, cols in t3.COLUMNS.items():
         cols = [x for x in cols if (table, x) != drop]
         extra = {"scheduled_tasks": ["prompt", "webhook_secret"]}.get(table, [])
@@ -33,6 +34,11 @@ def _db(path, drop=None):
               "'2026-09-30T23:00:00.000Z', null, null, '{\"worktreePath\": \"/w/broomva/wt\", \"title\": \"x\"}')")
     c.execute("insert into orchestration_v2_projection_threads values ('t-gone', 'p1', 'Archived', 'codex', "
               "'2026-09-30T23:00:00.000Z', '2026-09-30T23:10:00.000Z', null, '{}')")
+    if drop is None:  # an archived thread, still scheduled and waiting: neither listed nor counted
+        c.execute("insert into scheduled_tasks (task_id, title, enabled, schedule_json, thread_id, last_run_status, "
+                  "next_run_at) values ('s-gone', 'old', 1, '{}', 't-gone', 'succeeded', null)")
+        c.execute("insert into orchestration_v2_projection_runtime_requests values ('gone-open', 't-gone', "
+                  "'user_input', 'pending', '2026-09-30T21:00:00.000Z', null)")
     for tid, st in (("t-busy", "running"), ("t-idle", "completed")):  # unscheduled, nothing open
         c.execute("insert into orchestration_v2_projection_threads values (?, 'p1', ?, 'claudeAgent', "
                   "'2026-09-30T23:00:00.000Z', null, null, '{}')", (tid, tid))
@@ -68,7 +74,9 @@ def test_the_reader_keeps_open_requests_and_reads_no_prompt_or_secret(tmp_path):
     assert [r["request_id"] for r in st["requests"]] == ["open"]
     # Read: the scheduled thread and a busy one. Not read: an archived thread, an idle unscheduled one.
     assert sorted(t["thread_id"] for t in st["threads"]) == ["t-busy", "t-orch"]
-    assert st["threads"][0]["worktree"] == "/w/broomva/wt"
+    assert {t["thread_id"]: t for t in st["threads"]}["t-orch"]["worktree"] == "/w/broomva/wt"
+    assert "gone-open" not in [r["request_id"] for r in st["requests"]]  # an archived thread's request is not read
+    assert [s["task_id"] for s in st["schedules"]] == ["s1"]
     # The latest terminal runs, past six queued and one active: the window can't be filled by pending runs.
     assert [r["status"] for r in st["runs"]["t-orch"]] == ["failed", "failed", "completed"]
     assert st["queued"] == {"t-orch": 6} and st["active"] == {"t-orch": 1, "t-busy": 1}
@@ -84,16 +92,21 @@ def test_a_missing_pinned_column_fails_the_surface_never_reads_as_empty(tmp_path
     monkeypatch.setenv(t3.STATE_ENV, str(db))
     with pytest.raises(SourceError, match="lacks resolved_at"):
         sources.Sources().t3_state(NOW)
-    # No database at all is a host without T3: read, with nothing in it; never an ask every tick.
-    absent = t3.parse_state(t3.read_state(str(tmp_path / "absent.sqlite"), NOW))
+    # No T3 data directory at all is a host without T3: read, with nothing in it; never an ask every tick.
+    absent = t3.parse_state(t3.read_state(str(tmp_path / "no-t3" / "userdata" / "statev2.sqlite"), NOW))
     assert absent["installed"] is False and absent["threads"] == [] and absent["requests"] == []
+    # Its directory there and the file not: moved or renamed. Reading "no threads" would resolve every T3 ask.
+    with pytest.raises(t3.T3Unread, match="missing, though its directory is there"):
+        t3.read_state(str(tmp_path / "absent.sqlite"), NOW)
 
 
 def test_more_threads_than_the_cap_fail_the_surface_rather_than_list_part(tmp_path, monkeypatch):
     db = tmp_path / "statev2.sqlite"
     _db(db)
+    monkeypatch.setattr(t3, "MAX_THREADS", 2)  # t-orch and t-busy; the archived scheduled thread doesn't count
+    assert len(t3.parse_state(t3.read_state(str(db), NOW))["threads"]) == 2
     monkeypatch.setattr(t3, "MAX_THREADS", 1)
-    with pytest.raises(t3.T3Unread, match="over the cap of 1"):
+    with pytest.raises(t3.T3Unread, match="over 1 threads"):
         t3.read_state(str(db), NOW)
 
 
@@ -103,7 +116,21 @@ def test_the_reader_opens_the_database_read_only(tmp_path):
     before = db.read_bytes()
     t3.read_state(str(db), NOW)
     assert db.read_bytes() == before
-    assert not (tmp_path / "statev2.sqlite-wal").exists()
+    c = t3._connect(str(db))
+    with pytest.raises(sqlite3.OperationalError, match="readonly"):
+        c.execute("insert into projection_projects values ('p2', '/x', null)")
+    c.close()
+
+
+def test_a_value_json_cannot_encode_fails_the_surface(tmp_path):
+    db = tmp_path / "statev2.sqlite"
+    _db(db)
+    c = sqlite3.connect(str(db))
+    c.execute("update orchestration_v2_projection_threads set title = ? where thread_id = 't-orch'", (b"\x00\xff",))
+    c.commit()
+    c.close()
+    with pytest.raises(t3.T3Unread):
+        t3.read_state(str(db), NOW)
 
 
 def test_a_failing_streak_counts_failed_runs_in_a_row_past_neutral_ones():
@@ -188,6 +215,31 @@ def test_only_a_t3_wait_skips_the_ledgers_raise_delay():
     assert not report.pre_aged("prompt:s:abc") and not report.pre_aged("surface:t3")
 
 
+def test_an_unreadable_request_time_fails_the_surface_rather_than_resolve_the_ask(world):
+    _conditions(world)
+    p = world.fixture / "t3" / "state.json"
+    st = json.loads(p.read_text())
+    st["requests"][-1]["created_at"] = "yesterday"
+    p.write_text(json.dumps(st))
+    rep = _rep(world, healthy=True)
+    assert not rep["surfaces"]["t3"]["ok"] and "created_at" in rep["surfaces"]["t3"]["error"]
+    assert not report.observed("t3-wait:%s:x" % BROOMVA_ORCH, rep)
+
+
+def test_a_failing_ask_says_when_a_retry_is_already_queued(world):
+    _conditions(world)
+    p = world.fixture / "t3" / "state.json"
+    st = json.loads(p.read_text())
+    st["queued"][SRI_ORCH] = 1
+    p.write_text(json.dumps(st))
+    q = _keys(_rep(world, "sri", healthy=True))["t3-failing:%s" % SRI_ORCH][1]
+    assert "A retry is running or queued" in q and "does no work" not in q
+
+
+def test_a_failing_ask_with_no_retry_says_the_loop_is_stopped(world):
+    assert "does no work" in _keys(_rep(world, "sri"))["t3-failing:%s" % SRI_ORCH][1]
+
+
 def test_a_scheduled_thread_waiting_past_the_threshold_is_a_blocking_ask(world):
     keys = _keys(_rep(world))
     wait = [k for k in keys if k.startswith("t3-wait:")]
@@ -206,7 +258,7 @@ def test_another_scopes_thread_is_listed_never_asked_about(world):
     assert not any(k.startswith("t3-failing:") for k in broomva)
     sri = _keys(_rep(world, "sri"))
     assert set(k for k in sri if k.startswith("t3-")) == {"t3-failing:%s" % SRI_ORCH}
-    assert "last 2 runs failed" in sri["t3-failing:%s" % SRI_ORCH][1]
+    assert "last 2 finished runs failed" in sri["t3-failing:%s" % SRI_ORCH][1]
 
 
 def test_an_unread_t3_surface_raises_its_own_ask_and_resolves_no_t3_key(world):

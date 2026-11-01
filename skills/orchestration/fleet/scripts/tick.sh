@@ -42,6 +42,10 @@ export FLEET_CHILD=1
 # from a shell is dropped before anything runs, the config reads and the alert
 # fallback included, so every process this tick starts reads GitHub as it.
 unset GH_TOKEN GITHUB_TOKEN
+# Placement asks git which repo a path is in; an inherited GIT_DIR (a hook, a
+# shell inside a repo's git dir) would answer the same repo for every path, and
+# one scope would ask about another's threads (BRO-3376 P20).
+unset GIT_DIR GIT_WORK_TREE GIT_COMMON_DIR
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 FLEET="$SCRIPT_DIR/fleet"

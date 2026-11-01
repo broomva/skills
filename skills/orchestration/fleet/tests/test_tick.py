@@ -496,7 +496,8 @@ def test_an_ask_reaches_the_ledger_only_once_it_has_lasted(rig):
     assert len(rig.asks()) == 4
 
 
-def test_a_t3_wait_reaches_the_ledger_at_once_having_lasted_its_own_threshold(rig, tmp_path):
+@pytest.mark.parametrize("inherited_git_dir", [False, True])
+def test_a_t3_wait_reaches_the_ledger_at_once_having_lasted_its_own_threshold(rig, tmp_path, inherited_git_dir):
     # BRO-3376: a t3-wait is a candidate only after t3_wait_ask_min; the ledger's delay would stack on it.
     import sqlite3
 
@@ -515,7 +516,9 @@ def test_a_t3_wait_reaches_the_ledger_at_once_having_lasted_its_own_threshold(ri
     c.commit()
     c.close()
     rig.world.write_config(ask_raise_after_min=50)
-    r = rig.tick(FLEET_T3_STATE=str(db))
+    # An inherited GIT_DIR (here, the other scope's repo) must not place every thread in that repo.
+    extra = {"GIT_DIR": os.path.realpath(str(rig.world.home / "client" / "sri" / ".git"))} if inherited_git_dir else {}
+    r = rig.tick(FLEET_T3_STATE=str(db), **extra)
     asks = rig.asks()
     assert r.returncode == 0 and "4 waiting" in rig.log(), rig.log()
     assert [a["fleet"]["key"].split(":")[0] for a in asks] == ["t3-wait"] and asks[0]["blocking"] is True

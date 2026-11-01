@@ -161,7 +161,7 @@ By hand: `fleet reconcile --scope broomva` (it runs `scripts/tick.sh` with
 | Paseo | `~/.paseo/agents/*/*.json`, `~/.paseo/schedules/*.json` (read-only) | reported; the count check says it could not run |
 | The board | ctx-core's `events.jsonl`, rebuilt in memory (no cache write) | reported and asked per scope; that scope's sessions that would be 9, 9a or 10 read unknown, since 2, 4, 7 and 8 couldn't be checked |
 | GitHub | per repo: slug from `origin`, `repos/<r>` default branch, `rules/branches/<b>`, `gh pr list` | **that repo** is reported as not observed. A slug that doesn't resolve, a gh error or a PR list at `pr_list_cap` never reads as zero PRs |
-| T3 threads | `~/.t3/userdata/statev2.sqlite` (`FLEET_T3_STATE` overrides), opened read-only with its columns pinned (`fleetlib/t3.py`): the threads that are scheduled, waiting on a user-input request, or have a run active or queued; their last 5 runs; open user-input requests. Never a schedule's prompt or webhook secret, a message, or a request's question | a pinned column or table missing, or over 200 such threads: reported and asked (`surface:t3`); nothing is listed. No database at all is a host without T3: read, empty |
+| T3 threads | `~/.t3/userdata/statev2.sqlite` (`FLEET_T3_STATE` overrides), opened read-only with its columns pinned (`fleetlib/t3.py`): the live (not archived or deleted) threads that are scheduled, waiting on a user-input request, or have a run active or queued; each one's last 5 finished runs, read apart from active and queued ones; open user-input requests (command approvals are not read). A thread is placed by its worktree, else its project root. Never a schedule's prompt or webhook secret, a message, or a request's question | reported and asked (`surface:t3`), nothing listed, when a pinned column or table is missing, over 200 such threads or 200 open user-input requests, an open request's time can't be read, or the data directory is there without the database (moved or renamed). No T3 data directory at all is a host without T3: read, empty |
 
 The parsers are pinned to Claude Code 2.1.295: its listing and job files are
 captured in `tests/fixtures/cc-2.1.295/` and must parse with no drift. The
@@ -216,7 +216,9 @@ with no process; and in this scope's T3 threads (0.7.0, BRO-3376), a scheduled
 thread whose run has waited `t3_wait_ask_min` (30) minutes or more on a
 user-input request (`t3-wait:<thread>:<request>`, class 7, so it counts in
 Needs you: its schedule keeps firing and the fires queue behind the waiting
-run) and a scheduled thread whose last 2 runs failed (`t3-failing:<thread>`).
+run) and a scheduled thread whose last 2 finished runs failed, interrupted,
+cancelled and rolled-back runs skipped (`t3-failing:<thread>`; its text says
+when a retry is already running or queued).
 Another scope's threads are listed, never asked about. A key is asked once, stays open until the owner answers it or
 a tick finds it no longer true (a resolution record), and an answer holds for
 as long as the condition does; a condition that ends and comes back is a new
@@ -245,7 +247,9 @@ ask --show` keeps the scope's ask ledger, `<state_dir>/.control/asks/
 fleet-<scope>.yaml` (`scripts/fleetlib/ledger_ask.py`), in step with the open
 asks, once an ask has been open for `ask_raise_after_min` (50 by default: past
 the next hourly tick, so an ask a later tick found no longer true isn't
-written; 0 writes at once).
+written; 0 writes at once). A `t3-wait` is written on the tick that first
+finds it: it has already lasted `t3_wait_ask_min`, and the delay would stack
+on that (`report.PRE_AGED`).
 - Each open ask is one decision ask: its question as the headline, one
   option, Acknowledge, with the owner's note if any (`fleet ack`'s own
   meaning), and `blocking: true` for a session that waits on the owner (class 3, at a

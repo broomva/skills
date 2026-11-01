@@ -234,9 +234,11 @@ def candidates(rep: Dict[str, Any]) -> List[Tuple[str, str, str]]:
                               "every %s" % common.age(every) if every else "interval unknown", r["queued"])))
         else:
             cands.append(("t3-failing:%s" % r["thread_id"], "t3",
-                          "T3 thread %s: its last %d runs failed (schedule: %s; last runs %s). Its loop does "
-                          "no work until the cause is fixed." % (
-                              label, r["failing_streak"], r["schedule"]["title"], ", ".join(r["last_runs"][:4]))))
+                          "T3 thread %s: its last %d finished runs failed (schedule: %s; last runs %s). %s" % (
+                              label, r["failing_streak"], r["schedule"]["title"], ", ".join(r["last_runs"][:4]),
+                              "A retry is running or queued now; it is still an ask until a run completes."
+                              if r["active"] or r["queued"] else
+                              "Its loop does no work until the cause is fixed.")))
     # Scheduled work is an inventory, report-only in phase 1: its readings
     # (staleness, exit codes) are in the report's table, not the owner's dialog.
     return cands
