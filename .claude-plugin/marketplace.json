@@ -1,0 +1,342 @@
+{
+  "name": "broomva-skills",
+  "description": "The broomva/skills monorepo as Claude Code plugins: one plugin per category bucket (23), plus `broomva-skills` with all 111 skills.",
+  "owner": {
+    "name": "Broomva",
+    "url": "https://github.com/broomva"
+  },
+  "plugins": [
+    {
+      "name": "broomva-skills",
+      "description": "Every broomva/skills skill in one plugin: 111 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
+      "source": "./",
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "bundle"
+      ]
+    },
+    {
+      "name": "aerospace",
+      "description": "Aerospace & RF skills from broomva/skills: openrocket-sim, sdr-satellite.",
+      "source": "./skills/aerospace",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "aerospace"
+      ]
+    },
+    {
+      "name": "audio",
+      "description": "Audio & music skills from broomva/skills: livecoding, omnivoice, talkback.",
+      "source": "./skills/audio",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "audio"
+      ]
+    },
+    {
+      "name": "cadence",
+      "description": "Operating cadence skills from broomva/skills: drift-check, morning-briefing, stakeholder-update, weekly-review.",
+      "source": "./skills/cadence",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "cadence"
+      ]
+    },
+    {
+      "name": "commerce",
+      "description": "Commerce & procurement skills from broomva/skills: d1-cli, procurer, swapit.",
+      "source": "./skills/commerce",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "commerce"
+      ]
+    },
+    {
+      "name": "compute",
+      "description": "Compute infrastructure skills from broomva/skills: agentic-vps, colab-remote, forkable-shell, remote-gpu.",
+      "source": "./skills/compute",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "compute"
+      ]
+    },
+    {
+      "name": "design",
+      "description": "Design & brand skills from broomva/skills: arcan-glass, brand-icons, broomva-design, design-distill, design-engineering, liquid-dawn, liquid-midnight, tekton, unslop.",
+      "source": "./skills/design",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "design"
+      ]
+    },
+    {
+      "name": "finance",
+      "description": "Finance & payments skills from broomva/skills: finance-substrate, haima, investment-management, wealth-management.",
+      "source": "./skills/finance",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "finance"
+      ]
+    },
+    {
+      "name": "governance",
+      "description": "Governance & control skills from broomva/skills: agentic-control-kernel, architecture-design-principles, autoreview, bstack, cross-review, dogfood, harness-engineering-playbook, keel, legal-readiness, spec-contract, unhobble.",
+      "source": "./skills/governance",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "governance"
+      ]
+    },
+    {
+      "name": "healthcare",
+      "description": "Healthcare skills from broomva/skills: founder-mode-oncology, health.",
+      "source": "./skills/healthcare",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "healthcare"
+      ]
+    },
+    {
+      "name": "knowledge",
+      "description": "Knowledge & memory skills from broomva/skills: bookkeeping, braindump, ccr, colombia-conflict, comprehend, goodies, kg, what.",
+      "source": "./skills/knowledge",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "knowledge"
+      ]
+    },
+    {
+      "name": "messaging",
+      "description": "Messaging channels skills from broomva/skills: claude-code-channels, claude-remote-sessions.",
+      "source": "./skills/messaging",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "messaging"
+      ]
+    },
+    {
+      "name": "models",
+      "description": "Model runtimes skills from broomva/skills: bitnet, heretic-abliteration.",
+      "source": "./skills/models",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "models"
+      ]
+    },
+    {
+      "name": "neuroscience",
+      "description": "Neuroscience & BCI skills from broomva/skills: tribe-v2-agent-alignment, tribe-v2-bci-applied, tribe-v2-neuroscience.",
+      "source": "./skills/neuroscience",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "neuroscience"
+      ]
+    },
+    {
+      "name": "orchestration",
+      "description": "Orchestration & autonomy skills from broomva/skills: arc, autonomous, ctx-core, eve-forge, fleet, fleet-reconcile, governed-autonomy-loop, handback, handoff, p9, persist, provider-manager, resume, role-x.",
+      "source": "./skills/orchestration",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "orchestration"
+      ]
+    },
+    {
+      "name": "publishing",
+      "description": "Publishing & growth skills from broomva/skills: blog-post, citable, content-creation, format-first, revenuecast, seo-llmeo, social-intelligence.",
+      "source": "./skills/publishing",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "publishing"
+      ]
+    },
+    {
+      "name": "research",
+      "description": "Research skills from broomva/skills: checkit, deep-dive-research-orchestrator.",
+      "source": "./skills/research",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "research"
+      ]
+    },
+    {
+      "name": "robotics",
+      "description": "Robotics skills from broomva/skills: capx-agentic-robotics, orcahand.",
+      "source": "./skills/robotics",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "robotics"
+      ]
+    },
+    {
+      "name": "science",
+      "description": "Science skills from broomva/skills: ocean-genomics.",
+      "source": "./skills/science",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "science"
+      ]
+    },
+    {
+      "name": "simulation",
+      "description": "Simulation skills from broomva/skills: data-provider, parallax, sourcer.",
+      "source": "./skills/simulation",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "simulation"
+      ]
+    },
+    {
+      "name": "strategy",
+      "description": "Strategy & decisions skills from broomva/skills: agentic-leadership, decision-log, phronesis, pre-mortem, premortem, strategy-critique.",
+      "source": "./skills/strategy",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "strategy"
+      ]
+    },
+    {
+      "name": "tooling",
+      "description": "Skill & prompt tooling skills from broomva/skills: attempt-audit, audit-harness-usage, broomva-cli, disambiguate, make-spec, mod-anything, prompt-library, prove-the-negative, skillify, skills-catalog.",
+      "source": "./skills/tooling",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "tooling"
+      ]
+    },
+    {
+      "name": "utilities",
+      "description": "Everyday utilities skills from broomva/skills: alkosto-wait-optimizer, gasgo.",
+      "source": "./skills/utilities",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "utilities"
+      ]
+    },
+    {
+      "name": "video",
+      "description": "Video & multimedia skills from broomva/skills: brainrot-for-good, content-engine, creative-review, launch-video, ltx-video, motion-lab, video-cut.",
+      "source": "./skills/video",
+      "strict": false,
+      "skills": [
+        "./"
+      ],
+      "category": "productivity",
+      "tags": [
+        "skills",
+        "video"
+      ]
+    }
+  ]
+}
