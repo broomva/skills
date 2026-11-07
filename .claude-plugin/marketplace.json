@@ -1,6 +1,6 @@
 {
   "name": "broomva-skills",
-  "description": "The broomva/skills monorepo as Claude Code plugins: one plugin per category bucket (23), plus `broomva-skills` with all 111 skills.",
+  "description": "The broomva/skills monorepo as plugins: one per category bucket (23), plus `broomva-skills` with all 111 skills.",
   "owner": {
     "name": "Broomva",
     "url": "https://github.com/broomva"

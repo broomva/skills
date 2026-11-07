@@ -48,7 +48,13 @@ def repo(tmp_path: Path) -> Path:
 
 
 def _read(repo: Path, rel: str) -> dict:
-    return json.loads((repo / ".claude-plugin" / rel).read_text())
+    """`rel` is relative to `.claude-plugin/` unless it starts with `.`."""
+    base = repo if rel.startswith(".") else repo / ".claude-plugin"
+    return json.loads((base / rel).read_text())
+
+
+_ALL = (".claude-plugin/marketplace.json", ".claude-plugin/plugin.json",
+        ".agents/plugins/marketplace.json", ".codex-plugin/plugin.json")
 
 
 def test_one_plugin_per_bucket_plus_bundle(repo: Path) -> None:
@@ -83,11 +89,30 @@ def test_check_is_clean_after_write_and_red_on_new_skill(repo: Path, capsys) -> 
     capsys.readouterr()
     assert bpm.main(["--root", str(repo), "--check"]) == 1
     err = capsys.readouterr().err
-    assert "marketplace.json" in err and "plugin.json" in err
+    assert all(rel in err for rel in _ALL)
 
 
 def test_write_is_idempotent(repo: Path) -> None:
     bpm.main(["--root", str(repo)])
-    first = {p: p.read_text() for p in (repo / ".claude-plugin").iterdir()}
+    first = {rel: (repo / rel).read_text() for rel in _ALL}
     bpm.main(["--root", str(repo)])
-    assert first == {p: p.read_text() for p in (repo / ".claude-plugin").iterdir()}
+    assert first == {rel: (repo / rel).read_text() for rel in _ALL}
+
+
+def test_codex_marketplace_avoids_dot_slash_and_root_manifest(repo: Path) -> None:
+    # Codex ignores `skills: "./"`, and a bucket rooted at the repo would read the
+    # bundle's manifest and fail the name check — so buckets root at `skills/`.
+    bpm.main(["--root", str(repo)])
+    m = _read(repo, ".agents/plugins/marketplace.json")
+    by_name = {p["name"]: p for p in m["plugins"]}
+    assert list(by_name) == ["broomva-skills", "models", "research"]
+    assert by_name["broomva-skills"]["source"] == {"source": "local", "path": "./"}
+    assert "skills" not in by_name["broomva-skills"]
+    for cat in ("models", "research"):
+        assert by_name[cat]["source"] == {"source": "local", "path": "./skills"}
+        assert by_name[cat]["skills"] == f"./{cat}/"
+    assert all(p["policy"]["installation"] == "AVAILABLE" for p in m["plugins"])
+    assert not (repo / "skills" / ".codex-plugin").exists()
+    codex = _read(repo, ".codex-plugin/plugin.json")
+    assert codex["name"] == "broomva-skills" and codex["skills"] == "./skills/"
+    assert "version" not in codex
