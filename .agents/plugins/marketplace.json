@@ -1,0 +1,343 @@
+{
+  "name": "broomva-skills",
+  "interface": {
+    "displayName": "Broomva Skills"
+  },
+  "plugins": [
+    {
+      "name": "broomva-skills",
+      "description": "Every broomva/skills skill in one plugin: 111 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
+      "source": {
+        "source": "local",
+        "path": "./"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "aerospace",
+      "description": "Aerospace & RF skills from broomva/skills: openrocket-sim, sdr-satellite.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./aerospace/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "audio",
+      "description": "Audio & music skills from broomva/skills: livecoding, omnivoice, talkback.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./audio/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "cadence",
+      "description": "Operating cadence skills from broomva/skills: drift-check, morning-briefing, stakeholder-update, weekly-review.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./cadence/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "commerce",
+      "description": "Commerce & procurement skills from broomva/skills: d1-cli, procurer, swapit.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./commerce/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "compute",
+      "description": "Compute infrastructure skills from broomva/skills: agentic-vps, colab-remote, forkable-shell, remote-gpu.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./compute/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "design",
+      "description": "Design & brand skills from broomva/skills: arcan-glass, brand-icons, broomva-design, design-distill, design-engineering, liquid-dawn, liquid-midnight, tekton, unslop.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./design/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "finance",
+      "description": "Finance & payments skills from broomva/skills: finance-substrate, haima, investment-management, wealth-management.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./finance/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "governance",
+      "description": "Governance & control skills from broomva/skills: agentic-control-kernel, architecture-design-principles, autoreview, bstack, cross-review, dogfood, harness-engineering-playbook, keel, legal-readiness, spec-contract, unhobble.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./governance/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "healthcare",
+      "description": "Healthcare skills from broomva/skills: founder-mode-oncology, health.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./healthcare/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "knowledge",
+      "description": "Knowledge & memory skills from broomva/skills: bookkeeping, braindump, ccr, colombia-conflict, comprehend, goodies, kg, what.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./knowledge/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "messaging",
+      "description": "Messaging channels skills from broomva/skills: claude-code-channels, claude-remote-sessions.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./messaging/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "models",
+      "description": "Model runtimes skills from broomva/skills: bitnet, heretic-abliteration.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./models/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "neuroscience",
+      "description": "Neuroscience & BCI skills from broomva/skills: tribe-v2-agent-alignment, tribe-v2-bci-applied, tribe-v2-neuroscience.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./neuroscience/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "orchestration",
+      "description": "Orchestration & autonomy skills from broomva/skills: arc, autonomous, ctx-core, eve-forge, fleet, fleet-reconcile, governed-autonomy-loop, handback, handoff, p9, persist, provider-manager, resume, role-x.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./orchestration/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "publishing",
+      "description": "Publishing & growth skills from broomva/skills: blog-post, citable, content-creation, format-first, revenuecast, seo-llmeo, social-intelligence.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./publishing/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "research",
+      "description": "Research skills from broomva/skills: checkit, deep-dive-research-orchestrator.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./research/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "robotics",
+      "description": "Robotics skills from broomva/skills: capx-agentic-robotics, orcahand.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./robotics/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "science",
+      "description": "Science skills from broomva/skills: ocean-genomics.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./science/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "simulation",
+      "description": "Simulation skills from broomva/skills: data-provider, parallax, sourcer.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./simulation/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "strategy",
+      "description": "Strategy & decisions skills from broomva/skills: agentic-leadership, decision-log, phronesis, pre-mortem, premortem, strategy-critique.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./strategy/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "tooling",
+      "description": "Skill & prompt tooling skills from broomva/skills: attempt-audit, audit-harness-usage, broomva-cli, disambiguate, make-spec, mod-anything, prompt-library, prove-the-negative, skillify, skills-catalog.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./tooling/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "utilities",
+      "description": "Everyday utilities skills from broomva/skills: alkosto-wait-optimizer, gasgo.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./utilities/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    },
+    {
+      "name": "video",
+      "description": "Video & multimedia skills from broomva/skills: brainrot-for-good, content-engine, creative-review, launch-video, ltx-video, motion-lab, video-cut.",
+      "source": {
+        "source": "local",
+        "path": "./skills"
+      },
+      "skills": "./video/",
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Productivity"
+    }
+  ]
+}
