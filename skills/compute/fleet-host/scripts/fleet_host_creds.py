@@ -46,6 +46,8 @@ def _template():
     for p in (here / 'fleet-host/template.json', Path.home() / '.config/fleet-host/template.json'):
         if p.exists():
             return json.loads(p.read_text())
+    if {'-h', '--help'} & set(sys.argv):  # help works before any template exists (same rule as fleet_host)
+        return json.loads((here / 'fleet-host/template.example.json').read_text())
     sys.exit('fleet_host_creds: no host template (see fleet-host/template.example.json)')
 
 

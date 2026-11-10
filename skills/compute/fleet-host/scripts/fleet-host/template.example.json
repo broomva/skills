@@ -51,8 +51,8 @@
   },
   "repos": [
     {
-      "repo": "<owner>/<repo>",
-      "dir": "<checkout-dir>"
+      "repo": "your-org/your-repo",
+      "dir": "your-repo"
     }
   ],
   "credentials": {
