@@ -1,6 +1,6 @@
 # Skills Inventory
 
-> 111 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
+> 112 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
 ## Governance & control — `skills/governance/` (11)
 
@@ -49,7 +49,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 111 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 112 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 | `mod-anything` | Change or extend software or a device the user owns but whose source they don't control (a desktop app, a website, a game, a device protocol, a CLI) by the cheapest route that reaches the idea. The… |
 
 ## Knowledge & memory — `skills/knowledge/` (8)
@@ -147,12 +147,13 @@
 | `investment-management` | Investment management skill — portfolio construction, analysis, and execution |
 | `wealth-management` | Wealth management, financial planning, and investment analytics skill |
 
-## Compute infrastructure — `skills/compute/` (4)
+## Compute infrastructure — `skills/compute/` (5)
 
 | Skill | What it does |
 |---|---|
 | `agentic-vps` | Provision and harden a fresh Linux VPS into an autonomous-agent dev host using the capability-preserving model — the box IS the sandbox: full agent autonomy inside it |
 | `colab-remote` | Orchestrate Google Colab Pro/Pro+ GPU instances as remote training backends via SSH |
+| `fleet-host` | Grow and shrink an agent fleet by GCP VMs: one command adds a private, agentic-vps-hardened host with per-host revocable credentials; one removes it with every revocation proven |
 | `forkable-shell` | Give an agent session a disposable sandboxed bash shell whose entire filesystem is one JSON file — snapshot, fork, branch and resume a workspace at ~0.24ms per fork instead of seconds per container |
 | `remote-gpu` | Orchestrate a headless GPU server (NUC, cloud VM, or any SSH-accessible machine) from a local Mac or workstation |
 
@@ -232,7 +233,7 @@
 
 ## Aggregates
 
-- **Total skills**: 111
+- **Total skills**: 112
 - **Total category buckets**: 23
 - **Largest bucket**: Orchestration & autonomy (14)
 - **Smallest buckets** (1): Science

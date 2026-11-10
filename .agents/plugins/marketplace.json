@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "broomva-skills",
-      "description": "Every broomva/skills skill in one plugin: 111 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
+      "description": "Every broomva/skills skill in one plugin: 112 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
       "source": {
         "source": "local",
         "path": "./"
@@ -75,7 +75,7 @@
     },
     {
       "name": "compute",
-      "description": "Compute infrastructure skills from broomva/skills: agentic-vps, colab-remote, forkable-shell, remote-gpu.",
+      "description": "Compute infrastructure skills from broomva/skills: agentic-vps, colab-remote, fleet-host, forkable-shell, remote-gpu.",
       "source": {
         "source": "local",
         "path": "./skills"
