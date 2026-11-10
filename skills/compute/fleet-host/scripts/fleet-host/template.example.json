@@ -1,0 +1,103 @@
+{
+  "_doc": "Example GCP fleet host template. Copy to ~/.config/fleet-host/template.json (or pass --template) and replace every <...>. No secrets belong here: Keychain entries are named, never stored.",
+  "gcp": {
+    "project": "<gcp-project-id>",
+    "zone": "us-central1-a",
+    "shape": "e2-standard-8",
+    "disk_gb": 200,
+    "disk_type": "pd-balanced",
+    "image_family": "ubuntu-2404-lts-amd64",
+    "image_project": "ubuntu-os-cloud",
+    "network": "fleet-net",
+    "subnet": "fleet-us-central1",
+    "cidr": "10.80.0.0/24",
+    "apis": [
+      "compute.googleapis.com",
+      "iap.googleapis.com",
+      "secretmanager.googleapis.com",
+      "aiplatform.googleapis.com"
+    ],
+    "sa_roles": [
+      "roles/aiplatform.user",
+      "roles/logging.logWriter"
+    ],
+    "labels": {
+      "fleet": "<fleet-name>"
+    },
+    "admin_account": "<you@example.com>"
+  },
+  "shapes": {
+    "e2-standard-8": [
+      8,
+      32
+    ],
+    "n2-standard-8": [
+      8,
+      32
+    ],
+    "n2d-standard-8": [
+      8,
+      32
+    ],
+    "e2-standard-16": [
+      16,
+      64
+    ]
+  },
+  "tailnet": {
+    "tag": "tag:fleet-gcp",
+    "suffix": "<tailnet>.ts.net",
+    "oauth_keychain": "fleet-tailscale-oauth"
+  },
+  "repos": [
+    {
+      "repo": "<owner>/<repo>",
+      "dir": "<checkout-dir>"
+    }
+  ],
+  "credentials": {
+    "enabled": [
+      "vercel",
+      "neon",
+      "linear",
+      "logins"
+    ],
+    "vercel": {
+      "team": "<team_xxx>",
+      "scope": "<team-slug>",
+      "minter_keychain": "fleet-vercel-minter",
+      "ttl_days": 30
+    },
+    "neon": {
+      "org": "<org-xxx>",
+      "project": "<non-production-project-id>",
+      "prod_project": "<production-project-id>"
+    },
+    "linear": {
+      "source": "~/.config/linear/credentials.toml"
+    },
+    "logins": [
+      {
+        "name": "claude",
+        "account": "<account that approves the Claude login>"
+      },
+      {
+        "name": "codex",
+        "account": "<account>"
+      },
+      {
+        "name": "gh",
+        "account": "<github-user>"
+      }
+    ]
+  },
+  "fleet": {
+    "max_live": 1,
+    "max_live_max": 3,
+    "roles": [
+      "build",
+      "proof",
+      "review"
+    ]
+  }
+}
