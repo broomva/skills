@@ -42,6 +42,8 @@ def _template_path(argv):
     for p in (HERE / 'fleet-host/template.json', Path.home() / '.config/fleet-host/template.json'):
         if p.exists():
             return p
+    if {'-h', '--help'} & set(argv):  # help works before any template exists
+        return HERE / 'fleet-host/template.example.json'
     sys.exit('fleet_host: no host template. Copy scripts/fleet-host/template.example.json to '
              '~/.config/fleet-host/template.json and fill it in, or pass --template / FLEET_HOST_TEMPLATE.')
 
@@ -54,6 +56,9 @@ TAILNET_SUFFIX = T['tailnet']['suffix']
 TAG = T['tailnet']['tag']
 TS_KEYCHAIN = T['tailnet']['oauth_keychain']
 REPOS = [f"{r['repo']}:{r['dir']}" for r in T.get('repos', [])]
+for _r in REPOS:  # these reach a remote shell as words: allow only plain owner/repo:dir
+    if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+', _r):
+        sys.exit(f'fleet_host: template repo spec {_r!r} must be owner/repo with a plain dir name')
 LABELS = ','.join(f'{k}={v}' for k, v in G.get('labels', {}).items())
 RESERVED = {'mac', 'nuc', 'vps', 'local'}
 SHAPES = {k: tuple(v) for k, v in T['shapes'].items()}
@@ -387,12 +392,12 @@ def s_instance(h, apply):
     if not apply:
         return WOULD, (f'create {h.instance}: {h.a.shape} ({vcpu} vCPU/{mem} GB), {h.a.disk_gb} GB {G["disk_type"]}, '
                        f'{G["image_family"]}, on-demand, SA {h.sa}, tags fleet-host,fleet-iap, '
-                       f'labels fleet=broomva,fleet-host={h.name}, network {NET} (IAP-only ingress); startup-script + metadata')
+                       f'labels {LABELS},fleet-host={h.name}, network {NET} (IAP-only ingress); startup-script + metadata')
     slots = max(1, min(vcpu // 4, (mem - 6) // 5))
     name = run(['git', 'config', 'user.name'])[1]
     email = run(['git', 'config', 'user.email'])[1]
     with tempfile.TemporaryDirectory() as td:  # metadata values, none secret
-        md = {'fleet-host-name': h.name, 'fleet-heavy-slots': str(slots), 'fleet-git-name': name,
+        md = {'fleet-host-name': h.name, 'fleet-tailscale-tag': TAG, 'fleet-heavy-slots': str(slots), 'fleet-git-name': name,
               'fleet-git-email': email, 'fleet-ssh-pubkey': (SSH_KEY.with_suffix('.pub')).read_text().strip()}
         files = {'startup-script': HERE / 'fleet-host/startup.sh',
                  'fleet-heavy-run': HERE / 'fleet-host/heavy-run.py',
@@ -489,7 +494,7 @@ t3 service restart >/dev/null 2>&1 || true
 # 3. Repositories and T3 projects, once gh is logged in (the logins step); until then they stay pending.
 if gh auth status -h github.com >/dev/null 2>&1; then
   for spec in "$@"; do
-    repo=${spec%%:*}; dir=$HOME/${spec##*:}
+    repo="${spec%%:*}"; dir="$HOME/${spec##*:}"
     [ -d "$dir/.git" ] || gh repo clone "$repo" "$dir" -- --filter=blob:none
     t3 project add "$dir" >/dev/null 2>&1 || true
   done
@@ -506,10 +511,13 @@ systemctl --user is-active t3code.service
 def s_t3(h, apply):
     want = mac_t3_version()
     rc, out = (1, '') if no_host(h) else ssh(
-        h.name, 'export PATH="$HOME/.local/bin:$PATH"; t3 --version 2>/dev/null | tail -1; '
-                'systemctl --user is-active t3code.service', timeout=30)
+        h.name, 'export PATH="$HOME/.local/bin:$PATH"; '
+                # repos still owed: gh is logged in but a template checkout is missing (re-run clones them)
+                + ''.join(f'gh auth status -h github.com >/dev/null 2>&1 && [ ! -d "$HOME/{r.split(":", 1)[1]}/.git" ] '
+                          f'&& echo repo-missing; ' for r in REPOS)
+                + 't3 --version 2>/dev/null | tail -1; systemctl --user is-active t3code.service', timeout=30)
     lines = out.split()  # `t3 --version` prints "t3 v<version>"
-    if rc == 0 and want and lines and lines[-1] == 'active' and f'v{want}' in lines:
+    if rc == 0 and want and lines and lines[-1] == 'active' and f'v{want}' in lines and 'repo-missing' not in lines:
         return OK, f't3 {want}, t3code.service active'
     if not want:
         return BLOCKED, 'cannot determine the Mac T3 version (~/.t3/runtime/service-state.json)'
@@ -938,8 +946,13 @@ def duration(v):
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__.split('\n')[0])
-    p.add_argument('--template', help=f'host template JSON (default {TEMPLATE_PATH}); read at import')
+    p.add_argument('--template', help=f'host template JSON (default {TEMPLATE_PATH}). Read from sys.argv at import, '
+                   'so it applies to command-line runs; a caller of main() sets FLEET_HOST_TEMPLATE instead')
     sub = p.add_subparsers(dest='cmd', required=True)
+    tp = argparse.ArgumentParser(add_help=False)
+    tp.add_argument('--template', help=argparse.SUPPRESS)  # accepted after the subcommand too (read at import)
+    _add_parser = sub.add_parser
+    sub.add_parser = lambda *a_, **k: _add_parser(*a_, parents=[tp], **k)
     a = sub.add_parser('add')
     a.add_argument('name')
     a.add_argument('--shape', default=G['shape'], choices=sorted(SHAPES))

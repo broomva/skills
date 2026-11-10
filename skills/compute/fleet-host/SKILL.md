@@ -101,7 +101,7 @@ The drill caught three bugs that review did not:
 ## Validation
 
 ```
-python3 -m pytest tests/ -v        # 19 tests: ledger, revocation proofs, WIP rescue on real git repos,
+python3 -m pytest tests/ -v        # 23 tests: ledger, revocation proofs, WIP rescue on real git repos,
                                    # remove safety, template-driven behaviour
 bash -n scripts/fleet-host/startup.sh scripts/fleet-host/idle-stop.sh
 ```

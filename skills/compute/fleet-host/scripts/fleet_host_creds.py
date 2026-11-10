@@ -50,18 +50,22 @@ def _template():
 
 
 C = _template()['credentials']
-VERCEL_TEAM = C['vercel']['team']
-VERCEL_SCOPE = C['vercel'].get('scope', VERCEL_TEAM)
-VERCEL_MINTER = C['vercel']['minter_keychain']   # Keychain service holding the owner's full-account minter token
-NEON_ORG = C['neon']['org']
+ENABLED = set(C.get('enabled', ['vercel', 'neon', 'linear', 'logins']))
+_V, _N, _L = C.get('vercel', {}), C.get('neon', {}), C.get('linear', {})  # a disabled provider may omit its block
+for _kind, _block, _keys in (('vercel', _V, ('team', 'minter_keychain')), ('neon', _N, ('org', 'project', 'prod_project'))):
+    if _kind in ENABLED and not all(_block.get(k) for k in _keys):
+        sys.exit(f'fleet_host_creds: credentials.{_kind} is enabled but missing {[k for k in _keys if not _block.get(k)]}')
+VERCEL_TEAM = _V.get('team')
+VERCEL_SCOPE = _V.get('scope', VERCEL_TEAM)
+VERCEL_MINTER = _V.get('minter_keychain', 'fleet-vercel-minter')  # Keychain service holding the minter token
+NEON_ORG = _N.get('org')
 # The preview (non-production) project. A minted key is proven unable to read prod_project before delivery.
-NEON_PROJECT = C['neon']['project']
-NEON_PROD_PROJECT = C['neon']['prod_project']
+NEON_PROJECT = _N.get('project')
+NEON_PROD_PROJECT = _N.get('prod_project')
 NEON_AUTH = Path.home() / '.config/neonctl/credentials.json'
 NEON_API = 'https://console.neon.tech/api/v2'
-LINEAR_CREDS = Path(os.path.expanduser(C['linear']['source']))
-TTL_DAYS = C['vercel']['ttl_days']
-ENABLED = set(C.get('enabled', ['vercel', 'neon', 'linear', 'logins']))
+LINEAR_CREDS = Path(os.path.expanduser(_L.get('source', '~/.config/linear/credentials.toml')))
+TTL_DAYS = _V.get('ttl_days', 30)
 # Every host-side command gets these on PATH: Ubuntu's ~/.bashrc returns early for non-interactive
 # shells, so `bash -l` alone does not see ~/.bun/bin (P20 r1 BLOCKER 3).
 HOST_PATH = 'export PATH="$HOME/.local/bin:$HOME/.bun/bin:/usr/local/bin:$PATH"; '

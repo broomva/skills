@@ -16,6 +16,7 @@ log() { echo "fleet-startup: $*"; logger -t fleet-startup "$*" || true; }
 export DEBIAN_FRONTEND=noninteractive
 
 NAME=$(attr fleet-host-name)
+TS_TAG=$(attr fleet-tailscale-tag); case "$TS_TAG" in tag:[a-z0-9-]*) ;; *) TS_TAG=tag:fleet-gcp ;; esac
 PROJECT=$(md project/project-id)
 HEAVY_SLOTS=$(attr fleet-heavy-slots); case "$HEAVY_SLOTS" in ''|*[!0-9]*) HEAVY_SLOTS=1 ;; esac
 A=/home/agent
@@ -76,7 +77,7 @@ if ! tailscale status >/dev/null 2>&1; then
   if [ -n "$key" ]; then
     # The key goes through a 0600 file, never argv (visible in ps) or the log.
     kd=$(umask 077; mktemp -d); printf '%s' "$key" > "$kd/k"; unset key
-    rc=0; tailscale up --auth-key="file:$kd/k" --hostname="$NAME" --advertise-tags=tag:fleet-gcp --ssh=false || rc=$?
+    rc=0; tailscale up --auth-key="file:$kd/k" --hostname="$NAME" --advertise-tags="$TS_TAG" --ssh=false || rc=$?
     rm -rf "$kd"; [ "$rc" = 0 ] || exit "$rc"
     log "joined tailnet as $NAME"
   else

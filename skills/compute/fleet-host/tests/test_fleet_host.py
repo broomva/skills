@@ -306,5 +306,47 @@ class TemplateDriven(unittest.TestCase):
             self.assertTrue(node, path)
         self.assertNotIn(t['credentials']['neon']['project'], (t['credentials']['neon']['prod_project'],))
 
+class TemplateEdgeCases(unittest.TestCase):
+    """P20 r4: a minimal template works; bad input fails clearly, never deep inside a step."""
+    def run_cli(self, template, *argv, home=None):
+        import subprocess as sp
+        env = {**os.environ, 'FLEET_DIR': tempfile.mkdtemp(), 'FLEET_SSH_CONFIG': os.devnull}
+        if template is None:
+            env.pop('FLEET_HOST_TEMPLATE', None)
+            env['HOME'] = home or tempfile.mkdtemp()
+        else:
+            f = Path(tempfile.mkdtemp()) / 't.json'
+            f.write_text(json.dumps(template))
+            env['FLEET_HOST_TEMPLATE'] = str(f)
+        code = ('import sys; sys.path.insert(0, %r); sys.argv = ["fleet_host.py"] + %r; import fleet_host' % (str(SCRIPTS), list(argv)))
+        return sp.run(['python3', '-I', '-c', code], env=env, capture_output=True, text=True)
+
+    def base(self):
+        return json.loads(Path(os.environ['FLEET_HOST_TEMPLATE']).read_text())
+
+    def test_logins_only_template_imports(self):
+        t = self.base()
+        t['credentials'] = {'enabled': ['logins'], 'logins': ['gh']}
+        r = self.run_cli(t)
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+    def test_enabled_provider_without_its_block_fails_clearly(self):
+        t = self.base()
+        t['credentials'] = {'enabled': ['neon', 'logins'], 'logins': ['gh']}
+        r = self.run_cli(t)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('credentials.neon is enabled but missing', r.stderr)
+
+    def test_repo_spec_with_shell_metacharacters_is_refused(self):
+        t = self.base()
+        t['repos'] = [{'repo': 'acme/app', 'dir': 'app; rm -rf ~'}]
+        r = self.run_cli(t)
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn('plain dir name', r.stderr)
+
+    def test_help_needs_no_template(self):
+        r = self.run_cli(None, '--help')
+        self.assertEqual(r.returncode, 0, r.stderr)
+
 if __name__ == '__main__':
     unittest.main()
