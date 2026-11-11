@@ -5,7 +5,8 @@ tier: D
 description: >-
   Grow and shrink an agent fleet by GCP VMs with one command each way: `fleet_host.py add <name>`
   creates a private (Tailscale + IAP only), agentic-vps-hardened Compute Engine host with a full lane
-  toolchain, per-host revocable credentials and a T3 server, and `remove <name>` drains it, saves
+  toolchain, an LLM with no login (Gemini on Vertex through the VM service account), per-host
+  revocable credentials and a T3 server linked to the fleet, and `remove <name>` drains it, saves
   unfinished work, revokes every credential with proof and deletes everything it created. Dry run by
   default; every step idempotent and re-runnable after a partial failure; all deployment specifics in
   one template file. USE WHEN adding heavy build/verify capacity to an agent fleet, spinning up or
@@ -16,8 +17,8 @@ description: >-
   "add host", "remove host", "gcp fleet", "fleet_host", "grow the fleet".
 latent_only: false
 metadata:
-  version: 0.1.0
-  provenance: BRO-3651 (design, 3 cross-review rounds, live drill 2026-11-10)
+  version: 0.2.0
+  provenance: BRO-3651 (design, live drill 2026-11-10); BRO-3666 (login-free hosts, agent-operated, 2026-11-11)
 ---
 
 # fleet-host — GCP VMs that join an agent fleet ready to work, and leave without a trace
@@ -45,6 +46,12 @@ the contract for running it and for extending it.
    branches and detached HEADs to `wip/<host>/<worktree>/<branch>-<sha>` (`--push-wip`); otherwise it stops.
 6. **An owner step stops the run.** With `--apply`, any `owner`, `blocked` or `FAIL` step ends the run;
    re-running resumes there.
+7. **Useful before any login.** Gemini on Vertex (the VM service account, no key file), T3, the verify
+   gate, the T3 link and registration all come before the interactive logins, which are the last step
+   and gate nothing.
+8. **Agents operate it; the owner approves grants.** The owner never runs the tool. Logins are device
+   codes the agent relays; the owner only approves them in a browser. A new host is proposed with
+   demand evidence, never added automatically.
 
 ## Procedure
 
@@ -59,11 +66,22 @@ the contract for running it and for extending it.
    - a spend approval: `$FLEET_DIR/meta/fleet-hosts/APPROVAL.json` with the approved shapes and ceiling.
 3. **Dry run first:** `python3 scripts/fleet_host.py add <name>`. Every step prints `ok`, `would`,
    `owner` or `blocked` against the live state.
-4. **Add:** `python3 scripts/fleet_host.py add <name> --apply` **from a terminal**, so the Claude,
-   Codex and gh logins can prompt inline. Without a terminal it stops at `cred:logins` and prints the
-   exact commands; `creds <name> --apply` resumes them.
-5. **Link** the host's T3 environment from the Mac (`t3_environment_link`, `full-access`), record its
-   environmentId in the host registry, and let the fleet's governor release the host hold.
+4. **Add:** `python3 scripts/fleet_host.py add <name> --apply`, run by the agent.
+   - The host comes up with Gemini on Vertex and a `gemini-vertex` T3 provider.
+   - The `t3-link` step links it automatically: it runs `t3 pair` on the host and pipes the token into the
+     Mac's `t3 environment link`, so the token is never printed.
+   - `host-key` pins the VM's ssh key only if it matches the serial console.
+   - The last step, `cred:logins`, has no terminal. It starts each login (gh, codex, claude) in a
+     `login-<tool>` tmux session on the host and returns the link and code as an `owner` detail. The
+     agent relays them to the owner, who approves in a browser. Codes live 15 min, so regenerate them
+     right before asking.
+   - Claude ends with a code shown in the browser. Deliver it with
+     `fleet_host.py login-code <name> claude --code-file <file>` (from a secure-input file; the code
+     goes over ssh stdin).
+   - Re-run `add` until it reports N/N.
+5. **Wake on demand.** A host stops itself when idle. `fleet_host.py start <name> --apply [--awake 0..240]`
+   starts it and holds it awake 60 min by default. Idle stop also counts a pending login as busy.
+   `converge` (inside `add`) carries template and script changes to a live host.
 6. **Remove:** `python3 scripts/fleet_host.py remove <name> --apply [--push-wip]`. The receipt in
    `$FLEET_DIR/meta/fleet-hosts/<name>/remove-<UTC>.json` lists every step and every revocation proof.
 
@@ -76,7 +94,8 @@ Also: `start` / `stop <name>` (stop refuses while a run or heavy job is active) 
 |---|---|
 | a repo on every host | `repos` in the template |
 | a minted credential | a `Minted` subclass in `scripts/fleet_host_creds.py` (`mint`, `listed`, `delete`, optional `scope_ok`, `env`, `wrapper`) plus its name in `credentials.enabled` |
-| an interactive login | an entry in `_LOGIN_CMDS` (status, login, logout) and in `credentials.logins` |
+| an interactive login | an entry in `_LOGIN_CMDS` (status, login, logout), in `credentials.logins`, and in `RELAY` (how to read its link/code from the pane) |
+| the default LLM | `llm.vertex` in the template (location, Gemini CLI version, models, probe model); `enabled: false` removes it on converge |
 | a machine shape | `shapes` (vCPU, GiB); the heavy-slot count follows from it |
 | a different cloud project or fleet | another template |
 
@@ -98,11 +117,22 @@ The drill caught three bugs that review did not:
 - `npx t3 service install` lays down no launcher, so the tool links one;
 - a deleted service account answers `describe` with 403, so absence is proven from the account list.
 
+## Evidence (login-free and agent-operated, 2026-11-11)
+
+- With no login at all, the host called Vertex using only its service account: `gemini-4-argon`,
+  `gemini-3.8-flash` and `gemini-2.5-flash` all returned 200.
+- The T3 link was automatic. A task delegated from the Mac's T3 ran on the host on Gemini, and three
+  rounds of cross-model review ran there too.
+- The relayed logins were approved in a browser: Claude, Codex and gh were logged in, the repos were
+  cloned, and `add` reached 24/24.
+- Before the fix, idle stop powered the host off mid-login. After it, the journal shows `busy: login
+  awake`, and an awake hold more than 4 h ahead is ignored.
+
 ## Validation
 
 ```
-python3 -m pytest tests/ -v        # 23 tests: ledger, revocation proofs, WIP rescue on real git repos,
-                                   # remove safety, template-driven behaviour
+python3 -m pytest tests/ -v        # 47 tests: ledger, revocation proofs, WIP rescue on real git repos,
+                                   # remove safety, template, login relay, host-key pinning, converge, wake
 bash -n scripts/fleet-host/startup.sh scripts/fleet-host/idle-stop.sh
 ```
 
@@ -114,3 +144,5 @@ bash -n scripts/fleet-host/startup.sh scripts/fleet-host/idle-stop.sh
 | "The host is unreachable, so its credentials are gone." | Only a NOT_FOUND instance proves the disk is gone. An unreachable host blocks. |
 | "Export the token so every tool sees it." | Every child process, postinstall script and error dump sees it too. Use the per-CLI wrapper. |
 | "`--push-wip` will sort it out." | It refuses to continue until a re-scan is clean. A failed scan is unknown, never clean. |
+| "Ask the owner to run `add` from a terminal for the logins." | The owner does not run the tool. Relay the device codes; the owner approves in a browser. |
+| "Accept whatever host key answers; it's our VM." | A re-created host keeps its name and gets a new key. Pin only the key the serial console shows. |

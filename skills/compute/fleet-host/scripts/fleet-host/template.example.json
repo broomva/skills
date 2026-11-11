@@ -55,6 +55,20 @@
       "dir": "your-repo"
     }
   ],
+  "llm": {
+    "vertex": {
+      "_doc": "Gemini on Vertex through the VM service account (roles/aiplatform.user on gcp.project); no key, no login. The host can run agents before any Claude/Codex/gh login.",
+      "enabled": true,
+      "location": "global",
+      "gemini_cli": "0.66.0",
+      "models": [
+        "gemini-4-argon",
+        "gemini-3.8-flash",
+        "gemini-2.5-flash"
+      ],
+      "probe_model": "gemini-3.8-flash"
+    }
+  },
   "credentials": {
     "enabled": [
       "vercel",

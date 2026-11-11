@@ -423,18 +423,89 @@ def logins_missing(h):
     return [w.split(':', 1)[1] for w in words if w.startswith('missing:')]
 
 
+# Headless logins (owner 2026-11-11: agents relay device codes; the owner only approves in a browser, and
+# never runs fleet_host.py). Each login runs in a `login-<name>` tmux session on the host, which idle-stop
+# counts as busy. The step reads from the pane what the owner must open and returns it as the OWNER detail.
+# A device code grants nothing without the owner's own approval in their signed-in browser.
+RELAY = {  # name -> (keys after a fresh start, regex for the owner's part, where to enter it)
+    'gh': ('sleep 6; tmux send-keys -t "$s" Y Enter; sleep 4; tmux send-keys -t "$s" Enter; sleep 3',
+           r'one-time code: ([A-Z0-9]{4}-[A-Z0-9]{4})', 'https://github.com/login/device'),
+    'codex': ('sleep 6', r'^\s+([A-Z0-9]{4}-[A-Z0-9]{4,5})\s*$', 'https://auth.openai.com/codex/device'),
+    'claude': ('sleep 6', r'(https://claude\.com/cai/oauth/authorize\S+)', None),
+}
+LOGIN_TTL_S = 13 * 60  # device codes live 15 min: a session older than this is restarted for a fresh code
+LOGIN_MAX_S = 900      # no login process outlives its code: `timeout` ends it, the session closes 30 s later
+AWAKE = 'date -d "+40 min" +%s > /var/lib/fleet/awake-until 2>/dev/null || true; '
+
+
+def relay_logins(h, names):
+    """Start (or reuse a fresh) login session per name; return 'name: open X, enter CODE as WHO' lines,
+    or None when a session cannot be read."""
+    import re as _re
+    who = {n: w for n, *_, w in LOGINS}
+    asks = []
+    for name in names:
+        login_cmd = next(cmd for n, _, cmd, _, _ in LOGINS if n == name)
+        keys, pattern, where = RELAY[name]
+        script = (AWAKE + f's=login-{name}; '
+                  # an absent session prints nothing (exit 0 with a server up): default to 0, never a bad expression
+                  'c=$(tmux display -p -t "$s" "#{session_created}" 2>/dev/null); case "$c" in ""|*[!0-9]*) c=0 ;; esac; '
+                  'age=$(( $(date +%s) - c )); '
+                  # reuse only a login still waiting: once it exits (approved, failed, timed out) the pane shows
+                  # `sleep`, and its URL/code is spent (P20 #1252 r3)
+                  'cmd=$(tmux display -p -t "$s" "#{pane_current_command}" 2>/dev/null); '
+                  f'if ! tmux has-session -t "$s" 2>/dev/null || [ "$age" -ge {LOGIN_TTL_S} ] || [ "$cmd" = sleep ]; then '
+                  f'tmux kill-session -t "$s" 2>/dev/null; tmux new -d -s "$s" -x 250 -y 50 '
+                  f'{shlex.quote(f"timeout {LOGIN_MAX_S} bash -lc {shlex.quote(login_cmd)}; sleep 30")}; '
+                  f'{keys}; fi; tmux capture-pane -p -J -t "$s"')
+        rc, out = ssh(h.ssh_name, script, timeout=90)
+        found = _re.findall(pattern, out, _re.M) if rc == 0 else []
+        if not found:
+            return None
+        if where:
+            asks.append(f'{name}: open {where} and enter {found[-1]} (as {who[name]})')
+        else:
+            asks.append(f'{name}: open {found[-1]} (as {who[name]}), then deliver the code the page shows with '
+                        f'`fleet_host.py login-code {h.ssh_name} {name} --code-file <file>`')
+    return asks
+
+
+def end_login_sessions(h, names):
+    """Close the `login-<name>` sessions (a logged-in tool, or a code that was spent either way)."""
+    if names:
+        ssh(h.ssh_name, ' '.join(f'tmux kill-session -t login-{n} 2>/dev/null;' for n in names if n in RELAY) + ' true',
+            timeout=30)
+
+
+def send_login_code(h, name, code):
+    """Type the code the owner received (e.g. Claude's paste code) into the waiting login session. The code
+    travels on ssh stdin, never argv or output."""
+    if name not in RELAY or not code or any(c.isspace() for c in code):
+        return False
+    rc, _ = _run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', h.ssh_name, 'bash', '-c',
+                  shlex.quote(f'IFS= read -r c; tmux send-keys -t login-{name} -l "$c" && tmux send-keys -t login-{name} Enter')],
+                 input=code + '\n', timeout=60)
+    return rc == 0
+
+
 def s_logins(h, apply):
     if not h.reachable():
         return WOULD, 'interactive logins over ssh -t once the host answers: ' + ', '.join(n for n, *_ in LOGINS)
     missing = logins_missing(h)
     if missing is None:
         return BLOCKED, 'cannot read login status on the host'
+    end_login_sessions(h, [n for n, *_ in LOGINS if n not in missing])  # done ones stop holding the host awake
     if not missing:
         return OK, 'claude, codex, gh logged in'
     howto = '; '.join(f'`ssh -t {h.ssh_name} {shlex.quote("bash -lc " + shlex.quote(HOST_PATH + cmd))}` as {who}'
                       for name, _, cmd, _, who in LOGINS if name in missing)
-    if not apply or not sys.stdin.isatty():
-        return OWNER, f'run interactively (needs a terminal): {howto}'
+    if not apply:
+        return WOULD, f'relay device codes to the owner for: {missing}'
+    if not sys.stdin.isatty():  # an agent run: relay the codes; the owner approves in a browser
+        asks = relay_logins(h, missing)
+        if asks is None:
+            return BLOCKED, f'could not read a login session on the host; re-run (or by hand: {howto})'
+        return OWNER, 'approve in a browser (codes expire in ~15 min): ' + ' | '.join(asks)
     for name, _, cmd, _, who in LOGINS:
         if name in missing:
             print(f'    -> {name}: log in as {who}', flush=True)

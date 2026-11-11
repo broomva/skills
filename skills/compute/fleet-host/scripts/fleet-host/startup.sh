@@ -84,6 +84,8 @@ if ! tailscale status >/dev/null 2>&1; then
     log "tailscale auth key not readable yet; retry on next boot or fleet_host.py add"
   fi
 fi
+# agent runs T3, and `t3 pair --tailscale` publishes it with Tailscale Serve (the Mac links over HTTPS).
+tailscale status >/dev/null 2>&1 && tailscale set --operator=agent
 
 # 4. Toolchain (apt), as in agentic-vps provision.sh plus psql 18 and sqlite3.
 if [ ! -f /var/lib/fleet/apt-done ]; then
@@ -149,9 +151,36 @@ d.setdefault('sandbox', {'enabled': False, 'filesystem': {'denyRead': [
 json.dump(d, open(p + '.tmp', 'w'), indent=2); os.replace(p + '.tmp', p)
 PY"
 
+# 6b. An LLM with no login (BRO-3666): Gemini CLI on Vertex through the VM service account. No key file:
+#     with GOOGLE_APPLICATION_CREDENTIALS unset, ADC falls back to the metadata server. The CLI home is
+#     isolated and pinned to vertex-ai, so a later personal `gemini` login can never take over (the T3
+#     probe trap seen on the Mac, 2026-10-28). `gemini-vertex` is for shells; `-acp` is T3's provider.
+gv_version=$(attr fleet-gemini-cli-version); gv_location=$(attr fleet-vertex-location)
+case "$gv_version" in [0-9]*.[0-9]*.[0-9]*) ;; *) gv_version="" ;; esac
+case "$gv_location" in ''|*[!a-z0-9-]*) gv_location="" ;; esac
+if [ -n "$gv_version" ] && [ -n "$gv_location" ]; then
+  [ "$(gemini --version 2>/dev/null)" = "$gv_version" ] || npm install -g --no-fund --no-audit "@google/gemini-cli@$gv_version"
+  GV=$A/.local/share/broomva/gemini-vertex
+  as_agent 'mkdir -p "$1/bin" "$1/home/.gemini" "$HOME/.local/bin"
+    printf "%s\n" "{\"security\":{\"auth\":{\"selectedType\":\"vertex-ai\"}},\"general\":{\"enableAutoUpdate\":false},\"privacy\":{\"usageStatisticsEnabled\":false}}" > "$1/home/.gemini/settings.json"
+    for mode in acp cli; do
+      f="$1/bin/gemini-vertex-$mode"; [ "$mode" = cli ] && f="$HOME/.local/bin/gemini-vertex"
+      { echo "#!/bin/sh"
+        echo "# Gemini CLI on Vertex via the VM service account (fleet host, BRO-3666). Written by startup.sh."
+        echo "unset GEMINI_API_KEY GOOGLE_API_KEY GOOGLE_APPLICATION_CREDENTIALS"
+        echo "export GEMINI_CLI_HOME=\"$1/home\" GOOGLE_GENAI_USE_VERTEXAI=true GEMINI_CLI_TRUST_WORKSPACE=true"
+        echo "export GOOGLE_CLOUD_PROJECT=\"$2\" GOOGLE_CLOUD_QUOTA_PROJECT=\"$2\" GOOGLE_CLOUD_LOCATION=\"$3\""
+        if [ "$mode" = acp ]; then echo "exec gemini --acp \"\$@\""; else echo "exec gemini \"\$@\""; fi
+      } > "$f.tmp" && chmod 0755 "$f.tmp" && mv "$f.tmp" "$f"
+    done' "$GV" "$PROJECT" "$gv_location"
+else  # Vertex off in the template: no wrappers left behind (the T3 provider is removed by the t3 step)
+  rm -f "$A/.local/share/broomva/gemini-vertex/bin/gemini-vertex-acp" "$A/.local/bin/gemini-vertex"
+fi
+
 # 7. Heavy semaphore and idle stop. The lock directory belongs to agent (heavy-run runs as agent);
 #    root's idle check only probes the locks.
 install -d -m 0755 -o agent -g agent /var/lib/fleet/heavy
+[ -e /var/lib/fleet/awake-until ] || install -m 0644 -o agent -g agent /dev/null /var/lib/fleet/awake-until  # agent holds the host awake
 install -d /etc/fleet
 echo "$HEAVY_SLOTS" > /etc/fleet/heavy-slots
 attr fleet-heavy-run > /usr/local/bin/fleet-heavy-run; chmod 0755 /usr/local/bin/fleet-heavy-run
@@ -189,6 +218,8 @@ def v(c):
     try: return subprocess.run(c,capture_output=True,text=True,timeout=20).stdout.strip().splitlines()[0]
     except Exception: return None
 tools={t:shutil.which(t) is not None for t in ["bun","git","gh","node","psql","neonctl","vercel","linear","gws","uv","python3","claude","codex","tailscale","sqlite3","docker"]}
+import os
+if os.path.exists(os.path.expanduser("~/.local/share/broomva/gemini-vertex/bin/gemini-vertex-acp")): tools["gemini-vertex"]=shutil.which("gemini") is not None
 print(json.dumps({"tools":tools,"psql":v(["psql","--version"]),"node":v(["node","--version"]),"bun":v(["bun","--version"])}))
 EOF' > /var/lib/fleet/ready.json.tmp && mv /var/lib/fleet/ready.json.tmp /var/lib/fleet/ready.json
 log "ready"

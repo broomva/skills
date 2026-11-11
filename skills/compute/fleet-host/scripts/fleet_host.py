@@ -29,6 +29,7 @@ HOSTDIR = META / 'fleet-hosts'
 APPROVAL = HOSTDIR / 'APPROVAL.json'
 SSH_CONFIG = Path(os.environ.get('FLEET_SSH_CONFIG', Path.home() / '.ssh/config'))
 SSH_KEY = Path.home() / '.ssh/fleet_hosts_ed25519'
+KNOWN_HOSTS = Path(os.environ.get('FLEET_KNOWN_HOSTS', Path.home() / '.ssh/known_hosts'))
 # Everything deployment-specific comes from the template (scripts/fleet-host/template.json by default;
 # --template or FLEET_HOST_TEMPLATE for another fleet or project). No secrets live there.
 def _template_path(argv):
@@ -59,6 +60,19 @@ REPOS = [f"{r['repo']}:{r['dir']}" for r in T.get('repos', [])]
 for _r in REPOS:  # these reach a remote shell as words: allow only plain owner/repo:dir
     if not re.fullmatch(r'[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+:[A-Za-z0-9_.-]+', _r):
         sys.exit(f'fleet_host: template repo spec {_r!r} must be owner/repo with a plain dir name')
+VERTEX = T.get('llm', {}).get('vertex', {})  # Gemini on Vertex via the VM service account (BRO-3666)
+if VERTEX.get('enabled'):  # these become instance metadata and T3 settings: plain tokens only
+    for _k, _v in [('location', VERTEX.get('location')), ('gemini_cli', VERTEX.get('gemini_cli')),
+                   ('probe_model', VERTEX.get('probe_model')), *(('models', m) for m in VERTEX.get('models') or [None])]:
+        if not (isinstance(_v, str) and re.fullmatch(r'[A-Za-z0-9][A-Za-z0-9._-]{0,63}', _v)):
+            sys.exit(f'fleet_host: template llm.vertex.{_k} must be a plain name (got {_v!r})')
+    if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', VERTEX['gemini_cli']):  # startup.sh accepts only this
+        sys.exit('fleet_host: template llm.vertex.gemini_cli must be a plain version like 0.66.0')
+    if not re.fullmatch(r'[a-z0-9-]+', VERTEX['location']):  # likewise
+        sys.exit('fleet_host: template llm.vertex.location must be lowercase letters, digits and dashes')
+    if VERTEX['probe_model'] not in VERTEX['models']:
+        sys.exit('fleet_host: template llm.vertex.probe_model must be one of llm.vertex.models')
+GV_HOME = '/home/agent/.local/share/broomva/gemini-vertex'  # startup.sh writes the wrappers here
 LABELS = ','.join(f'{k}={v}' for k, v in G.get('labels', {}).items())
 RESERVED = {'mac', 'nuc', 'vps', 'local'}
 SHAPES = {k: tuple(v) for k, v in T['shapes'].items()}
@@ -144,12 +158,12 @@ class Host:
         self.kind = self.registry_entry().get('kind') or ('gcp' if a.cmd in ('add', 'remove', 'start', 'stop') else 'ssh')
 
     def reachable(self):
-        """The host answers over ssh (a GCP host must also be RUNNING). Cached per run."""
-        if not hasattr(self, '_reachable'):
+        """The host answers over ssh (a GCP host must also be RUNNING). Only a yes is cached: a host still
+        booting when an early step asks must not read as down for the rest of the run (P20 #1252 r1)."""
+        if not getattr(self, '_reachable', False):
             if self.kind == 'gcp' and self.instance_status() != 'RUNNING':
-                self._reachable = False
-            else:
-                self._reachable = ssh(self.ssh_name, 'true', timeout=20)[0] == 0
+                return False
+            self._reachable = ssh(self.ssh_name, 'true', timeout=20)[0] == 0
         return self._reachable
 
     def registry_entry(self):
@@ -188,8 +202,17 @@ def s_approval(h, apply):
 
 
 def s_ssh_key(h, apply):
-    if SSH_KEY.exists():
+    pub = SSH_KEY.with_suffix('.pub')
+    if SSH_KEY.exists() and pub.exists():
         return OK, f'{SSH_KEY} present'
+    if SSH_KEY.exists():  # private key without its .pub (e.g. restored alone): derive it, never a new key
+        if not apply:
+            return WOULD, f'derive {pub} from the existing private key'
+        rc, out = run(['ssh-keygen', '-y', '-f', str(SSH_KEY)])
+        if rc != 0 or not out.startswith('ssh-ed25519 '):
+            return FAIL, 'cannot derive the public key from the private key'
+        pub.write_text(out.strip() + ' fleet-hosts (BRO-3651)\n')
+        return OK, 'public key derived'
     if not apply:
         return WOULD, f'create Mac-only key {SSH_KEY} (ed25519, no passphrase, 0600)'
     rc, _ = run(['ssh-keygen', '-t', 'ed25519', '-N', '', '-C', 'fleet-hosts (BRO-3651)', '-f', str(SSH_KEY)])
@@ -384,6 +407,29 @@ def s_tailscale_key(h, apply):
     return OK, f'staged key {kid}'
 
 
+def instance_metadata(h):
+    """Every metadata key the startup script reads, as text. `add` creates with it; `converge` re-applies it."""
+    vcpu, mem = SHAPES[h.a.shape]
+    md = {'fleet-host-name': h.name, 'fleet-tailscale-tag': TAG,
+          'fleet-heavy-slots': str(max(1, min(vcpu // 4, (mem - 6) // 5))),
+          'fleet-git-name': run(['git', 'config', 'user.name'])[1], 'fleet-git-email': run(['git', 'config', 'user.email'])[1],
+          'fleet-ssh-pubkey': (SSH_KEY.with_suffix('.pub')).read_text().strip()}
+    on = bool(VERTEX.get('enabled'))  # always set, '' when off, so turning Vertex off converges too
+    md.update({'fleet-vertex-location': VERTEX['location'] if on else '',
+               'fleet-gemini-cli-version': VERTEX['gemini_cli'] if on else ''})
+    for k, f in (('startup-script', 'startup.sh'), ('fleet-heavy-run', 'heavy-run.py'), ('fleet-idle-stop', 'idle-stop.sh')):
+        md[k] = (HERE / 'fleet-host' / f).read_text()
+    return md
+
+
+def metadata_files(h, td):
+    files = {}
+    for k, v in instance_metadata(h).items():
+        (Path(td) / k).write_text(v)
+        files[k] = Path(td) / k
+    return files
+
+
 def s_instance(h, apply):
     st = h.instance_status()
     if st:
@@ -393,18 +439,8 @@ def s_instance(h, apply):
         return WOULD, (f'create {h.instance}: {h.a.shape} ({vcpu} vCPU/{mem} GB), {h.a.disk_gb} GB {G["disk_type"]}, '
                        f'{G["image_family"]}, on-demand, SA {h.sa}, tags fleet-host,fleet-iap, '
                        f'labels {LABELS},fleet-host={h.name}, network {NET} (IAP-only ingress); startup-script + metadata')
-    slots = max(1, min(vcpu // 4, (mem - 6) // 5))
-    name = run(['git', 'config', 'user.name'])[1]
-    email = run(['git', 'config', 'user.email'])[1]
     with tempfile.TemporaryDirectory() as td:  # metadata values, none secret
-        md = {'fleet-host-name': h.name, 'fleet-tailscale-tag': TAG, 'fleet-heavy-slots': str(slots), 'fleet-git-name': name,
-              'fleet-git-email': email, 'fleet-ssh-pubkey': (SSH_KEY.with_suffix('.pub')).read_text().strip()}
-        files = {'startup-script': HERE / 'fleet-host/startup.sh',
-                 'fleet-heavy-run': HERE / 'fleet-host/heavy-run.py',
-                 'fleet-idle-stop': HERE / 'fleet-host/idle-stop.sh'}
-        for k, v in md.items():
-            (Path(td) / k).write_text(v)
-            files[k] = Path(td) / k
+        files = metadata_files(h, td)
         rc, _ = gcloud('compute', 'instances', 'create', h.instance, f'--zone={h.zone}',
                        f'--machine-type={h.a.shape}', '--provisioning-model=STANDARD',
                        f'--image-family={G["image_family"]}', f'--image-project={G["image_project"]}',
@@ -414,6 +450,44 @@ def s_instance(h, apply):
                        '--metadata-from-file=' + ','.join(f'{k}={v}' for k, v in files.items()),
                        timeout=300)
     return (OK, 'created') if rc == 0 and h.instance_status(fresh=True) else (FAIL, 'instance create failed')
+
+
+def deployed_metadata(h):
+    rc, out = gcloud('compute', 'instances', 'describe', h.instance, f'--zone={h.zone}', '--format=json(metadata.items)')
+    if rc != 0:
+        raise Unobservable('instance metadata')
+    return {i['key']: i.get('value', '') for i in json.loads(out or '{}').get('metadata', {}).get('items', [])}
+
+
+def s_converge(h, apply):
+    """A template or script change reaches a live host: re-apply the metadata and re-run the startup script
+    (every step in it checks before it acts). A stopped host picks the new metadata up at its next boot."""
+    if not h.instance_status():
+        return WOULD, 'nothing to converge until the instance exists'
+    if not SSH_KEY.with_suffix('.pub').exists():
+        return BLOCKED, f'{SSH_KEY}.pub missing (the ssh-key step creates it)'
+    want, have = instance_metadata(h), deployed_metadata(h)
+    stale = sorted(k for k, v in want.items() if have.get(k, '').strip() != v.strip())
+    if not stale:
+        return OK, 'instance metadata matches the template and scripts'
+    if not apply:
+        return WOULD, f'update metadata {stale}; re-run the startup script on the host'
+    with tempfile.TemporaryDirectory() as td:
+        files = metadata_files(h, td)
+        rc, _ = gcloud('compute', 'instances', 'add-metadata', h.instance, f'--zone={h.zone}',
+                       '--metadata-from-file=' + ','.join(f'{k}={v}' for k, v in files.items()), timeout=120)
+    if rc != 0:
+        return FAIL, 'metadata update failed'
+    if h.instance_status(fresh=True) != 'RUNNING':
+        return OK, f'metadata updated {stale}; the startup script applies it at the next boot'
+    if not h.reachable():
+        return BLOCKED, f'metadata updated {stale}; host not answering yet, re-run to apply it'
+    # Never run the script twice at once: a boot-time run (first boot, restart) must finish first.
+    rc, out = ssh(h.name, 'systemctl show -p ActiveState --value google-startup-scripts.service', timeout=30)
+    if rc != 0 or out.strip() not in ('inactive', 'failed'):
+        return BLOCKED, f'metadata updated {stale}; the boot-time startup run is still {out.strip() or "unknown"}, re-run'
+    rc, out = ssh(h.name, 'sudo google_metadata_script_runner startup', timeout=1800)
+    return (OK, f'converged {stale}') if rc == 0 else (FAIL, f'startup script re-run failed (rc {rc})')
 
 
 def s_ssh_alias(h, apply):
@@ -436,6 +510,82 @@ def no_host(h):
     return h.instance_status() != 'RUNNING'
 
 
+def ssh_host(h):
+    return f'{h.name}.{TAILNET_SUFFIX}'
+
+
+def console_host_keys(h):
+    """The VM's ed25519 host keys as its guest agent printed them to the serial console: an out-of-band
+    channel (the GCP API), so a key seen over the tailnet can be checked against it."""
+    rc, out = gcloud('compute', 'instances', 'get-serial-port-output', h.instance, f'--zone={h.zone}', timeout=60)
+    if rc != 0:
+        raise Unobservable('serial console')
+    return set(re.findall(r'ssh-ed25519 AAAA[A-Za-z0-9+/=]+', out))
+
+
+def pinned_host_keys(h):
+    """Pinned ed25519 keys. ssh itself adds the host's other key types once ed25519 is trusted
+    (UpdateHostKeys, over the authenticated session), so only ed25519 is compared with the console."""
+    rc, out = run(['ssh-keygen', '-F', ssh_host(h), '-f', str(KNOWN_HOSTS)])
+    keys = (' '.join(l.split()[1:3]) for l in out.splitlines() if l and not l.startswith('#')) if rc == 0 else ()
+    return {k for k in keys if k.startswith('ssh-ed25519 ')}
+
+
+def strict_ssh(h):
+    """ssh that can only accept the KNOWN_HOSTS entry pinned_host_keys() inspected: no ssh config, no global
+    known_hosts, the entry's own name as the key alias (P20 #1252 r3)."""
+    return ['ssh', '-F', '/dev/null', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'StrictHostKeyChecking=yes',
+            '-o', f'UserKnownHostsFile={KNOWN_HOSTS}', '-o', 'GlobalKnownHostsFile=/dev/null',
+            '-o', f'HostKeyAlias={ssh_host(h)}', '-o', 'IdentitiesOnly=yes', '-i', str(SSH_KEY), f'agent@{ssh_host(h)}']
+
+
+def s_host_key(h, apply):
+    """Pin the new VM's ssh host key, checked against the serial console. A re-created host with the same
+    name gets a new key; without this, ssh refuses it (or, worse, someone accepts whatever key answers)."""
+    if no_host(h):
+        return WOULD, f'pin the ed25519 host key of {ssh_host(h)} after checking it against the serial console'
+    pinned = pinned_host_keys(h)
+    if pinned and run(strict_ssh(h) + ['true'], timeout=30)[0] == 0:
+        # The host proved it holds the pinned key. The console prints keys only on first boot, so a woken
+        # host is verified this way; the console is needed only to pin a new key.
+        return OK, f'{ssh_host(h)} answers with its pinned key'
+    console = console_host_keys(h)
+    if not console:
+        return BLOCKED, 'no host key in the serial console yet (first boot still running; re-run)'
+    if pinned and pinned <= console:
+        return OK, f'{ssh_host(h)} pinned to its console key'
+    rc, out = run(['ssh-keyscan', '-t', 'ed25519', ssh_host(h)], timeout=30)
+    seen = {' '.join(l.split()[1:3]) for l in out.splitlines() if l.startswith(ssh_host(h) + ' ')}
+    if not seen:
+        return BLOCKED, 'host not answering ssh over the tailnet yet (re-run)'
+    if not seen <= console:
+        return FAIL, 'the key answering on the tailnet is not the VM console key: refusing to pin it'
+    if not apply:
+        return WOULD, f'replace {len(pinned)} stale known_hosts entr{"y" if len(pinned) == 1 else "ies"} with the console key'
+    KNOWN_HOSTS.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+    if KNOWN_HOSTS.exists():
+        run(['ssh-keygen', '-R', ssh_host(h), '-f', str(KNOWN_HOSTS)])
+    lead = '\n' if KNOWN_HOSTS.exists() and KNOWN_HOSTS.read_bytes()[-1:] not in (b'', b'\n') else ''
+    fd = os.open(KNOWN_HOSTS, os.O_WRONLY | os.O_APPEND | os.O_CREAT, 0o600)
+    with os.fdopen(fd, 'a') as f:
+        f.write(lead + ''.join(f'{ssh_host(h)} {k}\n' for k in sorted(seen)))
+    return OK, 'pinned (matches the serial console)'
+
+
+def s_llm_vertex(h, apply):
+    """The host has an LLM with no login: Gemini on Vertex through its service account. One short call
+    proves it (a live, billed call, so only with --apply)."""
+    if not VERTEX.get('enabled'):
+        return OK, 'llm.vertex disabled in the template'
+    if no_host(h) or not apply:
+        return WOULD, f'one `gemini-vertex` call ({VERTEX["probe_model"]}) through the VM service account'
+    rc, out = ssh(h.name, f'cd /tmp && timeout 120 gemini-vertex -m {VERTEX["probe_model"]} '
+                          f'-p "Reply with exactly the word: ok" 2>/dev/null | tail -1', timeout=150)
+    if rc == 0 and out.strip().strip('.').lower() == 'ok':
+        return OK, f'gemini-vertex answered ({VERTEX["probe_model"]}, project {PROJECT}, no key file)'
+    return FAIL, f'gemini-vertex did not answer (rc {rc}); check `gemini-vertex` and roles/aiplatform.user'
+
+
 def s_ready(h, apply):
     if no_host(h):
         return WOULD, 'poll /var/lib/fleet/ready.json over ssh until the startup script finishes'
@@ -444,6 +594,8 @@ def s_ready(h, apply):
         return BLOCKED, 'host not reachable over the tailnet yet, or startup not finished (re-run)'
     tools = json.loads(out).get('tools', {})
     missing = [t for t, ok in tools.items() if not ok]
+    if VERTEX.get('enabled') and tools.get('gemini-vertex') is not True:
+        missing.append('gemini-vertex')  # absent counts as missing, never as fine
     if missing:
         return FAIL, f'missing tools: {missing}'
     # The single-use join key is spent once the host answers over the tailnet: destroy its secret.
@@ -470,7 +622,7 @@ def mac_t3_version():
 
 T3_INSTALL = r'''set -eu
 export PATH="$HOME/.local/bin:$HOME/.bun/bin:$PATH"
-V="$1"; shift  # remaining args: owner/repo:dir specs from the template
+V="$1"; GV="$2"; shift 2  # GV: gemini-vertex models (comma list, or - when off); rest: owner/repo:dir specs
 # 1. Runtime + user service at the Mac's version. Verified on gcp-1 2026-11-10: `npx t3@V service install`
 #    downloads ~/.t3/runtime/versions/V and starts t3code.service, but creates no launcher (and
 #    `npx t3@V update V` is a no-op: the npx copy already is V). So link the launcher ourselves.
@@ -479,19 +631,37 @@ if [ ! -x "$R" ] || ! systemctl --user is-active -q t3code.service; then
   npx -y "t3@$V" service install
 fi
 mkdir -p "$HOME/.local/bin"; ln -sfn "$R" "$HOME/.local/bin/t3"
-# 2. Linked environments on (the Mac links to this host).
-python3 - <<'PY'
+# 2. Linked environments on (the Mac links to this host), and the login-free provider: Gemini on Vertex
+#    through the wrapper startup.sh writes (VM service account; same shape as the VPS instance).
+GV_MODELS="$GV" GV_CMD="/home/agent/.local/share/broomva/gemini-vertex/bin/gemini-vertex-acp" python3 - <<'PY'
 import json, os
 p = os.path.expanduser('~/.t3/userdata/settings.json')
 d = json.load(open(p)) if os.path.exists(p) else {}
-if d.get('linkedEnvironmentsEnabled') is not True:
-    d['linkedEnvironmentsEnabled'] = True
+want = dict(d, linkedEnvironmentsEnabled=True)
+models = [m for m in os.environ['GV_MODELS'].split(',') if m and m != '-']
+if not models and 'gemini-vertex' in (d.get('providerInstances') or {}):  # Vertex turned off: remove it
+    want['providerInstances'] = {k: v for k, v in d['providerInstances'].items() if k != 'gemini-vertex'}
+if models:
+    want['providerInstances'] = dict(d.get('providerInstances') or {}, **{'gemini-vertex': {
+        'driver': 'acpRegistry', 'displayName': 'Gemini Vertex (GCP service account)', 'enabled': True,
+        'config': {'source': 'local', 'commandPath': os.environ['GV_CMD'], 'authMethodId': 'vertex-ai',
+                   'customModels': models}}})
+if want != d:
     os.makedirs(os.path.dirname(p), exist_ok=True)
-    json.dump(d, open(p + '.tmp', 'w'), indent=2); os.replace(p + '.tmp', p)
-    print('settings: linkedEnvironmentsEnabled=true')
+    json.dump(want, open(p + '.tmp', 'w'), indent=2); os.replace(p + '.tmp', p)
+    print('settings: linkedEnvironmentsEnabled, gemini-vertex provider')
 PY
 t3 service restart >/dev/null 2>&1 || true
-# 3. Repositories and T3 projects, once gh is logged in (the logins step); until then they stay pending.
+for i in $(seq 1 30); do systemctl --user is-active -q t3code.service && t3 --version >/dev/null 2>&1 && break; sleep 1; done
+sleep 3
+# 3. A login-free T3 project, so the host takes delegated tasks (Gemini on Vertex) before any gh login.
+if [ ! -d "$HOME/scratch/.git" ]; then
+  git init -q -b main "$HOME/scratch" && git -C "$HOME/scratch" commit -q --allow-empty -m "scratch: login-free T3 project"
+fi
+# Registered once: the check below reads T3's own project table (P20 #1252 r1: a dir alone proves nothing).
+SCRATCH_SQL="select count(*) from projection_projects where workspace_root='$HOME/scratch' and deleted_at is null"
+[ "$(sqlite3 -readonly -cmd '.timeout 10000' "$HOME/.t3/userdata/statev2.sqlite" "$SCRATCH_SQL" 2>/dev/null)" = 1 ] || t3 project add "$HOME/scratch"
+# 4. Repositories and T3 projects, once gh is logged in (the logins step); until then they stay pending.
 if gh auth status -h github.com >/dev/null 2>&1; then
   for spec in "$@"; do
     repo="${spec%%:*}"; dir="$HOME/${spec##*:}"
@@ -508,6 +678,19 @@ systemctl --user is-active t3code.service
 '''
 
 
+# The host's T3 lists the gemini-vertex provider with exactly the template models, or none when Vertex is off
+# (a template change either way re-applies).
+GV_CHECK = ("python3 -c 'import json,os,sys; p=os.path.expanduser(\"~/.t3/userdata/settings.json\"); "
+            "g=(json.load(open(p)).get(\"providerInstances\") or {}).get(\"gemini-vertex\") if os.path.exists(p) else None; "
+            "w=[m for m in sys.argv[1].split(\",\") if m]; "
+            "sys.exit(0 if (g[\"config\"].get(\"customModels\")==w if g else not w) else 1)' "
+            + shlex.quote(','.join(VERTEX.get('models') or []) if VERTEX.get('enabled') else '') + ' || echo gv-missing; ')
+# ~/scratch is registered in T3's own project table (a directory alone proves nothing).
+SCRATCH_CHECK = ('[ "$(sqlite3 -readonly -cmd \'.timeout 10000\' "$HOME/.t3/userdata/statev2.sqlite" '
+                 '"select count(*) from projection_projects where workspace_root=\'$HOME/scratch\' and deleted_at is null" '
+                 '2>/dev/null)" = 1 ] || echo scratch-missing; ')
+
+
 def s_t3(h, apply):
     want = mac_t3_version()
     rc, out = (1, '') if no_host(h) else ssh(
@@ -515,16 +698,19 @@ def s_t3(h, apply):
                 # repos still owed: gh is logged in but a template checkout is missing (re-run clones them)
                 + ''.join(f'gh auth status -h github.com >/dev/null 2>&1 && [ ! -d "$HOME/{r.split(":", 1)[1]}/.git" ] '
                           f'&& echo repo-missing; ' for r in REPOS)
+                + SCRATCH_CHECK
+                + GV_CHECK
                 + 't3 --version 2>/dev/null | tail -1; systemctl --user is-active t3code.service', timeout=30)
     lines = out.split()  # `t3 --version` prints "t3 v<version>"
-    if rc == 0 and want and lines and lines[-1] == 'active' and f'v{want}' in lines and 'repo-missing' not in lines:
+    if rc == 0 and want and lines and lines[-1] == 'active' and f'v{want}' in lines and not {'repo-missing', 'gv-missing', 'scratch-missing'} & set(lines):
         return OK, f't3 {want}, t3code.service active'
     if not want:
         return BLOCKED, 'cannot determine the Mac T3 version (~/.t3/runtime/service-state.json)'
     if not apply or no_host(h):
         return WOULD, (f'install t3 {want} (npm `t3`, the Mac version) as agent, `t3 service install`, '
-                       f'linkedEnvironmentsEnabled=true, clone {", ".join(r.split(":")[0] for r in REPOS)}, `t3 project add`')
-    rc, out = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', h.name, 'bash', '-l', '-s', '--', want, *REPOS],
+                       f'linkedEnvironmentsEnabled=true{", gemini-vertex provider" if VERTEX.get("enabled") else ""}, a ~/scratch project, clone {", ".join(r.split(":")[0] for r in REPOS)}, `t3 project add`')
+    models = ','.join(VERTEX['models']) if VERTEX.get('enabled') else '-'
+    rc, out = run(['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', h.name, 'bash', '-l', '-s', '--', want, models, *REPOS],
                   input=T3_INSTALL, timeout=1800)
     tail = out.splitlines()[-3:] if out else []
     if rc == 0 and tail and tail[-1] == 'active':
@@ -548,12 +734,95 @@ def linked_ids():
     return set(re.findall(r'[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}', out))
 
 
+T3_LINK_PORT, T3_LINK_ACCESS = 4443, 'full-access'  # tailnet ACL grants owner devices tcp:4443-4450 (spec §2); D3
+
+
+def linked_envs():
+    """The Mac's linked environments, live (`t3 environment list --json`)."""
+    cli = t3_cli()
+    if not cli:
+        raise Unobservable('Mac T3 runtime CLI not found')
+    rc, out = run([cli, 'environment', 'list', '--json'], timeout=60)
+    try:
+        d = json.loads(out) if rc == 0 else None
+    except ValueError:
+        d = None
+    if d is None:
+        raise Unobservable('t3 environment list failed')
+    return d if isinstance(d, list) else d.get('environments', [])
+
+
+def env_for_host(envs, h):
+    """Linked environments whose URL host is exactly this host's tailnet name (not a substring:
+    gcp-1 must not match test-gcp-1)."""
+    from urllib.parse import urlsplit
+    return [e['environmentId'] for e in envs
+            if any(urlsplit(u).hostname == ssh_host(h) for u in e.get('urls') or [])]
+
+
+def link_record(h):
+    return load(h.dir / 't3-link.json', {})
+
+
+def host_env_id(h):
+    """The host's T3 environment id: the registry's, else the one `add` recorded before registering."""
+    return h.registry_entry().get('environment_id') or link_record(h).get('environment_id')
+
+
+def record_link(h, env):
+    if link_record(h).get('environment_id') != env:
+        h.dir.mkdir(parents=True, exist_ok=True)
+        atomic_json(h.dir / 't3-link.json', {'environment_id': env, 'url': f'https://{ssh_host(h)}:{T3_LINK_PORT}',
+                                             'access': T3_LINK_ACCESS, 'at': datetime.now(timezone.utc).isoformat()})
+    reg = load(REGISTRY, {'hosts': []})
+    for e in reg['hosts']:
+        if e.get('id') == h.name and e.get('environment_id') != env:
+            e['environment_id'] = env
+            atomic_json(REGISTRY, reg)
+
+
+def pair_and_link(h):
+    """Pair on the host and link from the Mac. The single-use pairing token (5 min TTL) goes from the host's
+    stdout into the Mac CLI's argv in this process; it is never printed, logged or kept."""
+    rc, out = ssh(h.name, f'export PATH="$HOME/.local/bin:$PATH"; t3 pair --tailscale --tailscale-serve-port {T3_LINK_PORT} '
+                          f'--label {shlex.quote(os.uname().nodename.split(".")[0][:40] or "mac")} --ttl 5m', timeout=120)
+    m = re.search(r'^Pairing URL: (https://[^\s/#]+)/pair#token=([A-Za-z0-9_-]+)\s*$', out, re.M) if rc == 0 else None
+    if not m:
+        return False, f't3 pair failed on the host (rc {rc}); check `tailscale set --operator=agent` and t3code.service'
+    url, token = m.groups()
+    del out
+    for attempt in range(4):  # the first HTTPS answer waits on the Serve certificate
+        rc, _ = run([t3_cli(), 'environment', 'link', url, '--pairing-code', token, '--access', T3_LINK_ACCESS], timeout=180)
+        if rc == 0:
+            return True, url
+        time.sleep(20)
+    return False, f'`t3 environment link {url}` failed (rc {rc}) after 4 attempts'
+
+
 def s_t3_link(h, apply):
-    env = h.registry_entry().get('environment_id')
-    if env and env in linked_ids():
+    """The Mac links this host's T3 (Mac → host, D3 full-access), so the fleet can orchestrate it."""
+    if no_host(h):
+        return WOULD, f'pair on the host and link it from the Mac ({T3_LINK_ACCESS}); the code never leaves the pipe'
+    envs = linked_envs()
+    env = host_env_id(h)
+    if not (env and any(e.get('environmentId') == env for e in envs)):
+        mine = env_for_host(envs, h)
+        env = mine[0] if mine else None
+    if env:
+        if apply:
+            record_link(h, env)
         return OK, f'linked environmentId {env}'
-    return OWNER, (f'agent calls t3_environment_link (hint "{h.name}", access full-access, decision D3), then '
-                   f'records its environmentId in {REGISTRY}; never a pairing code in chat')
+    if not apply:
+        return WOULD, (f'`t3 pair --tailscale --tailscale-serve-port {T3_LINK_PORT}` on the host, piped into the Mac '
+                       f'`t3 environment link --access {T3_LINK_ACCESS}`; the pairing code is never printed')
+    ok, detail = pair_and_link(h)
+    if not ok:
+        return FAIL, detail
+    mine = env_for_host(linked_envs(), h)
+    if not mine:
+        return FAIL, f'linked {detail}, but `t3 environment list` does not show it'
+    record_link(h, mine[0])
+    return OK, f'linked environmentId {mine[0]} ({detail})'
 
 
 def s_snapshot(h, apply):
@@ -630,7 +899,7 @@ def s_register(h, apply):
     vcpu, mem = SHAPES[h.a.shape]
     entry = {'id': h.name, 'kind': 'gcp', 'state': 'active',
              'transport': ['ssh', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', h.name, 'bash', '-l', '-s'],
-             'environment_id': None, 't3_db': '/home/agent/.t3/userdata/statev2.sqlite',
+             'environment_id': host_env_id(h), 't3_db': '/home/agent/.t3/userdata/statev2.sqlite',
              'gcp': {'project': PROJECT, 'zone': h.zone, 'instance': h.instance, 'service_account': h.sa,
                      'shape': h.a.shape},
              'heavy_slots': max(1, min(vcpu // 4, (mem - 6) // 5)), 'roles': T['fleet']['roles'],
@@ -763,7 +1032,7 @@ def r_drain(h, apply):
 
 
 def r_archive_unlink(h, apply):
-    env = h.registry_entry().get('environment_id')
+    env = host_env_id(h)
     if not env or env not in linked_ids():
         return OK, 'not linked (checked live with `t3 environment list`)'
     return OWNER, (f'agent archives settled threads on environment {env} (the full-access link permits it), '
@@ -864,7 +1133,9 @@ def r_deregister(h, apply):
     left = [x for x, present in (('registry', bool(h.registry_entry())),
                                  ('setpoint', f'host.{h.name}.max_live' in sp.get('setpoints', {})),
                                  ('hold', h.name in st.get('remote_host_holds', {})),
-                                 ('ssh-alias', f'# >>> fleet-host {h.name} ' in text)) if present]
+                                 ('ssh-alias', f'# >>> fleet-host {h.name} ' in text),
+                                 ('known-host', bool(pinned_host_keys(h))),
+                                 ('t3-link-record', (h.dir / 't3-link.json').exists())) if present]
     if not left:
         return OK, 'deregistered'
     if not apply:
@@ -881,17 +1152,27 @@ def r_deregister(h, apply):
     if 'ssh-alias' in left:
         SSH_CONFIG.write_text(re.sub(rf'\n?# >>> fleet-host {re.escape(h.name)} .*?# <<< fleet-host {re.escape(h.name)}\n',
                                      '', text, flags=re.S))
+    if 'known-host' in left:  # a re-created host with this name has a new key; never keep the old one
+        run(['ssh-keygen', '-R', ssh_host(h), '-f', str(KNOWN_HOSTS)])
+    if 't3-link-record' in left:  # the link itself is gone (archive+unlink proved it)
+        (h.dir / 't3-link.json').unlink()
     return OK, 'deregistered'
 
 
+# Order (BRO-3666): the host is useful before any login. Gemini on Vertex, T3, the verify gate, the link and
+# registration come first; the interactive Claude/Codex/gh logins are last and gate nothing after them.
+_CREDS_NO_LOGIN = [(f'cred:{n}', f, False) for n, f in creds.CRED_STEPS if n != 'logins']
+_LOGINS = [(f'cred:{n}', f, False) for n, f in creds.CRED_STEPS if n == 'logins']
 ADD = [('preflight', s_preflight, False), ('approval', s_approval, False), ('apis', s_apis, True),
        ('network', s_network, True), ('ssh-key', s_ssh_key, False), ('service-account', s_service_account, True),
        ('tailscale-key', s_tailscale_key, False), ('instance', s_instance, True),
-       ('ssh-alias', s_ssh_alias, False), ('ready', s_ready, False),
+       ('ssh-alias', s_ssh_alias, False), ('host-key', s_host_key, False), ('converge', s_converge, True),
+       ('ready', s_ready, False),
        ('snapshot', s_snapshot, True),  # provisioned and secret-free: the rollback point (agentic-vps rule 1)
-       *[(f'cred:{n}', f, False) for n, f in creds.CRED_STEPS], ('t3', s_t3, False),
+       ('llm:vertex', s_llm_vertex, False), *_CREDS_NO_LOGIN, ('t3', s_t3, False),
        ('agentic-verify', s_agentic_verify, False), ('t3-link', s_t3_link, False),
-       ('setpoint', s_setpoint, False), ('governor-hold', s_hold, False), ('register', s_register, False)]
+       ('setpoint', s_setpoint, False), ('governor-hold', s_hold, False), ('register', s_register, False),
+       *_LOGINS]
 REMOVE = [('preflight', s_preflight, False), ('wake', r_wake, True), ('hold', r_drain_hold, False),
           ('drain', r_drain, False), ('archive+unlink', r_archive_unlink, False),
           *[(f'revoke:{n}', f, False) for n, f in creds.REVOKE_STEPS],
@@ -902,13 +1183,63 @@ REMOVE = [('preflight', s_preflight, False), ('wake', r_wake, True), ('hold', r_
 CREDS = [(f'cred:{n}', f, False) for n, f in creds.CRED_STEPS]
 
 
+AWAKE_MAX_MIN = 240  # idle-stop.sh clamps the marker to 4 h too
+
+
+def awake_minutes(v):
+    n = int(v)
+    if not 0 <= n <= AWAKE_MAX_MIN:
+        raise argparse.ArgumentTypeError(f'--awake must be 0..{AWAKE_MAX_MIN} minutes')
+    return n
+
+
+def hold_awake(h, minutes):
+    """Keep the host from idle-stopping for `minutes`: the agent that woke it is about to use it."""
+    return ssh(h.name, f'date -d "+{int(minutes)} min" +%s > /var/lib/fleet/awake-until', timeout=30)[0] == 0
+
+
 def x_start(h, apply):
     st = h.instance_status()
     if st is None:
         return BLOCKED, f'{h.instance} does not exist'
+    awake = getattr(h.a, 'awake', 60)
     if st == 'RUNNING':
-        return OK, 'running'
-    return start_instance(h) if apply else (WOULD, f'start {h.instance} ({st})')
+        if not (apply and awake):
+            return OK, 'running'
+        if h.reachable() and hold_awake(h, awake):
+            return OK, f'running; held awake {awake} min'
+        return OK, 'running; awake hold not set (idle stop may apply sooner)'  # never claim a hold we lack
+    if not apply:
+        return WOULD, f'start {h.instance} ({st}) and hold it awake {awake} min'
+    status, detail = start_instance(h)
+    if status == OK and awake and not hold_awake(h, awake):
+        return OK, detail + '; awake hold not set (idle stop may apply sooner)'
+    return status, detail + (f'; held awake {awake} min' if status == OK and awake else '')
+
+
+def x_login_code(h, apply):
+    """Deliver the code the owner's browser showed (Claude's paste code) to the waiting login session.
+    The code is read from a file (T3 request_secret delivery), sent on ssh stdin and never printed."""
+    f = Path(h.a.code_file)
+    if not f.exists():
+        return BLOCKED, f'{f} not found'
+    if not apply:
+        return WOULD, f'send the code in {f} to login-{h.a.tool} on the host'
+    sent = creds.send_login_code(h, h.a.tool, f.read_text().strip())
+    missing = creds.logins_missing(h) if sent else None
+    for _ in range(15 if sent else 0):  # the token exchange can outlast a fixed wait: poll ~60 s, then give up
+        if missing is not None and h.a.tool not in missing:
+            break
+        time.sleep(4)
+        missing = creds.logins_missing(h)
+    # The code is spent either way: close the session, so the next relay starts a fresh login and code
+    # instead of re-reading a dead pane (P20 #1252 r3).
+    creds.end_login_sessions(h, [h.a.tool])
+    if not sent:
+        return FAIL, f'could not deliver the code to login-{h.a.tool}; re-run creds for a fresh one'
+    if missing is None:
+        return BLOCKED, 'code sent; login status unreadable'
+    return (OK, f'{h.a.tool} logged in') if h.a.tool not in missing else (FAIL, f'{h.a.tool} still not logged in (code wrong or expired)')
 
 
 IDLE_CHECK = (f'sqlite3 "file:$HOME/.t3/userdata/statev2.sqlite?mode=ro" "{ACTIVE_RUNS}"; '
@@ -933,6 +1264,7 @@ def x_stop(h, apply):
 
 
 START = [('start', x_start, True)]
+LOGIN_CODE = [('login-code', x_login_code, False)]
 STOP = [('stop', x_stop, False)]
 REVOKE_CREDS = [(f'revoke:{n}', f, False) for n, f in creds.REVOKE_STEPS]
 
@@ -970,6 +1302,14 @@ def main(argv=None):
         c = sub.add_parser(cmd, help=f'{cmd} a GCP fleet host (stop refuses while runs or heavy jobs are active)')
         c.add_argument('name')
         c.add_argument('--apply', action='store_true')
+        if cmd == 'start':
+            c.add_argument('--awake', type=awake_minutes, default=60,
+                           help=f'minutes to hold the host awake after start (0..{AWAKE_MAX_MIN}; 0: none)')
+    lc = sub.add_parser('login-code', help='deliver a code the owner received (Claude paste code) to a waiting login')
+    lc.add_argument('name')
+    lc.add_argument('tool', choices=sorted(creds.RELAY))
+    lc.add_argument('--code-file', required=True, help='file holding the code (T3 request_secret delivery)')
+    lc.add_argument('--apply', action='store_true')
     for cmd, what in (('creds', 'mint/copy credentials and run logins on a reachable host'),
                       ('revoke-creds', 'revoke and prove every credential recorded for a host')):
         c = sub.add_parser(cmd, help=what)
@@ -981,7 +1321,8 @@ def main(argv=None):
     args.dry = not getattr(args, 'apply', False)
     args.shape = getattr(args, 'shape', None) or Host(args).registry_entry().get('gcp', {}).get('shape', G['shape'])
     h = Host(args)
-    steps = {'remove': REMOVE, 'creds': CREDS, 'revoke-creds': REVOKE_CREDS, 'start': START, 'stop': STOP}.get(args.cmd, ADD)
+    steps = {'remove': REMOVE, 'creds': CREDS, 'revoke-creds': REVOKE_CREDS, 'start': START, 'stop': STOP,
+             'login-code': LOGIN_CODE}.get(args.cmd, ADD)
     mode = 'DRY RUN (no changes; pass --apply)' if args.dry else 'APPLY'
     print(f'fleet_host {args.cmd} {args.name} — {mode} — project {PROJECT}, zone {h.zone}, shape {args.shape}')
     journal, approved = [], args.cmd != 'add' or s_approval(h, False)[0] == OK
