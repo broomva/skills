@@ -560,6 +560,11 @@ class LoginFreeHost(unittest.TestCase):
             hold.reset_mock()
             self.assertEqual(self.m.x_start(self.h, False)[0], self.m.OK)
             hold.assert_not_called()  # a dry run changes nothing
+        for reach, held in ((False, True), (True, False)):  # never claim a hold that was not set
+            with mock.patch.object(self.m.Host, 'instance_status', return_value='RUNNING'), \
+                 mock.patch.object(self.m.Host, 'reachable', return_value=reach), \
+                 mock.patch.object(self.m, 'hold_awake', return_value=held):
+                self.assertNotIn('held awake', self.m.x_start(self.h, True)[1], (reach, held))
 
     def test_login_code_always_closes_the_spent_session(self):
         c = self.m.creds
@@ -568,6 +573,13 @@ class LoginFreeHost(unittest.TestCase):
         self.assertEqual(self.m.x_login_code(self.h, True)[0], self.m.BLOCKED)  # no file
         f.write_text('abc#state')
         self.assertEqual(self.m.x_login_code(self.h, False)[0], self.m.WOULD)
+        # a slow token exchange: missing at first, logged in on a later poll, and the session is closed after
+        with mock.patch.object(c, 'send_login_code', return_value=True), \
+             mock.patch.object(c, 'logins_missing', side_effect=[['claude'], ['claude'], []]) as lm, \
+             mock.patch.object(c, 'end_login_sessions') as end, mock.patch.object(self.m.time, 'sleep'):
+            self.assertEqual(self.m.x_login_code(self.h, True)[0], self.m.OK)
+            self.assertEqual(lm.call_count, 3)
+            end.assert_called_once_with(self.h, ['claude'])
         for sent, missing, want in ((True, [], self.m.OK), (True, ['claude'], self.m.FAIL), (False, ['claude'], self.m.FAIL)):
             with mock.patch.object(c, 'send_login_code', return_value=sent), \
                  mock.patch.object(c, 'logins_missing', return_value=missing), \

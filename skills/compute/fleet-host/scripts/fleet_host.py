@@ -1204,9 +1204,11 @@ def x_start(h, apply):
         return BLOCKED, f'{h.instance} does not exist'
     awake = getattr(h.a, 'awake', 60)
     if st == 'RUNNING':
-        if apply and awake and h.reachable():
-            hold_awake(h, awake)
-        return OK, 'running' + (f'; held awake {awake} min' if apply and awake else '')
+        if not (apply and awake):
+            return OK, 'running'
+        if h.reachable() and hold_awake(h, awake):
+            return OK, f'running; held awake {awake} min'
+        return OK, 'running; awake hold not set (idle stop may apply sooner)'  # never claim a hold we lack
     if not apply:
         return WOULD, f'start {h.instance} ({st}) and hold it awake {awake} min'
     status, detail = start_instance(h)
@@ -1224,8 +1226,12 @@ def x_login_code(h, apply):
     if not apply:
         return WOULD, f'send the code in {f} to login-{h.a.tool} on the host'
     sent = creds.send_login_code(h, h.a.tool, f.read_text().strip())
-    time.sleep(8 if sent else 0)
-    missing = creds.logins_missing(h)
+    missing = creds.logins_missing(h) if sent else None
+    for _ in range(15 if sent else 0):  # the token exchange can outlast a fixed wait: poll ~60 s, then give up
+        if missing is not None and h.a.tool not in missing:
+            break
+        time.sleep(4)
+        missing = creds.logins_missing(h)
     # The code is spent either way: close the session, so the next relay starts a fresh login and code
     # instead of re-reading a dead pane (P20 #1252 r3).
     creds.end_login_sessions(h, [h.a.tool])
