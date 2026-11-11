@@ -53,7 +53,7 @@ Always — at the start of every session, before responding to substantive user 
 
 Carve-outs (no role-x intake needed): single-line typo fixes, pure read questions ("what does this function do?"), conversation continuation without new substantive request.
 
-The intake block's "Task-relevant knowledge" list holds at most 5 catalog entities. `ROLE_X_TASK_ENTITY_TOP_N=<n>` (0–50) in the hook's environment changes that cap; a bad value means 5. It only shortens or lengthens the same ranked list, and it exists for the context-ablation evals' compression arm (`scripts/skill_evals/ctx_ablation/`).
+The intake block's "Task-relevant knowledge" list is **off by default** (BRO-3658). Over 30 days of sessions in the workspace it was built for (33 sessions), 428 intakes carried the list, 725 distinct entity pointers were injected, and no session opened one afterwards; most intakes fire on machine events (task notifications, PR updates), where a keyword match returns unrelated entities. `ROLE_X_TASK_ENTITY_TOP_N=<n>` (1–50) in the hook's environment turns it on with a cap of `n`; 5 is the full list, and 0, unset or a bad value means off. A smaller cap only shortens the same ranked list. The context-ablation evals (`scripts/skill_evals/ctx_ablation/`) use the same switch for their arms. To look something up on purpose, use `/kg load <topic>`.
 
 ### Reflex output (`ROLE_X_OUTPUT`, v0.7.0, default off)
 

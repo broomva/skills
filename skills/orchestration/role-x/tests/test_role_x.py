@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 SCRIPT = Path(__file__).parent.parent / "scripts" / "role-x.py"
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -1305,7 +1307,14 @@ def _seed_catalog(workspace: Path, catalog: str = _FIXTURE_CATALOG) -> None:
     (docs / "knowledge-index.md").write_text(catalog, encoding="utf-8")
 
 
-def test_intake_surfaces_relevant_task_entity(tmp_path):
+@pytest.fixture
+def task_entities_on(monkeypatch):
+    """The task-entity block is off by default (BRO-3658). Tests of WHAT it selects
+    switch it on at its full size, the value the selection logic was built for."""
+    monkeypatch.setenv("ROLE_X_TASK_ENTITY_TOP_N", "5")
+
+
+def test_intake_surfaces_relevant_task_entity(tmp_path, task_entities_on):
     """A prompt whose tokens hit an entity's slug/tags surfaces it with its claim."""
     workspace = _seed_workspace(tmp_path)
     _seed_catalog(workspace)
@@ -1321,7 +1330,7 @@ def test_intake_surfaces_relevant_task_entity(tmp_path):
     assert "exponential stability" in out
 
 
-def test_intake_task_entity_body_excerpt_renders_path_only(tmp_path):
+def test_intake_task_entity_body_excerpt_renders_path_only(tmp_path, task_entities_on):
     """An entity whose catalog claim is a truncated body excerpt renders path-only."""
     workspace = _seed_workspace(tmp_path)
     _seed_catalog(workspace)
@@ -1388,9 +1397,48 @@ def _surfaced_backoff(tmp_path: Path, top_n: str | None) -> list[str]:
     return [c for c in "abcdefgh" if f"pattern/backoff-{c}.md" in out]
 
 
-def test_task_entity_top_n_default_is_five(tmp_path, monkeypatch):
+def test_task_entity_block_is_off_by_default(tmp_path, monkeypatch):
+    """BRO-3658: unset means no block. Five entities qualify here, so an empty
+    result is the default speaking, not an empty catalog."""
     monkeypatch.delenv("ROLE_X_TASK_ENTITY_TOP_N", raising=False)
-    assert _surfaced_backoff(tmp_path, None) == list("abcde")
+    assert _surfaced_backoff(tmp_path, None) == []
+
+
+def test_task_entity_top_n_five_is_the_full_block(tmp_path):
+    assert _surfaced_backoff(tmp_path, "5") == list("abcde")
+
+
+def test_task_entity_default_off_keeps_the_rest_of_the_intake(tmp_path, monkeypatch):
+    """Only the task-entity lines go. Lens, quality bar, persona constraints and
+    the closing line are the same with the block on and off."""
+    workspace = _seed_workspace(tmp_path)
+    _seed_catalog(workspace, _top_n_catalog())
+    args = ("intake", "--prompt", "tune the backoff between attempts please",
+            "--workspace", str(workspace), "--session", "same-rest")
+    monkeypatch.delenv("ROLE_X_TASK_ENTITY_TOP_N", raising=False)
+    rc_off, off, err = run_cli(*args, env={"HOME": str(tmp_path)})
+    rc_on, on, err_on = run_cli(*args, env={"HOME": str(tmp_path), "ROLE_X_TASK_ENTITY_TOP_N": "5"})
+    assert rc_off == 0 and rc_on == 0, f"stderr={err} / {err_on}"
+    assert "Task-relevant knowledge" not in off and "Task-relevant knowledge" in on
+    kept = [ln for ln in on.splitlines()
+            if "Task-relevant knowledge" not in ln and "pattern/backoff-" not in ln]
+    assert off.splitlines() == kept
+
+
+def test_task_entity_off_does_not_read_the_catalog(tmp_path, monkeypatch):
+    """The hook runs on every prompt; with the block off it must not parse a
+    megabyte catalog to throw the result away."""
+    mod = _load_role_x_module()
+    workspace = _seed_workspace(tmp_path)
+    _seed_catalog(workspace, _top_n_catalog())
+    parsed = []
+    real = mod._prepare_catalog
+    monkeypatch.setattr(mod, "_prepare_catalog", lambda text: parsed.append(1) or real(text))
+    prompt = "tune the backoff between attempts please"
+    monkeypatch.delenv("ROLE_X_TASK_ENTITY_TOP_N", raising=False)
+    assert mod._load_task_entities(workspace, prompt, set()) == [] and parsed == []
+    monkeypatch.setenv("ROLE_X_TASK_ENTITY_TOP_N", "5")
+    assert len(mod._load_task_entities(workspace, prompt, set())) == 5 and parsed == [1]
 
 
 def test_task_entity_top_n_env_compresses_to_a_prefix(tmp_path):
@@ -1404,8 +1452,9 @@ def test_task_entity_top_n_zero_drops_the_block(tmp_path):
 
 
 def test_task_entity_top_n_bad_value_falls_back_to_default(tmp_path):
-    """A hook must never fail a turn on a bad override: garbage means the default."""
-    assert _surfaced_backoff(tmp_path, "ten") == list("abcde")
+    """A hook must never fail a turn on a bad override: garbage means the default,
+    which is off."""
+    assert _surfaced_backoff(tmp_path, "ten") == []
 
 
 def test_task_entity_top_n_clamps_to_the_cap(tmp_path):
@@ -1438,7 +1487,7 @@ def test_task_entity_top_n_clamp_is_visible_above_fifty(tmp_path):
     assert sum(f"pattern/backoff-{i:03d}.md" in out for i in range(55)) == 50
 
 
-def test_intake_keeps_math_inequality_claim(tmp_path):
+def test_intake_keeps_math_inequality_claim(tmp_path, task_entities_on):
     """A claim with an interior ' > ' (math) must render inline, not be mistaken
     for a markdown blockquote and suppressed to path-only (P20 regression)."""
     workspace = _seed_workspace(tmp_path)
@@ -1562,7 +1611,7 @@ def test_rarity_gate_generic_token_surfaces_nothing(tmp_path):
     assert "widget-" not in _task_block(out), out
 
 
-def test_rarity_gate_keeps_rare_token(tmp_path):
+def test_rarity_gate_keeps_rare_token(tmp_path, task_entities_on):
     """A rare token still qualifies its entity — the gate drops noise, not signal."""
     workspace = _seed_workspace(tmp_path)
     _seed_catalog(workspace, _rarity_catalog())
@@ -1574,7 +1623,7 @@ def test_rarity_gate_keeps_rare_token(tmp_path):
     assert "concept/quasar-drive.md" in out, out
 
 
-def test_rarity_gate_ambient_token_cannot_qualify(tmp_path):
+def test_rarity_gate_ambient_token_cannot_qualify(tmp_path, task_entities_on):
     """Curated ambient vocabulary ('session', 'data', 'state', …) describes the
     interaction, not a topic — it must not surface an entity on its own. It is
     too RARE for the DF gate to catch (1 of 21 here), which is exactly why the
@@ -1597,7 +1646,7 @@ def test_rarity_gate_ambient_token_cannot_qualify(tmp_path):
     assert "concept/session-holder-record.md" in out2, out2
 
 
-def test_rarity_gate_ambient_token_still_corroborates(tmp_path):
+def test_rarity_gate_ambient_token_still_corroborates(tmp_path, task_entities_on):
     """Gated tokens are dropped from QUALIFICATION, not from scoring: once a rare
     token qualifies an entity, ambient overlap still ranks it up."""
     workspace = _seed_workspace(tmp_path)
@@ -1615,7 +1664,7 @@ def test_rarity_gate_ambient_token_still_corroborates(tmp_path):
     assert block.index("quasar-session-bridge") < block.index("quasar-drive"), block
 
 
-def test_rarity_gate_floor_protects_small_catalog(tmp_path):
+def test_rarity_gate_floor_protects_small_catalog(tmp_path, task_entities_on):
     """On a tiny catalog the share is meaningless (15% of 4 is 0.6); the absolute
     floor keeps every token qualifying so the block does not go permanently empty."""
     workspace = _seed_workspace(tmp_path)
