@@ -26,6 +26,17 @@ done
 awk '{exit !($1 < 0.5)}' /proc/loadavg || busy="$busy load"
 # Any agent ssh session, including non-interactive commands (`who` sees only ones with a tty).
 pgrep -u agent -f '^sshd: agent' >/dev/null && busy="$busy ssh"
+# A login waiting for the owner's device-code approval (fleet_host.py runs each in a `login-*` tmux session).
+# Only a young one counts: no device code lives past 15 min, so an older session cannot hold the host up.
+now_s=$(date +%s)
+sudo -u agent tmux ls -F '#S #{session_created}' 2>/dev/null \
+  | awk -v now="$now_s" '$1 ~ /^login-/ && $2 ~ /^[0-9]+$/ && now - $2 < 960 {f=1} END {exit !f}' && busy="$busy login"
+# An agent that is about to use the host holds it awake: /var/lib/fleet/awake-until holds an epoch second.
+# A value more than 4 h ahead is ignored, so a bad or runaway write cannot disable idle stop.
+until_s=$(cat /var/lib/fleet/awake-until 2>/dev/null || echo 0)
+case "$until_s" in ''|*[!0-9]*) until_s=0 ;; esac
+[ "${#until_s}" -le 12 ] || until_s=0
+[ "$until_s" -gt "$now_s" ] && [ "$until_s" -le $((now_s + 14400)) ] && busy="$busy awake"
 
 if [ -n "$busy" ]; then
   echo 0 > "$STATE"
