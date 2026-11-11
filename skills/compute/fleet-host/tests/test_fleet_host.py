@@ -18,6 +18,11 @@ def load_module(tmp):
     spec = importlib.util.spec_from_file_location('fleet_host', SCRIPTS / 'fleet_host.py')
     m = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(m)
+    # Never the operator's real fleet key: a CI runner has none, and a test must not read one (skills#311).
+    key = tmp / 'fleet_hosts_ed25519'
+    key.write_text('test private key, never used\n')
+    key.with_suffix('.pub').write_text('ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAITestOnlyKey fleet-test\n')
+    m.SSH_KEY = key
     return m
 
 
