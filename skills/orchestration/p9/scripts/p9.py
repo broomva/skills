@@ -33,6 +33,7 @@ import os
 import re
 import shlex
 import signal
+import stat as stat_mod
 import subprocess
 import sys
 import time
@@ -151,17 +152,27 @@ def stuck_markers_dir() -> Path:
 # with "run me again", which the agent can do without ever going idle.
 # ─────────────────────────────────────────────────────────────────────────────
 HOST_MARKERS: tuple[str, ...] = ("PASEO_AGENT_ID", "P9_BACKGROUND_WAKES",
-                                 "CLAUDECODE")
+                                 "CLAUDECODE", "T3CODE_THREAD_ID",
+                                 "P9_PR_WATCH_OWNER")
 BASH_CALL_CAP_SECONDS = 600
 DEFAULT_SLICE_SECONDS = 540
 
 
 def host_profile() -> dict[str, Any]:
     """Which wait regime this host needs. `P9_BACKGROUND_WAKES=0|1` overrides
-    detection, for a host p9 does not know or a Paseo build that fixes wakes."""
+    detection, for a host p9 does not know or a Paseo build that fixes wakes.
+
+    `pr_watch_owner` (BRO-3710) names who wakes the agent when a PR changes.
+    T3 Code watches PRs itself (`watch_pull_request`) and forbids waiting on
+    `gh --watch`, so there p9 records the watch and folds on each T3 wake
+    (`p9 observe`) instead of running a second watcher. `P9_PR_WATCH_OWNER=
+    p9|t3` overrides detection."""
     paseo = bool(os.environ.get("PASEO_AGENT_ID", "").strip())
+    t3 = bool(os.environ.get("T3CODE_THREAD_ID", "").strip())
     if paseo:
         host = "paseo"
+    elif t3:
+        host = "t3"
     elif os.environ.get("CLAUDECODE"):
         host = "claude-code"
     else:
@@ -170,11 +181,16 @@ def host_profile() -> dict[str, Any]:
     override = os.environ.get("P9_BACKGROUND_WAKES", "").strip()
     if override in ("0", "1"):
         wakes, source = override == "1", "P9_BACKGROUND_WAKES"
+    owner = "t3" if host == "t3" else "p9"
+    owner_override = os.environ.get("P9_PR_WATCH_OWNER", "").strip()
+    if owner_override in ("p9", "t3"):
+        owner = owner_override
     return {
         "host": host,
         "background_wakes": wakes,
         "wait_mode": "background" if wakes else "foreground",
         "source": source,
+        "pr_watch_owner": owner,
         "bash_call_cap_seconds": BASH_CALL_CAP_SECONDS,
         "default_slice_seconds": None if wakes else DEFAULT_SLICE_SECONDS,
     }
@@ -201,6 +217,10 @@ SESSION_MARKERS: tuple[tuple[str, str], ...] = (
     ("ORCA_WORKTREE_ID", "orca"),
     # Generic contract for any other harness, without a code change.
     ("AGENT_SESSION_ID", "agent"),
+    # T3 Code: one id per thread (BRO-3710). Without it two T3 threads with no
+    # other marker shared one scope: one queue, one wait mark, each other's
+    # host watches.
+    ("T3CODE_THREAD_ID", "t3"),
 )
 
 # Field separator for the composite payload. This alone does NOT make the
@@ -2284,10 +2304,21 @@ def _iso_age_seconds(ts: str) -> float:
     return (_dt.datetime.now(_dt.timezone.utc) - when).total_seconds()
 
 
-def _item_is_stale(it: WaitQueueItem) -> bool:
+def _latest_states() -> dict[tuple[str, int], str]:
+    """Latest state per (repo_key, pr), from ONE read of the state log."""
+    out: dict[tuple[str, int], str] = {}
+    for r in _read_state_rows():
+        out[(repo_key(r.get("repo", "")), r.get("pr"))] = str(r.get("to_state", ""))
+    return out
+
+
+def _item_is_stale(it: WaitQueueItem,
+                   states: dict[tuple[str, int], str] | None = None) -> bool:
     """A queue item is stale (eligible for pruning) when it has aged past
     the TTL, or its owning PR has reached a terminal state — the wait it was
-    queued behind is over, so the work is moot."""
+    queued behind is over, so the work is moot. `states` (BRO-3710) lets a
+    caller judge many items from one read of the state log; reading it once
+    per item put a 60k-row log x 300 items past the Stop hook's timeout."""
     ttl = _queue_ttl_seconds()
     if ttl > 0 and _iso_age_seconds(it.created_at) > ttl:
         return True
@@ -2295,7 +2326,11 @@ def _item_is_stale(it: WaitQueueItem) -> bool:
     # item with no repo can't be disambiguated from a same-numbered PR in
     # another repo. Such items fall back to TTL-only pruning.
     if it.pr is not None and it.repo:
-        st = current_pr_state(it.pr, it.repo)
+        if states is not None:
+            raw = states.get((repo_key(it.repo), it.pr))
+            st = PRState(raw) if raw else None
+        else:
+            st = current_pr_state(it.pr, it.repo)
         if st is not None and is_terminal(st):
             return True
     return False
@@ -2339,7 +2374,8 @@ def queue_list(session_id: Any = _CURRENT_SESSION, *,
     items = [WaitQueueItem(**r) for r in rows]
     items = [it for it in items if _item_visible(it, scope)]
     if not include_stale:
-        items = [it for it in items if not _item_is_stale(it)]
+        states = _latest_states() if any(it.pr is not None for it in items) else {}
+        items = [it for it in items if not _item_is_stale(it, states)]
     items.sort(key=lambda it: (_QUEUE_PRIORITY.index(it.source), it.created_at))
     return items
 
@@ -2356,9 +2392,12 @@ def queue_pop(session_id: Any = _CURRENT_SESSION, *,
             return None
         eligible: list[WaitQueueItem] = []
         retained: list[WaitQueueItem] = []   # out-of-scope, keep on disk
+        # One read of the state log for the whole queue (BRO-3710): once per
+        # item, under this lock, a long log stalled pops and starved harvests.
+        states = _latest_states() if any(r.get("pr") is not None for r in rows) else {}
         for r in rows:
             it = WaitQueueItem(**r)
-            if _item_is_stale(it):
+            if _item_is_stale(it, states):
                 continue  # prune from disk regardless of scope
             if _item_visible(it, scope):
                 eligible.append(it)
@@ -2399,6 +2438,374 @@ def queue_clear(session_id: Any = _CURRENT_SESSION, *,
             "".join(it.to_jsonl() + "\n" for it in keep), encoding="utf-8",
         )
         return removed
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Productive wait (BRO-3710)
+#
+# The queue above had a pop order and no producer: nothing ever pushed to it,
+# so "drain the queue while CI runs" drained an empty file in every session.
+# Three pieces close that:
+#
+#   harvest   fills the queue from what the wait is about — docs and KG
+#             entities that mention a file the branch changed, and memory
+#             notes flagged for follow-up. Local reads only, no network, so it
+#             is cheap enough to run inside a hook.
+#   marks     record that this session declared a wait (`p9 watch`,
+#             `wait-for`, or a T3 wait tool seen by the PostToolUse hook).
+#   hooks     PostToolUse puts the queue in front of the agent the moment it
+#             declares a wait; Stop blocks the turn's end ONCE per declared
+#             wait while unblocked work remains. Once, because a mark is
+#             consumed by the block and `stop_hook_active` lets the retry
+#             through: the hook can delay a hand-back, never trap one.
+#
+# Every item is offered once per session (the seen-ledger), so popping an item
+# does not make the next harvest put it back.
+# ─────────────────────────────────────────────────────────────────────────────
+WAIT_MARK_MAX_AGE_SECONDS = 2 * 3600
+HARVEST_SEEN_TTL_SECONDS = 7 * 86400
+HARVEST_CAPS = {"docs": 5, "graph": 3, "memory": 3}
+_GOVERNANCE_DOCS = ("CLAUDE.md", "AGENTS.md", "METALAYER.md")
+_FOLLOW_UP_RE = re.compile(r"needs?[ -]follow[ -]?up|follow[ -]?up:", re.I)
+_T3_WAIT_TOOLS = ("mcp__t3-code__watch_pull_request",
+                  "mcp__t3-code__delegate_task",
+                  "mcp__t3-code__t3_background_wait")
+
+
+def _safe_name(value: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]", "_", value) or "default"
+
+
+def wait_marks_dir() -> Path:
+    return p9_home() / "wait-marks"
+
+
+def mark_wait(tool: str, *, pr: int | None = None, repo: str = "",
+              session_id: str | None = None) -> None:
+    """Record that this session is waiting on something. Best effort: a mark
+    that cannot be written only means the Stop hook stays quiet."""
+    sid = session_id or current_session_id()
+    with contextlib.suppress(OSError):
+        wait_marks_dir().mkdir(parents=True, exist_ok=True)
+        (wait_marks_dir() / f"{_safe_name(sid)}.json").write_text(
+            json.dumps({"ts": _utcnow(), "tool": tool, "pr": pr,
+                        "repo": repo or ""}), encoding="utf-8")
+
+
+def consume_wait_mark(session_id: str | None = None, *,
+                      only_if: Any = None) -> dict[str, Any] | None:
+    """Take this session's mark, if any. Deleted on read so a wait blocks one
+    turn-end at most; a mark older than the max age is discarded unused.
+    `only_if(mark)` (BRO-3710): a wait that ENDS clears only its own mark, not
+    a later wait the same session declared since."""
+    path = wait_marks_dir() / f"{_safe_name(session_id or current_session_id())}.json"
+    try:
+        mark = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    if only_if is not None and not (isinstance(mark, dict) and only_if(mark)):
+        return None
+    with contextlib.suppress(OSError):
+        path.unlink()
+    if not isinstance(mark, dict) or \
+            _iso_age_seconds(str(mark.get("ts", ""))) > WAIT_MARK_MAX_AGE_SECONDS:
+        return None
+    return mark
+
+
+def _git(args: list[str], cwd: Path | None = None, *,
+         deadline: float | None = None) -> str | None:
+    """Run git; None on failure. `deadline` (a monotonic time) bounds the
+    call to what is left of the caller's budget."""
+    timeout = 20.0
+    if deadline is not None:
+        timeout = deadline - time.monotonic()
+        if timeout <= 0:
+            return None
+    try:
+        out = subprocess.run(["git", *args], capture_output=True, text=True,
+                             timeout=timeout, check=False, cwd=cwd)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    return out.stdout if out.returncode == 0 else None
+
+
+def _branch_changes(root: Path, deadline: float) -> list[str]:
+    """Files this branch changed against its upstream default branch."""
+    head = (_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], root,
+                 deadline=deadline) or "").strip()
+    base = head if head.startswith("origin/") else "origin/main"
+    # -z: without it git quotes a path with non-ASCII bytes ("caf\303\251/x")
+    # and the quoted string matches nothing.
+    out = _git(["diff", "--name-only", "-z", f"{base}...HEAD"], root,
+               deadline=deadline)
+    return [p for p in (out or "").split("\0") if p.strip()]
+
+
+def _needles(path: str, name_counts: dict[str, int] | None = None) -> list[str]:
+    """What a doc would say to mention `path`: the path itself, and the bare
+    file name only when it names one file in the repo. Dogfooding on a
+    monorepo showed why: `conftest.py` exists in dozens of directories, and
+    every README that mentioned any of them became a "stale doc" item."""
+    name = Path(path).name
+    unique = name_counts is None or name_counts.get(name, 0) <= 1
+    if "/" not in path and not unique:
+        # A root-level path IS its bare name; when other files share the name,
+        # a doc saying it could mean any of them.
+        return []
+    out = [path]
+    if unique and len(name) >= 8 and name not in (
+            "__init__.py", "index.ts", "index.tsx", "README.md", "SKILL.md",
+            "mod.rs", "package.json", "Cargo.toml"):
+        out.append(name)
+    return out
+
+
+# A candidate is (source, key, item, tier). The key names the finding — the
+# doc and the file it mentions — not the wording, which carries "PR #N" or
+# "this branch" and would make the same finding look new to the seen-ledger.
+Candidate = tuple[str, str, str, str]
+_DOC_SCAN_LIMIT = 40
+
+
+def _seen_digest(key: str) -> str:
+    return hashlib.sha1(key.encode()).hexdigest()
+
+
+def _harvest_docs(root: Path, changed: list[str], pr: int | None,
+                  deadline: float, *, ident: str = "",
+                  skip: frozenset[str] = frozenset()) -> list[Candidate]:
+    """Docs and KG entities that mention a changed file the branch did not
+    also update. Findings already offered (`skip`) are passed over during the
+    scan, so the scan bound counts only new ones and a long-lived session
+    keeps reaching findings past the first batch. `ident` (the repo, or the
+    checkout when the repo is unknown) keeps two repos' same-named docs
+    apart in the seen-ledger."""
+    code = [p for p in changed if not p.endswith((".md", ".mdx"))][:40]
+    listed = _git(["ls-files", "-z"], root, deadline=deadline)
+    if listed is None:
+        return []
+    counts: dict[str, int] = {}
+    for f in listed.split("\0"):
+        if f:
+            counts[Path(f).name] = counts.get(Path(f).name, 0) + 1
+    needles = sorted({n for p in code for n in _needles(p, counts)})
+    if not needles:
+        return []
+    args = ["grep", "-l", "-z", "-F"]
+    for n in needles:
+        args += ["-e", n]
+    out = _git([*args, "--", "*.md", "*.mdx"], root, deadline=deadline) or ""
+    touched = set(changed)
+    where = f"PR #{pr}" if pr else "this branch"
+    found: list[Candidate] = []
+    for doc in out.split("\0"):
+        if len(found) >= _DOC_SCAN_LIMIT or time.monotonic() >= deadline:
+            break
+        if not doc or doc in touched:
+            continue
+        try:
+            text = (root / doc).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        hit = next((n for n in needles if _mentions(text, n)), None)
+        if hit is None:
+            continue
+        source = "graph" if doc.startswith("research/entities/") else "docs"
+        key = f"{source}:{ident or root}:{doc}:{hit}"
+        if _seen_digest(key) in skip:
+            continue
+        tier = ("blocked" if Path(doc).name in _GOVERNANCE_DOCS
+                or doc.startswith(".control/") else "none")
+        found.append((source, key,
+                      f"{source}: {doc} mentions {hit}, which {where} changed "
+                      f"and {doc} did not; check it still holds", tier))
+    return found
+
+
+def _mentions(text: str, needle: str) -> bool:
+    """`needle` as a whole path or name: not `a/b.py` inside `data/b.py`."""
+    return re.search(r"(?<![\w./-])" + re.escape(needle) + r"(?![\w/-])",
+                     text) is not None
+
+
+def _project_slug(path: Path) -> str:
+    """Claude Code's directory name for a project under ~/.claude/projects."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(path))
+
+
+def _memory_dirs(root: Path | None, deadline: float) -> list[Path]:
+    """The memory directories of THIS project only. Reading every project's
+    memory put one project's private follow-ups (finances, other clients) into
+    an unrelated wait. Claude Code keys memory by the project directory, and a
+    worktree shares the main checkout's, so both are tried."""
+    raw = os.environ.get("BROOMVA_P9_MEMORY_DIRS")
+    if raw is not None:
+        return [Path(p) for p in raw.split(os.pathsep) if p.strip()]
+    if root is None:
+        return []
+    roots = {root}
+    common = (_git(["rev-parse", "--path-format=absolute", "--git-common-dir"],
+                   root, deadline=deadline) or "").strip()
+    if common:
+        roots.add(Path(common).parent)
+    base = Path.home() / ".claude" / "projects"
+    return [d for d in (base / _project_slug(r) / "memory" for r in sorted(roots))
+            if d.is_dir()]
+
+
+_MEMORY_READ_BYTES = 64 * 1024
+
+
+def _harvest_memory(dirs: list[Path], deadline: float) -> list[Candidate]:
+    """Memory notes touched in the last day that say they need a follow-up.
+    Regular files only, a bounded read each, inside the budget: a FIFO or a
+    stalled mount named `*.md` must not hold a hook past its timeout."""
+    found: list[Candidate] = []
+    cutoff = time.time() - 86400
+    for d in dirs:
+        if time.monotonic() >= deadline:
+            break
+        stats: list[tuple[Path, os.stat_result]] = []
+        try:
+            for n in d.glob("*.md"):
+                if time.monotonic() >= deadline:
+                    break
+                try:
+                    stats.append((n, n.stat()))
+                except OSError:
+                    continue  # a dangling link costs itself, not the dir
+        except OSError:
+            continue
+        stats.sort(key=lambda ns: ns[1].st_mtime, reverse=True)
+        for note, st in stats:
+            if time.monotonic() >= deadline:
+                break
+            if (note.name == "MEMORY.md" or not stat_mod.S_ISREG(st.st_mode)
+                    or st.st_mtime < cutoff):
+                continue
+            try:
+                fd = os.open(note, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+                try:
+                    text = os.read(fd, _MEMORY_READ_BYTES).decode("utf-8", "replace")
+                finally:
+                    os.close(fd)
+            except OSError:
+                continue
+            if _FOLLOW_UP_RE.search(text):
+                found.append(("memory", f"memory:{note}",
+                              f"memory: {note} is flagged for follow-up; do "
+                              "it or clear the flag", "none"))
+    return found
+
+
+def _seen_path(sid: str) -> Path:
+    return p9_home() / "harvest-seen" / f"{_safe_name(sid)}.json"
+
+
+HARVEST_BUDGET_SECONDS = 8.0
+
+
+def harvest_queue(*, pr: int | None = None, repo: str = "",
+                  cwd: Path | None = None) -> list[WaitQueueItem]:
+    """Fill this session's wait-queue from the wait at hand (BRO-3710).
+
+    Docs and KG entities are read from the local checkout only when it is
+    provably the PR's repo, or no repo was named: another repo's tree says
+    nothing about this PR. The whole harvest runs inside a time budget well
+    under the 30 s hook timeout. Never raises — it runs inside hooks, and a
+    hook that throws costs the agent a turn. `BROOMVA_P9_HARVEST=0` turns it
+    off."""
+    if os.environ.get("BROOMVA_P9_HARVEST", "1").strip() == "0":
+        return []
+    try:
+        return _harvest(pr, repo, cwd,
+                        time.monotonic() + HARVEST_BUDGET_SECONDS)
+    except Exception:  # noqa: BLE001 — best effort by contract
+        return []
+
+
+def _harvest(pr: int | None, repo: str, cwd: Path | None,
+             deadline: float) -> list[WaitQueueItem]:
+    sid = current_session_id()
+    seen_file = _seen_path(sid)
+    try:  # a lock-free read to skip offered findings while scanning
+        ledger = json.loads(seen_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        ledger = {}
+    # Expired entries are not skipped: the TTL is what lets a finding back in.
+    offered = frozenset(
+        k for k, v in (ledger.items() if isinstance(ledger, dict) else [])
+        if _iso_age_seconds(str(v)) < HARVEST_SEEN_TTL_SECONDS)
+    candidates: list[Candidate] = []
+    top = (_git(["rev-parse", "--show-toplevel"], cwd, deadline=deadline)
+           or "").strip()
+    root = Path(top) if top else None
+    if root is not None:
+        local = canonical_repo((_git(["remote", "get-url", "origin"], root,
+                                     deadline=deadline) or "").strip())
+        # Fail closed: a named repo must match a known local one. A checkout
+        # whose origin says nothing could be any repo.
+        if not repo or (local and local == canonical_repo(repo)):
+            candidates += _harvest_docs(root, _branch_changes(root, deadline),
+                                        pr, deadline, ident=local, skip=offered)
+    candidates += _harvest_memory(_memory_dirs(root, deadline), deadline)
+    if not candidates:
+        return []
+    added: list[WaitQueueItem] = []
+    taken = {k: 0 for k in HARVEST_CAPS}
+    # One lock over read-seen, append and write-seen; the append writes the
+    # file directly because `jsonl_append` would take the same flock again on
+    # a new descriptor and wait on itself until the timeout.
+    with file_lock(queue_lock_path(),
+                   timeout_s=max(0.5, deadline - time.monotonic())):
+        try:
+            seen = json.loads(seen_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            seen = {}
+        if not isinstance(seen, dict):
+            seen = {}
+        seen = {k: v for k, v in seen.items()
+                if _iso_age_seconds(str(v)) < HARVEST_SEEN_TTL_SECONDS}
+        for source, key, item, tier in candidates:
+            digest = _seen_digest(key)
+            if digest in seen or taken[source] >= HARVEST_CAPS[source]:
+                continue
+            seen[digest] = _utcnow()
+            taken[source] += 1
+            entry = WaitQueueItem(
+                id=uuid.uuid4().hex[:12], source=source, item=item,
+                created_at=_utcnow(), pr=pr, isolation_tier=tier,
+                session_id=sid, repo=repo or "")
+            wait_queue_jsonl().parent.mkdir(parents=True, exist_ok=True)
+            with wait_queue_jsonl().open("a", encoding="utf-8") as f:
+                f.write(entry.to_jsonl() + "\n")
+            added.append(entry)
+        seen_file.parent.mkdir(parents=True, exist_ok=True)
+        seen_file.write_text(json.dumps(seen), encoding="utf-8")
+    return added
+
+
+def actionable_queue() -> list[WaitQueueItem]:
+    """This session's queue minus `blocked` items, which need a person."""
+    return [it for it in queue_list() if it.isolation_tier != "blocked"]
+
+
+def productive_wait_brief(items: list[WaitQueueItem], *, limit: int = 5) -> str:
+    if not items:
+        return "Wait-queue: empty for this session. End your turn; the wake brings you back."
+    lines = [f"Productive wait (p9): {len(items)} item(s) queued for this session."]
+    lines += [f"  {i}. {it.item}" for i, it in enumerate(items[:limit], 1)]
+    if len(items) > limit:
+        lines.append(f"  … and {len(items) - limit} more (`p9 wait-queue list`)")
+    lines.append("Take one with `p9 wait-queue pop`, do it, repeat; "
+                 "`p9 wait-queue clear` drops the rest.")
+    if host_profile()["pr_watch_owner"] == "t3":
+        lines.append("On T3 a wake that arrives while you work waits until "
+                     "your turn ends, so keep items short and check "
+                     "`t3_queue list` between them; end your turn once the "
+                     "queue is empty.")
+    return "\n".join(lines)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -2465,7 +2872,11 @@ class StaleWriteRejected(P9Error):
 
 
 def append_state_event(event: PRStateEvent, *,
-                       expect_owner: str | _Unset = UNGUARDED) -> bool:
+                       expect_owner: str | _Unset = UNGUARDED,
+                       expect_state: str | None = None,
+                       expect_match: Any = None,
+                       expect_row: dict[str, Any] | None = None,
+                       takeover: str | None = None) -> bool:
     """Append a state event. Returns True if it was written.
 
     ``expect_owner`` (BRO-2374) makes the append a **compare-and-swap**: it
@@ -2525,7 +2936,28 @@ def append_state_event(event: PRStateEvent, *,
     assert_legal_transition(PRState(event.from_state), PRState(event.to_state))
     # Normalize on write so the stored key is exactly what repo_key() reads.
     event.repo = canonical_repo(event.repo)
+    # BRO-3710 state-write boundary. Production writers declare how they are
+    # fenced (tests/test_p9_productive_wait.py::test_every_writer_is_fenced
+    # enforces it): `expect_row` — the exact row the decision was made on
+    # (any write since voids it); `expect_owner` + `expect_state` — for a row
+    # only its own process writes; or `takeover` — an explicit seizure, with
+    # its reason, that is meant to win (operator abandon, --force).
+    if takeover is not None:
+        if not (isinstance(expect_owner, _Unset) and expect_row is None
+                and expect_state is None and expect_match is None):
+            raise P9Error("takeover is unguarded by definition; drop the fences")
+        event.extra = {**(event.extra or {}), "takeover": takeover}
+    if expect_row is not None:
+        if isinstance(expect_owner, _Unset):
+            expect_owner = _owner_of(expect_row)
+        inner = expect_match
+        expect_match = (lambda r: r == expect_row and (inner is None or inner(r)))
     if isinstance(expect_owner, _Unset):
+        if expect_state is not None or expect_match is not None:
+            # A state check is only atomic inside the guarded path; silently
+            # skipping it would hand the caller a guarantee it never had.
+            raise P9Error("expect_state/expect_match need expect_owner "
+                          "(the guarded path)")
         jsonl_append(state_jsonl(), event.to_jsonl(), state_lock_path())
         return True
     if not isinstance(expect_owner, str):
@@ -2549,6 +2981,8 @@ def append_state_event(event: PRStateEvent, *,
         # unreapable.
         found = False
         owner = ""
+        state = ""
+        latest: dict[str, Any] = {}
         for r in rows:
             if r.get("pr") != event.pr:
                 continue
@@ -2556,7 +2990,20 @@ def append_state_event(event: PRStateEvent, *,
                 continue
             found = True
             owner = _owner_of(r)
+            state = str(r.get("to_state", ""))
+            latest = r
         if not found or owner != expect_owner:
+            return False
+        # `expect_state` (BRO-3710): a fold keeps its watcher_id, so owner
+        # alone cannot tell a WATCHING row from the GREEN it just became. A
+        # writer that read WATCHING says so, and loses to a fold in between.
+        if expect_state is not None and state != expect_state:
+            return False
+        # `expect_match` (BRO-3710): a predicate over the latest row, for a
+        # writer whose decision depends on more than owner and state. Writers
+        # that decided from a snapshot pass `lambda r: r == snapshot`: any
+        # write in between voids the decision.
+        if expect_match is not None and not expect_match(latest):
             return False
         path = state_jsonl()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -2566,6 +3013,68 @@ def append_state_event(event: PRStateEvent, *,
             if not payload.endswith("\n"):
                 f.write("\n")
         return True
+
+
+def next_observation_ticket() -> int:
+    """A strictly increasing number, taken under the state lock BEFORE an
+    observation reads the network (BRO-3710). It orders observations by when
+    they started without trusting any clock: wall time steps back, repeats,
+    and differs between hosts sharing this directory."""
+    path = p9_home() / "observation-ticket"
+    with file_lock(state_lock_path()):
+        try:
+            n = int(path.read_text(encoding="utf-8").strip())
+        except (OSError, ValueError):
+            # Missing or damaged: recover from the state itself, so the
+            # counter never restarts below a ticket a live row already holds
+            # (which would drop every observation until it caught up).
+            rows, _ = jsonl_read_all(state_jsonl())
+            n = max([int((r.get("extra") or {}).get("obs_ticket") or 0)
+                     for r in rows] + [0])
+        n += 1
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(str(n), encoding="utf-8")
+        tmp.replace(path)  # atomic: a kill mid-write leaves the old value
+    return n
+
+
+def transact_pr_state(pr: int, repo: str, decide: Any, *,
+                      chain: bool = True) -> list[PRStateEvent]:
+    """Read the latest row, decide, append — under ONE state-lock acquisition
+    (BRO-3710).
+
+    Four review rounds found the same defect at four writers: each decided
+    from a row it had read earlier, and each guard added to one writer left
+    the next exposed. A decision made here is made against the row that is
+    current when it lands, so there is no earlier read to go stale.
+    `decide(latest_row_or_None)` returns the events to append, in order, or
+    an empty list; it runs inside the lock, so it must not do I/O.
+    `chain=False` is for an arm, which starts a new PUSHED->WATCHING edge
+    whatever the previous generation ended in (as `cmd_watch` always has)."""
+    want = repo_key(canonical_repo(repo))
+    with file_lock(state_lock_path()):
+        rows, _ = jsonl_read_all(state_jsonl())
+        latest: dict[str, Any] | None = None
+        for r in rows:
+            if r.get("pr") == pr and repo_key(r.get("repo", "")) == want:
+                latest = r
+        events = list(decide(latest) or [])
+        prev = PRState(latest["to_state"]) if latest else None
+        for ev in events:
+            assert_legal_transition(PRState(ev.from_state), PRState(ev.to_state))
+            if chain and prev is not None and ev.from_state != prev.value:
+                raise IllegalTransitionError(
+                    f"transact: event from {ev.from_state} but row is {prev.value}")
+            ev.repo = canonical_repo(ev.repo)
+            prev = PRState(ev.to_state)
+        if events:
+            path = state_jsonl()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                for ev in events:
+                    f.write(ev.to_jsonl().rstrip("\n") + "\n")
+    return events
 
 
 def current_pr_state(pr: int, repo: str | None = None) -> PRState | None:
@@ -3088,6 +3597,24 @@ def reap_stale_watchers(*, grace_seconds: float | None = None,
         lock_ctx.__exit__(None, None, None)
 
 
+def _host_watch_ttl_seconds() -> float:
+    """How long a host-owned watch (BRO-3710) may go unobserved before reaping
+    folds it. `BROOMVA_P9_HOST_WATCH_TTL_S`, default 6 hours."""
+    try:
+        return max(0.0, float(os.environ.get("BROOMVA_P9_HOST_WATCH_TTL_S",
+                                             "21600")))
+    except ValueError:
+        return 21600.0
+
+
+def _host_watch_live(row: dict[str, Any]) -> bool:
+    """A host-owned watch (BRO-3710) observed within the TTL. It has no
+    process, so reap and rearm must not read pid 0 as a dead watcher; they
+    share this one test so they cannot disagree about it."""
+    return (bool((row.get("extra") or {}).get("host_watch"))
+            and _iso_age_seconds(row.get("ts", "")) < _host_watch_ttl_seconds())
+
+
 def _is_slice_handback(row: dict[str, Any]) -> bool:
     """A PUSHED row folded by a foreground slice expiry (BRO-2815)."""
     return (row.get("to_state") == PRState.PUSHED.value
@@ -3107,6 +3634,12 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
                 continue
         elif state not in (PRState.WATCHING, PRState.HEALING):
             continue
+        host_watch = bool((row.get("extra") or {}).get("host_watch"))
+        if _host_watch_live(row):
+            # BRO-3710: no process to probe. The host does the watching and
+            # every `p9 observe` re-stamps the row, so only a watch nobody has
+            # observed for the whole TTL is an orphan.
+            continue
         pid = _row_pid(row)
         if pid > 0 and is_watcher_alive(pid):
             continue  # healthy watcher — leave it
@@ -3120,6 +3653,9 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
         pr = row["pr"]
         handback = _is_slice_handback(row)
         to_state, reason = _reconcile_dead_watcher(pr, repo, reconcile)
+        if host_watch:
+            reason = (f"host watch not observed for "
+                      f"{int(_host_watch_ttl_seconds())}s ({reason})")
         if handback:
             reason = (f"slice hand-back not re-run within "
                       f"{BASH_CALL_CAP_SECONDS}s ({reason})")
@@ -3135,7 +3671,12 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
         # here, a `watch --adopt` or `rearm` may have handed the key to a live
         # replacement — reaping then folds the *replacement* terminal on the
         # strength of the dead watcher's pid.
-        if not append_state_event(event, expect_owner=_owner_of(row)):
+        # BRO-3710: owner alone cannot see a fold (observe keeps the owner), so
+        # the reap also names the state it judged; a GREEN that landed while
+        # this scan asked GitHub stays GREEN.
+        # Full-row fence: the TTL and liveness judgement above was made on
+        # `row`; an observe that re-stamped it since makes it a live watch.
+        if not append_state_event(event, expect_row=row):
             continue
         # Termination invariant (BRO-1701): SIGKILL and machine-death can't be
         # trapped by the watcher itself — the reap path is where those become
@@ -3305,14 +3846,21 @@ def cmd_abandon(args: argparse.Namespace) -> int:
         print(f"PR #{pr} ({repo or 'repo-unknown'}): already terminal "
               f"({state.value}); no-op")
         return EXIT_OK
-    append_state_event(PRStateEvent(
-        ts=_utcnow(), pr=pr, repo=repo,
-        from_state=state.value,
-        to_state=PRState.ABANDONED.value,
-        watcher_id="abandon",
-        extra={"reason": args.reason or "manual abandon"},
-    ))
-    print(f"PR #{pr} ({repo or 'repo-unknown'}): {state.value} → ABANDONED")
+    # Decided against the current row (BRO-3710): a terminal state that
+    # landed since the read above (a MERGED record) is not buried.
+    reason = args.reason or "manual abandon"
+    done = transact_pr_state(pr, repo, lambda latest: [] if latest is None
+                             or is_terminal(PRState(latest["to_state"])) else [
+        PRStateEvent(ts=_utcnow(), pr=pr, repo=repo,
+                     from_state=latest["to_state"],
+                     to_state=PRState.ABANDONED.value, watcher_id="abandon",
+                     extra={"reason": reason, "takeover": "operator abandon"})])
+    if not done:
+        now = current_pr_state(pr, repo)
+        print(f"PR #{pr} ({repo or 'repo-unknown'}): became "
+              f"{now.value if now else 'untracked'} meanwhile; no-op")
+        return EXIT_OK
+    print(f"PR #{pr} ({repo or 'repo-unknown'}): {done[-1].from_state} → ABANDONED")
     return EXIT_OK
 
 
@@ -3363,13 +3911,17 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
         if gh_state in ("MERGED", "CLOSED"):
             reason = ("merged outside p9" if gh_state == "MERGED"
                       else "closed outside p9")
-            append_state_event(PRStateEvent(
-                ts=_utcnow(), pr=pr, repo=repo,
-                from_state=from_state.value,
-                to_state=PRState.ABANDONED.value,
-                watcher_id="cleanup",
-                extra={"reason": reason, "gh_state": gh_state},
-            ))
+            if not append_state_event(PRStateEvent(
+                    ts=_utcnow(), pr=pr, repo=repo,
+                    from_state=from_state.value,
+                    to_state=PRState.ABANDONED.value,
+                    watcher_id="cleanup",
+                    extra={"reason": reason, "gh_state": gh_state},
+            ), expect_row=row):
+                print(f"  #{pr}: its row changed while GitHub was asked; "
+                      "left to its new owner")
+                skipped += 1
+                continue
             print(f"  #{pr}: {from_state.value} → ABANDONED ({reason})")
             cleaned += 1
         else:
@@ -3409,7 +3961,8 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
 
     # Repo-qualified read (BRO-1988): merging on another repo's MERGE_READY
     # would be the worst possible shadowing outcome.
-    state = current_pr_state(pr, repo)
+    judged = latest_row(pr, repo)
+    state = PRState(judged["to_state"]) if judged else None
     if state != PRState.MERGE_READY:
         print(
             f"PR #{pr} ({repo or 'repo-unknown'}) not in MERGE_READY "
@@ -3427,6 +3980,8 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
 
     if action != "auto":
         # Block: emit idempotent state event with rationale; never merge.
+        # Fenced (BRO-3710): the gates were a network round-trip; a row that
+        # moved meanwhile gets no MERGE_READY note written over it.
         append_state_event(PRStateEvent(
             ts=_utcnow(),
             pr=pr, repo=repo,
@@ -3437,7 +3992,7 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
                                   "branch": branch, "paths": list(paths)[:20],
                                   "policy_source": decision["source"],
                                   "gates": decision["gates"]}},
-        ))
+        ), expect_row=judged)
         print(f"auto-merge blocked: action={action}; reason={reason}",
               file=sys.stderr)
         if decision["gates"]:
@@ -3464,6 +4019,15 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
                   f"-> {(now or 'unreadable')[:12]}); re-run", file=sys.stderr)
             return EXIT_AUTO_MERGE_BLOCKED
 
+    # The gates were network round-trips. Re-read the row right before the
+    # one irreversible step (BRO-3710): an operator `p9 abandon`, a re-watch
+    # or a cleanup in that window means this decision is about a row that no
+    # longer exists, and the merge must not happen.
+    if latest_row(pr, repo) != judged:
+        print(f"auto-merge blocked: PR #{pr}'s row changed while the gates "
+              "ran (abandoned, re-watched or cleaned up); not merging. "
+              "Re-run if it is still meant to merge.", file=sys.stderr)
+        return EXIT_AUTO_MERGE_BLOCKED
     rc = _gh_pr_merge(
         pr, repo,
         method=am.merge_method,
@@ -3474,18 +4038,40 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
         print(f"gh pr merge exited {rc}; PR not merged", file=sys.stderr)
         return EXIT_EXTERNAL_ERROR
 
-    append_state_event(PRStateEvent(
-        ts=_utcnow(),
-        pr=pr, repo=repo,
-        from_state=PRState.MERGE_READY.value,
-        to_state=PRState.MERGED.value,
-        watcher_id="auto-merge",
-        extra={"auto_merge": {"action": "auto", "reason": reason,
-                              "branch": branch,
-                              "method": am.merge_method,
-                              "policy_source": decision["source"],
-                              "gates": decision["gates"]}},
-    ))
+    # The merge has happened (pinned to the verified head), so this records a
+    # fact, not a decision. Decided against the CURRENT row (BRO-3710): the
+    # judged MERGE_READY row becomes MERGED; a row that moved meanwhile (a
+    # re-watch armed during the gates) is retired as ABANDONED with the reason,
+    # since MERGED is only reachable from MERGE_READY; a terminal row is left.
+    am_extra = {"auto_merge": {"action": "auto", "reason": reason,
+                               "branch": branch,
+                               "method": am.merge_method,
+                               "policy_source": decision["source"],
+                               "gates": decision["gates"]}}
+
+    def record_merge(latest: dict[str, Any] | None) -> list[PRStateEvent]:
+        if latest is None or is_terminal(PRState(latest["to_state"])):
+            return []
+        if latest == judged:
+            return [PRStateEvent(ts=_utcnow(), pr=pr, repo=repo,
+                                 from_state=PRState.MERGE_READY.value,
+                                 to_state=PRState.MERGED.value,
+                                 watcher_id="auto-merge", extra=am_extra)]
+        return [PRStateEvent(ts=_utcnow(), pr=pr, repo=repo,
+                             from_state=latest["to_state"],
+                             to_state=PRState.ABANDONED.value,
+                             watcher_id="auto-merge",
+                             extra={**am_extra, "reason":
+                                    "merged by auto-merge while the row moved"})]
+    if not transact_pr_state(pr, repo, record_merge):
+        # A terminal row landed between the re-check and the merge. It takes
+        # no further state, so the merge goes on the record as a report.
+        emit_termination_report({
+            "report": "p9-termination", "kind": "pr-watch", "ts": _utcnow(),
+            "pr": pr, "repo": repo, "state": "MERGED", "cause": "auto-merge",
+            "reason": "merged while the row turned terminal; not recorded "
+                      "as a state transition",
+            "next_action": "none — the PR is merged on GitHub"})
     print(f"auto-merge: PR #{pr} merged ({branch})")
     return EXIT_OK
 
@@ -3802,19 +4388,53 @@ def cmd_watch(args: argparse.Namespace) -> int:
     # ceiling count, the WATCHING row and the terminal fold all key on it.
     repo = resolve_repo(args.repo)
 
+    # BRO-3710: a rearm child acts only on the exact row its parent judged
+    # dead (owner@ts). Checked BEFORE the reap preflight below, which would
+    # otherwise fold that very row and make it look changed.
+    expect = getattr(args, "expect_owner", None)
+    judged: dict[str, Any] | None = None
+    if expect is not None:
+        judged = latest_row(pr, repo)
+        owner, _, ts = expect.partition("@")
+        if not (judged and _owner_of(judged) == ("" if owner == "-" else owner)
+                and judged["to_state"] in (PRState.WATCHING.value,
+                                           PRState.HEALING.value)
+                and (not ts or judged.get("ts", "") == ts)):
+            print(f"PR #{pr}: its row changed since rearm judged it dead; "
+                  "nothing to re-arm", file=sys.stderr)
+            return EXIT_OK
+
     # Preflight: reap *this session's* dead-watcher rows so a prior crashed
-    # watch doesn't permanently consume the slot we're about to claim.
-    reap_stale_watchers(reconcile=False, session_id=sid)
+    # watch doesn't permanently consume the slot we're about to claim. Not in
+    # a rearm child: its target is the row it just validated, and the
+    # supersede below is fenced on exactly that row.
+    if judged is None:
+        reap_stale_watchers(reconcile=False, session_id=sid)
 
     # De-dup: refuse to stack a second watcher on a PR that already has one,
     # unless it is provably dead (orphan recovery) or the caller overrides.
     adopt = bool(getattr(args, "adopt", False))
     force = bool(getattr(args, "force", False))
-    existing = latest_row(pr, repo)
+    existing = judged if judged is not None else latest_row(pr, repo)
+    # The arm below lands only over exactly this row (BRO-3710): the row this
+    # command judged, or its own supersede of it. Any other writer in between
+    # (another generation that armed, or armed and already folded) wins.
+    last_seen = existing
     if existing and PRState(existing["to_state"]) in (PRState.WATCHING, PRState.HEALING):
         epid = _row_pid(existing)
+        # A host-owned row (BRO-3710) has no process: re-watching it, say
+        # after pushing a fix, replaces a record, not a running watcher.
+        host_row = bool((existing.get("extra") or {}).get("host_watch"))
+        foreign_host = (host_row and _host_watch_live(existing)
+                        and existing.get("session_id", "") not in ("", sid))
+        if foreign_host and not (adopt or force):
+            print(f"PR #{pr} ({repo or 'repo-unknown'}) is watched by session "
+                  f"{existing.get('session_id')} through its host. Refusing "
+                  "to take it over; pass --adopt to take it.", file=sys.stderr)
+            return EXIT_DEGRADED
         alive = epid > 0 and is_watcher_alive(epid)
-        fresh = _iso_age_seconds(existing.get("ts", "")) < _watcher_grace_seconds()
+        fresh = (not host_row and _iso_age_seconds(existing.get("ts", ""))
+                 < _watcher_grace_seconds())
         if alive and not force:
             print(
                 f"PR #{pr} ({repo or 'repo-unknown'}) already has a live "
@@ -3833,13 +4453,21 @@ def cmd_watch(args: argparse.Namespace) -> int:
             )
             return EXIT_DEGRADED
         # Supersede the stale/forced row to free the slot before re-watching.
-        append_state_event(PRStateEvent(
-            ts=_utcnow(), pr=pr, repo=repo or "",
-            from_state=existing["to_state"], to_state=PRState.ABANDONED.value,
-            watcher_id="watch-supersede", session_id=existing.get("session_id", ""),
-            extra={"reason": "superseded by re-watch",
-                   "dead_pid": epid, "forced": force, "adopt": adopt},
-        ))
+        # Fenced on the exact row judged above (BRO-3710): a fold or observe
+        # that landed since changes what there is to supersede.
+        supersede = PRStateEvent(
+                ts=_utcnow(), pr=pr, repo=repo or "",
+                from_state=existing["to_state"], to_state=PRState.ABANDONED.value,
+                watcher_id="watch-supersede", session_id=existing.get("session_id", ""),
+                extra={"reason": "superseded by re-watch",
+                       "dead_pid": epid, "forced": force, "adopt": adopt},
+        )
+        if append_state_event(supersede, expect_row=existing):
+            last_seen = json.loads(supersede.to_jsonl())  # as stored
+        else:
+            print(f"PR #{pr}: its watch changed while this re-watch was "
+                  "deciding; run it again", file=sys.stderr)
+            return EXIT_DEGRADED
 
     # Scope comes from policy (BRO-1988), not from this code's opinion.
     # `repo or None` on top of that: with no resolvable repo, identity is
@@ -3851,6 +4479,17 @@ def cmd_watch(args: argparse.Namespace) -> int:
     enforce_concurrency_ceiling(policy, session_id=sid, repo=ceiling_repo,
                                 exclude=(repo, pr))
     watcher_id = uuid.uuid4().hex[:12]
+
+    # BRO-3710: where the host watches PRs itself (T3), a `gh --watch` here
+    # would be a second watcher on the same PR, and T3 forbids it. Record the
+    # watch, fold at once if CI already settled, and hand the wake to T3.
+    if host_profile()["pr_watch_owner"] == "t3" and not args.dry_run:
+        return _host_watch(args, pr, repo, sid, watcher_id, last_seen)
+    if not args.dry_run:
+        # The wait is declared now, whoever wakes the session later: the Stop
+        # hook holds the turn open once while the harvested work is undone.
+        mark_wait("p9 watch", pr=pr, repo=repo, session_id=sid)
+        harvest_queue(pr=pr, repo=repo)
 
     # Termination invariant (BRO-1701): EVERY exit path — green, red, signal,
     # unexpected exception — folds a state event, emits a termination report
@@ -3888,7 +4527,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
                              watcher_id=watcher_id)
         pid = proc.pid if proc else 0
         log_path = str(watch_log_path(watcher_id)) if proc is not None else None
-        append_state_event(PRStateEvent(
+        arm = PRStateEvent(
             ts=_utcnow(),
             pr=pr,
             repo=repo or "",
@@ -3899,7 +4538,18 @@ def cmd_watch(args: argparse.Namespace) -> int:
             session_id=sid,
             extra={"pid": pid, "dry_run": args.dry_run, "detach": args.detach,
                    **({"log": log_path} if log_path else {})},
-        ))
+        )
+        # BRO-3710: every path here has already superseded any watching row,
+        # so one found now was armed concurrently (a T3 host watch included);
+        # this arm refuses instead of overwriting it.
+        if not transact_pr_state(pr, repo, lambda latest: [arm]
+                                 if latest == last_seen else [], chain=False):
+            if proc is not None:
+                with contextlib.suppress(Exception):
+                    proc.terminate()
+            print(f"PR #{pr}: another watch was armed while this one was "
+                  "deciding; nothing armed", file=sys.stderr)
+            return EXIT_DEGRADED
         row_written = True
         if args.json:
             print(json.dumps({
@@ -3976,7 +4626,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
         # was still running, the key now belongs to the replacement and this
         # fold is stale. Dropping it is the point — applying it would bury a
         # live watcher and hand its slot to a third.
-        if append_state_event(event, expect_owner=watcher_id):
+        if append_state_event(event, expect_owner=watcher_id,
+                              expect_state=PRState.WATCHING.value):
             # A slice expiry is a hand-back, not news: no phone buzz every
             # nine minutes while CI runs.
             emit_termination_report(
@@ -3996,6 +4647,11 @@ def cmd_watch(args: argparse.Namespace) -> int:
                 "none — a live watcher owns this PR; this fold was discarded")
             emit_termination_report(report,
                                     do_notify=cause != "slice-expired")
+    if cause != "slice-expired":
+        # The wait ended inside this call (BRO-3710): nothing is pending for
+        # the Stop hook to hold the turn on — for THIS wait.
+        consume_wait_mark(only_if=lambda m: m.get("tool") == "p9 watch"
+                          and m.get("pr") == pr)
     # `reraise` must survive the rejection branch: an early return here would
     # swallow the very exception that terminated the watcher.
     if reraise is not None:
@@ -4022,13 +4678,440 @@ def cmd_watch(args: argparse.Namespace) -> int:
     return EXIT_OK
 
 
+def _host_watch(args: argparse.Namespace, pr: int, repo: str, sid: str,
+                watcher_id: str, last_seen: dict[str, Any] | None = None) -> int:
+    """`p9 watch` where the host owns the PR wake (BRO-3710).
+
+    Writes the WATCHING row with no watcher process (`host_watch` marks it so
+    reaping judges it by age, not by pid), folds immediately when CI has
+    already settled, marks the session as waiting and fills the wait-queue.
+    Exit 0 either way: on this host a pending PR is the normal outcome, and
+    the next step is the host's `watch_pull_request`, not a re-run."""
+    # The arm is part of the transaction (BRO-3710): it lands only over a row
+    # that is not being watched. Another thread arming between this
+    # command's checks and here makes it refuse, not overwrite.
+    armed = transact_pr_state(pr, repo, lambda latest: [] if latest != last_seen else [
+        PRStateEvent(ts=_utcnow(), pr=pr, repo=repo or "",
+                     from_state=PRState.PUSHED.value,
+                     to_state=PRState.WATCHING.value, watcher_id=watcher_id,
+                     attempt=0, session_id=sid,
+                     extra={"pid": 0, "host_watch": "t3", "armed_at": _utcnow()})],
+        chain=False)
+    if not armed:
+        print(f"PR #{pr}: another watch was armed while this one was "
+              "deciding; run `p9 status` and re-watch if needed",
+              file=sys.stderr)
+        return EXIT_DEGRADED
+    mark_wait("p9 watch", pr=pr, repo=repo)
+    obs = observe_pr(pr, repo, sid=sid)
+    if obs["folded"]:
+        # CI had settled: there is no wait to use
+        consume_wait_mark(only_if=lambda m: m.get("pr") == pr)
+    added = harvest_queue(pr=pr, repo=repo)
+    queued = [it for it in queue_list() if it.isolation_tier != "blocked"]
+    if args.json:
+        print(json.dumps({"watcher_id": watcher_id, "pid": 0, "pr": pr,
+                          "repo": repo, "mode": "host", **obs,
+                          "harvested": len(added), "queued": len(queued)}))
+        return EXIT_OK
+    print(f"watcher_id={watcher_id} pid=0 pr={pr} repo={repo} mode=host")
+    if obs["folded"]:
+        print(f"folded: {obs['state']} (checks {obs['verdict']})")
+    else:
+        print(f"CI on PR #{pr}: {obs['verdict']}. T3 owns the wait — call "
+              "watch_pull_request now, then run `p9 observe "
+              f"{pr}` on each wake.")
+    print(productive_wait_brief(queued))
+    return EXIT_OK
+
+
+def _checks_verdict(checks: Any) -> tuple[str, list[str]]:
+    """Reduce `gh pr checks --json name,bucket` to one word.
+
+    `red` as soon as any check failed or was cancelled, even with others still
+    running: T3 wakes on the first failure, and the point of folding then is to
+    start the heal while the rest finish. `green` only when nothing is pending,
+    as `gh pr checks --watch` decides it; when the required checks pass first,
+    T3 owes the thread one more wake once the rest settle (`owedChecks`), and
+    that wake folds green. `none` is a PR no check has reported on yet;
+    `unknown` is a failed read."""
+    if not isinstance(checks, list):
+        return "unknown", []
+    if not checks:
+        return "none", []
+    failed = [str(c.get("name", "")) for c in checks
+              if str(c.get("bucket", "")).lower() in ("fail", "cancel")]
+    if failed:
+        return "red", failed
+    if any(str(c.get("bucket", "")).lower() == "pending" for c in checks):
+        return "pending", []
+    return "green", []
+
+
+# T3 tells the thread "no checks have reported" after this long
+# (PULL_REQUEST_WATCH_NO_CHECKS_MS in its PR watch); observe folds then.
+NO_CHECKS_FOLD_SECONDS = 900
+
+
+def _pr_checks(pr: int, repo: str) -> list[dict[str, Any]] | None:
+    """`gh pr checks --json name,bucket`, or [] when gh says no check has
+    reported (it exits 1 and prints text, not JSON), or None on any other
+    failure. Telling "none yet" from "could not read" matters: only the first
+    is a live watch worth re-stamping."""
+    cmd = ["gh", "pr", "checks", str(pr), "--json", "name,bucket"]
+    if repo:
+        cmd += ["--repo", repo]
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                             check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    try:
+        data = json.loads(out.stdout) if out.stdout.strip() else None
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, list):
+        return data
+    if "no checks reported" in (out.stdout + out.stderr).lower():
+        return []
+    return None
+
+
+def observe_pr(pr: int, repo: str, *, sid: str | None = None,
+               no_checks_final: bool = False) -> dict[str, Any]:
+    """Fold a host-owned watch once, from the PR's current checks (BRO-3710).
+
+    Three fences, all applied inside one state-lock acquisition
+    (`transact_pr_state`), so no decision rests on a row read earlier:
+
+    * generation — the watch is named by the `watcher_id` read before the
+      checks are; a re-watch in between makes this observation moot;
+    * order — each observation takes a ticket under the state lock BEFORE
+      its network read (`obs_ticket`); one whose ticket is older than the
+      latest recorded one is dropped, so between non-terminal reads the newest
+      wins whatever order the writes land in, with no clock involved. A fold
+      is terminal for its generation: a later contrary read does not undo it
+      (a new push gets a new generation through `p9 watch`);
+    * ownership — only a host-owned WATCHING row is touched; a row with a
+      real watcher process belongs to that process.
+
+    A pending or no-checks-yet read re-stamps the row; a failed read does not,
+    so an unreadable watch ages out. "No checks" folds red, as
+    `gh pr checks --watch` does, once NO_CHECKS_FOLD_SECONDS have passed since
+    the watch was armed, or at once with `no_checks_final` — T3's own
+    no-checks notice, which it sends once per head and does not repeat."""
+    before = latest_row(pr, repo)
+    generation = _owner_of(before) if before else None
+    ticket = next_observation_ticket()
+    verdict, failed = _checks_verdict(_pr_checks(pr, repo))
+    out: dict[str, Any] = {"pr": pr, "repo": repo, "verdict": verdict,
+                           "failed": failed,
+                           "state": before.get("to_state") if before else None,
+                           "folded": False}
+    if before is None or before.get("to_state") != PRState.WATCHING.value:
+        return out
+    if not (before.get("extra") or {}).get("host_watch"):
+        out["note"] = "watched by a p9 process, which folds it itself"
+        return out
+
+    def decide(latest: dict[str, Any] | None) -> list[PRStateEvent]:
+        if (latest is None or _owner_of(latest) != generation
+                or latest.get("to_state") != PRState.WATCHING.value):
+            return []
+        lx = latest.get("extra") or {}
+        if not lx.get("host_watch"):
+            return []
+        if int(lx.get("obs_ticket") or 0) > ticket:
+            return []  # a newer observation already landed
+        base = dict(ts=_utcnow(), pr=pr, repo=repo or "",
+                    from_state=PRState.WATCHING.value, watcher_id=generation,
+                    attempt=int(latest.get("attempt") or 0),
+                    session_id=latest.get("session_id", "") or (sid or ""))
+        stamp = {"host_watch": "t3", "obs_ticket": ticket,
+                 **({"armed_at": lx["armed_at"]} if lx.get("armed_at") else {})}
+        if verdict in ("green", "red"):
+            nxt = PRState.GREEN if verdict == "green" else PRState.RED_UNCLASSIFIED
+            return [PRStateEvent(**base, to_state=nxt.value, extra={
+                **stamp, "folded_by": "p9 observe",
+                **({"failed_checks": failed} if failed else {})})]
+        if verdict == "none":
+            armed = lx.get("armed_at")
+            if no_checks_final or (armed and _iso_age_seconds(armed)
+                                   >= NO_CHECKS_FOLD_SECONDS):
+                why = ("T3 reported no checks for this head" if no_checks_final
+                       else f"no checks reported {NO_CHECKS_FOLD_SECONDS // 60} "
+                            "min after the watch was armed")
+                return [PRStateEvent(**base, to_state=PRState.RED_UNCLASSIFIED.value,
+                                     extra={**stamp, "folded_by": "p9 observe",
+                                            "reason": why})]
+            return [PRStateEvent(**base, to_state=PRState.WATCHING.value,
+                                 extra={**stamp, "pid": 0, "observed": "none"})]
+        if verdict == "pending":
+            return [PRStateEvent(**base, to_state=PRState.WATCHING.value,
+                                 extra={**stamp, "pid": 0, "observed": "pending"})]
+        return []  # unknown: a failed read re-stamps nothing
+
+    events = transact_pr_state(pr, repo, decide)
+    now = latest_row(pr, repo)  # report what IS, not what was read before
+    out["state"] = now.get("to_state") if now else None
+    if not events:
+        out["note"] = "superseded by a newer observation or a re-watch"
+    if events and events[-1].to_state != PRState.WATCHING.value:
+        ev = events[-1]
+        cause = ("observe:no-checks" if (ev.extra or {}).get("reason")
+                 else f"observe:{verdict}")
+        emit_termination_report(pr_termination_report(dataclasses.asdict(ev),
+                                                      cause=cause))
+        out.update(folded=True, state=ev.to_state)
+    return out
+
+
+def cmd_observe(args: argparse.Namespace) -> int:
+    """Fold a T3-owned watch from the PR's checks, once (BRO-3710). Run it on
+    each `watch_pull_request` wake."""
+    repo = resolve_repo(args.repo)
+    out = observe_pr(int(args.pr), repo, sid=current_session_id(),
+                     no_checks_final=bool(getattr(args, "no_checks", False)))
+    if args.json:
+        print(json.dumps(out))
+    elif out["folded"]:
+        print(f"folded: {out['state']} (checks {out['verdict']})"
+              + (f"; failed: {', '.join(out['failed'])}" if out["failed"] else ""))
+    elif str(out.get("note", "")).startswith("superseded") and \
+            out["verdict"] in ("green", "red"):
+        print(f"PR #{args.pr}: checks {out['verdict']}, but this read was "
+              f"{out['note']}; state is {out['state']}. Run `p9 observe "
+              f"{args.pr}` again before ending your turn.")
+    elif out["state"] == PRState.WATCHING.value:
+        hint = (" If T3's wake said no checks have reported, run "
+                f"`p9 observe {args.pr} --no-checks`." if out["verdict"] == "none"
+                else "")
+        print(f"PR #{args.pr}: checks {out['verdict']}; still watching. "
+              f"Work the queue, then end your turn.{hint}")
+    else:
+        print(f"PR #{args.pr}: state {out['state'] or 'untracked'}, checks "
+              f"{out['verdict']}; nothing to fold (`p9 watch {args.pr}` "
+              "starts a watch)")
+    return EXIT_OK
+
+
+_PR_URL_RE = re.compile(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)")
+
+
+def _wait_from_tool(name: str, tin: Any) -> dict[str, Any] | None:
+    """The wait a T3 tool call declared, or None for a call that blocks or
+    clears one. Only the three T3 wait tools count (BRO-3710)."""
+    tin = tin if isinstance(tin, dict) else {}
+    if name == "mcp__t3-code__watch_pull_request":
+        pr, repo = tin.get("number"), str(tin.get("repository") or "")
+        m = _PR_URL_RE.search(str(tin.get("url") or ""))
+        if m:
+            repo, pr = repo or m.group(1), pr or int(m.group(2))
+        try:
+            pr = int(pr) if pr is not None else None
+        except (TypeError, ValueError):
+            pr = None
+        return {"tool": "watch_pull_request", "pr": pr, "repo": repo}
+    if name == "mcp__t3-code__delegate_task":
+        return None if tin.get("mode") == "wait" else {"tool": "delegate_task"}
+    if name == "mcp__t3-code__t3_background_wait":
+        return None if tin.get("waiting") is False else {"tool": "t3_background_wait"}
+    return None
+
+
+def hook_post_tool_use(data: dict[str, Any]) -> dict[str, Any] | None:
+    """A T3 wait was just declared: mark it, fill the queue, and put the queue
+    in front of the agent while it still has the turn."""
+    wait = _wait_from_tool(str(data.get("tool_name") or ""), data.get("tool_input"))
+    if wait is None:
+        return None
+    repo = canonical_repo(wait.get("repo") or "") if wait.get("repo") else ""
+    mark_wait(wait["tool"], pr=wait.get("pr"), repo=repo)
+    cwd = data.get("cwd")
+    harvest_queue(pr=wait.get("pr"), repo=repo,
+                  cwd=Path(cwd) if isinstance(cwd, str) and cwd else None)
+    items = actionable_queue()
+    if not items:
+        return None
+    return {"hookSpecificOutput": {"hookEventName": "PostToolUse",
+                                   "additionalContext": productive_wait_brief(items)}}
+
+
+def hook_stop(data: dict[str, Any]) -> dict[str, Any] | None:
+    """Block the turn's end once per declared wait while queued work remains.
+
+    The mark is consumed by EVERY Stop, retry or not: a mark left behind by a
+    retry would block some later, unrelated turn. `stop_hook_active` means
+    this Stop is already a retry (ours or another hook's): never block it."""
+    if not (wait_marks_dir() / f"{_safe_name(current_session_id())}.json").exists():
+        return None
+    items = [] if data.get("stop_hook_active") else actionable_queue()
+    mark = consume_wait_mark()
+    if mark is None or data.get("stop_hook_active") or not items:
+        return None
+    return {"decision": "block", "reason": (
+        f"You declared a wait ({mark.get('tool', 'a wait')}) and queued work "
+        "remains for this session. Use the wait before ending the turn.\n"
+        + productive_wait_brief(items))}
+
+
+def hook_prompt_submit(_data: dict[str, Any]) -> None:
+    """A new user prompt starts a new turn. A wait declared in an earlier
+    turn that never reached a Stop (interrupted, errored) must not hold this
+    one, so its mark goes."""
+    consume_wait_mark()
+    return None
+
+
+_HOOK_HANDLERS = {"post-tool-use": hook_post_tool_use, "stop": hook_stop,
+                  "prompt-submit": hook_prompt_submit}
+
+
+def cmd_hook(args: argparse.Namespace) -> int:
+    """Claude Code hook entry point (BRO-3710). Reads the hook payload on
+    stdin. Always exits 0: a hook that fails must not cost the agent a turn."""
+    try:
+        raw = sys.stdin.read()
+        data = json.loads(raw) if raw.strip() else {}
+        if not isinstance(data, dict):
+            data = {}
+        out = _HOOK_HANDLERS[args.event](data)
+        if out is not None:
+            print(json.dumps(out))
+    except Exception as exc:  # noqa: BLE001 — never break the host session
+        print(f"p9 hook {args.event}: {exc}", file=sys.stderr)
+    return EXIT_OK
+
+
+HOOK_POST_TOOL_MATCHER = "|".join(_T3_WAIT_TOOLS)
+
+
+def _default_p9_path() -> Path:
+    """The installed p9, not this file: a hook pointing into a worktree breaks
+    when the worktree is pruned."""
+    for cand in (Path.home() / ".agents/skills/p9/scripts/p9.py",
+                 Path.home() / ".claude/skills/p9/scripts/p9.py"):
+        if cand.exists():
+            return cand
+    return Path(__file__).resolve()
+
+
+def _is_p9_hook(hook: Any) -> bool:
+    cmd = str((hook or {}).get("command", "")) if isinstance(hook, dict) else ""
+    return "p9.py" in cmd and any(f" hook {e}" in cmd for e in _HOOK_HANDLERS)
+
+
+def _hook_command(p9_path: Path, event: str) -> str:
+    """The shell command a hook runs. It cannot exit non-zero: Claude Code
+    reads exit 2 from a Stop hook as "block", so a p9 that is missing, or an
+    older install without `hook`, would otherwise hold every turn on the
+    machine, retries included."""
+    return (f"python3 -I {shlex.quote(str(p9_path))} hook {event} "
+            "2>/dev/null || true")
+
+
+def install_hooks(settings: dict[str, Any], p9_path: Path, *,
+                  uninstall: bool = False) -> dict[str, Any]:
+    """Return `settings` with p9's two hooks registered (or removed). Any
+    earlier p9 hook entry is replaced, so installing twice changes nothing."""
+    if not isinstance(settings.get("hooks"), dict):
+        settings["hooks"] = {}
+    hooks = settings["hooks"]
+
+    def entry(event: str) -> dict[str, Any]:
+        return {"type": "command", "command": _hook_command(p9_path, event),
+                "timeout": 30}
+
+    wanted = {
+        "PostToolUse": {"matcher": HOOK_POST_TOOL_MATCHER,
+                        "hooks": [entry("post-tool-use")]},
+        "Stop": {"hooks": [entry("stop")]},
+        "UserPromptSubmit": {"hooks": [entry("prompt-submit")]},
+    }
+    for event, group in wanted.items():
+        groups = hooks.get(event)
+        groups = groups if isinstance(groups, list) else []
+        kept = []
+        for g in groups:
+            if not isinstance(g, dict):
+                kept.append(g)
+                continue
+            inner = [h for h in g.get("hooks") or [] if not _is_p9_hook(h)]
+            if inner:
+                kept.append({**g, "hooks": inner})
+        if not uninstall:
+            kept.append(group)
+        if kept:
+            hooks[event] = kept
+        else:
+            hooks.pop(event, None)
+    return settings
+
+
+def _supports_hooks(p9_path: Path) -> bool:
+    """Whether the p9 the hooks would run has the `hook` command."""
+    try:
+        out = subprocess.run([sys.executable, "-I", str(p9_path), "hook", "--help"],
+                             capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.returncode == 0 and "prompt-submit" in out.stdout
+
+
+def cmd_hook_install(args: argparse.Namespace) -> int:
+    # Write through a symlink to its target: settings.json is often a link
+    # into a dotfiles repo, and replacing the link would cut it.
+    path = Path(args.settings).expanduser().resolve()
+    try:
+        current = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
+    except ValueError as exc:
+        print(f"{path} is not valid JSON ({exc}); not touching it", file=sys.stderr)
+        return EXIT_DEGRADED
+    if not isinstance(current, dict):
+        print(f"{path} is not a JSON object; not touching it", file=sys.stderr)
+        return EXIT_DEGRADED
+    p9_path = (Path(args.p9_path).expanduser().resolve() if args.p9_path
+               else _default_p9_path())
+    if not args.uninstall and not _supports_hooks(p9_path):
+        print(f"{p9_path} has no `hook` command (an older install?); update "
+              "it before installing hooks that run it", file=sys.stderr)
+        return EXIT_DEGRADED
+    has_p9 = isinstance(current.get("hooks"), dict) and any(
+        _is_p9_hook(h) for groups in current["hooks"].values()
+        if isinstance(groups, list) for g in groups if isinstance(g, dict)
+        for h in g.get("hooks") or [])
+    updated = (current if args.uninstall and not has_p9 else
+               install_hooks(json.loads(json.dumps(current)), p9_path,
+                             uninstall=args.uninstall))
+    if updated == current:
+        print(f"{path}: p9 hooks already {'absent' if args.uninstall else 'installed'}")
+        return EXIT_OK
+    if args.dry_run:
+        print(json.dumps(updated.get("hooks", {}), indent=2))
+        return EXIT_OK
+    tmp = path.with_suffix(path.suffix + ".p9tmp")
+    tmp.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
+    with contextlib.suppress(OSError):
+        tmp.chmod(path.stat().st_mode & 0o7777 if path.exists() else 0o600)
+    tmp.replace(path)
+    print(f"{path}: p9 hooks {'removed' if args.uninstall else 'installed'} "
+          f"({p9_path})")
+    return EXIT_OK
+
+
 def cmd_host(args: argparse.Namespace) -> int:
     """Report the wait regime this host needs (BRO-2815)."""
     prof = host_profile()
     if args.json:
         print(json.dumps(prof))
         return EXIT_OK
-    if prof["background_wakes"]:
+    if prof["pr_watch_owner"] == "t3":
+        print(f"host={prof['host']}: T3 Code owns PR waits. `p9 watch <pr>` "
+              "records the watch without running `gh --watch`; call "
+              "watch_pull_request, work the queue (`p9 wait-queue pop`), end "
+              "your turn, and run `p9 observe <pr>` on each wake. A T3 wake "
+              "that lands while you work is held until your turn ends.")
+    elif prof["background_wakes"]:
         print(f"host={prof['host']}: a finished background task wakes this "
               "session; `p9 watch <pr>` may run as a background task")
     else:
@@ -4114,6 +5197,15 @@ def cmd_wait_queue(args: argparse.Namespace) -> int:
     if sub == "clear":
         n = queue_clear(all_sessions=all_sessions)
         print(f"cleared {n} item(s)")
+        return EXIT_OK
+    if sub == "harvest":
+        repo = resolve_repo(args.repo) if (args.repo or args.pr) else ""
+        added = harvest_queue(pr=args.pr, repo=repo)
+        if args.json:
+            print(json.dumps([dataclasses.asdict(it) for it in added], indent=2))
+        else:
+            print(f"harvested {len(added)} new item(s)")
+            print(productive_wait_brief(actionable_queue()))
         return EXIT_OK
     print(f"unknown wait-queue action: {sub}", file=sys.stderr)
     return EXIT_USAGE
@@ -4410,7 +5502,8 @@ def cmd_merge_ready(args: argparse.Namespace) -> int:
     # CAS (BRO-2374): the verdict above is a network round-trip. A re-arm that
     # landed during it owns the key now, and writing MERGE_READY over its
     # WATCHING row would authorize a merge against state nobody is watching.
-    if not append_state_event(event, expect_owner=green_owner):
+    if not append_state_event(event, expect_owner=green_owner,
+                              expect_state=PRState.GREEN.value):
         print(f"PR #{pr} ({repo or 'repo-unknown'}) changed hands while the "
               f"merge verdict was being fetched (was watcher {green_owner!r}); "
               f"not marking MERGE_READY. Re-run once it settles.",
@@ -4471,6 +5564,8 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
     rearm_argv = [sys.executable, script, "wait-for", name,
                   "--cmd", cmd, "--interval", str(interval),
                   "--timeout", str(timeout), "--slice", "0"]
+    mark_wait(f"p9 wait-for {name}", session_id=sid)  # BRO-3710
+    harvest_queue()
 
     if args.detach:
         if not host_profile()["background_wakes"]:
@@ -4626,6 +5721,8 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
                 f"run p9 wait-for again in the foreground with --timeout "
                 f"{left} (the time left to the original deadline)")
         emit_termination_report(report, do_notify=cause != "slice-expired")
+        if cause != "slice-expired":
+            consume_wait_mark(only_if=lambda m: m.get("tool") == f"p9 wait-for {name}")
     if reraise is not None:
         raise reraise
     return exit_code
@@ -4659,6 +5756,11 @@ def cmd_rearm(args: argparse.Namespace) -> int:
     for row in open_prs():
         state = PRState(row["to_state"])
         if state not in (PRState.WATCHING, PRState.HEALING):
+            continue
+        if (row.get("extra") or {}).get("host_watch"):
+            # BRO-3710: a host watch is restored by its own thread calling
+            # watch_pull_request, which no detached child can do. Live, it is
+            # not dead; expired, `reap` retires it.
             continue
         pid = _row_pid(row)
         if pid > 0 and is_watcher_alive(pid):
@@ -4702,8 +5804,7 @@ def cmd_rearm(args: argparse.Namespace) -> int:
                 # needing to prove it owned the row it read — the case an
                 # implicit event.watcher_id check cannot express, and why
                 # expect_owner is an explicit argument.
-                if not append_state_event(
-                        stale, expect_owner=_owner_of(row)):
+                if not append_state_event(stale, expect_row=row):
                     action["skipped"] = (
                         "row changed hands before the fold landed; left to "
                         "its new owner")
@@ -4721,14 +5822,22 @@ def cmd_rearm(args: argparse.Namespace) -> int:
                 # `--slice 0` (BRO-2815): a detached child blocks nobody's
                 # Bash call; sliced, it would fold PUSHED unseen and stop.
                 argv = [sys.executable, script, "watch", str(pr),
-                        "--repo", repo, "--slice", "0"]
+                        "--repo", repo, "--slice", "0",
+                        # BRO-3710: the child acts only on the row judged dead
+                        # here; a fold that lands before it runs stands.
+                        "--expect-owner",
+                        f"{_owner_of(row) or '-'}@{row.get('ts', '')}"]
                 argv.append("--force" if args.now else "--adopt")
                 logs_dir().mkdir(parents=True, exist_ok=True)
                 log_path = logs_dir() / f"rearm-watch-{_safe_slug(str(pr))}.log"
                 with open(log_path, "ab") as out:
+                    # A detached child cannot be woken by a host, so it always
+                    # runs its own watcher, even when rearm runs inside T3.
                     child = subprocess.Popen(argv, stdout=out,
                                              stderr=subprocess.STDOUT,
-                                             start_new_session=True)
+                                             start_new_session=True,
+                                             env={**os.environ,
+                                                  "P9_PR_WATCH_OWNER": "p9"})
                 action.update(rearmed_pid=child.pid, log=str(log_path))
         except Exception as e:  # noqa: BLE001 — isolate per row
             action["error"] = f"{type(e).__name__}: {e}"
@@ -5160,6 +6269,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "running (exit 8; run watch again). Defaults to 540 "
                          "on hosts where background completions do not wake "
                          "the session (`p9 host`); 0 disables")
+    pw.add_argument("--expect-owner", default=None,
+                    help="(rearm) OWNER@TS: act only if the PR's latest row is "
+                         "still exactly the WATCHING/HEALING row rearm judged")
     pw.add_argument("--adopt", action="store_true",
                     help="Re-watch a PR whose prior watcher pid is gone, "
                          "superseding the stale row immediately (orphan recovery "
@@ -5184,8 +6296,33 @@ def build_parser() -> argparse.ArgumentParser:
     ps.add_argument("--json", action="store_true")
     ps.set_defaults(func=cmd_status)
 
+    po = sub.add_parser("observe", help="Fold a host-owned (T3) watch once "
+                        "from the PR's current checks; run on each wake")
+    po.add_argument("pr", help="PR number")
+    po.add_argument("--repo", help="OWNER/REPO (auto-detected if omitted)")
+    po.add_argument("--no-checks", action="store_true",
+                    help="T3's wake said no checks have reported: fold red "
+                         "now if none have (T3 sends that notice only once)")
+    po.add_argument("--json", action="store_true")
+    po.set_defaults(func=cmd_observe)
+
+    phk = sub.add_parser("hook", help="Claude Code hook entry point "
+                         "(productive wait; reads the hook payload on stdin)")
+    phk.add_argument("event", choices=["post-tool-use", "stop", "prompt-submit"])
+    phk.set_defaults(func=cmd_hook)
+
+    phi = sub.add_parser("hook-install", help="Register (or remove) p9's "
+                         "productive-wait hooks in a Claude settings file")
+    phi.add_argument("--settings", default="~/.claude/settings.json")
+    phi.add_argument("--p9-path", default=None,
+                     help="p9.py the hooks run (default: the installed skill)")
+    phi.add_argument("--uninstall", action="store_true")
+    phi.add_argument("--dry-run", action="store_true",
+                     help="Print the resulting hooks block; write nothing")
+    phi.set_defaults(func=cmd_hook_install)
+
     pq = sub.add_parser("wait-queue", help="Manage the productive-wait queue")
-    pq.add_argument("action", choices=["push", "pop", "list", "clear"])
+    pq.add_argument("action", choices=["push", "pop", "list", "clear", "harvest"])
     pq.add_argument("--source", default="session",
                     choices=list(_QUEUE_PRIORITY))
     pq.add_argument("--item", default="", help="(push only) free-text item")

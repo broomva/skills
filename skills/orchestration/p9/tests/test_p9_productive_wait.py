@@ -1,0 +1,1724 @@
+"""BRO-3710 — waits that do work.
+
+On T3 Code the host watches PRs itself (`watch_pull_request`), so p9 must not
+run a second `gh --watch`: `p9 watch` records the watch and `p9 observe` folds
+it on each wake. And the wait-queue, which had a pop order but no producer,
+is now filled by `harvest` and put in front of the agent by two hooks.
+"""
+
+from __future__ import annotations
+
+import importlib
+import io
+import json
+import os
+import subprocess
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+_HERE = Path(__file__).resolve().parent
+_FIXTURES = _HERE / "fixtures"
+_SCRIPT = _HERE.parent / "scripts" / "p9.py"
+REPO = "broomva/test"
+
+
+@pytest.fixture()
+def p9(tmp_path, monkeypatch):
+    monkeypatch.setenv("BROOMVA_P9_HOME", str(tmp_path / "home"))
+    monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-good.yaml"))
+    monkeypatch.setenv("BROOMVA_P9_REPO", REPO)
+    monkeypatch.setenv("BROOMVA_P9_MEMORY_DIRS", "")
+    if "p9" in sys.modules:
+        del sys.modules["p9"]
+    mod = importlib.import_module("p9")
+    monkeypatch.setattr(mod, "notify", lambda *a, **k: None)
+    return mod
+
+
+def _checks(monkeypatch, p9, *buckets):
+    """Make every `gh pr checks` read return these buckets."""
+    rows = [{"name": f"c{i}", "bucket": b} for i, b in enumerate(buckets)]
+    monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: list(rows))
+
+
+def _no_spawn(monkeypatch, p9):
+    def boom(*a, **k):
+        raise AssertionError("a host-owned watch must not spawn gh --watch")
+    monkeypatch.setattr(p9, "spawn_watcher", boom)
+
+
+def _watch_args(pr=7, **kw):
+    import argparse
+    base = dict(pr=str(pr), repo=None, dry_run=False, detach=False,
+                background=False, block=False, slice=None, adopt=False,
+                force=False, json=False, expect_owner=None)
+    base.update(kw)
+    return argparse.Namespace(**base)
+
+
+# ── host detection ──────────────────────────────────────────────────────────
+class TestHostProfile:
+    def test_t3_owns_pr_waits(self, p9, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+        monkeypatch.setenv("CLAUDECODE", "1")
+        prof = p9.host_profile()
+        assert prof["host"] == "t3"
+        assert prof["pr_watch_owner"] == "t3"
+        assert prof["background_wakes"] is True
+
+    def test_plain_claude_code_keeps_p9_watcher(self, p9, monkeypatch):
+        monkeypatch.setenv("CLAUDECODE", "1")
+        assert p9.host_profile()["pr_watch_owner"] == "p9"
+
+    @pytest.mark.parametrize("value", ["p9", "t3"])
+    def test_override(self, p9, monkeypatch, value):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+        monkeypatch.setenv("P9_PR_WATCH_OWNER", value)
+        assert p9.host_profile()["pr_watch_owner"] == value
+
+    def test_host_text_names_watch_pull_request(self, p9, monkeypatch, capsys):
+        import argparse
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+        p9.cmd_host(argparse.Namespace(json=False))
+        out = capsys.readouterr().out
+        assert "watch_pull_request" in out and "p9 observe" in out
+
+
+# ── checks verdict ──────────────────────────────────────────────────────────
+@pytest.mark.parametrize("checks,verdict", [
+    (None, "unknown"),
+    ([], "none"),
+    ([{"name": "a", "bucket": "pending"}], "pending"),
+    ([{"name": "a", "bucket": "pass"}, {"name": "b", "bucket": "skipping"}], "green"),
+    ([{"name": "a", "bucket": "fail"}, {"name": "b", "bucket": "pending"}], "red"),
+    ([{"name": "a", "bucket": "cancel"}], "red"),
+])
+def test_checks_verdict(p9, checks, verdict):
+    assert p9._checks_verdict(checks)[0] == verdict
+
+
+def test_red_names_the_failed_checks(p9):
+    _, failed = p9._checks_verdict([{"name": "lint", "bucket": "fail"},
+                                     {"name": "test", "bucket": "pass"}])
+    assert failed == ["lint"]
+
+
+# ── host-owned watch ────────────────────────────────────────────────────────
+class TestHostWatch:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def test_pending_records_watch_without_gh_watch(self, p9, monkeypatch, capsys):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_OK
+        row = p9.latest_row(7, REPO)
+        assert row["to_state"] == "WATCHING"
+        assert row["extra"]["host_watch"] == "t3"
+        assert row["extra"]["pid"] == 0
+        assert "watch_pull_request" in capsys.readouterr().out
+
+    def test_settled_green_folds_at_once(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pass")
+        p9.cmd_watch(_watch_args())
+        assert p9.latest_row(7, REPO)["to_state"] == "GREEN"
+
+    def test_watch_marks_the_wait(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        mark = p9.consume_wait_mark()
+        assert mark and mark["pr"] == 7
+
+    def test_dry_run_keeps_classic_path(self, p9, monkeypatch):
+        called = []
+        monkeypatch.setattr(p9, "_host_watch", lambda *a: called.append(a) or 0)
+        p9.cmd_watch(_watch_args(dry_run=True))
+        assert not called
+
+    def test_json_reports_host_mode(self, p9, monkeypatch, capsys):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args(json=True))
+        out = json.loads(capsys.readouterr().out.strip().splitlines()[-1])
+        assert out["mode"] == "host" and out["verdict"] == "pending"
+
+
+class TestObserve:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def _arm(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        return p9.latest_row(7, REPO)
+
+    def test_red_folds_with_failed_checks(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [
+            {"name": "lint", "bucket": "fail"}, {"name": "t", "bucket": "pending"}])
+        out = p9.observe_pr(7, REPO)
+        assert out["folded"] and out["state"] == "RED_UNCLASSIFIED"
+        row = p9.latest_row(7, REPO)
+        assert row["to_state"] == "RED_UNCLASSIFIED"
+        assert row["extra"]["failed_checks"] == ["lint"]
+
+    def test_pending_restamps_the_row(self, p9, monkeypatch):
+        first = self._arm(p9, monkeypatch)
+        time.sleep(1.1)
+        out = p9.observe_pr(7, REPO)
+        row = p9.latest_row(7, REPO)
+        assert not out["folded"] and row["to_state"] == "WATCHING"
+        assert row["ts"] > first["ts"]
+        assert row["watcher_id"] == first["watcher_id"]
+
+    def test_second_wake_after_fold_changes_nothing(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        _checks(monkeypatch, p9, "pass")
+        assert p9.observe_pr(7, REPO)["folded"]
+        before = p9.latest_row(7, REPO)
+        again = p9.observe_pr(7, REPO)
+        assert not again["folded"]
+        assert p9.latest_row(7, REPO) == before
+
+    def test_stale_read_cannot_fold_a_rewatch(self, p9, monkeypatch):
+        """A re-watch lands between observe's read and its write: the fold
+        must lose the compare-and-swap, not bury the live watch."""
+        stale = self._arm(p9, monkeypatch)
+        p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=7, repo=REPO, from_state="WATCHING",
+            to_state="WATCHING", watcher_id="replacement", session_id="",
+            extra={"pid": 0, "host_watch": "t3"}))
+        real_latest = p9.latest_row
+        monkeypatch.setattr(p9, "latest_row", lambda pr, repo=None: dict(stale))
+        _checks(monkeypatch, p9, "pass")
+        assert not p9.observe_pr(7, REPO)["folded"]
+        live = real_latest(7, REPO)
+        assert live["to_state"] == "WATCHING"
+        assert live["watcher_id"] == "replacement"
+
+    def test_untracked_pr_is_reported_not_folded(self, p9, monkeypatch):
+        _checks(monkeypatch, p9, "pass")
+        out = p9.observe_pr(99, REPO)
+        assert out["state"] is None and not out["folded"]
+        assert p9.latest_row(99, REPO) is None
+
+
+class TestReapHostWatch:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def _arm(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+
+    def test_fresh_host_watch_survives_reap(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        assert p9.reap_stale_watchers(grace_seconds=0) == []
+        assert p9.latest_row(7, REPO)["to_state"] == "WATCHING"
+
+    def test_unobserved_past_ttl_is_reaped(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        monkeypatch.setenv("BROOMVA_P9_HOST_WATCH_TTL_S", "0")
+        reaped = p9.reap_stale_watchers(grace_seconds=0)
+        assert len(reaped) == 1
+        assert "host watch not observed" in reaped[0]["reason"]
+
+
+# ── harvest ─────────────────────────────────────────────────────────────────
+def _git(cwd, *args):
+    subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True,
+                   env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@t",
+                        "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@t"})
+
+
+@pytest.fixture()
+def tree(tmp_path):
+    """A checkout whose branch changed src/feature_flag.py, with docs that
+    mention it on main."""
+    return _make_tree(tmp_path)
+
+
+def _make_tree(tmp_path, extra_docs=0):
+    origin = tmp_path / "origin.git"
+    work = tmp_path / "work"
+    subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
+    subprocess.run(["git", "init", "-q", "-b", "main", str(work)], check=True)
+    files = {
+        "src/feature_flag.py": "x = 1\n",
+        "docs/guide.md": "Flags live in src/feature_flag.py.\n",
+        "research/entities/flags.md": "See feature_flag.py for the toggles.\n",
+        "CLAUDE.md": "Never edit feature_flag.py by hand.\n",
+        "docs/unrelated.md": "Nothing to see.\n",
+        **{f"docs/many/d{i:02}.md": "uses src/feature_flag.py\n"
+           for i in range(extra_docs)},
+    }
+    for rel, text in files.items():
+        (work / rel).parent.mkdir(parents=True, exist_ok=True)
+        (work / rel).write_text(text)
+    _git(work, "add", "-A")
+    _git(work, "commit", "-qm", "base")
+    _git(work, "remote", "add", "origin", str(origin))
+    _git(work, "push", "-q", "origin", "main")
+    _git(work, "fetch", "-q", "origin")
+    _git(work, "checkout", "-qb", "feature")
+    (work / "src/feature_flag.py").write_text("x = 2\n")
+    _git(work, "commit", "-qam", "change flag")
+    return work
+
+
+class TestHarvest:
+    @pytest.fixture(autouse=True)
+    def _on(self, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_HARVEST", "1")
+
+    def test_docs_graph_and_governance(self, p9, tree):
+        added = p9.harvest_queue(pr=7, repo="", cwd=tree)
+        by_source = {it.source: it for it in added}
+        assert sorted(it.source for it in added) == ["docs", "docs", "graph"]
+        assert not any("unrelated.md" in it.item for it in added)
+        docs = [it for it in added if it.source == "docs"]
+        assert {it.item.split()[1] for it in docs} == {"docs/guide.md", "CLAUDE.md"}
+        governance = next(it for it in docs if "CLAUDE.md" in it.item)
+        assert governance.isolation_tier == "blocked"
+        assert by_source["graph"].item.startswith("graph: research/entities/flags.md")
+        assert "PR #7" in by_source["graph"].item
+
+    def test_offered_once_even_after_pop(self, p9, tree):
+        first = p9.harvest_queue(pr=7, cwd=tree)
+        assert first
+        while p9.queue_pop() is not None:
+            pass
+        assert p9.harvest_queue(pr=7, cwd=tree) == []
+
+    def test_other_repo_reads_no_docs(self, p9, tree):
+        _git(tree, "remote", "set-url", "origin", "https://github.com/acme/widgets.git")
+        assert p9.harvest_queue(pr=7, repo="other/repo", cwd=tree) == []
+        assert p9.harvest_queue(pr=7, repo="acme/widgets", cwd=tree)
+
+    def test_off_switch(self, p9, tree, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_HARVEST", "0")
+        assert p9.harvest_queue(pr=7, cwd=tree) == []
+
+    def test_memory_follow_ups(self, p9, tmp_path, monkeypatch):
+        mem = tmp_path / "memory"
+        mem.mkdir()
+        (mem / "MEMORY.md").write_text("needs follow-up\n")
+        (mem / "fresh.md").write_text("Status: needs follow-up on the gate\n")
+        (mem / "quiet.md").write_text("all done\n")
+        old = mem / "old.md"
+        old.write_text("needs follow-up\n")
+        os.utime(old, (time.time() - 3 * 86400,) * 2)
+        monkeypatch.setenv("BROOMVA_P9_MEMORY_DIRS", str(mem))
+        added = p9.harvest_queue(cwd=tmp_path)
+        assert [it.source for it in added] == ["memory"]
+        assert "fresh.md" in added[0].item
+
+    def test_never_raises(self, p9, monkeypatch):
+        monkeypatch.setattr(p9, "_harvest", lambda *a: 1 / 0)
+        assert p9.harvest_queue() == []
+
+
+# ── hooks ───────────────────────────────────────────────────────────────────
+class TestWaitFromTool:
+    def test_watch_pull_request_url(self, p9):
+        w = p9._wait_from_tool("mcp__t3-code__watch_pull_request",
+                               {"url": "https://github.com/acme/widgets/pull/42"})
+        assert w == {"tool": "watch_pull_request", "pr": 42, "repo": "acme/widgets"}
+
+    def test_watch_pull_request_number(self, p9):
+        w = p9._wait_from_tool("mcp__t3-code__watch_pull_request",
+                               {"number": 5, "repository": "acme/widgets"})
+        assert w["pr"] == 5 and w["repo"] == "acme/widgets"
+
+    @pytest.mark.parametrize("name,tin,declared", [
+        ("mcp__t3-code__delegate_task", {"task": "x"}, True),
+        ("mcp__t3-code__delegate_task", {"task": "x", "mode": "wait"}, False),
+        ("mcp__t3-code__t3_background_wait", {"taskIds": ["a"]}, True),
+        ("mcp__t3-code__t3_background_wait", {"taskIds": ["a"], "waiting": False}, False),
+        ("Bash", {"command": "ls"}, False),
+        ("mcp__t3-code__task_status", {"taskId": "a"}, False),
+    ])
+    def test_which_calls_declare_a_wait(self, p9, name, tin, declared):
+        assert (p9._wait_from_tool(name, tin) is not None) is declared
+
+
+class TestHooks:
+    def _queue(self, p9, tier="none"):
+        p9.queue_push("docs: check the guide", "docs", isolation_tier=tier)
+
+    def test_post_tool_use_marks_and_briefs(self, p9):
+        self._queue(p9)
+        out = p9.hook_post_tool_use({
+            "tool_name": "mcp__t3-code__watch_pull_request",
+            "tool_input": {"url": "https://github.com/acme/widgets/pull/42"}})
+        ctx = out["hookSpecificOutput"]["additionalContext"]
+        assert out["hookSpecificOutput"]["hookEventName"] == "PostToolUse"
+        assert "check the guide" in ctx and "p9 wait-queue pop" in ctx
+        assert p9.consume_wait_mark()["pr"] == 42
+
+    def test_post_tool_use_quiet_on_empty_queue(self, p9):
+        assert p9.hook_post_tool_use({"tool_name": "mcp__t3-code__delegate_task",
+                                      "tool_input": {"task": "x"}}) is None
+        assert p9.consume_wait_mark() is not None  # still marked
+
+    def test_post_tool_use_ignores_other_tools(self, p9):
+        self._queue(p9)
+        assert p9.hook_post_tool_use({"tool_name": "Bash",
+                                      "tool_input": {"command": "ls"}}) is None
+        assert p9.consume_wait_mark() is None
+
+    def test_stop_blocks_once_per_wait(self, p9):
+        self._queue(p9)
+        p9.mark_wait("watch_pull_request", pr=1)
+        first = p9.hook_stop({})
+        assert first["decision"] == "block"
+        assert "check the guide" in first["reason"]
+        assert p9.hook_stop({}) is None
+
+    def test_stop_never_blocks_the_retry(self, p9):
+        self._queue(p9)
+        p9.mark_wait("watch_pull_request", pr=1)
+        assert p9.hook_stop({"stop_hook_active": True}) is None
+
+    def test_stop_quiet_without_a_wait(self, p9):
+        self._queue(p9)
+        assert p9.hook_stop({}) is None
+
+    def test_stop_ignores_blocked_items(self, p9):
+        self._queue(p9, tier="blocked")
+        p9.mark_wait("watch_pull_request", pr=1)
+        assert p9.hook_stop({}) is None
+
+    def test_stale_mark_is_dropped(self, p9):
+        self._queue(p9)
+        p9.mark_wait("watch_pull_request", pr=1)
+        path = next(p9.wait_marks_dir().glob("*.json"))
+        mark = json.loads(path.read_text())
+        mark["ts"] = "2000-01-01T00:00:00+00:00"
+        path.write_text(json.dumps(mark))
+        assert p9.hook_stop({}) is None
+
+    def test_cli_entry_survives_garbage(self, tmp_path):
+        env = {**os.environ, "BROOMVA_P9_HOME": str(tmp_path),
+               "BROOMVA_P9_HARVEST": "0"}
+        for payload in ("not json", "[1,2]", ""):
+            r = subprocess.run([sys.executable, str(_SCRIPT), "hook", "stop"],
+                               input=payload, capture_output=True, text=True, env=env)
+            assert r.returncode == 0
+            assert r.stdout == ""
+
+
+class TestHookInstall:
+    def _settings(self, tmp_path, data):
+        path = tmp_path / "settings.json"
+        path.write_text(json.dumps(data))
+        return path
+
+    def _run(self, p9, path, **kw):
+        import argparse
+        args = argparse.Namespace(settings=str(path), p9_path=kw.get("p9_path", str(_SCRIPT)),
+                                  uninstall=kw.get("uninstall", False),
+                                  dry_run=kw.get("dry_run", False))
+        return p9.cmd_hook_install(args)
+
+    def test_install_keeps_other_hooks_and_is_idempotent(self, p9, tmp_path):
+        other = {"type": "command", "command": "/x/bridge.sh"}
+        path = self._settings(tmp_path, {"model": "x", "hooks": {
+            "Stop": [{"hooks": [other]}]}})
+        self._run(p9, path)
+        once = json.loads(path.read_text())
+        self._run(p9, path)
+        assert json.loads(path.read_text()) == once
+        assert once["model"] == "x"
+        stop_cmds = [h["command"] for g in once["hooks"]["Stop"] for h in g["hooks"]]
+        assert "/x/bridge.sh" in stop_cmds
+        assert any(c.startswith(f"python3 -I {_SCRIPT} hook stop")
+                   and c.endswith("|| true") for c in stop_cmds)
+        assert "UserPromptSubmit" in once["hooks"]
+        post = once["hooks"]["PostToolUse"][0]
+        assert post["matcher"] == p9.HOOK_POST_TOOL_MATCHER
+        assert " hook post-tool-use " in post["hooks"][0]["command"]
+
+    def test_uninstall_removes_only_p9(self, p9, tmp_path):
+        other = {"type": "command", "command": "/x/bridge.sh"}
+        path = self._settings(tmp_path, {"hooks": {"Stop": [{"hooks": [other]}]}})
+        self._run(p9, path)
+        self._run(p9, path, uninstall=True)
+        assert json.loads(path.read_text()) == {"hooks": {"Stop": [{"hooks": [other]}]}}
+
+    def test_dry_run_writes_nothing(self, p9, tmp_path):
+        path = self._settings(tmp_path, {})
+        self._run(p9, path, dry_run=True)
+        assert json.loads(path.read_text()) == {}
+
+    def test_refuses_invalid_json(self, p9, tmp_path):
+        path = tmp_path / "settings.json"
+        path.write_text("{oops")
+        assert self._run(p9, path) == p9.EXIT_DEGRADED
+        assert path.read_text() == "{oops"
+
+
+# ── P20 round 1 regressions ─────────────────────────────────────────────────
+class TestRoundOneStateMachine:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def _arm(self, p9, monkeypatch, pr=7):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args(pr=pr))
+        return p9.latest_row(pr, REPO)
+
+    def test_overlapping_restamp_cannot_undo_a_fold(self, p9, monkeypatch):
+        """Reader A sees WATCHING, B folds GREEN, A's pending re-stamp lands:
+        the row must stay GREEN (the owner is unchanged by a fold)."""
+        snap = self._arm(p9, monkeypatch)
+        _checks(monkeypatch, p9, "pass")
+        assert p9.observe_pr(7, REPO)["folded"]
+        real_latest = p9.latest_row
+        monkeypatch.setattr(p9, "latest_row", lambda pr, repo=None: dict(snap))
+        _checks(monkeypatch, p9, "pending")
+        p9.observe_pr(7, REPO)
+        assert real_latest(7, REPO)["to_state"] == "GREEN"
+
+    def test_expect_state_rejects_a_moved_row(self, p9, monkeypatch):
+        row = self._arm(p9, monkeypatch)
+        ev = p9.PRStateEvent(ts=p9._utcnow(), pr=7, repo=REPO,
+                             from_state="WATCHING", to_state="WATCHING",
+                             watcher_id=row["watcher_id"], session_id="")
+        assert not p9.append_state_event(ev, expect_owner=row["watcher_id"],
+                                         expect_state="GREEN")
+        assert p9.append_state_event(ev, expect_owner=row["watcher_id"],
+                                     expect_state="WATCHING")
+
+    def test_observe_leaves_process_watches_alone(self, p9, monkeypatch):
+        p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=8, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="proc", session_id="",
+            extra={"pid": 4242, "log": "/x.log"}))
+        _checks(monkeypatch, p9, "pass")
+        before = p9.latest_row(8, REPO)
+        out = p9.observe_pr(8, REPO)
+        assert not out["folded"] and "note" in out
+        assert p9.latest_row(8, REPO) == before
+
+    def test_failed_read_does_not_restamp(self, p9, monkeypatch):
+        first = self._arm(p9, monkeypatch)
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: None)
+        time.sleep(1.1)
+        assert p9.observe_pr(7, REPO)["verdict"] == "unknown"
+        assert p9.latest_row(7, REPO)["ts"] == first["ts"]
+
+    def test_no_checks_yet_restamps(self, p9, monkeypatch):
+        first = self._arm(p9, monkeypatch)
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
+        time.sleep(1.1)
+        assert p9.observe_pr(7, REPO)["verdict"] == "none"
+        assert p9.latest_row(7, REPO)["ts"] > first["ts"]
+
+    def test_detach_on_t3_still_owned_by_host(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        assert p9.cmd_watch(_watch_args(detach=True)) == p9.EXIT_OK
+        assert p9.latest_row(7, REPO)["extra"]["host_watch"] == "t3"
+
+    def test_rewatch_of_host_row_supersedes(self, p9, monkeypatch, capsys):
+        first = self._arm(p9, monkeypatch)
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_OK
+        row = p9.latest_row(7, REPO)
+        assert row["to_state"] == "WATCHING"
+        assert row["watcher_id"] != first["watcher_id"]
+        assert "Refusing" not in capsys.readouterr().err
+
+    def test_rearm_skips_live_host_watch(self, p9, monkeypatch, capsys):
+        import argparse
+        self._arm(p9, monkeypatch)
+        capsys.readouterr()
+        p9.cmd_rearm(argparse.Namespace(now=True, dry_run=True, json=True))
+        assert json.loads(capsys.readouterr().out)["rearmed"] == []
+
+    def test_rearm_never_takes_host_rows(self, p9, monkeypatch, capsys):
+        """Past the TTL too: a detached child cannot register a T3 wake, so
+        a host watch is restored by its thread, and reap retires it."""
+        import argparse
+        self._arm(p9, monkeypatch)
+        monkeypatch.setenv("BROOMVA_P9_HOST_WATCH_TTL_S", "0")
+        capsys.readouterr()
+        p9.cmd_rearm(argparse.Namespace(now=True, dry_run=True, json=True))
+        assert json.loads(capsys.readouterr().out)["rearmed"] == []
+
+
+def test_pr_checks_reads_gh_no_checks_text(p9, monkeypatch):
+    class R:
+        stdout = ""
+        stderr = "no checks reported on the 'feature' branch\n"
+        returncode = 1
+    monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: R())
+    assert p9._pr_checks(7, REPO) == []
+
+
+def test_pr_checks_failure_is_none(p9, monkeypatch):
+    class R:
+        stdout = ""
+        stderr = "HTTP 401: Bad credentials\n"
+        returncode = 1
+    monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: R())
+    assert p9._pr_checks(7, REPO) is None
+
+
+def test_classic_watch_marks_and_harvests(p9, monkeypatch):
+    """The mark exists while the watcher runs, and is gone once the watch
+    folded inside the call: there is no wait left to hold a turn on."""
+    calls, marked = [], []
+    monkeypatch.setattr(p9, "harvest_queue", lambda **kw: calls.append(kw) or [])
+
+    class Done:
+        pid = 4243
+
+        def wait(self, timeout=None):
+            return 0
+
+    def spawn(*a, **k):
+        marked.append(any(p9.wait_marks_dir().glob("*.json")))
+        return Done()
+    monkeypatch.setattr(p9, "spawn_watcher", spawn)
+    p9.cmd_watch(_watch_args())
+    assert calls and calls[0]["pr"] == 7
+    assert marked == [True]
+    assert p9.consume_wait_mark() is None
+
+
+class TestRoundOneHarvest:
+    @pytest.fixture(autouse=True)
+    def _on(self, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_HARVEST", "1")
+
+    def test_named_repo_with_unknown_origin_fails_closed(self, p9, tree):
+        # canonical_repo cannot name a file:// origin, so the checkout could
+        # be any repo; a named repo must then get nothing from it.
+        _git(tree, "remote", "set-url", "origin", "file:///x/y")
+        assert p9.canonical_repo("file:///x/y") == ""
+        assert p9.harvest_queue(pr=7, repo="definitely/other", cwd=tree) == []
+        assert p9.harvest_queue(pr=7, repo="", cwd=tree)  # unnamed: local is all there is
+
+    def test_caps_apply_after_seen(self, p9, tree):
+        for i in range(8):
+            (tree / f"docs/d{i}.md").write_text("uses src/feature_flag.py\n")
+        _git(tree, "add", "-A")
+        _git(tree, "commit", "-qm", "docs")
+        # the docs were added on the branch, so they count as changed: move
+        # them onto main's side by committing there and rebasing.
+        _git(tree, "checkout", "-q", "main")
+        _git(tree, "checkout", "-q", "feature", "--", "docs")
+        _git(tree, "commit", "-qm", "docs on main")
+        _git(tree, "push", "-q", "origin", "main")
+        _git(tree, "fetch", "-q", "origin")
+        _git(tree, "checkout", "-q", "feature")
+        _git(tree, "rebase", "-q", "main")
+        first = [it for it in p9.harvest_queue(pr=7, cwd=tree) if it.source == "docs"]
+        assert len(first) == p9.HARVEST_CAPS["docs"]
+        while p9.queue_pop() is not None:
+            pass
+        second = [it for it in p9.harvest_queue(pr=7, cwd=tree) if it.source == "docs"]
+        assert second, "later candidates must not starve behind offered ones"
+        assert not {it.item for it in first} & {it.item for it in second}
+
+    def test_same_finding_not_requeued_under_new_wording(self, p9, tree):
+        p9.harvest_queue(pr=7, cwd=tree)
+        assert p9.harvest_queue(pr=None, cwd=tree) == []
+
+    def test_memory_is_this_projects_only(self, p9, tree, tmp_path, monkeypatch):
+        monkeypatch.delenv("BROOMVA_P9_MEMORY_DIRS", raising=False)
+        home = tmp_path / "fakehome"
+        monkeypatch.setenv("HOME", str(home))
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=tree,
+                             capture_output=True, text=True).stdout.strip()
+        mine = home / ".claude/projects" / p9._project_slug(Path(top)) / "memory"
+        other = home / ".claude/projects/-Users-x-finance/memory"
+        for d, text in ((mine, "needs follow-up: the gate"),
+                        (other, "Follow-up: pay the bill")):
+            d.mkdir(parents=True)
+            (d / "note.md").write_text(text)
+        added = [it for it in p9.harvest_queue(cwd=tree) if it.source == "memory"]
+        assert len(added) == 1 and str(mine) in added[0].item
+
+    def test_git_gets_only_the_budget_left(self, p9, monkeypatch):
+        seen = []
+
+        class R:
+            returncode, stdout = 0, ""
+        monkeypatch.setattr(p9.subprocess, "run",
+                            lambda *a, **k: seen.append(k["timeout"]) or R())
+        p9._git(["status"], deadline=time.monotonic() + 3)
+        assert seen and 0 < seen[0] <= 3
+        assert p9._git(["status"], deadline=time.monotonic() - 1) is None
+        assert len(seen) == 1, "a spent budget must not start git at all"
+
+
+class TestRoundOneHooks:
+    def _queue(self, p9):
+        p9.queue_push("docs: check the guide", "docs")
+
+    def test_retry_stop_still_consumes_the_mark(self, p9):
+        self._queue(p9)
+        p9.mark_wait("delegate_task")
+        assert p9.hook_stop({"stop_hook_active": True}) is None
+        assert p9.hook_stop({}) is None
+
+    def test_new_prompt_clears_an_unspent_mark(self, p9):
+        self._queue(p9)
+        p9.mark_wait("delegate_task")
+        p9.hook_prompt_submit({})
+        assert p9.hook_stop({}) is None
+
+    @pytest.mark.parametrize("target", ["missing", "old"])
+    def test_hook_command_cannot_exit_nonzero(self, p9, tmp_path, target):
+        """Claude reads exit 2 from a Stop hook as block. A missing p9 or an
+        older one without `hook` must not hold the turn."""
+        if target == "missing":
+            p9_path = tmp_path / "gone" / "p9.py"
+        else:
+            p9_path = tmp_path / "p9.py"
+            p9_path.write_text("import argparse\np=argparse.ArgumentParser()\n"
+                               "p.add_argument('cmd', choices=['watch'])\np.parse_args()\n")
+        cmd = p9._hook_command(p9_path, "stop")
+        r = subprocess.run(["sh", "-c", cmd], input='{"stop_hook_active": true}',
+                           capture_output=True, text=True)
+        assert r.returncode == 0 and r.stdout == ""
+
+    def test_install_refuses_a_p9_without_hooks(self, p9, tmp_path):
+        import argparse
+        old = tmp_path / "p9.py"
+        old.write_text("raise SystemExit(2)\n")
+        path = tmp_path / "settings.json"
+        path.write_text("{}")
+        rc = p9.cmd_hook_install(argparse.Namespace(
+            settings=str(path), p9_path=str(old), uninstall=False, dry_run=False))
+        assert rc == p9.EXIT_DEGRADED and path.read_text() == "{}"
+
+    def test_install_keeps_symlink_and_mode(self, p9, tmp_path):
+        import argparse
+        real = tmp_path / "real.json"
+        real.write_text("{}")
+        real.chmod(0o600)
+        link = tmp_path / "settings.json"
+        link.symlink_to(real)
+        p9.cmd_hook_install(argparse.Namespace(
+            settings=str(link), p9_path=str(_SCRIPT), uninstall=False, dry_run=False))
+        assert link.is_symlink()
+        assert "Stop" in json.loads(real.read_text())["hooks"]
+        assert (real.stat().st_mode & 0o777) == 0o600
+
+    def test_install_survives_null_hooks(self, p9, tmp_path):
+        import argparse
+        path = tmp_path / "settings.json"
+        path.write_text('{"hooks": null}')
+        rc = p9.cmd_hook_install(argparse.Namespace(
+            settings=str(path), p9_path=str(_SCRIPT), uninstall=False, dry_run=False))
+        assert rc == p9.EXIT_OK
+        assert "Stop" in json.loads(path.read_text())["hooks"]
+
+
+# ── P20 round 2 regressions ─────────────────────────────────────────────────
+class TestRoundTwo:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def _arm(self, p9, monkeypatch, verdict="pending"):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, verdict)
+        p9.cmd_watch(_watch_args())
+        return p9.latest_row(7, REPO)
+
+    def test_reap_cannot_bury_a_fold_that_raced_it(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        monkeypatch.setenv("BROOMVA_P9_HOST_WATCH_TTL_S", "0")
+        real = p9._reconcile_dead_watcher
+
+        def reconcile_while_observe_folds(pr, repo, reconcile):
+            # the agent's wake lands while reap is asking GitHub
+            _checks(monkeypatch, p9, "pass")
+            assert p9.observe_pr(pr, repo)["folded"]
+            return real(pr, repo, reconcile)
+        monkeypatch.setattr(p9, "_reconcile_dead_watcher", reconcile_while_observe_folds)
+        assert p9.reap_stale_watchers(grace_seconds=0) == []
+        assert p9.latest_row(7, REPO)["to_state"] == "GREEN"
+
+    def test_expect_state_requires_owner(self, p9):
+        ev = p9.PRStateEvent(ts=p9._utcnow(), pr=1, repo=REPO, from_state="PUSHED",
+                             to_state="WATCHING", watcher_id="w", session_id="")
+        with pytest.raises(p9.P9Error):
+            p9.append_state_event(ev, expect_state="PUSHED")
+
+    def test_no_checks_folds_red_after_the_window(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
+        first = p9.observe_pr(7, REPO)
+        assert not first["folded"]
+        assert p9.latest_row(7, REPO)["extra"].get("armed_at")  # carried forward
+        monkeypatch.setattr(p9, "NO_CHECKS_FOLD_SECONDS", 0)
+        out = p9.observe_pr(7, REPO)
+        assert out["folded"] and out["state"] == "RED_UNCLASSIFIED"
+        assert "no checks" in p9.latest_row(7, REPO)["extra"]["reason"]
+
+    def test_t3_no_checks_notice_folds_at_once(self, p9, monkeypatch):
+        """T3 sends its no-checks notice once per head; acting on it must
+        not depend on p9's own clock having run long enough."""
+        self._arm(p9, monkeypatch)
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
+        assert not p9.observe_pr(7, REPO)["folded"]
+        out = p9.observe_pr(7, REPO, no_checks_final=True)
+        assert out["folded"] and out["state"] == "RED_UNCLASSIFIED"
+
+    def test_no_checks_flag_never_folds_running_checks(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        assert not p9.observe_pr(7, REPO, no_checks_final=True)["folded"]
+
+    def test_foreign_session_cannot_take_a_live_host_watch(self, p9, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_SESSION", "session-a")
+        self._arm(p9, monkeypatch)
+        monkeypatch.setenv("BROOMVA_P9_SESSION", "session-b")
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_DEGRADED
+        assert p9.latest_row(7, REPO)["session_id"] == "session-a"
+        assert p9.cmd_watch(_watch_args(adopt=True)) == p9.EXIT_OK
+        assert p9.latest_row(7, REPO)["session_id"] == "session-b"
+
+
+def _checks_none(monkeypatch, p9):
+    monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: None)
+
+
+class TestRoundTwoHarvest:
+    @pytest.fixture(autouse=True)
+    def _on(self, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_HARVEST", "1")
+
+    def test_long_session_reaches_every_finding(self, p9, tmp_path):
+        work = _make_tree(tmp_path, extra_docs=50)
+        offered = set()
+        for _ in range(20):
+            for it in p9.harvest_queue(pr=7, cwd=work):
+                if it.source == "docs":
+                    offered.add(it.item.split()[1])
+            while p9.queue_pop() is not None:
+                pass
+        many = {d for d in offered if d.startswith("docs/many/")}
+        assert len(many) == 50
+
+    def test_same_doc_in_two_repos_is_two_findings(self, p9, tmp_path):
+        a = _make_tree(tmp_path / "a")
+        b = _make_tree(tmp_path / "b")
+        _git(a, "remote", "set-url", "origin", "https://github.com/acme/one.git")
+        _git(b, "remote", "set-url", "origin", "https://github.com/acme/two.git")
+        assert any("docs/guide.md" in it.item for it in p9.harvest_queue(cwd=a))
+        assert any("docs/guide.md" in it.item for it in p9.harvest_queue(cwd=b))
+
+    def test_fifo_in_memory_does_not_hang(self, p9, tmp_path, monkeypatch):
+        mem = tmp_path / "memory"
+        mem.mkdir()
+        os.mkfifo(mem / "followup.md")
+        (mem / "real.md").write_text("needs follow-up\n")
+        monkeypatch.setenv("BROOMVA_P9_MEMORY_DIRS", str(mem))
+        t0 = time.monotonic()
+        added = p9.harvest_queue(cwd=tmp_path)
+        assert time.monotonic() - t0 < 5
+        assert [Path(it.item.split()[1]).name for it in added] == ["real.md"]
+
+    def test_memory_respects_the_budget(self, p9, tmp_path, monkeypatch):
+        mem = tmp_path / "memory"
+        mem.mkdir()
+        (mem / "a.md").write_text("needs follow-up\n")
+        assert p9._harvest_memory([mem], deadline=time.monotonic() - 1) == []
+        assert len(p9._harvest_memory([mem], deadline=time.monotonic() + 5)) == 1
+
+
+class TestRoundTwoInstall:
+    def _args(self, path, p9_path, **kw):
+        import argparse
+        return argparse.Namespace(settings=str(path), p9_path=p9_path,
+                                  uninstall=kw.get("uninstall", False),
+                                  dry_run=False)
+
+    def test_relative_p9_path_is_made_absolute(self, p9, tmp_path, monkeypatch):
+        path = tmp_path / "settings.json"
+        path.write_text("{}")
+        monkeypatch.chdir(_SCRIPT.parent)
+        p9.cmd_hook_install(self._args(path, "p9.py"))
+        cmd = json.loads(path.read_text())["hooks"]["Stop"][0]["hooks"][0]["command"]
+        assert f"-I {_SCRIPT} hook stop" in cmd
+
+    def test_uninstall_on_clean_settings_writes_nothing(self, p9, tmp_path):
+        path = tmp_path / "settings.json"
+        path.write_text('{"model": "x"}')
+        p9.cmd_hook_install(self._args(path, str(_SCRIPT), uninstall=True))
+        assert path.read_text() == '{"model": "x"}'
+
+
+# ── dogfood regression (PR #313 on broomva/skills) ──────────────────────────
+class TestDogfood:
+    @pytest.fixture(autouse=True)
+    def _on(self, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_HARVEST", "1")
+
+    def test_a_common_file_name_is_not_a_mention(self, p9, tmp_path):
+        """Changing one of many conftest.py files must not flag every doc
+        that mentions some other conftest.py."""
+        work = _make_tree(tmp_path)
+        _git(work, "checkout", "-q", "main")
+        for d in ("pkg_a", "pkg_b"):
+            (work / d).mkdir()
+            (work / d / "conftest.py").write_text("x = 1\n")
+        (work / "pkg_b/README.md").write_text("Fixtures live in conftest.py.\n")
+        (work / "docs/testing.md").write_text("See pkg_a/conftest.py.\n")
+        _git(work, "add", "-A")
+        _git(work, "commit", "-qm", "pkgs")
+        _git(work, "push", "-q", "origin", "main")
+        _git(work, "fetch", "-q", "origin")
+        _git(work, "checkout", "-q", "feature")
+        _git(work, "rebase", "-q", "main")
+        (work / "pkg_a/conftest.py").write_text("x = 2\n")
+        _git(work, "commit", "-qam", "touch a conftest")
+        docs = {it.item.split()[1] for it in p9.harvest_queue(pr=7, cwd=work)}
+        assert "pkg_b/README.md" not in docs      # bare common name: not a mention
+        assert "docs/testing.md" in docs          # full path: a mention
+        assert "docs/guide.md" in docs            # unique name still counts
+
+
+# ── P20 round 3 regressions ─────────────────────────────────────────────────
+class TestRoundThree:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def _arm(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+
+    def test_stale_no_checks_read_cannot_fold_red(self, p9, monkeypatch):
+        """An older no-checks read lands after a newer read found checks
+        running: its ticket is older, so it is dropped."""
+        self._arm(p9, monkeypatch)
+        monkeypatch.setattr(p9, "NO_CHECKS_FOLD_SECONDS", 0)
+
+        def outer_checks(pr, repo):
+            _checks(monkeypatch, p9, "pending")
+            p9.observe_pr(7, REPO)                    # newer ticket lands first
+            return []
+        monkeypatch.setattr(p9, "_pr_checks", outer_checks)
+        out = p9.observe_pr(7, REPO)
+        assert not out["folded"] and out["state"] == "WATCHING"
+
+    def test_t3_threads_are_separate_sessions(self, p9, monkeypatch):
+        a = p9.current_session_id()
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-2")
+        assert p9.current_session_id() != a
+
+    def test_another_t3_thread_cannot_take_the_watch(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-2")
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_DEGRADED
+
+
+class TestRoundThreeHarvest:
+    @pytest.fixture(autouse=True)
+    def _on(self, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_HARVEST", "1")
+
+    def _branch_touching(self, work, files, changed, docs):
+        _git(work, "checkout", "-q", "main")
+        for rel in files:
+            (work / rel).parent.mkdir(parents=True, exist_ok=True)
+            (work / rel).write_text("x = 1\n")
+        for rel, text in docs.items():
+            (work / rel).write_text(text)
+        _git(work, "add", "-A")
+        _git(work, "commit", "-qm", "setup")
+        _git(work, "push", "-q", "origin", "main")
+        _git(work, "fetch", "-q", "origin")
+        _git(work, "checkout", "-q", "feature")
+        _git(work, "rebase", "-q", "main")
+        (work / changed).write_text("x = 2\n")
+        _git(work, "commit", "-qam", "change")
+
+    def test_quoted_path_still_counts_as_a_duplicate_name(self, p9, tmp_path):
+        work = _make_tree(tmp_path)
+        self._branch_touching(work, ["alpha/conftest.py", "café/conftest.py"],
+                              "alpha/conftest.py",
+                              {"docs/testing.md": "Fixtures: conftest.py\n"})
+        items = [it.item for it in p9.harvest_queue(pr=7, cwd=work)]
+        assert not any("docs/testing.md" in i for i in items)
+
+    def test_root_level_shared_name_is_ambiguous(self, p9, tmp_path):
+        work = _make_tree(tmp_path)
+        self._branch_touching(work, ["conftest.py", "pkg/conftest.py"],
+                              "conftest.py",
+                              {"pkg/README.md": "See conftest.py.\n"})
+        items = [it.item for it in p9.harvest_queue(pr=7, cwd=work)]
+        assert not any("pkg/README.md" in i for i in items)
+
+    def test_expired_offer_comes_back(self, p9, tree):
+        first = p9.harvest_queue(pr=7, cwd=tree)
+        assert first
+        p9.queue_clear()
+        seen = p9._seen_path(p9.current_session_id())
+        ledger = json.loads(seen.read_text())
+        seen.write_text(json.dumps({k: "2000-01-01T00:00:00+00:00" for k in ledger}))
+        assert len(p9.harvest_queue(pr=7, cwd=tree)) == len(first)
+
+    def test_dangling_link_costs_only_itself(self, p9, tmp_path):
+        mem = tmp_path / "memory"
+        mem.mkdir()
+        (mem / "real.md").write_text("needs follow-up\n")
+        (mem / "broken.md").symlink_to(tmp_path / "nowhere.md")
+        found = p9._harvest_memory([mem], deadline=time.monotonic() + 5)
+        assert [Path(c[2].split()[1]).name for c in found] == ["real.md"]
+
+    def test_slow_stats_stop_at_the_budget(self, p9, tmp_path, monkeypatch):
+        mem = tmp_path / "memory"
+        mem.mkdir()
+        for i in range(30):
+            (mem / f"n{i}.md").write_text("needs follow-up\n")
+        real_stat = Path.stat
+
+        def slow_stat(self, *a, **k):
+            time.sleep(0.05)
+            return real_stat(self, *a, **k)
+        monkeypatch.setattr(Path, "stat", slow_stat)
+        t0 = time.monotonic()
+        p9._harvest_memory([mem], deadline=time.monotonic() + 0.2)
+        assert time.monotonic() - t0 < 0.6
+
+
+# ── STRUCTURAL: deterministic interleavings for transact_pr_state ───────────
+class TestInterleavings:
+    """The continuation review named four schedules. Each is forced exactly:
+    one observe runs INSIDE another's checks read, and time.time() is
+    scripted, so the order of reads and writes is the test's, not the OS's."""
+
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def _arm(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        return p9.latest_row(7, REPO)
+
+    def _tickets(self, monkeypatch, p9, *values):
+        """Script the next observation tickets: a thread that took its ticket
+        earlier but finished its read later."""
+        base = p9.next_observation_ticket() + 1000
+        it = iter([base + v for v in values])
+        monkeypatch.setattr(p9, "next_observation_ticket", lambda: next(it))
+        return base
+
+    def test_newer_green_survives_an_older_pending_landing_first(self, p9, monkeypatch):
+        """Round 4's lost green: the older pending read writes first; the
+        newer green read must still fold."""
+        self._arm(p9, monkeypatch)
+        self._tickets(monkeypatch, p9, 200, 100)     # outer green is newer
+
+        def outer_checks(pr, repo):
+            monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [
+                {"name": "c", "bucket": "pending"}])
+            p9.observe_pr(7, REPO)                    # inner pending, read at 100
+            return [{"name": "c", "bucket": "pass"}]
+        monkeypatch.setattr(p9, "_pr_checks", outer_checks)
+        assert p9.observe_pr(7, REPO)["folded"]
+        assert p9.latest_row(7, REPO)["to_state"] == "GREEN"
+
+    def test_older_green_cannot_override_a_newer_pending(self, p9, monkeypatch):
+        """Reordered responses: a green read that started earlier lands after
+        a newer pending read; it is older news and is dropped."""
+        self._arm(p9, monkeypatch)
+        base = self._tickets(monkeypatch, p9, 100, 200)    # outer green is older
+
+        def outer_checks(pr, repo):
+            monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [
+                {"name": "c", "bucket": "pending"}])
+            p9.observe_pr(7, REPO)                    # inner pending, read at 200
+            return [{"name": "c", "bucket": "pass"}]
+        monkeypatch.setattr(p9, "_pr_checks", outer_checks)
+        assert not p9.observe_pr(7, REPO)["folded"]
+        row = p9.latest_row(7, REPO)
+        assert row["to_state"] == "WATCHING" and row["extra"]["obs_ticket"] == base + 200
+
+    def test_rewatch_during_a_read_voids_the_observation(self, p9, monkeypatch):
+        """Replacement ownership: the watch is replaced while observe reads
+        checks; its green belongs to the old generation."""
+        first = self._arm(p9, monkeypatch)
+
+        def outer_checks(pr, repo):
+            _checks(monkeypatch, p9, "pending")
+            p9.cmd_watch(_watch_args())               # new generation
+            return [{"name": "c", "bucket": "pass"}]
+        monkeypatch.setattr(p9, "_pr_checks", outer_checks)
+        assert not p9.observe_pr(7, REPO)["folded"]
+        row = p9.latest_row(7, REPO)
+        assert row["to_state"] == "WATCHING"
+        assert row["watcher_id"] != first["watcher_id"]
+
+    def test_refresh_during_reap_keeps_the_watch(self, p9, monkeypatch):
+        """Refreshed TTL: reap judges the row expired, an observe re-stamps
+        it while reap asks GitHub, and the stale judgement must not land."""
+        self._arm(p9, monkeypatch)
+        monkeypatch.setenv("BROOMVA_P9_HOST_WATCH_TTL_S", "0")
+        real = p9._reconcile_dead_watcher
+
+        def observe_meanwhile(pr, repo, reconcile):
+            _checks(monkeypatch, p9, "pending")
+            p9.observe_pr(pr, repo)
+            return real(pr, repo, reconcile)
+        monkeypatch.setattr(p9, "_reconcile_dead_watcher", observe_meanwhile)
+        assert p9.reap_stale_watchers(grace_seconds=0) == []
+        assert p9.latest_row(7, REPO)["to_state"] == "WATCHING"
+
+    def test_transact_rejects_an_event_from_the_wrong_state(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        bad = p9.PRStateEvent(ts=p9._utcnow(), pr=7, repo=REPO, from_state="GREEN",
+                              to_state="MERGE_READY", watcher_id="x", session_id="")
+        with pytest.raises(p9.IllegalTransitionError):
+            p9.transact_pr_state(7, REPO, lambda latest: [bad])
+
+    def test_supersede_cannot_bury_a_fold_it_did_not_see(self, p9, monkeypatch):
+        """Watch supersession: re-watch read WATCHING, a fold to GREEN landed,
+        then the supersede would write ABANDONED over the GREEN."""
+        stale = self._arm(p9, monkeypatch)
+        _checks(monkeypatch, p9, "pass")
+        assert p9.observe_pr(7, REPO)["folded"]
+        real_latest = p9.latest_row
+        monkeypatch.setattr(p9, "latest_row", lambda pr, repo=None: dict(stale))
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_DEGRADED
+        assert real_latest(7, REPO)["to_state"] == "GREEN"
+
+
+# ── reshaped round 1 regressions ────────────────────────────────────────────
+class TestReshapedRoundOne:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def test_tickets_ignore_the_clock(self, p9, monkeypatch):
+        monkeypatch.setattr(p9.time, "time", lambda: 5.0)  # frozen, even backward
+        a, b = p9.next_observation_ticket(), p9.next_observation_ticket()
+        assert b > a
+
+    def test_clock_step_back_does_not_drop_green(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        monkeypatch.setattr(p9.time, "time", lambda: 1.0)  # NTP stepped back
+        _checks(monkeypatch, p9, "pass")
+        assert p9.observe_pr(7, REPO)["folded"]
+
+    def test_concurrent_arm_refuses_instead_of_overwriting(self, p9, monkeypatch):
+        """Thread B arms inside thread A's preflight; A must refuse."""
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        real_ceiling = p9.enforce_concurrency_ceiling
+        fired = []
+
+        def b_arms_meanwhile(*a, **k):
+            if not fired:
+                fired.append(1)
+                monkeypatch.setenv("T3CODE_THREAD_ID", "thread-2")
+                assert p9.cmd_watch(_watch_args()) == p9.EXIT_OK
+                monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+            return real_ceiling(*a, **k)
+        monkeypatch.setattr(p9, "enforce_concurrency_ceiling", b_arms_meanwhile)
+        owner_b_session = None
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_DEGRADED
+        row = p9.latest_row(7, REPO)
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-2")
+        owner_b_session = p9.current_session_id()
+        assert row["session_id"] == owner_b_session
+
+    def test_rearm_child_leaves_a_fold_alone(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        judged = p9.latest_row(7, REPO)
+        _checks(monkeypatch, p9, "pass")
+        assert p9.observe_pr(7, REPO)["folded"]           # fold lands first
+        _checks(monkeypatch, p9, "pending")               # a re-arm would show
+        rc = p9.cmd_watch(_watch_args(adopt=True, expect_owner=judged["watcher_id"]))
+        assert rc == p9.EXIT_OK
+        assert p9.latest_row(7, REPO)["to_state"] == "GREEN"
+
+    def test_rearm_child_is_fenced_and_never_host_owned(self, p9, monkeypatch, capsys):
+        """Run from a T3 thread, rearm restores a dead classic watch with a
+        real watcher: the child is told the exact row and not to take the
+        host path."""
+        import argparse
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2000-01-01T00:00:00+00:00", pr=9, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="deadw", session_id="other",
+            extra={"pid": 999999}))
+        row = p9.latest_row(9, REPO)
+        launched = []
+        monkeypatch.setattr(p9.subprocess, "Popen", lambda argv, **k: launched.append(
+            (argv, k)) or type("P", (), {"pid": 1})())
+        p9.cmd_rearm(argparse.Namespace(now=True, dry_run=False, json=True))
+        argv, kw = launched[0]
+        assert argv[argv.index("--expect-owner") + 1] == f"deadw@{row['ts']}"
+        assert kw["env"]["P9_PR_WATCH_OWNER"] == "p9"
+
+    def test_discarded_observation_reports_the_current_state(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+
+        def fold_meanwhile(pr, repo):
+            monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [
+                {"name": "c", "bucket": "pass"}])
+            p9.observe_pr(7, REPO)
+            return [{"name": "c", "bucket": "pending"}]
+        monkeypatch.setattr(p9, "_pr_checks", fold_meanwhile)
+        out = p9.observe_pr(7, REPO)
+        assert not out["folded"] and out["state"] == "GREEN"
+
+
+class TestPinnedClaims:
+    def test_memory_read_is_capped(self, p9, tmp_path):
+        mem = tmp_path / "memory"
+        mem.mkdir()
+        cap = p9._MEMORY_READ_BYTES
+        (mem / "late.md").write_text("x" * (cap + 10) + "\nneeds follow-up\n")
+        (mem / "early.md").write_text("needs follow-up\n" + "x" * (cap + 10))
+        found = p9._harvest_memory([mem], deadline=time.monotonic() + 5)
+        assert [Path(c[2].split()[1]).name for c in found] == ["early.md"]
+
+    def test_hook_and_cli_share_a_session_in_one_env(self, tmp_path):
+        """The hook process and the agent's Bash inherit one environment; in
+        it they must resolve one session. (The live measurement is in the
+        PR; this pins the code half.)"""
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("BROOMVA_P9_SESSION", "CLAUDE_CODE_MESSAGING_SOCKET",
+                            "ORCA_WORKTREE_ID", "AGENT_SESSION_ID")}
+        env.update(BROOMVA_P9_HOME=str(tmp_path), BROOMVA_P9_HARVEST="0",
+                   T3CODE_THREAD_ID="thread-x", CLAUDE_CODE_MESSAGING_SOCKET="/tmp/s1")
+        subprocess.run([sys.executable, str(_SCRIPT), "wait-queue", "push",
+                        "--item", "from bash"], env=env, check=True, capture_output=True)
+        r = subprocess.run([sys.executable, str(_SCRIPT), "hook", "post-tool-use"],
+                           input=json.dumps({"tool_name": "mcp__t3-code__delegate_task",
+                                             "tool_input": {"task": "x"}}),
+                           env=env, capture_output=True, text=True)
+        assert "from bash" in json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+
+
+# ── reshaped round 2 regressions ────────────────────────────────────────────
+def test_rearm_recovers_its_own_sessions_dead_watch_end_to_end(tmp_path):
+    """Real processes: `p9 rearm` from the session that owns a dead watch
+    must re-arm it (the child's reap preflight once folded the very row the
+    child was told to act on, and the watch was lost for good)."""
+    home = tmp_path / "p9home"
+    home.mkdir()
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake_gh = bindir / "gh"
+    fake_gh.write_text("#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = --json ] && echo '[]'; done\nexit 0\n")
+    fake_gh.chmod(0o755)
+    row = {"ts": "2000-01-01T00:00:00+00:00", "pr": 42, "repo": "o/r",
+           "from_state": "PUSHED", "to_state": "WATCHING", "watcher_id": "deadw",
+           "attempt": 0, "evaluator_score": None, "extra": {"pid": 999999},
+           "session_id": "sess-1"}
+    (home / "state.jsonl").write_text(json.dumps(row) + "\n")
+    env = {k: v for k, v in os.environ.items() if k not in (
+        "T3CODE_THREAD_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "ORCA_WORKTREE_ID",
+        "AGENT_SESSION_ID", "PASEO_AGENT_ID", "P9_PR_WATCH_OWNER")}
+    env.update(BROOMVA_P9_HOME=str(home), BROOMVA_P9_SESSION="sess-1",
+               BROOMVA_P9_POLICY=str(_FIXTURES / "policy-good.yaml"),
+               BROOMVA_P9_HARVEST="0", PATH=f"{bindir}{os.pathsep}{env['PATH']}")
+    r = subprocess.run([sys.executable, str(_SCRIPT), "rearm", "--json"],
+                       env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    final = None
+    for _ in range(100):
+        rows = [json.loads(l) for l in (home / "state.jsonl").read_text().splitlines() if l]
+        final = [x for x in rows if x["pr"] == 42][-1]
+        if final["to_state"] == "GREEN":
+            break
+        time.sleep(0.2)
+    assert final["to_state"] == "GREEN", final
+
+
+class TestReshapedRoundTwo:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def test_damaged_counter_never_goes_backwards(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        for _ in range(3):
+            p9.observe_pr(7, REPO)
+        held = p9.latest_row(7, REPO)["extra"]["obs_ticket"]
+        (p9.p9_home() / "observation-ticket").write_text("")   # truncated
+        assert p9.next_observation_ticket() > held
+        (p9.p9_home() / "observation-ticket").unlink()          # deleted
+        assert p9.next_observation_ticket() > held
+        _checks(monkeypatch, p9, "pass")
+        assert p9.observe_pr(7, REPO)["folded"]
+
+    def test_counter_write_leaves_no_partial_file(self, p9):
+        p9.next_observation_ticket()
+        assert not list(p9.p9_home().glob("observation-ticket.tmp"))
+
+    def test_child_ignores_a_row_restamped_since_judged(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        judged = p9.latest_row(7, REPO)
+        time.sleep(1.1)
+        p9.observe_pr(7, REPO)                    # live again: new ts
+        rc = p9.cmd_watch(_watch_args(
+            adopt=True, expect_owner=f"{judged['watcher_id']}@{judged['ts']}"))
+        assert rc == p9.EXIT_OK
+        assert p9.latest_row(7, REPO)["watcher_id"] == judged["watcher_id"]
+
+    def test_superseded_read_is_not_reported_as_still_watching(self, p9, monkeypatch, capsys):
+        import argparse
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        base = p9.next_observation_ticket() + 1000
+        it = iter([base + 100, base + 200])
+        monkeypatch.setattr(p9, "next_observation_ticket", lambda: next(it))
+
+        def outer(pr, repo):
+            _checks(monkeypatch, p9, "pending")
+            p9.observe_pr(7, REPO)                # newer pending lands first
+            return [{"name": "c", "bucket": "pass"}]
+        monkeypatch.setattr(p9, "_pr_checks", outer)
+        capsys.readouterr()
+        p9.cmd_observe(argparse.Namespace(pr="7", repo=None, json=False, no_checks=False))
+        out = capsys.readouterr().out
+        assert "still watching" not in out and "again" in out
+
+
+# ── reshaped round 3 regressions ────────────────────────────────────────────
+class TestReshapedRoundThree:
+    def test_classic_arm_refuses_over_a_concurrent_host_watch(self, p9, monkeypatch):
+        """A classic watch paused in its harvest; a T3 thread arms meanwhile;
+        the classic arm must not overwrite it."""
+        monkeypatch.delenv("T3CODE_THREAD_ID", raising=False)
+        monkeypatch.setenv("BROOMVA_P9_SESSION", "classic")
+
+        fired = []
+
+        def t3_arms_meanwhile(**kw):
+            if fired:
+                return []           # the inner T3 watch harvests too
+            fired.append(1)
+            monkeypatch.setenv("T3CODE_THREAD_ID", "thread-9")
+            monkeypatch.setenv("BROOMVA_P9_SESSION", "t3")
+            _checks(monkeypatch, p9, "pending")
+            _no_spawn(monkeypatch, p9)
+            assert p9.cmd_watch(_watch_args()) == p9.EXIT_OK
+            monkeypatch.delenv("T3CODE_THREAD_ID")
+            monkeypatch.setenv("BROOMVA_P9_SESSION", "classic")
+            terminated = []
+
+            class Proc:
+                pid = 4321
+
+                def terminate(self):
+                    terminated.append(1)
+
+                def wait(self, timeout=None):
+                    return 0
+            monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: Proc())
+            return []
+        monkeypatch.setattr(p9, "harvest_queue", t3_arms_meanwhile)
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_DEGRADED
+        row = p9.latest_row(7, REPO)
+        assert row["session_id"] == "t3" and row["extra"]["host_watch"] == "t3"
+
+    def test_process_owned_note_does_not_say_run_again(self, p9, monkeypatch, capsys):
+        import argparse
+        p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=8, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="proc", session_id="",
+            extra={"pid": os.getpid()}))
+        _checks(monkeypatch, p9, "pass")
+        p9.cmd_observe(argparse.Namespace(pr="8", repo=None, json=False, no_checks=False))
+        assert "again" not in capsys.readouterr().out
+
+    @pytest.mark.parametrize("text,hit", [
+        ("uses data/b.py", False), ("uses a/b.py.", True), ("`a/b.py`", True),
+        ("see ./a/b.py", False), ("a/b.pyc", False)])
+    def test_path_mention_is_whole(self, p9, text, hit):
+        assert p9._mentions(text, "a/b.py") is hit
+
+
+def test_harvest_does_not_match_a_path_inside_another(p9, tmp_path, monkeypatch):
+    monkeypatch.setenv("BROOMVA_P9_HARVEST", "1")
+    work = _make_tree(tmp_path)
+    _git(work, "checkout", "-q", "main")
+    (work / "a").mkdir()
+    (work / "a/b.py").write_text("x = 1\n")
+    (work / "docs/other.md").write_text("uses data/b.py\n")
+    (work / "docs/right.md").write_text("uses a/b.py\n")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-qm", "setup")
+    _git(work, "push", "-q", "origin", "main")
+    _git(work, "fetch", "-q", "origin")
+    _git(work, "checkout", "-q", "feature")
+    _git(work, "rebase", "-q", "main")
+    (work / "a/b.py").write_text("x = 2\n")
+    _git(work, "commit", "-qam", "change a/b.py")
+    docs = {it.item.split()[1] for it in p9.harvest_queue(pr=5, cwd=work)}
+    assert "docs/right.md" in docs and "docs/other.md" not in docs
+
+
+# ── STRUCTURAL #2: one state-write boundary for every lifecycle writer ──────
+def test_every_writer_is_fenced():
+    """The executable invariant the continuation review asked for: every
+    production call to append_state_event declares its fence — the exact row
+    it decided on (`expect_row`), owner + state for a row only its own
+    process writes, or an explicit `takeover` — and nothing else writes the
+    state file. A new unfenced writer fails here, not in a later review."""
+    import ast
+    src = _SCRIPT.read_text()
+    tree = ast.parse(src)
+    unfenced = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef) or fn.name == "append_state_event":
+            continue
+        for node in ast.walk(fn):
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", "")
+            if name != "append_state_event":
+                continue
+            # A fence keyword whose value is the literal None is no fence.
+            kw = {k.arg for k in node.keywords
+                  if not (isinstance(k.value, ast.Constant) and k.value.value is None)}
+            if not ("expect_row" in kw or "takeover" in kw
+                    or {"expect_owner", "expect_state"} <= kw):
+                unfenced.append(f"{fn.name}:{node.lineno}")
+    # Other routes to the state file: jsonl_append(state_jsonl(), ...), and
+    # aliasing the writer (w = append_state_event; w(ev)) to dodge the check.
+    boundary = {"append_state_event", "transact_pr_state"}
+    inside = {id(n) for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef)
+              and fn.name in boundary for n in ast.walk(fn)}
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and id(node) not in inside
+                and getattr(node.func, "id", "") == "jsonl_append"
+                and node.args and "state_jsonl" in ast.unparse(node.args[0])):
+            unfenced.append(f"jsonl_append(state_jsonl):{node.lineno}")
+        if (isinstance(node, ast.Name) and node.id == "append_state_event"
+                and isinstance(node.ctx, ast.Load)):
+            parent_calls = [c for c in ast.walk(tree) if isinstance(c, ast.Call)
+                            and c.func is node]
+            if not parent_calls:
+                unfenced.append(f"alias of append_state_event:{node.lineno}")
+    assert unfenced == [], f"unfenced state writers: {unfenced}"
+    module_calls = [n.lineno for n in tree.body for c in ast.walk(n)
+                    if not isinstance(n, (ast.FunctionDef, ast.ClassDef))
+                    and isinstance(c, ast.Call)
+                    and (getattr(c.func, "id", None) or getattr(c.func, "attr", "")) == "append_state_event"]
+    assert module_calls == [], f"module-level state writes: {module_calls}"
+    assert unfenced == [], f"unfenced state writers: {unfenced}"
+    direct = {fn.name for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef)
+              and "path = state_jsonl()" in (ast.get_source_segment(src, fn) or "")}
+    assert direct <= {"append_state_event", "transact_pr_state"}, direct
+
+
+class TestLifecycleInterleavings:
+    def _seed_ready(self, p9, pr):
+        for prev, curr in [("PUSHED", "WATCHING"), ("WATCHING", "GREEN"),
+                           ("GREEN", "MERGE_READY")]:
+            p9.append_state_event(p9.PRStateEvent(
+                ts="2026-09-26T00:00:00+00:00", pr=pr, repo=REPO,
+                from_state=prev, to_state=curr, watcher_id="seed"))
+
+    def _auto_merge(self, p9, monkeypatch, pr, *, action, meanwhile):
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-with-auto-merge.yaml"))
+        listing = type("L", (), {"branch": "feat/x", "paths": ["a.py"],
+                                 "unmeasured": [], "head_sha": "h"})()
+        monkeypatch.setattr(p9, "_gh_pr_listing", lambda pr, repo: listing)
+
+        def decide(*a, **k):
+            meanwhile()
+            return {"action": action, "reason": "r", "policy": None,
+                    "source": "test", "gates": {}, "base_sha": None,
+                    "base": "main", "head_sha": "h"}
+        monkeypatch.setattr(p9, "decide_auto_merge", decide)
+        monkeypatch.setattr(p9, "_gh_pr_merge", lambda *a, **k: 0)
+        return p9.main(["auto-merge", str(pr), "--repo", REPO])
+
+    def _rewatch(self, p9, pr):
+        p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=pr, repo=REPO, from_state="MERGE_READY",
+            to_state="WATCHING", watcher_id="rewatch"), takeover="test")
+
+    def test_merge_records_merged_when_the_row_held(self, p9, monkeypatch):
+        self._seed_ready(p9, 50)
+        assert self._auto_merge(p9, monkeypatch, 50, action="auto",
+                                meanwhile=lambda: None) == p9.EXIT_OK
+        assert p9.latest_row(50, REPO)["to_state"] == "MERGED"
+
+    def test_row_moved_during_gates_blocks_the_merge(self, p9, monkeypatch):
+        self._seed_ready(p9, 51)
+        merged = []
+        rc = self._auto_merge(p9, monkeypatch, 51, action="auto",
+                              meanwhile=lambda: self._rewatch(p9, 51))
+        monkeypatch.setattr(p9, "_gh_pr_merge", lambda *a, **k: merged.append(1) or 0)
+        assert rc == p9.EXIT_AUTO_MERGE_BLOCKED
+        assert p9.latest_row(51, REPO)["watcher_id"] == "rewatch"
+
+    def test_operator_abandon_during_gates_stops_the_merge(self, p9, monkeypatch):
+        """The reviewer's case: abandon is the operator's stop button."""
+        self._seed_ready(p9, 54)
+        merged = []
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-with-auto-merge.yaml"))
+        listing = type("L", (), {"branch": "b", "paths": [], "unmeasured": [], "head_sha": "h"})()
+        monkeypatch.setattr(p9, "_gh_pr_listing", lambda pr, repo: listing)
+
+        def decide(*a, **k):
+            p9.main(["abandon", "54", "--repo", REPO, "--reason", "operator: stop"])
+            return {"action": "auto", "reason": "r", "policy": None, "source": "t",
+                    "gates": {}, "base_sha": None, "base": "main", "head_sha": "h"}
+        monkeypatch.setattr(p9, "decide_auto_merge", decide)
+        monkeypatch.setattr(p9, "_gh_pr_merge", lambda *a, **k: merged.append(1) or 0)
+        assert p9.main(["auto-merge", "54", "--repo", REPO]) == p9.EXIT_AUTO_MERGE_BLOCKED
+        assert merged == []
+        row = p9.latest_row(54, REPO)
+        assert row["to_state"] == "ABANDONED" and row["extra"]["takeover"] == "operator abandon"
+
+    def test_row_moved_after_the_recheck_is_recorded_not_lost(self, p9, monkeypatch):
+        self._seed_ready(p9, 55)
+
+        def merge_while_moving(*a, **k):
+            self._rewatch(p9, 55)
+            return 0
+        self._auto_merge(p9, monkeypatch, 55, action="auto", meanwhile=lambda: None)
+        # second run: the move lands inside the merge call itself
+        self._seed_ready(p9, 56)
+        monkeypatch.setattr(p9, "decide_auto_merge", lambda *a, **k: {
+            "action": "auto", "reason": "r", "policy": None, "source": "t",
+            "gates": {}, "base_sha": None, "base": "main", "head_sha": "h"})
+        monkeypatch.setattr(p9, "_gh_pr_merge", lambda *a, **k: (self._rewatch(p9, 56), 0)[1])
+        p9.main(["auto-merge", "56", "--repo", REPO])
+        row = p9.latest_row(56, REPO)
+        assert row["to_state"] == "ABANDONED"
+        assert "merged by auto-merge" in row["extra"]["reason"]
+
+    def test_terminal_row_after_the_merge_is_reported(self, p9, monkeypatch, capsys):
+        self._seed_ready(p9, 57)
+
+        def merge_then_abandon(*a, **k):
+            p9.main(["abandon", "57", "--repo", REPO])
+            return 0
+        self._auto_merge(p9, monkeypatch, 57, action="auto", meanwhile=lambda: None)
+        self._seed_ready(p9, 58)
+        monkeypatch.setattr(p9, "_gh_pr_merge", lambda *a, **k: (
+            p9.main(["abandon", "58", "--repo", REPO]), 0)[1])
+        capsys.readouterr()
+        p9.main(["auto-merge", "58", "--repo", REPO])
+        assert "merged while the row turned terminal" in capsys.readouterr().err
+
+    def test_blocked_note_is_not_written_over_a_moved_row(self, p9, monkeypatch):
+        self._seed_ready(p9, 52)
+        self._auto_merge(p9, monkeypatch, 52, action="notify",
+                         meanwhile=lambda: self._rewatch(p9, 52))
+        row = p9.latest_row(52, REPO)
+        assert row["to_state"] == "WATCHING" and row["watcher_id"] == "rewatch"
+
+    def test_cleanup_leaves_a_row_rearmed_during_its_query(self, p9, monkeypatch):
+        import argparse
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2026-09-26T00:00:00+00:00", pr=53, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="old", extra={"pid": 999999}))
+
+        class R:
+            returncode, stderr = 0, ""
+            stdout = json.dumps({"state": "MERGED", "mergedAt": "x"})
+
+        def gh(cmd, **k):
+            p9.append_state_event(p9.PRStateEvent(
+                ts=p9._utcnow(), pr=53, repo=REPO, from_state="WATCHING",
+                to_state="WATCHING", watcher_id="new"), takeover="test")
+            return R()
+        monkeypatch.setattr(p9.subprocess, "run", gh)
+        p9.cmd_cleanup(argparse.Namespace())
+        assert p9.latest_row(53, REPO)["watcher_id"] == "new"
+        assert p9.latest_row(53, REPO)["to_state"] == "WATCHING"
+
+    def test_takeover_cannot_carry_fences(self, p9):
+        ev = p9.PRStateEvent(ts=p9._utcnow(), pr=1, repo=REPO, from_state="PUSHED",
+                             to_state="WATCHING", watcher_id="w")
+        with pytest.raises(p9.P9Error):
+            p9.append_state_event(ev, takeover="x", expect_owner="w")
+
+
+class TestBoundaryRoundOne:
+    def test_stop_hook_reads_state_once_for_the_whole_queue(self, p9, monkeypatch):
+        for i in range(50):
+            p9.queue_push(f"item {i}", "docs", pr=i, repo=REPO)
+        p9.mark_wait("delegate_task")
+        reads = []
+        real = p9._read_state_rows
+        monkeypatch.setattr(p9, "_read_state_rows", lambda: reads.append(1) or real())
+        assert p9.hook_stop({})["decision"] == "block"
+        assert len(reads) <= 2
+
+    def test_rearm_child_fence_holds_after_validation(self, p9, monkeypatch):
+        """A fold lands after the child validated its row: the supersede is
+        fenced on that very row, so the fold stands."""
+        monkeypatch.delenv("T3CODE_THREAD_ID", raising=False)
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2000-01-01T00:00:00+00:00", pr=61, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="deadw", extra={"pid": 999999}))
+        judged = p9.latest_row(61, REPO)
+
+        def fold_meanwhile(pid):
+            # between the child's validation and its supersede, the watched
+            # row folds through a real (owner + state fenced) fold
+            assert p9.append_state_event(p9.PRStateEvent(
+                ts=p9._utcnow(), pr=61, repo=REPO, from_state="WATCHING",
+                to_state="GREEN", watcher_id="deadw"),
+                expect_owner="deadw", expect_state="WATCHING")
+            return False
+        monkeypatch.setattr(p9, "is_watcher_alive", fold_meanwhile)
+        monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("must not arm over the fold")))
+        rc = p9.cmd_watch(_watch_args(pr=61, adopt=True,
+                                      expect_owner=f"deadw@{judged['ts']}"))
+        assert rc == p9.EXIT_DEGRADED
+        assert p9.latest_row(61, REPO)["to_state"] == "GREEN"
+
+    def test_host_watch_that_folds_at_once_leaves_no_mark(self, p9, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pass")
+        p9.cmd_watch(_watch_args())
+        assert p9.consume_wait_mark() is None
+
+    def test_rearm_child_never_rereads_its_row(self, p9, monkeypatch):
+        """The fold lands right after the child's validation read. One read
+        means the supersede fences on the validated row and refuses; a second
+        read would see GREEN and arm over it."""
+        monkeypatch.delenv("T3CODE_THREAD_ID", raising=False)
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2000-01-01T00:00:00+00:00", pr=62, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="deadw", extra={"pid": 999999}))
+        judged = p9.latest_row(62, REPO)
+        real_latest = p9.latest_row
+        reads = []
+
+        def read_then_fold(pr, repo=None):
+            row = real_latest(pr, repo)
+            if pr == 62 and not reads:
+                reads.append(1)
+                p9.append_state_event(p9.PRStateEvent(
+                    ts=p9._utcnow(), pr=62, repo=REPO, from_state="WATCHING",
+                    to_state="GREEN", watcher_id="deadw"),
+                    expect_owner="deadw", expect_state="WATCHING")
+            return row
+        monkeypatch.setattr(p9, "latest_row", read_then_fold)
+        monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("must not arm over the fold")))
+        rc = p9.cmd_watch(_watch_args(pr=62, adopt=True,
+                                      expect_owner=f"deadw@{judged['ts']}"))
+        assert rc == p9.EXIT_DEGRADED
+        assert real_latest(62, REPO)["to_state"] == "GREEN"
+
+
+class TestBoundaryRoundTwo:
+    def test_queue_pop_reads_state_once(self, p9, monkeypatch):
+        for i in range(50):
+            p9.queue_push(f"item {i}", "docs", pr=i, repo=REPO)
+        reads = []
+        real = p9._read_state_rows
+        monkeypatch.setattr(p9, "_read_state_rows", lambda: reads.append(1) or real())
+        assert p9.queue_pop() is not None
+        assert len(reads) <= 1
+
+    def test_arm_refuses_a_generation_that_landed_after_the_supersede(self, p9, monkeypatch):
+        """Supersede done, then another generation arms AND folds before this
+        command arms: its RED must stand."""
+        monkeypatch.delenv("T3CODE_THREAD_ID", raising=False)
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2000-01-01T00:00:00+00:00", pr=63, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="deadw", extra={"pid": 999999}))
+        fired = []
+
+        def other_generation(**kw):
+            if not fired:
+                fired.append(1)
+                for prev, nxt in (("PUSHED", "WATCHING"), ("WATCHING", "RED_UNCLASSIFIED")):
+                    p9.append_state_event(p9.PRStateEvent(
+                        ts=p9._utcnow(), pr=63, repo=REPO, from_state=prev,
+                        to_state=nxt, watcher_id="genX"), takeover="test")
+            return []
+        monkeypatch.setattr(p9, "harvest_queue", other_generation)
+        stopped = []
+
+        class Proc:
+            pid = 4242
+
+            def terminate(self):
+                stopped.append(1)
+
+            def wait(self, timeout=None):
+                return 0
+        monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: Proc())
+        assert p9.cmd_watch(_watch_args(pr=63, adopt=True)) == p9.EXIT_DEGRADED
+        row = p9.latest_row(63, REPO)
+        assert row["watcher_id"] == "genX" and row["to_state"] == "RED_UNCLASSIFIED"
+        assert stopped == [1]
+
+    def test_wait_for_clears_its_own_mark(self, p9, monkeypatch):
+        assert p9.main(["wait-for", "build", "--cmd", "true", "--timeout", "5",
+                        "--interval", "0.1"]) == p9.EXIT_OK
+        assert p9.consume_wait_mark() is None
+
+    def test_a_finished_wait_leaves_a_later_waits_mark(self, p9, monkeypatch):
+        """One mark per session: a classic watch that ends must not delete
+        the mark of a delegate_task declared after it."""
+        class Done:
+            pid = 4243
+
+            def wait(self, timeout=None):
+                p9.mark_wait("delegate_task")      # declared while CI ran
+                return 0
+        monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: Done())
+        p9.cmd_watch(_watch_args(pr=64))
+        mark = p9.consume_wait_mark()
+        assert mark and mark["tool"] == "delegate_task"
+
+    def test_abandon_does_not_bury_a_terminal_row(self, p9, monkeypatch):
+        for prev, nxt in (("PUSHED", "WATCHING"), ("WATCHING", "GREEN"),
+                          ("GREEN", "MERGE_READY")):
+            p9.append_state_event(p9.PRStateEvent(
+                ts=p9._utcnow(), pr=65, repo=REPO, from_state=prev, to_state=nxt,
+                watcher_id="seed"), takeover="test")
+        real = p9.current_pr_state
+
+        def merged_meanwhile(pr, repo=None):
+            st = real(pr, repo)
+            p9.append_state_event(p9.PRStateEvent(
+                ts=p9._utcnow(), pr=65, repo=REPO, from_state="MERGE_READY",
+                to_state="MERGED", watcher_id="auto-merge"), takeover="test")
+            return st
+        monkeypatch.setattr(p9, "current_pr_state", merged_meanwhile)
+        # a clean no-op, not an illegal-transition error from the table
+        assert p9.main(["abandon", "65", "--repo", REPO]) == p9.EXIT_OK
+        assert p9.latest_row(65, REPO)["to_state"] == "MERGED"

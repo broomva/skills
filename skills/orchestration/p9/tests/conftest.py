@@ -34,3 +34,7 @@ def _hermetic_session_identity(monkeypatch):
     # suite would otherwise inherit a 540s foreground slice it never asked for.
     for env_name in _p9.HOST_MARKERS:
         monkeypatch.delenv(env_name, raising=False)
+    # BRO-3710: `watch` and `wait-for` harvest the wait-queue from the git
+    # checkout and the user's memory notes. Off unless a test turns it on
+    # against a fixture tree, so no test reads the real home directory.
+    monkeypatch.setenv("BROOMVA_P9_HARVEST", "0")

@@ -46,13 +46,87 @@ when_to_use: |
 
 | Trigger | Action |
 |---|---|
-| `git push` opens or updates a PR | `p9 watch <pr> --background` immediately |
+| `git push` opens or updates a PR | `p9 watch <pr> --background` immediately (on T3: `p9 watch <pr>` then `watch_pull_request`, see below) |
 | `run_in_background` task notification fires for the watcher | `p9 status --pr <n>` to read terminal state |
+| T3 wakes you on a watched PR | `p9 observe <pr>`, then the wakeup protocol |
+| You declared any wait and the turn is about to end | `p9 wait-queue pop` until empty (the Stop hook holds the turn once if you don't) |
 | `gh pr checks` returned non-zero | `p9 heal <pr> --classify` to inspect failure |
 | Push triggers a deploy / long non-PR operation | `p9 wait-for <name> --cmd '<predicate>' --detach` (or `--preset railway\|vercel`) |
 | Fresh session picking up after a kill/crash/reboot | `p9 report` to read state + next action; `p9 rearm` to re-arm dead watchers |
 | A watcher/wait looks wedged | `p9 stuck-scan` — structured dump + notification |
 | About to `sleep` | **Don't.** Pull from `p9 wait-queue pop` instead |
+
+### T3 Code sessions: T3 owns the PR wake (BRO-3710)
+
+`p9 host` reports `host=t3` and `pr_watch_owner=t3` when `T3CODE_THREAD_ID`
+is set (`P9_PR_WATCH_OWNER=p9|t3` overrides). T3 watches PRs itself and
+forbids waiting on `gh --watch`, so on T3:
+
+- `p9 watch <pr>` starts no watcher. It writes the WATCHING row with
+  `host_watch: t3` and `pid: 0`, folds at once if CI already settled, marks
+  the wait, harvests the queue and prints it. It exits 0 while CI is pending.
+- Then call `watch_pull_request` and do the queued work.
+- On each T3 wake run `p9 observe <pr>`. It folds once from
+  `gh pr checks`: `red` as soon as any check failed (T3 wakes on the first
+  failure), `green` once nothing is pending (when the required checks pass
+  first, T3 owes one more wake once the rest settle). A pending or
+  no-checks-yet read re-stamps the row; a failed read does not, so an
+  unreadable watch ages out. "No checks" folds RED, as `gh pr checks --watch`
+  would, 15 minutes after the watch was armed, or at once with
+  `p9 observe <pr> --no-checks` when T3's wake says no checks have reported
+  (T3 sends that notice once per head and does not repeat it).
+  Observe decides inside `transact_pr_state` (read latest row, decide,
+  append, under one state lock), fenced three ways: the watch generation
+  (`watcher_id`) read before the checks; an observation ticket taken under
+  the lock before the network read (`obs_ticket`, no clock involved), so
+  between non-terminal reads the newest wins whatever order writes land in;
+  and host ownership. A fold is terminal for its generation: a later contrary
+  read does not undo it, and a new push gets a new generation via `p9 watch`.
+  The arm itself is in the transaction (it lands only over a row nobody is
+  watching). `reap` and re-watch supersession only write if the latest row is
+  exactly the row they judged, and `rearm`'s child acts only on the exact row
+  it judged dead (`--expect-owner OWNER@TS`): it reads that row once, skips
+  its own reap preflight, and fences its supersede on that same row, so a
+  fold landing after the check makes it refuse. The observation-ticket counter is written atomically and,
+  if damaged, recovers to the highest ticket in the state, never below it. Every write goes
+  through the state-write boundary below, so an overlapping or late wake
+  changes nothing, and a row watched by a p9 process is never touched. Re-running `p9 watch` on a host-owned row
+  (say after pushing a fix) replaces it; another session's live host watch
+  is refused unless you pass `--adopt`. `--detach` is host-owned on T3 too.
+- `p9 reap` judges a host-owned row by age, not pid: it is live until
+  `BROOMVA_P9_HOST_WATCH_TTL_S` (default 6 h) passes without an observe.
+  `p9 rearm` never touches a host-owned row: only its own thread can restore
+  it (`watch_pull_request` + `p9 watch`), and a detached child cannot. Rearm
+  children always run their own watcher (`P9_PR_WATCH_OWNER=p9`), even when
+  rearm runs inside T3. The classic arm is in the transaction too, so it
+  refuses rather than overwrite a watch armed concurrently.
+- **Measured limit:** a T3 wake (a delegated child finishing, a PR change)
+  that arrives while your turn is still running is queued as your next turn,
+  not delivered into the current one. A Claude background task's completion,
+  by contrast, does arrive mid-turn. So keep queue items short and check
+  `t3_queue list` between them. Steering the wake into the running turn needs
+  a T3 change (BRO-3710).
+
+### One state-write boundary (BRO-3710)
+
+Every writer of `state.jsonl` declares how its decision is fenced, and
+`test_every_writer_is_fenced` fails on any production call that does not:
+
+| Form | Meaning | Used by |
+|---|---|---|
+| `expect_row=row` | write only if the latest row is exactly the row the decision was made on | reap, rearm's repo-less fold, re-watch supersession, cleanup, auto-merge's blocked note |
+| `expect_owner` + `expect_state` | for a row only its own process writes | the classic watch fold, merge-ready |
+| `takeover="reason"` | an explicit seizure meant to win; the reason is written to the row (`extra.takeover`) | (available; no production writer needs it) |
+| `transact_pr_state(decide)` | read latest, decide, append under one lock | observe, both arms (each lands only over the exact row the command saw or wrote), `p9 abandon` (never over a terminal row), auto-merge's post-merge record |
+
+`p9 auto-merge` re-reads the row immediately before `gh pr merge`: if it
+moved while the gates ran (an operator `p9 abandon`, a re-watch, a cleanup),
+it does not merge. After a merge succeeds, the merge is a fact, not a
+decision: it is recorded as MERGED if the judged MERGE_READY row still holds,
+as ABANDONED ("merged by auto-merge while the row moved") if the row moved in
+the last instant, and, if that row turned terminal, as a termination report,
+because a terminal row takes no further state. It is never written from the
+wrong state.
 
 ### Paseo-hosted sessions: wait in foreground slices (BRO-2815)
 
@@ -100,7 +174,7 @@ its scope in this order:
 | # | Source | When it applies |
 |---|---|---|
 | 1 | `BROOMVA_P9_SESSION` | explicit override, for a harness that knows its own scope better than p9 can infer it (`bstack wave` plans, tests) |
-| 2 | a **composite over every harness marker present** — `CLAUDE_CODE_MESSAGING_SOCKET`, `ORCA_WORKTREE_ID`, `AGENT_SESSION_ID` — recomputed each call, **not** latched | automatic; the id is `<prefix>-<hash16>`, so `cc-…` / `orca-…` in `p9 status` names which harness answered first |
+| 2 | a **composite over every harness marker present** — `CLAUDE_CODE_MESSAGING_SOCKET`, `ORCA_WORKTREE_ID`, `AGENT_SESSION_ID`, `T3CODE_THREAD_ID` (BRO-3710: one T3 thread, one scope) — recomputed each call, **not** latched | automatic; the id is `<prefix>-<hash16>`, so `cc-…` / `orca-…` in `p9 status` names which harness answered first |
 | 3 | persisted `session-default.id` | nothing derivable — one shared scope, the pre-BRO-2373 behavior |
 
 Adding a harness is one row in `SESSION_MARKERS` (`p9.py`); a row that does not
@@ -152,6 +226,12 @@ that over-isolates and one that under-isolates, only the first is safe.
 **A harness that wants stability across a sanitized environment should set
 `BROOMVA_P9_SESSION`** — rung 1 exists precisely for the case derivation
 cannot serve.
+
+**Upgrading across a marker change.** Adding `T3CODE_THREAD_ID` (BRO-3710)
+changes the derived id of a T3 session that was already running. Its earlier
+queue items stop being visible to it (`p9 wait-queue list --all` shows them),
+and re-watching a PR it was watching asks for `--adopt`. Both are the
+fragmentation trade-off above, not lost state.
 
 **The git worktree is not itself a marker.** An agent that `cd`s between repos
 — routine in this monorepo — would otherwise change identity mid-session.
@@ -266,16 +346,53 @@ could not.
 ## Wait-time work selection (priority order)
 
 When the watcher is running, drain work from these sources in priority order
-(higher = pulled first):
+(higher = pulled first). Until BRO-3710 nothing filled the queue at all: it
+had this pop order and no producer. Now `harvest` fills three of the sources,
+and the agent pushes the other two (`p9 wait-queue push --source <s> --item`):
 
-1. **session** — TODOs already on the agent's TaskList tagged `wait_ok=true`.
-2. **memory** — items from `~/.claude/.../memory/MEMORY.md` flagged "needs
-   follow-up" within the last 24h.
-3. **graph** — knowledge-graph entities adjacent to files-touched-in-PR
-   (BFS depth 1 via `bookkeeping.py query`).
-4. **docs** — cross-refs from the current PR's diff (mentioned files not
-   yet updated).
-5. **linear** — tickets in the current cycle, label-matched to PR's Linear ID.
+| # | Source | Filled by |
+|---|---|---|
+| 1 | **session** | the agent: its own follow-ups for this wait |
+| 2 | **memory** | harvest: this project's memory notes only (`~/.claude/projects/<this checkout or its main checkout>/memory/*.md`, not `MEMORY.md`) changed in the last 24 h that say "needs follow-up". Other projects' notes are never read. |
+| 3 | **graph** | harvest: `research/entities/**` pages that mention a file this branch changed and the branch did not update |
+| 4 | **docs** | harvest: any other `.md`/`.mdx` that mentions a changed file the branch did not update. A mention is the file's path, or its bare name only when no other tracked file shares it (in a monorepo, `conftest.py` is not a mention) |
+| 5 | **linear** | the agent: tickets it pulls via the Linear MCP (a script cannot reach MCP) |
+
+Harvest runs on `p9 watch`, `p9 wait-for`, the PostToolUse hook and
+`p9 wait-queue harvest [--pr N]`. Docs and graph come from the local checkout,
+and only when that checkout is provably the PR's repo (a named repo against an
+origin p9 cannot identify gets nothing). It never touches the network and runs
+inside an 8 s budget, memory reads included (regular files only, 64 KiB
+each). Caps (docs 5, graph 3, memory 3) apply per harvest after
+the seen-ledger, and each finding (doc + the file it mentions) is offered once
+per session for 7 days, so popping an item does not bring it back and a
+different wording does not make it new. Offered findings are skipped during
+the scan itself, so a long wait keeps reaching new ones. `BROOMVA_P9_HARVEST=0` turns it off.
+
+### The hooks: the queue reaches the agent
+
+`p9 hook-install` registers three Claude Code hooks in `~/.claude/settings.json`
+(`--settings` for another file, `--uninstall` to remove, `--dry-run` to
+preview). It is idempotent, leaves other hooks alone, writes through a
+symlinked settings file and keeps its mode, and refuses to install hooks that
+would run a p9 without the `hook` command:
+
+- **PostToolUse** on `watch_pull_request`, `delegate_task` (not
+  `mode: wait`) and `t3_background_wait`: marks the wait, harvests, and
+  puts the queue in front of the agent as additional context while it still
+  has the turn. Quiet when the queue is empty.
+- **Stop**: when this session declared a wait and unblocked items remain,
+  blocks the end of the turn once and lists them. Every Stop consumes the
+  mark, retries included, and a retry (`stop_hook_active`) is never blocked,
+  so a wait delays one hand-back at most and never traps one. Items with the
+  `blocked` tier never hold a turn.
+- **UserPromptSubmit**: clears an unspent mark, so a wait from a turn that was
+  interrupted before its Stop cannot hold the next, unrelated turn.
+
+The hook commands end in `2>/dev/null || true`: Claude Code reads exit 2 from
+a Stop hook as "block", so a missing or outdated p9 must not be able to exit
+non-zero. The hook and the agent's Bash calls resolve the same p9 session id
+(measured in a live T3 thread), so the hook fills the queue the agent pops.
 
 ### Isolation tier (per spec §5.5)
 
@@ -290,7 +407,9 @@ Each pop returns the inferred isolation tier:
 
 ## Wakeup protocol
 
-When the bg task notification fires:
+When the bg task notification fires (on T3: when `watch_pull_request` wakes
+you, run `p9 observe <n>` first, adding `--no-checks` if the wake says no
+checks have reported; that is the fold the notification would have carried):
 
 ```text
 1. p9 status --pr <n> --json
