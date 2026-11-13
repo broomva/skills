@@ -72,7 +72,9 @@ forbids waiting on `gh --watch`, so on T3:
   first, T3 owes one more wake once the rest settle). A pending or
   no-checks-yet read re-stamps the row; a failed read does not, so an
   unreadable watch ages out. When no check has reported for 15 minutes (T3's
-  own no-checks notice), observe folds RED, as `gh pr checks --watch` would. Every write is a compare-and-swap on owner and
+  own no-checks notice), observe folds RED, as `gh pr checks --watch` would.
+  Each observation bumps `obs_seq` and every write requires the one it read,
+  so a stale read never acts on a newer one's row. Every write is a compare-and-swap on owner and
   state, so an overlapping or late wake changes nothing, and a row watched by
   a p9 process is never touched. Re-running `p9 watch` on a host-owned row
   (say after pushing a fix) replaces it; another session's live host watch
@@ -133,7 +135,7 @@ its scope in this order:
 | # | Source | When it applies |
 |---|---|---|
 | 1 | `BROOMVA_P9_SESSION` | explicit override, for a harness that knows its own scope better than p9 can infer it (`bstack wave` plans, tests) |
-| 2 | a **composite over every harness marker present** — `CLAUDE_CODE_MESSAGING_SOCKET`, `ORCA_WORKTREE_ID`, `AGENT_SESSION_ID` — recomputed each call, **not** latched | automatic; the id is `<prefix>-<hash16>`, so `cc-…` / `orca-…` in `p9 status` names which harness answered first |
+| 2 | a **composite over every harness marker present** — `CLAUDE_CODE_MESSAGING_SOCKET`, `ORCA_WORKTREE_ID`, `AGENT_SESSION_ID`, `T3CODE_THREAD_ID` (BRO-3710: one T3 thread, one scope) — recomputed each call, **not** latched | automatic; the id is `<prefix>-<hash16>`, so `cc-…` / `orca-…` in `p9 status` names which harness answered first |
 | 3 | persisted `session-default.id` | nothing derivable — one shared scope, the pre-BRO-2373 behavior |
 
 Adding a harness is one row in `SESSION_MARKERS` (`p9.py`); a row that does not

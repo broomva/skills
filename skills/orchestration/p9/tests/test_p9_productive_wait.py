@@ -885,3 +885,109 @@ class TestDogfood:
         assert "pkg_b/README.md" not in docs      # bare common name: not a mention
         assert "docs/testing.md" in docs          # full path: a mention
         assert "docs/guide.md" in docs            # unique name still counts
+
+
+# ── P20 round 3 regressions ─────────────────────────────────────────────────
+class TestRoundThree:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def _arm(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+
+    def test_stale_no_checks_read_cannot_fold_red(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
+        p9.observe_pr(7, REPO)                        # none: clock starts
+        stale = p9.latest_row(7, REPO)
+        _checks(monkeypatch, p9, "pending")
+        p9.observe_pr(7, REPO)                        # newer read: checks running
+        real_latest = p9.latest_row
+        monkeypatch.setattr(p9, "latest_row", lambda pr, repo=None: dict(stale))
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
+        monkeypatch.setattr(p9, "NO_CHECKS_FOLD_SECONDS", 0)
+        assert not p9.observe_pr(7, REPO)["folded"]
+        assert real_latest(7, REPO)["to_state"] == "WATCHING"
+
+    def test_t3_threads_are_separate_sessions(self, p9, monkeypatch):
+        a = p9.current_session_id()
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-2")
+        assert p9.current_session_id() != a
+
+    def test_another_t3_thread_cannot_take_the_watch(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-2")
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_DEGRADED
+
+
+class TestRoundThreeHarvest:
+    @pytest.fixture(autouse=True)
+    def _on(self, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_HARVEST", "1")
+
+    def _branch_touching(self, work, files, changed, docs):
+        _git(work, "checkout", "-q", "main")
+        for rel in files:
+            (work / rel).parent.mkdir(parents=True, exist_ok=True)
+            (work / rel).write_text("x = 1\n")
+        for rel, text in docs.items():
+            (work / rel).write_text(text)
+        _git(work, "add", "-A")
+        _git(work, "commit", "-qm", "setup")
+        _git(work, "push", "-q", "origin", "main")
+        _git(work, "fetch", "-q", "origin")
+        _git(work, "checkout", "-q", "feature")
+        _git(work, "rebase", "-q", "main")
+        (work / changed).write_text("x = 2\n")
+        _git(work, "commit", "-qam", "change")
+
+    def test_quoted_path_still_counts_as_a_duplicate_name(self, p9, tmp_path):
+        work = _make_tree(tmp_path)
+        self._branch_touching(work, ["alpha/conftest.py", "café/conftest.py"],
+                              "alpha/conftest.py",
+                              {"docs/testing.md": "Fixtures: conftest.py\n"})
+        items = [it.item for it in p9.harvest_queue(pr=7, cwd=work)]
+        assert not any("docs/testing.md" in i for i in items)
+
+    def test_root_level_shared_name_is_ambiguous(self, p9, tmp_path):
+        work = _make_tree(tmp_path)
+        self._branch_touching(work, ["conftest.py", "pkg/conftest.py"],
+                              "conftest.py",
+                              {"pkg/README.md": "See conftest.py.\n"})
+        items = [it.item for it in p9.harvest_queue(pr=7, cwd=work)]
+        assert not any("pkg/README.md" in i for i in items)
+
+    def test_expired_offer_comes_back(self, p9, tree):
+        first = p9.harvest_queue(pr=7, cwd=tree)
+        assert first
+        p9.queue_clear()
+        seen = p9._seen_path(p9.current_session_id())
+        ledger = json.loads(seen.read_text())
+        seen.write_text(json.dumps({k: "2000-01-01T00:00:00+00:00" for k in ledger}))
+        assert len(p9.harvest_queue(pr=7, cwd=tree)) == len(first)
+
+    def test_dangling_link_costs_only_itself(self, p9, tmp_path):
+        mem = tmp_path / "memory"
+        mem.mkdir()
+        (mem / "real.md").write_text("needs follow-up\n")
+        (mem / "broken.md").symlink_to(tmp_path / "nowhere.md")
+        found = p9._harvest_memory([mem], deadline=time.monotonic() + 5)
+        assert [Path(c[2].split()[1]).name for c in found] == ["real.md"]
+
+    def test_slow_stats_stop_at_the_budget(self, p9, tmp_path, monkeypatch):
+        mem = tmp_path / "memory"
+        mem.mkdir()
+        for i in range(30):
+            (mem / f"n{i}.md").write_text("needs follow-up\n")
+        real_stat = Path.stat
+
+        def slow_stat(self, *a, **k):
+            time.sleep(0.05)
+            return real_stat(self, *a, **k)
+        monkeypatch.setattr(Path, "stat", slow_stat)
+        t0 = time.monotonic()
+        p9._harvest_memory([mem], deadline=time.monotonic() + 0.2)
+        assert time.monotonic() - t0 < 0.6

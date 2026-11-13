@@ -217,6 +217,10 @@ SESSION_MARKERS: tuple[tuple[str, str], ...] = (
     ("ORCA_WORKTREE_ID", "orca"),
     # Generic contract for any other harness, without a code change.
     ("AGENT_SESSION_ID", "agent"),
+    # T3 Code: one id per thread (BRO-3710). Without it two T3 threads with no
+    # other marker shared one scope: one queue, one wait mark, each other's
+    # host watches.
+    ("T3CODE_THREAD_ID", "t3"),
 )
 
 # Field separator for the composite payload. This alone does NOT make the
@@ -2507,8 +2511,11 @@ def _branch_changes(root: Path, deadline: float) -> list[str]:
     head = (_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], root,
                  deadline=deadline) or "").strip()
     base = head if head.startswith("origin/") else "origin/main"
-    out = _git(["diff", "--name-only", f"{base}...HEAD"], root, deadline=deadline)
-    return [ln for ln in (out or "").splitlines() if ln.strip()]
+    # -z: without it git quotes a path with non-ASCII bytes ("caf\303\251/x")
+    # and the quoted string matches nothing.
+    out = _git(["diff", "--name-only", "-z", f"{base}...HEAD"], root,
+               deadline=deadline)
+    return [p for p in (out or "").split("\0") if p.strip()]
 
 
 def _needles(path: str, name_counts: dict[str, int] | None = None) -> list[str]:
@@ -2517,8 +2524,12 @@ def _needles(path: str, name_counts: dict[str, int] | None = None) -> list[str]:
     monorepo showed why: `conftest.py` exists in dozens of directories, and
     every README that mentioned any of them became a "stale doc" item."""
     name = Path(path).name
-    out = [path]
     unique = name_counts is None or name_counts.get(name, 0) <= 1
+    if "/" not in path and not unique:
+        # A root-level path IS its bare name; when other files share the name,
+        # a doc saying it could mean any of them.
+        return []
+    out = [path]
     if unique and len(name) >= 8 and name not in (
             "__init__.py", "index.ts", "index.tsx", "README.md", "SKILL.md",
             "mod.rs", "package.json", "Cargo.toml"):
@@ -2547,23 +2558,24 @@ def _harvest_docs(root: Path, changed: list[str], pr: int | None,
     checkout when the repo is unknown) keeps two repos' same-named docs
     apart in the seen-ledger."""
     code = [p for p in changed if not p.endswith((".md", ".mdx"))][:40]
-    listed = _git(["ls-files"], root, deadline=deadline)
+    listed = _git(["ls-files", "-z"], root, deadline=deadline)
     if listed is None:
         return []
     counts: dict[str, int] = {}
-    for f in listed.splitlines():
-        counts[Path(f).name] = counts.get(Path(f).name, 0) + 1
+    for f in listed.split("\0"):
+        if f:
+            counts[Path(f).name] = counts.get(Path(f).name, 0) + 1
     needles = sorted({n for p in code for n in _needles(p, counts)})
     if not needles:
         return []
-    args = ["grep", "-l", "-F"]
+    args = ["grep", "-l", "-z", "-F"]
     for n in needles:
         args += ["-e", n]
     out = _git([*args, "--", "*.md", "*.mdx"], root, deadline=deadline) or ""
     touched = set(changed)
     where = f"PR #{pr}" if pr else "this branch"
     found: list[Candidate] = []
-    for doc in out.splitlines():
+    for doc in out.split("\0"):
         if len(found) >= _DOC_SCAN_LIMIT or time.monotonic() >= deadline:
             break
         if not doc or doc in touched:
@@ -2624,8 +2636,15 @@ def _harvest_memory(dirs: list[Path], deadline: float) -> list[Candidate]:
     for d in dirs:
         if time.monotonic() >= deadline:
             break
+        stats: list[tuple[Path, os.stat_result]] = []
         try:
-            stats = [(n, n.stat()) for n in d.glob("*.md")]
+            for n in d.glob("*.md"):
+                if time.monotonic() >= deadline:
+                    break
+                try:
+                    stats.append((n, n.stat()))
+                except OSError:
+                    continue  # a dangling link costs itself, not the dir
         except OSError:
             continue
         stats.sort(key=lambda ns: ns[1].st_mtime, reverse=True)
@@ -2681,9 +2700,13 @@ def _harvest(pr: int | None, repo: str, cwd: Path | None,
     sid = current_session_id()
     seen_file = _seen_path(sid)
     try:  # a lock-free read to skip offered findings while scanning
-        offered = frozenset(json.loads(seen_file.read_text(encoding="utf-8")))
-    except (OSError, ValueError, TypeError):
-        offered = frozenset()
+        ledger = json.loads(seen_file.read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        ledger = {}
+    # Expired entries are not skipped: the TTL is what lets a finding back in.
+    offered = frozenset(
+        k for k, v in (ledger.items() if isinstance(ledger, dict) else [])
+        if _iso_age_seconds(str(v)) < HARVEST_SEEN_TTL_SECONDS)
     candidates: list[Candidate] = []
     top = (_git(["rev-parse", "--show-toplevel"], cwd, deadline=deadline)
            or "").strip()
@@ -2820,7 +2843,8 @@ class StaleWriteRejected(P9Error):
 
 def append_state_event(event: PRStateEvent, *,
                        expect_owner: str | _Unset = UNGUARDED,
-                       expect_state: str | None = None) -> bool:
+                       expect_state: str | None = None,
+                       expect_match: Any = None) -> bool:
     """Append a state event. Returns True if it was written.
 
     ``expect_owner`` (BRO-2374) makes the append a **compare-and-swap**: it
@@ -2881,10 +2905,11 @@ def append_state_event(event: PRStateEvent, *,
     # Normalize on write so the stored key is exactly what repo_key() reads.
     event.repo = canonical_repo(event.repo)
     if isinstance(expect_owner, _Unset):
-        if expect_state is not None:
+        if expect_state is not None or expect_match is not None:
             # A state check is only atomic inside the guarded path; silently
             # skipping it would hand the caller a guarantee it never had.
-            raise P9Error("expect_state needs expect_owner (the guarded path)")
+            raise P9Error("expect_state/expect_match need expect_owner "
+                          "(the guarded path)")
         jsonl_append(state_jsonl(), event.to_jsonl(), state_lock_path())
         return True
     if not isinstance(expect_owner, str):
@@ -2909,6 +2934,7 @@ def append_state_event(event: PRStateEvent, *,
         found = False
         owner = ""
         state = ""
+        latest: dict[str, Any] = {}
         for r in rows:
             if r.get("pr") != event.pr:
                 continue
@@ -2917,12 +2943,18 @@ def append_state_event(event: PRStateEvent, *,
             found = True
             owner = _owner_of(r)
             state = str(r.get("to_state", ""))
+            latest = r
         if not found or owner != expect_owner:
             return False
         # `expect_state` (BRO-3710): a fold keeps its watcher_id, so owner
         # alone cannot tell a WATCHING row from the GREEN it just became. A
         # writer that read WATCHING says so, and loses to a fold in between.
         if expect_state is not None and state != expect_state:
+            return False
+        # `expect_match` (BRO-3710): a predicate over the latest row, for a
+        # writer whose decision depends on more than owner and state. observe
+        # uses it to require the exact observation it read.
+        if expect_match is not None and not expect_match(latest):
             return False
         path = state_jsonl()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -4552,7 +4584,14 @@ def observe_pr(pr: int, repo: str, *, sid: str | None = None) -> dict[str, Any]:
                 from_state=PRState.WATCHING.value, watcher_id=owner,
                 attempt=int(row.get("attempt") or 0),
                 session_id=row.get("session_id", "") or (sid or ""))
-    guard = dict(expect_owner=owner, expect_state=PRState.WATCHING.value)
+    # Owner and state are not enough between two observations: both leave
+    # WATCHING under the same owner. Each one bumps `obs_seq`, and every write
+    # requires the exact observation it read, so a stale "no checks" read
+    # cannot fold red after a newer read found checks running.
+    seq = int((row.get("extra") or {}).get("obs_seq", 0) or 0)
+    guard = dict(expect_owner=owner, expect_state=PRState.WATCHING.value,
+                 expect_match=lambda r: int((r.get("extra") or {}).get(
+                     "obs_seq", 0) or 0) == seq)
     if verdict in ("green", "red"):
         nxt = PRState.GREEN if verdict == "green" else PRState.RED_UNCLASSIFIED
         event = PRStateEvent(**base, to_state=nxt.value, extra={
@@ -4580,7 +4619,8 @@ def observe_pr(pr: int, repo: str, *, sid: str | None = None) -> dict[str, Any]:
             out.update(folded=True, state=PRState.RED_UNCLASSIFIED.value)
         return out
     if verdict in ("pending", "none"):
-        extra: dict[str, Any] = {"pid": 0, "host_watch": "t3", "observed": verdict}
+        extra: dict[str, Any] = {"pid": 0, "host_watch": "t3",
+                                 "observed": verdict, "obs_seq": seq + 1}
         if verdict == "none":
             extra["none_since"] = none_since or _utcnow()
         append_state_event(PRStateEvent(**base, to_state=PRState.WATCHING.value,
