@@ -120,8 +120,8 @@ cloud-chamber example for each step. For a field other than particle physics, re
 A claim's `test` is a file the test command runs, or a file listed under `tests.gates` with
 its own command (a check run separately, such as a headless render). A mutation's `file` is
 code under test. The audit refuses one that touches a test, a gate, anything in the tests
-directory, a registered reference table, or a path listed under `tests.support` (helpers and
-data kept elsewhere). Changing any of those turns a test red without touching the code the
+directory, a registered reference table, or a path listed under `tests.support` (a helper's
+source file, or a directory of helpers and data kept elsewhere). Changing any of those turns a test red without touching the code the
 claim is about.
 
 A surviving mutation needs reading before it is called a test gap. The cloud chamber's first
@@ -149,7 +149,7 @@ be predictions and conventions. That is the honest result. Say it in the README.
 |---|---|
 | The test command exits 0 in a copy of the package | That the tests test anything. Only mutations show that |
 | Every test file contains an assertion | That the assertion is about the claim |
-| A reference file has a URL and a date, and source code beside the tests names the file | That the table was copied correctly, that it is the right table, or that the code which names it also uses it. A test that loads tables by listing a directory must still name each file. Only files in a language the audit knows count as source; name any other helper under `tests.support` |
+| A reference file has a URL and a date, and source code names the file: a test file, a gate, or a source file beside the tests or under `tests.support` | That the table was copied correctly, that it is the right table, or that the code which names it also uses it. A test that loads tables by listing a directory must still name each file. Only files in a language the audit knows count as source, and a registered table never counts, whatever its suffix |
 | A string the ledger quotes appears in the docs and in the report's standard output | Numbers in the docs that the ledger does not list. That the report computes anything: a report command that prints the README would pass. And a short string such as `1.1` matches by accident; quote enough digits or the unit |
 | A mutation turns its test command red | That it died for the right reason. A mutation that breaks the code outright kills any test, a test that fails for another reason also kills it, and nothing checks that the command runs the claim's `test` file |
 | With `--run-gates`, each gate's command exits 0 | That the command runs the gate's file. Without the flag, anything about a gate beyond the file existing and asserting; it reports SKIP |
@@ -162,16 +162,18 @@ More limits:
 - **The package must run from a copy of its own directory.** Commands run in a temporary copy,
   so tests that import a sibling package fail there. The `suite` check says so when it happens.
   A symlink that points inside the package points inside the copy. One that points elsewhere
-  is followed, so a link to a large directory is copied in full.
+  is followed, so a link to a large directory is copied in full. A link that leaves the
+  package and leads back into it is refused.
 - **Tests need their own directory.** Everything under `tests.dir` is treated as a test, a
   helper or test data, so source files kept beside their tests cannot be mutated.
 - **Linked directories are shared.** `node_modules`, `.venv`, `venv` and `target` (or the
   names under `link`) are symlinked into the copy, so a command that writes a cache there
   writes into the real one. The audit refuses a mutation inside a linked directory. If one of
   those names holds your source, set `link` in the ledger.
-- **The assertion detector is a list of patterns.** It strips comments for the languages it
-  knows but does not parse strings, and it counts `throw`, `raise` and a non-zero `exit` as
-  ways to fail. For a framework it does not know, set `tests.assertion` in the ledger. The
+- **The assertion detector is a list of patterns.** Python files are read with Python's own
+  tokenizer, so their comments and strings are exact. For the other languages it knows, it
+  strips comments by rule and does not parse strings. It counts `throw`, `raise` and a
+  non-zero `exit` as ways to fail. For a framework it does not know, set `tests.assertion` in the ledger. The
   audit trusts that pattern: one that matches everything makes every file pass.
 
 These are what the review in step 11 is for.

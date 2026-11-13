@@ -53,6 +53,9 @@ SOURCE = SKILL / "scripts" / "sim_audit.py"
 # that drops a relative link depends on the Python version (older ones judge the
 # link from the working directory), so the mutant would be killed on some
 # interpreters only. The behaviour has its own test.
+#
+# Also not listed: ignoring the text of an f-string. Before Python 3.12 an
+# f-string is one STRING token, so the mutant would survive on 3.11 only.
 CURATED: list[tuple[str, str, str]] = [
     ('json ok always true', '"ok": not failed', '"ok": True'),
     ('a failing audit exits 0', 'return 1 if failed else 0', 'return 0'),
@@ -143,11 +146,9 @@ CURATED: list[tuple[str, str, str]] = [
     ('support paths are not readers', 'for place in [tests_dir, *support]:', 'for place in [tests_dir]:'),
     ('test files in subdirectories not scanned', 'for path in sorted(root.rglob("*"))', 'for path in sorted(root.glob("*"))'),
     ('reference matched by stem', 'if path.name not in code:', 'if path.stem not in code:'),
-    ('suffix case matters for comments', 'return strip_comments(text, path.suffix.lower())', 'return strip_comments(text, path.suffix)'),
     ('multi-line block comments kept', '        text = re.sub(r"/\\*.*?\\*/", "", text, flags=re.S)\n', '        text = re.sub(r"/\\*.*?\\*/", "", text)\n'),
     ('block comment strip is greedy', '        text = re.sub(r"/\\*.*?\\*/", "", text, flags=re.S)\n', '        text = re.sub(r"/\\*.*\\*/", "", text, flags=re.S)\n'),
     ('an unclosed block comment is code', '        text = re.sub(r"/\\*(?:(?!\\*/).)*\\Z", "", text, flags=re.S)\n', ''),
-    ('definitions count as assertions', 'DEFINITION.sub("", code_text(path))', 'code_text(path)'),
     ("the ledger's pattern is ignored for claims", '        if not has_assertion(path, ledger.assertion):\n            audit.add("claims"', '        if not has_assertion(path):\n            audit.add("claims"'),
     ('quotes on unchecked claims ignored', 'quotes = [(c["id"], q) for c in claims for q in c.get("quoted", [])]', 'quotes = [(c["id"], q) for c in claims if c["kind"] in CHECKED_KINDS for q in c.get("quoted", [])]'),
     ('quoted values stripped before matching the report', 'if q not in report]', 'if q.strip() not in report]'),
@@ -166,8 +167,6 @@ CURATED: list[tuple[str, str, str]] = [
     ('default glob loses *_test.*', '["*.test.*", "test_*.py", "*_test.*"]', '["*.test.*", "test_*.py"]'),
     ('default glob loses *.test.*', '["*.test.*", "test_*.py", "*_test.*"]', '["test_*.py", "*_test.*"]'),
     ('a whole definition line is dropped', '(assert|expect)\\w*\\s*\\("', '(assert|expect).*"'),
-    ('exit with a message not recognised', '[\'\\"1-9]', '[1-9]'),
-    ('exit(0) counts', '[\'\\"1-9]', '[\'\\"0-9]'),
     ('shell exit 0 counts', 'r"\\bexit\\s+[1-9]",', 'r"\\bexit\\s+[0-9]",'),
     ('@testset counts', 'r"@test\\b",', 'r"@test",'),
     ('trailing # comment kept', '            line = strip_hash_comment(line)\n', '            pass\n'),
@@ -177,13 +176,21 @@ CURATED: list[tuple[str, str, str]] = [
     ('a registered table may read itself', 'readers = {p for p in readers if not any(t is not None and _same(p, t) for t in tables)}', 'pass'),
     ('any file beside the tests is a reader', 'if p.is_file() and is_source(p))', 'if p.is_file())'),
     ('suffix case matters for readers', 'suffix = path.suffix.lower()\n    return suffix in SLASH_COMMENTS', 'suffix = path.suffix\n    return suffix in SLASH_COMMENTS'),
-    ('a named support file must be source', '        if place.is_file():\n            readers.add(place)\n        else:', '        if True:'),
     ('internal symlinks copied as separate files', '                internal.append((link, target))\n                skipped.append(name)', '                pass'),
     ('duplicate YAML keys accepted', '                _unique_pairs([(key, None) for key in keys if isinstance(key, (str, int, float))])\n', ''),
     ('duplicate JSON keys accepted', 'json.loads(text, object_pairs_hook=_unique_pairs)', 'json.loads(text)'),
     ('internal links are absolute', 'os.path.relpath(aim, copied.parent)', 'aim'),
-    ('helpers in subdirectories are not readers', 'place.rglob("*") if p.is_file() and is_source(p)', 'place.glob("*") if p.is_file() and is_source(p)'),
     ('linked names skipped at every depth', '        if here.resolve() == package:\n            skipped += [n for n in names if n in links and (package / n).is_dir()]', '        skipped += [n for n in names if n in links]'),
+    ('any backslash escapes a quote', '% 2 == 1\n        if quote:', '>= 1\n        if quote:'),
+    ('a python string loses its quotes', 'keep = \'""\' if token.type == tokenize.STRING else ""', 'keep = ""'),
+    ('python comments are not removed', '            lines[row - 1] = lines[row - 1][:column]\n', '            pass\n'),
+    ('python that does not tokenize is left unstripped', '        return None\n    middle =', '        return text\n    middle ='),
+    ('python strings still count as code', 'code_text(path, strings=False)', 'code_text(path)'),
+    ('file names in strings are lost to the reference check', 'code = "\\n".join(code_text(p) for p in sorted(readers))', 'code = "\\n".join(code_text(p, strings=False) for p in sorted(readers))'),
+    ('helpers in subdirectories are not readers', 'else place.rglob("*")', 'else place.glob("*")'),
+    ('exit with a message not recognised', '([rbfuRBFU]{0,2}[\'\\"]|[1-9])', '([1-9])'),
+    ('exit with a prefixed string not recognised', '[rbfuRBFU]{0,2}', ''),
+    ('exit(0) counts', '[\'\\"]|[1-9])",', '[\'\\"]|[0-9])",'),
 ]
 
 # Mutants the tests cannot kill because the change does not alter behaviour.

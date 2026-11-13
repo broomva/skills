@@ -22,8 +22,9 @@ tests:
   #     - file: tools/render.ts
   #       command: "bun run render"
   gates: []
-  # Test helpers and test data that live outside `dir`. They may read
-  # reference tables, and a mutation may not touch them.
+  # Test helpers and test data that live outside `dir`: a helper's source
+  # file, or a directory. Source files there may name reference tables, and a
+  # mutation may not touch anything listed.
   support: []
   # Optional: a regular expression that replaces the built-in list of
   # assertion constructs, for a test framework the audit does not know.

@@ -447,6 +447,14 @@ NOT_ASSERTIONS = [
     ("b2.py", "x = 'a'  # assert x\n"),
     ("b3.py", "print(1)# assert False\n"),
     ("b4.py", "print('#')# assert False\n"),
+    ("b5.py", "s = 'BSBS'; print(1) # assert False\n".replace("BS", chr(92))),
+    ("b6.py", 'DQDQDQ\nassert in a docstring\nDQDQDQ\nprint(1)\n'.replace("DQ", chr(34))),
+    ("b7.py", "print('assert x == 1')\n"),
+    ("b12.rb", "puts 'this should work'\n"),
+    ("b8.py", "print(f'{x} should be 1, expect(x)')\n"),
+    ("b9.py", "def (:\nprint(1) # assert False\n"),
+    ("b10.rb", "s = 'BSBS'; puts 1 # assert x\n".replace("BS", chr(92))),
+    ("b11.py", "x = DQDQDQ\n# not a comment\nDQDQDQ # assert x\nprint(x)\n".replace("DQ", chr(34))),
     ("c.ts", "const x = 1\n// expect(x).toBe(2)\nconsole.log(x)\n"),
     ("d.ts", "const x = 1\nconsole.log(x) // expect(x).toBe(2)\n"),
     ("e.ts", "/*\n * expect(x).toBe(2)\n */\nconsole.log(1)\n"),
@@ -543,6 +551,8 @@ def test_text_that_cannot_fail_is_not_an_assertion(tmp_path, name, text):
         ("u4.ts", "let i = 3; i--; expect(i).toBe(2)"),
         ("u5.js", "x.should.equal(4)"),
         ("u6.ts", "const n = this.#count; expect(n).toBe(1)"),
+        ("u7.rb", "x = Dir.glob('a/*'); x.should eq(1); y = Dir.glob('*/b')"),
+        ("u8.sh", "half=$((10 // 2)); test $half -eq 5 || exit 1"),
         ("v.swift", "XCTAssertEqual(range, 4.16, accuracy: 0.01)"),
         ("w.r", "expect_equal(range, 4.16)"),
         ("x.zig", "try expectApproxEqAbs(4.16, range, 0.01);"),
@@ -1206,6 +1216,14 @@ EVERY_IDIOM = [
     ("py8.py", "s = 'it\\'s # fine'; assert s"),
     ("py9.py", 's = "#"; assert s'),
     ("sh2.sh", "test $# -gt 0 || exit 1"),
+    ("py10.py", "s = 'BSBS'; assert s  # the string is one backslash".replace("BS", chr(92))),
+    ("py11.py", "x = DQDQDQ\nfirst\nsecond\nDQDQDQ; assert x".replace("DQ", chr(34))),
+    ("py12.py", "def (:\n    assert broken_file_still_scanned"),
+    ("py13.py", "sys.exit(f'bad {x}')"),
+    ("z5.txt", "sys.exit(b'bad')"),
+    ("z6.txt", "sys.exit(rb'bad')"),
+    ("rb2.rb", "s = 'aBSBS'; x.should eq(1)".replace("BS", chr(92))),
+    ("rb3.rb", "s = 'itBS's # fine'; x.should eq(1)".replace("BS", chr(92))),
     ("py7.py", "def assert_zero(): assert fall_time(0) == 0"),
     ("rs1.rs", "fn zero() { assert_eq!(fall_time(0.0), 0.0); }"),
     ("ts1.ts", "/* first */ expect(x).toBe(1) /* second */"),
@@ -1622,7 +1640,7 @@ def test_a_mutation_reached_through_a_symlink_is_seen_by_tests_that_read_through
         assert (target / alias).resolve() == (target / "src").resolve()
 
 
-def test_only_source_files_and_named_support_files_read_references(tmp_path):
+def test_only_source_files_read_references_and_a_support_file_must_be_source(tmp_path):
     retyped = read(TABLE).replace(
         'open("test/reference/drop.txt", encoding="utf-8")', 'open("README.md", encoding="utf-8")'
     )
@@ -1635,11 +1653,33 @@ def test_only_source_files_and_named_support_files_read_references(tmp_path):
     files = {TABLE: retyped, "testlib/MANIFEST.yaml": "tables: [drop.txt]\n"}
     audit = static(build(tmp_path / "dir", data, **files))
     assert "drop-table: no test reads it" in failures(audit, "references")
+    assert statuses(audit, "ledger") == [PASS]
 
-    data["tests"]["support"] = ["testlib/loader.inc"]
-    files = {TABLE: retyped, "testlib/loader.inc": loader}
-    audit = static(build(tmp_path / "named", data, **files))
+    for name in ("testlib/loader.inc", "testlib/MANIFEST.yaml", "testlib/notes"):
+        data["tests"]["support"] = [name]
+        files = {TABLE: retyped, name: "see drop.txt\n"}
+        audit = static(build(tmp_path / name.replace("/", "-"), data, **files))
+        assert f"{name}: a support file must be source code" in failures(audit, "ledger")
+        assert "drop-table: no test reads it" in failures(audit, "references")
+
+    data["tests"]["support"] = ["testlib/loader.py"]
+    audit = static(build(tmp_path / "named", data, **{TABLE: retyped, "testlib/loader.py": loader}))
     assert "sourced, dated and read" in passes(audit, "references")
+    assert statuses(audit, "ledger") == [PASS]
+
+
+def test_a_symlink_that_leaves_the_package_and_comes_back_is_refused(tmp_path, capsys):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    package = build(tmp_path)
+    (outside / "back").symlink_to(package / "src", target_is_directory=True)
+    (package / "out").symlink_to(outside, target_is_directory=True)
+    with pytest.raises(sim_audit.AuditError, match="leaves the package and points back into it"):
+        sim_audit.audit_package(package, run_tests=True)
+    assert sim_audit.main([str(package), "--run-tests"]) == 2
+    err = capsys.readouterr().err
+    assert "leaves the package and points back into it" in err and "Traceback" not in err
+    assert not static(package).failed(strict=False)  # nothing is copied unless something runs
 
 
 def test_a_registered_table_does_not_count_as_reading_itself(tmp_path):

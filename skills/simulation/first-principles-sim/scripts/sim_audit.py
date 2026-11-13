@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import io
 import json
 import os
 import re
@@ -56,6 +57,7 @@ import stat
 import subprocess
 import sys
 import tempfile
+import tokenize
 from dataclasses import dataclass, field
 from datetime import date
 from pathlib import Path
@@ -99,7 +101,7 @@ ASSERTIONS = (
     r"\bpytest\.raises\b",
     r"\.fail\s*\(",
     r"\bt\.(Error|Errorf|Fatal|Fatalf|Fail|FailNow)\s*\(",
-    r"\b(exit|Exit)\s*\(\s*['\"1-9]",
+    r"\b(exit|Exit)\s*\(\s*([rbfuRBFU]{0,2}['\"]|[1-9])",
     r"\bexit\s+[1-9]",
     r"\bprocess\.exitCode\s*=\s*[1-9]",
     r"\bthrow\s+\w",
@@ -364,17 +366,24 @@ def _within(path: Path, directory: Path) -> bool:
     return any(_same(parent, directory) for parent in (path, *path.parents))
 
 
-def strip_comments(text: str, suffix: str) -> str:
+def strip_comments(text: str, suffix: str, strings: bool = True) -> str:
     """Drop comment text, so a commented-out assertion does not count.
 
     Deliberately crude. For `//` languages: `/* */` blocks, on one line or
     many, whole lines starting with `//`, and `//` to end of line unless it
-    follows a colon (so URLs survive). For `#` languages: `#` to end of line,
-    unless it sits inside quotes on that line or follows `$`. For `--`
+    follows a colon (so URLs survive). Python is read with its own tokenizer,
+    which can also empty its strings (`strings` false); a file that does not
+    tokenize falls back to the `#` rule. For the other
+    `#` languages: `#` to end of line, unless it sits inside quotes on that
+    line or follows `$`. For `--`
     languages: `--` to end of line. A file of an unknown language loses only
     whole lines that start with a comment marker. Strings are otherwise not
     parsed, so an assertion that exists only inside a string still counts.
     """
+    if suffix == ".py":
+        tokenized = strip_python_comments(text, strings)
+        if tokenized is not None:
+            return tokenized
     known = suffix in SLASH_COMMENTS or suffix in HASH_COMMENTS or suffix in DASH_COMMENTS
     if suffix in SLASH_COMMENTS:
         text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
@@ -400,6 +409,34 @@ def is_source(path: Path) -> bool:
     return suffix in SLASH_COMMENTS or suffix in HASH_COMMENTS or suffix in DASH_COMMENTS
 
 
+def strip_python_comments(text: str, strings: bool = True) -> str | None:
+    """Python source without comments, or None if it does not tokenize.
+
+    Python's own tokenizer decides what a comment and a string are, so quotes,
+    backslashes and strings that span lines need no rules here. With `strings`
+    false each string is also replaced by `""`, so the word `assert` in a
+    docstring or a message is not code, while `sys.exit("message")` still
+    shows that it is given a string.
+    """
+    lines = text.splitlines()
+    try:
+        tokens = list(tokenize.generate_tokens(io.StringIO(text).readline))
+    except (tokenize.TokenError, SyntaxError, IndentationError):
+        return None
+    middle = getattr(tokenize, "FSTRING_MIDDLE", None)  # the text of an f-string, Python 3.12+
+    for token in reversed(tokens):
+        (row, column), (end_row, end_column) = token.start, token.end
+        if token.type == tokenize.COMMENT:
+            lines[row - 1] = lines[row - 1][:column]
+        elif strings:
+            continue
+        elif token.type == tokenize.STRING or (middle is not None and token.type == middle):
+            keep = '""' if token.type == tokenize.STRING else ""
+            tail = lines[end_row - 1][end_column:]
+            lines[row - 1 : end_row] = [lines[row - 1][:column] + keep + tail]
+    return "\n".join(lines)
+
+
 def strip_hash_comment(line: str) -> str:
     """`line` up to a `#` that starts a comment.
 
@@ -408,7 +445,9 @@ def strip_hash_comment(line: str) -> str:
     """
     quote = ""
     for index, char in enumerate(line):
-        escaped = index > 0 and line[index - 1] == "\\"
+        # A quote is escaped by an odd number of backslashes straight before it.
+        before = line[:index]
+        escaped = (len(before) - len(before.rstrip("\\"))) % 2 == 1
         if quote:
             if char == quote and not escaped:
                 quote = ""
@@ -419,16 +458,19 @@ def strip_hash_comment(line: str) -> str:
     return line
 
 
-def code_text(path: Path) -> str:
+def code_text(path: Path, strings: bool = True) -> str:
+    """The file without comments. `strings` false also empties Python strings."""
     try:
         text = path.read_text(encoding="utf-8", errors="replace")
     except OSError:
         return ""
-    return strip_comments(text, path.suffix.lower())
+    return strip_comments(text, path.suffix.lower(), strings)
 
 
 def has_assertion(path: Path, pattern: re.Pattern = ASSERTION) -> bool:
-    return bool(pattern.search(DEFINITION.sub("", code_text(path))))
+    # A file name sits in a string, so the reference check keeps strings; an
+    # assertion never does, so this check drops them where it can.
+    return bool(pattern.search(DEFINITION.sub("", code_text(path, strings=False))))
 
 
 def find_test_files(package: Path, ledger: Ledger) -> list[Path]:
@@ -455,12 +497,20 @@ def gate_files(package: Path, ledger: Ledger, audit: Audit) -> list[Path]:
 
 
 def support_files(package: Path, ledger: Ledger, audit: Audit) -> list[Path]:
-    """Test helpers and data that live outside the tests directory."""
+    """Test helpers, and directories of test data, outside the tests directory."""
     found = []
     for name in ledger.support:
         path = _inside(package, name)
         if path is None or not path.exists():
             audit.add("ledger", FAIL, "support path does not exist inside the package", name)
+        elif path.is_file() and not is_source(path):
+            audit.add(
+                "ledger",
+                FAIL,
+                "a support file must be source code in a language the audit knows; "
+                "for data, list its directory",
+                name,
+            )
         else:
             found.append(path)
     return found
@@ -666,18 +716,16 @@ def check_references(
             continue
         used.add(rid)
 
-    # Code that could load a table: the checks, a support file named in the
-    # ledger, and source files beside the tests or under a support directory.
+    # Code that could load a table: the checks, and source files beside the
+    # tests or under a declared support path.
     # A manifest, a checksum list or a README that names the table is not code.
     readers = set(checks)
     tests_dir = _inside(package, ledger.tests_dir)
     for place in [tests_dir, *support]:
         if place is None:
             continue
-        if place.is_file():
-            readers.add(place)
-        else:
-            readers.update(p for p in place.rglob("*") if p.is_file() and is_source(p))
+        candidates = [place] if place.is_file() else place.rglob("*")
+        readers.update(p for p in candidates if p.is_file() and is_source(p))
     # A registered table is data, whatever its suffix: one called `drop.py`
     # that quotes its own URL would otherwise count as naming itself.
     tables = [_inside(package, entry["path"]) for entry in references.values()]
@@ -841,6 +889,12 @@ def copy_package(package: Path, destination: Path, links: tuple[str, ...]) -> No
                 continue
             target = link.resolve()
             if target == package or package in target.parents:
+                inside = here.resolve()
+                if inside != package and package not in inside.parents:
+                    raise AuditError(
+                        f"cannot copy the package: {link} is reached through a symlink that "
+                        "leaves the package and points back into it. Remove one of the two links"
+                    )
                 # Recreated below, pointing at the copy of its target. Copied
                 # as a separate file, a mutation of the target would be
                 # invisible to a test that reads it through the link.

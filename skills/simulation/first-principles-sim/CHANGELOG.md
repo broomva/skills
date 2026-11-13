@@ -18,6 +18,9 @@ open findings are on BRO-3709; the main ones:
   found.
 - **Crashes.** A very large `--timeout`, a deeply nested ledger and an id with a lone
   surrogate give tracebacks. A `find` containing `\r\n` never matches.
+- **Comment handling outside Python.** Python test files are read with Python's tokenizer.
+  Every other language is stripped by rule: strings are not parsed, and a string that spans
+  lines is not followed.
 - **The script's own tests.** `tests/run_mutants.py` generates several hundred changes and all are caught,
   but in every round a reviewer wrote further changes by hand and about half survived (24 of
   48 in round 4). Most are outside what the generator produces: only the first gate or support
