@@ -20,6 +20,9 @@ Listed by hand in CURATED: changes those four cannot express.
     python3 tests/run_mutants.py --list     # print the mutants and stop
     python3 tests/run_mutants.py strict     # only names containing "strict"
 
+The tests are run on the unchanged script first, and nothing else runs unless
+they pass.
+
 Exit 0 when every mutant is killed or is listed in EQUIVALENT with a reason.
 Exit 1 when one survives, when a curated mutant no longer applies, or when an
 EQUIVALENT entry is killed or matches nothing (the list has gone stale).
@@ -46,6 +49,10 @@ SKILL = Path(__file__).resolve().parents[1]
 SOURCE = SKILL / "scripts" / "sim_audit.py"
 
 # (name, find, replace). `find` must occur exactly once in sim_audit.py.
+# Not listed: passing `ignore_dangling_symlinks=True` to copytree again. Whether
+# that drops a relative link depends on the Python version (older ones judge the
+# link from the working directory), so the mutant would be killed on some
+# interpreters only. The behaviour has its own test.
 CURATED: list[tuple[str, str, str]] = [
     ('json ok always true', '"ok": not failed', '"ok": True'),
     ('a failing audit exits 0', 'return 1 if failed else 0', 'return 0'),
@@ -80,7 +87,6 @@ CURATED: list[tuple[str, str, str]] = [
     ('any scheme accepted', 'URL = re.compile(r"https?://', 'URL = re.compile(r"\\w+://'),
     ('a comment counts as reading', 'code = "\\n".join(code_text(p) for p in sorted(readers))', 'code = "\\n".join(p.read_text(encoding="utf-8", errors="replace") for p in sorted(readers))'),
     ('gates cannot read references', 'readers = set(checks)', 'readers = set()'),
-    ('data files count as readers', 'and p.suffix.lower() not in DATA_SUFFIXES', ''),
     ('only the last doc is searched', 'docs += path.read_text', 'docs = path.read_text'),
     ('report match ignores case', 'if q not in report]', 'if q.lower() not in report.lower()]'),
     ('docs match ignores case', 'if q not in docs]', 'if q.lower() not in docs.lower()]'),
@@ -93,7 +99,6 @@ CURATED: list[tuple[str, str, str]] = [
     ('any use of should counts', 'should\\s+(be|equal|eq)\\b', 'should\\b'),
     ('URLs stripped as comments', 're.sub(r"(?<!:)//.*$", "", line)', 're.sub(r"//.*$", "", line)'),
     ('trailing // comment kept', '            line = re.sub(r"(?<!:)//.*$", "", line)', '            pass'),
-    ('trailing # comment kept', '            line = re.sub(r"\\s#.*$", "", line)', '            pass'),
     ('trailing -- comment kept', '            line = re.sub(r"--.*$", "", line)', '            pass'),
     ('custom assertion ignored', 'assertion = re.compile(tests["assertion"])', 'assertion = re.compile(tests["assertion"]) and ASSERTION'),
     ('EXPECT_ not recognised', '(EXPECT|ASSERT|REQUIRE|CHECK)(_', '(ASSERT|REQUIRE|CHECK)(_'),
@@ -130,31 +135,18 @@ CURATED: list[tuple[str, str, str]] = [
     ('date may sit inside a longer number', 'DATE = re.compile(r"\\b(\\d{4})', 'DATE = re.compile(r"(\\d{4})'),
     ('an invalid date ends the search', '        except ValueError:\n            continue\n        if FIRST_YEAR', '        except ValueError:\n            break\n        if FIRST_YEAR'),
     ('symlinks kept as links', 'ignore=ignore, symlinks=False)', 'ignore=ignore, symlinks=True)'),
-    (
-        'dangling symlinks stop the copy',
-        'n for n in names if (Path(directory) / n).is_symlink() and not (Path(directory) / n).exists()',
-        'n for n in names if False',
-    ),
-    (
-        'relative symlinks judged from the working directory',
-        'shutil.copytree(package, destination, ignore=ignore, symlinks=False)',
-        'shutil.copytree(package, destination, ignore=ignore, symlinks=False, ignore_dangling_symlinks=True)',
-    ),
     ('files named like a link are skipped', 'if n in links and (package / n).is_dir()]', 'if n in links]'),
     ('duplicate link names crash', 'if source.is_dir() and not os.path.lexists(destination / name):', 'if source.is_dir():'),
     ('read-only sources crash', '        target.chmod(target.stat().st_mode | stat.S_IWUSR)\n', ''),
     ('reference tables may be mutated', '        if table is not None and table.exists():\n            protected.append(table)', '        pass'),
     ('support paths may be mutated', 'protected = [*checks, *support]', 'protected = [*checks]'),
     ('support paths are not readers', 'for place in [tests_dir, *support]:', 'for place in [tests_dir]:'),
-    ('helpers in subdirectories are not readers', 'candidates = place.rglob("*") if place.is_dir() else [place]', 'candidates = place.glob("*") if place.is_dir() else [place]'),
     ('test files in subdirectories not scanned', 'for path in sorted(root.rglob("*"))', 'for path in sorted(root.glob("*"))'),
     ('reference matched by stem', 'if path.name not in code:', 'if path.stem not in code:'),
-    ('suffix case matters for data files', 'p.suffix.lower() not in DATA_SUFFIXES', 'p.suffix not in DATA_SUFFIXES'),
     ('suffix case matters for comments', 'return strip_comments(text, path.suffix.lower())', 'return strip_comments(text, path.suffix)'),
     ('multi-line block comments kept', '        text = re.sub(r"/\\*.*?\\*/", "", text, flags=re.S)\n', '        text = re.sub(r"/\\*.*?\\*/", "", text)\n'),
     ('block comment strip is greedy', '        text = re.sub(r"/\\*.*?\\*/", "", text, flags=re.S)\n', '        text = re.sub(r"/\\*.*\\*/", "", text, flags=re.S)\n'),
     ('an unclosed block comment is code', '        text = re.sub(r"/\\*(?:(?!\\*/).)*\\Z", "", text, flags=re.S)\n', ''),
-    ('any # starts a comment', 'line = re.sub(r"\\s#.*$", "", line)', 'line = re.sub(r"#.*$", "", line)'),
     ('definitions count as assertions', 'DEFINITION.sub("", code_text(path))', 'code_text(path)'),
     ("the ledger's pattern is ignored for claims", '        if not has_assertion(path, ledger.assertion):\n            audit.add("claims"', '        if not has_assertion(path):\n            audit.add("claims"'),
     ('quotes on unchecked claims ignored', 'quotes = [(c["id"], q) for c in claims for q in c.get("quoted", [])]', 'quotes = [(c["id"], q) for c in claims if c["kind"] in CHECKED_KINDS for q in c.get("quoted", [])]'),
@@ -178,7 +170,19 @@ CURATED: list[tuple[str, str, str]] = [
     ('exit(0) counts', '[\'\\"1-9]', '[\'\\"0-9]'),
     ('shell exit 0 counts', 'r"\\bexit\\s+[1-9]",', 'r"\\bexit\\s+[0-9]",'),
     ('@testset counts', 'r"@test\\b",', 'r"@test",'),
-    ('linked names skipped at every depth', '        if Path(directory).resolve() == package:\n            skipped += [n for n in names if n in links and (package / n).is_dir()]', '        skipped += [n for n in names if n in links]'),
+    ('trailing # comment kept', '            line = strip_hash_comment(line)\n', '            pass\n'),
+    ('any # starts a comment', 'line = strip_hash_comment(line)', 'line = line.split("#")[0]'),
+    ('a # after $ is a comment', ' and not (index > 0 and line[index - 1] == "$")', ''),
+    ('an escaped quote ends the string', 'if char == quote and not escaped:', 'if char == quote:'),
+    ('any file beside the tests is a reader', 'if p.is_file() and is_source(p))', 'if p.is_file())'),
+    ('suffix case matters for readers', 'suffix = path.suffix.lower()\n    return suffix in SLASH_COMMENTS', 'suffix = path.suffix\n    return suffix in SLASH_COMMENTS'),
+    ('a named support file must be source', '        if place.is_file():\n            readers.add(place)\n        else:', '        if True:'),
+    ('internal symlinks copied as separate files', '                internal.append((link, target))\n                skipped.append(name)', '                pass'),
+    ('duplicate YAML keys accepted', '                _unique_pairs([(key, None) for key in keys if isinstance(key, (str, int, float))])\n', ''),
+    ('duplicate JSON keys accepted', 'json.loads(text, object_pairs_hook=_unique_pairs)', 'json.loads(text)'),
+    ('internal links are absolute', 'os.path.relpath(aim, copied.parent)', 'aim'),
+    ('helpers in subdirectories are not readers', 'place.rglob("*") if p.is_file() and is_source(p)', 'place.glob("*") if p.is_file() and is_source(p)'),
+    ('linked names skipped at every depth', '        if here.resolve() == package:\n            skipped += [n for n in names if n in links and (package / n).is_dir()]', '        skipped += [n for n in names if n in links]'),
 ]
 
 # Mutants the tests cannot kill because the change does not alter behaviour.
@@ -311,6 +315,12 @@ def main(argv: list[str]) -> int:
         print(f"{len(mutants)} mutants")
         return 0
     chosen = [m for m in mutants if not argv or any(a in m[0] for a in argv)]
+    # A suite that is already red fails for every mutant, and every mutant
+    # would be counted as killed. Nothing below means anything without this.
+    baseline = run_mutant(("the unchanged script", SOURCE.read_text(encoding="utf-8")))[1]
+    if baseline != "SURVIVED":
+        print(f"BASELINE   the tests do not pass on the unchanged script ({baseline}); no mutant was run")
+        return 1
     workers = int(os.environ.get("MUTANT_WORKERS", os.cpu_count() or 4))
     with ThreadPoolExecutor(max_workers=workers) as pool:
         outcomes = dict(pool.map(run_mutant, chosen))

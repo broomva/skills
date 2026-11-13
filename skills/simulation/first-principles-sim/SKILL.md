@@ -13,8 +13,8 @@ description: >-
   structures. Every claim goes in a ledger (sim-claims.yaml) as reference,
   independent, conservation, control, prediction, convention or omitted, and
   scripts/sim_audit.py checks the ledger: the tests are green and every test
-  file asserts, every reference table carries its source and date and is read
-  by a test, every number the ledger quotes appears in the docs and in the
+  file asserts, every reference table carries its source and date and is named
+  by test code, every number the ledger quotes appears in the docs and in the
   report command's output, and each listed small code change turns a test
   red. USE WHEN: "simulate X from physics", "from first principles",
   "physically accurate", "make it emerge, don't fake it", "like rauchg's
@@ -93,8 +93,12 @@ cloud-chamber example for each step. For a field other than particle physics, re
    run that was not requested reports SKIP, never PASS. Add `--run-gates` to run the checks
    listed under `tests.gates`. A YAML ledger needs PyYAML; a `sim-claims.json` one does not.
 10. **Vary what should not matter.** Shift every random seed and run the tests again. For a
-    deterministic solver, halve the step and the grid spacing instead: the error against the
-    anchor must fall at the order the scheme promises.
+    deterministic solver, halve the step and the grid spacing instead, and keep two questions
+    apart. Does the solver converge? Measure its error against an exact solution of the
+    equations it solves, or against a much finer run, and require it to fall at the order the
+    scheme promises. Does the model match the world? Compare the converged result with the
+    measured anchor. That difference includes measurement error and left-out physics, and
+    refining the grid will not shrink it.
 11. **Get an independent review** (cross-review, P20) on a copy of the tree. Fix each finding by
     checking the claim against something computed another way, or by narrowing the claim.
 12. **Write the three tables** in the README from the ledger: what is checked against what, what
@@ -145,7 +149,7 @@ be predictions and conventions. That is the honest result. Say it in the README.
 |---|---|
 | The test command exits 0 in a copy of the package | That the tests test anything. Only mutations show that |
 | Every test file contains an assertion | That the assertion is about the claim |
-| A reference file has a URL and a date, and code beside the tests names the file | That the table was copied correctly, that it is the right table, or that the code which names it also uses it. A test that loads tables by listing a directory must still name each file |
+| A reference file has a URL and a date, and source code beside the tests names the file | That the table was copied correctly, that it is the right table, or that the code which names it also uses it. A test that loads tables by listing a directory must still name each file. Only files in a language the audit knows count as source; name any other helper under `tests.support` |
 | A string the ledger quotes appears in the docs and in the report's standard output | Numbers in the docs that the ledger does not list. That the report computes anything: a report command that prints the README would pass. And a short string such as `1.1` matches by accident; quote enough digits or the unit |
 | A mutation turns its test command red | That it died for the right reason. A mutation that breaks the code outright kills any test, a test that fails for another reason also kills it, and nothing checks that the command runs the claim's `test` file |
 | With `--run-gates`, each gate's command exits 0 | That the command runs the gate's file. Without the flag, anything about a gate beyond the file existing and asserting; it reports SKIP |
@@ -157,8 +161,8 @@ More limits:
 
 - **The package must run from a copy of its own directory.** Commands run in a temporary copy,
   so tests that import a sibling package fail there. The `suite` check says so when it happens.
-  Symlinks in the package are followed when it is copied, so a link to a large directory is
-  copied in full.
+  A symlink that points inside the package points inside the copy. One that points elsewhere
+  is followed, so a link to a large directory is copied in full.
 - **Tests need their own directory.** Everything under `tests.dir` is treated as a test, a
   helper or test data, so source files kept beside their tests cannot be mutated.
 - **Linked directories are shared.** `node_modules`, `.venv`, `venv` and `target` (or the

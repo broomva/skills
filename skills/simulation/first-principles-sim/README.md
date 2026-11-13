@@ -16,10 +16,16 @@ npx skills add broomva/skills --skill first-principles-sim
 
 ## Audit a package
 
+Run these from this skill's directory (after install, `~/.claude/skills/first-principles-sim`),
+with `<package>` as the path to your simulation package:
+
 ```bash
 cp assets/example/falling-body/sim-claims.yaml <package>/sim-claims.yaml   # then replace every entry
 python3 scripts/sim_audit.py <package> --run-report --run-mutations
 ```
+
+From anywhere else, give the script's full path:
+`python3 ~/.claude/skills/first-principles-sim/scripts/sim_audit.py <package> ...`.
 
 `assets/example/falling-body` is a complete package that passes with `--strict`.
 

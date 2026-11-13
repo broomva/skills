@@ -13,15 +13,11 @@ First release (BRO-3709), distilled from the cloud-chamber build (BRO-3705).
 review rounds each scored it 5 out of 10 (one stratum scored 3 and 4 in rounds 1 and 3). The
 open findings are on BRO-3709; the main ones:
 
-- **False passes.** Any non-data file beside the tests that names a reference table (a
-  checksum file, a `README.rst`) counts as code that reads it. A ledger listed as its own doc,
-  with a report that prints it, passes the quoted check.
-- **Wrong results through symlinks.** A mutation aimed at a file reached through a symlink
-  inside the package changes the link's target, not the copy the tests import, and reports
-  SURVIVED.
+- **False passes.** A ledger listed as its own doc, with a report that prints it, passes the
+  quoted check. A quoted value split across the end of one doc and the start of the next is
+  found.
 - **Crashes.** A very large `--timeout`, a deeply nested ledger and an id with a lone
-  surrogate give tracebacks. Duplicate YAML keys are accepted silently. A `find` containing
-  `\r\n` never matches.
+  surrogate give tracebacks. A `find` containing `\r\n` never matches.
 - **The script's own tests.** `tests/run_mutants.py` generates several hundred changes and all are caught,
   but in every round a reviewer wrote further changes by hand and about half survived (24 of
   48 in round 4). Most are outside what the generator produces: only the first gate or support

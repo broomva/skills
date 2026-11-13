@@ -32,8 +32,9 @@ Checks:
                makes its test command fail
 
 Commands run in a temporary copy of the package, never in the package itself.
-Symlinks in the package are followed when it is copied, except the directories
-listed under `link`, which the copy shares with the package.
+A symlink that points inside the package points inside the copy; one that
+points elsewhere is followed and its content copied. The directories listed
+under `link` are the exception: the copy shares them with the package.
 
 Exit 0 when nothing failed, 1 when a check failed, 2 when the ledger could not
 be read or the package could not be copied. A check that needs a flag that was not given reports SKIP, never PASS.
@@ -120,8 +121,6 @@ SLASH_COMMENTS = {
 HASH_COMMENTS = {".py", ".rb", ".sh", ".bash", ".jl", ".r", ".pl", ".nim", ".ex", ".exs"}
 #: Languages whose comments start with `--`.
 DASH_COMMENTS = {".lua", ".hs", ".sql", ".elm"}
-#: Files that hold data, not code: they cannot "read" a reference table.
-DATA_SUFFIXES = {".txt", ".csv", ".tsv", ".dat", ".json", ".md"}
 
 URL = re.compile(r"https?://\S+")
 DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
@@ -203,6 +202,16 @@ def find_ledger(package: Path) -> Path:
     return found[0]
 
 
+def _unique_pairs(pairs: list) -> dict:
+    """A mapping from `pairs`, refusing a key that appears twice."""
+    seen: dict = {}
+    for key, value in pairs:
+        if key in seen:
+            raise LedgerError(f"the ledger has the key {key!r} twice in one mapping")
+        seen[key] = value
+    return seen
+
+
 def read_ledger(path: Path) -> dict:
     try:
         text = path.read_text(encoding="utf-8")
@@ -210,7 +219,7 @@ def read_ledger(path: Path) -> dict:
         raise LedgerError(f"{path.name} is not UTF-8: {exc}") from exc
     if path.suffix == ".json":
         try:
-            data = json.loads(text)
+            data = json.loads(text, object_pairs_hook=_unique_pairs)
         except json.JSONDecodeError as exc:
             raise LedgerError(f"{path.name}: {exc}") from exc
     else:
@@ -221,8 +230,17 @@ def read_ledger(path: Path) -> dict:
                 f"{path.name} is YAML and PyYAML is not installed "
                 "(pip install pyyaml, or write sim-claims.json)"
             ) from exc
+
+        class UniqueKeys(yaml.SafeLoader):
+            """A second `claims:` would silently replace the first."""
+
+            def construct_mapping(self, node, deep=False):
+                keys = [self.construct_object(key, deep=True) for key, _ in node.value]
+                _unique_pairs([(key, None) for key in keys if isinstance(key, (str, int, float))])
+                return super().construct_mapping(node, deep)
+
         try:
-            data = yaml.safe_load(text)
+            data = yaml.load(text, Loader=UniqueKeys)  # noqa: S506 - a SafeLoader subclass
         except yaml.YAMLError as exc:
             raise LedgerError(f"{path.name}: {exc}") from exc
     if not isinstance(data, dict):
@@ -351,11 +369,11 @@ def strip_comments(text: str, suffix: str) -> str:
 
     Deliberately crude. For `//` languages: `/* */` blocks, on one line or
     many, whole lines starting with `//`, and `//` to end of line unless it
-    follows a colon (so URLs survive). For `#` languages: whole lines starting
-    with `#`, and ` #` to end of line. For `--` languages: `--` to end of
-    line. A file of an unknown language loses only whole lines that start with
-    a comment marker. Strings are not parsed, so an assertion that exists only
-    inside a string still counts.
+    follows a colon (so URLs survive). For `#` languages: `#` to end of line,
+    unless it sits inside quotes on that line or follows `$`. For `--`
+    languages: `--` to end of line. A file of an unknown language loses only
+    whole lines that start with a comment marker. Strings are otherwise not
+    parsed, so an assertion that exists only inside a string still counts.
     """
     known = suffix in SLASH_COMMENTS or suffix in HASH_COMMENTS or suffix in DASH_COMMENTS
     if suffix in SLASH_COMMENTS:
@@ -367,15 +385,38 @@ def strip_comments(text: str, suffix: str) -> str:
         if not known and stripped.startswith(("#", "//", "/*", "*")):
             continue
         if suffix in HASH_COMMENTS:
-            if stripped.startswith("#"):
-                continue
-            line = re.sub(r"\s#.*$", "", line)
+            line = strip_hash_comment(line)
         if suffix in SLASH_COMMENTS:
             line = re.sub(r"(?<!:)//.*$", "", line)
         if suffix in DASH_COMMENTS:
             line = re.sub(r"--.*$", "", line)
         kept.append(line)
     return "\n".join(kept)
+
+
+def is_source(path: Path) -> bool:
+    """Whether `path` is code in a language whose comments the audit knows."""
+    suffix = path.suffix.lower()
+    return suffix in SLASH_COMMENTS or suffix in HASH_COMMENTS or suffix in DASH_COMMENTS
+
+
+def strip_hash_comment(line: str) -> str:
+    """`line` up to a `#` that starts a comment.
+
+    A `#` inside quotes on the same line, or straight after `$`, is not one.
+    Strings that span lines are not followed.
+    """
+    quote = ""
+    for index, char in enumerate(line):
+        escaped = index > 0 and line[index - 1] == "\\"
+        if quote:
+            if char == quote and not escaped:
+                quote = ""
+        elif char in "'\"":
+            quote = char
+        elif char == "#" and not (index > 0 and line[index - 1] == "$"):
+            return line[:index]
+    return line
 
 
 def code_text(path: Path) -> str:
@@ -625,17 +666,18 @@ def check_references(
             continue
         used.add(rid)
 
-    # Code that could load a table: the checks, and any helper beside the tests
-    # or under a declared support path.
+    # Code that could load a table: the checks, a support file named in the
+    # ledger, and source files beside the tests or under a support directory.
+    # A manifest, a checksum list or a README that names the table is not code.
     readers = set(checks)
     tests_dir = _inside(package, ledger.tests_dir)
     for place in [tests_dir, *support]:
         if place is None:
             continue
-        candidates = place.rglob("*") if place.is_dir() else [place]
-        readers.update(
-            p for p in candidates if p.is_file() and p.suffix.lower() not in DATA_SUFFIXES
-        )
+        if place.is_file():
+            readers.add(place)
+        else:
+            readers.update(p for p in place.rglob("*") if p.is_file() and is_source(p))
     code = "\n".join(code_text(p) for p in sorted(readers))
 
     for rid, entry in references.items():
@@ -770,24 +812,40 @@ def copy_package(package: Path, destination: Path, links: tuple[str, ...]) -> No
     """Copy the package without its caches, linking heavy top-level directories.
 
     A linked directory is shared with the package: a command that writes a
-    cache there writes to the real one. Every other symlink is followed.
+    cache there writes to the real one. A symlink that points inside the
+    package is recreated pointing inside the copy. Any other symlink is
+    followed and its content copied.
     """
 
+    internal: list[tuple[Path, Path]] = []  # (link, its target), both inside the package
+
     def ignore(directory: str, names: list[str]) -> list[str]:
+        here = Path(directory)
         # Compiled Python left in the package would be loaded in place of a
         # mutated source of the same size written within the same second.
         skipped = [n for n in names if n in STALE]
-        # A link whose target is gone. `exists` follows the link from its own
-        # directory; copytree's own check resolves it from the working directory.
-        skipped += [
-            n for n in names if (Path(directory) / n).is_symlink() and not (Path(directory) / n).exists()
-        ]
-        if Path(directory).resolve() == package:
+        if here.resolve() == package:
             skipped += [n for n in names if n in links and (package / n).is_dir()]
+        for name in names:
+            link = here / name
+            if name in skipped or not link.is_symlink():
+                continue
+            # `exists` follows the link from its own directory; copytree's own
+            # check for a dangling link resolves it from the working directory.
+            if not link.exists():
+                skipped.append(name)
+                continue
+            target = link.resolve()
+            if target == package or package in target.parents:
+                # Recreated below, pointing at the copy of its target. Copied
+                # as a separate file, a mutation of the target would be
+                # invisible to a test that reads it through the link.
+                internal.append((link, target))
+                skipped.append(name)
         return skipped
 
     try:
-        # Symlinks are followed: a link kept as a link would let a command
+        # Any other symlink is followed: kept as a link, it would let a command
         # write through it to the real file.
         shutil.copytree(package, destination, ignore=ignore, symlinks=False)
     except (shutil.Error, OSError) as exc:
@@ -796,6 +854,12 @@ def copy_package(package: Path, destination: Path, links: tuple[str, ...]) -> No
         source = package / name
         if source.is_dir() and not os.path.lexists(destination / name):
             os.symlink(source.resolve(), destination / name, target_is_directory=True)
+    for link, target in internal:
+        # `link` was reached by walking real directories, so its parent is
+        # inside the package even when the link's own target is elsewhere in it.
+        copied = destination / link.parent.resolve().relative_to(package) / link.name
+        aim = destination / target.relative_to(package)
+        os.symlink(os.path.relpath(aim, copied.parent), copied, target_is_directory=target.is_dir())
 
 
 def check_suite(

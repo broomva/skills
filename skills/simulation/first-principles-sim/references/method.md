@@ -94,10 +94,14 @@ partials, and those partials are the anchor. So:
 
 - State the stability limit of the scheme (the Courant number, or its equivalent) and print the
   value the simulation runs at.
-- Halve the step and the spacing, and assert that the error against the anchor falls at the
-  order the scheme promises. This is the deterministic solver's version of shifting the seeds.
-  Use at least three resolutions: two give one ratio, which cannot show an order. Stop refining
-  when the error reaches round-off or the resolution of the measurement.
+- Halve the step and the spacing, and assert that the solver's error falls at the order the
+  scheme promises. Measure that error against an exact solution of the equations being solved,
+  or against a much finer run. Do not measure it against a measured anchor: that difference
+  also holds measurement error and left-out physics, and refinement does not shrink it. This
+  is the deterministic solver's version of shifting the seeds.
+- Two resolutions against an exact solution give one estimate of the order. A third shows
+  whether the estimate is steady. Stop refining when the error reaches round-off.
+- Then compare the converged result with the measured anchor, as its own claim.
 - For sound, the output sample rate fixes the time step. Refine in space, or oversample and
   decimate. The standard explicit scheme for an ideal string is exact at a Courant number of
   one, so there is no error to shrink there; test the refinement on the case with stiffness or

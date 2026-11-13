@@ -444,6 +444,9 @@ def test_a_test_file_that_only_prints_fails(tmp_path):
 NOT_ASSERTIONS = [
     ("a.py", "x = 1\n# assert x == 2\nprint(x)\n"),
     ("b.py", "x = 1\nprint(x)  # assert x == 2\n"),
+    ("b2.py", "x = 'a'  # assert x\n"),
+    ("b3.py", "print(1)# assert False\n"),
+    ("b4.py", "print('#')# assert False\n"),
     ("c.ts", "const x = 1\n// expect(x).toBe(2)\nconsole.log(x)\n"),
     ("d.ts", "const x = 1\nconsole.log(x) // expect(x).toBe(2)\n"),
     ("e.ts", "/*\n * expect(x).toBe(2)\n */\nconsole.log(1)\n"),
@@ -539,6 +542,7 @@ def test_text_that_cannot_fail_is_not_an_assertion(tmp_path, name, text):
         ("u3.ts", "const s = ' #'; expect(s).toBe(' #')"),
         ("u4.ts", "let i = 3; i--; expect(i).toBe(2)"),
         ("u5.js", "x.should.equal(4)"),
+        ("u6.ts", "const n = this.#count; expect(n).toBe(1)"),
         ("v.swift", "XCTAssertEqual(range, 4.16, accuracy: 0.01)"),
         ("w.r", "expect_equal(range, 4.16)"),
         ("x.zig", "try expectApproxEqAbs(4.16, range, 0.01);"),
@@ -675,8 +679,8 @@ def test_a_reference_no_test_reads_fails(tmp_path):
     audit = static(build(tmp_path / "comment", **{TABLE: commented}))
     assert "drop-table: no test reads it" in failures(audit, "references")
 
-    assert sim_audit.DATA_SUFFIXES == {".txt", ".csv", ".tsv", ".dat", ".json", ".md"}
-    for suffix in (".txt", ".csv", ".tsv", ".dat", ".json", ".md"):
+    # A file that is not source code does not read anything, whatever it is called.
+    for suffix in (".txt", ".csv", ".tsv", ".dat", ".json", ".md", ".yaml", ".rst", ".sha256", ""):
         note = {f"test/reference/notes{suffix}": "see drop.txt\n"}
         audit = static(build(tmp_path / f"data{suffix}", **{TABLE: retyped, **note}))
         assert "drop-table: no test reads it" in failures(audit, "references"), suffix
@@ -1199,6 +1203,9 @@ EVERY_IDIOM = [
     ("py4.py", "assert colour == '#fff'"),
     ("py5.py", "def test_zero(): assert fall_time(0) == 0"),
     ("py6.py", "tag = '#'; assert tag"),
+    ("py8.py", "s = 'it\\'s # fine'; assert s"),
+    ("py9.py", 's = "#"; assert s'),
+    ("sh2.sh", "test $# -gt 0 || exit 1"),
     ("py7.py", "def assert_zero(): assert fall_time(0) == 0"),
     ("rs1.rs", "fn zero() { assert_eq!(fall_time(0.0), 0.0); }"),
     ("ts1.ts", "/* first */ expect(x).toBe(1) /* second */"),
@@ -1376,8 +1383,12 @@ def test_a_symlink_in_the_package_is_followed_so_nothing_is_written_through_it(t
 
 def test_a_relative_symlink_is_followed_wherever_the_audit_is_run_from(tmp_path, monkeypatch):
     package = build(tmp_path)
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "note.txt").write_text("shared", encoding="utf-8")
     (package / "lib").symlink_to("src", target_is_directory=True)
     (package / "gone").symlink_to("nowhere")
+    (package / "outside").symlink_to("../shared", target_is_directory=True)
     for name in ("test/table.test.py", "test/stepped.test.py", "test/energy.test.py", "test/control.test.py"):
         text = read(name).replace('sys.path.insert(0, "src")', 'sys.path.insert(0, "lib")')
         assert text != read(name)
@@ -1388,9 +1399,14 @@ def test_a_relative_symlink_is_followed_wherever_the_audit_is_run_from(tmp_path,
         monkeypatch.chdir(cwd)
         audit = sim_audit.audit_package(package, run_tests=True, run_report=True)
         assert statuses(audit, "suite") == [PASS], cwd
+        copied = tmp_path / f"copy-from-{cwd.name}"
+        sim_audit.copy_package(package.resolve(), copied, ())
+        assert (copied / "outside" / "note.txt").read_text(encoding="utf-8") == "shared", cwd
+        assert not (copied / "outside").is_symlink()
     target = tmp_path / "copy"
     sim_audit.copy_package(package.resolve(), target, ())
-    assert (target / "lib" / "model.py").is_file() and not (target / "lib").is_symlink()
+    assert (target / "lib").is_symlink() and os.readlink(target / "lib") == "src"
+    assert (target / "lib" / "model.py").resolve() == (target / "src" / "model.py").resolve()
     assert not os.path.lexists(target / "gone")
 
 
@@ -1544,3 +1560,83 @@ def test_a_support_path_may_hold_the_code_that_reads_a_reference(tmp_path):
     data["tests"]["support"] = ["absent"]
     audit = static(build(tmp_path / "absent", data, **files))
     assert "absent: support path does not exist" in failures(audit, "ledger")
+
+
+# Added for the CodeRabbit review of the pull request
+
+
+def test_a_key_given_twice_is_refused(tmp_path, capsys):
+    package = tmp_path / "pkg"
+    shutil.copytree(EXAMPLE, package)
+    original = (package / "sim-claims.yaml").read_text(encoding="utf-8")
+    cases = {
+        "top": original + "\nclaims:\n  - id: only\n    kind: omitted\n    statement: Everything.\n",
+        "nested": original.replace(
+            '    command: "python3 test/table.test.py"\n',
+            '    command: "python3 test/table.test.py"\n    command: "true"\n',
+        ),
+    }
+    assert cases["nested"] != original
+    for name, text in cases.items():
+        (package / "sim-claims.yaml").write_text(text, encoding="utf-8")
+        with pytest.raises(sim_audit.LedgerError, match="twice in one mapping"):
+            static(package)
+        assert sim_audit.main([str(package)]) == 2, name
+        assert "Traceback" not in capsys.readouterr().err
+    (package / "sim-claims.yaml").unlink()
+    (package / "sim-claims.json").write_text('{"claims": [], "docs": ["a"], "claims": []}', encoding="utf-8")
+    with pytest.raises(sim_audit.LedgerError, match="'claims' twice"):
+        static(package)
+    (package / "sim-claims.json").write_text('{"tests": {"dir": "a", "dir": "b"}}', encoding="utf-8")
+    with pytest.raises(sim_audit.LedgerError, match="'dir' twice"):
+        static(package)
+
+
+def test_the_same_key_in_two_different_mappings_is_fine(tmp_path):
+    package = tmp_path / "falling-body"
+    shutil.copytree(EXAMPLE, package)
+    text = (package / "sim-claims.yaml").read_text(encoding="utf-8")
+    (package / "sim-claims.yaml").write_text(with_interpreter(text), encoding="utf-8")
+    assert statuses(static(package), "ledger") == [PASS]
+
+
+def test_a_mutation_reached_through_a_symlink_is_seen_by_tests_that_read_through_it(tmp_path):
+    data = ledger()
+    for entry in data["mutations"]:
+        entry["file"] = "lib/model.py"
+    package = build(tmp_path, data)
+    (package / "lib").symlink_to("src", target_is_directory=True)
+    (package / "abs").symlink_to(package / "src", target_is_directory=True)
+    names = ("test/table.test.py", "test/stepped.test.py", "test/energy.test.py", "test/control.test.py")
+    for index, name in enumerate(names):
+        alias = "lib" if index % 2 else "abs"
+        text = read(name).replace('sys.path.insert(0, "src")', f'sys.path.insert(0, "{alias}")')
+        (package / name).write_text(text, encoding="utf-8")
+    audit = full(package)
+    assert not audit.failed(strict=True), sim_audit.render(audit, True)
+    assert details(audit, "mutations").count("killed") == 4
+    target = tmp_path / "copy"
+    sim_audit.copy_package(package.resolve(), target, ())
+    for alias in ("lib", "abs"):
+        assert (target / alias).is_symlink()
+        assert (target / alias).resolve() == (target / "src").resolve()
+
+
+def test_only_source_files_and_named_support_files_read_references(tmp_path):
+    retyped = read(TABLE).replace(
+        'open("test/reference/drop.txt", encoding="utf-8")', 'open("README.md", encoding="utf-8")'
+    )
+    loader = 'def load():\n    return open("test/reference/drop.txt")\n'
+    audit = static(build(tmp_path / "upper", **{TABLE: retyped, "test/LOADER.PY": loader}))
+    assert "sourced, dated and read" in passes(audit, "references")
+
+    data = ledger()
+    data["tests"]["support"] = ["testlib"]
+    files = {TABLE: retyped, "testlib/MANIFEST.yaml": "tables: [drop.txt]\n"}
+    audit = static(build(tmp_path / "dir", data, **files))
+    assert "drop-table: no test reads it" in failures(audit, "references")
+
+    data["tests"]["support"] = ["testlib/loader.inc"]
+    files = {TABLE: retyped, "testlib/loader.inc": loader}
+    audit = static(build(tmp_path / "named", data, **files))
+    assert "sourced, dated and read" in passes(audit, "references")
