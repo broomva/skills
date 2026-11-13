@@ -245,6 +245,10 @@ def _git(cwd, *args):
 def tree(tmp_path):
     """A checkout whose branch changed src/feature_flag.py, with docs that
     mention it on main."""
+    return _make_tree(tmp_path)
+
+
+def _make_tree(tmp_path, extra_docs=0):
     origin = tmp_path / "origin.git"
     work = tmp_path / "work"
     subprocess.run(["git", "init", "-q", "--bare", "-b", "main", str(origin)], check=True)
@@ -255,6 +259,8 @@ def tree(tmp_path):
         "research/entities/flags.md": "See feature_flag.py for the toggles.\n",
         "CLAUDE.md": "Never edit feature_flag.py by hand.\n",
         "docs/unrelated.md": "Nothing to see.\n",
+        **{f"docs/many/d{i:02}.md": "uses src/feature_flag.py\n"
+           for i in range(extra_docs)},
     }
     for rel, text in files.items():
         (work / rel).parent.mkdir(parents=True, exist_ok=True)
@@ -713,3 +719,139 @@ class TestRoundOneHooks:
             settings=str(path), p9_path=str(_SCRIPT), uninstall=False, dry_run=False))
         assert rc == p9.EXIT_OK
         assert "Stop" in json.loads(path.read_text())["hooks"]
+
+
+# ── P20 round 2 regressions ─────────────────────────────────────────────────
+class TestRoundTwo:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def _arm(self, p9, monkeypatch, verdict="pending"):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, verdict)
+        p9.cmd_watch(_watch_args())
+        return p9.latest_row(7, REPO)
+
+    def test_reap_cannot_bury_a_fold_that_raced_it(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        monkeypatch.setenv("BROOMVA_P9_HOST_WATCH_TTL_S", "0")
+        real = p9._reconcile_dead_watcher
+
+        def reconcile_while_observe_folds(pr, repo, reconcile):
+            # the agent's wake lands while reap is asking GitHub
+            _checks(monkeypatch, p9, "pass")
+            assert p9.observe_pr(pr, repo)["folded"]
+            return real(pr, repo, reconcile)
+        monkeypatch.setattr(p9, "_reconcile_dead_watcher", reconcile_while_observe_folds)
+        assert p9.reap_stale_watchers(grace_seconds=0) == []
+        assert p9.latest_row(7, REPO)["to_state"] == "GREEN"
+
+    def test_expect_state_requires_owner(self, p9):
+        ev = p9.PRStateEvent(ts=p9._utcnow(), pr=1, repo=REPO, from_state="PUSHED",
+                             to_state="WATCHING", watcher_id="w", session_id="")
+        with pytest.raises(p9.P9Error):
+            p9.append_state_event(ev, expect_state="PUSHED")
+
+    def test_no_checks_folds_red_after_the_window(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
+        first = p9.observe_pr(7, REPO)
+        assert not first["folded"]
+        assert p9.latest_row(7, REPO)["extra"].get("none_since")
+        monkeypatch.setattr(p9, "NO_CHECKS_FOLD_SECONDS", 0)
+        out = p9.observe_pr(7, REPO)
+        assert out["folded"] and out["state"] == "RED_UNCLASSIFIED"
+        assert "no checks" in p9.latest_row(7, REPO)["extra"]["reason"]
+
+    def test_pending_resets_the_no_checks_clock(self, p9, monkeypatch):
+        """none -> pending -> none: checks showed up in between, so the second
+        none starts a new clock instead of folding on the first one's."""
+        self._arm(p9, monkeypatch)
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
+        p9.observe_pr(7, REPO)                       # none: clock starts
+        _checks(monkeypatch, p9, "pending")
+        p9.observe_pr(7, REPO)                       # checks appeared
+        assert "none_since" not in p9.latest_row(7, REPO)["extra"]
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
+        monkeypatch.setattr(p9, "NO_CHECKS_FOLD_SECONDS", 0)
+        assert not p9.observe_pr(7, REPO)["folded"]  # a fresh clock
+
+    def test_foreign_session_cannot_take_a_live_host_watch(self, p9, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_SESSION", "session-a")
+        self._arm(p9, monkeypatch)
+        monkeypatch.setenv("BROOMVA_P9_SESSION", "session-b")
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_DEGRADED
+        assert p9.latest_row(7, REPO)["session_id"] == "session-a"
+        assert p9.cmd_watch(_watch_args(adopt=True)) == p9.EXIT_OK
+        assert p9.latest_row(7, REPO)["session_id"] == "session-b"
+
+
+def _checks_none(monkeypatch, p9):
+    monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: None)
+
+
+class TestRoundTwoHarvest:
+    @pytest.fixture(autouse=True)
+    def _on(self, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_HARVEST", "1")
+
+    def test_long_session_reaches_every_finding(self, p9, tmp_path):
+        work = _make_tree(tmp_path, extra_docs=50)
+        offered = set()
+        for _ in range(20):
+            for it in p9.harvest_queue(pr=7, cwd=work):
+                if it.source == "docs":
+                    offered.add(it.item.split()[1])
+            while p9.queue_pop() is not None:
+                pass
+        many = {d for d in offered if d.startswith("docs/many/")}
+        assert len(many) == 50
+
+    def test_same_doc_in_two_repos_is_two_findings(self, p9, tmp_path):
+        a = _make_tree(tmp_path / "a")
+        b = _make_tree(tmp_path / "b")
+        _git(a, "remote", "set-url", "origin", "https://github.com/acme/one.git")
+        _git(b, "remote", "set-url", "origin", "https://github.com/acme/two.git")
+        assert any("docs/guide.md" in it.item for it in p9.harvest_queue(cwd=a))
+        assert any("docs/guide.md" in it.item for it in p9.harvest_queue(cwd=b))
+
+    def test_fifo_in_memory_does_not_hang(self, p9, tmp_path, monkeypatch):
+        mem = tmp_path / "memory"
+        mem.mkdir()
+        os.mkfifo(mem / "followup.md")
+        (mem / "real.md").write_text("needs follow-up\n")
+        monkeypatch.setenv("BROOMVA_P9_MEMORY_DIRS", str(mem))
+        t0 = time.monotonic()
+        added = p9.harvest_queue(cwd=tmp_path)
+        assert time.monotonic() - t0 < 5
+        assert [Path(it.item.split()[1]).name for it in added] == ["real.md"]
+
+    def test_memory_respects_the_budget(self, p9, tmp_path, monkeypatch):
+        mem = tmp_path / "memory"
+        mem.mkdir()
+        (mem / "a.md").write_text("needs follow-up\n")
+        assert p9._harvest_memory([mem], deadline=time.monotonic() - 1) == []
+        assert len(p9._harvest_memory([mem], deadline=time.monotonic() + 5)) == 1
+
+
+class TestRoundTwoInstall:
+    def _args(self, path, p9_path, **kw):
+        import argparse
+        return argparse.Namespace(settings=str(path), p9_path=p9_path,
+                                  uninstall=kw.get("uninstall", False),
+                                  dry_run=False)
+
+    def test_relative_p9_path_is_made_absolute(self, p9, tmp_path, monkeypatch):
+        path = tmp_path / "settings.json"
+        path.write_text("{}")
+        monkeypatch.chdir(_SCRIPT.parent)
+        p9.cmd_hook_install(self._args(path, "p9.py"))
+        cmd = json.loads(path.read_text())["hooks"]["Stop"][0]["hooks"][0]["command"]
+        assert f"-I {_SCRIPT} hook stop" in cmd
+
+    def test_uninstall_on_clean_settings_writes_nothing(self, p9, tmp_path):
+        path = tmp_path / "settings.json"
+        path.write_text('{"model": "x"}')
+        p9.cmd_hook_install(self._args(path, str(_SCRIPT), uninstall=True))
+        assert path.read_text() == '{"model": "x"}'

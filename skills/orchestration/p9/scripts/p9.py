@@ -33,6 +33,7 @@ import os
 import re
 import shlex
 import signal
+import stat as stat_mod
 import subprocess
 import sys
 import time
@@ -2529,12 +2530,19 @@ Candidate = tuple[str, str, str, str]
 _DOC_SCAN_LIMIT = 40
 
 
+def _seen_digest(key: str) -> str:
+    return hashlib.sha1(key.encode()).hexdigest()
+
+
 def _harvest_docs(root: Path, changed: list[str], pr: int | None,
-                  deadline: float) -> list[Candidate]:
+                  deadline: float, *, ident: str = "",
+                  skip: frozenset[str] = frozenset()) -> list[Candidate]:
     """Docs and KG entities that mention a changed file the branch did not
-    also update. Uncapped here (bounded by _DOC_SCAN_LIMIT): the per-source
-    caps apply after the seen-ledger, so an item already offered does not
-    hold a slot a new one could use."""
+    also update. Findings already offered (`skip`) are passed over during the
+    scan, so the scan bound counts only new ones and a long-lived session
+    keeps reaching findings past the first batch. `ident` (the repo, or the
+    checkout when the repo is unknown) keeps two repos' same-named docs
+    apart in the seen-ledger."""
     code = [p for p in changed if not p.endswith((".md", ".mdx"))][:40]
     needles = sorted({n for p in code for n in _needles(p)})
     if not needles:
@@ -2559,9 +2567,12 @@ def _harvest_docs(root: Path, changed: list[str], pr: int | None,
         if hit is None:
             continue
         source = "graph" if doc.startswith("research/entities/") else "docs"
+        key = f"{source}:{ident or root}:{doc}:{hit}"
+        if _seen_digest(key) in skip:
+            continue
         tier = ("blocked" if Path(doc).name in _GOVERNANCE_DOCS
                 or doc.startswith(".control/") else "none")
-        found.append((source, f"{source}:{doc}:{hit}",
+        found.append((source, key,
                       f"{source}: {doc} mentions {hit}, which {where} changed "
                       f"and {doc} did not; check it still holds", tier))
     return found
@@ -2592,21 +2603,35 @@ def _memory_dirs(root: Path | None, deadline: float) -> list[Path]:
             if d.is_dir()]
 
 
-def _harvest_memory(dirs: list[Path]) -> list[Candidate]:
-    """Memory notes touched in the last day that say they need a follow-up."""
+_MEMORY_READ_BYTES = 64 * 1024
+
+
+def _harvest_memory(dirs: list[Path], deadline: float) -> list[Candidate]:
+    """Memory notes touched in the last day that say they need a follow-up.
+    Regular files only, a bounded read each, inside the budget: a FIFO or a
+    stalled mount named `*.md` must not hold a hook past its timeout."""
     found: list[Candidate] = []
     cutoff = time.time() - 86400
     for d in dirs:
+        if time.monotonic() >= deadline:
+            break
         try:
-            notes = sorted(d.glob("*.md"), key=lambda p: p.stat().st_mtime,
-                           reverse=True)
+            stats = [(n, n.stat()) for n in d.glob("*.md")]
         except OSError:
             continue
-        for note in notes:
+        stats.sort(key=lambda ns: ns[1].st_mtime, reverse=True)
+        for note, st in stats:
+            if time.monotonic() >= deadline:
+                break
+            if (note.name == "MEMORY.md" or not stat_mod.S_ISREG(st.st_mode)
+                    or st.st_mtime < cutoff):
+                continue
             try:
-                if note.name == "MEMORY.md" or note.stat().st_mtime < cutoff:
-                    continue
-                text = note.read_text(encoding="utf-8", errors="replace")
+                fd = os.open(note, os.O_RDONLY | getattr(os, "O_NONBLOCK", 0))
+                try:
+                    text = os.read(fd, _MEMORY_READ_BYTES).decode("utf-8", "replace")
+                finally:
+                    os.close(fd)
             except OSError:
                 continue
             if _FOLLOW_UP_RE.search(text):
@@ -2645,6 +2670,11 @@ def harvest_queue(*, pr: int | None = None, repo: str = "",
 def _harvest(pr: int | None, repo: str, cwd: Path | None,
              deadline: float) -> list[WaitQueueItem]:
     sid = current_session_id()
+    seen_file = _seen_path(sid)
+    try:  # a lock-free read to skip offered findings while scanning
+        offered = frozenset(json.loads(seen_file.read_text(encoding="utf-8")))
+    except (OSError, ValueError, TypeError):
+        offered = frozenset()
     candidates: list[Candidate] = []
     top = (_git(["rev-parse", "--show-toplevel"], cwd, deadline=deadline)
            or "").strip()
@@ -2656,11 +2686,10 @@ def _harvest(pr: int | None, repo: str, cwd: Path | None,
         # whose origin says nothing could be any repo.
         if not repo or (local and local == canonical_repo(repo)):
             candidates += _harvest_docs(root, _branch_changes(root, deadline),
-                                        pr, deadline)
-    candidates += _harvest_memory(_memory_dirs(root, deadline))
+                                        pr, deadline, ident=local, skip=offered)
+    candidates += _harvest_memory(_memory_dirs(root, deadline), deadline)
     if not candidates:
         return []
-    seen_file = _seen_path(sid)
     added: list[WaitQueueItem] = []
     taken = {k: 0 for k in HARVEST_CAPS}
     # One lock over read-seen, append and write-seen; the append writes the
@@ -2677,7 +2706,7 @@ def _harvest(pr: int | None, repo: str, cwd: Path | None,
         seen = {k: v for k, v in seen.items()
                 if _iso_age_seconds(str(v)) < HARVEST_SEEN_TTL_SECONDS}
         for source, key, item, tier in candidates:
-            digest = hashlib.sha1(key.encode()).hexdigest()
+            digest = _seen_digest(key)
             if digest in seen or taken[source] >= HARVEST_CAPS[source]:
                 continue
             seen[digest] = _utcnow()
@@ -2843,6 +2872,10 @@ def append_state_event(event: PRStateEvent, *,
     # Normalize on write so the stored key is exactly what repo_key() reads.
     event.repo = canonical_repo(event.repo)
     if isinstance(expect_owner, _Unset):
+        if expect_state is not None:
+            # A state check is only atomic inside the guarded path; silently
+            # skipping it would hand the caller a guarantee it never had.
+            raise P9Error("expect_state needs expect_owner (the guarded path)")
         jsonl_append(state_jsonl(), event.to_jsonl(), state_lock_path())
         return True
     if not isinstance(expect_owner, str):
@@ -3486,7 +3519,11 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
         # here, a `watch --adopt` or `rearm` may have handed the key to a live
         # replacement — reaping then folds the *replacement* terminal on the
         # strength of the dead watcher's pid.
-        if not append_state_event(event, expect_owner=_owner_of(row)):
+        # BRO-3710: owner alone cannot see a fold (observe keeps the owner), so
+        # the reap also names the state it judged; a GREEN that landed while
+        # this scan asked GitHub stays GREEN.
+        if not append_state_event(event, expect_owner=_owner_of(row),
+                                  expect_state=state.value):
             continue
         # Termination invariant (BRO-1701): SIGKILL and machine-death can't be
         # trapped by the watcher itself — the reap path is where those become
@@ -4167,6 +4204,13 @@ def cmd_watch(args: argparse.Namespace) -> int:
         # A host-owned row (BRO-3710) has no process: re-watching it, say
         # after pushing a fix, replaces a record, not a running watcher.
         host_row = bool((existing.get("extra") or {}).get("host_watch"))
+        foreign_host = (host_row and _host_watch_live(existing)
+                        and existing.get("session_id", "") not in ("", sid))
+        if foreign_host and not (adopt or force):
+            print(f"PR #{pr} ({repo or 'repo-unknown'}) is watched by session "
+                  f"{existing.get('session_id')} through its host. Refusing "
+                  "to take it over; pass --adopt to take it.", file=sys.stderr)
+            return EXIT_DEGRADED
         alive = epid > 0 and is_watcher_alive(epid)
         fresh = (not host_row and _iso_age_seconds(existing.get("ts", ""))
                  < _watcher_grace_seconds())
@@ -4446,6 +4490,11 @@ def _checks_verdict(checks: Any) -> tuple[str, list[str]]:
     return "green", []
 
 
+# T3 tells the thread "no checks have reported" after this long
+# (PULL_REQUEST_WATCH_NO_CHECKS_MS in its PR watch); observe folds then.
+NO_CHECKS_FOLD_SECONDS = 900
+
+
 def _pr_checks(pr: int, repo: str) -> list[dict[str, Any]] | None:
     """`gh pr checks --json name,bucket`, or [] when gh says no check has
     reported (it exits 1 and prints text, not JSON), or None on any other
@@ -4506,11 +4555,27 @@ def observe_pr(pr: int, repo: str, *, sid: str | None = None) -> dict[str, Any]:
                                       cause=f"observe:{verdict}"))
             out.update(folded=True, state=nxt.value)
         return out
+    none_since = (row.get("extra") or {}).get("none_since") if verdict == "none" else None
+    if verdict == "none" and none_since and \
+            _iso_age_seconds(none_since) >= NO_CHECKS_FOLD_SECONDS:
+        # No check has reported for as long as T3 waits before saying so. The
+        # classic path folds this red too (`gh pr checks --watch` exits 1 on
+        # "no checks reported"), and red is what tells the agent to look.
+        event = PRStateEvent(**base, to_state=PRState.RED_UNCLASSIFIED.value,
+                             extra={"folded_by": "p9 observe", "host_watch": "t3",
+                                    "reason": "no checks reported after "
+                                              f"{NO_CHECKS_FOLD_SECONDS // 60} min"})
+        if append_state_event(event, **guard):
+            emit_termination_report(pr_termination_report(
+                dataclasses.asdict(event), cause="observe:no-checks"))
+            out.update(folded=True, state=PRState.RED_UNCLASSIFIED.value)
+        return out
     if verdict in ("pending", "none"):
+        extra: dict[str, Any] = {"pid": 0, "host_watch": "t3", "observed": verdict}
+        if verdict == "none":
+            extra["none_since"] = none_since or _utcnow()
         append_state_event(PRStateEvent(**base, to_state=PRState.WATCHING.value,
-                                        extra={"pid": 0, "host_watch": "t3",
-                                               "observed": verdict}),
-                           **guard)
+                                        extra=extra), **guard)
     return out
 
 
@@ -4709,13 +4774,19 @@ def cmd_hook_install(args: argparse.Namespace) -> int:
     if not isinstance(current, dict):
         print(f"{path} is not a JSON object; not touching it", file=sys.stderr)
         return EXIT_DEGRADED
-    p9_path = Path(args.p9_path).expanduser() if args.p9_path else _default_p9_path()
+    p9_path = (Path(args.p9_path).expanduser().resolve() if args.p9_path
+               else _default_p9_path())
     if not args.uninstall and not _supports_hooks(p9_path):
         print(f"{p9_path} has no `hook` command (an older install?); update "
               "it before installing hooks that run it", file=sys.stderr)
         return EXIT_DEGRADED
-    updated = install_hooks(json.loads(json.dumps(current)), p9_path,
-                            uninstall=args.uninstall)
+    has_p9 = isinstance(current.get("hooks"), dict) and any(
+        _is_p9_hook(h) for groups in current["hooks"].values()
+        if isinstance(groups, list) for g in groups if isinstance(g, dict)
+        for h in g.get("hooks") or [])
+    updated = (current if args.uninstall and not has_p9 else
+               install_hooks(json.loads(json.dumps(current)), p9_path,
+                             uninstall=args.uninstall))
     if updated == current:
         print(f"{path}: p9 hooks already {'absent' if args.uninstall else 'installed'}")
         return EXIT_OK
@@ -5432,7 +5503,8 @@ def cmd_rearm(args: argparse.Namespace) -> int:
                 # implicit event.watcher_id check cannot express, and why
                 # expect_owner is an explicit argument.
                 if not append_state_event(
-                        stale, expect_owner=_owner_of(row)):
+                        stale, expect_owner=_owner_of(row),
+                        expect_state=state.value):
                     action["skipped"] = (
                         "row changed hands before the fold landed; left to "
                         "its new owner")

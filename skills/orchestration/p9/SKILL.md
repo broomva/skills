@@ -71,10 +71,12 @@ forbids waiting on `gh --watch`, so on T3:
   failure), `green` once nothing is pending (when the required checks pass
   first, T3 owes one more wake once the rest settle). A pending or
   no-checks-yet read re-stamps the row; a failed read does not, so an
-  unreadable watch ages out. Every write is a compare-and-swap on owner and
+  unreadable watch ages out. When no check has reported for 15 minutes (T3's
+  own no-checks notice), observe folds RED, as `gh pr checks --watch` would. Every write is a compare-and-swap on owner and
   state, so an overlapping or late wake changes nothing, and a row watched by
   a p9 process is never touched. Re-running `p9 watch` on a host-owned row
-  (say after pushing a fix) replaces it; `--detach` is host-owned on T3 too.
+  (say after pushing a fix) replaces it; another session's live host watch
+  is refused unless you pass `--adopt`. `--detach` is host-owned on T3 too.
 - `p9 reap` and `p9 rearm` judge a host-owned row by age, not pid: it is
   live until `BROOMVA_P9_HOST_WATCH_TTL_S` (default 6 h) passes without an
   observe.
@@ -313,10 +315,12 @@ Harvest runs on `p9 watch`, `p9 wait-for`, the PostToolUse hook and
 `p9 wait-queue harvest [--pr N]`. Docs and graph come from the local checkout,
 and only when that checkout is provably the PR's repo (a named repo against an
 origin p9 cannot identify gets nothing). It never touches the network and runs
-inside an 8 s budget. Caps (docs 5, graph 3, memory 3) apply per harvest after
+inside an 8 s budget, memory reads included (regular files only, 64 KiB
+each). Caps (docs 5, graph 3, memory 3) apply per harvest after
 the seen-ledger, and each finding (doc + the file it mentions) is offered once
 per session for 7 days, so popping an item does not bring it back and a
-different wording does not make it new. `BROOMVA_P9_HARVEST=0` turns it off.
+different wording does not make it new. Offered findings are skipped during
+the scan itself, so a long wait keeps reaching new ones. `BROOMVA_P9_HARVEST=0` turns it off.
 
 ### The hooks: the queue reaches the agent
 
