@@ -92,9 +92,13 @@ forbids waiting on `gh --watch`, so on T3:
   a p9 process is never touched. Re-running `p9 watch` on a host-owned row
   (say after pushing a fix) replaces it; another session's live host watch
   is refused unless you pass `--adopt`. `--detach` is host-owned on T3 too.
-- `p9 reap` and `p9 rearm` judge a host-owned row by age, not pid: it is
-  live until `BROOMVA_P9_HOST_WATCH_TTL_S` (default 6 h) passes without an
-  observe.
+- `p9 reap` judges a host-owned row by age, not pid: it is live until
+  `BROOMVA_P9_HOST_WATCH_TTL_S` (default 6 h) passes without an observe.
+  `p9 rearm` never touches a host-owned row: only its own thread can restore
+  it (`watch_pull_request` + `p9 watch`), and a detached child cannot. Rearm
+  children always run their own watcher (`P9_PR_WATCH_OWNER=p9`), even when
+  rearm runs inside T3. The classic arm is in the transaction too, so it
+  refuses rather than overwrite a watch armed concurrently.
 - **Measured limit:** a T3 wake (a delegated child finishing, a PR change)
   that arrives while your turn is still running is queued as your next turn,
   not delivered into the current one. A Claude background task's completion,

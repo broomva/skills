@@ -548,13 +548,15 @@ class TestRoundOneStateMachine:
         p9.cmd_rearm(argparse.Namespace(now=True, dry_run=True, json=True))
         assert json.loads(capsys.readouterr().out)["rearmed"] == []
 
-    def test_rearm_takes_host_watch_past_ttl(self, p9, monkeypatch, capsys):
+    def test_rearm_never_takes_host_rows(self, p9, monkeypatch, capsys):
+        """Past the TTL too: a detached child cannot register a T3 wake, so
+        a host watch is restored by its thread, and reap retires it."""
         import argparse
         self._arm(p9, monkeypatch)
         monkeypatch.setenv("BROOMVA_P9_HOST_WATCH_TTL_S", "0")
         capsys.readouterr()
         p9.cmd_rearm(argparse.Namespace(now=True, dry_run=True, json=True))
-        assert [a["pr"] for a in json.loads(capsys.readouterr().out)["rearmed"]] == [7]
+        assert json.loads(capsys.readouterr().out)["rearmed"] == []
 
 
 def test_pr_checks_reads_gh_no_checks_text(p9, monkeypatch):
@@ -1150,19 +1152,23 @@ class TestReshapedRoundOne:
         assert rc == p9.EXIT_OK
         assert p9.latest_row(7, REPO)["to_state"] == "GREEN"
 
-    def test_rearm_argv_carries_the_owner(self, p9, monkeypatch, capsys):
+    def test_rearm_child_is_fenced_and_never_host_owned(self, p9, monkeypatch, capsys):
+        """Run from a T3 thread, rearm restores a dead classic watch with a
+        real watcher: the child is told the exact row and not to take the
+        host path."""
         import argparse
-        _no_spawn(monkeypatch, p9)
-        _checks(monkeypatch, p9, "pending")
-        p9.cmd_watch(_watch_args())
-        monkeypatch.setenv("BROOMVA_P9_HOST_WATCH_TTL_S", "0")
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2000-01-01T00:00:00+00:00", pr=9, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="deadw", session_id="other",
+            extra={"pid": 999999}))
+        row = p9.latest_row(9, REPO)
         launched = []
-        monkeypatch.setattr(p9.subprocess, "Popen",
-                            lambda argv, **k: launched.append(argv) or type("P", (), {"pid": 1})())
+        monkeypatch.setattr(p9.subprocess, "Popen", lambda argv, **k: launched.append(
+            (argv, k)) or type("P", (), {"pid": 1})())
         p9.cmd_rearm(argparse.Namespace(now=True, dry_run=False, json=True))
-        argv = launched[0]
-        row = p9.latest_row(7, REPO)
-        assert argv[argv.index("--expect-owner") + 1] == f"{row['watcher_id']}@{row['ts']}"
+        argv, kw = launched[0]
+        assert argv[argv.index("--expect-owner") + 1] == f"deadw@{row['ts']}"
+        assert kw["env"]["P9_PR_WATCH_OWNER"] == "p9"
 
     def test_discarded_observation_reports_the_current_state(self, p9, monkeypatch):
         _no_spawn(monkeypatch, p9)
@@ -1296,3 +1302,78 @@ class TestReshapedRoundTwo:
         p9.cmd_observe(argparse.Namespace(pr="7", repo=None, json=False, no_checks=False))
         out = capsys.readouterr().out
         assert "still watching" not in out and "again" in out
+
+
+# ── reshaped round 3 regressions ────────────────────────────────────────────
+class TestReshapedRoundThree:
+    def test_classic_arm_refuses_over_a_concurrent_host_watch(self, p9, monkeypatch):
+        """A classic watch paused in its harvest; a T3 thread arms meanwhile;
+        the classic arm must not overwrite it."""
+        monkeypatch.delenv("T3CODE_THREAD_ID", raising=False)
+        monkeypatch.setenv("BROOMVA_P9_SESSION", "classic")
+
+        fired = []
+
+        def t3_arms_meanwhile(**kw):
+            if fired:
+                return []           # the inner T3 watch harvests too
+            fired.append(1)
+            monkeypatch.setenv("T3CODE_THREAD_ID", "thread-9")
+            monkeypatch.setenv("BROOMVA_P9_SESSION", "t3")
+            _checks(monkeypatch, p9, "pending")
+            _no_spawn(monkeypatch, p9)
+            assert p9.cmd_watch(_watch_args()) == p9.EXIT_OK
+            monkeypatch.delenv("T3CODE_THREAD_ID")
+            monkeypatch.setenv("BROOMVA_P9_SESSION", "classic")
+            terminated = []
+
+            class Proc:
+                pid = 4321
+
+                def terminate(self):
+                    terminated.append(1)
+
+                def wait(self, timeout=None):
+                    return 0
+            monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: Proc())
+            return []
+        monkeypatch.setattr(p9, "harvest_queue", t3_arms_meanwhile)
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_DEGRADED
+        row = p9.latest_row(7, REPO)
+        assert row["session_id"] == "t3" and row["extra"]["host_watch"] == "t3"
+
+    def test_process_owned_note_does_not_say_run_again(self, p9, monkeypatch, capsys):
+        import argparse
+        p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=8, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="proc", session_id="",
+            extra={"pid": os.getpid()}))
+        _checks(monkeypatch, p9, "pass")
+        p9.cmd_observe(argparse.Namespace(pr="8", repo=None, json=False, no_checks=False))
+        assert "again" not in capsys.readouterr().out
+
+    @pytest.mark.parametrize("text,hit", [
+        ("uses data/b.py", False), ("uses a/b.py.", True), ("`a/b.py`", True),
+        ("see ./a/b.py", False), ("a/b.pyc", False)])
+    def test_path_mention_is_whole(self, p9, text, hit):
+        assert p9._mentions(text, "a/b.py") is hit
+
+
+def test_harvest_does_not_match_a_path_inside_another(p9, tmp_path, monkeypatch):
+    monkeypatch.setenv("BROOMVA_P9_HARVEST", "1")
+    work = _make_tree(tmp_path)
+    _git(work, "checkout", "-q", "main")
+    (work / "a").mkdir()
+    (work / "a/b.py").write_text("x = 1\n")
+    (work / "docs/other.md").write_text("uses data/b.py\n")
+    (work / "docs/right.md").write_text("uses a/b.py\n")
+    _git(work, "add", "-A")
+    _git(work, "commit", "-qm", "setup")
+    _git(work, "push", "-q", "origin", "main")
+    _git(work, "fetch", "-q", "origin")
+    _git(work, "checkout", "-q", "feature")
+    _git(work, "rebase", "-q", "main")
+    (work / "a/b.py").write_text("x = 2\n")
+    _git(work, "commit", "-qam", "change a/b.py")
+    docs = {it.item.split()[1] for it in p9.harvest_queue(pr=5, cwd=work)}
+    assert "docs/right.md" in docs and "docs/other.md" not in docs

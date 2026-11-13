@@ -2584,7 +2584,7 @@ def _harvest_docs(root: Path, changed: list[str], pr: int | None,
             text = (root / doc).read_text(encoding="utf-8", errors="replace")
         except OSError:
             continue
-        hit = next((n for n in needles if n in text), None)
+        hit = next((n for n in needles if _mentions(text, n)), None)
         if hit is None:
             continue
         source = "graph" if doc.startswith("research/entities/") else "docs"
@@ -2597,6 +2597,12 @@ def _harvest_docs(root: Path, changed: list[str], pr: int | None,
                       f"{source}: {doc} mentions {hit}, which {where} changed "
                       f"and {doc} did not; check it still holds", tier))
     return found
+
+
+def _mentions(text: str, needle: str) -> bool:
+    """`needle` as a whole path or name: not `a/b.py` inside `data/b.py`."""
+    return re.search(r"(?<![\w./-])" + re.escape(needle) + r"(?![\w/-])",
+                     text) is not None
 
 
 def _project_slug(path: Path) -> str:
@@ -4426,7 +4432,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
                              watcher_id=watcher_id)
         pid = proc.pid if proc else 0
         log_path = str(watch_log_path(watcher_id)) if proc is not None else None
-        append_state_event(PRStateEvent(
+        arm = PRStateEvent(
             ts=_utcnow(),
             pr=pr,
             repo=repo or "",
@@ -4437,7 +4443,19 @@ def cmd_watch(args: argparse.Namespace) -> int:
             session_id=sid,
             extra={"pid": pid, "dry_run": args.dry_run, "detach": args.detach,
                    **({"log": log_path} if log_path else {})},
-        ))
+        )
+        # BRO-3710: every path here has already superseded any watching row,
+        # so one found now was armed concurrently (a T3 host watch included);
+        # this arm refuses instead of overwriting it.
+        if not transact_pr_state(pr, repo, lambda latest: [] if latest and latest.get(
+                "to_state") in (PRState.WATCHING.value, PRState.HEALING.value)
+                else [arm], chain=False):
+            if proc is not None:
+                with contextlib.suppress(Exception):
+                    proc.terminate()
+            print(f"PR #{pr}: another watch was armed while this one was "
+                  "deciding; nothing armed", file=sys.stderr)
+            return EXIT_DEGRADED
         row_written = True
         if args.json:
             print(json.dumps({
@@ -4757,7 +4775,8 @@ def cmd_observe(args: argparse.Namespace) -> int:
     elif out["folded"]:
         print(f"folded: {out['state']} (checks {out['verdict']})"
               + (f"; failed: {', '.join(out['failed'])}" if out["failed"] else ""))
-    elif out.get("note") and out["verdict"] in ("green", "red"):
+    elif str(out.get("note", "")).startswith("superseded") and \
+            out["verdict"] in ("green", "red"):
         print(f"PR #{args.pr}: checks {out['verdict']}, but this read was "
               f"{out['note']}; state is {out['state']}. Run `p9 observe "
               f"{args.pr}` again before ending your turn.")
@@ -5633,8 +5652,11 @@ def cmd_rearm(args: argparse.Namespace) -> int:
         state = PRState(row["to_state"])
         if state not in (PRState.WATCHING, PRState.HEALING):
             continue
-        if _host_watch_live(row):
-            continue  # BRO-3710: pid 0 is how a live host watch looks
+        if (row.get("extra") or {}).get("host_watch"):
+            # BRO-3710: a host watch is restored by its own thread calling
+            # watch_pull_request, which no detached child can do. Live, it is
+            # not dead; expired, `reap` retires it.
+            continue
         pid = _row_pid(row)
         if pid > 0 and is_watcher_alive(pid):
             continue
@@ -5707,9 +5729,13 @@ def cmd_rearm(args: argparse.Namespace) -> int:
                 logs_dir().mkdir(parents=True, exist_ok=True)
                 log_path = logs_dir() / f"rearm-watch-{_safe_slug(str(pr))}.log"
                 with open(log_path, "ab") as out:
+                    # A detached child cannot be woken by a host, so it always
+                    # runs its own watcher, even when rearm runs inside T3.
                     child = subprocess.Popen(argv, stdout=out,
                                              stderr=subprocess.STDOUT,
-                                             start_new_session=True)
+                                             start_new_session=True,
+                                             env={**os.environ,
+                                                  "P9_PR_WATCH_OWNER": "p9"})
                 action.update(rearmed_pid=child.pid, log=str(log_path))
         except Exception as e:  # noqa: BLE001 — isolate per row
             action["error"] = f"{type(e).__name__}: {e}"
