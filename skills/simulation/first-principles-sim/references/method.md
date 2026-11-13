@@ -150,8 +150,8 @@ A test file that asserts is not the same as a claim that is enforced. The cloud 
 test for the water nucleation threshold that passed, and tested a function the engine never
 called. It had two brute-force tests that retyped the engine's formula.
 
-A mutation settles it. Change one line of the code under test so that the claim becomes false,
-and run the test:
+A mutation settles it. Make a small change to the code under test, usually one line, so that
+the claim becomes false, and run the test:
 
 ```yaml
 mutations:

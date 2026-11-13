@@ -296,6 +296,7 @@ def test_text_that_cannot_fail_is_not_an_assertion(tmp_path, name, text):
         ("r.rb", "range.should eq(4.16)"),
         ("s.ts", "const r = await fetch('https://x.org/a'); expect(r.ok).toBe(true)"),
         ("t.py", "paths = glob('ref/*.txt')\nassert paths\nother = glob('**/x')"),
+        ("u.py", "x = 10 // 2; assert x == 5"),
     ],
 )
 def test_assertion_constructs_are_recognised(tmp_path, name, line):
@@ -391,6 +392,7 @@ def test_a_test_path_outside_the_package_is_refused(tmp_path):
     [
         ("# Fetched 2026-11-13\n", "no source URL"),
         ("# Source: https://example.org/t\n", "no fetch date"),
+        ("# Source: ftp://example.org/t, 2026-11-13\n", "no source URL"),
         ("#\n" * 45 + "# https://example.org/t 2026-11-13\n", "no source URL; no fetch date"),
     ],
 )
@@ -398,6 +400,16 @@ def test_a_reference_without_provenance_in_its_header_fails(tmp_path, header, pr
     table = header + "5.0 1.0098\n20.0 2.0196\n"
     audit = static(build(tmp_path, **{"test/reference/drop.txt": table}))
     assert problem in details(audit, "references")
+
+
+def test_a_plain_http_source_is_accepted(tmp_path):
+    table = "# http://example.org/t fetched 2026-11-13\n" + read("test/reference/drop.txt")
+    table = table.replace("https://physics.nist.gov/cgi-bin/cuu/Value?gn", "(see above)")
+    assert "https://" not in table
+    audit = static(build(tmp_path, **{"test/reference/drop.txt": table}))
+    assert "drop-table: test/reference/drop.txt: sourced, dated and read" in details(
+        audit, "references", PASS
+    )
 
 
 def test_a_reference_no_test_reads_fails(tmp_path):
@@ -519,6 +531,16 @@ def test_report_command_failures_fail(tmp_path):
     del data["commands"]["report"]
     audit = sim_audit.audit_package(build(tmp_path / "none", data), run_report=True)
     assert "no `commands.report`" in failures(audit, "quoted")
+
+
+def test_quoted_values_match_exactly_including_case(tmp_path):
+    data = ledger()
+    claim(data, "energy")["quoted"] = ["9.90 M/S"]
+    readme = read("README.md").replace("9.90 m/s", "9.90 M/S")
+    audit = sim_audit.audit_package(build(tmp_path, data, **{"README.md": readme}), run_report=True)
+    assert "energy: '9.90 M/S' is not in the report output" in failures(audit, "quoted")
+    audit = static(build(tmp_path / "docs", data))
+    assert "energy: '9.90 M/S' is in the ledger but not in the docs" in failures(audit, "quoted")
 
 
 def test_a_number_printed_only_to_standard_error_does_not_count(tmp_path):
@@ -673,8 +695,16 @@ def test_no_mutations_fails(tmp_path):
 # the copy
 
 
-def test_linked_directories_are_linked_and_git_is_left_behind(tmp_path):
-    package = build(tmp_path, **{"node_modules/big/file.txt": "x", ".git/HEAD": "ref"})
+def test_linked_directories_are_linked_and_caches_are_left_behind(tmp_path):
+    package = build(
+        tmp_path,
+        **{
+            "node_modules/big/file.txt": "x",
+            ".git/HEAD": "ref",
+            "src/__pycache__/model.cpython-312.pyc": "stale",
+            ".pytest_cache/v": "x",
+        },
+    )
     (package / "cache").mkdir()
     target = tmp_path / "copy"
     sim_audit.copy_package(package.resolve(), target, ("node_modules", "cache", "absent"))
@@ -682,6 +712,8 @@ def test_linked_directories_are_linked_and_git_is_left_behind(tmp_path):
     assert (target / "cache").is_symlink()
     assert not (target / "absent").exists()
     assert not (target / ".git").exists()
+    assert not (target / "src" / "__pycache__").exists()
+    assert not (target / ".pytest_cache").exists()
     assert (target / "src" / "model.py").is_file() and not (target / "src").is_symlink()
 
 

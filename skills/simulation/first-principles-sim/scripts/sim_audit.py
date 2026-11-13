@@ -7,7 +7,7 @@ package makes is either enforced by something that can fail, or labelled as
 unchecked.
 
 The ledger is `sim-claims.yaml` (or `.json`) in the package directory. It lists
-the reference files, the claims, the numbers quoted in prose, and one-line code
+the reference files, the claims, the numbers quoted in prose, and small code
 changes ("mutations") that must turn a test red.
 
 Checks:
@@ -105,6 +105,8 @@ DATE = re.compile(r"\b(19|20)\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b")
 HEADER_LINES = 40
 #: Directories linked into the copy instead of copied.
 DEFAULT_LINKS = ("node_modules", ".venv", "venv", "target")
+#: Never copied: version control, and caches that can outlive a source change.
+STALE = (".git", "__pycache__", ".pytest_cache")
 DEFAULT_TIMEOUT = 600
 
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
@@ -647,14 +649,16 @@ def check_quoted(
 
 
 def copy_package(package: Path, destination: Path, links: tuple[str, ...]) -> None:
-    """Copy the package, linking heavy top-level directories instead.
+    """Copy the package without its caches, linking heavy top-level directories.
 
     A linked directory is shared with the package: a command that writes a
     cache there writes to the real one.
     """
 
     def ignore(directory: str, names: list[str]) -> list[str]:
-        skipped = [n for n in names if n == ".git"]
+        # Compiled Python left in the package would be loaded in place of a
+        # mutated source of the same size written within the same second.
+        skipped = [n for n in names if n in STALE]
         if Path(directory).resolve() == package:
             skipped += [n for n in names if n in links]
         return skipped

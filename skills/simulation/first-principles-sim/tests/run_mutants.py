@@ -82,7 +82,8 @@ MUTANTS: list[tuple[str, str, str]] = [
         'command = ledger.commands.get("test")',
     ),
     ("ledger link list ignored", "links=tuple(links),", "links=DEFAULT_LINKS,"),
-    (".git copied", 'skipped = [n for n in names if n == ".git"]', "skipped = []"),
+    ("caches and .git copied", "skipped = [n for n in names if n in STALE]", "skipped = []"),
+    ("stale bytecode copied", 'STALE = (".git", "__pycache__", ".pytest_cache")', 'STALE = (".git",)'),
     (
         "linked directories copied instead",
         "        if source.is_dir():\n            os.symlink",
@@ -168,6 +169,18 @@ MUTANTS: list[tuple[str, str, str]] = [
         'code = "\\n".join(p.read_text(encoding="utf-8", errors="replace") for p in sorted(readers))',
     ),
     ("no URL needed", "if not URL.search(head):", "if False:"),
+    ("plain http refused", 'URL = re.compile(r"https?://\\S+")', 'URL = re.compile(r"https://\\S+")'),
+    ("any scheme accepted", 'URL = re.compile(r"https?://\\S+")', 'URL = re.compile(r"\\w+://\\S+")'),
+    (
+        "report match ignores case",
+        "unprinted = [(cid, q) for cid, q in quotes if q not in report]",
+        "unprinted = [(cid, q) for cid, q in quotes if q.lower() not in report.lower()]",
+    ),
+    (
+        "docs match ignores case",
+        "undocumented = [(cid, q) for cid, q in quotes if q not in docs]",
+        "undocumented = [(cid, q) for cid, q in quotes if q.lower() not in docs.lower()]",
+    ),
     ("no date needed", "if not DATE.search(head):", "if False:"),
     ("an unread table passes", "if path.name not in code:", "if False:"),
     ("an unused table passes", "if rid not in used:", "if False:"),

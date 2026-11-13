@@ -82,7 +82,7 @@ claims:
     kind: omitted            # physics left out
     statement: "Air drag and buoyancy."
 
-# One-line changes to the code under test that must turn a test red. Each runs
+# Small changes to the code under test, usually one line, that must turn a test red. Each runs
 # in a copy of the package. `find` must occur exactly once in `file`, and
 # `file` may not be a test.
 mutations:

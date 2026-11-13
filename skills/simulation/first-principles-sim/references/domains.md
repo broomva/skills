@@ -26,7 +26,7 @@ Other instruments built from the same stages:
 
 | Instrument | Reuses | New stage | Anchor |
 |---|---|---|---|
-| Geiger counter, as sound | Sources, energy loss | Avalanche and dead time; a click per count | Counts per window are Poisson and intervals are exponential; the dead-time correction formula |
+| Geiger counter, as sound | Sources, energy loss | Avalanche and dead time; a click per count | Decays arriving at the tube: counts per window are Poisson and intervals exponential. Recorded clicks are thinned by dead time, so compare their rate with the dead-time correction formula and expect no interval shorter than the dead time |
 | Bubble chamber | Transport | Nucleation of vapor in superheated liquid | Stopping powers for the liquid; curvature in the field |
 | Spark chamber | Transport, ion pairs | Breakdown along the ion trail between plates | Weak: Paschen's law covers a static uniform gap, not a pulsed discharge along a trail. Expect predictions here |
 | Scintillator and photomultiplier | Energy loss | Light yield, photon statistics, pulse shape | Published light yields; Poisson width of the photopeak |

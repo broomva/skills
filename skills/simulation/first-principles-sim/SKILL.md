@@ -15,7 +15,7 @@ description: >-
   scripts/sim_audit.py checks the ledger: the tests are green and every test
   file asserts, every reference table carries its source and date and is read
   by a test, every number the ledger quotes appears in the docs and in the
-  report command's output, and each listed one-line code change turns a test
+  report command's output, and each listed small code change turns a test
   red. USE WHEN: "simulate X from physics", "from first principles",
   "physically accurate", "make it emerge, don't fake it", "like rauchg's
   vinyl", "a realistic simulation of", "verify the simulation against real
@@ -74,8 +74,8 @@ cloud-chamber example for each step. For a field other than particle physics, re
    to act, or the control passes because nothing has happened yet.
 7. **Write the report command.** It prints every number the prose quotes. Quote nothing else,
    and quote the digits it prints.
-8. **Write a mutation for each checked claim.** One line of the code under test, changed so the
-   claim becomes false. The test must go red. If it stays green, the test checks something
+8. **Write a mutation for each checked claim.** A small change to the code under test, usually
+   one line, that makes the claim false. The test must go red. If it stays green, the test checks something
    other than the claim. The audit warns for each checked claim that has none.
 9. **Run the audit.**
 
