@@ -2484,20 +2484,29 @@ def consume_wait_mark(session_id: str | None = None) -> dict[str, Any] | None:
     return mark
 
 
-def _git(args: list[str], cwd: Path | None = None) -> str | None:
+def _git(args: list[str], cwd: Path | None = None, *,
+         deadline: float | None = None) -> str | None:
+    """Run git; None on failure. `deadline` (a monotonic time) bounds the
+    call to what is left of the caller's budget."""
+    timeout = 20.0
+    if deadline is not None:
+        timeout = deadline - time.monotonic()
+        if timeout <= 0:
+            return None
     try:
         out = subprocess.run(["git", *args], capture_output=True, text=True,
-                             timeout=20, check=False, cwd=cwd)
+                             timeout=timeout, check=False, cwd=cwd)
     except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
         return None
     return out.stdout if out.returncode == 0 else None
 
 
-def _branch_changes(root: Path) -> list[str]:
+def _branch_changes(root: Path, deadline: float) -> list[str]:
     """Files this branch changed against its upstream default branch."""
-    head = (_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], root) or "").strip()
+    head = (_git(["rev-parse", "--abbrev-ref", "origin/HEAD"], root,
+                 deadline=deadline) or "").strip()
     base = head if head.startswith("origin/") else "origin/main"
-    out = _git(["diff", "--name-only", f"{base}...HEAD"], root)
+    out = _git(["diff", "--name-only", f"{base}...HEAD"], root, deadline=deadline)
     return [ln for ln in (out or "").splitlines() if ln.strip()]
 
 
@@ -2513,10 +2522,19 @@ def _needles(path: str) -> list[str]:
     return out
 
 
-def _harvest_docs(root: Path, changed: list[str], pr: int | None
-                  ) -> list[tuple[str, str, str]]:
-    """(source, item, tier) for each doc or KG entity that mentions a changed
-    file the branch did not also update."""
+# A candidate is (source, key, item, tier). The key names the finding — the
+# doc and the file it mentions — not the wording, which carries "PR #N" or
+# "this branch" and would make the same finding look new to the seen-ledger.
+Candidate = tuple[str, str, str, str]
+_DOC_SCAN_LIMIT = 40
+
+
+def _harvest_docs(root: Path, changed: list[str], pr: int | None,
+                  deadline: float) -> list[Candidate]:
+    """Docs and KG entities that mention a changed file the branch did not
+    also update. Uncapped here (bounded by _DOC_SCAN_LIMIT): the per-source
+    caps apply after the seen-ledger, so an item already offered does not
+    hold a slot a new one could use."""
     code = [p for p in changed if not p.endswith((".md", ".mdx"))][:40]
     needles = sorted({n for p in code for n in _needles(p)})
     if not needles:
@@ -2524,16 +2542,14 @@ def _harvest_docs(root: Path, changed: list[str], pr: int | None
     args = ["grep", "-l", "-F"]
     for n in needles:
         args += ["-e", n]
-    out = _git([*args, "--", "*.md", "*.mdx"], root) or ""
+    out = _git([*args, "--", "*.md", "*.mdx"], root, deadline=deadline) or ""
     touched = set(changed)
     where = f"PR #{pr}" if pr else "this branch"
-    found: list[tuple[str, str, str]] = []
-    counts = {"docs": 0, "graph": 0}
+    found: list[Candidate] = []
     for doc in out.splitlines():
+        if len(found) >= _DOC_SCAN_LIMIT or time.monotonic() >= deadline:
+            break
         if not doc or doc in touched:
-            continue
-        source = "graph" if doc.startswith("research/entities/") else "docs"
-        if counts[source] >= HARVEST_CAPS[source]:
             continue
         try:
             text = (root / doc).read_text(encoding="utf-8", errors="replace")
@@ -2542,35 +2558,51 @@ def _harvest_docs(root: Path, changed: list[str], pr: int | None
         hit = next((n for n in needles if n in text), None)
         if hit is None:
             continue
+        source = "graph" if doc.startswith("research/entities/") else "docs"
         tier = ("blocked" if Path(doc).name in _GOVERNANCE_DOCS
                 or doc.startswith(".control/") else "none")
-        found.append((source, f"{source}: {doc} mentions {hit}, which "
-                      f"{where} changed and {doc} did not; check it still "
-                      "holds", tier))
-        counts[source] += 1
+        found.append((source, f"{source}:{doc}:{hit}",
+                      f"{source}: {doc} mentions {hit}, which {where} changed "
+                      f"and {doc} did not; check it still holds", tier))
     return found
 
 
-def _memory_dirs() -> list[Path]:
+def _project_slug(path: Path) -> str:
+    """Claude Code's directory name for a project under ~/.claude/projects."""
+    return re.sub(r"[^A-Za-z0-9]", "-", str(path))
+
+
+def _memory_dirs(root: Path | None, deadline: float) -> list[Path]:
+    """The memory directories of THIS project only. Reading every project's
+    memory put one project's private follow-ups (finances, other clients) into
+    an unrelated wait. Claude Code keys memory by the project directory, and a
+    worktree shares the main checkout's, so both are tried."""
     raw = os.environ.get("BROOMVA_P9_MEMORY_DIRS")
     if raw is not None:
         return [Path(p) for p in raw.split(os.pathsep) if p.strip()]
-    return sorted(Path.home().glob(".claude/projects/*/memory"))
+    if root is None:
+        return []
+    roots = {root}
+    common = (_git(["rev-parse", "--path-format=absolute", "--git-common-dir"],
+                   root, deadline=deadline) or "").strip()
+    if common:
+        roots.add(Path(common).parent)
+    base = Path.home() / ".claude" / "projects"
+    return [d for d in (base / _project_slug(r) / "memory" for r in sorted(roots))
+            if d.is_dir()]
 
 
-def _harvest_memory() -> list[tuple[str, str, str]]:
+def _harvest_memory(dirs: list[Path]) -> list[Candidate]:
     """Memory notes touched in the last day that say they need a follow-up."""
-    found: list[tuple[str, str, str]] = []
+    found: list[Candidate] = []
     cutoff = time.time() - 86400
-    for d in _memory_dirs():
+    for d in dirs:
         try:
             notes = sorted(d.glob("*.md"), key=lambda p: p.stat().st_mtime,
                            reverse=True)
         except OSError:
             continue
         for note in notes:
-            if len(found) >= HARVEST_CAPS["memory"]:
-                return found
             try:
                 if note.name == "MEMORY.md" or note.stat().st_mtime < cutoff:
                     continue
@@ -2578,8 +2610,9 @@ def _harvest_memory() -> list[tuple[str, str, str]]:
             except OSError:
                 continue
             if _FOLLOW_UP_RE.search(text):
-                found.append(("memory", f"memory: {note} is flagged for "
-                              "follow-up; do it or clear the flag", "none"))
+                found.append(("memory", f"memory:{note}",
+                              f"memory: {note} is flagged for follow-up; do "
+                              "it or clear the flag", "none"))
     return found
 
 
@@ -2587,41 +2620,54 @@ def _seen_path(sid: str) -> Path:
     return p9_home() / "harvest-seen" / f"{_safe_name(sid)}.json"
 
 
+HARVEST_BUDGET_SECONDS = 8.0
+
+
 def harvest_queue(*, pr: int | None = None, repo: str = "",
                   cwd: Path | None = None) -> list[WaitQueueItem]:
     """Fill this session's wait-queue from the wait at hand (BRO-3710).
 
-    Docs and KG entities are read from the local checkout only when it is the
-    PR's repo (or no repo was named): another repo's tree says nothing about
-    this PR. Never raises — it runs inside hooks, and a hook that throws costs
-    the agent a turn. `BROOMVA_P9_HARVEST=0` turns it off."""
+    Docs and KG entities are read from the local checkout only when it is
+    provably the PR's repo, or no repo was named: another repo's tree says
+    nothing about this PR. The whole harvest runs inside a time budget well
+    under the 30 s hook timeout. Never raises — it runs inside hooks, and a
+    hook that throws costs the agent a turn. `BROOMVA_P9_HARVEST=0` turns it
+    off."""
     if os.environ.get("BROOMVA_P9_HARVEST", "1").strip() == "0":
         return []
     try:
-        return _harvest(pr, repo, cwd)
+        return _harvest(pr, repo, cwd,
+                        time.monotonic() + HARVEST_BUDGET_SECONDS)
     except Exception:  # noqa: BLE001 — best effort by contract
         return []
 
 
-def _harvest(pr: int | None, repo: str, cwd: Path | None) -> list[WaitQueueItem]:
+def _harvest(pr: int | None, repo: str, cwd: Path | None,
+             deadline: float) -> list[WaitQueueItem]:
     sid = current_session_id()
-    candidates: list[tuple[str, str, str]] = []
-    top = (_git(["rev-parse", "--show-toplevel"], cwd) or "").strip()
-    if top:
-        root = Path(top)
-        local = canonical_repo((_git(["remote", "get-url", "origin"], root)
-                                or "").strip())
-        if not repo or not local or local == canonical_repo(repo):
-            candidates += _harvest_docs(root, _branch_changes(root), pr)
-    candidates += _harvest_memory()
+    candidates: list[Candidate] = []
+    top = (_git(["rev-parse", "--show-toplevel"], cwd, deadline=deadline)
+           or "").strip()
+    root = Path(top) if top else None
+    if root is not None:
+        local = canonical_repo((_git(["remote", "get-url", "origin"], root,
+                                     deadline=deadline) or "").strip())
+        # Fail closed: a named repo must match a known local one. A checkout
+        # whose origin says nothing could be any repo.
+        if not repo or (local and local == canonical_repo(repo)):
+            candidates += _harvest_docs(root, _branch_changes(root, deadline),
+                                        pr, deadline)
+    candidates += _harvest_memory(_memory_dirs(root, deadline))
     if not candidates:
         return []
     seen_file = _seen_path(sid)
     added: list[WaitQueueItem] = []
+    taken = {k: 0 for k in HARVEST_CAPS}
     # One lock over read-seen, append and write-seen; the append writes the
     # file directly because `jsonl_append` would take the same flock again on
     # a new descriptor and wait on itself until the timeout.
-    with file_lock(queue_lock_path()):
+    with file_lock(queue_lock_path(),
+                   timeout_s=max(0.5, deadline - time.monotonic())):
         try:
             seen = json.loads(seen_file.read_text(encoding="utf-8"))
         except (OSError, ValueError):
@@ -2630,11 +2676,12 @@ def _harvest(pr: int | None, repo: str, cwd: Path | None) -> list[WaitQueueItem]
             seen = {}
         seen = {k: v for k, v in seen.items()
                 if _iso_age_seconds(str(v)) < HARVEST_SEEN_TTL_SECONDS}
-        for source, item, tier in candidates:
-            key = hashlib.sha1(f"{source}\0{item}".encode()).hexdigest()
-            if key in seen:
+        for source, key, item, tier in candidates:
+            digest = hashlib.sha1(key.encode()).hexdigest()
+            if digest in seen or taken[source] >= HARVEST_CAPS[source]:
                 continue
-            seen[key] = _utcnow()
+            seen[digest] = _utcnow()
+            taken[source] += 1
             entry = WaitQueueItem(
                 id=uuid.uuid4().hex[:12], source=source, item=item,
                 created_at=_utcnow(), pr=pr, isolation_tier=tier,
@@ -2734,7 +2781,8 @@ class StaleWriteRejected(P9Error):
 
 
 def append_state_event(event: PRStateEvent, *,
-                       expect_owner: str | _Unset = UNGUARDED) -> bool:
+                       expect_owner: str | _Unset = UNGUARDED,
+                       expect_state: str | None = None) -> bool:
     """Append a state event. Returns True if it was written.
 
     ``expect_owner`` (BRO-2374) makes the append a **compare-and-swap**: it
@@ -2818,6 +2866,7 @@ def append_state_event(event: PRStateEvent, *,
         # unreapable.
         found = False
         owner = ""
+        state = ""
         for r in rows:
             if r.get("pr") != event.pr:
                 continue
@@ -2825,7 +2874,13 @@ def append_state_event(event: PRStateEvent, *,
                 continue
             found = True
             owner = _owner_of(r)
+            state = str(r.get("to_state", ""))
         if not found or owner != expect_owner:
+            return False
+        # `expect_state` (BRO-3710): a fold keeps its watcher_id, so owner
+        # alone cannot tell a WATCHING row from the GREEN it just became. A
+        # writer that read WATCHING says so, and loses to a fold in between.
+        if expect_state is not None and state != expect_state:
             return False
         path = state_jsonl()
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -3367,6 +3422,14 @@ def _host_watch_ttl_seconds() -> float:
         return 21600.0
 
 
+def _host_watch_live(row: dict[str, Any]) -> bool:
+    """A host-owned watch (BRO-3710) observed within the TTL. It has no
+    process, so reap and rearm must not read pid 0 as a dead watcher; they
+    share this one test so they cannot disagree about it."""
+    return (bool((row.get("extra") or {}).get("host_watch"))
+            and _iso_age_seconds(row.get("ts", "")) < _host_watch_ttl_seconds())
+
+
 def _is_slice_handback(row: dict[str, Any]) -> bool:
     """A PUSHED row folded by a foreground slice expiry (BRO-2815)."""
     return (row.get("to_state") == PRState.PUSHED.value
@@ -3387,8 +3450,7 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
         elif state not in (PRState.WATCHING, PRState.HEALING):
             continue
         host_watch = bool((row.get("extra") or {}).get("host_watch"))
-        if host_watch and _iso_age_seconds(row.get("ts", "")) < \
-                _host_watch_ttl_seconds():
+        if _host_watch_live(row):
             # BRO-3710: no process to probe. The host does the watching and
             # every `p9 observe` re-stamps the row, so only a watch nobody has
             # observed for the whole TTL is an orphan.
@@ -4102,8 +4164,12 @@ def cmd_watch(args: argparse.Namespace) -> int:
     existing = latest_row(pr, repo)
     if existing and PRState(existing["to_state"]) in (PRState.WATCHING, PRState.HEALING):
         epid = _row_pid(existing)
+        # A host-owned row (BRO-3710) has no process: re-watching it, say
+        # after pushing a fix, replaces a record, not a running watcher.
+        host_row = bool((existing.get("extra") or {}).get("host_watch"))
         alive = epid > 0 and is_watcher_alive(epid)
-        fresh = _iso_age_seconds(existing.get("ts", "")) < _watcher_grace_seconds()
+        fresh = (not host_row and _iso_age_seconds(existing.get("ts", ""))
+                 < _watcher_grace_seconds())
         if alive and not force:
             print(
                 f"PR #{pr} ({repo or 'repo-unknown'}) already has a live "
@@ -4144,8 +4210,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     # BRO-3710: where the host watches PRs itself (T3), a `gh --watch` here
     # would be a second watcher on the same PR, and T3 forbids it. Record the
     # watch, fold at once if CI already settled, and hand the wake to T3.
-    if (host_profile()["pr_watch_owner"] == "t3"
-            and not (args.detach or args.dry_run)):
+    if host_profile()["pr_watch_owner"] == "t3" and not args.dry_run:
         return _host_watch(args, pr, repo, sid, watcher_id)
     if not args.dry_run:
         # The wait is declared now, whoever wakes the session later: the Stop
@@ -4363,8 +4428,11 @@ def _checks_verdict(checks: Any) -> tuple[str, list[str]]:
 
     `red` as soon as any check failed or was cancelled, even with others still
     running: T3 wakes on the first failure, and the point of folding then is to
-    start the heal while the rest finish. `green` only when nothing is pending.
-    `none` is a PR no check has reported on yet; `unknown` is a failed read."""
+    start the heal while the rest finish. `green` only when nothing is pending,
+    as `gh pr checks --watch` decides it; when the required checks pass first,
+    T3 owes the thread one more wake once the rest settle (`owedChecks`), and
+    that wake folds green. `none` is a PR no check has reported on yet;
+    `unknown` is a failed read."""
     if not isinstance(checks, list):
         return "unknown", []
     if not checks:
@@ -4378,43 +4446,71 @@ def _checks_verdict(checks: Any) -> tuple[str, list[str]]:
     return "green", []
 
 
-def observe_pr(pr: int, repo: str, *, sid: str | None = None) -> dict[str, Any]:
-    """Fold a host-owned watch once, from the PR's current checks (BRO-3710).
-
-    Only a WATCHING row is folded, and only by compare-and-swap on its owner,
-    so a wake that lands after a fold or a re-watch changes nothing. A pending
-    read re-stamps the row, which is what keeps a live host watch from aging
-    into the reaper."""
-    row = latest_row(pr, repo)
-    state = row.get("to_state") if row else None
+def _pr_checks(pr: int, repo: str) -> list[dict[str, Any]] | None:
+    """`gh pr checks --json name,bucket`, or [] when gh says no check has
+    reported (it exits 1 and prints text, not JSON), or None on any other
+    failure. Telling "none yet" from "could not read" matters: only the first
+    is a live watch worth re-stamping."""
     cmd = ["gh", "pr", "checks", str(pr), "--json", "name,bucket"]
     if repo:
         cmd += ["--repo", repo]
-    verdict, failed = _checks_verdict(_gh_json(cmd, any_rc=True))
+    try:
+        out = subprocess.run(cmd, capture_output=True, text=True, timeout=30,
+                             check=False)
+    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
+        return None
+    try:
+        data = json.loads(out.stdout) if out.stdout.strip() else None
+    except json.JSONDecodeError:
+        data = None
+    if isinstance(data, list):
+        return data
+    if "no checks reported" in (out.stdout + out.stderr).lower():
+        return []
+    return None
+
+
+def observe_pr(pr: int, repo: str, *, sid: str | None = None) -> dict[str, Any]:
+    """Fold a host-owned watch once, from the PR's current checks (BRO-3710).
+
+    Only a host-owned WATCHING row is touched: a row with a real watcher
+    process belongs to that process. Every write is a compare-and-swap on both
+    owner and state, so a wake that overlaps a fold, or lands after a
+    re-watch, changes nothing. A pending or no-checks-yet read re-stamps the
+    row; a failed read does not, so a watch that can no longer be read ages
+    into the reaper instead of holding its slot forever."""
+    row = latest_row(pr, repo)
+    state = row.get("to_state") if row else None
+    verdict, failed = _checks_verdict(_pr_checks(pr, repo))
     out: dict[str, Any] = {"pr": pr, "repo": repo, "verdict": verdict,
                            "failed": failed, "state": state, "folded": False}
     if row is None or state != PRState.WATCHING.value:
+        return out
+    if not (row.get("extra") or {}).get("host_watch"):
+        out["note"] = "watched by a p9 process, which folds it itself"
         return out
     owner = _owner_of(row)
     base = dict(ts=_utcnow(), pr=pr, repo=repo or "",
                 from_state=PRState.WATCHING.value, watcher_id=owner,
                 attempt=int(row.get("attempt") or 0),
                 session_id=row.get("session_id", "") or (sid or ""))
+    guard = dict(expect_owner=owner, expect_state=PRState.WATCHING.value)
     if verdict in ("green", "red"):
         nxt = PRState.GREEN if verdict == "green" else PRState.RED_UNCLASSIFIED
         event = PRStateEvent(**base, to_state=nxt.value, extra={
             "folded_by": "p9 observe", "host_watch": "t3",
             **({"failed_checks": failed} if failed else {})})
-        if append_state_event(event, expect_owner=owner):
+        if append_state_event(event, **guard):
             emit_termination_report(
                 pr_termination_report(dataclasses.asdict(event),
                                       cause=f"observe:{verdict}"))
             out.update(folded=True, state=nxt.value)
         return out
-    append_state_event(PRStateEvent(**base, to_state=PRState.WATCHING.value,
-                                    extra={"pid": 0, "host_watch": "t3",
-                                           "observed": verdict}),
-                       expect_owner=owner)
+    if verdict in ("pending", "none"):
+        append_state_event(PRStateEvent(**base, to_state=PRState.WATCHING.value,
+                                        extra={"pid": 0, "host_watch": "t3",
+                                               "observed": verdict}),
+                           **guard)
     return out
 
 
@@ -4482,11 +4578,12 @@ def hook_post_tool_use(data: dict[str, Any]) -> dict[str, Any] | None:
 
 def hook_stop(data: dict[str, Any]) -> dict[str, Any] | None:
     """Block the turn's end once per declared wait while queued work remains.
-    `stop_hook_active` means this is already the retry: never block twice."""
-    if data.get("stop_hook_active"):
-        return None
+
+    The mark is consumed by EVERY Stop, retry or not: a mark left behind by a
+    retry would block some later, unrelated turn. `stop_hook_active` means
+    this Stop is already a retry (ours or another hook's): never block it."""
     mark = consume_wait_mark()
-    if mark is None:
+    if mark is None or data.get("stop_hook_active"):
         return None
     items = actionable_queue()
     if not items:
@@ -4497,6 +4594,18 @@ def hook_stop(data: dict[str, Any]) -> dict[str, Any] | None:
         + productive_wait_brief(items))}
 
 
+def hook_prompt_submit(_data: dict[str, Any]) -> None:
+    """A new user prompt starts a new turn. A wait declared in an earlier
+    turn that never reached a Stop (interrupted, errored) must not hold this
+    one, so its mark goes."""
+    consume_wait_mark()
+    return None
+
+
+_HOOK_HANDLERS = {"post-tool-use": hook_post_tool_use, "stop": hook_stop,
+                  "prompt-submit": hook_prompt_submit}
+
+
 def cmd_hook(args: argparse.Namespace) -> int:
     """Claude Code hook entry point (BRO-3710). Reads the hook payload on
     stdin. Always exits 0: a hook that fails must not cost the agent a turn."""
@@ -4505,8 +4614,7 @@ def cmd_hook(args: argparse.Namespace) -> int:
         data = json.loads(raw) if raw.strip() else {}
         if not isinstance(data, dict):
             data = {}
-        handler = hook_post_tool_use if args.event == "post-tool-use" else hook_stop
-        out = handler(data)
+        out = _HOOK_HANDLERS[args.event](data)
         if out is not None:
             print(json.dumps(out))
     except Exception as exc:  # noqa: BLE001 — never break the host session
@@ -4529,20 +4637,35 @@ def _default_p9_path() -> Path:
 
 def _is_p9_hook(hook: Any) -> bool:
     cmd = str((hook or {}).get("command", "")) if isinstance(hook, dict) else ""
-    return "p9.py" in cmd and (" hook post-tool-use" in cmd or " hook stop" in cmd)
+    return "p9.py" in cmd and any(f" hook {e}" in cmd for e in _HOOK_HANDLERS)
+
+
+def _hook_command(p9_path: Path, event: str) -> str:
+    """The shell command a hook runs. It cannot exit non-zero: Claude Code
+    reads exit 2 from a Stop hook as "block", so a p9 that is missing, or an
+    older install without `hook`, would otherwise hold every turn on the
+    machine, retries included."""
+    return (f"python3 -I {shlex.quote(str(p9_path))} hook {event} "
+            "2>/dev/null || true")
 
 
 def install_hooks(settings: dict[str, Any], p9_path: Path, *,
                   uninstall: bool = False) -> dict[str, Any]:
     """Return `settings` with p9's two hooks registered (or removed). Any
     earlier p9 hook entry is replaced, so installing twice changes nothing."""
-    hooks = settings.setdefault("hooks", {})
-    base = f"python3 -I {shlex.quote(str(p9_path))} hook"
+    if not isinstance(settings.get("hooks"), dict):
+        settings["hooks"] = {}
+    hooks = settings["hooks"]
+
+    def entry(event: str) -> dict[str, Any]:
+        return {"type": "command", "command": _hook_command(p9_path, event),
+                "timeout": 30}
+
     wanted = {
-        "PostToolUse": {"matcher": HOOK_POST_TOOL_MATCHER, "hooks": [
-            {"type": "command", "command": f"{base} post-tool-use", "timeout": 30}]},
-        "Stop": {"hooks": [
-            {"type": "command", "command": f"{base} stop", "timeout": 30}]},
+        "PostToolUse": {"matcher": HOOK_POST_TOOL_MATCHER,
+                        "hooks": [entry("post-tool-use")]},
+        "Stop": {"hooks": [entry("stop")]},
+        "UserPromptSubmit": {"hooks": [entry("prompt-submit")]},
     }
     for event, group in wanted.items():
         groups = hooks.get(event)
@@ -4564,14 +4687,33 @@ def install_hooks(settings: dict[str, Any], p9_path: Path, *,
     return settings
 
 
+def _supports_hooks(p9_path: Path) -> bool:
+    """Whether the p9 the hooks would run has the `hook` command."""
+    try:
+        out = subprocess.run([sys.executable, "-I", str(p9_path), "hook", "--help"],
+                             capture_output=True, text=True, timeout=30, check=False)
+    except (OSError, subprocess.TimeoutExpired):
+        return False
+    return out.returncode == 0 and "prompt-submit" in out.stdout
+
+
 def cmd_hook_install(args: argparse.Namespace) -> int:
-    path = Path(args.settings).expanduser()
+    # Write through a symlink to its target: settings.json is often a link
+    # into a dotfiles repo, and replacing the link would cut it.
+    path = Path(args.settings).expanduser().resolve()
     try:
         current = json.loads(path.read_text(encoding="utf-8")) if path.exists() else {}
     except ValueError as exc:
         print(f"{path} is not valid JSON ({exc}); not touching it", file=sys.stderr)
         return EXIT_DEGRADED
+    if not isinstance(current, dict):
+        print(f"{path} is not a JSON object; not touching it", file=sys.stderr)
+        return EXIT_DEGRADED
     p9_path = Path(args.p9_path).expanduser() if args.p9_path else _default_p9_path()
+    if not args.uninstall and not _supports_hooks(p9_path):
+        print(f"{p9_path} has no `hook` command (an older install?); update "
+              "it before installing hooks that run it", file=sys.stderr)
+        return EXIT_DEGRADED
     updated = install_hooks(json.loads(json.dumps(current)), p9_path,
                             uninstall=args.uninstall)
     if updated == current:
@@ -4582,6 +4724,8 @@ def cmd_hook_install(args: argparse.Namespace) -> int:
         return EXIT_OK
     tmp = path.with_suffix(path.suffix + ".p9tmp")
     tmp.write_text(json.dumps(updated, indent=2) + "\n", encoding="utf-8")
+    with contextlib.suppress(OSError):
+        tmp.chmod(path.stat().st_mode & 0o7777 if path.exists() else 0o600)
     tmp.replace(path)
     print(f"{path}: p9 hooks {'removed' if args.uninstall else 'installed'} "
           f"({p9_path})")
@@ -5243,6 +5387,8 @@ def cmd_rearm(args: argparse.Namespace) -> int:
         state = PRState(row["to_state"])
         if state not in (PRState.WATCHING, PRState.HEALING):
             continue
+        if _host_watch_live(row):
+            continue  # BRO-3710: pid 0 is how a live host watch looks
         pid = _row_pid(row)
         if pid > 0 and is_watcher_alive(pid):
             continue
@@ -5776,7 +5922,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     phk = sub.add_parser("hook", help="Claude Code hook entry point "
                          "(productive wait; reads the hook payload on stdin)")
-    phk.add_argument("event", choices=["post-tool-use", "stop"])
+    phk.add_argument("event", choices=["post-tool-use", "stop", "prompt-submit"])
     phk.set_defaults(func=cmd_hook)
 
     phi = sub.add_parser("hook-install", help="Register (or remove) p9's "

@@ -41,7 +41,7 @@ def p9(tmp_path, monkeypatch):
 def _checks(monkeypatch, p9, *buckets):
     """Make every `gh pr checks` read return these buckets."""
     rows = [{"name": f"c{i}", "bucket": b} for i, b in enumerate(buckets)]
-    monkeypatch.setattr(p9, "_gh_json", lambda cmd, **kw: list(rows))
+    monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: list(rows))
 
 
 def _no_spawn(monkeypatch, p9):
@@ -162,7 +162,7 @@ class TestObserve:
 
     def test_red_folds_with_failed_checks(self, p9, monkeypatch):
         self._arm(p9, monkeypatch)
-        monkeypatch.setattr(p9, "_gh_json", lambda cmd, **kw: [
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [
             {"name": "lint", "bucket": "fail"}, {"name": "t", "bucket": "pending"}])
         out = p9.observe_pr(7, REPO)
         assert out["folded"] and out["state"] == "RED_UNCLASSIFIED"
@@ -420,7 +420,7 @@ class TestHookInstall:
 
     def _run(self, p9, path, **kw):
         import argparse
-        args = argparse.Namespace(settings=str(path), p9_path="/opt/p9/p9.py",
+        args = argparse.Namespace(settings=str(path), p9_path=kw.get("p9_path", str(_SCRIPT)),
                                   uninstall=kw.get("uninstall", False),
                                   dry_run=kw.get("dry_run", False))
         return p9.cmd_hook_install(args)
@@ -436,10 +436,12 @@ class TestHookInstall:
         assert once["model"] == "x"
         stop_cmds = [h["command"] for g in once["hooks"]["Stop"] for h in g["hooks"]]
         assert "/x/bridge.sh" in stop_cmds
-        assert "python3 -I /opt/p9/p9.py hook stop" in stop_cmds
+        assert any(c.startswith(f"python3 -I {_SCRIPT} hook stop")
+                   and c.endswith("|| true") for c in stop_cmds)
+        assert "UserPromptSubmit" in once["hooks"]
         post = once["hooks"]["PostToolUse"][0]
         assert post["matcher"] == p9.HOOK_POST_TOOL_MATCHER
-        assert post["hooks"][0]["command"].endswith("hook post-tool-use")
+        assert " hook post-tool-use " in post["hooks"][0]["command"]
 
     def test_uninstall_removes_only_p9(self, p9, tmp_path):
         other = {"type": "command", "command": "/x/bridge.sh"}
@@ -458,3 +460,256 @@ class TestHookInstall:
         path.write_text("{oops")
         assert self._run(p9, path) == p9.EXIT_DEGRADED
         assert path.read_text() == "{oops"
+
+
+# ── P20 round 1 regressions ─────────────────────────────────────────────────
+class TestRoundOneStateMachine:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def _arm(self, p9, monkeypatch, pr=7):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args(pr=pr))
+        return p9.latest_row(pr, REPO)
+
+    def test_overlapping_restamp_cannot_undo_a_fold(self, p9, monkeypatch):
+        """Reader A sees WATCHING, B folds GREEN, A's pending re-stamp lands:
+        the row must stay GREEN (the owner is unchanged by a fold)."""
+        snap = self._arm(p9, monkeypatch)
+        _checks(monkeypatch, p9, "pass")
+        assert p9.observe_pr(7, REPO)["folded"]
+        real_latest = p9.latest_row
+        monkeypatch.setattr(p9, "latest_row", lambda pr, repo=None: dict(snap))
+        _checks(monkeypatch, p9, "pending")
+        p9.observe_pr(7, REPO)
+        assert real_latest(7, REPO)["to_state"] == "GREEN"
+
+    def test_expect_state_rejects_a_moved_row(self, p9, monkeypatch):
+        row = self._arm(p9, monkeypatch)
+        ev = p9.PRStateEvent(ts=p9._utcnow(), pr=7, repo=REPO,
+                             from_state="WATCHING", to_state="WATCHING",
+                             watcher_id=row["watcher_id"], session_id="")
+        assert not p9.append_state_event(ev, expect_owner=row["watcher_id"],
+                                         expect_state="GREEN")
+        assert p9.append_state_event(ev, expect_owner=row["watcher_id"],
+                                     expect_state="WATCHING")
+
+    def test_observe_leaves_process_watches_alone(self, p9, monkeypatch):
+        p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=8, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="proc", session_id="",
+            extra={"pid": 4242, "log": "/x.log"}))
+        _checks(monkeypatch, p9, "pass")
+        before = p9.latest_row(8, REPO)
+        out = p9.observe_pr(8, REPO)
+        assert not out["folded"] and "note" in out
+        assert p9.latest_row(8, REPO) == before
+
+    def test_failed_read_does_not_restamp(self, p9, monkeypatch):
+        first = self._arm(p9, monkeypatch)
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: None)
+        time.sleep(1.1)
+        assert p9.observe_pr(7, REPO)["verdict"] == "unknown"
+        assert p9.latest_row(7, REPO)["ts"] == first["ts"]
+
+    def test_no_checks_yet_restamps(self, p9, monkeypatch):
+        first = self._arm(p9, monkeypatch)
+        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
+        time.sleep(1.1)
+        assert p9.observe_pr(7, REPO)["verdict"] == "none"
+        assert p9.latest_row(7, REPO)["ts"] > first["ts"]
+
+    def test_detach_on_t3_still_owned_by_host(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        assert p9.cmd_watch(_watch_args(detach=True)) == p9.EXIT_OK
+        assert p9.latest_row(7, REPO)["extra"]["host_watch"] == "t3"
+
+    def test_rewatch_of_host_row_supersedes(self, p9, monkeypatch, capsys):
+        first = self._arm(p9, monkeypatch)
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_OK
+        row = p9.latest_row(7, REPO)
+        assert row["to_state"] == "WATCHING"
+        assert row["watcher_id"] != first["watcher_id"]
+        assert "Refusing" not in capsys.readouterr().err
+
+    def test_rearm_skips_live_host_watch(self, p9, monkeypatch, capsys):
+        import argparse
+        self._arm(p9, monkeypatch)
+        capsys.readouterr()
+        p9.cmd_rearm(argparse.Namespace(now=True, dry_run=True, json=True))
+        assert json.loads(capsys.readouterr().out)["rearmed"] == []
+
+    def test_rearm_takes_host_watch_past_ttl(self, p9, monkeypatch, capsys):
+        import argparse
+        self._arm(p9, monkeypatch)
+        monkeypatch.setenv("BROOMVA_P9_HOST_WATCH_TTL_S", "0")
+        capsys.readouterr()
+        p9.cmd_rearm(argparse.Namespace(now=True, dry_run=True, json=True))
+        assert [a["pr"] for a in json.loads(capsys.readouterr().out)["rearmed"]] == [7]
+
+
+def test_pr_checks_reads_gh_no_checks_text(p9, monkeypatch):
+    class R:
+        stdout = ""
+        stderr = "no checks reported on the 'feature' branch\n"
+        returncode = 1
+    monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: R())
+    assert p9._pr_checks(7, REPO) == []
+
+
+def test_pr_checks_failure_is_none(p9, monkeypatch):
+    class R:
+        stdout = ""
+        stderr = "HTTP 401: Bad credentials\n"
+        returncode = 1
+    monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: R())
+    assert p9._pr_checks(7, REPO) is None
+
+
+def test_classic_watch_marks_and_harvests(p9, monkeypatch):
+    calls = []
+    monkeypatch.setattr(p9, "harvest_queue", lambda **kw: calls.append(kw) or [])
+
+    class Done:
+        pid = 4243
+
+        def wait(self, timeout=None):
+            return 0
+    monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: Done())
+    p9.cmd_watch(_watch_args())
+    assert calls and calls[0]["pr"] == 7
+    assert p9.consume_wait_mark()["pr"] == 7
+
+
+class TestRoundOneHarvest:
+    @pytest.fixture(autouse=True)
+    def _on(self, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_HARVEST", "1")
+
+    def test_named_repo_with_unknown_origin_fails_closed(self, p9, tree):
+        # canonical_repo cannot name a file:// origin, so the checkout could
+        # be any repo; a named repo must then get nothing from it.
+        _git(tree, "remote", "set-url", "origin", "file:///x/y")
+        assert p9.canonical_repo("file:///x/y") == ""
+        assert p9.harvest_queue(pr=7, repo="definitely/other", cwd=tree) == []
+        assert p9.harvest_queue(pr=7, repo="", cwd=tree)  # unnamed: local is all there is
+
+    def test_caps_apply_after_seen(self, p9, tree):
+        for i in range(8):
+            (tree / f"docs/d{i}.md").write_text("uses src/feature_flag.py\n")
+        _git(tree, "add", "-A")
+        _git(tree, "commit", "-qm", "docs")
+        # the docs were added on the branch, so they count as changed: move
+        # them onto main's side by committing there and rebasing.
+        _git(tree, "checkout", "-q", "main")
+        _git(tree, "checkout", "-q", "feature", "--", "docs")
+        _git(tree, "commit", "-qm", "docs on main")
+        _git(tree, "push", "-q", "origin", "main")
+        _git(tree, "fetch", "-q", "origin")
+        _git(tree, "checkout", "-q", "feature")
+        _git(tree, "rebase", "-q", "main")
+        first = [it for it in p9.harvest_queue(pr=7, cwd=tree) if it.source == "docs"]
+        assert len(first) == p9.HARVEST_CAPS["docs"]
+        while p9.queue_pop() is not None:
+            pass
+        second = [it for it in p9.harvest_queue(pr=7, cwd=tree) if it.source == "docs"]
+        assert second, "later candidates must not starve behind offered ones"
+        assert not {it.item for it in first} & {it.item for it in second}
+
+    def test_same_finding_not_requeued_under_new_wording(self, p9, tree):
+        p9.harvest_queue(pr=7, cwd=tree)
+        assert p9.harvest_queue(pr=None, cwd=tree) == []
+
+    def test_memory_is_this_projects_only(self, p9, tree, tmp_path, monkeypatch):
+        monkeypatch.delenv("BROOMVA_P9_MEMORY_DIRS", raising=False)
+        home = tmp_path / "fakehome"
+        monkeypatch.setenv("HOME", str(home))
+        top = subprocess.run(["git", "rev-parse", "--show-toplevel"], cwd=tree,
+                             capture_output=True, text=True).stdout.strip()
+        mine = home / ".claude/projects" / p9._project_slug(Path(top)) / "memory"
+        other = home / ".claude/projects/-Users-x-finance/memory"
+        for d, text in ((mine, "needs follow-up: the gate"),
+                        (other, "Follow-up: pay the bill")):
+            d.mkdir(parents=True)
+            (d / "note.md").write_text(text)
+        added = [it for it in p9.harvest_queue(cwd=tree) if it.source == "memory"]
+        assert len(added) == 1 and str(mine) in added[0].item
+
+    def test_git_gets_only_the_budget_left(self, p9, monkeypatch):
+        seen = []
+
+        class R:
+            returncode, stdout = 0, ""
+        monkeypatch.setattr(p9.subprocess, "run",
+                            lambda *a, **k: seen.append(k["timeout"]) or R())
+        p9._git(["status"], deadline=time.monotonic() + 3)
+        assert seen and 0 < seen[0] <= 3
+        assert p9._git(["status"], deadline=time.monotonic() - 1) is None
+        assert len(seen) == 1, "a spent budget must not start git at all"
+
+
+class TestRoundOneHooks:
+    def _queue(self, p9):
+        p9.queue_push("docs: check the guide", "docs")
+
+    def test_retry_stop_still_consumes_the_mark(self, p9):
+        self._queue(p9)
+        p9.mark_wait("delegate_task")
+        assert p9.hook_stop({"stop_hook_active": True}) is None
+        assert p9.hook_stop({}) is None
+
+    def test_new_prompt_clears_an_unspent_mark(self, p9):
+        self._queue(p9)
+        p9.mark_wait("delegate_task")
+        p9.hook_prompt_submit({})
+        assert p9.hook_stop({}) is None
+
+    @pytest.mark.parametrize("target", ["missing", "old"])
+    def test_hook_command_cannot_exit_nonzero(self, p9, tmp_path, target):
+        """Claude reads exit 2 from a Stop hook as block. A missing p9 or an
+        older one without `hook` must not hold the turn."""
+        if target == "missing":
+            p9_path = tmp_path / "gone" / "p9.py"
+        else:
+            p9_path = tmp_path / "p9.py"
+            p9_path.write_text("import argparse\np=argparse.ArgumentParser()\n"
+                               "p.add_argument('cmd', choices=['watch'])\np.parse_args()\n")
+        cmd = p9._hook_command(p9_path, "stop")
+        r = subprocess.run(["sh", "-c", cmd], input='{"stop_hook_active": true}',
+                           capture_output=True, text=True)
+        assert r.returncode == 0 and r.stdout == ""
+
+    def test_install_refuses_a_p9_without_hooks(self, p9, tmp_path):
+        import argparse
+        old = tmp_path / "p9.py"
+        old.write_text("raise SystemExit(2)\n")
+        path = tmp_path / "settings.json"
+        path.write_text("{}")
+        rc = p9.cmd_hook_install(argparse.Namespace(
+            settings=str(path), p9_path=str(old), uninstall=False, dry_run=False))
+        assert rc == p9.EXIT_DEGRADED and path.read_text() == "{}"
+
+    def test_install_keeps_symlink_and_mode(self, p9, tmp_path):
+        import argparse
+        real = tmp_path / "real.json"
+        real.write_text("{}")
+        real.chmod(0o600)
+        link = tmp_path / "settings.json"
+        link.symlink_to(real)
+        p9.cmd_hook_install(argparse.Namespace(
+            settings=str(link), p9_path=str(_SCRIPT), uninstall=False, dry_run=False))
+        assert link.is_symlink()
+        assert "Stop" in json.loads(real.read_text())["hooks"]
+        assert (real.stat().st_mode & 0o777) == 0o600
+
+    def test_install_survives_null_hooks(self, p9, tmp_path):
+        import argparse
+        path = tmp_path / "settings.json"
+        path.write_text('{"hooks": null}')
+        rc = p9.cmd_hook_install(argparse.Namespace(
+            settings=str(path), p9_path=str(_SCRIPT), uninstall=False, dry_run=False))
+        assert rc == p9.EXIT_OK
+        assert "Stop" in json.loads(path.read_text())["hooks"]

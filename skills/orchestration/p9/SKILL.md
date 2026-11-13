@@ -68,11 +68,16 @@ forbids waiting on `gh --watch`, so on T3:
 - Then call `watch_pull_request` and do the queued work.
 - On each T3 wake run `p9 observe <pr>`. It folds once from
   `gh pr checks`: `red` as soon as any check failed (T3 wakes on the first
-  failure), `green` once nothing is pending. A pending read re-stamps the row.
-  Folding is a compare-and-swap on the watcher id, so a late wake after a
-  re-watch changes nothing.
-- `p9 reap` judges a host-owned row by age, not pid. It is reaped only after
-  `BROOMVA_P9_HOST_WATCH_TTL_S` (default 6 h) without an observe.
+  failure), `green` once nothing is pending (when the required checks pass
+  first, T3 owes one more wake once the rest settle). A pending or
+  no-checks-yet read re-stamps the row; a failed read does not, so an
+  unreadable watch ages out. Every write is a compare-and-swap on owner and
+  state, so an overlapping or late wake changes nothing, and a row watched by
+  a p9 process is never touched. Re-running `p9 watch` on a host-owned row
+  (say after pushing a fix) replaces it; `--detach` is host-owned on T3 too.
+- `p9 reap` and `p9 rearm` judge a host-owned row by age, not pid: it is
+  live until `BROOMVA_P9_HOST_WATCH_TTL_S` (default 6 h) passes without an
+  observe.
 - **Measured limit:** a T3 wake (a delegated child finishing, a PR change)
   that arrives while your turn is still running is queued as your next turn,
   not delivered into the current one. A Claude background task's completion,
@@ -299,37 +304,44 @@ and the agent pushes the other two (`p9 wait-queue push --source <s> --item`):
 | # | Source | Filled by |
 |---|---|---|
 | 1 | **session** | the agent: its own follow-ups for this wait |
-| 2 | **memory** | harvest: memory notes (`~/.claude/projects/*/memory/*.md`, not `MEMORY.md`) changed in the last 24 h that say "needs follow-up" |
+| 2 | **memory** | harvest: this project's memory notes only (`~/.claude/projects/<this checkout or its main checkout>/memory/*.md`, not `MEMORY.md`) changed in the last 24 h that say "needs follow-up". Other projects' notes are never read. |
 | 3 | **graph** | harvest: `research/entities/**` pages that mention a file this branch changed and the branch did not update |
 | 4 | **docs** | harvest: any other `.md`/`.mdx` that mentions a changed file the branch did not update |
 | 5 | **linear** | the agent: tickets it pulls via the Linear MCP (a script cannot reach MCP) |
 
 Harvest runs on `p9 watch`, `p9 wait-for`, the PostToolUse hook and
-`p9 wait-queue harvest [--pr N]`. It reads only the local checkout, and only
-when that checkout is the PR's repo; it never touches the network. It is
-capped (docs 5, graph 3, memory 3), and each item is offered once per session
-(a 7-day seen-ledger), so popping an item does not bring it back.
-`BROOMVA_P9_HARVEST=0` turns it off.
+`p9 wait-queue harvest [--pr N]`. Docs and graph come from the local checkout,
+and only when that checkout is provably the PR's repo (a named repo against an
+origin p9 cannot identify gets nothing). It never touches the network and runs
+inside an 8 s budget. Caps (docs 5, graph 3, memory 3) apply per harvest after
+the seen-ledger, and each finding (doc + the file it mentions) is offered once
+per session for 7 days, so popping an item does not bring it back and a
+different wording does not make it new. `BROOMVA_P9_HARVEST=0` turns it off.
 
 ### The hooks: the queue reaches the agent
 
-`p9 hook-install` registers two Claude Code hooks in `~/.claude/settings.json`
+`p9 hook-install` registers three Claude Code hooks in `~/.claude/settings.json`
 (`--settings` for another file, `--uninstall` to remove, `--dry-run` to
-preview). It is idempotent and leaves other hooks alone:
+preview). It is idempotent, leaves other hooks alone, writes through a
+symlinked settings file and keeps its mode, and refuses to install hooks that
+would run a p9 without the `hook` command:
 
 - **PostToolUse** on `watch_pull_request`, `delegate_task` (not
   `mode: wait`) and `t3_background_wait`: marks the wait, harvests, and
   puts the queue in front of the agent as additional context while it still
   has the turn. Quiet when the queue is empty.
 - **Stop**: when this session declared a wait and unblocked items remain,
-  blocks the end of the turn once and lists them. The mark is consumed by the
-  block and `stop_hook_active` lets the retry through, so a wait delays one
-  hand-back at most and never traps one. Items with the `blocked` tier never
-  hold a turn.
+  blocks the end of the turn once and lists them. Every Stop consumes the
+  mark, retries included, and a retry (`stop_hook_active`) is never blocked,
+  so a wait delays one hand-back at most and never traps one. Items with the
+  `blocked` tier never hold a turn.
+- **UserPromptSubmit**: clears an unspent mark, so a wait from a turn that was
+  interrupted before its Stop cannot hold the next, unrelated turn.
 
-Both hooks always exit 0. The hook and the agent's Bash calls resolve the
-same p9 session id (measured in a live T3 thread), so the hook fills the queue
-the agent pops.
+The hook commands end in `2>/dev/null || true`: Claude Code reads exit 2 from
+a Stop hook as "block", so a missing or outdated p9 must not be able to exit
+non-zero. The hook and the agent's Bash calls resolve the same p9 session id
+(measured in a live T3 thread), so the hook fills the queue the agent pops.
 
 ### Isolation tier (per spec §5.5)
 
