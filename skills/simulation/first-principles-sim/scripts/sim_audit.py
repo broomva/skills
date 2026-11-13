@@ -777,6 +777,11 @@ def copy_package(package: Path, destination: Path, links: tuple[str, ...]) -> No
         # Compiled Python left in the package would be loaded in place of a
         # mutated source of the same size written within the same second.
         skipped = [n for n in names if n in STALE]
+        # A link whose target is gone. `exists` follows the link from its own
+        # directory; copytree's own check resolves it from the working directory.
+        skipped += [
+            n for n in names if (Path(directory) / n).is_symlink() and not (Path(directory) / n).exists()
+        ]
         if Path(directory).resolve() == package:
             skipped += [n for n in names if n in links and (package / n).is_dir()]
         return skipped
@@ -784,9 +789,7 @@ def copy_package(package: Path, destination: Path, links: tuple[str, ...]) -> No
     try:
         # Symlinks are followed: a link kept as a link would let a command
         # write through it to the real file.
-        shutil.copytree(
-            package, destination, ignore=ignore, symlinks=False, ignore_dangling_symlinks=True
-        )
+        shutil.copytree(package, destination, ignore=ignore, symlinks=False)
     except (shutil.Error, OSError) as exc:
         raise AuditError(f"cannot copy the package: {exc}") from exc
     for name in links:

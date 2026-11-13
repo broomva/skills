@@ -1374,6 +1374,26 @@ def test_a_symlink_in_the_package_is_followed_so_nothing_is_written_through_it(t
     assert list((package / "build").iterdir()) == []
 
 
+def test_a_relative_symlink_is_followed_wherever_the_audit_is_run_from(tmp_path, monkeypatch):
+    package = build(tmp_path)
+    (package / "lib").symlink_to("src", target_is_directory=True)
+    (package / "gone").symlink_to("nowhere")
+    for name in ("test/table.test.py", "test/stepped.test.py", "test/energy.test.py", "test/control.test.py"):
+        text = read(name).replace('sys.path.insert(0, "src")', 'sys.path.insert(0, "lib")')
+        assert text != read(name)
+        (package / name).write_text(text, encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    for cwd in (elsewhere, package):
+        monkeypatch.chdir(cwd)
+        audit = sim_audit.audit_package(package, run_tests=True, run_report=True)
+        assert statuses(audit, "suite") == [PASS], cwd
+    target = tmp_path / "copy"
+    sim_audit.copy_package(package.resolve(), target, ())
+    assert (target / "lib" / "model.py").is_file() and not (target / "lib").is_symlink()
+    assert not os.path.lexists(target / "gone")
+
+
 def test_only_directories_are_linked_and_duplicates_do_no_harm(tmp_path):
     data = ledger()
     data["link"] = ["node_modules", "node_modules", "target"]

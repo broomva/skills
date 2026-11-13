@@ -4,7 +4,7 @@ tier: D
 category: simulation
 version: 0.1.0
 description: >-
-  Build a simulation in which the thing you see or hear is never drawn: model
+  EXPERIMENTAL. Build a simulation in which the thing you see or hear is never drawn: model
   the mechanism (source, medium, interaction, state, observation), let the
   phenomenon come out of it, and check each stated quantity against something
   computed outside the model. For setups with known laws and at least one
@@ -27,6 +27,12 @@ description: >-
 ---
 
 # first-principles-sim: model the mechanism, let the phenomenon emerge, prove the numbers
+
+> **Experimental (0.1.0).** The method and the ledger format are usable. The audit script found
+> real gaps in the one package it has been run on, but it did not pass independent review: four
+> rounds each scored it 5 out of 10, and each found new wrong answers at its edges. Treat a
+> clean audit as a floor, not as proof, and read "What the audit checks, and what it cannot"
+> first. Open findings are listed in the CHANGELOG.
 
 A simulation that looks right is evidence that it looks right. This skill is for building one
 where the picture or the sound is a consequence of the model, and where each number the package
@@ -114,10 +120,13 @@ directory, a registered reference table, or a path listed under `tests.support` 
 data kept elsewhere). Changing any of those turns a test red without touching the code the
 claim is about.
 
-A mutation must make its claim false in the code, and that is worth checking by hand. The
-cloud chamber's first control mutation forced every ion to seed a droplet, and the test stayed
-green: where the nucleation rate is zero the wait came out infinite and the droplet fell
-outside the box, so the claim still held.
+A surviving mutation needs reading before it is called a test gap. The cloud chamber's first
+control mutation forced every ion to seed a droplet, and its claim's test stayed green. The
+test fires a particle well above the sensitive layer, where the nucleation rate is tiny, the
+wait before a droplet forms is enormous, and the droplet drifts out of the box. Close to the
+layer the same mutation does add droplets. So the mutation broke the claim and the test probes
+too far away to see it; the author first read it the other way round, and a reviewer measured
+it.
 
 Give each mutation the `command` that runs only its claim's test. With the whole suite as the
 command, whichever assertion fails first kills the mutation, and it may belong to another

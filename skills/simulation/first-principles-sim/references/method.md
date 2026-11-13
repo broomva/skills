@@ -193,11 +193,15 @@ proves nothing about the claim. The audit refuses a mutation of a test, a gate, 
 reference table, or anything in the tests directory or under `tests.support`, because changing
 a tolerance or a table also turns the test red.
 
-Check that the mutation makes the claim false. The cloud chamber's first mutation for "no
-droplets form outside the sensitive layer" set every ion's chance of seeding to one. The test
-stayed green, and the test was right: where the nucleation rate is zero the wait is infinite,
-the droplet lands outside the box, and none is added. The claim still held. Adding one per
-second to the rate does break it, and the test catches that.
+Read a surviving mutation before deciding what it shows. The cloud chamber's first mutation
+for "no droplets form outside the sensitive layer" set every ion's chance of seeding to one,
+and the claim's own test stayed green. The test fires a muon 2 cm above the layer. The
+nucleation rate there is tiny but not zero, so the wait before a droplet forms is enormous and
+the droplet drifts out of the box. Closer to the layer the same mutation does add droplets: it
+broke the claim, and the test probes too far from the edge to see it. The author first read
+this as a mutation that left the claim true; a reviewer measured it. The ledger now uses a
+mutation the test does catch (one per second added to the rate everywhere), and the weak
+control is on that package's ticket.
 
 Give each mutation the command that runs only its claim's test. Under the whole suite, a
 mutation is killed by whichever assertion fails first.
