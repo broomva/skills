@@ -106,6 +106,23 @@ forbids waiting on `gh --watch`, so on T3:
   `t3_queue list` between them. Steering the wake into the running turn needs
   a T3 change (BRO-3710).
 
+### One state-write boundary (BRO-3710)
+
+Every writer of `state.jsonl` declares how its decision is fenced, and
+`test_every_writer_is_fenced` fails on any production call that does not:
+
+| Form | Meaning | Used by |
+|---|---|---|
+| `expect_row=row` | write only if the latest row is exactly the row the decision was made on | reap, rearm's repo-less fold, re-watch supersession, cleanup, auto-merge's blocked note |
+| `expect_owner` + `expect_state` | for a row only its own process writes | the classic watch fold, merge-ready |
+| `takeover="reason"` | an explicit seizure meant to win | `p9 abandon` |
+| `transact_pr_state(decide)` | read latest, decide, append under one lock | observe, both arms, auto-merge's post-merge record |
+
+After `gh pr merge` succeeds, the merge is a fact, not a decision: it is
+recorded as MERGED if the judged MERGE_READY row still holds, and otherwise as
+ABANDONED with the reason "merged by auto-merge while the row moved", never
+written from the wrong state and never lost.
+
 ### Paseo-hosted sessions: wait in foreground slices (BRO-2815)
 
 On Paseo (`PASEO_AGENT_ID` set), a background task that finishes does

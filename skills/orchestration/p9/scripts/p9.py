@@ -2850,7 +2850,9 @@ class StaleWriteRejected(P9Error):
 def append_state_event(event: PRStateEvent, *,
                        expect_owner: str | _Unset = UNGUARDED,
                        expect_state: str | None = None,
-                       expect_match: Any = None) -> bool:
+                       expect_match: Any = None,
+                       expect_row: dict[str, Any] | None = None,
+                       takeover: str | None = None) -> bool:
     """Append a state event. Returns True if it was written.
 
     ``expect_owner`` (BRO-2374) makes the append a **compare-and-swap**: it
@@ -2910,6 +2912,21 @@ def append_state_event(event: PRStateEvent, *,
     assert_legal_transition(PRState(event.from_state), PRState(event.to_state))
     # Normalize on write so the stored key is exactly what repo_key() reads.
     event.repo = canonical_repo(event.repo)
+    # BRO-3710 state-write boundary. Production writers declare how they are
+    # fenced (tests/test_p9_productive_wait.py::test_every_writer_is_fenced
+    # enforces it): `expect_row` — the exact row the decision was made on
+    # (any write since voids it); `expect_owner` + `expect_state` — for a row
+    # only its own process writes; or `takeover` — an explicit seizure, with
+    # its reason, that is meant to win (operator abandon, --force).
+    if takeover is not None:
+        if not (isinstance(expect_owner, _Unset) and expect_row is None
+                and expect_state is None and expect_match is None):
+            raise P9Error("takeover is unguarded by definition; drop the fences")
+    if expect_row is not None:
+        if isinstance(expect_owner, _Unset):
+            expect_owner = _owner_of(expect_row)
+        inner = expect_match
+        expect_match = (lambda r: r == expect_row and (inner is None or inner(r)))
     if isinstance(expect_owner, _Unset):
         if expect_state is not None or expect_match is not None:
             # A state check is only atomic inside the guarded path; silently
@@ -3634,9 +3651,7 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
         # this scan asked GitHub stays GREEN.
         # Full-row fence: the TTL and liveness judgement above was made on
         # `row`; an observe that re-stamped it since makes it a live watch.
-        if not append_state_event(event, expect_owner=_owner_of(row),
-                                  expect_state=state.value,
-                                  expect_match=lambda r, row=row: r == row):
+        if not append_state_event(event, expect_row=row):
             continue
         # Termination invariant (BRO-1701): SIGKILL and machine-death can't be
         # trapped by the watcher itself — the reap path is where those become
@@ -3812,7 +3827,7 @@ def cmd_abandon(args: argparse.Namespace) -> int:
         to_state=PRState.ABANDONED.value,
         watcher_id="abandon",
         extra={"reason": args.reason or "manual abandon"},
-    ))
+    ), takeover="operator abandon")
     print(f"PR #{pr} ({repo or 'repo-unknown'}): {state.value} → ABANDONED")
     return EXIT_OK
 
@@ -3864,13 +3879,17 @@ def cmd_cleanup(args: argparse.Namespace) -> int:
         if gh_state in ("MERGED", "CLOSED"):
             reason = ("merged outside p9" if gh_state == "MERGED"
                       else "closed outside p9")
-            append_state_event(PRStateEvent(
-                ts=_utcnow(), pr=pr, repo=repo,
-                from_state=from_state.value,
-                to_state=PRState.ABANDONED.value,
-                watcher_id="cleanup",
-                extra={"reason": reason, "gh_state": gh_state},
-            ))
+            if not append_state_event(PRStateEvent(
+                    ts=_utcnow(), pr=pr, repo=repo,
+                    from_state=from_state.value,
+                    to_state=PRState.ABANDONED.value,
+                    watcher_id="cleanup",
+                    extra={"reason": reason, "gh_state": gh_state},
+            ), expect_row=row):
+                print(f"  #{pr}: its row changed while GitHub was asked; "
+                      "left to its new owner")
+                skipped += 1
+                continue
             print(f"  #{pr}: {from_state.value} → ABANDONED ({reason})")
             cleaned += 1
         else:
@@ -3910,7 +3929,8 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
 
     # Repo-qualified read (BRO-1988): merging on another repo's MERGE_READY
     # would be the worst possible shadowing outcome.
-    state = current_pr_state(pr, repo)
+    judged = latest_row(pr, repo)
+    state = PRState(judged["to_state"]) if judged else None
     if state != PRState.MERGE_READY:
         print(
             f"PR #{pr} ({repo or 'repo-unknown'}) not in MERGE_READY "
@@ -3928,6 +3948,8 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
 
     if action != "auto":
         # Block: emit idempotent state event with rationale; never merge.
+        # Fenced (BRO-3710): the gates were a network round-trip; a row that
+        # moved meanwhile gets no MERGE_READY note written over it.
         append_state_event(PRStateEvent(
             ts=_utcnow(),
             pr=pr, repo=repo,
@@ -3938,7 +3960,7 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
                                   "branch": branch, "paths": list(paths)[:20],
                                   "policy_source": decision["source"],
                                   "gates": decision["gates"]}},
-        ))
+        ), expect_row=judged)
         print(f"auto-merge blocked: action={action}; reason={reason}",
               file=sys.stderr)
         if decision["gates"]:
@@ -3975,18 +3997,32 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
         print(f"gh pr merge exited {rc}; PR not merged", file=sys.stderr)
         return EXIT_EXTERNAL_ERROR
 
-    append_state_event(PRStateEvent(
-        ts=_utcnow(),
-        pr=pr, repo=repo,
-        from_state=PRState.MERGE_READY.value,
-        to_state=PRState.MERGED.value,
-        watcher_id="auto-merge",
-        extra={"auto_merge": {"action": "auto", "reason": reason,
-                              "branch": branch,
-                              "method": am.merge_method,
-                              "policy_source": decision["source"],
-                              "gates": decision["gates"]}},
-    ))
+    # The merge has happened (pinned to the verified head), so this records a
+    # fact, not a decision. Decided against the CURRENT row (BRO-3710): the
+    # judged MERGE_READY row becomes MERGED; a row that moved meanwhile (a
+    # re-watch armed during the gates) is retired as ABANDONED with the reason,
+    # since MERGED is only reachable from MERGE_READY; a terminal row is left.
+    am_extra = {"auto_merge": {"action": "auto", "reason": reason,
+                               "branch": branch,
+                               "method": am.merge_method,
+                               "policy_source": decision["source"],
+                               "gates": decision["gates"]}}
+
+    def record_merge(latest: dict[str, Any] | None) -> list[PRStateEvent]:
+        if latest is None or is_terminal(PRState(latest["to_state"])):
+            return []
+        if latest == judged:
+            return [PRStateEvent(ts=_utcnow(), pr=pr, repo=repo,
+                                 from_state=PRState.MERGE_READY.value,
+                                 to_state=PRState.MERGED.value,
+                                 watcher_id="auto-merge", extra=am_extra)]
+        return [PRStateEvent(ts=_utcnow(), pr=pr, repo=repo,
+                             from_state=latest["to_state"],
+                             to_state=PRState.ABANDONED.value,
+                             watcher_id="auto-merge",
+                             extra={**am_extra, "reason":
+                                    "merged by auto-merge while the row moved"})]
+    transact_pr_state(pr, repo, record_merge)
     print(f"auto-merge: PR #{pr} merged ({branch})")
     return EXIT_OK
 
@@ -4368,8 +4404,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
                 watcher_id="watch-supersede", session_id=existing.get("session_id", ""),
                 extra={"reason": "superseded by re-watch",
                        "dead_pid": epid, "forced": force, "adopt": adopt},
-        ), expect_owner=_owner_of(existing),
-                expect_match=lambda r: r == existing):
+        ), expect_row=existing):
             print(f"PR #{pr}: its watch changed while this re-watch was "
                   "deciding; run it again", file=sys.stderr)
             return EXIT_DEGRADED
@@ -4532,7 +4567,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
         # was still running, the key now belongs to the replacement and this
         # fold is stale. Dropping it is the point — applying it would bury a
         # live watcher and hand its slot to a third.
-        if append_state_event(event, expect_owner=watcher_id):
+        if append_state_event(event, expect_owner=watcher_id,
+                              expect_state=PRState.WATCHING.value):
             # A slice expiry is a hand-back, not news: no phone buzz every
             # nine minutes while CI runs.
             emit_termination_report(
@@ -5400,7 +5436,8 @@ def cmd_merge_ready(args: argparse.Namespace) -> int:
     # CAS (BRO-2374): the verdict above is a network round-trip. A re-arm that
     # landed during it owns the key now, and writing MERGE_READY over its
     # WATCHING row would authorize a merge against state nobody is watching.
-    if not append_state_event(event, expect_owner=green_owner):
+    if not append_state_event(event, expect_owner=green_owner,
+                              expect_state=PRState.GREEN.value):
         print(f"PR #{pr} ({repo or 'repo-unknown'}) changed hands while the "
               f"merge verdict was being fetched (was watcher {green_owner!r}); "
               f"not marking MERGE_READY. Re-run once it settles.",
@@ -5699,10 +5736,7 @@ def cmd_rearm(args: argparse.Namespace) -> int:
                 # needing to prove it owned the row it read — the case an
                 # implicit event.watcher_id check cannot express, and why
                 # expect_owner is an explicit argument.
-                if not append_state_event(
-                        stale, expect_owner=_owner_of(row),
-                        expect_state=state.value,
-                        expect_match=lambda r, row=row: r == row):
+                if not append_state_event(stale, expect_row=row):
                     action["skipped"] = (
                         "row changed hands before the fold landed; left to "
                         "its new owner")

@@ -1377,3 +1377,105 @@ def test_harvest_does_not_match_a_path_inside_another(p9, tmp_path, monkeypatch)
     _git(work, "commit", "-qam", "change a/b.py")
     docs = {it.item.split()[1] for it in p9.harvest_queue(pr=5, cwd=work)}
     assert "docs/right.md" in docs and "docs/other.md" not in docs
+
+
+# ── STRUCTURAL #2: one state-write boundary for every lifecycle writer ──────
+def test_every_writer_is_fenced():
+    """The executable invariant the continuation review asked for: every
+    production call to append_state_event declares its fence — the exact row
+    it decided on (`expect_row`), owner + state for a row only its own
+    process writes, or an explicit `takeover` — and nothing else writes the
+    state file. A new unfenced writer fails here, not in a later review."""
+    import ast
+    src = _SCRIPT.read_text()
+    tree = ast.parse(src)
+    unfenced = []
+    for fn in ast.walk(tree):
+        if not isinstance(fn, ast.FunctionDef) or fn.name == "append_state_event":
+            continue
+        for node in ast.walk(fn):
+            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "append_state_event":
+                kw = {k.arg for k in node.keywords}
+                if not ("expect_row" in kw or "takeover" in kw
+                        or {"expect_owner", "expect_state"} <= kw):
+                    unfenced.append(f"{fn.name}:{node.lineno}")
+    assert unfenced == [], f"unfenced state writers: {unfenced}"
+    direct = {fn.name for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef)
+              and "path = state_jsonl()" in (ast.get_source_segment(src, fn) or "")}
+    assert direct <= {"append_state_event", "transact_pr_state"}, direct
+
+
+class TestLifecycleInterleavings:
+    def _seed_ready(self, p9, pr):
+        for prev, curr in [("PUSHED", "WATCHING"), ("WATCHING", "GREEN"),
+                           ("GREEN", "MERGE_READY")]:
+            p9.append_state_event(p9.PRStateEvent(
+                ts="2026-09-26T00:00:00+00:00", pr=pr, repo=REPO,
+                from_state=prev, to_state=curr, watcher_id="seed"))
+
+    def _auto_merge(self, p9, monkeypatch, pr, *, action, meanwhile):
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-with-auto-merge.yaml"))
+        listing = type("L", (), {"branch": "feat/x", "paths": ["a.py"],
+                                 "unmeasured": [], "head_sha": "h"})()
+        monkeypatch.setattr(p9, "_gh_pr_listing", lambda pr, repo: listing)
+
+        def decide(*a, **k):
+            meanwhile()
+            return {"action": action, "reason": "r", "policy": None,
+                    "source": "test", "gates": {}, "base_sha": None,
+                    "base": "main", "head_sha": "h"}
+        monkeypatch.setattr(p9, "decide_auto_merge", decide)
+        monkeypatch.setattr(p9, "_gh_pr_merge", lambda *a, **k: 0)
+        return p9.main(["auto-merge", str(pr), "--repo", REPO])
+
+    def _rewatch(self, p9, pr):
+        p9.append_state_event(p9.PRStateEvent(
+            ts=p9._utcnow(), pr=pr, repo=REPO, from_state="MERGE_READY",
+            to_state="WATCHING", watcher_id="rewatch"), takeover="test")
+
+    def test_merge_records_merged_when_the_row_held(self, p9, monkeypatch):
+        self._seed_ready(p9, 50)
+        assert self._auto_merge(p9, monkeypatch, 50, action="auto",
+                                meanwhile=lambda: None) == p9.EXIT_OK
+        assert p9.latest_row(50, REPO)["to_state"] == "MERGED"
+
+    def test_merge_while_the_row_moved_is_recorded_not_lost(self, p9, monkeypatch):
+        self._seed_ready(p9, 51)
+        self._auto_merge(p9, monkeypatch, 51, action="auto",
+                         meanwhile=lambda: self._rewatch(p9, 51))
+        row = p9.latest_row(51, REPO)
+        assert row["to_state"] == "ABANDONED"
+        assert "merged by auto-merge" in row["extra"]["reason"]
+
+    def test_blocked_note_is_not_written_over_a_moved_row(self, p9, monkeypatch):
+        self._seed_ready(p9, 52)
+        self._auto_merge(p9, monkeypatch, 52, action="notify",
+                         meanwhile=lambda: self._rewatch(p9, 52))
+        row = p9.latest_row(52, REPO)
+        assert row["to_state"] == "WATCHING" and row["watcher_id"] == "rewatch"
+
+    def test_cleanup_leaves_a_row_rearmed_during_its_query(self, p9, monkeypatch):
+        import argparse
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2026-09-26T00:00:00+00:00", pr=53, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="old", extra={"pid": 999999}))
+
+        class R:
+            returncode, stderr = 0, ""
+            stdout = json.dumps({"state": "MERGED", "mergedAt": "x"})
+
+        def gh(cmd, **k):
+            p9.append_state_event(p9.PRStateEvent(
+                ts=p9._utcnow(), pr=53, repo=REPO, from_state="WATCHING",
+                to_state="WATCHING", watcher_id="new"), takeover="test")
+            return R()
+        monkeypatch.setattr(p9.subprocess, "run", gh)
+        p9.cmd_cleanup(argparse.Namespace())
+        assert p9.latest_row(53, REPO)["watcher_id"] == "new"
+        assert p9.latest_row(53, REPO)["to_state"] == "WATCHING"
+
+    def test_takeover_cannot_carry_fences(self, p9):
+        ev = p9.PRStateEvent(ts=p9._utcnow(), pr=1, repo=REPO, from_state="PUSHED",
+                             to_state="WATCHING", watcher_id="w")
+        with pytest.raises(p9.P9Error):
+            p9.append_state_event(ev, takeover="x", expect_owner="w")
