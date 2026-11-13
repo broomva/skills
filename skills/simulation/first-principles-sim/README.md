@@ -11,21 +11,27 @@ number it states.
 ## Install
 
 ```bash
-npx skills add broomva/skills --skill first-principles-sim
+npx skills add broomva/skills --skill first-principles-sim -g -a claude-code
 ```
+
+With `-g -a claude-code` the skill lands in `~/.claude/skills/first-principles-sim`. Without
+`-g` it is installed into the current project instead, at
+`.claude/skills/first-principles-sim`; use that path in the commands below.
 
 ## Audit a package
 
-Run these from this skill's directory (after install, `~/.claude/skills/first-principles-sim`),
-with `<package>` as the path to your simulation package:
+Run these from this skill's directory (after the global install above,
+`~/.claude/skills/first-principles-sim`), with `<package>` as the path to your simulation
+package:
 
 ```bash
 cp assets/example/falling-body/sim-claims.yaml <package>/sim-claims.yaml   # then replace every entry
 python3 scripts/sim_audit.py <package> --run-report --run-mutations
 ```
 
-From anywhere else, give the script's full path:
-`python3 ~/.claude/skills/first-principles-sim/scripts/sim_audit.py <package> ...`.
+From anywhere else, give the script's full path, for example
+`python3 ~/.claude/skills/first-principles-sim/scripts/sim_audit.py <package> ...` for a global
+install.
 
 `assets/example/falling-body` is a complete package that passes with `--strict`.
 
