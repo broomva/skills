@@ -10,9 +10,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 First release (BRO-3709), distilled from the cloud-chamber build (BRO-3705).
 
 - `scripts/sim_audit.py`: audits a simulation package against its claim ledger
-  (`sim-claims.yaml`). Checks that every test asserts, that reference tables carry a source and
-  a date and are read by a test, that quoted numbers appear in the docs and in the report
-  output, and that each listed mutation turns its test command red in a copy of the package.
-- `assets/templates/sim-claims.yaml`: a ledger to copy.
-- `references/method.md`: the eleven steps, each with its reason and the cloud-chamber example.
+  (`sim-claims.yaml`). Checks that the tests are green and every test file asserts, that
+  reference tables carry a source and a date and are read by a test, that quoted numbers appear
+  in the docs and in the report output, and that each listed mutation turns its test command
+  red. Commands run in a temporary copy of the package.
+- `assets/example/falling-body`: a complete package that passes the audit with `--strict`. Its
+  ledger is the template to copy.
+- `tests/run_mutants.py`: changes the audit one behaviour at a time and requires the test suite
+  to fail each time.
+- `references/method.md`: the steps, each with its reason and the cloud-chamber example.
 - `references/domains.md`: the stage chain, anchors and controls for other fields.

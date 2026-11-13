@@ -45,5 +45,9 @@ jobs:
         run: pip install -r tests/requirements-dev.txt
       - name: Tests
         run: python -m pytest tests/ -v
+      - name: The audit's tests fail when the audit is changed
+        run: python tests/run_mutants.py
+      - name: The shipped example passes the audit strictly
+        run: python scripts/sim_audit.py assets/example/falling-body --run-report --run-mutations --strict
       - name: Skillify gate
         run: python3 ../../tooling/skillify/scripts/skillify_check.py . --run-tests

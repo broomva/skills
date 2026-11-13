@@ -6,23 +6,24 @@ version: 0.1.0
 description: >-
   Build a simulation in which the thing you see or hear is never drawn: model
   the mechanism (source, medium, interaction, state, observation), let the
-  phenomenon come out of it, and prove each stated quantity against something
-  computed outside the model. Works for any setup with known laws: particle
-  detectors, fluids, heat, sound and instruments, optics, orbits, circuits,
-  reaction-diffusion, neurons, structures. Every claim goes in a ledger
-  (sim-claims.yaml) as reference, independent, conservation, control,
-  prediction, convention or omitted, and scripts/sim_audit.py checks the
-  ledger: every test asserts, every reference table carries its source and
-  date and is read by a test, every quoted number is printed by the report
-  command, and each listed one-line code change turns a test red. USE WHEN:
-  "simulate X from physics", "from first principles", "physically accurate",
-  "make it emerge, don't fake it", "like rauchg's vinyl", "a realistic
-  simulation of", "verify the simulation against real data", "audit this
-  simulation", or building an explainer whose picture or sound must be a
-  consequence of the model. NOT FOR: stylised effects where faking is the
-  right call (game feel, a shader that only has to look good), policy or
-  ontology rollouts (parallax), data-fitted or learned surrogates, or driving
-  an existing solver (openrocket-sim).
+  phenomenon come out of it, and check each stated quantity against something
+  computed outside the model. For setups with known laws and at least one
+  measured or derived quantity: particle detectors, fluids, heat, sound and
+  instruments, optics, orbits, circuits, reaction-diffusion, neurons,
+  structures. Every claim goes in a ledger (sim-claims.yaml) as reference,
+  independent, conservation, control, prediction, convention or omitted, and
+  scripts/sim_audit.py checks the ledger: the tests are green and every test
+  file asserts, every reference table carries its source and date and is read
+  by a test, every number the ledger quotes appears in the docs and in the
+  report command's output, and each listed one-line code change turns a test
+  red. USE WHEN: "simulate X from physics", "from first principles",
+  "physically accurate", "make it emerge, don't fake it", "like rauchg's
+  vinyl", "a realistic simulation of", "verify the simulation against real
+  data", "audit this simulation", or building an explainer whose picture or
+  sound must be a consequence of the model. NOT FOR: stylised effects where
+  faking is the right call (game feel, a shader that only has to look good),
+  policy or ontology rollouts (parallax), data-fitted or learned surrogates,
+  or driving an existing solver (openrocket-sim).
 ---
 
 # first-principles-sim: model the mechanism, let the phenomenon emerge, prove the numbers
@@ -35,7 +36,7 @@ It comes from two artifacts. [rauchg/vinyl](https://github.com/rauchg/vinyl) get
 player's crackle and wow from simulated groove geometry, with no audio effects. Its tests print
 numbers and assert nothing. The cloud chamber in `broomva/workspace` (`packages/cloud-chamber`)
 applied the same idea to ionizing radiation and added the checks. One of those checks found a
-bug the picture hid, and two rounds of independent review each found defects that the author's
+bug the picture hid. Two rounds of independent review then each found defects that the author's
 own green tests had hidden. This skill is that method, with those defects turned into a gate.
 
 ## The rule
@@ -55,16 +56,19 @@ cloud-chamber example for each step. For a field other than particle physics, re
    animation with equations in it.
 2. **Name the phenomenon and the chain.** Write what must emerge, and the stages that produce
    it: source, medium, interaction, state, observation. One file per stage. Each stage is a
-   pure function of its inputs and a seed. SI units throughout; every constant has a source.
-3. **Open the ledger before the code.** Copy `assets/templates/sim-claims.yaml` into the
-   package. Give every quantity you intend to state one claim and one kind (table below).
+   pure function of its inputs and, where it draws random numbers, a seed. In a time-stepped
+   field solver the source is the initial condition and the forcing, and the interaction is
+   the update rule. SI units throughout; every constant has a source.
+3. **Open the ledger before the code.** Copy `assets/example/falling-body/sim-claims.yaml` into
+   the package. Give every quantity you intend to state one claim and one kind (table below).
    Fetch the reference tables now and store them with their URL and fetch date.
 4. **Build bottom-up, one stage at a time, with its check.** Do not start a stage until the
    one below it passes against its anchor. A wrong stopping power makes every track wrong, and
    the track will not tell you.
 5. **Observe without drawing.** The renderer or the audio output reads state and nothing else.
    Then measure the output itself, headless, against the same anchors: a track's length in
-   pixels against the published range, a tone's pitch against the string's length.
+   pixels against the published range, a tone's pitch against the frequency that the string's
+   length, tension and mass per length give.
 6. **Add the negative controls.** Remove the cause and require the effect to vanish: no
    radiation, a black frame. Read the result after the slowest relevant process has had time
    to act, or the control passes because nothing has happened yet.
@@ -72,18 +76,21 @@ cloud-chamber example for each step. For a field other than particle physics, re
    and quote the digits it prints.
 8. **Write a mutation for each checked claim.** One line of the code under test, changed so the
    claim becomes false. The test must go red. If it stays green, the test checks something
-   other than the claim.
-9. **Run the audit**, then shift every seed and run the tests again.
+   other than the claim. The audit warns for each checked claim that has none.
+9. **Run the audit.**
 
    ```bash
    python3 scripts/sim_audit.py <package> --run-report --run-mutations
    ```
 
-   Exit 0 means no check failed. `--strict` also fails on warnings (a checked claim with no
-   mutation). A run that was not requested reports SKIP, never PASS.
-10. **Get an independent review** (cross-review, P20) on a copy of the tree. Fix each finding by
+   Exit 0 means no check failed. `--strict` also fails on warnings and on anything not run. A
+   run that was not requested reports SKIP, never PASS.
+10. **Vary what should not matter.** Shift every random seed and run the tests again. For a
+    deterministic solver, halve the step and the grid spacing instead: the error against the
+    anchor must fall at the order the scheme promises.
+11. **Get an independent review** (cross-review, P20) on a copy of the tree. Fix each finding by
     checking the claim against something computed another way, or by narrowing the claim.
-11. **Write the three tables** in the README from the ledger: what is checked against what, what
+12. **Write the three tables** in the README from the ledger: what is checked against what, what
     the model predicts and is not compared with a measurement, and what is approximated or left
     out.
 
@@ -99,9 +106,12 @@ cloud-chamber example for each step. For a field other than particle physics, re
 | `convention` | Nothing. A choice or a typical value | `statement` |
 | `omitted` | Nothing. Physics left out | `statement` |
 
-A ledger must hold at least one control, one `reference` or `independent` claim, and one
-`convention` or `omitted` claim. A package where every check is the model agreeing with itself
-has no anchor, and a model with nothing left out is misdescribed.
+A claim's `test` is a file the test command runs, or a file listed under `tests.gates` (a check
+run separately, such as a headless render).
+
+A ledger must hold at least one control, one `reference` or `independent` claim, one
+`convention` or `omitted` claim, and one mutation. A package where every check is the model
+agreeing with itself has no anchor, and a model with nothing left out is misdescribed.
 
 When the laws are themselves models (an agent-based market, a flocking rule), most claims will
 be predictions and conventions. That is the honest result. Say it in the README.
@@ -110,29 +120,42 @@ be predictions and conventions. That is the honest result. Say it in the README.
 
 | It checks | It cannot check |
 |---|---|
-| Every test file contains an assertion | That the assertion is about the claim. Only a mutation shows that |
-| A reference file has a URL and a date, and a test reads it | That the table was copied correctly, or that it is the right table |
-| A quoted string appears in the docs and in the report output | That the report computes it correctly. A short string such as `1.1` matches by accident; quote enough digits or the unit |
-| A mutation turns its test command red | That the test is right. A test that fails for another reason also kills the mutation |
-| The ledger has a control, an anchor and a limit | That the prose labels predictions as predictions |
+| The test command exits 0 in a copy of the package | That the tests test anything. Only mutations show that |
+| Every test file contains an assertion | That the assertion is about the claim |
+| A reference file has a URL and a date, and code beside the tests names the file | That the table was copied correctly, that it is the right table, or that the code which names it also uses it |
+| A string the ledger quotes appears in the docs and in the report's standard output | Numbers in the docs that the ledger does not list. And a short string such as `1.1` matches by accident; quote enough digits or the unit |
+| A mutation turns its test command red | That it died for the right reason. A mutation that breaks the code outright kills any test, and a test that fails for another reason also kills it |
+| The ledger has a control, an anchor, a limit and a mutation | That an `independent` check really is. A closed-form solution of the equation being solved verifies the solver, not the physics both sides assume |
+| A checked claim has a mutation (a warning if not) | That the prose labels predictions as predictions |
 
-The assertion check strips comments but does not parse strings, and it counts `throw` and
-`raise` as ways to fail. The independence of an `independent` claim is not decidable: a test
-that retypes the formula it tests passes this audit until a mutation of that formula is listed.
-That is what the review in step 10 is for.
+Three more limits:
+
+- **The package must run from a copy of its own directory.** Commands run in a temporary copy,
+  so tests that import a sibling package fail there. The `suite` check says so when it happens.
+- **Linked directories are shared.** `node_modules` and the others under `link` are symlinked
+  into the copy, so a command that writes a cache there writes into the real one. The audit
+  refuses a mutation inside a linked directory.
+- **The assertion detector is a list of patterns.** It strips whole-line and trailing comments
+  but does not parse strings or inline `/* */`, and it counts `throw` and `raise` as ways to
+  fail. For a framework it does not know, set `tests.assertion` in the ledger.
+
+These are what the review in step 11 is for.
 
 ## Failures this skill exists to prevent
 
-Each of these happened in the cloud-chamber build, with the suite green.
+Each of these happened in the cloud-chamber build. The first was caught by a reference test
+when that test was written. The rest were found with the suite green, by review or by
+regenerating a number. The last column is the kind of check that catches each one; the cloud
+chamber's own ledger does not yet have a mutation for every row.
 
-| What was written | What was true | The check that catches it |
+| What was written | What was true | What catches it |
 |---|---|---|
 | A rotation with a special case near the vertical axis | It discarded accumulated deflection; steep tracks came out too straight, and the picture looked fine | A reference claim: scattering width against the Highland formula |
 | A test of the water nucleation threshold | It tested a formula the simulation never calls | A mutation of the function the engine calls |
 | Two "brute-force" tests | They retyped the engine's formula; doubling its coefficient left them green | A mutation of the coefficient |
-| A black-frame control over a warm plate | The frame was read before droplets could have appeared | Read the control after the slowest timescale |
-| A plate limit of -5.7 °C in the README | The report printed -8.4 °C; the number had been typed from memory | `quoted`, with `--run-report` |
-| Landing times "for droplets" | They were counted over array entries, each standing for 15 droplets | A conservation claim on the weighted count |
+| A black-frame control over a warm plate | The frame was read before droplets could have appeared | Reading the control after the slowest timescale |
+| A plate limit typed into the README from an expectation | The report, once it existed, printed -8.4 °C | `quoted`, with `--run-report` |
+| Landing times "for droplets" | They were counted over array entries, each standing for about 15 droplets | A conservation claim on the weighted count |
 | "Every test asserts against a published reference" | Several check consistency, not a reference | The kind column of the ledger |
 | A three-pass iteration for the inertia cap | It does not converge; the heaviest columns got no downdraft | An independent claim: bisection of the same equation over the whole range |
 
@@ -148,10 +171,15 @@ Each of these happened in the cloud-chamber build, with the suite green.
 ## Validation
 
 ```bash
-python3 -m pytest tests/ -q
+python3 -m pytest tests/ -q        # the audit against a small package, one fault at a time
+python3 tests/run_mutants.py       # the audit's own tests against changes to the audit
 ```
 
-The tests build a small falling-body package in a temp directory, break one thing at a time,
-and check that the audit names it. The cloud chamber's own ledger is the real-data case: at
-0.1.0 the audit kills nine of its eleven mutations and reports two survivors, both gaps in that
-package's tests (see [references/method.md](references/method.md)).
+`assets/example/falling-body` is a complete package that passes the audit with `--strict`. The
+tests copy it, break one thing at a time, and check that the audit names it. `run_mutants.py`
+holds the audit to its own rule: it changes `scripts/sim_audit.py` one behaviour at a time and
+requires the tests to fail.
+
+The cloud chamber's ledger is the real-data case. On 2026-11-13 the audit killed nine of its
+eleven mutations and reported two survivors, both gaps in that package's tests (see
+[references/method.md](references/method.md)).

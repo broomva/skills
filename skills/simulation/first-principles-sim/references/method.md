@@ -32,11 +32,17 @@ Then write the chain of stages that produces it. Most physical setups have the s
 | State | What evolves afterwards? | Droplets nucleate on ions, grow, fall | Tip position and velocity, platter speed |
 | Observation | What does the instrument report? | Light scattered by droplets into a camera | Cartridge voltage, then the preamp chain |
 
+The table fits event-driven setups. A field stepped forward in time (a string, a fluid, a
+temperature map) uses the same five stages with different contents: the source is the initial
+condition and any forcing, the medium is the material constants and the boundaries, the
+interaction is the update rule, the state is the field, and the observation is a probe, a
+pickup or an image.
+
 Rules for the code:
 
 - One file per stage. A stage imports only the stages below it.
-- Each function is a pure function of its arguments and a seeded random generator. The same
-  seed gives the same output, element for element. Test that.
+- Each function is a pure function of its arguments and, where it draws random numbers, a
+  seeded generator. The same inputs give the same output, element for element. Test that.
 - SI units inside. Convert at the edges, and name the unit in a comment where a table uses
   another one.
 - Constants live in one place, each with its source.
@@ -44,7 +50,8 @@ Rules for the code:
 ## 3. The ledger comes first
 
 Before writing a stage, list what you intend to state about it and how each statement will be
-enforced. This is `sim-claims.yaml`. Writing it first changes what you build: a quantity with
+enforced. This is `sim-claims.yaml`; `assets/example/falling-body/sim-claims.yaml` is a complete
+one, with every field explained. Writing it first changes what you build: a quantity with
 no possible anchor gets labelled a prediction on day one, and the README inherits that label.
 
 Fetch reference tables at this point:
@@ -80,6 +87,18 @@ and below 6%. Then neither a regression nor a silent improvement passes unnotice
 (Reynolds, Knudsen, the ratio of step to mean free path) at the conditions the simulation
 actually reaches, and print it in the report. The cloud chamber's first settling law ignored
 inertia; the Reynolds number of an alpha column showed the law did not apply.
+
+**Discretisation is an approximation, and it needs its own check.** A grid and a time step
+change the answer. A finite-difference string has numerical dispersion, which detunes its upper
+partials, and those partials are the anchor. So:
+
+- State the stability limit of the scheme (the Courant number, or its equivalent) and print the
+  value the simulation runs at.
+- Halve the step and the spacing, and assert that the error against the anchor falls at the
+  order the scheme promises. This is the deterministic solver's version of shifting the seeds.
+- An analytic solution of the equation you are solving verifies the solver. It says nothing
+  about whether that equation describes the instrument. Label it `independent`, and look for
+  a measured anchor as well (a tabulated frequency, a measured decay time, a benchmark run).
 
 **Scale tricks are claims.** If one array entry stands for many particles, or a time step
 merges many collisions, that is a convention, and totals must still be counted in real units.
@@ -117,9 +136,13 @@ One command prints every number the prose quotes, each on a labelled line. The p
 the digits it prints. The audit's `quoted` check ties the two together: the string must appear
 in the docs and in the report output.
 
-This exists because of one error. A README sentence gave a plate limit of -5.7 °C. The report,
-when it was written and run, printed -8.4 °C. The first number had been typed from an
-expectation.
+This exists because of one error in the cloud-chamber build. A README sentence gave a plate
+limit that had been typed from an expectation. The report, when it was written and run, printed
+-8.4 °C, a different number.
+
+The check covers only the strings the ledger lists. A number in the docs that no claim quotes
+is not checked, and neither is hand rounding: the cloud chamber's README says "7 to 62 mm"
+where its report prints `6.8 to 61.8`.
 
 ## 8. Mutations
 
@@ -152,12 +175,21 @@ Good mutations:
 Avoid equivalent mutations: flipping the sign of an azimuth drawn uniformly from a full circle
 changes nothing statistically, and its survival means nothing.
 
-The audit applies each mutation in a temporary copy of the package and never edits the live
-tree.
+Do not mutate a test file, and do not use a mutation that merely breaks the code: a syntax
+error turns every test red and proves nothing about the claim.
+
+The audit runs every command in a temporary copy of the package and does not edit the
+package's own files. Directories listed under `link` (by default `node_modules`, `.venv`,
+`venv`, `target`) are symlinked into the copy, so a command that writes a cache there writes
+into the real one. The audit refuses a mutation inside a linked directory. Because commands run
+in the copy, the package's tests must not need files outside its own directory.
+
+The cloud chamber's ledger has eleven mutations for its twenty-two checked claims. The audit
+warns for the other eleven.
 
 ### What the first real run found
 
-Run against the cloud chamber at 0.1.0, the audit killed nine of eleven mutations and two
+Run against the cloud chamber on 2026-11-13, the audit killed nine of eleven mutations and two
 survived the whole suite:
 
 - `engine-skips-cap`: no test fails when the engine ignores the inertia cap. The cap's own
@@ -168,11 +200,14 @@ survived the whole suite:
 The first was already an open finding from the third review round. The second had passed all
 three rounds.
 
-## 9. Seeds
+## 9. Vary what should not matter
 
 Run the suite with every seed shifted, several times. A statistical test that passes at one
 seed may be passing by luck, and a tolerance set by looking at one run is too tight. The cloud
 chamber reads `CHAMBER_SEED_SHIFT` and runs the suite eight times.
+
+A deterministic solver has no seed. Its equivalent is the refinement check in section 4: the
+result must not depend on the step beyond the stated error.
 
 ## 10. Independent review
 
@@ -189,6 +224,9 @@ For each finding there are two honest fixes:
 Rewording the claim so the existing test covers it is the second fix, and is fine. Adding a
 test that restates the code is neither.
 
+The cloud chamber had three rounds. The first two each found defects the author's tests had
+hidden. The third passed it and filed what remained.
+
 ## 11. The README
 
 Three tables, generated from the ledger by hand:
@@ -202,4 +240,4 @@ Three tables, generated from the ledger by hand:
 
 Pin the runtime version. Give statistical tests a timeout that fits the slowest runner. Run the
 audit with `--run-report --run-mutations` once the package passes it; until then, the survivors
-are tickets.
+are tickets. The cloud chamber's CI does not run the audit yet, for that reason.

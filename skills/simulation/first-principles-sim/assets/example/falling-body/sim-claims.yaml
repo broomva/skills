@@ -7,7 +7,7 @@
 # claim, and the claim's kind says what enforces it.
 
 # The thing a viewer will see or hear, which no code is allowed to draw.
-phenomenon: "A falling body takes longer to land from higher up."
+phenomenon: "A body dropped from higher up takes longer to land."
 
 # Prose that quotes numbers. Every `quoted` string below must appear here.
 docs:
@@ -16,13 +16,22 @@ docs:
 tests:
   dir: test
   glob: "*.test.py"
+  # Checks that `commands.test` does not run, such as a headless render gate.
+  # A claim may name one as its `test`.
+  gates: []
+  # Optional: a regular expression that replaces the built-in list of
+  # assertion constructs, for a test framework the audit does not know.
+  # assertion: "\\bverify\\("
 
 commands:
+  # Run from a copy of the package directory. They must not need files
+  # outside it.
   test: "python3 test/fall.test.py"
   # Prints every number the docs quote. Nothing else may be quoted.
   report: "python3 tools/report.py"
 
-# Directories linked into the mutation copy instead of copied.
+# Top-level directories linked into the copy instead of copied. A command that
+# writes into one writes into the real one.
 link:
   - node_modules
 
@@ -36,13 +45,14 @@ claims:
   # Checked kinds need `test`. A checked claim with no mutation is a warning.
   - id: fall-time
     kind: reference          # compared with a published table or value
-    statement: "Fall time from 5 m and 20 m matches the table within 0.01 s."
+    statement: "Fall time from 1, 5, 20 and 100 m matches the table within 0.001 s."
     test: test/fall.test.py
-    reference: drop-table
+    reference: drop-table    # or `source: "<citation>"` for one typed-in value
+    # Strings, in quotes, with enough digits or a unit to be unmistakable.
     quoted:
       - "1.010 s"
 
-  - id: fall-time-integrated
+  - id: fall-time-stepped
     kind: independent        # the same quantity computed another way
     statement: "The closed form matches a step-by-step integration within 0.1%."
     test: test/fall.test.py
@@ -51,6 +61,8 @@ claims:
     kind: conservation       # a conservation law or an identity of the equations
     statement: "Kinetic energy at the ground equals the potential energy lost."
     test: test/fall.test.py
+    quoted:
+      - "9.90 m/s"
 
   - id: zero-height
     kind: control            # a null input that must give a null output
@@ -58,25 +70,41 @@ claims:
     test: test/fall.test.py
 
   # Unchecked kinds need only a statement. The docs must label them the same way.
-  - id: terminal-speed
+  - id: untimed
     kind: prediction         # a model result with no measurement to compare
-    statement: "With drag added, a 1 cm steel ball would reach 30 m/s."
+    statement: "A real 5 m drop takes 1.010 s. Nobody timed one for this package."
 
   - id: g-value
     kind: convention         # a choice or typical value, not a measurement
-    statement: "g is 9.81 m/s² everywhere."
+    statement: "g is the standard 9.80665 m/s² everywhere."
 
   - id: no-drag
     kind: omitted            # physics left out
     statement: "Air drag and buoyancy."
 
-# One-line changes to the code that must turn a test red. Each runs in a copy
-# of the package. `find` must occur exactly once in `file`.
+# One-line changes to the code under test that must turn a test red. Each runs
+# in a copy of the package. `find` must occur exactly once in `file`, and
+# `file` may not be a test.
 mutations:
-  - id: halve-g
+  - id: weaker-gravity
     claim: fall-time
     file: src/model.py
-    find: "G = 9.81"
-    replace: "G = 4.9"
+    find: "G = 9.80665"
+    replace: "G = 9.7"
+  - id: lose-the-factor-two
+    claim: fall-time-stepped
+    file: src/model.py
+    find: "return (2 * height / G) ** 0.5"
+    replace: "return (height / G) ** 0.5"
+  - id: faster-impact
+    claim: energy
+    file: src/model.py
+    find: "return G * fall_time(height)"
+    replace: "return G * fall_time(height) * 1.001"
     # Optional; defaults to commands.test.
     command: "python3 test/fall.test.py"
+  - id: never-instant
+    claim: zero-height
+    file: src/model.py
+    find: "return (2 * height / G) ** 0.5"
+    replace: "return (2 * height / G) ** 0.5 + 1e-6"

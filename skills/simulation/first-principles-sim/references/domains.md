@@ -18,17 +18,17 @@ Each of these is one new stage or one replaced approximation in `packages/cloud-
 | A lead plate across the chamber | Tracks are shorter and more curved below it; some electrons shower | Energy loss in lead from the NIST tables; radiation length from the PDG |
 | A clearing field | Old ions are swept out; the background mist thins | Ion drift speed from published mobilities |
 | Mie scattering in place of the phase function | Brightness depends on droplet size and viewing angle | A Mie code's published test cases |
-| Two-dimensional convection | The sensitive layer thins near warm walls; rolls appear when the chamber is unstable | Onset at the critical Rayleigh number |
+| Two-dimensional convection driven by warm side walls | The sensitive layer thins near the walls. The chamber is heated from above and stable, so there is no Rayleigh-Bénard onset to look for | The de Vahl Davis benchmark for a differentially heated cavity; no flow when the walls follow the still-gas profile |
 | An expansion (Wilson) chamber | Sharp tracks for a moment after each expansion, then fog | Adiabatic cooling from the expansion ratio; Wilson's thresholds |
-| Bremsstrahlung and pair production | Photons convert to electron-positron pairs that curve apart in a field | NIST XCOM cross-sections |
+| Bremsstrahlung and pair production | Fast electrons radiate; photons convert to electron-positron pairs that curve apart in a field | NIST ESTAR radiative stopping power for the electrons; NIST XCOM cross-sections for the photons |
 
 Other instruments built from the same stages:
 
 | Instrument | Reuses | New stage | Anchor |
 |---|---|---|---|
-| Geiger counter, as sound | Sources, energy loss | Avalanche and dead time; a click per count | Poisson statistics of the intervals; the dead-time correction formula |
+| Geiger counter, as sound | Sources, energy loss | Avalanche and dead time; a click per count | Counts per window are Poisson and intervals are exponential; the dead-time correction formula |
 | Bubble chamber | Transport | Nucleation of vapor in superheated liquid | Stopping powers for the liquid; curvature in the field |
-| Spark chamber | Transport, ion pairs | Breakdown along the ion trail between plates | Paschen's law |
+| Spark chamber | Transport, ion pairs | Breakdown along the ion trail between plates | Weak: Paschen's law covers a static uniform gap, not a pulsed discharge along a trail. Expect predictions here |
 | Scintillator and photomultiplier | Energy loss | Light yield, photon statistics, pulse shape | Published light yields; Poisson width of the photopeak |
 
 ## Fluids
@@ -38,13 +38,18 @@ Other instruments built from the same stages:
   fields; dye, particles or a schlieren image.
 - **Emerges:** boundary layers, vortex streets behind a cylinder, the hydraulic jump, surface
   waves.
-- **Anchors:** the Poiseuille profile in a pipe (analytic); Stokes drag on a sphere; the
-  measured Strouhal number against Reynolds number for a cylinder; the lid-driven cavity
-  benchmark of Ghia, Ghia and Shin; gravity-wave speed in shallow water.
-- **Conservation:** mass and momentum, to rounding.
-- **Control:** fluid at rest with no forcing stays at rest.
-- **Validity:** the Mach number of a lattice Boltzmann run, the Reynolds number against the
-  grid resolution.
+- **Anchors:** the Poiseuille profile in a channel or pipe (analytic); Stokes drag on a sphere,
+  for a three-dimensional run; the measured Strouhal number against Reynolds number for a
+  cylinder (Williamson's 1996 review in the Annual Review of Fluid Mechanics collects the
+  curve); the lid-driven cavity benchmark of Ghia, Ghia and Shin; gravity-wave speed in
+  shallow water.
+- **Conservation:** mass to rounding; momentum as a budget that includes the forces on walls
+  and what crosses the inlet and outlet.
+- **Control:** fluid at rest with no forcing stays at rest. For a cylinder wake, no shedding
+  below the critical Reynolds number.
+- **Validity:** the Mach number of a lattice Boltzmann run; the Reynolds number against the
+  grid resolution; blockage by the side walls and reflections from the outflow boundary. A
+  two-dimensional wake stops matching experiment once the real flow becomes three-dimensional.
 
 ## Heat and thermodynamics
 
@@ -67,14 +72,17 @@ a pickup, and the anchors are measured from the rendered samples.
   the excitation mechanism (stick-slip of a bow, a reed's valve, a hammer's felt); the
   vibrating body; radiation to a listening point.
 - **Emerges:** the harmonic series of a string and its inharmonicity when the string is stiff;
-  a clarinet's missing even harmonics; the non-harmonic modes of a drum; a wolf note; room
-  reverberation.
+  a clarinet's weak even harmonics in its low register; the non-harmonic modes of a drum; a
+  wolf note; room reverberation.
 - **Anchors:** string frequency from length, tension and mass per length; Fletcher's
   inharmonicity formula for piano strings; mode ratios of a circular membrane from the zeros
   of Bessel functions; resonances of a tube with its end correction; Sabine's reverberation
   time for a room.
 - **Conservation:** with losses off, the energy of the vibrating body is constant.
 - **Control:** no excitation gives silence, to the last sample.
+- **Validity:** a finite-difference string or membrane has numerical dispersion that detunes
+  the upper partials. Run the refinement check in method.md section 4 before comparing
+  partials with theory.
 
 ## Light and optics
 
@@ -120,7 +128,9 @@ a pickup, and the anchors are measured from the rendered samples.
 - **Anchors:** the pattern wavelength from linear stability analysis; front speed from the
   Fisher-KPP result; a stochastic (Gillespie) run against the rate equations at large
   molecule counts; published rate constants (NIST Chemical Kinetics Database).
-- **Conservation:** atoms of each element.
+- **Conservation:** atoms of each element in a closed reactor. The usual pattern-forming models
+  (Gray-Scott, the Brusselator, the Oregonator) are open, with feed and removal terms, so check
+  the budget including those terms.
 - **Control:** a uniform steady state with no perturbation stays uniform.
 
 ## Neurons and physiology

@@ -17,15 +17,19 @@ npx skills add broomva/skills --skill first-principles-sim
 ## Audit a package
 
 ```bash
-cp assets/templates/sim-claims.yaml <package>/sim-claims.yaml   # then replace every entry
+cp assets/example/falling-body/sim-claims.yaml <package>/sim-claims.yaml   # then replace every entry
 python3 scripts/sim_audit.py <package> --run-report --run-mutations
 ```
 
-A YAML ledger needs PyYAML. A `sim-claims.json` ledger needs nothing beyond Python 3.10.
+`assets/example/falling-body` is a complete package that passes with `--strict`.
+
+A YAML ledger needs PyYAML. A `sim-claims.json` ledger needs only the standard library. CI runs
+Python 3.11 and 3.12. The package's tests must run from a copy of the package directory.
 
 ## Test
 
 ```bash
 pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
+python3 tests/run_mutants.py   # changes the audit one behaviour at a time; the tests must fail
 ```
