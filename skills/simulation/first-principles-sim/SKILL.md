@@ -84,7 +84,8 @@ cloud-chamber example for each step. For a field other than particle physics, re
    ```
 
    Exit 0 means no check failed. `--strict` also fails on warnings and on anything not run. A
-   run that was not requested reports SKIP, never PASS.
+   run that was not requested reports SKIP, never PASS. Add `--run-gates` to run the checks
+   listed under `tests.gates`. A YAML ledger needs PyYAML; a `sim-claims.json` one does not.
 10. **Vary what should not matter.** Shift every random seed and run the tests again. For a
     deterministic solver, halve the step and the grid spacing instead: the error against the
     anchor must fall at the order the scheme promises.
@@ -106,8 +107,13 @@ cloud-chamber example for each step. For a field other than particle physics, re
 | `convention` | Nothing. A choice or a typical value | `statement` |
 | `omitted` | Nothing. Physics left out | `statement` |
 
-A claim's `test` is a file the test command runs, or a file listed under `tests.gates` (a check
-run separately, such as a headless render).
+A claim's `test` is a file the test command runs, or a file listed under `tests.gates` with
+its own command (a check run separately, such as a headless render). A mutation's `file` is
+code under test: not a test, not a gate, and nothing in the tests directory.
+
+Give each mutation the `command` that runs only its claim's test. With the whole suite as the
+command, whichever assertion fails first kills the mutation, and it may belong to another
+claim. The example package has one test file per claim for this reason.
 
 A ledger must hold at least one control, one `reference` or `independent` claim, one
 `convention` or `omitted` claim, and one mutation. A package where every check is the model
@@ -122,9 +128,10 @@ be predictions and conventions. That is the honest result. Say it in the README.
 |---|---|
 | The test command exits 0 in a copy of the package | That the tests test anything. Only mutations show that |
 | Every test file contains an assertion | That the assertion is about the claim |
-| A reference file has a URL and a date, and code beside the tests names the file | That the table was copied correctly, that it is the right table, or that the code which names it also uses it |
+| A reference file has a URL and a date, and code beside the tests names the file | That the table was copied correctly, that it is the right table, or that the code which names it also uses it. A test that loads tables by listing a directory must still name each file |
 | A string the ledger quotes appears in the docs and in the report's standard output | Numbers in the docs that the ledger does not list. And a short string such as `1.1` matches by accident; quote enough digits or the unit |
-| A mutation turns its test command red | That it died for the right reason. A mutation that breaks the code outright kills any test, and a test that fails for another reason also kills it |
+| A mutation turns its test command red | That it died for the right reason. A mutation that breaks the code outright kills any test, a test that fails for another reason also kills it, and nothing checks that the command runs the claim's `test` file |
+| With `--run-gates`, each gate's command exits 0 | Without the flag, anything about a gate beyond the file existing and asserting. It reports SKIP |
 | The ledger has a control, an anchor, a limit and a mutation | That an `independent` check really is. A closed-form solution of the equation being solved verifies the solver, not the physics both sides assume |
 | A checked claim has a mutation (a warning if not) | That the prose labels predictions as predictions |
 
@@ -132,12 +139,13 @@ Three more limits:
 
 - **The package must run from a copy of its own directory.** Commands run in a temporary copy,
   so tests that import a sibling package fail there. The `suite` check says so when it happens.
-- **Linked directories are shared.** `node_modules` and the others under `link` are symlinked
-  into the copy, so a command that writes a cache there writes into the real one. The audit
-  refuses a mutation inside a linked directory.
-- **The assertion detector is a list of patterns.** It strips whole-line and trailing comments
-  but does not parse strings or inline `/* */`, and it counts `throw` and `raise` as ways to
-  fail. For a framework it does not know, set `tests.assertion` in the ledger.
+- **Linked directories are shared.** `node_modules`, `.venv`, `venv` and `target` (or the
+  names under `link`) are symlinked into the copy, so a command that writes a cache there
+  writes into the real one. The audit refuses a mutation inside a linked directory. If one of
+  those names holds your source, set `link` in the ledger.
+- **The assertion detector is a list of patterns.** It strips comments for the languages it
+  knows but does not parse strings, and it counts `throw`, `raise` and a non-zero `exit` as
+  ways to fail. For a framework it does not know, set `tests.assertion` in the ledger.
 
 These are what the review in step 11 is for.
 
@@ -145,7 +153,8 @@ These are what the review in step 11 is for.
 
 Each of these happened in the cloud-chamber build. The first was caught by a reference test
 when that test was written. The rest were found with the suite green, by review or by
-regenerating a number. The last column is the kind of check that catches each one; the cloud
+regenerating a number. The plate-limit row happened in a draft, before the first commit, so the
+repository does not record it. The last column is the kind of check that catches each one; the cloud
 chamber's own ledger does not yet have a mutation for every row.
 
 | What was written | What was true | What catches it |
@@ -154,7 +163,7 @@ chamber's own ledger does not yet have a mutation for every row.
 | A test of the water nucleation threshold | It tested a formula the simulation never calls | A mutation of the function the engine calls |
 | Two "brute-force" tests | They retyped the engine's formula; doubling its coefficient left them green | A mutation of the coefficient |
 | A black-frame control over a warm plate | The frame was read before droplets could have appeared | Reading the control after the slowest timescale |
-| A plate limit typed into the README from an expectation | The report, once it existed, printed -8.4 °C | `quoted`, with `--run-report` |
+| A plate limit typed into a draft README from an expectation | The report, once it existed, printed a different number | `quoted`, with `--run-report` |
 | Landing times "for droplets" | They were counted over array entries, each standing for about 15 droplets | A conservation claim on the weighted count |
 | "Every test asserts against a published reference" | Several check consistency, not a reference | The kind column of the ledger |
 | A three-pass iteration for the inertia cap | It does not converge; the heaviest columns got no downdraft | An independent claim: bisection of the same equation over the whole range |
@@ -176,9 +185,15 @@ python3 tests/run_mutants.py       # the audit's own tests against changes to th
 ```
 
 `assets/example/falling-body` is a complete package that passes the audit with `--strict`. The
-tests copy it, break one thing at a time, and check that the audit names it. `run_mutants.py`
-holds the audit to its own rule: it changes `scripts/sim_audit.py` one behaviour at a time and
-requires the tests to fail.
+tests copy it, break one thing at a time, and check that the audit names it.
+
+`run_mutants.py` holds the audit to its own rule, more strictly than the audit holds a
+simulation. It generates changes to `scripts/sim_audit.py` from the source (every single-line
+condition forced true and false, every failure, warning and skip reported as a pass, every
+assertion pattern removed, every element of a constant list removed), adds a hand-written
+list for what those cannot express, and requires the tests to fail for each one. A survivor
+must be listed with the reason it changes nothing. It cannot tell a mutant that a test caught
+from one that died because the change raised an exception.
 
 The cloud chamber's ledger is the real-data case. On 2026-11-13 the audit killed nine of its
 eleven mutations and reported two survivors, both gaps in that package's tests (see

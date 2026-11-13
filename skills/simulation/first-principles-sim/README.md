@@ -31,5 +31,5 @@ Python 3.11 and 3.12. The package's tests must run from a copy of the package di
 ```bash
 pip install -r tests/requirements-dev.txt
 python3 -m pytest tests/ -q
-python3 tests/run_mutants.py   # changes the audit one behaviour at a time; the tests must fail
+python3 tests/run_mutants.py   # generates changes to the audit; the tests must fail for each
 ```

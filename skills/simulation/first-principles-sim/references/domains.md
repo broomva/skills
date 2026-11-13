@@ -15,7 +15,7 @@ Each of these is one new stage or one replaced approximation in `packages/cloud-
 | Extension | What emerges | Anchor |
 |---|---|---|
 | A magnetic field | Tracks curve, tighter as the particle slows; positive and negative particles curve opposite ways | Radius of curvature from momentum, charge and field (analytic) |
-| A lead plate across the chamber | Tracks are shorter and more curved below it; some electrons shower | Energy loss in lead from the NIST tables; radiation length from the PDG |
+| A lead plate across the chamber | Tracks are shorter and more scattered below it, and with the field of the row above, more tightly curved; some electrons shower | Energy loss in lead from the NIST tables; radiation length from the PDG |
 | A clearing field | Old ions are swept out; the background mist thins | Ion drift speed from published mobilities |
 | Mie scattering in place of the phase function | Brightness depends on droplet size and viewing angle | A Mie code's published test cases |
 | Two-dimensional convection driven by warm side walls | The sensitive layer thins near the walls. The chamber is heated from above and stable, so there is no Rayleigh-Bénard onset to look for | The de Vahl Davis benchmark for a differentially heated cavity; no flow when the walls follow the still-gas profile |
@@ -74,15 +74,18 @@ a pickup, and the anchors are measured from the rendered samples.
 - **Emerges:** the harmonic series of a string and its inharmonicity when the string is stiff;
   a clarinet's weak even harmonics in its low register; the non-harmonic modes of a drum; a
   wolf note; room reverberation.
-- **Anchors:** string frequency from length, tension and mass per length; Fletcher's
-  inharmonicity formula for piano strings; mode ratios of a circular membrane from the zeros
+- **Anchors:** string frequency from length, tension and mass per length; the amplitudes of a
+  plucked string's harmonics, which follow from where it is plucked (a harmonic with a node at
+  the plucking point is absent); Fletcher's inharmonicity formula for piano strings; mode ratios of a circular membrane from the zeros
   of Bessel functions; resonances of a tube with its end correction; Sabine's reverberation
   time for a room.
 - **Conservation:** with losses off, the energy of the vibrating body is constant.
 - **Control:** no excitation gives silence, to the last sample.
 - **Validity:** a finite-difference string or membrane has numerical dispersion that detunes
   the upper partials. Run the refinement check in method.md section 4 before comparing
-  partials with theory.
+  partials with theory. These anchors are analytic; a measured one (a recorded decay time, a
+  tabulated string) is worth finding. Radiation from the body to a listener usually has no
+  anchor and ends up a convention.
 
 ## Light and optics
 

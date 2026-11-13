@@ -17,6 +17,7 @@ Checks:
                passes whatever the physics does)
   claims       each checked claim names a test file, or a declared gate, that
                exists and asserts
+  gates        (--run-gates) each gate's command exits 0
   references   each reference file states a URL and a fetch date, and a test
                reads it (a table nobody loads was retyped); a reference claim
                with no stored table must cite its source
@@ -26,12 +27,13 @@ Checks:
                the standard output of the report command
   suite        (--run-tests) the test command exits 0
   mutations    each mutation applies exactly once to code that is not a test,
-               and (--run-mutations) makes its test command fail
+               a test's helper or data, or a gate, and (--run-mutations) makes
+               its test command fail
 
 Commands run in a temporary copy of the package, never in the package itself.
 
 Exit 0 when nothing failed, 1 when a check failed, 2 when the ledger could not
-be read. A check that needs a flag that was not given reports SKIP, never PASS.
+be read or the package could not be copied. A check that needs a flag that was not given reports SKIP, never PASS.
 With --strict, WARN and SKIP fail too.
 
 Stdlib only for a JSON ledger; a YAML ledger needs PyYAML.
@@ -72,23 +74,32 @@ KINDS = {**CHECKED_KINDS, **UNCHECKED_KINDS}
 #: Constructs that can make a test fail. Matched after comments are stripped.
 #: A ledger can replace this with `tests.assertion` for another framework.
 ASSERTION = re.compile(
-    r"\bexpect\s*\("
+    r"\bexpect(_\w+|[A-Z]\w*)?\s*\("
     r"|(?<!console\.)\bassert\w*\s*[(!]"
     r"|\bassert\.\w+\s*\("
     r"|\bassert\s+\S"
+    r"|\bassert_\w+\s+\S"
     r"|\bAssert\.\w+\s*\("
+    r"|\bXCTAssert\w*\s*\("
+    r"|\bdoAssert\b"
+    r"|\brequire\.(Equal|NotEqual|NoError|Error|True|False|Nil|NotNil|InDelta|Len)\w*\s*\("
     r"|\b(EXPECT|ASSERT|REQUIRE|CHECK)(_[A-Z]+)*\s*\("
+    r"|\bBOOST_(CHECK|REQUIRE)\w*\s*\("
     r"|@test\b"
+    r"|\.should\b"
+    r"|\bshould(Be|Equal|Throw)\b"
+    r"|\bshould\s+(be|equal|eq)\b"
     r"|\b(strictEqual|deepStrictEqual|deepEqual|notStrictEqual|notEqual)\s*\("
     r"|\bpytest\.(raises|fail)\b"
     r"|\bt\.(Error|Errorf|Fatal|Fatalf|Fail|FailNow)\s*\("
-    r"|\b(sys\.exit|process\.exit|os\.Exit|exit)\s*\(\s*[1-9]"
+    r"|\b(exit|Exit)\s*\(\s*[1-9]"
     r"|\bprocess\.exitCode\s*=\s*[1-9]"
     r"|\bthrow\s+\w"
     r"|\braise\s+\w"
     r"|\bpanic!?\s*\("
-    r"|\.should\b"
 )
+#: A line that defines a helper named like an assertion is not one.
+DEFINITION = re.compile(r"^\s*(export\s+)?(async\s+)?(def|function|fn|func|sub|proc)\s+\w+\s*\(")
 #: Languages whose comments start with `//` or sit in `/* */`.
 SLASH_COMMENTS = {
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".c", ".h", ".cc", ".cpp", ".hpp",
@@ -96,6 +107,8 @@ SLASH_COMMENTS = {
 }  # fmt: skip
 #: Languages whose comments start with `#`.
 HASH_COMMENTS = {".py", ".rb", ".sh", ".bash", ".jl", ".r", ".pl", ".nim", ".ex", ".exs"}
+#: Languages whose comments start with `--`.
+DASH_COMMENTS = {".lua", ".hs", ".sql", ".elm"}
 #: Files that hold data, not code: they cannot "read" a reference table.
 DATA_SUFFIXES = {".txt", ".csv", ".tsv", ".dat", ".json", ".md"}
 
@@ -112,7 +125,11 @@ DEFAULT_TIMEOUT = 600
 PASS, FAIL, WARN, SKIP = "PASS", "FAIL", "WARN", "SKIP"
 
 
-class LedgerError(Exception):
+class AuditError(Exception):
+    """The audit could not be carried out at all. Exit 2."""
+
+
+class LedgerError(AuditError):
     """The ledger is missing, unparseable, or not shaped like a ledger."""
 
 
@@ -151,7 +168,7 @@ class Ledger:
     docs: list[str]
     tests_dir: str
     globs: list[str]
-    gates: list[str]
+    gates: dict[str, str]  # file -> command
     assertion: re.Pattern
     commands: dict[str, str]
     links: tuple[str, ...]
@@ -173,7 +190,10 @@ def find_ledger(package: Path) -> Path:
 
 
 def read_ledger(path: Path) -> dict:
-    text = path.read_text(encoding="utf-8")
+    try:
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise LedgerError(f"{path.name} is not UTF-8: {exc}") from exc
     if path.suffix == ".json":
         try:
             data = json.loads(text)
@@ -234,6 +254,21 @@ def parse_ledger(data: dict) -> Ledger:
         if name in {".", ".."} or "/" in name or "\\" in name:
             raise LedgerError(f"`link` entries are top-level directory names; got {name!r}")
 
+    gates: dict[str, str] = {}
+    declared = tests.get("gates", [])
+    if not isinstance(declared, list):
+        raise LedgerError("`tests.gates` must be a list")
+    for gate in declared:
+        if (
+            not isinstance(gate, dict)
+            or not isinstance(gate.get("file"), str)
+            or not isinstance(gate.get("command"), str)
+            or not gate["file"].strip()
+            or not gate["command"].strip()
+        ):
+            raise LedgerError("each `tests.gates` entry needs a `file` and a `command`")
+        gates[gate["file"]] = gate["command"]
+
     entries = {}
     for key in ("references", "claims", "mutations"):
         value = data.get(key) or []
@@ -245,7 +280,7 @@ def parse_ledger(data: dict) -> Ledger:
         docs=_string_list(data, "docs", ["README.md"]),
         tests_dir=tests_dir,
         globs=_string_list(tests, "glob", ["*.test.*", "test_*.py", "*_test.*"]),
-        gates=_string_list(tests, "gates", []),
+        gates=gates,
         assertion=assertion,
         commands=commands,
         links=tuple(links),
@@ -268,20 +303,38 @@ def _inside(package: Path, relative: str) -> Path | None:
     return target
 
 
+def _same(a: Path, b: Path) -> bool:
+    """Whether two paths are one file, whatever their spelling or letter case."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return False
+
+
+def _within(path: Path, directory: Path) -> bool:
+    """Whether `path` is `directory` or sits under it, by file identity."""
+    return any(_same(parent, directory) for parent in (path, *path.parents))
+
+
 def strip_comments(text: str, suffix: str) -> str:
     """Drop comment text, so a commented-out assertion does not count.
 
-    Line-based and deliberately crude. For `//` languages: whole lines starting
-    with `//`, `/*` or `*`, and `//` to end of line unless it follows a colon
-    (so URLs survive). For `#` languages: whole lines starting with `#`, and
-    ` #` to end of line. It does not parse strings or inline `/* */`, so an
-    assertion that exists only inside a string or an inline block comment
-    still counts.
+    Line-based and deliberately crude. For `//` languages: `/* */` closed on
+    one line, whole lines starting with `//`, `/*` or `*`, and `//` to end of
+    line unless it follows a colon (so URLs survive). For `#` languages: whole
+    lines starting with `#`, and ` #` to end of line. For `--` languages: `--`
+    to end of line. A file of an unknown language loses only whole lines that
+    start with a comment marker. Strings are not parsed, so an assertion that
+    exists only inside a string still counts.
     """
-    hashes = suffix in HASH_COMMENTS or suffix not in SLASH_COMMENTS
-    slashes = suffix in SLASH_COMMENTS or suffix not in HASH_COMMENTS
+    known = suffix in SLASH_COMMENTS or suffix in HASH_COMMENTS or suffix in DASH_COMMENTS
+    hashes = suffix in HASH_COMMENTS or not known
+    slashes = suffix in SLASH_COMMENTS or not known
+    dashes = suffix in DASH_COMMENTS
     kept = []
     for line in text.splitlines():
+        if suffix in SLASH_COMMENTS:
+            line = re.sub(r"/\*.*?\*/", "", line)
         stripped = line.lstrip()
         if hashes and stripped.startswith("#"):
             continue
@@ -291,6 +344,8 @@ def strip_comments(text: str, suffix: str) -> str:
             line = re.sub(r"\s#.*$", "", line)
         if suffix in SLASH_COMMENTS:
             line = re.sub(r"(?<!:)//.*$", "", line)
+        if dashes:
+            line = re.sub(r"--.*$", "", line)
         kept.append(line)
     return "\n".join(kept)
 
@@ -304,7 +359,8 @@ def code_text(path: Path) -> str:
 
 
 def has_assertion(path: Path, pattern: re.Pattern = ASSERTION) -> bool:
-    return bool(pattern.search(code_text(path)))
+    lines = [line for line in code_text(path).splitlines() if not DEFINITION.match(line)]
+    return bool(pattern.search("\n".join(lines)))
 
 
 def find_test_files(package: Path, ledger: Ledger) -> list[Path]:
@@ -328,6 +384,22 @@ def gate_files(package: Path, ledger: Ledger, audit: Audit) -> list[Path]:
         else:
             found.append(path)
     return found
+
+
+def check_gates(
+    ledger: Ledger, audit: Audit, copy: Path | None, run_gates: bool, timeout: int
+) -> None:
+    for name, command in ledger.gates.items():
+        if not run_gates or copy is None:
+            audit.add("gates", SKIP, f"not run (--run-gates): {command}", name)
+            continue
+        code, _ = run(command, copy, timeout)
+        if code == 0:
+            audit.add("gates", PASS, f"exit 0: {command}", name)
+        elif code == 124:
+            audit.add("gates", FAIL, f"timed out after {timeout} s: {command}", name)
+        else:
+            audit.add("gates", FAIL, f"exit {code}: {command}", name)
 
 
 # Checks
@@ -361,7 +433,7 @@ def check_ledger(ledger: Ledger, audit: Audit) -> tuple[dict, list[dict], list[d
             audit.add("ledger", FAIL, "duplicate claim id", cid)
             continue
         seen.add(cid)
-        if entry.get("kind") not in KINDS:
+        if not isinstance(entry.get("kind"), str) or entry["kind"] not in KINDS:
             audit.add(
                 "ledger",
                 FAIL,
@@ -460,7 +532,7 @@ def check_claims(
         if path is None or not path.is_file():
             audit.add("claims", FAIL, f"test file {test} does not exist", cid)
             continue
-        if path not in checks:
+        if not any(_same(path, check) for check in checks):
             audit.add(
                 "claims",
                 FAIL,
@@ -472,7 +544,7 @@ def check_claims(
             audit.add("claims", FAIL, f"{test} contains no assertion", cid)
             continue
         if cid in mutated:
-            audit.add("claims", PASS, f"{kind}: {test}, with a mutation", cid)
+            audit.add("claims", PASS, f"{kind}: {test}, and a mutation names it", cid)
         else:
             audit.add(
                 "claims",
@@ -587,6 +659,7 @@ def run(command: str, cwd: Path, timeout: int) -> tuple[int, str]:
         stdout=subprocess.PIPE,
         stderr=subprocess.DEVNULL,
         text=True,
+        errors="replace",
         env={**os.environ, "PYTHONDONTWRITEBYTECODE": "1"},
         start_new_session=True,
     )
@@ -663,7 +736,10 @@ def copy_package(package: Path, destination: Path, links: tuple[str, ...]) -> No
             skipped += [n for n in names if n in links]
         return skipped
 
-    shutil.copytree(package, destination, ignore=ignore, symlinks=True)
+    try:
+        shutil.copytree(package, destination, ignore=ignore, symlinks=True)
+    except (shutil.Error, OSError) as exc:
+        raise AuditError(f"cannot copy the package: {exc}") from exc
     for name in links:
         source = package / name
         if source.is_dir():
@@ -712,6 +788,12 @@ def check_mutations(
         )
         return
 
+    # Everything under the tests directory is a test, its helper or its data.
+    protected = list(checks)
+    tests_dir = _inside(package, ledger.tests_dir)
+    if tests_dir is not None and tests_dir.is_dir():
+        protected.append(tests_dir)
+
     applicable: list[tuple[dict, Path, str]] = []
     for mutation in mutations:
         mid = mutation["id"]
@@ -719,25 +801,30 @@ def check_mutations(
         if path is None or not path.is_file():
             audit.add("mutations", FAIL, f"{mutation['file']} does not exist in the package", mid)
             continue
-        if path in checks:
+        if any(_within(path, guarded) for guarded in protected):
             audit.add(
                 "mutations",
                 FAIL,
-                f"{mutation['file']} is a test: a mutation changes the code under test",
+                f"{mutation['file']} is a test, a gate, or a file beside the tests: "
+                "a mutation changes the code under test",
                 mid,
             )
             continue
-        relative = path.relative_to(package)
-        if relative.parts[0] in ledger.links:
+        if any(_within(path, package / name) for name in ledger.links):
             audit.add(
                 "mutations",
                 FAIL,
                 f"{mutation['file']} is in a linked directory, which the copy shares "
-                "with the package",
+                "with the package (set `link` in the ledger if it holds source)",
                 mid,
             )
             continue
-        count = path.read_text(encoding="utf-8").count(mutation["find"])
+        relative = path.relative_to(package)
+        try:
+            count = path.read_text(encoding="utf-8").count(mutation["find"])
+        except UnicodeDecodeError:
+            audit.add("mutations", FAIL, f"{mutation['file']} is not UTF-8", mid)
+            continue
         if count != 1:
             audit.add(
                 "mutations",
@@ -800,6 +887,7 @@ def audit_package(
     run_tests: bool = False,
     run_report: bool = False,
     run_mutations: bool = False,
+    run_gates: bool = False,
     timeout: int = DEFAULT_TIMEOUT,
 ) -> Audit:
     package = package.resolve()
@@ -816,11 +904,12 @@ def audit_package(
 
     with tempfile.TemporaryDirectory(prefix="sim-audit-") as scratch:
         copy = None
-        if run_tests or run_report:
+        if run_tests or run_report or run_gates:
             copy = Path(scratch) / "package"
             copy_package(package, copy, ledger.links)
         check_quoted(package, ledger, claims, audit, copy, run_report, timeout)
         check_suite(ledger, audit, copy, run_tests, timeout)
+        check_gates(ledger, audit, copy, run_gates, timeout)
         check_mutations(package, ledger, mutations, checks, audit, copy, run_mutations, timeout)
     return audit
 
@@ -849,6 +938,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--run-mutations", action="store_true", help="apply each mutation (implies --run-tests)"
     )
+    parser.add_argument("--run-gates", action="store_true", help="run each gate's command")
     parser.add_argument("--strict", action="store_true", help="warnings and skips fail")
     parser.add_argument("--timeout", type=int, default=DEFAULT_TIMEOUT, help="seconds per command")
     parser.add_argument("--json", action="store_true", help="machine-readable output")
@@ -864,9 +954,14 @@ def main(argv: list[str] | None = None) -> int:
         return refuse(f"{args.package} is not a directory")
     try:
         audit = audit_package(
-            args.package, args.run_tests, args.run_report, args.run_mutations, args.timeout
+            args.package,
+            run_tests=args.run_tests,
+            run_report=args.run_report,
+            run_mutations=args.run_mutations,
+            run_gates=args.run_gates,
+            timeout=args.timeout,
         )
-    except LedgerError as exc:
+    except AuditError as exc:
         return refuse(str(exc))
 
     failed = audit.failed(args.strict)

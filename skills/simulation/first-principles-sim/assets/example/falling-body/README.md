@@ -5,7 +5,7 @@ The smallest package the audit passes. A body falls from rest in vacuum.
 | Quantity | Checked against | Agreement |
 |---|---|---|
 | Fall time from 1, 5, 20 and 100 m | The stored table | 0.001 s |
-| Fall time from 5 m | Stepping the motion forward in the test | 0.1% |
+| Fall time from 5 m | Stepping the motion forward in its own test | 0.1% |
 | Impact speed | Energy conservation | 1e-9 |
 | Zero height | Takes no time | exact |
 

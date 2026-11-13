@@ -96,6 +96,15 @@ partials, and those partials are the anchor. So:
   value the simulation runs at.
 - Halve the step and the spacing, and assert that the error against the anchor falls at the
   order the scheme promises. This is the deterministic solver's version of shifting the seeds.
+  Use at least three resolutions: two give one ratio, which cannot show an order. Stop refining
+  when the error reaches round-off or the resolution of the measurement.
+- For sound, the output sample rate fixes the time step. Refine in space, or oversample and
+  decimate. The standard explicit scheme for an ideal string is exact at a Courant number of
+  one, so there is no error to shrink there; test the refinement on the case with stiffness or
+  loss, which is the case that matters.
+- A scheme conserves its own discrete energy, not the continuous formula evaluated on the
+  grid. Assert the discrete one to round-off, or the continuous one to a tolerance that
+  shrinks with the step.
 - An analytic solution of the equation you are solving verifies the solver. It says nothing
   about whether that equation describes the instrument. Label it `independent`, and look for
   a measured anchor as well (a tabulated frequency, a measured decay time, a benchmark run).
@@ -115,7 +124,10 @@ wave or a note. Then test the output, not only the state:
   That goes in the ledger as a convention.
 
 For sound, the same applies: measure the pitch, the decay time or the spectrum of the rendered
-samples, and compare with the anchor.
+samples, and compare with the anchor. Say how the pitch is measured and how finely. A one-second
+Fourier transform has bins 1 Hz wide; interpolating the peak, or fitting the period in the time
+domain, does better. A string made of a whole number of grid cells is tuned only as finely as
+one cell allows, and that belongs in the ledger as a convention.
 
 ## 6. Negative controls
 
@@ -136,9 +148,10 @@ One command prints every number the prose quotes, each on a labelled line. The p
 the digits it prints. The audit's `quoted` check ties the two together: the string must appear
 in the docs and in the report output.
 
-This exists because of one error in the cloud-chamber build. A README sentence gave a plate
-limit that had been typed from an expectation. The report, when it was written and run, printed
--8.4 °C, a different number.
+This exists because of one error in the cloud-chamber build. A draft README sentence gave a
+plate limit that had been typed from an expectation. The report, when it was written and run,
+printed a different number. This happened before the first commit, so the repository does not
+record it.
 
 The check covers only the strings the ledger lists. A number in the docs that no claim quotes
 is not checked, and neither is hand rounding: the cloud chamber's README says "7 to 62 mm"
@@ -175,8 +188,15 @@ Good mutations:
 Avoid equivalent mutations: flipping the sign of an azimuth drawn uniformly from a full circle
 changes nothing statistically, and its survival means nothing.
 
-Do not mutate a test file, and do not use a mutation that merely breaks the code: a syntax
-error turns every test red and proves nothing about the claim.
+Do not use a mutation that merely breaks the code: a syntax error turns every test red and
+proves nothing about the claim. The audit refuses a mutation of a test, a gate, or anything in
+the tests directory, because changing a tolerance or a table also turns the test red.
+
+Give each mutation the command that runs only its claim's test. Under the whole suite, a
+mutation is killed by whichever assertion fails first.
+
+A claim checked by a gate (a check the test command does not run, such as a headless render)
+is run only with `--run-gates`. Without it the gate reports SKIP, and `--strict` fails.
 
 The audit runs every command in a temporary copy of the package and does not edit the
 package's own files. Directories listed under `link` (by default `node_modules`, `.venv`,
