@@ -71,14 +71,21 @@ forbids waiting on `gh --watch`, so on T3:
   failure), `green` once nothing is pending (when the required checks pass
   first, T3 owes one more wake once the rest settle). A pending or
   no-checks-yet read re-stamps the row; a failed read does not, so an
-  unreadable watch ages out. When no check has reported for 15 minutes (T3's
-  own no-checks notice), observe folds RED, as `gh pr checks --watch` would.
+  unreadable watch ages out. "No checks" folds RED, as `gh pr checks --watch`
+  would, 15 minutes after the watch was armed, or at once with
+  `p9 observe <pr> --no-checks` when T3's wake says no checks have reported
+  (T3 sends that notice once per head and does not repeat it).
   Observe decides inside `transact_pr_state` (read latest row, decide,
   append, under one state lock), fenced three ways: the watch generation
-  (`watcher_id`) read before the checks, the read's start time
-  (`observed_at`, so the newest read wins whatever order writes land in), and
-  host ownership. `reap`, `rearm` and re-watch supersession only write if the
-  latest row is exactly the row they judged. Every write is a compare-and-swap on owner and
+  (`watcher_id`) read before the checks; an observation ticket taken under
+  the lock before the network read (`obs_ticket`, no clock involved), so
+  between non-terminal reads the newest wins whatever order writes land in;
+  and host ownership. A fold is terminal for its generation: a later contrary
+  read does not undo it, and a new push gets a new generation via `p9 watch`.
+  The arm itself is in the transaction (it lands only over a row nobody is
+  watching). `reap` and re-watch supersession only write if the latest row is
+  exactly the row they judged, and `rearm`'s child acts only on the watcher
+  it judged dead (`--expect-owner`). Every write is a compare-and-swap on owner and
   state, so an overlapping or late wake changes nothing, and a row watched by
   a p9 process is never touched. Re-running `p9 watch` on a host-owned row
   (say after pushing a fix) replaces it; another session's live host watch
@@ -373,8 +380,8 @@ Each pop returns the inferred isolation tier:
 ## Wakeup protocol
 
 When the bg task notification fires (on T3: when `watch_pull_request` wakes
-you, run `p9 observe <n>` first; that is the fold the notification would have
-carried):
+you, run `p9 observe <n>` first, adding `--no-checks` if the wake says no
+checks have reported; that is the fold the notification would have carried):
 
 ```text
 1. p9 status --pr <n> --json

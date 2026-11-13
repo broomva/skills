@@ -2967,7 +2967,25 @@ def append_state_event(event: PRStateEvent, *,
         return True
 
 
-def transact_pr_state(pr: int, repo: str, decide: Any) -> list[PRStateEvent]:
+def next_observation_ticket() -> int:
+    """A strictly increasing number, taken under the state lock BEFORE an
+    observation reads the network (BRO-3710). It orders observations by when
+    they started without trusting any clock: wall time steps back, repeats,
+    and differs between hosts sharing this directory."""
+    path = p9_home() / "observation-ticket"
+    with file_lock(state_lock_path()):
+        try:
+            n = int(path.read_text(encoding="utf-8").strip() or 0)
+        except (OSError, ValueError):
+            n = 0
+        n += 1
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(str(n), encoding="utf-8")
+    return n
+
+
+def transact_pr_state(pr: int, repo: str, decide: Any, *,
+                      chain: bool = True) -> list[PRStateEvent]:
     """Read the latest row, decide, append — under ONE state-lock acquisition
     (BRO-3710).
 
@@ -2976,7 +2994,9 @@ def transact_pr_state(pr: int, repo: str, decide: Any) -> list[PRStateEvent]:
     the next exposed. A decision made here is made against the row that is
     current when it lands, so there is no earlier read to go stale.
     `decide(latest_row_or_None)` returns the events to append, in order, or
-    an empty list; it runs inside the lock, so it must not do I/O."""
+    an empty list; it runs inside the lock, so it must not do I/O.
+    `chain=False` is for an arm, which starts a new PUSHED->WATCHING edge
+    whatever the previous generation ended in (as `cmd_watch` always has)."""
     want = repo_key(canonical_repo(repo))
     with file_lock(state_lock_path()):
         rows, _ = jsonl_read_all(state_jsonl())
@@ -2988,7 +3008,7 @@ def transact_pr_state(pr: int, repo: str, decide: Any) -> list[PRStateEvent]:
         prev = PRState(latest["to_state"]) if latest else None
         for ev in events:
             assert_legal_transition(PRState(ev.from_state), PRState(ev.to_state))
-            if prev is not None and ev.from_state != prev.value:
+            if chain and prev is not None and ev.from_state != prev.value:
                 raise IllegalTransitionError(
                     f"transact: event from {ev.from_state} but row is {prev.value}")
             ev.repo = canonical_repo(ev.repo)
@@ -4279,6 +4299,14 @@ def cmd_watch(args: argparse.Namespace) -> int:
     adopt = bool(getattr(args, "adopt", False))
     force = bool(getattr(args, "force", False))
     existing = latest_row(pr, repo)
+    expect = getattr(args, "expect_owner", None)
+    if expect is not None and not (
+            existing and _owner_of(existing) == ("" if expect == "-" else expect)
+            and existing["to_state"] in (PRState.WATCHING.value,
+                                         PRState.HEALING.value)):
+        print(f"PR #{pr}: its row changed since rearm judged it dead; "
+              "nothing to re-arm", file=sys.stderr)
+        return EXIT_OK
     if existing and PRState(existing["to_state"]) in (PRState.WATCHING, PRState.HEALING):
         epid = _row_pid(existing)
         # A host-owned row (BRO-3710) has no process: re-watching it, say
@@ -4527,12 +4555,22 @@ def _host_watch(args: argparse.Namespace, pr: int, repo: str, sid: str,
     already settled, marks the session as waiting and fills the wait-queue.
     Exit 0 either way: on this host a pending PR is the normal outcome, and
     the next step is the host's `watch_pull_request`, not a re-run."""
-    append_state_event(PRStateEvent(
-        ts=_utcnow(), pr=pr, repo=repo or "",
-        from_state=PRState.PUSHED.value, to_state=PRState.WATCHING.value,
-        watcher_id=watcher_id, attempt=0, session_id=sid,
-        extra={"pid": 0, "host_watch": "t3"},
-    ))
+    # The arm is part of the transaction (BRO-3710): it lands only over a row
+    # that is not being watched. Another thread arming between this
+    # command's checks and here makes it refuse, not overwrite.
+    armed = transact_pr_state(pr, repo, lambda latest: [] if latest and latest.get(
+        "to_state") in (PRState.WATCHING.value, PRState.HEALING.value) else [
+        PRStateEvent(ts=_utcnow(), pr=pr, repo=repo or "",
+                     from_state=PRState.PUSHED.value,
+                     to_state=PRState.WATCHING.value, watcher_id=watcher_id,
+                     attempt=0, session_id=sid,
+                     extra={"pid": 0, "host_watch": "t3", "armed_at": _utcnow()})],
+        chain=False)
+    if not armed:
+        print(f"PR #{pr}: another watch was armed while this one was "
+              "deciding; run `p9 status` and re-watch if needed",
+              file=sys.stderr)
+        return EXIT_DEGRADED
     mark_wait("p9 watch", pr=pr, repo=repo)
     obs = observe_pr(pr, repo, sid=sid)
     added = harvest_queue(pr=pr, repo=repo)
@@ -4605,7 +4643,8 @@ def _pr_checks(pr: int, repo: str) -> list[dict[str, Any]] | None:
     return None
 
 
-def observe_pr(pr: int, repo: str, *, sid: str | None = None) -> dict[str, Any]:
+def observe_pr(pr: int, repo: str, *, sid: str | None = None,
+               no_checks_final: bool = False) -> dict[str, Any]:
     """Fold a host-owned watch once, from the PR's current checks (BRO-3710).
 
     Three fences, all applied inside one state-lock acquisition
@@ -4613,19 +4652,23 @@ def observe_pr(pr: int, repo: str, *, sid: str | None = None) -> dict[str, Any]:
 
     * generation — the watch is named by the `watcher_id` read before the
       checks are; a re-watch in between makes this observation moot;
-    * freshness — each observation records when its checks read STARTED
-      (`observed_at`); one that started before the latest recorded one is
-      older news and is dropped, so the newest read wins whatever order the
-      writes land in (a slow pending read cannot bury a later green);
+    * order — each observation takes a ticket under the state lock BEFORE
+      its network read (`obs_ticket`); one whose ticket is older than the
+      latest recorded one is dropped, so between non-terminal reads the newest
+      wins whatever order the writes land in, with no clock involved. A fold
+      is terminal for its generation: a later contrary read does not undo it
+      (a new push gets a new generation through `p9 watch`);
     * ownership — only a host-owned WATCHING row is touched; a row with a
       real watcher process belongs to that process.
 
     A pending or no-checks-yet read re-stamps the row; a failed read does not,
-    so an unreadable watch ages out. No check for NO_CHECKS_FOLD_SECONDS folds
-    red, as `gh pr checks --watch` does."""
+    so an unreadable watch ages out. "No checks" folds red, as
+    `gh pr checks --watch` does, once NO_CHECKS_FOLD_SECONDS have passed since
+    the watch was armed, or at once with `no_checks_final` — T3's own
+    no-checks notice, which it sends once per head and does not repeat."""
     before = latest_row(pr, repo)
     generation = _owner_of(before) if before else None
-    read_at = time.time()
+    ticket = next_observation_ticket()
     verdict, failed = _checks_verdict(_pr_checks(pr, repo))
     out: dict[str, Any] = {"pr": pr, "repo": repo, "verdict": verdict,
                            "failed": failed,
@@ -4644,34 +4687,41 @@ def observe_pr(pr: int, repo: str, *, sid: str | None = None) -> dict[str, Any]:
         lx = latest.get("extra") or {}
         if not lx.get("host_watch"):
             return []
-        if float(lx.get("observed_at") or 0) > read_at:
+        if int(lx.get("obs_ticket") or 0) > ticket:
             return []  # a newer observation already landed
         base = dict(ts=_utcnow(), pr=pr, repo=repo or "",
                     from_state=PRState.WATCHING.value, watcher_id=generation,
                     attempt=int(latest.get("attempt") or 0),
                     session_id=latest.get("session_id", "") or (sid or ""))
-        stamp = {"host_watch": "t3", "observed_at": read_at}
+        stamp = {"host_watch": "t3", "obs_ticket": ticket,
+                 **({"armed_at": lx["armed_at"]} if lx.get("armed_at") else {})}
         if verdict in ("green", "red"):
             nxt = PRState.GREEN if verdict == "green" else PRState.RED_UNCLASSIFIED
             return [PRStateEvent(**base, to_state=nxt.value, extra={
                 **stamp, "folded_by": "p9 observe",
                 **({"failed_checks": failed} if failed else {})})]
         if verdict == "none":
-            since = lx.get("none_since")
-            if since and _iso_age_seconds(since) >= NO_CHECKS_FOLD_SECONDS:
+            armed = lx.get("armed_at")
+            if no_checks_final or (armed and _iso_age_seconds(armed)
+                                   >= NO_CHECKS_FOLD_SECONDS):
+                why = ("T3 reported no checks for this head" if no_checks_final
+                       else f"no checks reported {NO_CHECKS_FOLD_SECONDS // 60} "
+                            "min after the watch was armed")
                 return [PRStateEvent(**base, to_state=PRState.RED_UNCLASSIFIED.value,
                                      extra={**stamp, "folded_by": "p9 observe",
-                                            "reason": "no checks reported after "
-                                            f"{NO_CHECKS_FOLD_SECONDS // 60} min"})]
-            return [PRStateEvent(**base, to_state=PRState.WATCHING.value, extra={
-                **stamp, "pid": 0, "observed": "none",
-                "none_since": since or _utcnow()})]
+                                            "reason": why})]
+            return [PRStateEvent(**base, to_state=PRState.WATCHING.value,
+                                 extra={**stamp, "pid": 0, "observed": "none"})]
         if verdict == "pending":
             return [PRStateEvent(**base, to_state=PRState.WATCHING.value,
                                  extra={**stamp, "pid": 0, "observed": "pending"})]
         return []  # unknown: a failed read re-stamps nothing
 
     events = transact_pr_state(pr, repo, decide)
+    now = latest_row(pr, repo)  # report what IS, not what was read before
+    out["state"] = now.get("to_state") if now else None
+    if not events:
+        out["note"] = "superseded by a newer observation or a re-watch"
     if events and events[-1].to_state != PRState.WATCHING.value:
         ev = events[-1]
         cause = ("observe:no-checks" if (ev.extra or {}).get("reason")
@@ -4686,15 +4736,19 @@ def cmd_observe(args: argparse.Namespace) -> int:
     """Fold a T3-owned watch from the PR's checks, once (BRO-3710). Run it on
     each `watch_pull_request` wake."""
     repo = resolve_repo(args.repo)
-    out = observe_pr(int(args.pr), repo, sid=current_session_id())
+    out = observe_pr(int(args.pr), repo, sid=current_session_id(),
+                     no_checks_final=bool(getattr(args, "no_checks", False)))
     if args.json:
         print(json.dumps(out))
     elif out["folded"]:
         print(f"folded: {out['state']} (checks {out['verdict']})"
               + (f"; failed: {', '.join(out['failed'])}" if out["failed"] else ""))
     elif out["state"] == PRState.WATCHING.value:
+        hint = (" If T3's wake said no checks have reported, run "
+                f"`p9 observe {args.pr} --no-checks`." if out["verdict"] == "none"
+                else "")
         print(f"PR #{args.pr}: checks {out['verdict']}; still watching. "
-              "Work the queue, then end your turn.")
+              f"Work the queue, then end your turn.{hint}")
     else:
         print(f"PR #{args.pr}: state {out['state'] or 'untracked'}, checks "
               f"{out['verdict']}; nothing to fold (`p9 watch {args.pr}` "
@@ -5626,7 +5680,10 @@ def cmd_rearm(args: argparse.Namespace) -> int:
                 # `--slice 0` (BRO-2815): a detached child blocks nobody's
                 # Bash call; sliced, it would fold PUSHED unseen and stop.
                 argv = [sys.executable, script, "watch", str(pr),
-                        "--repo", repo, "--slice", "0"]
+                        "--repo", repo, "--slice", "0",
+                        # BRO-3710: the child acts only on the row judged dead
+                        # here; a fold that lands before it runs stands.
+                        "--expect-owner", _owner_of(row) or "-"]
                 argv.append("--force" if args.now else "--adopt")
                 logs_dir().mkdir(parents=True, exist_ok=True)
                 log_path = logs_dir() / f"rearm-watch-{_safe_slug(str(pr))}.log"
@@ -6065,6 +6122,9 @@ def build_parser() -> argparse.ArgumentParser:
                          "running (exit 8; run watch again). Defaults to 540 "
                          "on hosts where background completions do not wake "
                          "the session (`p9 host`); 0 disables")
+    pw.add_argument("--expect-owner", default=None,
+                    help="(rearm) act only if the PR's latest row is still "
+                         "this watcher's WATCHING/HEALING row")
     pw.add_argument("--adopt", action="store_true",
                     help="Re-watch a PR whose prior watcher pid is gone, "
                          "superseding the stale row immediately (orphan recovery "
@@ -6093,6 +6153,9 @@ def build_parser() -> argparse.ArgumentParser:
                         "from the PR's current checks; run on each wake")
     po.add_argument("pr", help="PR number")
     po.add_argument("--repo", help="OWNER/REPO (auto-detected if omitted)")
+    po.add_argument("--no-checks", action="store_true",
+                    help="T3's wake said no checks have reported: fold red "
+                         "now if none have (T3 sends that notice only once)")
     po.add_argument("--json", action="store_true")
     po.set_defaults(func=cmd_observe)
 

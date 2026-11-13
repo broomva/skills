@@ -54,7 +54,7 @@ def _watch_args(pr=7, **kw):
     import argparse
     base = dict(pr=str(pr), repo=None, dry_run=False, detach=False,
                 background=False, block=False, slice=None, adopt=False,
-                force=False, json=False)
+                force=False, json=False, expect_owner=None)
     base.update(kw)
     return argparse.Namespace(**base)
 
@@ -758,24 +758,24 @@ class TestRoundTwo:
         monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
         first = p9.observe_pr(7, REPO)
         assert not first["folded"]
-        assert p9.latest_row(7, REPO)["extra"].get("none_since")
+        assert p9.latest_row(7, REPO)["extra"].get("armed_at")  # carried forward
         monkeypatch.setattr(p9, "NO_CHECKS_FOLD_SECONDS", 0)
         out = p9.observe_pr(7, REPO)
         assert out["folded"] and out["state"] == "RED_UNCLASSIFIED"
         assert "no checks" in p9.latest_row(7, REPO)["extra"]["reason"]
 
-    def test_pending_resets_the_no_checks_clock(self, p9, monkeypatch):
-        """none -> pending -> none: checks showed up in between, so the second
-        none starts a new clock instead of folding on the first one's."""
+    def test_t3_no_checks_notice_folds_at_once(self, p9, monkeypatch):
+        """T3 sends its no-checks notice once per head; acting on it must
+        not depend on p9's own clock having run long enough."""
         self._arm(p9, monkeypatch)
         monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
-        p9.observe_pr(7, REPO)                       # none: clock starts
-        _checks(monkeypatch, p9, "pending")
-        p9.observe_pr(7, REPO)                       # checks appeared
-        assert "none_since" not in p9.latest_row(7, REPO)["extra"]
-        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
-        monkeypatch.setattr(p9, "NO_CHECKS_FOLD_SECONDS", 0)
-        assert not p9.observe_pr(7, REPO)["folded"]  # a fresh clock
+        assert not p9.observe_pr(7, REPO)["folded"]
+        out = p9.observe_pr(7, REPO, no_checks_final=True)
+        assert out["folded"] and out["state"] == "RED_UNCLASSIFIED"
+
+    def test_no_checks_flag_never_folds_running_checks(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        assert not p9.observe_pr(7, REPO, no_checks_final=True)["folded"]
 
     def test_foreign_session_cannot_take_a_live_host_watch(self, p9, monkeypatch):
         monkeypatch.setenv("BROOMVA_P9_SESSION", "session-a")
@@ -899,18 +899,18 @@ class TestRoundThree:
         p9.cmd_watch(_watch_args())
 
     def test_stale_no_checks_read_cannot_fold_red(self, p9, monkeypatch):
+        """An older no-checks read lands after a newer read found checks
+        running: its ticket is older, so it is dropped."""
         self._arm(p9, monkeypatch)
-        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
-        p9.observe_pr(7, REPO)                        # none: clock starts
-        stale = p9.latest_row(7, REPO)
-        _checks(monkeypatch, p9, "pending")
-        p9.observe_pr(7, REPO)                        # newer read: checks running
-        real_latest = p9.latest_row
-        monkeypatch.setattr(p9, "latest_row", lambda pr, repo=None: dict(stale))
-        monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [])
         monkeypatch.setattr(p9, "NO_CHECKS_FOLD_SECONDS", 0)
-        assert not p9.observe_pr(7, REPO)["folded"]
-        assert real_latest(7, REPO)["to_state"] == "WATCHING"
+
+        def outer_checks(pr, repo):
+            _checks(monkeypatch, p9, "pending")
+            p9.observe_pr(7, REPO)                    # newer ticket lands first
+            return []
+        monkeypatch.setattr(p9, "_pr_checks", outer_checks)
+        out = p9.observe_pr(7, REPO)
+        assert not out["folded"] and out["state"] == "WATCHING"
 
     def test_t3_threads_are_separate_sessions(self, p9, monkeypatch):
         a = p9.current_session_id()
@@ -1009,19 +1009,19 @@ class TestInterleavings:
         p9.cmd_watch(_watch_args())
         return p9.latest_row(7, REPO)
 
-    def _clock(self, monkeypatch, p9, *values):
-        """Script time.time() for the next reads, offset past the arm's own
-        observation (which stamped the real clock)."""
-        base = time.time() + 1000
+    def _tickets(self, monkeypatch, p9, *values):
+        """Script the next observation tickets: a thread that took its ticket
+        earlier but finished its read later."""
+        base = p9.next_observation_ticket() + 1000
         it = iter([base + v for v in values])
-        monkeypatch.setattr(p9.time, "time", lambda: next(it))
+        monkeypatch.setattr(p9, "next_observation_ticket", lambda: next(it))
         return base
 
     def test_newer_green_survives_an_older_pending_landing_first(self, p9, monkeypatch):
         """Round 4's lost green: the older pending read writes first; the
         newer green read must still fold."""
         self._arm(p9, monkeypatch)
-        self._clock(monkeypatch, p9, 200.0, 100.0)   # outer (green) reads at 200
+        self._tickets(monkeypatch, p9, 200, 100)     # outer green is newer
 
         def outer_checks(pr, repo):
             monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [
@@ -1036,7 +1036,7 @@ class TestInterleavings:
         """Reordered responses: a green read that started earlier lands after
         a newer pending read; it is older news and is dropped."""
         self._arm(p9, monkeypatch)
-        base = self._clock(monkeypatch, p9, 100.0, 200.0)  # outer (green) reads at 100
+        base = self._tickets(monkeypatch, p9, 100, 200)    # outer green is older
 
         def outer_checks(pr, repo):
             monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [
@@ -1046,7 +1046,7 @@ class TestInterleavings:
         monkeypatch.setattr(p9, "_pr_checks", outer_checks)
         assert not p9.observe_pr(7, REPO)["folded"]
         row = p9.latest_row(7, REPO)
-        assert row["to_state"] == "WATCHING" and row["extra"]["observed_at"] == base + 200.0
+        assert row["to_state"] == "WATCHING" and row["extra"]["obs_ticket"] == base + 200
 
     def test_rewatch_during_a_read_voids_the_observation(self, p9, monkeypatch):
         """Replacement ownership: the watch is replaced while observe reads
@@ -1095,3 +1095,112 @@ class TestInterleavings:
         monkeypatch.setattr(p9, "latest_row", lambda pr, repo=None: dict(stale))
         assert p9.cmd_watch(_watch_args()) == p9.EXIT_DEGRADED
         assert real_latest(7, REPO)["to_state"] == "GREEN"
+
+
+# ── reshaped round 1 regressions ────────────────────────────────────────────
+class TestReshapedRoundOne:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def test_tickets_ignore_the_clock(self, p9, monkeypatch):
+        monkeypatch.setattr(p9.time, "time", lambda: 5.0)  # frozen, even backward
+        a, b = p9.next_observation_ticket(), p9.next_observation_ticket()
+        assert b > a
+
+    def test_clock_step_back_does_not_drop_green(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        monkeypatch.setattr(p9.time, "time", lambda: 1.0)  # NTP stepped back
+        _checks(monkeypatch, p9, "pass")
+        assert p9.observe_pr(7, REPO)["folded"]
+
+    def test_concurrent_arm_refuses_instead_of_overwriting(self, p9, monkeypatch):
+        """Thread B arms inside thread A's preflight; A must refuse."""
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        real_ceiling = p9.enforce_concurrency_ceiling
+        fired = []
+
+        def b_arms_meanwhile(*a, **k):
+            if not fired:
+                fired.append(1)
+                monkeypatch.setenv("T3CODE_THREAD_ID", "thread-2")
+                assert p9.cmd_watch(_watch_args()) == p9.EXIT_OK
+                monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+            return real_ceiling(*a, **k)
+        monkeypatch.setattr(p9, "enforce_concurrency_ceiling", b_arms_meanwhile)
+        owner_b_session = None
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_DEGRADED
+        row = p9.latest_row(7, REPO)
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-2")
+        owner_b_session = p9.current_session_id()
+        assert row["session_id"] == owner_b_session
+
+    def test_rearm_child_leaves_a_fold_alone(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        judged = p9.latest_row(7, REPO)
+        _checks(monkeypatch, p9, "pass")
+        assert p9.observe_pr(7, REPO)["folded"]           # fold lands first
+        _checks(monkeypatch, p9, "pending")               # a re-arm would show
+        rc = p9.cmd_watch(_watch_args(adopt=True, expect_owner=judged["watcher_id"]))
+        assert rc == p9.EXIT_OK
+        assert p9.latest_row(7, REPO)["to_state"] == "GREEN"
+
+    def test_rearm_argv_carries_the_owner(self, p9, monkeypatch, capsys):
+        import argparse
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        monkeypatch.setenv("BROOMVA_P9_HOST_WATCH_TTL_S", "0")
+        launched = []
+        monkeypatch.setattr(p9.subprocess, "Popen",
+                            lambda argv, **k: launched.append(argv) or type("P", (), {"pid": 1})())
+        p9.cmd_rearm(argparse.Namespace(now=True, dry_run=False, json=True))
+        argv = launched[0]
+        assert argv[argv.index("--expect-owner") + 1] == p9.latest_row(7, REPO)["watcher_id"]
+
+    def test_discarded_observation_reports_the_current_state(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+
+        def fold_meanwhile(pr, repo):
+            monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [
+                {"name": "c", "bucket": "pass"}])
+            p9.observe_pr(7, REPO)
+            return [{"name": "c", "bucket": "pending"}]
+        monkeypatch.setattr(p9, "_pr_checks", fold_meanwhile)
+        out = p9.observe_pr(7, REPO)
+        assert not out["folded"] and out["state"] == "GREEN"
+
+
+class TestPinnedClaims:
+    def test_memory_read_is_capped(self, p9, tmp_path):
+        mem = tmp_path / "memory"
+        mem.mkdir()
+        cap = p9._MEMORY_READ_BYTES
+        (mem / "late.md").write_text("x" * (cap + 10) + "\nneeds follow-up\n")
+        (mem / "early.md").write_text("needs follow-up\n" + "x" * (cap + 10))
+        found = p9._harvest_memory([mem], deadline=time.monotonic() + 5)
+        assert [Path(c[2].split()[1]).name for c in found] == ["early.md"]
+
+    def test_hook_and_cli_share_a_session_in_one_env(self, tmp_path):
+        """The hook process and the agent's Bash inherit one environment; in
+        it they must resolve one session. (The live measurement is in the
+        PR; this pins the code half.)"""
+        env = {k: v for k, v in os.environ.items()
+               if k not in ("BROOMVA_P9_SESSION", "CLAUDE_CODE_MESSAGING_SOCKET",
+                            "ORCA_WORKTREE_ID", "AGENT_SESSION_ID")}
+        env.update(BROOMVA_P9_HOME=str(tmp_path), BROOMVA_P9_HARVEST="0",
+                   T3CODE_THREAD_ID="thread-x", CLAUDE_CODE_MESSAGING_SOCKET="/tmp/s1")
+        subprocess.run([sys.executable, str(_SCRIPT), "wait-queue", "push",
+                        "--item", "from bash"], env=env, check=True, capture_output=True)
+        r = subprocess.run([sys.executable, str(_SCRIPT), "hook", "post-tool-use"],
+                           input=json.dumps({"tool_name": "mcp__t3-code__delegate_task",
+                                             "tool_input": {"task": "x"}}),
+                           env=env, capture_output=True, text=True)
+        assert "from bash" in json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
