@@ -991,3 +991,107 @@ class TestRoundThreeHarvest:
         t0 = time.monotonic()
         p9._harvest_memory([mem], deadline=time.monotonic() + 0.2)
         assert time.monotonic() - t0 < 0.6
+
+
+# ── STRUCTURAL: deterministic interleavings for transact_pr_state ───────────
+class TestInterleavings:
+    """The continuation review named four schedules. Each is forced exactly:
+    one observe runs INSIDE another's checks read, and time.time() is
+    scripted, so the order of reads and writes is the test's, not the OS's."""
+
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def _arm(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        return p9.latest_row(7, REPO)
+
+    def _clock(self, monkeypatch, p9, *values):
+        """Script time.time() for the next reads, offset past the arm's own
+        observation (which stamped the real clock)."""
+        base = time.time() + 1000
+        it = iter([base + v for v in values])
+        monkeypatch.setattr(p9.time, "time", lambda: next(it))
+        return base
+
+    def test_newer_green_survives_an_older_pending_landing_first(self, p9, monkeypatch):
+        """Round 4's lost green: the older pending read writes first; the
+        newer green read must still fold."""
+        self._arm(p9, monkeypatch)
+        self._clock(monkeypatch, p9, 200.0, 100.0)   # outer (green) reads at 200
+
+        def outer_checks(pr, repo):
+            monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [
+                {"name": "c", "bucket": "pending"}])
+            p9.observe_pr(7, REPO)                    # inner pending, read at 100
+            return [{"name": "c", "bucket": "pass"}]
+        monkeypatch.setattr(p9, "_pr_checks", outer_checks)
+        assert p9.observe_pr(7, REPO)["folded"]
+        assert p9.latest_row(7, REPO)["to_state"] == "GREEN"
+
+    def test_older_green_cannot_override_a_newer_pending(self, p9, monkeypatch):
+        """Reordered responses: a green read that started earlier lands after
+        a newer pending read; it is older news and is dropped."""
+        self._arm(p9, monkeypatch)
+        base = self._clock(monkeypatch, p9, 100.0, 200.0)  # outer (green) reads at 100
+
+        def outer_checks(pr, repo):
+            monkeypatch.setattr(p9, "_pr_checks", lambda pr, repo: [
+                {"name": "c", "bucket": "pending"}])
+            p9.observe_pr(7, REPO)                    # inner pending, read at 200
+            return [{"name": "c", "bucket": "pass"}]
+        monkeypatch.setattr(p9, "_pr_checks", outer_checks)
+        assert not p9.observe_pr(7, REPO)["folded"]
+        row = p9.latest_row(7, REPO)
+        assert row["to_state"] == "WATCHING" and row["extra"]["observed_at"] == base + 200.0
+
+    def test_rewatch_during_a_read_voids_the_observation(self, p9, monkeypatch):
+        """Replacement ownership: the watch is replaced while observe reads
+        checks; its green belongs to the old generation."""
+        first = self._arm(p9, monkeypatch)
+
+        def outer_checks(pr, repo):
+            _checks(monkeypatch, p9, "pending")
+            p9.cmd_watch(_watch_args())               # new generation
+            return [{"name": "c", "bucket": "pass"}]
+        monkeypatch.setattr(p9, "_pr_checks", outer_checks)
+        assert not p9.observe_pr(7, REPO)["folded"]
+        row = p9.latest_row(7, REPO)
+        assert row["to_state"] == "WATCHING"
+        assert row["watcher_id"] != first["watcher_id"]
+
+    def test_refresh_during_reap_keeps_the_watch(self, p9, monkeypatch):
+        """Refreshed TTL: reap judges the row expired, an observe re-stamps
+        it while reap asks GitHub, and the stale judgement must not land."""
+        self._arm(p9, monkeypatch)
+        monkeypatch.setenv("BROOMVA_P9_HOST_WATCH_TTL_S", "0")
+        real = p9._reconcile_dead_watcher
+
+        def observe_meanwhile(pr, repo, reconcile):
+            _checks(monkeypatch, p9, "pending")
+            p9.observe_pr(pr, repo)
+            return real(pr, repo, reconcile)
+        monkeypatch.setattr(p9, "_reconcile_dead_watcher", observe_meanwhile)
+        assert p9.reap_stale_watchers(grace_seconds=0) == []
+        assert p9.latest_row(7, REPO)["to_state"] == "WATCHING"
+
+    def test_transact_rejects_an_event_from_the_wrong_state(self, p9, monkeypatch):
+        self._arm(p9, monkeypatch)
+        bad = p9.PRStateEvent(ts=p9._utcnow(), pr=7, repo=REPO, from_state="GREEN",
+                              to_state="MERGE_READY", watcher_id="x", session_id="")
+        with pytest.raises(p9.IllegalTransitionError):
+            p9.transact_pr_state(7, REPO, lambda latest: [bad])
+
+    def test_supersede_cannot_bury_a_fold_it_did_not_see(self, p9, monkeypatch):
+        """Watch supersession: re-watch read WATCHING, a fold to GREEN landed,
+        then the supersede would write ABANDONED over the GREEN."""
+        stale = self._arm(p9, monkeypatch)
+        _checks(monkeypatch, p9, "pass")
+        assert p9.observe_pr(7, REPO)["folded"]
+        real_latest = p9.latest_row
+        monkeypatch.setattr(p9, "latest_row", lambda pr, repo=None: dict(stale))
+        assert p9.cmd_watch(_watch_args()) == p9.EXIT_DEGRADED
+        assert real_latest(7, REPO)["to_state"] == "GREEN"

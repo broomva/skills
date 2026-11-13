@@ -2952,8 +2952,9 @@ def append_state_event(event: PRStateEvent, *,
         if expect_state is not None and state != expect_state:
             return False
         # `expect_match` (BRO-3710): a predicate over the latest row, for a
-        # writer whose decision depends on more than owner and state. observe
-        # uses it to require the exact observation it read.
+        # writer whose decision depends on more than owner and state. Writers
+        # that decided from a snapshot pass `lambda r: r == snapshot`: any
+        # write in between voids the decision.
         if expect_match is not None and not expect_match(latest):
             return False
         path = state_jsonl()
@@ -2964,6 +2965,41 @@ def append_state_event(event: PRStateEvent, *,
             if not payload.endswith("\n"):
                 f.write("\n")
         return True
+
+
+def transact_pr_state(pr: int, repo: str, decide: Any) -> list[PRStateEvent]:
+    """Read the latest row, decide, append — under ONE state-lock acquisition
+    (BRO-3710).
+
+    Four review rounds found the same defect at four writers: each decided
+    from a row it had read earlier, and each guard added to one writer left
+    the next exposed. A decision made here is made against the row that is
+    current when it lands, so there is no earlier read to go stale.
+    `decide(latest_row_or_None)` returns the events to append, in order, or
+    an empty list; it runs inside the lock, so it must not do I/O."""
+    want = repo_key(canonical_repo(repo))
+    with file_lock(state_lock_path()):
+        rows, _ = jsonl_read_all(state_jsonl())
+        latest: dict[str, Any] | None = None
+        for r in rows:
+            if r.get("pr") == pr and repo_key(r.get("repo", "")) == want:
+                latest = r
+        events = list(decide(latest) or [])
+        prev = PRState(latest["to_state"]) if latest else None
+        for ev in events:
+            assert_legal_transition(PRState(ev.from_state), PRState(ev.to_state))
+            if prev is not None and ev.from_state != prev.value:
+                raise IllegalTransitionError(
+                    f"transact: event from {ev.from_state} but row is {prev.value}")
+            ev.repo = canonical_repo(ev.repo)
+            prev = PRState(ev.to_state)
+        if events:
+            path = state_jsonl()
+            path.parent.mkdir(parents=True, exist_ok=True)
+            with path.open("a", encoding="utf-8") as f:
+                for ev in events:
+                    f.write(ev.to_jsonl().rstrip("\n") + "\n")
+    return events
 
 
 def current_pr_state(pr: int, repo: str | None = None) -> PRState | None:
@@ -3563,8 +3599,11 @@ def _reap_scan(grace: float, reconcile: bool, session_id: str | None,
         # BRO-3710: owner alone cannot see a fold (observe keeps the owner), so
         # the reap also names the state it judged; a GREEN that landed while
         # this scan asked GitHub stays GREEN.
+        # Full-row fence: the TTL and liveness judgement above was made on
+        # `row`; an observe that re-stamped it since makes it a live watch.
         if not append_state_event(event, expect_owner=_owner_of(row),
-                                  expect_state=state.value):
+                                  expect_state=state.value,
+                                  expect_match=lambda r, row=row: r == row):
             continue
         # Termination invariant (BRO-1701): SIGKILL and machine-death can't be
         # trapped by the watcher itself — the reap path is where those become
@@ -4273,13 +4312,19 @@ def cmd_watch(args: argparse.Namespace) -> int:
             )
             return EXIT_DEGRADED
         # Supersede the stale/forced row to free the slot before re-watching.
-        append_state_event(PRStateEvent(
-            ts=_utcnow(), pr=pr, repo=repo or "",
-            from_state=existing["to_state"], to_state=PRState.ABANDONED.value,
-            watcher_id="watch-supersede", session_id=existing.get("session_id", ""),
-            extra={"reason": "superseded by re-watch",
-                   "dead_pid": epid, "forced": force, "adopt": adopt},
-        ))
+        # Fenced on the exact row judged above (BRO-3710): a fold or observe
+        # that landed since changes what there is to supersede.
+        if not append_state_event(PRStateEvent(
+                ts=_utcnow(), pr=pr, repo=repo or "",
+                from_state=existing["to_state"], to_state=PRState.ABANDONED.value,
+                watcher_id="watch-supersede", session_id=existing.get("session_id", ""),
+                extra={"reason": "superseded by re-watch",
+                       "dead_pid": epid, "forced": force, "adopt": adopt},
+        ), expect_owner=_owner_of(existing),
+                expect_match=lambda r: r == existing):
+            print(f"PR #{pr}: its watch changed while this re-watch was "
+                  "deciding; run it again", file=sys.stderr)
+            return EXIT_DEGRADED
 
     # Scope comes from policy (BRO-1988), not from this code's opinion.
     # `repo or None` on top of that: with no resolvable repo, identity is
@@ -4563,68 +4608,77 @@ def _pr_checks(pr: int, repo: str) -> list[dict[str, Any]] | None:
 def observe_pr(pr: int, repo: str, *, sid: str | None = None) -> dict[str, Any]:
     """Fold a host-owned watch once, from the PR's current checks (BRO-3710).
 
-    Only a host-owned WATCHING row is touched: a row with a real watcher
-    process belongs to that process. Every write is a compare-and-swap on both
-    owner and state, so a wake that overlaps a fold, or lands after a
-    re-watch, changes nothing. A pending or no-checks-yet read re-stamps the
-    row; a failed read does not, so a watch that can no longer be read ages
-    into the reaper instead of holding its slot forever."""
-    row = latest_row(pr, repo)
-    state = row.get("to_state") if row else None
+    Three fences, all applied inside one state-lock acquisition
+    (`transact_pr_state`), so no decision rests on a row read earlier:
+
+    * generation — the watch is named by the `watcher_id` read before the
+      checks are; a re-watch in between makes this observation moot;
+    * freshness — each observation records when its checks read STARTED
+      (`observed_at`); one that started before the latest recorded one is
+      older news and is dropped, so the newest read wins whatever order the
+      writes land in (a slow pending read cannot bury a later green);
+    * ownership — only a host-owned WATCHING row is touched; a row with a
+      real watcher process belongs to that process.
+
+    A pending or no-checks-yet read re-stamps the row; a failed read does not,
+    so an unreadable watch ages out. No check for NO_CHECKS_FOLD_SECONDS folds
+    red, as `gh pr checks --watch` does."""
+    before = latest_row(pr, repo)
+    generation = _owner_of(before) if before else None
+    read_at = time.time()
     verdict, failed = _checks_verdict(_pr_checks(pr, repo))
     out: dict[str, Any] = {"pr": pr, "repo": repo, "verdict": verdict,
-                           "failed": failed, "state": state, "folded": False}
-    if row is None or state != PRState.WATCHING.value:
+                           "failed": failed,
+                           "state": before.get("to_state") if before else None,
+                           "folded": False}
+    if before is None or before.get("to_state") != PRState.WATCHING.value:
         return out
-    if not (row.get("extra") or {}).get("host_watch"):
+    if not (before.get("extra") or {}).get("host_watch"):
         out["note"] = "watched by a p9 process, which folds it itself"
         return out
-    owner = _owner_of(row)
-    base = dict(ts=_utcnow(), pr=pr, repo=repo or "",
-                from_state=PRState.WATCHING.value, watcher_id=owner,
-                attempt=int(row.get("attempt") or 0),
-                session_id=row.get("session_id", "") or (sid or ""))
-    # Owner and state are not enough between two observations: both leave
-    # WATCHING under the same owner. Each one bumps `obs_seq`, and every write
-    # requires the exact observation it read, so a stale "no checks" read
-    # cannot fold red after a newer read found checks running.
-    seq = int((row.get("extra") or {}).get("obs_seq", 0) or 0)
-    guard = dict(expect_owner=owner, expect_state=PRState.WATCHING.value,
-                 expect_match=lambda r: int((r.get("extra") or {}).get(
-                     "obs_seq", 0) or 0) == seq)
-    if verdict in ("green", "red"):
-        nxt = PRState.GREEN if verdict == "green" else PRState.RED_UNCLASSIFIED
-        event = PRStateEvent(**base, to_state=nxt.value, extra={
-            "folded_by": "p9 observe", "host_watch": "t3",
-            **({"failed_checks": failed} if failed else {})})
-        if append_state_event(event, **guard):
-            emit_termination_report(
-                pr_termination_report(dataclasses.asdict(event),
-                                      cause=f"observe:{verdict}"))
-            out.update(folded=True, state=nxt.value)
-        return out
-    none_since = (row.get("extra") or {}).get("none_since") if verdict == "none" else None
-    if verdict == "none" and none_since and \
-            _iso_age_seconds(none_since) >= NO_CHECKS_FOLD_SECONDS:
-        # No check has reported for as long as T3 waits before saying so. The
-        # classic path folds this red too (`gh pr checks --watch` exits 1 on
-        # "no checks reported"), and red is what tells the agent to look.
-        event = PRStateEvent(**base, to_state=PRState.RED_UNCLASSIFIED.value,
-                             extra={"folded_by": "p9 observe", "host_watch": "t3",
-                                    "reason": "no checks reported after "
-                                              f"{NO_CHECKS_FOLD_SECONDS // 60} min"})
-        if append_state_event(event, **guard):
-            emit_termination_report(pr_termination_report(
-                dataclasses.asdict(event), cause="observe:no-checks"))
-            out.update(folded=True, state=PRState.RED_UNCLASSIFIED.value)
-        return out
-    if verdict in ("pending", "none"):
-        extra: dict[str, Any] = {"pid": 0, "host_watch": "t3",
-                                 "observed": verdict, "obs_seq": seq + 1}
+
+    def decide(latest: dict[str, Any] | None) -> list[PRStateEvent]:
+        if (latest is None or _owner_of(latest) != generation
+                or latest.get("to_state") != PRState.WATCHING.value):
+            return []
+        lx = latest.get("extra") or {}
+        if not lx.get("host_watch"):
+            return []
+        if float(lx.get("observed_at") or 0) > read_at:
+            return []  # a newer observation already landed
+        base = dict(ts=_utcnow(), pr=pr, repo=repo or "",
+                    from_state=PRState.WATCHING.value, watcher_id=generation,
+                    attempt=int(latest.get("attempt") or 0),
+                    session_id=latest.get("session_id", "") or (sid or ""))
+        stamp = {"host_watch": "t3", "observed_at": read_at}
+        if verdict in ("green", "red"):
+            nxt = PRState.GREEN if verdict == "green" else PRState.RED_UNCLASSIFIED
+            return [PRStateEvent(**base, to_state=nxt.value, extra={
+                **stamp, "folded_by": "p9 observe",
+                **({"failed_checks": failed} if failed else {})})]
         if verdict == "none":
-            extra["none_since"] = none_since or _utcnow()
-        append_state_event(PRStateEvent(**base, to_state=PRState.WATCHING.value,
-                                        extra=extra), **guard)
+            since = lx.get("none_since")
+            if since and _iso_age_seconds(since) >= NO_CHECKS_FOLD_SECONDS:
+                return [PRStateEvent(**base, to_state=PRState.RED_UNCLASSIFIED.value,
+                                     extra={**stamp, "folded_by": "p9 observe",
+                                            "reason": "no checks reported after "
+                                            f"{NO_CHECKS_FOLD_SECONDS // 60} min"})]
+            return [PRStateEvent(**base, to_state=PRState.WATCHING.value, extra={
+                **stamp, "pid": 0, "observed": "none",
+                "none_since": since or _utcnow()})]
+        if verdict == "pending":
+            return [PRStateEvent(**base, to_state=PRState.WATCHING.value,
+                                 extra={**stamp, "pid": 0, "observed": "pending"})]
+        return []  # unknown: a failed read re-stamps nothing
+
+    events = transact_pr_state(pr, repo, decide)
+    if events and events[-1].to_state != PRState.WATCHING.value:
+        ev = events[-1]
+        cause = ("observe:no-checks" if (ev.extra or {}).get("reason")
+                 else f"observe:{verdict}")
+        emit_termination_report(pr_termination_report(dataclasses.asdict(ev),
+                                                      cause=cause))
+        out.update(folded=True, state=ev.to_state)
     return out
 
 
@@ -5553,7 +5607,8 @@ def cmd_rearm(args: argparse.Namespace) -> int:
                 # expect_owner is an explicit argument.
                 if not append_state_event(
                         stale, expect_owner=_owner_of(row),
-                        expect_state=state.value):
+                        expect_state=state.value,
+                        expect_match=lambda r, row=row: r == row):
                     action["skipped"] = (
                         "row changed hands before the fold landed; left to "
                         "its new owner")

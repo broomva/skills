@@ -73,8 +73,12 @@ forbids waiting on `gh --watch`, so on T3:
   no-checks-yet read re-stamps the row; a failed read does not, so an
   unreadable watch ages out. When no check has reported for 15 minutes (T3's
   own no-checks notice), observe folds RED, as `gh pr checks --watch` would.
-  Each observation bumps `obs_seq` and every write requires the one it read,
-  so a stale read never acts on a newer one's row. Every write is a compare-and-swap on owner and
+  Observe decides inside `transact_pr_state` (read latest row, decide,
+  append, under one state lock), fenced three ways: the watch generation
+  (`watcher_id`) read before the checks, the read's start time
+  (`observed_at`, so the newest read wins whatever order writes land in), and
+  host ownership. `reap`, `rearm` and re-watch supersession only write if the
+  latest row is exactly the row they judged. Every write is a compare-and-swap on owner and
   state, so an overlapping or late wake changes nothing, and a row watched by
   a p9 process is never touched. Re-running `p9 watch` on a host-owned row
   (say after pushing a fix) replaces it; another session's live host watch
@@ -187,6 +191,12 @@ that over-isolates and one that under-isolates, only the first is safe.
 **A harness that wants stability across a sanitized environment should set
 `BROOMVA_P9_SESSION`** — rung 1 exists precisely for the case derivation
 cannot serve.
+
+**Upgrading across a marker change.** Adding `T3CODE_THREAD_ID` (BRO-3710)
+changes the derived id of a T3 session that was already running. Its earlier
+queue items stop being visible to it (`p9 wait-queue list --all` shows them),
+and re-watching a PR it was watching asks for `--adopt`. Both are the
+fragmentation trade-off above, not lost state.
 
 **The git worktree is not itself a marker.** An agent that `cd`s between repos
 — routine in this monorepo — would otherwise change identity mid-session.
