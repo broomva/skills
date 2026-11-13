@@ -1640,3 +1640,22 @@ def test_only_source_files_and_named_support_files_read_references(tmp_path):
     files = {TABLE: retyped, "testlib/loader.inc": loader}
     audit = static(build(tmp_path / "named", data, **files))
     assert "sourced, dated and read" in passes(audit, "references")
+
+
+def test_a_registered_table_does_not_count_as_reading_itself(tmp_path):
+    retyped = read(TABLE).replace(
+        'open("test/reference/drop.txt", encoding="utf-8")', 'open("README.md", encoding="utf-8")'
+    )
+    table = '# fetched 2026-11-13\nSOURCE = "https://example.com/drop.py"\nROWS = [(5.0, 1.0098)]\n'
+    for where, support in (("test/reference/drop.py", []), ("refdata/drop.py", ["refdata"]), ("refdata/drop.py", ["refdata/drop.py"])):
+        data = ledger()
+        data["references"][0]["path"] = where
+        data["tests"]["support"] = support
+        audit = static(build(tmp_path / f"{len(support)}-{support and support[0].count('.')}", data, **{TABLE: retyped, where: table}))
+        assert "drop-table: no test reads it" in failures(audit, "references"), (where, support)
+
+    reading = read(TABLE).replace("test/reference/drop.txt", "test/reference/drop.py")
+    data = ledger()
+    data["references"][0]["path"] = "test/reference/drop.py"
+    audit = static(build(tmp_path / "read", data, **{TABLE: reading, "test/reference/drop.py": table}))
+    assert "drop-table: test/reference/drop.py: sourced, dated and read" in passes(audit, "references")

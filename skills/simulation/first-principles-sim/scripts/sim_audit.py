@@ -678,6 +678,10 @@ def check_references(
             readers.add(place)
         else:
             readers.update(p for p in place.rglob("*") if p.is_file() and is_source(p))
+    # A registered table is data, whatever its suffix: one called `drop.py`
+    # that quotes its own URL would otherwise count as naming itself.
+    tables = [_inside(package, entry["path"]) for entry in references.values()]
+    readers = {p for p in readers if not any(t is not None and _same(p, t) for t in tables)}
     code = "\n".join(code_text(p) for p in sorted(readers))
 
     for rid, entry in references.items():

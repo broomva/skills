@@ -174,6 +174,7 @@ CURATED: list[tuple[str, str, str]] = [
     ('any # starts a comment', 'line = strip_hash_comment(line)', 'line = line.split("#")[0]'),
     ('a # after $ is a comment', ' and not (index > 0 and line[index - 1] == "$")', ''),
     ('an escaped quote ends the string', 'if char == quote and not escaped:', 'if char == quote:'),
+    ('a registered table may read itself', 'readers = {p for p in readers if not any(t is not None and _same(p, t) for t in tables)}', 'pass'),
     ('any file beside the tests is a reader', 'if p.is_file() and is_source(p))', 'if p.is_file())'),
     ('suffix case matters for readers', 'suffix = path.suffix.lower()\n    return suffix in SLASH_COMMENTS', 'suffix = path.suffix\n    return suffix in SLASH_COMMENTS'),
     ('a named support file must be source', '        if place.is_file():\n            readers.add(place)\n        else:', '        if True:'),
