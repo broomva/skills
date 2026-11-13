@@ -1,4 +1,5 @@
 #!/usr/bin/env python3
+# p9 end-to-end probe (BRO-3710): comment-only change; this PR is closed unmerged.
 """Per-skill SemVer consistency linter for the broomva/skills monorepo.
 
 A skill is "versioned" (a release candidate) iff its `SKILL.md` frontmatter
