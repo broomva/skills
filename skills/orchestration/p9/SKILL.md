@@ -85,8 +85,9 @@ forbids waiting on `gh --watch`, so on T3:
   The arm itself is in the transaction (it lands only over a row nobody is
   watching). `reap` and re-watch supersession only write if the latest row is
   exactly the row they judged, and `rearm`'s child acts only on the exact row
-  it judged dead (`--expect-owner OWNER@TS`, checked before the child's own
-  reap preflight). The observation-ticket counter is written atomically and,
+  it judged dead (`--expect-owner OWNER@TS`): it reads that row once, skips
+  its own reap preflight, and fences its supersede on that same row, so a
+  fold landing after the check makes it refuse. The observation-ticket counter is written atomically and,
   if damaged, recovers to the highest ticket in the state, never below it. Every write is a compare-and-swap on owner and
   state, so an overlapping or late wake changes nothing, and a row watched by
   a p9 process is never touched. Re-running `p9 watch` on a host-owned row
@@ -115,13 +116,17 @@ Every writer of `state.jsonl` declares how its decision is fenced, and
 |---|---|---|
 | `expect_row=row` | write only if the latest row is exactly the row the decision was made on | reap, rearm's repo-less fold, re-watch supersession, cleanup, auto-merge's blocked note |
 | `expect_owner` + `expect_state` | for a row only its own process writes | the classic watch fold, merge-ready |
-| `takeover="reason"` | an explicit seizure meant to win | `p9 abandon` |
+| `takeover="reason"` | an explicit seizure meant to win; the reason is written to the row (`extra.takeover`) | `p9 abandon` |
 | `transact_pr_state(decide)` | read latest, decide, append under one lock | observe, both arms, auto-merge's post-merge record |
 
-After `gh pr merge` succeeds, the merge is a fact, not a decision: it is
-recorded as MERGED if the judged MERGE_READY row still holds, and otherwise as
-ABANDONED with the reason "merged by auto-merge while the row moved", never
-written from the wrong state and never lost.
+`p9 auto-merge` re-reads the row immediately before `gh pr merge`: if it
+moved while the gates ran (an operator `p9 abandon`, a re-watch, a cleanup),
+it does not merge. After a merge succeeds, the merge is a fact, not a
+decision: it is recorded as MERGED if the judged MERGE_READY row still holds,
+as ABANDONED ("merged by auto-merge while the row moved") if the row moved in
+the last instant, and, if that row turned terminal, as a termination report,
+because a terminal row takes no further state. It is never written from the
+wrong state.
 
 ### Paseo-hosted sessions: wait in foreground slices (BRO-2815)
 

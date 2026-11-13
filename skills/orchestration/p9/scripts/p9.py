@@ -2304,10 +2304,21 @@ def _iso_age_seconds(ts: str) -> float:
     return (_dt.datetime.now(_dt.timezone.utc) - when).total_seconds()
 
 
-def _item_is_stale(it: WaitQueueItem) -> bool:
+def _latest_states() -> dict[tuple[str, int], str]:
+    """Latest state per (repo_key, pr), from ONE read of the state log."""
+    out: dict[tuple[str, int], str] = {}
+    for r in _read_state_rows():
+        out[(repo_key(r.get("repo", "")), r.get("pr"))] = str(r.get("to_state", ""))
+    return out
+
+
+def _item_is_stale(it: WaitQueueItem,
+                   states: dict[tuple[str, int], str] | None = None) -> bool:
     """A queue item is stale (eligible for pruning) when it has aged past
     the TTL, or its owning PR has reached a terminal state — the wait it was
-    queued behind is over, so the work is moot."""
+    queued behind is over, so the work is moot. `states` (BRO-3710) lets a
+    caller judge many items from one read of the state log; reading it once
+    per item put a 60k-row log x 300 items past the Stop hook's timeout."""
     ttl = _queue_ttl_seconds()
     if ttl > 0 and _iso_age_seconds(it.created_at) > ttl:
         return True
@@ -2315,7 +2326,11 @@ def _item_is_stale(it: WaitQueueItem) -> bool:
     # item with no repo can't be disambiguated from a same-numbered PR in
     # another repo. Such items fall back to TTL-only pruning.
     if it.pr is not None and it.repo:
-        st = current_pr_state(it.pr, it.repo)
+        if states is not None:
+            raw = states.get((repo_key(it.repo), it.pr))
+            st = PRState(raw) if raw else None
+        else:
+            st = current_pr_state(it.pr, it.repo)
         if st is not None and is_terminal(st):
             return True
     return False
@@ -2359,7 +2374,8 @@ def queue_list(session_id: Any = _CURRENT_SESSION, *,
     items = [WaitQueueItem(**r) for r in rows]
     items = [it for it in items if _item_visible(it, scope)]
     if not include_stale:
-        items = [it for it in items if not _item_is_stale(it)]
+        states = _latest_states() if any(it.pr is not None for it in items) else {}
+        items = [it for it in items if not _item_is_stale(it, states)]
     items.sort(key=lambda it: (_QUEUE_PRIORITY.index(it.source), it.created_at))
     return items
 
@@ -2922,6 +2938,7 @@ def append_state_event(event: PRStateEvent, *,
         if not (isinstance(expect_owner, _Unset) and expect_row is None
                 and expect_state is None and expect_match is None):
             raise P9Error("takeover is unguarded by definition; drop the fences")
+        event.extra = {**(event.extra or {}), "takeover": takeover}
     if expect_row is not None:
         if isinstance(expect_owner, _Unset):
             expect_owner = _owner_of(expect_row)
@@ -3987,6 +4004,15 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
                   f"-> {(now or 'unreadable')[:12]}); re-run", file=sys.stderr)
             return EXIT_AUTO_MERGE_BLOCKED
 
+    # The gates were network round-trips. Re-read the row right before the
+    # one irreversible step (BRO-3710): an operator `p9 abandon`, a re-watch
+    # or a cleanup in that window means this decision is about a row that no
+    # longer exists, and the merge must not happen.
+    if latest_row(pr, repo) != judged:
+        print(f"auto-merge blocked: PR #{pr}'s row changed while the gates "
+              "ran (abandoned, re-watched or cleaned up); not merging. "
+              "Re-run if it is still meant to merge.", file=sys.stderr)
+        return EXIT_AUTO_MERGE_BLOCKED
     rc = _gh_pr_merge(
         pr, repo,
         method=am.merge_method,
@@ -4022,7 +4048,15 @@ def cmd_auto_merge(args: argparse.Namespace) -> int:
                              watcher_id="auto-merge",
                              extra={**am_extra, "reason":
                                     "merged by auto-merge while the row moved"})]
-    transact_pr_state(pr, repo, record_merge)
+    if not transact_pr_state(pr, repo, record_merge):
+        # A terminal row landed between the re-check and the merge. It takes
+        # no further state, so the merge goes on the record as a report.
+        emit_termination_report({
+            "report": "p9-termination", "kind": "pr-watch", "ts": _utcnow(),
+            "pr": pr, "repo": repo, "state": "MERGED", "cause": "auto-merge",
+            "reason": "merged while the row turned terminal; not recorded "
+                      "as a state transition",
+            "next_action": "none — the PR is merged on GitHub"})
     print(f"auto-merge: PR #{pr} merged ({branch})")
     return EXIT_OK
 
@@ -4343,6 +4377,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     # dead (owner@ts). Checked BEFORE the reap preflight below, which would
     # otherwise fold that very row and make it look changed.
     expect = getattr(args, "expect_owner", None)
+    judged: dict[str, Any] | None = None
     if expect is not None:
         judged = latest_row(pr, repo)
         owner, _, ts = expect.partition("@")
@@ -4355,14 +4390,17 @@ def cmd_watch(args: argparse.Namespace) -> int:
             return EXIT_OK
 
     # Preflight: reap *this session's* dead-watcher rows so a prior crashed
-    # watch doesn't permanently consume the slot we're about to claim.
-    reap_stale_watchers(reconcile=False, session_id=sid)
+    # watch doesn't permanently consume the slot we're about to claim. Not in
+    # a rearm child: its target is the row it just validated, and the
+    # supersede below is fenced on exactly that row.
+    if judged is None:
+        reap_stale_watchers(reconcile=False, session_id=sid)
 
     # De-dup: refuse to stack a second watcher on a PR that already has one,
     # unless it is provably dead (orphan recovery) or the caller overrides.
     adopt = bool(getattr(args, "adopt", False))
     force = bool(getattr(args, "force", False))
-    existing = latest_row(pr, repo)
+    existing = judged if judged is not None else latest_row(pr, repo)
     if existing and PRState(existing["to_state"]) in (PRState.WATCHING, PRState.HEALING):
         epid = _row_pid(existing)
         # A host-owned row (BRO-3710) has no process: re-watching it, say
@@ -4588,6 +4626,10 @@ def cmd_watch(args: argparse.Namespace) -> int:
                 "none — a live watcher owns this PR; this fold was discarded")
             emit_termination_report(report,
                                     do_notify=cause != "slice-expired")
+    if cause != "slice-expired":
+        # The wait ended inside this call (BRO-3710): nothing is pending for
+        # the Stop hook to hold the turn on.
+        consume_wait_mark()
     # `reraise` must survive the rejection branch: an early return here would
     # swallow the very exception that terminated the watcher.
     if reraise is not None:
@@ -4641,6 +4683,8 @@ def _host_watch(args: argparse.Namespace, pr: int, repo: str, sid: str,
         return EXIT_DEGRADED
     mark_wait("p9 watch", pr=pr, repo=repo)
     obs = observe_pr(pr, repo, sid=sid)
+    if obs["folded"]:
+        consume_wait_mark()  # CI had settled: there is no wait to use
     added = harvest_queue(pr=pr, repo=repo)
     queued = [it for it in queue_list() if it.isolation_tier != "blocked"]
     if args.json:
@@ -4877,11 +4921,11 @@ def hook_stop(data: dict[str, Any]) -> dict[str, Any] | None:
     The mark is consumed by EVERY Stop, retry or not: a mark left behind by a
     retry would block some later, unrelated turn. `stop_hook_active` means
     this Stop is already a retry (ours or another hook's): never block it."""
-    mark = consume_wait_mark()
-    if mark is None or data.get("stop_hook_active"):
+    if not (wait_marks_dir() / f"{_safe_name(current_session_id())}.json").exists():
         return None
-    items = actionable_queue()
-    if not items:
+    items = [] if data.get("stop_hook_active") else actionable_queue()
+    mark = consume_wait_mark()
+    if mark is None or data.get("stop_hook_active") or not items:
         return None
     return {"decision": "block", "reason": (
         f"You declared a wait ({mark.get('tool', 'a wait')}) and queued work "

@@ -578,7 +578,9 @@ def test_pr_checks_failure_is_none(p9, monkeypatch):
 
 
 def test_classic_watch_marks_and_harvests(p9, monkeypatch):
-    calls = []
+    """The mark exists while the watcher runs, and is gone once the watch
+    folded inside the call: there is no wait left to hold a turn on."""
+    calls, marked = [], []
     monkeypatch.setattr(p9, "harvest_queue", lambda **kw: calls.append(kw) or [])
 
     class Done:
@@ -586,10 +588,15 @@ def test_classic_watch_marks_and_harvests(p9, monkeypatch):
 
         def wait(self, timeout=None):
             return 0
-    monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: Done())
+
+    def spawn(*a, **k):
+        marked.append(any(p9.wait_marks_dir().glob("*.json")))
+        return Done()
+    monkeypatch.setattr(p9, "spawn_watcher", spawn)
     p9.cmd_watch(_watch_args())
     assert calls and calls[0]["pr"] == 7
-    assert p9.consume_wait_mark()["pr"] == 7
+    assert marked == [True]
+    assert p9.consume_wait_mark() is None
 
 
 class TestRoundOneHarvest:
@@ -1394,11 +1401,22 @@ def test_every_writer_is_fenced():
         if not isinstance(fn, ast.FunctionDef) or fn.name == "append_state_event":
             continue
         for node in ast.walk(fn):
-            if isinstance(node, ast.Call) and getattr(node.func, "id", "") == "append_state_event":
-                kw = {k.arg for k in node.keywords}
-                if not ("expect_row" in kw or "takeover" in kw
-                        or {"expect_owner", "expect_state"} <= kw):
-                    unfenced.append(f"{fn.name}:{node.lineno}")
+            if not isinstance(node, ast.Call):
+                continue
+            name = getattr(node.func, "id", None) or getattr(node.func, "attr", "")
+            if name != "append_state_event":
+                continue
+            # A fence keyword whose value is the literal None is no fence.
+            kw = {k.arg for k in node.keywords
+                  if not (isinstance(k.value, ast.Constant) and k.value.value is None)}
+            if not ("expect_row" in kw or "takeover" in kw
+                    or {"expect_owner", "expect_state"} <= kw):
+                unfenced.append(f"{fn.name}:{node.lineno}")
+    module_calls = [n.lineno for n in tree.body for c in ast.walk(n)
+                    if not isinstance(n, (ast.FunctionDef, ast.ClassDef))
+                    and isinstance(c, ast.Call)
+                    and (getattr(c.func, "id", None) or getattr(c.func, "attr", "")) == "append_state_event"]
+    assert module_calls == [], f"module-level state writes: {module_calls}"
     assert unfenced == [], f"unfenced state writers: {unfenced}"
     direct = {fn.name for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef)
               and "path = state_jsonl()" in (ast.get_source_segment(src, fn) or "")}
@@ -1439,13 +1457,65 @@ class TestLifecycleInterleavings:
                                 meanwhile=lambda: None) == p9.EXIT_OK
         assert p9.latest_row(50, REPO)["to_state"] == "MERGED"
 
-    def test_merge_while_the_row_moved_is_recorded_not_lost(self, p9, monkeypatch):
+    def test_row_moved_during_gates_blocks_the_merge(self, p9, monkeypatch):
         self._seed_ready(p9, 51)
-        self._auto_merge(p9, monkeypatch, 51, action="auto",
-                         meanwhile=lambda: self._rewatch(p9, 51))
-        row = p9.latest_row(51, REPO)
+        merged = []
+        rc = self._auto_merge(p9, monkeypatch, 51, action="auto",
+                              meanwhile=lambda: self._rewatch(p9, 51))
+        monkeypatch.setattr(p9, "_gh_pr_merge", lambda *a, **k: merged.append(1) or 0)
+        assert rc == p9.EXIT_AUTO_MERGE_BLOCKED
+        assert p9.latest_row(51, REPO)["watcher_id"] == "rewatch"
+
+    def test_operator_abandon_during_gates_stops_the_merge(self, p9, monkeypatch):
+        """The reviewer's case: abandon is the operator's stop button."""
+        self._seed_ready(p9, 54)
+        merged = []
+        monkeypatch.setenv("BROOMVA_P9_POLICY", str(_FIXTURES / "policy-with-auto-merge.yaml"))
+        listing = type("L", (), {"branch": "b", "paths": [], "unmeasured": [], "head_sha": "h"})()
+        monkeypatch.setattr(p9, "_gh_pr_listing", lambda pr, repo: listing)
+
+        def decide(*a, **k):
+            p9.main(["abandon", "54", "--repo", REPO, "--reason", "operator: stop"])
+            return {"action": "auto", "reason": "r", "policy": None, "source": "t",
+                    "gates": {}, "base_sha": None, "base": "main", "head_sha": "h"}
+        monkeypatch.setattr(p9, "decide_auto_merge", decide)
+        monkeypatch.setattr(p9, "_gh_pr_merge", lambda *a, **k: merged.append(1) or 0)
+        assert p9.main(["auto-merge", "54", "--repo", REPO]) == p9.EXIT_AUTO_MERGE_BLOCKED
+        assert merged == []
+        row = p9.latest_row(54, REPO)
+        assert row["to_state"] == "ABANDONED" and row["extra"]["takeover"] == "operator abandon"
+
+    def test_row_moved_after_the_recheck_is_recorded_not_lost(self, p9, monkeypatch):
+        self._seed_ready(p9, 55)
+
+        def merge_while_moving(*a, **k):
+            self._rewatch(p9, 55)
+            return 0
+        self._auto_merge(p9, monkeypatch, 55, action="auto", meanwhile=lambda: None)
+        # second run: the move lands inside the merge call itself
+        self._seed_ready(p9, 56)
+        monkeypatch.setattr(p9, "decide_auto_merge", lambda *a, **k: {
+            "action": "auto", "reason": "r", "policy": None, "source": "t",
+            "gates": {}, "base_sha": None, "base": "main", "head_sha": "h"})
+        monkeypatch.setattr(p9, "_gh_pr_merge", lambda *a, **k: (self._rewatch(p9, 56), 0)[1])
+        p9.main(["auto-merge", "56", "--repo", REPO])
+        row = p9.latest_row(56, REPO)
         assert row["to_state"] == "ABANDONED"
         assert "merged by auto-merge" in row["extra"]["reason"]
+
+    def test_terminal_row_after_the_merge_is_reported(self, p9, monkeypatch, capsys):
+        self._seed_ready(p9, 57)
+
+        def merge_then_abandon(*a, **k):
+            p9.main(["abandon", "57", "--repo", REPO])
+            return 0
+        self._auto_merge(p9, monkeypatch, 57, action="auto", meanwhile=lambda: None)
+        self._seed_ready(p9, 58)
+        monkeypatch.setattr(p9, "_gh_pr_merge", lambda *a, **k: (
+            p9.main(["abandon", "58", "--repo", REPO]), 0)[1])
+        capsys.readouterr()
+        p9.main(["auto-merge", "58", "--repo", REPO])
+        assert "merged while the row turned terminal" in capsys.readouterr().err
 
     def test_blocked_note_is_not_written_over_a_moved_row(self, p9, monkeypatch):
         self._seed_ready(p9, 52)
@@ -1479,3 +1549,76 @@ class TestLifecycleInterleavings:
                              to_state="WATCHING", watcher_id="w")
         with pytest.raises(p9.P9Error):
             p9.append_state_event(ev, takeover="x", expect_owner="w")
+
+
+class TestBoundaryRoundOne:
+    def test_stop_hook_reads_state_once_for_the_whole_queue(self, p9, monkeypatch):
+        for i in range(50):
+            p9.queue_push(f"item {i}", "docs", pr=i, repo=REPO)
+        p9.mark_wait("delegate_task")
+        reads = []
+        real = p9._read_state_rows
+        monkeypatch.setattr(p9, "_read_state_rows", lambda: reads.append(1) or real())
+        assert p9.hook_stop({})["decision"] == "block"
+        assert len(reads) <= 2
+
+    def test_rearm_child_fence_holds_after_validation(self, p9, monkeypatch):
+        """A fold lands after the child validated its row: the supersede is
+        fenced on that very row, so the fold stands."""
+        monkeypatch.delenv("T3CODE_THREAD_ID", raising=False)
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2000-01-01T00:00:00+00:00", pr=61, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="deadw", extra={"pid": 999999}))
+        judged = p9.latest_row(61, REPO)
+
+        def fold_meanwhile(pid):
+            # between the child's validation and its supersede, the watched
+            # row folds through a real (owner + state fenced) fold
+            assert p9.append_state_event(p9.PRStateEvent(
+                ts=p9._utcnow(), pr=61, repo=REPO, from_state="WATCHING",
+                to_state="GREEN", watcher_id="deadw"),
+                expect_owner="deadw", expect_state="WATCHING")
+            return False
+        monkeypatch.setattr(p9, "is_watcher_alive", fold_meanwhile)
+        monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("must not arm over the fold")))
+        rc = p9.cmd_watch(_watch_args(pr=61, adopt=True,
+                                      expect_owner=f"deadw@{judged['ts']}"))
+        assert rc == p9.EXIT_DEGRADED
+        assert p9.latest_row(61, REPO)["to_state"] == "GREEN"
+
+    def test_host_watch_that_folds_at_once_leaves_no_mark(self, p9, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pass")
+        p9.cmd_watch(_watch_args())
+        assert p9.consume_wait_mark() is None
+
+    def test_rearm_child_never_rereads_its_row(self, p9, monkeypatch):
+        """The fold lands right after the child's validation read. One read
+        means the supersede fences on the validated row and refuses; a second
+        read would see GREEN and arm over it."""
+        monkeypatch.delenv("T3CODE_THREAD_ID", raising=False)
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2000-01-01T00:00:00+00:00", pr=62, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="deadw", extra={"pid": 999999}))
+        judged = p9.latest_row(62, REPO)
+        real_latest = p9.latest_row
+        reads = []
+
+        def read_then_fold(pr, repo=None):
+            row = real_latest(pr, repo)
+            if pr == 62 and not reads:
+                reads.append(1)
+                p9.append_state_event(p9.PRStateEvent(
+                    ts=p9._utcnow(), pr=62, repo=REPO, from_state="WATCHING",
+                    to_state="GREEN", watcher_id="deadw"),
+                    expect_owner="deadw", expect_state="WATCHING")
+            return row
+        monkeypatch.setattr(p9, "latest_row", read_then_fold)
+        monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("must not arm over the fold")))
+        rc = p9.cmd_watch(_watch_args(pr=62, adopt=True,
+                                      expect_owner=f"deadw@{judged['ts']}"))
+        assert rc == p9.EXIT_DEGRADED
+        assert real_latest(62, REPO)["to_state"] == "GREEN"
