@@ -2392,9 +2392,12 @@ def queue_pop(session_id: Any = _CURRENT_SESSION, *,
             return None
         eligible: list[WaitQueueItem] = []
         retained: list[WaitQueueItem] = []   # out-of-scope, keep on disk
+        # One read of the state log for the whole queue (BRO-3710): once per
+        # item, under this lock, a long log stalled pops and starved harvests.
+        states = _latest_states() if any(r.get("pr") is not None for r in rows) else {}
         for r in rows:
             it = WaitQueueItem(**r)
-            if _item_is_stale(it):
+            if _item_is_stale(it, states):
                 continue  # prune from disk regardless of scope
             if _item_visible(it, scope):
                 eligible.append(it)
@@ -2489,13 +2492,18 @@ def mark_wait(tool: str, *, pr: int | None = None, repo: str = "",
                         "repo": repo or ""}), encoding="utf-8")
 
 
-def consume_wait_mark(session_id: str | None = None) -> dict[str, Any] | None:
+def consume_wait_mark(session_id: str | None = None, *,
+                      only_if: Any = None) -> dict[str, Any] | None:
     """Take this session's mark, if any. Deleted on read so a wait blocks one
-    turn-end at most; a mark older than the max age is discarded unused."""
+    turn-end at most; a mark older than the max age is discarded unused.
+    `only_if(mark)` (BRO-3710): a wait that ENDS clears only its own mark, not
+    a later wait the same session declared since."""
     path = wait_marks_dir() / f"{_safe_name(session_id or current_session_id())}.json"
     try:
         mark = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
+        return None
+    if only_if is not None and not (isinstance(mark, dict) and only_if(mark)):
         return None
     with contextlib.suppress(OSError):
         path.unlink()
@@ -3838,14 +3846,21 @@ def cmd_abandon(args: argparse.Namespace) -> int:
         print(f"PR #{pr} ({repo or 'repo-unknown'}): already terminal "
               f"({state.value}); no-op")
         return EXIT_OK
-    append_state_event(PRStateEvent(
-        ts=_utcnow(), pr=pr, repo=repo,
-        from_state=state.value,
-        to_state=PRState.ABANDONED.value,
-        watcher_id="abandon",
-        extra={"reason": args.reason or "manual abandon"},
-    ), takeover="operator abandon")
-    print(f"PR #{pr} ({repo or 'repo-unknown'}): {state.value} → ABANDONED")
+    # Decided against the current row (BRO-3710): a terminal state that
+    # landed since the read above (a MERGED record) is not buried.
+    reason = args.reason or "manual abandon"
+    done = transact_pr_state(pr, repo, lambda latest: [] if latest is None
+                             or is_terminal(PRState(latest["to_state"])) else [
+        PRStateEvent(ts=_utcnow(), pr=pr, repo=repo,
+                     from_state=latest["to_state"],
+                     to_state=PRState.ABANDONED.value, watcher_id="abandon",
+                     extra={"reason": reason, "takeover": "operator abandon"})])
+    if not done:
+        now = current_pr_state(pr, repo)
+        print(f"PR #{pr} ({repo or 'repo-unknown'}): became "
+              f"{now.value if now else 'untracked'} meanwhile; no-op")
+        return EXIT_OK
+    print(f"PR #{pr} ({repo or 'repo-unknown'}): {done[-1].from_state} → ABANDONED")
     return EXIT_OK
 
 
@@ -4401,6 +4416,10 @@ def cmd_watch(args: argparse.Namespace) -> int:
     adopt = bool(getattr(args, "adopt", False))
     force = bool(getattr(args, "force", False))
     existing = judged if judged is not None else latest_row(pr, repo)
+    # The arm below lands only over exactly this row (BRO-3710): the row this
+    # command judged, or its own supersede of it. Any other writer in between
+    # (another generation that armed, or armed and already folded) wins.
+    last_seen = existing
     if existing and PRState(existing["to_state"]) in (PRState.WATCHING, PRState.HEALING):
         epid = _row_pid(existing)
         # A host-owned row (BRO-3710) has no process: re-watching it, say
@@ -4436,13 +4455,16 @@ def cmd_watch(args: argparse.Namespace) -> int:
         # Supersede the stale/forced row to free the slot before re-watching.
         # Fenced on the exact row judged above (BRO-3710): a fold or observe
         # that landed since changes what there is to supersede.
-        if not append_state_event(PRStateEvent(
+        supersede = PRStateEvent(
                 ts=_utcnow(), pr=pr, repo=repo or "",
                 from_state=existing["to_state"], to_state=PRState.ABANDONED.value,
                 watcher_id="watch-supersede", session_id=existing.get("session_id", ""),
                 extra={"reason": "superseded by re-watch",
                        "dead_pid": epid, "forced": force, "adopt": adopt},
-        ), expect_row=existing):
+        )
+        if append_state_event(supersede, expect_row=existing):
+            last_seen = json.loads(supersede.to_jsonl())  # as stored
+        else:
             print(f"PR #{pr}: its watch changed while this re-watch was "
                   "deciding; run it again", file=sys.stderr)
             return EXIT_DEGRADED
@@ -4462,7 +4484,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
     # would be a second watcher on the same PR, and T3 forbids it. Record the
     # watch, fold at once if CI already settled, and hand the wake to T3.
     if host_profile()["pr_watch_owner"] == "t3" and not args.dry_run:
-        return _host_watch(args, pr, repo, sid, watcher_id)
+        return _host_watch(args, pr, repo, sid, watcher_id, last_seen)
     if not args.dry_run:
         # The wait is declared now, whoever wakes the session later: the Stop
         # hook holds the turn open once while the harvested work is undone.
@@ -4520,9 +4542,8 @@ def cmd_watch(args: argparse.Namespace) -> int:
         # BRO-3710: every path here has already superseded any watching row,
         # so one found now was armed concurrently (a T3 host watch included);
         # this arm refuses instead of overwriting it.
-        if not transact_pr_state(pr, repo, lambda latest: [] if latest and latest.get(
-                "to_state") in (PRState.WATCHING.value, PRState.HEALING.value)
-                else [arm], chain=False):
+        if not transact_pr_state(pr, repo, lambda latest: [arm]
+                                 if latest == last_seen else [], chain=False):
             if proc is not None:
                 with contextlib.suppress(Exception):
                     proc.terminate()
@@ -4628,8 +4649,9 @@ def cmd_watch(args: argparse.Namespace) -> int:
                                     do_notify=cause != "slice-expired")
     if cause != "slice-expired":
         # The wait ended inside this call (BRO-3710): nothing is pending for
-        # the Stop hook to hold the turn on.
-        consume_wait_mark()
+        # the Stop hook to hold the turn on — for THIS wait.
+        consume_wait_mark(only_if=lambda m: m.get("tool") == "p9 watch"
+                          and m.get("pr") == pr)
     # `reraise` must survive the rejection branch: an early return here would
     # swallow the very exception that terminated the watcher.
     if reraise is not None:
@@ -4657,7 +4679,7 @@ def cmd_watch(args: argparse.Namespace) -> int:
 
 
 def _host_watch(args: argparse.Namespace, pr: int, repo: str, sid: str,
-                watcher_id: str) -> int:
+                watcher_id: str, last_seen: dict[str, Any] | None = None) -> int:
     """`p9 watch` where the host owns the PR wake (BRO-3710).
 
     Writes the WATCHING row with no watcher process (`host_watch` marks it so
@@ -4668,8 +4690,7 @@ def _host_watch(args: argparse.Namespace, pr: int, repo: str, sid: str,
     # The arm is part of the transaction (BRO-3710): it lands only over a row
     # that is not being watched. Another thread arming between this
     # command's checks and here makes it refuse, not overwrite.
-    armed = transact_pr_state(pr, repo, lambda latest: [] if latest and latest.get(
-        "to_state") in (PRState.WATCHING.value, PRState.HEALING.value) else [
+    armed = transact_pr_state(pr, repo, lambda latest: [] if latest != last_seen else [
         PRStateEvent(ts=_utcnow(), pr=pr, repo=repo or "",
                      from_state=PRState.PUSHED.value,
                      to_state=PRState.WATCHING.value, watcher_id=watcher_id,
@@ -4684,7 +4705,8 @@ def _host_watch(args: argparse.Namespace, pr: int, repo: str, sid: str,
     mark_wait("p9 watch", pr=pr, repo=repo)
     obs = observe_pr(pr, repo, sid=sid)
     if obs["folded"]:
-        consume_wait_mark()  # CI had settled: there is no wait to use
+        # CI had settled: there is no wait to use
+        consume_wait_mark(only_if=lambda m: m.get("pr") == pr)
     added = harvest_queue(pr=pr, repo=repo)
     queued = [it for it in queue_list() if it.isolation_tier != "blocked"]
     if args.json:
@@ -5699,6 +5721,8 @@ def cmd_wait_for(args: argparse.Namespace) -> int:
                 f"run p9 wait-for again in the foreground with --timeout "
                 f"{left} (the time left to the original deadline)")
         emit_termination_report(report, do_notify=cause != "slice-expired")
+        if cause != "slice-expired":
+            consume_wait_mark(only_if=lambda m: m.get("tool") == f"p9 wait-for {name}")
     if reraise is not None:
         raise reraise
     return exit_code

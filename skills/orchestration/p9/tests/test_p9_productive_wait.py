@@ -1412,6 +1412,23 @@ def test_every_writer_is_fenced():
             if not ("expect_row" in kw or "takeover" in kw
                     or {"expect_owner", "expect_state"} <= kw):
                 unfenced.append(f"{fn.name}:{node.lineno}")
+    # Other routes to the state file: jsonl_append(state_jsonl(), ...), and
+    # aliasing the writer (w = append_state_event; w(ev)) to dodge the check.
+    boundary = {"append_state_event", "transact_pr_state"}
+    inside = {id(n) for fn in ast.walk(tree) if isinstance(fn, ast.FunctionDef)
+              and fn.name in boundary for n in ast.walk(fn)}
+    for node in ast.walk(tree):
+        if (isinstance(node, ast.Call) and id(node) not in inside
+                and getattr(node.func, "id", "") == "jsonl_append"
+                and node.args and "state_jsonl" in ast.unparse(node.args[0])):
+            unfenced.append(f"jsonl_append(state_jsonl):{node.lineno}")
+        if (isinstance(node, ast.Name) and node.id == "append_state_event"
+                and isinstance(node.ctx, ast.Load)):
+            parent_calls = [c for c in ast.walk(tree) if isinstance(c, ast.Call)
+                            and c.func is node]
+            if not parent_calls:
+                unfenced.append(f"alias of append_state_event:{node.lineno}")
+    assert unfenced == [], f"unfenced state writers: {unfenced}"
     module_calls = [n.lineno for n in tree.body for c in ast.walk(n)
                     if not isinstance(n, (ast.FunctionDef, ast.ClassDef))
                     and isinstance(c, ast.Call)
@@ -1622,3 +1639,86 @@ class TestBoundaryRoundOne:
                                       expect_owner=f"deadw@{judged['ts']}"))
         assert rc == p9.EXIT_DEGRADED
         assert real_latest(62, REPO)["to_state"] == "GREEN"
+
+
+class TestBoundaryRoundTwo:
+    def test_queue_pop_reads_state_once(self, p9, monkeypatch):
+        for i in range(50):
+            p9.queue_push(f"item {i}", "docs", pr=i, repo=REPO)
+        reads = []
+        real = p9._read_state_rows
+        monkeypatch.setattr(p9, "_read_state_rows", lambda: reads.append(1) or real())
+        assert p9.queue_pop() is not None
+        assert len(reads) <= 1
+
+    def test_arm_refuses_a_generation_that_landed_after_the_supersede(self, p9, monkeypatch):
+        """Supersede done, then another generation arms AND folds before this
+        command arms: its RED must stand."""
+        monkeypatch.delenv("T3CODE_THREAD_ID", raising=False)
+        p9.append_state_event(p9.PRStateEvent(
+            ts="2000-01-01T00:00:00+00:00", pr=63, repo=REPO, from_state="PUSHED",
+            to_state="WATCHING", watcher_id="deadw", extra={"pid": 999999}))
+        fired = []
+
+        def other_generation(**kw):
+            if not fired:
+                fired.append(1)
+                for prev, nxt in (("PUSHED", "WATCHING"), ("WATCHING", "RED_UNCLASSIFIED")):
+                    p9.append_state_event(p9.PRStateEvent(
+                        ts=p9._utcnow(), pr=63, repo=REPO, from_state=prev,
+                        to_state=nxt, watcher_id="genX"), takeover="test")
+            return []
+        monkeypatch.setattr(p9, "harvest_queue", other_generation)
+        stopped = []
+
+        class Proc:
+            pid = 4242
+
+            def terminate(self):
+                stopped.append(1)
+
+            def wait(self, timeout=None):
+                return 0
+        monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: Proc())
+        assert p9.cmd_watch(_watch_args(pr=63, adopt=True)) == p9.EXIT_DEGRADED
+        row = p9.latest_row(63, REPO)
+        assert row["watcher_id"] == "genX" and row["to_state"] == "RED_UNCLASSIFIED"
+        assert stopped == [1]
+
+    def test_wait_for_clears_its_own_mark(self, p9, monkeypatch):
+        assert p9.main(["wait-for", "build", "--cmd", "true", "--timeout", "5",
+                        "--interval", "0.1"]) == p9.EXIT_OK
+        assert p9.consume_wait_mark() is None
+
+    def test_a_finished_wait_leaves_a_later_waits_mark(self, p9, monkeypatch):
+        """One mark per session: a classic watch that ends must not delete
+        the mark of a delegate_task declared after it."""
+        class Done:
+            pid = 4243
+
+            def wait(self, timeout=None):
+                p9.mark_wait("delegate_task")      # declared while CI ran
+                return 0
+        monkeypatch.setattr(p9, "spawn_watcher", lambda *a, **k: Done())
+        p9.cmd_watch(_watch_args(pr=64))
+        mark = p9.consume_wait_mark()
+        assert mark and mark["tool"] == "delegate_task"
+
+    def test_abandon_does_not_bury_a_terminal_row(self, p9, monkeypatch):
+        for prev, nxt in (("PUSHED", "WATCHING"), ("WATCHING", "GREEN"),
+                          ("GREEN", "MERGE_READY")):
+            p9.append_state_event(p9.PRStateEvent(
+                ts=p9._utcnow(), pr=65, repo=REPO, from_state=prev, to_state=nxt,
+                watcher_id="seed"), takeover="test")
+        real = p9.current_pr_state
+
+        def merged_meanwhile(pr, repo=None):
+            st = real(pr, repo)
+            p9.append_state_event(p9.PRStateEvent(
+                ts=p9._utcnow(), pr=65, repo=REPO, from_state="MERGE_READY",
+                to_state="MERGED", watcher_id="auto-merge"), takeover="test")
+            return st
+        monkeypatch.setattr(p9, "current_pr_state", merged_meanwhile)
+        # a clean no-op, not an illegal-transition error from the table
+        assert p9.main(["abandon", "65", "--repo", REPO]) == p9.EXIT_OK
+        assert p9.latest_row(65, REPO)["to_state"] == "MERGED"

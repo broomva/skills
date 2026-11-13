@@ -88,9 +88,9 @@ forbids waiting on `gh --watch`, so on T3:
   it judged dead (`--expect-owner OWNER@TS`): it reads that row once, skips
   its own reap preflight, and fences its supersede on that same row, so a
   fold landing after the check makes it refuse. The observation-ticket counter is written atomically and,
-  if damaged, recovers to the highest ticket in the state, never below it. Every write is a compare-and-swap on owner and
-  state, so an overlapping or late wake changes nothing, and a row watched by
-  a p9 process is never touched. Re-running `p9 watch` on a host-owned row
+  if damaged, recovers to the highest ticket in the state, never below it. Every write goes
+  through the state-write boundary below, so an overlapping or late wake
+  changes nothing, and a row watched by a p9 process is never touched. Re-running `p9 watch` on a host-owned row
   (say after pushing a fix) replaces it; another session's live host watch
   is refused unless you pass `--adopt`. `--detach` is host-owned on T3 too.
 - `p9 reap` judges a host-owned row by age, not pid: it is live until
@@ -116,8 +116,8 @@ Every writer of `state.jsonl` declares how its decision is fenced, and
 |---|---|---|
 | `expect_row=row` | write only if the latest row is exactly the row the decision was made on | reap, rearm's repo-less fold, re-watch supersession, cleanup, auto-merge's blocked note |
 | `expect_owner` + `expect_state` | for a row only its own process writes | the classic watch fold, merge-ready |
-| `takeover="reason"` | an explicit seizure meant to win; the reason is written to the row (`extra.takeover`) | `p9 abandon` |
-| `transact_pr_state(decide)` | read latest, decide, append under one lock | observe, both arms, auto-merge's post-merge record |
+| `takeover="reason"` | an explicit seizure meant to win; the reason is written to the row (`extra.takeover`) | (available; no production writer needs it) |
+| `transact_pr_state(decide)` | read latest, decide, append under one lock | observe, both arms (each lands only over the exact row the command saw or wrote), `p9 abandon` (never over a terminal row), auto-merge's post-merge record |
 
 `p9 auto-merge` re-reads the row immediately before `gh pr merge`: if it
 moved while the gates ran (an operator `p9 abandon`, a re-watch, a cleanup),
