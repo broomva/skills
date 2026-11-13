@@ -2975,12 +2975,19 @@ def next_observation_ticket() -> int:
     path = p9_home() / "observation-ticket"
     with file_lock(state_lock_path()):
         try:
-            n = int(path.read_text(encoding="utf-8").strip() or 0)
+            n = int(path.read_text(encoding="utf-8").strip())
         except (OSError, ValueError):
-            n = 0
+            # Missing or damaged: recover from the state itself, so the
+            # counter never restarts below a ticket a live row already holds
+            # (which would drop every observation until it caught up).
+            rows, _ = jsonl_read_all(state_jsonl())
+            n = max([int((r.get("extra") or {}).get("obs_ticket") or 0)
+                     for r in rows] + [0])
         n += 1
         path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(str(n), encoding="utf-8")
+        tmp = path.with_name(path.name + ".tmp")
+        tmp.write_text(str(n), encoding="utf-8")
+        tmp.replace(path)  # atomic: a kill mid-write leaves the old value
     return n
 
 
@@ -4290,6 +4297,21 @@ def cmd_watch(args: argparse.Namespace) -> int:
     # ceiling count, the WATCHING row and the terminal fold all key on it.
     repo = resolve_repo(args.repo)
 
+    # BRO-3710: a rearm child acts only on the exact row its parent judged
+    # dead (owner@ts). Checked BEFORE the reap preflight below, which would
+    # otherwise fold that very row and make it look changed.
+    expect = getattr(args, "expect_owner", None)
+    if expect is not None:
+        judged = latest_row(pr, repo)
+        owner, _, ts = expect.partition("@")
+        if not (judged and _owner_of(judged) == ("" if owner == "-" else owner)
+                and judged["to_state"] in (PRState.WATCHING.value,
+                                           PRState.HEALING.value)
+                and (not ts or judged.get("ts", "") == ts)):
+            print(f"PR #{pr}: its row changed since rearm judged it dead; "
+                  "nothing to re-arm", file=sys.stderr)
+            return EXIT_OK
+
     # Preflight: reap *this session's* dead-watcher rows so a prior crashed
     # watch doesn't permanently consume the slot we're about to claim.
     reap_stale_watchers(reconcile=False, session_id=sid)
@@ -4299,14 +4321,6 @@ def cmd_watch(args: argparse.Namespace) -> int:
     adopt = bool(getattr(args, "adopt", False))
     force = bool(getattr(args, "force", False))
     existing = latest_row(pr, repo)
-    expect = getattr(args, "expect_owner", None)
-    if expect is not None and not (
-            existing and _owner_of(existing) == ("" if expect == "-" else expect)
-            and existing["to_state"] in (PRState.WATCHING.value,
-                                         PRState.HEALING.value)):
-        print(f"PR #{pr}: its row changed since rearm judged it dead; "
-              "nothing to re-arm", file=sys.stderr)
-        return EXIT_OK
     if existing and PRState(existing["to_state"]) in (PRState.WATCHING, PRState.HEALING):
         epid = _row_pid(existing)
         # A host-owned row (BRO-3710) has no process: re-watching it, say
@@ -4743,6 +4757,10 @@ def cmd_observe(args: argparse.Namespace) -> int:
     elif out["folded"]:
         print(f"folded: {out['state']} (checks {out['verdict']})"
               + (f"; failed: {', '.join(out['failed'])}" if out["failed"] else ""))
+    elif out.get("note") and out["verdict"] in ("green", "red"):
+        print(f"PR #{args.pr}: checks {out['verdict']}, but this read was "
+              f"{out['note']}; state is {out['state']}. Run `p9 observe "
+              f"{args.pr}` again before ending your turn.")
     elif out["state"] == PRState.WATCHING.value:
         hint = (" If T3's wake said no checks have reported, run "
                 f"`p9 observe {args.pr} --no-checks`." if out["verdict"] == "none"
@@ -5683,7 +5701,8 @@ def cmd_rearm(args: argparse.Namespace) -> int:
                         "--repo", repo, "--slice", "0",
                         # BRO-3710: the child acts only on the row judged dead
                         # here; a fold that lands before it runs stands.
-                        "--expect-owner", _owner_of(row) or "-"]
+                        "--expect-owner",
+                        f"{_owner_of(row) or '-'}@{row.get('ts', '')}"]
                 argv.append("--force" if args.now else "--adopt")
                 logs_dir().mkdir(parents=True, exist_ok=True)
                 log_path = logs_dir() / f"rearm-watch-{_safe_slug(str(pr))}.log"
@@ -6123,8 +6142,8 @@ def build_parser() -> argparse.ArgumentParser:
                          "on hosts where background completions do not wake "
                          "the session (`p9 host`); 0 disables")
     pw.add_argument("--expect-owner", default=None,
-                    help="(rearm) act only if the PR's latest row is still "
-                         "this watcher's WATCHING/HEALING row")
+                    help="(rearm) OWNER@TS: act only if the PR's latest row is "
+                         "still exactly the WATCHING/HEALING row rearm judged")
     pw.add_argument("--adopt", action="store_true",
                     help="Re-watch a PR whose prior watcher pid is gone, "
                          "superseding the stale row immediately (orphan recovery "

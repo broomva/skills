@@ -1161,7 +1161,8 @@ class TestReshapedRoundOne:
                             lambda argv, **k: launched.append(argv) or type("P", (), {"pid": 1})())
         p9.cmd_rearm(argparse.Namespace(now=True, dry_run=False, json=True))
         argv = launched[0]
-        assert argv[argv.index("--expect-owner") + 1] == p9.latest_row(7, REPO)["watcher_id"]
+        row = p9.latest_row(7, REPO)
+        assert argv[argv.index("--expect-owner") + 1] == f"{row['watcher_id']}@{row['ts']}"
 
     def test_discarded_observation_reports_the_current_state(self, p9, monkeypatch):
         _no_spawn(monkeypatch, p9)
@@ -1204,3 +1205,94 @@ class TestPinnedClaims:
                                              "tool_input": {"task": "x"}}),
                            env=env, capture_output=True, text=True)
         assert "from bash" in json.loads(r.stdout)["hookSpecificOutput"]["additionalContext"]
+
+
+# ── reshaped round 2 regressions ────────────────────────────────────────────
+def test_rearm_recovers_its_own_sessions_dead_watch_end_to_end(tmp_path):
+    """Real processes: `p9 rearm` from the session that owns a dead watch
+    must re-arm it (the child's reap preflight once folded the very row the
+    child was told to act on, and the watch was lost for good)."""
+    home = tmp_path / "p9home"
+    home.mkdir()
+    bindir = tmp_path / "bin"
+    bindir.mkdir()
+    fake_gh = bindir / "gh"
+    fake_gh.write_text("#!/bin/sh\nfor a in \"$@\"; do [ \"$a\" = --json ] && echo '[]'; done\nexit 0\n")
+    fake_gh.chmod(0o755)
+    row = {"ts": "2000-01-01T00:00:00+00:00", "pr": 42, "repo": "o/r",
+           "from_state": "PUSHED", "to_state": "WATCHING", "watcher_id": "deadw",
+           "attempt": 0, "evaluator_score": None, "extra": {"pid": 999999},
+           "session_id": "sess-1"}
+    (home / "state.jsonl").write_text(json.dumps(row) + "\n")
+    env = {k: v for k, v in os.environ.items() if k not in (
+        "T3CODE_THREAD_ID", "CLAUDE_CODE_MESSAGING_SOCKET", "ORCA_WORKTREE_ID",
+        "AGENT_SESSION_ID", "PASEO_AGENT_ID", "P9_PR_WATCH_OWNER")}
+    env.update(BROOMVA_P9_HOME=str(home), BROOMVA_P9_SESSION="sess-1",
+               BROOMVA_P9_POLICY=str(_FIXTURES / "policy-good.yaml"),
+               BROOMVA_P9_HARVEST="0", PATH=f"{bindir}{os.pathsep}{env['PATH']}")
+    r = subprocess.run([sys.executable, str(_SCRIPT), "rearm", "--json"],
+                       env=env, capture_output=True, text=True, timeout=60)
+    assert r.returncode == 0, r.stderr
+    final = None
+    for _ in range(100):
+        rows = [json.loads(l) for l in (home / "state.jsonl").read_text().splitlines() if l]
+        final = [x for x in rows if x["pr"] == 42][-1]
+        if final["to_state"] == "GREEN":
+            break
+        time.sleep(0.2)
+    assert final["to_state"] == "GREEN", final
+
+
+class TestReshapedRoundTwo:
+    @pytest.fixture(autouse=True)
+    def _t3(self, monkeypatch):
+        monkeypatch.setenv("T3CODE_THREAD_ID", "thread-1")
+
+    def test_damaged_counter_never_goes_backwards(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        for _ in range(3):
+            p9.observe_pr(7, REPO)
+        held = p9.latest_row(7, REPO)["extra"]["obs_ticket"]
+        (p9.p9_home() / "observation-ticket").write_text("")   # truncated
+        assert p9.next_observation_ticket() > held
+        (p9.p9_home() / "observation-ticket").unlink()          # deleted
+        assert p9.next_observation_ticket() > held
+        _checks(monkeypatch, p9, "pass")
+        assert p9.observe_pr(7, REPO)["folded"]
+
+    def test_counter_write_leaves_no_partial_file(self, p9):
+        p9.next_observation_ticket()
+        assert not list(p9.p9_home().glob("observation-ticket.tmp"))
+
+    def test_child_ignores_a_row_restamped_since_judged(self, p9, monkeypatch):
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        judged = p9.latest_row(7, REPO)
+        time.sleep(1.1)
+        p9.observe_pr(7, REPO)                    # live again: new ts
+        rc = p9.cmd_watch(_watch_args(
+            adopt=True, expect_owner=f"{judged['watcher_id']}@{judged['ts']}"))
+        assert rc == p9.EXIT_OK
+        assert p9.latest_row(7, REPO)["watcher_id"] == judged["watcher_id"]
+
+    def test_superseded_read_is_not_reported_as_still_watching(self, p9, monkeypatch, capsys):
+        import argparse
+        _no_spawn(monkeypatch, p9)
+        _checks(monkeypatch, p9, "pending")
+        p9.cmd_watch(_watch_args())
+        base = p9.next_observation_ticket() + 1000
+        it = iter([base + 100, base + 200])
+        monkeypatch.setattr(p9, "next_observation_ticket", lambda: next(it))
+
+        def outer(pr, repo):
+            _checks(monkeypatch, p9, "pending")
+            p9.observe_pr(7, REPO)                # newer pending lands first
+            return [{"name": "c", "bucket": "pass"}]
+        monkeypatch.setattr(p9, "_pr_checks", outer)
+        capsys.readouterr()
+        p9.cmd_observe(argparse.Namespace(pr="7", repo=None, json=False, no_checks=False))
+        out = capsys.readouterr().out
+        assert "still watching" not in out and "again" in out

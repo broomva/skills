@@ -84,8 +84,10 @@ forbids waiting on `gh --watch`, so on T3:
   read does not undo it, and a new push gets a new generation via `p9 watch`.
   The arm itself is in the transaction (it lands only over a row nobody is
   watching). `reap` and re-watch supersession only write if the latest row is
-  exactly the row they judged, and `rearm`'s child acts only on the watcher
-  it judged dead (`--expect-owner`). Every write is a compare-and-swap on owner and
+  exactly the row they judged, and `rearm`'s child acts only on the exact row
+  it judged dead (`--expect-owner OWNER@TS`, checked before the child's own
+  reap preflight). The observation-ticket counter is written atomically and,
+  if damaged, recovers to the highest ticket in the state, never below it. Every write is a compare-and-swap on owner and
   state, so an overlapping or late wake changes nothing, and a row watched by
   a p9 process is never touched. Re-running `p9 watch` on a host-owned row
   (say after pushing a fix) replaces it; another session's live host watch
