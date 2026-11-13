@@ -22,6 +22,9 @@ tests:
   #     - file: tools/render.ts
   #       command: "bun run render"
   gates: []
+  # Test helpers and test data that live outside `dir`. They may read
+  # reference tables, and a mutation may not touch them.
+  support: []
   # Optional: a regular expression that replaces the built-in list of
   # assertion constructs, for a test framework the audit does not know.
   # assertion: "\\bverify\\("
@@ -87,8 +90,8 @@ claims:
 
 # Small changes to the code under test, usually one line, that must turn a
 # test red. Each runs in a copy of the package. `find` must occur exactly once
-# in `file`. `file` may not be a test, a gate, or anything in the tests
-# directory.
+# in `file`. `file` may not be a test, a gate, a reference table, or anything
+# in the tests directory or under `support`.
 #
 # Give each mutation the command that runs only its claim's test. With the
 # whole suite as the command, a mutation is "killed" by whichever assertion

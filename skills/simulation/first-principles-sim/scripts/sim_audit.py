@@ -27,10 +27,13 @@ Checks:
                the standard output of the report command
   suite        (--run-tests) the test command exits 0
   mutations    each mutation applies exactly once to code that is not a test,
-               a test's helper or data, or a gate, and (--run-mutations) makes
-               its test command fail
+               a gate, a registered reference table, or anything in the tests
+               directory or a declared support path, and (--run-mutations)
+               makes its test command fail
 
 Commands run in a temporary copy of the package, never in the package itself.
+Symlinks in the package are followed when it is copied, except the directories
+listed under `link`, which the copy shares with the package.
 
 Exit 0 when nothing failed, 1 when a check failed, 2 when the ledger could not
 be read or the package could not be copied. A check that needs a flag that was not given reports SKIP, never PASS.
@@ -48,10 +51,12 @@ import os
 import re
 import shutil
 import signal
+import stat
 import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 
 LEDGER_NAMES = ("sim-claims.yaml", "sim-claims.yml", "sim-claims.json")
@@ -73,33 +78,39 @@ KINDS = {**CHECKED_KINDS, **UNCHECKED_KINDS}
 
 #: Constructs that can make a test fail. Matched after comments are stripped.
 #: A ledger can replace this with `tests.assertion` for another framework.
-ASSERTION = re.compile(
-    r"\bexpect(_\w+|[A-Z]\w*)?\s*\("
-    r"|(?<!console\.)\bassert\w*\s*[(!]"
-    r"|\bassert\.\w+\s*\("
-    r"|\bassert\s+\S"
-    r"|\bassert_\w+\s+\S"
-    r"|\bAssert\.\w+\s*\("
-    r"|\bXCTAssert\w*\s*\("
-    r"|\bdoAssert\b"
-    r"|\brequire\.(Equal|NotEqual|NoError|Error|True|False|Nil|NotNil|InDelta|Len)\w*\s*\("
-    r"|\b(EXPECT|ASSERT|REQUIRE|CHECK)(_[A-Z]+)*\s*\("
-    r"|\bBOOST_(CHECK|REQUIRE)\w*\s*\("
-    r"|@test\b"
-    r"|\.should\b"
-    r"|\bshould(Be|Equal|Throw)\b"
-    r"|\bshould\s+(be|equal|eq)\b"
-    r"|\b(strictEqual|deepStrictEqual|deepEqual|notStrictEqual|notEqual)\s*\("
-    r"|\bpytest\.(raises|fail)\b"
-    r"|\bt\.(Error|Errorf|Fatal|Fatalf|Fail|FailNow)\s*\("
-    r"|\b(exit|Exit)\s*\(\s*[1-9]"
-    r"|\bprocess\.exitCode\s*=\s*[1-9]"
-    r"|\bthrow\s+\w"
-    r"|\braise\s+\w"
-    r"|\bpanic!?\s*\("
+ASSERTIONS = (
+    r"\bexpect(_\w+|[A-Z]\w*)?\s*\(",
+    r"(?<!console\.)\bassert\w*\s*[(!]",
+    r"\bassert\.\w+\s*\(",
+    r"\bassert\s+\S",
+    r"\bassert_\w+\s+\S",
+    r"\bAssert\.\w+\s*\(",
+    r"\bXCTAssert\w*\s*\(",
+    r"\bdoAssert\b",
+    r"\brequire\.(Equal|NotEqual|NoError|Error|True|False|Nil|NotNil|InDelta|Len)\w*\s*\(",
+    r"\b(EXPECT|ASSERT|REQUIRE|CHECK)(_[A-Z]+)*\s*\(",
+    r"\bBOOST_(CHECK|REQUIRE)\w*\s*\(",
+    r"@test\b",
+    r"\.should\b",
+    r"\bshould(Be|Equal|Throw)\b",
+    r"\bshould\s+(be|equal|eq)\b",
+    r"\b(strictEqual|deepStrictEqual|deepEqual|notStrictEqual|notEqual)\s*\(",
+    r"\bpytest\.raises\b",
+    r"\.fail\s*\(",
+    r"\bt\.(Error|Errorf|Fatal|Fatalf|Fail|FailNow)\s*\(",
+    r"\b(exit|Exit)\s*\(\s*['\"1-9]",
+    r"\bexit\s+[1-9]",
+    r"\bprocess\.exitCode\s*=\s*[1-9]",
+    r"\bthrow\s+\w",
+    r"\braise\s+\w",
+    r"\bpanic!?\s*\(",
 )
-#: A line that defines a helper named like an assertion is not one.
-DEFINITION = re.compile(r"^\s*(export\s+)?(async\s+)?(def|function|fn|func|sub|proc)\s+\w+\s*\(")
+ASSERTION = re.compile("|".join(ASSERTIONS))
+#: The header of a helper that is named like an assertion. It is removed
+#: before matching, so defining `assert_close` does not count as asserting.
+DEFINITION = re.compile(
+    r"\b(def|function|fn|func|sub|proc)\s+(assert|expect)\w*\s*\("
+)
 #: Languages whose comments start with `//` or sit in `/* */`.
 SLASH_COMMENTS = {
     ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".c", ".h", ".cc", ".cpp", ".hpp",
@@ -113,7 +124,9 @@ DASH_COMMENTS = {".lua", ".hs", ".sql", ".elm"}
 DATA_SUFFIXES = {".txt", ".csv", ".tsv", ".dat", ".json", ".md"}
 
 URL = re.compile(r"https?://\S+")
-DATE = re.compile(r"\b(19|20)\d{2}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])\b")
+DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})\b")
+#: A fetch date outside these years is a typo or a placeholder.
+FIRST_YEAR, LAST_YEAR = 1900, 2099
 #: How many leading lines of a reference file may carry its provenance.
 HEADER_LINES = 40
 #: Directories linked into the copy instead of copied.
@@ -169,6 +182,7 @@ class Ledger:
     tests_dir: str
     globs: list[str]
     gates: dict[str, str]  # file -> command
+    support: list[str]
     assertion: re.Pattern
     commands: dict[str, str]
     links: tuple[str, ...]
@@ -281,6 +295,7 @@ def parse_ledger(data: dict) -> Ledger:
         tests_dir=tests_dir,
         globs=_string_list(tests, "glob", ["*.test.*", "test_*.py", "*_test.*"]),
         gates=gates,
+        support=_string_list(tests, "support", []),
         assertion=assertion,
         commands=commands,
         links=tuple(links),
@@ -297,10 +312,25 @@ def load_ledger(package: Path) -> Ledger:
 
 def _inside(package: Path, relative: str) -> Path | None:
     """`relative` resolved under `package`, or None if it leaves it."""
-    target = (package / relative).resolve()
+    try:
+        target = (package / relative).resolve()
+    except (OSError, ValueError):
+        return None
     if target != package and package not in target.parents:
         return None
     return target
+
+
+def has_date(text: str) -> bool:
+    """Whether `text` holds a real calendar date, YYYY-MM-DD."""
+    for year, month, day in DATE.findall(text):
+        try:
+            date(int(year), int(month), int(day))
+        except ValueError:
+            continue
+        if FIRST_YEAR <= int(year) <= LAST_YEAR:
+            return True
+    return False
 
 
 def _same(a: Path, b: Path) -> bool:
@@ -319,32 +349,30 @@ def _within(path: Path, directory: Path) -> bool:
 def strip_comments(text: str, suffix: str) -> str:
     """Drop comment text, so a commented-out assertion does not count.
 
-    Line-based and deliberately crude. For `//` languages: `/* */` closed on
-    one line, whole lines starting with `//`, `/*` or `*`, and `//` to end of
-    line unless it follows a colon (so URLs survive). For `#` languages: whole
-    lines starting with `#`, and ` #` to end of line. For `--` languages: `--`
-    to end of line. A file of an unknown language loses only whole lines that
-    start with a comment marker. Strings are not parsed, so an assertion that
-    exists only inside a string still counts.
+    Deliberately crude. For `//` languages: `/* */` blocks, on one line or
+    many, whole lines starting with `//`, and `//` to end of line unless it
+    follows a colon (so URLs survive). For `#` languages: whole lines starting
+    with `#`, and ` #` to end of line. For `--` languages: `--` to end of
+    line. A file of an unknown language loses only whole lines that start with
+    a comment marker. Strings are not parsed, so an assertion that exists only
+    inside a string still counts.
     """
     known = suffix in SLASH_COMMENTS or suffix in HASH_COMMENTS or suffix in DASH_COMMENTS
-    hashes = suffix in HASH_COMMENTS or not known
-    slashes = suffix in SLASH_COMMENTS or not known
-    dashes = suffix in DASH_COMMENTS
+    if suffix in SLASH_COMMENTS:
+        text = re.sub(r"/\*.*?\*/", "", text, flags=re.S)
+        text = re.sub(r"/\*(?:(?!\*/).)*\Z", "", text, flags=re.S)
     kept = []
     for line in text.splitlines():
-        if suffix in SLASH_COMMENTS:
-            line = re.sub(r"/\*.*?\*/", "", line)
         stripped = line.lstrip()
-        if hashes and stripped.startswith("#"):
-            continue
-        if slashes and stripped.startswith(("//", "/*", "*")):
+        if not known and stripped.startswith(("#", "//", "/*", "*")):
             continue
         if suffix in HASH_COMMENTS:
+            if stripped.startswith("#"):
+                continue
             line = re.sub(r"\s#.*$", "", line)
         if suffix in SLASH_COMMENTS:
             line = re.sub(r"(?<!:)//.*$", "", line)
-        if dashes:
+        if suffix in DASH_COMMENTS:
             line = re.sub(r"--.*$", "", line)
         kept.append(line)
     return "\n".join(kept)
@@ -359,8 +387,7 @@ def code_text(path: Path) -> str:
 
 
 def has_assertion(path: Path, pattern: re.Pattern = ASSERTION) -> bool:
-    lines = [line for line in code_text(path).splitlines() if not DEFINITION.match(line)]
-    return bool(pattern.search("\n".join(lines)))
+    return bool(pattern.search(DEFINITION.sub("", code_text(path))))
 
 
 def find_test_files(package: Path, ledger: Ledger) -> list[Path]:
@@ -381,6 +408,18 @@ def gate_files(package: Path, ledger: Ledger, audit: Audit) -> list[Path]:
         path = _inside(package, name)
         if path is None or not path.is_file():
             audit.add("ledger", FAIL, "gate file does not exist inside the package", name)
+        else:
+            found.append(path)
+    return found
+
+
+def support_files(package: Path, ledger: Ledger, audit: Audit) -> list[Path]:
+    """Test helpers and data that live outside the tests directory."""
+    found = []
+    for name in ledger.support:
+        path = _inside(package, name)
+        if path is None or not path.exists():
+            audit.add("ledger", FAIL, "support path does not exist inside the package", name)
         else:
             found.append(path)
     return found
@@ -560,6 +599,7 @@ def check_references(
     references: dict,
     claims: list[dict],
     checks: list[Path],
+    support: list[Path],
     audit: Audit,
 ) -> None:
     used: set[str] = set()
@@ -585,14 +625,16 @@ def check_references(
             continue
         used.add(rid)
 
-    # Code that could load a table: the checks, and any helper beside the tests.
+    # Code that could load a table: the checks, and any helper beside the tests
+    # or under a declared support path.
     readers = set(checks)
     tests_dir = _inside(package, ledger.tests_dir)
-    if tests_dir is not None and tests_dir.is_dir():
+    for place in [tests_dir, *support]:
+        if place is None:
+            continue
+        candidates = place.rglob("*") if place.is_dir() else [place]
         readers.update(
-            p
-            for p in tests_dir.rglob("*")
-            if p.is_file() and p.suffix.lower() not in DATA_SUFFIXES
+            p for p in candidates if p.is_file() and p.suffix.lower() not in DATA_SUFFIXES
         )
     code = "\n".join(code_text(p) for p in sorted(readers))
 
@@ -601,13 +643,16 @@ def check_references(
         if path is None or not path.is_file():
             audit.add("references", FAIL, f"{entry['path']} does not exist in the package", rid)
             continue
-        head = "\n".join(
-            path.read_text(encoding="utf-8", errors="replace").splitlines()[:HEADER_LINES]
-        )
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError as exc:
+            audit.add("references", FAIL, f"{entry['path']} cannot be read: {exc.strerror}", rid)
+            continue
+        head = "\n".join(text.splitlines()[:HEADER_LINES])
         problems = []
         if not URL.search(head):
             problems.append("no source URL")
-        if not DATE.search(head):
+        if not has_date(head):
             problems.append("no fetch date (YYYY-MM-DD)")
         if path.name not in code:
             problems.append("no test reads it")
@@ -725,7 +770,7 @@ def copy_package(package: Path, destination: Path, links: tuple[str, ...]) -> No
     """Copy the package without its caches, linking heavy top-level directories.
 
     A linked directory is shared with the package: a command that writes a
-    cache there writes to the real one.
+    cache there writes to the real one. Every other symlink is followed.
     """
 
     def ignore(directory: str, names: list[str]) -> list[str]:
@@ -733,16 +778,20 @@ def copy_package(package: Path, destination: Path, links: tuple[str, ...]) -> No
         # mutated source of the same size written within the same second.
         skipped = [n for n in names if n in STALE]
         if Path(directory).resolve() == package:
-            skipped += [n for n in names if n in links]
+            skipped += [n for n in names if n in links and (package / n).is_dir()]
         return skipped
 
     try:
-        shutil.copytree(package, destination, ignore=ignore, symlinks=True)
+        # Symlinks are followed: a link kept as a link would let a command
+        # write through it to the real file.
+        shutil.copytree(
+            package, destination, ignore=ignore, symlinks=False, ignore_dangling_symlinks=True
+        )
     except (shutil.Error, OSError) as exc:
         raise AuditError(f"cannot copy the package: {exc}") from exc
     for name in links:
         source = package / name
-        if source.is_dir():
+        if source.is_dir() and not os.path.lexists(destination / name):
             os.symlink(source.resolve(), destination / name, target_is_directory=True)
 
 
@@ -773,8 +822,10 @@ def check_suite(
 def check_mutations(
     package: Path,
     ledger: Ledger,
+    references: dict,
     mutations: list[dict],
     checks: list[Path],
+    support: list[Path],
     audit: Audit,
     copy: Path | None,
     run_mutations: bool,
@@ -788,11 +839,17 @@ def check_mutations(
         )
         return
 
-    # Everything under the tests directory is a test, its helper or its data.
-    protected = list(checks)
+    # Tests, gates, everything under the tests directory, declared support
+    # paths and registered reference tables: changing any of them turns a test
+    # red without touching the code the claim is about.
+    protected = [*checks, *support]
     tests_dir = _inside(package, ledger.tests_dir)
     if tests_dir is not None and tests_dir.is_dir():
         protected.append(tests_dir)
+    for entry in references.values():
+        table = _inside(package, entry["path"])
+        if table is not None and table.exists():
+            protected.append(table)
 
     applicable: list[tuple[dict, Path, str]] = []
     for mutation in mutations:
@@ -805,7 +862,7 @@ def check_mutations(
             audit.add(
                 "mutations",
                 FAIL,
-                f"{mutation['file']} is a test, a gate, or a file beside the tests: "
+                f"{mutation['file']} is a test, a gate, test data or a test helper: "
                 "a mutation changes the code under test",
                 mid,
             )
@@ -820,10 +877,16 @@ def check_mutations(
             )
             continue
         relative = path.relative_to(package)
+        if any(part in STALE for part in relative.parts):
+            audit.add("mutations", FAIL, f"{mutation['file']} is in a cache, which is not copied", mid)
+            continue
         try:
             count = path.read_text(encoding="utf-8").count(mutation["find"])
         except UnicodeDecodeError:
             audit.add("mutations", FAIL, f"{mutation['file']} is not UTF-8", mid)
+            continue
+        except OSError as exc:
+            audit.add("mutations", FAIL, f"{mutation['file']} cannot be read: {exc.strerror}", mid)
             continue
         if count != 1:
             audit.add(
@@ -862,6 +925,7 @@ def check_mutations(
             )
             continue
         target = copy / relative
+        target.chmod(target.stat().st_mode | stat.S_IWUSR)
         original = target.read_text(encoding="utf-8")
         target.write_text(original.replace(mutation["find"], mutation["replace"]), encoding="utf-8")
         try:
@@ -897,9 +961,10 @@ def audit_package(
     references, claims, mutations = check_ledger(ledger, audit)
     tests = find_test_files(package, ledger)
     checks = tests + gate_files(package, ledger, audit)
+    support = support_files(package, ledger, audit)
     check_asserting(package, ledger, tests, audit)
     check_claims(package, ledger, claims, mutations, checks, audit)
-    check_references(package, ledger, references, claims, checks, audit)
+    check_references(package, ledger, references, claims, checks, support, audit)
     check_coverage(claims, audit)
 
     with tempfile.TemporaryDirectory(prefix="sim-audit-") as scratch:
@@ -910,7 +975,10 @@ def audit_package(
         check_quoted(package, ledger, claims, audit, copy, run_report, timeout)
         check_suite(ledger, audit, copy, run_tests, timeout)
         check_gates(ledger, audit, copy, run_gates, timeout)
-        check_mutations(package, ledger, mutations, checks, audit, copy, run_mutations, timeout)
+        check_mutations(
+            package, ledger, references, mutations, checks, support, audit, copy,
+            run_mutations, timeout,
+        )  # fmt: skip
     return audit
 
 
@@ -963,6 +1031,8 @@ def main(argv: list[str] | None = None) -> int:
         )
     except AuditError as exc:
         return refuse(str(exc))
+    except (OSError, ValueError) as exc:
+        return refuse(f"{type(exc).__name__}: {exc}")
 
     failed = audit.failed(args.strict)
     if args.json:

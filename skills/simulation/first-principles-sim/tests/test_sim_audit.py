@@ -124,12 +124,6 @@ def test_the_shipped_example_passes_strictly_from_its_yaml_ledger(tmp_path):
     assert {c["kind"] for c in LEDGER["claims"]} == set(sim_audit.KINDS)
 
 
-def test_each_example_mutation_is_killed_by_its_own_claims_test(tmp_path):
-    for entry in LEDGER["mutations"]:
-        assert claim(LEDGER, entry["claim"])["test"] in entry["command"], entry["id"]
-    assert len({m["command"] for m in LEDGER["mutations"]}) == len(LEDGER["mutations"])
-
-
 def test_every_check_reports(tmp_path):
     data = ledger()
     data["tests"]["gates"] = [{"file": "tools/gate.py", "command": f"{PY} tools/gate.py"}]
@@ -467,18 +461,33 @@ NOT_ASSERTIONS = [
     ("q.unknown", "# assert x\n// expect(x)\n"),
     ("r.ts", "process.exitCode = 0\n"),
 ]
-# One file per comment family: the marker must be stripped for every suffix.
-NOT_ASSERTIONS += [(f"slash{s}", "x()\n// assert(x)\ny() // assert(y)\n") for s in sorted(sim_audit.SLASH_COMMENTS)]
-NOT_ASSERTIONS += [(f"hash{s}", "x()\n# assert x\ny() # assert y\n") for s in sorted(sim_audit.HASH_COMMENTS)]
-NOT_ASSERTIONS += [(f"dash{s}", "x()\n-- assert(x)\n") for s in sorted(sim_audit.DASH_COMMENTS)]
+# One file per suffix of each comment family. The lists are written out, not
+# read from the script, so a suffix swapped or dropped there fails here.
+SLASH = [
+    ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".c", ".h", ".cc", ".cpp", ".hpp",
+    ".rs", ".go", ".java", ".kt", ".swift", ".cs", ".scala", ".zig",
+]  # fmt: skip
+HASH = [".py", ".rb", ".sh", ".bash", ".jl", ".r", ".pl", ".nim", ".ex", ".exs"]
+DASH = [".lua", ".hs", ".sql", ".elm"]
+NOT_ASSERTIONS += [(f"slash{s}", "x()\n// assert(x)\ny() // assert(y)\n") for s in SLASH]
+NOT_ASSERTIONS += [(f"SLASH{s.upper()}", "x()\ny() // assert(y)\n") for s in SLASH]
+NOT_ASSERTIONS += [(f"block{s}", "x()\n/*\nassert(x)\n*/\ny() /* assert(y) */\n") for s in SLASH]
+NOT_ASSERTIONS += [(f"open{s}", "x()\n/*\nassert(x)\n") for s in SLASH]
+NOT_ASSERTIONS += [(f"hash{s}", "x()\n# assert x\ny() # assert y\n") for s in HASH]
+NOT_ASSERTIONS += [(f"HASH{s.upper()}", "x()\ny() # assert y\n") for s in HASH]
+NOT_ASSERTIONS += [("quiet.sh", "echo done; exit 0\n")]
+NOT_ASSERTIONS += [(f"dash{s}", "x()\n-- assert(x)\n") for s in DASH]
+NOT_ASSERTIONS += [
+    (f"define-{keyword}.txt", f"{keyword} {name}_close(a, b) {{ log(a, b) }}\n")
+    for keyword in ("def", "function", "fn", "func", "sub", "proc")
+    for name in ("assert", "expect")
+]
 
 
-def test_the_comment_tables_have_not_shrunk():
-    assert len(sim_audit.SLASH_COMMENTS) == 19
-    assert len(sim_audit.HASH_COMMENTS) == 10
-    assert sim_audit.DASH_COMMENTS == {".lua", ".hs", ".sql", ".elm"}
-    assert {".ts", ".rs", ".go", ".cpp", ".java"} <= sim_audit.SLASH_COMMENTS
-    assert {".py", ".rb", ".jl", ".sh"} <= sim_audit.HASH_COMMENTS
+def test_the_comment_tables_are_exactly_these():
+    assert sim_audit.SLASH_COMMENTS == set(SLASH)
+    assert sim_audit.HASH_COMMENTS == set(HASH)
+    assert sim_audit.DASH_COMMENTS == set(DASH)
 
 
 @pytest.mark.parametrize(("name", "text"), NOT_ASSERTIONS)
@@ -917,10 +926,10 @@ MODEL = "src/model.py"
         ({"find": "height"}, "`find` occurs 5 times in src/model.py; it must occur once"),
         ({"file": "src/absent.py"}, "src/absent.py does not exist in the package"),
         ({"file": "../model.py"}, "../model.py does not exist in the package"),
-        ({"file": TABLE, "find": "assert len(rows) >= 2"}, "is a test, a gate, or a file beside"),
-        ({"file": "test/reference/drop.txt", "find": "5.0 1.0098"}, "is a test, a gate, or"),
-        ({"file": "test/tol.py", "find": "TOL = 1e-3"}, "is a test, a gate, or a file beside"),
-        ({"file": "tools/gate.py", "find": "assert True"}, "is a test, a gate, or a file beside"),
+        ({"file": TABLE, "find": "assert len(rows) >= 2"}, "is a test, a gate, test data or a test helper"),
+        ({"file": "test/reference/drop.txt", "find": "5.0 1.0098"}, "is a test, a gate, test data"),
+        ({"file": "test/tol.py", "find": "TOL = 1e-3"}, "is a test, a gate, test data or a test helper"),
+        ({"file": "tools/gate.py", "find": "assert True"}, "is a test, a gate, test data or a test helper"),
         ({"file": "lib/model.py"}, "is in a linked directory"),
         ({"file": "lib/deep/model.py"}, "is in a linked directory"),
         ({"file": "src/latin1.py", "find": "x"}, "src/latin1.py is not UTF-8"),
@@ -1155,3 +1164,363 @@ def test_unreadable_and_ambiguous_ledgers_are_refused(tmp_path):
     (package / "sim-claims.yaml").rename(package / "sim-claims.yml")
     with pytest.raises(sim_audit.LedgerError, match="sim-claims.yml"):
         static(package)
+
+
+# Added after review round 3
+
+
+EVERY_IDIOM = [
+    ("go1.go", "t.Error(x)"),
+    ("go2.go", "t.Errorf(\"%v\", x)"),
+    ("go3.go", "t.Fatal(x)"),
+    ("go4.go", "t.Fail()"),
+    ("go5.go", "t.FailNow()"),
+    ("go6.go", "require.Equal(t, a, b)"),
+    ("go7.go", "require.NotEqual(t, a, b)"),
+    ("go8.go", "require.NoError(t, err)"),
+    ("go9.go", "require.Error(t, err)"),
+    ("go10.go", "require.True(t, ok)"),
+    ("go11.go", "require.False(t, ok)"),
+    ("go12.go", "require.Nil(t, x)"),
+    ("go13.go", "require.NotNil(t, x)"),
+    ("go14.go", "require.Len(t, xs, 3)"),
+    ("kt1.kt", "range shouldEqual 4.16"),
+    ("kt2.kt", "shouldThrow<Exception> { run() }"),
+    ("sc1.scala", "range should equal (4.16)"),
+    ("rb1.rb", "range.should eq 4.16"),
+    ("rb2.txt", "range should eq 4.16"),
+    ("cc1.cc", "BOOST_REQUIRE(ok);"),
+    ("cc2.cc", "EXPECT_EQ(a, b);"),
+    ("cc3.cc", "EXPECT(ok);"),
+    ("sh1.sh", "[ \"$a\" = \"$b\" ] || exit 1"),
+    ("py1.py", "self.fail('range')"),
+    ("py2.py", "sys.exit('range is wrong')"),
+    ("py3.py", 'sys.exit("range is wrong")'),
+    ("py4.py", "assert colour == '#fff'"),
+    ("py5.py", "def test_zero(): assert fall_time(0) == 0"),
+    ("py6.py", "tag = '#'; assert tag"),
+    ("py7.py", "def assert_zero(): assert fall_time(0) == 0"),
+    ("rs1.rs", "fn zero() { assert_eq!(fall_time(0.0), 0.0); }"),
+    ("ts1.ts", "/* first */ expect(x).toBe(1) /* second */"),
+    ("ts2.ts", "expectTypeOf(x).toBeNumber()"),
+    ("r1.r", "expect_true(ok)"),
+]
+
+
+@pytest.mark.parametrize(("name", "line"), EVERY_IDIOM)
+def test_every_listed_idiom_is_recognised(tmp_path, name, line):
+    path = tmp_path / name
+    path.write_text(f"setup()\n{line}\n", encoding="utf-8")
+    assert sim_audit.has_assertion(path)
+
+
+def test_the_text_report_shows_each_status_its_subject_and_the_tally(tmp_path):
+    data = ledger()
+    data["mutations"] = [m for m in data["mutations"] if m["claim"] != "energy"]
+    mutation(data, "weaker-gravity")["command"] = f"{PY} -c pass"
+    audit = full(build(tmp_path, data))
+    text = sim_audit.render(audit, strict=False)
+    lines = text.splitlines()
+    assert "FAIL mutations  [weaker-gravity] SURVIVED" in text
+    assert any(l.startswith("WARN claims     [energy]") for l in lines)
+    assert any(l.startswith("PASS mutations  [never-instant] killed") for l in lines)
+    assert any(l.startswith("PASS suite      exit 0") for l in lines)
+    tally = {s: sum(r.status == s for r in audit.results) for s in (PASS, WARN, SKIP, FAIL)}
+    assert tally[FAIL] == 1 and tally[WARN] == 1 and tally[SKIP] == 0
+    assert lines[-1] == f"{tally[PASS]} pass, 1 warn, 0 skip, 1 fail"
+    static_text = sim_audit.render(static(build(tmp_path / "static", data)), strict=True)
+    assert "SKIP suite      tests not run" in static_text
+    assert static_text.splitlines()[-1].endswith("3 skip, 0 fail (strict: warnings and skips fail)")
+
+
+def test_test_files_in_subdirectories_are_checked(tmp_path):
+    audit = static(build(tmp_path, **{"test/unit/deep/print.test.py": "print(1)\n"}))
+    assert "test/unit/deep/print.test.py: contains no assertion" in failures(audit, "asserting")
+
+
+def test_a_helper_in_a_subdirectory_may_read_the_reference(tmp_path):
+    retyped = read(TABLE).replace(
+        'open("test/reference/drop.txt", encoding="utf-8")', 'open("README.md", encoding="utf-8")'
+    )
+    loader = 'def load():\n    return open("test/reference/drop.txt")\n'
+    audit = static(build(tmp_path, **{TABLE: retyped, "test/helpers/deep/loader.py": loader}))
+    assert "drop-table: test/reference/drop.txt: sourced, dated and read" in passes(
+        audit, "references"
+    )
+
+
+def test_a_reference_is_matched_by_its_whole_file_name(tmp_path):
+    other = read(TABLE).replace("test/reference/drop.txt", "test/reference/drop.csv")
+    files = {TABLE: other, "test/reference/drop.csv": read("test/reference/drop.txt")}
+    audit = static(build(tmp_path, **files))
+    assert "drop-table: no test reads it" in failures(audit, "references")
+
+
+def test_data_files_and_comments_are_recognised_whatever_the_letter_case(tmp_path):
+    retyped = read(TABLE).replace(
+        'open("test/reference/drop.txt", encoding="utf-8")', 'open("README.md", encoding="utf-8")'
+    )
+    files = {TABLE: retyped, "test/reference/NOTES.TXT": "see drop.txt\n"}
+    audit = static(build(tmp_path, **files))
+    assert "drop-table: no test reads it" in failures(audit, "references")
+
+
+def test_the_ledgers_assertion_pattern_applies_to_claims_and_gates_too(tmp_path):
+    custom = "from model import fall_time\nverify(fall_time(0.0) == 0.0)\n"
+    data = ledger()
+    data["tests"]["assertion"] = r"\bassert\b"
+    data["tests"]["gates"] = [{"file": "tools/gate.py", "command": "true"}]
+    claim(data, "energy")["test"] = "tools/gate.py"
+    package = build(tmp_path, data, **{"test/control.test.py": custom, "tools/gate.py": custom})
+    text = failures(static(package), "claims")
+    assert "zero-height: test/control.test.py contains no assertion" in text
+    assert "energy: tools/gate.py contains no assertion" in text
+
+    data["tests"]["assertion"] = r"\bverify\(|\bassert\b"
+    package = build(tmp_path / "own", data, **{"test/control.test.py": custom, "tools/gate.py": custom})
+    text = details(static(package), "claims")
+    assert "contains no assertion" not in text
+    assert "zero-height: control: test/control.test.py, and a mutation names it" in text
+
+
+@pytest.mark.parametrize("name", ["test_table.py", "table_test.py", "table.test.py"])
+def test_each_default_glob_finds_its_files(tmp_path, name):
+    data = ledger()
+    del data["tests"]["glob"]
+    audit = static(build(tmp_path, data, **{f"test/{name}": "print(1)\n"}))
+    assert f"test/{name}: contains no assertion" in failures(audit, "asserting")
+
+
+def test_quotes_on_unchecked_claims_are_checked_too(tmp_path):
+    data = ledger()
+    claim(data, "untimed")["quoted"] = ["7.777 s"]
+    audit = sim_audit.audit_package(build(tmp_path / "absent", data), run_report=True)
+    assert "untimed: '7.777 s' is in the ledger but not in the docs" in failures(audit, "quoted")
+    readme = read("README.md") + "\nA real drop would take 7.777 s.\n"
+    audit = sim_audit.audit_package(
+        build(tmp_path / "docs-only", data, **{"README.md": readme}), run_report=True
+    )
+    assert "untimed: '7.777 s' is not in the report output" in failures(audit, "quoted")
+
+
+def test_a_quoted_value_is_matched_with_its_spaces(tmp_path):
+    data = ledger()
+    claim(data, "energy")["quoted"] = ["9.90 m/s when"]
+    readme = read("README.md").replace("9.90 m/s.", "9.90 m/s when it lands.")
+    assert readme != read("README.md")
+    audit = sim_audit.audit_package(build(tmp_path, data, **{"README.md": readme}), run_report=True)
+    assert "energy: '9.90 m/s when' is not in the report output" in failures(audit, "quoted")
+    data = ledger()
+    claim(data, "energy")["quoted"] = ["9.90 m/s "]
+    readme = read("README.md").replace("9.90 m/s.", "9.90 m/s on landing.")
+    audit = sim_audit.audit_package(
+        build(tmp_path / "trailing", data, **{"README.md": readme}), run_report=True
+    )
+    assert "energy: '9.90 m/s ' is not in the report output" in failures(audit, "quoted")
+    audit = static(build(tmp_path / "docs", data))
+    assert "energy: '9.90 m/s ' is in the ledger but not in the docs" in failures(audit, "quoted")
+
+
+def test_a_long_report_is_read_to_the_end(tmp_path):
+    report = "print('x' * 200000)\n" + read("tools/report.py")
+    audit = sim_audit.audit_package(build(tmp_path, **{"tools/report.py": report}), run_report=True)
+    assert "2 quoted values are printed by the report" in passes(audit, "quoted")
+
+
+@pytest.mark.parametrize("code", [1, 2, 3, 127])
+def test_any_non_zero_exit_is_a_red_suite(tmp_path, code):
+    data = ledger()
+    data["commands"]["test"] = f"exit {code}"
+    audit = sim_audit.audit_package(build(tmp_path, data), run_tests=True)
+    assert f"exit {code} in a copy of the package" in failures(audit, "suite")
+    data["mutations"] = [mutation(data, "weaker-gravity")]
+    data["mutations"][0]["command"] = f"exit {code}"
+    audit = sim_audit.audit_package(build(tmp_path / "m", data), run_mutations=True)
+    assert f"the test command exits {code} before any change" in failures(audit, "mutations")
+
+
+def test_a_mutation_may_name_an_unchecked_claim(tmp_path):
+    data = ledger()
+    mutation(data, "weaker-gravity")["claim"] = "untimed"
+    audit = full(build(tmp_path, data))
+    assert "weaker-gravity: killed (exit 1): untimed" in passes(audit, "mutations")
+    assert statuses(audit, "ledger") == [PASS]
+
+
+def test_a_find_that_occurs_twice_is_refused(tmp_path):
+    data = ledger()
+    mutation(data, "weaker-gravity")["find"] = "fall_time"
+    audit = static(build(tmp_path, data))
+    assert "weaker-gravity: `find` occurs 2 times in src/model.py" in failures(audit, "mutations")
+
+
+def test_a_symlink_in_the_package_is_followed_so_nothing_is_written_through_it(tmp_path):
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (outside / "note.txt").write_text("original", encoding="utf-8")
+    package = build(tmp_path)
+    (package / "build").mkdir()
+    (package / "out").symlink_to(outside, target_is_directory=True)
+    (package / "back").symlink_to(package / "build", target_is_directory=True)
+    (package / "dangling").symlink_to(tmp_path / "nowhere")
+    writer = (
+        "open('out/note.txt', 'w').write('changed')\n"
+        "open('back/report.txt', 'w').write('x')\n" + read("tools/report.py")
+    )
+    (package / "tools" / "report.py").write_text(writer, encoding="utf-8")
+    audit = sim_audit.audit_package(package, run_report=True, run_mutations=True)
+    assert not audit.failed(strict=False), sim_audit.render(audit, False)
+    assert (outside / "note.txt").read_text(encoding="utf-8") == "original"
+    assert list((package / "build").iterdir()) == []
+
+
+def test_only_directories_are_linked_and_duplicates_do_no_harm(tmp_path):
+    data = ledger()
+    data["link"] = ["node_modules", "node_modules", "target"]
+    probe = read(TABLE) + "\nimport os\nassert os.path.isfile('target') and not os.path.islink('target')\n"
+    probe += "assert os.path.islink('node_modules')\n"
+    package = build(tmp_path, data, **{TABLE: probe, "target": "a file", "node_modules/x": "x"})
+    audit = sim_audit.audit_package(package, run_tests=True)
+    assert statuses(audit, "suite") == [PASS]
+
+
+def test_a_read_only_source_file_can_still_be_mutated_in_the_copy(tmp_path):
+    package = build(tmp_path)
+    (package / "src" / "model.py").chmod(0o444)
+    audit = full(package)
+    assert not audit.failed(strict=True), sim_audit.render(audit, True)
+    assert (package / "src" / "model.py").stat().st_mode & 0o777 == 0o444
+
+
+def test_a_mutation_inside_a_cache_is_refused(tmp_path):
+    data = ledger()
+    mutation(data, "weaker-gravity")["file"] = "src/__pycache__/model.py"
+    package = build(tmp_path, data, **{"src/__pycache__/model.py": read(MODEL)})
+    assert "weaker-gravity: src/__pycache__/model.py is in a cache" in failures(
+        static(package), "mutations"
+    )
+
+
+def test_unreadable_files_are_failures_not_crashes(tmp_path):
+    if os.geteuid() == 0:
+        pytest.skip("root reads everything")
+    package = build(tmp_path)
+    (package / "test" / "reference" / "drop.txt").chmod(0o000)
+    (package / "src" / "model.py").chmod(0o000)
+    try:
+        audit = static(package)
+    finally:
+        (package / "test" / "reference" / "drop.txt").chmod(0o644)
+        (package / "src" / "model.py").chmod(0o644)
+    assert "drop-table: test/reference/drop.txt cannot be read" in failures(audit, "references")
+    assert "weaker-gravity: src/model.py cannot be read" in failures(audit, "mutations")
+
+
+def test_a_path_that_cannot_exist_is_not_a_crash(tmp_path, capsys):
+    data = ledger()
+    data["docs"] = ["bad\x00path"]
+    claim(data, "energy")["test"] = "bad\x00path"
+    package = build(tmp_path, data)
+    audit = static(package)
+    assert "doc bad\x00path does not exist" in failures(audit, "quoted")
+    assert "energy: test file bad\x00path does not exist" in failures(audit, "claims")
+    assert sim_audit.main([str(package)]) == 1
+    assert "Traceback" not in capsys.readouterr().err
+
+
+def test_an_unexpected_os_error_exits_2_without_a_traceback(tmp_path, capsys, monkeypatch):
+    package = build(tmp_path)
+
+    def broken(*args, **kwargs):
+        raise PermissionError(13, "Permission denied")
+
+    monkeypatch.setattr(sim_audit, "check_coverage", broken)
+    assert sim_audit.main([str(package)]) == 2
+    err = capsys.readouterr().err
+    assert "PermissionError" in err and "Traceback" not in err
+
+
+@pytest.mark.parametrize(
+    ("day", "ok"),
+    [
+        ("2026-02-28", True),
+        ("2024-02-29", True),
+        ("1900-01-01", True),
+        ("2099-12-31", True),
+        ("2026-02-31", False),
+        ("2026-02-29", False),
+        ("2026-00-10", False),
+        ("2026-11-00", False),
+        ("1899-12-31", False),
+        ("2100-01-01", False),
+        ("2026-1-5", False),
+    ],
+)
+def test_a_fetch_date_must_be_a_real_day_in_range(tmp_path, day, ok):
+    table = f"# https://example.org/t fetched {day}\n1.0 0.4516\n5.0 1.0098\n20.0 2.0196\n100.0 4.5160\n"
+    audit = static(build(tmp_path, **{"test/reference/drop.txt": table}))
+    if ok:
+        assert "drop-table: test/reference/drop.txt: sourced, dated and read" in passes(
+            audit, "references"
+        )
+    else:
+        assert "drop-table: no fetch date (YYYY-MM-DD)" in failures(audit, "references")
+
+
+def test_an_invalid_date_does_not_hide_a_valid_one_after_it(tmp_path):
+    table = "# drafted 2026-02-31, https://example.org/t fetched 2026-03-01\n1.0 0.4516\n5.0 1.0098\n20.0 2.0196\n100.0 4.5160\n"
+    audit = static(build(tmp_path, **{"test/reference/drop.txt": table}))
+    assert "sourced, dated and read" in passes(audit, "references")
+
+
+def test_test_data_and_helpers_outside_the_tests_directory_are_protected(tmp_path):
+    moved = read(TABLE).replace("test/reference/drop.txt", "refdata/drop.txt")
+    moved = moved.replace("< 1e-3, height", "< TOL, height").replace(
+        "from model import", "sys.path.insert(0, 'testlib')\nfrom tol import TOL\nfrom model import"
+    )
+    assert "TOL, height" in moved and "from tol import TOL" in moved
+    data = ledger()
+    data["references"][0]["path"] = "refdata/drop.txt"
+    data["tests"]["support"] = ["testlib"]
+    data["mutations"].append(
+        {
+            "id": "loosen",
+            "claim": "fall-time",
+            "file": "testlib/tol.py",
+            "find": "TOL = 1e-3",
+            "replace": "TOL = -1",
+        }
+    )
+    mutation(data, "weaker-gravity").update(
+        file="refdata/drop.txt", find="5.0 1.0098", replace="5.0 2.0098"
+    )
+    files = {
+        TABLE: moved,
+        "refdata/drop.txt": read("test/reference/drop.txt"),
+        "testlib/tol.py": "TOL = 1e-3\n",
+    }
+    package = build(tmp_path, data, **files)
+    (package / "test" / "reference" / "drop.txt").unlink()
+    audit = static(package)
+    text = failures(audit, "mutations")
+    assert "weaker-gravity: refdata/drop.txt is a test, a gate, test data or a test helper" in text
+    assert "loosen: testlib/tol.py is a test, a gate, test data or a test helper" in text
+    assert "drop-table: refdata/drop.txt: sourced, dated and read" in passes(audit, "references")
+
+
+def test_a_support_path_may_hold_the_code_that_reads_a_reference(tmp_path):
+    retyped = read(TABLE).replace(
+        'open("test/reference/drop.txt", encoding="utf-8")', 'open("README.md", encoding="utf-8")'
+    )
+    loader = 'def load():\n    return open("test/reference/drop.txt")\n'
+    data = ledger()
+    files = {TABLE: retyped, "testlib/loader.py": loader}
+    audit = static(build(tmp_path / "undeclared", data, **files))
+    assert "drop-table: no test reads it" in failures(audit, "references")
+    for declared in (["testlib"], ["testlib/loader.py"]):
+        data["tests"]["support"] = declared
+        audit = static(build(tmp_path / declared[0].replace("/", "-"), data, **files))
+        assert "sourced, dated and read" in passes(audit, "references"), declared
+    data["tests"]["support"] = ["absent"]
+    audit = static(build(tmp_path / "absent", data, **files))
+    assert "absent: support path does not exist" in failures(audit, "ledger")

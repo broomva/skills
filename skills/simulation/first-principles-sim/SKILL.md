@@ -109,7 +109,15 @@ cloud-chamber example for each step. For a field other than particle physics, re
 
 A claim's `test` is a file the test command runs, or a file listed under `tests.gates` with
 its own command (a check run separately, such as a headless render). A mutation's `file` is
-code under test: not a test, not a gate, and nothing in the tests directory.
+code under test. The audit refuses one that touches a test, a gate, anything in the tests
+directory, a registered reference table, or a path listed under `tests.support` (helpers and
+data kept elsewhere). Changing any of those turns a test red without touching the code the
+claim is about.
+
+A mutation must make its claim false in the code, and that is worth checking by hand. The
+cloud chamber's first control mutation forced every ion to seed a droplet, and the test stayed
+green: where the nucleation rate is zero the wait came out infinite and the droplet fell
+outside the box, so the claim still held.
 
 Give each mutation the `command` that runs only its claim's test. With the whole suite as the
 command, whichever assertion fails first kills the mutation, and it may belong to another
@@ -129,23 +137,29 @@ be predictions and conventions. That is the honest result. Say it in the README.
 | The test command exits 0 in a copy of the package | That the tests test anything. Only mutations show that |
 | Every test file contains an assertion | That the assertion is about the claim |
 | A reference file has a URL and a date, and code beside the tests names the file | That the table was copied correctly, that it is the right table, or that the code which names it also uses it. A test that loads tables by listing a directory must still name each file |
-| A string the ledger quotes appears in the docs and in the report's standard output | Numbers in the docs that the ledger does not list. And a short string such as `1.1` matches by accident; quote enough digits or the unit |
+| A string the ledger quotes appears in the docs and in the report's standard output | Numbers in the docs that the ledger does not list. That the report computes anything: a report command that prints the README would pass. And a short string such as `1.1` matches by accident; quote enough digits or the unit |
 | A mutation turns its test command red | That it died for the right reason. A mutation that breaks the code outright kills any test, a test that fails for another reason also kills it, and nothing checks that the command runs the claim's `test` file |
-| With `--run-gates`, each gate's command exits 0 | Without the flag, anything about a gate beyond the file existing and asserting. It reports SKIP |
+| With `--run-gates`, each gate's command exits 0 | That the command runs the gate's file. Without the flag, anything about a gate beyond the file existing and asserting; it reports SKIP |
+| A mutation does not touch a test, a gate, the tests directory, a registered reference table or a `tests.support` path | A helper or data file kept elsewhere and not declared |
 | The ledger has a control, an anchor, a limit and a mutation | That an `independent` check really is. A closed-form solution of the equation being solved verifies the solver, not the physics both sides assume |
 | A checked claim has a mutation (a warning if not) | That the prose labels predictions as predictions |
 
-Three more limits:
+More limits:
 
 - **The package must run from a copy of its own directory.** Commands run in a temporary copy,
   so tests that import a sibling package fail there. The `suite` check says so when it happens.
+  Symlinks in the package are followed when it is copied, so a link to a large directory is
+  copied in full.
+- **Tests need their own directory.** Everything under `tests.dir` is treated as a test, a
+  helper or test data, so source files kept beside their tests cannot be mutated.
 - **Linked directories are shared.** `node_modules`, `.venv`, `venv` and `target` (or the
   names under `link`) are symlinked into the copy, so a command that writes a cache there
   writes into the real one. The audit refuses a mutation inside a linked directory. If one of
   those names holds your source, set `link` in the ledger.
 - **The assertion detector is a list of patterns.** It strips comments for the languages it
   knows but does not parse strings, and it counts `throw`, `raise` and a non-zero `exit` as
-  ways to fail. For a framework it does not know, set `tests.assertion` in the ledger.
+  ways to fail. For a framework it does not know, set `tests.assertion` in the ledger. The
+  audit trusts that pattern: one that matches everything makes every file pass.
 
 These are what the review in step 11 is for.
 
@@ -188,12 +202,17 @@ python3 tests/run_mutants.py       # the audit's own tests against changes to th
 tests copy it, break one thing at a time, and check that the audit names it.
 
 `run_mutants.py` holds the audit to its own rule, more strictly than the audit holds a
-simulation. It generates changes to `scripts/sim_audit.py` from the source (every single-line
-condition forced true and false, every failure, warning and skip reported as a pass, every
-assertion pattern removed, every element of a constant list removed), adds a hand-written
-list for what those cannot express, and requires the tests to fail for each one. A survivor
-must be listed with the reason it changes nothing. It cannot tell a mutant that a test caught
-from one that died because the change raised an exception.
+simulation. It generates changes to `scripts/sim_audit.py` from the source: every single-line
+condition forced true and false; every failure, warning and skip reported as a pass; every
+assertion pattern, and every alternative inside one, removed; every element of a constant
+list and every claim kind removed. It adds a hand-written list for what those cannot express,
+and requires the tests to fail for each one. A survivor must be listed with the reason it
+changes nothing.
+
+It is not exhaustive. Conditions that span several lines, arithmetic and string formatting are
+covered only by the hand-written list, and in each of three review rounds a reviewer wrote
+further changes that survived. It also cannot tell a mutant that a test caught from one that
+died because the change raised an exception.
 
 The cloud chamber's ledger is the real-data case. On 2026-11-13 the audit killed nine of its
 eleven mutations and reported two survivors, both gaps in that package's tests (see

@@ -189,8 +189,15 @@ Avoid equivalent mutations: flipping the sign of an azimuth drawn uniformly from
 changes nothing statistically, and its survival means nothing.
 
 Do not use a mutation that merely breaks the code: a syntax error turns every test red and
-proves nothing about the claim. The audit refuses a mutation of a test, a gate, or anything in
-the tests directory, because changing a tolerance or a table also turns the test red.
+proves nothing about the claim. The audit refuses a mutation of a test, a gate, a registered
+reference table, or anything in the tests directory or under `tests.support`, because changing
+a tolerance or a table also turns the test red.
+
+Check that the mutation makes the claim false. The cloud chamber's first mutation for "no
+droplets form outside the sensitive layer" set every ion's chance of seeding to one. The test
+stayed green, and the test was right: where the nucleation rate is zero the wait is infinite,
+the droplet lands outside the box, and none is added. The claim still held. Adding one per
+second to the rate does break it, and the test catches that.
 
 Give each mutation the command that runs only its claim's test. Under the whole suite, a
 mutation is killed by whichever assertion fails first.
@@ -204,8 +211,9 @@ package's own files. Directories listed under `link` (by default `node_modules`,
 into the real one. The audit refuses a mutation inside a linked directory. Because commands run
 in the copy, the package's tests must not need files outside its own directory.
 
-The cloud chamber's ledger has eleven mutations for its twenty-two checked claims. The audit
-warns for the other eleven.
+The cloud chamber's ledger has eleven mutations for its twenty-two checked claims, and the
+audit warns for the other eleven. Ten of the mutations run only the test of the claim they
+name; `engine-skips-cap` has no test of its own and runs the whole suite.
 
 ### What the first real run found
 

@@ -29,13 +29,19 @@ defaults:
 
 jobs:
   test:
-    name: pytest (Python ${{ matrix.python }})
-    runs-on: ubuntu-latest
+    # macOS as well: its file system ignores letter case, which is what the
+    # file-identity checks exist for, and Linux skips that test.
+    name: pytest (Python ${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
+        os: [ubuntu-latest]
         python: ["3.11", "3.12"]
+        include:
+          - os: macos-latest
+            python: "3.12"
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python }}
