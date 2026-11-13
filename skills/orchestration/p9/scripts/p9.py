@@ -2511,14 +2511,17 @@ def _branch_changes(root: Path, deadline: float) -> list[str]:
     return [ln for ln in (out or "").splitlines() if ln.strip()]
 
 
-def _needles(path: str) -> list[str]:
-    """What a doc would say to mention `path`: the path itself, and the file
-    name when it is distinctive enough not to match half the tree."""
+def _needles(path: str, name_counts: dict[str, int] | None = None) -> list[str]:
+    """What a doc would say to mention `path`: the path itself, and the bare
+    file name only when it names one file in the repo. Dogfooding on a
+    monorepo showed why: `conftest.py` exists in dozens of directories, and
+    every README that mentioned any of them became a "stale doc" item."""
     name = Path(path).name
     out = [path]
-    if len(name) >= 8 and name not in ("__init__.py", "index.ts", "index.tsx",
-                                       "README.md", "SKILL.md", "mod.rs",
-                                       "package.json", "Cargo.toml"):
+    unique = name_counts is None or name_counts.get(name, 0) <= 1
+    if unique and len(name) >= 8 and name not in (
+            "__init__.py", "index.ts", "index.tsx", "README.md", "SKILL.md",
+            "mod.rs", "package.json", "Cargo.toml"):
         out.append(name)
     return out
 
@@ -2544,7 +2547,13 @@ def _harvest_docs(root: Path, changed: list[str], pr: int | None,
     checkout when the repo is unknown) keeps two repos' same-named docs
     apart in the seen-ledger."""
     code = [p for p in changed if not p.endswith((".md", ".mdx"))][:40]
-    needles = sorted({n for p in code for n in _needles(p)})
+    listed = _git(["ls-files"], root, deadline=deadline)
+    if listed is None:
+        return []
+    counts: dict[str, int] = {}
+    for f in listed.splitlines():
+        counts[Path(f).name] = counts.get(Path(f).name, 0) + 1
+    needles = sorted({n for p in code for n in _needles(p, counts)})
     if not needles:
         return []
     args = ["grep", "-l", "-F"]

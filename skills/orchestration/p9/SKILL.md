@@ -308,7 +308,7 @@ and the agent pushes the other two (`p9 wait-queue push --source <s> --item`):
 | 1 | **session** | the agent: its own follow-ups for this wait |
 | 2 | **memory** | harvest: this project's memory notes only (`~/.claude/projects/<this checkout or its main checkout>/memory/*.md`, not `MEMORY.md`) changed in the last 24 h that say "needs follow-up". Other projects' notes are never read. |
 | 3 | **graph** | harvest: `research/entities/**` pages that mention a file this branch changed and the branch did not update |
-| 4 | **docs** | harvest: any other `.md`/`.mdx` that mentions a changed file the branch did not update |
+| 4 | **docs** | harvest: any other `.md`/`.mdx` that mentions a changed file the branch did not update. A mention is the file's path, or its bare name only when no other tracked file shares it (in a monorepo, `conftest.py` is not a mention) |
 | 5 | **linear** | the agent: tickets it pulls via the Linear MCP (a script cannot reach MCP) |
 
 Harvest runs on `p9 watch`, `p9 wait-for`, the PostToolUse hook and

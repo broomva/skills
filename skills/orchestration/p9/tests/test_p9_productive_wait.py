@@ -855,3 +855,33 @@ class TestRoundTwoInstall:
         path.write_text('{"model": "x"}')
         p9.cmd_hook_install(self._args(path, str(_SCRIPT), uninstall=True))
         assert path.read_text() == '{"model": "x"}'
+
+
+# ── dogfood regression (PR #313 on broomva/skills) ──────────────────────────
+class TestDogfood:
+    @pytest.fixture(autouse=True)
+    def _on(self, monkeypatch):
+        monkeypatch.setenv("BROOMVA_P9_HARVEST", "1")
+
+    def test_a_common_file_name_is_not_a_mention(self, p9, tmp_path):
+        """Changing one of many conftest.py files must not flag every doc
+        that mentions some other conftest.py."""
+        work = _make_tree(tmp_path)
+        _git(work, "checkout", "-q", "main")
+        for d in ("pkg_a", "pkg_b"):
+            (work / d).mkdir()
+            (work / d / "conftest.py").write_text("x = 1\n")
+        (work / "pkg_b/README.md").write_text("Fixtures live in conftest.py.\n")
+        (work / "docs/testing.md").write_text("See pkg_a/conftest.py.\n")
+        _git(work, "add", "-A")
+        _git(work, "commit", "-qm", "pkgs")
+        _git(work, "push", "-q", "origin", "main")
+        _git(work, "fetch", "-q", "origin")
+        _git(work, "checkout", "-q", "feature")
+        _git(work, "rebase", "-q", "main")
+        (work / "pkg_a/conftest.py").write_text("x = 2\n")
+        _git(work, "commit", "-qam", "touch a conftest")
+        docs = {it.item.split()[1] for it in p9.harvest_queue(pr=7, cwd=work)}
+        assert "pkg_b/README.md" not in docs      # bare common name: not a mention
+        assert "docs/testing.md" in docs          # full path: a mention
+        assert "docs/guide.md" in docs            # unique name still counts
