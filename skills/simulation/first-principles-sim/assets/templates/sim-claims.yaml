@@ -1,0 +1,82 @@
+# Claim ledger for a simulation package. Copy to <package>/sim-claims.yaml and
+# replace every entry. Audit with:
+#
+#   python3 scripts/sim_audit.py <package> --run-report --run-mutations
+#
+# Write the ledger before the code. Each quantity the package states gets one
+# claim, and the claim's kind says what enforces it.
+
+# The thing a viewer will see or hear, which no code is allowed to draw.
+phenomenon: "A falling body takes longer to land from higher up."
+
+# Prose that quotes numbers. Every `quoted` string below must appear here.
+docs:
+  - README.md
+
+tests:
+  dir: test
+  glob: "*.test.py"
+
+commands:
+  test: "python3 test/fall.test.py"
+  # Prints every number the docs quote. Nothing else may be quoted.
+  report: "python3 tools/report.py"
+
+# Directories linked into the mutation copy instead of copied.
+link:
+  - node_modules
+
+# Published tables, stored with their source. The first 40 lines of each file
+# must carry a URL and a fetch date (YYYY-MM-DD), and a test must read the file.
+references:
+  - id: drop-table
+    path: test/reference/drop.txt
+
+claims:
+  # Checked kinds need `test`. A checked claim with no mutation is a warning.
+  - id: fall-time
+    kind: reference          # compared with a published table or value
+    statement: "Fall time from 5 m and 20 m matches the table within 0.01 s."
+    test: test/fall.test.py
+    reference: drop-table
+    quoted:
+      - "1.010 s"
+
+  - id: fall-time-integrated
+    kind: independent        # the same quantity computed another way
+    statement: "The closed form matches a step-by-step integration within 0.1%."
+    test: test/fall.test.py
+
+  - id: energy
+    kind: conservation       # a conservation law or an identity of the equations
+    statement: "Kinetic energy at the ground equals the potential energy lost."
+    test: test/fall.test.py
+
+  - id: zero-height
+    kind: control            # a null input that must give a null output
+    statement: "From zero height the fall takes no time."
+    test: test/fall.test.py
+
+  # Unchecked kinds need only a statement. The docs must label them the same way.
+  - id: terminal-speed
+    kind: prediction         # a model result with no measurement to compare
+    statement: "With drag added, a 1 cm steel ball would reach 30 m/s."
+
+  - id: g-value
+    kind: convention         # a choice or typical value, not a measurement
+    statement: "g is 9.81 m/s² everywhere."
+
+  - id: no-drag
+    kind: omitted            # physics left out
+    statement: "Air drag and buoyancy."
+
+# One-line changes to the code that must turn a test red. Each runs in a copy
+# of the package. `find` must occur exactly once in `file`.
+mutations:
+  - id: halve-g
+    claim: fall-time
+    file: src/model.py
+    find: "G = 9.81"
+    replace: "G = 4.9"
+    # Optional; defaults to commands.test.
+    command: "python3 test/fall.test.py"

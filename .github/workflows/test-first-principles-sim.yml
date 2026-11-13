@@ -1,0 +1,49 @@
+name: test-first-principles-sim
+
+# Python test gate for the `first-principles-sim` skill
+# (skills/simulation/first-principles-sim/). Path-filtered so it runs only when
+# that skill changes. BRO-3709.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/simulation/first-principles-sim/**'
+      - '.github/workflows/test-first-principles-sim.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/simulation/first-principles-sim/**'
+      - '.github/workflows/test-first-principles-sim.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-first-principles-sim-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/simulation/first-principles-sim
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Tests
+        run: python -m pytest tests/ -v
+      - name: Skillify gate
+        run: python3 ../../tooling/skillify/scripts/skillify_check.py . --run-tests
