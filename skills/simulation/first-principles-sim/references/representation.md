@@ -55,9 +55,12 @@ This is the reason the choice belongs in this skill.
   from their buffer. Reading a float texture needs the same extension as writing one (below).
   An ordinary 8-bit canvas keeps 8 bits per channel, which is enough to measure where a track
   is and not enough to check a number.
-- **Shader arithmetic is at most 32-bit, and often less exact than that.** Only values declared
-  `highp` are 32-bit; `mediump` can be 16-bit on phones, and built-in functions are not required
-  to round correctly. A value also survives being written only at the precision of its target:
+- **Count on no more than 32-bit precision in a shader, and often less.** The shading language
+  has no 64-bit type. Its precision qualifiers set minimums, not exact sizes: `highp` floats
+  must carry at least 32-bit precision, `mediump` at least 16-bit, and an implementation may
+  give more than the minimum, so the same shader can be more exact on a desktop than on a
+  phone. Built-in functions are not required to round correctly. Declare `highp` for anything
+  you intend to check. A value also survives being written only at the precision of its target:
   32 bits per component in a 32-bit float format such as `RGBA32F`, 16 in `RGBA16F`, 8 in an
   ordinary canvas. Results differ slightly between graphics drivers, so a tolerance that passes
   on one machine may fail on another.
