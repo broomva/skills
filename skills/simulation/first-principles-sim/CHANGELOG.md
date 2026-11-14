@@ -5,6 +5,16 @@ All notable changes to `first-principles-sim` are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.1.1] — 2026-11-14
+
+Reference only; the audit script is unchanged (BRO-3741).
+
+- `references/representation.md`: how to hold and show the state. A table from state type to
+  representation and display; drawing versus computing on the graphics processor and what each
+  does to verification; where WebGL2 fits; where it does not, why, and what to use instead
+  (WebGPU, the processor with WebAssembly, Web Audio, a 2D canvas, offline compute).
+- `SKILL.md` step 5 and the reading list point to it.
+
 ## [0.1.0] — 2026-11-13
 
 First release (BRO-3709), distilled from the cloud-chamber build (BRO-3705).

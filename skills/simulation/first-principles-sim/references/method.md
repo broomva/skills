@@ -275,5 +275,5 @@ Three tables, generated from the ledger by hand:
 ## In CI
 
 Pin the runtime version. Give statistical tests a timeout that fits the slowest runner. Run the
-audit with `--run-report --run-mutations` once the package passes it; until then, the survivors
+audit with `--run-report --run-mutations --run-gates` once the package passes it; until then, the survivors
 are tickets. The cloud chamber's CI does not run the audit yet, for that reason.
