@@ -2,7 +2,7 @@
 name: first-principles-sim
 tier: D
 category: simulation
-version: 0.1.0
+version: 0.1.1
 description: >-
   EXPERIMENTAL. Build a simulation in which the thing you see or hear is never drawn: model
   the mechanism (source, medium, interaction, state, observation), let the
@@ -56,6 +56,9 @@ droplets. If a `drawTrack` function exists, the simulation is an animation.
 Read [references/method.md](references/method.md) before starting; it has the reasoning and the
 cloud-chamber example for each step. For a field other than particle physics, read
 [references/domains.md](references/domains.md) for the mechanism chain and the anchors to check.
+Before choosing how to hold and show the state, read
+[references/representation.md](references/representation.md): which representation fits which
+state, when WebGL2 is the right renderer, and when it is not.
 
 1. **Decide whether it fits.** You need a mechanism with known laws and at least one quantity
    someone has measured or derived. If neither exists, say so and stop: the result would be an
@@ -72,6 +75,8 @@ cloud-chamber example for each step. For a field other than particle physics, re
    one below it passes against its anchor. A wrong stopping power makes every track wrong, and
    the track will not tell you.
 5. **Observe without drawing.** The renderer or the audio output reads state and nothing else.
+   Choose the representation from the state, and the renderer last; keep every stage you
+   check against a reference on the processor, not in a shader.
    Then measure the output itself, headless, against the same anchors: a track's length in
    pixels against the published range, a tone's pitch against the frequency that the string's
    length, tension and mass per length give.

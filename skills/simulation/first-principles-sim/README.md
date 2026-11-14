@@ -6,6 +6,8 @@ number it states.
 - [SKILL.md](SKILL.md): the arc and the claim kinds.
 - [references/method.md](references/method.md): each step, with its reason and an example.
 - [references/domains.md](references/domains.md): how the method applies to other fields.
+- [references/representation.md](references/representation.md): how to hold and show the state,
+  and when WebGL2 fits.
 - [scripts/sim_audit.py](scripts/sim_audit.py): the audit.
 
 ## Install
