@@ -1122,6 +1122,12 @@ def test_a_ledger_with_no_claims_fails(tmp_path):
         (lambda d: d["tests"].update(gates=[{"command": "x"}]), "needs a `file` and a `command`"),
         (lambda d: d["tests"].update(gates=[{"file": " ", "command": "x"}]), "needs a `file`"),
         (lambda d: d["tests"].update(gates=[{"file": "x", "command": " "}]), "needs a `file`"),
+        (
+            lambda d: d["tests"].update(
+                gates=[{"file": "tools/g.py", "command": "a"}, {"file": "tools/g.py", "command": "b"}]
+            ),
+            "lists tools/g.py twice",
+        ),
         (lambda d: d.update(docs=[5]), "`docs` must be a list"),
         (lambda d: d.update(docs=[" "]), "`docs` must be a list"),
         (lambda d: d.update(link=["../x"]), "top-level directory names"),
@@ -1699,3 +1705,63 @@ def test_a_registered_table_does_not_count_as_reading_itself(tmp_path):
     data["references"][0]["path"] = "test/reference/drop.py"
     audit = static(build(tmp_path / "read", data, **{TABLE: reading, "test/reference/drop.py": table}))
     assert "drop-table: test/reference/drop.py: sourced, dated and read" in passes(audit, "references")
+
+
+# Added for the fourth CodeRabbit round
+
+
+def test_compiled_files_in_a_cache_are_not_tests(tmp_path):
+    files = {
+        "test/__pycache__/drop.test.py": "print(1)\n",
+        "test/.pytest_cache/x.test.py": "print(1)\n",
+        "test/deep/__pycache__/table.test.py": "print(1)\n",
+        "test/.git/y.test.py": "print(1)\n",
+    }
+    audit = static(build(tmp_path, **files))
+    assert "4 test files, each with an assertion" in passes(audit, "asserting")
+    assert failures(audit, "asserting") == ""
+
+
+def test_a_gate_or_test_file_that_is_not_source_does_not_name_a_table(tmp_path):
+    retyped = read(TABLE).replace(
+        'open("test/reference/drop.txt", encoding="utf-8")', 'open("README.md", encoding="utf-8")'
+    )
+    data = ledger()
+    data["tests"]["gates"] = [{"file": "tools/manifest.yaml", "command": "true"}]
+    data["tests"]["glob"] = ["*.test.py", "*.test.yaml"]
+    files = {
+        TABLE: retyped,
+        "tools/manifest.yaml": "tables: [drop.txt]\n",
+        "test/tables.test.yaml": "assert: drop.txt\n",
+    }
+    audit = static(build(tmp_path, data, **files))
+    assert "drop-table: no test reads it" in failures(audit, "references")
+
+
+def test_each_mutation_runs_in_its_own_fresh_copy(tmp_path):
+    data = ledger()
+    data["commands"]["test"] = "touch dirty; " + data["commands"]["test"]
+    clean = "test ! -e dirty && touch dirty && "
+    data["mutations"] = [mutation(data, "weaker-gravity"), mutation(data, "never-instant")]
+    data["mutations"][0]["command"] = clean + f"{PY} test/table.test.py"
+    data["mutations"][1]["command"] = clean + f"{PY} test/control.test.py"
+    data["mutations"].append(
+        {
+            "id": "harmless",
+            "claim": "energy",
+            "file": "src/model.py",
+            "find": '"""Speed on reaching the ground, m/s."""',
+            "replace": '"""Speed at the ground, m/s."""',
+            "command": f"test ! -e dirty && {PY} test/energy.test.py",
+        }
+    )
+    package = build(tmp_path, data)
+    audit = sim_audit.audit_package(package, run_mutations=True)
+    text = details(audit, "mutations")
+    assert "before any change" not in text
+    # The baseline leaves `dirty` behind, so the mutated run of the first two
+    # fails for that reason: one copy per mutation, not one per run.
+    assert "weaker-gravity: killed" in text and "never-instant: killed" in text
+    assert "harmless: SURVIVED" in text
+    assert not (package / "dirty").exists()
+    assert statuses(audit, "suite") == [PASS]

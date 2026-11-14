@@ -44,6 +44,9 @@ jobs:
             python: "3.12"
     steps:
       - uses: actions/checkout@v4
+        with:
+          # The steps below run code from the pull request.
+          persist-credentials: false
       - name: Set up Python ${{ matrix.python }}
         uses: actions/setup-python@v5
         with:

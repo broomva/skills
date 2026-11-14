@@ -52,7 +52,10 @@ claims:
   # Checked kinds need `test`. A checked claim with no mutation is a warning.
   - id: fall-time
     kind: reference          # compared with a published table or value
-    statement: "Fall time from 1, 5, 20 and 100 m matches the table within 0.001 s."
+    # In this example the table was computed once from the same formula, so
+    # this is a regression check standing in for a published table. A real
+    # package stores a table it downloaded; that is what makes it an anchor.
+    statement: "Fall time from 1, 5, 20 and 100 m matches the stored table within 0.001 s (a regression check here; see the comment)."
     test: test/table.test.py
     reference: drop-table    # or `source: "<citation>"` for one typed-in value
     # Strings, in quotes, with enough digits or a unit to be unmistakable.

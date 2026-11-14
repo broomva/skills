@@ -301,6 +301,11 @@ def parse_ledger(data: dict) -> Ledger:
             or not gate["command"].strip()
         ):
             raise LedgerError("each `tests.gates` entry needs a `file` and a `command`")
+        if gate["file"] in gates:
+            raise LedgerError(
+                f"`tests.gates` lists {gate['file']} twice; give each command its own gate file, "
+                "or join the commands with `&&`"
+            )
         gates[gate["file"]] = gate["command"]
 
     entries = {}
@@ -480,7 +485,9 @@ def find_test_files(package: Path, ledger: Ledger) -> list[Path]:
     return [
         path
         for path in sorted(root.rglob("*"))
-        if path.is_file() and any(fnmatch.fnmatch(path.name, g) for g in ledger.globs)
+        if path.is_file()
+        and any(fnmatch.fnmatch(path.name, g) for g in ledger.globs)
+        and not any(part in STALE for part in path.relative_to(root).parts)
     ]
 
 
@@ -716,10 +723,10 @@ def check_references(
             continue
         used.add(rid)
 
-    # Code that could load a table: the checks, and source files beside the
-    # tests or under a declared support path.
+    # Code that could load a table: source files among the tests and gates,
+    # beside the tests, or under a declared support path.
     # A manifest, a checksum list or a README that names the table is not code.
-    readers = set(checks)
+    readers = {p for p in checks if is_source(p)}
     tests_dir = _inside(package, ledger.tests_dir)
     for place in [tests_dir, *support]:
         if place is None:
@@ -1037,26 +1044,32 @@ def check_mutations(
         return
 
     baselines: dict[str, int] = {}
-    for mutation, relative, command in applicable:
+    for number, (mutation, relative, command) in enumerate(applicable):
         mid = mutation["id"]
-        if command not in baselines:
-            baselines[command], _ = run(command, copy, timeout)
-        if baselines[command] != 0:
-            audit.add(
-                "mutations",
-                FAIL,
-                f"the test command exits {baselines[command]} before any change: {command}",
-                mid,
-            )
-            continue
-        target = copy / relative
-        target.chmod(target.stat().st_mode | stat.S_IWUSR)
-        original = target.read_text(encoding="utf-8")
-        target.write_text(original.replace(mutation["find"], mutation["replace"]), encoding="utf-8")
+        # Each mutation gets its own copy: a run that leaves a lock file or
+        # changes a fixture must not decide the result of the next one.
+        fresh = copy.parent / f"mutation-{number}"
+        copy_package(package, fresh, ledger.links)
         try:
-            code, _ = run(command, copy, timeout)
+            if command not in baselines:
+                baselines[command], _ = run(command, fresh, timeout)
+            if baselines[command] != 0:
+                audit.add(
+                    "mutations",
+                    FAIL,
+                    f"the test command exits {baselines[command]} before any change: {command}",
+                    mid,
+                )
+                continue
+            target = fresh / relative
+            target.chmod(target.stat().st_mode | stat.S_IWUSR)
+            original = target.read_text(encoding="utf-8")
+            target.write_text(
+                original.replace(mutation["find"], mutation["replace"]), encoding="utf-8"
+            )
+            code, _ = run(command, fresh, timeout)
         finally:
-            target.write_text(original, encoding="utf-8")
+            shutil.rmtree(fresh, ignore_errors=True)
         if code == 0:
             audit.add(
                 "mutations",

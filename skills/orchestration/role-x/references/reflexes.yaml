@@ -671,3 +671,33 @@ reflexes:
     line: "Turning a working session into a tested, registered skill is the `skillify` skill."
     signature: [{tool: Skill, name: skillify}]
     source: "skills/tooling/skillify/SKILL.md"
+
+  - id: skill.first-principles-sim
+    kind: skill
+    skill: first-principles-sim
+    skill_source: skills/simulation/first-principles-sim/SKILL.md
+    routing: skills/simulation/first-principles-sim/evals/prompts.json
+    status: listed
+    m3: "no sealed held-out set yet; on the skill's own 13 author-written eval prompts: recall 0.29 (2/7), false fire 0.0 (0/6)"
+    priority: 39
+    when:
+      - phrases: [from first principles, physically accurate, a realistic simulation of,
+                  audit this simulation]
+    line: "Building a simulation from its mechanism and auditing its claims is the `first-principles-sim` skill."
+    signature: [{tool: Skill, name: first-principles-sim}]
+    source: "skills/simulation/first-principles-sim/SKILL.md"
+
+  - id: skill.motion-lab
+    kind: skill
+    skill: motion-lab
+    skill_source: skills/video/motion-lab/SKILL.md
+    routing: skills/video/motion-lab/evals/prompts.json
+    status: listed
+    m3: "no sealed held-out set yet; on the skill's own 10 author-written eval prompts: recall 0.17 (1/6), false fire 0.00 (0/4)"
+    priority: 39
+    when:
+      - phrases: [motion lab, render this animation, render contract, contact sheet, animated loop,
+                  loop hiccup]
+    line: "Directed, reproducible code-first motion with a render contract is the `motion-lab` skill."
+    signature: [{tool: Skill, name: motion-lab}]
+    source: "skills/video/motion-lab/SKILL.md"
