@@ -1046,13 +1046,18 @@ def check_mutations(
     baselines: dict[str, int] = {}
     for number, (mutation, relative, command) in enumerate(applicable):
         mid = mutation["id"]
-        # Each mutation gets its own copy: a run that leaves a lock file or
-        # changes a fixture must not decide the result of the next one.
+        # Every run gets its own copy, the baseline included: a run that leaves
+        # a lock file or changes a fixture must not decide the result of another.
+        if command not in baselines:
+            untouched = copy.parent / f"baseline-{number}"
+            copy_package(package, untouched, ledger.links)
+            try:
+                baselines[command], _ = run(command, untouched, timeout)
+            finally:
+                shutil.rmtree(untouched, ignore_errors=True)
         fresh = copy.parent / f"mutation-{number}"
         copy_package(package, fresh, ledger.links)
         try:
-            if command not in baselines:
-                baselines[command], _ = run(command, fresh, timeout)
             if baselines[command] != 0:
                 audit.add(
                     "mutations",

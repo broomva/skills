@@ -1752,15 +1752,15 @@ def test_each_mutation_runs_in_its_own_fresh_copy(tmp_path):
             "file": "src/model.py",
             "find": '"""Speed on reaching the ground, m/s."""',
             "replace": '"""Speed at the ground, m/s."""',
-            "command": f"test ! -e dirty && {PY} test/energy.test.py",
+            "command": clean + f"{PY} test/energy.test.py",
         }
     )
     package = build(tmp_path, data)
     audit = sim_audit.audit_package(package, run_mutations=True)
     text = details(audit, "mutations")
     assert "before any change" not in text
-    # The baseline leaves `dirty` behind, so the mutated run of the first two
-    # fails for that reason: one copy per mutation, not one per run.
+    # Every command leaves `dirty` behind and refuses to run if it is there. A
+    # harmless change survives only if its run did not see the baseline's file.
     assert "weaker-gravity: killed" in text and "never-instant: killed" in text
     assert "harmless: SURVIVED" in text
     assert not (package / "dirty").exists()

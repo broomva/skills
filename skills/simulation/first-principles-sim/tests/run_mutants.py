@@ -193,6 +193,7 @@ CURATED: list[tuple[str, str, str]] = [
     ('only the first mutation runs', 'in enumerate(applicable):', 'in enumerate(applicable[:1]):'),
     ('a second gate on one file replaces the first', '        if gate["file"] in gates:\n            raise LedgerError(', '        if False:\n            raise LedgerError('),
     ('read-only sources crash', '            target.chmod(target.stat().st_mode | stat.S_IWUSR)\n', ''),
+    ("an unmutated run happens first in the mutation's copy", '        copy_package(package, fresh, ledger.links)\n        try:\n            if baselines', '        copy_package(package, fresh, ledger.links)\n        run(command, fresh, timeout)\n        try:\n            if baselines'),
 ]
 
 # Mutants the tests cannot kill because the change does not alter behaviour.
