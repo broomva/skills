@@ -28,7 +28,7 @@ package:
 
 ```bash
 cp assets/example/falling-body/sim-claims.yaml <package>/sim-claims.yaml   # then replace every entry
-python3 scripts/sim_audit.py <package> --run-report --run-mutations
+python3 scripts/sim_audit.py <package> --run-report --run-mutations --run-gates
 ```
 
 From anywhere else, give the script's full path, for example

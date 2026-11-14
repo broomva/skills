@@ -36,7 +36,8 @@ Keep these apart when you decide.
 - **Drawing.** The simulation runs on the processor, and the graphics processor only draws the
   result. This is what the cloud chamber does: transport, nucleation and droplet growth are
   TypeScript, and WebGL2 draws one point per array entry. An entry can stand for several real
-  droplets (about 15 on an alpha track), and that is recorded as a convention.
+  droplets (about 15 on an alpha track). Its README says so under what is approximated; a
+  ledger should carry a scale trick like that as a `convention` claim.
 - **Computing.** The simulation itself runs on the graphics processor. This is faster for the
   right problems and harder to verify for all of them.
 
@@ -54,20 +55,25 @@ This is the reason the choice belongs in this skill.
   from their buffer. Reading a float texture needs the same extension as writing one (below).
   An ordinary 8-bit canvas keeps 8 bits per channel, which is enough to measure where a track
   is and not enough to check a number.
-- **Shader arithmetic is at most 32-bit, and often less exact than that.** Medium precision can
-  be 16-bit on phones, and built-in functions are not required to round correctly. Results
-  differ slightly between graphics drivers, so a tolerance that passes on one machine may fail
-  on another.
-- **A headless browser usually renders in software.** Headless Chromium falls back to a software
-  rasteriser unless told otherwise, and the cloud chamber's render gate runs that way by
-  default. A green headless gate shows the shader is right. It says nothing about real drivers.
+- **Shader arithmetic is at most 32-bit, and often less exact than that.** Only values declared
+  `highp` are 32-bit; `mediump` can be 16-bit on phones, and built-in functions are not required
+  to round correctly. A value also survives being written only at the precision of its target:
+  32 bits per component in a 32-bit float format such as `RGBA32F`, 16 in `RGBA16F`, 8 in an
+  ordinary canvas. Results differ slightly between graphics drivers, so a tolerance that passes
+  on one machine may fail on another.
+- **A headless gate often renders in software.** The cloud chamber's render gate tells headless
+  Chromium to use a software rasteriser, and uses the real graphics processor only when asked.
+  A green gate run that way shows the shader is right on that one rasteriser. It says nothing
+  about real drivers.
 
 So: keep every stage you check against a `reference` or an `independent` claim on the
 processor. Use the graphics processor for display, and for stages checked only by
 `conservation` or `control` claims, with tolerances set from more than one real machine.
 
 Whatever draws the picture, the rendered output is still measured, headless, against the same
-anchors (step 5 of the arc). List that check under `tests.gates` in the ledger.
+anchors (step 5 of the arc). List that check under `tests.gates` in the ledger, and run the
+audit with `--run-gates`: without that flag a gate is reported as SKIP and its command does not
+run.
 
 ## Where WebGL2 fits
 
@@ -89,14 +95,18 @@ anchors (step 5 of the arc). List that check under `tests.gates` in the ledger.
 - **Path tracing of moderate scenes.** A fragment shader can trace paths with the scene's
   acceleration structure stored in textures. Several published WebGL2 path tracers do this.
 
-Check three extensions before stepping a field in WebGL2, and fall back to the processor if one
-is missing:
+Three extensions matter when stepping a field in WebGL2:
 
 - `EXT_color_buffer_float`: rendering into a floating-point texture is not part of core WebGL2.
-- `EXT_float_blend`: blending into a 32-bit float texture. 16-bit float targets blend without
-  it.
-- `OES_texture_float_linear`: linear filtering of 32-bit float textures. Smoke and fluid
-  solvers that sample between cells need it.
+  Every stepped field needs this one. Without it, compute on the processor.
+- `EXT_float_blend`: blending into a 32-bit float texture. Needed only if a step blends; the
+  two-texture scheme above does not.
+- `OES_texture_float_linear`: linear filtering of 32-bit float textures. Needed only if a
+  shader samples between cells, as smoke and fluid solvers do.
+
+If one of the last two is missing, there are cheaper ways out than leaving the graphics
+processor: use 16-bit float textures if their precision is enough, or interpolate by hand in
+the shader.
 
 ## Where it does not, why, and what to use
 

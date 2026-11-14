@@ -91,11 +91,11 @@ state, when WebGL2 is the right renderer, and when it is not.
 9. **Run the audit.**
 
    ```bash
-   python3 scripts/sim_audit.py <package> --run-report --run-mutations
+   python3 scripts/sim_audit.py <package> --run-report --run-mutations --run-gates
    ```
 
    Exit 0 means no check failed. `--strict` also fails on warnings and on anything not run. A
-   run that was not requested reports SKIP, never PASS. Add `--run-gates` to run the checks
+   run that was not requested reports SKIP, never PASS. `--run-gates` runs the checks
    listed under `tests.gates`. A YAML ledger needs PyYAML; a `sim-claims.json` one does not.
 10. **Vary what should not matter.** Shift every random seed and run the tests again. For a
     deterministic solver, halve the step and the grid spacing instead, and keep two questions
