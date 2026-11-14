@@ -1,0 +1,279 @@
+# The method, step by step
+
+Each step below says what to do, why, and what it looked like in the cloud chamber
+(`packages/cloud-chamber` in `broomva/workspace`). Read the whole file once before starting a
+new simulation.
+
+## 1. Does it fit?
+
+The method needs two things:
+
+- **A mechanism with known laws.** Energy loss in matter, diffusion, Newton's laws, Maxwell's
+  equations, reaction kinetics. If the "law" is something you would invent for this project,
+  the output is your invention.
+- **An anchor.** At least one quantity that someone measured or derived independently of your
+  code: a table, a formula with a stated accuracy, an analytic solution.
+
+It does not fit when a convincing look is the whole goal. A game's water does not need to
+conserve mass. Faking is cheaper there and nobody is misled.
+
+## 2. The phenomenon and the chain
+
+Write one sentence naming what a viewer will see or hear. That is the phenomenon, and no code
+may produce it directly.
+
+Then write the chain of stages that produces it. Most physical setups have the same five:
+
+| Stage | Question | Cloud chamber | vinyl |
+|---|---|---|---|
+| Source | What enters, at what rate, with what spectrum? | Cosmic muons, radon alphas, gamma-ray electrons | The cut groove: audio turned into wall displacement |
+| Medium | What state is the stage in before anything happens? | Temperature and vapor profile between plate and top | The pressed disc: roughness, dust, warp |
+| Interaction | What does the source do to the medium, event by event? | Energy loss, scattering, knock-on electrons, ion pairs | Stylus contact on two walls, with friction |
+| State | What evolves afterwards? | Droplets nucleate on ions, grow, fall | Tip position and velocity, platter speed |
+| Observation | What does the instrument report? | Light scattered by droplets into a camera | Cartridge voltage, then the preamp chain |
+
+The table fits event-driven setups. A field stepped forward in time (a string, a fluid, a
+temperature map) uses the same five stages with different contents: the source is the initial
+condition and any forcing, the medium is the material constants and the boundaries, the
+interaction is the update rule, the state is the field, and the observation is a probe, a
+pickup or an image.
+
+Rules for the code:
+
+- One file per stage. A stage imports only the stages below it.
+- Each function is a pure function of its arguments and, where it draws random numbers, a
+  seeded generator. The same inputs give the same output, element for element. Test that.
+- SI units inside. Convert at the edges, and name the unit in a comment where a table uses
+  another one.
+- Constants live in one place, each with its source.
+
+## 3. The ledger comes first
+
+Before writing a stage, list what you intend to state about it and how each statement will be
+enforced. This is `sim-claims.yaml`; `assets/example/falling-body/sim-claims.yaml` is a complete
+one, with every field explained. Writing it first changes what you build: a quantity with
+no possible anchor gets labelled a prediction on day one, and the README inherits that label.
+
+Fetch reference tables at this point:
+
+- Download the table. Do not type numbers from memory or from a search snippet.
+- Store it under `test/reference/` with a header giving the URL and the fetch date.
+- Tests parse the file. A value typed into a test can drift from the table without anyone
+  seeing it.
+- A single scalar with a citation (a textbook value, a formula's stated accuracy) may be typed
+  into the test. The ledger then carries `source:` in place of `reference:`.
+
+In the cloud chamber: NIST ASTAR, PSTAR and ESTAR tables, the PDG muon table and the IAEA beta
+energies are stored files. The Highland formula and the vapor-pressure points are cited values.
+
+## 4. Bottom-up, each stage with its check
+
+Order matters because errors compound upward and the picture hides them. Check, in this order
+of preference:
+
+1. **Reference.** The stage's output against a published table, at a stated tolerance.
+2. **Independent.** The same quantity computed another way. Sampling against quadrature. A
+   closed-form shortcut against a brute-force numerical solution. The second method must not
+   share the first one's formula; if you could copy and paste between them, it is not
+   independent.
+3. **Conservation.** Mass, energy, charge, particle number, or an identity of the equations.
+   These catch bookkeeping errors and say nothing about whether the physics is right.
+
+**Pinned tolerances.** When the model has a known bias (the cloud chamber's beta energies are 3
+to 6% high because its Fermi function is non-relativistic), assert it from both sides: above 3%
+and below 6%. Then neither a regression nor a silent improvement passes unnoticed.
+
+**Validity ranges.** For each formula, work out the dimensionless number that governs it
+(Reynolds, Knudsen, the ratio of step to mean free path) at the conditions the simulation
+actually reaches, and print it in the report. The cloud chamber's first settling law ignored
+inertia; the Reynolds number of an alpha column showed the law did not apply.
+
+**Discretisation is an approximation, and it needs its own check.** A grid and a time step
+change the answer. A finite-difference string has numerical dispersion, which detunes its upper
+partials, and those partials are the anchor. So:
+
+- State the stability limit of the scheme (the Courant number, or its equivalent) and print the
+  value the simulation runs at.
+- Halve the step and the spacing, and assert that the solver's error falls at the order the
+  scheme promises. Measure that error against an exact solution of the equations being solved,
+  or against a much finer run. Do not measure it against a measured anchor: that difference
+  also holds measurement error and left-out physics, and refinement does not shrink it. This
+  is the deterministic solver's version of shifting the seeds.
+- Two resolutions against an exact solution give one estimate of the order. A third shows
+  whether the estimate is steady. Stop refining when the error reaches round-off.
+- Then compare the converged result with the measured anchor, as its own claim.
+- For sound, the output sample rate fixes the time step. Refine in space, or oversample and
+  decimate. The standard explicit scheme for an ideal string is exact at a Courant number of
+  one, so there is no error to shrink there; test the refinement on the case with stiffness or
+  loss, which is the case that matters.
+- A scheme conserves its own discrete energy, not the continuous formula evaluated on the
+  grid. Assert the discrete one to round-off, or the continuous one to a tolerance that
+  shrinks with the step.
+- An analytic solution of the equation you are solving verifies the solver. It says nothing
+  about whether that equation describes the instrument. Label it `independent`, and look for
+  a measured anchor as well (a tabulated frequency, a measured decay time, a benchmark run).
+
+**Scale tricks are claims.** If one array entry stands for many particles, or a time step
+merges many collisions, that is a convention, and totals must still be counted in real units.
+The cloud chamber counted landing times over array entries when the claim was about droplets.
+
+## 5. Observation
+
+The renderer reads state. It has no access to the source list and no notion of a track, a
+wave or a note. Then test the output, not only the state:
+
+- Render headless, at fixed seed, and measure. The cloud chamber's render gate finds the lit
+  pixels of an alpha track and compares their extent with the ASTAR range.
+- State the limits of the picture. A point sprite 0.9 mm wide draws a 25 µm track as 0.9 mm.
+  That goes in the ledger as a convention.
+
+For sound, the same applies: measure the pitch, the decay time or the spectrum of the rendered
+samples, and compare with the anchor. Say how the pitch is measured and how finely. A one-second
+Fourier transform has bins 1 Hz wide; interpolating the peak, or fitting the period in the time
+domain, does better. A string made of a whole number of grid cells is tuned only as finely as
+one cell allows, and that belongs in the ledger as a convention.
+
+## 6. Negative controls
+
+A control removes the cause and requires the effect to vanish. Without one, a renderer that
+always draws something passes every positive test.
+
+Two rules:
+
+- **Wait long enough.** Read the control after the slowest process that could produce the
+  effect. The cloud chamber's warm-plate frame was first read before any droplet could have
+  appeared, so it was black for the wrong reason.
+- **Check exact nulls exactly.** Black means every channel of every pixel is zero. Silence
+  means every sample is zero.
+
+## 7. The report command
+
+One command prints every number the prose quotes, each on a labelled line. The prose quotes
+the digits it prints. The audit's `quoted` check ties the two together: the string must appear
+in the docs and in the report output.
+
+This exists because of one error in the cloud-chamber build. A draft README sentence gave a
+plate limit that had been typed from an expectation. The report, when it was written and run,
+printed a different number. This happened before the first commit, so the repository does not
+record it.
+
+The check covers only the strings the ledger lists. A number in the docs that no claim quotes
+is not checked, and neither is hand rounding: the cloud chamber's README says "7 to 62 mm"
+where its report prints `6.8 to 61.8`.
+
+## 8. Mutations
+
+A test file that asserts is not the same as a claim that is enforced. The cloud chamber had a
+test for the water nucleation threshold that passed, and tested a function the engine never
+called. It had two brute-force tests that retyped the engine's formula.
+
+A mutation settles it. Make a small change to the code under test, usually one line, so that
+the claim becomes false, and run the test:
+
+```yaml
+mutations:
+  - id: old-column-offset
+    claim: downdraft-viscous
+    file: src/engine.ts
+    find: "export const COLUMN_OFFSET = 0.45"
+    replace: "export const COLUMN_OFFSET = 0.84"
+    command: "bun test test/engine.test.ts --timeout 60000"
+```
+
+Good mutations:
+
+- Change the thing the claim is about, by more than the tolerance and not absurdly more. A 1%
+  shift against a 0.3% tolerance is a better mutation than a factor of ten.
+- Reintroduce a bug you fixed. The cloud chamber's `old-rotation` mutation restores the
+  near-axis special case.
+- Bypass a call. `engine-skips-cap` replaces the capped downdraft with the uncapped one, to ask
+  whether anything checks that the engine uses the function its unit test verifies.
+
+Avoid equivalent mutations: flipping the sign of an azimuth drawn uniformly from a full circle
+changes nothing statistically, and its survival means nothing.
+
+Do not use a mutation that merely breaks the code: a syntax error turns every test red and
+proves nothing about the claim. The audit refuses a mutation of a test, a gate, a registered
+reference table, or anything in the tests directory or under `tests.support`, because changing
+a tolerance or a table also turns the test red.
+
+Read a surviving mutation before deciding what it shows. The cloud chamber's first mutation
+for "no droplets form outside the sensitive layer" set every ion's chance of seeding to one,
+and the claim's own test stayed green. The test fires a muon 2 cm above the layer. The
+nucleation rate there is tiny but not zero, so the wait before a droplet forms is enormous and
+the droplet drifts out of the box. Closer to the layer the same mutation does add droplets: it
+broke the claim, and the test probes too far from the edge to see it. The author first read
+this as a mutation that left the claim true; a reviewer measured it. The ledger now uses a
+mutation the test does catch (one per second added to the rate everywhere), and the weak
+control is on that package's ticket.
+
+Give each mutation the command that runs only its claim's test. Under the whole suite, a
+mutation is killed by whichever assertion fails first.
+
+A claim checked by a gate (a check the test command does not run, such as a headless render)
+is run only with `--run-gates`. Without it the gate reports SKIP, and `--strict` fails.
+
+The audit runs every command in a temporary copy of the package and does not edit the
+package's own files. Directories listed under `link` (by default `node_modules`, `.venv`,
+`venv`, `target`) are symlinked into the copy, so a command that writes a cache there writes
+into the real one. The audit refuses a mutation inside a linked directory. Because commands run
+in the copy, the package's tests must not need files outside its own directory.
+
+The cloud chamber's ledger has eleven mutations for its twenty-two checked claims, and the
+audit warns for the other eleven. Ten of the mutations run only the test of the claim they
+name; `engine-skips-cap` has no test of its own and runs the whole suite.
+
+### What the first real run found
+
+Run against the cloud chamber on 2026-11-13, the audit killed nine of eleven mutations and two
+survived the whole suite:
+
+- `engine-skips-cap`: no test fails when the engine ignores the inertia cap. The cap's own
+  unit test passes because it calls the function directly.
+- `double-mist`: the mist test reads a closure figure computed from an intermediate variable.
+  Doubling the output array, which is what the engine reads, leaves it at 1.
+
+The first was already an open finding from the third review round. The second had passed all
+three rounds.
+
+## 9. Vary what should not matter
+
+Run the suite with every seed shifted, several times. A statistical test that passes at one
+seed may be passing by luck, and a tolerance set by looking at one run is too tight. The cloud
+chamber reads `CHAMBER_SEED_SHIFT` and runs the suite eight times.
+
+A deterministic solver has no seed. Its equivalent is the refinement check in section 4: the
+result must not depend on the step beyond the stated error.
+
+## 10. Independent review
+
+The author's tests agree with the author's code because one understanding produced both. A
+reviewer with a different model, and no access to the author's reasoning, reads the claims
+against the code. Give reviewers a copy of the tree: asked to verify, they will edit what they
+are pointed at.
+
+For each finding there are two honest fixes:
+
+- Make the test exercise the claim against something computed another way.
+- Narrow the claim to what is checked.
+
+Rewording the claim so the existing test covers it is the second fix, and is fine. Adding a
+test that restates the code is neither.
+
+The cloud chamber had three rounds. The first two each found defects the author's tests had
+hidden. The third passed it and filed what remained.
+
+## 11. The README
+
+Three tables, generated from the ledger by hand:
+
+- **What is checked against what:** quantity, reference, agreement asserted, test.
+- **What the model predicts:** each `prediction`, with the sentence "none is compared with a
+  measurement".
+- **What is approximated, and what is left out:** each `convention` and `omitted` claim.
+
+## In CI
+
+Pin the runtime version. Give statistical tests a timeout that fits the slowest runner. Run the
+audit with `--run-report --run-mutations` once the package passes it; until then, the survivors
+are tickets. The cloud chamber's CI does not run the audit yet, for that reason.

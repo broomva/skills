@@ -1,0 +1,63 @@
+name: test-first-principles-sim
+
+# Python test gate for the `first-principles-sim` skill
+# (skills/simulation/first-principles-sim/). Path-filtered so it runs only when
+# that skill changes. BRO-3709.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/simulation/first-principles-sim/**'
+      - '.github/workflows/test-first-principles-sim.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/simulation/first-principles-sim/**'
+      - '.github/workflows/test-first-principles-sim.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-first-principles-sim-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/simulation/first-principles-sim
+
+jobs:
+  test:
+    # macOS as well: its file system ignores letter case, which is what the
+    # file-identity checks exist for, and Linux skips that test.
+    name: pytest (Python ${{ matrix.python }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 45
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+        python: ["3.11", "3.12"]
+        include:
+          - os: macos-latest
+            python: "3.12"
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          # The steps below run code from the pull request.
+          persist-credentials: false
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Tests
+        run: python -m pytest tests/ -v
+      - name: The audit's tests fail when the audit is changed
+        run: python tests/run_mutants.py
+      - name: The shipped example passes the audit strictly
+        run: python scripts/sim_audit.py assets/example/falling-body --run-report --run-mutations --strict
+      - name: Skillify gate
+        run: python3 ../../tooling/skillify/scripts/skillify_check.py . --run-tests

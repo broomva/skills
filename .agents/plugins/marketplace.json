@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "broomva-skills",
-      "description": "Every broomva/skills skill in one plugin: 112 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
+      "description": "Every broomva/skills skill in one plugin: 113 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
       "source": {
         "source": "local",
         "path": "./"
@@ -271,7 +271,7 @@
     },
     {
       "name": "simulation",
-      "description": "Simulation skills from broomva/skills: data-provider, parallax, sourcer.",
+      "description": "Simulation skills from broomva/skills: data-provider, first-principles-sim, parallax, sourcer.",
       "source": {
         "source": "local",
         "path": "./skills"

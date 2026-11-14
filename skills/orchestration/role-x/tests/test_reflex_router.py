@@ -574,6 +574,13 @@ EXAMPLES: dict[str, tuple[list[str], list[str]]] = {
                            ["this is clearly wrong", "spec out the room"]),
     "skill.skillify": (["skillify it", "turn this into a skill"],
                        ["what skills do I have?", "skill issue"]),
+    "skill.motion-lab": (["render this animation and give me a contact sheet",
+                          "the animated loop hiccups at the seam"],
+                         ["cut the pauses out of this recording", "what is motion blur?"]),
+    "skill.first-principles-sim": (["simulate a plucked string from first principles",
+                                    "audit this simulation before we publish it"],
+                                   ["simulate the policy change before we apply it",
+                                    "add a ripple shader that looks nice"]),
 }
 
 

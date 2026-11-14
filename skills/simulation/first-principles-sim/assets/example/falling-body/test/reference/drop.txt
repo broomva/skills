@@ -1,0 +1,8 @@
+# Fall time from rest in vacuum: height (m) | time (s).
+# Computed 2026-11-13 from t = sqrt(2 h / g_n) with the standard acceleration of gravity,
+# g_n = 9.80665 m/s^2: https://physics.nist.gov/cgi-bin/cuu/Value?gn
+# This stands in for a published table. A real package stores the table it downloaded.
+1.0 0.4516
+5.0 1.0098
+20.0 2.0196
+100.0 4.5160
