@@ -8,8 +8,9 @@
 2. it is not scripted: no automation marker, its exact text does not recur in
    three or more sessions (150+ characters), and its opening does not recur in
    four or more sessions (40+ characters);
-3. it is not a duplicate of the same text already counted from a
-   higher-priority store within 36 hours (20 minutes for short prompts).
+3. it is not the same turn already counted from another store: same text,
+   within 36 hours (20 minutes for prompts under 80 characters). Two
+   identical prompts in one store are two turns.
 
 Filter 2 is skipped for stores with an exact author flag (T3): a person may
 paste the same brief into several threads, and the store has already said who
@@ -22,7 +23,12 @@ get an estimated reply: the month's measured mean if it has 500 or more
 replies, else the pooled mean. Estimated words are reported separately.
 
 Replies to agent-written prompts are reported as the agents' own volume and
-excluded from what was read.
+excluded from what was read. Each turn contributes at most one reply: the
+latest revision in its own store (see :func:`pick_replies`).
+
+Memory: the fold holds the selected rows in memory. Rows are per turn, not
+per transcript byte; one measured year of heavy multi-harness use was ~80k
+rows (25 MB on disk), so this is deliberate.
 """
 
 from __future__ import annotations
@@ -105,30 +111,12 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
 
     human_ids = {r["id"] for r in prompts if counts_as_written(r)}
 
-    # Cross-store dedupe of prompts and of replies, by content hash and time.
-    def dedupe(items: List[dict], label: str) -> List[dict]:
-        items.sort(key=lambda r: (_rank(r["src"]), r["ts"]))
-        seen: Dict[str, List[tuple]] = collections.defaultdict(list)
-        kept = []
-        for r in items:
-            window = 36 * 3600 if (r["chars"] >= 80 or r["src"] == "export") else 20 * 60
-            duplicate = False
-            for ts, src in seen[r["h"]]:
-                w = 36 * 3600 if "export" in (src, r["src"]) else window
-                if abs(ts - r["ts"]) <= w:
-                    duplicate = True
-                    break
-            if duplicate:
-                dropped[f"duplicate {label}"] += 1
-                continue
-            seen[r["h"]].append((r["ts"], r["src"]))
-            kept.append(r)
-        return kept
-
-    written = dedupe([r for r in prompts if r["id"] in human_ids], "prompt")
-    replies = [r for r in rows if r["kind"] == "reply"]
-    human_replies = dedupe([r for r in replies if r.get("turn") in human_ids], "reply")
-    agent_replies = dedupe([r for r in replies if r.get("turn") not in human_ids], "agent reply")
+    written, human_canon = canonical_turns([r for r in prompts if r["id"] in human_ids], dropped, "prompt")
+    _agent_kept, agent_canon = canonical_turns([r for r in prompts if r["id"] not in human_ids], dropped,
+                                               "agent prompt")
+    prompt_src = {r["id"]: r["src"] for r in prompts}
+    human_replies = pick_replies([r for r in rows if r["kind"] == "reply"], human_canon, prompt_src, dropped)
+    agent_replies = pick_replies([r for r in rows if r["kind"] == "reply"], agent_canon, prompt_src, dropped)
 
     months: Dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     for r in written:
@@ -202,6 +190,81 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
         "by_month": {k: dict(v) for k, v in sorted(months.items())},
         "dropped": dict(dropped),
     }
+
+
+def _window(a: dict, b_src: str, b_chars: int) -> float:
+    if "export" in (a["src"], b_src):
+        return 36 * 3600  # exports carry a date per session, not a time per turn
+    return 36 * 3600 if max(a["chars"], b_chars) >= 80 else 20 * 60
+
+
+def canonical_turns(items: List[dict], dropped: Dict[str, int], label: str):
+    """Merge one turn recorded by several stores into a single canonical prompt.
+
+    Rows from the same store are always distinct turns: two identical prompts
+    typed in one store were typed twice. A row from another store merges into
+    an existing turn with the same text inside the time window, and each
+    canonical turn can be claimed at most once per store, so two "yes" turns
+    in one store and two in another stay two turns, not one.
+
+    Returns the kept prompts and a map from every prompt id to its canonical id.
+    """
+    items = sorted(items, key=lambda r: (_rank(r["src"]), r["ts"]))
+    by_hash: Dict[str, List[dict]] = collections.defaultdict(list)
+    claimed: Dict[str, set] = collections.defaultdict(set)  # canonical id -> stores merged into it
+    canon: Dict[str, str] = {}
+    kept: List[dict] = []
+    for r in items:
+        match = None
+        for c in by_hash[r["h"]]:
+            if c["src"] == r["src"] or r["src"] in claimed[c["id"]]:
+                continue
+            if abs(c["ts"] - r["ts"]) <= _window(c, r["src"], r["chars"]):
+                match = c
+                break
+        if match is not None:
+            claimed[match["id"]].add(r["src"])
+            canon[r["id"]] = match["id"]
+            dropped[f"duplicate {label}"] += 1
+            continue
+        canon[r["id"]] = r["id"]
+        claimed[r["id"]].add(r["src"])
+        by_hash[r["h"]].append(r)
+        kept.append(r)
+    return kept, canon
+
+
+def pick_replies(replies: List[dict], canon: Dict[str, str], prompt_src: Dict[str, str],
+                 dropped: Dict[str, int]) -> List[dict]:
+    """At most one final reply per canonical turn.
+
+    A harvest that runs mid-turn records the reply as it stood; a later
+    harvest records the final one. Within a store, the latest revision of a
+    turn's reply wins. Across stores, the canonical prompt's own store wins,
+    then store priority.
+    """
+    latest: Dict[tuple, dict] = {}
+    for r in replies:
+        turn = r.get("turn")
+        if turn not in canon:
+            continue
+        key = (r["src"], turn)
+        if key in latest:
+            dropped["superseded reply revision"] += 1
+            if (r["ts"], r["words"]) <= (latest[key]["ts"], latest[key]["words"]):
+                continue
+        latest[key] = r
+    chosen: Dict[str, dict] = {}
+    for (src, turn), r in latest.items():
+        cid = canon[turn]
+        own = prompt_src.get(cid) == src
+        rank = (0 if own else 1, _rank(src))
+        if cid in chosen:
+            dropped["duplicate reply"] += 1
+            if rank >= chosen[cid][0]:
+                continue
+        chosen[cid] = (rank, r)
+    return [r for _rank_key, r in chosen.values()]
 
 
 def _streak(days: List[_dt.date]) -> int:

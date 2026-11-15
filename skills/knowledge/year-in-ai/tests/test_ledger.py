@@ -21,7 +21,7 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from yia.ledger import make_row, row_fields, unwrap_command  # noqa: E402
+from yia.ledger import make_row, opaque, row_fields, text_hash, unwrap_command  # noqa: E402
 from yia.ledger import archive as A  # noqa: E402
 from yia.ledger import attention as T  # noqa: E402
 from yia.ledger import sources as S  # noqa: E402
@@ -175,7 +175,7 @@ def test_t3_authors_come_from_created_by_and_subagents_are_skipped(corpus):
     t3 = [r for r in rows if r["src"] == "t3"]
     prompts = {r["author"] for r in t3 if r["kind"] == "prompt"}
     assert prompts == {"human", "agent"}
-    assert not any(r["sess"] == "child" for r in t3)
+    assert not any(r["sess"] == opaque("child") for r in t3)
     replies = [r for r in t3 if r["kind"] == "reply"]
     human_turn = next(r for r in t3 if r["kind"] == "prompt" and r["author"] == "human")["id"]
     final = next(r for r in replies if r["turn"] == human_turn)
@@ -186,12 +186,13 @@ def test_claude_entrypoints_commands_and_paseo(corpus):
     _l, _e, rows = harvest_rows(corpus)
     claude = [r for r in rows if r["src"] == "claude_code" and r["kind"] == "prompt"]
     by_sess = {r["sess"]: r for r in claude}
-    assert by_sess["sess-cli"]["author"] == "human"
-    assert by_sess["sess-cli"]["words"] == 4  # "/autonomous ship the ledger"
-    assert by_sess["sess-p"]["author"] == "agent"
-    assert by_sess["sess-paseo"]["harness"] == "paseo" and by_sess["sess-paseo"]["author"] == "agent"
-    assert len([r for r in claude if r["sess"] == "sess-cli"]) == 1  # sidechain, tool result, bare /clear dropped
-    reply = next(r for r in rows if r["src"] == "claude_code" and r["kind"] == "reply" and r["sess"] == "sess-cli")
+    sid = {name: opaque(name) for name in ("sess-cli", "sess-p", "sess-paseo")}
+    assert by_sess[sid["sess-cli"]]["author"] == "human"
+    assert by_sess[sid["sess-cli"]]["words"] == 4  # "/autonomous ship the ledger"
+    assert by_sess[sid["sess-p"]]["author"] == "agent"
+    assert by_sess[sid["sess-paseo"]]["harness"] == "paseo" and by_sess[sid["sess-paseo"]]["author"] == "agent"
+    assert len([r for r in claude if r["sess"] == sid["sess-cli"]]) == 1  # sidechain, tool result, bare /clear dropped
+    reply = next(r for r in rows if r["src"] == "claude_code" and r["kind"] == "reply" and r["sess"] == sid["sess-cli"])
     assert reply["words"] == 3  # the last text, "Shipped the ledger."
 
 
@@ -263,9 +264,8 @@ def test_exact_author_store_keeps_repeated_briefs():
     rows = [make_row(src="t3", harness="t3", kind="prompt", ts=T0 + i * 7200,
                      text="Same brief pasted into several threads on purpose, comfortably long enough to template.",
                      session=f"t{i}", author="human") for i in range(4)]
-    assert T.fold(rows)["written"]["prompts"] == 1  # deduped as one prompt seen four times within 36 h...
-    spaced = [dict(r, ts=T0 + i * 3 * 86400) for i, r in enumerate(rows)]
-    assert T.fold(spaced)["written"]["prompts"] == 4  # ...but never filtered as scripted
+    # Four prompts typed in one store are four turns, and an exact-author store is never filtered as scripted.
+    assert T.fold(rows)["written"]["prompts"] == 4
 
 
 def test_text_only_sources_stop_once_exact_coverage_starts():
@@ -338,3 +338,183 @@ def test_cli_harvest_and_attention_run_end_to_end(corpus, tmp_path):
                           str(tmp / "cli-ledger"), "--out", str(out)], capture_output=True, text=True, env=env)
     assert run.returncode == 0, run.stderr
     assert json.loads(out.read_text())["written"]["prompts"] == 6
+
+
+# ------------------------------------------------------------ review round 1 regressions
+
+
+def test_same_store_identical_prompts_are_distinct_turns():
+    rows = [make_row(src="claude_history", harness="claude-cli", kind="prompt", ts=T0 + i * 60, text="yes",
+                     session="s", author="human") for i in range(2)]
+    assert T.fold(rows)["written"]["prompts"] == 2
+
+
+def test_one_turn_in_two_stores_gets_one_reply():
+    p1 = make_row(src="t3", harness="t3", kind="prompt", ts=T0, text="ship it now please", session="a", author="human")
+    p2 = make_row(src="bridged", harness="bridged", kind="prompt", ts=T0 + 60, text="Ship it  now please",
+                  session="b", author="unknown")
+    r1 = make_row(src="t3", harness="t3", kind="reply", ts=T0 + 90, text="Shipped, merged and verified.", session="a",
+                  author="human", turn=p1["id"])
+    r2 = make_row(src="bridged", harness="bridged", kind="reply", ts=T0 + 90, text="Shipped (rendered differently).",
+                  session="b", author="unknown", turn=p2["id"])
+    summary = T.fold([p1, p2, r1, r2])
+    assert summary["written"]["prompts"] == 1
+    assert summary["by_month"][next(iter(summary["by_month"]))]["replies"] == 1
+    assert summary["read"]["reply_words_measured"] == r1["words"]  # the canonical store's own reply
+
+
+def test_two_turns_with_the_same_answer_keep_both_replies():
+    rows = []
+    for i, text in enumerate(("first question here", "second question here")):
+        p = make_row(src="t3", harness="t3", kind="prompt", ts=T0 + i * 600, text=text, session="a", author="human")
+        rows += [p, make_row(src="t3", harness="t3", kind="reply", ts=T0 + i * 600 + 5, text="Done.", session="a",
+                             author="human", turn=p["id"])]
+    summary = T.fold(rows)
+    assert summary["written"]["prompts"] == 2
+    assert summary["read"]["reply_words_measured"] == 2
+
+
+def test_each_turn_is_claimed_once_per_store():
+    # t3 saw two "yes" turns; the bridge saw three. Two of the bridge's merge into
+    # t3's turns, one each; the third is a turn t3 never recorded.
+    rows = [make_row(src="t3", harness="t3", kind="prompt", ts=T0 + i * 300, text="yes", session="t",
+                     author="human") for i in range(2)]
+    rows += [make_row(src="bridged", harness="bridged", kind="prompt", ts=T0 + i * 300, text="yes", session="b",
+                      author="unknown") for i in range(3)]
+    summary = T.fold(rows)
+    assert summary["written"]["prompts"] == 3
+    assert summary["dropped"]["duplicate prompt"] == 2
+
+
+def test_a_reply_harvested_mid_turn_is_superseded(tmp_path):
+    root = tmp_path / "claude"
+    session = [
+        {"type": "user", "uuid": "u1", "entrypoint": "cli", "timestamp": iso(T0), "message": {"content": "help me"}},
+        {"type": "assistant", "uuid": "a1", "entrypoint": "cli", "timestamp": iso(T0 + 2),
+         "message": {"content": [{"type": "text", "text": "working on it"}]}},
+    ]
+    write_jsonl(root / "-p" / "grow.jsonl", session)
+    roots = {k: [] for k in L.DEFAULT_ROOTS}
+    roots["claude_projects"] = [root]
+    ledger = L.Ledger(str(tmp_path / "ledger"))
+    L.harvest(ledger, roots, since=None)
+    session.append({"type": "assistant", "uuid": "a2", "entrypoint": "cli", "timestamp": iso(T0 + 9),
+                    "message": {"content": [{"type": "text", "text": "all finished now, merged and verified"}]}})
+    write_jsonl(root / "-p" / "grow.jsonl", session)
+    L.harvest(ledger, roots, since=None)
+    rows = list(ledger.rows())
+    assert len([r for r in rows if r["kind"] == "reply"]) == 2  # both revisions are kept on disk...
+    summary = T.fold(rows)
+    assert summary["read"]["reply_words_measured"] == 6  # ...and only the latest one is read
+    assert summary["dropped"]["superseded reply revision"] == 1
+
+
+def test_long_prompts_sharing_a_template_do_not_merge():
+    prefix = "shared prefix " * 50
+    assert text_hash(prefix + "one") != text_hash(prefix + "two")
+
+
+def test_conductor_replies_pair_with_their_own_prompt(tmp_path):
+    db = tmp_path / "conductor.db"
+    con = sqlite3.connect(db)
+    con.execute("create table session_messages (session_id text, role text, content text, created_at text, turn_id text)")
+    def assistant(text):
+        return json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
+    for row in [("s", "user", "first ask", "2026-10-26 10:00:00", "t1"),
+                ("s", "assistant", assistant("first answer here"), "2026-10-26 10:00:05", "t1"),
+                ("s", "user", "second ask", "2026-10-26 10:01:00", "t2"),
+                ("s", "assistant", assistant("second answer"), "2026-10-26 10:01:05", "t2")]:
+        con.execute("insert into session_messages values (?,?,?,?,?)", row)
+    con.commit()
+    con.close()
+    _report, rows = S.read_conductor(db, None)
+    rows = list(rows)
+    prompts = [r["id"] for r in rows if r["kind"] == "prompt"]
+    replies = sorted((r for r in rows if r["kind"] == "reply"), key=lambda r: r["ts"])
+    assert [prompts.index(r["turn"]) for r in replies] == [0, 1]
+    assert [r["words"] for r in replies] == [3, 2]
+
+
+def test_attribution_fields_cannot_carry_text():
+    row = make_row(src="t3", harness="t3", kind="prompt", ts=T0, text="ordinary", session="s",
+                   attr={"creation_source": f"{SECRET} as metadata", "project": SECRET, "created_by": "user"})
+    assert row["attr"] == {"creation_source": "other", "created_by": "user"}
+    assert SECRET not in json.dumps(row)
+    assert row["sess"] == opaque("s") and row["sess"] != "s"
+
+
+def test_unknown_providers_and_originators_become_other(tmp_path):
+    from yia.ledger import harness_label
+    assert harness_label("t3", f"{SECRET}", "provider") == "t3:other"
+    assert harness_label("codex", "Codex Desktop", "originator") == "codex:Codex Desktop"
+    assert harness_label("claude", None, "entrypoint") == "claude"
+
+
+def test_codex_rollouts_are_streamed_not_loaded(tmp_path):
+    # A reader that loads the file sees its contents at the first line; a
+    # streaming reader also sees a line appended after it started.
+    path = tmp_path / "rollout.jsonl"
+    path.write_text(("{\"pad\": \"" + "x" * 1000 + "\"}\n") * 2000)
+    lines = S._codex_lines(path)
+    next(lines)
+    with path.open("a") as handle:
+        handle.write("APPENDED\n")
+    assert list(lines)[-1].strip() == "APPENDED"
+
+
+def test_archive_never_replaces_a_larger_copy_when_the_source_shrinks_mid_copy(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    dst = tmp_path / "dst"
+    (src / "p").mkdir(parents=True)
+    (dst / "p").mkdir(parents=True)
+    (src / "p" / "a.jsonl").write_text("x" * 20)
+    (dst / "p" / "a.jsonl").write_text("y" * 10)
+    real_copy = A.shutil.copy2
+
+    def shrink_then_copy(s, d, *args, **kwargs):
+        Path(s).write_text("z")  # the live store truncates the file between stat and copy
+        return real_copy(s, d, *args, **kwargs)
+
+    monkeypatch.setattr(A.shutil, "copy2", shrink_then_copy)
+    counts = A.copy_additive(src, dst, (".jsonl",))
+    assert (dst / "p" / "a.jsonl").read_text() == "y" * 10
+    assert counts["copied"] == 0
+    assert not list(dst.rglob("*.yia-tmp"))
+
+
+def test_archive_cleans_up_after_a_failed_copy(tmp_path, monkeypatch):
+    src = tmp_path / "src"
+    (src / "p").mkdir(parents=True)
+    (src / "p" / "a.jsonl").write_text("data")
+    real_copy = A.shutil.copy2
+
+    def copy_then_fail(s, d, *args, **kwargs):
+        real_copy(s, d, *args, **kwargs)
+        raise OSError("disk full")
+
+    monkeypatch.setattr(A.shutil, "copy2", copy_then_fail)
+    counts = A.copy_additive(src, tmp_path / "dst", (".jsonl",))
+    assert counts["errors"] == 1
+    assert not list((tmp_path / "dst").rglob("*.yia-tmp"))
+
+
+def test_year_selection_uses_the_local_calendar(tmp_path):
+    from datetime import datetime, timezone
+    ledger = L.Ledger(str(tmp_path / "ledger"))
+    new_year_eve_local = datetime(2027, 1, 1, 2, 0, tzinfo=timezone.utc).timestamp()  # 21:00 on Dec 31 at UTC-5
+    first_hours_local = datetime(2026, 1, 1, 3, 0, tzinfo=timezone.utc).timestamp()  # 22:00 on Dec 31 2025 at UTC-5
+    ledger.write([
+        make_row(src="t3", harness="t3", kind="prompt", ts=new_year_eve_local, text="late in the year", session="a",
+                 author="human"),
+        make_row(src="t3", harness="t3", kind="prompt", ts=first_hours_local, text="still last year", session="a",
+                 author="human"),
+    ])
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"utc_offset_hours": -5}))
+    out = tmp_path / "a.json"
+    run = subprocess.run([sys.executable, str(SCRIPTS / "year_in_ai.py"), "attention", "--year", "2026", "--config",
+                          str(config), "--ledger", str(ledger.dir), "--out", str(out)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    summary = json.loads(out.read_text())
+    assert summary["written"]["prompts"] == 1
+    assert list(summary["by_month"]) == ["2026-12"]  # the late-December prompt, not the 2025 one

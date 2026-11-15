@@ -197,14 +197,19 @@ def cmd_attention(args: argparse.Namespace) -> int:
     config = L.load_config(args.config)
     ledger = L.Ledger(args.ledger or config.get("ledger"))
     since = until = None
+    offset = float(config.get("utc_offset_hours", -5))
     if args.year:
-        since = datetime(args.year, 1, 1, tzinfo=timezone.utc).timestamp()
-        until = datetime(args.year + 1, 1, 1, tzinfo=timezone.utc).timestamp()
+        # The year is the operator's local calendar year, the same zone the fold reports in.
+        from datetime import timedelta
+
+        zone = timezone(timedelta(hours=offset))
+        since = datetime(args.year, 1, 1, tzinfo=zone).timestamp()
+        until = datetime(args.year + 1, 1, 1, tzinfo=zone).timestamp()
     text_only_until = config.get("text_only_until")
     summary = T.fold(
         ledger.rows(since, until),
         read_share=(args.read_low, (args.read_low + args.read_high) / 2, args.read_high),
-        utc_offset_hours=float(config.get("utc_offset_hours", -5)),
+        utc_offset_hours=offset,
         text_only_until=datetime.fromisoformat(text_only_until).replace(tzinfo=timezone.utc).timestamp()
         if text_only_until else None,
     )

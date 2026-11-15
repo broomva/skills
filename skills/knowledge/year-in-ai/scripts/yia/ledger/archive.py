@@ -52,19 +52,32 @@ def copy_additive(source: Path, target: Path, suffixes: Optional[Tuple[str, ...]
                 continue
             src_path = Path(dirpath) / name
             dst_path = target / rel / name
+            tmp = dst_path.with_name(f".{name}.yia-tmp")
             try:
                 st = src_path.stat()
                 if not _needs_copy(st, dst_path):
                     counts["unchanged"] += 1
                     continue
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
-                tmp = dst_path.with_name(f".{name}.yia-tmp")
                 shutil.copy2(src_path, tmp)
+                # The source can shrink or be rewritten between the stat above and
+                # the copy. Judge what was actually copied, against the archive as it
+                # is now, immediately before replacing it.
+                if not _needs_copy(tmp.stat(), dst_path):
+                    counts["unchanged"] += 1
+                    continue
                 os.replace(tmp, dst_path)
                 counts["copied"] += 1
-                counts["bytes"] += st.st_size
+                counts["bytes"] += dst_path.stat().st_size
             except OSError:
                 counts["errors"] += 1
+            finally:
+                try:
+                    tmp.unlink()
+                except FileNotFoundError:
+                    pass
+                except OSError:
+                    counts["errors"] += 1
     return counts
 
 

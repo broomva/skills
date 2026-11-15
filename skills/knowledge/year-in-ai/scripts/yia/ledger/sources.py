@@ -30,7 +30,7 @@ from pathlib import Path
 from typing import Dict, Iterator, List, Optional, Set, Tuple
 
 from ..model import SourceReport
-from . import is_injected, make_row, unwrap_command
+from . import harness_label, is_injected, make_row, unwrap_command
 
 Rows = Iterator[dict]
 
@@ -108,7 +108,7 @@ def read_t3(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, R
             if ts is None:
                 continue
             _observe(report, ts)
-            harness = f"t3:{provider}" if provider else "t3"
+            harness = harness_label("t3", provider, "provider")
             state = runs.setdefault((thread, run), {"prompt": None, "author": None, "last": None})
             if role == "user":
                 if is_injected(text):
@@ -134,6 +134,45 @@ def read_t3(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, R
     return report, stream()
 
 
+
+def pair_turns(events, *, src: str, session: Optional[str], harness, author, attr=None,
+               report: Optional[SourceReport] = None) -> Rows:
+    """Turn a time-ordered stream of ``(role, ts, text)`` into prompt and reply rows, incrementally.
+
+    ``role`` is ``"prompt"`` or ``"reply"``. A reply row is the last reply text
+    before the next prompt, tied to that prompt's row id. ``harness``,
+    ``author`` and ``attr`` may be callables, evaluated at the first prompt, so
+    a reader can classify a session from fields it only sees while streaming.
+    Holds one pending reply in memory, never the session.
+    """
+    prompt_id = None
+    final = None
+    resolved = None
+    for role, ts, text in events:
+        if not text or not text.strip():
+            continue
+        if report is not None:
+            _observe(report, ts)
+        if role == "prompt":
+            if resolved is None:
+                resolved = (harness() if callable(harness) else harness,
+                            author() if callable(author) else author,
+                            attr() if callable(attr) else attr)
+            if final and prompt_id:
+                yield make_row(src=src, harness=resolved[0], kind="reply", ts=final[0], text=final[1],
+                               session=session, author=resolved[1], turn=prompt_id)
+            final = None
+            row = make_row(src=src, harness=resolved[0], kind="prompt", ts=ts, text=text, session=session,
+                           author=resolved[1], attr=resolved[2])
+            prompt_id = row["id"]
+            yield row
+        elif prompt_id:
+            final = (ts, text)
+    if final and prompt_id:
+        yield make_row(src=src, harness=resolved[0], kind="reply", ts=final[0], text=final[1], session=session,
+                       author=resolved[1], turn=prompt_id)
+
+
 # ---------------------------------------------------------------------- Conductor
 
 
@@ -154,9 +193,11 @@ def read_conductor(db: Optional[Path], since: Optional[float]) -> Tuple[SourceRe
             report.reason = f"Conductor database unreadable: {exc}"
             return
         report.files = 1
-        prompts: Dict[str, str] = {}
-        last: Dict[Tuple[str, str], Tuple[float, str]] = {}
-        for session, role, content, created, turn in rows:
+        # The prompt each session is answering *now*. A reply belongs to the
+        # prompt current when it was read, never to the session's last prompt.
+        current: Dict[str, str] = {}
+        last: Dict[str, Tuple[float, str, str]] = {}
+        for session, role, content, created, _turn in rows:
             ts = _iso(created or "")
             if ts is None or (since and ts < since) or not content:
                 continue
@@ -166,9 +207,9 @@ def read_conductor(db: Optional[Path], since: Optional[float]) -> Tuple[SourceRe
                     continue
                 row = make_row(src=name, harness="conductor", kind="prompt", ts=ts, text=content,
                                session=session, author="human")
-                prompts[session] = row["id"]
+                current[session] = row["id"]
                 yield row
-            elif role == "assistant":
+            elif role == "assistant" and session in current:
                 try:
                     message = json.loads(content)
                 except ValueError:
@@ -178,10 +219,10 @@ def read_conductor(db: Optional[Path], since: Optional[float]) -> Tuple[SourceRe
                 parts = (message.get("message") or {}).get("content") or []
                 text = "\n".join(p.get("text", "") for p in parts if isinstance(p, dict) and p.get("type") == "text")
                 if text.strip():
-                    last[(session, turn)] = (ts, text)
-        for (session, _turn), (ts, text) in last.items():
+                    last[current[session]] = (ts, text, session)
+        for prompt_id, (ts, text, session) in last.items():
             yield make_row(src=name, harness="conductor", kind="reply", ts=ts, text=text, session=session,
-                           author="human", turn=prompts.get(session))
+                           author="human", turn=prompt_id)
         con.close()
 
     return report, stream()
@@ -245,67 +286,64 @@ def read_claude_projects(
                     files[sid] = path
         for sid, path in files.items():
             report.files += 1
-            entry = None
-            seen: Set[str] = set()
-            turns: List[Tuple[str, float, str]] = []
-            try:
-                handle = path.open("r", encoding="utf-8", errors="ignore")
-            except OSError:
-                continue
-            with handle:
-                for line in handle:
-                    # Cheap pre-filter before parsing, independent of JSON spacing.
-                    if '"user"' not in line and '"assistant"' not in line:
-                        continue
-                    try:
-                        rec = json.loads(line)
-                    except ValueError:
-                        continue
-                    entry = entry or rec.get("entrypoint")
-                    if rec.get("isSidechain") or rec.get("isMeta") or rec.get("isCompactSummary"):
-                        continue
-                    uid = rec.get("uuid")
-                    if uid in seen:
-                        continue
-                    seen.add(uid)
-                    ts = _iso(rec.get("timestamp") or "")
-                    if ts is None or (since and ts < since):
-                        continue
-                    text = _claude_text((rec.get("message") or {}).get("content"))
-                    if not text or not text.strip():
-                        continue
-                    turns.append((rec.get("type"), ts, text))
-            if sid in paseo_ids:
-                harness, author = "paseo", "agent"
-            elif entry in CLAUDE_HUMAN_ENTRYPOINTS:
-                harness, author = "claude-cli", "human"
-            else:
-                harness, author = f"claude-{entry or 'unknown'}", ("agent" if entry == "sdk-cli" else "unknown")
-            prompt_id = None
-            final = None
-            for kind, ts, text in turns:
-                _observe(report, ts)
-                if kind == "user":
+            yield from _claude_session(path, sid, since, paseo_ids, report)
+
+    return report, stream()
+
+
+def _claude_session(path: Path, sid: str, since: Optional[float], paseo_ids: Set[str],
+                    report: SourceReport) -> Rows:
+    state = {"entry": None}
+
+    def events():
+        seen: Set[str] = set()
+        try:
+            handle = path.open("r", encoding="utf-8", errors="ignore")
+        except OSError:
+            return
+        with handle:
+            for line in handle:
+                # Cheap pre-filter before parsing, independent of JSON spacing.
+                if '"user"' not in line and '"assistant"' not in line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except ValueError:
+                    continue
+                state["entry"] = state["entry"] or rec.get("entrypoint")
+                if rec.get("isSidechain") or rec.get("isMeta") or rec.get("isCompactSummary"):
+                    continue
+                uid = rec.get("uuid")
+                if uid in seen:
+                    continue
+                seen.add(uid)
+                ts = _iso(rec.get("timestamp") or "")
+                if ts is None or (since and ts < since):
+                    continue
+                text = _claude_text((rec.get("message") or {}).get("content"))
+                if not text or not text.strip():
+                    continue
+                if rec.get("type") == "user":
                     if is_injected(text):
                         continue
                     typed = unwrap_command(text)
                     if typed is None:
                         continue
-                    if final and prompt_id:
-                        yield make_row(src=name, harness=harness, kind="reply", ts=final[0], text=final[1],
-                                       session=sid, author=author, turn=prompt_id)
-                    final = None
-                    row = make_row(src=name, harness=harness, kind="prompt", ts=ts, text=typed, session=sid,
-                                   author=author, attr={"entrypoint": entry})
-                    prompt_id = row["id"]
-                    yield row
-                elif prompt_id:
-                    final = (ts, text)
-            if final and prompt_id:
-                yield make_row(src=name, harness=harness, kind="reply", ts=final[0], text=final[1],
-                               session=sid, author=author, turn=prompt_id)
+                    yield "prompt", ts, typed
+                else:
+                    yield "reply", ts, text
 
-    return report, stream()
+    def classify():
+        entry = state["entry"]
+        if sid in paseo_ids:
+            return "paseo", "agent"
+        if entry in CLAUDE_HUMAN_ENTRYPOINTS:
+            return "claude-cli", "human"
+        return harness_label("claude", entry or "unknown", "entrypoint"), ("agent" if entry == "sdk-cli" else "unknown")
+
+    yield from pair_turns(events(), src="claude_code", session=sid, report=report,
+                          harness=lambda: classify()[0], author=lambda: classify()[1],
+                          attr=lambda: {"entrypoint": state["entry"]})
 
 
 def read_claude_history(path: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, Rows]:
@@ -345,8 +383,7 @@ def read_claude_history(path: Optional[Path], since: Optional[float]) -> Tuple[S
                 full = "\n".join([display] + pasted)
                 typed = len(re.sub(r"\[Pasted text[^\]]*\]", "", display).strip())
                 yield make_row(src=name, harness="claude-cli", kind="prompt", ts=ts, text=full,
-                               session=rec.get("sessionId"), author="human", authored=min(typed, 4000),
-                               attr={"project": os.path.basename(rec.get("project") or "") or None})
+                               session=rec.get("sessionId"), author="human", authored=min(typed, 4000))
 
     return report, stream()
 
@@ -357,20 +394,28 @@ def read_claude_history(path: Optional[Path], since: Optional[float]) -> Tuple[S
 CODEX_NOT_INTERACTIVE = {"codex_exec", "T3 Code", "t3code_desktop", "codex_sdk_ts"}
 
 
-def _codex_lines(path: Path) -> List[str]:
+def _codex_lines(path: Path) -> Iterator[str]:
+    """Stream a rollout line by line, decompressing ``.zst`` through a pipe."""
     if path.name.endswith(".zst"):
         zstd = shutil.which("zstd")
         if not zstd:
-            return []
+            return
         try:
-            out = subprocess.run([zstd, "-dc", str(path)], capture_output=True, timeout=120).stdout
-        except (OSError, subprocess.SubprocessError):
-            return []
-        return out.decode("utf-8", errors="ignore").splitlines()
+            proc = subprocess.Popen([zstd, "-dc", str(path)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError:
+            return
+        try:
+            for raw in proc.stdout:
+                yield raw.decode("utf-8", errors="ignore")
+        finally:
+            proc.stdout.close()
+            proc.wait()
+        return
     try:
-        return path.read_text(encoding="utf-8", errors="ignore").splitlines()
+        with path.open("r", encoding="utf-8", errors="ignore") as handle:
+            yield from handle
     except OSError:
-        return []
+        return
 
 
 def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[SourceReport, Rows]:
@@ -404,62 +449,56 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
 
 
 def _codex_file(path: Path, sid: str, since: Optional[float], report: SourceReport) -> Rows:
+    lines = _codex_lines(path)
     meta: Optional[dict] = None
-    events: List[Tuple[str, float, str]] = []
-    for line in _codex_lines(path):
-        if '"session_meta"' not in line and '"event_msg"' not in line:
-            continue
-        try:
-            rec = json.loads(line)
-        except ValueError:
-            continue
-        payload = rec.get("payload") or {}
-        if rec.get("type") == "session_meta" and meta is None:
-            meta = payload
-            continue
-        if rec.get("type") != "event_msg":
-            continue
-        ts = _iso(rec.get("timestamp") or "")
-        if ts is None or (since and ts < since):
-            continue
-        kind = payload.get("type")
-        if kind == "user_message":
-            events.append(("prompt", ts, payload.get("message") or ""))
-        elif kind == "agent_message":
-            events.append(("reply", ts, payload.get("message") or ""))
-        elif kind == "task_complete" and payload.get("last_agent_message"):
-            events.append(("reply", ts, payload["last_agent_message"]))
+    # session_meta is the first record; read up to it, then stream the rest.
+    for line in lines:
+        if '"session_meta"' in line:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if rec.get("type") == "session_meta":
+                meta = rec.get("payload") or {}
+                break
     if not meta:
         return
     source = meta.get("source")
     if not isinstance(source, str):
+        for _ in lines:  # drain, so the decompressor exits cleanly
+            pass
         return  # a subagent spawned by another Codex thread
     originator = meta.get("originator") or ""
     if originator in CODEX_NOT_INTERACTIVE or source not in ("vscode", "cli"):
         author = "agent" if originator == "codex_exec" or source == "exec" else "unknown"
     else:
         author = "human"
-    harness = f"codex:{originator or source}"
-    prompt_id = None
-    final = None
-    for kind, ts, text in events:
-        if not text.strip():
-            continue
-        _observe(report, ts)
-        if kind == "prompt":
-            if final and prompt_id:
-                yield make_row(src="codex", harness=harness, kind="reply", ts=final[0], text=final[1],
-                               session=sid, author=author, turn=prompt_id)
-            final = None
-            row = make_row(src="codex", harness=harness, kind="prompt", ts=ts, text=text, session=sid,
-                           author=author, attr={"originator": originator, "source": source})
-            prompt_id = row["id"]
-            yield row
-        elif prompt_id:
-            final = (ts, text)
-    if final and prompt_id:
-        yield make_row(src="codex", harness=harness, kind="reply", ts=final[0], text=final[1], session=sid,
-                       author=author, turn=prompt_id)
+
+    def events():
+        for line in lines:
+            if '"event_msg"' not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if rec.get("type") != "event_msg":
+                continue
+            ts = _iso(rec.get("timestamp") or "")
+            if ts is None or (since and ts < since):
+                continue
+            payload = rec.get("payload") or {}
+            kind = payload.get("type")
+            if kind == "user_message":
+                yield "prompt", ts, payload.get("message") or ""
+            elif kind == "agent_message":
+                yield "reply", ts, payload.get("message") or ""
+            elif kind == "task_complete" and payload.get("last_agent_message"):
+                yield "reply", ts, payload["last_agent_message"]
+
+    yield from pair_turns(events(), src="codex", session=sid, report=report,
+                          harness=harness_label("codex", originator, "originator"), author=author,
+                          attr={"originator": originator, "source": source})
 
 
 def read_codex_history(path: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, Rows]:

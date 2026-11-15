@@ -22,7 +22,7 @@ import hashlib
 import re
 from typing import Any, Dict, Iterable, Optional
 
-SCHEMA = "year-in-ai/ledger/v1"
+SCHEMA = "year-in-ai/ledger/v2"
 
 #: A prompt is what started a turn; a reply is the final assistant message of it.
 KINDS = ("prompt", "reply")
@@ -72,8 +72,53 @@ def normalize(text: str) -> str:
 
 
 def text_hash(text: str) -> str:
-    """Hash of the normalized text, used to merge one prompt seen in two stores."""
-    return hashlib.sha1(normalize(text)[:600].encode("utf-8")).hexdigest()[:16]
+    """Hash of the whole normalized text, used to merge one prompt seen in two stores.
+
+    The whole text, not a prefix: two long prompts built from one template
+    differ only after the template, and must not merge.
+    """
+    return hashlib.sha1(normalize(text).encode("utf-8")).hexdigest()[:16]
+
+
+def opaque(value: Optional[str]) -> Optional[str]:
+    """A stable, non-reversible handle for an external identifier (session ids, paths)."""
+    if value is None:
+        return None
+    return hashlib.sha1(str(value).encode("utf-8")).hexdigest()[:16]
+
+
+#: The only values an attribution field may hold. Anything else is stored as
+#: ``other``: a store that put free text in one of these fields must not be
+#: able to carry it into the ledger.
+ATTR_VALUES = {
+    "created_by": {"user", "agent", "system"},
+    "creation_source": {"web", "mobile", "server", "desktop", "cli", "api"},
+    "lineage": {"top", "subagent", "fork"},
+    "entrypoint": {"cli", "sdk-cli", "sdk-ts", "sdk-py", "claude-desktop", "claude-vscode", "mcp"},
+    "originator": {"Codex Desktop", "codex_exec", "codex_cli_rs", "codex-tui", "T3 Code", "t3code_desktop",
+                   "superconductor", "acpx", "codex_sdk_ts", "codex_work_desktop"},
+    "source": {"vscode", "cli", "exec"},
+    "provider": {"claudeAgent", "codex", "codex_team", "codex_carlos", "codex_carlos_personal_20261029",
+                 "gemini-vertex", "antigravity", "antigravity-personal", "antigravity-balanced", "grok",
+                 "holon", "cursor", "opencode", "pi"},
+}
+
+
+def clean_attr(attr: Optional[Dict[str, Any]]) -> Dict[str, str]:
+    """Keep known keys with known values; map unknown values to ``other``; drop unknown keys."""
+    out: Dict[str, str] = {}
+    for key, value in (attr or {}).items():
+        if key not in ATTR_VALUES or value is None:
+            continue
+        out[key] = value if value in ATTR_VALUES[key] else "other"
+    return out
+
+
+def harness_label(prefix: str, value: Optional[str], key: str) -> str:
+    """``prefix:value`` when the value is a known enum, ``prefix:other`` when not, ``prefix`` when absent."""
+    if not value:
+        return prefix
+    return f"{prefix}:{value if value in ATTR_VALUES[key] else 'other'}"
 
 
 def prefix_hash(text: str) -> Optional[str]:
@@ -134,7 +179,12 @@ def make_row(
     attr: Optional[Dict[str, Any]] = None,
     authored: Optional[int] = None,
 ) -> Dict[str, Any]:
-    """Build one ledger row from a turn. The text goes in; only numbers and hashes come out."""
+    """Build one ledger row from a turn. The text goes in; only numbers and hashes come out.
+
+    ``session`` and ``turn`` are external or derived identifiers; the session is
+    stored as an opaque hash, and ``turn`` is always a row id made here.
+    ``harness`` must come from :func:`harness_label` or a fixed literal.
+    """
     if kind not in KINDS:
         raise ValueError(f"unknown row kind: {kind!r}")
     if author not in AUTHORS:
@@ -146,10 +196,11 @@ def make_row(
     flags = []
     if kind == "prompt" and has_automation_marker(clean):
         flags.append("marker")
-    row_id = hashlib.sha1(f"{src}|{session}|{kind}|{ts:.3f}|{h}".encode("utf-8")).hexdigest()[:20]
+    sess = opaque(session)
+    row_id = hashlib.sha1(f"{src}|{sess}|{kind}|{ts:.3f}|{h}".encode("utf-8")).hexdigest()[:20]
     return {
         "id": row_id,
-        "v": 1,
+        "v": 2,
         "ts": round(ts, 3),
         "src": src,
         "harness": harness,
@@ -161,10 +212,10 @@ def make_row(
         "authored_words": round(words * min(1.0, a_chars / max(len(clean), 1))),
         "h": h,
         "ph": prefix_hash(clean) if kind == "prompt" else None,
-        "sess": session,
+        "sess": sess,
         "turn": turn,
         "flags": flags,
-        "attr": {k: v for k, v in (attr or {}).items() if v is not None},
+        "attr": clean_attr(attr),
     }
 
 
