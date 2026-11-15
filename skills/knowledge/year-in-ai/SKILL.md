@@ -23,8 +23,11 @@ computed in December from the stores alone. The skill therefore has:
    hashes and author flags. **Rows never hold message text.** `--archive-to`
    also copies the stores that prune themselves to a larger disk. Nothing
    archived is ever lost: a file is replaced only by one that extends it byte
-   for byte; a rewritten or truncated source is kept beside it as a
-   `.rev-<hash>` revision.
+   for byte; a rewritten or truncated source opens a numbered revision,
+   `<name>.rev-<n>.jsonl`, which later growth extends in place. A file its
+   tool rewrites wholesale every week would add one revision per rewrite;
+   none of the archived stores does that, and `harvest` prints the revision
+   count so growth is visible.
 2. **Recap (once a year).** `attention` folds the ledger into what you wrote
    and read. `extract` and `render` build the story deck from transcripts.
 
@@ -92,10 +95,13 @@ fold.
 
 ## How "written" and "read" are counted
 
-- **Written:** prompts a person wrote, counted as turns. A store's own author
-  flag wins. Prompts from stores without one pass three filters: no automation
-  opening, no exact text repeated across three sessions, no opening repeated
-  across four. A turn recorded by two stores counts once (the closest
+- **Written:** prompts a person wrote, counted as turns. Each store's author
+  signal (table above) decides who wrote a prompt, and a prompt marked as an
+  agent's never counts. Only T3's per-message `createdBy` is exact enough to
+  stand alone. Every other store's human prompts also pass three filters,
+  because a script can drive those harnesses the way a person does (see the
+  known limit below): no automation opening, no exact text repeated across
+  three sessions, no opening repeated across four. A turn recorded by two stores counts once (the closest
   same-text turn within 36 hours, 20 minutes under 80 characters). A resumed
   or forked session's copy counts once, but only on evidence: the store's own
   message id, a T3 fork's creation time, or, for markdown and exports, a run
@@ -109,9 +115,18 @@ fold.
   family (a CLI prompt from CLI replies), reported separately.
 - **The ratio** is words read over *authored* words written: pasted logs and
   code blocks are not writing.
-- **Known limit:** an agent that drives the interactive `claude` CLI through a
-  terminal looks exactly like a person to every store. Only the scripted-prompt
-  filters (repeated text, repeated openings, automation markers) catch it.
+- **Known limits.**
+  - An agent that drives the interactive `claude` CLI through a terminal looks
+    exactly like a person to every store. Only the scripted-prompt filters
+    (repeated text, repeated openings, automation markers) catch it, and a
+    person who types the same long prompt into three sessions is filtered too.
+  - Stores without message ids (bridged markdown, exports) identify a turn by
+    its text. A turn whose text changes there (a re-rendered bridge file)
+    is a second turn. Bridged markdown is a generated rendering, used only
+    before `text_only_until`.
+  - Identical prompts in a store without message ids (same session, time and
+    text) are told apart by order, so pruning one can relabel the others;
+    their count in the ledger stays right.
 - **The agents' own year:** replies to agent-written prompts are reported on
   their own, never added to what you read.
 - Set `text_only_until` to the date a store with exact authors starts covering
