@@ -5,7 +5,7 @@
 [![Agent Skills spec](https://img.shields.io/badge/spec-agentskills.io-blue)](https://agentskills.io/specification)
 [![Monorepo layout](https://img.shields.io/badge/layout-anthropics%2Fskills-orange)](https://github.com/anthropics/skills)
 
-A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 113 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
+A curated monorepo of [Agent Skills](https://agentskills.io/specification) — 114 Tier-2 skills (the catalog is one of them) + the showcase renderer. Compatible with Claude Code, Codex, Cursor, Gemini CLI, Goose, Copilot, and any agent that consumes the `SKILL.md` standard.
 
 Layout: **no root `SKILL.md`** (the README is the discovery surface). Skills are bucketed by single-noun **category** at `skills/<category>/<name>/SKILL.md` (depth-2). skills.sh discovers depth-2 by default — **requires CLI ≥ v1.5.8** — and `--skill <name>` resolves path-independently, so install commands don't reference the category.
 
@@ -60,7 +60,7 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 
 ## Tier-2 skills (vendored in this monorepo)
 
-**113 skills** organized into **23 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
+**114 skills** organized into **23 single-noun category buckets** at `skills/<category>/<name>/` (depth-2; requires skills.sh CLI ≥ v1.5.8). Install any skill path-independently: `npx skills add broomva/skills --skill <name>`.
 
 ### Governance & control — `skills/governance/`
 
@@ -110,7 +110,7 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 | [`prove-the-negative`](skills/tooling/prove-the-negative/) | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | [`attempt-audit`](skills/tooling/attempt-audit/) | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely; zero-config AST tripwire that names what it could not audit |
 | [`skillify`](skills/tooling/skillify/) | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 113 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| [`skills-catalog`](skills/tooling/skills-catalog/) | Canonical reference inventory of the 114 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 
 ### Knowledge & memory — `skills/knowledge/`
 
@@ -124,6 +124,7 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 | [`goodies`](skills/knowledge/goodies/) | Ingest, contextualize, and index curated resources into a public GitHub Pages vault with dynamic taxonomy and Knowledge Graph integration |
 | [`kg`](skills/knowledge/kg/) | Load relevant entities from the bstack knowledge graph (research/entities/) for a given topic |
 | [`what`](skills/knowledge/what/) | Explain the *concepts* a session used, at the operator's register — ranked by what blocks understanding, anchored to where each term appeared, grounded in the knowledge graph; degrades to a re-pitch when the slice is short |
+| [`year-in-ai`](skills/knowledge/year-in-ai/) | A Spotify-Wrapped-style retrospective of your year with AI agents, computed from local history across harnesses (Claude Code, Codex, T3, Conductor, Gemini CLI, bridged transcripts, exports). Two… |
 
 ### Research — `skills/research/`
 
@@ -292,14 +293,14 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 
 ## Catalog inventory
 
-The 113 skills bucket into 23 single-noun categories — one row per `skills/<category>/` directory:
+The 114 skills bucket into 23 single-noun categories — one row per `skills/<category>/` directory:
 
 | Category | Bucket | Count |
 |---|---|---|
 | Governance & control | `skills/governance/` | 11 |
 | Orchestration & autonomy | `skills/orchestration/` | 14 |
 | Skill & prompt tooling | `skills/tooling/` | 10 |
-| Knowledge & memory | `skills/knowledge/` | 8 |
+| Knowledge & memory | `skills/knowledge/` | 9 |
 | Research | `skills/research/` | 2 |
 | Strategy & decisions | `skills/strategy/` | 6 |
 | Operating cadence | `skills/cadence/` | 4 |

@@ -1,0 +1,452 @@
+"""The reader identity contract, run against every reader in ``sources.REGISTRY``.
+
+Each reader gets a fixture builder that writes its store in the real on-disk
+format from one turn specification. The same cases then run against all of
+them:
+
+* stable: harvesting the same store twice gives the same row ids;
+* distinct: two occurrences with identical text and timestamp get two ids;
+* local: pruning the oldest turn, or inserting a turn, leaves every other
+  row's id unchanged;
+* native copies: where a store copies a message with its own id (a resumed
+  Claude Code session), the copy has the original's id;
+* hostile metadata: dicts and lists where a store should hold strings do not
+  stop the reader.
+
+Adding a reader to ``REGISTRY`` without a builder here fails the suite.
+"""
+
+from __future__ import annotations
+
+import ast
+import datetime as dt
+import inspect
+import json
+import sqlite3
+import sys
+from pathlib import Path
+
+import pytest
+
+SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
+sys.path.insert(0, str(SCRIPTS))
+
+from yia import ledger as LEDGER  # noqa: E402
+from yia.ledger import sources as S  # noqa: E402
+
+T0 = 1793000000.0  # 2026-10-26, a Monday
+COT = dt.timezone(dt.timedelta(hours=-5))
+HOSTILE = {"nested": ["not", "a", "string"]}
+
+
+def turn(n, sess="s1", ts=None, prompt=None, reply=None):
+    """One turn: a prompt and its reply, with native ids for stores that have them."""
+    return {"sess": sess, "ts": T0 + n * 600 if ts is None else ts, "prompt": prompt or f"prompt number {n}",
+            "reply": reply or f"reply number {n}", "pid": f"p{n}", "rid": f"r{n}"}
+
+
+def iso(ts, zone=dt.timezone.utc):
+    return dt.datetime.fromtimestamp(ts, zone).strftime("%Y-%m-%dT%H:%M:%S.%f")[:-3] + "Z"
+
+
+def write_jsonl(path: Path, records) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(json.dumps(r) + "\n" for r in records), encoding="utf-8")
+
+
+# ---------------------------------------------------------------- builders
+
+
+def build_t3(d, turns, hostile=False):
+    db = d / "statev2.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("create table orchestration_v2_projection_threads (thread_id text, default_provider text, "
+                "payload_json text, created_at text)")
+    con.execute("create table orchestration_v2_projection_messages (message_id text, thread_id text, run_id text, "
+                "role text, streaming int, created_at text, payload_json text)")
+    for sess in sorted({t["sess"] for t in turns}):
+        lineage = HOSTILE if hostile else None
+        con.execute("insert into orchestration_v2_projection_threads values (?,?,?,?)",
+                    (sess, json.dumps(HOSTILE) if hostile else "claudeAgent",
+                     json.dumps({"lineage": {"relationshipToParent": lineage}}), iso(T0 - 86400)))
+    for t in turns:
+        created_by = HOSTILE if hostile else "user"
+        con.execute("insert into orchestration_v2_projection_messages values (?,?,?,?,?,?,?)",
+                    (t["pid"], t["sess"], f"run-{t['pid']}", "user", 0, iso(t["ts"]),
+                     json.dumps({"createdBy": created_by, "creationSource": HOSTILE if hostile else "web",
+                                 "text": t["prompt"]})))
+        con.execute("insert into orchestration_v2_projection_messages values (?,?,?,?,?,?,?)",
+                    (t["rid"], t["sess"], f"run-{t['pid']}", "assistant", 0, iso(t["ts"] + 5),
+                     json.dumps({"createdBy": "agent", "text": t["reply"]})))
+    con.commit()
+    con.close()
+    return lambda: S.read_t3(db, None)
+
+
+def build_conductor(d, turns, hostile=False):
+    db = d / "conductor.db"
+    con = sqlite3.connect(db)
+    con.execute("create table session_messages (id text, session_id text, role text, content text, "
+                "created_at text, turn_id text)")
+    for t in turns:
+        stamp = dt.datetime.fromtimestamp(t["ts"], dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        later = dt.datetime.fromtimestamp(t["ts"] + 5, dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+        message = {"type": "assistant", "message": {"content": [{"type": "text", "text": t["reply"]}]}}
+        if hostile:
+            message["message"]["content"].append({"type": "text", "text": HOSTILE})
+        con.execute("insert into session_messages values (?,?,?,?,?,?)",
+                    (t["pid"], t["sess"], "user", t["prompt"], stamp, t["pid"]))
+        con.execute("insert into session_messages values (?,?,?,?,?,?)",
+                    (t["rid"], t["sess"], "assistant", json.dumps(message), later, t["pid"]))
+    con.commit()
+    con.close()
+    return lambda: S.read_conductor(db, None)
+
+
+def _claude_records(turns, hostile):
+    entry = HOSTILE if hostile else "cli"
+    out = []
+    for t in turns:
+        out.append({"type": "user", "uuid": t["pid"], "entrypoint": entry, "timestamp": iso(t["ts"]),
+                    "message": {"content": t["prompt"]}})
+        out.append({"type": "assistant", "uuid": t["rid"], "entrypoint": entry, "timestamp": iso(t["ts"] + 5),
+                    "message": {"content": [{"type": "text", "text": t["reply"]}]}})
+    return out
+
+
+def build_claude_code(d, turns, hostile=False):
+    root = d / "projects"
+    for sess in sorted({t["sess"] for t in turns}):
+        write_jsonl(root / "-proj" / f"{sess}.jsonl", _claude_records([t for t in turns if t["sess"] == sess], hostile))
+    root.mkdir(parents=True, exist_ok=True)
+    return lambda: S.read_claude_projects([root], None)
+
+
+def build_claude_history(d, turns, hostile=False):
+    path = d / "history.jsonl"
+    write_jsonl(path, [{"display": t["prompt"], "timestamp": int(t["ts"] * 1000),
+                        "project": HOSTILE if hostile else "/p",
+                        "sessionId": HOSTILE if hostile else t["sess"], "pastedContents": HOSTILE if hostile else {}}
+                       for t in turns])
+    return lambda: S.read_claude_history(path, None)
+
+
+def _codex_sid(sess):
+    return (sess + "-" * 36)[:36]
+
+
+def build_codex(d, turns, hostile=False):
+    root = d / "codex"
+    for sess in sorted({t["sess"] for t in turns}):
+        mine = [t for t in turns if t["sess"] == sess]
+        records = [{"type": "session_meta", "timestamp": iso(T0 - 60),
+                    "payload": {"originator": HOSTILE if hostile else "Codex Desktop", "source": "vscode"}}]
+        for t in mine:
+            records.append({"type": "event_msg", "timestamp": iso(t["ts"]),
+                            "payload": {"type": "user_message", "message": t["prompt"]}})
+            records.append({"type": "event_msg", "timestamp": iso(t["ts"] + 5),
+                            "payload": {"type": "agent_message", "message": t["reply"]}})
+        write_jsonl(root / "2026" / "10" / f"rollout-x-{_codex_sid(sess)}.jsonl", records)
+    root.mkdir(parents=True, exist_ok=True)
+    return lambda: S.read_codex_sessions([root], None)
+
+
+def build_codex_history(d, turns, hostile=False):
+    path = d / "codex-history.jsonl"
+    write_jsonl(path, [{"session_id": HOSTILE if hostile else t["sess"], "ts": int(t["ts"]), "text": t["prompt"]}
+                       for t in turns])
+    return lambda: S.read_codex_history(path, None)
+
+
+def build_gemini(d, turns, hostile=False):
+    root = d / "gemini"
+    for sess in sorted({t["sess"] for t in turns}):
+        messages = []
+        for t in (t for t in turns if t["sess"] == sess):
+            messages.append({"id": t["pid"], "timestamp": iso(t["ts"]), "type": "user", "content": t["prompt"]})
+            messages.append({"id": t["rid"], "timestamp": iso(t["ts"] + 5), "type": "gemini", "content": t["reply"]})
+        path = root / "proj" / "chats" / f"{sess}.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(json.dumps({"sessionId": HOSTILE if hostile else sess, "messages": messages}))
+    root.mkdir(parents=True, exist_ok=True)
+    return lambda: S.read_gemini([root], None)
+
+
+def build_bridged(d, turns, hostile=False):
+    root = d / "bridge"
+    root.mkdir(parents=True, exist_ok=True)
+    for sess in sorted({t["sess"] for t in turns}):
+        mine = [t for t in turns if t["sess"] == sess]
+        day = dt.datetime.fromtimestamp(mine[0]["ts"], COT).strftime("%Y-%m-%d")
+        lines = ["---", f"created: {day}", f"session_id: {sess}", "---", ""]
+        for t in mine:
+            hm = dt.datetime.fromtimestamp(t["ts"], COT).strftime("%H:%M")
+            lines += [f"> [!quote] **User** ({hm})", f"> {t['prompt']}", "", "> [!info] **Assistant**",
+                      f"> {t['reply']}", ""]
+        (root / f"session-{day}-{sess}.md").write_text("\n".join(lines))
+    return lambda: S.read_bridged([root], None)
+
+
+def build_export(d, turns, hostile=False):
+    path = d / "conversations.jsonl"
+    records = []
+    for sess in sorted({t["sess"] for t in turns}):
+        mine = [t for t in turns if t["sess"] == sess]
+        body = []
+        for t in mine:
+            body += [{"role": "user", "content": t["prompt"]}, {"role": "assistant", "content": t["reply"]}]
+        records.append({"session_id": HOSTILE if hostile else sess,
+                        "date": dt.datetime.fromtimestamp(mine[0]["ts"], dt.timezone.utc).strftime("%Y-%m-%d"),
+                        "turns": json.dumps(body)})
+    write_jsonl(path, records)
+    return lambda: S.read_exports([path], None)
+
+
+BUILDERS = {
+    "t3": build_t3, "conductor": build_conductor, "claude_code": build_claude_code,
+    "claude_history": build_claude_history, "codex": build_codex, "codex_history": build_codex_history,
+    "gemini": build_gemini, "bridged": build_bridged, "export": build_export,
+}
+#: Stores whose own message ids survive a copy into another session.
+NATIVE_COPIES = {"claude_code"}
+#: Stores whose messages carry their own ids, so an edit in place keeps the occurrence.
+NATIVE_IDS = {"t3", "conductor", "claude_code", "gemini"}
+#: Stores told apart only by content, where identical occurrences are ordered, not named.
+CONTENT_KEYED = sorted(set(BUILDERS) - NATIVE_IDS)
+
+
+def harvest(builder, tmp_path, turns, name="run", hostile=False):
+    d = tmp_path / name
+    d.mkdir()
+    _report, rows = builder(d, turns, hostile)()
+    return list(rows)
+
+
+def prompt_ids(rows):
+    return {r["ts"]: r["id"] for r in rows if r["kind"] == "prompt"}
+
+
+# ----------------------------------------------------------------- the cases
+
+
+def test_every_registered_reader_has_a_fixture():
+    assert set(BUILDERS) == set(S.REGISTRY)
+
+
+@pytest.mark.parametrize("store", sorted(BUILDERS))
+def test_ids_are_stable_across_harvests(store, tmp_path):
+    turns = [turn(1), turn(2), turn(3)]
+    first = harvest(BUILDERS[store], tmp_path, turns, "a")
+    second = harvest(BUILDERS[store], tmp_path, turns, "b")
+    assert first and sorted(r["id"] for r in first) == sorted(r["id"] for r in second)
+
+
+@pytest.mark.parametrize("store", sorted(BUILDERS))
+def test_identical_occurrences_get_distinct_ids(store, tmp_path):
+    same = dict(ts=T0 + 120, prompt="yes", reply="ok")
+    turns = [turn(1, **same), turn(2, **same)]
+    rows = harvest(BUILDERS[store], tmp_path, turns)
+    prompts = [r for r in rows if r["kind"] == "prompt"]
+    assert len(prompts) == 2
+    assert len({r["id"] for r in prompts}) == 2
+
+
+@pytest.mark.parametrize("store", sorted(BUILDERS))
+def test_pruning_the_oldest_turn_leaves_other_ids_alone(store, tmp_path):
+    full = harvest(BUILDERS[store], tmp_path, [turn(1), turn(2), turn(3)], "full")
+    pruned = harvest(BUILDERS[store], tmp_path, [turn(2), turn(3)], "pruned")
+    assert {r["id"] for r in pruned if r["kind"] == "prompt"} <= {r["id"] for r in full if r["kind"] == "prompt"}
+    assert len([r for r in pruned if r["kind"] == "prompt"]) == 2
+
+
+@pytest.mark.parametrize("store", sorted(BUILDERS))
+def test_inserting_a_turn_leaves_other_ids_alone(store, tmp_path):
+    before = harvest(BUILDERS[store], tmp_path, [turn(1), turn(3)], "before")
+    after = harvest(BUILDERS[store], tmp_path, [turn(1), turn(2), turn(3)], "after")
+    assert {r["id"] for r in before if r["kind"] == "prompt"} <= {r["id"] for r in after if r["kind"] == "prompt"}
+
+
+@pytest.mark.parametrize("store", sorted(BUILDERS))
+def test_hostile_metadata_does_not_stop_the_reader(store, tmp_path):
+    rows = harvest(BUILDERS[store], tmp_path, [turn(1), turn(2)], hostile=True)
+    assert len([r for r in rows if r["kind"] == "prompt"]) == 2  # still read, not silently skipped
+    for r in rows:
+        assert "nested" not in json.dumps(r)
+
+
+@pytest.mark.parametrize("store", sorted(NATIVE_COPIES))
+def test_a_native_copy_keeps_the_original_id(store, tmp_path):
+    original = turn(1, sess="original")
+    copy = dict(original, sess="resumed")  # same native ids, carried into a resumed session
+    rows = harvest(BUILDERS[store], tmp_path, [original, copy, turn(2, sess="resumed")])
+    ids = [r["id"] for r in rows if r["kind"] == "prompt"]
+    assert len(set(ids)) == 2  # the copy collapses into its original; the new turn stays distinct
+
+
+# ------------------------------------------------------- the static half
+
+
+def test_one_function_makes_row_ids():
+    """Only the identity functions hash; no reader, store or fold computes an id itself."""
+    ledger_dir = SCRIPTS / "yia" / "ledger"
+    for path in ledger_dir.glob("*.py"):
+        tree = ast.parse(path.read_text())
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "sha1":
+                owner = next((f.name for f in ast.walk(tree) if isinstance(f, ast.FunctionDef)
+                              and f.lineno <= node.lineno <= f.end_lineno), None)
+                assert path.name == "__init__.py" and owner in {"row_identity", "revision_identity", "text_hash", "prefix_hash", "opaque"}, \
+                    f"{path.name}:{node.lineno} hashes outside the identity functions"
+
+
+def test_every_row_a_reader_makes_names_its_occurrence():
+    assert inspect.signature(LEDGER.make_row).parameters["occurrence"].default is inspect.Parameter.empty
+    tree = ast.parse((SCRIPTS / "yia" / "ledger" / "sources.py").read_text())
+    calls = [n for n in ast.walk(tree) if isinstance(n, ast.Call) and getattr(n.func, "id", "") == "make_row"]
+    assert calls
+    for call in calls:
+        assert "occurrence" in {k.arg for k in call.keywords}, f"make_row at line {call.lineno} has no occurrence"
+
+
+@pytest.mark.parametrize("store", sorted(NATIVE_IDS))
+def test_an_edit_in_place_is_a_new_revision_of_the_same_occurrence(store, tmp_path):
+    before = harvest(BUILDERS[store], tmp_path, [turn(1)], "before")
+    after = harvest(BUILDERS[store], tmp_path, [turn(1, prompt="prompt number 1, edited and longer")], "after")
+    p0 = next(r for r in before if r["kind"] == "prompt")
+    p1 = next(r for r in after if r["kind"] == "prompt")
+    assert p0["id"] != p1["id"] and p0["o"] == p1["o"]
+
+
+@pytest.mark.parametrize("store", CONTENT_KEYED)
+def test_identical_occurrences_keep_their_count_through_pruning_and_insertion(store, tmp_path):
+    """The disclosed limit: identical keyless occurrences are ordered, not named. Counts still hold."""
+    from yia.ledger import store as L
+    same = dict(ts=T0 + 120, prompt="yes", reply="ok")
+    ledger = L.Ledger(str(tmp_path / "ledger"))
+
+    def ingest(turns, name):
+        ledger.write(harvest(BUILDERS[store], tmp_path, turns, name))
+        return len([r for r in ledger.rows() if r["kind"] == "prompt"])
+
+    assert ingest([turn(1, **same), turn(2, **same)], "two") == 2
+    assert ingest([turn(2, **same)], "pruned") == 2  # the store forgot one; the ledger did not
+    assert ingest([turn(0, **same), turn(1, **same), turn(2, **same)], "three") == 3  # one new occurrence, one new row
+
+
+@pytest.mark.parametrize("store", ["gemini", "export"])
+def test_hostile_role_fields_are_skipped_not_fatal(store, tmp_path):
+    d = tmp_path / "store"
+    d.mkdir()
+    run = BUILDERS[store](d, [turn(1), turn(2)])
+    if store == "gemini":
+        path = next((d / "gemini").rglob("*.json"))
+        data = json.loads(path.read_text())
+        data["messages"].insert(0, {"id": "x", "timestamp": iso(T0), "type": HOSTILE, "content": "junk"})
+        path.write_text(json.dumps(data))
+    else:
+        path = d / "conversations.jsonl"
+        rec = json.loads(path.read_text().splitlines()[0])
+        body = json.loads(rec["turns"])
+        body.insert(0, {"role": ["user"], "content": "junk"})
+        rec["turns"] = json.dumps(body)
+        path.write_text(json.dumps(rec) + "\n")
+    _report, rows = run()
+    assert len([r for r in list(rows) if r["kind"] == "prompt"]) == 2
+
+
+# ------------------------------------------- live and archived copies, every multi-root reader
+
+#: Readers that take several roots (a live store plus its archive), with the
+#: directory their builder writes into and how to call them on several roots.
+MULTI_ROOT = {
+    "claude_code": ("projects", lambda roots: S.read_claude_projects(roots, None)),
+    "codex": ("codex", lambda roots: S.read_codex_sessions(roots, None)),
+    "gemini": ("gemini", lambda roots: S.read_gemini(roots, None)),
+    "bridged": ("bridge", lambda roots: S.read_bridged(roots, None)),
+}
+
+
+def _two_roots(store, tmp_path, live_turns, archive_turns, same_mtime=False, live_newer=False,
+               archive_newer=False):
+    import os
+    sub, read = MULTI_ROOT[store]
+    live, archive = tmp_path / "live", tmp_path / "zz-archive"
+    live.mkdir()
+    archive.mkdir()
+    BUILDERS[store](live, live_turns)
+    BUILDERS[store](archive, archive_turns)
+    live_files = sorted(p for p in (live / sub).rglob("*") if p.is_file())
+    archive_files = sorted(p for p in (archive / sub).rglob("*") if p.is_file())
+    for lf, af in zip(live_files, archive_files):
+        stamp = af.stat().st_mtime_ns
+        if same_mtime:
+            os.utime(lf, ns=(stamp, stamp))
+        elif live_newer:
+            os.utime(lf, ns=(stamp + 10**9, stamp + 10**9))
+            os.utime(af, ns=(stamp, stamp))
+        elif archive_newer:
+            os.utime(af, ns=(stamp + 10**9, stamp + 10**9))
+            os.utime(lf, ns=(stamp, stamp))
+    _report, rows = read([live / sub, archive / sub])
+    return [r for r in rows if r["kind"] == "prompt"]
+
+
+def test_every_multi_root_reader_is_listed():
+    assert set(MULTI_ROOT) == {name for name, fn in S.REGISTRY.items()
+                               if list(inspect.signature(fn).parameters)[0] == "roots"}
+
+
+#: Stores whose files only grow; the rest (chat JSON, rendered markdown) are rewritten whole.
+APPEND_ONLY = {"claude_code", "codex"}
+
+
+@pytest.mark.parametrize("store", sorted(APPEND_ONLY))
+def test_a_longer_archive_that_extends_a_truncated_live_copy_wins(store, tmp_path):
+    # The archive is the OLDER file but holds the live bytes plus more: the live copy was truncated.
+    prompts = _two_roots(store, tmp_path, [turn(1)], [turn(1), turn(2)], live_newer=True)
+    assert len(prompts) == 2
+
+
+@pytest.mark.parametrize("store", sorted(set(MULTI_ROOT) - APPEND_ONLY))
+def test_a_newer_shorter_edit_beats_an_older_longer_archive(store, tmp_path):
+    # Size is not freshness: an edit can shorten a rewritten file.
+    prompts = _two_roots(store, tmp_path, [turn(1, prompt="short")], [turn(1, prompt="a much longer old prompt")],
+                         live_newer=True)
+    assert [p["h"] for p in prompts] == [LEDGER.text_hash("short")]
+
+
+@pytest.mark.parametrize("store", sorted(APPEND_ONLY))
+def test_a_newer_shorter_diverged_copy_beats_an_older_longer_one(store, tmp_path):
+    # Neither extends the other (an edit, not a truncation): the newest write wins.
+    prompts = _two_roots(store, tmp_path, [turn(1, prompt="short")], [turn(1, prompt="a much longer old prompt")],
+                         live_newer=True)
+    assert [p["h"] for p in prompts] == [LEDGER.text_hash("short")]
+
+
+@pytest.mark.parametrize("store", sorted(MULTI_ROOT))
+def test_an_equal_size_newer_archive_beats_the_live_copy(store, tmp_path):
+    prompts = _two_roots(store, tmp_path, [turn(1, prompt="live text 1")], [turn(1, prompt="arch text 1")],
+                         archive_newer=True)
+    assert [p["h"] for p in prompts] == [LEDGER.text_hash("arch text 1")]
+
+
+@pytest.mark.parametrize("store", sorted(MULTI_ROOT))
+def test_an_equal_size_newer_live_copy_beats_the_archive(store, tmp_path):
+    prompts = _two_roots(store, tmp_path, [turn(1, prompt="live text 1")], [turn(1, prompt="arch text 1")],
+                         live_newer=True)
+    assert [p["h"] for p in prompts] == [LEDGER.text_hash("live text 1")]
+
+
+@pytest.mark.parametrize("store", sorted(MULTI_ROOT))
+def test_a_full_tie_goes_to_the_live_root(store, tmp_path):
+    prompts = _two_roots(store, tmp_path, [turn(1, prompt="live text 1")], [turn(1, prompt="arch text 1")],
+                         same_mtime=True)
+    assert [p["h"] for p in prompts] == [LEDGER.text_hash("live text 1")]
+
+
+def test_copies_are_chosen_in_one_place():
+    tree = ast.parse((SCRIPTS / "yia" / "ledger" / "sources.py").read_text())
+    for name in MULTI_ROOT:
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == S.REGISTRY[name].__name__)
+        calls = {getattr(c.func, "id", "") for c in ast.walk(fn) if isinstance(c, ast.Call)}
+        assert "pick_copies" in calls, f"{fn.name} chooses copies itself"
