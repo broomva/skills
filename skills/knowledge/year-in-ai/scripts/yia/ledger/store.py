@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Set
 
-from . import SCHEMA
+from . import ROW_VERSION, SCHEMA
 from . import sources as S
 
 DEFAULT_LEDGER = "~/.local/share/year-in-ai/ledger"
@@ -108,11 +108,19 @@ def readers(roots: Dict[str, List[Path]], since: Optional[float], bridged_offset
     ]
 
 
+class LegacyLedgerError(RuntimeError):
+    """The ledger directory holds rows written under another schema version."""
+
+
 class Ledger:
     """Monthly JSONL files with id-level idempotency."""
 
     def __init__(self, directory: Optional[str] = None):
         self.dir = expand_path(directory or DEFAULT_LEDGER)
+        #: Rows of another schema version seen by the last :meth:`rows` read.
+        #: They are never folded: their ids, hashes and metadata follow other
+        #: rules, so mixing them would double-count turns.
+        self.legacy_rows = 0
 
     def _month_file(self, ts: float) -> Path:
         return self.dir / (_dt.datetime.fromtimestamp(ts, _dt.timezone.utc).strftime("%Y-%m") + ".jsonl")
@@ -124,9 +132,16 @@ class Ledger:
         with path.open("r", encoding="utf-8") as handle:
             for line in handle:
                 try:
-                    ids.add(json.loads(line)["id"])
-                except (ValueError, KeyError):
+                    row = json.loads(line)
+                except ValueError:
                     continue
+                if row.get("v") != ROW_VERSION:
+                    raise LegacyLedgerError(
+                        f"{path} holds rows of schema v{row.get('v')}; this code writes v{ROW_VERSION}. "
+                        "Move the old ledger aside and run `harvest --backfill` to rebuild it from the stores "
+                        "and the archive."
+                    )
+                ids.add(row["id"])
         return ids
 
     def write(self, rows: Iterable[dict]) -> Dict[str, int]:
@@ -158,6 +173,7 @@ class Ledger:
             os.fsync(handle.fileno())
 
     def rows(self, since: Optional[float] = None, until: Optional[float] = None) -> Iterator[dict]:
+        self.legacy_rows = 0
         if not self.dir.is_dir():
             return
         for path in sorted(self.dir.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9].jsonl")):
@@ -166,6 +182,9 @@ class Ledger:
                     try:
                         row = json.loads(line)
                     except ValueError:
+                        continue
+                    if row.get("v") != ROW_VERSION:
+                        self.legacy_rows += 1
                         continue
                     if since is not None and row["ts"] < since:
                         continue

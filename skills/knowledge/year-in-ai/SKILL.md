@@ -79,9 +79,14 @@ Add archive copies and extra stores in `~/.config/year-in-ai/config.json`:
 - **Written:** prompts a person wrote, counted as turns. A store's own author
   flag wins. Prompts from stores without one pass three filters: no automation
   opening, no exact text repeated across three sessions, no opening repeated
-  across four. A turn recorded by two stores counts once (same text within 36
-  hours, 20 minutes under 80 characters). A resumed or forked session's copy
-  of a turn counts once. The same prompt typed twice counts twice.
+  across four. A turn recorded by two stores counts once (the closest
+  same-text turn within 36 hours, 20 minutes under 80 characters). A resumed
+  or forked session's copy counts once, but only on evidence: the store's own
+  message id, a T3 fork's creation time, or, for markdown and exports, a run
+  of matching neighbouring turns. Anything else typed twice counts twice.
+- A ledger written by an older schema version is never mixed in: `harvest`
+  refuses to append to it and `attention` ignores its rows. Rebuild with
+  `harvest --backfill` into a fresh ledger directory.
 - **Read:** the final reply to each counted prompt, times the read share
   (`--read-low`/`--read-high`, default 0.60–0.70). Prompts from stores that never kept
   replies get an estimated reply, reported separately from measured words.

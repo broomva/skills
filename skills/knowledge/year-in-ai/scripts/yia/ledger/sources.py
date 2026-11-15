@@ -78,17 +78,17 @@ def read_t3(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, R
         try:
             con = _ro_sqlite(db)
             threads = {
-                tid: (lin or "top", prov)
-                for tid, lin, prov in con.execute(
+                tid: (lin or "top", prov, _iso(created or ""))
+                for tid, lin, prov, created in con.execute(
                     "select thread_id, json_extract(payload_json,'$.lineage.relationshipToParent'), "
-                    "default_provider from orchestration_v2_projection_threads"
+                    "default_provider, created_at from orchestration_v2_projection_threads"
                 )
             }
             cutoff = (
                 _dt.datetime.fromtimestamp(since, _UTC).strftime("%Y-%m-%dT%H:%M:%S") if since else ""
             )
             rows = con.execute(
-                "select thread_id, run_id, role, created_at, json_extract(payload_json,'$.createdBy'), "
+                "select message_id, thread_id, run_id, role, created_at, json_extract(payload_json,'$.createdBy'), "
                 "json_extract(payload_json,'$.creationSource'), json_extract(payload_json,'$.text') "
                 "from orchestration_v2_projection_messages where streaming=0 and created_at >= ? "
                 "order by created_at",
@@ -100,12 +100,15 @@ def read_t3(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, R
             return
         report.files = 1
         runs: Dict[Tuple[str, str], dict] = {}
-        for thread, run, role, created, created_by, creation_source, text in rows:
-            lineage, provider = threads.get(thread, ("top", None))
+        for message_id, thread, run, role, created, created_by, creation_source, text in rows:
+            lineage, provider, thread_created = threads.get(thread, ("top", None, None))
             if lineage == "subagent" or not text:
                 continue
             ts = _iso(created)
             if ts is None:
+                continue
+            # A fork carries its parent's history; messages older than the fork are copies.
+            if lineage == "fork" and thread_created is not None and ts < thread_created:
                 continue
             _observe(report, ts)
             harness = harness_label("t3", provider, "provider")
@@ -117,7 +120,7 @@ def read_t3(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, R
                 row = make_row(
                     src=name, harness=harness, kind="prompt", ts=ts, text=text, session=thread,
                     author=author, attr={"created_by": created_by, "creation_source": creation_source,
-                                         "lineage": lineage},
+                                         "lineage": lineage}, key=message_id,
                 )
                 if state["prompt"] is None:
                     state["prompt"], state["author"] = row["id"], author
@@ -139,7 +142,8 @@ def pair_turns(events, *, src: str, session: Optional[str], harness, author, att
                report: Optional[SourceReport] = None) -> Rows:
     """Turn a time-ordered stream of ``(role, ts, text)`` into prompt and reply rows, incrementally.
 
-    ``role`` is ``"prompt"`` or ``"reply"``. A reply row is the last reply text
+    ``role`` is ``"prompt"`` or ``"reply"``; an optional fourth element is the
+    store's own message id. A reply row is the last reply text
     before the next prompt, tied to that prompt's row id. ``harness``,
     ``author`` and ``attr`` may be callables, evaluated at the first prompt, so
     a reader can classify a session from fields it only sees while streaming.
@@ -148,7 +152,9 @@ def pair_turns(events, *, src: str, session: Optional[str], harness, author, att
     prompt_id = None
     final = None
     resolved = None
-    for role, ts, text in events:
+    for event in events:
+        role, ts, text = event[0], event[1], event[2]
+        key = event[3] if len(event) > 3 else None
         if not text or not text.strip():
             continue
         if report is not None:
@@ -163,7 +169,7 @@ def pair_turns(events, *, src: str, session: Optional[str], harness, author, att
                                session=session, author=resolved[1], turn=prompt_id)
             final = None
             row = make_row(src=src, harness=resolved[0], kind="prompt", ts=ts, text=text, session=session,
-                           author=resolved[1], attr=resolved[2])
+                           author=resolved[1], attr=resolved[2], key=key)
             prompt_id = row["id"]
             yield row
         elif prompt_id:
@@ -329,7 +335,8 @@ def _claude_session(path: Path, sid: str, since: Optional[float], paseo_ids: Set
                     typed = unwrap_command(text)
                     if typed is None:
                         continue
-                    yield "prompt", ts, typed
+                    # A resumed session copies records with their original uuid.
+                    yield "prompt", ts, typed, uid
                 else:
                     yield "reply", ts, text
 

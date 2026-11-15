@@ -168,7 +168,11 @@ def cmd_harvest(args: argparse.Namespace) -> int:
     config = L.load_config(args.config)
     roots = L.resolve_roots(config, _roots_from_args(args), defaults=not args.no_defaults)
     ledger = L.Ledger(args.ledger or config.get("ledger"))
-    entry = L.harvest(ledger, roots, _since(args), float(config.get("bridged_utc_offset_hours", -5)))
+    try:
+        entry = L.harvest(ledger, roots, _since(args), float(config.get("bridged_utc_offset_hours", -5)))
+    except L.LegacyLedgerError as exc:
+        print(f"harvest: refused — {exc}", file=sys.stderr)
+        return 3
     added = sum(entry["added"].values())
     print(f"harvest: {added:,} new rows into {ledger.dir} in {entry['seconds']}s")
     for src in entry["sources"]:
@@ -206,8 +210,17 @@ def cmd_attention(args: argparse.Namespace) -> int:
         since = datetime(args.year, 1, 1, tzinfo=zone).timestamp()
         until = datetime(args.year + 1, 1, 1, tzinfo=zone).timestamp()
     text_only_until = config.get("text_only_until")
+    # Read two days either side as context, so a turn that straddles the year
+    # boundary keeps its prompt and reply; only the window is reported.
+    margin = 2 * 86400
+    rows = list(ledger.rows(since - margin if since is not None else None,
+                            until + margin if until is not None else None))
+    if ledger.legacy_rows:
+        print(f"note: ignored {ledger.legacy_rows:,} rows of an older ledger schema; "
+              "rebuild with `harvest --backfill` into a fresh ledger directory", file=sys.stderr)
     summary = T.fold(
-        ledger.rows(since, until),
+        rows,
+        window=(since, until),
         read_share=(args.read_low, (args.read_low + args.read_high) / 2, args.read_high),
         utc_offset_hours=offset,
         text_only_until=datetime.fromisoformat(text_only_until).replace(tzinfo=timezone.utc).timestamp()

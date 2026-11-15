@@ -40,13 +40,15 @@ def iso(ts: float) -> str:
 
 def make_t3(path: Path) -> None:
     con = sqlite3.connect(path)
-    con.execute("create table orchestration_v2_projection_threads (thread_id text, default_provider text, payload_json text)")
+    con.execute("create table orchestration_v2_projection_threads (thread_id text, default_provider text, "
+                "payload_json text, created_at text)")
     con.execute("create table orchestration_v2_projection_messages (message_id text, thread_id text, run_id text, "
                 "role text, streaming int, created_at text, payload_json text)")
     threads = [("top", "claudeAgent", {"lineage": {"relationshipToParent": None}}),
                ("child", "codex", {"lineage": {"relationshipToParent": "subagent"}})]
     for tid, prov, payload in threads:
-        con.execute("insert into orchestration_v2_projection_threads values (?,?,?)", (tid, prov, json.dumps(payload)))
+        con.execute("insert into orchestration_v2_projection_threads values (?,?,?,?)",
+                    (tid, prov, json.dumps(payload), iso(T0 - 3600)))
     msgs = [
         ("m1", "top", "r1", "user", T0, {"createdBy": "user", "creationSource": "web", "text": f"build the thing {SECRET}"}),
         ("m2", "top", "r1", "assistant", T0 + 10, {"createdBy": "agent", "text": "working"}),
@@ -524,7 +526,7 @@ def test_a_resumed_session_copy_is_one_turn_with_one_reply():
     rows = []
     for sess in ("original", "resumed"):  # the resumed file carries the turn with its original timestamps
         p = make_row(src="claude_code", harness="claude-cli", kind="prompt", ts=T0, text="fix the parser", session=sess,
-                     author="human")
+                     author="human", key="uuid-1")
         rows += [p, make_row(src="claude_code", harness="claude-cli", kind="reply", ts=T0 + 30,
                              text="Parser fixed and tested.", session=sess, author="human", turn=p["id"])]
     summary = T.fold(rows)
@@ -533,12 +535,27 @@ def test_a_resumed_session_copy_is_one_turn_with_one_reply():
     assert summary["dropped"]["copied prompt"] == 1
 
 
-def test_bridged_copies_match_at_minute_precision_only():
-    def bridged(ts, sess):
-        return make_row(src="bridged", harness="bridged", kind="prompt", ts=ts, text="lets plan it", session=sess,
-                        author="unknown")
-    assert T.fold([bridged(T0, "a"), bridged(T0 + 60, "b")])["written"]["prompts"] == 1
-    assert T.fold([bridged(T0, "a"), bridged(T0 + 600, "b")])["written"]["prompts"] == 2
+def _bridged(ts, sess, text="lets plan it"):
+    return make_row(src="bridged", harness="bridged", kind="prompt", ts=ts, text=text, session=sess, author="unknown")
+
+
+def test_bridged_copies_need_a_matching_neighbour_at_minute_precision():
+    # A resumed session repeats a run of turns: two in a row match, so both are copies.
+    resumed = [_bridged(T0, "a", "first step"), _bridged(T0 + 120, "a", "second step"),
+               _bridged(T0 + 30, "b", "first step"), _bridged(T0 + 150, "b", "second step")]
+    assert T.fold(resumed)["written"]["prompts"] == 2
+    # Outside the minute, the same run is two separate pairs of turns.
+    apart = [_bridged(T0, "a", "first step"), _bridged(T0 + 120, "a", "second step"),
+             _bridged(T0 + 600, "b", "first step"), _bridged(T0 + 720, "b", "second step")]
+    assert T.fold(apart)["written"]["prompts"] == 4
+
+
+def test_a_lone_matching_prompt_in_two_sessions_is_two_turns():
+    # Same text, same minute, different sessions, nothing else in common: no lineage, no copy.
+    assert T.fold([_bridged(T0, "a", "yes"), _bridged(T0 + 20, "b", "yes")])["written"]["prompts"] == 2
+    t3 = [make_row(src="t3", harness="t3", kind="prompt", ts=T0 + i * 0.5, text="yes", session=f"t{i}",
+                   author="human", key=f"m{i}") for i in range(2)]
+    assert T.fold(t3)["written"]["prompts"] == 2
 
 
 def test_the_same_prompt_twice_in_one_session_is_two_turns():
@@ -552,12 +569,145 @@ def test_a_copy_follows_its_original_into_another_stores_turn():
     t3_reply = make_row(src="t3", harness="t3", kind="reply", ts=T0 + 30, text="Parser fixed.", session="t",
                         author="human", turn=t3["id"])
     original = make_row(src="claude_code", harness="claude-cli", kind="prompt", ts=T0 + 1, text="fix the parser",
-                        session="o", author="human")
+                        session="o", author="human", key="uuid-7")
     copy = make_row(src="claude_code", harness="claude-cli", kind="prompt", ts=T0 + 1, text="fix the parser",
-                    session="r", author="human")
+                    session="r", author="human", key="uuid-7")
     copy_reply = make_row(src="claude_code", harness="claude-cli", kind="reply", ts=T0 + 31,
                           text="Parser fixed, as rendered by another store.", session="r", author="human",
                           turn=copy["id"])
     summary = T.fold([t3, t3_reply, original, copy, copy_reply])
     assert summary["written"]["prompts"] == 1
     assert summary["read"]["reply_words_measured"] == 2  # one reply for the one turn: t3's own
+
+
+# ------------------------------------------------------------ review round 2 regressions
+
+
+def _copy_pair_with_replies():
+    rows = []
+    for sess, reply_text, reply_ts in (("original", "Done.", T0 + 10), ("resumed", "Done, merged, verified.", T0 + 90)):
+        p = make_row(src="claude_code", harness="claude-cli", kind="prompt", ts=T0, text="ship it", session=sess,
+                     author="human", key="uuid-9")
+        rows += [p, make_row(src="claude_code", harness="claude-cli", kind="reply", ts=reply_ts, text=reply_text,
+                             session=sess, author="human", turn=p["id"])]
+    return rows
+
+
+def test_reply_choice_does_not_depend_on_row_order():
+    rows = _copy_pair_with_replies()
+    forward = T.fold(rows)["read"]["reply_words_measured"]
+    backward = T.fold(list(reversed(rows)))["read"]["reply_words_measured"]
+    assert forward == backward == 3  # the latest revision of the turn's reply
+
+
+def test_a_measured_reply_is_not_also_estimated():
+    hist = make_row(src="claude_history", harness="claude-cli", kind="prompt", ts=T0, text="plan the recap",
+                    session="h", author="human")
+    bridged = make_row(src="bridged", harness="bridged", kind="prompt", ts=T0 + 30, text="plan the recap",
+                       session="b", author="unknown")
+    reply = make_row(src="bridged", harness="bridged", kind="reply", ts=T0 + 60, text="Here is the plan.",
+                     session="b", author="unknown", turn=bridged["id"])
+    read = T.fold([hist, bridged, reply])["read"]
+    assert read["reply_words_measured"] == 4
+    assert read["reply_words_estimated"] == 0
+
+
+def test_a_turn_seen_only_in_a_history_is_estimated():
+    hist = make_row(src="claude_history", harness="claude-cli", kind="prompt", ts=T0, text="plan the recap",
+                    session="h", author="human")
+    other = make_row(src="t3", harness="t3", kind="prompt", ts=T0 + 5000, text="something else", session="t",
+                     author="human")
+    reply = make_row(src="t3", harness="t3", kind="reply", ts=T0 + 5010, text="one two three four", session="t",
+                     author="human", turn=other["id"])
+    assert T.fold([hist, other, reply])["read"]["reply_words_estimated"] == 4
+
+
+def test_cross_store_match_takes_the_closest_turn():
+    first = make_row(src="t3", harness="t3", kind="prompt", ts=T0, text="yes", session="t", author="human")
+    second = make_row(src="t3", harness="t3", kind="prompt", ts=T0 + 100, text="yes", session="t", author="human")
+    first_reply = make_row(src="t3", harness="t3", kind="reply", ts=T0 + 5, text="ok", session="t", author="human",
+                           turn=first["id"])
+    bridged = make_row(src="bridged", harness="bridged", kind="prompt", ts=T0 + 100, text="yes", session="b",
+                       author="unknown")
+    bridged_reply = make_row(src="bridged", harness="bridged", kind="reply", ts=T0 + 110, text="done and pushed",
+                             session="b", author="unknown", turn=bridged["id"])
+    summary = T.fold([first, second, first_reply, bridged, bridged_reply])
+    assert summary["written"]["prompts"] == 2
+    assert summary["read"]["reply_words_measured"] == 1 + 3  # the bridged reply belongs to the second turn
+
+
+def test_rows_of_another_schema_are_never_folded_or_appended_to(tmp_path):
+    ledger = L.Ledger(str(tmp_path / "ledger"))
+    ledger.dir.mkdir(parents=True)
+    legacy = {"id": "old", "v": 1, "ts": T0, "src": "t3", "kind": "prompt", "author": "human", "chars": 10, "words": 2,
+              "h": "x", "sess": "raw-session", "attr": {"entrypoint": f"{SECRET} free text"}}
+    month = ledger._month_file(T0)
+    month.write_text(json.dumps(legacy) + "\n")
+    assert list(ledger.rows()) == [] and ledger.legacy_rows == 1
+    with pytest.raises(L.LegacyLedgerError):
+        ledger.write([make_row(src="t3", harness="t3", kind="prompt", ts=T0, text="new", session="s", author="human")])
+    assert month.read_text().count("\n") == 1
+
+
+def test_a_reply_just_inside_the_year_keeps_its_prompt_from_just_before(tmp_path):
+    from datetime import datetime, timedelta, timezone
+    zone = timezone(timedelta(hours=-5))
+    start = datetime(2027, 1, 1, tzinfo=zone).timestamp()
+    ledger = L.Ledger(str(tmp_path / "ledger"))
+    p = make_row(src="t3", harness="t3", kind="prompt", ts=start - 1, text="last question", session="a", author="human")
+    r = make_row(src="t3", harness="t3", kind="reply", ts=start + 1, text="one two three four", session="a",
+                 author="human", turn=p["id"])
+    ledger.write([p, r])
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"utc_offset_hours": -5}))
+    out = tmp_path / "a.json"
+    run = subprocess.run([sys.executable, str(SCRIPTS / "year_in_ai.py"), "attention", "--year", "2027", "--config",
+                          str(config), "--ledger", str(ledger.dir), "--out", str(out)], capture_output=True, text=True)
+    assert run.returncode == 0, run.stderr
+    summary = json.loads(out.read_text())
+    assert summary["written"]["prompts"] == 0  # the prompt belongs to 2026...
+    assert summary["read"]["reply_words_measured"] == 4  # ...the reply was read in 2027
+
+
+def test_non_string_attribution_values_become_other():
+    from yia.ledger import clean_attr
+    assert clean_attr({"source": {"private": "text"}, "lineage": ["top"], "created_by": "user"}) == {
+        "source": "other", "lineage": "other", "created_by": "user"}
+
+
+def test_t3_fork_history_copies_are_skipped(tmp_path):
+    db = tmp_path / "t3.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("create table orchestration_v2_projection_threads (thread_id text, default_provider text, "
+                "payload_json text, created_at text)")
+    con.execute("create table orchestration_v2_projection_messages (message_id text, thread_id text, run_id text, "
+                "role text, streaming int, created_at text, payload_json text)")
+    con.execute("insert into orchestration_v2_projection_threads values (?,?,?,?)",
+                ("fork", "claudeAgent", json.dumps({"lineage": {"relationshipToParent": "fork"}}), iso(T0 + 100)))
+    for mid, ts, text in (("copied", T0, "from the parent thread"), ("new", T0 + 200, "typed after forking")):
+        con.execute("insert into orchestration_v2_projection_messages values (?,?,?,?,?,?,?)",
+                    (mid, "fork", "r", "user", 0, iso(ts), json.dumps({"createdBy": "user", "text": text})))
+    con.commit()
+    con.close()
+    _report, rows = S.read_t3(db, None)
+    prompts = [r for r in rows if r["kind"] == "prompt"]
+    assert len(prompts) == 1 and prompts[0]["ts"] == round(T0 + 200, 3)
+
+
+def test_a_resumed_claude_session_counts_its_copied_turns_once(tmp_path):
+    root = tmp_path / "claude"
+    turn = {"type": "user", "uuid": "shared-uuid", "entrypoint": "cli", "timestamp": iso(T0),
+            "message": {"content": "fix the parser"}}
+    answer = {"type": "assistant", "uuid": "a-1", "entrypoint": "cli", "timestamp": iso(T0 + 5),
+              "message": {"content": [{"type": "text", "text": "Fixed."}]}}
+    write_jsonl(root / "-p" / "original.jsonl", [turn, answer])
+    new_turn = {"type": "user", "uuid": "u-2", "entrypoint": "cli", "timestamp": iso(T0 + 600),
+                "message": {"content": "now add a test"}}
+    write_jsonl(root / "-p" / "resumed.jsonl", [turn, answer, new_turn])  # resume copies history, uuids and all
+    roots = {k: [] for k in L.DEFAULT_ROOTS}
+    roots["claude_projects"] = [root]
+    ledger = L.Ledger(str(tmp_path / "ledger"))
+    L.harvest(ledger, roots, since=None)
+    summary = T.fold(ledger.rows())
+    assert summary["written"]["prompts"] == 2
+    assert summary["dropped"]["copied prompt"] == 1

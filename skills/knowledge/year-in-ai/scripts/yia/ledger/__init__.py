@@ -22,7 +22,9 @@ import hashlib
 import re
 from typing import Any, Dict, Iterable, Optional
 
-SCHEMA = "year-in-ai/ledger/v2"
+SCHEMA = "year-in-ai/ledger/v3"
+#: Row version written and read by this code. Rows of other versions are ignored.
+ROW_VERSION = 3
 
 #: A prompt is what started a turn; a reply is the final assistant message of it.
 KINDS = ("prompt", "reply")
@@ -110,7 +112,7 @@ def clean_attr(attr: Optional[Dict[str, Any]]) -> Dict[str, str]:
     for key, value in (attr or {}).items():
         if key not in ATTR_VALUES or value is None:
             continue
-        out[key] = value if value in ATTR_VALUES[key] else "other"
+        out[key] = value if isinstance(value, str) and value in ATTR_VALUES[key] else "other"
     return out
 
 
@@ -118,7 +120,7 @@ def harness_label(prefix: str, value: Optional[str], key: str) -> str:
     """``prefix:value`` when the value is a known enum, ``prefix:other`` when not, ``prefix`` when absent."""
     if not value:
         return prefix
-    return f"{prefix}:{value if value in ATTR_VALUES[key] else 'other'}"
+    return f"{prefix}:{value if isinstance(value, str) and value in ATTR_VALUES[key] else 'other'}"
 
 
 def prefix_hash(text: str) -> Optional[str]:
@@ -178,12 +180,16 @@ def make_row(
     turn: Optional[str] = None,
     attr: Optional[Dict[str, Any]] = None,
     authored: Optional[int] = None,
+    key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build one ledger row from a turn. The text goes in; only numbers and hashes come out.
 
     ``session`` and ``turn`` are external or derived identifiers; the session is
     stored as an opaque hash, and ``turn`` is always a row id made here.
     ``harness`` must come from :func:`harness_label` or a fixed literal.
+    ``key`` is the store's own id for the message, when it has one; it is
+    stored as an opaque hash and is the evidence that two rows are one turn
+    copied into a resumed session.
     """
     if kind not in KINDS:
         raise ValueError(f"unknown row kind: {kind!r}")
@@ -200,7 +206,7 @@ def make_row(
     row_id = hashlib.sha1(f"{src}|{sess}|{kind}|{ts:.3f}|{h}".encode("utf-8")).hexdigest()[:20]
     return {
         "id": row_id,
-        "v": 2,
+        "v": ROW_VERSION,
         "ts": round(ts, 3),
         "src": src,
         "harness": harness,
@@ -214,6 +220,7 @@ def make_row(
         "ph": prefix_hash(clean) if kind == "prompt" else None,
         "sess": sess,
         "turn": turn,
+        "k": opaque(key),
         "flags": flags,
         "attr": clean_attr(attr),
     }
@@ -223,5 +230,5 @@ def row_fields() -> Iterable[str]:
     """The complete set of row keys. Tests assert rows carry nothing else."""
     return (
         "id", "v", "ts", "src", "harness", "kind", "author", "chars", "words",
-        "authored_chars", "authored_words", "h", "ph", "sess", "turn", "flags", "attr",
+        "authored_chars", "authored_words", "h", "ph", "sess", "turn", "k", "flags", "attr",
     )
