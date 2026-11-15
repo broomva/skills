@@ -298,6 +298,9 @@ def read_conductor(db: Optional[Path], since: Optional[float]) -> Tuple[SourceRe
 
 # --------------------------------------------------------------------- Claude Code
 
+#: An archived revision's suffix, added by :mod:`yia.ledger.archive`.
+_REVISION_SUFFIX = re.compile(r"\.rev-[0-9]+$")
+
 #: Entry points where a person types into the session.
 CLAUDE_HUMAN_ENTRYPOINTS = {"cli", "claude-desktop", "claude-vscode"}
 
@@ -355,12 +358,14 @@ def read_claude_projects(
                     continue
                 if since and st.st_mtime < since:
                     continue
-                sid = path.stem
-                if sid not in files or st.st_size > files[sid][0]:
-                    files[sid] = (st.st_size, path)
-        for sid in sorted(files):
+                # Live and archived copies share a name and the largest wins; an
+                # archived revision (`<sid>.rev-<n>.jsonl`) is read too, under its
+                # original session id, and overlaps collapse by occurrence id.
+                files[path.stem] = max(files.get(path.stem, (0, path)), (st.st_size, path))
+        for stem in sorted(files):
             report.files += 1
-            yield from _claude_session(files[sid][1], sid, since, paseo_ids, report)
+            sid = _REVISION_SUFFIX.sub("", stem)
+            yield from _claude_session(files[stem][1], sid, since, paseo_ids, report)
 
     return report, stream()
 
@@ -457,10 +462,9 @@ def read_claude_history(path: Optional[Path], since: Optional[float]) -> Tuple[S
                 pasted = [v.get("content") for v in pasted_map.values()
                           if isinstance(v, dict) and isinstance(v.get("content"), str)]
                 full = "\n".join([display] + pasted)
-                typed = len(re.sub(r"\[Pasted text[^\]]*\]", "", display).strip())
                 session = _sid(rec.get("sessionId"))
                 yield make_row(src=name, harness="claude-cli", kind="prompt", ts=ts, text=full, session=session,
-                               author="human", authored=min(typed, 4000),
+                               author="human", authored=display,
                                occurrence=keys(session, ts, "prompt", full))
 
     return report, stream()

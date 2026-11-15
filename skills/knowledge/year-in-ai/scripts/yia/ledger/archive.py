@@ -10,10 +10,16 @@ archive root, usually on a larger disk:
 
 **Nothing archived is ever lost.** The archive never deletes, and it replaces
 an archived file only with one that *extends* it byte for byte (a transcript
-that grew). A source that no longer starts with the archived bytes (rewritten,
-truncated, or truncated and then appended to) is kept as a sibling revision,
-``<name>.rev-<hash>.<ext>``, next to the archived file, which stays as it was.
-Readers dedupe the overlap by occurrence identity.
+that grew). A source that extends none of its archived versions (rewritten,
+truncated, or truncated and then appended to) opens a new numbered revision,
+``<name>.rev-<n>.<ext>``, beside them; later growth of that source extends the
+revision in place instead of copying it again. Readers read every version and
+dedupe the overlap by occurrence identity.
+
+The cheap skip trusts metadata only when nothing could have rewritten the
+source since it was archived: same size, same ``mtime_ns``, and a source
+``ctime`` no newer than the archived copy's. ``ctime`` cannot be set back by a
+restore or a timestamp-preserving copy, so those are compared byte for byte.
 
 Each copy goes through a temporary file. The decision is re-checked against
 the finished copy and the archive as it is at that moment, immediately before
@@ -23,7 +29,6 @@ archived file. Temporary files are removed on every path.
 
 from __future__ import annotations
 
-import hashlib
 import os
 import shutil
 from pathlib import Path
@@ -36,6 +41,10 @@ DEFAULT_TARGETS: List[Tuple[str, str]] = [
 ]
 
 _CHUNK = 1 << 20
+
+
+class _Unchanged(Exception):
+    pass
 
 
 def _starts_with(path: Path, prefix: Path, length: int) -> bool:
@@ -53,20 +62,32 @@ def _starts_with(path: Path, prefix: Path, length: int) -> bool:
         return False
 
 
-def _digest(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(_CHUNK), b""):
-            h.update(block)
-    return h.hexdigest()[:12]
-
-
-def _revision_path(dst: Path, candidate: Path) -> Path:
-    name = dst.name
+def _split_ext(name: str):
     for ext in (".jsonl.zst", ".jsonl"):
         if name.endswith(ext):
-            return dst.with_name(f"{name[: -len(ext)]}.rev-{_digest(candidate)}{ext}")
-    return dst.with_name(f"{name}.rev-{_digest(candidate)}")
+            return name[: -len(ext)], ext
+    return name, ""
+
+
+def _versions(dst: Path) -> List[Path]:
+    """The archived file and its numbered revisions, oldest first."""
+    stem, ext = _split_ext(dst.name)
+    revs = []
+    for p in dst.parent.glob(f"{stem}.rev-*{ext}"):
+        n = p.name[len(stem) + len(".rev-"): len(p.name) - len(ext)]
+        if n.isdigit():
+            revs.append((int(n), p))
+    return ([dst] if dst.exists() else []) + [p for _n, p in sorted(revs)]
+
+
+def _next_revision(dst: Path) -> Path:
+    stem, ext = _split_ext(dst.name)
+    taken = len(_versions(dst))
+    while True:
+        candidate = dst.with_name(f"{stem}.rev-{taken}{ext}")
+        if not candidate.exists():
+            return candidate
+        taken += 1
 
 
 def classify(candidate: Path, dst: Path) -> str:
@@ -102,31 +123,40 @@ def copy_additive(source: Path, target: Path, suffixes: Optional[Tuple[str, ...]
                 # else, even a same-size rewrite in the same second, is compared
                 # byte for byte below.
                 try:
-                    st, archived = src_path.stat(), dst_path.stat()
-                    if st.st_size == archived.st_size and st.st_mtime_ns == archived.st_mtime_ns:
-                        counts["unchanged"] += 1
-                        continue
+                    st = src_path.stat()
+                    for version in _versions(dst_path):
+                        v = version.stat()
+                        if (st.st_size == v.st_size and st.st_mtime_ns == v.st_mtime_ns
+                                and st.st_ctime_ns <= v.st_ctime_ns):
+                            raise _Unchanged
+                except _Unchanged:
+                    counts["unchanged"] += 1
+                    continue
                 except FileNotFoundError:
                     pass
                 dst_path.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copy2(src_path, tmp)
-                # Decide on what was actually copied, against the archive as it is now.
-                kind = classify(tmp, dst_path)
-                if kind == "same":
+                # Decide on what was actually copied, against the archive as it is now:
+                # the first archived version this copy equals or extends.
+                verdicts = [(classify(tmp, v), v) for v in _versions(dst_path)]
+                if not verdicts:
+                    os.replace(tmp, dst_path)
+                    counts["copied"] += 1
+                    counts["bytes"] += dst_path.stat().st_size
+                    continue
+                if any(kind == "same" for kind, _v in verdicts):
                     counts["unchanged"] += 1
                     continue
-                if kind == "diverged":
-                    revision = _revision_path(dst_path, tmp)
-                    if revision.exists():
-                        counts["unchanged"] += 1
-                        continue
-                    os.replace(tmp, revision)
-                    counts["revisions"] += 1
-                    counts["bytes"] += revision.stat().st_size
+                grown = next((v for kind, v in verdicts if kind == "grown"), None)
+                if grown is not None:
+                    os.replace(tmp, grown)  # a byte-for-byte extension of that version
+                    counts["copied"] += 1
+                    counts["bytes"] += grown.stat().st_size
                     continue
-                os.replace(tmp, dst_path)  # new, or a byte-for-byte extension of the archived file
-                counts["copied"] += 1
-                counts["bytes"] += dst_path.stat().st_size
+                revision = _next_revision(dst_path)
+                os.replace(tmp, revision)
+                counts["revisions"] += 1
+                counts["bytes"] += revision.stat().st_size
             except OSError:
                 counts["errors"] += 1
             finally:

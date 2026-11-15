@@ -106,12 +106,18 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
     # each occurrence's latest revision: the last one appended to the ledger.
     # Replies that point at an older revision of their prompt follow the alias.
     latest: Dict[str, dict] = {}
+    order: Dict[str, Tuple[int, int]] = {}
     revisions: Dict[str, List[str]] = collections.defaultdict(list)
-    for r in rows:
+    for position, r in enumerate(rows):
         occ = r.get("o") or r["id"]
         if r["id"] not in revisions[occ]:
             revisions[occ].append(r["id"])
-        latest[occ] = r
+        # The ledger's harvest sequence orders revisions; rows built outside a
+        # ledger have none and fall back to input order.
+        rank = (r.get("seq") or 0, position)
+        if occ not in order or rank >= order[occ]:
+            order[occ] = rank
+            latest[occ] = r
     alias: Dict[str, str] = {}
     for occ, ids in revisions.items():
         for rid in ids:

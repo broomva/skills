@@ -25,9 +25,9 @@ import json
 import os
 import time
 from pathlib import Path
-from typing import Dict, Iterable, Iterator, List, Optional, Set
+from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
-from . import ROW_VERSION, SCHEMA
+from . import ROW_VERSION, SCHEMA, revision_identity
 from . import sources as S
 
 DEFAULT_LEDGER = "~/.local/share/year-in-ai/ledger"
@@ -129,48 +129,72 @@ class Ledger:
     def _month_file(self, ts: float) -> Path:
         return self.dir / (_dt.datetime.fromtimestamp(ts, _dt.timezone.utc).strftime("%Y-%m") + ".jsonl")
 
-    def _ids(self, path: Path) -> Set[str]:
+    def _scan(self) -> Tuple[Set[str], Dict[str, Tuple[int, str, int]], int]:
+        """Every stored id, each occurrence's latest revision, and the highest sequence.
+
+        Refuses a directory holding rows of another schema version, in any month.
+        """
         ids: Set[str] = set()
-        if not path.is_file():
-            return ids
-        with path.open("r", encoding="utf-8") as handle:
-            for line in handle:
-                try:
-                    row = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(row, dict):
-                    continue
-                if row.get("v") != ROW_VERSION:
-                    raise LegacyLedgerError(
-                        f"{path} holds rows of schema v{row.get('v')}; this code writes v{ROW_VERSION}. "
-                        "Move the old ledger aside and run `harvest --backfill` to rebuild it from the stores "
-                        "and the archive."
-                    )
-                ids.add(row["id"])
-        return ids
+        latest: Dict[str, Tuple[int, str, int]] = {}  # occurrence -> (seq, text hash, revisions so far)
+        top = 0
+        if not self.dir.is_dir():
+            return ids, latest, top
+        for path in sorted(self.dir.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9].jsonl")):
+            with path.open("r", encoding="utf-8") as handle:
+                for line in handle:
+                    try:
+                        row = json.loads(line)
+                    except ValueError:
+                        continue
+                    if not isinstance(row, dict):
+                        continue
+                    if row.get("v") != ROW_VERSION:
+                        raise LegacyLedgerError(
+                            f"{path} holds rows of schema v{row.get('v')}; this code writes v{ROW_VERSION}. "
+                            "Move the old ledger aside and run `harvest --backfill` to rebuild it from the "
+                            "stores and the archive."
+                        )
+                    ids.add(row["id"])
+                    seq = row.get("seq") or 0
+                    top = max(top, seq)
+                    prior = latest.get(row["o"])
+                    if prior is None or seq >= prior[0]:
+                        latest[row["o"]] = (seq, row["h"], (prior[2] + 1) if prior else 1)
+                    else:
+                        latest[row["o"]] = (prior[0], prior[1], prior[2] + 1)
+        return ids, latest, top
 
     def check_schema(self) -> None:
         """Refuse a ledger directory that holds rows of another schema version, in any month."""
-        if not self.dir.is_dir():
-            return
-        for path in sorted(self.dir.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9].jsonl")):
-            self._ids(path)
+        self._scan()
 
     def write(self, rows: Iterable[dict]) -> Dict[str, int]:
-        """Append rows not already present. Returns new-row counts per month file."""
+        """Append each row unless its occurrence's latest stored revision already has its text.
+
+        Every written row gets the next harvest sequence (``seq``), which is
+        what the fold orders revisions by, independent of month files. An
+        occurrence that returns to an earlier text (A, B, A) is a new row,
+        identified by :func:`revision_identity`. Returns new-row counts per month.
+        """
         self.dir.mkdir(parents=True, exist_ok=True)
-        self.check_schema()
-        known: Dict[Path, Set[str]] = {}
+        ids, latest, seq = self._scan()
         pending: Dict[Path, List[str]] = {}
         added: Dict[str, int] = {}
         for row in rows:
-            path = self._month_file(row["ts"])
-            if path not in known:
-                known[path] = self._ids(path)
-            if row["id"] in known[path]:
+            prior = latest.get(row["o"])
+            if prior is not None and prior[1] == row["h"]:
+                continue  # unchanged since the last harvest
+            n = prior[2] if prior else 0
+            row = dict(row)
+            if n and row["id"] in ids:
+                row["id"] = revision_identity(row["o"], row["h"], n)
+            if row["id"] in ids:
                 continue
-            known[path].add(row["id"])
+            seq += 1
+            row["seq"] = seq
+            ids.add(row["id"])
+            latest[row["o"]] = (seq, row["h"], n + 1)
+            path = self._month_file(row["ts"])
             pending.setdefault(path, []).append(json.dumps(row, separators=(",", ":"), sort_keys=True))
             if len(pending[path]) >= 5000:
                 self._flush(path, pending.pop(path))

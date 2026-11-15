@@ -22,9 +22,9 @@ import hashlib
 import re
 from typing import Any, Dict, Iterable, Optional
 
-SCHEMA = "year-in-ai/ledger/v5"
+SCHEMA = "year-in-ai/ledger/v6"
 #: Row version written and read by this code. Rows of other versions are ignored.
-ROW_VERSION = 5
+ROW_VERSION = 6
 
 #: A prompt is what started a turn; a reply is the final assistant message of it.
 KINDS = ("prompt", "reply")
@@ -161,10 +161,18 @@ def prefix_hash(text: str) -> Optional[str]:
     return hashlib.sha1(norm[:45].encode("utf-8")).hexdigest()[:16]
 
 
+#: A single prompt longer than this is a paste, not writing, whatever its markup.
+AUTHORED_CAP = 4000
+
+
+def authored_text(text: str) -> str:
+    """What the person wrote: pasted blocks, paste placeholders and code fences removed, capped."""
+    stripped = _FENCE.sub("", _PASTE.sub("", _PASTE_PLACEHOLDER.sub("", text))).strip()
+    return stripped[:AUTHORED_CAP]
+
+
 def authored_chars(text: str) -> int:
-    """Characters the person wrote: pasted blocks and code fences removed, capped at 4000."""
-    stripped = _FENCE.sub("", _PASTE.sub("", _PASTE_PLACEHOLDER.sub("", text)))
-    return min(len(stripped.strip()), 4000)
+    return len(authored_text(text))
 
 
 def unwrap_command(text: str) -> Optional[str]:
@@ -206,7 +214,7 @@ def make_row(
     turn: Optional[str] = None,
     occurrence: str,
     attr: Optional[Dict[str, Any]] = None,
-    authored: Optional[int] = None,
+    authored: Optional[str] = None,
     key: Optional[str] = None,
 ) -> Dict[str, Any]:
     """Build one ledger row from a turn. The text goes in; only numbers and hashes come out.
@@ -226,7 +234,9 @@ def make_row(
         raise ValueError(f"unknown author: {author!r}")
     clean = text.strip()
     h = text_hash(clean)
-    a_chars = authored_chars(clean) if authored is None else authored
+    # ``authored`` is the part of the text the person wrote, when the store keeps
+    # it apart (a prompt history stores pastes separately); else it is derived.
+    own = authored_text(clean if authored is None else authored)
     words = len(clean.split())
     flags = []
     if kind == "prompt" and has_automation_marker(clean):
@@ -243,21 +253,23 @@ def make_row(
         "author": author,
         "chars": len(clean),
         "words": words,
-        "authored_chars": a_chars,
-        "authored_words": round(words * min(1.0, a_chars / max(len(clean), 1))),
+        "authored_chars": len(own),
+        "authored_words": len(own.split()),
         "h": h,
         "ph": prefix_hash(clean) if kind == "prompt" else None,
         "sess": sess,
         "turn": turn,
         "k": opaque(key),
         "o": opaque(f"{src}|{kind}|{occurrence}"),
+        # Harvest order, set by the ledger when the row is written.
+        "seq": None,
         "flags": flags,
         "attr": clean_attr(attr),
     }
 
 
 def row_identity(src: str, kind: str, occurrence: str, revision: str) -> str:
-    """The only place a row id is made. A test asserts nothing else computes one.
+    """Where a row id is made (with :func:`revision_identity`). A test asserts nothing else computes one.
 
     A row is one *revision* of one occurrence: the occurrence identity plus the
     hash of its text. Harvesting an unchanged message again gives the same id;
@@ -269,9 +281,18 @@ def row_identity(src: str, kind: str, occurrence: str, revision: str) -> str:
     return hashlib.sha1(f"{src}|{kind}|{occurrence}|{revision}".encode("utf-8")).hexdigest()[:20]
 
 
+def revision_identity(occurrence_hash: str, revision: str, n: int) -> str:
+    """The id of the n-th stored revision of one occurrence (n = 0 is :func:`row_identity`'s row).
+
+    Used by the ledger when an occurrence returns to text it had before
+    (A, B, A): the third revision is a new row, ordered by harvest sequence.
+    """
+    return hashlib.sha1(f"{occurrence_hash}|{revision}|{n}".encode("utf-8")).hexdigest()[:20]
+
+
 def row_fields() -> Iterable[str]:
     """The complete set of row keys. Tests assert rows carry nothing else."""
     return (
         "id", "v", "ts", "src", "harness", "kind", "author", "chars", "words",
-        "authored_chars", "authored_words", "h", "ph", "sess", "turn", "k", "o", "flags", "attr",
+        "authored_chars", "authored_words", "h", "ph", "sess", "turn", "k", "o", "seq", "flags", "attr",
     )

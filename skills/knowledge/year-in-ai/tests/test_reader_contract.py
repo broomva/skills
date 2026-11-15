@@ -287,7 +287,7 @@ def test_a_native_copy_keeps_the_original_id(store, tmp_path):
 
 
 def test_one_function_makes_row_ids():
-    """Only ``row_identity`` hashes a row id; no reader or fold computes one itself."""
+    """Only the identity functions hash; no reader, store or fold computes an id itself."""
     ledger_dir = SCRIPTS / "yia" / "ledger"
     for path in ledger_dir.glob("*.py"):
         tree = ast.parse(path.read_text())
@@ -295,7 +295,7 @@ def test_one_function_makes_row_ids():
             if isinstance(node, ast.Call) and getattr(node.func, "attr", "") == "sha1":
                 owner = next((f.name for f in ast.walk(tree) if isinstance(f, ast.FunctionDef)
                               and f.lineno <= node.lineno <= f.end_lineno), None)
-                assert path.name == "__init__.py" and owner in {"row_identity", "text_hash", "prefix_hash", "opaque"}, \
+                assert path.name == "__init__.py" and owner in {"row_identity", "revision_identity", "text_hash", "prefix_hash", "opaque"}, \
                     f"{path.name}:{node.lineno} hashes outside the identity functions"
 
 
