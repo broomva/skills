@@ -199,6 +199,13 @@ Access. Run the harvest through `/bin/bash` (grant it access) and the system
 `/usr/bin/python3`. Homebrew's Python hangs on the privacy prompt instead of
 failing.
 
+Without that access, zstd blocks opening a compressed transcript on the
+volume, waiting for a privacy prompt nobody sees. The harvest does not wait
+forever: a zstd that produces no output for 120 seconds is killed, every
+compressed file in the run is reported as skipped, and `harvest` exits 4
+naming the stall. Exit 4 from a scheduled run means "grant access", not a
+quiet week.
+
 ## Tests
 
 ```bash

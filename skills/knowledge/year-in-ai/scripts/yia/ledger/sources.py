@@ -49,6 +49,8 @@ import shutil
 import sqlite3
 import stat
 import subprocess
+import threading
+import time
 from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
@@ -229,6 +231,50 @@ def find_zstd() -> Optional[str]:
     return next((p for p in ZSTD_LOCATIONS if os.path.isfile(p) and os.access(p, os.X_OK)), None)
 
 
+#: Seconds zstd may go without output while the harvest waits on it. A
+#: launchd job without disk access blocks inside open() on a privacy prompt
+#: nobody can answer; without this bound the harvest never exits.
+ZSTD_STALL_SECONDS = 120.0
+
+#: Set once zstd has stalled in this process. Every later compressed file is
+#: then skipped at once instead of stalling again: the cause (no disk access)
+#: applies to all of them.
+_zstd_stalled = False
+
+ZSTD_STALLED = ("zstd stalled with no output (on a scheduled job this usually means "
+                "it lacks Full Disk Access)")
+
+
+def zstd_problem() -> Optional[str]:
+    """Why compressed transcripts cannot be read in this run, or None."""
+    if _zstd_stalled:
+        return ZSTD_STALLED
+    return None if find_zstd() else "zstd not found"
+
+
+class _StallWatch:
+    """Kills ``proc`` when a read from it has waited longer than ``limit`` seconds."""
+
+    def __init__(self, proc: subprocess.Popen, limit: float):
+        self.proc, self.limit = proc, limit
+        self.waiting_since: Optional[float] = None
+        self.stalled = False
+        self._stop = threading.Event()
+        self._thread = threading.Thread(target=self._run, daemon=True)
+        self._thread.start()
+
+    def _run(self) -> None:
+        while not self._stop.wait(min(1.0, self.limit / 4)):
+            since = self.waiting_since
+            if since is not None and time.monotonic() - since > self.limit:
+                self.stalled = True
+                self.proc.kill()
+                return
+
+    def stop(self) -> None:
+        self._stop.set()
+
+
 def _content(path: Path) -> Optional[bytes]:
     """A transcript's bytes, decompressed when it is ``.zst``; None when they cannot be read.
 
@@ -236,11 +282,14 @@ def _content(path: Path) -> Optional[bytes]:
     prefix that every other copy extends.
     """
     if path.name.endswith(".zst"):
-        zstd = find_zstd()
-        if not zstd:
+        global _zstd_stalled
+        if zstd_problem():
             return None
         try:
-            done = subprocess.run([zstd, "-dc", str(path)], capture_output=True, timeout=300)
+            done = subprocess.run([find_zstd(), "-dc", str(path)], capture_output=True, timeout=ZSTD_STALL_SECONDS)
+        except subprocess.TimeoutExpired:
+            _zstd_stalled = True
+            return None
         except (OSError, subprocess.SubprocessError):
             return None
         return done.stdout if done.returncode == 0 else None
@@ -260,26 +309,40 @@ def read_lines(path: Path, report: SourceReport) -> Iterator[str]:
     failure.
     """
     if path.name.endswith(".zst"):
-        zstd = find_zstd()
-        if not zstd:
-            report.skip("zstd not found")
+        global _zstd_stalled
+        problem = zstd_problem()
+        if problem:
+            report.skip(problem)
             return
         try:
-            proc = subprocess.Popen([zstd, "-dc", str(path)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+            proc = subprocess.Popen([find_zstd(), "-dc", str(path)], stdout=subprocess.PIPE,
+                                    stderr=subprocess.DEVNULL)
         except OSError:
             report.skip("zstd could not start")
             return
+        # Only time spent waiting on zstd counts toward a stall, never time the
+        # caller spends between lines.
+        watch = _StallWatch(proc, ZSTD_STALL_SECONDS)
         finished = False
         try:
-            for raw in proc.stdout:
+            while True:
+                watch.waiting_since = time.monotonic()
+                raw = proc.stdout.readline()
+                watch.waiting_since = None
+                if not raw:
+                    break
                 yield raw.decode("utf-8", errors="ignore")
             finished = True
         except OSError:
             report.skip("decompression failed")
         finally:
+            watch.stop()
             proc.stdout.close()
             code = proc.wait()
-            if finished and code != 0:
+            if watch.stalled:
+                _zstd_stalled = True
+                report.skip(ZSTD_STALLED)
+            elif finished and code != 0:
                 report.skip("decompression failed")
         return
     try:
@@ -401,8 +464,8 @@ def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[s
                         best, best_bytes = other, other_bytes
             for path, _data in lost:
                 if path != best:
-                    report.skip("zstd not found" if path.name.endswith(".zst") and find_zstd() is None
-                                else "a copy could not be read")
+                    problem = zstd_problem() if path.name.endswith(".zst") else None
+                    report.skip(problem or "a copy could not be read")
         picked.append((key, best))
     return picked
 
