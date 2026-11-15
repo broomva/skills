@@ -319,3 +319,73 @@ def test_symlinked_directories_are_followed_once(tmp_path):
     (real / "loop").symlink_to(real, target_is_directory=True)  # a cycle must end
     report, rows = S.read_codex_sessions([root], None)
     assert len(list(rows)) == 1 and report.skipped == 0 and path.exists()
+
+
+# --- BRO-3767: a stalled zstd must end in a skip, never a hang
+
+
+@pytest.fixture
+def stalling_zstd(tmp_path, monkeypatch):
+    fake = tmp_path / "bin" / "zstd"
+    fake.parent.mkdir()
+    fake.write_text("#!/bin/sh\nexec sleep 60\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(S, "find_zstd", lambda: str(fake))
+    monkeypatch.setattr(S, "ZSTD_STALL_SECONDS", 2.0)
+    monkeypatch.setattr(S, "_zstd_stalled", False)
+    return fake
+
+
+def test_a_stalled_zstd_is_a_skip_not_a_hang(tmp_path, stalling_zstd):
+    import time
+    root = tmp_path / "codex"
+    for day in ("01", "02", "03"):
+        path = root / "2026" / "10" / day / f"rollout-{day}.jsonl.zst"  # three transcripts, one copy each
+        path.parent.mkdir(parents=True)
+        path.write_bytes(b"\x28\xb5\x2f\xfd")
+    started = time.monotonic()
+    report, rows = S.read_codex_sessions([root], None)
+    assert list(rows) == []
+    # One stall, then the rest are skipped at once: under 3 x the 2 s limit.
+    assert time.monotonic() - started < 5
+    assert report.skipped == 3 and "stalled" in report.reason
+
+
+def test_a_slow_consumer_is_not_a_stall(tmp_path, monkeypatch):
+    import time
+    if not S.find_zstd():
+        pytest.skip("zstd not installed")
+    monkeypatch.setattr(S, "ZSTD_STALL_SECONDS", 0.5)
+    monkeypatch.setattr(S, "_zstd_stalled", False)
+    path = _compressed(tmp_path / "codex", 3)
+    report = S.SourceReport("codex", True)
+    lines = []
+    for line in S.read_lines(path, report):
+        lines.append(line)
+        time.sleep(0.8)  # longer than the limit, spent by the caller, not zstd
+    assert len(lines) >= 4 and report.skipped == 0
+
+
+def test_a_stalled_zstd_in_copy_comparison_is_bounded(tmp_path, stalling_zstd):
+    path = tmp_path / "x.jsonl.zst"
+    path.write_bytes(b"\x28\xb5\x2f\xfd")
+    assert S._content(path) is None and S._zstd_stalled
+
+
+def test_stopping_early_never_waits_forever_on_zstd(tmp_path, monkeypatch):
+    import time
+    fake = tmp_path / "bin" / "zstd"
+    fake.parent.mkdir()
+    fake.write_text("#!/bin/sh\ntrap '' PIPE\necho line\nexec sleep 60\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(S, "find_zstd", lambda: str(fake))
+    monkeypatch.setattr(S, "ZSTD_STALL_SECONDS", 1.0)
+    monkeypatch.setattr(S, "_zstd_stalled", False)
+    path = tmp_path / "x.jsonl.zst"
+    path.write_bytes(b"\x28\xb5\x2f\xfd")
+    report = S.SourceReport("codex", True)
+    lines = S.read_lines(path, report)
+    assert next(lines).strip() == "line"
+    started = time.monotonic()
+    lines.close()
+    assert time.monotonic() - started < 5 and report.skipped == 1
