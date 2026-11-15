@@ -151,3 +151,12 @@ def test_temporary_copies_are_unique_per_process(tmp_path, monkeypatch):
     monkeypatch.setattr(A.shutil, "copy2", spy)
     A.copy_additive(src, dst)
     assert seen and str(os.getpid()) in seen[0]
+
+
+def test_make_row_rejects_unknown_kinds_and_authors():
+    with pytest.raises(ValueError):
+        make_row(src="t3", harness="t3", kind="tool", ts=T0, text="x", session="s", occurrence="o")
+    with pytest.raises(ValueError):
+        make_row(src="t3", harness="t3", kind="prompt", ts=T0, text="x", session="s", author="robot", occurrence="o")
+    with pytest.raises(ValueError):
+        make_row(src="t3", harness="t3", kind="prompt", ts=T0, text="x", session="s", occurrence="")

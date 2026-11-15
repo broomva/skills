@@ -102,6 +102,15 @@ records moves no other occurrence id. `tests/test_reader_contract.py` runs these
 occurrences are the same *turn* is a separate, evidence-based decision in the
 fold.
 
+## Live stores and their archives
+
+A store and its archive copy hold the same files under the same names, and
+`harvest` reads one copy of each: the newest write, with ties going to the
+live store. For transcripts that only grow (Claude Code, Codex), an older
+copy wins instead when its content, decompressed, extends the newest one byte
+for byte, because the newest was truncated. Size alone is never taken as
+freshness, since an edit can shorten a file.
+
 ## How "written" and "read" are counted
 
 - **Written:** prompts a person wrote, counted as turns. Each store's author
