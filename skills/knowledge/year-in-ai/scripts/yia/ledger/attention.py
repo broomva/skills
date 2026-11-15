@@ -182,9 +182,11 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
             "reply_words_measured": basis_measured,
             "reply_words_estimated": basis_estimated,
             "pooled_words_per_reply": round(pooled),
-            "words_low": round(basis_measured * low),
+            "words_low": round((basis_measured + basis_estimated) * low),
             "words_central": read_central,
             "words_high": round((basis_measured + basis_estimated) * high),
+            # The floor with no estimate at all: measured replies at the low share.
+            "words_measured_only_low": round(basis_measured * low),
         },
         "ratio_read_to_written": ratio(read_central, totals["words_written"]),
         "agents_own": {"replies": totals["agent_replies"], "words": totals["agent_reply_words"]},

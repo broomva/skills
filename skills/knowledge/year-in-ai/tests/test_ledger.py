@@ -278,7 +278,9 @@ def test_text_only_sources_stop_once_exact_coverage_starts():
 def test_read_band_orders_low_central_high(corpus):
     _l, _e, rows = harvest_rows(corpus)
     read = T.fold(rows)["read"]
-    assert read["words_low"] <= read["words_central"] <= read["words_high"]
+    assert read["words_measured_only_low"] <= read["words_low"] <= read["words_central"] <= read["words_high"]
+    basis = read["reply_words_measured"] + read["reply_words_estimated"]
+    assert read["words_low"] == round(basis * 0.60) and read["words_high"] == round(basis * 0.70)
 
 
 def test_unwrap_command():
