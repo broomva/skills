@@ -122,11 +122,21 @@ def redact(payload: dict[str, Any], extra_terms: tuple[str, ...] | list[str] | N
             {**row, "repo": _label(row.get("repo"), terms, keep_basename=True)}
             for row in git["by_repo"]
         ]
+    # Note titles are copied verbatim from each note's first heading.
+    memory = outcomes.get("memory")
+    if isinstance(memory, dict) and isinstance(memory.get("most_linked"), list):
+        memory["most_linked"] = [
+            {**row, "title": _label(row.get("title"), terms, keep_basename=False),
+             "slug": _label(row.get("slug"), terms, keep_basename=False)}
+            if isinstance(row, dict) else row
+            for row in memory["most_linked"]
+        ]
 
     out["share_safe"] = True
     out["redaction"] = {
         "segments": list(SENSITIVE_SEGMENTS),
-        "extra_terms": terms,
+        # Never the terms themselves: a shared payload must not disclose what was hidden.
+        "extra_terms_count": len(terms),
         "policy": "relabel-and-merge; counts are preserved so totals match the private deck",
     }
     return out

@@ -81,15 +81,25 @@ def copy_additive(source: Path, target: Path, suffixes: Optional[Tuple[str, ...]
     return counts
 
 
+def _nested(a: Path, b: Path) -> bool:
+    """True when ``a`` and ``b`` are the same directory or one contains the other."""
+    ra, rb = os.path.realpath(a), os.path.realpath(b)
+    return os.path.commonpath([ra, rb]) in (ra, rb)
+
+
 def archive(root: Path, ledger_dir: Optional[Path] = None,
             targets: Optional[List[Tuple[str, str]]] = None) -> Dict[str, Dict[str, int]]:
     """Copy every pruning store, and the ledger itself, into ``root``."""
     if not root.is_dir():
         raise FileNotFoundError(f"archive root {root} is not mounted or does not exist")
-    results: Dict[str, Dict[str, int]] = {}
-    for raw, sub in targets or DEFAULT_TARGETS:
-        source = Path(os.path.expanduser(raw))
-        results[sub] = copy_additive(source, root / sub, (".jsonl", ".jsonl.zst"))
+    pairs = [(Path(os.path.expanduser(raw)), sub, (".jsonl", ".jsonl.zst")) for raw, sub in targets or DEFAULT_TARGETS]
     if ledger_dir is not None:
-        results["year-in-ai-ledger"] = copy_additive(ledger_dir, root / "year-in-ai-ledger", (".jsonl",))
+        pairs.append((Path(ledger_dir), "year-in-ai-ledger", (".jsonl",)))
+    # A destination inside its source would copy its own output on every walk.
+    for source, sub, _suffixes in pairs:
+        if source.is_dir() and _nested(source, root / sub):
+            raise ValueError(f"archive target {root / sub} overlaps its source {source}")
+    results: Dict[str, Dict[str, int]] = {}
+    for source, sub, suffixes in pairs:
+        results[sub] = copy_additive(source, root / sub, suffixes)
     return results

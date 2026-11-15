@@ -16,12 +16,15 @@ from __future__ import annotations
 import datetime as _dt
 import json
 import os
+import re
 from collections.abc import Iterator
 from pathlib import Path
 
 from ..model import Window
 
 _TS_KEY = '"timestamp":"'
+#: The same key with any JSON whitespace around the colon.
+_TS_RE = re.compile(r'"timestamp"\s*:\s*"')
 _TS_LEN = 19  # YYYY-MM-DDTHH:MM:SS
 
 
@@ -62,9 +65,14 @@ def iter_records(path: Path, window: Window) -> Iterator[tuple[_dt.datetime, dic
     with handle:
         for line in handle:
             idx = line.find(_TS_KEY)
-            if idx < 0:
-                continue
-            prefix = line[idx + len(_TS_KEY) : idx + len(_TS_KEY) + _TS_LEN]
+            if idx >= 0:
+                start = idx + len(_TS_KEY)
+            else:
+                match = _TS_RE.search(line)
+                if not match:
+                    continue
+                start = match.end()
+            prefix = line[start : start + _TS_LEN]
             if len(prefix) < _TS_LEN or not prefix[:4].isdigit():
                 continue
             # Lexicographic window test, before any JSON parsing.

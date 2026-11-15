@@ -179,7 +179,7 @@ def cmd_harvest(args: argparse.Namespace) -> int:
     if archive_to:
         try:
             result = A.archive(Path(os.path.expanduser(archive_to)), ledger.dir)
-        except FileNotFoundError as exc:
+        except (FileNotFoundError, ValueError) as exc:
             print(f"archive: skipped — {exc}", file=sys.stderr)
             return 2
         for sub, counts in result.items():

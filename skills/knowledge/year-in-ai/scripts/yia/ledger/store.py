@@ -84,23 +84,27 @@ def resolve_roots(config: dict, overrides: Optional[Dict[str, List[str]]] = None
     return resolved
 
 
-def _first(paths: List[Path]) -> Optional[Path]:
-    return paths[0] if paths else None
-
-
 def readers(roots: Dict[str, List[Path]], since: Optional[float], bridged_offset: float = -5.0):
     """Every reader, wired to its resolved roots. Order sets dedupe priority in the fold."""
-    paseo = S.paseo_session_ids(_first(roots.get("paseo_agents", [])))
+    paseo: Set[str] = set()
+    for agents in roots.get("paseo_agents", []):
+        paseo |= S.paseo_session_ids(agents)
+
+    def each(key: str, reader, *extra):
+        """One reader per configured file; an absent store still reports once."""
+        paths = roots.get(key) or [None]
+        return [reader(path, since, *extra) for path in paths]
+
     return [
-        S.read_t3(_first(roots["t3_db"]), since),
+        *each("t3_db", S.read_t3),
         S.read_claude_projects(roots["claude_projects"], since, paseo),
-        S.read_conductor(_first(roots["conductor_db"]), since),
+        *each("conductor_db", S.read_conductor),
         S.read_codex_sessions(roots["codex_sessions"], since),
         S.read_gemini(roots["gemini_tmp"], since),
-        S.read_claude_history(_first(roots["claude_history"]), since),
+        *each("claude_history", S.read_claude_history),
         S.read_exports(roots["exports"], since),
         S.read_bridged(roots["bridged"], since, bridged_offset),
-        S.read_codex_history(_first(roots["codex_history"]), since),
+        *each("codex_history", S.read_codex_history),
     ]
 
 
