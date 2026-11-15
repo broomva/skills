@@ -61,7 +61,9 @@ def test_share_safe_output_relabels_note_titles_and_hides_the_terms():
     text = json.dumps(out).lower()
     assert TERM not in text
     assert out["redaction"]["extra_terms_count"] == 1
-    assert out["outcomes"]["memory"]["most_linked"][1]["title"] == "A public note"
+    # Titles are free text: every one is replaced, keyword or not, and counts survive.
+    assert [r["title"] for r in out["outcomes"]["memory"]["most_linked"]] == ["note 1", "note 2"]
+    assert [r["inbound"] for r in out["outcomes"]["memory"]["most_linked"]] == [4, 2]
 
 
 def test_timestamp_prefilter_accepts_spaced_json(tmp_path):

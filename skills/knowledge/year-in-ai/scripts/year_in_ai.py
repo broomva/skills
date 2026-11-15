@@ -210,11 +210,10 @@ def cmd_attention(args: argparse.Namespace) -> int:
         since = datetime(args.year, 1, 1, tzinfo=zone).timestamp()
         until = datetime(args.year + 1, 1, 1, tzinfo=zone).timestamp()
     text_only_until = config.get("text_only_until")
-    # Read two days either side as context, so a turn that straddles the year
-    # boundary keeps its prompt and reply; only the window is reported.
-    margin = 2 * 86400
-    rows = list(ledger.rows(since - margin if since is not None else None,
-                            until + margin if until is not None else None))
+    # Read the whole ledger as context, so every prompt keeps its replies and
+    # every reply its final revision wherever they fall; only the window is
+    # reported. A year of heavy use is ~80k rows, so this is cheap.
+    rows = list(ledger.rows())
     if ledger.legacy_rows:
         print(f"note: ignored {ledger.legacy_rows:,} rows of an older ledger schema; "
               "rebuild with `harvest --backfill` into a fresh ledger directory", file=sys.stderr)

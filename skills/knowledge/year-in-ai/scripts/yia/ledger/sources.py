@@ -13,7 +13,13 @@ where it has one, otherwise ``(session, timestamp, role, text hash, n)``, where
 * distinct: two occurrences never share an id, even with identical text and
   timestamp;
 * local: pruning older records or inserting new ones leaves every other id
-  unchanged.
+  unchanged, with one disclosed exception: occurrences identical in session,
+  timestamp, role and text, in a store without message ids, are told apart
+  only by their order, so pruning or inserting one of them can relabel the
+  others. Their *count* in the ledger is still right: an append-only ledger
+  keeps every occurrence it has seen and adds one for each new one;
+* revisions: a message edited in place is a new row for the same occurrence
+  (``o``), and the fold keeps its latest revision.
 
 ``tests/test_reader_contract.py`` runs the same contract cases against every
 reader in :data:`REGISTRY`, and fails if a reader is added without a fixture.
@@ -640,7 +646,7 @@ def read_gemini(roots: List[Path], since: Optional[float]) -> Tuple[SourceReport
                         content = _text(content)
                         if ts is None or (since and ts < since) or not content:
                             continue
-                        role = {"user": "prompt", "gemini": "reply"}.get(msg.get("type"))
+                        role = {"user": "prompt", "gemini": "reply"}.get(ext_str(msg.get("type")))
                         if role:
                             yield role, ts, content, _sid(msg.get("id"))
 
@@ -758,7 +764,7 @@ def read_exports(paths: List[Path], since: Optional[float]) -> Tuple[SourceRepor
                             if not isinstance(turn, dict):
                                 continue
                             text = _text(turn.get("content")) or ""
-                            role = {"user": "prompt", "assistant": "reply"}.get(turn.get("role"))
+                            role = {"user": "prompt", "assistant": "reply"}.get(ext_str(turn.get("role")))
                             if not role or not text.strip() or (role == "prompt" and is_injected(text)):
                                 continue
                             # The day, not the position: positions shift when turns are pruned.

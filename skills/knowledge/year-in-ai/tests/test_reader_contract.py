@@ -209,6 +209,10 @@ BUILDERS = {
 }
 #: Stores whose own message ids survive a copy into another session.
 NATIVE_COPIES = {"claude_code"}
+#: Stores whose messages carry their own ids, so an edit in place keeps the occurrence.
+NATIVE_IDS = {"t3", "conductor", "claude_code", "gemini"}
+#: Stores told apart only by content, where identical occurrences are ordered, not named.
+CONTENT_KEYED = sorted(set(BUILDERS) - NATIVE_IDS)
 
 
 def harvest(builder, tmp_path, turns, name="run", hostile=False):
@@ -302,3 +306,49 @@ def test_every_row_a_reader_makes_names_its_occurrence():
     assert calls
     for call in calls:
         assert "occurrence" in {k.arg for k in call.keywords}, f"make_row at line {call.lineno} has no occurrence"
+
+
+@pytest.mark.parametrize("store", sorted(NATIVE_IDS))
+def test_an_edit_in_place_is_a_new_revision_of_the_same_occurrence(store, tmp_path):
+    before = harvest(BUILDERS[store], tmp_path, [turn(1)], "before")
+    after = harvest(BUILDERS[store], tmp_path, [turn(1, prompt="prompt number 1, edited and longer")], "after")
+    p0 = next(r for r in before if r["kind"] == "prompt")
+    p1 = next(r for r in after if r["kind"] == "prompt")
+    assert p0["id"] != p1["id"] and p0["o"] == p1["o"]
+
+
+@pytest.mark.parametrize("store", CONTENT_KEYED)
+def test_identical_occurrences_keep_their_count_through_pruning_and_insertion(store, tmp_path):
+    """The disclosed limit: identical keyless occurrences are ordered, not named. Counts still hold."""
+    from yia.ledger import store as L
+    same = dict(ts=T0 + 120, prompt="yes", reply="ok")
+    ledger = L.Ledger(str(tmp_path / "ledger"))
+
+    def ingest(turns, name):
+        ledger.write(harvest(BUILDERS[store], tmp_path, turns, name))
+        return len([r for r in ledger.rows() if r["kind"] == "prompt"])
+
+    assert ingest([turn(1, **same), turn(2, **same)], "two") == 2
+    assert ingest([turn(2, **same)], "pruned") == 2  # the store forgot one; the ledger did not
+    assert ingest([turn(0, **same), turn(1, **same), turn(2, **same)], "three") == 3  # one new occurrence, one new row
+
+
+@pytest.mark.parametrize("store", ["gemini", "export"])
+def test_hostile_role_fields_are_skipped_not_fatal(store, tmp_path):
+    d = tmp_path / "store"
+    d.mkdir()
+    run = BUILDERS[store](d, [turn(1), turn(2)])
+    if store == "gemini":
+        path = next((d / "gemini").rglob("*.json"))
+        data = json.loads(path.read_text())
+        data["messages"].insert(0, {"id": "x", "timestamp": iso(T0), "type": HOSTILE, "content": "junk"})
+        path.write_text(json.dumps(data))
+    else:
+        path = d / "conversations.jsonl"
+        rec = json.loads(path.read_text().splitlines()[0])
+        body = json.loads(rec["turns"])
+        body.insert(0, {"role": ["user"], "content": "junk"})
+        rec["turns"] = json.dumps(body)
+        path.write_text(json.dumps(rec) + "\n")
+    _report, rows = run()
+    assert len([r for r in list(rows) if r["kind"] == "prompt"]) == 2

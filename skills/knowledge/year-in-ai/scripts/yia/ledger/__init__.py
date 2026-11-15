@@ -22,9 +22,9 @@ import hashlib
 import re
 from typing import Any, Dict, Iterable, Optional
 
-SCHEMA = "year-in-ai/ledger/v4"
+SCHEMA = "year-in-ai/ledger/v5"
 #: Row version written and read by this code. Rows of other versions are ignored.
-ROW_VERSION = 4
+ROW_VERSION = 5
 
 #: A prompt is what started a turn; a reply is the final assistant message of it.
 KINDS = ("prompt", "reply")
@@ -233,7 +233,7 @@ def make_row(
     if kind == "prompt" and has_automation_marker(clean):
         flags.append("marker")
     sess = opaque(session)
-    row_id = row_identity(src, kind, occurrence)
+    row_id = row_identity(src, kind, occurrence, h)
     return {
         "id": row_id,
         "v": ROW_VERSION,
@@ -251,21 +251,28 @@ def make_row(
         "sess": sess,
         "turn": turn,
         "k": opaque(key),
+        "o": opaque(f"{src}|{kind}|{occurrence}"),
         "flags": flags,
         "attr": clean_attr(attr),
     }
 
 
-def row_identity(src: str, kind: str, occurrence: str) -> str:
-    """The only place a row id is made. A test asserts nothing else computes one."""
+def row_identity(src: str, kind: str, occurrence: str, revision: str) -> str:
+    """The only place a row id is made. A test asserts nothing else computes one.
+
+    A row is one *revision* of one occurrence: the occurrence identity plus the
+    hash of its text. Harvesting an unchanged message again gives the same id;
+    a message edited in place since the last harvest gives a new row for the
+    same occurrence (``o``), and the fold keeps the latest revision.
+    """
     if not occurrence:
         raise ValueError("a row needs an occurrence identity")
-    return hashlib.sha1(f"{src}|{kind}|{occurrence}".encode("utf-8")).hexdigest()[:20]
+    return hashlib.sha1(f"{src}|{kind}|{occurrence}|{revision}".encode("utf-8")).hexdigest()[:20]
 
 
 def row_fields() -> Iterable[str]:
     """The complete set of row keys. Tests assert rows carry nothing else."""
     return (
         "id", "v", "ts", "src", "harness", "kind", "author", "chars", "words",
-        "authored_chars", "authored_words", "h", "ph", "sess", "turn", "k", "flags", "attr",
+        "authored_chars", "authored_words", "h", "ph", "sess", "turn", "k", "o", "flags", "attr",
     )

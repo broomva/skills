@@ -122,14 +122,14 @@ def redact(payload: dict[str, Any], extra_terms: tuple[str, ...] | list[str] | N
             {**row, "repo": _label(row.get("repo"), terms, keep_basename=True)}
             for row in git["by_repo"]
         ]
-    # Note titles are copied verbatim from each note's first heading.
+    # Note titles and slugs are free text copied from each note's first heading
+    # and file name; no keyword list can vouch for them. Shared output replaces
+    # them with placeholders and keeps the counts.
     memory = outcomes.get("memory")
     if isinstance(memory, dict) and isinstance(memory.get("most_linked"), list):
         memory["most_linked"] = [
-            {**row, "title": _label(row.get("title"), terms, keep_basename=False),
-             "slug": _label(row.get("slug"), terms, keep_basename=False)}
-            if isinstance(row, dict) else row
-            for row in memory["most_linked"]
+            {**row, "title": f"note {i}", "slug": f"note-{i}"} if isinstance(row, dict) else row
+            for i, row in enumerate(memory["most_linked"], start=1)
         ]
 
     out["share_safe"] = True

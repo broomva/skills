@@ -97,11 +97,22 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
     def in_window(ts: float) -> bool:
         return (lo is None or ts >= lo) and (hi is None or ts < hi)
 
-    # One id is one occurrence (see the reader contract): keep the first of each.
-    unique: Dict[str, dict] = {}
+    # One id is one revision of one occurrence (see the reader contract). Keep
+    # each occurrence's latest revision: the last one appended to the ledger.
+    # Replies that point at an older revision of their prompt follow the alias.
+    latest: Dict[str, dict] = {}
+    revisions: Dict[str, List[str]] = collections.defaultdict(list)
     for r in rows:
-        unique.setdefault(r["id"], r)
-    rows = list(unique.values())
+        occ = r.get("o") or r["id"]
+        if r["id"] not in revisions[occ]:
+            revisions[occ].append(r["id"])
+        latest[occ] = r
+    alias: Dict[str, str] = {}
+    for occ, ids in revisions.items():
+        for rid in ids:
+            alias[rid] = latest[occ]["id"]
+    rows = [dict(r, turn=alias.get(r.get("turn"), r.get("turn"))) if r["kind"] == "reply" else r
+            for r in latest.values()]
     prompts = [r for r in rows if r["kind"] == "prompt"]
 
     sessions_by_text: Dict[str, set] = collections.defaultdict(set)

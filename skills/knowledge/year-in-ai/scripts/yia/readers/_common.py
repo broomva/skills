@@ -82,9 +82,10 @@ def iter_records(path: Path, window: Window) -> Iterator[tuple[_dt.datetime, dic
             if len(prefix) < _TS_LEN or not prefix[:4].isdigit():
                 continue
             # Lexicographic window test, before any JSON parsing.
-            if lo is not None and prefix < lo:
-                continue
-            if hi is not None and prefix >= hi:
+            outside = (lo is not None and prefix < lo) or (hi is not None and prefix >= hi)
+            # The first "timestamp" in the line may belong to a nested payload;
+            # only trust the fast path when the line has exactly one.
+            if outside and line.count('"timestamp"') == 1:
                 continue
             try:
                 record = json.loads(line)

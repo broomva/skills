@@ -104,3 +104,61 @@ def test_a_turns_reply_is_its_final_revision_in_the_period_it_was_written():
     after = T.fold([p, early, final], window=(200.0, 300.0))
     assert inside["written"]["prompts"] == 1 and inside["read"]["reply_words_measured"] == 0
     assert after["read"]["reply_words_measured"] == 4  # read once, as its final revision, when it was written
+
+
+# ------------------------------------------------- fresh round 1 (cd12be9) regressions
+
+
+def test_an_edited_prompt_counts_its_latest_revision():
+    first = row(src="t3", harness="t3", kind="prompt", ts=T0, text="one", session="s", author="human",
+                occurrence="m1")
+    edited = row(src="t3", harness="t3", kind="prompt", ts=T0, text="one two three four", session="s",
+                 author="human", occurrence="m1")
+    reply_to_first = row(src="t3", harness="t3", kind="reply", ts=T0 + 5, text="ok then", session="s",
+                         author="human", turn=first["id"], occurrence="m2")
+    summary = T.fold([first, reply_to_first, edited])
+    assert summary["written"] == {"prompts": 1, "words": 4, "authored_words": 4, "median_words": 4}
+    assert summary["read"]["reply_words_measured"] == 2  # the reply follows its prompt's latest revision
+
+
+def test_nested_timestamps_do_not_hide_an_in_window_record(tmp_path):
+    path = tmp_path / "s.jsonl"
+    path.write_text('{"payload": {"timestamp": "2020-01-01T00:00:00Z"}, "timestamp": "2026-01-01T00:00:00Z"}\n')
+    window = Window(start=dt.datetime(2025, 12, 31, tzinfo=dt.timezone.utc),
+                    end=dt.datetime(2026, 1, 2, tzinfo=dt.timezone.utc))
+    assert len(list(_common.iter_records(path, window))) == 1
+
+
+def test_year_attention_sees_revisions_and_prompts_far_outside_the_year(tmp_path):
+    import subprocess
+    zone = dt.timezone(dt.timedelta(hours=-5))
+    dec = dt.datetime(2026, 12, 20, tzinfo=zone).timestamp()
+    jan = dt.datetime(2027, 1, 5, tzinfo=zone).timestamp()
+    ledger = L.Ledger(str(tmp_path / "ledger"))
+    p = row(src="t3", harness="t3", kind="prompt", ts=dec, text="question", session="a", author="human",
+            occurrence="p")
+    ledger.write([p,
+                  row(src="t3", harness="t3", kind="reply", ts=dec + 60, text="two words", session="a",
+                      author="human", turn=p["id"], occurrence="r1"),
+                  row(src="t3", harness="t3", kind="reply", ts=jan, text="three words now", session="a",
+                      author="human", turn=p["id"], occurrence="r1")])
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"utc_offset_hours": -5}))
+    out = {}
+    for year in (2026, 2027):
+        path = tmp_path / f"{year}.json"
+        run = subprocess.run([sys.executable, str(SCRIPTS / "year_in_ai.py"), "attention", "--year", str(year),
+                              "--config", str(config), "--ledger", str(ledger.dir), "--out", str(path)],
+                             capture_output=True, text=True)
+        assert run.returncode == 0, run.stderr
+        out[year] = json.loads(path.read_text())
+    assert out[2026]["written"]["prompts"] == 1 and out[2026]["read"]["reply_words_measured"] == 0
+    assert out[2027]["read"]["reply_words_measured"] == 3
+
+
+def test_share_safe_titles_hide_secrets_without_keywords():
+    from yia.redact import redact
+    payload = {"outcomes": {"memory": {"most_linked": [
+        {"slug": "acme-acquisition-price", "inbound": 4, "title": "Acme acquisition price 5 million"}]}}}
+    text = json.dumps(redact(payload)).lower()
+    assert "acme" not in text and "million" not in text
