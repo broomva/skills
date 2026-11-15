@@ -21,7 +21,10 @@ computed in December from the stores alone. The skill therefore has:
 1. **Harvest (all year).** `harvest` reads every store it can find and folds
    each turn into a ledger row: timestamps, word and character counts, content
    hashes and author flags. **Rows never hold message text.** `--archive-to`
-   also copies the stores that prune themselves to a larger disk, additively.
+   also copies the stores that prune themselves to a larger disk. Nothing
+   archived is ever lost: a file is replaced only by one that extends it byte
+   for byte; a rewritten or truncated source is kept beside it as a
+   `.rev-<hash>` revision.
 2. **Recap (once a year).** `attention` folds the ledger into what you wrote
    and read. `extract` and `render` build the story deck from transcripts.
 
@@ -102,7 +105,13 @@ fold.
   `harvest --backfill` into a fresh ledger directory.
 - **Read:** the final reply to each counted prompt, times the read share
   (`--read-low`/`--read-high`, default 0.60–0.70). Prompts from stores that never kept
-  replies get an estimated reply, reported separately from measured words.
+  replies get an estimated reply from measured replies of the same harness
+  family (a CLI prompt from CLI replies), reported separately.
+- **The ratio** is words read over *authored* words written: pasted logs and
+  code blocks are not writing.
+- **Known limit:** an agent that drives the interactive `claude` CLI through a
+  terminal looks exactly like a person to every store. Only the scripted-prompt
+  filters (repeated text, repeated openings, automation markers) catch it.
 - **The agents' own year:** replies to agent-written prompts are reported on
   their own, never added to what you read.
 - Set `text_only_until` to the date a store with exact authors starts covering

@@ -512,7 +512,11 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
                     if ".jsonl" not in fname:
                         continue
                     sid = fname.split(".")[0][-36:]
-                    if sid in seen:
+                    # One file is read once (live and archived copies share a name); an
+                    # archived revision of the same session is another file, and its
+                    # overlap with the original collapses by occurrence identity.
+                    base = fname[: -len(".zst")] if fname.endswith(".zst") else fname
+                    if base in seen:
                         continue
                     path = Path(dirpath) / fname
                     try:
@@ -520,7 +524,7 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
                             continue
                     except OSError:
                         continue
-                    seen.add(sid)
+                    seen.add(base)
                     report.files += 1
                     yield from _codex_file(path, sid, since, report)
 

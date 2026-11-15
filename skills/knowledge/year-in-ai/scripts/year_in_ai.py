@@ -166,7 +166,11 @@ def cmd_harvest(args: argparse.Namespace) -> int:
     from yia.ledger import store as L
 
     config = L.load_config(args.config)
-    roots = L.resolve_roots(config, _roots_from_args(args), defaults=not args.no_defaults)
+    try:
+        roots = L.resolve_roots(config, _roots_from_args(args), defaults=not args.no_defaults)
+    except ValueError as exc:
+        print(f"harvest: {exc}", file=sys.stderr)
+        return 2
     ledger = L.Ledger(args.ledger or config.get("ledger"))
     try:
         entry = L.harvest(ledger, roots, _since(args), float(config.get("bridged_utc_offset_hours", -5)))
@@ -187,8 +191,8 @@ def cmd_harvest(args: argparse.Namespace) -> int:
             print(f"archive: skipped — {exc}", file=sys.stderr)
             return 2
         for sub, counts in result.items():
-            print(f"archive: {sub}: {counts['copied']} copied ({counts['bytes'] / 1e6:.0f} MB), "
-                  f"{counts['unchanged']} unchanged, {counts['errors']} errors")
+            print(f"archive: {sub}: {counts['copied']} copied, {counts['revisions']} kept as revisions "
+                  f"({counts['bytes'] / 1e6:.0f} MB), {counts['unchanged']} unchanged, {counts['errors']} errors")
     return 0
 
 

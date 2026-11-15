@@ -67,9 +67,11 @@ def resolve_roots(config: dict, overrides: Optional[Dict[str, List[str]]] = None
                   defaults: bool = True) -> Dict[str, List[Path]]:
     """Defaults, plus config roots, plus command-line roots; existing paths only, de-duplicated."""
     merged: Dict[str, List[str]] = {k: list(v) if defaults else [] for k, v in DEFAULT_ROOTS.items()}
-    for source in ((config.get("roots") or {}), (overrides or {})):
+    for origin, source in (("config", config.get("roots") or {}), ("--root", overrides or {})):
         for key, values in source.items():
-            if key in merged and values:
+            if key not in merged:
+                raise ValueError(f"{origin}: unknown store {key!r}; known stores: {', '.join(sorted(merged))}")
+            if values:
                 merged[key].extend(values if isinstance(values, list) else [values])
     resolved: Dict[str, List[Path]] = {}
     for key, values in merged.items():

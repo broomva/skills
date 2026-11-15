@@ -54,8 +54,7 @@ AUTOMATION_OPENINGS = (
     "[fleet coordinator", "[coordinator", "[sri coordinator", "respond in one", "follow the heartbeat",
     "previous ai response", "[image: ", "**workflow authoring", "you are the ", "you are an ",
     "you are a ", "you are fleet", "# ", "## ", "authentication successful", "resume. a paseo",
-    "run the shell command", "act as the ", "delegated task ", "reply with ok", "say hello",
-    "what is 1+1",
+    "run the shell command", "act as the ", "delegated task ",
 )
 
 #: Phrases that mark a prompt as scripted wherever they appear in its first 200 characters.

@@ -69,6 +69,11 @@ COPY_PRECISION = {"bridged": 60.0, "export": 1.0}
 EXCLUDED_REASONS = {"text-only after exact coverage", "unknown author"}
 
 
+def _family(r: dict) -> str:
+    """The harness family a row belongs to: ``claude-cli``, ``codex``, ``t3``, ``conductor``…"""
+    return r["harness"].split(":")[0]
+
+
 def _month(ts: float, zone: _dt.tzinfo) -> str:
     return _dt.datetime.fromtimestamp(ts, zone).strftime("%Y-%m")
 
@@ -180,29 +185,36 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
 
     written = [r for r in human_kept if in_window(r["ts"])]
     months: Dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
+    families_without_reply: Dict[Tuple[str, str], int] = collections.Counter()
     for r in written:
         m = months[_month(r["ts"], zone)]
         m["prompts"] += 1
         m["words_written"] += r["words"]
         m["authored_words"] += r.get("authored_words", r["words"])
-        if r["id"] not in human_replies and members[r["id"]] <= NO_REPLIES:
+        # Only reply-less stores recorded this turn, so no reply can exist for it.
+        if members[r["id"]] <= NO_REPLIES:
             m["prompts_without_reply"] += 1
+            families_without_reply[(_month(r["ts"], zone), _family(r))] += 1
+    family_words: Dict[str, List[int]] = collections.defaultdict(list)
     for r in human_replies.values():
         if in_window(r["ts"]):
             m = months[_month(r["ts"], zone)]
             m["replies"] += 1
             m["reply_words"] += r["words"]
+            family_words[_family(r)].append(r["words"])
     for r in agent_replies.values():
         if in_window(r["ts"]):
             m = months[_month(r["ts"], zone)]
             m["agent_replies"] += 1
             m["agent_reply_words"] += r["words"]
 
+    # A reply-less prompt is estimated from measured replies of the same harness
+    # family (a CLI prompt from CLI replies), falling back to all replies.
     total_replies = sum(m["replies"] for m in months.values())
     pooled = (sum(m["reply_words"] for m in months.values()) / total_replies) if total_replies else 0.0
-    for m in months.values():
-        per = m["reply_words"] / m["replies"] if m["replies"] >= 500 else pooled
-        m["estimated_reply_words"] = round(m["prompts_without_reply"] * per)
+    per_family = {f: sum(w) / len(w) for f, w in family_words.items() if len(w) >= 100}
+    for (month, family), count in families_without_reply.items():
+        months[month]["estimated_reply_words"] += round(count * per_family.get(family, pooled))
 
     low, central, high = read_share
     totals: collections.Counter = collections.Counter()
@@ -236,7 +248,8 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
             # The floor with no estimate at all: measured replies at the low share.
             "words_measured_only_low": round(basis_measured * low),
         },
-        "ratio_read_to_written": round(read_central / totals["words_written"], 2) if totals["words_written"] else None,
+        # Against authored words: pasted logs and code are not writing.
+        "ratio_read_to_written": round(read_central / totals["authored_words"], 2) if totals["authored_words"] else None,
         "agents_own": {"replies": totals["agent_replies"], "words": totals["agent_reply_words"]},
         "activity": {
             "active_days": len(days),
