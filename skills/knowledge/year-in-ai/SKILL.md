@@ -121,8 +121,10 @@ database, and a store that exists but cannot be reached (permission denied on
 it or on a directory above it). Only a store that does not exist is absent.
 Symlinked directories inside a store are followed. A failure counts as
 `skipped` on its source, never as an empty store; `harvest` prints a warning naming the cause and exits with status 4.
-That is what a scheduled job without disk access looks like, so treat exit 4
-from launchd as "grant access", not as a quiet week.
+Exit 4 always means the totals are incomplete, never a quiet week. Read the
+warning's reason: a stall or "not accessible" points to missing disk access
+(grant Full Disk Access); zstd not found, a corrupt archive or an unreadable
+file each need their own fix.
 
 ## Live stores and their archives
 
@@ -203,8 +205,7 @@ Without that access, zstd blocks opening a compressed transcript on the
 volume, waiting for a privacy prompt nobody sees. The harvest does not wait
 forever: a zstd that produces no output for 120 seconds is killed, every
 compressed file in the run is reported as skipped, and `harvest` exits 4
-naming the stall. Exit 4 from a scheduled run means "grant access", not a
-quiet week.
+naming the stall.
 
 ## Tests
 

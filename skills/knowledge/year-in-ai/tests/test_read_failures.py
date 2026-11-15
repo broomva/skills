@@ -370,3 +370,22 @@ def test_a_stalled_zstd_in_copy_comparison_is_bounded(tmp_path, stalling_zstd):
     path = tmp_path / "x.jsonl.zst"
     path.write_bytes(b"\x28\xb5\x2f\xfd")
     assert S._content(path) is None and S._zstd_stalled
+
+
+def test_stopping_early_never_waits_forever_on_zstd(tmp_path, monkeypatch):
+    import time
+    fake = tmp_path / "bin" / "zstd"
+    fake.parent.mkdir()
+    fake.write_text("#!/bin/sh\ntrap '' PIPE\necho line\nexec sleep 60\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(S, "find_zstd", lambda: str(fake))
+    monkeypatch.setattr(S, "ZSTD_STALL_SECONDS", 1.0)
+    monkeypatch.setattr(S, "_zstd_stalled", False)
+    path = tmp_path / "x.jsonl.zst"
+    path.write_bytes(b"\x28\xb5\x2f\xfd")
+    report = S.SourceReport("codex", True)
+    lines = S.read_lines(path, report)
+    assert next(lines).strip() == "line"
+    started = time.monotonic()
+    lines.close()
+    assert time.monotonic() - started < 5 and report.skipped == 1

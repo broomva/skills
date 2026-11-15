@@ -253,23 +253,34 @@ def zstd_problem() -> Optional[str]:
 
 
 class _StallWatch:
-    """Kills ``proc`` when a read from it has waited longer than ``limit`` seconds."""
+    """Kills ``proc`` when a read from it has waited longer than ``limit`` seconds.
+
+    The reader marks the start and end of each read under a lock, and the
+    watchdog decides and kills under the same lock, so a read that has
+    returned is never killed as a stall.
+    """
 
     def __init__(self, proc: subprocess.Popen, limit: float):
         self.proc, self.limit = proc, limit
-        self.waiting_since: Optional[float] = None
         self.stalled = False
+        self._waiting_since: Optional[float] = None
+        self._lock = threading.Lock()
         self._stop = threading.Event()
         self._thread = threading.Thread(target=self._run, daemon=True)
         self._thread.start()
 
+    def reading(self, active: bool) -> None:
+        with self._lock:
+            self._waiting_since = time.monotonic() if active else None
+
     def _run(self) -> None:
         while not self._stop.wait(min(1.0, self.limit / 4)):
-            since = self.waiting_since
-            if since is not None and time.monotonic() - since > self.limit:
-                self.stalled = True
-                self.proc.kill()
-                return
+            with self._lock:
+                since = self._waiting_since
+                if since is not None and time.monotonic() - since > self.limit:
+                    self.stalled = True
+                    self.proc.kill()
+                    return
 
     def stop(self) -> None:
         self._stop.set()
@@ -326,9 +337,9 @@ def read_lines(path: Path, report: SourceReport) -> Iterator[str]:
         finished = False
         try:
             while True:
-                watch.waiting_since = time.monotonic()
+                watch.reading(True)
                 raw = proc.stdout.readline()
-                watch.waiting_since = None
+                watch.reading(False)
                 if not raw:
                     break
                 yield raw.decode("utf-8", errors="ignore")
@@ -338,7 +349,14 @@ def read_lines(path: Path, report: SourceReport) -> Iterator[str]:
         finally:
             watch.stop()
             proc.stdout.close()
-            code = proc.wait()
+            try:
+                # A caller that stops early closes the pipe; zstd normally exits
+                # at once, but one blocked on its input would not.
+                code = proc.wait(timeout=ZSTD_STALL_SECONDS)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                code = proc.wait()
+                watch.stalled = True
             if watch.stalled:
                 _zstd_stalled = True
                 report.skip(ZSTD_STALLED)
