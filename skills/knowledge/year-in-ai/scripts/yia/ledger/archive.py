@@ -30,6 +30,7 @@ archived file. Temporary files are removed on every path.
 from __future__ import annotations
 
 import os
+import re
 import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
@@ -70,13 +71,19 @@ def _split_ext(name: str):
 
 
 def _versions(dst: Path) -> List[Path]:
-    """The archived file and its numbered revisions, oldest first."""
+    """The archived file and its numbered revisions, oldest first.
+
+    Matched by an exact pattern on the listed names, not a glob, so names with
+    glob metacharacters work and only ``<stem>.rev-<digits><ext>`` counts.
+    """
     stem, ext = _split_ext(dst.name)
+    pattern = re.compile(re.escape(stem) + r"\.rev-([0-9]+)" + re.escape(ext) + "$")
     revs = []
-    for p in dst.parent.glob(f"{stem}.rev-*{ext}"):
-        n = p.name[len(stem) + len(".rev-"): len(p.name) - len(ext)]
-        if n.isdigit():
-            revs.append((int(n), p))
+    if dst.parent.is_dir():
+        for p in dst.parent.iterdir():
+            m = pattern.match(p.name)
+            if m:
+                revs.append((int(m.group(1)), p))
     return ([dst] if dst.exists() else []) + [p for _n, p in sorted(revs)]
 
 

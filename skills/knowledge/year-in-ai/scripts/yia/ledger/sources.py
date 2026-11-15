@@ -298,8 +298,18 @@ def read_conductor(db: Optional[Path], since: Optional[float]) -> Tuple[SourceRe
 
 # --------------------------------------------------------------------- Claude Code
 
-#: An archived revision's suffix, added by :mod:`yia.ledger.archive`.
-_REVISION_SUFFIX = re.compile(r"\.rev-[0-9]+$")
+#: An archived revision's name, made by :mod:`yia.ledger.archive`: ``<name>.rev-<n>.jsonl[.zst]``.
+_ARCHIVE_REVISION = re.compile(r"\.rev-[0-9]+\.jsonl(\.zst)?$")
+
+
+def is_archive_revision(name: str) -> bool:
+    """Is this file a revision the archive kept beside a diverged transcript?
+
+    Revisions are preserved so a recap can quote them, and are never ledger
+    input: replaying stored versions of one transcript is what made every
+    harvest re-append them. The ledger reads live files and base archive files.
+    """
+    return bool(_ARCHIVE_REVISION.search(name))
 
 #: Entry points where a person types into the session.
 CLAUDE_HUMAN_ENTRYPOINTS = {"cli", "claude-desktop", "claude-vscode"}
@@ -349,8 +359,8 @@ def read_claude_projects(
     paseo_ids = paseo_ids or set()
 
     def stream() -> Rows:
-        files: Dict[str, Tuple[int, Path]] = {}
-        for root in roots:
+        files: Dict[str, Tuple[tuple, Path]] = {}
+        for root_index, root in enumerate(roots):
             for path in root.glob("*/*.jsonl"):
                 try:
                     st = path.stat()
@@ -358,14 +368,16 @@ def read_claude_projects(
                     continue
                 if since and st.st_mtime < since:
                     continue
-                # Live and archived copies share a name and the largest wins; an
-                # archived revision (`<sid>.rev-<n>.jsonl`) is read too, under its
-                # original session id, and overlaps collapse by occurrence id.
-                files[path.stem] = max(files.get(path.stem, (0, path)), (st.st_size, path))
-        for stem in sorted(files):
+                if is_archive_revision(path.name):
+                    continue  # kept by the archive for quoting, never counted
+                # Live and archived copies share a name. The larger wins; on a tie the
+                # newer write, then the earlier root (live before archive).
+                rank = (st.st_size, st.st_mtime_ns, -root_index)
+                if path.stem not in files or rank > files[path.stem][0]:
+                    files[path.stem] = (rank, path)
+        for sid in sorted(files):
             report.files += 1
-            sid = _REVISION_SUFFIX.sub("", stem)
-            yield from _claude_session(files[stem][1], sid, since, paseo_ids, report)
+            yield from _claude_session(files[sid][1], sid, since, paseo_ids, report)
 
     return report, stream()
 
@@ -515,10 +527,10 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
                 for fname in sorted(names):
                     if ".jsonl" not in fname:
                         continue
+                    if is_archive_revision(fname):
+                        continue  # kept by the archive for quoting, never counted
                     sid = fname.split(".")[0][-36:]
-                    # One file is read once (live and archived copies share a name); an
-                    # archived revision of the same session is another file, and its
-                    # overlap with the original collapses by occurrence identity.
+                    # One file is read once: live and archived copies share a name.
                     base = fname[: -len(".zst")] if fname.endswith(".zst") else fname
                     if base in seen:
                         continue

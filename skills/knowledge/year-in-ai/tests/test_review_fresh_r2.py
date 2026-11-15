@@ -47,15 +47,6 @@ def test_revision_order_is_harvest_order_not_month_order(tmp_path):
     assert T.fold(rows)["written"]["words"] == 2
 
 
-def test_an_archived_claude_revision_keeps_its_paseo_session(tmp_path):
-    root = tmp_path / "archive"
-    records = _claude_records([turn(1, sess="sess-1")], hostile=False)
-    write_jsonl(root / "-proj" / "sess-1.rev-1.jsonl", records)  # only the archived revision survives
-    _report, rows = S.read_claude_projects([root], None, paseo_ids={"sess-1"})
-    prompts = [r for r in rows if r["kind"] == "prompt"]
-    assert [(r["harness"], r["author"]) for r in prompts] == [("paseo", "agent")]
-
-
 def test_a_same_size_rewrite_with_its_old_mtime_restored_is_still_archived(tmp_path):
     src, dst = tmp_path / "src", tmp_path / "dst"
     (src / "p").mkdir(parents=True)

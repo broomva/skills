@@ -129,13 +129,13 @@ class Ledger:
     def _month_file(self, ts: float) -> Path:
         return self.dir / (_dt.datetime.fromtimestamp(ts, _dt.timezone.utc).strftime("%Y-%m") + ".jsonl")
 
-    def _scan(self) -> Tuple[Set[str], Dict[str, Tuple[int, str, int]], int]:
+    def _scan(self) -> Tuple[Set[str], Dict[str, Tuple[int, str, int, str]], int]:
         """Every stored id, each occurrence's latest revision, and the highest sequence.
 
         Refuses a directory holding rows of another schema version, in any month.
         """
         ids: Set[str] = set()
-        latest: Dict[str, Tuple[int, str, int]] = {}  # occurrence -> (seq, text hash, revisions so far)
+        latest: Dict[str, Tuple[int, str, int, str]] = {}  # occurrence -> (seq, hash, revisions so far, id)
         top = 0
         if not self.dir.is_dir():
             return ids, latest, top
@@ -148,6 +148,8 @@ class Ledger:
                         continue
                     if not isinstance(row, dict):
                         continue
+                    if row.get("v") == ROW_VERSION and not all(isinstance(row.get(k), str) for k in ("id", "o", "h")):
+                        continue  # well-formed JSON but not a row: skipped, as rows() counts it
                     if row.get("v") != ROW_VERSION:
                         raise LegacyLedgerError(
                             f"{path} holds rows of schema v{row.get('v')}; this code writes v{ROW_VERSION}. "
@@ -155,13 +157,15 @@ class Ledger:
                             "stores and the archive."
                         )
                     ids.add(row["id"])
-                    seq = row.get("seq") or 0
+                    # A row without a sequence (hand-edited, or from a crash) is older
+                    # than every sequenced row; ties break by id, never by month file.
+                    seq = row.get("seq") if isinstance(row.get("seq"), int) else -1
                     top = max(top, seq)
                     prior = latest.get(row["o"])
-                    if prior is None or seq >= prior[0]:
-                        latest[row["o"]] = (seq, row["h"], (prior[2] + 1) if prior else 1)
+                    if prior is None or (seq, row["id"]) > (prior[0], prior[3]):
+                        latest[row["o"]] = (seq, row["h"], (prior[2] + 1) if prior else 1, row["id"])
                     else:
-                        latest[row["o"]] = (prior[0], prior[1], prior[2] + 1)
+                        latest[row["o"]] = (prior[0], prior[1], prior[2] + 1, prior[3])
         return ids, latest, top
 
     def check_schema(self) -> None:
@@ -193,7 +197,7 @@ class Ledger:
             seq += 1
             row["seq"] = seq
             ids.add(row["id"])
-            latest[row["o"]] = (seq, row["h"], n + 1)
+            latest[row["o"]] = (seq, row["h"], n + 1, row["id"])
             path = self._month_file(row["ts"])
             pending.setdefault(path, []).append(json.dumps(row, separators=(",", ":"), sort_keys=True))
             if len(pending[path]) >= 5000:
@@ -232,7 +236,8 @@ class Ledger:
                     except ValueError:
                         self.malformed_lines += 1
                         continue
-                    if not isinstance(row, dict):
+                    if not isinstance(row, dict) or (row.get("v") == ROW_VERSION and not all(
+                            isinstance(row.get(k), str) for k in ("id", "o", "h"))):
                         self.malformed_lines += 1
                         continue
                     if row.get("v") != ROW_VERSION:

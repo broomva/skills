@@ -127,27 +127,6 @@ def test_same_size_rewrite_is_a_revision_not_an_overwrite(tmp_path):
     assert [v for k, v in _files(dst).items() if ".rev-" in k] == ["bbbb\n"]
 
 
-def test_codex_reads_an_archived_revision_and_dedupes_its_overlap(tmp_path):
-    from yia.ledger import sources as S
-    root = tmp_path / "codex" / "2026" / "10"
-    root.mkdir(parents=True)
-    sid = "0" * 36
-
-    def rollout(prompts):
-        lines = [{"type": "session_meta", "timestamp": "2026-10-26T10:00:00Z",
-                  "payload": {"originator": "Codex Desktop", "source": "vscode"}}]
-        for i, text in prompts:
-            lines.append({"type": "event_msg", "timestamp": f"2026-10-26T10:0{i}:00Z",
-                          "payload": {"type": "user_message", "message": text}})
-        return "".join(json.dumps(x) + "\n" for x in lines)
-
-    (root / f"rollout-x-{sid}.jsonl").write_text(rollout([(1, "first"), (2, "second")]))
-    (root / f"rollout-x-{sid}.rev-abc123.jsonl").write_text(rollout([(2, "second"), (3, "third")]))
-    _report, rows = S.read_codex_sessions([tmp_path / "codex"], None)
-    ids = {r["id"] for r in rows if r["kind"] == "prompt"}
-    assert len(ids) == 3  # first, second (once), third
-
-
 # ------------------------------------------------------------------ the fold
 
 

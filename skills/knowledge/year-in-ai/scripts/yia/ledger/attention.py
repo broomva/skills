@@ -114,7 +114,8 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
             revisions[occ].append(r["id"])
         # The ledger's harvest sequence orders revisions; rows built outside a
         # ledger have none and fall back to input order.
-        rank = (r.get("seq") or 0, position)
+        seq = r.get("seq") if isinstance(r.get("seq"), int) else -1
+        rank = (seq, position) if seq >= 0 else (-1, position)
         if occ not in order or rank >= order[occ]:
             order[occ] = rank
             latest[occ] = r

@@ -27,7 +27,12 @@ computed in December from the stores alone. The skill therefore has:
    `<name>.rev-<n>.jsonl`, which later growth extends in place. A file its
    tool rewrites wholesale every week would add one revision per rewrite;
    none of the archived stores does that, and `harvest` prints the revision
-   count so growth is visible.
+   count so growth is visible. Revisions are kept for quoting and are **never
+   ledger input**: the harvest skips every `*.rev-<n>.jsonl` file. Turns that
+   exist only in a revision (a transcript rewritten and then pruned at its
+   source) are preserved on disk but not counted. A transcript whose own name
+   ends in `.rev-<n>.jsonl` would be skipped too; Claude Code and Codex name
+   sessions by UUID.
 2. **Recap (once a year).** `attention` folds the ledger into what you wrote
    and read. `extract` and `render` build the story deck from transcripts.
 
@@ -85,10 +90,14 @@ Add archive copies and extra stores in `~/.config/year-in-ai/config.json`:
 Every row a reader emits has an **occurrence** identity: the store's own
 message id where it has one (T3, Conductor, Claude Code, Gemini), otherwise
 the session, timestamp, role, text hash and a count of earlier identical
-occurrences. A row id is made from the store and that identity alone, never
-from content. So the same occurrence harvested twice is one row, two
-occurrences never share a row, and pruning or inserting records moves no other
-id. `tests/test_reader_contract.py` runs these cases against every reader in
+occurrences. The occurrence id is stable across harvests and carries no text.
+A **row** is one revision of an occurrence: its id is the occurrence plus the
+hash of its text, so an unchanged message harvested twice is one row, an
+edited one adds a row for the same occurrence, and two occurrences never share
+a row. The ledger stamps each row with a harvest sequence; the fold keeps each
+occurrence's latest revision by that sequence, and a message that returns to
+earlier text gets a new row (`revision_identity`). Pruning or inserting
+records moves no other occurrence id. `tests/test_reader_contract.py` runs these cases against every reader in
 `sources.REGISTRY` and fails when a reader has no fixture. Whether two
 occurrences are the same *turn* is a separate, evidence-based decision in the
 fold.
@@ -101,7 +110,10 @@ fold.
   stand alone. Every other store's human prompts also pass three filters,
   because a script can drive those harnesses the way a person does (see the
   known limit below): no automation opening, no exact text repeated across
-  three sessions, no opening repeated across four. A turn recorded by two stores counts once (the closest
+  three sessions, no opening repeated across four. Prompts from stores with no
+  author at all (bridged markdown, exports) must also be 1,500 characters or
+  shorter: longer unflagged prompts were dispatched briefs far more often than
+  writing. A turn recorded by two stores counts once (the closest
   same-text turn within 36 hours, 20 minutes under 80 characters). A resumed
   or forked session's copy counts once, but only on evidence: the store's own
   message id, a T3 fork's creation time, or, for markdown and exports, a run
@@ -113,17 +125,20 @@ fold.
   (`--read-low`/`--read-high`, default 0.60–0.70). Prompts from stores that never kept
   replies get an estimated reply from measured replies of the same harness
   family (a CLI prompt from CLI replies), reported separately.
-- **The ratio** is words read over *authored* words written: pasted logs and
-  code blocks are not writing.
+- **The ratio** is words read over *authored* words written: pasted blocks,
+  paste placeholders and fenced code blocks are removed, and what remains is
+  capped at 4,000 characters per prompt (a longer one is a paste, whatever its
+  markup).
 - **Known limits.**
   - An agent that drives the interactive `claude` CLI through a terminal looks
     exactly like a person to every store. Only the scripted-prompt filters
     (repeated text, repeated openings, automation markers) catch it, and a
     person who types the same long prompt into three sessions is filtered too.
-  - Stores without message ids (bridged markdown, exports) identify a turn by
-    its text. A turn whose text changes there (a re-rendered bridge file)
-    is a second turn. Bridged markdown is a generated rendering, used only
-    before `text_only_until`.
+  - Stores without message ids (Codex rollouts, the Claude and Codex prompt
+    histories, bridged markdown, exports) identify a turn by its text. A turn
+    whose text changes there is a second turn. In practice these stores do
+    not edit history: rollouts and histories only append, and bridged
+    markdown is a generated rendering, used only before `text_only_until`.
   - Identical prompts in a store without message ids (same session, time and
     text) are told apart by order, so pruning one can relabel the others;
     their count in the ledger stays right.
