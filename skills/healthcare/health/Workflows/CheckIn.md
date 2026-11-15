@@ -96,14 +96,15 @@ health checkin show --days 7
   `~/broomva-health/`, 0700, outside every repo; see
   [References/privacy-architecture.md](../References/privacy-architecture.md)). The file is
   0600. `--journal` (or `$BROOMVA_HEALTH_JOURNAL`) picks another file only if its folder is
-  owner-only, not inside a git work tree and not inside a cloud-synced folder. Otherwise the
+  owner-only, not inside a git work tree and not inside a known cloud-synced folder (iCloud,
+  Dropbox, Google Drive, OneDrive, Box, Nextcloud, ownCloud, Syncthing, pCloud, MEGA, Seafile). Otherwise the
   command refuses and writes nothing.
 - **One object per date, one line each.** Recording merges into that date's object: new keys
   win and earlier answers stay. Every write takes an exclusive lock (10 s at most), rewrites
   the file through a temp file with fsync and an atomic replace, and keeps any line that
   does not parse, verbatim, in place. If the lock times out (exit 3) or the write fails,
   nothing is written. The agent then says so and keeps the answers in its reply to record later.
-- Values: answers are stored verbatim as text. Only `*_score` keys become numbers (finite,
+- Values: answers are stored verbatim as text. Only `*_score` keys become numbers (0–10,
   otherwise the command refuses), and `safety_stop` can only be `yes`. Extra keys for
   whatever the user tracks (for example `symptoms`, or a named habit) are allowed; readers
   ignore keys they don't know. `safety_stop: true` marks a day the safety table stopped.

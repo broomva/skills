@@ -71,6 +71,9 @@ def record(
             parsed[key.strip()] = parse_value(key.strip(), value)
         except ValueError as exc:
             raise typer.BadParameter(str(exc)) from exc
+    if parsed.get("safety_stop") is True and set(parsed) != {"safety_stop"}:
+        # A safety stop stores the marker and nothing else (Workflows/CheckIn.md).
+        raise typer.BadParameter("safety_stop=yes is recorded alone, with no other answers")
     if day is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
         raise typer.BadParameter(f"--date must be YYYY-MM-DD, got {day!r}")
     try:
@@ -98,5 +101,10 @@ def show(
     journal: Path | None = typer.Option(None, "--journal"),
 ) -> None:
     """The last N entries, one JSON object per line."""
-    for entry in _journal(journal).recent(days):
+    try:
+        entries = _journal(journal).recent(days)
+    except OSError as exc:
+        typer.echo(f"cannot read the journal: {type(exc).__name__}", err=True)
+        raise typer.Exit(1) from exc
+    for entry in entries:
         typer.echo(json.dumps(entry, ensure_ascii=False))

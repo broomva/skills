@@ -168,7 +168,9 @@ def root(
 
     # Defer the heavy lifting to first subcommand call.
     paths = HealthPaths.discover()
-    resolved_config = config_file.expanduser() if config_file is not None else paths.config_file
+    resolved_config = (
+        config_file.expanduser() if config_file is not None else paths.config_file
+    )
     settings = load_settings(resolved_config)
 
     container = Container.build(settings, paths)
@@ -215,7 +217,9 @@ def main() -> None:
     except HealthError as exc:
         # The Typer app may already have printed user-visible output; the
         # exception is the structured-exit signal.
-        typer.secho(f"error[{exc.code}]: {exc}", fg=typer.colors.RED, err=True)
+        typer.secho(
+            f"error[{exc.code}]: {exc}", fg=typer.colors.RED, err=True
+        )
         sys.exit(exc.exit_code)
     except typer.Exit:
         raise

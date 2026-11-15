@@ -34,6 +34,13 @@ __all__ = ["JournalLockTimeout", "JsonlJournal", "parse_value", "private_dir_pro
 # Path fragments of folders that sync to a cloud (macOS iCloud Drive, File Provider mounts,
 # the usual desktop sync clients). A journal must not live under one.
 _CLOUD_MARKERS = (
+    "/nextcloud/",
+    "/owncloud/",
+    "/pcloud drive/",
+    "/mega/",
+    "/sync.com/",
+    "/syncthing/",
+    "/seafile/",
     "/library/mobile documents/",
     "/library/cloudstorage/",
     "/icloud drive/",
@@ -44,12 +51,12 @@ _CLOUD_MARKERS = (
 )
 
 
-_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+_ISO_DAY = re.compile(r"[0-9]{4}-[0-9]{2}-[0-9]{2}")
 
 
 def _is_iso_day(day: object) -> bool:
     """A real calendar date written YYYY-MM-DD (``2026-02-30`` is not)."""
-    if not isinstance(day, str) or not _ISO_DAY.match(day) or not day.isascii():
+    if not isinstance(day, str) or not _ISO_DAY.fullmatch(day) or not day.isascii():
         return False
     try:
         date.fromisoformat(day)
@@ -73,9 +80,9 @@ def parse_value(key: str, raw: str) -> Any:
         try:
             value = float(text)
         except ValueError:
-            raise ValueError(f"{key} must be a number, got {raw!r}") from None
-        if not math.isfinite(value):
-            raise ValueError(f"{key} must be a finite number, got {raw!r}")
+            raise ValueError(f"{key} must be a number") from None
+        if not math.isfinite(value) or not 0 <= value <= 10:
+            raise ValueError(f"{key} must be a number from 0 to 10")
         return int(value) if value.is_integer() else value
     if key == "safety_stop":
         if text.lower() not in ("yes", "true", "1"):
@@ -103,8 +110,15 @@ def private_dir_problems(path: Path) -> list[str]:
             problems.append(f"{p} is inside the git work tree {parent}")
             break
     probe = str(p).lower() + "/"
-    if any(marker in probe for marker in _CLOUD_MARKERS):
-        problems.append(f"{p} is inside a cloud-synced folder")
+    synced_by_marker = any(m in probe for m in _CLOUD_MARKERS)
+    # Sync clients that mark their root with a file, wherever it lives.
+    synced_by_root = any(
+        (parent / mark).exists()
+        for parent in (p, *p.parents)
+        for mark in (".stfolder", ".sync", ".nextcloudsync.log", ".owncloudsync.log", ".dropbox")
+    )
+    if synced_by_marker or synced_by_root:
+        problems.append(f"{p} is inside a known cloud-synced folder")
     return problems
 
 

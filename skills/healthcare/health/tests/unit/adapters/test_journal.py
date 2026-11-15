@@ -293,3 +293,59 @@ def test_stderr_never_carries_journal_content(
     assert r.exit_code == 0, r.output
     assert "secret" not in r.output
     assert "kept 1 journal line" in r.output
+
+
+def test_a_safety_stop_is_recorded_alone(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from broomva_health.cli.checkin import app
+
+    monkeypatch.setenv("BROOMVA_HEALTH_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("BROOMVA_HEALTH_JOURNAL", raising=False)
+    runner = CliRunner()
+    r = runner.invoke(app, ["record", "safety_stop=yes", "note=must not persist"])
+    assert r.exit_code == 2
+    assert not (tmp_path / "data" / "journal.jsonl").exists()
+    r = runner.invoke(app, ["record", "safety_stop=yes", "--date", "2026-01-15"])
+    assert r.exit_code == 0, r.output
+    assert json.loads((tmp_path / "data" / "journal.jsonl").read_text())["safety_stop"] is True
+
+
+@pytest.mark.parametrize("parts", [("Nextcloud", "x"), ("pCloud Drive", "x"), ("MEGA", "x")])
+def test_more_cloud_folders_are_refused(tmp_path: Path, parts: tuple[str, ...]) -> None:
+    d = tmp_path.joinpath(*parts)
+    d.mkdir(parents=True)
+    os.chmod(d, 0o700)
+    assert any("cloud-synced" in p for p in private_dir_problems(d))
+
+
+def test_a_sync_root_marker_file_is_refused(tmp_path: Path) -> None:
+    root = tmp_path / "anything"
+    (root / "health").mkdir(parents=True)
+    (root / ".stfolder").mkdir()
+    os.chmod(root / "health", 0o700)
+    assert any("cloud-synced" in p for p in private_dir_problems(root / "health"))
+
+
+def test_show_reports_io_errors_without_a_traceback(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from broomva_health.cli.checkin import app
+
+    monkeypatch.setenv("BROOMVA_HEALTH_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("BROOMVA_HEALTH_JOURNAL", raising=False)
+
+    def denied(*_a: object, **_k: object) -> list[dict[str, object]]:
+        raise PermissionError("secret/path")
+
+    monkeypatch.setattr(JsonlJournal, "recent", denied)
+    r = CliRunner().invoke(app, ["show"])
+    assert r.exit_code == 1
+    assert "PermissionError" in r.output
+    assert "secret/path" not in r.output
+
+
+def test_scores_must_be_between_zero_and_ten() -> None:
+    for bad in ("11", "-1", "1e300"):
+        with pytest.raises(ValueError):
+            parse_value("body_score", bad)
+    assert parse_value("body_score", "0") == 0
+    assert parse_value("body_score", "10") == 10
