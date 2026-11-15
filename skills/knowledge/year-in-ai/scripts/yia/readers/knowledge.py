@@ -21,7 +21,7 @@ _WIKILINK = re.compile(r"\[\[([^\]|#]+)")
 _TITLE = re.compile(r"^#\s+(.+?)\s*$", re.MULTILINE)
 
 
-@dataclass(slots=True)
+@dataclass
 class GraphStats:
     """Shape of a wikilink-connected markdown graph."""
 

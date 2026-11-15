@@ -33,7 +33,7 @@ def _safe_env() -> dict[str, str]:
     return env
 
 
-@dataclass(slots=True)
+@dataclass
 class GitStats:
     """Commit activity across repositories inside the window."""
 

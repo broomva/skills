@@ -46,7 +46,7 @@ def parse_duration(text: str) -> int | None:
     return total if (hours or minutes or seconds) else None
 
 
-@dataclass(slots=True)
+@dataclass
 class BridgedSession:
     """One bridged session summary."""
 

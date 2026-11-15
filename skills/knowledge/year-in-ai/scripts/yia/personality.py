@@ -54,7 +54,7 @@ TYPE_NAMES = {
 }
 
 
-@dataclass(slots=True)
+@dataclass
 class Personality:
     code: str
     name: str

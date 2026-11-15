@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import time
 from pathlib import Path
@@ -139,6 +140,83 @@ def cmd_run(args: argparse.Namespace) -> int:
     return 0
 
 
+def _roots_from_args(args: argparse.Namespace) -> dict:
+    """Pairs like ``claude_projects=/path`` from repeated --root flags."""
+    out: dict = {}
+    for item in args.root or []:
+        key, _, value = item.partition("=")
+        if not value:
+            raise SystemExit(f"--root expects KEY=PATH, got {item!r}")
+        out.setdefault(key.strip(), []).append(value.strip())
+    return out
+
+
+def _since(args: argparse.Namespace):
+    from datetime import datetime, timezone
+
+    if getattr(args, "backfill", False):
+        return None
+    if args.since:
+        return datetime.fromisoformat(args.since).replace(tzinfo=timezone.utc).timestamp()
+    return time.time() - args.days * 86400
+
+
+def cmd_harvest(args: argparse.Namespace) -> int:
+    from yia.ledger import archive as A
+    from yia.ledger import store as L
+
+    config = L.load_config(args.config)
+    roots = L.resolve_roots(config, _roots_from_args(args), defaults=not args.no_defaults)
+    ledger = L.Ledger(args.ledger or config.get("ledger"))
+    entry = L.harvest(ledger, roots, _since(args), float(config.get("bridged_utc_offset_hours", -5)))
+    added = sum(entry["added"].values())
+    print(f"harvest: {added:,} new rows into {ledger.dir} in {entry['seconds']}s")
+    for src in entry["sources"]:
+        state = "ok " if src["available"] else "-- "
+        span = f"{(src['first'] or '')[:10]} → {(src['last'] or '')[:10]}" if src["records"] else (src["reason"] or "empty")
+        print(f"  {state}{src['source']:<15} {src['records']:>8,} records  {span}")
+    archive_to = args.archive_to or config.get("archive_to")
+    if archive_to:
+        try:
+            result = A.archive(Path(os.path.expanduser(archive_to)), ledger.dir)
+        except FileNotFoundError as exc:
+            print(f"archive: skipped — {exc}", file=sys.stderr)
+            return 2
+        for sub, counts in result.items():
+            print(f"archive: {sub}: {counts['copied']} copied ({counts['bytes'] / 1e6:.0f} MB), "
+                  f"{counts['unchanged']} unchanged, {counts['errors']} errors")
+    return 0
+
+
+def cmd_attention(args: argparse.Namespace) -> int:
+    from datetime import datetime, timezone
+
+    from yia.ledger import attention as T
+    from yia.ledger import store as L
+
+    config = L.load_config(args.config)
+    ledger = L.Ledger(args.ledger or config.get("ledger"))
+    since = until = None
+    if args.year:
+        since = datetime(args.year, 1, 1, tzinfo=timezone.utc).timestamp()
+        until = datetime(args.year + 1, 1, 1, tzinfo=timezone.utc).timestamp()
+    text_only_until = config.get("text_only_until")
+    summary = T.fold(
+        ledger.rows(since, until),
+        read_share=(args.read_low, (args.read_low + args.read_high) / 2, args.read_high),
+        utc_offset_hours=float(config.get("utc_offset_hours", -5)),
+        text_only_until=datetime.fromisoformat(text_only_until).replace(tzinfo=timezone.utc).timestamp()
+        if text_only_until else None,
+    )
+    text = json.dumps(summary, indent=2, default=str)
+    if args.out:
+        Path(args.out).write_text(text, encoding="utf-8")
+        print(f"wrote {args.out}")
+    else:
+        print(text)
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="year-in-ai", description=__doc__.splitlines()[0])
     parser.add_argument("--version", action="version", version=f"year-in-ai {__version__}")
@@ -165,6 +243,26 @@ def main(argv: list[str] | None = None) -> int:
     p_run.add_argument("--share", action="store_true")
     p_run.add_argument("--redact-term", action="append")
     p_run.set_defaults(func=cmd_run)
+
+    p_harvest = sub.add_parser("harvest", help="fold recent turns into the text-free ledger")
+    p_harvest.add_argument("--ledger", help="ledger directory (default ~/.local/share/year-in-ai/ledger)")
+    p_harvest.add_argument("--config", help="config file (default ~/.config/year-in-ai/config.json)")
+    p_harvest.add_argument("--days", type=int, default=45, help="look back this many days (default 45)")
+    p_harvest.add_argument("--since", help="ISO date lower bound instead of --days")
+    p_harvest.add_argument("--backfill", action="store_true", help="read everything still on disk")
+    p_harvest.add_argument("--root", action="append", help="extra store root, KEY=PATH (repeatable)")
+    p_harvest.add_argument("--no-defaults", action="store_true", help="use only config and --root paths")
+    p_harvest.add_argument("--archive-to", help="also copy pruning stores into this archive root")
+    p_harvest.set_defaults(func=cmd_harvest)
+
+    p_attention = sub.add_parser("attention", help="words written and read, from the ledger")
+    p_attention.add_argument("--ledger")
+    p_attention.add_argument("--config")
+    p_attention.add_argument("--year", type=int)
+    p_attention.add_argument("--read-low", type=float, default=0.60)
+    p_attention.add_argument("--read-high", type=float, default=0.70)
+    p_attention.add_argument("--out")
+    p_attention.set_defaults(func=cmd_attention)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

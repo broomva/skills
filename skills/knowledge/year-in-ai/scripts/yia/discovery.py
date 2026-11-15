@@ -17,7 +17,7 @@ def _expand(p: str | os.PathLike[str]) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(str(p))))
 
 
-@dataclass(slots=True)
+@dataclass
 class Stores:
     """Resolved roots for each store, ``None`` when absent from this machine."""
 

@@ -130,7 +130,7 @@ class PhraseCounter:
         ][:limit]
 
 
-@dataclass(slots=True)
+@dataclass
 class SessionAcc:
     """Per-session accumulator; there are thousands of these, not millions."""
 

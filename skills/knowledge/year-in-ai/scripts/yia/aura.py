@@ -78,7 +78,7 @@ def _hsl_to_hex(h: float, s: float, lightness: float) -> str:
     return f"#{channel(h + 1/3):02x}{channel(h):02x}{channel(h - 1/3):02x}"
 
 
-@dataclass(slots=True)
+@dataclass
 class Aura:
     primary: str
     secondary: str

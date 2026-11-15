@@ -30,7 +30,7 @@ from typing import Any
 KINDS = ("user", "assistant", "tool", "meta")
 
 
-@dataclass(slots=True)
+@dataclass
 class Event:
     """One normalised occurrence in an AI session."""
 
@@ -63,7 +63,7 @@ class Event:
 # --------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class SourceReport:
     """What one store contributed, including the case where it contributed nothing.
 
@@ -109,7 +109,7 @@ class SourceReport:
         }
 
 
-@dataclass(slots=True)
+@dataclass
 class Window:
     """The half-open time window a run covers, plus what was actually observed.
 
@@ -159,7 +159,7 @@ class Window:
 # --------------------------------------------------------------------------
 
 
-@dataclass(slots=True)
+@dataclass
 class Provenance:
     """Anchors every claim in the payload to something on disk.
 
