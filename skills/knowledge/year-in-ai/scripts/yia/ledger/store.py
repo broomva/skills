@@ -52,15 +52,33 @@ def expand_path(raw: str) -> Path:
     return Path(os.path.expandvars(os.path.expanduser(raw)))
 
 
+class ConfigError(ValueError):
+    """A config that exists but cannot be used. Never read as an empty config."""
+
+
 def load_config(path: Optional[str] = None) -> dict:
+    """The config as a dict. Only an absent *default* config is empty.
+
+    A config named with ``--config`` that does not exist, one that cannot be
+    read, and one that is not a JSON object all raise :class:`ConfigError`:
+    reading them as ``{}`` would silently drop every configured store.
+    """
     cfg = expand_path(path or DEFAULT_CONFIG)
-    if not cfg.is_file():
-        return {}
     try:
-        data = json.loads(cfg.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
+        text = cfg.read_text(encoding="utf-8")
+    except FileNotFoundError:
+        if path:
+            raise ConfigError(f"config {cfg} does not exist")
         return {}
-    return data if isinstance(data, dict) else {}
+    except OSError as exc:
+        raise ConfigError(f"config {cfg} cannot be read: {exc.strerror or exc}")
+    try:
+        data = json.loads(text)
+    except ValueError as exc:
+        raise ConfigError(f"config {cfg} is not valid JSON: {exc}")
+    if not isinstance(data, dict):
+        raise ConfigError(f"config {cfg} is not a JSON object")
+    return data
 
 
 def resolve_roots(config: dict, overrides: Optional[Dict[str, List[str]]] = None,
