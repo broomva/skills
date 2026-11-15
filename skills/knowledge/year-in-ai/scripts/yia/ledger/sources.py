@@ -117,7 +117,9 @@ def pair_turns(events, *, src: str, session: Optional[str], harness, author, att
                report: Optional[SourceReport] = None) -> Rows:
     """Turn a time-ordered stream of ``(role, ts, text, native_id)`` into prompt and reply rows.
 
-    ``role`` is ``"prompt"`` or ``"reply"``; ``native_id`` is the store's
+    ``role`` is ``"prompt"``, ``"reply"`` or ``"boundary"`` (an excluded
+    prompt: it ends the current turn, and replies until the next prompt are
+    dropped); ``native_id`` is the store's
     message id, or a precomputed content key, or ``None`` (then the key is
     content-anchored here). A reply row is the last reply before the next
     prompt, tied to that prompt's row id, and carries the identity of that
@@ -137,6 +139,14 @@ def pair_turns(events, *, src: str, session: Optional[str], harness, author, att
                         author=resolved[1], turn=prompt_id, occurrence=occ)
 
     for role, ts, text, native in events:
+        if role == "boundary":
+            # An excluded prompt (harness-injected, a bare command) still ends the
+            # current turn: its reply is not the previous prompt's.
+            if final and prompt_id:
+                yield reply_row(final)
+            final = None
+            prompt_id = None
+            continue
         if not text or not text.strip():
             continue
         if report is not None:
@@ -269,6 +279,7 @@ def read_conductor(db: Optional[Path], since: Optional[float]) -> Tuple[SourceRe
             _observe(report, ts)
             if role == "user":
                 if is_injected(content):
+                    current.pop(session, None)  # its reply is not the previous prompt's
                     continue
                 row = make_row(src=name, harness="conductor", kind="prompt", ts=ts, text=content,
                                session=session, author="human", occurrence=occurrence_key(message_id),
@@ -418,10 +429,9 @@ def _claude_session(path: Path, sid: str, since: Optional[float], paseo_ids: Set
                 if not text or not text.strip():
                     continue
                 if rec.get("type") == "user":
-                    if is_injected(text):
-                        continue
-                    typed = unwrap_command(text)
+                    typed = None if is_injected(text) else unwrap_command(text)
                     if typed is None:
+                        yield "boundary", ts, None, None
                         continue
                     yield "prompt", ts, typed, uid
                 elif rec.get("type") == "assistant":
@@ -742,7 +752,10 @@ def _bridge_events(body: str, day: _dt.datetime, zone):
             hour_minute = (int(hh), int(mm))
         ts = day.replace(hour=hour_minute[0], minute=hour_minute[1], tzinfo=zone).timestamp()
         text = "\n".join(lines).strip()
-        if not text or (role == "User" and is_injected(text)):
+        if not text:
+            continue
+        if role == "User" and is_injected(text):
+            yield "boundary", ts, None, None
             continue
         yield ("prompt" if role == "User" else "reply"), ts, text, None
 
@@ -786,7 +799,10 @@ def read_exports(paths: List[Path], since: Optional[float]) -> Tuple[SourceRepor
                                 continue
                             text = _text(turn.get("content")) or ""
                             role = {"user": "prompt", "assistant": "reply"}.get(ext_str(turn.get("role")))
-                            if not role or not text.strip() or (role == "prompt" and is_injected(text)):
+                            if not role or not text.strip():
+                                continue
+                            if role == "prompt" and is_injected(text):
+                                yield "boundary", day + i, None, None
                                 continue
                             # The day, not the position: positions shift when turns are pruned.
                             yield role, day + i, text, keys(sid, day, role, text)

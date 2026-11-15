@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
-from . import ROW_VERSION, SCHEMA, revision_identity
+from . import ROW_VERSION, SCHEMA, exclusive_lock, revision_identity
 from . import sources as S
 
 DEFAULT_LEDGER = "~/.local/share/year-in-ai/ledger"
@@ -110,6 +110,11 @@ def readers(roots: Dict[str, List[Path]], since: Optional[float], bridged_offset
     ]
 
 
+def fingerprint(row: dict) -> str:
+    """What makes a stored row out of date: its text and how it is attributed."""
+    return f"{row['h']}|{row.get('author')}|{row.get('harness')}"
+
+
 class LegacyLedgerError(RuntimeError):
     """The ledger directory holds rows written under another schema version."""
 
@@ -163,7 +168,7 @@ class Ledger:
                     top = max(top, seq)
                     prior = latest.get(row["o"])
                     if prior is None or (seq, row["id"]) > (prior[0], prior[3]):
-                        latest[row["o"]] = (seq, row["h"], (prior[2] + 1) if prior else 1, row["id"])
+                        latest[row["o"]] = (seq, fingerprint(row), (prior[2] + 1) if prior else 1, row["id"])
                     else:
                         latest[row["o"]] = (prior[0], prior[1], prior[2] + 1, prior[3])
         return ids, latest, top
@@ -181,23 +186,29 @@ class Ledger:
         identified by :func:`revision_identity`. Returns new-row counts per month.
         """
         self.dir.mkdir(parents=True, exist_ok=True)
+        with exclusive_lock(self.dir, ".write.lock"):
+            return self._write_locked(rows)
+
+    def _write_locked(self, rows: Iterable[dict]) -> Dict[str, int]:
         ids, latest, seq = self._scan()
         pending: Dict[Path, List[str]] = {}
         added: Dict[str, int] = {}
         for row in rows:
             prior = latest.get(row["o"])
-            if prior is not None and prior[1] == row["h"]:
+            # Unchanged means same text AND same attribution: a session found
+            # later to be Paseo's moves its turns from human to agent.
+            if prior is not None and prior[1] == fingerprint(row):
                 continue  # unchanged since the last harvest
             n = prior[2] if prior else 0
             row = dict(row)
             if n and row["id"] in ids:
-                row["id"] = revision_identity(row["o"], row["h"], n)
+                row["id"] = revision_identity(row["o"], fingerprint(row), n)
             if row["id"] in ids:
                 continue
             seq += 1
             row["seq"] = seq
             ids.add(row["id"])
-            latest[row["o"]] = (seq, row["h"], n + 1, row["id"])
+            latest[row["o"]] = (seq, fingerprint(row), n + 1, row["id"])
             path = self._month_file(row["ts"])
             pending.setdefault(path, []).append(json.dumps(row, separators=(",", ":"), sort_keys=True))
             if len(pending[path]) >= 5000:

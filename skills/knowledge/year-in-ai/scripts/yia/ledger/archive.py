@@ -35,6 +35,8 @@ import shutil
 from pathlib import Path
 from typing import Dict, List, Optional, Tuple
 
+from . import exclusive_lock
+
 #: (default source, subdirectory in the archive root)
 DEFAULT_TARGETS: List[Tuple[str, str]] = [
     ("~/.claude/projects", "claude-projects"),
@@ -122,7 +124,7 @@ def copy_additive(source: Path, target: Path, suffixes: Optional[Tuple[str, ...]
                 continue
             src_path = Path(dirpath) / name
             dst_path = target / rel / name
-            tmp = dst_path.with_name(f".{name}.yia-tmp")
+            tmp = dst_path.with_name(f".{name}.{os.getpid()}.yia-tmp")
             try:
                 # Cheap skip only for an untouched file: copy2 preserves the
                 # nanosecond mtime, so equal size *and* equal mtime_ns means the
@@ -195,6 +197,9 @@ def archive(root: Path, ledger_dir: Optional[Path] = None,
         if source.is_dir() and _nested(source, root / sub):
             raise ValueError(f"archive target {root / sub} overlaps its source {source}")
     results: Dict[str, Dict[str, int]] = {}
-    for source, sub, suffixes in pairs:
-        results[sub] = copy_additive(source, root / sub, suffixes)
+    # One archive run at a time per root: classification and replacement must
+    # not interleave with another run's.
+    with exclusive_lock(root, ".year-in-ai-archive.lock"):
+        for source, sub, suffixes in pairs:
+            results[sub] = copy_additive(source, root / sub, suffixes)
     return results

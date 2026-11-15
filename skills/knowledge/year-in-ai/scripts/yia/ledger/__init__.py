@@ -22,9 +22,9 @@ import hashlib
 import re
 from typing import Any, Dict, Iterable, Optional
 
-SCHEMA = "year-in-ai/ledger/v6"
+SCHEMA = "year-in-ai/ledger/v7"
 #: Row version written and read by this code. Rows of other versions are ignored.
-ROW_VERSION = 6
+ROW_VERSION = 7
 
 #: A prompt is what started a turn; a reply is the final assistant message of it.
 KINDS = ("prompt", "reply")
@@ -200,6 +200,32 @@ def is_injected(text: str) -> bool:
 def has_automation_marker(text: str) -> bool:
     head = text.strip().lower()[:200]
     return head.startswith(AUTOMATION_OPENINGS) or any(p in head for p in AUTOMATION_PHRASES)
+
+
+class exclusive_lock:
+    """An exclusive ``flock`` on ``<directory>/<name>`` for the duration of a ``with`` block.
+
+    Serializes overlapping harvests: two ledger writers would otherwise read
+    the same highest sequence, and two archive runs could replace a version
+    between another run's classification and its rename.
+    """
+
+    def __init__(self, directory, name: str):
+        import os as _os
+        self.path = _os.path.join(str(directory), name)
+        self.handle = None
+
+    def __enter__(self):
+        import fcntl
+        self.handle = open(self.path, "a")
+        fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX)
+        return self
+
+    def __exit__(self, *exc):
+        import fcntl
+        fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        self.handle.close()
+        return False
 
 
 def make_row(

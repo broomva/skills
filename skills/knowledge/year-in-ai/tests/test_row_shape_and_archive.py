@@ -50,7 +50,10 @@ def assert_text_free(row: dict) -> None:
     assert set(row["flags"]) <= {"marker"}
     for key in ("chars", "words", "authored_chars", "authored_words"):
         assert isinstance(row[key], int) and row[key] >= 0
-    assert isinstance(row["ts"], float) and isinstance(row["v"], int) and isinstance(row["src"], str)
+    from yia.ledger import sources as _S
+    assert isinstance(row["ts"], float) and isinstance(row["v"], int)
+    assert row["src"] in set(_S.REGISTRY)
+    assert row["seq"] is None or (isinstance(row["seq"], int) and row["seq"] > 0)
 
 
 @pytest.mark.parametrize("store", sorted(BUILDERS))

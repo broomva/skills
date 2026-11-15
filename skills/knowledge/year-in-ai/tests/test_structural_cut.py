@@ -141,7 +141,7 @@ def test_rows_without_a_sequence_never_outrank_sequenced_ones_and_ties_ignore_mo
     ledger._month_file(a["ts"]).write_text(json.dumps(a) + "\n")
     ledger._month_file(b["ts"]).write_text(json.dumps(b) + "\n")
     _ids, latest, top = ledger._scan()
-    assert latest[a["o"]][1] == winner["h"] and top == 0  # the next harvest writes seq 1
+    assert latest[a["o"]][1] == L.fingerprint(winner) and top == 0  # the next harvest writes seq 1
     # A later harvest writes the other text; a sequenced row outranks both unsequenced ones.
     loser = a if winner is b else b
     ledger.write([dict(loser, seq=None)])
