@@ -85,6 +85,12 @@ class SourceReport:
     first: _dt.datetime | None = None
     last: _dt.datetime | None = None
 
+    def skip(self, why: str) -> None:
+        """Count a file this reader could not read. The one way a reader records
+        a lost file: ``harvest`` then warns and exits non-zero, never silently."""
+        self.skipped += 1
+        self.reason = f"{self.skipped} file(s) not read; last: {why}"
+
     def observe(self, ts: _dt.datetime) -> None:
         """Widen the observed span to include ``ts``."""
         self.records += 1

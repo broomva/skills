@@ -469,7 +469,7 @@ def test_codex_rollouts_are_streamed_not_loaded(tmp_path):
     # streaming reader also sees a line appended after it started.
     path = tmp_path / "rollout.jsonl"
     path.write_text(("{\"pad\": \"" + "x" * 1000 + "\"}\n") * 2000)
-    lines = S._codex_lines(path)
+    lines = S.read_lines(path, S.SourceReport("codex", True))
     next(lines)
     with path.open("a") as handle:
         handle.write("APPENDED\n")

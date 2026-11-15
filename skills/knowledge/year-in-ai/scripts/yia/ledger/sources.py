@@ -203,6 +203,57 @@ def _content(path: Path) -> Optional[bytes]:
         return None
 
 
+def read_lines(path: Path, report: SourceReport) -> Iterator[str]:
+    """A transcript's lines, decompressing ``.zst`` through a pipe: the one way readers read a line file.
+
+    Every failure is reported through ``report.skip``, never read as an empty
+    or shorter file: a missing zstd, a decompressor that cannot start or exits
+    non-zero after the whole stream was read (a corrupt or truncated archive),
+    and an ``OSError`` on open or mid-read. A caller that stops early is not a
+    failure.
+    """
+    if path.name.endswith(".zst"):
+        zstd = find_zstd()
+        if not zstd:
+            report.skip("zstd not found")
+            return
+        try:
+            proc = subprocess.Popen([zstd, "-dc", str(path)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
+        except OSError:
+            report.skip("zstd could not start")
+            return
+        finished = False
+        try:
+            for raw in proc.stdout:
+                yield raw.decode("utf-8", errors="ignore")
+            finished = True
+        finally:
+            proc.stdout.close()
+            code = proc.wait()
+            if finished and code != 0:
+                report.skip("decompression failed")
+        return
+    try:
+        handle = path.open("r", encoding="utf-8", errors="ignore")
+    except OSError:
+        report.skip("unreadable")
+        return
+    with handle:
+        try:
+            yield from handle
+        except OSError:
+            report.skip("read error")
+
+
+def read_text(path: Path, report: SourceReport) -> Optional[str]:
+    """A whole file's text, or None after ``report.skip``: the one way readers read a whole file."""
+    try:
+        return path.read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        report.skip("unreadable")
+        return None
+
+
 def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[str, Path]]],
                 since: Optional[float] = None, append_only: bool = False,
                 unreadable: Optional[Callable[[Path], None]] = None) -> List[Tuple[str, Path]]:
@@ -223,6 +274,9 @@ def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[s
       instead of losing it silently. When no copy is readable the newest is
       returned and the caller's own read reports it.
 
+    ``since`` filters transcripts, not copies: a transcript any copy of which
+    was written since then is compared across all of its copies.
+
     Archive revisions are never candidates. Every multi-root reader uses this,
     and the reader contract suite checks each one against live/archive pairs.
     """
@@ -235,11 +289,13 @@ def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[s
                 st = path.stat()
             except OSError:
                 continue
-            if since and st.st_mtime < since:
-                continue
             found[key].append((st.st_mtime_ns, -root_index, path))
     picked: List[Tuple[str, Path]] = []
     for key in sorted(found):
+        # ``since`` admits a transcript when any copy was written since; then
+        # every copy competes, so an older but longer archive is not dropped.
+        if since and max(c[0] for c in found[key]) < since * 1e9:
+            continue
         copies = sorted(found[key], key=lambda c: (c[0], c[1]), reverse=True)
         best = copies[0][2]
         if append_only and len(copies) > 1:
@@ -467,11 +523,8 @@ def read_claude_projects(
             for path in root.glob("*/*.jsonl"):
                 yield path.stem, path
 
-        def lost(path: Path) -> None:
-            report.skipped += 1
-            report.reason = f"{report.skipped} transcript copy(ies) could not be read"
-
-        for sid, path in pick_copies(roots, candidates, since, append_only=True, unreadable=lost):
+        for sid, path in pick_copies(roots, candidates, since, append_only=True,
+                                     unreadable=lambda _p: report.skip("a copy could not be read")):
             report.files += 1
             yield from _claude_session(path, sid, since, paseo_ids, report)
 
@@ -484,43 +537,38 @@ def _claude_session(path: Path, sid: str, since: Optional[float], paseo_ids: Set
 
     def events():
         seen: Set[str] = set()
-        try:
-            handle = path.open("r", encoding="utf-8", errors="ignore")
-        except OSError:
-            return
-        with handle:
-            for line in handle:
-                # Cheap pre-filter before parsing, independent of JSON spacing.
-                if '"user"' not in line and '"assistant"' not in line:
+        for line in read_lines(path, report):
+            # Cheap pre-filter before parsing, independent of JSON spacing.
+            if '"user"' not in line and '"assistant"' not in line:
+                continue
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            state["entry"] = state["entry"] or ext_str(rec.get("entrypoint"))
+            if rec.get("isSidechain") or rec.get("isMeta") or rec.get("isCompactSummary"):
+                continue
+            uid = _sid(rec.get("uuid"))
+            if not uid or uid in seen:
+                continue
+            seen.add(uid)
+            ts = _iso(rec.get("timestamp"))
+            if ts is None or (since and ts < since):
+                continue
+            message = rec.get("message") if isinstance(rec.get("message"), dict) else {}
+            text = _claude_text(message.get("content"))
+            if not text or not text.strip():
+                continue
+            if rec.get("type") == "user":
+                typed = None if is_injected(text) else unwrap_command(text)
+                if typed is None:
+                    yield "boundary", ts, None, None
                     continue
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(rec, dict):
-                    continue
-                state["entry"] = state["entry"] or ext_str(rec.get("entrypoint"))
-                if rec.get("isSidechain") or rec.get("isMeta") or rec.get("isCompactSummary"):
-                    continue
-                uid = _sid(rec.get("uuid"))
-                if not uid or uid in seen:
-                    continue
-                seen.add(uid)
-                ts = _iso(rec.get("timestamp"))
-                if ts is None or (since and ts < since):
-                    continue
-                message = rec.get("message") if isinstance(rec.get("message"), dict) else {}
-                text = _claude_text(message.get("content"))
-                if not text or not text.strip():
-                    continue
-                if rec.get("type") == "user":
-                    typed = None if is_injected(text) else unwrap_command(text)
-                    if typed is None:
-                        yield "boundary", ts, None, None
-                        continue
-                    yield "prompt", ts, typed, uid
-                elif rec.get("type") == "assistant":
-                    yield "reply", ts, text, uid
+                yield "prompt", ts, typed, uid
+            elif rec.get("type") == "assistant":
+                yield "reply", ts, text, uid
 
     def classify():
         entry = state["entry"]
@@ -544,35 +592,34 @@ def read_claude_history(path: Optional[Path], since: Optional[float]) -> Tuple[S
 
     def stream() -> Rows:
         keys = ContentKeys()
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(rec, dict):
-                    continue
-                stamp = rec.get("timestamp")
-                display = _text(rec.get("display")) or ""
-                if not isinstance(stamp, (int, float)) or isinstance(stamp, bool) or not display.strip():
-                    continue
-                ts = stamp / 1000.0
-                if since and ts < since:
-                    continue
-                # A menu-bar usage probe sends /usage every few minutes; it is nobody typing.
-                if "CodexBar" in (ext_str(rec.get("project")) or ""):
-                    continue
-                if display.strip().startswith("/") and len(display) < 60:
-                    continue
-                _observe(report, ts)
-                pasted_map = rec.get("pastedContents") if isinstance(rec.get("pastedContents"), dict) else {}
-                pasted = [v.get("content") for v in pasted_map.values()
-                          if isinstance(v, dict) and isinstance(v.get("content"), str)]
-                full = "\n".join([display] + pasted)
-                session = _sid(rec.get("sessionId"))
-                yield make_row(src=name, harness="claude-cli", kind="prompt", ts=ts, text=full, session=session,
-                               author="human", authored=display,
-                               occurrence=keys(session, ts, "prompt", full))
+        for line in read_lines(path, report):
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            stamp = rec.get("timestamp")
+            display = _text(rec.get("display")) or ""
+            if not isinstance(stamp, (int, float)) or isinstance(stamp, bool) or not display.strip():
+                continue
+            ts = stamp / 1000.0
+            if since and ts < since:
+                continue
+            # A menu-bar usage probe sends /usage every few minutes; it is nobody typing.
+            if "CodexBar" in (ext_str(rec.get("project")) or ""):
+                continue
+            if display.strip().startswith("/") and len(display) < 60:
+                continue
+            _observe(report, ts)
+            pasted_map = rec.get("pastedContents") if isinstance(rec.get("pastedContents"), dict) else {}
+            pasted = [v.get("content") for v in pasted_map.values()
+                      if isinstance(v, dict) and isinstance(v.get("content"), str)]
+            full = "\n".join([display] + pasted)
+            session = _sid(rec.get("sessionId"))
+            yield make_row(src=name, harness="claude-cli", kind="prompt", ts=ts, text=full, session=session,
+                           author="human", authored=display,
+                           occurrence=keys(session, ts, "prompt", full))
 
     return report, stream()
 
@@ -581,30 +628,6 @@ def read_claude_history(path: Optional[Path], since: Optional[float]) -> Tuple[S
 
 #: Codex originators that are a script or another app, never a person in Codex itself.
 CODEX_NOT_INTERACTIVE = {"codex_exec", "T3 Code", "t3code_desktop", "codex_sdk_ts"}
-
-
-def _codex_lines(path: Path) -> Iterator[str]:
-    """Stream a rollout line by line, decompressing ``.zst`` through a pipe."""
-    if path.name.endswith(".zst"):
-        zstd = find_zstd()
-        if not zstd:
-            return
-        try:
-            proc = subprocess.Popen([zstd, "-dc", str(path)], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL)
-        except OSError:
-            return
-        try:
-            for raw in proc.stdout:
-                yield raw.decode("utf-8", errors="ignore")
-        finally:
-            proc.stdout.close()
-            proc.wait()
-        return
-    try:
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            yield from handle
-    except OSError:
-        return
 
 
 def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[SourceReport, Rows]:
@@ -622,16 +645,10 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
                     if ".jsonl" in fname:
                         yield (fname[: -len(".zst")] if fname.endswith(".zst") else fname), Path(dirpath) / fname
 
-        def lost(path: Path) -> None:
-            # Never silently: a skipped transcript makes every total incomplete.
-            report.skipped += 1
-            why = "zstd not found" if find_zstd() is None else "unreadable"
-            report.reason = f"{report.skipped} transcript copy(ies) not read: {why}"
+        def lost(_path: Path) -> None:
+            report.skip("zstd not found" if find_zstd() is None else "a copy could not be read")
 
         for base, path in pick_copies(roots, candidates, since, append_only=True, unreadable=lost):
-            if path.name.endswith(".zst") and find_zstd() is None:
-                lost(path)
-                continue
             report.files += 1
             yield from _codex_file(path, base.split(".")[0][-36:], since, report)
 
@@ -639,7 +656,7 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
 
 
 def _codex_file(path: Path, sid: str, since: Optional[float], report: SourceReport) -> Rows:
-    lines = _codex_lines(path)
+    lines = read_lines(path, report)
     meta: Optional[dict] = None
     # session_meta is the first record; read up to it, then stream the rest.
     for line in lines:
@@ -704,24 +721,23 @@ def read_codex_history(path: Optional[Path], since: Optional[float]) -> Tuple[So
 
     def stream() -> Rows:
         keys = ContentKeys()
-        with path.open("r", encoding="utf-8", errors="ignore") as handle:
-            for line in handle:
-                try:
-                    rec = json.loads(line)
-                except ValueError:
-                    continue
-                if not isinstance(rec, dict):
-                    continue
-                ts = rec.get("ts")
-                text = _text(rec.get("text")) or ""
-                if not isinstance(ts, (int, float)) or isinstance(ts, bool) or (since and ts < since) \
-                        or not text.strip():
-                    continue
-                _observe(report, ts)
-                session = _sid(rec.get("session_id"))
-                yield make_row(src=name, harness="codex:history", kind="prompt", ts=float(ts), text=text,
-                               session=session, author="human",
-                               occurrence=keys(session, float(ts), "prompt", text))
+        for line in read_lines(path, report):
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if not isinstance(rec, dict):
+                continue
+            ts = rec.get("ts")
+            text = _text(rec.get("text")) or ""
+            if not isinstance(ts, (int, float)) or isinstance(ts, bool) or (since and ts < since) \
+                    or not text.strip():
+                continue
+            _observe(report, ts)
+            session = _sid(rec.get("session_id"))
+            yield make_row(src=name, harness="codex:history", kind="prompt", ts=float(ts), text=text,
+                           session=session, author="human",
+                           occurrence=keys(session, float(ts), "prompt", text))
 
     return report, stream()
 
@@ -742,9 +758,13 @@ def read_gemini(roots: List[Path], since: Optional[float]) -> Tuple[SourceReport
                 yield path.relative_to(root).as_posix(), path
 
         for _key, path in pick_copies(roots, candidates):
+            body = read_text(path, report)
+            if body is None:
+                continue
             try:
-                data = json.loads(path.read_text(encoding="utf-8"))
-            except (OSError, ValueError):
+                data = json.loads(body)
+            except ValueError:
+                report.skip("malformed chat file")
                 continue
             if not isinstance(data, dict):
                 continue
@@ -802,9 +822,8 @@ def read_bridged(
                 yield path.name, path
 
         for _key, path in pick_copies(roots, candidates):
-            try:
-                body = path.read_text(encoding="utf-8", errors="ignore")
-            except OSError:
+            body = read_text(path, report)
+            if body is None:
                 continue
             created = re.search(r"^created: (\d{4}-\d{2}-\d{2})", body, re.M)
             sid_match = re.search(r"^session_id: (\S+)", body, re.M)
@@ -872,35 +891,34 @@ def read_exports(paths: List[Path], since: Optional[float]) -> Tuple[SourceRepor
     def stream() -> Rows:
         for path in paths:
             report.files += 1
-            with path.open("r", encoding="utf-8", errors="ignore") as handle:
-                for line in handle:
-                    try:
-                        rec = json.loads(line)
-                        turns = json.loads(rec["turns"]) if isinstance(rec.get("turns"), str) else rec.get("turns")
-                        day = _dt.datetime.fromisoformat(rec["date"]).replace(hour=17, tzinfo=_UTC).timestamp()
-                    except (ValueError, KeyError, TypeError, AttributeError):
-                        continue
-                    if since and day < since:
-                        continue
-                    sid = _sid(rec.get("session_id"))
-                    keys = ContentKeys()
+            for line in read_lines(path, report):
+                try:
+                    rec = json.loads(line)
+                    turns = json.loads(rec["turns"]) if isinstance(rec.get("turns"), str) else rec.get("turns")
+                    day = _dt.datetime.fromisoformat(rec["date"]).replace(hour=17, tzinfo=_UTC).timestamp()
+                except (ValueError, KeyError, TypeError, AttributeError):
+                    continue
+                if since and day < since:
+                    continue
+                sid = _sid(rec.get("session_id"))
+                keys = ContentKeys()
 
-                    def events(turns=turns, day=day, sid=sid, keys=keys):
-                        for i, turn in enumerate(turns if isinstance(turns, list) else []):
-                            if not isinstance(turn, dict):
-                                continue
-                            text = _text(turn.get("content")) or ""
-                            role = {"user": "prompt", "assistant": "reply"}.get(ext_str(turn.get("role")))
-                            if not role or not text.strip():
-                                continue
-                            if role == "prompt" and is_injected(text):
-                                yield "boundary", day + i, None, None
-                                continue
-                            # The day, not the position: positions shift when turns are pruned.
-                            yield role, day + i, text, keys(sid, day, role, text)
+                def events(turns=turns, day=day, sid=sid, keys=keys):
+                    for i, turn in enumerate(turns if isinstance(turns, list) else []):
+                        if not isinstance(turn, dict):
+                            continue
+                        text = _text(turn.get("content")) or ""
+                        role = {"user": "prompt", "assistant": "reply"}.get(ext_str(turn.get("role")))
+                        if not role or not text.strip():
+                            continue
+                        if role == "prompt" and is_injected(text):
+                            yield "boundary", day + i, None, None
+                            continue
+                        # The day, not the position: positions shift when turns are pruned.
+                        yield role, day + i, text, keys(sid, day, role, text)
 
-                    yield from pair_turns(events(), src=name, session=sid, report=report, harness="claude-code",
-                                          author="unknown")
+                yield from pair_turns(events(), src=name, session=sid, report=report, harness="claude-code",
+                                      author="unknown")
 
     return report, stream()
 

@@ -107,9 +107,14 @@ fold.
 Python 3.9 or later, nothing else, except **zstd** for compressed Codex
 transcripts (`*.jsonl.zst`). It is looked for on `PATH`, then in
 `/opt/homebrew/bin`, `/usr/local/bin` and `/usr/bin`, so a launchd job with a
-minimal `PATH` still finds a Homebrew install. If it is missing, `harvest`
-never skips silently: the Codex source reports how many compressed files it
-could not read, a warning names zstd, and `harvest` exits with status 4.
+minimal `PATH` still finds a Homebrew install.
+
+**No file is ever skipped silently.** Readers read files only through
+`read_lines` and `read_text` (a test fails otherwise), and these report every
+failure: zstd missing, a corrupt or truncated archive, a file that cannot be
+opened or read, a malformed Gemini chat. A failed read counts as `skipped` on
+its source and never as an empty file. `harvest` prints a warning naming the
+cause and exits with status 4.
 
 ## Live stores and their archives
 
