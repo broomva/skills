@@ -109,12 +109,15 @@ transcripts (`*.jsonl.zst`). It is looked for on `PATH`, then in
 `/opt/homebrew/bin`, `/usr/local/bin` and `/usr/bin`, so a launchd job with a
 minimal `PATH` still finds a Homebrew install.
 
-**No file is ever skipped silently.** Readers read files only through
-`read_lines` and `read_text` (a test fails otherwise), and these report every
-failure: zstd missing, a corrupt or truncated archive, a file that cannot be
-opened or read, a malformed Gemini chat. A failed read counts as `skipped` on
-its source and never as an empty file. `harvest` prints a warning naming the
-cause and exits with status 4.
+**No file is ever skipped silently.** Readers find files only through
+`list_files` and read them only through `read_lines` and `read_text` (a test
+fails otherwise), and these report every failure: a directory that cannot be
+listed, zstd missing, a corrupt or truncated archive, a file that cannot be
+opened or read, a malformed Gemini chat, an unreadable T3 or Conductor
+database. A failure counts as `skipped` on its source, never as an empty
+store; `harvest` prints a warning naming the cause and exits with status 4.
+That is what a scheduled job without disk access looks like, so treat exit 4
+from launchd as "grant access", not as a quiet week.
 
 ## Live stores and their archives
 

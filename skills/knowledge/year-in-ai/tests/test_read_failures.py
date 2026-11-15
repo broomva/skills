@@ -107,14 +107,17 @@ def test_harvest_exits_non_zero_on_a_corrupt_archive(tmp_path):
     assert run.returncode == 4 and "incomplete" in run.stderr and "brew install" not in run.stderr
 
 
-#: Functions allowed to touch files directly: the two read helpers, copy
-#: comparison, the SQLite opener, and Paseo id discovery (attribution, not a source).
-READ_HELPERS = {"read_lines", "read_text", "_content", "_connect", "paseo_session_ids", "find_zstd"}
-FILE_CALLS = {"open", "read_text", "read_bytes", "Popen", "run"}
+#: Functions allowed to touch the file system directly: the read and discovery
+#: helpers, copy comparison, the SQLite opener, config path expansion and Paseo
+#: id discovery (attribution, not a source).
+READ_HELPERS = {"read_lines", "read_text", "list_files", "_content", "_ro_sqlite", "expand",
+                "paseo_session_ids", "find_zstd"}
+FILE_CALLS = {"open", "read_text", "read_bytes", "Popen", "run", "glob", "rglob", "iterdir", "scandir",
+              "listdir", "walk", "fdopen"}
 
 
-def test_readers_read_files_only_through_the_reporting_helpers():
-    tree = ast.parse((SCRIPTS / "yia" / "ledger" / "sources.py").read_text())
+def file_access_outside_helpers(source: str):
+    """Every call that reads or lists files outside the reporting helpers, as ``function:line .call()``."""
     offenders = []
 
     def visit(node, owner):
@@ -122,16 +125,59 @@ def test_readers_read_files_only_through_the_reporting_helpers():
             name = owner
             if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and owner is None:
                 name = child.name
-            if (isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute)
-                    and child.func.attr in FILE_CALLS and name not in READ_HELPERS):
-                offenders.append(f"{name}:{child.lineno} .{child.func.attr}()")
-            if isinstance(child, ast.Call) and isinstance(child.func, ast.Name) and child.func.id == "open" \
-                    and name not in READ_HELPERS:
-                offenders.append(f"{name}:{child.lineno} open()")
+            if isinstance(child, ast.Call) and name not in READ_HELPERS:
+                func = child.func
+                called = func.attr if isinstance(func, ast.Attribute) else func.id if isinstance(func, ast.Name) else None
+                calls_a_helper = isinstance(func, ast.Name) and called in READ_HELPERS
+                if called in FILE_CALLS and not calls_a_helper:
+                    offenders.append(f"{name}:{child.lineno} .{called}()")
             visit(child, name)
 
-    visit(tree, None)
-    assert offenders == []
+    visit(ast.parse(source), None)
+    return offenders
+
+
+def test_readers_read_files_only_through_the_reporting_helpers():
+    assert file_access_outside_helpers((SCRIPTS / "yia" / "ledger" / "sources.py").read_text()) == []
+
+
+@pytest.mark.parametrize("call", ["io.open(p)", "open(p)", "os.walk(r)", "r.glob('*')", "r.rglob('*')",
+                                  "os.scandir(r)", "os.listdir(r)", "r.iterdir()", "p.read_bytes()",
+                                  "subprocess.run(['zstd'])", "walk(r)", "p.read_text()"])
+def test_the_guard_catches_every_file_api(call):
+    assert file_access_outside_helpers(f"def read_new_store(p, r):\n    return {call}\n")
+
+
+@not_root
+@pytest.mark.parametrize("store", ["codex", "claude"])
+def test_an_unlistable_directory_is_reported_not_read_as_empty(tmp_path, store):
+    if store == "codex":
+        path = _codex_rollout(tmp_path / "root", [turn(1)], compress=False)
+        locked, read = path.parent, lambda: S.read_codex_sessions([tmp_path / "root"], None)
+    else:
+        path = tmp_path / "root" / "-proj" / "s1.jsonl"
+        write_jsonl(path, _claude_records([turn(1)], False))
+        locked, read = path.parent, lambda: S.read_claude_projects([tmp_path / "root"], None)
+    locked.chmod(0)
+    try:
+        report, rows = read()
+        assert list(rows) == [] and report.skipped == 1 and "listed" in report.reason
+    finally:
+        locked.chmod(0o755)
+
+
+def test_an_unreadable_database_is_reported(tmp_path):
+    db = tmp_path / "state.sqlite"
+    db.write_bytes(b"not a database" * 100)
+    report, rows = S.read_t3(db, None)
+    assert list(rows) == [] and report.skipped == 1
+
+
+def test_archive_temporary_files_are_not_transcripts(tmp_path):
+    path = _codex_rollout(tmp_path / "codex", [turn(1)], compress=False)
+    (path.parent / f".{path.name}.123.yia-tmp").write_text(path.read_text())
+    report, rows = S.read_codex_sessions([tmp_path / "codex"], None)
+    assert len(list(rows)) == 1 and report.files == 1
 
 
 def test_skip_is_the_only_way_a_reader_counts_a_lost_file():

@@ -227,6 +227,8 @@ def read_lines(path: Path, report: SourceReport) -> Iterator[str]:
             for raw in proc.stdout:
                 yield raw.decode("utf-8", errors="ignore")
             finished = True
+        except OSError:
+            report.skip("decompression failed")
         finally:
             proc.stdout.close()
             code = proc.wait()
@@ -245,6 +247,39 @@ def read_lines(path: Path, report: SourceReport) -> Iterator[str]:
             report.skip("read error")
 
 
+def list_files(root: Path, report: SourceReport, depth: Optional[int] = None) -> Iterator[Path]:
+    """Files under ``root`` in name order: the one way readers discover files.
+
+    ``depth`` 1 means files directly in ``root``, 2 one directory down, and so
+    on; None means any depth (symlinked directories are then not followed).
+    Names starting with a dot are skipped, as a glob would, which also keeps
+    the archive's temporary copies out. A directory that cannot be listed is
+    reported through ``report.skip``, never read as empty.
+    """
+    def walk(directory: Path, level: int) -> Iterator[Path]:
+        try:
+            with os.scandir(directory) as entries:
+                listed = sorted(entries, key=lambda e: e.name)
+        except OSError:
+            report.skip("directory could not be listed")
+            return
+        for entry in listed:
+            if entry.name.startswith("."):
+                continue
+            try:
+                is_dir = entry.is_dir(follow_symlinks=depth is not None)
+            except OSError:
+                report.skip("directory could not be listed")
+                continue
+            if is_dir:
+                if depth is None or level < depth:
+                    yield from walk(Path(entry.path), level + 1)
+            elif depth is None or level == depth:
+                yield Path(entry.path)
+
+    yield from walk(root, 1)
+
+
 def read_text(path: Path, report: SourceReport) -> Optional[str]:
     """A whole file's text, or None after ``report.skip``: the one way readers read a whole file."""
     try:
@@ -255,8 +290,8 @@ def read_text(path: Path, report: SourceReport) -> Optional[str]:
 
 
 def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[str, Path]]],
-                since: Optional[float] = None, append_only: bool = False,
-                unreadable: Optional[Callable[[Path], None]] = None) -> List[Tuple[str, Path]]:
+                report: SourceReport, since: Optional[float] = None,
+                append_only: bool = False) -> List[Tuple[str, Path]]:
     """One file per key across several roots: the one place copies are chosen.
 
     Live stores and their archives hold the same files under the same names.
@@ -269,10 +304,10 @@ def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[s
       replaces it when its content, decompressed, *extends* the newest one
       byte for byte: the newest was truncated, and the longer copy holds all of
       it plus more. Only readable copies compete: a copy whose bytes cannot be
-      read (zstd missing, a failed decompression) is passed to ``unreadable``
-      unless it is the one returned, so the caller reports it as skipped
-      instead of losing it silently. When no copy is readable the newest is
-      returned and the caller's own read reports it.
+      read (zstd missing, a failed decompression) is reported as skipped
+      unless it is the one returned. When no copy is readable the newest is
+      returned and the caller's read reports it. A copy that cannot even be
+      stat-ed is reported too.
 
     ``since`` filters transcripts, not copies: a transcript any copy of which
     was written since then is compared across all of its copies.
@@ -288,6 +323,7 @@ def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[s
             try:
                 st = path.stat()
             except OSError:
+                report.skip("a copy could not be read")
                 continue
             found[key].append((st.st_mtime_ns, -root_index, path))
     picked: List[Tuple[str, Path]] = []
@@ -310,8 +346,9 @@ def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[s
                     if len(other_bytes) > len(best_bytes) and other_bytes.startswith(best_bytes):
                         best, best_bytes = other, other_bytes
             for path, _data in lost:
-                if path != best and unreadable is not None:
-                    unreadable(path)
+                if path != best:
+                    report.skip("zstd not found" if path.name.endswith(".zst") and find_zstd() is None
+                                else "a copy could not be read")
         picked.append((key, best))
     return picked
 
@@ -348,7 +385,7 @@ def read_t3(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, R
             )
         except sqlite3.Error as exc:
             report.available = False
-            report.reason = f"T3 database unreadable: {exc}"
+            report.skip(f"T3 database unreadable: {exc}")
             return
         report.files = 1
         runs: Dict[Tuple[str, str], dict] = {}
@@ -413,7 +450,7 @@ def read_conductor(db: Optional[Path], since: Optional[float]) -> Tuple[SourceRe
             )
         except sqlite3.Error as exc:
             report.available = False
-            report.reason = f"Conductor database unreadable: {exc}"
+            report.skip(f"Conductor database unreadable: {exc}")
             return
         report.files = 1
         # The prompt each session is answering *now*. A reply belongs to the
@@ -520,11 +557,11 @@ def read_claude_projects(
 
     def stream() -> Rows:
         def candidates(root: Path):
-            for path in root.glob("*/*.jsonl"):
-                yield path.stem, path
+            for path in list_files(root, report, depth=2):
+                if path.suffix == ".jsonl":
+                    yield path.stem, path
 
-        for sid, path in pick_copies(roots, candidates, since, append_only=True,
-                                     unreadable=lambda _p: report.skip("a copy could not be read")):
+        for sid, path in pick_copies(roots, candidates, report, since, append_only=True):
             report.files += 1
             yield from _claude_session(path, sid, since, paseo_ids, report)
 
@@ -639,16 +676,12 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
 
     def stream() -> Rows:
         def candidates(root: Path):
-            for dirpath, dirs, names in os.walk(root):
-                dirs.sort()
-                for fname in sorted(names):
-                    if ".jsonl" in fname:
-                        yield (fname[: -len(".zst")] if fname.endswith(".zst") else fname), Path(dirpath) / fname
+            for path in list_files(root, report):
+                fname = path.name
+                if ".jsonl" in fname:
+                    yield (fname[: -len(".zst")] if fname.endswith(".zst") else fname), path
 
-        def lost(_path: Path) -> None:
-            report.skip("zstd not found" if find_zstd() is None else "a copy could not be read")
-
-        for base, path in pick_copies(roots, candidates, since, append_only=True, unreadable=lost):
+        for base, path in pick_copies(roots, candidates, report, since, append_only=True):
             report.files += 1
             yield from _codex_file(path, base.split(".")[0][-36:], since, report)
 
@@ -754,10 +787,11 @@ def read_gemini(roots: List[Path], since: Optional[float]) -> Tuple[SourceReport
 
     def stream() -> Rows:
         def candidates(root: Path):
-            for path in root.glob("*/chats/*.json"):
-                yield path.relative_to(root).as_posix(), path
+            for path in list_files(root, report, depth=3):
+                if path.parent.name == "chats" and path.suffix == ".json":
+                    yield path.relative_to(root).as_posix(), path
 
-        for _key, path in pick_copies(roots, candidates):
+        for _key, path in pick_copies(roots, candidates, report):
             body = read_text(path, report)
             if body is None:
                 continue
@@ -818,10 +852,11 @@ def read_bridged(
 
     def stream() -> Rows:
         def candidates(root: Path):
-            for path in root.glob("session-*.md"):
-                yield path.name, path
+            for path in list_files(root, report, depth=1):
+                if path.name.startswith("session-") and path.suffix == ".md":
+                    yield path.name, path
 
-        for _key, path in pick_copies(roots, candidates):
+        for _key, path in pick_copies(roots, candidates, report):
             body = read_text(path, report)
             if body is None:
                 continue
