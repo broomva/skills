@@ -21,7 +21,18 @@ import pytest
 SCRIPTS = Path(__file__).resolve().parents[1] / "scripts"
 sys.path.insert(0, str(SCRIPTS))
 
-from yia.ledger import make_row, opaque, row_fields, text_hash, unwrap_command  # noqa: E402
+import itertools  # noqa: E402
+
+from yia.ledger import make_row as _make_row  # noqa: E402
+from yia.ledger import opaque, row_fields, text_hash, unwrap_command  # noqa: E402
+
+_occurrences = itertools.count()
+
+
+def make_row(**kw):
+    """Tests build rows by hand: a fresh occurrence each, or the native key when one models a copy."""
+    kw.setdefault("occurrence", kw.get("key") or f"test-occurrence-{next(_occurrences)}")
+    return _make_row(**kw)
 from yia.ledger import archive as A  # noqa: E402
 from yia.ledger import attention as T  # noqa: E402
 from yia.ledger import sources as S  # noqa: E402
@@ -419,14 +430,15 @@ def test_long_prompts_sharing_a_template_do_not_merge():
 def test_conductor_replies_pair_with_their_own_prompt(tmp_path):
     db = tmp_path / "conductor.db"
     con = sqlite3.connect(db)
-    con.execute("create table session_messages (session_id text, role text, content text, created_at text, turn_id text)")
+    con.execute("create table session_messages (id text, session_id text, role text, content text, created_at text, "
+                "turn_id text)")
     def assistant(text):
         return json.dumps({"type": "assistant", "message": {"content": [{"type": "text", "text": text}]}})
-    for row in [("s", "user", "first ask", "2026-10-26 10:00:00", "t1"),
-                ("s", "assistant", assistant("first answer here"), "2026-10-26 10:00:05", "t1"),
-                ("s", "user", "second ask", "2026-10-26 10:01:00", "t2"),
-                ("s", "assistant", assistant("second answer"), "2026-10-26 10:01:05", "t2")]:
-        con.execute("insert into session_messages values (?,?,?,?,?)", row)
+    for row in [("m1", "s", "user", "first ask", "2026-10-26 10:00:00", "t1"),
+                ("m2", "s", "assistant", assistant("first answer here"), "2026-10-26 10:00:05", "t1"),
+                ("m3", "s", "user", "second ask", "2026-10-26 10:01:00", "t2"),
+                ("m4", "s", "assistant", assistant("second answer"), "2026-10-26 10:01:05", "t2")]:
+        con.execute("insert into session_messages values (?,?,?,?,?,?)", row)
     con.commit()
     con.close()
     _report, rows = S.read_conductor(db, None)
@@ -532,7 +544,6 @@ def test_a_resumed_session_copy_is_one_turn_with_one_reply():
     summary = T.fold(rows)
     assert summary["written"]["prompts"] == 1
     assert summary["read"]["reply_words_measured"] == 4
-    assert summary["dropped"]["copied prompt"] == 1
 
 
 def _bridged(ts, sess, text="lets plan it"):
@@ -708,6 +719,7 @@ def test_a_resumed_claude_session_counts_its_copied_turns_once(tmp_path):
     roots["claude_projects"] = [root]
     ledger = L.Ledger(str(tmp_path / "ledger"))
     L.harvest(ledger, roots, since=None)
-    summary = T.fold(ledger.rows())
-    assert summary["written"]["prompts"] == 2
-    assert summary["dropped"]["copied prompt"] == 1
+    rows = list(ledger.rows())
+    # The copy has the original's occurrence id, so the ledger stores it once.
+    assert len([r for r in rows if r["kind"] == "prompt"]) == 2
+    assert T.fold(rows)["written"]["prompts"] == 2

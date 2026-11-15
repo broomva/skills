@@ -44,10 +44,16 @@ def parse_ts(raw: str) -> _dt.datetime | None:
     return dt.astimezone(_dt.timezone.utc)
 
 
-def _bound_prefix(dt: _dt.datetime | None) -> str | None:
+#: Recorded offsets range from UTC-12 to UTC+14. The lexical pre-filter compares
+#: a record's *local* prefix with UTC bounds, so it widens each bound by this
+#: much and leaves the exact decision to the parsed timestamp.
+_OFFSET_SLACK = _dt.timedelta(hours=14)
+
+
+def _bound_prefix(dt: _dt.datetime | None, slack: _dt.timedelta = _dt.timedelta(0)) -> str | None:
     if dt is None:
         return None
-    return dt.astimezone(_dt.timezone.utc).strftime("%Y-%m-%dT%H:%M:%S")
+    return (dt.astimezone(_dt.timezone.utc) + slack).strftime("%Y-%m-%dT%H:%M:%S")
 
 
 def iter_records(path: Path, window: Window) -> Iterator[tuple[_dt.datetime, dict]]:
@@ -56,8 +62,8 @@ def iter_records(path: Path, window: Window) -> Iterator[tuple[_dt.datetime, dic
     Malformed lines are skipped rather than raised: these files are appended to
     by live processes, so a torn final line is normal and is not a corpus error.
     """
-    lo = _bound_prefix(window.start)
-    hi = _bound_prefix(window.end)
+    lo = _bound_prefix(window.start, -_OFFSET_SLACK)
+    hi = _bound_prefix(window.end, _OFFSET_SLACK)
     try:
         handle = path.open("r", encoding="utf-8", errors="ignore")
     except OSError:

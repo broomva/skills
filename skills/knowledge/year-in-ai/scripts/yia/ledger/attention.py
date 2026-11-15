@@ -34,6 +34,9 @@ separately. Replies to agent-written prompts are the agents' own volume.
 
 ``window`` limits what is *reported*; rows outside it are still used as
 context, so a reply just inside the window keeps the prompt just before it.
+A turn's reply is its final revision, wherever that falls: it is what was
+read, and it is read when it was written. A turn whose final revision lands
+after the window is reported in the period that contains it, not this one.
 
 Memory: the fold holds the selected rows in memory. Rows are per turn, not per
 transcript byte; one measured year of heavy multi-harness use was ~80k rows
@@ -42,6 +45,7 @@ transcript byte; one measured year of heavy multi-harness use was ~80k rows
 
 from __future__ import annotations
 
+import bisect
 import collections
 import datetime as _dt
 import statistics
@@ -61,6 +65,8 @@ UNFLAGGED_MAX_CHARS = 1500
 #: Timestamp precision of text-only stores, in seconds: bridged markdown records
 #: minutes; exports place turns at synthetic one-second steps.
 COPY_PRECISION = {"bridged": 60.0, "export": 1.0}
+#: Reasons a prompt is neither the person's writing nor the agents' own.
+EXCLUDED_REASONS = {"text-only after exact coverage", "unknown author"}
 
 
 def _month(ts: float, zone: _dt.tzinfo) -> str:
@@ -91,7 +97,11 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
     def in_window(ts: float) -> bool:
         return (lo is None or ts >= lo) and (hi is None or ts < hi)
 
-    rows = list(rows)
+    # One id is one occurrence (see the reader contract): keep the first of each.
+    unique: Dict[str, dict] = {}
+    for r in rows:
+        unique.setdefault(r["id"], r)
+    rows = list(unique.values())
     prompts = [r for r in rows if r["kind"] == "prompt"]
 
     sessions_by_text: Dict[str, set] = collections.defaultdict(set)
@@ -126,17 +136,25 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
         return None
 
     human_ids = set()
+    agent_ids = set()
     for r in prompts:
         reason = why_not_written(r)
         if reason is None:
             human_ids.add(r["id"])
-        elif in_window(r["ts"]):
-            dropped[reason] += 1
+        else:
+            # The agents' own volume is what agents wrote: an agent author, or a
+            # prompt filtered as scripted. A row cut by `text_only_until`, or one
+            # whose store records no author (an SDK app such as T3 driving Claude,
+            # already counted from T3 itself), is excluded from both sides.
+            if reason not in EXCLUDED_REASONS:
+                agent_ids.add(r["id"])
+            if in_window(r["ts"]):
+                dropped[reason] += 1
 
     sequences = session_sequences(prompts)
     human_kept, human_canon = canonical_turns([r for r in prompts if r["id"] in human_ids], sequences,
                                               dropped, "prompt", in_window)
-    _agent_kept, agent_canon = canonical_turns([r for r in prompts if r["id"] not in human_ids], sequences,
+    _agent_kept, agent_canon = canonical_turns([r for r in prompts if r["id"] in agent_ids], sequences,
                                                dropped, "agent prompt", in_window)
     prompt_src = {r["id"]: r["src"] for r in prompts}
     replies = [r for r in rows if r["kind"] == "reply"]
@@ -223,27 +241,83 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
     }
 
 
-def session_sequences(prompts: List[dict]) -> Dict[Tuple[str, str], List[dict]]:
-    """Every session's prompts in order, per store. The evidence for session lineage."""
-    seqs: Dict[Tuple[str, str], List[dict]] = collections.defaultdict(list)
-    for r in sorted(prompts, key=lambda r: (r["ts"], r["id"])):
-        seqs[(r["src"], r["sess"])].append(r)
-    return seqs
+class Sequences:
+    """Every session's prompts in order, per store, with each row's position. The evidence for lineage."""
+
+    def __init__(self, prompts: List[dict]):
+        self.by_session: Dict[Tuple[str, str], List[dict]] = collections.defaultdict(list)
+        for r in sorted(prompts, key=lambda r: (r["ts"], r["id"])):
+            self.by_session[(r["src"], r["sess"])].append(r)
+        self.position: Dict[str, int] = {}
+        for seq in self.by_session.values():
+            for i, r in enumerate(seq):
+                self.position[r["id"]] = i
+
+    def neighbour(self, r: dict, step: int) -> Optional[dict]:
+        seq = self.by_session[(r["src"], r["sess"])]
+        j = self.position[r["id"]] + step
+        return seq[j] if 0 <= j < len(seq) else None
+
+
+def session_sequences(prompts: List[dict]) -> "Sequences":
+    return Sequences(prompts)
 
 
 def _same_moment(a: dict, b: dict, precision: float) -> bool:
     return a["h"] == b["h"] and abs(a["ts"] - b["ts"]) <= precision
 
 
-def _neighbours_match(a: dict, b: dict, seqs, precision: float) -> bool:
+def _neighbours_match(a: dict, b: dict, seqs: "Sequences", precision: float) -> bool:
     """Do the turns before or after ``a`` and ``b`` in their sessions also match?"""
-    sa, sb = seqs[(a["src"], a["sess"])], seqs[(b["src"], b["sess"])]
-    ia, ib = sa.index(a), sb.index(b)
     for step in (-1, 1):
-        ja, jb = ia + step, ib + step
-        if 0 <= ja < len(sa) and 0 <= jb < len(sb) and _same_moment(sa[ja], sb[jb], precision):
+        na, nb = seqs.neighbour(a, step), seqs.neighbour(b, step)
+        if na is not None and nb is not None and _same_moment(na, nb, precision):
             return True
     return False
+
+
+class _TimeIndex:
+    """Rows of one text hash, per store, sorted by time, for nearest-neighbour lookups."""
+
+    def __init__(self) -> None:
+        self.times: Dict[str, List[float]] = collections.defaultdict(list)
+        self.rows: Dict[str, List[dict]] = collections.defaultdict(list)
+
+    def add(self, r: dict) -> None:
+        i = bisect.bisect_right(self.times[r["src"]], r["ts"])
+        self.times[r["src"]].insert(i, r["ts"])
+        self.rows[r["src"]].insert(i, r)
+
+    def near(self, src: str, ts: float, radius: float):
+        """Rows of ``src`` within ``radius`` of ``ts``, nearest first (ties by id), lazily.
+
+        Walks outward from the insertion point, so a caller that stops at the
+        first acceptable candidate touches only the rows it passes over.
+        """
+        times, rows = self.times.get(src, []), self.rows.get(src, [])
+        right = bisect.bisect_left(times, ts)
+        left = right - 1
+        while True:
+            lgap = ts - times[left] if left >= 0 else None
+            rgap = times[right] - ts if right < len(times) else None
+            if lgap is not None and lgap > radius:
+                lgap, left = None, -1
+            if rgap is not None and rgap > radius:
+                rgap, right = None, len(times)
+            if lgap is None and rgap is None:
+                return
+            # Equal gaps: take the smaller id first, so the order never depends on insertion order.
+            take_left = rgap is None or (lgap is not None and (lgap, rows[left]["id"]) <= (rgap, rows[right]["id"]))
+            if take_left:
+                yield rows[left]
+                left -= 1
+            else:
+                yield rows[right]
+                right += 1
+
+
+#: The widest cross-store window; per-pair windows are narrower (see :func:`_window`).
+MAX_MATCH_WINDOW = 36 * 3600
 
 
 def _window(a: dict, b: dict) -> float:
@@ -259,15 +333,15 @@ def canonical_turns(items: List[dict], seqs, dropped: Dict[str, int], label: str
     # Pass 1: copies inside one store, on evidence only.
     originals: List[dict] = []
     by_key: Dict[Tuple[str, str], dict] = {}
-    by_moment: Dict[Tuple[str, str], List[dict]] = collections.defaultdict(list)
+    by_moment: Dict[str, _TimeIndex] = collections.defaultdict(_TimeIndex)
     for r in sorted(items, key=lambda r: (r["src"], r["ts"], r["id"])):
         original = None
         if r.get("k"):
             original = by_key.get((r["src"], r["k"]))
         elif r["src"] in COPY_PRECISION:
             precision = COPY_PRECISION[r["src"]]
-            for c in by_moment[(r["src"], r["h"])]:
-                if c["sess"] != r["sess"] and _same_moment(c, r, precision) and _neighbours_match(c, r, seqs, precision):
+            for c in by_moment[r["h"]].near(r["src"], r["ts"], precision):
+                if c["sess"] != r["sess"] and _neighbours_match(c, r, seqs, precision):
                     original = c
                     break
         if original is not None:
@@ -277,21 +351,26 @@ def canonical_turns(items: List[dict], seqs, dropped: Dict[str, int], label: str
             continue
         if r.get("k"):
             by_key[(r["src"], r["k"])] = r
-        by_moment[(r["src"], r["h"])].append(r)
+        by_moment[r["h"]].add(r)
         originals.append(r)
 
     # Pass 2: one turn recorded by several stores; the closest candidate wins.
-    by_hash: Dict[str, List[dict]] = collections.defaultdict(list)
+    by_hash: Dict[str, _TimeIndex] = collections.defaultdict(_TimeIndex)
     claimed: Dict[str, set] = collections.defaultdict(set)
     kept: List[dict] = []
     for r in sorted(originals, key=_order):
         best = None
-        for c in by_hash[r["h"]]:
-            if c["src"] == r["src"] or r["src"] in claimed[c["id"]]:
+        index = by_hash.get(r["h"])
+        for src in sorted(index.rows) if index else ():
+            if src == r["src"]:
                 continue
-            gap = abs(c["ts"] - r["ts"])
-            if gap <= _window(c, r) and (best is None or (gap, c["id"]) < best[0]):
-                best = ((gap, c["id"]), c)
+            for c in index.near(src, r["ts"], MAX_MATCH_WINDOW):
+                if r["src"] in claimed[c["id"]]:
+                    continue
+                gap = abs(c["ts"] - r["ts"])
+                if gap <= _window(c, r) and (best is None or (gap, c["id"]) < best[0]):
+                    best = ((gap, c["id"]), c)
+                break  # nearest unclaimed candidate of this store
         if best is not None:
             match = best[1]
             claimed[match["id"]].add(r["src"])
@@ -301,7 +380,7 @@ def canonical_turns(items: List[dict], seqs, dropped: Dict[str, int], label: str
             continue
         canon[r["id"]] = r["id"]
         claimed[r["id"]].add(r["src"])
-        by_hash[r["h"]].append(r)
+        by_hash[r["h"]].add(r)
         kept.append(r)
 
     # Copies point at an original that may itself have merged into another store's turn.

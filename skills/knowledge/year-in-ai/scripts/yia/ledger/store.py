@@ -121,6 +121,8 @@ class Ledger:
         #: They are never folded: their ids, hashes and metadata follow other
         #: rules, so mixing them would double-count turns.
         self.legacy_rows = 0
+        #: Lines that were not valid JSON (a torn write) in the last read.
+        self.malformed_lines = 0
 
     def _month_file(self, ts: float) -> Path:
         return self.dir / (_dt.datetime.fromtimestamp(ts, _dt.timezone.utc).strftime("%Y-%m") + ".jsonl")
@@ -135,6 +137,8 @@ class Ledger:
                     row = json.loads(line)
                 except ValueError:
                     continue
+                if not isinstance(row, dict):
+                    continue
                 if row.get("v") != ROW_VERSION:
                     raise LegacyLedgerError(
                         f"{path} holds rows of schema v{row.get('v')}; this code writes v{ROW_VERSION}. "
@@ -144,9 +148,17 @@ class Ledger:
                 ids.add(row["id"])
         return ids
 
+    def check_schema(self) -> None:
+        """Refuse a ledger directory that holds rows of another schema version, in any month."""
+        if not self.dir.is_dir():
+            return
+        for path in sorted(self.dir.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9].jsonl")):
+            self._ids(path)
+
     def write(self, rows: Iterable[dict]) -> Dict[str, int]:
         """Append rows not already present. Returns new-row counts per month file."""
         self.dir.mkdir(parents=True, exist_ok=True)
+        self.check_schema()
         known: Dict[Path, Set[str]] = {}
         pending: Dict[Path, List[str]] = {}
         added: Dict[str, int] = {}
@@ -167,13 +179,23 @@ class Ledger:
 
     @staticmethod
     def _flush(path: Path, lines: List[str]) -> None:
+        # An interrupted earlier write can leave a final line without its newline.
+        # Appending straight after it would glue the first new row onto the torn
+        # one and lose both; start on a fresh line instead. The torn line stays
+        # as one malformed line, which ``rows()`` counts.
+        torn = False
+        if path.is_file() and path.stat().st_size:
+            with path.open("rb") as handle:
+                handle.seek(-1, os.SEEK_END)
+                torn = handle.read(1) != b"\n"
         with path.open("a", encoding="utf-8") as handle:
-            handle.write("\n".join(lines) + "\n")
+            handle.write(("\n" if torn else "") + "\n".join(lines) + "\n")
             handle.flush()
             os.fsync(handle.fileno())
 
     def rows(self, since: Optional[float] = None, until: Optional[float] = None) -> Iterator[dict]:
         self.legacy_rows = 0
+        self.malformed_lines = 0
         if not self.dir.is_dir():
             return
         for path in sorted(self.dir.glob("[0-9][0-9][0-9][0-9]-[0-9][0-9].jsonl")):
@@ -182,6 +204,10 @@ class Ledger:
                     try:
                         row = json.loads(line)
                     except ValueError:
+                        self.malformed_lines += 1
+                        continue
+                    if not isinstance(row, dict):
+                        self.malformed_lines += 1
                         continue
                     if row.get("v") != ROW_VERSION:
                         self.legacy_rows += 1
@@ -204,6 +230,7 @@ def harvest(ledger: Ledger, roots: Dict[str, List[Path]], since: Optional[float]
     started = time.time()
     reports = []
     added: Dict[str, int] = {}
+    ledger.check_schema()
     for report, rows in readers(roots, since, bridged_offset):
         for month, count in ledger.write(rows).items():
             added[month] = added.get(month, 0) + count

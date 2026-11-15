@@ -74,6 +74,19 @@ Add archive copies and extra stores in `~/.config/year-in-ai/config.json`:
 }
 ```
 
+## Identity: occurrences first, turns second
+
+Every row a reader emits has an **occurrence** identity: the store's own
+message id where it has one (T3, Conductor, Claude Code, Gemini), otherwise
+the session, timestamp, role, text hash and a count of earlier identical
+occurrences. A row id is made from the store and that identity alone, never
+from content. So the same occurrence harvested twice is one row, two
+occurrences never share a row, and pruning or inserting records moves no other
+id. `tests/test_reader_contract.py` runs these cases against every reader in
+`sources.REGISTRY` and fails when a reader has no fixture. Whether two
+occurrences are the same *turn* is a separate, evidence-based decision in the
+fold.
+
 ## How "written" and "read" are counted
 
 - **Written:** prompts a person wrote, counted as turns. A store's own author

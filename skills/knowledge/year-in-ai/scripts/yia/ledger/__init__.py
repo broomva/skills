@@ -22,9 +22,9 @@ import hashlib
 import re
 from typing import Any, Dict, Iterable, Optional
 
-SCHEMA = "year-in-ai/ledger/v3"
+SCHEMA = "year-in-ai/ledger/v4"
 #: Row version written and read by this code. Rows of other versions are ignored.
-ROW_VERSION = 3
+ROW_VERSION = 4
 
 #: A prompt is what started a turn; a reply is the final assistant message of it.
 KINDS = ("prompt", "reply")
@@ -106,21 +106,48 @@ ATTR_VALUES = {
 }
 
 
+def ext_str(value: Any) -> Optional[str]:
+    """The one boundary for external scalar fields: a string, or ``None``.
+
+    Store metadata is untrusted. A field that should be a string but holds a
+    dict, list or number is treated as unknown here, before any reader compares
+    it with a set or puts it in a label.
+    """
+    if isinstance(value, str):
+        return value
+    if value is None:
+        return None
+    return "other"
+
+
+def occurrence_key(*parts: Any) -> str:
+    """A reader's identity for one recorded occurrence, from its parts.
+
+    Readers pass either the store's own message id, or, when the store has
+    none, ``(session, timestamp, text hash, n)`` where ``n`` counts earlier
+    occurrences with the same session, timestamp and text. Content-anchored
+    keys stay stable when other records are inserted or a prefix is pruned.
+    """
+    return "|".join("" if p is None else str(p) for p in parts)
+
+
 def clean_attr(attr: Optional[Dict[str, Any]]) -> Dict[str, str]:
     """Keep known keys with known values; map unknown values to ``other``; drop unknown keys."""
     out: Dict[str, str] = {}
     for key, value in (attr or {}).items():
+        value = ext_str(value)
         if key not in ATTR_VALUES or value is None:
             continue
-        out[key] = value if isinstance(value, str) and value in ATTR_VALUES[key] else "other"
+        out[key] = value if value in ATTR_VALUES[key] else "other"
     return out
 
 
 def harness_label(prefix: str, value: Optional[str], key: str) -> str:
     """``prefix:value`` when the value is a known enum, ``prefix:other`` when not, ``prefix`` when absent."""
+    value = ext_str(value)
     if not value:
         return prefix
-    return f"{prefix}:{value if isinstance(value, str) and value in ATTR_VALUES[key] else 'other'}"
+    return f"{prefix}:{value if value in ATTR_VALUES[key] else 'other'}"
 
 
 def prefix_hash(text: str) -> Optional[str]:
@@ -178,6 +205,7 @@ def make_row(
     session: Optional[str],
     author: str = "unknown",
     turn: Optional[str] = None,
+    occurrence: str,
     attr: Optional[Dict[str, Any]] = None,
     authored: Optional[int] = None,
     key: Optional[str] = None,
@@ -187,9 +215,11 @@ def make_row(
     ``session`` and ``turn`` are external or derived identifiers; the session is
     stored as an opaque hash, and ``turn`` is always a row id made here.
     ``harness`` must come from :func:`harness_label` or a fixed literal.
-    ``key`` is the store's own id for the message, when it has one; it is
-    stored as an opaque hash and is the evidence that two rows are one turn
-    copied into a resumed session.
+    ``occurrence`` is the reader's identity for this recorded occurrence (see
+    :func:`occurrence_key`); the row id is derived from the store and it alone,
+    never from content, so two occurrences never share an id and the same
+    occurrence harvested twice always does. ``key`` is the store's native
+    message id when it has one, kept (hashed) as evidence for copy detection.
     """
     if kind not in KINDS:
         raise ValueError(f"unknown row kind: {kind!r}")
@@ -203,7 +233,7 @@ def make_row(
     if kind == "prompt" and has_automation_marker(clean):
         flags.append("marker")
     sess = opaque(session)
-    row_id = hashlib.sha1(f"{src}|{sess}|{kind}|{ts:.3f}|{h}".encode("utf-8")).hexdigest()[:20]
+    row_id = row_identity(src, kind, occurrence)
     return {
         "id": row_id,
         "v": ROW_VERSION,
@@ -224,6 +254,13 @@ def make_row(
         "flags": flags,
         "attr": clean_attr(attr),
     }
+
+
+def row_identity(src: str, kind: str, occurrence: str) -> str:
+    """The only place a row id is made. A test asserts nothing else computes one."""
+    if not occurrence:
+        raise ValueError("a row needs an occurrence identity")
+    return hashlib.sha1(f"{src}|{kind}|{occurrence}".encode("utf-8")).hexdigest()[:20]
 
 
 def row_fields() -> Iterable[str]:
