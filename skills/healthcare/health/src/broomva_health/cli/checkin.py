@@ -40,6 +40,8 @@ def _journal(journal: Path | None) -> JsonlJournal:
     problems = private_dir_problems(chosen.parent)
     if chosen.is_symlink():
         problems.append(f"{chosen} is a symlink")
+    elif chosen.exists() and not chosen.is_file():
+        problems.append(f"{chosen} is not a regular file")
     if problems:
         raise typer.BadParameter("refusing this journal location: " + "; ".join(problems))
     return JsonlJournal(chosen)
@@ -81,8 +83,12 @@ def record(
     except JournalLockTimeout as exc:
         typer.echo(f"not recorded: {exc}", err=True)
         raise typer.Exit(3) from exc
-    for line in j.unparsed:
-        typer.echo(f"kept a journal line that does not parse: {line[:80]}", err=True)
+    except (OSError, ValueError) as exc:
+        typer.echo(f"not recorded: {type(exc).__name__}", err=True)  # no journal content in errors
+        raise typer.Exit(1) from exc
+    if j.unparsed:
+        # A count only: journal lines are private and never go to logs or stderr.
+        typer.echo(f"kept {len(j.unparsed)} journal line(s) that do not parse, unchanged", err=True)
     typer.echo(json.dumps(entry, ensure_ascii=False))
 
 

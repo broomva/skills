@@ -252,3 +252,44 @@ def test_cli_validates_dates_days_and_scores(
     entry = json.loads((tmp_path / "data" / "journal.jsonl").read_text())
     assert entry["spirit"] == "Yes"
     assert entry["note"] == "No"
+
+
+def test_impossible_dates_are_refused_and_kept_not_trusted(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    p.write_text('{"date": "2026-02-30", "a": 1}\n{"date": "2026-01-01", "s": NaN}\n')
+    j = JsonlJournal(p)
+    with pytest.raises(ValueError):
+        j.record("2026-02-30", {"a": "1"})
+    j.record("2026-01-15", {"b": "2"})
+    assert sorted(j.read()) == ["2026-01-15"]
+    assert len(j.unparsed) == 2
+
+
+def test_a_directory_is_not_a_journal(tmp_path: Path) -> None:
+    from broomva_health.cli.checkin import app
+
+    d = tmp_path / "private"
+    (d / "journal.jsonl").mkdir(parents=True)
+    os.chmod(d, 0o700)
+    with pytest.raises(ValueError):
+        JsonlJournal(d / "journal.jsonl").record("2026-01-15", {"a": "1"})
+    r = CliRunner().invoke(app, ["record", "a=1", "--journal", str(d / "journal.jsonl")])
+    assert r.exit_code == 2
+    assert not (d / "journal.lock").exists()
+
+
+def test_stderr_never_carries_journal_content(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from broomva_health.cli.checkin import app
+
+    data = tmp_path / "data"
+    data.mkdir(mode=0o700)
+    os.chmod(data, 0o700)
+    (data / "journal.jsonl").write_text("secret words that do not parse\n")
+    monkeypatch.setenv("BROOMVA_HEALTH_DATA_DIR", str(data))
+    monkeypatch.delenv("BROOMVA_HEALTH_JOURNAL", raising=False)
+    r = CliRunner().invoke(app, ["record", "a=1", "--date", "2026-01-15"])
+    assert r.exit_code == 0, r.output
+    assert "secret" not in r.output
+    assert "kept 1 journal line" in r.output

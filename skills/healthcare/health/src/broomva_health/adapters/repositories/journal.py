@@ -25,6 +25,7 @@ import re
 import tempfile
 import time
 from dataclasses import dataclass, field
+from datetime import date
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +45,17 @@ _CLOUD_MARKERS = (
 
 
 _ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
+def _is_iso_day(day: object) -> bool:
+    """A real calendar date written YYYY-MM-DD (``2026-02-30`` is not)."""
+    if not isinstance(day, str) or not _ISO_DAY.match(day) or not day.isascii():
+        return False
+    try:
+        date.fromisoformat(day)
+    except ValueError:
+        return False
+    return True
 
 
 class JournalLockTimeout(TimeoutError):
@@ -113,8 +125,10 @@ class JsonlJournal:
 
     def record(self, day: str, fields: dict[str, Any], *, at: str | None = None) -> dict[str, Any]:
         """Merge ``fields`` into ``day``'s entry and persist atomically. Returns the merged entry."""
-        if not _ISO_DAY.match(day):
-            raise ValueError(f"date must be YYYY-MM-DD, got {day!r}")
+        if not _is_iso_day(day):
+            raise ValueError(f"date must be a real YYYY-MM-DD date, got {day!r}")
+        if self.path.exists() and not self.path.is_file():
+            raise ValueError(f"{self.path} exists and is not a regular file")
         if self.path.is_symlink():
             raise ValueError(f"{self.path} is a symlink; the journal must be a regular file")
         self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
@@ -168,8 +182,9 @@ class JsonlJournal:
             try:
                 obj = json.loads(line)
                 day = obj["date"] if isinstance(obj, dict) else None
-                if not isinstance(day, str) or not _ISO_DAY.match(day):
-                    raise ValueError("no ISO date")
+                if not isinstance(day, str) or not _is_iso_day(day):
+                    raise ValueError("no real ISO date")
+                json.dumps(obj, allow_nan=False)  # a line we could not write back is kept as is
             except (ValueError, KeyError):
                 key = f"~line-{i:06d}"
                 self.unparsed.append(line)
