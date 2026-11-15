@@ -19,7 +19,9 @@ from __future__ import annotations
 import contextlib
 import fcntl
 import json
+import math
 import os
+import re
 import tempfile
 import time
 from dataclasses import dataclass, field
@@ -41,22 +43,33 @@ _CLOUD_MARKERS = (
 )
 
 
+_ISO_DAY = re.compile(r"^\d{4}-\d{2}-\d{2}$")
+
+
 class JournalLockTimeout(TimeoutError):
     """Another writer held the journal lock past the timeout. Nothing was written."""
 
 
-def parse_value(raw: str) -> Any:
-    """``"8"`` → 8, ``"2.5"`` → 2.5, ``"yes"/"true"`` → True, ``"no"/"false"`` → False, else the text."""
+def parse_value(key: str, raw: str) -> Any:
+    """Store answers verbatim. Only ``*_score`` keys become numbers and ``safety_stop`` a boolean.
+
+    A label such as "Yes" or a note such as "No" stays text: the journal keeps the user's
+    words, not a guess at their type. A score must be a finite number.
+    """
     text = raw.strip()
-    low = text.lower()
-    if low in ("true", "yes"):
+    if key.endswith("_score"):
+        try:
+            value = float(text)
+        except ValueError:
+            raise ValueError(f"{key} must be a number, got {raw!r}") from None
+        if not math.isfinite(value):
+            raise ValueError(f"{key} must be a finite number, got {raw!r}")
+        return int(value) if value.is_integer() else value
+    if key == "safety_stop":
+        if text.lower() not in ("yes", "true", "1"):
+            raise ValueError("safety_stop can only be set to yes")
         return True
-    if low in ("false", "no"):
-        return False
-    for cast in (int, float):
-        with contextlib.suppress(ValueError):
-            return cast(text)
-    return text
+    return raw
 
 
 def private_dir_problems(path: Path) -> list[str]:
@@ -66,6 +79,8 @@ def private_dir_problems(path: Path) -> list[str]:
     work tree (one ``git add -A`` from a commit), or inside a cloud-synced folder.
     """
     problems: list[str] = []
+    if path.expanduser().is_symlink():
+        problems.append(f"{path} is a symlink; give the real folder")
     p = path.expanduser().resolve()
     if p.exists() and p.stat().st_mode & 0o077:
         problems.append(
@@ -98,11 +113,15 @@ class JsonlJournal:
 
     def record(self, day: str, fields: dict[str, Any], *, at: str | None = None) -> dict[str, Any]:
         """Merge ``fields`` into ``day``'s entry and persist atomically. Returns the merged entry."""
-        self.path.parent.mkdir(parents=True, exist_ok=True)
+        if not _ISO_DAY.match(day):
+            raise ValueError(f"date must be YYYY-MM-DD, got {day!r}")
+        if self.path.is_symlink():
+            raise ValueError(f"{self.path} is a symlink; the journal must be a regular file")
+        self.path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
         with contextlib.suppress(OSError):
             os.chmod(self.path.parent, 0o700)
-        lock_path = self.path.parent / "journal.lock"
-        with open(lock_path, "w") as lock:
+        lock_fd = os.open(self.path.parent / "journal.lock", os.O_WRONLY | os.O_CREAT, 0o600)
+        with os.fdopen(lock_fd, "w") as lock:
             self._acquire(lock)
             try:
                 entries, order = self._read_ordered()
@@ -140,7 +159,7 @@ class JsonlJournal:
         entries: dict[str, Any] = {}
         order: list[str] = []
         try:
-            lines = self.path.read_text(encoding="utf-8").splitlines()
+            lines = self.path.read_text(encoding="utf-8", errors="surrogateescape").splitlines()
         except FileNotFoundError:
             return entries, order
         for i, line in enumerate(lines):
@@ -149,8 +168,8 @@ class JsonlJournal:
             try:
                 obj = json.loads(line)
                 day = obj["date"] if isinstance(obj, dict) else None
-                if not isinstance(day, str):
-                    raise ValueError("no date")
+                if not isinstance(day, str) or not _ISO_DAY.match(day):
+                    raise ValueError("no ISO date")
             except (ValueError, KeyError):
                 key = f"~line-{i:06d}"
                 self.unparsed.append(line)
@@ -159,7 +178,7 @@ class JsonlJournal:
                 continue
             if day not in entries:
                 order.append(day)
-            entries[day] = {**entries.get(day, {}), **obj}
+            entries[day] = {**entries.get(day, {}), **obj}  # a duplicated date merges
         return entries, order
 
     def _replace(self, entries: dict[str, Any], order: list[str]) -> None:
@@ -167,12 +186,14 @@ class JsonlJournal:
         it = iter(dated)
         # Dated entries come out sorted; an unparsed line keeps its slot among them.
         rows = [
-            entries[k] if k.startswith("~") else json.dumps(entries[next(it)], ensure_ascii=False)
+            entries[k]
+            if k.startswith("~")
+            else json.dumps(entries[next(it)], ensure_ascii=False, allow_nan=False)
             for k in order
         ]
         fd, tmp = tempfile.mkstemp(dir=self.path.parent, prefix=".journal-", suffix=".tmp")
         try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            with os.fdopen(fd, "w", encoding="utf-8", errors="surrogateescape") as fh:
                 fh.write("".join(r + "\n" for r in rows))
                 fh.flush()
                 os.fsync(fh.fileno())

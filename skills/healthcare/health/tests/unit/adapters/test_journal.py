@@ -137,12 +137,46 @@ def test_private_dir_problems(tmp_path: Path) -> None:
     assert any("cloud-synced" in p for p in private_dir_problems(cloud))
 
 
-def test_parse_value() -> None:
-    assert parse_value("8") == 8
-    assert parse_value("2.5") == 2.5
-    assert parse_value("yes") is True
-    assert parse_value("No") is False
-    assert parse_value("Calm, clear") == "Calm, clear"
+def test_parse_value_keeps_answers_verbatim_and_only_scores_are_numbers() -> None:
+    assert parse_value("spirit", "Yes") == "Yes"
+    assert parse_value("note", "No") == "No"
+    assert parse_value("note", "007") == "007"
+    assert parse_value("body_score", "8") == 8
+    assert parse_value("body_score", "2.5") == 2.5
+    assert parse_value("safety_stop", "yes") is True
+    for bad in ("nan", "inf", "-inf", "eight"):
+        with pytest.raises(ValueError):
+            parse_value("mind_score", bad)
+    with pytest.raises(ValueError):
+        parse_value("safety_stop", "no")
+
+
+def test_lock_file_is_owner_only(tmp_path: Path) -> None:
+    j = JsonlJournal(tmp_path / "journal.jsonl")
+    j.record("2026-01-15", {"a": "1"})
+    assert stat.S_IMODE((tmp_path / "journal.lock").stat().st_mode) == 0o600
+
+
+def test_a_symlinked_journal_is_refused(tmp_path: Path) -> None:
+    real = tmp_path / "real.jsonl"
+    real.write_text("")
+    link = tmp_path / "journal.jsonl"
+    link.symlink_to(real)
+    with pytest.raises(ValueError):
+        JsonlJournal(link).record("2026-01-15", {"a": "1"})
+
+
+def test_bad_dates_and_bad_bytes_are_kept_not_trusted(tmp_path: Path) -> None:
+    p = tmp_path / "journal.jsonl"
+    p.write_bytes(b'{"date": "~x", "a": 1}\n\xff\xfe broken\n{"date": "2026-01-15", "b": 2}\n')
+    j = JsonlJournal(p)
+    j.record("2026-01-16", {"c": "3"})
+    raw = p.read_bytes().splitlines()
+    assert raw[0] == b'{"date": "~x", "a": 1}'
+    assert raw[1] == b"\xff\xfe broken"
+    assert sorted(j.read()) == ["2026-01-15", "2026-01-16"]
+    with pytest.raises(ValueError):
+        j.record("2026-1-5", {"x": "1"})
 
 
 def test_cli_record_and_show_use_the_data_dir(
@@ -180,3 +214,41 @@ def test_cli_rejects_reserved_keys(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     monkeypatch.setenv("BROOMVA_HEALTH_DATA_DIR", str(tmp_path / "data"))
     r = CliRunner().invoke(app, ["record", "date=2026-01-01"])
     assert r.exit_code != 0
+
+
+def test_cli_checks_the_default_data_dir_too(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from broomva_health.cli.checkin import app
+
+    repo = tmp_path / "repo"
+    (repo / ".git").mkdir(parents=True)
+    monkeypatch.setenv("BROOMVA_HEALTH_DATA_DIR", str(repo / "health"))
+    monkeypatch.delenv("BROOMVA_HEALTH_JOURNAL", raising=False)
+    r = CliRunner().invoke(app, ["record", "a=1"])
+    assert r.exit_code != 0
+    assert not (repo / "health").exists()
+
+
+def test_cli_validates_dates_days_and_scores(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from broomva_health.cli.checkin import app
+
+    monkeypatch.setenv("BROOMVA_HEALTH_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("BROOMVA_HEALTH_JOURNAL", raising=False)
+    runner = CliRunner()
+    for args in (
+        ["record", "a=1", "--date", "2026-13-01"],
+        ["record", "a=1", "--date", "2026-W03-4"],
+        ["record", "mind_score=nan"],
+        ["show", "--days", "0"],
+        ["show", "--days", "-1"],
+    ):
+        r = runner.invoke(app, args)
+        assert r.exit_code == 2, (args, r.output)
+    r = runner.invoke(app, ["record", "spirit=Yes", "note=No", "--date", "2026-01-15"])
+    assert r.exit_code == 0, r.output
+    entry = json.loads((tmp_path / "data" / "journal.jsonl").read_text())
+    assert entry["spirit"] == "Yes"
+    assert entry["note"] == "No"

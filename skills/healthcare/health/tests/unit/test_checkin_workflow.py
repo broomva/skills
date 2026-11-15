@@ -49,10 +49,13 @@ def test_safety_table_is_the_single_source_and_every_row_has_a_known_action():
     for trigger, action, say in rows:
         assert action in ACTIONS, (trigger, action)
         assert say.strip(), trigger
-    by_action = {a: [t for t, x, _ in rows if x == a] for a in ACTIONS}
+    by_action = {a: [t.lower() for t, x, _ in rows if x == a] for a in ACTIONS}
     assert any("self-harm" in t for t in by_action["stop"])
     assert any("hopelessness" in t for t in by_action["stop"])
-    assert any("Low or flat" in t for t in by_action["say first, then continue"])
+    assert any("low or flat" in t for t in by_action["say first, then continue"])
+    assert any(
+        "hopelessness about something specific" in t for t in by_action["say first, then continue"]
+    )
     assert any("passed" in t for t in by_action["say first, then continue"])
     # no trigger list survives outside the table: step 0 names no trigger itself
     step0 = DOC.split("0. **Safety before anything.**", 1)[1].split("1. **Snapshot", 1)[0]

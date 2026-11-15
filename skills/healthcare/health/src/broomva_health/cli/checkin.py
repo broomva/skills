@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 from datetime import date, datetime
 from pathlib import Path
 
@@ -30,15 +31,15 @@ app = typer.Typer(
 
 
 def _journal(journal: Path | None) -> JsonlJournal:
-    chosen = journal or (
-        Path(os.environ["BROOMVA_HEALTH_JOURNAL"])
-        if os.environ.get("BROOMVA_HEALTH_JOURNAL")
-        else None
-    )
+    """The journal to use. Every location, the default included, must pass the privacy checks."""
+    env = os.environ.get("BROOMVA_HEALTH_JOURNAL")
+    chosen = journal or (Path(env) if env else None)
     if chosen is None:
-        return JsonlJournal(HealthPaths.discover().data_dir / "journal.jsonl")
+        chosen = HealthPaths.discover().data_dir / "journal.jsonl"
     chosen = chosen.expanduser()
     problems = private_dir_problems(chosen.parent)
+    if chosen.is_symlink():
+        problems.append(f"{chosen} is a symlink")
     if problems:
         raise typer.BadParameter("refusing this journal location: " + "; ".join(problems))
     return JsonlJournal(chosen)
@@ -64,8 +65,16 @@ def record(
             raise typer.BadParameter(f"expected key=value, got {item!r}")
         if key.strip() in ("date", "at"):
             raise typer.BadParameter(f"{key!r} is set by the command; use --date")
-        parsed[key.strip()] = parse_value(value)
-    when = date.fromisoformat(day).isoformat() if day else date.today().isoformat()
+        try:
+            parsed[key.strip()] = parse_value(key.strip(), value)
+        except ValueError as exc:
+            raise typer.BadParameter(str(exc)) from exc
+    if day is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
+        raise typer.BadParameter(f"--date must be YYYY-MM-DD, got {day!r}")
+    try:
+        when = date.fromisoformat(day).isoformat() if day else date.today().isoformat()
+    except ValueError as exc:
+        raise typer.BadParameter(f"--date is not a real date: {day!r}") from exc
     j = _journal(journal)
     try:
         entry = j.record(when, parsed, at=datetime.now().strftime("%H:%M"))
@@ -79,7 +88,7 @@ def record(
 
 @app.command("show")
 def show(
-    days: int = typer.Option(7, "--days", help="How many recent entries."),
+    days: int = typer.Option(7, "--days", min=1, help="How many recent entries (at least 1)."),
     journal: Path | None = typer.Option(None, "--journal"),
 ) -> None:
     """The last N entries, one JSON object per line."""

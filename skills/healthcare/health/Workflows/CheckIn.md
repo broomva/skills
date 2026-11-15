@@ -21,8 +21,8 @@ own words a day, stored next to the watch data so the two can be read together.
 
 0. **Safety before anything.** Check the user's message, and every answer at every step,
    against the [safety triggers](#safety-lines-not-coaching). That table is the only list of
-   triggers, and its *Action* column decides what happens next: **stop**, **say first, then
-   continue**, or **say, don't record**.
+   triggers, and its *Action* column decides what happens next: **stop** or **say first, then
+   continue**.
 1. **Snapshot.** `health status`; if the store is stale, sync. Read last night's sleep
    (`health raw --endpoint sleep` for the night) and the last 7 journal entries.
 2. **Ask, don't interrogate.** One structured question call (AskUserQuestion in Claude Code),
@@ -69,7 +69,8 @@ Whatever the action, the line is said plainly and **first**, before any other re
 | Trigger | Action | What to say |
 |---|---|---|
 | Thoughts of self-harm, or danger right now | stop | The local emergency number now (for example 911 or 112). Then a crisis line for the user's country: one the user has recorded, or a directory such as findahelpline.com if the location is unknown. |
-| Words of hopelessness | stop | Talk to a doctor or a trusted person soon, plus the same crisis-line route. |
+| Hopelessness about living, or not wanting to be here | stop | Talk to a doctor or a trusted person today, plus the same crisis-line route. |
+| Hopelessness about something specific (work, a relationship), with no sign of danger | say first, then continue | Name it gently and ask one question: "Is it more than that, about everything, or about yourself?" A yes moves to the row above. |
 | Chest pain, fainting, or palpitations with dizziness, happening now | stop | Emergency services now. |
 | Mind "Low or flat", or a `safety_stop`, on 3 or more of the last 5 days (journal plus today) | say first, then continue | Low for several days now. A doctor or a trusted person this week is worth it, plus the crisis-line route. |
 | Chest pain, fainting or palpitations that have passed, or a fever lasting more than two days | say first, then continue | A clinician the same day (for the fever, soon). The check-in goes on, and the symptom is recorded under `symptoms` in the user's words. |
@@ -102,7 +103,8 @@ health checkin show --days 7
   the file through a temp file with fsync and an atomic replace, and keeps any line that
   does not parse, verbatim, in place. If the lock times out (exit 3) or the write fails,
   nothing is written. The agent then says so and keeps the answers in its reply to record later.
-- Values: `8` becomes a number, `yes`/`no` a boolean, anything else text. Extra keys for
+- Values: answers are stored verbatim as text. Only `*_score` keys become numbers (finite,
+  otherwise the command refuses), and `safety_stop` can only be `yes`. Extra keys for
   whatever the user tracks (for example `symptoms`, or a named habit) are allowed; readers
   ignore keys they don't know. `safety_stop: true` marks a day the safety table stopped.
 
