@@ -28,32 +28,51 @@ own words a day, stored next to the watch data so the two can be read together.
    - Spirit: "Did today feel connected to what matters to you?" (Yes · Partly · Disconnected · Hard to say)
    - One user-defined item the user is tracking (a habit, a craving, a symptom)
    Then one optional follow-up: "What did you do for yourself today?" (multi-select:
-   moved · time outside · time with someone · reflection) and a free-text note.
+   moved · time outside · time with someone · reflection), a free-text note, and
+   "Any intention for tomorrow?". Its options are up to three drawn from what the user has
+   chosen or done before, plus their own words.
 3. **Record** one JSON line per day in the journal (see *Storage*). The user's words go in
    verbatim; options map to 0–10 scores (for example Strong 8, Okay 5, Tired 3, Unwell 1).
    A "hard to say" answer gets no score, never a guessed one.
 4. **Reflect in 4–6 lines.** One line per dimension, each tied to a number or a trend
-   (measured data against the user's own baseline, never a population norm), then **one**
-   small, concrete suggestion. No lecturing. A lapse or a bad day logged honestly gets
-   thanks, then curiosity about what led to it.
+   (measured data against the user's own baseline, never a population norm), then the
+   intention the user chose, repeated back. Observations, not instructions: the v1
+   boundary in [Coaching](Coaching.md) holds, so the agent does not prescribe. No lecturing.
+   A lapse or a bad day logged honestly gets thanks, then curiosity about what led to it.
 5. **Weekly** (one fixed day): a short table of the week per dimension, what improved, what
-   slipped, and one intention.
+   slipped, and the user's intention for the week.
 6. **If the user doesn't answer,** record nothing and don't nag. Offer a late entry for that
    date at the next check-in.
 
 ## Safety lines (not coaching)
 
-The check-in reflects. It does not diagnose or prescribe. Say plainly, and first:
-- **Low mood on most recent days, or any words of hopelessness:** suggest a doctor or a trusted
-  person, and give the local crisis line. Thoughts of self-harm need urgent help now.
-- **Fever, chest pain, palpitations or fainting:** a clinician, not the journal.
+The check-in reflects. It does not diagnose or prescribe, but it never stays quiet about risk.
+Say these plainly, and first:
+- **Thoughts of self-harm, or danger right now:** the local emergency number now (for
+  example 911, 112 or 123). Then a crisis line for the user's country: use one the user has
+  recorded, or point to a directory such as findahelpline.com if the location is unknown.
+- **Low mood on most recent days, or words of hopelessness:** suggest talking to a doctor or
+  a trusted person this week, and give the same crisis-line route.
+- **Chest pain, fainting, or palpitations with dizziness happening now:** emergency services
+  now. If it has passed: a clinician the same day. A fever lasting more than a couple of
+  days: a clinician. None of these is a journal entry.
 
 ## Storage
 
-- Path: `journal.jsonl` in the private health directory, the same directory as the
-  [DailyNote](DailyNote.md) projection (default `~/broomva-vault/07-Health/`). Keep it out of
-  git and out of cloud mirrors: see [References/privacy-architecture.md](../References/privacy-architecture.md).
-- One object per day, and a later entry for the same date replaces it:
+- **Path:** `journal.jsonl` in the skill's data directory (`$BROOMVA_HEALTH_DATA_DIR`, default
+  `~/broomva-health/`). It is created 0700 and sits outside every repo, like the traces
+  (see [References/privacy-architecture.md](../References/privacy-architecture.md)). The
+  journal holds the most sensitive data the skill touches (mood, symptoms, substances, the
+  user's own words), so the file is 0600. A user may choose another folder only if, before
+  the first write, the agent verifies it is owner-only (0700), not inside a git work tree,
+  and not inside a cloud-synced folder. Otherwise it refuses and uses the default.
+- **One object per date.** Writing a date merges into that date's object: new keys win and
+  old keys stay, so a late follow-up never erases the first answers. Writes are
+  single-writer: take an exclusive lock on `journal.lock` (`flock`), read every line, merge,
+  write the whole file to a temp file in the same directory, fsync it, `os.replace` it over
+  the journal, then release the lock. A scheduled check-in and an on-demand one can then
+  never interleave, duplicate a date or leave half a line. A line that does not parse is kept
+  verbatim and reported, never dropped.
 
 ```json
 {"date": "2026-11-15", "at": "21:04",
@@ -79,5 +98,5 @@ no personal detail sits in the scheduler.
 Body 5: tired, matches a short night (6.4 h, HRV 47 vs your 50 baseline).
 Mind 8: calm despite that.
 Spirit 5: partly connected; the walk counted.
-Tomorrow: same wake time, and 10 minutes outside before screens.
+Your intention for tomorrow: same wake time, outside before screens.
 ```
