@@ -518,3 +518,46 @@ def test_year_selection_uses_the_local_calendar(tmp_path):
     summary = json.loads(out.read_text())
     assert summary["written"]["prompts"] == 1
     assert list(summary["by_month"]) == ["2026-12"]  # the late-December prompt, not the 2025 one
+
+
+def test_a_resumed_session_copy_is_one_turn_with_one_reply():
+    rows = []
+    for sess in ("original", "resumed"):  # the resumed file carries the turn with its original timestamps
+        p = make_row(src="claude_code", harness="claude-cli", kind="prompt", ts=T0, text="fix the parser", session=sess,
+                     author="human")
+        rows += [p, make_row(src="claude_code", harness="claude-cli", kind="reply", ts=T0 + 30,
+                             text="Parser fixed and tested.", session=sess, author="human", turn=p["id"])]
+    summary = T.fold(rows)
+    assert summary["written"]["prompts"] == 1
+    assert summary["read"]["reply_words_measured"] == 4
+    assert summary["dropped"]["copied prompt"] == 1
+
+
+def test_bridged_copies_match_at_minute_precision_only():
+    def bridged(ts, sess):
+        return make_row(src="bridged", harness="bridged", kind="prompt", ts=ts, text="lets plan it", session=sess,
+                        author="unknown")
+    assert T.fold([bridged(T0, "a"), bridged(T0 + 60, "b")])["written"]["prompts"] == 1
+    assert T.fold([bridged(T0, "a"), bridged(T0 + 600, "b")])["written"]["prompts"] == 2
+
+
+def test_the_same_prompt_twice_in_one_session_is_two_turns():
+    rows = [make_row(src="bridged", harness="bridged", kind="prompt", ts=T0 + i * 30, text="yes", session="a",
+                     author="unknown") for i in range(2)]
+    assert T.fold(rows)["written"]["prompts"] == 2
+
+
+def test_a_copy_follows_its_original_into_another_stores_turn():
+    t3 = make_row(src="t3", harness="t3", kind="prompt", ts=T0, text="fix the parser", session="t", author="human")
+    t3_reply = make_row(src="t3", harness="t3", kind="reply", ts=T0 + 30, text="Parser fixed.", session="t",
+                        author="human", turn=t3["id"])
+    original = make_row(src="claude_code", harness="claude-cli", kind="prompt", ts=T0 + 1, text="fix the parser",
+                        session="o", author="human")
+    copy = make_row(src="claude_code", harness="claude-cli", kind="prompt", ts=T0 + 1, text="fix the parser",
+                    session="r", author="human")
+    copy_reply = make_row(src="claude_code", harness="claude-cli", kind="reply", ts=T0 + 31,
+                          text="Parser fixed, as rendered by another store.", session="r", author="human",
+                          turn=copy["id"])
+    summary = T.fold([t3, t3_reply, original, copy, copy_reply])
+    assert summary["written"]["prompts"] == 1
+    assert summary["read"]["reply_words_measured"] == 2  # one reply for the one turn: t3's own

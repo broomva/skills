@@ -49,6 +49,11 @@ TEXT_ONLY = {"bridged", "export"}
 NO_REPLIES = {"claude_history", "codex_history"}
 #: Unflagged prompts longer than this are dispatched briefs far more often than writing.
 UNFLAGGED_MAX_CHARS = 1500
+#: Timestamp precision per store, in seconds. The same text in another session of
+#: the same store within this distance is a copied turn (a resumed or forked
+#: session), not a new one. Bridged markdown records minutes; others record
+#: milliseconds; exports place turns at synthetic one-second steps.
+COPY_PRECISION = {"bridged": 60.0}
 
 
 def _month(ts: float, zone: _dt.tzinfo) -> str:
@@ -210,9 +215,28 @@ def canonical_turns(items: List[dict], dropped: Dict[str, int], label: str):
     Returns the kept prompts and a map from every prompt id to its canonical id.
     """
     items = sorted(items, key=lambda r: (_rank(r["src"]), r["ts"]))
+    canon: Dict[str, str] = {}
+
+    # Pass 1: copies inside one store. A resumed or forked session carries its
+    # history into a new session with the original timestamps, so the same text
+    # in a different session at the same moment is one turn recorded twice.
+    originals: List[dict] = []
+    last_seen: Dict[tuple, dict] = {}
+    for r in sorted(items, key=lambda r: (r["src"], r["h"], r["ts"])):
+        key = (r["src"], r["h"])
+        prior = last_seen.get(key)
+        precision = COPY_PRECISION.get(r["src"], 1.0)
+        if prior is not None and prior["sess"] != r["sess"] and abs(r["ts"] - prior["ts"]) <= precision:
+            canon[r["id"]] = prior["id"]
+            dropped[f"copied {label}"] += 1
+            continue
+        last_seen[key] = r
+        originals.append(r)
+    items = sorted(originals, key=lambda r: (_rank(r["src"]), r["ts"]))
+
+    # Pass 2: one turn recorded by several stores.
     by_hash: Dict[str, List[dict]] = collections.defaultdict(list)
     claimed: Dict[str, set] = collections.defaultdict(set)  # canonical id -> stores merged into it
-    canon: Dict[str, str] = {}
     kept: List[dict] = []
     for r in items:
         match = None
@@ -231,6 +255,11 @@ def canonical_turns(items: List[dict], dropped: Dict[str, int], label: str):
         claimed[r["id"]].add(r["src"])
         by_hash[r["h"]].append(r)
         kept.append(r)
+    # Copies point at an original that may itself have merged into another store's turn.
+    for rid, target in list(canon.items()):
+        while canon.get(target, target) != target:
+            target = canon[target]
+        canon[rid] = target
     return kept, canon
 
 

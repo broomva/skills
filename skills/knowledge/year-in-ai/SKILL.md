@@ -76,10 +76,12 @@ Add archive copies and extra stores in `~/.config/year-in-ai/config.json`:
 
 ## How "written" and "read" are counted
 
-- **Written:** prompts a person wrote. A store's own author flag wins. Prompts
-  from stores without one pass three filters: no automation opening, no exact
-  text repeated across three sessions, no opening repeated across four. The
-  same prompt seen in two stores counts once (content hash within 36 hours).
+- **Written:** prompts a person wrote, counted as turns. A store's own author
+  flag wins. Prompts from stores without one pass three filters: no automation
+  opening, no exact text repeated across three sessions, no opening repeated
+  across four. A turn recorded by two stores counts once (same text within 36
+  hours, 20 minutes under 80 characters). A resumed or forked session's copy
+  of a turn counts once. The same prompt typed twice counts twice.
 - **Read:** the final reply to each counted prompt, times the read share
   (`--read-low`/`--read-high`, default 0.60–0.70). Prompts from stores that never kept
   replies get an estimated reply, reported separately from measured words.
@@ -91,8 +93,10 @@ Add archive copies and extra stores in `~/.config/year-in-ai/config.json`:
 
 ## Privacy
 
-- The ledger holds no message text. A test fails the build if any fixture
-  phrase reaches a ledger file.
+- The ledger holds no message text. Session ids are stored as hashes, and
+  attribution fields accept only known values (anything else becomes
+  `other`). Tests fail the build if a fixture phrase reaches a ledger file or
+  metadata carries free text.
 - Text hashes of very short prompts ("yes", "go") can be guessed by
   dictionary. Keep the ledger as private as the transcripts.
 - `extract --share` redacts client and CRM paths and verbatim prompts before
