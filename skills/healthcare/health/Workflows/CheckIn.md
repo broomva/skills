@@ -20,7 +20,8 @@ own words a day, stored next to the watch data so the two can be read together.
 ## Protocol
 
 0. **Safety before anything.** If the user's message, or any answer at any step, shows
-   danger (self-harm, an emergency symptom happening now), stop the protocol: say the
+   danger (self-harm, an emergency symptom happening now) or hopelessness (for example
+   "I've felt hopeless for days"), stop the protocol: say the
    [safety lines](#safety-lines-not-coaching) first and do nothing else that turn. No
    snapshot, no sync, no questions, no storage. Resume another time, only if the user wants to.
 1. **Snapshot.** `health status`; if the store is stale, sync. Read last night's sleep
@@ -30,7 +31,10 @@ own words a day, stored next to the watch data so the two can be read together.
    - Body: "How did your body feel today?" (Strong · Okay · Tired or heavy · Unwell)
    - Mind: "How was your mind today?" (Calm, clear · Okay · Stressed or anxious · Low or flat)
    - Spirit: "Did today feel connected to what matters to you?" (Yes · Partly · Disconnected · Hard to say)
-   - One user-defined item the user is tracking (a habit, a craving, a symptom)
+   - One user-defined item the user is tracking (a habit, a craving, a symptom). It is
+     optional: with none defined, ask three questions. At the first check-in, offer to
+     define one: its name, the question, 3–4 options and their scores. Store that in the
+     brief; from then on it is asked like the others.
    Then one optional follow-up: "What did you do for yourself today?" (multi-select:
    moved · time outside · time with someone · reflection), a free-text note, and
    "Any intention for tomorrow?". Its options are up to three drawn from what the user has

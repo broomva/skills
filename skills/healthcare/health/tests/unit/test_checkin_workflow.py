@@ -53,3 +53,14 @@ def test_emergency_route_has_a_fallback_when_location_is_unknown():
 def test_skill_routes_to_checkin():
     assert "[CheckIn](Workflows/CheckIn.md)" in SKILL
     assert "| **CheckIn** |" in SKILL
+
+
+def test_hopelessness_stops_the_protocol_at_step_zero():
+    first = DOC.split("0. **Safety before anything.**", 1)[1].split("1. **Snapshot", 1)[0]
+    assert "hopelessness" in first and "stop the protocol" in first
+
+
+def test_user_defined_item_is_optional_with_a_first_use_setup():
+    ask = DOC.split("2. **Ask", 1)[1].split("3. **Record", 1)[0]
+    assert "optional" in ask and "ask three questions" in ask
+    assert "first check-in" in ask and "scores" in ask and "brief" in ask
