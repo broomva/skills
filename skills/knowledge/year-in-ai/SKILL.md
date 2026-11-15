@@ -69,7 +69,10 @@ python3 year_in_ai.py run --year 2026 --outdir ./year-in-ai-out
 | Bridged markdown | config `bridged` | none: filtered, then used only before exact coverage |
 | Exports | config `exports` | none: filtered |
 
-Add archive copies and extra stores in `~/.config/year-in-ai/config.json`:
+Add archive copies and extra stores in `~/.config/year-in-ai/config.json`. If
+that file is absent the config is empty; a `--config` that does not exist, or
+any config that cannot be read or is not a JSON object, stops the run with
+status 2 instead of silently dropping its stores:
 
 ```json
 {
@@ -114,8 +117,10 @@ minimal `PATH` still finds a Homebrew install.
 fails otherwise), and these report every failure: a directory that cannot be
 listed, zstd missing, a corrupt or truncated archive, a file that cannot be
 opened or read, a malformed Gemini chat, an unreadable T3 or Conductor
-database. A failure counts as `skipped` on its source, never as an empty
-store; `harvest` prints a warning naming the cause and exits with status 4.
+database, and a store that exists but cannot be reached (permission denied on
+it or on a directory above it). Only a store that does not exist is absent.
+Symlinked directories inside a store are followed. A failure counts as
+`skipped` on its source, never as an empty store; `harvest` prints a warning naming the cause and exits with status 4.
 That is what a scheduled job without disk access looks like, so treat exit 4
 from launchd as "grant access", not as a quiet week.
 

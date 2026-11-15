@@ -165,8 +165,8 @@ def cmd_harvest(args: argparse.Namespace) -> int:
     from yia.ledger import archive as A
     from yia.ledger import store as L
 
-    config = L.load_config(args.config)
     try:
+        config = L.load_config(args.config)
         roots = L.resolve_roots(config, _roots_from_args(args), defaults=not args.no_defaults)
     except ValueError as exc:
         print(f"harvest: {exc}", file=sys.stderr)
@@ -207,7 +207,11 @@ def cmd_attention(args: argparse.Namespace) -> int:
     from yia.ledger import attention as T
     from yia.ledger import store as L
 
-    config = L.load_config(args.config)
+    try:
+        config = L.load_config(args.config)
+    except L.ConfigError as exc:
+        print(f"attention: {exc}", file=sys.stderr)
+        return 2
     ledger = L.Ledger(args.ledger or config.get("ledger"))
     since = until = None
     offset = float(config.get("utc_offset_hours", -5))

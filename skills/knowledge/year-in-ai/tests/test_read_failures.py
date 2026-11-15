@@ -11,6 +11,7 @@ structural test below fails if a reader opens a file any other way.
 from __future__ import annotations
 
 import ast
+import json
 import os
 import shutil
 import subprocess
@@ -110,10 +111,10 @@ def test_harvest_exits_non_zero_on_a_corrupt_archive(tmp_path):
 #: Functions allowed to touch the file system directly: the read and discovery
 #: helpers, copy comparison, the SQLite opener, config path expansion and Paseo
 #: id discovery (attribution, not a source).
-READ_HELPERS = {"read_lines", "read_text", "list_files", "_content", "_ro_sqlite", "expand",
-                "paseo_session_ids", "find_zstd"}
+READ_HELPERS = {"read_lines", "read_text", "list_files", "_content", "_ro_sqlite", "expand", "present",
+                "_inaccessible", "paseo_session_ids", "find_zstd"}
 FILE_CALLS = {"open", "read_text", "read_bytes", "Popen", "run", "glob", "rglob", "iterdir", "scandir",
-              "listdir", "walk", "fdopen"}
+              "listdir", "walk", "fdopen", "is_dir", "is_file", "exists"}
 
 
 def file_access_outside_helpers(source: str):
@@ -143,7 +144,8 @@ def test_readers_read_files_only_through_the_reporting_helpers():
 
 @pytest.mark.parametrize("call", ["io.open(p)", "open(p)", "os.walk(r)", "r.glob('*')", "r.rglob('*')",
                                   "os.scandir(r)", "os.listdir(r)", "r.iterdir()", "p.read_bytes()",
-                                  "subprocess.run(['zstd'])", "walk(r)", "p.read_text()"])
+                                  "subprocess.run(['zstd'])", "walk(r)", "p.read_text()", "r.is_dir()",
+                                  "p.is_file()", "os.path.exists(p)"])
 def test_the_guard_catches_every_file_api(call):
     assert file_access_outside_helpers(f"def read_new_store(p, r):\n    return {call}\n")
 
@@ -224,3 +226,96 @@ def test_the_ledger_never_appends_a_row_it_would_not_read(tmp_path):
     ledger.write([bad])
     lines = [line for f in (tmp_path / "ledger").rglob("*.jsonl") for line in f.read_text().splitlines()]
     assert len(lines) == 1
+
+
+# --- BRO-3766: last check of #290 at 861d22c
+
+
+def _harvest(tmp_path, *args):
+    env = dict(os.environ, HOME=str(tmp_path / "home"))
+    return subprocess.run([sys.executable, str(SCRIPTS / "year_in_ai.py"), "harvest", "--backfill", "--no-defaults",
+                           "--ledger", str(tmp_path / "ledger"), *args], capture_output=True, text=True, env=env)
+
+
+def _store(tmp_path, store):
+    """One transcript of ``store`` under ``tmp_path/gate/root``; returns the root and its --root key."""
+    root = tmp_path / "gate" / "root"
+    if store == "codex_sessions":
+        _codex_rollout(root, [turn(1)], compress=False)
+    elif store == "claude_projects":
+        write_jsonl(root / "-proj" / "s1.jsonl", _claude_records([turn(1)], False))
+    elif store == "gemini_tmp":
+        chat = root / "p" / "chats" / "session-1.json"
+        chat.parent.mkdir(parents=True)
+        chat.write_text('{"sessionId": "s1", "messages": [{"type": "user", "content": "hello there", '
+                        '"timestamp": "2026-10-26T12:00:00Z"}]}')
+    else:
+        root.mkdir(parents=True)
+        (root / "session-2026-10-26-abc.md").write_text("---\ncreated: 2026-10-26\nsession_id: abc\n---\n")
+    return root
+
+
+@not_root
+@pytest.mark.parametrize("store", ["codex_sessions", "claude_projects", "gemini_tmp", "bridged"])
+def test_a_root_behind_a_locked_directory_is_reported_not_absent(tmp_path, store):
+    root = _store(tmp_path, store)
+    (tmp_path / "gate").chmod(0)
+    try:
+        run = _harvest(tmp_path, "--root", f"{store}={root}")
+    finally:
+        (tmp_path / "gate").chmod(0o755)
+    assert run.returncode == 4, (run.stdout, run.stderr)
+    assert "not accessible" in run.stderr
+
+
+@not_root
+def test_a_database_behind_a_locked_directory_is_reported(tmp_path):
+    db = tmp_path / "gate" / "state.sqlite"
+    db.parent.mkdir()
+    db.write_bytes(b"")
+    (tmp_path / "gate").chmod(0)
+    try:
+        report, rows = S.read_t3(db, None)
+        assert list(rows) == [] and report.skipped == 1
+    finally:
+        (tmp_path / "gate").chmod(0o755)
+
+
+def test_a_missing_optional_store_is_still_a_clean_run(tmp_path):
+    run = _harvest(tmp_path, "--root", f"codex_sessions={tmp_path / 'nowhere'}")
+    assert run.returncode == 0, run.stderr
+
+
+@not_root
+@pytest.mark.parametrize("case", ["unreadable", "invalid", "not an object", "missing"])
+def test_a_config_that_cannot_be_used_is_an_error_not_an_empty_config(tmp_path, case):
+    cfg = tmp_path / "config.json"
+    root = _store(tmp_path, "codex_sessions")
+    if case != "missing":
+        cfg.write_text({"unreadable": json.dumps({"roots": {"codex_sessions": [str(root)]}}),
+                        "invalid": "{not json", "not an object": "[1, 2]"}[case])
+    if case == "unreadable":
+        cfg.chmod(0)
+    try:
+        run = _harvest(tmp_path, "--config", str(cfg))
+    finally:
+        if cfg.exists():
+            cfg.chmod(0o644)
+    assert run.returncode == 2 and "config" in run.stderr
+
+
+def test_an_absent_default_config_is_empty(tmp_path, monkeypatch):
+    from yia.ledger import store as L
+    monkeypatch.setattr(L, "DEFAULT_CONFIG", str(tmp_path / "no-config.json"))
+    assert L.load_config(None) == {}
+
+
+def test_symlinked_directories_are_followed_once(tmp_path):
+    real = tmp_path / "elsewhere"
+    path = _codex_rollout(real, [turn(1)], compress=False)
+    root = tmp_path / "codex"
+    root.mkdir()
+    (root / "linked").symlink_to(real, target_is_directory=True)
+    (real / "loop").symlink_to(real, target_is_directory=True)  # a cycle must end
+    report, rows = S.read_codex_sessions([root], None)
+    assert len(list(rows)) == 1 and report.skipped == 0 and path.exists()

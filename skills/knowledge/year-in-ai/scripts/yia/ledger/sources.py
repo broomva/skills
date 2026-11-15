@@ -47,6 +47,7 @@ import os
 import re
 import shutil
 import sqlite3
+import stat
 import subprocess
 from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
@@ -107,6 +108,39 @@ def _observe(report: SourceReport, ts: float) -> None:
 
 def _absent(name: str, reason: str) -> Tuple[SourceReport, Rows]:
     return SourceReport(name, False, reason=reason), iter(())
+
+
+def present(paths, kind: str) -> Tuple[List[Path], int]:
+    """The paths that are a ``kind`` ("dir" or "file"), and how many could not be checked.
+
+    A path that does not exist is a store this machine does not have, which is
+    normal. One that cannot be checked (permission denied on it or on a
+    directory above it) is a store this harvest cannot see: the reader reports
+    it through ``report.skip``, never as absent. ``Path.is_dir`` cannot tell
+    the two apart, so readers never use it on a root.
+    """
+    found: List[Path] = []
+    blocked = 0
+    for path in paths:
+        if path is None:
+            continue
+        try:
+            mode = os.stat(path).st_mode
+        except (FileNotFoundError, NotADirectoryError):
+            continue
+        except OSError:
+            blocked += 1
+            continue
+        if (stat.S_ISDIR(mode) if kind == "dir" else stat.S_ISREG(mode)):
+            found.append(Path(path))
+    return found, blocked
+
+
+def _opened(name: str, roots: List[Path], blocked: int, **extra) -> SourceReport:
+    report = SourceReport(name, True, root=", ".join(str(r) for r in roots), **extra)
+    for _ in range(blocked):
+        report.skip("store not accessible (permission denied on it or a directory above it)")
+    return report
 
 
 def _ro_sqlite(path: Path) -> sqlite3.Connection:
@@ -264,12 +298,19 @@ def list_files(root: Path, report: SourceReport, depth: Optional[int] = None) ->
     """Files under ``root`` in name order: the one way readers discover files.
 
     ``depth`` 1 means files directly in ``root``, 2 one directory down, and so
-    on; None means any depth (symlinked directories are then not followed).
-    Names starting with a dot are skipped, as a glob would, which also keeps
-    the archive's temporary copies out. A directory that cannot be listed is
-    reported through ``report.skip``, never read as empty.
+    on; None means any depth. Symlinked directories are followed, each real
+    directory once, so a link cycle ends. Names starting with a dot are
+    skipped, as a glob would, which also keeps the archive's temporary copies
+    out. A directory that cannot be listed is reported through
+    ``report.skip``, never read as empty.
     """
+    visited: Set[str] = set()
+
     def walk(directory: Path, level: int) -> Iterator[Path]:
+        real = os.path.realpath(directory)
+        if real in visited:
+            return
+        visited.add(real)
         try:
             with os.scandir(directory) as entries:
                 listed = sorted(entries, key=lambda e: e.name)
@@ -280,7 +321,7 @@ def list_files(root: Path, report: SourceReport, depth: Optional[int] = None) ->
             if entry.name.startswith("."):
                 continue
             try:
-                is_dir = entry.is_dir(follow_symlinks=depth is not None)
+                is_dir = entry.is_dir()
             except OSError:
                 report.skip("directory could not be listed")
                 continue
@@ -372,8 +413,11 @@ def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[s
 def read_t3(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, Rows]:
     """T3's orchestration store. Subagent threads are skipped; fork threads skip their copied history."""
     name = "t3"
-    if db is None or not db.is_file():
+    found, blocked = present([db], "file")
+    if not found and not blocked:
         return _absent(name, "no T3 state database on this machine")
+    if blocked:
+        return _opened(name, [db], blocked), iter(())
     report = SourceReport(name, True, root=str(db))
 
     def stream() -> Rows:
@@ -451,8 +495,11 @@ def read_t3(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, R
 
 def read_conductor(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, Rows]:
     name = "conductor"
-    if db is None or not db.is_file():
+    found, blocked = present([db], "file")
+    if not found and not blocked:
         return _absent(name, "no Conductor database on this machine")
+    if blocked:
+        return _opened(name, [db], blocked), iter(())
     report = SourceReport(name, True, root=str(db))
 
     def stream() -> Rows:
@@ -562,10 +609,10 @@ def read_claude_projects(
     original one, so a copied turn has the same occurrence id as its original.
     """
     name = "claude_code"
-    roots = [r for r in roots if r and r.is_dir()]
-    if not roots:
+    roots, blocked = present(roots, "dir")
+    if not roots and not blocked:
         return _absent(name, "no Claude Code transcript directory on this machine")
-    report = SourceReport(name, True, root=", ".join(str(r) for r in roots))
+    report = _opened(name, roots, blocked)
     paseo_ids = paseo_ids or set()
 
     def stream() -> Rows:
@@ -636,8 +683,11 @@ def _claude_session(path: Path, sid: str, since: Optional[float], paseo_ids: Set
 def read_claude_history(path: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, Rows]:
     """Prompts typed into the interactive Claude Code CLI, kept long after transcripts are pruned."""
     name = "claude_history"
-    if path is None or not path.is_file():
+    found, blocked = present([path], "file")
+    if not found and not blocked:
         return _absent(name, "no Claude Code prompt history on this machine")
+    if blocked:
+        return _opened(name, [path], blocked), iter(())
     report = SourceReport(name, True, root=str(path), files=1)
 
     def stream() -> Rows:
@@ -681,10 +731,10 @@ CODEX_NOT_INTERACTIVE = {"codex_exec", "T3 Code", "t3code_desktop", "codex_sdk_t
 
 def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[SourceReport, Rows]:
     name = "codex"
-    roots = [r for r in roots if r and r.is_dir()]
-    if not roots:
+    roots, blocked = present(roots, "dir")
+    if not roots and not blocked:
         return _absent(name, "no Codex session directory on this machine")
-    report = SourceReport(name, True, root=", ".join(str(r) for r in roots))
+    report = _opened(name, roots, blocked)
 
     def stream() -> Rows:
         def candidates(root: Path):
@@ -760,8 +810,11 @@ def _codex_file(path: Path, sid: str, since: Optional[float], report: SourceRepo
 def read_codex_history(path: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, Rows]:
     """Prompts typed into the Codex TUI. Reaches back further than rollouts survive."""
     name = "codex_history"
-    if path is None or not path.is_file():
+    found, blocked = present([path], "file")
+    if not found and not blocked:
         return _absent(name, "no Codex prompt history on this machine")
+    if blocked:
+        return _opened(name, [path], blocked), iter(())
     report = SourceReport(name, True, root=str(path), files=1)
 
     def stream() -> Rows:
@@ -791,10 +844,10 @@ def read_codex_history(path: Optional[Path], since: Optional[float]) -> Tuple[So
 
 def read_gemini(roots: List[Path], since: Optional[float]) -> Tuple[SourceReport, Rows]:
     name = "gemini"
-    roots = [r for r in roots if r and r.is_dir()]
-    if not roots:
+    roots, blocked = present(roots, "dir")
+    if not roots and not blocked:
         return _absent(name, "no Gemini CLI chat directory on this machine")
-    report = SourceReport(name, True, root=", ".join(str(r) for r in roots))
+    report = _opened(name, roots, blocked)
 
     def stream() -> Rows:
         def candidates(root: Path):
@@ -855,10 +908,10 @@ def read_bridged(
     ``unknown``. Times are wall-clock minutes in the bridge host's zone.
     """
     name = "bridged"
-    roots = [r for r in roots if r and r.is_dir()]
-    if not roots:
+    roots, blocked = present(roots, "dir")
+    if not roots and not blocked:
         return _absent(name, "no bridged session directory found")
-    report = SourceReport(name, True, root=", ".join(str(r) for r in roots))
+    report = _opened(name, roots, blocked)
     zone = _dt.timezone(_dt.timedelta(hours=utc_offset_hours))
 
     def stream() -> Rows:
@@ -929,10 +982,10 @@ def read_exports(paths: List[Path], since: Optional[float]) -> Tuple[SourceRepor
     Authors are ``unknown``.
     """
     name = "export"
-    paths = [p for p in paths if p and p.is_file()]
-    if not paths:
+    paths, blocked = present(paths, "file")
+    if not paths and not blocked:
         return _absent(name, "no conversation export configured")
-    report = SourceReport(name, True, root=", ".join(str(p) for p in paths))
+    report = _opened(name, paths, blocked)
 
     def stream() -> Rows:
         for path in paths:
@@ -983,11 +1036,23 @@ REGISTRY: Dict[str, Callable] = {
 }
 
 
+def _inaccessible(path: str) -> bool:
+    try:
+        os.stat(path)
+    except (FileNotFoundError, NotADirectoryError):
+        return False
+    except OSError:
+        return True
+    return False
+
+
 def expand(paths) -> List[Path]:
     """Expand ``~``, variables and globs into existing paths."""
     out: List[Path] = []
     for raw in paths or []:
         pattern = os.path.expandvars(os.path.expanduser(str(raw)))
         matches = glob.glob(pattern) if any(c in pattern for c in "*?[") else [pattern]
-        out.extend(Path(m) for m in matches if os.path.exists(m))
+        # Keep a path that cannot be checked: the reader reports it as not
+        # accessible. Only a path that does not exist is dropped.
+        out.extend(Path(m) for m in matches if os.path.exists(m) or _inaccessible(m))
     return out
