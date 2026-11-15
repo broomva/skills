@@ -2,8 +2,10 @@ name: test-year-in-ai
 
 # Python test gate for the `year-in-ai` skill (skills/knowledge/year-in-ai/).
 # Path-filtered so it runs only when the skill or this workflow changes.
-# Python 3.9 is in the matrix on purpose: the scheduled harvest runs under the
-# macOS system Python (3.9), because Homebrew's Python hangs under launchd.
+# Python 3.9 is tested on purpose: the scheduled harvest runs under the macOS
+# system Python (3.9), because Homebrew's Python hangs under launchd. The
+# hosted runner no longer ships 3.9, so that leg runs in the official
+# python:3.9 container.
 
 on:
   pull_request:
@@ -32,7 +34,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python: ["3.9", "3.11", "3.12"]
+        python: ["3.11", "3.12"]
     steps:
       - uses: actions/checkout@v4
       - name: Set up Python ${{ matrix.python }}
@@ -43,5 +45,20 @@ jobs:
         run: |
           pip install pytest
           command -v zstd || (sudo apt-get update -q && sudo apt-get install -y -q zstd)
+      - name: Tests
+        run: python -m pytest tests/ -v
+
+  test-py39:
+    name: pytest (Python 3.9, system-python floor)
+    runs-on: ubuntu-latest
+    container: python:3.9-slim
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install pytest and zstd
+        run: |
+          apt-get update -q && apt-get install -y -q zstd
+          pip install pytest
+      - name: Confirm the interpreter
+        run: python -c "import sys; assert sys.version_info[:2] == (3, 9), sys.version; print(sys.version)"
       - name: Tests
         run: python -m pytest tests/ -v
