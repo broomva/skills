@@ -17,8 +17,8 @@ trigger_keywords:
   - vo2max, body battery, training load, ctl, atl, tsb, race readiness
   - my fitness, workout history, longevity, peter attia metric, andy galpin metric, stacy sims
   - daily health note, health dashboard, healthos
-  - check-in, daily check-in, journal, log my day, how am i doing
-  - mood, stress, wellbeing, mental health, spiritual health, meaning, connection, holistic health
+  - daily check-in, health check-in, log my day, how am i doing, mood check
+  - wellbeing, holistic health, mental health check-in, spiritual health
 ---
 
 # Health — Personal Health Knowledge Graph
@@ -92,7 +92,7 @@ Invoke this skill on any trigger in the frontmatter `trigger_keywords` list. The
 | "Am I overreached?" / training-load read | [TrainingLoad](Workflows/TrainingLoad.md) | `health synthesis` (CTL/ATL/TSB field) |
 | "Recovery review" / 7-day rollup | [RecoveryReview](Workflows/RecoveryReview.md) | `health synthesis` (hrv_cv_30d + recovery_score) |
 | "VO2max arc" / longevity check | [VO2maxArc](Workflows/VO2maxArc.md) | `health synthesis` (vo2max_arc field) |
-| "Check in" / journal / how am I doing (physical, mental, spiritual) | [CheckIn](Workflows/CheckIn.md) | AskUserQuestion + `journal.jsonl` |
+| "Check in" / how am I doing (physical, mental, spiritual) | [CheckIn](Workflows/CheckIn.md) | AskUserQuestion → `health checkin record` |
 | "Coach me / what should I do" | [Coaching](Workflows/Coaching.md) | **NOT IMPLEMENTED in v1** |
 
 Default discipline: any health-domain conversation opens with `health status` (a P15 Snapshot reflex). The agent **never** answers a health question from training-data priors when the live trace store could answer it.
@@ -143,7 +143,7 @@ Deep-dive: [References/architecture.md](References/architecture.md).
 | **TrainingLoad** | `health synthesis` → `ctl`/`atl`/`tsb` | When asking about freshness/fatigue | CTL, ATL, TSB — 42d/7d EWMA of Garmin per-activity training load |
 | **RecoveryReview** | `health synthesis` → `hrv_cv_30d`/`recovery_score` | Weekly review; after illness | HRV-CV + recovery composite |
 | **VO2maxArc** | `health synthesis` → `vo2max_arc` | Quarterly check; longevity tracking | `{quarter_key: mean_vo2max}` |
-| **CheckIn** | AskUserQuestion → `journal.jsonl` | Daily (scheduled) or on request; holistic: physical, mental, spiritual | one journal line + a 4–6 line reflection |
+| **CheckIn** | AskUserQuestion → `health checkin record` / `show` | Daily (scheduled) or on request; holistic: physical, mental, spiritual | one journal line + a 4–6 line reflection |
 | **Coaching** | *(not implemented in v1)* | — | — |
 
 Each workflow doc starts with a one-line **When invoked** rule and ends with example output. See `Workflows/*.md`.

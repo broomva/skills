@@ -37,6 +37,9 @@ from broomva_health.cli import (
     backfill as backfill_cli,
 )
 from broomva_health.cli import (
+    checkin as checkin_cli,
+)
+from broomva_health.cli import (
     context as context_cli,
 )
 from broomva_health.cli import (
@@ -165,9 +168,7 @@ def root(
 
     # Defer the heavy lifting to first subcommand call.
     paths = HealthPaths.discover()
-    resolved_config = (
-        config_file.expanduser() if config_file is not None else paths.config_file
-    )
+    resolved_config = config_file.expanduser() if config_file is not None else paths.config_file
     settings = load_settings(resolved_config)
 
     container = Container.build(settings, paths)
@@ -198,6 +199,7 @@ app.add_typer(synthesis_cli.app, name="synthesis")
 app.add_typer(series_cli.app, name="series")
 app.add_typer(raw_cli.app, name="raw")
 app.add_typer(doctor_cli.app, name="doctor")
+app.add_typer(checkin_cli.app, name="checkin")
 
 
 def _silence_format_for_helpers(fmt: Format) -> Format:
@@ -213,9 +215,7 @@ def main() -> None:
     except HealthError as exc:
         # The Typer app may already have printed user-visible output; the
         # exception is the structured-exit signal.
-        typer.secho(
-            f"error[{exc.code}]: {exc}", fg=typer.colors.RED, err=True
-        )
+        typer.secho(f"error[{exc.code}]: {exc}", fg=typer.colors.RED, err=True)
         sys.exit(exc.exit_code)
     except typer.Exit:
         raise

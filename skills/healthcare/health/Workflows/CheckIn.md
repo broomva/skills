@@ -30,15 +30,15 @@ own words a day, stored next to the watch data so the two can be read together.
    - Body: "How did your body feel today?" (Strong · Okay · Tired or heavy · Unwell)
    - Mind: "How was your mind today?" (Calm, clear · Okay · Stressed or anxious · Low or flat)
    - Spirit: "Did today feel connected to what matters to you?" (Yes · Partly · Disconnected · Hard to say)
-   - One user-defined item the user is tracking (a habit, a craving, a symptom). It is
+   - One user-defined item the user is tracking (a habit, a symptom, anything they name). It is
      optional: with none defined, ask three questions. At the first check-in, offer to
      define one: its name, the question, 3–4 options and their scores. Store that in the
      brief; from then on it is asked like the others.
    Then one optional follow-up: "What did you do for yourself today?" (multi-select:
    moved · time outside · time with someone · reflection), a free-text note, and
-   "Any intention for tomorrow?". Its options are up to three drawn from what the user has
-   chosen or done before, plus their own words.
-3. **Record** the answers in the journal (see *Storage*). The label goes in verbatim, and so
+   "Any intention for tomorrow?". Its options are up to three intentions the user has set
+   before, in their own words, plus a free-text answer. The agent never invents one.
+3. **Record** the answers with `health checkin record` (see *Storage*). The label goes in verbatim, and so
    does any free-text answer. The score comes from this table and nowhere else, so trends stay
    comparable week to week:
 
@@ -68,45 +68,49 @@ Whatever the action, the line is said plainly and **first**, before any other re
 
 | Trigger | Action | What to say |
 |---|---|---|
-| Thoughts of self-harm, or danger right now | stop | The local emergency number now (for example 911, 112 or 123). Then a crisis line for the user's country: one the user has recorded, or a directory such as findahelpline.com if the location is unknown. |
+| Thoughts of self-harm, or danger right now | stop | The local emergency number now (for example 911 or 112). Then a crisis line for the user's country: one the user has recorded, or a directory such as findahelpline.com if the location is unknown. |
 | Words of hopelessness | stop | Talk to a doctor or a trusted person soon, plus the same crisis-line route. |
 | Chest pain, fainting, or palpitations with dizziness, happening now | stop | Emergency services now. |
-| Mind "Low or flat" on 3 or more of the last 5 days (journal plus today) | say first, then continue | Low for several days now. A doctor or a trusted person this week is worth it, plus the crisis-line route. |
-| Chest pain, fainting or palpitations that have passed, or a fever lasting more than two days | say, don't record | A clinician the same day (for the fever, soon). The symptom is not written to the journal. |
+| Mind "Low or flat", or a `safety_stop`, on 3 or more of the last 5 days (journal plus today) | say first, then continue | Low for several days now. A doctor or a trusted person this week is worth it, plus the crisis-line route. |
+| Chest pain, fainting or palpitations that have passed, or a fever lasting more than two days | say first, then continue | A clinician the same day (for the fever, soon). The check-in goes on, and the symptom is recorded under `symptoms` in the user's words. |
 
-**stop** means nothing else that turn: no snapshot, no sync, no questions, no storage. Resume
-another time, only if the user wants to. **say first, then continue** means the check-in goes
-on after the line. **say, don't record** means the check-in goes on, but that symptom is left
-out of the entry.
+**stop** means nothing else that turn: no snapshot, no sync, no questions, no storage beyond
+one marker, `health checkin record safety_stop=yes`, with no words, so the low-days row
+above can count that day. Resume another time, only if the user wants to. **say first, then
+continue** means the check-in goes on after the line.
 
 ## Storage
 
-- **Path:** `journal.jsonl` in the skill's data directory (`$BROOMVA_HEALTH_DATA_DIR`, default
-  `~/broomva-health/`). It is created 0700 and sits outside every repo, like the traces
-  (see [References/privacy-architecture.md](../References/privacy-architecture.md)). The
-  journal holds the most sensitive data the skill touches (mood, symptoms, substances, the
-  user's own words), so the file is 0600. A user may choose another folder only if, before
-  the first write, the agent verifies it is owner-only (0700), not inside a git work tree,
-  and not inside a cloud-synced folder. Otherwise it refuses and uses the default.
-- **One object per date.** Writing a date merges into that date's object: new keys win and
-  old keys stay, so a late follow-up never erases the first answers. Writes are
-  single-writer: take an exclusive lock on `journal.lock` (`flock`, wait at most 10 s), read every line, merge,
-  write the whole file to a temp file in the same directory, fsync it, `os.replace` it over
-  the journal, then release the lock. A scheduled check-in and an on-demand one can then
-  never interleave, duplicate a date or leave half a line. A line that does not parse is kept
-  verbatim and reported, never dropped. If the lock can't be taken in 10 s, or the write
-  fails, write nothing. Tell the user, and keep the answers in the reply so they can be
-  recorded next time. A missing journal is created on the first write (0600).
+`health checkin` is the **only writer** of the journal. Agents never edit the file by hand,
+so the rules below hold whoever runs the check-in. They live in code
+(`adapters/repositories/journal.py`) and are tested (`tests/unit/adapters/test_journal.py`).
 
-```json
-{"date": "2026-11-15", "at": "21:04",
- "body": "Okay", "body_score": 5, "mind": "Calm, clear", "mind_score": 8,
- "spirit": "Partly", "spirit_score": 5, "practices": "moved, outside",
- "note": "long day, good walk at sunset"}
+```bash
+health checkin record body="Okay" body_score=5 mind="Calm, clear" mind_score=8 note="good walk"
+health checkin record --date 2026-01-14 spirit="Partly" spirit_score=5   # a late answer
+health checkin show --days 7
 ```
 
-Extra keys for whatever the user tracks (for example `craving`, `drinks`, `symptoms`) are
-allowed. Readers must ignore keys they don't know.
+- **Path:** `journal.jsonl` in the skill's data directory (`$BROOMVA_HEALTH_DATA_DIR`, default
+  `~/broomva-health/`, 0700, outside every repo; see
+  [References/privacy-architecture.md](../References/privacy-architecture.md)). The file is
+  0600. `--journal` (or `$BROOMVA_HEALTH_JOURNAL`) picks another file only if its folder is
+  owner-only, not inside a git work tree and not inside a cloud-synced folder. Otherwise the
+  command refuses and writes nothing.
+- **One object per date, one line each.** Recording merges into that date's object: new keys
+  win and earlier answers stay. Every write takes an exclusive lock (10 s at most), rewrites
+  the file through a temp file with fsync and an atomic replace, and keeps any line that
+  does not parse, verbatim, in place. If the lock times out (exit 3) or the write fails,
+  nothing is written. The agent then says so and keeps the answers in its reply to record later.
+- Values: `8` becomes a number, `yes`/`no` a boolean, anything else text. Extra keys for
+  whatever the user tracks (for example `symptoms`, or a named habit) are allowed; readers
+  ignore keys they don't know. `safety_stop: true` marks a day the safety table stopped.
+
+A stored line:
+
+```json
+{"date": "2026-01-15", "at": "21:04", "body": "Okay", "body_score": 5, "mind": "Calm, clear", "mind_score": 8, "spirit": "Partly", "spirit_score": 5, "practices": "moved, outside", "note": "long day, good walk at sunset"}
+```
 
 ## Running it as an agentic loop
 

@@ -49,6 +49,14 @@ For the second category, use v1.1's SQLCipher path.
 
 ---
 
+### The check-in journal
+
+[CheckIn](../Workflows/CheckIn.md) answers (mood, symptoms, the user's own words) are the most
+sensitive data the skill stores. `health checkin` is their only writer. It writes
+`journal.jsonl` into the 0700 data directory as a 0600 file, through a lock and an atomic
+replace. It refuses a user-chosen location that is readable by others, inside a git work
+tree, or inside a cloud-synced folder.
+
 ## v1.1 — SQLCipher upgrade path
 
 When the `[encrypted]` extra is installed:
