@@ -19,6 +19,7 @@ prompts there.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from typing import Any, Dict, Iterable, Optional
 
@@ -316,6 +317,10 @@ def revision_identity(occurrence_hash: str, revision: str, n: int) -> str:
     return hashlib.sha1(f"{occurrence_hash}|{revision}|{n}".encode("utf-8")).hexdigest()[:20]
 
 
+#: 2100-01-01T00:00:00Z. A timestamp past it is a corrupt row, not a turn.
+TS_CEILING = 4102444800
+
+
 def valid_row(row) -> bool:
     """Does this decoded line have the shape of a ledger row? The one check reads and scans share."""
     if not isinstance(row, dict) or set(row) != set(row_fields()):
@@ -325,6 +330,7 @@ def valid_row(row) -> bool:
     return (all(isinstance(row[k], str) and row[k] for k in texts)
             and all(isinstance(row[k], int) and not isinstance(row[k], bool) and row[k] >= 0 for k in ints)
             and isinstance(row["ts"], (int, float)) and not isinstance(row["ts"], bool)
+            and math.isfinite(row["ts"]) and 0 <= row["ts"] < TS_CEILING
             and row["kind"] in KINDS and row["author"] in AUTHORS
             and (row["seq"] is None or (isinstance(row["seq"], int) and not isinstance(row["seq"], bool)))
             and isinstance(row["flags"], list) and isinstance(row["attr"], dict)

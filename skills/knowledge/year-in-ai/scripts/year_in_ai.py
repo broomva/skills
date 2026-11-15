@@ -183,6 +183,10 @@ def cmd_harvest(args: argparse.Namespace) -> int:
         state = "ok " if src["available"] else "-- "
         span = f"{(src['first'] or '')[:10]} → {(src['last'] or '')[:10]}" if src["records"] else (src["reason"] or "empty")
         print(f"  {state}{src['source']:<15} {src['records']:>8,} records  {span}")
+    skipped = [src for src in entry["sources"] if src.get("skipped")]
+    for src in skipped:
+        print(f"harvest: WARNING {src['source']}: {src['reason']} — totals are incomplete. "
+              "Install zstd (brew install zstd) and run harvest again.", file=sys.stderr)
     archive_to = args.archive_to or config.get("archive_to")
     if archive_to:
         try:
@@ -193,7 +197,7 @@ def cmd_harvest(args: argparse.Namespace) -> int:
         for sub, counts in result.items():
             print(f"archive: {sub}: {counts['copied']} copied, {counts['revisions']} kept as revisions "
                   f"({counts['bytes'] / 1e6:.0f} MB), {counts['unchanged']} unchanged, {counts['errors']} errors")
-    return 0
+    return 4 if skipped else 0
 
 
 def cmd_attention(args: argparse.Namespace) -> int:

@@ -102,6 +102,15 @@ records moves no other occurrence id. `tests/test_reader_contract.py` runs these
 occurrences are the same *turn* is a separate, evidence-based decision in the
 fold.
 
+## Requirements
+
+Python 3.9 or later, nothing else, except **zstd** for compressed Codex
+transcripts (`*.jsonl.zst`). It is looked for on `PATH`, then in
+`/opt/homebrew/bin`, `/usr/local/bin` and `/usr/bin`, so a launchd job with a
+minimal `PATH` still finds a Homebrew install. If it is missing, `harvest`
+never skips silently: the Codex source reports how many compressed files it
+could not read, a warning names zstd, and `harvest` exits with status 4.
+
 ## Live stores and their archives
 
 A store and its archive copy hold the same files under the same names, and

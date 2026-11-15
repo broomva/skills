@@ -170,10 +170,22 @@ def pair_turns(events, *, src: str, session: Optional[str], harness, author, att
         yield reply_row(final)
 
 
+#: Where zstd lives when a launchd job's PATH does not include it.
+ZSTD_LOCATIONS = ("/opt/homebrew/bin/zstd", "/usr/local/bin/zstd", "/usr/bin/zstd")
+
+
+def find_zstd() -> Optional[str]:
+    """The zstd executable: on PATH, else a standard install location, else None."""
+    found = shutil.which("zstd")
+    if found:
+        return found
+    return next((p for p in ZSTD_LOCATIONS if os.path.isfile(p) and os.access(p, os.X_OK)), None)
+
+
 def _content(path: Path) -> bytes:
     """A transcript's bytes, decompressed when it is ``.zst``."""
     if path.name.endswith(".zst"):
-        zstd = shutil.which("zstd")
+        zstd = find_zstd()
         if not zstd:
             return b""
         try:
@@ -552,7 +564,7 @@ CODEX_NOT_INTERACTIVE = {"codex_exec", "T3 Code", "t3code_desktop", "codex_sdk_t
 def _codex_lines(path: Path) -> Iterator[str]:
     """Stream a rollout line by line, decompressing ``.zst`` through a pipe."""
     if path.name.endswith(".zst"):
-        zstd = shutil.which("zstd")
+        zstd = find_zstd()
         if not zstd:
             return
         try:
@@ -589,6 +601,11 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
                         yield (fname[: -len(".zst")] if fname.endswith(".zst") else fname), Path(dirpath) / fname
 
         for base, path in pick_copies(roots, candidates, since, append_only=True):
+            if path.name.endswith(".zst") and find_zstd() is None:
+                # Never silently: a skipped transcript makes every total incomplete.
+                report.skipped += 1
+                report.reason = f"{report.skipped} compressed transcript(s) not read: zstd not found"
+                continue
             report.files += 1
             yield from _codex_file(path, base.split(".")[0][-36:], since, report)
 

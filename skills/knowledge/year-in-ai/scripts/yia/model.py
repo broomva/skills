@@ -78,6 +78,10 @@ class SourceReport:
     root: str | None = None
     files: int = 0
     records: int = 0
+    #: Files the reader could not read and therefore did not count (e.g. a
+    #: compressed transcript with no decompressor). Non-zero means the totals
+    #: are incomplete; ``harvest`` exits non-zero and says why.
+    skipped: int = 0
     first: _dt.datetime | None = None
     last: _dt.datetime | None = None
 
@@ -103,6 +107,7 @@ class SourceReport:
             "root": self.root,
             "files": self.files,
             "records": self.records,
+            "skipped": self.skipped,
             "first": self.first.isoformat() if self.first else None,
             "last": self.last.isoformat() if self.last else None,
             "span_days": self.span_days,
