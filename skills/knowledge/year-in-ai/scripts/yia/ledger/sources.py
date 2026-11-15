@@ -52,7 +52,7 @@ from pathlib import Path
 from typing import Callable, Dict, Iterator, List, Optional, Set, Tuple
 
 from ..model import SourceReport
-from . import ext_str, harness_label, is_injected, make_row, occurrence_key, text_hash, unwrap_command
+from . import TS_CEILING, ext_str, harness_label, is_injected, make_row, occurrence_key, text_hash, unwrap_command
 
 Rows = Iterator[dict]
 
@@ -86,6 +86,19 @@ def _sid(value) -> Optional[str]:
 
 def _text(value) -> Optional[str]:
     return value if isinstance(value, str) else None
+
+
+def _epoch(value, scale: float = 1.0) -> Optional[float]:
+    """A numeric timestamp in seconds, or None when it is not a number or outside 1970..2100.
+
+    Out-of-range values would make ``datetime.fromtimestamp`` raise and abort
+    the harvest; a corrupt record is dropped instead.
+    """
+    if not isinstance(value, (int, float)) or isinstance(value, bool):
+        return None
+    if not 0 <= value < TS_CEILING * scale:
+        return None
+    return value / scale
 
 
 def _observe(report: SourceReport, ts: float) -> None:
@@ -636,11 +649,10 @@ def read_claude_history(path: Optional[Path], since: Optional[float]) -> Tuple[S
                 continue
             if not isinstance(rec, dict):
                 continue
-            stamp = rec.get("timestamp")
+            ts = _epoch(rec.get("timestamp"), 1000.0)
             display = _text(rec.get("display")) or ""
-            if not isinstance(stamp, (int, float)) or isinstance(stamp, bool) or not display.strip():
+            if ts is None or not display.strip():
                 continue
-            ts = stamp / 1000.0
             if since and ts < since:
                 continue
             # A menu-bar usage probe sends /usage every few minutes; it is nobody typing.
@@ -761,10 +773,9 @@ def read_codex_history(path: Optional[Path], since: Optional[float]) -> Tuple[So
                 continue
             if not isinstance(rec, dict):
                 continue
-            ts = rec.get("ts")
+            ts = _epoch(rec.get("ts"))
             text = _text(rec.get("text")) or ""
-            if not isinstance(ts, (int, float)) or isinstance(ts, bool) or (since and ts < since) \
-                    or not text.strip():
+            if ts is None or (since and ts < since) or not text.strip():
                 continue
             _observe(report, ts)
             session = _sid(rec.get("session_id"))

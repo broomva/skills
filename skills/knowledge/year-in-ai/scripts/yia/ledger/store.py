@@ -194,6 +194,8 @@ class Ledger:
         pending: Dict[Path, List[str]] = {}
         added: Dict[str, int] = {}
         for row in rows:
+            if not valid_row(row):
+                continue  # what rows() would drop must never be appended, or every write re-appends it
             prior = latest.get(row["o"])
             # Unchanged means same text AND same attribution: a session found
             # later to be Paseo's moves its turns from human to agent.

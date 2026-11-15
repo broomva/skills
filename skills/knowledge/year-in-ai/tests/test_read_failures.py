@@ -193,3 +193,34 @@ def test_stopping_early_on_an_archive_is_not_a_failure(tmp_path):
     next(lines)
     lines.close()
     assert report.skipped == 0
+
+
+# --- CodeRabbit at 861d22c
+
+
+@pytest.mark.parametrize("store", ["claude_history", "codex_history"])
+def test_an_absurd_history_timestamp_is_dropped_not_fatal(tmp_path, store):
+    import json
+    path = tmp_path / "history.jsonl"
+    if store == "claude_history":
+        bad, good = {"timestamp": 1e23, "display": "corrupt"}, {"timestamp": T0 * 1000, "display": "typed"}
+        read = S.read_claude_history
+    else:
+        bad, good = {"ts": 1e20, "text": "corrupt"}, {"ts": T0, "text": "typed"}
+        read = S.read_codex_history
+    path.write_text(json.dumps(bad) + "\n" + json.dumps(good) + "\n")
+    _report, rows = read(path, None)
+    assert len(list(rows)) == 1
+
+
+def test_the_ledger_never_appends_a_row_it_would_not_read(tmp_path):
+    from yia.ledger import make_row
+    from yia.ledger import store as L
+    ledger = L.Ledger(str(tmp_path / "ledger"))
+    good = make_row(src="t3", harness="t3", kind="prompt", ts=T0, text="ok", session="s", author="human",
+                    occurrence="g")
+    bad = dict(good, id="b" * 20, o="c" * 16, ts=4102444800.0)
+    ledger.write([good, bad])
+    ledger.write([bad])
+    lines = [line for f in (tmp_path / "ledger").rglob("*.jsonl") for line in f.read_text().splitlines()]
+    assert len(lines) == 1
