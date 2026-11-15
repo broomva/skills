@@ -352,3 +352,81 @@ def test_hostile_role_fields_are_skipped_not_fatal(store, tmp_path):
         path.write_text(json.dumps(rec) + "\n")
     _report, rows = run()
     assert len([r for r in list(rows) if r["kind"] == "prompt"]) == 2
+
+
+# ------------------------------------------- live and archived copies, every multi-root reader
+
+#: Readers that take several roots (a live store plus its archive), with the
+#: directory their builder writes into and how to call them on several roots.
+MULTI_ROOT = {
+    "claude_code": ("projects", lambda roots: S.read_claude_projects(roots, None)),
+    "codex": ("codex", lambda roots: S.read_codex_sessions(roots, None)),
+    "gemini": ("gemini", lambda roots: S.read_gemini(roots, None)),
+    "bridged": ("bridge", lambda roots: S.read_bridged(roots, None)),
+}
+
+
+def _two_roots(store, tmp_path, live_turns, archive_turns, same_mtime=False, live_newer=False,
+               archive_newer=False):
+    import os
+    sub, read = MULTI_ROOT[store]
+    live, archive = tmp_path / "live", tmp_path / "zz-archive"
+    live.mkdir()
+    archive.mkdir()
+    BUILDERS[store](live, live_turns)
+    BUILDERS[store](archive, archive_turns)
+    live_files = sorted(p for p in (live / sub).rglob("*") if p.is_file())
+    archive_files = sorted(p for p in (archive / sub).rglob("*") if p.is_file())
+    for lf, af in zip(live_files, archive_files):
+        stamp = af.stat().st_mtime_ns
+        if same_mtime:
+            os.utime(lf, ns=(stamp, stamp))
+        elif live_newer:
+            os.utime(lf, ns=(stamp + 10**9, stamp + 10**9))
+            os.utime(af, ns=(stamp, stamp))
+        elif archive_newer:
+            os.utime(af, ns=(stamp + 10**9, stamp + 10**9))
+            os.utime(lf, ns=(stamp, stamp))
+    _report, rows = read([live / sub, archive / sub])
+    return [r for r in rows if r["kind"] == "prompt"]
+
+
+def test_every_multi_root_reader_is_listed():
+    assert set(MULTI_ROOT) == {name for name, fn in S.REGISTRY.items()
+                               if list(inspect.signature(fn).parameters)[0] == "roots"}
+
+
+@pytest.mark.parametrize("store", sorted(MULTI_ROOT))
+def test_a_longer_archived_copy_beats_a_truncated_live_one(store, tmp_path):
+    # The longer archive is also the OLDER file: size must decide, not mtime.
+    prompts = _two_roots(store, tmp_path, [turn(1)], [turn(1), turn(2)], live_newer=True)
+    assert len(prompts) == 2
+
+
+@pytest.mark.parametrize("store", sorted(MULTI_ROOT))
+def test_an_equal_size_newer_archive_beats_the_live_copy(store, tmp_path):
+    prompts = _two_roots(store, tmp_path, [turn(1, prompt="live text 1")], [turn(1, prompt="arch text 1")],
+                         archive_newer=True)
+    assert [p["h"] for p in prompts] == [LEDGER.text_hash("arch text 1")]
+
+
+@pytest.mark.parametrize("store", sorted(MULTI_ROOT))
+def test_an_equal_size_newer_live_copy_beats_the_archive(store, tmp_path):
+    prompts = _two_roots(store, tmp_path, [turn(1, prompt="live text 1")], [turn(1, prompt="arch text 1")],
+                         live_newer=True)
+    assert [p["h"] for p in prompts] == [LEDGER.text_hash("live text 1")]
+
+
+@pytest.mark.parametrize("store", sorted(MULTI_ROOT))
+def test_a_full_tie_goes_to_the_live_root(store, tmp_path):
+    prompts = _two_roots(store, tmp_path, [turn(1, prompt="live text 1")], [turn(1, prompt="arch text 1")],
+                         same_mtime=True)
+    assert [p["h"] for p in prompts] == [LEDGER.text_hash("live text 1")]
+
+
+def test_copies_are_chosen_in_one_place():
+    tree = ast.parse((SCRIPTS / "yia" / "ledger" / "sources.py").read_text())
+    for name in MULTI_ROOT:
+        fn = next(n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef) and n.name == S.REGISTRY[name].__name__)
+        calls = {getattr(c.func, "id", "") for c in ast.walk(fn) if isinstance(c, ast.Call)}
+        assert "pick_copies" in calls, f"{fn.name} chooses copies itself"

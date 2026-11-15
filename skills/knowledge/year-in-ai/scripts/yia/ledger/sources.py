@@ -170,6 +170,33 @@ def pair_turns(events, *, src: str, session: Optional[str], harness, author, att
         yield reply_row(final)
 
 
+def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[str, Path]]],
+                since: Optional[float] = None) -> List[Tuple[str, Path]]:
+    """One file per key across several roots: the one place copies are chosen.
+
+    Live stores and their archives hold the same files under the same names.
+    ``candidates(root)`` yields ``(key, path)``; for each key the larger file
+    wins, then the newer write, then the earlier root (live before archive).
+    Archive revisions are never candidates. Every multi-root reader uses this,
+    and the reader contract suite checks each one against a live/archive pair.
+    """
+    chosen: Dict[str, Tuple[tuple, Path]] = {}
+    for root_index, root in enumerate(roots):
+        for key, path in candidates(root):
+            if is_archive_revision(path.name):
+                continue  # kept by the archive for quoting, never counted
+            try:
+                st = path.stat()
+            except OSError:
+                continue
+            if since and st.st_mtime < since:
+                continue
+            rank = (st.st_size, st.st_mtime_ns, -root_index)
+            if key not in chosen or rank > chosen[key][0]:
+                chosen[key] = (rank, path)
+    return [(key, chosen[key][1]) for key in sorted(chosen)]
+
+
 # --------------------------------------------------------------------------- T3
 
 
@@ -370,25 +397,13 @@ def read_claude_projects(
     paseo_ids = paseo_ids or set()
 
     def stream() -> Rows:
-        files: Dict[str, Tuple[tuple, Path]] = {}
-        for root_index, root in enumerate(roots):
+        def candidates(root: Path):
             for path in root.glob("*/*.jsonl"):
-                try:
-                    st = path.stat()
-                except OSError:
-                    continue
-                if since and st.st_mtime < since:
-                    continue
-                if is_archive_revision(path.name):
-                    continue  # kept by the archive for quoting, never counted
-                # Live and archived copies share a name. The larger wins; on a tie the
-                # newer write, then the earlier root (live before archive).
-                rank = (st.st_size, st.st_mtime_ns, -root_index)
-                if path.stem not in files or rank > files[path.stem][0]:
-                    files[path.stem] = (rank, path)
-        for sid in sorted(files):
+                yield path.stem, path
+
+        for sid, path in pick_copies(roots, candidates, since):
             report.files += 1
-            yield from _claude_session(files[sid][1], sid, since, paseo_ids, report)
+            yield from _claude_session(path, sid, since, paseo_ids, report)
 
     return report, stream()
 
@@ -530,30 +545,16 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
     report = SourceReport(name, True, root=", ".join(str(r) for r in roots))
 
     def stream() -> Rows:
-        # Live and archived copies share a name. Pick one per name before reading:
-        # the larger, then the newer write, then the earlier root (live first).
-        chosen: Dict[str, Tuple[tuple, Path, str]] = {}
-        for root_index, root in enumerate(roots):
+        def candidates(root: Path):
             for dirpath, dirs, names in os.walk(root):
                 dirs.sort()
                 for fname in sorted(names):
-                    if ".jsonl" not in fname or is_archive_revision(fname):
-                        continue  # revisions are kept by the archive for quoting, never counted
-                    path = Path(dirpath) / fname
-                    try:
-                        st = path.stat()
-                    except OSError:
-                        continue
-                    if since and st.st_mtime < since:
-                        continue
-                    base = fname[: -len(".zst")] if fname.endswith(".zst") else fname
-                    rank = (st.st_size, st.st_mtime_ns, -root_index)
-                    if base not in chosen or rank > chosen[base][0]:
-                        chosen[base] = (rank, path, fname.split(".")[0][-36:])
-        for base in sorted(chosen):
-            _rank, path, sid = chosen[base]
+                    if ".jsonl" in fname:
+                        yield (fname[: -len(".zst")] if fname.endswith(".zst") else fname), Path(dirpath) / fname
+
+        for base, path in pick_copies(roots, candidates, since):
             report.files += 1
-            yield from _codex_file(path, sid, since, report)
+            yield from _codex_file(path, base.split(".")[0][-36:], since, report)
 
     return report, stream()
 
@@ -653,36 +654,39 @@ def read_gemini(roots: List[Path], since: Optional[float]) -> Tuple[SourceReport
     report = SourceReport(name, True, root=", ".join(str(r) for r in roots))
 
     def stream() -> Rows:
-        for root in roots:
-            for path in sorted(root.glob("*/chats/*.json")):
-                try:
-                    data = json.loads(path.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    continue
-                if not isinstance(data, dict):
-                    continue
-                report.files += 1
-                sid = _sid(data.get("sessionId")) or path.stem
-                messages = data.get("messages") if isinstance(data.get("messages"), list) else []
+        def candidates(root: Path):
+            for path in root.glob("*/chats/*.json"):
+                yield path.relative_to(root).as_posix(), path
 
-                def events(messages=messages):
-                    for msg in messages:
-                        if not isinstance(msg, dict):
-                            continue
-                        ts = _iso(msg.get("timestamp"))
-                        content = msg.get("content")
-                        if isinstance(content, list):
-                            content = "\n".join(c["text"] for c in content
-                                                if isinstance(c, dict) and isinstance(c.get("text"), str))
-                        content = _text(content)
-                        if ts is None or (since and ts < since) or not content:
-                            continue
-                        role = {"user": "prompt", "gemini": "reply"}.get(ext_str(msg.get("type")))
-                        if role:
-                            yield role, ts, content, _sid(msg.get("id"))
+        for _key, path in pick_copies(roots, candidates):
+            try:
+                data = json.loads(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                continue
+            if not isinstance(data, dict):
+                continue
+            report.files += 1
+            sid = _sid(data.get("sessionId")) or path.stem
+            messages = data.get("messages") if isinstance(data.get("messages"), list) else []
 
-                yield from pair_turns(events(), src=name, session=sid, report=report, harness="gemini-cli",
-                                      author="human")
+            def events(messages=messages):
+                for msg in messages:
+                    if not isinstance(msg, dict):
+                        continue
+                    ts = _iso(msg.get("timestamp"))
+                    content = msg.get("content")
+                    if isinstance(content, list):
+                        content = "\n".join(c["text"] for c in content
+                                            if isinstance(c, dict) and isinstance(c.get("text"), str))
+                    content = _text(content)
+                    if ts is None or (since and ts < since) or not content:
+                        continue
+                    role = {"user": "prompt", "gemini": "reply"}.get(ext_str(msg.get("type")))
+                    if role:
+                        yield role, ts, content, _sid(msg.get("id"))
+
+            yield from pair_turns(events(), src=name, session=sid, report=report, harness="gemini-cli",
+                                  author="human")
 
     return report, stream()
 
@@ -708,23 +712,26 @@ def read_bridged(
     zone = _dt.timezone(_dt.timedelta(hours=utc_offset_hours))
 
     def stream() -> Rows:
-        for root in roots:
-            for path in sorted(root.glob("session-*.md")):
-                try:
-                    body = path.read_text(encoding="utf-8", errors="ignore")
-                except OSError:
-                    continue
-                created = re.search(r"^created: (\d{4}-\d{2}-\d{2})", body, re.M)
-                sid_match = re.search(r"^session_id: (\S+)", body, re.M)
-                if not created:
-                    continue
-                day = _dt.datetime.fromisoformat(created.group(1))
-                if since and day.replace(tzinfo=_UTC).timestamp() < since - 86400:
-                    continue
-                report.files += 1
-                sid = sid_match.group(1) if sid_match else path.stem
-                yield from pair_turns(_bridge_events(body, day, zone), src=name, session=sid, report=report,
-                                      harness="bridged", author="unknown")
+        def candidates(root: Path):
+            for path in root.glob("session-*.md"):
+                yield path.name, path
+
+        for _key, path in pick_copies(roots, candidates):
+            try:
+                body = path.read_text(encoding="utf-8", errors="ignore")
+            except OSError:
+                continue
+            created = re.search(r"^created: (\d{4}-\d{2}-\d{2})", body, re.M)
+            sid_match = re.search(r"^session_id: (\S+)", body, re.M)
+            if not created:
+                continue
+            day = _dt.datetime.fromisoformat(created.group(1))
+            if since and day.replace(tzinfo=_UTC).timestamp() < since - 86400:
+                continue
+            report.files += 1
+            sid = sid_match.group(1) if sid_match else path.stem
+            yield from pair_turns(_bridge_events(body, day, zone), src=name, session=sid, report=report,
+                                  harness="bridged", author="unknown")
 
     return report, stream()
 
