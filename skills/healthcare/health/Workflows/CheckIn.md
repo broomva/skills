@@ -19,11 +19,10 @@ own words a day, stored next to the watch data so the two can be read together.
 
 ## Protocol
 
-0. **Safety before anything.** If the user's message, or any answer at any step, shows
-   danger (self-harm, an emergency symptom happening now) or hopelessness (for example
-   "I've felt hopeless for days"), stop the protocol: say the
-   [safety lines](#safety-lines-not-coaching) first and do nothing else that turn. No
-   snapshot, no sync, no questions, no storage. Resume another time, only if the user wants to.
+0. **Safety before anything.** Check the user's message, and every answer at every step,
+   against the [safety triggers](#safety-lines-not-coaching). That table is the only list of
+   triggers, and its *Action* column decides what happens next: **stop**, **say first, then
+   continue**, or **say, don't record**.
 1. **Snapshot.** `health status`; if the store is stale, sync. Read last night's sleep
    (`health raw --endpoint sleep` for the night) and the last 7 journal entries.
 2. **Ask, don't interrogate.** One structured question call (AskUserQuestion in Claude Code),
@@ -64,15 +63,21 @@ own words a day, stored next to the watch data so the two can be read together.
 ## Safety lines (not coaching)
 
 The check-in reflects. It does not diagnose or prescribe, but it never stays quiet about risk.
-Say these plainly, and first:
-- **Thoughts of self-harm, or danger right now:** the local emergency number now (for
-  example 911, 112 or 123). Then a crisis line for the user's country: use one the user has
-  recorded, or point to a directory such as findahelpline.com if the location is unknown.
-- **Low mood on most recent days, or words of hopelessness:** suggest talking to a doctor or
-  a trusted person this week, and give the same crisis-line route.
-- **Chest pain, fainting, or palpitations with dizziness happening now:** emergency services
-  now. If it has passed: a clinician the same day. A fever lasting more than a couple of
-  days: a clinician. None of these is a journal entry.
+This table is the single source of safety triggers; step 0 and every later step defer to it.
+Whatever the action, the line is said plainly and **first**, before any other reply.
+
+| Trigger | Action | What to say |
+|---|---|---|
+| Thoughts of self-harm, or danger right now | stop | The local emergency number now (for example 911, 112 or 123). Then a crisis line for the user's country: one the user has recorded, or a directory such as findahelpline.com if the location is unknown. |
+| Words of hopelessness | stop | Talk to a doctor or a trusted person soon, plus the same crisis-line route. |
+| Chest pain, fainting, or palpitations with dizziness, happening now | stop | Emergency services now. |
+| Mind "Low or flat" on 3 or more of the last 5 days (journal plus today) | say first, then continue | Low for several days now. A doctor or a trusted person this week is worth it, plus the crisis-line route. |
+| Chest pain, fainting or palpitations that have passed, or a fever lasting more than two days | say, don't record | A clinician the same day (for the fever, soon). The symptom is not written to the journal. |
+
+**stop** means nothing else that turn: no snapshot, no sync, no questions, no storage. Resume
+another time, only if the user wants to. **say first, then continue** means the check-in goes
+on after the line. **say, don't record** means the check-in goes on, but that symptom is left
+out of the entry.
 
 ## Storage
 

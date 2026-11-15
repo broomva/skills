@@ -18,12 +18,41 @@ def _protocol_steps() -> list[str]:
     return re.findall(r"^(\d+)\. \*\*(.+?)\*\*", body, re.M)
 
 
-def test_safety_is_step_zero_and_precedes_snapshot():
+ACTIONS = {"stop", "say first, then continue", "say, don't record"}
+
+
+def _safety_table() -> list[tuple[str, str, str]]:
+    section = DOC.split("## Safety lines", 1)[1].split("\n## ", 1)[0]
+    rows = [r for r in re.findall(r"^\| (.+?) \| (.+?) \| (.+?) \|$", section, re.M)
+            if r[0] not in ("Trigger",) and not r[0].startswith("---")]
+    return rows
+
+
+def test_safety_is_step_zero_precedes_snapshot_and_defers_to_the_table():
     steps = _protocol_steps()
     assert steps[0][0] == "0" and "Safety" in steps[0][1]
     assert steps[1][0] == "1" and "Snapshot" in steps[1][1]
-    first = DOC.split("0. **Safety before anything.**", 1)[1].split("1. **Snapshot", 1)[0]
-    assert "no sync" in first and "no storage" in first
+    step0 = DOC.split("0. **Safety before anything.**", 1)[1].split("1. **Snapshot", 1)[0]
+    assert "(#safety-lines-not-coaching)" in step0 and "only list" in step0
+
+
+def test_safety_table_is_the_single_source_and_every_row_has_a_known_action():
+    rows = _safety_table()
+    assert len(rows) >= 5
+    for trigger, action, say in rows:
+        assert action in ACTIONS, (trigger, action)
+        assert say.strip(), trigger
+    by_action = {a: [t for t, x, _ in rows if x == a] for a in ACTIONS}
+    assert any("self-harm" in t for t in by_action["stop"])
+    assert any("hopelessness" in t for t in by_action["stop"])
+    assert any("Low or flat" in t for t in by_action["say first, then continue"])
+    assert any("passed" in t for t in by_action["say, don't record"])
+    # no trigger list survives outside the table: step 0 names no trigger itself
+    step0 = DOC.split("0. **Safety before anything.**", 1)[1].split("1. **Snapshot", 1)[0]
+    for word in ("self-harm", "hopeless", "chest pain", "fever"):
+        assert word not in step0.lower(), word
+    section = DOC.split("## Safety lines", 1)[1].split("\n## ", 1)[0]
+    assert "no snapshot, no sync, no questions, no storage" in section
 
 
 def test_every_option_label_has_exactly_one_score():
@@ -46,18 +75,13 @@ def test_storage_is_the_owner_only_data_dir_and_writes_are_atomic():
 
 
 def test_emergency_route_has_a_fallback_when_location_is_unknown():
-    safety = DOC.split("## Safety lines", 1)[1].split("\n## ", 1)[0]
-    assert "emergency number" in safety and "findahelpline.com" in safety
+    say = " ".join(x for _, _, x in _safety_table())
+    assert "emergency number" in say and "findahelpline.com" in say
 
 
 def test_skill_routes_to_checkin():
     assert "[CheckIn](Workflows/CheckIn.md)" in SKILL
     assert "| **CheckIn** |" in SKILL
-
-
-def test_hopelessness_stops_the_protocol_at_step_zero():
-    first = DOC.split("0. **Safety before anything.**", 1)[1].split("1. **Snapshot", 1)[0]
-    assert "hopelessness" in first and "stop the protocol" in first
 
 
 def test_user_defined_item_is_optional_with_a_first_use_setup():
