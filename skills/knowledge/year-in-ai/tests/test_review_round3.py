@@ -110,12 +110,14 @@ def test_a_turns_reply_is_its_final_revision_in_the_period_it_was_written():
 
 
 def test_an_edited_prompt_counts_its_latest_revision():
-    first = row(src="t3", harness="t3", kind="prompt", ts=T0, text="one", session="s", author="human",
-                occurrence="m1")
-    edited = row(src="t3", harness="t3", kind="prompt", ts=T0, text="one two three four", session="s",
-                 author="human", occurrence="m1")
-    reply_to_first = row(src="t3", harness="t3", kind="reply", ts=T0 + 5, text="ok then", session="s",
-                         author="human", turn=first["id"], occurrence="m2")
+    first = dict(row(src="t3", harness="t3", kind="prompt", ts=T0, text="one", session="s", author="human",
+                     occurrence="m1"), seq=1)
+    edited = dict(row(src="t3", harness="t3", kind="prompt", ts=T0, text="one two three four", session="s",
+                      author="human", occurrence="m1"), seq=3)
+    reply_to_first = dict(row(src="t3", harness="t3", kind="reply", ts=T0 + 5, text="ok then", session="s",
+                              author="human", turn=first["id"], occurrence="m2"), seq=2)
+    # Harvest order (seq) decides, whatever order the rows arrive in.
+    assert T.fold([edited, reply_to_first, first]) == T.fold([first, reply_to_first, edited])
     summary = T.fold([first, reply_to_first, edited])
     assert summary["written"] == {"prompts": 1, "words": 4, "authored_words": 4, "median_words": 4}
     assert summary["read"]["reply_words_measured"] == 2  # the reply follows its prompt's latest revision

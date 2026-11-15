@@ -124,7 +124,9 @@ fold.
 - **Read:** the final reply to each counted prompt, times the read share
   (`--read-low`/`--read-high`, default 0.60–0.70). Prompts from stores that never kept
   replies get an estimated reply from measured replies of the same harness
-  family (a CLI prompt from CLI replies), reported separately.
+  family (a CLI prompt from CLI replies), reported separately. A family with
+  no measured replies is never estimated from another family; its prompts are
+  reported as `unestimated_prompts`.
 - **The ratio** is words read over *authored* words written: pasted blocks,
   paste placeholders and fenced code blocks are removed, and what remains is
   capped at 4,000 characters per prompt (a longer one is a paste, whatever its

@@ -28,9 +28,11 @@ from evidence, never from text alone:
 **Read** counts the final reply to each counted turn, times a stated read share
 (default band 60-70%). Within a store the latest revision of a turn's reply
 wins; across stores the turn's own store wins, then store priority. A turn
-recorded only by stores that never keep replies gets an estimated reply (the
-month's measured mean with 500+ replies, else the pooled mean), reported
-separately. Replies to agent-written prompts are the agents' own volume.
+recorded only by stores that never keep replies gets an estimated reply: the
+mean measured reply of the same harness family (a CLI prompt from CLI
+replies), reported separately. A family with no measured replies gets no
+estimate; its prompts are counted as unestimated. Replies to agent-written
+prompts are the agents' own volume.
 
 ``window`` limits what is *reported*; rows outside it are still used as
 context, so a reply just inside the window keeps the prompt just before it.
@@ -106,17 +108,18 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
     # each occurrence's latest revision: the last one appended to the ledger.
     # Replies that point at an older revision of their prompt follow the alias.
     latest: Dict[str, dict] = {}
-    order: Dict[str, Tuple[int, int]] = {}
+    order: Dict[str, Tuple[int, str]] = {}
     revisions: Dict[str, List[str]] = collections.defaultdict(list)
     for position, r in enumerate(rows):
         occ = r.get("o") or r["id"]
         if r["id"] not in revisions[occ]:
             revisions[occ].append(r["id"])
-        # The ledger's harvest sequence orders revisions; rows built outside a
-        # ledger have none and fall back to input order.
+        # The ledger's harvest sequence orders revisions, ties broken by id: the
+        # same order the ledger's own scan uses. A row without one is older than
+        # every sequenced row. Input order never decides.
         seq = r.get("seq") if isinstance(r.get("seq"), int) else -1
-        rank = (seq, position) if seq >= 0 else (-1, position)
-        if occ not in order or rank >= order[occ]:
+        rank = (seq, r["id"])
+        if occ not in order or rank > order[occ]:
             order[occ] = rank
             latest[occ] = r
     alias: Dict[str, str] = {}
@@ -219,9 +222,14 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
     # family (a CLI prompt from CLI replies), falling back to all replies.
     total_replies = sum(m["replies"] for m in months.values())
     pooled = (sum(m["reply_words"] for m in months.values()) / total_replies) if total_replies else 0.0
-    per_family = {f: sum(w) / len(w) for f, w in family_words.items() if len(w) >= 100}
+    # Only the family's own replies are evidence. A family with no measured
+    # replies gets no estimate; its prompts are reported as unestimated.
+    per_family = {f: sum(w) / len(w) for f, w in family_words.items() if w}
     for (month, family), count in families_without_reply.items():
-        months[month]["estimated_reply_words"] += round(count * per_family.get(family, pooled))
+        if family in per_family:
+            months[month]["estimated_reply_words"] += round(count * per_family[family])
+        else:
+            months[month]["unestimated_prompts"] += count
 
     low, central, high = read_share
     totals: collections.Counter = collections.Counter()
@@ -249,6 +257,8 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
             "reply_words_measured": basis_measured,
             "reply_words_estimated": basis_estimated,
             "pooled_words_per_reply": round(pooled),
+            # Reply-less prompts from a harness family with no measured replies to estimate from.
+            "unestimated_prompts": totals["unestimated_prompts"],
             "words_low": round(basis * low),
             "words_central": read_central,
             "words_high": round(basis * high),

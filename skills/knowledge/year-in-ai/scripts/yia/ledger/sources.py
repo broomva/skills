@@ -215,7 +215,7 @@ def read_t3(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, R
                 if is_injected(text):
                     continue
                 created_by = ext_str(created_by)
-                author = "human" if created_by == "user" else "agent"
+                author = {"user": "human", "agent": "agent"}.get(created_by, "unknown")
                 row = make_row(
                     src=name, harness=harness, kind="prompt", ts=ts, text=text, session=thread, author=author,
                     attr={"created_by": created_by, "creation_source": creation_source, "lineage": lineage},
@@ -520,29 +520,30 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
     report = SourceReport(name, True, root=", ".join(str(r) for r in roots))
 
     def stream() -> Rows:
-        seen: Set[str] = set()
-        for root in roots:
+        # Live and archived copies share a name. Pick one per name before reading:
+        # the larger, then the newer write, then the earlier root (live first).
+        chosen: Dict[str, Tuple[tuple, Path, str]] = {}
+        for root_index, root in enumerate(roots):
             for dirpath, dirs, names in os.walk(root):
                 dirs.sort()
                 for fname in sorted(names):
-                    if ".jsonl" not in fname:
-                        continue
-                    if is_archive_revision(fname):
-                        continue  # kept by the archive for quoting, never counted
-                    sid = fname.split(".")[0][-36:]
-                    # One file is read once: live and archived copies share a name.
-                    base = fname[: -len(".zst")] if fname.endswith(".zst") else fname
-                    if base in seen:
-                        continue
+                    if ".jsonl" not in fname or is_archive_revision(fname):
+                        continue  # revisions are kept by the archive for quoting, never counted
                     path = Path(dirpath) / fname
                     try:
-                        if since and path.stat().st_mtime < since:
-                            continue
+                        st = path.stat()
                     except OSError:
                         continue
-                    seen.add(base)
-                    report.files += 1
-                    yield from _codex_file(path, sid, since, report)
+                    if since and st.st_mtime < since:
+                        continue
+                    base = fname[: -len(".zst")] if fname.endswith(".zst") else fname
+                    rank = (st.st_size, st.st_mtime_ns, -root_index)
+                    if base not in chosen or rank > chosen[base][0]:
+                        chosen[base] = (rank, path, fname.split(".")[0][-36:])
+        for base in sorted(chosen):
+            _rank, path, sid = chosen[base]
+            report.files += 1
+            yield from _codex_file(path, sid, since, report)
 
     return report, stream()
 

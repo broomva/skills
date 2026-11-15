@@ -153,3 +153,59 @@ def test_text_only_prompts_over_1500_characters_are_not_counted(length, counted)
     r = make_row(src="bridged", harness="bridged", kind="prompt", ts=T0, text="w" * length, session="b",
                  author="unknown", occurrence="b1")
     assert T.fold([r])["written"]["prompts"] == counted
+
+
+def test_codex_prefers_the_longer_archived_copy_over_a_truncated_live_one(tmp_path):
+    live, archive = tmp_path / "live", tmp_path / "zz-archive"
+    rollout = f"rollout-x-{_codex_sid('s1')}.jsonl"
+    write_jsonl(live / "2026" / "10" / rollout, _codex_records([turn(1, sess="s1")]))
+    write_jsonl(archive / "2026" / "10" / rollout, _codex_records([turn(1, sess="s1"), turn(2, sess="s1")]))
+    _report, rows = S.read_codex_sessions([live, archive], None)
+    assert len([r for r in rows if r["kind"] == "prompt"]) == 2
+
+
+def test_codex_equal_size_copies_prefer_the_live_root(tmp_path):
+    live, archive = tmp_path / "live", tmp_path / "zz-archive"
+    rollout = f"rollout-x-{_codex_sid('s1')}.jsonl"
+    write_jsonl(live / "2026" / "10" / rollout, _codex_records([turn(1, sess="s1", prompt="live prompt")]))
+    write_jsonl(archive / "2026" / "10" / rollout, _codex_records([turn(1, sess="s1", prompt="arch prompt")]))
+    stamp = (live / "2026" / "10" / rollout).stat().st_mtime_ns
+    for p in (live / "2026" / "10" / rollout, archive / "2026" / "10" / rollout):
+        os.utime(p, ns=(stamp, stamp))
+    _report, rows = S.read_codex_sessions([live, archive], None)
+    prompt = next(r for r in rows if r["kind"] == "prompt")
+    assert prompt["h"] == make_row(src="codex", harness="codex", kind="prompt", ts=T0, text="live prompt",
+                                   session="s", author="human", occurrence="x")["h"]
+
+
+@pytest.mark.parametrize("created_by,author", [("user", "human"), ("agent", "agent"), (None, "unknown"),
+                                               ({"a": 1}, "unknown"), ("system", "unknown")])
+def test_t3_maps_only_explicit_authors(created_by, author, tmp_path):
+    import sqlite3
+    db = tmp_path / "t3.sqlite"
+    con = sqlite3.connect(db)
+    con.execute("create table orchestration_v2_projection_threads (thread_id text, default_provider text, "
+                "payload_json text, created_at text)")
+    con.execute("create table orchestration_v2_projection_messages (message_id text, thread_id text, run_id text, "
+                "role text, streaming int, created_at text, payload_json text)")
+    con.execute("insert into orchestration_v2_projection_threads values ('t','claudeAgent','{}',?)", (iso(T0 - 99),))
+    con.execute("insert into orchestration_v2_projection_messages values ('m','t','r','user',0,?,?)",
+                (iso(T0), json.dumps({"createdBy": created_by, "text": "hello"})))
+    con.execute("insert into orchestration_v2_projection_messages values ('a','t','r','assistant',0,?,?)",
+                (iso(T0 + 5), json.dumps({"createdBy": "agent", "text": "hi there"})))
+    con.commit()
+    con.close()
+    _report, rows = S.read_t3(db, None)
+    rows = list(rows)
+    assert {r["author"] for r in rows if r["kind"] == "prompt"} == {author}
+    summary = T.fold(rows)
+    if author == "unknown":  # neither the person's writing nor the agents' own
+        assert summary["written"]["prompts"] == 0 and summary["agents_own"]["replies"] == 0
+
+
+def test_unsequenced_revisions_fold_the_same_in_any_order():
+    a = make_row(src="t3", harness="t3", kind="prompt", ts=T0, text="one", session="s", author="human",
+                 occurrence="m")
+    b = make_row(src="t3", harness="t3", kind="prompt", ts=T0, text="two words", session="s", author="human",
+                 occurrence="m")
+    assert T.fold([a, b])["written"] == T.fold([b, a])["written"]

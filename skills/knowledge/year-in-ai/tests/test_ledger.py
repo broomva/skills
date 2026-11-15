@@ -623,14 +623,31 @@ def test_a_measured_reply_is_not_also_estimated():
     assert read["reply_words_estimated"] == 0
 
 
-def test_a_turn_seen_only_in_a_history_is_estimated():
+def test_a_turn_seen_only_in_a_history_is_estimated_from_its_own_family():
     hist = make_row(src="claude_history", harness="claude-cli", kind="prompt", ts=T0, text="plan the recap",
                     session="h", author="human")
-    other = make_row(src="t3", harness="t3", kind="prompt", ts=T0 + 5000, text="something else", session="t",
-                     author="human")
-    reply = make_row(src="t3", harness="t3", kind="reply", ts=T0 + 5010, text="one two three four", session="t",
-                     author="human", turn=other["id"])
-    assert T.fold([hist, other, reply])["read"]["reply_words_estimated"] == 4
+    cli = make_row(src="claude_code", harness="claude-cli", kind="prompt", ts=T0 + 5000, text="something else",
+                   session="c", author="human")
+    cli_reply = make_row(src="claude_code", harness="claude-cli", kind="reply", ts=T0 + 5010,
+                         text="one two three four", session="c", author="human", turn=cli["id"])
+    t3 = make_row(src="t3", harness="t3", kind="prompt", ts=T0 + 9000, text="a third thing", session="t",
+                  author="human")
+    t3_reply = make_row(src="t3", harness="t3", kind="reply", ts=T0 + 9010, text=" ".join(["w"] * 40),
+                        session="t", author="human", turn=t3["id"])
+    read = T.fold([hist, cli, cli_reply, t3, t3_reply])["read"]
+    assert read["reply_words_estimated"] == 4  # the CLI family's mean, not T3's
+    assert read["unestimated_prompts"] == 0
+
+
+def test_a_family_with_no_measured_replies_is_not_estimated_from_another():
+    hist = make_row(src="codex_history", harness="codex:history", kind="prompt", ts=T0, text="codex prompt",
+                    session="h", author="human")
+    t3 = make_row(src="t3", harness="t3", kind="prompt", ts=T0 + 9000, text="a t3 prompt", session="t",
+                  author="human")
+    t3_reply = make_row(src="t3", harness="t3", kind="reply", ts=T0 + 9010, text=" ".join(["w"] * 10),
+                        session="t", author="human", turn=t3["id"])
+    read = T.fold([hist, t3, t3_reply])["read"]
+    assert read["reply_words_estimated"] == 0 and read["unestimated_prompts"] == 1
 
 
 def test_cross_store_match_takes_the_closest_turn():
