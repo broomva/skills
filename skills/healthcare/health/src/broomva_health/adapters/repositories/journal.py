@@ -37,7 +37,7 @@ _CLOUD_MARKERS = (
     "/nextcloud/",
     "/owncloud/",
     "/pcloud drive/",
-    "/mega/",
+    "/megasync/",
     "/sync.com/",
     "/syncthing/",
     "/seafile/",
@@ -111,10 +111,13 @@ def private_dir_problems(path: Path) -> list[str]:
             break
     probe = str(p).lower() + "/"
     synced_by_marker = any(m in probe for m in _CLOUD_MARKERS)
-    # Sync clients that mark their root with a file, wherever it lives.
+    # Sync clients that mark their root with a file. Only folders strictly below HOME are
+    # checked: HOME itself holds client config (~/.dropbox, ~/.sync), not a sync root.
+    home = Path.home().resolve()
+    below_home = [q for q in (p, *p.parents) if home in q.parents]
     synced_by_root = any(
         (parent / mark).exists()
-        for parent in (p, *p.parents)
+        for parent in below_home
         for mark in (".stfolder", ".sync", ".nextcloudsync.log", ".owncloudsync.log", ".dropbox")
     )
     if synced_by_marker or synced_by_root:
@@ -140,7 +143,7 @@ class JsonlJournal:
     def record(self, day: str, fields: dict[str, Any], *, at: str | None = None) -> dict[str, Any]:
         """Merge ``fields`` into ``day``'s entry and persist atomically. Returns the merged entry."""
         if not _is_iso_day(day):
-            raise ValueError(f"date must be a real YYYY-MM-DD date, got {day!r}")
+            raise ValueError("date must be a real YYYY-MM-DD date")
         if self.path.exists() and not self.path.is_file():
             raise ValueError(f"{self.path} exists and is not a regular file")
         if self.path.is_symlink():

@@ -77,7 +77,7 @@ Whatever the action, the line is said plainly and **first**, before any other re
 
 **stop** means nothing else that turn: no snapshot, no sync, no questions, no storage beyond
 one marker, `health checkin record safety_stop=yes`, with no words, so the low-days row
-above can count that day. Resume another time, only if the user wants to. **say first, then
+above can count that day. Answers already recorded earlier that day are kept, never erased. Resume another time, only if the user wants to. **say first, then
 continue** means the check-in goes on after the line.
 
 ## Storage
@@ -97,7 +97,7 @@ health checkin show --days 7
   [References/privacy-architecture.md](../References/privacy-architecture.md)). The file is
   0600. `--journal` (or `$BROOMVA_HEALTH_JOURNAL`) picks another file only if its folder is
   owner-only, not inside a git work tree and not inside a known cloud-synced folder (iCloud,
-  Dropbox, Google Drive, OneDrive, Box, Nextcloud, ownCloud, Syncthing, pCloud, MEGA, Seafile). Otherwise the
+  Dropbox, Google Drive, OneDrive, Box, Nextcloud, ownCloud, Syncthing, pCloud, MEGA, Seafile; sync-root markers count only below HOME). Otherwise the
   command refuses and writes nothing.
 - **One object per date, one line each.** Recording merges into that date's object: new keys
   win and earlier answers stay. Every write takes an exclusive lock (10 s at most), rewrites

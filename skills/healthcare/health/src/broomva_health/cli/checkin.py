@@ -61,12 +61,12 @@ def record(
 ) -> None:
     """Merge answers into a day's entry (new keys win, earlier answers stay)."""
     parsed: dict[str, object] = {}
-    for item in fields:
+    for position, item in enumerate(fields, start=1):
         key, sep, value = item.partition("=")
         if not sep or not key.strip():
-            raise typer.BadParameter(f"expected key=value, got {item!r}")
+            raise typer.BadParameter(f"argument {position} is not key=value")
         if key.strip() in ("date", "at"):
-            raise typer.BadParameter(f"{key!r} is set by the command; use --date")
+            raise typer.BadParameter("date and at are set by the command; use --date")
         try:
             parsed[key.strip()] = parse_value(key.strip(), value)
         except ValueError as exc:
@@ -75,11 +75,11 @@ def record(
         # A safety stop stores the marker and nothing else (Workflows/CheckIn.md).
         raise typer.BadParameter("safety_stop=yes is recorded alone, with no other answers")
     if day is not None and not re.fullmatch(r"\d{4}-\d{2}-\d{2}", day):
-        raise typer.BadParameter(f"--date must be YYYY-MM-DD, got {day!r}")
+        raise typer.BadParameter("--date must be YYYY-MM-DD")
     try:
         when = date.fromisoformat(day).isoformat() if day else date.today().isoformat()
     except ValueError as exc:
-        raise typer.BadParameter(f"--date is not a real date: {day!r}") from exc
+        raise typer.BadParameter("--date is not a real date") from exc
     j = _journal(journal)
     try:
         entry = j.record(when, parsed, at=datetime.now().strftime("%H:%M"))

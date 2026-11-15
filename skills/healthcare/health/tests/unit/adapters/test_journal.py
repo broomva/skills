@@ -309,7 +309,7 @@ def test_a_safety_stop_is_recorded_alone(tmp_path: Path, monkeypatch: pytest.Mon
     assert json.loads((tmp_path / "data" / "journal.jsonl").read_text())["safety_stop"] is True
 
 
-@pytest.mark.parametrize("parts", [("Nextcloud", "x"), ("pCloud Drive", "x"), ("MEGA", "x")])
+@pytest.mark.parametrize("parts", [("Nextcloud", "x"), ("pCloud Drive", "x"), ("MEGAsync", "x")])
 def test_more_cloud_folders_are_refused(tmp_path: Path, parts: tuple[str, ...]) -> None:
     d = tmp_path.joinpath(*parts)
     d.mkdir(parents=True)
@@ -317,7 +317,10 @@ def test_more_cloud_folders_are_refused(tmp_path: Path, parts: tuple[str, ...]) 
     assert any("cloud-synced" in p for p in private_dir_problems(d))
 
 
-def test_a_sync_root_marker_file_is_refused(tmp_path: Path) -> None:
+def test_a_sync_root_marker_file_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
     root = tmp_path / "anything"
     (root / "health").mkdir(parents=True)
     (root / ".stfolder").mkdir()
@@ -349,3 +352,45 @@ def test_scores_must_be_between_zero_and_ten() -> None:
             parse_value("body_score", bad)
     assert parse_value("body_score", "0") == 0
     assert parse_value("body_score", "10") == 10
+
+
+def test_client_config_in_home_does_not_refuse_the_default_dir(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    home = tmp_path / "home"
+    (home / ".dropbox").mkdir(parents=True)
+    (home / ".sync").mkdir()
+    data = home / "broomva-health"
+    data.mkdir(mode=0o700)
+    os.chmod(data, 0o700)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: home))
+    assert private_dir_problems(data) == []
+    synced = home / "Shared" / "health"
+    synced.mkdir(parents=True)
+    os.chmod(synced, 0o700)
+    (home / "Shared" / ".sync").mkdir()
+    assert any("cloud-synced" in p for p in private_dir_problems(synced))
+
+
+def test_rejected_input_is_never_echoed(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from broomva_health.cli.checkin import app
+
+    monkeypatch.setenv("BROOMVA_HEALTH_DATA_DIR", str(tmp_path / "data"))
+    monkeypatch.delenv("BROOMVA_HEALTH_JOURNAL", raising=False)
+    runner = CliRunner()
+    for args in (
+        ["record", "a very private sentence"],
+        ["record", "body_score=private-words"],
+        ["record", "a=1", "--date", "private-words"],
+    ):
+        r = runner.invoke(app, args)
+        assert r.exit_code == 2
+        assert "private" not in r.output
+
+
+def test_a_safety_stop_keeps_earlier_answers_that_day(tmp_path: Path) -> None:
+    j = JsonlJournal(tmp_path / "journal.jsonl")
+    j.record("2026-01-15", {"body": "Okay"})
+    j.record("2026-01-15", {"safety_stop": True})
+    assert j.read()["2026-01-15"]["body"] == "Okay"
+    assert j.read()["2026-01-15"]["safety_stop"] is True
