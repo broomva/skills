@@ -170,17 +170,41 @@ def pair_turns(events, *, src: str, session: Optional[str], harness, author, att
         yield reply_row(final)
 
 
+def _content(path: Path) -> bytes:
+    """A transcript's bytes, decompressed when it is ``.zst``."""
+    if path.name.endswith(".zst"):
+        zstd = shutil.which("zstd")
+        if not zstd:
+            return b""
+        try:
+            return subprocess.run([zstd, "-dc", str(path)], capture_output=True, timeout=300).stdout
+        except (OSError, subprocess.SubprocessError):
+            return b""
+    try:
+        return path.read_bytes()
+    except OSError:
+        return b""
+
+
 def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[str, Path]]],
-                since: Optional[float] = None) -> List[Tuple[str, Path]]:
+                since: Optional[float] = None, append_only: bool = False) -> List[Tuple[str, Path]]:
     """One file per key across several roots: the one place copies are chosen.
 
     Live stores and their archives hold the same files under the same names.
-    ``candidates(root)`` yields ``(key, path)``; for each key the larger file
-    wins, then the newer write, then the earlier root (live before archive).
+    ``candidates(root)`` yields ``(key, path)``. Size is never evidence of
+    freshness, because an edit can shorten a file:
+
+    * the newest write wins; on equal mtime the earlier root (live before
+      archive) wins;
+    * for ``append_only`` stores (transcripts that only grow), an older copy
+      replaces it when its content, decompressed, *extends* the newest one
+      byte for byte: the newest was truncated, and the longer copy holds all of
+      it plus more.
+
     Archive revisions are never candidates. Every multi-root reader uses this,
-    and the reader contract suite checks each one against a live/archive pair.
+    and the reader contract suite checks each one against live/archive pairs.
     """
-    chosen: Dict[str, Tuple[tuple, Path]] = {}
+    found: Dict[str, List[Tuple[int, int, Path]]] = collections.defaultdict(list)
     for root_index, root in enumerate(roots):
         for key, path in candidates(root):
             if is_archive_revision(path.name):
@@ -191,10 +215,19 @@ def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[s
                 continue
             if since and st.st_mtime < since:
                 continue
-            rank = (st.st_size, st.st_mtime_ns, -root_index)
-            if key not in chosen or rank > chosen[key][0]:
-                chosen[key] = (rank, path)
-    return [(key, chosen[key][1]) for key in sorted(chosen)]
+            found[key].append((st.st_mtime_ns, -root_index, path))
+    picked: List[Tuple[str, Path]] = []
+    for key in sorted(found):
+        copies = sorted(found[key], key=lambda c: (c[0], c[1]), reverse=True)
+        best = copies[0][2]
+        if append_only and len(copies) > 1:
+            best_bytes = _content(best)
+            for _mtime, _root, other in copies[1:]:
+                other_bytes = _content(other)
+                if len(other_bytes) > len(best_bytes) and other_bytes.startswith(best_bytes):
+                    best, best_bytes = other, other_bytes
+        picked.append((key, best))
+    return picked
 
 
 # --------------------------------------------------------------------------- T3
@@ -247,9 +280,12 @@ def read_t3(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, R
                 continue
             _observe(report, ts)
             harness = harness_label("t3", provider, "provider")
-            state = runs.setdefault((thread, run), {"prompt": None, "author": None, "last": None})
+            state = runs.setdefault((thread, run), {"prompt": None, "author": None, "last": None, "closed": False})
             if role == "user":
                 if is_injected(text):
+                    # The turn ends here: later replies in this run answer the injected
+                    # message, not the person's prompt.
+                    state["closed"] = True
                     continue
                 created_by = ext_str(created_by)
                 author = {"user": "human", "agent": "agent"}.get(created_by, "unknown")
@@ -261,7 +297,7 @@ def read_t3(db: Optional[Path], since: Optional[float]) -> Tuple[SourceReport, R
                 if state["prompt"] is None:
                     state["prompt"], state["author"] = row["id"], author
                 yield row
-            elif role == "assistant":
+            elif role == "assistant" and not state["closed"]:
                 state["last"] = (ts, text, harness, message_id)
         for (thread, _run), state in runs.items():
             if state["last"] and state["prompt"]:
@@ -401,7 +437,7 @@ def read_claude_projects(
             for path in root.glob("*/*.jsonl"):
                 yield path.stem, path
 
-        for sid, path in pick_copies(roots, candidates, since):
+        for sid, path in pick_copies(roots, candidates, since, append_only=True):
             report.files += 1
             yield from _claude_session(path, sid, since, paseo_ids, report)
 
@@ -552,7 +588,7 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
                     if ".jsonl" in fname:
                         yield (fname[: -len(".zst")] if fname.endswith(".zst") else fname), Path(dirpath) / fname
 
-        for base, path in pick_copies(roots, candidates, since):
+        for base, path in pick_copies(roots, candidates, since, append_only=True):
             report.files += 1
             yield from _codex_file(path, base.split(".")[0][-36:], since, report)
 
@@ -601,7 +637,11 @@ def _codex_file(path: Path, sid: str, since: Optional[float], report: SourceRepo
             payload = rec.get("payload") if isinstance(rec.get("payload"), dict) else {}
             kind = payload.get("type")
             if kind == "user_message":
-                yield "prompt", ts, _text(payload.get("message")), None
+                message = _text(payload.get("message"))
+                if message and is_injected(message):
+                    yield "boundary", ts, None, None
+                else:
+                    yield "prompt", ts, message, None
             elif kind == "agent_message":
                 yield "reply", ts, _text(payload.get("message")), None
             elif kind == "task_complete":
@@ -682,7 +722,9 @@ def read_gemini(roots: List[Path], since: Optional[float]) -> Tuple[SourceReport
                     if ts is None or (since and ts < since) or not content:
                         continue
                     role = {"user": "prompt", "gemini": "reply"}.get(ext_str(msg.get("type")))
-                    if role:
+                    if role == "prompt" and is_injected(content):
+                        yield "boundary", ts, None, None
+                    elif role:
                         yield role, ts, content, _sid(msg.get("id"))
 
             yield from pair_turns(events(), src=name, session=sid, report=report, harness="gemini-cli",

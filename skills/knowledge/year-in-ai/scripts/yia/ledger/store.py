@@ -27,7 +27,7 @@ import time
 from pathlib import Path
 from typing import Dict, Iterable, Iterator, List, Optional, Set, Tuple
 
-from . import ROW_VERSION, SCHEMA, exclusive_lock, revision_identity
+from . import ROW_VERSION, SCHEMA, exclusive_lock, revision_identity, valid_row
 from . import sources as S
 
 DEFAULT_LEDGER = "~/.local/share/year-in-ai/ledger"
@@ -153,7 +153,7 @@ class Ledger:
                         continue
                     if not isinstance(row, dict):
                         continue
-                    if row.get("v") == ROW_VERSION and not all(isinstance(row.get(k), str) for k in ("id", "o", "h")):
+                    if row.get("v") == ROW_VERSION and not valid_row(row):
                         continue  # well-formed JSON but not a row: skipped, as rows() counts it
                     if row.get("v") != ROW_VERSION:
                         raise LegacyLedgerError(
@@ -247,8 +247,7 @@ class Ledger:
                     except ValueError:
                         self.malformed_lines += 1
                         continue
-                    if not isinstance(row, dict) or (row.get("v") == ROW_VERSION and not all(
-                            isinstance(row.get(k), str) for k in ("id", "o", "h"))):
+                    if not isinstance(row, dict) or (row.get("v") == ROW_VERSION and not valid_row(row)):
                         self.malformed_lines += 1
                         continue
                     if row.get("v") != ROW_VERSION:
@@ -272,7 +271,6 @@ def harvest(ledger: Ledger, roots: Dict[str, List[Path]], since: Optional[float]
     started = time.time()
     reports = []
     added: Dict[str, int] = {}
-    ledger.check_schema()
     for report, rows in readers(roots, since, bridged_offset):
         for month, count in ledger.write(rows).items():
             added[month] = added.get(month, 0) + count

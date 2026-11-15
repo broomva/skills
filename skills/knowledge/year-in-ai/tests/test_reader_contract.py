@@ -396,11 +396,31 @@ def test_every_multi_root_reader_is_listed():
                                if list(inspect.signature(fn).parameters)[0] == "roots"}
 
 
-@pytest.mark.parametrize("store", sorted(MULTI_ROOT))
-def test_a_longer_archived_copy_beats_a_truncated_live_one(store, tmp_path):
-    # The longer archive is also the OLDER file: size must decide, not mtime.
+#: Stores whose files only grow; the rest (chat JSON, rendered markdown) are rewritten whole.
+APPEND_ONLY = {"claude_code", "codex"}
+
+
+@pytest.mark.parametrize("store", sorted(APPEND_ONLY))
+def test_a_longer_archive_that_extends_a_truncated_live_copy_wins(store, tmp_path):
+    # The archive is the OLDER file but holds the live bytes plus more: the live copy was truncated.
     prompts = _two_roots(store, tmp_path, [turn(1)], [turn(1), turn(2)], live_newer=True)
     assert len(prompts) == 2
+
+
+@pytest.mark.parametrize("store", sorted(set(MULTI_ROOT) - APPEND_ONLY))
+def test_a_newer_shorter_edit_beats_an_older_longer_archive(store, tmp_path):
+    # Size is not freshness: an edit can shorten a rewritten file.
+    prompts = _two_roots(store, tmp_path, [turn(1, prompt="short")], [turn(1, prompt="a much longer old prompt")],
+                         live_newer=True)
+    assert [p["h"] for p in prompts] == [LEDGER.text_hash("short")]
+
+
+@pytest.mark.parametrize("store", sorted(APPEND_ONLY))
+def test_a_newer_shorter_diverged_copy_beats_an_older_longer_one(store, tmp_path):
+    # Neither extends the other (an edit, not a truncation): the newest write wins.
+    prompts = _two_roots(store, tmp_path, [turn(1, prompt="short")], [turn(1, prompt="a much longer old prompt")],
+                         live_newer=True)
+    assert [p["h"] for p in prompts] == [LEDGER.text_hash("short")]
 
 
 @pytest.mark.parametrize("store", sorted(MULTI_ROOT))

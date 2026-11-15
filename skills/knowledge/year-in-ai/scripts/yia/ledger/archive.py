@@ -189,7 +189,7 @@ def archive(root: Path, ledger_dir: Optional[Path] = None,
     """Copy every pruning store, and the ledger itself, into ``root``."""
     if not root.is_dir():
         raise FileNotFoundError(f"archive root {root} is not mounted or does not exist")
-    pairs = [(Path(os.path.expanduser(raw)), sub, (".jsonl", ".jsonl.zst")) for raw, sub in targets or DEFAULT_TARGETS]
+    pairs = [(Path(os.path.expanduser(raw)), sub, (".jsonl", ".jsonl.zst")) for raw, sub in (DEFAULT_TARGETS if targets is None else targets)]
     if ledger_dir is not None:
         pairs.append((Path(ledger_dir), "year-in-ai-ledger", (".jsonl",)))
     # A destination inside its source would copy its own output on every walk.
