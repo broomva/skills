@@ -19,7 +19,11 @@ own words a day, stored next to the watch data so the two can be read together.
 
 ## Protocol
 
-1. **Snapshot first.** `health status`; if the store is stale, sync. Read last night's sleep
+0. **Safety before anything.** If the user's message, or any answer at any step, shows
+   danger (self-harm, an emergency symptom happening now), stop the protocol: say the
+   [safety lines](#safety-lines-not-coaching) first and do nothing else that turn. No
+   snapshot, no sync, no questions, no storage. Resume another time, only if the user wants to.
+1. **Snapshot.** `health status`; if the store is stale, sync. Read last night's sleep
    (`health raw --endpoint sleep` for the night) and the last 7 journal entries.
 2. **Ask, don't interrogate.** One structured question call (AskUserQuestion in Claude Code),
    four questions, each with 3–4 options plus free text. Keep the wording warm and short:
@@ -31,9 +35,18 @@ own words a day, stored next to the watch data so the two can be read together.
    moved · time outside · time with someone · reflection), a free-text note, and
    "Any intention for tomorrow?". Its options are up to three drawn from what the user has
    chosen or done before, plus their own words.
-3. **Record** one JSON line per day in the journal (see *Storage*). The user's words go in
-   verbatim; options map to 0–10 scores (for example Strong 8, Okay 5, Tired 3, Unwell 1).
-   A "hard to say" answer gets no score, never a guessed one.
+3. **Record** the answers in the journal (see *Storage*). The label goes in verbatim, and so
+   does any free-text answer. The score comes from this table and nowhere else, so trends stay
+   comparable week to week:
+
+   | Dimension | Labels → score |
+   |---|---|
+   | Body | Strong 8 · Okay 5 · Tired or heavy 3 · Unwell 1 |
+   | Mind | Calm, clear 8 · Okay 5 · Stressed or anxious 3 · Low or flat 2 |
+   | Spirit | Yes 8 · Partly 5 · Disconnected 2 · Hard to say: no score |
+
+   A free-text answer has no score: never guess one. A user-defined item is scored only on
+   a scale the user set when they defined it, and that scale is stored in the brief.
 4. **Reflect in 4–6 lines.** One line per dimension, each tied to a number or a trend
    (measured data against the user's own baseline, never a population norm), then the
    intention the user chose, repeated back. Observations, not instructions: the v1
@@ -68,11 +81,13 @@ Say these plainly, and first:
   and not inside a cloud-synced folder. Otherwise it refuses and uses the default.
 - **One object per date.** Writing a date merges into that date's object: new keys win and
   old keys stay, so a late follow-up never erases the first answers. Writes are
-  single-writer: take an exclusive lock on `journal.lock` (`flock`), read every line, merge,
+  single-writer: take an exclusive lock on `journal.lock` (`flock`, wait at most 10 s), read every line, merge,
   write the whole file to a temp file in the same directory, fsync it, `os.replace` it over
   the journal, then release the lock. A scheduled check-in and an on-demand one can then
   never interleave, duplicate a date or leave half a line. A line that does not parse is kept
-  verbatim and reported, never dropped.
+  verbatim and reported, never dropped. If the lock can't be taken in 10 s, or the write
+  fails, write nothing. Tell the user, and keep the answers in the reply so they can be
+  recorded next time. A missing journal is created on the first write (0600).
 
 ```json
 {"date": "2026-11-15", "at": "21:04",
@@ -89,8 +104,10 @@ allowed. Readers must ignore keys they don't know.
 A long-lived agent thread with a daily scheduled prompt works better than a desktop
 notification: the agent asks, records and reflects in one place, and keeps its own brief
 (protocol, baselines, current context) in a private file it re-reads after every context
-compaction. The scheduled prompt should only say "read the brief and run the check-in", so
-no personal detail sits in the scheduler.
+compaction. The brief lives next to the journal, as `checkin-brief.md` in the data
+directory, with the same rules: 0600, outside every repo and every cloud-synced folder. The
+scheduled prompt should only say "read the brief and run the check-in", so no personal
+detail sits in the scheduler.
 
 ## Example reply
 
