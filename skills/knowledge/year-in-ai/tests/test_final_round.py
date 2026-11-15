@@ -86,3 +86,52 @@ def test_out_of_range_timestamps_are_malformed_rows(tmp_path, bad_ts):
         handle.write(json.dumps(broken) + "\n")
     rows = list(ledger.rows())
     assert [r["id"] for r in rows] == [good["id"]] and ledger.malformed_lines == 1
+
+
+# --- verification of f34c21f: an unreadable copy must never lose to, or hide behind, a readable one
+
+
+def _copies(tmp_path, compressed_newest):
+    live, arch = tmp_path / "live", tmp_path / "arch"
+    short = _codex_rollout(live, [turn(1)], compress=False)
+    long = _codex_rollout(arch, [turn(i) for i in range(1, 31)], compress=True)
+    long = long.with_name(long.name + ".zst")
+    newer, older = (long, short) if compressed_newest else (short, long)
+    os.utime(older, (T0, T0))
+    os.utime(newer, (T0 + 100, T0 + 100))
+    return [live, arch]
+
+
+@pytest.mark.skipif(not S.find_zstd(), reason="zstd not installed")
+@pytest.mark.parametrize("compressed_newest", [False, True])
+def test_an_unreadable_competing_copy_is_reported_not_dropped(tmp_path, monkeypatch, compressed_newest):
+    roots = _copies(tmp_path, compressed_newest)
+    monkeypatch.setattr(S, "find_zstd", lambda: None)
+    report, rows = S.read_codex_sessions(roots, None)
+    rows = list(rows)
+    assert report.skipped == 1 and "zstd not found" in report.reason
+    assert len(rows) == 1  # the readable live copy (one prompt) is still read
+
+
+@pytest.mark.skipif(not S.find_zstd(), reason="zstd not installed")
+def test_a_readable_longer_archive_still_wins(tmp_path):
+    report, rows = S.read_codex_sessions(_copies(tmp_path, False), None)
+    assert report.skipped == 0 and len(list(rows)) == 30
+
+
+def test_a_failed_decompression_is_unreadable_not_empty(tmp_path, monkeypatch):
+    fake = tmp_path / "zstd"
+    fake.write_text("#!/bin/sh\nexit 1\n")
+    fake.chmod(0o755)
+    monkeypatch.setattr(S, "find_zstd", lambda: str(fake))
+    broken = tmp_path / "x.jsonl.zst"
+    broken.write_bytes(b"not zstd")
+    assert S._content(broken) is None
+
+
+def test_a_huge_integer_timestamp_is_rejected_without_overflow():
+    from yia.ledger import valid_row
+    good = make_row(src="t3", harness="t3", kind="prompt", ts=T0, text="valid", session="s", author="human",
+                    occurrence="m")
+    assert valid_row(good)
+    assert valid_row(dict(good, ts=10 ** 400)) is False

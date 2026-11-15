@@ -182,24 +182,30 @@ def find_zstd() -> Optional[str]:
     return next((p for p in ZSTD_LOCATIONS if os.path.isfile(p) and os.access(p, os.X_OK)), None)
 
 
-def _content(path: Path) -> bytes:
-    """A transcript's bytes, decompressed when it is ``.zst``."""
+def _content(path: Path) -> Optional[bytes]:
+    """A transcript's bytes, decompressed when it is ``.zst``; None when they cannot be read.
+
+    None is not empty: an unreadable copy must never look like a zero-length
+    prefix that every other copy extends.
+    """
     if path.name.endswith(".zst"):
         zstd = find_zstd()
         if not zstd:
-            return b""
+            return None
         try:
-            return subprocess.run([zstd, "-dc", str(path)], capture_output=True, timeout=300).stdout
+            done = subprocess.run([zstd, "-dc", str(path)], capture_output=True, timeout=300)
         except (OSError, subprocess.SubprocessError):
-            return b""
+            return None
+        return done.stdout if done.returncode == 0 else None
     try:
         return path.read_bytes()
     except OSError:
-        return b""
+        return None
 
 
 def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[str, Path]]],
-                since: Optional[float] = None, append_only: bool = False) -> List[Tuple[str, Path]]:
+                since: Optional[float] = None, append_only: bool = False,
+                unreadable: Optional[Callable[[Path], None]] = None) -> List[Tuple[str, Path]]:
     """One file per key across several roots: the one place copies are chosen.
 
     Live stores and their archives hold the same files under the same names.
@@ -211,7 +217,11 @@ def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[s
     * for ``append_only`` stores (transcripts that only grow), an older copy
       replaces it when its content, decompressed, *extends* the newest one
       byte for byte: the newest was truncated, and the longer copy holds all of
-      it plus more.
+      it plus more. Only readable copies compete: a copy whose bytes cannot be
+      read (zstd missing, a failed decompression) is passed to ``unreadable``
+      unless it is the one returned, so the caller reports it as skipped
+      instead of losing it silently. When no copy is readable the newest is
+      returned and the caller's own read reports it.
 
     Archive revisions are never candidates. Every multi-root reader uses this,
     and the reader contract suite checks each one against live/archive pairs.
@@ -233,11 +243,19 @@ def pick_copies(roots: List[Path], candidates: Callable[[Path], Iterator[Tuple[s
         copies = sorted(found[key], key=lambda c: (c[0], c[1]), reverse=True)
         best = copies[0][2]
         if append_only and len(copies) > 1:
-            best_bytes = _content(best)
-            for _mtime, _root, other in copies[1:]:
-                other_bytes = _content(other)
-                if len(other_bytes) > len(best_bytes) and other_bytes.startswith(best_bytes):
-                    best, best_bytes = other, other_bytes
+            readable = []
+            lost = []
+            for _mtime, _root, path in copies:
+                data = _content(path)
+                (lost if data is None else readable).append((path, data))
+            if readable:
+                best, best_bytes = readable[0]
+                for other, other_bytes in readable[1:]:
+                    if len(other_bytes) > len(best_bytes) and other_bytes.startswith(best_bytes):
+                        best, best_bytes = other, other_bytes
+            for path, _data in lost:
+                if path != best and unreadable is not None:
+                    unreadable(path)
         picked.append((key, best))
     return picked
 
@@ -449,7 +467,11 @@ def read_claude_projects(
             for path in root.glob("*/*.jsonl"):
                 yield path.stem, path
 
-        for sid, path in pick_copies(roots, candidates, since, append_only=True):
+        def lost(path: Path) -> None:
+            report.skipped += 1
+            report.reason = f"{report.skipped} transcript copy(ies) could not be read"
+
+        for sid, path in pick_copies(roots, candidates, since, append_only=True, unreadable=lost):
             report.files += 1
             yield from _claude_session(path, sid, since, paseo_ids, report)
 
@@ -600,11 +622,15 @@ def read_codex_sessions(roots: List[Path], since: Optional[float]) -> Tuple[Sour
                     if ".jsonl" in fname:
                         yield (fname[: -len(".zst")] if fname.endswith(".zst") else fname), Path(dirpath) / fname
 
-        for base, path in pick_copies(roots, candidates, since, append_only=True):
+        def lost(path: Path) -> None:
+            # Never silently: a skipped transcript makes every total incomplete.
+            report.skipped += 1
+            why = "zstd not found" if find_zstd() is None else "unreadable"
+            report.reason = f"{report.skipped} transcript copy(ies) not read: {why}"
+
+        for base, path in pick_copies(roots, candidates, since, append_only=True, unreadable=lost):
             if path.name.endswith(".zst") and find_zstd() is None:
-                # Never silently: a skipped transcript makes every total incomplete.
-                report.skipped += 1
-                report.reason = f"{report.skipped} compressed transcript(s) not read: zstd not found"
+                lost(path)
                 continue
             report.files += 1
             yield from _codex_file(path, base.split(".")[0][-36:], since, report)

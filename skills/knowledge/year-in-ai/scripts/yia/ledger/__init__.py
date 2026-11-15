@@ -330,7 +330,7 @@ def valid_row(row) -> bool:
     return (all(isinstance(row[k], str) and row[k] for k in texts)
             and all(isinstance(row[k], int) and not isinstance(row[k], bool) and row[k] >= 0 for k in ints)
             and isinstance(row["ts"], (int, float)) and not isinstance(row["ts"], bool)
-            and math.isfinite(row["ts"]) and 0 <= row["ts"] < TS_CEILING
+            and 0 <= row["ts"] < TS_CEILING and math.isfinite(row["ts"])
             and row["kind"] in KINDS and row["author"] in AUTHORS
             and (row["seq"] is None or (isinstance(row["seq"], int) and not isinstance(row["seq"], bool)))
             and isinstance(row["flags"], list) and isinstance(row["attr"], dict)

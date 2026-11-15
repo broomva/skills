@@ -185,8 +185,9 @@ def cmd_harvest(args: argparse.Namespace) -> int:
         print(f"  {state}{src['source']:<15} {src['records']:>8,} records  {span}")
     skipped = [src for src in entry["sources"] if src.get("skipped")]
     for src in skipped:
-        print(f"harvest: WARNING {src['source']}: {src['reason']} — totals are incomplete. "
-              "Install zstd (brew install zstd) and run harvest again.", file=sys.stderr)
+        hint = " Install zstd (brew install zstd) and run harvest again." if "zstd" in (src["reason"] or "") else ""
+        print(f"harvest: WARNING {src['source']}: {src['reason']} — totals are incomplete.{hint}",
+              file=sys.stderr)
     archive_to = args.archive_to or config.get("archive_to")
     if archive_to:
         try:
