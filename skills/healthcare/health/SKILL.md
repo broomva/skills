@@ -238,9 +238,12 @@ earlier wearables (Apple Watch, Oura, Whoop, Withings, phone step counts) gets i
    or set `[apple_health] export_path`. The source registers only once an export exists.
 3. `health backfill --source apple_health --from 2018-01-01` stream-parses the zip in place
    (no extraction, flat memory: 1M records in about 20 s) into `traces/apple_health.db`.
-   **Import-only:** `health sync` does nothing for this source (an export has no reliable cursor, and
-   a progress marker can outlive the data). Re-run the backfill after each new export; it rewrites
-   the same rows. Only files whose root element is `<HealthData>` are picked up.
+   **Import-only:** Apple Health holds several producers and has no reconciliation projection yet
+   (BRO-3793), so it is read only through `backfill`, `raw` and `series --producer`. `sync`, `auth`,
+   `context`, `daily-note` and synthesis skip it (`IMPORT_ONLY_SOURCES`), because they assume one stream
+   per source. Re-run the backfill after each new export: it rewrites the same rows, keyed on each
+   record's instant whatever UTC offset the export used. Only files whose root element is
+   `<HealthData>` are picked up.
 
 Every sample keeps its producer: `device` (manufacturer, hardware model) and `metadata.source_name`
 (the app that wrote it). Comparisons should stay within one producer, because devices differ in level.

@@ -26,7 +26,7 @@ import re
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 from typing import IO, Any, Final, cast
 from xml.etree import ElementTree as ET
@@ -287,16 +287,19 @@ def _to_sample(
     if day < start or day > end:
         return None
     producer = a.get("sourceName") or ""
+    end_utc = parse_ts(a["endDate"]).astimezone(UTC)
     common: dict[str, Any] = {
         "source": Source.APPLE_HEALTH,
         "device": parse_device(a.get("device")),
         "start_ts": parse_ts(a["startDate"]),
-        "end_ts": parse_ts(a["endDate"]),
+        "end_ts": end_utc,
         "producer": producer,
         # Full natural identity: a record is its producer, interval and (for
         # categories) value. Re-importing the same export rewrites the same rows.
         "record_key": "\x1f".join(
-            (producer, a["endDate"], a.get("value", "") if kind == SLEEP_TYPE else "")
+            # The instant, not its rendering: the same record re-exported under
+            # another UTC offset must map to the same row.
+            (producer, end_utc.isoformat(), a.get("value", "") if kind == SLEEP_TYPE else "")
         ),
         "metadata": {
             k: v

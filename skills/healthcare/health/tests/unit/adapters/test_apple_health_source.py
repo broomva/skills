@@ -576,3 +576,28 @@ def test_a_utf16_export_gets_a_clear_refusal(tmp_path: Path) -> None:
     )
     with pytest.raises(SourceUnavailable, match="UTF-16"):
         _samples(path, date(2024, 1, 1), date(2024, 12, 31))
+
+
+def test_the_same_record_under_another_offset_updates_not_duplicates(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    hr = f"{HK}HeartRate"
+    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
+    repo.migrate()
+    for i, stamp in enumerate(("2024-04-01 09:00:00 +0000", "2024-04-01 04:00:00 -0500")):
+        path = _mini_export(tmp_path / f"{i}.zip", [_record(hr, stamp, stamp, "60", "count/min")])
+        AppleHealthTraceSource(paths=tmp_paths, export_path=str(path)).backfill(
+            repo=repo,
+            token_store=None,  # type: ignore[arg-type]
+            rate_limiter=None,  # type: ignore[arg-type]
+            start=date(2024, 3, 31),
+            end=date(2024, 4, 2),
+        )
+    got = repo.query_quantity(
+        Source.APPLE_HEALTH,
+        MetricCode.HEART_RATE,
+        datetime(2024, 4, 1, tzinfo=UTC),
+        datetime(2024, 4, 2, tzinfo=UTC),
+    )
+    assert len(got) == 1
+    repo.close()

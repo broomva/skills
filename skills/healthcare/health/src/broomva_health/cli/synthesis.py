@@ -21,6 +21,7 @@ from typing import TYPE_CHECKING, Any
 import typer
 
 from broomva_health.cli.formatters import format_value
+from broomva_health.domain.source import single_stream
 from broomva_health.synthesis.service import SynthesisService
 
 if TYPE_CHECKING:
@@ -59,7 +60,7 @@ def synthesis_by_source(container: Container, on_date: date) -> dict[str, Any]:
     ``context`` command's ``synthesis`` section so both surfaces agree.
     """
     out: dict[str, Any] = {}
-    for src in container.sources:
+    for src in single_stream(container.sources):  # import-only sources have no reconciliation
         try:
             repo = container.repository_for(src)
         except Exception as exc:  # a source whose DB won't open shouldn't kill the rest

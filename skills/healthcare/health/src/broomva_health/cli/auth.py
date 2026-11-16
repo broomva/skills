@@ -10,7 +10,7 @@ import typer
 from broomva_health.application.status import HealthStatusUseCase
 from broomva_health.cli.formatters import format_value
 from broomva_health.domain.errors import AuthRequired, HealthError
-from broomva_health.domain.source import Source
+from broomva_health.domain.source import IMPORT_ONLY_SOURCES, Source
 
 if TYPE_CHECKING:
     from broomva_health.cli.container import Container
@@ -47,6 +47,9 @@ def login(
     """
 
     container = _container_from_ctx(ctx)
+    if source in IMPORT_ONLY_SOURCES:
+        typer.echo(f"{source.value} needs no login: it is imported from a local export file.")
+        return
     src = container.sources.get(source)
     if src is None:
         typer.secho(f"Source '{source.value}' is not registered.", fg=typer.colors.RED, err=True)

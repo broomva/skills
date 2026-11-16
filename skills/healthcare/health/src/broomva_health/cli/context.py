@@ -15,7 +15,7 @@ import typer
 
 from broomva_health.cli.formatters import format_value
 from broomva_health.domain.metrics import MetricCode
-from broomva_health.domain.source import Source
+from broomva_health.domain.source import Source, single_stream
 
 if TYPE_CHECKING:
     from broomva_health.cli.container import Container
@@ -128,11 +128,13 @@ def context_root(
     # Per-source latest-sample snapshot is what the 'health' and 'weight'
     # sections aggregate over. We collect repositories lazily — that means
     # we never open the Whoop DB if the user said --focus health,training.
-    sources = list(container.sources.keys())
+    # Data sections read one stream per source; import-only sources hold several
+    # producers with no reconciliation yet, so they are listed but not read.
+    sources = single_stream(container.sources.keys())
 
     if section_enabled("profile"):
         document["profile_info"] = {
-            "registered_sources": [src.value for src in sources],
+            "registered_sources": [src.value for src in container.sources],
             "data_dir": str(container.paths.data_dir),
             "vault_dir": str(container.paths.vault_dir),
         }
