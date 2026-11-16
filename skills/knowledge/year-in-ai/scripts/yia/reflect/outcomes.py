@@ -184,15 +184,28 @@ def kg_entities(root: Optional[str]) -> Tuple[dict, List[dict]]:
     return status, entities
 
 
-def _same_repo(episode: dict, pr: dict) -> bool:
-    """Is ``pr`` from the repository the episode ran in? Unknown counts as no."""
-    name = (pr.get("repo") or "").rsplit("/", 1)[-1].lower()
-    if not name:
-        return False
-    for place in (episode.get("repo"), episode.get("cwd")):
-        if place and name in {part.lower() for part in re.split(r"[\\/]", place) if part}:
-            return True
-    return False
+_REMOTE = re.compile(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?\s*$")
+
+
+def remote_slug(directory: Optional[str], runner: "Runner" = None) -> Optional[str]:
+    """``owner/name`` of the git remote ``origin`` of ``directory``, or None when it cannot be known."""
+    if not directory:
+        return None
+    found, _blocked = present([directory], "dir")
+    if not found:
+        return None
+    ok, remote = (runner or run)(["git", "-C", str(found[0]), "remote", "get-url", "origin"])
+    match = _REMOTE.search(remote) if ok else None
+    return match.group(1).lower() if match else None
+
+
+def _same_repo(episode: dict, pr: dict, repo_of) -> bool:
+    """Is ``pr`` from the repository the episode ran in? Only an exact ``owner/name``
+    match of the episode directory's git remote counts; unknown counts as no.
+    A directory or path component that merely shares the repository's name is
+    not identity."""
+    want = (pr.get("repo") or "").lower()
+    return bool(want) and repo_of(episode.get("cwd")) == want
 
 
 def _within(merged_at: Optional[str], first: str, last: str, before: int = 1) -> bool:
@@ -203,8 +216,19 @@ def _within(merged_at: Optional[str], first: str, last: str, before: int = 1) ->
 
 
 def join(episodes: List[dict], sources: Dict[str, dict], prs: List[dict], tickets_state: Dict[str, dict],
-         entities: List[dict]) -> dict:
-    """Link every episode to its outcomes. ``sources`` is reported as given."""
+         entities: List[dict], repo_of=None) -> dict:
+    """Link every episode to its outcomes. ``sources`` is reported as given.
+
+    ``repo_of(cwd)`` gives a directory's ``owner/name`` (default: its git remote,
+    cached per directory).
+    """
+    if repo_of is None:
+        cache: Dict[Optional[str], Optional[str]] = {}
+
+        def repo_of(cwd):
+            if cwd not in cache:
+                cache[cwd] = remote_slug(cwd)
+            return cache[cwd]
     index = {p["url"]: p for p in prs}
     by_branch: Dict[str, List[dict]] = collections.defaultdict(list)
     by_ticket: Dict[str, List[dict]] = collections.defaultdict(list)
@@ -244,7 +268,7 @@ def join(episodes: List[dict], sources: Dict[str, dict], prs: List[dict], ticket
                 if _within(p.get("merged_at"), e["first"], e["last"]):
                     # A branch name is the session's own outcome only in its own
                     # repository; elsewhere the same name is a coincidence.
-                    link(p, "branch" if _same_repo(e, p) else "branch-name")
+                    link(p, "branch" if _same_repo(e, p, repo_of) else "branch-name")
         for t in e["tickets"]:
             for p in by_ticket.get(t, []):
                 if _within(p.get("merged_at"), e["first"], e["last"], before=2):

@@ -219,8 +219,13 @@ def share(args, config: dict, outdir: Path) -> int:
     if not path.is_file():
         print(f"reflect share: {path} does not exist", file=sys.stderr)
         return 2
+    if not (outdir / "episodes.jsonl").is_file():
+        print("reflect share: needs episodes.jsonl to remove text copied from prompts and replies; "
+              "run `reflect episodes` first", file=sys.stderr)
+        return 2
+    texts = [t["text"] for e in O.load_episodes(outdir) for t in e["prompts"] + e["replies"]]
     out = Path(args.out).expanduser() if args.out else outdir / "reflection.share.md"
-    write_private(out, SHARE.redact(path.read_text(encoding="utf-8"), args.redact_term or []))
+    write_private(out, SHARE.redact(path.read_text(encoding="utf-8"), args.redact_term or [], texts))
     print(f"reflect share: wrote a redacted copy to {out} (quotes, links and paths removed); review it "
           "before it leaves this machine")
     return 0

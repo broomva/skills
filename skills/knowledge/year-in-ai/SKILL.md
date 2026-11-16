@@ -242,8 +242,11 @@ episode's prompts (whitespace and quote style aside; never a reply).
 
 **4. Join (code only).** Links episodes to merged PRs (by mention, the
 harness's own PR record, the head branch, or a ticket in the PR title within
-three weeks; `data.json` counts only the first three as the episode's own outcome, and a
-shared ticket as related), ticket ids, and knowledge-graph entities (by ticket, URL, or
+three weeks; `data.json` counts only the first three as the episode's own
+outcome, and a shared ticket as related). A head-branch match counts only
+when the episode directory's git remote is exactly the PR's `owner/name`;
+otherwise, or when the directory is gone, it is a `branch-name` link and
+counts as nothing, ticket ids, and knowledge-graph entities (by ticket, URL, or
 created during the episode and named in it). Every source is optional and
 reported: `harness` (PRs a store linked, e.g. T3's snapshots), `github`
 (`gh` lists the owner's own merged PRs month by month; no session text is
@@ -275,20 +278,29 @@ moved, what stalled), and the invoking agent reads the arcs, `index.md` and
 6. optionally `## Data notes`: coverage and absent sources (the only section
    exempt from citations; numbers are still checked).
 
-**7. Lint (the gate).** `reflect lint` fails on: a claim (paragraph, list
-item, table row, blockquote) with no `[e-…]` citation; a citation that does
+**7. Lint (the gate).** A reflection holds only headings, paragraphs, list
+items and blockquotes: a table, a fenced block or any other structure fails.
+`reflect lint` fails on: a claim (paragraph, list item, blockquote) with no
+`[e-…]` citation; a citation that does
 not resolve; a quote (a blockquote, or a quoted span of three or more words)
 not verbatim in a prompt of an episode the same claim cites; a number not in
 `data.json` (thousands separators, `%`, `K`/`M` are understood; ISO dates,
 ids, `#123`, URLs, quotes and `inline code` are not numbers, so write version
-numbers as code); a missing section; a fenced block. The reflection is done
-when the lint passes.
+numbers as code); a missing section. The reflection is done when the lint
+passes. The lint proves each number appears in `data.json`, not that it is
+the right figure for its sentence: after re-running `join` or `reduce`,
+re-check every figure in the text against the new `data.json`, because a
+stale value that matches another field passes
+([BRO-3774](https://linear.app/broomva/issue/BRO-3774/year-in-ai-reflect-the-lint-checks-a-figure-exists-not-that-it-is-the)).
 
 **Privacy.** Local only. Never paste episode text, digests or the reflection
 into a ticket, PR, chat service or upload. `reflect share` writes
-`reflection.share.md` with blockquotes and quoted spans replaced, URLs and
-paths removed, and `--redact-term` values masked; review it before it leaves
-the machine.
+`reflection.share.md`. It replaces blockquotes, quoted spans of every kind
+and inline code, and any run of five or more words that appears in a prompt
+or reply, quoted or not; it removes URLs and paths and masks `--redact-term`
+values. It needs `episodes.jsonl` and refuses to run without it. A short name
+or term is caught only through `--redact-term`; review the copy before it
+leaves the machine.
 
 **From chapters to video.** The four chapters are the script for the recap
 video: hand `reflection.share.md` and `data.json` to the `motion-lab` skill

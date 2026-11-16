@@ -32,24 +32,12 @@ EXEMPT_SECTIONS = ("data notes",)
 _HEADING = re.compile(r"^(#{1,6})\s+(.*)$")
 _LIST = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")
 _RULE = re.compile(r"^\s*(?:-{3,}|\*{3,}|_{3,})\s*$")
-_TABLE_SEP = re.compile(r"^\s*\|?\s*:?-{2,}")
 _CODE = re.compile(r"`[^`]*`")
 _URL = re.compile(r"https?://\S+")
 _DATE = re.compile(r"\b\d{4}-\d{2}(?:-\d{2})?(?:T\d{2}:\d{2})?\b")
 _REF = re.compile(r"#\d+\b")
 _QUOTED = re.compile(r"“([^”]+)”|\"([^\"]+)\"")
 _NUMBER = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?:\s?([KkMm%])(?![a-zA-Z]))?")
-
-
-def _label_row(row: str) -> bool:
-    """A table header made only of short labels (no digits, no quotes, three words or fewer per cell).
-
-    Any other header row is a claim like a body row, so a header cannot carry
-    an uncited sentence or an unsupported number past the lint.
-    """
-    cells = [c.strip() for c in row.strip().strip("|").split("|")]
-    return all(c and len(c.split()) <= 3 and not any(ch.isdigit() for ch in c)
-               and not any(q in c for q in "\"“”‘’") for c in cells)
 
 
 def units(markdown: str) -> Tuple[List[dict], List[str], List[str]]:
@@ -105,10 +93,14 @@ def units(markdown: str) -> Tuple[List[dict], List[str], List[str]]:
             table_row = 0
             continue
         if stripped.startswith("|"):
+            # Only headings, paragraphs, list items and blockquotes are allowed:
+            # every table shape tried as an exemption (label headers, separator
+            # rows) was a way to state a claim the lint did not check.
             close()
+            if table_row == 0:
+                errors.append(f"line {n + 1}: tables are not allowed in a reflection; "
+                              "write each claim as a sentence or list item")
             table_row += 1
-            if _TABLE_SEP.match(stripped) or (table_row == 1 and _label_row(stripped)):
-                continue
             out.append({"line": n + 1, "section": section, "kind": "row", "text": stripped})
             continue
         if stripped.startswith(">"):

@@ -65,7 +65,9 @@ def payload(year: int, episodes: List[dict], digests: Dict[str, dict], outcomes:
             with_pr += 1
             m["episodes_with_merged_pr"] += 1
             merged_urls |= {p["url"] for p in strong}
-        elif out.get("merged_prs"):
+        elif any("ticket" in p["via"] for p in out.get("merged_prs", [])):
+            # Only a shared ticket counts here; a same-named branch in another
+            # repository is no evidence at all.
             ticket_only += 1
             m["episodes_with_ticket_linked_pr"] += 1
         if out.get("kg"):

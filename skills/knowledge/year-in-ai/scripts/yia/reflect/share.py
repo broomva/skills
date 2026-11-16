@@ -2,7 +2,10 @@
 
 The private reflection quotes prompts verbatim and names repositories and
 branches. Anything that leaves the machine goes through :func:`redact`:
-blockquotes and quoted spans become a placeholder, URLs and filesystem paths
+blockquotes, quoted spans of every kind and inline code become a placeholder,
+and so does any run of ``VERBATIM_WORDS`` or more words that appears in a
+prompt or reply, quoted or not: that is the property a share copy needs, and
+it does not depend on how the text was marked up. URLs and filesystem paths
 are removed, and every ``--redact-term`` is replaced wherever it appears.
 Episode citations stay: they are opaque hashes.
 """
@@ -10,17 +13,52 @@ Episode citations stay: they are opaque hashes.
 from __future__ import annotations
 
 import re
-from typing import Iterable
+from typing import Iterable, Set
 
 from ..redact import PLACEHOLDER
 
 QUOTE_REMOVED = "«quote removed»"
 _URL = re.compile(r"https?://\S+")
 _PATH = re.compile(r"(?:~|/Users|/Volumes|/home|/private|/tmp|/opt)/[^\s)\]`'\"]*")
-_QUOTED = re.compile(r"“[^”]+”|‘[^’]+’|\"[^\"\n]+\"")
+_QUOTED = re.compile(r"“[^”]+”|‘[^’]+’|\"[^\"\n]+\"|(?<!\w)'[^'\n]+'(?!\w)|`[^`\n]+`")
+_WORD = re.compile(r"\w+")
+
+#: A run of this many words shared with a prompt or reply is removed.
+VERBATIM_WORDS = 5
 
 
-def redact(markdown: str, terms: Iterable[str] = ()) -> str:
+def ngrams(texts: Iterable[str], n: int = VERBATIM_WORDS) -> Set[int]:
+    """Hashes of every run of ``n`` words (case-folded) in ``texts``."""
+    out: Set[int] = set()
+    for text in texts:
+        words = [m.group(0).lower() for m in _WORD.finditer(text or "")]
+        out.update(hash(tuple(words[i:i + n])) for i in range(len(words) - n + 1))
+    return out
+
+
+def _strip_verbatim(line: str, grams: Set[int], n: int = VERBATIM_WORDS) -> str:
+    words = list(_WORD.finditer(line))
+    hit = [False] * len(words)
+    for i in range(len(words) - n + 1):
+        if hash(tuple(m.group(0).lower() for m in words[i:i + n])) in grams:
+            hit[i:i + n] = [True] * n
+    out, pos, i = [], 0, 0
+    while i < len(words):
+        if not hit[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < len(words) and hit[j + 1]:
+            j += 1
+        out += [line[pos:words[i].start()], QUOTE_REMOVED]
+        pos, i = words[j].end(), j + 1
+    out.append(line[pos:])
+    return "".join(out)
+
+
+def redact(markdown: str, terms: Iterable[str] = (), private_texts: Iterable[str] = ()) -> str:
+    """The share copy. ``private_texts`` are the prompts and replies whose word runs must not survive."""
+    grams = ngrams(private_texts)
     out = []
     for line in markdown.splitlines():
         if line.lstrip().startswith(">"):
@@ -28,6 +66,8 @@ def redact(markdown: str, terms: Iterable[str] = ()) -> str:
             continue
         # Every quoted span, whatever its length: a two-word quote can be a name.
         line = _QUOTED.sub(QUOTE_REMOVED, line)
+        if grams:
+            line = _strip_verbatim(line, grams)
         line = _URL.sub("«link»", line)
         line = _PATH.sub("«path»", line)
         out.append(line)

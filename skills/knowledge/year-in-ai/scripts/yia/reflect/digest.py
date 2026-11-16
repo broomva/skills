@@ -122,9 +122,11 @@ def load(outdir: Path, eid: str):
     if not path.is_file():
         return None
     try:
-        return json.loads(path.read_text(encoding="utf-8"))
+        data = json.loads(path.read_text(encoding="utf-8"))
     except ValueError:
-        return {"_unparseable": True}
+        return {"_invalid": "not valid JSON"}
+    # A file that exists is never "missing": null, a list or a number is invalid.
+    return data if isinstance(data, dict) else {"_invalid": "digest is not a JSON object"}
 
 
 def status(outdir: Path, episodes: List[dict], only: Optional[set] = None) -> Tuple[Dict[str, List[str]], List[str], Dict[str, dict]]:
@@ -139,10 +141,7 @@ def status(outdir: Path, episodes: List[dict], only: Optional[set] = None) -> Tu
         if d is None:
             missing.append(e["id"])
             continue
-        if not isinstance(d, dict):
-            problems = ["digest is not a JSON object"]
-        else:
-            problems = ["not valid JSON"] if d.get("_unparseable") else validate(d, e)
+        problems = [d["_invalid"]] if "_invalid" in d else validate(d, e)
         if problems:
             errors[e["id"]] = problems
         else:

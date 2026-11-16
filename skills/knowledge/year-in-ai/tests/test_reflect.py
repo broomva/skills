@@ -206,7 +206,7 @@ def test_the_join_reports_absent_sources_and_continues(tmp_path):
 
 def test_the_join_links_by_mention_branch_ticket_and_kg(tmp_path):
     e = build_episodes(tmp_path)[0][0]
-    e["cwd"] = "/work/app"  # the episode ran in acme/app
+    e["cwd"] = "/work/app"  # the episode ran in acme/app (its git remote, stubbed below)
     prs = [{"url": "https://github.com/acme/app/pull/7", "title": "feat: login (ABC-12)", "merged_at": iso(T0 + 3600),
             "branch": "feature/abc-12-login", "repo": "acme/app"},
            {"url": "https://github.com/acme/app/pull/9", "title": "fix: ABC-12 follow-up",
@@ -217,7 +217,8 @@ def test_the_join_links_by_mention_branch_ticket_and_kg(tmp_path):
     kg_dir.mkdir(parents=True)
     (kg_dir / "login-flow.md").write_text("---\ncreated: \"2026-10-26\"\n---\nTracked in ABC-12.\n")
     kg, entities = OUT.kg_entities(str(tmp_path / "entities"))
-    result = OUT.join([e], {"kg": kg}, prs, {}, entities)["episodes"][e["id"]]
+    result = OUT.join([e], {"kg": kg}, prs, {}, entities,
+                      repo_of=lambda cwd: "acme/app" if cwd == "/work/app" else None)["episodes"][e["id"]]
     vias = {p["url"].rsplit("/", 1)[1]: p["via"] for p in result["merged_prs"]}
     assert vias == {"7": ["mention", "branch", "ticket"], "9": ["ticket"]}
     assert result["kg"] == [{"slug": "login-flow", "type": "concept", "via": "ticket"}]
@@ -262,9 +263,7 @@ Building was 37% of the work, about 216K words of prompts [e-1a2b3c4d, e-9999999
 
 ## Challenges and outcomes
 
-| month | note |
-|---|---|
-| `2026-03` | ledger shipped [e-1a2b3c4d] |
+- In 2026-03 the ledger shipped. [e-1a2b3c4d]
 
 ## Insights for next year
 
@@ -382,7 +381,7 @@ def test_a_branch_name_in_another_repository_is_not_the_sessions_outcome(tmp_pat
     pr = {"url": "https://github.com/example/repo-b/pull/7", "title": "unrelated", "merged_at": iso(T0 + 3600),
           "branch": "feature/login", "repo": "example/repo-b"}
     e["branch"], e["tickets"] = "feature/login", []
-    linked = OUT.join([e], {}, [pr], {}, [])["episodes"][e["id"]]
+    linked = OUT.join([e], {}, [pr], {}, [], repo_of=lambda cwd: "example/repo-a")["episodes"][e["id"]]
     assert linked["merged_prs"][0]["via"] == ["branch-name"]
     assert RED.STRONG_VIA.isdisjoint(linked["merged_prs"][0]["via"])
 
@@ -393,12 +392,55 @@ def test_share_removes_every_quoted_span_however_short():
     assert "secret phrase" not in out and "Acme" not in out and out.count(SH.QUOTE_REMOVED) == 2
 
 
-def test_a_table_header_cannot_carry_an_uncited_claim():
+@pytest.mark.parametrize("table", [
+    "| 999 users were served without evidence | x |\n|---|---|\n",
+    "| Company lied | Users harmed |\n|---|---|\n",
+    "| --- | 999 users served |\n",
+    "| Month | Episodes |\n|---|---|\n| 2026-03 | 12 |\n",
+])
+def test_any_table_fails_the_lint(table):
     from yia.reflect import lint as LINT
-    claims, _headings, _errors = LINT.units("## Monthly arcs\n\n| 999 users were served without evidence | x |\n|---|---|\n")
-    assert any("999 users" in c["text"] for c in claims)
-    labels, _h, _e = LINT.units("## Monthly arcs\n\n| Month | Episodes | Shipped |\n|---|---|---|\n")
-    assert labels == []
+    _claims, _headings, errors = LINT.units("## Monthly arcs\n\n" + table)
+    assert any("tables are not allowed" in err for err in errors)
+
+
+def test_a_directory_named_like_the_repo_is_not_the_repo(tmp_path):
+    e = build_episodes(tmp_path)[0][0]
+    e["cwd"], e["repo"], e["branch"], e["tickets"] = "/work/app/other", "other", "feature/login", []
+    pr = {"url": "https://github.com/example/app/pull/3", "title": "x", "merged_at": iso(T0 + 3600),
+          "branch": "feature/login", "repo": "example/app"}
+    linked = OUT.join([e], {}, [pr], {}, [], repo_of=lambda cwd: "example/other")["episodes"][e["id"]]
+    assert linked["merged_prs"][0]["via"] == ["branch-name"]
+
+
+def test_a_branch_name_link_is_not_counted_as_ticket_linked(tmp_path):
+    from yia.reflect import reduce as RED
+    e = build_episodes(tmp_path)[0][0]
+    joined = {e["id"]: {"merged_prs": [{"url": "u", "via": ["branch-name"]}], "kg": []}}
+    data = RED.payload(2026, [e], {}, {"episodes": joined, "sources": {}}, {})
+    assert data["outcomes"]["episodes_with_only_ticket_linked_pr"] == 0
+    assert data["outcomes"]["episodes_with_merged_pr"] == 0
+
+
+def test_share_removes_single_quotes_code_and_unquoted_copied_runs():
+    from yia.reflect import share as SH
+    prompt = "please make the onboarding flow for the acme pilot work by friday"
+    out = SH.redact("Single 'secret phrase', code `private prompt words`, and the user asked to make the "
+                    "onboarding flow for the acme pilot work soon [e-12345678]. It isn't hard.\n", (), [prompt])
+    for leaked in ("secret phrase", "private prompt words", "onboarding flow for the acme pilot"):
+        assert leaked not in out, out
+    assert "isn't hard" in out  # an apostrophe is not a quote
+
+
+def test_a_null_digest_is_invalid_not_missing(tmp_path):
+    from yia.reflect import digest as DG
+    e = build_episodes(tmp_path)[0][0]
+    out = tmp_path / "reflect"
+    path = DG.digest_path(out, e["id"])
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("null")
+    errors, missing, _valid = DG.status(out, [e])
+    assert errors[e["id"]] == ["digest is not a JSON object"] and missing == []
 
 
 def test_a_digest_that_is_not_an_object_is_an_error_not_a_crash(tmp_path):
