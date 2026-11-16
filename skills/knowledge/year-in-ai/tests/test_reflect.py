@@ -560,3 +560,38 @@ def test_share_says_it_is_a_review_draft(tmp_path):
                          env=dict(os.environ, HOME=str(tmp_path / "home")))
     assert run.returncode == 0, run.stderr
     assert "REVIEW DRAFT" in run.stdout and "not share-safe" in run.stdout
+
+
+# --- CodeRabbit follow-ups on e84061d
+
+
+def test_month_cleanup_keeps_files_it_did_not_generate(tmp_path):
+    from yia.reflect import reduce as RED
+    eps = build_episodes(tmp_path)[0]
+    out = tmp_path / "reflect-out"
+    (out / "months").mkdir(parents=True)
+    (out / "months" / "notes.md").write_text("mine")
+    (out / "months" / "2025-01.md").write_text("old")
+    RED.write(out, 2026, eps, {}, {"episodes": {}, "sources": {}}, {})
+    assert (out / "months" / "notes.md").read_text() == "mine"
+    assert not (out / "months" / "2025-01.md").exists()
+
+
+def test_a_redact_term_is_masked_inside_other_words():
+    from yia.reflect import share as SH
+    assert "confidential" not in SH.redact("myProject X (confidential) today [e-12345678].\n",
+                                            ["Project X (confidential)"])
+
+
+def test_share_removes_a_path_whose_first_segment_has_punctuation():
+    from yia.reflect import share as SH
+    assert "secret" not in SH.redact("Read /data:private/secret today [e-12345678].\n")
+
+
+def test_a_branch_name_link_is_not_described_as_sharing_a_ticket(tmp_path):
+    from yia.reflect import reduce as RED
+    e = build_episodes(tmp_path)[0][0]
+    joined = {"merged_prs": [{"url": "https://github.com/x/y/pull/1", "via": ["branch-name"]},
+                             {"url": "https://github.com/x/y/pull/2", "via": ["ticket"]}]}
+    line = RED._line(e, _digest(e), joined)
+    assert "merged PRs: none; 1 more merged PRs share a ticket" in line

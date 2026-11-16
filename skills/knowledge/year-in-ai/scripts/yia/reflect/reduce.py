@@ -10,6 +10,7 @@ topics, ideas, obstacles and quote candidates with the episodes behind them.
 from __future__ import annotations
 
 import collections
+import re
 from pathlib import Path
 from typing import Dict, List
 
@@ -147,7 +148,8 @@ def _line(e: dict, d: dict, out: dict) -> str:
     prs = ", ".join(p["url"].replace("https://github.com/", "") for p in strong[:8]) or "none"
     if len(strong) > 8:
         prs += f" (+{len(strong) - 8} more)"
-    related = len(out.get("merged_prs", [])) - len(strong)
+    # Only a shared ticket makes a PR "related"; a same-named branch elsewhere is nothing.
+    related = sum(1 for p in out.get("merged_prs", []) if p not in strong and "ticket" in p["via"])
     if related:
         prs += f"; {related} more merged PRs share a ticket"
     kg = ", ".join(k["slug"] for k in out.get("kg", [])) or "none"
@@ -186,7 +188,8 @@ def write(outdir: Path, year: int, episodes: List[dict], digests: Dict[str, dict
     months_dir = outdir / "months"
     if months_dir.is_dir():
         for stale in months_dir.glob("*.md"):
-            if stale.stem not in by_month:
+            # Only packets this step generates (YYYY-MM.md); anything else is left alone.
+            if re.fullmatch(r"\d{4}-\d{2}", stale.stem) and stale.stem not in by_month:
                 stale.unlink()
     for month, group in sorted(by_month.items()):
         stats = data["by_month"][month]
