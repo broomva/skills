@@ -27,6 +27,7 @@ class MetricCode(StrEnum):
     RESTING_HEART_RATE = "resting_heart_rate"
     HRV_OVERNIGHT = "hrv_overnight"
     HR_VARIABILITY_RMSSD = "hr_variability_rmssd"
+    HR_VARIABILITY_SDNN = "hr_variability_sdnn"  # Apple Watch; not comparable with RMSSD
 
     # Energy / activity
     STEPS = "steps"
@@ -85,6 +86,7 @@ METRIC_UNITS: Final[MappingProxyType[MetricCode, str]] = MappingProxyType(
         MetricCode.RESTING_HEART_RATE: "bpm",
         MetricCode.HRV_OVERNIGHT: "ms",
         MetricCode.HR_VARIABILITY_RMSSD: "ms",
+        MetricCode.HR_VARIABILITY_SDNN: "ms",
         MetricCode.STEPS: "count",
         MetricCode.FLOORS_CLIMBED: "count",
         MetricCode.ACTIVE_KCAL: "kcal",

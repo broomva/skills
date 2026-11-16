@@ -10,6 +10,16 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+### Added
+
+- **Apple Health import (`apple_health` source).** Reads the iPhone's "Export All Health Data"
+  archive (`export.zip` or an extracted XML) from `exports/apple_health/` or
+  `[apple_health] export_path`, stream-parsing it in place with flat memory. Maps 19 quantity types
+  and sleep stages to canonical units (kJ, lb, fraction-percent and mmol/L converted), keeps each
+  sample's device and writing app, and finds the localised XML name inside the zip by content. The
+  source registers only when an export exists, so all-source runs never fail without one.
+- `hr_variability_sdnn` metric: Apple Watch HRV is SDNN and stays separate from RMSSD.
+
 ## [0.12.0] — 2026-08-12
 
 ### Added

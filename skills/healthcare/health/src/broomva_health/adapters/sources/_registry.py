@@ -24,6 +24,7 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import TYPE_CHECKING, Final
 
+from broomva_health.adapters.sources.apple_health import AppleHealthTraceSource, find_export
 from broomva_health.adapters.sources.garmin import GarminTraceSource
 from broomva_health.adapters.sources.garmin_cli import GarminCliTraceSource
 from broomva_health.adapters.sources.garmin_native import GarminNativeTraceSource
@@ -80,17 +81,24 @@ def _garmin_source(settings: HealthSettings | None, paths: HealthPaths) -> Trace
     )
 
 
-def build_sources(
-    settings: HealthSettings | None, paths: HealthPaths
-) -> dict[Source, TraceSource]:
+def build_sources(settings: HealthSettings | None, paths: HealthPaths) -> dict[Source, TraceSource]:
     """Construct every registered source adapter, honoring per-source backends.
 
     This is the settings-aware entry point the container uses. Garmin's backend
     comes from ``[garmin] backend``; other sources use their single adapter.
     """
-    return {
+    sources: dict[Source, TraceSource] = {
         Source.GARMIN: _garmin_source(settings, paths),
     }
+    # Apple Health is file-based: it joins only once an export is configured or
+    # present, so all-source runs never fail on a machine without one.
+    apple_cfg = dict(getattr(settings, "apple_health", {}) or {}) if settings else {}
+    export_path = apple_cfg.get("export_path")
+    if export_path or find_export(paths) is not None:
+        sources[Source.APPLE_HEALTH] = AppleHealthTraceSource(
+            paths=paths, export_path=str(export_path) if export_path else None
+        )
+    return sources
 
 
 def get_source(source: Source, *, paths: HealthPaths) -> TraceSource:

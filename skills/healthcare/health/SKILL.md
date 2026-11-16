@@ -228,6 +228,26 @@ Already have an `oauth1_token.json` + `oauth2_token.json` elsewhere? `health aut
 
 ---
 
+## Apple Health import (`apple_health` source)
+
+Apple Health is file-based: there is no API off the iPhone. It is how history from
+earlier wearables (Apple Watch, Oura, Whoop, Withings, phone step counts) gets in.
+
+1. iPhone: Health → profile picture → **Export All Health Data**. AirDrop `export.zip` to the Mac.
+2. Put it in `<data_dir>/exports/apple_health/` (default `~/broomva-health/exports/apple_health/`),
+   or set `[apple_health] export_path`. The source registers only once an export exists.
+3. `health backfill --source apple_health --from 2018-01-01` stream-parses the zip in place
+   (no extraction, flat memory: 1M records in about 20 s) into `traces/apple_health.db`.
+
+Every sample keeps its producer: `device` (manufacturer, hardware model) and `metadata.source_name`
+(the app that wrote it). Comparisons should stay within one producer, because devices differ in level.
+**Apple's HRV is SDNN** (`hr_variability_sdnn`), while Garmin and Oura report **RMSSD**: different
+statistics, never compared directly. Mapped types: heart rate, resting HR, HRV SDNN, respiratory rate,
+SpO2, steps, floors, active/basal energy, distance, weight, lean mass, body fat, BMI, VO2max, blood
+pressure, glucose, water, and sleep stages (in bed, asleep, light/core, deep, REM, awake). Workouts are
+not imported yet. Samples are keyed on (source, metric, start): two producers writing the same metric at
+the same second keep only the last one read.
+
 ## Composition with bstack primitives
 
 The skill is designed to *compound* with the existing bstack primitives, not replace any of them.
@@ -263,7 +283,7 @@ Failure to uphold these invariants is a P20 blocker — Cross-Review must reject
 ## What this skill explicitly is NOT
 
 - **Not a coaching surface in v1.** It does not tell you to take a rest day, hit zone 2, or sleep more. Coaching is the v2 vision (see [Workflows/Coaching.md](Workflows/Coaching.md)) and requires Telos + calendar + context integration that is intentionally out-of-scope here.
-- **Not Apple Health in v1.** The Apple Health adapter is *designed-for* (the `APPLE_HEALTH` Source enum member exists; the port shape is HealthKit-compatible) but unimplemented. Adding it is a P5 fan-out task per [References/extension-guide.md](References/extension-guide.md).
+- **Not a live Apple Health sync.** Apple Health has no API off the iPhone, so it comes in as a file import (see *Apple Health import* above), refreshed whenever you export again.
 - **Not a Garmin Health API client.** Garmin Health is enterprise-only and not viable for a single-user knowledge graph. The default `native` backend is in-house — it calls Garmin's `connectapi` through `garth`, riding an existing token (no fresh login, no external binary); `cli` delegates to `eddmann/garmin-connect-cli`, `library` uses `garminconnect` directly — see [References/garmin-api-landscape-2026.md](References/garmin-api-landscape-2026.md) and the **Garmin backends** section above.
 - **Not a replacement for `apps/healthOS/`.** `healthOS` is the platform; this skill produces the substrate that `healthOS` can read from. The `[ProjectionTarget]` port exists precisely so `healthOS` can subscribe without coupling.
 - **Not a Strava / Wahoo / Polar middle-tier.** Strava has no sleep/HRV/body-battery; Wahoo has no API; Polar's API is gated. These are not viable substrates for a health KG.
