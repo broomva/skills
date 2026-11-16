@@ -96,3 +96,16 @@ def test_context_lists_but_never_reads_an_import_only_source(tmp_path: Path) -> 
     assert result.exit_code == 0, result.output
     assert opened == []
     assert json.loads(result.output)["profile_info"]["registered_sources"] == ["apple_health"]
+
+
+def test_every_auth_command_leaves_import_only_sources_alone(tmp_path: Path) -> None:
+    container = _container(tmp_path)
+    container.token_store = _Boom()  # any token-store use fails the test
+    obj = {"container": container, "format": "json", "fields": None}
+    for args in (["import", "--source", "apple_health"], ["logout", "--source", "apple_health"]):
+        result = CliRunner().invoke(auth.app, args, obj=obj)
+        assert result.exit_code == 0, (args, result.output)
+        assert "needs no login" in result.output
+    status = CliRunner().invoke(auth.app, ["status"], obj=obj)
+    assert status.exit_code == 0, status.output
+    assert "apple_health" not in status.output

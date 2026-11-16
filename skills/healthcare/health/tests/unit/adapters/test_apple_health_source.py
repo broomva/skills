@@ -601,3 +601,48 @@ def test_the_same_record_under_another_offset_updates_not_duplicates(
     )
     assert len(got) == 1
     repo.close()
+
+
+@pytest.mark.parametrize(
+    "doctype",
+    [
+        '<!DOCTYPE HealthData SYSTEM "health>archive.dtd">',
+        '<!DOCTYPE HealthData [\n<!ENTITY note "a ]> inside a value">\n<!ATTLIST RightEye value CDATA>\n]>',
+    ],
+)
+def test_quoted_text_does_not_end_the_doctype(tmp_path: Path, doctype: str) -> None:
+    path = tmp_path / "export.xml"
+    path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        + doctype
+        + "\n<HealthData>"
+        + RECORDS[0]
+        + "</HealthData>",
+        encoding="utf-8",
+    )
+    assert [s.value for s in _samples(path, date(2024, 1, 1), date(2024, 12, 31))] == [58.0]
+
+
+def test_a_utf16_export_inside_a_zip_gets_the_utf16_message(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    path = tmp_path / "export.zip"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr(
+            "apple_health_export/export.xml",
+            ('<?xml version="1.0" encoding="UTF-16"?>' + EXPORT_XML.split("?>", 1)[1]).encode(
+                "utf-16"
+            ),
+        )
+    assert find_export(tmp_paths, str(path)) == path  # still recognised as the export
+    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
+    repo.migrate()
+    with pytest.raises(SourceUnavailable, match="UTF-16"):
+        AppleHealthTraceSource(paths=tmp_paths, export_path=str(path)).backfill(
+            repo=repo,
+            token_store=None,  # type: ignore[arg-type]
+            rate_limiter=None,  # type: ignore[arg-type]
+            start=date(2024, 1, 1),
+            end=date(2024, 12, 31),
+        )
+    repo.close()

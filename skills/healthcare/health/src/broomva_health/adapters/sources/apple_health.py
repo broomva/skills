@@ -158,9 +158,60 @@ def open_export(path: Path) -> Iterator[IO[bytes]]:
 
 
 _DOCTYPE = re.compile(rb"<!DOCTYPE\b")
-_SUBSET_END = re.compile(rb"\]\s*>")
 _ELEMENT = re.compile(rb"<[A-Za-z_]")
 _PREFIX_LIMIT = 4 * 1024 * 1024
+
+
+class _Utf16Export(SourceUnavailable):
+    """A UTF-16 file: refused with re-export guidance, but still recognisable as an export."""
+
+    def __init__(self, head: bytes) -> None:
+        super().__init__("Apple Health export is UTF-16; export it again from the iPhone (UTF-8)")
+        self.head = head
+
+
+def _doctype_end(head: bytes, i: int) -> int | None:
+    """Index just past the DOCTYPE that starts before ``i``, skipping quoted text.
+
+    A ``>`` or ``]`` inside a quoted system identifier or entity value does not
+    end the declaration. ``None`` if the end is not in ``head`` yet.
+    """
+    quote: int | None = None
+    in_subset = False
+    n = len(head)
+    while i < n:
+        c = head[i]
+        if quote is not None:
+            if c == quote:
+                quote = None
+        elif c in (0x22, 0x27):  # " or '
+            quote = c
+        elif c == 0x5B and not in_subset:  # [
+            in_subset = True
+        elif c == 0x5D and in_subset:  # ]
+            in_subset = False
+        elif c == 0x3E and not in_subset:  # >
+            return i + 1
+        i += 1
+    return None
+
+
+_ROOT_TEXT = re.compile(r"<(?![?!/])([A-Za-z_][\w.:-]*)")
+
+
+def _stream_root(raw: IO[bytes]) -> str | None:
+    """The stream's real root element, or None. A UTF-16 stream is decoded for this probe only."""
+    try:
+        for _, elem in ET.iterparse(_WithoutDoctype(raw), events=("start",)):  # noqa: S314
+            return str(elem.tag)
+    except _Utf16Export as exc:
+        text = exc.head.decode("utf-16", errors="ignore")
+        text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
+        m = _ROOT_TEXT.search(re.sub(r"<!DOCTYPE.*?(\[.*?\])?\s*>", "", text, count=1, flags=re.S))
+        return m.group(1) if m else None
+    except (ET.ParseError, SourceUnavailable, OSError):
+        return None
+    return None
 
 
 class _WithoutDoctype(io.RawIOBase):
@@ -186,20 +237,15 @@ class _WithoutDoctype(io.RawIOBase):
             head += chunk
             if head[:2] in (b"\xff\xfe", b"\xfe\xff") or b"\x00" in head[:64]:
                 # The iPhone writes UTF-8; a UTF-16 file would defeat the byte scan.
-                raise SourceUnavailable(
-                    "Apple Health export is UTF-16; export it again from the iPhone (UTF-8)"
-                )
+                raise _Utf16Export(head)
             m = _DOCTYPE.search(head)
             if m is None:
                 if _ELEMENT.search(head):  # the root started: no DOCTYPE to strip
                     return head
                 continue
-            bracket, close = head.find(b"[", m.end()), head.find(b">", m.end())
-            if close != -1 and (bracket == -1 or close < bracket):
-                return head[: m.start()] + head[close + 1 :]
-            end = _SUBSET_END.search(head, m.end())
+            end = _doctype_end(head, m.end())
             if end is not None:
-                return head[: m.start()] + head[end.end() :]
+                return head[: m.start()] + head[end:]
         return head
 
     def readable(self) -> bool:
@@ -219,11 +265,9 @@ def _root_tag(zf: zipfile.ZipFile, name: str) -> str | None:
     """The member's real root element (comments and the DTD are skipped), or None."""
     try:
         with zf.open(name) as probe:
-            for _, elem in ET.iterparse(_WithoutDoctype(probe), events=("start",)):  # noqa: S314
-                return str(elem.tag)
-    except (ET.ParseError, SourceUnavailable, OSError):
+            return _stream_root(probe)
+    except (zipfile.BadZipFile, OSError):
         return None
-    return None
 
 
 def is_export(path: Path) -> bool:
@@ -237,11 +281,9 @@ def is_export(path: Path) -> bool:
                     if n.lower().endswith(".xml") and "cda" not in n.lower()
                 )
         with path.open("rb") as fh:
-            for _, elem in ET.iterparse(_WithoutDoctype(fh), events=("start",)):  # noqa: S314
-                return bool(elem.tag == "HealthData")
-    except (zipfile.BadZipFile, ET.ParseError, SourceUnavailable, OSError):
+            return _stream_root(fh) == "HealthData"
+    except (zipfile.BadZipFile, OSError):
         return False
-    return False
 
 
 def iter_samples(
