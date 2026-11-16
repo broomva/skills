@@ -58,7 +58,7 @@ not say that none exists. Treat MANUAL as needing a person, in the app.
 `is_ai_generated` is "a self-disclosure of AI usage in the post". Meta's help pages
 ask creators to disclose photorealistic video and realistic-sounding audio, with an
 AI voice-over as their example (MED: script-rendered pages, read as search snippets).
-`reel_loop.py payload` sets the flag whenever the card declares synthetic media or
+The gate sets the flag whenever the card declares synthetic media or
 sets it true. It cannot detect media the card does not declare.
 
 ## Sending the approved bytes
@@ -67,8 +67,9 @@ A Reels container also accepts `upload_type=resumable`: "An optional parameter f
 users want to upload video through the rupload protocol". The file is then sent
 with `POST https://rupload.facebook.com/ig-api-upload/<version>/<IG_CONTAINER_ID>`,
 using headers `offset` and `file_size` and the file as the body. `reel_loop.py
-payload` defaults to this mode, so the published bytes are the approved file rather
-than whatever a URL serves when Meta fetches it.
+publish` uses only this mode and sends the same bytes it read and gated. A
+`video_url` container would let Meta fetch whatever the URL serves later, so it
+cannot be bound to an approval; the script does not offer it.
 
 ## Insights for our own Reels
 

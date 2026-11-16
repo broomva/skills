@@ -37,8 +37,8 @@ SENSE → OUTLIERS → DECONSTRUCT → SCRIPT → PRODUCE → QC → [APPROVE] �
 ```
 
 Stages 1–6 may run unattended (for example nightly). Stage 7 is a person. Stage 8
-refuses to run without stage 7's approval for the exact file being published. That
-refusal is code (`scripts/reel_loop.py payload`), not a sentence in this file.
+refuses to run without stage 7's approval for the exact bytes being published. That
+refusal is code (`scripts/reel_loop.py publish`), not a sentence in this file.
 
 The pattern comes from a creator's reel (`@davidmadrazo.ia`, 2026-11-12) showing
 Claude doing stages 1–10 every night at 03:55 while he only presses "Aprobar". Its
@@ -185,49 +185,61 @@ The agent writes this block only after a yes, and only with the hash of the file
 person saw. **Never write an approval the person did not give.** An agent that
 approves its own post has removed the only gate the loop has.
 
-`payload` checks that the approval is well formed and bound to these bytes. It
+The gate checks that the approval is well formed and bound to these bytes. It
 cannot prove a person gave it; that rests on the agent following this rule. Where
 the approval comes from a Maestro ask or an `AskUserQuestion` answer, put that ask's
 id in `approval.by` so it can be audited.
 
 ### 8 · Publish
 
+Dry run first; it prints the container parameters, sha256 and size:
+
 ```bash
 python3 scripts/reel_loop.py payload runs/<date>/card-<n>.json --video runs/<date>/final-<n>.mp4
 ```
 
-The script exits 2 and lists every reason when:
+Then publish. This is the only path by which bytes reach Instagram:
+
+```bash
+IG_ACCESS_TOKEN=… python3 scripts/reel_loop.py publish runs/<date>/card-<n>.json \
+    --video runs/<date>/final-<n>.mp4 --ig-user-id <IG_USER_ID>   # add --no-go-live to stop before media_publish
+```
+
+Both commands exit 2 and list every reason when:
 
 - the card is malformed (wrong types, unreadable JSON);
+- the video is missing, empty, not a regular file or over 300 MB;
 - there is no approval, or the approval names other bytes (a re-render needs a new
   approval);
 - the card declares a cloned voice and the consent record is missing, undated,
   future-dated or points to a file that does not exist;
 - the caption is over 2,200 characters, 30 hashtags or 20 @ tags;
-- the file is over 300 MB;
 - with `ffprobe`, the codec, fps or duration breaks the Reels spec (without it,
   those three are reported as UNCHECKED);
-- the trial strategy is invalid.
+- the trial strategy is invalid;
+- for `publish` only, `IG_ACCESS_TOKEN` is unset.
 
 `is_ai_generated` is true whenever the card declares synthetic media or sets it
 true. The gate cannot see synthetic media the card does not declare.
 
-On exit 0 the output is `{"container": …, "upload": …}`. Publish **the approved
-file itself**:
+`publish` reads the video **once**, gates those bytes, and sends **those same
+bytes**. Swapping or editing the file after the gate cannot change what is
+published. In order, it:
 
-1. `POST /<IG_ID>/media` with the `container` fields. They include
-   `upload_type=resumable`.
-2. Upload `upload.file` to `https://rupload.facebook.com/ig-api-upload/<version>/<container id>`
-   with headers `offset: 0` and `file_size: <upload.file_size>`. Re-hash the file
-   first; if it no longer matches `upload.sha256`, stop.
-3. Poll the container until `FINISHED`.
-4. `POST /<IG_ID>/media_publish`.
+1. creates a resumable REELS container (`POST /<IG_ID>/media`, `upload_type=resumable`);
+2. sends the bytes to `https://rupload.facebook.com/ig-api-upload/<version>/<container id>`
+   with `offset: 0` and `file_size`;
+3. polls the container once a minute, up to 5 times, until `FINISHED`;
+4. calls `POST /<IG_ID>/media_publish`.
 
-A hosted copy is also accepted: `--video-url https://…` is fetched now and must
-serve bytes with the approved sha256. Even so, the host could change the file
-before Meta fetches it, so the resumable upload is the default. A thin publishing
-layer such as Postiz, Upload-Post or Blotato also works if it sends the approved
-file and the same fields. Append the post to `posts.tsv`. Plan for 50 posts per 24 h.
+A Graph API failure after the gate exits 3 and names the step. The token is sent in
+the form body or the `Authorization` header and never appears in a URL or a
+message.
+
+Never upload a render by any other route, whether by hand, through a hosted
+`video_url` or through a third-party scheduler. Those send whatever the file or
+URL holds at that moment, not the bytes that were approved. Append the receipt
+(`media_id`, `sha256`) to `posts.tsv`. Plan for 50 posts per 24 h.
 
 ### 9 · Measure
 

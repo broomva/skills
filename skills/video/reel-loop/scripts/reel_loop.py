@@ -12,19 +12,22 @@ here so an agent cannot talk itself past them:
             only once they are old enough for insights to have settled
             (Meta: insights can lag up to 48 h). Emits a trial-reel variant
             plan for each winner.
-  payload   The publish gate. Prints the Instagram Graph API container
-            parameters for a post card ONLY when the card is well-formed and
-            carries an approval bound to the sha256 of the rendered video; a
-            consent record (speaker, valid past date, existing file) when the
-            card declares a cloned voice; a caption within Meta's limits; and a
-            valid trial graduation strategy. Declared synthetic media or an
-            explicit is_ai_generated=true yields is_ai_generated=true. By default
-            the container is a resumable upload of the approved file itself; a
-            --video-url is fetched and must serve the approved bytes. Exit 2 and
-            a list of reasons otherwise. It cannot detect synthetic media the
-            card does not declare.
+  payload   Dry run of the publish gate (below). Prints the container
+            parameters, sha256 and size; names no file to upload.
+  publish   The publish gate, then the publish. Reads the video ONCE and
+            gates those bytes: the card must be well-formed and carry an
+            approval bound to their sha256; a declared cloned voice needs a
+            consent record (speaker, past ISO date, existing file); the caption
+            must be within Meta's limits; the trial strategy must be valid.
+            Declared synthetic media or an explicit is_ai_generated=true yields
+            is_ai_generated=true. Then: create a resumable REELS container,
+            send THE SAME BYTES to rupload, poll until FINISHED, media_publish.
+            Swapping the file after the gate cannot change what is published.
+            Exit 2 with reasons when blocked, 3 when a Graph API step fails.
+            It cannot prove who wrote the approval or detect synthetic media
+            the card does not declare.
 
-Pure stdlib. `ffprobe` is used by `payload` when present; when absent the spec
+Pure stdlib. `ffprobe` is used by the gate when present; when absent the spec
 check is reported as UNCHECKED, never as passed.
 
 Sources for the platform numbers (read 2026-11-16):
@@ -44,6 +47,7 @@ import csv
 import hashlib
 import io
 import json
+import os
 import re
 import shutil
 import subprocess
@@ -271,13 +275,14 @@ def _maybe_float(v):
         return None
 
 
-# --- payload (the publish gate) ------------------------------------------------
-def sha256_file(path: Path) -> str:
-    h = hashlib.sha256()
-    with path.open("rb") as f:
-        for chunk in iter(lambda: f.read(1 << 20), b""):
-            h.update(chunk)
-    return h.hexdigest()
+# --- the publish gate -----------------------------------------------------------
+GRAPH = "https://graph.facebook.com"
+RUPLOAD = "https://rupload.facebook.com/ig-api-upload"
+API_VERSION = "v27.0"
+
+
+class PublishError(RuntimeError):
+    """A Graph API step failed after the gate passed. Never carries the token."""
 
 
 def probe_video(path: Path) -> dict | None:
@@ -299,27 +304,16 @@ def probe_video(path: Path) -> dict | None:
             "format": (data.get("format") or {}).get("format_name", "")}
 
 
-def fetch_url_sha256(url: str, limit: int = REEL_MAX_BYTES + 1) -> str:
-    """Download `url` and return the sha256 of its bytes (at most `limit` bytes)."""
-    import urllib.request
-    h, total = hashlib.sha256(), 0
-    with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310 - https only, checked by caller
-        for chunk in iter(lambda: resp.read(1 << 20), b""):
-            total += len(chunk)
-            if total > limit:
-                raise ValueError(f"{url} serves more than {limit} bytes")
-            h.update(chunk)
-    return h.hexdigest()
-
-
+# Optional fields: null means absent. Fields not listed here (account, source,
+# script) are provenance for the run note; they are never published and not checked.
 _OPTIONAL_TYPES = {"cover_url": str, "audio_name": str, "thumb_offset": int, "share_to_feed": bool,
                    "is_ai_generated": bool, "caption": str}
 
 
 def _type_errors(card) -> list[str]:
-    """Every shape problem in a card. A card with any of these is blocked before
-    a single field is trusted, so a malformed card can neither crash the gate nor
-    slip past a check that assumed a type."""
+    """Every shape problem in the published or gating fields of a card. A card
+    with any of these is blocked before a single field is trusted, so a malformed
+    card can neither crash the gate nor slip past a check that assumed a type."""
     if not isinstance(card, dict):
         return [f"the card must be a JSON object, got {type(card).__name__}"]
     errs = []
@@ -373,30 +367,41 @@ def _consent_errors(consent: dict | None, card_dir: Path, now: datetime) -> list
     return errs
 
 
-def check_payload(card, video: Path, video_url: str | None, *, card_dir: Path | None = None,
-                  probe=probe_video, fetch=fetch_url_sha256, now: datetime | None = None
-                  ) -> tuple[dict | None, list[str], list[str]]:
-    """Return (payload, blocking_reasons, notes). payload is None when blocked.
-
-    payload = {"container": <Graph API create-media params>, "upload": <file to send> | None}.
-    Without `video_url` the container uses `upload_type=resumable`, and `upload`
-    names the exact approved file, its size and sha256, to send to
-    rupload.facebook.com. With `video_url`, the URL is fetched now and must serve
-    bytes with the approved sha256.
-    """
-    notes: list[str] = []
-    errs = _type_errors(card)
-    if errs:
-        return None, errs, notes
-    now = now or datetime.now(timezone.utc)
-    card_dir = card_dir or Path(".")
+def read_video(video: Path) -> tuple[bytes | None, list[str]]:
+    """Read the video ONCE. Every later step — hash, probe, upload — uses these
+    bytes, so nothing that happens to the file afterwards can reach Instagram."""
+    if not video.exists():
+        return None, [f"video cannot be read: {video} does not exist"]
     if not video.is_file():
-        return None, [f"video not found: {video}"], notes
-    size = video.stat().st_size
-    if size > REEL_MAX_BYTES:
-        return None, [f"video is {size} bytes > 300 MB"], notes
-    digest = sha256_file(video)
+        return None, [f"video is not a regular file: {video}"]
+    try:
+        with video.open("rb") as f:
+            data = f.read(REEL_MAX_BYTES + 1)  # one bounded read: no stat/read race on the size
+    except OSError as exc:
+        return None, [f"video cannot be read: {exc}"]
+    if not data:
+        return None, ["video is empty"]
+    if len(data) > REEL_MAX_BYTES:
+        return None, ["video is over 300 MB"]
+    return data, []
+
+
+def _probe_bytes(data: bytes, probe) -> dict | None:
+    """Probe the exact bytes in hand, through a private temporary copy."""
+    import tempfile
+    with tempfile.TemporaryDirectory() as tmp:
+        f = Path(tmp) / "probe.mp4"
+        f.write_bytes(data)
+        return probe(f)
+
+
+def gate(card: dict, data: bytes, *, card_dir: Path, probe, now: datetime
+         ) -> tuple[dict | None, list[str], list[str], str]:
+    """Judge a well-formed card against the exact bytes `data`.
+    Returns (container_params | None, reasons, notes, sha256(data))."""
+    notes: list[str] = []
     reasons: list[str] = []
+    digest = hashlib.sha256(data).hexdigest()
 
     approval = card.get("approval")
     if not approval:
@@ -405,7 +410,7 @@ def check_payload(card, video: Path, video_url: str | None, *, card_dir: Path | 
         reasons.append("approval does not match these bytes: approval.video_sha256 != sha256(video); "
                        "a re-render needs a new approval")
 
-    synthetic = card.get("synthetic", {})
+    synthetic = card.get("synthetic") or {}
     if synthetic.get("voice_clone"):
         reasons += _consent_errors(card.get("voice_consent"), card_dir, now)
     is_ai = card.get("is_ai_generated") is True or any(synthetic.values())
@@ -430,7 +435,7 @@ def check_payload(card, video: Path, video_url: str | None, *, card_dir: Path | 
         elif strategy == "MANUAL":
             notes.append("MANUAL: Meta documents graduating it in the Instagram app; no API graduation endpoint is documented")
 
-    info = probe(video)
+    info = _probe_bytes(data, probe)
     if info is None:
         notes.append("UNCHECKED: ffprobe not on PATH, so codec, fps and duration were not verified")
     elif "error" in info:
@@ -443,38 +448,122 @@ def check_payload(card, video: Path, video_url: str | None, *, card_dir: Path | 
         if not (REEL_MIN_SECONDS <= info["duration"] <= REEL_MAX_SECONDS):
             reasons.append(f"duration {info['duration']:.1f} s outside 3 s - 15 min")
 
-    if video_url and not reasons:
-        if not video_url.startswith("https://"):
-            reasons.append("video_url must be https: Meta fetches it from a public server")
-        else:
-            try:
-                served = fetch(video_url)
-            except Exception as exc:  # noqa: BLE001 - any fetch failure blocks
-                reasons.append(f"could not fetch video_url to verify its bytes: {exc}")
-            else:
-                if served != digest:
-                    reasons.append("video_url serves different bytes than the approved file "
-                                   f"(sha256 {served[:12]}… != {digest[:12]}…)")
-
     if reasons:
-        return None, reasons, notes
-    container = {"media_type": "REELS", "caption": caption, "is_ai_generated": is_ai,
-                 "share_to_feed": card.get("share_to_feed", True)}
-    if video_url:
-        container["video_url"] = video_url
-        upload = None
-        notes.append("video_url verified now; the host must keep serving these bytes until Meta fetches them "
-                     "(prefer the resumable upload, which sends the approved file itself)")
-    else:
-        container["upload_type"] = "resumable"
-        upload = {"file": str(video.resolve()), "file_size": size, "sha256": digest, "offset": 0}
+        return None, reasons, notes, digest
+    share = card.get("share_to_feed")
+    container = {"media_type": "REELS", "upload_type": "resumable", "caption": caption,
+                 "is_ai_generated": is_ai, "share_to_feed": True if share is None else share}
     if trial is not None:
         container["trial_params"] = {"graduation_strategy": trial["graduation_strategy"]}
     for opt in ("cover_url", "thumb_offset", "audio_name", "collaborators"):
         if card.get(opt) not in (None, "", []):
             container[opt] = card[opt]
     notes.append(f"gate passed: sha256 {digest} approved by {approval['by']} at {approval['at']}")
-    return {"container": container, "upload": upload}, reasons, notes
+    return container, reasons, notes, digest
+
+
+def check_payload(card, video: Path, *, card_dir: Path | None = None, probe=probe_video,
+                  now: datetime | None = None) -> tuple[dict | None, list[str], list[str]]:
+    """Dry run of the gate. Returns ({"container", "sha256", "file_size"} | None, reasons, notes).
+    It names no file to upload: the only way bytes reach Instagram is `publish`."""
+    errs = _type_errors(card)
+    if errs:
+        return None, errs, []
+    data, errs = read_video(video)
+    if errs:
+        return None, errs, []
+    container, reasons, notes, digest = gate(card, data, card_dir=card_dir or Path("."), probe=probe,
+                                             now=now or datetime.now(timezone.utc))
+    if container is None:
+        return None, reasons, notes
+    return {"container": container, "sha256": digest, "file_size": len(data)}, [], notes
+
+
+def graph_http(method: str, url: str, *, params: dict | None = None, headers: dict | None = None,
+               body: bytes | None = None, timeout: float = 300) -> dict:
+    """One Graph API call. POST params go in the form body, so the token never
+    lands in a URL; errors carry the status and Meta's message, never the token."""
+    import urllib.error
+    import urllib.parse
+    import urllib.request
+    data = body
+    if params is not None:
+        enc = urllib.parse.urlencode(params)
+        if method == "GET":
+            url = f"{url}?{enc}"
+        else:
+            data = enc.encode()
+    req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - fixed https hosts
+            return json.loads(resp.read() or b"{}")
+    except urllib.error.HTTPError as exc:
+        detail = exc.read()[:500].decode("utf-8", "replace")
+        raise PublishError(f"{method} {url.split('?')[0]} -> HTTP {exc.code}: {detail}") from None
+    except urllib.error.URLError as exc:
+        raise PublishError(f"{method} {url.split('?')[0]} failed: {exc.reason}") from None
+
+
+def _form(container: dict) -> dict:
+    out = {}
+    for k, v in container.items():
+        out[k] = json.dumps(v) if isinstance(v, (dict, list)) else ("true" if v is True else "false" if v is False else v)
+    return out
+
+
+def publish(card, video: Path, *, ig_user_id: str, token: str, card_dir: Path | None = None,
+            api_version: str = API_VERSION, http=graph_http, probe=probe_video, now: datetime | None = None,
+            sleep=None, poll_every: float = 60.0, max_polls: int = 5, go_live: bool = True
+            ) -> tuple[dict | None, list[str], list[str]]:
+    """Gate, then publish the gated bytes. Returns (receipt | None, reasons, notes).
+
+    The video is read once; the bytes hashed against the approval are the bytes
+    sent to rupload, so swapping the file after the gate changes nothing that is
+    published. Raises PublishError when a Graph API step fails after the gate.
+    """
+    import time
+    sleep = sleep or time.sleep
+    errs = _type_errors(card)
+    if errs:
+        return None, errs, []
+    data, errs = read_video(video)
+    if errs:
+        return None, errs, []
+    container, reasons, notes, digest = gate(card, data, card_dir=card_dir or Path("."), probe=probe,
+                                             now=now or datetime.now(timezone.utc))
+    if container is None:
+        return None, reasons, notes
+
+    made = http("POST", f"{GRAPH}/{api_version}/{ig_user_id}/media",
+                params={**_form(container), "access_token": token})
+    cid = made.get("id")
+    if not cid:
+        raise PublishError(f"container create returned no id: {made}")
+    sent = http("POST", f"{RUPLOAD}/{api_version}/{cid}",
+                headers={"Authorization": f"OAuth {token}", "offset": "0", "file_size": str(len(data))},
+                body=data)
+    if not sent.get("success"):
+        raise PublishError(f"rupload did not report success: {sent}")
+    for attempt in range(max_polls):
+        status = http("GET", f"{GRAPH}/{api_version}/{cid}",
+                      params={"fields": "status_code", "access_token": token}).get("status_code")
+        if status == "FINISHED":
+            break
+        if status in ("ERROR", "EXPIRED"):
+            raise PublishError(f"container {cid} status {status}")
+        if attempt < max_polls - 1:
+            sleep(poll_every)
+    else:
+        raise PublishError(f"container {cid} not FINISHED after {max_polls} polls")
+    receipt = {"container_id": cid, "sha256": digest, "file_size": len(data), "status": "FINISHED",
+               "trial": container.get("trial_params"), "is_ai_generated": container["is_ai_generated"]}
+    if go_live:
+        done = http("POST", f"{GRAPH}/{api_version}/{ig_user_id}/media_publish",
+                    params={"creation_id": cid, "access_token": token})
+        if not done.get("id"):
+            raise PublishError(f"media_publish returned no id: {done}")
+        receipt["media_id"] = done["id"]
+    return receipt, [], notes
 
 
 # --- CLI ----------------------------------------------------------------------
@@ -522,10 +611,17 @@ def main(argv: list[str] | None = None) -> int:
     w.add_argument("--graduation", default="SS_PERFORMANCE", choices=GRADUATION_STRATEGIES)
     w.add_argument("--now")
 
-    p = sub.add_parser("payload", help="the publish gate: card + video -> Graph API container params")
+    p = sub.add_parser("payload", help="dry run of the publish gate: card + video -> container params")
     p.add_argument("card", help="post card JSON (references/post-card.md)")
     p.add_argument("--video", required=True)
-    p.add_argument("--video-url", help="optional public https URL; fetched now and must serve the approved bytes. Omit it to get a resumable upload of the local file")
+
+    u = sub.add_parser("publish", help="gate, then publish the gated bytes (token from $IG_ACCESS_TOKEN)")
+    u.add_argument("card", help="post card JSON (references/post-card.md)")
+    u.add_argument("--video", required=True)
+    u.add_argument("--ig-user-id", required=True)
+    u.add_argument("--api-version", default=API_VERSION)
+    u.add_argument("--no-go-live", action="store_true",
+                   help="create, upload and wait for the container, but do not call media_publish")
 
     a = ap.parse_args(argv)
     try:
@@ -548,21 +644,33 @@ def main(argv: list[str] | None = None) -> int:
         except (OSError, ValueError) as exc:
             print(f"BLOCKED — not publishable:\n  - the card could not be read as JSON: {exc}", file=sys.stderr)
             return 2
-        payload, reasons, notes = check_payload(card, Path(a.video), a.video_url,
-                                                card_dir=Path(a.card).resolve().parent)
+        card_dir = Path(a.card).resolve().parent
+        if a.cmd == "payload":
+            result, reasons, notes = check_payload(card, Path(a.video), card_dir=card_dir)
+        else:
+            token = os.environ.get("IG_ACCESS_TOKEN", "")
+            if not token:
+                print("BLOCKED — not publishable:\n  - IG_ACCESS_TOKEN is not set", file=sys.stderr)
+                return 2
+            try:
+                result, reasons, notes = publish(card, Path(a.video), ig_user_id=a.ig_user_id, token=token,
+                                                 card_dir=card_dir, api_version=a.api_version,
+                                                 go_live=not a.no_go_live)
+            except PublishError as exc:
+                print(f"PUBLISH FAILED after the gate passed: {exc}", file=sys.stderr)
+                return 3
         for n in notes:
             print(f"note: {n}", file=sys.stderr)
-        if payload is None:
+        if result is None:
             print("BLOCKED — not publishable:", file=sys.stderr)
             for r in reasons:
                 print(f"  - {r}", file=sys.stderr)
             return 2
-        print(json.dumps(payload, indent=2, ensure_ascii=False))
+        print(json.dumps(result, indent=2, ensure_ascii=False))
         return 0
     except (ValueError, OSError, json.JSONDecodeError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1
-
 
 if __name__ == "__main__":
     sys.exit(main())

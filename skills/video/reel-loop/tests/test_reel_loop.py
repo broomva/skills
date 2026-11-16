@@ -173,21 +173,21 @@ def _card(video: Path, **over):
     return card
 
 
-def _gate(card, video, url=None, **kw):
+def _gate(card, video, **kw):
     kw.setdefault("probe", _ok_probe)
     kw.setdefault("card_dir", video.parent)
     kw.setdefault("now", NOW)
-    return rl.check_payload(card, video, url, **kw)
+    return rl.check_payload(card, video, **kw)
 
 
-def test_gate_passes_with_a_resumable_upload_of_the_approved_file(video):
+def test_dry_run_passes_and_names_no_file(video):
     payload, reasons, _ = _gate(_card(video, is_ai_generated=False), video)
     assert reasons == []
-    c, u = payload["container"], payload["upload"]
-    assert c["is_ai_generated"] is True and c["media_type"] == "REELS"
-    assert c["upload_type"] == "resumable" and "video_url" not in c
-    assert u == {"file": str(video.resolve()), "file_size": video.stat().st_size,
-                 "sha256": hashlib.sha256(video.read_bytes()).hexdigest(), "offset": 0}
+    c = payload["container"]
+    assert c["is_ai_generated"] is True and c["media_type"] == "REELS" and c["upload_type"] == "resumable"
+    assert payload["sha256"] == hashlib.sha256(video.read_bytes()).hexdigest()
+    assert payload["file_size"] == video.stat().st_size
+    assert set(payload) == {"container", "sha256", "file_size"}  # no path to upload by hand
     assert "trial_params" not in c
 
 
@@ -201,31 +201,6 @@ def test_gate_blocks_when_video_changed_after_approval(video):
     video.write_bytes(b"re-rendered after approval")
     payload, reasons, _ = _gate(card, video)
     assert payload is None and any("does not match these bytes" in r for r in reasons)
-
-
-# Review r1 BLOCKER 2: the approved bytes must be the published bytes.
-def test_video_url_serving_other_bytes_is_blocked(video):
-    payload, reasons, _ = _gate(_card(video), video, "https://cdn.example/v.mp4", fetch=lambda _u: "0" * 64)
-    assert payload is None and any("serves different bytes" in r for r in reasons)
-
-
-def test_video_url_serving_the_approved_bytes_passes(video):
-    digest = hashlib.sha256(video.read_bytes()).hexdigest()
-    payload, reasons, _ = _gate(_card(video), video, "https://cdn.example/v.mp4", fetch=lambda _u: digest)
-    assert reasons == [] and payload["container"]["video_url"] == "https://cdn.example/v.mp4"
-    assert payload["upload"] is None and "upload_type" not in payload["container"]
-
-
-def test_video_url_fetch_failure_blocks(video):
-    def boom(_u):
-        raise OSError("connection refused")
-    payload, reasons, _ = _gate(_card(video), video, "https://cdn.example/v.mp4", fetch=boom)
-    assert payload is None and any("could not fetch" in r for r in reasons)
-
-
-def test_non_https_video_url_blocks(video):
-    payload, reasons, _ = _gate(_card(video), video, "http://cdn.example/v.mp4", fetch=lambda _u: "x")
-    assert payload is None and any("https" in r for r in reasons)
 
 
 # Review r1 BLOCKER 3: consent must be real evidence, not two strings.
@@ -332,7 +307,7 @@ def test_missing_ffprobe_is_unchecked_not_green(video):
 
 def test_container_holds_only_graph_api_fields(video):
     payload, _, notes = _gate(_card(video, cover_url="https://x/c.jpg"), video)
-    allowed = {"media_type", "upload_type", "video_url", "caption", "is_ai_generated", "share_to_feed",
+    allowed = {"media_type", "upload_type", "caption", "is_ai_generated", "share_to_feed",
                "trial_params", "cover_url", "thumb_offset", "audio_name", "collaborators"}
     assert set(payload["container"]) <= allowed
     assert any(n.startswith("gate passed: sha256 ") for n in notes)
@@ -362,6 +337,114 @@ def test_cli_payload_passes_with_consent_resolved_next_to_the_card(tmp_path, vid
                           capture_output=True, text=True)
     # ffprobe may be absent (UNCHECKED note) or present and reject the fake bytes; both are honest.
     if proc.returncode == 0:
-        assert json.loads(proc.stdout)["upload"]["sha256"] == hashlib.sha256(video.read_bytes()).hexdigest()
+        assert json.loads(proc.stdout)["sha256"] == hashlib.sha256(video.read_bytes()).hexdigest()
     else:
         assert proc.returncode == 2 and "ffprobe could not read" in proc.stderr
+
+
+# --- review r2: file edge cases ----------------------------------------------------
+def test_empty_video_is_blocked(video):
+    card = _card(video)
+    video.write_bytes(b"")
+    payload, reasons, _ = _gate(card, video)
+    assert payload is None and reasons == ["video is empty"]
+
+
+def test_directory_as_video_is_blocked(video, tmp_path):
+    payload, reasons, _ = _gate(_card(video), tmp_path)
+    assert payload is None and "not a regular file" in reasons[0]
+
+
+def test_missing_video_is_blocked(video, tmp_path):
+    payload, reasons, _ = _gate(_card(video), tmp_path / "nope.mp4")
+    assert payload is None and "cannot be read" in reasons[0]
+
+
+def test_null_share_to_feed_gets_the_default(video):
+    payload, reasons, _ = _gate(_card(video, share_to_feed=None), video)
+    assert reasons == [] and payload["container"]["share_to_feed"] is True
+
+
+# --- review r2 BLOCKER: publish sends the gated bytes, whatever happens to the file --
+class FakeGraph:
+    """Records every call; answers like the Graph API and rupload."""
+
+    def __init__(self, on_call=None, status=("IN_PROGRESS", "FINISHED")):
+        self.calls, self.on_call, self.status = [], on_call, list(status)
+
+    def __call__(self, method, url, *, params=None, headers=None, body=None, timeout=300):
+        self.calls.append({"method": method, "url": url, "params": params, "headers": headers, "body": body})
+        if self.on_call:
+            self.on_call(len(self.calls), url)
+        if url.endswith("/media"):
+            return {"id": "C123"}
+        if "rupload" in url:
+            return {"success": True}
+        if url.endswith("/media_publish"):
+            return {"id": "M456"}
+        return {"status_code": self.status.pop(0) if self.status else "FINISHED"}
+
+
+def _publish(card, video, http, **kw):
+    kw.setdefault("probe", _ok_probe)
+    kw.setdefault("card_dir", video.parent)
+    kw.setdefault("now", NOW)
+    return rl.publish(card, video, ig_user_id="17841400000000000", token="TOKEN", http=http,
+                      sleep=lambda _s: None, **kw)
+
+
+def test_publish_runs_the_documented_sequence(video):
+    http = FakeGraph()
+    receipt, reasons, _ = _publish(_card(video, trial={"graduation_strategy": "SS_PERFORMANCE"}), video, http)
+    assert reasons == [] and receipt["media_id"] == "M456" and receipt["container_id"] == "C123"
+    create, upload = http.calls[0], http.calls[1]
+    assert create["url"].endswith("/17841400000000000/media")
+    assert create["params"]["upload_type"] == "resumable" and create["params"]["media_type"] == "REELS"
+    assert create["params"]["is_ai_generated"] == "true"
+    assert json.loads(create["params"]["trial_params"]) == {"graduation_strategy": "SS_PERFORMANCE"}
+    assert "TOKEN" not in create["url"]
+    assert upload["url"].endswith("/ig-api-upload/v27.0/C123")
+    assert upload["headers"] == {"Authorization": "OAuth TOKEN", "offset": "0", "file_size": str(len(upload["body"]))}
+    assert http.calls[-1]["url"].endswith("/media_publish") and http.calls[-1]["params"]["creation_id"] == "C123"
+
+
+def test_publish_sends_the_approved_bytes_even_if_the_file_is_swapped(video):
+    approved = video.read_bytes()
+
+    def swap(n, _url):  # after the gate, before the upload: replace the file, same length
+        if n == 1:
+            video.write_bytes(b"X" * len(approved))
+
+    http = FakeGraph(on_call=swap)
+    receipt, reasons, _ = _publish(_card(video), video, http)
+    sent = next(c["body"] for c in http.calls if "rupload" in c["url"])
+    assert sent == approved
+    assert receipt["sha256"] == hashlib.sha256(approved).hexdigest()
+    assert video.read_bytes() != approved  # the swap really happened
+
+
+def test_publish_blocked_card_makes_no_api_call(video):
+    http = FakeGraph()
+    receipt, reasons, _ = _publish(_card(video, approval=None), video, http)
+    assert receipt is None and http.calls == []
+
+
+def test_publish_no_go_live_stops_before_media_publish(video):
+    http = FakeGraph()
+    receipt, _, _ = _publish(_card(video), video, http, go_live=False)
+    assert "media_id" not in receipt and not any(c["url"].endswith("/media_publish") for c in http.calls)
+
+
+@pytest.mark.parametrize("status,needle", [(("ERROR",), "status ERROR"), (("IN_PROGRESS",) * 9, "not FINISHED")])
+def test_publish_container_failure_raises(video, status, needle):
+    with pytest.raises(rl.PublishError, match=needle):
+        _publish(_card(video), video, FakeGraph(status=status), max_polls=3)
+
+
+def test_cli_publish_without_token_is_blocked(tmp_path, video):
+    card = tmp_path / "card.json"
+    card.write_text(json.dumps(_card(video)), encoding="utf-8")
+    env = {k: v for k, v in __import__("os").environ.items() if k != "IG_ACCESS_TOKEN"}
+    proc = subprocess.run([sys.executable, str(SCRIPT), "publish", str(card), "--video", str(video),
+                           "--ig-user-id", "1"], capture_output=True, text=True, env=env)
+    assert proc.returncode == 2 and "IG_ACCESS_TOKEN" in proc.stderr

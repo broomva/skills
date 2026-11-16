@@ -1,8 +1,9 @@
 # Post card: `runs/<date>/card-<n>.json`
 
-One card per render. `reel_loop.py payload` reads it. Only if every gate passes
-does it print `{"container": <Graph API create-media params>, "upload": <the
-approved file, its size and sha256> | null}`.
+One card per render. `reel_loop.py payload` (dry run) and `reel_loop.py publish`
+read it and run the same gate on the video's bytes, read once. Only if every gate
+passes does `payload` print `{"container", "sha256", "file_size"}`, or `publish`
+send those exact bytes.
 
 ```json
 {
@@ -19,15 +20,14 @@ approved file, its size and sha256> | null}`.
 }
 ```
 
-| Field | Rule enforced by `payload` |
+| Field | Rule enforced by the gate |
 |---|---|
-| the card | Must be a JSON object with the field types shown. Any wrong type blocks before any field is trusted. |
+| the card | Must be a JSON object. The gating and published fields below must have the types shown; any wrong type blocks before any field is trusted. `null` on an optional field means absent (`share_to_feed: null` publishes as true). `account`, `source` and `script` are provenance, never published and not checked. |
 | `approval` | `null`, or an object of non-empty strings `by`, `at` and `video_sha256`. `video_sha256` must equal the sha256 of the file passed with `--video`. Written only after a person says yes to that file; the gate cannot verify who wrote it. |
 | `synthetic` | An object of true/false values. Any true value, or `is_ai_generated: true`, yields `is_ai_generated: true`. Media the card does not declare cannot be detected. |
 | `voice_consent` | Required when `synthetic.voice_clone` is true. It needs a non-empty `speaker`, an ISO `date` not in the future, and a `ref` to a file that exists, resolved relative to the card's folder. |
 | `caption` | ≤ 2200 characters, ≤ 30 hashtags, ≤ 20 @ tags. |
 | `trial` | `null` for a normal post, or `{"graduation_strategy": "SS_PERFORMANCE" \| "MANUAL"}`. |
-| the video | ≤ 300 MB, always checked. H264 or HEVC, 23–60 fps and 3 s to 15 min are checked with `ffprobe`; without it they are reported as UNCHECKED, never as passed. Container layout, audio codec, bitrate and width are not checked. |
-| `--video-url` | Optional. Must be https, and is fetched now: it must serve bytes with the approved sha256. Without it, the output is a resumable upload of the local file. |
+| the video | Read once; must exist, be a regular non-empty file and be ≤ 300 MB, always checked. H264 or HEVC, 23–60 fps and 3 s to 15 min are checked with `ffprobe`; without it they are reported as UNCHECKED, never as passed. Container layout, audio codec, bitrate and width are not checked. |
 
 `source` is the provenance record for the run note. It is never published.
