@@ -229,12 +229,24 @@ published. In order, it:
 1. creates a resumable REELS container (`POST /<IG_ID>/media`, `upload_type=resumable`);
 2. sends the bytes to `https://rupload.facebook.com/ig-api-upload/<version>/<container id>`
    with `offset: 0` and `file_size`;
-3. polls the container once a minute, up to 5 times, until `FINISHED`;
+3. polls the container once a minute until `FINISHED`. Polling stops at a 5-minute
+   deadline, counting both the requests and the waits between them;
 4. calls `POST /<IG_ID>/media_publish`.
 
-A Graph API failure after the gate exits 3 and names the step. The token is sent in
-the form body or the `Authorization` header and never appears in a URL or a
-message.
+A Graph API failure after the gate exits 3 and names the step. Failures include
+an error status, a reply that is not a JSON object, a missing id, an upload
+`success` that is not `true`, or a container not `FINISHED` by the deadline.
+
+The token travels only in `Authorization` headers: `Bearer` for Graph calls,
+following Meta's content-publishing guide, and `OAuth` for rupload, following the
+media reference. It never goes in a URL or a request body, and it is redacted from
+every error message.
+
+**Not yet verified live.** `publish` is tested only against a fake Graph API: the
+request sequence, the bytes sent, the redaction and the failure handling. It has
+never published to a real account, because that needs the owner's Instagram token
+and a professional account. The first real run should use `--no-go-live`, then be
+checked in the app before `media_publish` is called.
 
 Never upload a render by any other route, whether by hand, through a hosted
 `video_url` or through a third-party scheduler. Those send whatever the file or

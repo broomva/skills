@@ -21,9 +21,12 @@ here so an agent cannot talk itself past them:
             must be within Meta's limits; the trial strategy must be valid.
             Declared synthetic media or an explicit is_ai_generated=true yields
             is_ai_generated=true. Then: create a resumable REELS container,
-            send THE SAME BYTES to rupload, poll until FINISHED, media_publish.
-            Swapping the file after the gate cannot change what is published.
+            send THE SAME BYTES to rupload, poll until FINISHED (5-minute
+            deadline), media_publish. Swapping the file after the gate cannot
+            change what is published. The token goes only in Authorization
+            headers and is redacted from every error.
             Exit 2 with reasons when blocked, 3 when a Graph API step fails.
+            Tested against a fake Graph API only; never run against a live account.
             It cannot prove who wrote the approval or detect synthetic media
             the card does not declare.
 
@@ -480,9 +483,10 @@ def check_payload(card, video: Path, *, card_dir: Path | None = None, probe=prob
 
 
 def graph_http(method: str, url: str, *, params: dict | None = None, headers: dict | None = None,
-               body: bytes | None = None, timeout: float = 300) -> dict:
-    """One Graph API call. POST params go in the form body, so the token never
-    lands in a URL; errors carry the status and Meta's message, never the token."""
+               body: bytes | None = None, timeout: float = 120) -> dict:
+    """One Graph API call. The caller passes the token only in `headers`. Any failure,
+    including a non-JSON or non-object reply, raises PublishError; the caller
+    redacts the token from every message."""
     import urllib.error
     import urllib.parse
     import urllib.request
@@ -494,14 +498,21 @@ def graph_http(method: str, url: str, *, params: dict | None = None, headers: di
         else:
             data = enc.encode()
     req = urllib.request.Request(url, data=data, method=method, headers=headers or {})
+    where = f"{method} {url.split('?')[0]}"
     try:
         with urllib.request.urlopen(req, timeout=timeout) as resp:  # noqa: S310 - fixed https hosts
-            return json.loads(resp.read() or b"{}")
+            raw = resp.read()
     except urllib.error.HTTPError as exc:
-        detail = exc.read()[:500].decode("utf-8", "replace")
-        raise PublishError(f"{method} {url.split('?')[0]} -> HTTP {exc.code}: {detail}") from None
-    except urllib.error.URLError as exc:
-        raise PublishError(f"{method} {url.split('?')[0]} failed: {exc.reason}") from None
+        raise PublishError(f"{where} -> HTTP {exc.code}: {exc.read()[:500].decode('utf-8', 'replace')}") from None
+    except (urllib.error.URLError, OSError) as exc:
+        raise PublishError(f"{where} failed: {getattr(exc, 'reason', exc)}") from None
+    try:
+        out = json.loads(raw or b"{}")
+    except ValueError:
+        raise PublishError(f"{where} returned non-JSON: {raw[:200]!r}") from None
+    if not isinstance(out, dict):
+        raise PublishError(f"{where} returned {type(out).__name__}, not a JSON object")
+    return out
 
 
 def _form(container: dict) -> dict:
@@ -511,18 +522,30 @@ def _form(container: dict) -> dict:
     return out
 
 
+def _redact(text: str, token: str) -> str:
+    return text.replace(token, "<redacted>") if token else text
+
+
+PUBLISH_DEADLINE_SECONDS = 300.0  # Meta: poll "once per minute, for no more than 5 minutes"
+
+
 def publish(card, video: Path, *, ig_user_id: str, token: str, card_dir: Path | None = None,
             api_version: str = API_VERSION, http=graph_http, probe=probe_video, now: datetime | None = None,
-            sleep=None, poll_every: float = 60.0, max_polls: int = 5, go_live: bool = True
-            ) -> tuple[dict | None, list[str], list[str]]:
+            sleep=None, clock=None, poll_every: float = 60.0, deadline_s: float = PUBLISH_DEADLINE_SECONDS,
+            go_live: bool = True) -> tuple[dict | None, list[str], list[str]]:
     """Gate, then publish the gated bytes. Returns (receipt | None, reasons, notes).
 
     The video is read once; the bytes hashed against the approval are the bytes
     sent to rupload, so swapping the file after the gate changes nothing that is
-    published. Raises PublishError when a Graph API step fails after the gate.
+    published. The token travels only in Authorization headers (Bearer for Graph
+    calls, OAuth for rupload), never in a URL or body, and every error message is
+    redacted. Raises PublishError when a Graph
+    API step fails after the gate, or when the container is not FINISHED within
+    `deadline_s` (requests and sleeps both count).
     """
     import time
     sleep = sleep or time.sleep
+    clock = clock or time.monotonic
     errs = _type_errors(card)
     if errs:
         return None, errs, []
@@ -534,34 +557,48 @@ def publish(card, video: Path, *, ig_user_id: str, token: str, card_dir: Path | 
     if container is None:
         return None, reasons, notes
 
-    made = http("POST", f"{GRAPH}/{api_version}/{ig_user_id}/media",
-                params={**_form(container), "access_token": token})
+    bearer = {"Authorization": f"Bearer {token}"}   # Graph calls, as in Meta's content-publishing guide
+    oauth = {"Authorization": f"OAuth {token}"}     # rupload, as in the media reference
+
+    def call(step: str, method: str, url: str, **kw) -> dict:
+        try:
+            out = http(method, url, **kw)
+        except Exception as exc:  # noqa: BLE001 - every transport failure is a redacted PublishError
+            raise PublishError(_redact(f"{step}: {exc}", token)) from None
+        if not isinstance(out, dict):
+            raise PublishError(f"{step}: reply is {type(out).__name__}, not a JSON object")
+        return out
+
+    def fail(msg: str) -> PublishError:
+        return PublishError(_redact(msg, token))
+
+    made = call("create container", "POST", f"{GRAPH}/{api_version}/{ig_user_id}/media",
+                params=_form(container), headers=bearer)
     cid = made.get("id")
-    if not cid:
-        raise PublishError(f"container create returned no id: {made}")
-    sent = http("POST", f"{RUPLOAD}/{api_version}/{cid}",
-                headers={"Authorization": f"OAuth {token}", "offset": "0", "file_size": str(len(data))},
-                body=data)
-    if not sent.get("success"):
-        raise PublishError(f"rupload did not report success: {sent}")
-    for attempt in range(max_polls):
-        status = http("GET", f"{GRAPH}/{api_version}/{cid}",
-                      params={"fields": "status_code", "access_token": token}).get("status_code")
+    if not isinstance(cid, str) or not cid:
+        raise fail(f"create container: no id in reply {made}")
+    sent = call("upload", "POST", f"{RUPLOAD}/{api_version}/{cid}",
+                headers={**oauth, "offset": "0", "file_size": str(len(data))}, body=data)
+    if sent.get("success") is not True:
+        raise fail(f"upload: rupload did not report success: {sent}")
+    deadline = clock() + deadline_s
+    while True:
+        status = call("poll", "GET", f"{GRAPH}/{api_version}/{cid}", params={"fields": "status_code"},
+                      headers=bearer, timeout=max(1.0, deadline - clock())).get("status_code")
         if status == "FINISHED":
             break
         if status in ("ERROR", "EXPIRED"):
-            raise PublishError(f"container {cid} status {status}")
-        if attempt < max_polls - 1:
-            sleep(poll_every)
-    else:
-        raise PublishError(f"container {cid} not FINISHED after {max_polls} polls")
+            raise fail(f"poll: container {cid} status {status}")
+        if clock() + poll_every > deadline:
+            raise fail(f"poll: container {cid} not FINISHED within {deadline_s:.0f} s (last status {status!r})")
+        sleep(poll_every)
     receipt = {"container_id": cid, "sha256": digest, "file_size": len(data), "status": "FINISHED",
                "trial": container.get("trial_params"), "is_ai_generated": container["is_ai_generated"]}
     if go_live:
-        done = http("POST", f"{GRAPH}/{api_version}/{ig_user_id}/media_publish",
-                    params={"creation_id": cid, "access_token": token})
-        if not done.get("id"):
-            raise PublishError(f"media_publish returned no id: {done}")
+        done = call("media_publish", "POST", f"{GRAPH}/{api_version}/{ig_user_id}/media_publish",
+                    params={"creation_id": cid}, headers=bearer)
+        if not isinstance(done.get("id"), str) or not done.get("id"):
+            raise fail(f"media_publish: no id in reply {done}")
         receipt["media_id"] = done["id"]
     return receipt, [], notes
 

@@ -402,10 +402,12 @@ def test_publish_runs_the_documented_sequence(video):
     assert create["params"]["upload_type"] == "resumable" and create["params"]["media_type"] == "REELS"
     assert create["params"]["is_ai_generated"] == "true"
     assert json.loads(create["params"]["trial_params"]) == {"graduation_strategy": "SS_PERFORMANCE"}
-    assert "TOKEN" not in create["url"]
+    assert "TOKEN" not in create["url"] and "TOKEN" not in json.dumps(create["params"])
+    assert create["headers"] == {"Authorization": "Bearer TOKEN"}
     assert upload["url"].endswith("/ig-api-upload/v27.0/C123")
     assert upload["headers"] == {"Authorization": "OAuth TOKEN", "offset": "0", "file_size": str(len(upload["body"]))}
-    assert http.calls[-1]["url"].endswith("/media_publish") and http.calls[-1]["params"]["creation_id"] == "C123"
+    assert http.calls[-1]["url"].endswith("/media_publish") and http.calls[-1]["params"] == {"creation_id": "C123"}
+    assert http.calls[-1]["headers"] == {"Authorization": "Bearer TOKEN"}
 
 
 def test_publish_sends_the_approved_bytes_even_if_the_file_is_swapped(video):
@@ -435,10 +437,149 @@ def test_publish_no_go_live_stops_before_media_publish(video):
     assert "media_id" not in receipt and not any(c["url"].endswith("/media_publish") for c in http.calls)
 
 
-@pytest.mark.parametrize("status,needle", [(("ERROR",), "status ERROR"), (("IN_PROGRESS",) * 9, "not FINISHED")])
+class FakeClock:
+    """Monotonic clock that advances on sleep and by `per_call` seconds per API call."""
+
+    def __init__(self):
+        self.t = 0.0
+
+    def __call__(self):
+        return self.t
+
+    def sleep(self, s):
+        self.t += s
+
+
+@pytest.mark.parametrize("status,needle", [(("ERROR",), "status ERROR"), (("IN_PROGRESS",) * 20, "not FINISHED within 300")])
 def test_publish_container_failure_raises(video, status, needle):
+    clock = FakeClock()
     with pytest.raises(rl.PublishError, match=needle):
-        _publish(_card(video), video, FakeGraph(status=status), max_polls=3)
+        rl.publish(_card(video), video, ig_user_id="1", token="TOKEN", http=FakeGraph(status=status),
+                   probe=_ok_probe, card_dir=video.parent, now=NOW, sleep=clock.sleep, clock=clock)
+
+
+# Review r3 MINOR: requests count against Meta's 5-minute window, not just sleeps.
+def test_publish_deadline_counts_slow_requests(video):
+    clock = FakeClock()
+
+    def slow(n, _url):  # every API call takes 70 s
+        clock.t += 70
+
+    graph = FakeGraph(on_call=slow, status=("IN_PROGRESS",) * 20)
+    http_calls = graph.calls
+    with pytest.raises(rl.PublishError, match="not FINISHED within 300"):
+        rl.publish(_card(video), video, ig_user_id="1", token="TOKEN",
+                   http=graph,
+                   probe=_ok_probe, card_dir=video.parent, now=NOW, sleep=clock.sleep, clock=clock)
+    # create + upload took 140 s; polling then stops within its 300 s window, overrunning by at most
+    # one request (70 s). Before the fix it ran five full cycles regardless: 590 s in total.
+    assert clock.t <= 140 + 300 + 70
+    polls = [c for c in http_calls if c["method"] == "GET"]
+    assert len(polls) == 3
+
+
+# Review r3 MAJOR: the token never reaches a URL, an exception or the CLI's output.
+SENTINEL = "P20_FAKE_SECRET_SENTINEL"
+
+
+def test_real_transport_puts_no_token_in_any_url(video, monkeypatch):
+    import io
+    import urllib.request
+    seen = []
+    replies = iter([b'{"id": "C1"}', b'{"success": true}', b'{"status_code": "FINISHED"}', b'{"id": "M1"}'])
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    def fake_urlopen(req, timeout=0):
+        seen.append((req.full_url, dict(req.header_items()), req.data))
+        return Resp(next(replies))
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    receipt, _, _ = rl.publish(_card(video), video, ig_user_id="1", token=SENTINEL, probe=_ok_probe,
+                               card_dir=video.parent, now=NOW, sleep=lambda s: None)
+    assert receipt["media_id"] == "M1" and len(seen) == 4
+    assert all(SENTINEL not in url for url, _, _ in seen)
+    # the token is never in a form body either (the upload body is the video itself)
+    assert all(SENTINEL.encode() not in (body or b"") for _, _, body in (seen[0], seen[2], seen[3]))
+    poll_url, poll_headers, _ = seen[2]
+    assert "fields=status_code" in poll_url and poll_headers.get("Authorization") == f"Bearer {SENTINEL}"
+    assert seen[1][1].get("Authorization") == f"OAuth {SENTINEL}"
+
+
+@pytest.mark.parametrize("failure", ["http_error", "url_error", "dump"])
+def test_errors_are_redacted(video, monkeypatch, failure):
+    import io
+    import urllib.error
+    import urllib.request
+
+    def fake_urlopen(req, timeout=0):
+        if failure == "http_error":
+            raise urllib.error.HTTPError(req.full_url, 400, "bad", {}, io.BytesIO(f'{{"error": "{SENTINEL} invalid"}}'.encode()))
+        if failure == "url_error":
+            raise urllib.error.URLError(f"proxy said {SENTINEL}")
+
+        class Resp(io.BytesIO):
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *a):
+                return False
+        return Resp(f'{{"echo": "{SENTINEL}"}}'.encode())  # no id: the reply is dumped into the error
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    with pytest.raises(rl.PublishError) as info:
+        rl.publish(_card(video), video, ig_user_id="1", token=SENTINEL, probe=_ok_probe,
+                   card_dir=video.parent, now=NOW, sleep=lambda s: None)
+    assert SENTINEL not in str(info.value) and "<redacted>" in str(info.value)
+
+
+# Review r3 MINOR: malformed replies fail as PublishError (exit 3), never crash or pass.
+@pytest.mark.parametrize("raw", [b"not json", b"[]", b"null"])
+def test_non_object_replies_raise_publish_error(raw, monkeypatch):
+    import io
+    import urllib.request
+
+    class Resp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: Resp(raw))
+    with pytest.raises(rl.PublishError):
+        rl.graph_http("POST", "https://graph.facebook.com/v27.0/1/media", params={"a": "b"})
+
+
+def test_upload_success_must_be_boolean_true(video):
+    class Stringy(FakeGraph):
+        def __call__(self, method, url, **kw):
+            out = super().__call__(method, url, **kw)
+            return {"success": "false"} if "rupload" in url else out
+
+    http = Stringy()
+    with pytest.raises(rl.PublishError, match="did not report success"):
+        _publish(_card(video), video, http)
+    assert not any(c["url"].endswith("/media_publish") for c in http.calls)
+
+
+def test_cli_publish_failure_exits_3_without_the_token(tmp_path, video):
+    card = tmp_path / "card.json"
+    card.write_text(json.dumps(_card(video)), encoding="utf-8")
+    env = {**__import__("os").environ, "IG_ACCESS_TOKEN": SENTINEL, "https_proxy": "http://127.0.0.1:9",
+           "HTTPS_PROXY": "http://127.0.0.1:9"}
+    proc = subprocess.run([sys.executable, str(SCRIPT), "publish", str(card), "--video", str(video),
+                           "--ig-user-id", "1"], capture_output=True, text=True, env=env, timeout=60)
+    if proc.returncode == 2:  # ffprobe present and rejected the fake bytes: the gate blocked first
+        assert "ffprobe could not read" in proc.stderr
+    else:
+        assert proc.returncode == 3 and "PUBLISH FAILED" in proc.stderr
+    assert SENTINEL not in proc.stderr + proc.stdout
 
 
 def test_cli_publish_without_token_is_blocked(tmp_path, video):
