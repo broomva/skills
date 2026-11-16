@@ -124,10 +124,11 @@ ANTI-SLOP RUBRIC (10 points total)
           (what happens on bad input, network fail, race condition,
            empty state, very large input, concurrent access)
 
-  2 pts — Tests cover the change
-          (unit/integration/E2E proportional to change shape;
-           coverage matches what the change introduces;
-           no critical path untested)
+  2 pts — Rerunnable evidence
+          (tests cover the change, AND each new check is shown able to
+           fail: a mutation, a replayed real past mistake, a model-checker
+           counterexample; claims rest on commands and output a reviewer
+           can rerun, not on narrative. Evidence outranks argument.)
 
 PASS: ≥7/10   (record --axes=a,b,c,d,e; a ZERO axis caps the stored score to 6)
 LOOP: <7 → fix the specific deductions → rescore

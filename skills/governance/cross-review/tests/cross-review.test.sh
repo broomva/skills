@@ -110,7 +110,7 @@ if [ -f "$REPO/references/rubric.md" ] && \
     grep -q "template-paste patterns" "$REPO/references/rubric.md" && \
     grep -q "Correct contracts at boundaries" "$REPO/references/rubric.md" && \
     grep -q "Failure modes named explicitly" "$REPO/references/rubric.md" && \
-    grep -q "Tests cover the change" "$REPO/references/rubric.md"; then
+    grep -q "Rerunnable evidence" "$REPO/references/rubric.md"; then
     ok "T6: rubric.md complete"
 else
     fail "T6: rubric.md complete"
