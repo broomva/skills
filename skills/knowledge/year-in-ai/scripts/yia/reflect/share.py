@@ -19,7 +19,10 @@ from ..redact import PLACEHOLDER
 
 QUOTE_REMOVED = "«quote removed»"
 _URL = re.compile(r"https?://\S+")
-_PATH = re.compile(r"(?:~|/Users|/Volumes|/home|/private|/tmp|/opt)/[^\s)\]`'\"]*")
+# Any absolute or home-relative path with at least two segments, whatever its
+# root: `/workspace/acme/x`, `/srv/...`, `~/notes`. A lone `/checkit` is a
+# command, not a path.
+_PATH = re.compile(r"(?<![\w.:/])(?:~/|/[\w.@+-]+/)[^\s)\]`'\"]*")
 _QUOTED = re.compile(r"“[^”]+”|‘[^’]+’|\"[^\"\n]+\"|(?<!\w)'[^'\n]+'(?!\w)|`[^`\n]+`")
 _WORD = re.compile(r"\w+")
 
@@ -74,5 +77,9 @@ def redact(markdown: str, terms: Iterable[str] = (), private_texts: Iterable[str
     text = "\n".join(out) + "\n"
     for term in sorted({t.strip() for t in terms if t and t.strip()},
                        key=len, reverse=True):
-        text = re.sub(rf"(?i)\b{re.escape(term)}\b", PLACEHOLDER, text)
+        # Word boundaries only where the term itself starts or ends with a word
+        # character: "Project X (confidential)" must match before a space.
+        left = r"(?<!\w)" if re.match(r"\w", term) else ""
+        right = r"(?!\w)" if re.search(r"\w$", term) else ""
+        text = re.sub(rf"(?i){left}{re.escape(term)}{right}", PLACEHOLDER, text)
     return text

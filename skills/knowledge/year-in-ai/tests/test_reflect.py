@@ -453,3 +453,56 @@ def test_a_digest_that_is_not_an_object_is_an_error_not_a_crash(tmp_path):
     path.write_text("[]")
     errors, missing, valid = DG.status(out, [e])
     assert errors[e["id"]] == ["digest is not a JSON object"] and not valid
+
+
+# --- CodeRabbit on 7e21863
+
+
+def test_a_scaled_figure_needs_a_scaled_value():
+    from yia.reflect import lint as LINT
+    assert not LINT.number_supported(("2", "", "K"), [2])
+    assert LINT.number_supported(("2", "", "K"), [2000])
+    assert LINT.number_supported(("2", "", ""), [2])
+
+
+def test_a_kg_entity_citing_the_same_pr_url_is_linked(tmp_path):
+    e = build_episodes(tmp_path)[0][0]
+    url = "https://github.com/acme/app/pull/42"
+    e["prompts"].append({"ts": e["first"], "text": f"see {url}"})
+    e["tickets"] = []
+    entity = {"slug": "app-pr-42", "type": "decision", "created": None, "tickets": [], "urls": [url]}
+    linked = OUT.join([e], {}, [], {}, [entity], repo_of=lambda cwd: None)["episodes"][e["id"]]
+    assert any(k["slug"] == "app-pr-42" for k in linked["kg"])
+
+
+def test_the_median_of_an_even_count_is_the_mean_of_the_middle_two():
+    from yia.reflect import reduce as RED
+    assert RED._median([1, 9]) == 5 and RED._median([1, 2, 9]) == 2 and RED._median([1, 2]) == 1.5
+
+
+def test_stale_month_packets_are_removed(tmp_path):
+    from yia.reflect import reduce as RED
+    eps = build_episodes(tmp_path)[0]
+    out = tmp_path / "reflect-out"
+    (out / "months").mkdir(parents=True)
+    (out / "months" / "2025-01.md").write_text("old")
+    RED.write(out, 2026, eps, {}, {"episodes": {}, "sources": {}}, {})
+    assert not (out / "months" / "2025-01.md").exists()
+    assert {p.stem for p in (out / "months").glob("*.md")} == {e["month"] for e in eps}
+
+
+@pytest.mark.parametrize("path", ["/workspace/acme/private", "/srv/data/x", "/mnt/disk/notes.md", "~/notes/a.md"])
+def test_share_removes_paths_under_any_root(path):
+    from yia.reflect import share as SH
+    assert path not in SH.redact(f"Worked in {path} today [e-12345678].\n")
+
+
+def test_share_keeps_a_lone_slash_command():
+    from yia.reflect import share as SH
+    assert "/checkit" in SH.redact("Ran /checkit often [e-12345678].\n")
+
+
+def test_a_redact_term_with_punctuation_is_masked():
+    from yia.reflect import share as SH
+    out = SH.redact("Worked on Project X (confidential) today [e-12345678].\n", ["Project X (confidential)"])
+    assert "confidential" not in out

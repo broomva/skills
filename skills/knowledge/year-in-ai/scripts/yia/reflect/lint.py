@@ -150,7 +150,7 @@ def number_supported(token: Tuple[str, str, str], values: Iterable[float]) -> bo
     places = len(frac or "")
     scale = {"k": 1e3, "m": 1e6}.get((suffix or "").lower(), 1.0)
     for v in values:
-        if abs(v - n) < 1e-9:
+        if scale == 1.0 and abs(v - n) < 1e-9:
             return True
         if round(v / scale, places) == n and (scale > 1 or places > 0):
             return True

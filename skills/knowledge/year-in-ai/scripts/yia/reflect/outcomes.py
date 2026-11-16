@@ -33,7 +33,7 @@ from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from ..ledger.sources import SourceReport, list_files, present, read_text
-from . import pr_urls_in, tickets_in
+from . import tickets_in
 
 GENERIC_BRANCHES = {"main", "master", "dev", "develop", "trunk", "HEAD", "staging", "production", "release"}
 #: How long after an episode a PR merge still counts as its outcome.
@@ -284,7 +284,7 @@ def join(episodes: List[dict], sources: Dict[str, dict], prs: List[dict], ticket
         for t in e["tickets"]:
             for ent in ent_by_ticket.get(t, []):
                 kg.setdefault(ent["slug"], {"slug": ent["slug"], "type": ent["type"], "via": "ticket"})
-        for u in urls - set(pr_urls_in(text)):
+        for u in urls:
             for ent in ent_by_url.get(u, []):
                 kg.setdefault(ent["slug"], {"slug": ent["slug"], "type": ent["type"], "via": "url"})
         for ent in entities:

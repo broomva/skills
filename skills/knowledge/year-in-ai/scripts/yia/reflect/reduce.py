@@ -24,6 +24,16 @@ def strong_prs(out: dict) -> List[dict]:
     return [p for p in out.get("merged_prs", []) if STRONG_VIA & set(p["via"])]
 
 
+def _median(values: List[int]) -> float:
+    if not values:
+        return 0
+    ordered, mid = sorted(values), len(values) // 2
+    if len(values) % 2:
+        return ordered[mid]
+    middle = (ordered[mid - 1] + ordered[mid]) / 2
+    return int(middle) if middle == int(middle) else middle
+
+
 def _pct(part: int, whole: int) -> int:
     return round(100 * part / whole) if whole else 0
 
@@ -108,7 +118,7 @@ def payload(year: int, episodes: List[dict], digests: Dict[str, dict], outcomes:
             "tool_calls": sum(e["tools"] for e in episodes), "tool_errors": sum(e["tool_errors"] for e in episodes),
             "subagents": sum(e["subagents"] for e in episodes),
             "active_months": len(months), "active_days": len({d for e in episodes for d in e["days"]}),
-            "median_prompts_per_episode": sorted(len(e["prompts"]) for e in episodes)[n // 2] if n else 0,
+            "median_prompts_per_episode": _median([len(e["prompts"]) for e in episodes]),
         },
         "outcomes": {
             "episodes_with_merged_pr": with_pr, "episodes_with_merged_pr_pct": _pct(with_pr, n),
@@ -171,6 +181,13 @@ def write(outdir: Path, year: int, episodes: List[dict], digests: Dict[str, dict
     by_month: Dict[str, List[dict]] = collections.defaultdict(list)
     for e in episodes:
         by_month[e["month"]].append(e)
+    # A packet from an earlier run for a month no longer in the episode set
+    # would feed the monthly readers episodes absent from data.json.
+    months_dir = outdir / "months"
+    if months_dir.is_dir():
+        for stale in months_dir.glob("*.md"):
+            if stale.stem not in by_month:
+                stale.unlink()
     for month, group in sorted(by_month.items()):
         stats = data["by_month"][month]
         body = [f"# {month}: {stats['episodes']} episodes, {stats['prompts']} prompts, "
