@@ -6,7 +6,7 @@
   "plugins": [
     {
       "name": "broomva-skills",
-      "description": "Every broomva/skills skill in one plugin: 114 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
+      "description": "Every broomva/skills skill in one plugin: 115 skills across 23 category buckets. Large always-on footprint; prefer the per-category plugins when you only need a few.",
       "source": {
         "source": "local",
         "path": "./"
@@ -327,7 +327,7 @@
     },
     {
       "name": "video",
-      "description": "Video & multimedia skills from broomva/skills: brainrot-for-good, content-engine, creative-review, launch-video, ltx-video, motion-lab, video-cut.",
+      "description": "Video & multimedia skills from broomva/skills: brainrot-for-good, content-engine, creative-review, launch-video, ltx-video, motion-lab, reel-loop, video-cut.",
       "source": {
         "source": "local",
         "path": "./skills"
