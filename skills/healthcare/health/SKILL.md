@@ -253,9 +253,11 @@ statistics, never compared directly. Mapped types: heart rate, resting HR, HRV S
 SpO2, steps, floors, active/basal energy, distance, weight, lean mass, body fat, BMI, VO2max, blood
 pressure, glucose, water, and sleep stages (in bed, asleep, light/core, deep, REM, awake). Workouts are
 not imported yet. Records nested in a Correlation are read once, from their top-level copies (Apple's
-DTD lists them at both places). Each sample keeps its full natural identity (`record_key`: producer, end time and, for
-sleep, the stage), so two apps at the same second, or an in-bed record and the first sleep stage,
-all stay (migration `004_producer_record_key`). `health series --producer <app>` selects one
+DTD lists them at both places). Apple records carry no id, so each record's identity (`record_key`) is a
+digest of all its fields: type, producer, UTC start, end and creation time, value and unit. Two
+distinct records never overwrite each other, and the same record re-exported under another offset
+maps to the same row (migration `004_producer_record_key`). The export's DOCTYPE is cut out up to
+the `<HealthData>` start tag before parsing; some iOS versions wrote an invalid DTD. `health series --producer <app>` selects one
 producer, and buckets never pool producers.
 
 ## Composition with bstack primitives

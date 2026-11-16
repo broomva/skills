@@ -719,3 +719,68 @@ def test_an_encrypted_zip_member_is_a_source_error(tmp_paths: HealthPaths, tmp_p
     path.write_bytes(bytes(data))
     with pytest.raises(SourceUnavailable):
         _backfill_all(tmp_paths, path)
+
+
+def _hr(value: str, created: str, start: str = "2024-05-01 09:00:00 +0000") -> str:
+    return (
+        f'<Record type="{HK}HeartRate" sourceName="Watch" unit="count/min" creationDate="{created}" '
+        f'startDate="{start}" endDate="{start}" value="{value}"/>'
+    )
+
+
+def _hr_rows(paths: HealthPaths) -> list[float]:
+    import sqlite3
+
+    rows = sqlite3.connect(paths.trace_db_for("apple_health")).execute(
+        "SELECT value FROM quantity_sample WHERE metric='heart_rate' ORDER BY value"
+    )
+    return [r[0] for r in rows.fetchall()]
+
+
+def test_distinct_records_sharing_producer_and_interval_all_survive(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    path = _mini_export(
+        tmp_path / "x.zip",
+        [_hr("60", "2024-05-01 09:00:01 +0000"), _hr("61", "2024-05-01 09:00:02 +0000")],
+    )
+    _backfill_all(tmp_paths, path)
+    assert _hr_rows(tmp_paths) == [60.0, 61.0]
+
+
+def test_a_re_export_of_the_same_record_maps_to_the_same_row(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    first = _mini_export(tmp_path / "a.zip", [_hr("60", "2024-05-01 09:00:01 +0000")])
+    # Same record: another UTC offset, another number rendering.
+    second = _mini_export(
+        tmp_path / "b.zip",
+        [_hr("60.0", "2024-05-01 04:00:01 -0500", start="2024-05-01 04:00:00 -0500")],
+    )
+    _backfill_all(tmp_paths, first)
+    _backfill_all(tmp_paths, second)
+    assert _hr_rows(tmp_paths) == [60.0]
+
+
+def test_a_dtd_comment_holding_brackets_does_not_cut_the_document(tmp_path: Path) -> None:
+    path = tmp_path / "export.xml"
+    path.write_text(
+        '<?xml version="1.0"?>\n<!DOCTYPE HealthData [<!-- ] > --> <!ELEMENT HealthData ANY>]>\n<HealthData>'
+        + RECORDS[0]
+        + "</HealthData>",
+        encoding="utf-8",
+    )
+    assert [s.value for s in _samples(path, date(2024, 1, 1), date(2024, 12, 31))] == [58.0]
+
+
+@pytest.mark.parametrize("codec", ["utf-16-be", "utf-16-le"])
+def test_a_bom_less_utf16_export_is_recognised_and_refused(
+    tmp_paths: HealthPaths, tmp_path: Path, codec: str
+) -> None:
+    path = tmp_path / "export.xml"
+    path.write_bytes(
+        ('<?xml version="1.0" encoding="UTF-16"?>' + EXPORT_XML.split("?>", 1)[1]).encode(codec)
+    )
+    assert find_export(tmp_paths, str(path)) == path
+    with pytest.raises(SourceUnavailable, match="UTF-16"):
+        _backfill_all(tmp_paths, path)

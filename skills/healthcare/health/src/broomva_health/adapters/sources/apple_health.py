@@ -20,6 +20,7 @@ directly.
 
 from __future__ import annotations
 
+import hashlib
 import io
 import logging
 import re
@@ -160,6 +161,7 @@ def open_export(path: Path) -> Iterator[IO[bytes]]:
 
 _DOCTYPE = re.compile(rb"<!DOCTYPE\b")
 _ELEMENT = re.compile(rb"<[A-Za-z_]")
+_ROOT_START = re.compile(rb"<HealthData[\s/>]")
 _PREFIX_LIMIT = 4 * 1024 * 1024
 
 
@@ -171,45 +173,21 @@ class _Utf16Export(SourceUnavailable):
         self.head = head
 
 
-def _doctype_end(head: bytes, i: int) -> int | None:
-    """Index just past the DOCTYPE that starts before ``i``, skipping quoted text.
-
-    A ``>`` or ``]`` inside a quoted system identifier or entity value does not
-    end the declaration. ``None`` if the end is not in ``head`` yet.
-    """
-    quote: int | None = None
-    in_subset = False
-    n = len(head)
-    while i < n:
-        c = head[i]
-        if quote is not None:
-            if c == quote:
-                quote = None
-        elif c in (0x22, 0x27):  # " or '
-            quote = c
-        elif c == 0x5B and not in_subset:  # [
-            in_subset = True
-        elif c == 0x5D and in_subset:  # ]
-            in_subset = False
-        elif c == 0x3E and not in_subset:  # >
-            return i + 1
-        i += 1
-    return None
-
-
-_ROOT_TEXT = re.compile(r"<(?![?!/])([A-Za-z_][\w.:-]*)")
-
-
 def _stream_root(raw: IO[bytes]) -> str | None:
     """The stream's real root element, or None. A UTF-16 stream is decoded for this probe only."""
     try:
         for _, elem in ET.iterparse(_WithoutDoctype(raw), events=("start",)):  # noqa: S314
             return str(elem.tag)
     except _Utf16Export as exc:
-        text = exc.head.decode("utf-16", errors="ignore")
-        text = re.sub(r"<!--.*?-->", "", text, flags=re.S)
-        m = _ROOT_TEXT.search(re.sub(r"<!DOCTYPE.*?(\[.*?\])?\s*>", "", text, count=1, flags=re.S))
-        return m.group(1) if m else None
+        head = exc.head
+        if head[:2] in (b"\xff\xfe", b"\xfe\xff"):
+            codec = "utf-16"  # the BOM names the byte order
+        else:
+            codec = "utf-16-be" if head[:1] == b"\x00" else "utf-16-le"  # '<' is 0x003C
+        # Same rule as the UTF-8 path: a HealthData export is the one whose
+        # document element <HealthData> starts in the prefix.
+        text = head.decode(codec, errors="ignore").encode("utf-8")
+        return "HealthData" if _ROOT_START.search(text) else None
     except (ET.ParseError, SourceUnavailable, OSError):
         return None
     return None
@@ -244,9 +222,12 @@ class _WithoutDoctype(io.RawIOBase):
                 if _ELEMENT.search(head):  # the root started: no DOCTYPE to strip
                     return head
                 continue
-            end = _doctype_end(head, m.end())
-            if end is not None:
-                return head[: m.start()] + head[end:]
+            # Cut from the DOCTYPE to the root start tag. No DTD parsing: comments,
+            # quoted text and entities inside the declaration cannot confuse a
+            # cut that only needs to find where the document element begins.
+            root = _ROOT_START.search(head, m.end())
+            if root is not None:
+                return head[: m.start()] + head[root.start() :]
         return head
 
     def readable(self) -> bool:
@@ -320,6 +301,38 @@ def iter_samples(
             yield sample
 
 
+def _utc_text(raw: str | None) -> str:
+    return parse_ts(raw).astimezone(UTC).isoformat() if raw else ""
+
+
+def _value_text(raw: str | None) -> str:
+    try:
+        return repr(float(raw)) if raw is not None else ""
+    except ValueError:
+        return raw or ""
+
+
+def record_identity(a: dict[str, str], kind: str) -> str:
+    """A digest of every field that makes an Apple Health record what it is.
+
+    Apple records carry no id, so a record *is* its fields: type, producer,
+    interval, creation time, value and unit. Instants are normalised to UTC and
+    numbers to their float form, so the same record re-exported under another
+    offset or rendering maps to the same row. Any two records that differ in
+    any field get different keys, so none overwrites another.
+    """
+    fields = (
+        kind,
+        a.get("sourceName") or "",
+        _utc_text(a.get("startDate")),
+        _utc_text(a.get("endDate")),
+        _utc_text(a.get("creationDate")),
+        _value_text(a.get("value")) if kind != SLEEP_TYPE else (a.get("value") or ""),
+        a.get("unit") or "",
+    )
+    return hashlib.sha256("\x1f".join(fields).encode("utf-8")).hexdigest()
+
+
 def _to_sample(
     a: dict[str, str], *, start: date, end: date
 ) -> QuantitySample | CategorySample | None:
@@ -337,13 +350,7 @@ def _to_sample(
         "start_ts": parse_ts(a["startDate"]),
         "end_ts": end_utc,
         "producer": producer,
-        # Full natural identity: a record is its producer, interval and (for
-        # categories) value. Re-importing the same export rewrites the same rows.
-        "record_key": "\x1f".join(
-            # The instant, not its rendering: the same record re-exported under
-            # another UTC offset must map to the same row.
-            (producer, end_utc.isoformat(), a.get("value", "") if kind == SLEEP_TYPE else "")
-        ),
+        "record_key": record_identity(a, kind),
         "metadata": {
             k: v
             for k, v in (
