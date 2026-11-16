@@ -115,9 +115,10 @@ text instead. When the download is allowed, run the workspace's
 `scripts/video_ingest.py "$URL" --query "$Q" --keep-video`, passing both values
 through exported variables. Then read its contact sheet and transcript.
 
-Its speech recognition is English-only today (BRO-3796). On a non-English reel it
-returns a placeholder like "(speaking in foreign language)" and reports low speech.
-In that case, extract the audio with `ffmpeg -i video.mp4 -ar 16000 -ac 1 a.wav` and
+Its speech recognition runs as English today (BRO-3796). Two paths set
+`language="en"`. The third, whisper.cpp, passes no language and defaults to the
+English-only `ggml-base.en` model. On a non-English reel it returns a placeholder
+like "(speaking in foreign language)" and reports low speech. In that case, extract the audio with `ffmpeg -i video.mp4 -ar 16000 -ac 1 a.wav` and
 run `whisper-cli -m <ggml-small.bin> -l <lang> -f a.wav`. **Copy the structure, never the wording, footage or
 audio.**
 
@@ -184,30 +185,49 @@ The agent writes this block only after a yes, and only with the hash of the file
 person saw. **Never write an approval the person did not give.** An agent that
 approves its own post has removed the only gate the loop has.
 
+`payload` checks that the approval is well formed and bound to these bytes. It
+cannot prove a person gave it; that rests on the agent following this rule. Where
+the approval comes from a Maestro ask or an `AskUserQuestion` answer, put that ask's
+id in `approval.by` so it can be audited.
+
 ### 8 · Publish
 
 ```bash
-python3 scripts/reel_loop.py payload runs/<date>/card-<n>.json --video runs/<date>/final-<n>.mp4 --video-url "$PUBLIC_URL"
+python3 scripts/reel_loop.py payload runs/<date>/card-<n>.json --video runs/<date>/final-<n>.mp4
 ```
 
 The script exits 2 and lists every reason when:
 
-- there is no approval;
-- the approval names other bytes (a re-render needs a new approval);
-- a voice is cloned with no consent record;
+- the card is malformed (wrong types, unreadable JSON);
+- there is no approval, or the approval names other bytes (a re-render needs a new
+  approval);
+- the card declares a cloned voice and the consent record is missing, undated,
+  future-dated or points to a file that does not exist;
 - the caption is over 2,200 characters, 30 hashtags or 20 @ tags;
-- the codec, fps, duration or size breaks the Reels spec;
+- the file is over 300 MB;
+- with `ffprobe`, the codec, fps or duration breaks the Reels spec (without it,
+  those three are reported as UNCHECKED);
 - the trial strategy is invalid.
 
-`is_ai_generated` is forced to true whenever anything synthetic is declared. On
-exit 0, post the printed parameters through the Graph API:
+`is_ai_generated` is true whenever the card declares synthetic media or sets it
+true. The gate cannot see synthetic media the card does not declare.
 
-1. `POST /<IG_ID>/media`;
-2. poll the container until `FINISHED`;
-3. `POST /<IG_ID>/media_publish`.
+On exit 0 the output is `{"container": …, "upload": …}`. Publish **the approved
+file itself**:
 
-A thin publishing layer such as Postiz, Upload-Post or Blotato also works if it
-passes the same fields. Append the post to `posts.tsv`. Plan for 50 posts per 24 h.
+1. `POST /<IG_ID>/media` with the `container` fields. They include
+   `upload_type=resumable`.
+2. Upload `upload.file` to `https://rupload.facebook.com/ig-api-upload/<version>/<container id>`
+   with headers `offset: 0` and `file_size: <upload.file_size>`. Re-hash the file
+   first; if it no longer matches `upload.sha256`, stop.
+3. Poll the container until `FINISHED`.
+4. `POST /<IG_ID>/media_publish`.
+
+A hosted copy is also accepted: `--video-url https://…` is fetched now and must
+serve bytes with the approved sha256. Even so, the host could change the file
+before Meta fetches it, so the resumable upload is the default. A thin publishing
+layer such as Postiz, Upload-Post or Blotato also works if it sends the approved
+file and the same fields. Append the post to `posts.tsv`. Plan for 50 posts per 24 h.
 
 ### 9 · Measure
 
@@ -231,7 +251,8 @@ For each winner, the script plans three variants:
 
 Each variant goes back through stages 5–8 with `"trial": {"graduation_strategy":
 "SS_PERFORMANCE"}`, so Instagram graduates it to followers only if it performs.
-`MANUAL` graduation exists only in the app. Trial posts are left out of the
+Meta documents graduating a `MANUAL` trial in the Instagram app and documents no
+API endpoint for it. Trial posts are left out of the
 baseline.
 
 Changing the variant is contested. One school reposts the proven winner unchanged

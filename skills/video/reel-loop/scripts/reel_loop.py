@@ -13,11 +13,16 @@ here so an agent cannot talk itself past them:
             (Meta: insights can lag up to 48 h). Emits a trial-reel variant
             plan for each winner.
   payload   The publish gate. Prints the Instagram Graph API container
-            parameters for a post card ONLY when the card carries an approval
-            bound to the exact bytes of the rendered video, a consent record
-            for any cloned voice, a caption within Meta's limits, and a valid
-            trial graduation strategy. Anything synthetic forces
-            is_ai_generated=true. Exit 2 and a list of reasons otherwise.
+            parameters for a post card ONLY when the card is well-formed and
+            carries an approval bound to the sha256 of the rendered video; a
+            consent record (speaker, valid past date, existing file) when the
+            card declares a cloned voice; a caption within Meta's limits; and a
+            valid trial graduation strategy. Declared synthetic media or an
+            explicit is_ai_generated=true yields is_ai_generated=true. By default
+            the container is a resumable upload of the approved file itself; a
+            --video-url is fetched and must serve the approved bytes. Exit 2 and
+            a list of reasons otherwise. It cannot detect synthetic media the
+            card does not declare.
 
 Pure stdlib. `ffprobe` is used by `payload` when present; when absent the spec
 check is reported as UNCHECKED, never as passed.
@@ -294,30 +299,116 @@ def probe_video(path: Path) -> dict | None:
             "format": (data.get("format") or {}).get("format_name", "")}
 
 
-def check_payload(card: dict, video: Path, video_url: str | None, *, probe=probe_video) -> tuple[dict | None, list[str], list[str]]:
-    """Return (payload, blocking_reasons, notes). payload is None when blocked."""
-    reasons, notes = [], []
+def fetch_url_sha256(url: str, limit: int = REEL_MAX_BYTES + 1) -> str:
+    """Download `url` and return the sha256 of its bytes (at most `limit` bytes)."""
+    import urllib.request
+    h, total = hashlib.sha256(), 0
+    with urllib.request.urlopen(url, timeout=60) as resp:  # noqa: S310 - https only, checked by caller
+        for chunk in iter(lambda: resp.read(1 << 20), b""):
+            total += len(chunk)
+            if total > limit:
+                raise ValueError(f"{url} serves more than {limit} bytes")
+            h.update(chunk)
+    return h.hexdigest()
 
+
+_OPTIONAL_TYPES = {"cover_url": str, "audio_name": str, "thumb_offset": int, "share_to_feed": bool,
+                   "is_ai_generated": bool, "caption": str}
+
+
+def _type_errors(card) -> list[str]:
+    """Every shape problem in a card. A card with any of these is blocked before
+    a single field is trusted, so a malformed card can neither crash the gate nor
+    slip past a check that assumed a type."""
+    if not isinstance(card, dict):
+        return [f"the card must be a JSON object, got {type(card).__name__}"]
+    errs = []
+    approval = card.get("approval")
+    if approval is not None:
+        if not isinstance(approval, dict):
+            errs.append("approval must be an object {by, at, video_sha256} or null")
+        else:
+            for k in ("by", "at", "video_sha256"):
+                if not isinstance(approval.get(k), str) or not approval.get(k).strip():
+                    errs.append(f"approval.{k} must be a non-empty string")
+    synthetic = card.get("synthetic", {})
+    if not isinstance(synthetic, dict) or not all(isinstance(v, bool) for v in synthetic.values()):
+        errs.append("synthetic must be an object whose values are true or false")
+    consent = card.get("voice_consent")
+    if consent is not None and not isinstance(consent, dict):
+        errs.append("voice_consent must be an object {speaker, date, ref} or null")
+    trial = card.get("trial")
+    if trial is not None and not isinstance(trial, dict):
+        errs.append("trial must be an object {graduation_strategy} or null")
+    for k, typ in _OPTIONAL_TYPES.items():
+        v = card.get(k)
+        if v is not None and (not isinstance(v, typ) or (typ is int and isinstance(v, bool))):
+            errs.append(f"{k} must be {typ.__name__}")
+    collab = card.get("collaborators")
+    if collab is not None and (not isinstance(collab, list) or not all(isinstance(c, str) for c in collab)
+                               or len(collab) > 3):
+        errs.append("collaborators must be a list of at most 3 usernames")
+    return errs
+
+
+def _consent_errors(consent: dict | None, card_dir: Path, now: datetime) -> list[str]:
+    if not consent:
+        return ["cloned voice declared without voice_consent {speaker, date, ref}"]
+    errs = []
+    if not isinstance(consent.get("speaker"), str) or not consent["speaker"].strip():
+        errs.append("voice_consent.speaker must name the person whose voice is cloned")
+    try:
+        when = parse_time(consent.get("date")) if isinstance(consent.get("date"), str) else None
+    except ValueError:
+        when = None
+    if when is None:
+        errs.append("voice_consent.date must be an ISO date")
+    elif when > now:
+        errs.append("voice_consent.date is in the future")
+    ref = consent.get("ref")
+    if not isinstance(ref, str) or not ref.strip():
+        errs.append("voice_consent.ref must point to the consent record file")
+    elif not (card_dir / ref).is_file():
+        errs.append(f"voice_consent.ref {ref!r} does not exist relative to the card ({card_dir})")
+    return errs
+
+
+def check_payload(card, video: Path, video_url: str | None, *, card_dir: Path | None = None,
+                  probe=probe_video, fetch=fetch_url_sha256, now: datetime | None = None
+                  ) -> tuple[dict | None, list[str], list[str]]:
+    """Return (payload, blocking_reasons, notes). payload is None when blocked.
+
+    payload = {"container": <Graph API create-media params>, "upload": <file to send> | None}.
+    Without `video_url` the container uses `upload_type=resumable`, and `upload`
+    names the exact approved file, its size and sha256, to send to
+    rupload.facebook.com. With `video_url`, the URL is fetched now and must serve
+    bytes with the approved sha256.
+    """
+    notes: list[str] = []
+    errs = _type_errors(card)
+    if errs:
+        return None, errs, notes
+    now = now or datetime.now(timezone.utc)
+    card_dir = card_dir or Path(".")
     if not video.is_file():
         return None, [f"video not found: {video}"], notes
+    size = video.stat().st_size
+    if size > REEL_MAX_BYTES:
+        return None, [f"video is {size} bytes > 300 MB"], notes
     digest = sha256_file(video)
+    reasons: list[str] = []
 
-    approval = card.get("approval") or {}
-    if not approval.get("by") or not approval.get("at"):
-        reasons.append("no approval: the card needs approval.by and approval.at, set by a person")
-    elif approval.get("video_sha256") != digest:
+    approval = card.get("approval")
+    if not approval:
+        reasons.append("no approval: the card needs approval {by, at, video_sha256}, written after a person says yes")
+    elif approval["video_sha256"] != digest:
         reasons.append("approval does not match these bytes: approval.video_sha256 != sha256(video); "
                        "a re-render needs a new approval")
 
-    synthetic = card.get("synthetic") or {}
-    if not isinstance(synthetic, dict):
-        reasons.append("synthetic must be an object of booleans")
-        synthetic = {}
+    synthetic = card.get("synthetic", {})
     if synthetic.get("voice_clone"):
-        consent = card.get("voice_consent") or {}
-        if not consent.get("speaker") or not consent.get("date"):
-            reasons.append("cloned voice without a consent record (voice_consent.speaker and .date)")
-    is_ai = any(bool(v) for v in synthetic.values())
+        reasons += _consent_errors(card.get("voice_consent"), card_dir, now)
+    is_ai = card.get("is_ai_generated") is True or any(synthetic.values())
     if card.get("is_ai_generated") is False and is_ai:
         notes.append("card said is_ai_generated=false but synthetic media is declared; forced to true")
 
@@ -333,15 +424,12 @@ def check_payload(card: dict, video: Path, video_url: str | None, *, probe=probe
 
     trial = card.get("trial")
     if trial is not None:
-        strategy = (trial or {}).get("graduation_strategy")
+        strategy = trial.get("graduation_strategy")
         if strategy not in GRADUATION_STRATEGIES:
             reasons.append(f"trial.graduation_strategy must be one of {GRADUATION_STRATEGIES}, got {strategy!r}")
         elif strategy == "MANUAL":
-            notes.append("MANUAL graduation happens only in the Instagram app; nothing in the API graduates it")
+            notes.append("MANUAL: Meta documents graduating it in the Instagram app; no API graduation endpoint is documented")
 
-    size = video.stat().st_size
-    if size > REEL_MAX_BYTES:
-        reasons.append(f"video is {size} bytes > 300 MB")
     info = probe(video)
     if info is None:
         notes.append("UNCHECKED: ffprobe not on PATH, so codec, fps and duration were not verified")
@@ -355,21 +443,38 @@ def check_payload(card: dict, video: Path, video_url: str | None, *, probe=probe
         if not (REEL_MIN_SECONDS <= info["duration"] <= REEL_MAX_SECONDS):
             reasons.append(f"duration {info['duration']:.1f} s outside 3 s - 15 min")
 
-    if not video_url:
-        notes.append("video_url left as a placeholder: Meta fetches the file from a public URL")
+    if video_url and not reasons:
+        if not video_url.startswith("https://"):
+            reasons.append("video_url must be https: Meta fetches it from a public server")
+        else:
+            try:
+                served = fetch(video_url)
+            except Exception as exc:  # noqa: BLE001 - any fetch failure blocks
+                reasons.append(f"could not fetch video_url to verify its bytes: {exc}")
+            else:
+                if served != digest:
+                    reasons.append("video_url serves different bytes than the approved file "
+                                   f"(sha256 {served[:12]}… != {digest[:12]}…)")
 
     if reasons:
         return None, reasons, notes
-    payload = {"media_type": "REELS", "video_url": video_url or "<PUBLIC_VIDEO_URL>",
-               "caption": caption, "is_ai_generated": is_ai,
-               "share_to_feed": bool(card.get("share_to_feed", True))}
+    container = {"media_type": "REELS", "caption": caption, "is_ai_generated": is_ai,
+                 "share_to_feed": card.get("share_to_feed", True)}
+    if video_url:
+        container["video_url"] = video_url
+        upload = None
+        notes.append("video_url verified now; the host must keep serving these bytes until Meta fetches them "
+                     "(prefer the resumable upload, which sends the approved file itself)")
+    else:
+        container["upload_type"] = "resumable"
+        upload = {"file": str(video.resolve()), "file_size": size, "sha256": digest, "offset": 0}
     if trial is not None:
-        payload["trial_params"] = {"graduation_strategy": trial["graduation_strategy"]}
+        container["trial_params"] = {"graduation_strategy": trial["graduation_strategy"]}
     for opt in ("cover_url", "thumb_offset", "audio_name", "collaborators"):
-        if card.get(opt) not in (None, ""):
-            payload[opt] = card[opt]
-    notes.append(f"gate passed: sha256 {digest} approved by {approval.get('by')} at {approval.get('at')}")
-    return payload, reasons, notes
+        if card.get(opt) not in (None, "", []):
+            container[opt] = card[opt]
+    notes.append(f"gate passed: sha256 {digest} approved by {approval['by']} at {approval['at']}")
+    return {"container": container, "upload": upload}, reasons, notes
 
 
 # --- CLI ----------------------------------------------------------------------
@@ -420,7 +525,7 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("payload", help="the publish gate: card + video -> Graph API container params")
     p.add_argument("card", help="post card JSON (references/post-card.md)")
     p.add_argument("--video", required=True)
-    p.add_argument("--video-url", help="the public URL Meta will fetch the same bytes from")
+    p.add_argument("--video-url", help="optional public https URL; fetched now and must serve the approved bytes. Omit it to get a resumable upload of the local file")
 
     a = ap.parse_args(argv)
     try:
@@ -438,8 +543,13 @@ def main(argv: list[str] | None = None) -> int:
                                 graduation=a.graduation, now=_now(a.now))
             print(json.dumps(res, indent=2, ensure_ascii=False))
             return 0
-        card = json.loads(Path(a.card).read_text(encoding="utf-8"))
-        payload, reasons, notes = check_payload(card, Path(a.video), a.video_url)
+        try:
+            card = json.loads(Path(a.card).read_text(encoding="utf-8"))
+        except (OSError, ValueError) as exc:
+            print(f"BLOCKED — not publishable:\n  - the card could not be read as JSON: {exc}", file=sys.stderr)
+            return 2
+        payload, reasons, notes = check_payload(card, Path(a.video), a.video_url,
+                                                card_dir=Path(a.card).resolve().parent)
         for n in notes:
             print(f"note: {n}", file=sys.stderr)
         if payload is None:

@@ -154,6 +154,8 @@ def _ok_probe(_path):
 def video(tmp_path):
     v = tmp_path / "final.mp4"
     v.write_bytes(b"not really a video, the probe is stubbed")
+    (tmp_path / "consent").mkdir()
+    (tmp_path / "consent" / "voice.md").write_text("I consent. — the creator, 2026-11-16\n", encoding="utf-8")
     return v
 
 
@@ -171,35 +173,110 @@ def _card(video: Path, **over):
     return card
 
 
-def test_gate_passes_and_forces_ai_disclosure(video):
-    payload, reasons, _ = rl.check_payload(_card(video, is_ai_generated=False), video, "https://x/v.mp4", probe=_ok_probe)
+def _gate(card, video, url=None, **kw):
+    kw.setdefault("probe", _ok_probe)
+    kw.setdefault("card_dir", video.parent)
+    kw.setdefault("now", NOW)
+    return rl.check_payload(card, video, url, **kw)
+
+
+def test_gate_passes_with_a_resumable_upload_of_the_approved_file(video):
+    payload, reasons, _ = _gate(_card(video, is_ai_generated=False), video)
     assert reasons == []
-    assert payload["is_ai_generated"] is True
-    assert payload["media_type"] == "REELS"
-    assert "trial_params" not in payload
+    c, u = payload["container"], payload["upload"]
+    assert c["is_ai_generated"] is True and c["media_type"] == "REELS"
+    assert c["upload_type"] == "resumable" and "video_url" not in c
+    assert u == {"file": str(video.resolve()), "file_size": video.stat().st_size,
+                 "sha256": hashlib.sha256(video.read_bytes()).hexdigest(), "offset": 0}
+    assert "trial_params" not in c
 
 
 def test_gate_blocks_without_approval(video):
-    payload, reasons, _ = rl.check_payload(_card(video, approval=None), video, None, probe=_ok_probe)
+    payload, reasons, _ = _gate(_card(video, approval=None), video)
     assert payload is None and any("no approval" in r for r in reasons)
 
 
 def test_gate_blocks_when_video_changed_after_approval(video):
     card = _card(video)
     video.write_bytes(b"re-rendered after approval")
-    payload, reasons, _ = rl.check_payload(card, video, None, probe=_ok_probe)
+    payload, reasons, _ = _gate(card, video)
     assert payload is None and any("does not match these bytes" in r for r in reasons)
 
 
-def test_gate_blocks_cloned_voice_without_consent(video):
-    payload, reasons, _ = rl.check_payload(_card(video, voice_consent=None), video, None, probe=_ok_probe)
-    assert payload is None and any("consent" in r for r in reasons)
+# Review r1 BLOCKER 2: the approved bytes must be the published bytes.
+def test_video_url_serving_other_bytes_is_blocked(video):
+    payload, reasons, _ = _gate(_card(video), video, "https://cdn.example/v.mp4", fetch=lambda _u: "0" * 64)
+    assert payload is None and any("serves different bytes" in r for r in reasons)
+
+
+def test_video_url_serving_the_approved_bytes_passes(video):
+    digest = hashlib.sha256(video.read_bytes()).hexdigest()
+    payload, reasons, _ = _gate(_card(video), video, "https://cdn.example/v.mp4", fetch=lambda _u: digest)
+    assert reasons == [] and payload["container"]["video_url"] == "https://cdn.example/v.mp4"
+    assert payload["upload"] is None and "upload_type" not in payload["container"]
+
+
+def test_video_url_fetch_failure_blocks(video):
+    def boom(_u):
+        raise OSError("connection refused")
+    payload, reasons, _ = _gate(_card(video), video, "https://cdn.example/v.mp4", fetch=boom)
+    assert payload is None and any("could not fetch" in r for r in reasons)
+
+
+def test_non_https_video_url_blocks(video):
+    payload, reasons, _ = _gate(_card(video), video, "http://cdn.example/v.mp4", fetch=lambda _u: "x")
+    assert payload is None and any("https" in r for r in reasons)
+
+
+# Review r1 BLOCKER 3: consent must be real evidence, not two strings.
+@pytest.mark.parametrize("consent,needle", [
+    (None, "without voice_consent"),
+    ({"speaker": "the creator", "date": "NOT_A_DATE", "ref": "consent/voice.md"}, "ISO date"),
+    ({"speaker": "the creator", "date": "2027-01-01", "ref": "consent/voice.md"}, "future"),
+    ({"speaker": "the creator", "date": "2026-11-16", "ref": "missing.md"}, "does not exist"),
+    ({"speaker": "the creator", "date": "2026-11-16"}, "ref must point"),
+    ({"speaker": "", "date": "2026-11-16", "ref": "consent/voice.md"}, "speaker"),
+])
+def test_gate_blocks_weak_consent(video, consent, needle):
+    payload, reasons, _ = _gate(_card(video, voice_consent=consent), video)
+    assert payload is None and any(needle in r for r in reasons), reasons
 
 
 def test_no_consent_needed_without_a_cloned_voice(video):
     card = _card(video, voice_consent=None, synthetic={"voice_clone": False, "generated_visuals": False})
-    payload, reasons, _ = rl.check_payload(card, video, None, probe=_ok_probe)
-    assert reasons == [] and payload["is_ai_generated"] is False
+    payload, reasons, _ = _gate(card, video)
+    assert reasons == [] and payload["container"]["is_ai_generated"] is False
+
+
+# Review r1 MAJOR 4: an explicit true disclosure is never dropped.
+def test_explicit_ai_disclosure_is_kept(video):
+    card = _card(video, voice_consent=None, synthetic={}, is_ai_generated=True)
+    payload, reasons, _ = _gate(card, video)
+    assert reasons == [] and payload["container"]["is_ai_generated"] is True
+
+
+# Review r1 BLOCKER 1: malformed cards block, never crash and never pass.
+@pytest.mark.parametrize("over,needle", [
+    ({"approval": "yes"}, "approval must be an object"),
+    ({"approval": {"by": "owner", "at": "now"}}, "approval.video_sha256"),
+    ({"synthetic": []}, "synthetic must be an object"),
+    ({"synthetic": {"voice_clone": "yes"}}, "synthetic must be an object"),
+    ({"voice_consent": "yes"}, "voice_consent must be an object"),
+    ({"trial": "SS_PERFORMANCE"}, "trial must be an object"),
+    ({"caption": 12345}, "caption must be str"),
+    ({"is_ai_generated": "true"}, "is_ai_generated must be bool"),
+    ({"share_to_feed": "yes"}, "share_to_feed must be bool"),
+    ({"thumb_offset": True}, "thumb_offset must be int"),
+    ({"collaborators": ["a", "b", "c", "d"]}, "collaborators"),
+])
+def test_malformed_card_is_blocked(video, over, needle):
+    payload, reasons, _ = _gate(_card(video, **over), video)
+    assert payload is None and any(needle in r for r in reasons), reasons
+
+
+def test_non_object_card_is_blocked(video):
+    payload, reasons, _ = _gate(["not", "a", "card"], video)
+    assert payload is None and "JSON object" in reasons[0]
 
 
 @pytest.mark.parametrize("caption,needle", [
@@ -208,20 +285,20 @@ def test_no_consent_needed_without_a_cloned_voice(video):
     (" ".join(f"@u{i}" for i in range(21)), "@ tags"),
 ])
 def test_gate_enforces_caption_limits(video, caption, needle):
-    payload, reasons, _ = rl.check_payload(_card(video, caption=caption), video, None, probe=_ok_probe)
+    payload, reasons, _ = _gate(_card(video, caption=caption), video)
     assert payload is None and any(needle in r for r in reasons)
 
 
 def test_caption_at_the_limits_passes(video):
     cap = " ".join(f"#t{i}" for i in range(30)) + " " + " ".join(f"@u{i}" for i in range(20))
-    payload, reasons, _ = rl.check_payload(_card(video, caption=cap), video, None, probe=_ok_probe)
+    payload, reasons, _ = _gate(_card(video, caption=cap), video)
     assert reasons == []
 
 
 def test_trial_params_passed_through_and_validated(video):
-    payload, _, _ = rl.check_payload(_card(video, trial={"graduation_strategy": "SS_PERFORMANCE"}), video, None, probe=_ok_probe)
-    assert payload["trial_params"] == {"graduation_strategy": "SS_PERFORMANCE"}
-    payload, reasons, _ = rl.check_payload(_card(video, trial={"graduation_strategy": "AUTO"}), video, None, probe=_ok_probe)
+    payload, _, _ = _gate(_card(video, trial={"graduation_strategy": "SS_PERFORMANCE"}), video)
+    assert payload["container"]["trial_params"] == {"graduation_strategy": "SS_PERFORMANCE"}
+    payload, reasons, _ = _gate(_card(video, trial={"graduation_strategy": "AUTO"}), video)
     assert payload is None and any("graduation_strategy" in r for r in reasons)
 
 
@@ -233,14 +310,32 @@ def test_trial_params_passed_through_and_validated(video):
     ({"error": "moov atom not found"}, "ffprobe"),
 ])
 def test_gate_enforces_reel_spec(video, probe, needle):
-    payload, reasons, _ = rl.check_payload(_card(video), video, None, probe=lambda _p: probe)
+    payload, reasons, _ = _gate(_card(video), video, probe=lambda _p: probe)
     assert payload is None and any(needle in r for r in reasons)
 
 
+# Review r1 MINOR 5: the 300 MB limit had no test.
+def test_oversized_video_is_blocked(tmp_path):
+    big = tmp_path / "big.mp4"
+    with big.open("wb") as f:
+        f.truncate(rl.REEL_MAX_BYTES + 1)  # sparse: no 300 MB written to disk
+    card = {"approval": {"by": "o", "at": "t", "video_sha256": "x"}, "synthetic": {}}
+    payload, reasons, _ = _gate(card, big)
+    assert payload is None and "300 MB" in reasons[0]
+
+
 def test_missing_ffprobe_is_unchecked_not_green(video):
-    payload, reasons, notes = rl.check_payload(_card(video), video, None, probe=lambda _p: None)
+    payload, reasons, notes = _gate(_card(video), video, probe=lambda _p: None)
     assert payload is not None
     assert any(n.startswith("UNCHECKED") for n in notes)
+
+
+def test_container_holds_only_graph_api_fields(video):
+    payload, _, notes = _gate(_card(video, cover_url="https://x/c.jpg"), video)
+    allowed = {"media_type", "upload_type", "video_url", "caption", "is_ai_generated", "share_to_feed",
+               "trial_params", "cover_url", "thumb_offset", "audio_name", "collaborators"}
+    assert set(payload["container"]) <= allowed
+    assert any(n.startswith("gate passed: sha256 ") for n in notes)
 
 
 # --- CLI ------------------------------------------------------------------------
@@ -250,17 +345,23 @@ def test_cli_outliers_runs_on_the_example():
     assert "@alpha" in out and "/p/A6/" in out and "/p/B6/" not in out
 
 
-def test_cli_payload_exit_2_when_blocked(tmp_path, video):
+@pytest.mark.parametrize("card_text", ['{"approval": "yes"}', "not json", "[]"])
+def test_cli_payload_exit_2_on_bad_cards(tmp_path, video, card_text):
     card = tmp_path / "card.json"
-    card.write_text(json.dumps(_card(video, approval=None)), encoding="utf-8")
+    card.write_text(card_text, encoding="utf-8")
     proc = subprocess.run([sys.executable, str(SCRIPT), "payload", str(card), "--video", str(video)],
                           capture_output=True, text=True)
     assert proc.returncode == 2 and "BLOCKED" in proc.stderr and proc.stdout == ""
+    assert "Traceback" not in proc.stderr
 
 
-def test_payload_holds_only_graph_api_fields(video):
-    payload, _, notes = rl.check_payload(_card(video), video, "https://x/v.mp4", probe=_ok_probe)
-    allowed = {"media_type", "video_url", "caption", "is_ai_generated", "share_to_feed", "trial_params",
-               "cover_url", "thumb_offset", "audio_name", "collaborators"}
-    assert set(payload) <= allowed
-    assert any(n.startswith("gate passed: sha256 ") for n in notes)
+def test_cli_payload_passes_with_consent_resolved_next_to_the_card(tmp_path, video):
+    card = tmp_path / "card.json"
+    card.write_text(json.dumps(_card(video)), encoding="utf-8")
+    proc = subprocess.run([sys.executable, str(SCRIPT), "payload", str(card), "--video", str(video)],
+                          capture_output=True, text=True)
+    # ffprobe may be absent (UNCHECKED note) or present and reject the fake bytes; both are honest.
+    if proc.returncode == 0:
+        assert json.loads(proc.stdout)["upload"]["sha256"] == hashlib.sha256(video.read_bytes()).hexdigest()
+    else:
+        assert proc.returncode == 2 and "ffprobe could not read" in proc.stderr

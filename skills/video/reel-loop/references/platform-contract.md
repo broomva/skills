@@ -50,14 +50,25 @@ two values:
 - **`SS_PERFORMANCE`:** "the trial reel will be automatically graduated if the trial
   reel performs well".
 
-**No API endpoint graduates a trial reel.** MANUAL means a person, in the app.
+The reference page documents no API endpoint that graduates a trial reel. It does
+not say that none exists. Treat MANUAL as needing a person, in the app.
 
 ## AI disclosure
 
 `is_ai_generated` is "a self-disclosure of AI usage in the post". Meta's help pages
 ask creators to disclose photorealistic video and realistic-sounding audio, with an
 AI voice-over as their example (MED: script-rendered pages, read as search snippets).
-`reel_loop.py payload` sets the flag whenever the card declares synthetic media.
+`reel_loop.py payload` sets the flag whenever the card declares synthetic media or
+sets it true. It cannot detect media the card does not declare.
+
+## Sending the approved bytes
+
+A Reels container also accepts `upload_type=resumable`: "An optional parameter for
+users want to upload video through the rupload protocol". The file is then sent
+with `POST https://rupload.facebook.com/ig-api-upload/<version>/<IG_CONTAINER_ID>`,
+using headers `offset` and `file_size` and the file as the body. `reel_loop.py
+payload` defaults to this mode, so the published bytes are the approved file rather
+than whatever a URL serves when Meta fetches it.
 
 ## Insights for our own Reels
 
