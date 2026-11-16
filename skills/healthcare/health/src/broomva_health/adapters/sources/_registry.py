@@ -43,6 +43,7 @@ __all__ = ["SOURCE_REGISTRY", "build_sources", "get_source"]
 #: settings-aware and picks the Garmin backend.
 SOURCE_REGISTRY: Final[Mapping[Source, type]] = {
     Source.GARMIN: GarminTraceSource,
+    Source.APPLE_HEALTH: AppleHealthTraceSource,
 }
 
 _DEFAULT_GARMIN_BACKEND = "native"

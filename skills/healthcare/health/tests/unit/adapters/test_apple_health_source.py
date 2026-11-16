@@ -163,7 +163,22 @@ EXPORT_XML = (
         "mmHg",
     )
     + "</Correlation>"
-    '<Workout workoutActivityType="HKWorkoutActivityTypeRunning" duration="30"/>'
+    # Apple's DTD: records inside a Correlation also appear at top level.
+    + _record(
+        f"{HK}BloodPressureSystolic",
+        "2024-03-02 08:00:00 -0500",
+        "2024-03-02 08:00:00 -0500",
+        "121",
+        "mmHg",
+    )
+    + _record(
+        f"{HK}BloodPressureDiastolic",
+        "2024-03-02 08:00:00 -0500",
+        "2024-03-02 08:00:00 -0500",
+        "78",
+        "mmHg",
+    )
+    + '<Workout workoutActivityType="HKWorkoutActivityTypeRunning" duration="30"/>'
     "</HealthData>\n"
 )
 
@@ -430,3 +445,82 @@ def test_corrupt_or_truncated_export_is_a_source_error(
             end=date(2024, 12, 31),
         )
     repo.close()
+
+
+def test_two_producers_at_the_same_instant_both_survive(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    hr = f"{HK}HeartRate"
+    ts = "2024-05-01 09:00:00 +0000"
+    path = _mini_export(
+        tmp_path / "x.zip",
+        [
+            _record(hr, ts, ts, "60", "count/min", source="Watch"),
+            _record(hr, ts, ts, "72", "count/min", device=RING, source="Chest strap"),
+        ],
+    )
+    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
+    repo.migrate()
+    AppleHealthTraceSource(paths=tmp_paths, export_path=str(path)).backfill(
+        repo=repo,
+        token_store=None,
+        rate_limiter=None,  # type: ignore[arg-type]
+        start=date(2024, 5, 1),
+        end=date(2024, 5, 1),
+    )
+    got = repo.query_quantity(
+        Source.APPLE_HEALTH,
+        MetricCode.HEART_RATE,
+        datetime(2024, 5, 1, tzinfo=UTC),
+        datetime(2024, 5, 2, tzinfo=UTC),
+    )
+    assert sorted((s.producer, s.value) for s in got) == [("Chest strap", 72.0), ("Watch", 60.0)]
+    repo.close()
+
+
+def test_records_nested_in_a_correlation_are_not_read_twice(tmp_path: Path) -> None:
+    sys_type = f"{HK}BloodPressureSystolic"
+    ts = "2024-03-02 08:00:00 -0500"
+    nested_only = _mini_export(
+        tmp_path / "n.zip",
+        [
+            f'<Correlation type="HKCorrelationTypeIdentifierBloodPressure" startDate="{ts}" endDate="{ts}">'
+            + _record(sys_type, ts, ts, "121", "mmHg")
+            + "</Correlation>",
+        ],
+    )
+    assert _samples(nested_only, date(2024, 1, 1), date(2024, 12, 31)) == []
+
+
+def test_zip_member_is_chosen_by_parsed_root_not_substring(tmp_path: Path) -> None:
+    path = tmp_path / "export.zip"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("notes.xml", "<!-- <HealthData --><Notes>" + "x" * 200_000 + "</Notes>")
+        zf.writestr("apple_health_export/export.xml", EXPORT_XML)
+    assert len(_samples(path, date(2024, 1, 1), date(2024, 12, 31))) > 0
+
+
+def test_sync_reaches_today_east_of_utc(
+    tmp_paths: HealthPaths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from broomva_health.adapters.sources import apple_health
+
+    monkeypatch.setattr(apple_health, "utc_now", lambda: datetime(2024, 3, 1, 20, 0, tzinfo=UTC))
+    ts = "2024-03-02 05:00:00 +0900"  # 2024-03-01 20:00Z: already "today" in UTC+9
+    path = _mini_export(tmp_path / "e.zip", [_record(f"{HK}HeartRate", ts, ts, "64", "count/min")])
+    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
+    repo.migrate()
+    result = AppleHealthTraceSource(paths=tmp_paths, export_path=str(path)).sync(
+        repo=repo,
+        token_store=None,
+        rate_limiter=None,  # type: ignore[arg-type]
+        since=datetime(2024, 3, 1, 0, 0, tzinfo=UTC),
+    )
+    assert result.samples_ingested == 1
+    repo.close()
+
+
+def test_legacy_get_source_knows_apple_health(tmp_paths: HealthPaths) -> None:
+    from broomva_health.adapters.sources._registry import get_source
+
+    assert isinstance(get_source(Source.APPLE_HEALTH, paths=tmp_paths), AppleHealthTraceSource)

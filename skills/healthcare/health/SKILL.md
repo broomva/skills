@@ -245,8 +245,9 @@ Every sample keeps its producer: `device` (manufacturer, hardware model) and `me
 statistics, never compared directly. Mapped types: heart rate, resting HR, HRV SDNN, respiratory rate,
 SpO2, steps, floors, active/basal energy, distance, weight, lean mass, body fat, BMI, VO2max, blood
 pressure, glucose, water, and sleep stages (in bed, asleep, light/core, deep, REM, awake). Workouts are
-not imported yet. Samples are keyed on (source, metric, start): two producers writing the same metric at
-the same second keep only the last one read.
+not imported yet. Records nested in a Correlation are read once, from their top-level copies (Apple's
+DTD lists them at both places). Samples are keyed on (source, metric, start, producer), so two apps
+writing the same metric at the same second both stay (migration `004_producer_key`).
 
 ## Composition with bstack primitives
 

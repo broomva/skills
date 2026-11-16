@@ -51,6 +51,13 @@ class _SampleBase(BaseModel):
     start_ts: datetime = Field(..., description="UTC start of the sample interval")
     end_ts: datetime = Field(..., description="UTC end of the sample interval")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Source-specific extras")
+    producer: str = Field(
+        default="",
+        description=(
+            "Which producer inside the source wrote it (e.g. the app that wrote an Apple Health "
+            "record). Part of the sample's identity, so two producers at the same instant both stay."
+        ),
+    )
     ingested_at: datetime = Field(default_factory=utc_now, description="When the trace was written")
 
     _normalize_start = field_validator("start_ts", mode="after")(_coerce_utc)

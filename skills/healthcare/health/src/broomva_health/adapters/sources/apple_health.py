@@ -139,8 +139,8 @@ def open_export(path: Path) -> Iterator[IO[bytes]]:
     """Yield the export XML stream, from ``export.zip`` or an extracted ``.xml``.
 
     Apple localises the XML's file name, so inside a zip the HealthData document
-    is found by content: the first non-CDA ``.xml`` member whose root is
-    ``<HealthData``.
+    is found by content: the largest non-CDA ``.xml`` member whose parsed root
+    element is ``<HealthData>``.
     """
     if path.suffix.lower() != ".zip":
         with path.open("rb") as fh:
@@ -149,44 +149,51 @@ def open_export(path: Path) -> Iterator[IO[bytes]]:
     with zipfile.ZipFile(path) as zf:
         names = [n for n in zf.namelist() if n.lower().endswith(".xml") and "cda" not in n.lower()]
         for name in sorted(names, key=lambda n: -zf.getinfo(n).file_size):
-            with zf.open(name) as probe:
-                if b"<HealthData" in probe.read(64 * 1024):
-                    with zf.open(name) as fh:
-                        yield fh
-                    return
+            if _root_tag(zf, name) == "HealthData":
+                with zf.open(name) as fh:
+                    yield fh
+                return
     raise SourceUnavailable(f"no Apple Health export XML inside {path.name}")
+
+
+def _root_tag(zf: zipfile.ZipFile, name: str) -> str | None:
+    """The member's real root element (comments and the DTD are skipped), or None."""
+    try:
+        with zf.open(name) as probe:
+            for _, elem in ET.iterparse(probe, events=("start",)):  # noqa: S314
+                return elem.tag
+    except ET.ParseError:
+        return None
+    return None
 
 
 def iter_samples(
     stream: IO[bytes], *, start: date, end: date
 ) -> Iterator[QuantitySample | CategorySample]:
-    """Stream-parse ``<Record>`` elements whose local start day is in ``[start, end]``."""
-    # Exports run to gigabytes: drop every finished top-level element from the
-    # root, or the tree keeps millions of empty nodes alive.
+    """Stream-parse top-level ``<Record>`` elements whose local start day is in ``[start, end]``.
+
+    Records nested in a ``<Correlation>`` are skipped: Apple's export DTD states
+    they also appear as top-level records, so reading both would double them.
+    """
+    # Exports run to gigabytes: drop every finished element from its parent, or
+    # the tree keeps millions of empty nodes alive (a Correlation can hold many).
     # S314: this is the owner's own local export; expat >= 2.4.1 caps entity
     # expansion and never fetches external entities.
-    root = None
+    stack: list[ET.Element] = []
     for event, elem in ET.iterparse(stream, events=("start", "end")):  # noqa: S314
-        if root is None:
-            root = elem
+        if event == "start":
+            stack.append(elem)
             continue
-        if event != "end" or elem.tag != "Record":
-            if event == "end" and elem.tag in (
-                "Workout",
-                "ActivitySummary",
-                "ClinicalRecord",
-                "Correlation",
-                "Me",
-                "ExportDate",
-            ):
-                root.clear()
-            continue
-        try:
-            sample = _to_sample(elem.attrib, start=start, end=end)
-        except (ValueError, KeyError) as exc:
-            logger.debug("apple_health: skipped a record: %s", exc)
-            sample = None
-        root.clear()
+        stack.pop()
+        parent = stack[-1] if stack else None
+        sample = None
+        if elem.tag == "Record" and parent is not None and len(stack) == 1:
+            try:
+                sample = _to_sample(elem.attrib, start=start, end=end)
+            except (ValueError, KeyError) as exc:
+                logger.debug("apple_health: skipped a record: %s", exc)
+        if parent is not None:
+            parent.remove(elem)
         if sample is not None:
             yield sample
 
@@ -205,6 +212,7 @@ def _to_sample(
         "device": parse_device(a.get("device")),
         "start_ts": parse_ts(a["startDate"]),
         "end_ts": parse_ts(a["endDate"]),
+        "producer": a.get("sourceName") or "",
         "metadata": {
             k: v
             for k, v in (
@@ -311,7 +319,8 @@ class AppleHealthTraceSource:
         # The cursor is UTC but the window is the record's local day: back off a
         # day so evening samples west of UTC are not skipped (upserts are idempotent).
         start = since.date() - timedelta(days=1) if since else date(2000, 1, 1)
-        n = self._ingest(repo, start, started.date())
+        # Local days east of UTC run ahead of the UTC date: reach one day past it.
+        n = self._ingest(repo, start, started.date() + timedelta(days=1))
         return SyncResult(
             source=self.name,
             started_at=started,

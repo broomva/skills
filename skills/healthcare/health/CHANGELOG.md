@@ -19,6 +19,14 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
   sample's device and writing app, and finds the localised XML name inside the zip by content. The
   source registers only when an export exists, so all-source runs never fail without one.
 - `hr_variability_sdnn` metric: Apple Watch HRV is SDNN and stays separate from RMSSD.
+- Samples carry a `producer` (the app that wrote an Apple Health record). Migration
+  `004_producer_key` adds it to every sample table's primary key, so two producers recording the
+  same metric at the same instant no longer overwrite each other. Existing rows keep producer `''`.
+
+### Fixed
+
+- The test suite configures again under `filterwarnings = error` with current pytest-asyncio
+  (`asyncio_default_fixture_loop_scope = "function"`).
 
 ## [0.12.0] — 2026-08-12
 
