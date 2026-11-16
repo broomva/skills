@@ -1,4 +1,4 @@
-"""Migration 004 adds `producer` to every sample table's key without losing rows."""
+"""Migration 004 adds `producer` and keys samples on `record_key` without losing rows."""
 
 from __future__ import annotations
 
@@ -42,7 +42,8 @@ def test_upgrade_from_003_keeps_rows_and_widens_the_key(tmp_path: Path) -> None:
     ]
     for table in ("quantity_sample", "category_sample", "correlation_sample"):
         pk = [r[1] for r in conn.execute(f"PRAGMA table_info({table})") if r[5]]
-        assert "producer" in pk, table
+        assert "record_key" in pk, table
+        assert "producer" in [r[1] for r in conn.execute(f"PRAGMA table_info({table})")], table
     indexes = {r[0] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='index'")}
     assert {
         "ix_quantity_metric_start",
@@ -50,3 +51,31 @@ def test_upgrade_from_003_keeps_rows_and_widens_the_key(tmp_path: Path) -> None:
         "ix_category_metric_start",
     } <= indexes
     conn.close()
+
+
+def test_a_source_without_record_keys_still_updates_in_place(tmp_path: Path) -> None:
+    from datetime import UTC, datetime
+
+    from broomva_health.domain.metrics import MetricCode
+    from broomva_health.domain.samples import QuantitySample
+    from broomva_health.domain.source import Source
+
+    repo = SQLiteTraceRepository(tmp_path / "g.db")
+    repo.migrate()
+    day = datetime(2024, 1, 1, tzinfo=UTC)
+    for end_hour, steps in ((12, 4000.0), (22, 9000.0)):  # Garmin re-reports the day as it grows
+        repo.upsert_quantity(
+            [
+                QuantitySample(
+                    source=Source.GARMIN,
+                    metric=MetricCode.STEPS,
+                    value=steps,
+                    unit="count",
+                    start_ts=day,
+                    end_ts=day.replace(hour=end_hour),
+                ),
+            ]
+        )
+    got = repo.query_quantity(Source.GARMIN, MetricCode.STEPS, day, day.replace(hour=23))
+    assert [s.value for s in got] == [9000.0]
+    repo.close()

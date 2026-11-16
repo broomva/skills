@@ -19,9 +19,15 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
   sample's device and writing app, and finds the localised XML name inside the zip by content. The
   source registers only when an export exists, so all-source runs never fail without one.
 - `hr_variability_sdnn` metric: Apple Watch HRV is SDNN and stays separate from RMSSD.
-- Samples carry a `producer` (the app that wrote an Apple Health record). Migration
-  `004_producer_key` adds it to every sample table's primary key, so two producers recording the
-  same metric at the same instant no longer overwrite each other. Existing rows keep producer `''`.
+- Samples carry `producer` (the app behind an Apple Health record) and `record_key`, their identity
+  beyond (source, metric, start). Migration `004_producer_record_key` keys every sample table on
+  `record_key`: Apple records that share a start time (two apps, an in-bed record and a sleep stage)
+  no longer overwrite each other, while Garmin (empty key) still updates a day in place. Existing
+  rows keep empty values.
+- `health series --producer`: select one producer. Buckets never pool producers or sources.
+- Apple Health is import-only: `sync` is a no-op and `backfill` re-reads the export idempotently.
+  Only files whose root is `<HealthData>` are selected. A malformed internal DTD is stripped before
+  parsing. UTF-16 files get a clear refusal.
 
 ### Fixed
 

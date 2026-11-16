@@ -325,21 +325,24 @@ def test_missing_export_is_a_clear_error(tmp_paths: HealthPaths) -> None:
     assert source.status(token_store=None).token_valid is False  # type: ignore[arg-type]
 
 
-def test_find_export_prefers_config_then_newest_file(
+def test_find_export_prefers_config_then_newest_valid_file(
     tmp_paths: HealthPaths, tmp_path: Path
 ) -> None:
-    folder = tmp_paths.exports_dir / "apple_health"
-    folder.mkdir(parents=True)
-    old, new = folder / "old.zip", folder / "new.xml"
-    old.write_text("x")
-    new.write_text("y")
     import os
 
+    folder = tmp_paths.exports_dir / "apple_health"
+    folder.mkdir(parents=True)
+    old, new = _write_zip(folder / "old.zip"), folder / "new.xml"
+    new.write_text(EXPORT_XML, encoding="utf-8")
     os.utime(old, (1, 1))
     assert find_export(tmp_paths) == new
-    custom = tmp_path / "elsewhere.zip"
-    custom.write_text("z")
+    # A newer stray XML that is not a HealthData document is never chosen.
+    stray = folder / "notes.xml"
+    stray.write_text("<Notes><Record type='x'/></Notes>", encoding="utf-8")
+    assert find_export(tmp_paths) == new
+    custom = _write_zip(tmp_path / "elsewhere.zip")
     assert find_export(tmp_paths, str(custom)) == custom
+    assert find_export(tmp_paths, str(stray)) is None
     assert find_export(tmp_paths, str(tmp_path / "missing.zip")) is None
 
 
@@ -377,51 +380,6 @@ def test_registry_skips_a_configured_export_that_no_longer_exists(
     assert Source.APPLE_HEALTH not in build_sources(settings, tmp_paths)
     _write_zip(tmp_path / "gone.zip")
     assert Source.APPLE_HEALTH in build_sources(settings, tmp_paths)
-
-
-def test_sync_cursor_in_utc_still_reaches_evening_samples_west_of_utc(
-    tmp_paths: HealthPaths, tmp_path: Path
-) -> None:
-    hr = f"{HK}HeartRate"
-    first = _mini_export(
-        tmp_path / "a.zip",
-        [
-            _record(
-                hr, "2024-03-01 23:10:00 -0500", "2024-03-01 23:10:00 -0500", "58", "count/min"
-            ),
-        ],
-    )
-    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
-    repo.migrate()
-    AppleHealthTraceSource(paths=tmp_paths, export_path=str(first)).sync(
-        repo=repo,
-        token_store=None,
-        rate_limiter=None,  # type: ignore[arg-type]
-    )
-    second = _mini_export(
-        tmp_path / "b.zip",
-        [
-            _record(
-                hr, "2024-03-01 23:10:00 -0500", "2024-03-01 23:10:00 -0500", "58", "count/min"
-            ),
-            _record(
-                hr, "2024-03-01 23:50:00 -0500", "2024-03-01 23:50:00 -0500", "61", "count/min"
-            ),
-        ],
-    )
-    AppleHealthTraceSource(paths=tmp_paths, export_path=str(second)).sync(
-        repo=repo,
-        token_store=None,
-        rate_limiter=None,  # type: ignore[arg-type]
-    )
-    got = repo.query_quantity(
-        Source.APPLE_HEALTH,
-        MetricCode.HEART_RATE,
-        datetime(2024, 3, 1, tzinfo=UTC),
-        datetime(2024, 3, 3, tzinfo=UTC),
-    )
-    assert sorted(s.value for s in got) == [58.0, 61.0]
-    repo.close()
 
 
 @pytest.mark.parametrize("content", [b"not a zip at all", None])
@@ -500,111 +458,10 @@ def test_zip_member_is_chosen_by_parsed_root_not_substring(tmp_path: Path) -> No
     assert len(_samples(path, date(2024, 1, 1), date(2024, 12, 31))) > 0
 
 
-def test_sync_reaches_today_east_of_utc(
-    tmp_paths: HealthPaths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    from broomva_health.adapters.sources import apple_health
-
-    monkeypatch.setattr(apple_health, "utc_now", lambda: datetime(2024, 3, 1, 20, 0, tzinfo=UTC))
-    ts = "2024-03-02 05:00:00 +0900"  # 2024-03-01 20:00Z: already "today" in UTC+9
-    path = _mini_export(tmp_path / "e.zip", [_record(f"{HK}HeartRate", ts, ts, "64", "count/min")])
-    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
-    repo.migrate()
-    result = AppleHealthTraceSource(paths=tmp_paths, export_path=str(path)).sync(
-        repo=repo,
-        token_store=None,
-        rate_limiter=None,  # type: ignore[arg-type]
-        since=datetime(2024, 3, 1, 0, 0, tzinfo=UTC),
-    )
-    assert result.samples_ingested == 1
-    repo.close()
-
-
 def test_legacy_get_source_knows_apple_health(tmp_paths: HealthPaths) -> None:
     from broomva_health.adapters.sources._registry import get_source
 
     assert isinstance(get_source(Source.APPLE_HEALTH, paths=tmp_paths), AppleHealthTraceSource)
-
-
-def _sync(paths: HealthPaths, export: Path, repo: SQLiteTraceRepository) -> int:
-    return (
-        AppleHealthTraceSource(paths=paths, export_path=str(export))
-        .sync(
-            repo=repo,
-            token_store=None,
-            rate_limiter=None,  # type: ignore[arg-type]
-        )
-        .samples_ingested
-    )
-
-
-def test_sync_skips_an_unchanged_export_and_reimports_a_new_one(
-    tmp_paths: HealthPaths, tmp_path: Path
-) -> None:
-    hr, rr = f"{HK}HeartRate", f"{HK}RespiratoryRate"
-    export = _mini_export(
-        tmp_path / "export.zip",
-        [
-            _record(
-                hr, "2024-06-01 08:00:00 +0000", "2024-06-01 08:00:00 +0000", "60", "count/min"
-            ),
-        ],
-    )
-    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
-    repo.migrate()
-    assert _sync(tmp_paths, export, repo) == 1
-    assert _sync(tmp_paths, export, repo) == 0  # unchanged file: nothing to do
-    # A new export holds an older record of another metric: it is still imported.
-    _mini_export(
-        export,
-        [
-            _record(
-                hr, "2024-06-01 08:00:00 +0000", "2024-06-01 08:00:00 +0000", "60", "count/min"
-            ),
-            _record(
-                rr, "2023-01-01 03:00:00 +0000", "2023-01-01 03:00:00 +0000", "14", "count/min"
-            ),
-        ],
-    )
-    assert _sync(tmp_paths, export, repo) == 2
-    got = repo.query_quantity(
-        Source.APPLE_HEALTH,
-        MetricCode.RESPIRATION_RPM,
-        datetime(2023, 1, 1, tzinfo=UTC),
-        datetime(2023, 1, 2, tzinfo=UTC),
-    )
-    assert [s.value for s in got] == [14.0]
-    repo.close()
-
-
-def test_an_interrupted_sync_is_redone_next_time(
-    tmp_paths: HealthPaths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-) -> None:
-    export = _mini_export(
-        tmp_path / "export.zip",
-        [
-            _record(
-                f"{HK}HeartRate",
-                "2024-06-01 08:00:00 +0000",
-                "2024-06-01 08:00:00 +0000",
-                "60",
-                "count/min",
-            )
-        ],
-    )
-    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
-    repo.migrate()
-    real_ingest = AppleHealthTraceSource._ingest
-
-    def killed(*_args: object, **_kwargs: object) -> int:
-        raise KeyboardInterrupt  # the process dies mid-import
-
-    monkeypatch.setattr(AppleHealthTraceSource, "_ingest", killed)
-    with pytest.raises(KeyboardInterrupt):
-        _sync(tmp_paths, export, repo)
-    monkeypatch.setattr(AppleHealthTraceSource, "_ingest", real_ingest)
-    assert _sync(tmp_paths, export, repo) == 1  # same file: the import is redone, not skipped
-    repo.close()
 
 
 _BAD_DTD = (
@@ -641,3 +498,81 @@ def test_an_external_doctype_without_a_subset_is_removed_too(tmp_path: Path) -> 
         encoding="utf-8",
     )
     assert len(_samples(path, date(2024, 1, 1), date(2024, 12, 31))) == 1
+
+
+def test_sync_is_a_no_op_and_backfill_is_the_import(tmp_paths: HealthPaths) -> None:
+    folder = tmp_paths.exports_dir / "apple_health"
+    folder.mkdir(parents=True)
+    _write_zip(folder / "export.zip")
+    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
+    repo.migrate()
+    result = AppleHealthTraceSource(paths=tmp_paths).sync(
+        repo=repo,
+        token_store=None,  # type: ignore[arg-type]
+        rate_limiter=None,  # type: ignore[arg-type]
+    )
+    assert result.samples_ingested == 0
+    assert result.succeeded
+    assert not (tmp_paths.traces_dir / "apple_health.import.json").exists()
+    repo.close()
+
+
+def test_same_producer_records_sharing_a_start_all_survive(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    sleep = "HKCategoryTypeIdentifierSleepAnalysis"
+    start = "2024-03-01 22:00:00 -0500"
+    path = _mini_export(
+        tmp_path / "s.zip",
+        [
+            _record(sleep, start, "2024-03-02 07:00:00 -0500", "HKCategoryValueSleepAnalysisInBed"),
+            _record(sleep, start, "2024-03-01 22:20:00 -0500", "HKCategoryValueSleepAnalysisAwake"),
+        ],
+    )
+    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
+    repo.migrate()
+    source = AppleHealthTraceSource(paths=tmp_paths, export_path=str(path))
+    for _ in range(2):  # a repeat import rewrites the same rows
+        source.backfill(
+            repo=repo,
+            token_store=None,  # type: ignore[arg-type]
+            rate_limiter=None,  # type: ignore[arg-type]
+            start=date(2024, 3, 1),
+            end=date(2024, 3, 2),
+        )
+    import sqlite3
+
+    rows = (
+        sqlite3.connect(tmp_paths.trace_db_for("apple_health"))
+        .execute("SELECT category FROM category_sample ORDER BY category")
+        .fetchall()
+    )
+    assert rows == [("awake",), ("in_bed",)]
+    repo.close()
+
+
+def test_a_non_health_root_is_refused_not_imported(tmp_path: Path) -> None:
+    path = tmp_path / "export.xml"
+    path.write_text(
+        "<Notes>"
+        + _record(
+            f"{HK}HeartRate",
+            "2024-03-01 10:00:00 +0000",
+            "2024-03-01 10:00:00 +0000",
+            "60",
+            "count/min",
+        )
+        + "</Notes>",
+        encoding="utf-8",
+    )
+    with pytest.raises(SourceUnavailable, match="not an Apple Health export"):
+        _samples(path, date(2024, 1, 1), date(2024, 12, 31))
+
+
+def test_a_utf16_export_gets_a_clear_refusal(tmp_path: Path) -> None:
+    path = tmp_path / "export.xml"
+    path.write_bytes(
+        ('<?xml version="1.0" encoding="UTF-16"?>' + EXPORT_XML.split("?>", 1)[1]).encode("utf-16")
+    )
+    with pytest.raises(SourceUnavailable, match="UTF-16"):
+        _samples(path, date(2024, 1, 1), date(2024, 12, 31))

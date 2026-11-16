@@ -144,7 +144,7 @@ class SQLiteTraceRepository:
     # Upserts
     # ------------------------------------------------------------------ #
     def upsert_quantity(self, samples: list[QuantitySample]) -> int:
-        """Insert-or-replace quantity samples. Idempotent on (source, metric, start_ts, producer)."""
+        """Insert-or-replace quantity samples. Idempotent on (source, metric, start_ts, record_key)."""
         if not samples:
             return 0
         rows = [self._serialize_quantity_row(s) for s in samples]
@@ -152,14 +152,14 @@ class SQLiteTraceRepository:
             self._conn.executemany(
                 "INSERT OR REPLACE INTO quantity_sample "
                 "(source, metric, start_ts, end_ts, value, unit, "
-                " device_json, metadata_json, ingested_at, producer) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " device_json, metadata_json, ingested_at, producer, record_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
         return len(rows)
 
     def upsert_category(self, samples: list[CategorySample]) -> int:
-        """Insert-or-replace category samples. Idempotent on (source, metric, start_ts, producer)."""
+        """Insert-or-replace category samples. Idempotent on (source, metric, start_ts, record_key)."""
         if not samples:
             return 0
         rows = [self._serialize_category_row(s) for s in samples]
@@ -167,14 +167,14 @@ class SQLiteTraceRepository:
             self._conn.executemany(
                 "INSERT OR REPLACE INTO category_sample "
                 "(source, metric, start_ts, end_ts, category, "
-                " device_json, metadata_json, ingested_at, producer) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " device_json, metadata_json, ingested_at, producer, record_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
         return len(rows)
 
     def upsert_correlation(self, samples: list[CorrelationSample]) -> int:
-        """Insert-or-replace correlation samples. Idempotent on (source, metric, start_ts, producer)."""
+        """Insert-or-replace correlation samples. Idempotent on (source, metric, start_ts, record_key)."""
         if not samples:
             return 0
         rows = [self._serialize_correlation_row(s) for s in samples]
@@ -182,8 +182,8 @@ class SQLiteTraceRepository:
             self._conn.executemany(
                 "INSERT OR REPLACE INTO correlation_sample "
                 "(source, metric, start_ts, end_ts, components_json, units_json, "
-                " device_json, metadata_json, ingested_at, producer) "
-                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                " device_json, metadata_json, ingested_at, producer, record_key) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 rows,
             )
         return len(rows)
@@ -260,7 +260,7 @@ class SQLiteTraceRepository:
         if source is None:
             cursor = self._conn.execute(
                 "SELECT source, metric, start_ts, end_ts, value, unit, "
-                "       device_json, metadata_json, ingested_at, producer "
+                "       device_json, metadata_json, ingested_at, producer, record_key "
                 "FROM quantity_sample "
                 "WHERE metric = ? AND start_ts >= ? AND start_ts <= ? "
                 "ORDER BY start_ts ASC",
@@ -269,7 +269,7 @@ class SQLiteTraceRepository:
         else:
             cursor = self._conn.execute(
                 "SELECT source, metric, start_ts, end_ts, value, unit, "
-                "       device_json, metadata_json, ingested_at, producer "
+                "       device_json, metadata_json, ingested_at, producer, record_key "
                 "FROM quantity_sample "
                 "WHERE source = ? AND metric = ? AND start_ts >= ? AND start_ts <= ? "
                 "ORDER BY start_ts ASC",
@@ -377,7 +377,7 @@ class SQLiteTraceRepository:
     # ---- row (de)serialization -------------------------------------- #
     def _serialize_quantity_row(
         self, s: QuantitySample
-    ) -> tuple[str, str, str, str, float, str, str | None, str | None, str, str]:
+    ) -> tuple[str, str, str, str, float, str, str | None, str | None, str, str, str]:
         return (
             str(s.source),
             str(s.metric),
@@ -389,11 +389,12 @@ class SQLiteTraceRepository:
             _metadata_to_json(s.metadata),
             s.ingested_at.isoformat(),
             s.producer,
+            s.record_key,
         )
 
     def _serialize_category_row(
         self, s: CategorySample
-    ) -> tuple[str, str, str, str, str, str | None, str | None, str, str]:
+    ) -> tuple[str, str, str, str, str, str | None, str | None, str, str, str]:
         return (
             str(s.source),
             str(s.metric),
@@ -404,11 +405,12 @@ class SQLiteTraceRepository:
             _metadata_to_json(s.metadata),
             s.ingested_at.isoformat(),
             s.producer,
+            s.record_key,
         )
 
     def _serialize_correlation_row(
         self, s: CorrelationSample
-    ) -> tuple[str, str, str, str, str, str, str | None, str | None, str, str]:
+    ) -> tuple[str, str, str, str, str, str, str | None, str | None, str, str, str]:
         return (
             str(s.source),
             str(s.metric),
@@ -420,6 +422,7 @@ class SQLiteTraceRepository:
             _metadata_to_json(s.metadata),
             s.ingested_at.isoformat(),
             s.producer,
+            s.record_key,
         )
 
     def _serialize_workout_row(
@@ -485,6 +488,7 @@ class SQLiteTraceRepository:
             metadata=_metadata_from_json(metadata_json),
             ingested_at=_parse_ts(ingested_at),
             producer=rest[0] if rest else "",
+            record_key=rest[1] if len(rest) > 1 else "",
         )
 
     def _deserialize_category_row(self, row: tuple[Any, ...]) -> CategorySample:
@@ -509,6 +513,7 @@ class SQLiteTraceRepository:
             metadata=_metadata_from_json(metadata_json),
             ingested_at=_parse_ts(ingested_at),
             producer=rest[0] if rest else "",
+            record_key=rest[1] if len(rest) > 1 else "",
         )
 
     def _deserialize_correlation_row(self, row: tuple[Any, ...]) -> CorrelationSample:
@@ -535,6 +540,7 @@ class SQLiteTraceRepository:
             metadata=_metadata_from_json(metadata_json),
             ingested_at=_parse_ts(ingested_at),
             producer=rest[0] if rest else "",
+            record_key=rest[1] if len(rest) > 1 else "",
         )
 
     def _deserialize_workout_row(self, row: tuple[Any, ...]) -> Workout:

@@ -53,9 +53,15 @@ class _SampleBase(BaseModel):
     metadata: dict[str, Any] = Field(default_factory=dict, description="Source-specific extras")
     producer: str = Field(
         default="",
+        description="Which producer inside the source wrote it (e.g. the app behind an Apple Health record).",
+    )
+    record_key: str = Field(
+        default="",
         description=(
-            "Which producer inside the source wrote it (e.g. the app that wrote an Apple Health "
-            "record). Part of the sample's identity, so two producers at the same instant both stay."
+            "Identity beyond (source, metric, start_ts). Empty for sources that update a sample in "
+            "place (Garmin re-reports a day). Sources whose distinct records can share a start time "
+            "(Apple Health: two apps, or an in-bed record and a sleep stage) set their full natural "
+            "identity here, so none overwrites another."
         ),
     )
     ingested_at: datetime = Field(default_factory=utc_now, description="When the trace was written")

@@ -1,7 +1,9 @@
 -- A source can hold several producers (Apple Health holds every app and device
--- that wrote to it). Make the producer part of each sample's identity so two
--- producers recording the same metric at the same instant both survive.
--- Existing rows get producer '' and keep their identity.
+-- that wrote to it), and distinct records of one producer can share a start
+-- time (an in-bed record and the first sleep stage). Add `producer` for
+-- provenance and `record_key` to each sample's identity. Sources that update a
+-- sample in place (Garmin) leave record_key '' and keep their identity, and so
+-- do all existing rows.
 
 CREATE TABLE quantity_sample_new (
     source TEXT NOT NULL,
@@ -14,7 +16,8 @@ CREATE TABLE quantity_sample_new (
     metadata_json TEXT,
     ingested_at TEXT NOT NULL,
     producer TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (source, metric, start_ts, producer)
+    record_key TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (source, metric, start_ts, record_key)
 ) WITHOUT ROWID;
 INSERT INTO quantity_sample_new
     (source, metric, start_ts, end_ts, value, unit, device_json, metadata_json, ingested_at)
@@ -33,7 +36,8 @@ CREATE TABLE category_sample_new (
     metadata_json TEXT,
     ingested_at TEXT NOT NULL,
     producer TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (source, metric, start_ts, producer)
+    record_key TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (source, metric, start_ts, record_key)
 ) WITHOUT ROWID;
 INSERT INTO category_sample_new
     (source, metric, start_ts, end_ts, category, device_json, metadata_json, ingested_at)
@@ -53,7 +57,8 @@ CREATE TABLE correlation_sample_new (
     metadata_json TEXT,
     ingested_at TEXT NOT NULL,
     producer TEXT NOT NULL DEFAULT '',
-    PRIMARY KEY (source, metric, start_ts, producer)
+    record_key TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (source, metric, start_ts, record_key)
 ) WITHOUT ROWID;
 INSERT INTO correlation_sample_new
     (source, metric, start_ts, end_ts, components_json, units_json, device_json, metadata_json,

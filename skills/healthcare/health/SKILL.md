@@ -238,8 +238,9 @@ earlier wearables (Apple Watch, Oura, Whoop, Withings, phone step counts) gets i
    or set `[apple_health] export_path`. The source registers only once an export exists.
 3. `health backfill --source apple_health --from 2018-01-01` stream-parses the zip in place
    (no extraction, flat memory: 1M records in about 20 s) into `traces/apple_health.db`.
-   `health sync` re-imports only when the export file changed: progress is recorded per export file
-   after a complete import, so an interrupted run is simply redone.
+   **Import-only:** `health sync` does nothing for this source (an export has no reliable cursor, and
+   a progress marker can outlive the data). Re-run the backfill after each new export; it rewrites
+   the same rows. Only files whose root element is `<HealthData>` are picked up.
 
 Every sample keeps its producer: `device` (manufacturer, hardware model) and `metadata.source_name`
 (the app that wrote it). Comparisons should stay within one producer, because devices differ in level.
@@ -248,8 +249,10 @@ statistics, never compared directly. Mapped types: heart rate, resting HR, HRV S
 SpO2, steps, floors, active/basal energy, distance, weight, lean mass, body fat, BMI, VO2max, blood
 pressure, glucose, water, and sleep stages (in bed, asleep, light/core, deep, REM, awake). Workouts are
 not imported yet. Records nested in a Correlation are read once, from their top-level copies (Apple's
-DTD lists them at both places). Samples are keyed on (source, metric, start, producer), so two apps
-writing the same metric at the same second both stay (migration `004_producer_key`).
+DTD lists them at both places). Each sample keeps its full natural identity (`record_key`: producer, end time and, for
+sleep, the stage), so two apps at the same second, or an in-bed record and the first sleep stage,
+all stay (migration `004_producer_record_key`). `health series --producer <app>` selects one
+producer, and buckets never pool producers.
 
 ## Composition with bstack primitives
 

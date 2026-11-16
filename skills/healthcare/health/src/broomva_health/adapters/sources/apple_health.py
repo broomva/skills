@@ -21,16 +21,14 @@ directly.
 from __future__ import annotations
 
 import io
-import json
 import logging
-import os
 import re
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import date, datetime, timedelta
+from datetime import date, datetime
 from pathlib import Path
-from typing import IO, Any, Final
+from typing import IO, Any, Final, cast
 from xml.etree import ElementTree as ET
 
 from broomva_health.config.paths import HealthPaths
@@ -147,14 +145,14 @@ def open_export(path: Path) -> Iterator[IO[bytes]]:
     """
     if path.suffix.lower() != ".zip":
         with path.open("rb") as fh:
-            yield _WithoutDoctype(fh)
+            yield cast(IO[bytes], _WithoutDoctype(fh))
         return
     with zipfile.ZipFile(path) as zf:
         names = [n for n in zf.namelist() if n.lower().endswith(".xml") and "cda" not in n.lower()]
         for name in sorted(names, key=lambda n: -zf.getinfo(n).file_size):
             if _root_tag(zf, name) == "HealthData":
                 with zf.open(name) as fh:
-                    yield _WithoutDoctype(fh)
+                    yield cast(IO[bytes], _WithoutDoctype(fh))
                 return
     raise SourceUnavailable(f"no Apple Health export XML inside {path.name}")
 
@@ -186,6 +184,11 @@ class _WithoutDoctype(io.RawIOBase):
             if not chunk:
                 return head
             head += chunk
+            if head[:2] in (b"\xff\xfe", b"\xfe\xff") or b"\x00" in head[:64]:
+                # The iPhone writes UTF-8; a UTF-16 file would defeat the byte scan.
+                raise SourceUnavailable(
+                    "Apple Health export is UTF-16; export it again from the iPhone (UTF-8)"
+                )
             m = _DOCTYPE.search(head)
             if m is None:
                 if _ELEMENT.search(head):  # the root started: no DOCTYPE to strip
@@ -217,10 +220,28 @@ def _root_tag(zf: zipfile.ZipFile, name: str) -> str | None:
     try:
         with zf.open(name) as probe:
             for _, elem in ET.iterparse(_WithoutDoctype(probe), events=("start",)):  # noqa: S314
-                return elem.tag
-    except ET.ParseError:
+                return str(elem.tag)
+    except (ET.ParseError, SourceUnavailable, OSError):
         return None
     return None
+
+
+def is_export(path: Path) -> bool:
+    """Whether ``path`` holds a HealthData document (checked by its root, not its name)."""
+    try:
+        if path.suffix.lower() == ".zip":
+            with zipfile.ZipFile(path) as zf:
+                return any(
+                    _root_tag(zf, n) == "HealthData"
+                    for n in zf.namelist()
+                    if n.lower().endswith(".xml") and "cda" not in n.lower()
+                )
+        with path.open("rb") as fh:
+            for _, elem in ET.iterparse(_WithoutDoctype(fh), events=("start",)):  # noqa: S314
+                return bool(elem.tag == "HealthData")
+    except (zipfile.BadZipFile, ET.ParseError, SourceUnavailable, OSError):
+        return False
+    return False
 
 
 def iter_samples(
@@ -238,6 +259,8 @@ def iter_samples(
     stack: list[ET.Element] = []
     for event, elem in ET.iterparse(stream, events=("start", "end")):  # noqa: S314
         if event == "start":
+            if not stack and elem.tag != "HealthData":
+                raise SourceUnavailable(f"not an Apple Health export: root element is <{elem.tag}>")
             stack.append(elem)
             continue
         stack.pop()
@@ -263,12 +286,18 @@ def _to_sample(
     day = _local_day(a["startDate"])
     if day < start or day > end:
         return None
+    producer = a.get("sourceName") or ""
     common: dict[str, Any] = {
         "source": Source.APPLE_HEALTH,
         "device": parse_device(a.get("device")),
         "start_ts": parse_ts(a["startDate"]),
         "end_ts": parse_ts(a["endDate"]),
-        "producer": a.get("sourceName") or "",
+        "producer": producer,
+        # Full natural identity: a record is its producer, interval and (for
+        # categories) value. Re-importing the same export rewrites the same rows.
+        "record_key": "\x1f".join(
+            (producer, a["endDate"], a.get("value", "") if kind == SLEEP_TYPE else "")
+        ),
         "metadata": {
             k: v
             for k, v in (
@@ -292,21 +321,23 @@ def _to_sample(
     return QuantitySample(metric=metric, value=value, unit=unit, **common)
 
 
-def _fingerprint(path: Path) -> dict[str, Any]:
-    st = path.stat()
-    return {"path": str(path.resolve()), "size": st.st_size, "mtime_ns": st.st_mtime_ns}
-
-
 def find_export(paths: HealthPaths, configured: str | None = None) -> Path | None:
-    """The configured export, else the newest ``.zip``/``.xml`` in ``exports/apple_health/``."""
+    """The configured export, else the newest ``.zip``/``.xml`` in ``exports/apple_health/``.
+
+    Only files whose root element is ``<HealthData>`` count, so a stray XML in the
+    folder is never picked over the real export.
+    """
     if configured:
         p = Path(configured).expanduser()
-        return p if p.is_file() else None
+        return p if p.is_file() and is_export(p) else None
     folder = paths.exports_dir / "apple_health"
     if not folder.is_dir():
         return None
     found = [p for p in folder.iterdir() if p.is_file() and p.suffix.lower() in (".zip", ".xml")]
-    return max(found, key=lambda p: p.stat().st_mtime) if found else None
+    for p in sorted(found, key=lambda p: p.stat().st_mtime, reverse=True):
+        if is_export(p):
+            return p
+    return None
 
 
 class AppleHealthTraceSource:
@@ -322,6 +353,12 @@ class AppleHealthTraceSource:
 
     def _export(self) -> Path:
         path = find_export(self._paths, self._configured)
+        configured = Path(self._configured).expanduser() if self._configured else None
+        if path is None and configured is not None and configured.is_file():
+            raise SourceUnavailable(
+                f"Apple Health export {configured.name} is unreadable or not a HealthData "
+                "document; export it again from the iPhone"
+            )
         if path is None:
             where = self._configured or str(self._paths.exports_dir / "apple_health")
             raise SourceUnavailable(
@@ -367,56 +404,28 @@ class AppleHealthTraceSource:
     def sync(
         self,
         *,
-        repo: TraceRepository,
+        repo: TraceRepository,  # noqa: ARG002
         token_store: TokenStore,  # noqa: ARG002
         rate_limiter: RateLimiter,  # noqa: ARG002
-        since: datetime | None = None,
+        since: datetime | None = None,  # noqa: ARG002
         profile: str = "default",  # noqa: ARG002
     ) -> SyncResult:
-        """Import the export if it changed since the last complete import.
+        """No-op: Apple Health is import-only.
 
-        An export is a full snapshot, so progress is tracked per export file, not
-        by any stored sample: the file's fingerprint is recorded only after an
-        import finishes, and an interrupted or partial run is simply redone. An
-        explicit ``since`` re-reads from that instant (one day of margin either
-        side, because the window is each record's local day; upserts are idempotent).
+        An export is a full snapshot with no reliable cursor, and any progress
+        marker can outlive the data it vouches for. So nothing is tracked:
+        ``health backfill --source apple_health`` re-reads the export, and the
+        upserts make a repeat import rewrite the same rows. Routine all-source
+        syncs never re-parse a multi-gigabyte file.
         """
-        started = utc_now()
-        end = started.date() + timedelta(days=1)  # local days east of UTC run ahead
-        if since is not None:
-            n = self._ingest(repo, since.date() - timedelta(days=1), end)
-        else:
-            path = self._export()
-            fingerprint = _fingerprint(path)
-            if self._last_import() == fingerprint:
-                n = 0
-            else:
-                n = self._ingest(repo, date(1970, 1, 1), end)
-                self._record_import(fingerprint)
+        now = utc_now()
         return SyncResult(
             source=self.name,
-            started_at=started,
-            finished_at=utc_now(),
-            samples_ingested=n,
+            started_at=now,
+            finished_at=now,
+            samples_ingested=0,
             workouts_ingested=0,
         )
-
-    @property
-    def _state_file(self) -> Path:
-        return self._paths.traces_dir / "apple_health.import.json"
-
-    def _last_import(self) -> dict[str, Any] | None:
-        try:
-            data = json.loads(self._state_file.read_text(encoding="utf-8"))
-        except (OSError, ValueError):
-            return None
-        return data if isinstance(data, dict) else None
-
-    def _record_import(self, fingerprint: dict[str, Any]) -> None:
-        self._state_file.parent.mkdir(parents=True, exist_ok=True)
-        tmp = self._state_file.with_suffix(".tmp")
-        tmp.write_text(json.dumps(fingerprint), encoding="utf-8")
-        os.replace(tmp, self._state_file)
 
     def status(self, *, token_store: TokenStore, profile: str = "default") -> SourceStatus:  # noqa: ARG002
         path = find_export(self._paths, self._configured)
