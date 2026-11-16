@@ -2,8 +2,8 @@
 name: year-in-ai
 tier: D
 category: knowledge
-description: "A Spotify-Wrapped-style retrospective of your year with AI agents, computed from local history across harnesses (Claude Code, Codex, T3, Conductor, Gemini CLI, bridged transcripts, exports). Two layers. (1) A year-round HARVEST folds every turn into a text-free ledger (counts, hashes, who wrote it) and optionally ARCHIVES the transcripts that their own tools prune (Claude Code deletes sessions after ~30 days), because a December extract alone cannot cover a year. (2) The recap: ATTENTION folds the ledger into words you wrote vs words you read (final reply per human turn × a stated read share, 60-70% by default), separating human prompts from agent-dispatched ones per each store's own author flags; EXTRACT/RENDER build the story deck. USE WHEN year in ai, your year in ai, ai wrapped, wrapped for my agents, year in review of my ai usage, how much have I written to agents, how much have I read, words written and read, harvest agent history, archive agent transcripts, set up the year-in-ai harvest. NOT FOR billing or token cost (use the provider's usage tools), single-session search (use session-search), or health/sleep recaps."
-argument-hint: "[harvest|attention|run] [--year YYYY]"
+description: "A Spotify-Wrapped-style retrospective of your year with AI agents, computed from local history across harnesses (Claude Code, Codex, T3, Conductor, Gemini CLI, bridged transcripts, exports). Two layers. (1) A year-round HARVEST folds every turn into a text-free ledger (counts, hashes, who wrote it) and optionally ARCHIVES the transcripts that their own tools prune (Claude Code deletes sessions after ~30 days), because a December extract alone cannot cover a year. (2) The recap: ATTENTION folds the ledger into words you wrote vs words you read (final reply per human turn × a stated read share, 60-70% by default), separating human prompts from agent-dispatched ones per each store's own author flags; EXTRACT/RENDER build the story deck. (3) REFLECT reasons about how the year went, not just how much: it rebuilds each session the person drove as an episode (their prompts verbatim, trimmed final replies, invoked skills, corrections), fans out digest subagents per batch, joins episodes to merged PRs, tickets and KG entities, and has the invoking agent write a cited reflection.md (monthly arcs plus four chapters) that a lint holds to the data. USE WHEN year in ai, your year in ai, ai wrapped, wrapped for my agents, year in review of my ai usage, how much have I written to agents, how much have I read, words written and read, harvest agent history, archive agent transcripts, set up the year-in-ai harvest, reflect on my year with agents, what patterns did I have with agents, themes of my year in ai, how did I work with agents this year. NOT FOR billing or token cost (use the provider's usage tools), single-session search (use session-search), or health/sleep recaps."
+argument-hint: "[harvest|attention|run|reflect] [--year YYYY]"
 effort: medium
 ---
 
@@ -35,6 +35,9 @@ computed in December from the stores alone. The skill therefore has:
    sessions by UUID.
 2. **Recap (once a year).** `attention` folds the ledger into what you wrote
    and read. `extract` and `render` build the story deck from transcripts.
+3. **Reflect (once a year).** Reads what was actually said and writes a
+   cited `reflection.md`: themes and ideas, how you worked with agents,
+   challenges and outcomes, insights for next year. See "Reflect" below.
 
 ## Commands
 
@@ -182,6 +185,112 @@ freshness, since an edit can shorten a file.
 - Set `text_only_until` to the date a store with exact authors starts covering
   you. Measured on one machine, only ~18% of bridged "user" turns after that
   date matched a human-typed prompt.
+
+## Reflect: how the year went, not just how much
+
+Counts say how much; the reflection says what the work was, how it was
+steered, what got hard and what shipped. It runs in stages. Code does
+everything that can be checked; agents do the reading; a lint holds the
+prose to the data. All output goes to `~/.local/share/year-in-ai/reflect/<year>/`
+(mode 0700, files 0600). It holds the user's words, so it never goes in the
+ledger, a repository, a ticket, a PR, or any third-party service.
+
+```bash
+cd scripts
+python3 year_in_ai.py reflect status   --year 2026   # what exists, and the next step
+python3 year_in_ai.py reflect episodes --year 2026   # 1. episodes + digest batches (code)
+#                                                       2. digest subagents, one per batch
+python3 year_in_ai.py reflect check    --year 2026 --complete   # 3. the digest gate
+python3 year_in_ai.py reflect join     --year 2026 --kg ~/workspace/research/entities  # 4. outcomes (code)
+python3 year_in_ai.py reflect reduce   --year 2026   # 5. data.json, months/, index.md (code)
+#                                                       6. the invoking agent writes reflection.md
+python3 year_in_ai.py reflect lint     --year 2026   # 7. the gate on the reflection
+python3 year_in_ai.py reflect share    --year 2026 --redact-term acme   # redacted copy to share
+```
+
+**1. Episodes (code only).** Every session with a human-written turn in the
+year becomes an episode `e-<8 hex>`: dates, harness, repository, directory and
+branch, ticket ids and PR URLs mentioned, skills and slash commands invoked,
+the user's prompts verbatim (their authored words: pastes and code fences
+removed, as `attention` counts them), each turn's final reply trimmed to its
+head and tail, correction markers (a later prompt that redirects the agent,
+plus interrupts), and a size and correction score. Who wrote a prompt is
+never re-derived: `episodes` reads the stores through the ledger's own
+readers with a text tap and joins the text back to the rows
+`attention.classify` decided were human. The 30 longest and 30 most-corrected
+sessions also get a sampled tool trace (the opening, every error, the events
+around each correction, the close). Batches of about 25 episodes go to
+`batches/batch-NNN.json`, and `digest-instructions.md` holds the schema.
+Exit 4 means a store was partly unreadable (the warning names it); the
+episodes from what was read are still written.
+
+**2. Digest (fan-out).** Launch one subagent per batch, in parallel waves
+(about ten at a time). Give each the path of its batch file and of
+`digest-instructions.md`, and nothing else: it writes one
+`digests/<episode id>.json` per episode (goal, topics, kind of work, how the
+user steered, main obstacle and resolution, outcome with evidence, ideas, one
+quote candidate) and finishes by running `reflect check --batch NNN` until it
+passes. Digests are cached against each episode's content hash: rerunning
+`episodes` only batches sessions that are new, grew, or whose digest failed
+the check. Tell subagents not to echo episode text in their replies.
+
+**3. Check (the digest gate).** Rejects a digest with a missing field, a value
+outside the schema, a stale hash, or a quote that is not verbatim in that
+episode's prompts (whitespace and quote style aside; never a reply).
+
+**4. Join (code only).** Links episodes to merged PRs (by mention, the
+harness's own PR record, the head branch, or a ticket in the PR title within
+three weeks), ticket ids, and knowledge-graph entities (by ticket, URL, or
+created during the episode and named in it). Every source is optional and
+reported: `harness` (PRs a store linked, e.g. T3's snapshots), `github`
+(`gh` lists the owner's own merged PRs month by month; no session text is
+sent), `git` (local first-parent history, used when `gh` is absent),
+`linear` (an optional export, `--linear-json`), `kg` (`--kg` or config
+`kg_entities`). An absent source is printed and recorded in `outcomes.json`;
+the join continues without it.
+
+**5. Reduce (code only, then the agent).** `reduce` writes `data.json` (every
+number the reflection may use: totals, per-month figures, kinds, steering,
+outcomes, topics, skills, repositories, shares as whole percents),
+`months/<YYYY-MM>.md` (one compact block per episode: digest plus joined
+outcomes) and `index.md` (recurring topics, obstacles by corrections, ideas
+in time order, quote candidates). Then reduce in two levels: one subagent per
+month reads its packet and writes a cited arc (what the month was about, what
+moved, what stalled), and the invoking agent reads the arcs, `index.md` and
+`data.json` and writes `reflection.md`:
+
+1. `## Monthly arcs`: one short cited paragraph per month;
+2. `## Themes and ideas`: what the year was about and how it changed,
+   recurring ideas and principles;
+3. `## How you worked with agents`: briefing and steering style, corrections,
+   delegation and fan-out, which skills and harnesses carried the work, how
+   that changed through the year;
+4. `## Challenges and outcomes`: the hardest problems and what broke them,
+   what shipped and what stalled;
+5. `## Insights for next year`: blind spots and concrete changes, each tied
+   to the episodes that show the pattern;
+6. optionally `## Data notes`: coverage and absent sources (the only section
+   exempt from citations; numbers are still checked).
+
+**7. Lint (the gate).** `reflect lint` fails on: a claim (paragraph, list
+item, table row, blockquote) with no `[e-…]` citation; a citation that does
+not resolve; a quote (a blockquote, or a quoted span of three or more words)
+not verbatim in a prompt of an episode the same claim cites; a number not in
+`data.json` (thousands separators, `%`, `K`/`M` are understood; ISO dates,
+ids, `#123`, URLs, quotes and `inline code` are not numbers, so write version
+numbers as code); a missing section; a fenced block. The reflection is done
+when the lint passes.
+
+**Privacy.** Local only. Never paste episode text, digests or the reflection
+into a ticket, PR, chat service or upload. `reflect share` writes
+`reflection.share.md` with blockquotes and quoted spans replaced, URLs and
+paths removed, and `--redact-term` values masked; review it before it leaves
+the machine.
+
+**From chapters to video.** The four chapters are the script for the recap
+video: hand `reflection.share.md` and `data.json` to the `motion-lab` skill
+(`skills/video/motion-lab`), as tracked in
+[BRO-3752](https://linear.app/broomva/issue/BRO-3752/year-in-ai-recap-video-command-motion-lab-liquid-midnight-style).
 
 ## Privacy
 

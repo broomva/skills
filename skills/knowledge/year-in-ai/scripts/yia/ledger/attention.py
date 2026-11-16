@@ -89,16 +89,23 @@ def _order(r: dict) -> Tuple:
     return (_rank(r["src"]), r["ts"], r["id"])
 
 
-def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: float = -5.0,
-         text_only_until: Optional[float] = None,
-         window: Optional[Tuple[Optional[float], Optional[float]]] = None) -> dict:
-    """Fold ledger rows into the written/read summary.
+class Classification:
+    """Who wrote which prompt, and which rows are one turn: the fold's decisions, reusable.
 
-    ``text_only_until``: ignore text-only sources from this time on. Use it once
-    a store with exact authors covers the period: measured on 2026-10-18 to
-    2026-11-13, only ~18% of bridged prompts matched a human-typed T3 prompt.
+    ``rows`` are the latest revisions; ``human_kept`` the canonical turns a person
+    wrote (all of them, not only the window's); ``human_canon`` maps every human
+    prompt row id to its canonical turn id; ``human_replies`` maps a canonical
+    turn id to its final reply row. The reflect layer rebuilds episodes from
+    these instead of re-deriving who wrote what.
     """
-    zone = _dt.timezone(_dt.timedelta(hours=utc_offset_hours))
+
+    def __init__(self, **fields):
+        self.__dict__.update(fields)
+
+
+def classify(rows: Iterable[dict], text_only_until: Optional[float] = None,
+             window: Optional[Tuple[Optional[float], Optional[float]]] = None) -> Classification:
+    """The authorship and turn decisions of :func:`fold`, without the summary."""
     lo, hi = window or (None, None)
 
     def in_window(ts: float) -> bool:
@@ -110,7 +117,7 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
     latest: Dict[str, dict] = {}
     order: Dict[str, Tuple[int, str]] = {}
     revisions: Dict[str, List[str]] = collections.defaultdict(list)
-    for position, r in enumerate(rows):
+    for r in rows:
         occ = r.get("o") or r["id"]
         if r["id"] not in revisions[occ]:
             revisions[occ].append(r["id"])
@@ -186,6 +193,26 @@ def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: 
     replies = [r for r in rows if r["kind"] == "reply"]
     human_replies = pick_replies(replies, human_canon, prompt_src, dropped)
     agent_replies = pick_replies(replies, agent_canon, prompt_src, dropped)
+    return Classification(rows=rows, prompts=prompts, human_ids=human_ids, agent_ids=agent_ids,
+                          human_kept=human_kept, human_canon=human_canon, agent_canon=agent_canon,
+                          prompt_src=prompt_src, human_replies=human_replies, agent_replies=agent_replies,
+                          dropped=dropped, in_window=in_window)
+
+
+def fold(rows: Iterable[dict], read_share=(0.60, 0.65, 0.70), utc_offset_hours: float = -5.0,
+         text_only_until: Optional[float] = None,
+         window: Optional[Tuple[Optional[float], Optional[float]]] = None) -> dict:
+    """Fold ledger rows into the written/read summary.
+
+    ``text_only_until``: ignore text-only sources from this time on. Use it once
+    a store with exact authors covers the period: measured on 2026-10-18 to
+    2026-11-13, only ~18% of bridged prompts matched a human-typed T3 prompt.
+    """
+    zone = _dt.timezone(_dt.timedelta(hours=utc_offset_hours))
+    c = classify(rows, text_only_until=text_only_until, window=window)
+    in_window, dropped, prompt_src = c.in_window, c.dropped, c.prompt_src
+    human_kept, human_canon = c.human_kept, c.human_canon
+    human_replies, agent_replies = c.human_replies, c.agent_replies
 
     # Which stores recorded each canonical turn: a turn needs an estimated reply
     # only when no reply was resolved for it and only reply-less stores saw it.
