@@ -22,6 +22,7 @@ by `[garmin] backend` in config:
 from __future__ import annotations
 
 from collections.abc import Mapping
+from pathlib import Path
 from typing import TYPE_CHECKING, Final
 
 from broomva_health.adapters.sources.apple_health import AppleHealthTraceSource, find_export
@@ -95,8 +96,13 @@ def build_sources(settings: HealthSettings | None, paths: HealthPaths) -> dict[S
     # present, so all-source runs never fail on a machine without one.
     apple_cfg = dict(getattr(settings, "apple_health", {}) or {}) if settings else {}
     export_path = apple_cfg.get("export_path")
-    # A configured path must exist too, or a moved archive would fail every all-source run.
-    if find_export(paths, str(export_path) if export_path else None) is not None:
+    # A configured file that exists registers even when it is unreadable, so its
+    # backfill explains why. A configured path that is gone does not register, so
+    # a moved archive never fails an all-source run.
+    configured = Path(str(export_path)).expanduser() if export_path else None
+    if (configured is not None and configured.is_file()) or (
+        configured is None and find_export(paths) is not None
+    ):
         sources[Source.APPLE_HEALTH] = AppleHealthTraceSource(
             paths=paths, export_path=str(export_path) if export_path else None
         )

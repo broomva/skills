@@ -24,6 +24,7 @@ import io
 import logging
 import re
 import zipfile
+import zlib
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
 from datetime import UTC, date, datetime
@@ -266,7 +267,7 @@ def _root_tag(zf: zipfile.ZipFile, name: str) -> str | None:
     try:
         with zf.open(name) as probe:
             return _stream_root(probe)
-    except (zipfile.BadZipFile, OSError):
+    except (zipfile.BadZipFile, zlib.error, RuntimeError, OSError):
         return None
 
 
@@ -282,7 +283,7 @@ def is_export(path: Path) -> bool:
                 )
         with path.open("rb") as fh:
             return _stream_root(fh) == "HealthData"
-    except (zipfile.BadZipFile, OSError):
+    except (zipfile.BadZipFile, zlib.error, RuntimeError, OSError):
         return False
 
 
@@ -500,7 +501,15 @@ class AppleHealthTraceSource:
                     (quantity if isinstance(s, QuantitySample) else category).append(s)  # type: ignore[arg-type]
                     if len(quantity) + len(category) >= _BATCH:
                         total += flush()
-        except (zipfile.BadZipFile, zipfile.LargeZipFile, ET.ParseError, OSError, EOFError) as exc:
+        except (
+            zipfile.BadZipFile,
+            zipfile.LargeZipFile,
+            zlib.error,
+            RuntimeError,
+            ET.ParseError,
+            OSError,
+            EOFError,
+        ) as exc:  # RuntimeError: an encrypted zip member
             # Samples flushed before the fault stay (idempotent); re-export and re-run.
             raise SourceUnavailable(
                 f"Apple Health export {path.name} is unreadable ({type(exc).__name__}: {exc}); "

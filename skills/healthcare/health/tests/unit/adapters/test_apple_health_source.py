@@ -646,3 +646,76 @@ def test_a_utf16_export_inside_a_zip_gets_the_utf16_message(
             end=date(2024, 12, 31),
         )
     repo.close()
+
+
+def _backfill_all(paths: HealthPaths, export: Path) -> None:
+    repo = SQLiteTraceRepository(paths.trace_db_for("apple_health"))
+    repo.migrate()
+    try:
+        AppleHealthTraceSource(paths=paths, export_path=str(export)).backfill(
+            repo=repo,
+            token_store=None,  # type: ignore[arg-type]
+            rate_limiter=None,  # type: ignore[arg-type]
+            start=date(2000, 1, 1),
+            end=date(2030, 1, 1),
+        )
+    finally:
+        repo.close()
+
+
+def test_a_configured_file_that_is_not_an_export_registers_and_explains(
+    tmp_paths: HealthPaths, tmp_settings: HealthSettings, tmp_path: Path
+) -> None:
+    wrong = tmp_path / "notes.xml"
+    wrong.write_text("<Notes/>", encoding="utf-8")
+    settings = tmp_settings.model_copy(update={"apple_health": {"export_path": str(wrong)}})
+    assert Source.APPLE_HEALTH in build_sources(settings, tmp_paths)
+    with pytest.raises(SourceUnavailable, match="not a HealthData document"):
+        _backfill_all(tmp_paths, wrong)
+
+
+def test_a_corrupt_deflate_stream_is_a_source_error(tmp_paths: HealthPaths, tmp_path: Path) -> None:
+    import struct
+
+    path = _write_zip(tmp_path / "export.zip")
+    data = bytearray(path.read_bytes())
+    # Corrupt the first compressed byte of every member: BTYPE=11 is an invalid
+    # deflate block, so reading raises zlib.error (not a CRC error).
+    i = data.find(b"PK\x03\x04")
+    while i != -1:
+        name_len, extra_len = struct.unpack("<HH", data[i + 26 : i + 30])
+        if struct.unpack("<H", data[i + 8 : i + 10])[0] == zipfile.ZIP_DEFLATED:
+            data[i + 30 + name_len + extra_len] = 0xFF
+        i = data.find(b"PK\x03\x04", i + 4)
+    path.write_bytes(bytes(data))
+    with pytest.raises(SourceUnavailable):
+        _backfill_all(tmp_paths, path)
+
+
+def test_a_zlib_error_mid_import_is_a_source_error(
+    tmp_paths: HealthPaths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import zlib
+
+    from broomva_health.adapters.sources import apple_health
+
+    def broken(*_args: object, **_kwargs: object) -> object:
+        raise zlib.error("Error -3 while decompressing data")
+
+    monkeypatch.setattr(apple_health, "iter_samples", broken)
+    with pytest.raises(SourceUnavailable, match="unreadable"):
+        _backfill_all(tmp_paths, _write_zip(tmp_path / "export.zip"))
+
+
+def test_an_encrypted_zip_member_is_a_source_error(tmp_paths: HealthPaths, tmp_path: Path) -> None:
+    path = _write_zip(tmp_path / "export.zip")
+    data = bytearray(path.read_bytes())
+    # Set the "encrypted" flag bit in every local and central header.
+    for sig, flag_at in ((b"PK\x03\x04", 6), (b"PK\x01\x02", 8)):
+        i = data.find(sig)
+        while i != -1:
+            data[i + flag_at] |= 0x01
+            i = data.find(sig, i + 4)
+    path.write_bytes(bytes(data))
+    with pytest.raises(SourceUnavailable):
+        _backfill_all(tmp_paths, path)

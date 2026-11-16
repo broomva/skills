@@ -239,7 +239,8 @@ earlier wearables (Apple Watch, Oura, Whoop, Withings, phone step counts) gets i
 3. `health backfill --source apple_health --from 2018-01-01` stream-parses the zip in place
    (no extraction, flat memory: 1M records in about 20 s) into `traces/apple_health.db`.
    **Import-only:** Apple Health holds several producers and has no reconciliation projection yet
-   (BRO-3793), so it is read only through `backfill`, `raw` and `series --producer`. `sync`, `auth`,
+   (BRO-3793), so it is read only through `series --producer` after a `backfill` (it writes no
+   `raw` documents). `sync`, `auth`,
    `context`, `daily-note` and synthesis skip it (`IMPORT_ONLY_SOURCES`), because they assume one stream
    per source. Re-run the backfill after each new export: it rewrites the same rows, keyed on each
    record's instant whatever UTC offset the export used. Only files whose root element is
