@@ -240,7 +240,8 @@ episode's prompts (whitespace and quote style aside; never a reply).
 
 **4. Join (code only).** Links episodes to merged PRs (by mention, the
 harness's own PR record, the head branch, or a ticket in the PR title within
-three weeks), ticket ids, and knowledge-graph entities (by ticket, URL, or
+three weeks; `data.json` counts only the first three as the episode's own outcome, and a
+shared ticket as related), ticket ids, and knowledge-graph entities (by ticket, URL, or
 created during the episode and named in it). Every source is optional and
 reported: `harness` (PRs a store linked, e.g. T3's snapshots), `github`
 (`gh` lists the owner's own merged PRs month by month; no session text is

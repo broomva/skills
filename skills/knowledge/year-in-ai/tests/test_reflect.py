@@ -217,6 +217,17 @@ def test_the_join_links_by_mention_branch_ticket_and_kg(tmp_path):
     assert result["kg"] == [{"slug": "login-flow", "type": "concept", "via": "ticket"}]
 
 
+def test_only_session_links_count_as_the_episodes_outcome(tmp_path):
+    from yia.reflect import reduce as RED
+    e = build_episodes(tmp_path)[0][0]
+    shared = {"episodes": {e["id"]: {"merged_prs": [{"url": "u9", "via": ["ticket"]}], "kg": []}}}
+    own = {"episodes": {e["id"]: {"merged_prs": [{"url": "u7", "via": ["branch", "ticket"]}], "kg": []}}}
+    a = RED.payload(2026, [e], {}, shared, {})["outcomes"]
+    b = RED.payload(2026, [e], {}, own, {})["outcomes"]
+    assert (a["episodes_with_merged_pr"], a["episodes_with_only_ticket_linked_pr"]) == (0, 1)
+    assert (b["episodes_with_merged_pr"], b["merged_prs_linked"]) == (1, 1)
+
+
 # ------------------------------------------------------------------ the lint
 
 EP_ID = "e-1a2b3c4d"

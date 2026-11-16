@@ -16,6 +16,14 @@ from typing import Dict, List
 from . import write_json, write_private
 
 
+#: Links that tie a PR to the session itself; a shared ticket only says they are related.
+STRONG_VIA = {"mention", "harness", "branch"}
+
+
+def strong_prs(out: dict) -> List[dict]:
+    return [p for p in out.get("merged_prs", []) if STRONG_VIA & set(p["via"])]
+
+
 def _pct(part: int, whole: int) -> int:
     return round(100 * part / whole) if whole else 0
 
@@ -35,7 +43,7 @@ def payload(year: int, episodes: List[dict], digests: Dict[str, dict], outcomes:
     month_kinds: Dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     month_topics: Dict[str, collections.Counter] = collections.defaultdict(collections.Counter)
     merged_urls, tickets_all, kg_all = set(), set(), set()
-    corrected = interrupted = with_pr = with_kg = 0
+    corrected = interrupted = with_pr = with_kg = ticket_only = 0
     for e in episodes:
         m = months[e["month"]]
         m["episodes"] += 1
@@ -52,10 +60,14 @@ def payload(year: int, episodes: List[dict], digests: Dict[str, dict], outcomes:
         corrected += bool(e["corrections"])
         interrupted += bool(e["interrupts"])
         out = joined.get(e["id"], {})
-        if out.get("merged_prs"):
+        strong = strong_prs(out)
+        if strong:
             with_pr += 1
             m["episodes_with_merged_pr"] += 1
-            merged_urls |= {p["url"] for p in out["merged_prs"]}
+            merged_urls |= {p["url"] for p in strong}
+        elif out.get("merged_prs"):
+            ticket_only += 1
+            m["episodes_with_ticket_linked_pr"] += 1
         if out.get("kg"):
             with_kg += 1
             kg_all |= {k["slug"] for k in out["kg"]}
@@ -99,6 +111,7 @@ def payload(year: int, episodes: List[dict], digests: Dict[str, dict], outcomes:
         "outcomes": {
             "episodes_with_merged_pr": with_pr, "episodes_with_merged_pr_pct": _pct(with_pr, n),
             "merged_prs_linked": len(merged_urls), "tickets_mentioned": len(tickets_all),
+            "episodes_with_only_ticket_linked_pr": ticket_only,
             "episodes_with_kg_entity": with_kg, "kg_entities_linked": len(kg_all),
             "sources": outcomes.get("sources", {}),
         },
@@ -118,7 +131,13 @@ def payload(year: int, episodes: List[dict], digests: Dict[str, dict], outcomes:
 
 
 def _line(e: dict, d: dict, out: dict) -> str:
-    prs = ", ".join(p["url"].replace("https://github.com/", "") for p in out.get("merged_prs", [])) or "none"
+    strong = strong_prs(out)
+    prs = ", ".join(p["url"].replace("https://github.com/", "") for p in strong[:8]) or "none"
+    if len(strong) > 8:
+        prs += f" (+{len(strong) - 8} more)"
+    related = len(out.get("merged_prs", [])) - len(strong)
+    if related:
+        prs += f"; {related} more merged PRs share a ticket"
     kg = ", ".join(k["slug"] for k in out.get("kg", [])) or "none"
     where = " ".join(x for x in (e.get("repo") or "", f"@{e['branch']}" if e.get("branch") else "") if x)
     head = (f"### [{e['id']}] {e['first'][:10]} {e['harness']} {where} "
