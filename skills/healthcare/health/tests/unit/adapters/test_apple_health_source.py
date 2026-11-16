@@ -605,3 +605,39 @@ def test_an_interrupted_sync_is_redone_next_time(
     monkeypatch.setattr(AppleHealthTraceSource, "_ingest", real_ingest)
     assert _sync(tmp_paths, export, repo) == 1  # same file: the import is redone, not skipped
     repo.close()
+
+
+_BAD_DTD = (
+    '<?xml version="1.0" encoding="UTF-8"?>\n<!DOCTYPE HealthData [\n'
+    "<!ATTLIST RightEye value CDATA>\n"  # invalid: no default declaration (seen in real exports)
+    "{pad}]>\n"
+)
+
+
+@pytest.mark.parametrize("pad", ["", "<!-- " + "x" * 200_000 + " -->\n"])
+@pytest.mark.parametrize("as_zip", [True, False])
+def test_a_malformed_internal_dtd_does_not_block_the_records(
+    tmp_path: Path, pad: str, as_zip: bool
+) -> None:
+    body = '<HealthData locale="en_US">' + RECORDS[0] + "</HealthData>"
+    xml = _BAD_DTD.format(pad=pad) + body
+    if as_zip:
+        path = tmp_path / "export.zip"
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("apple_health_export/export.xml", xml)
+    else:
+        path = tmp_path / "export.xml"
+        path.write_text(xml, encoding="utf-8")
+    got = _samples(path, date(2024, 1, 1), date(2024, 12, 31))
+    assert [s.value for s in got] == [58.0]
+
+
+def test_an_external_doctype_without_a_subset_is_removed_too(tmp_path: Path) -> None:
+    path = tmp_path / "export.xml"
+    path.write_text(
+        '<?xml version="1.0"?><!DOCTYPE HealthData SYSTEM "x.dtd"><HealthData>'
+        + RECORDS[0]
+        + "</HealthData>",
+        encoding="utf-8",
+    )
+    assert len(_samples(path, date(2024, 1, 1), date(2024, 12, 31))) == 1

@@ -20,6 +20,7 @@ directly.
 
 from __future__ import annotations
 
+import io
 import json
 import logging
 import os
@@ -146,23 +147,76 @@ def open_export(path: Path) -> Iterator[IO[bytes]]:
     """
     if path.suffix.lower() != ".zip":
         with path.open("rb") as fh:
-            yield fh
+            yield _WithoutDoctype(fh)
         return
     with zipfile.ZipFile(path) as zf:
         names = [n for n in zf.namelist() if n.lower().endswith(".xml") and "cda" not in n.lower()]
         for name in sorted(names, key=lambda n: -zf.getinfo(n).file_size):
             if _root_tag(zf, name) == "HealthData":
                 with zf.open(name) as fh:
-                    yield fh
+                    yield _WithoutDoctype(fh)
                 return
     raise SourceUnavailable(f"no Apple Health export XML inside {path.name}")
+
+
+_DOCTYPE = re.compile(rb"<!DOCTYPE\b")
+_SUBSET_END = re.compile(rb"\]\s*>")
+_ELEMENT = re.compile(rb"<[A-Za-z_]")
+_PREFIX_LIMIT = 4 * 1024 * 1024
+
+
+class _WithoutDoctype(io.RawIOBase):
+    """Read a stream with its ``<!DOCTYPE ...>`` declaration removed.
+
+    Some iOS versions wrote an invalid internal DTD (e.g. an ``ATTLIST`` with no
+    default declaration), which a strict parser rejects before the first record.
+    Records carry everything as attributes and need nothing from the DTD.
+    """
+
+    def __init__(self, raw: IO[bytes]) -> None:
+        self._raw = raw
+        self._head = self._strip(raw)
+
+    @staticmethod
+    def _strip(raw: IO[bytes]) -> bytes:
+        """Read up to the root element and cut the DOCTYPE out of that prefix."""
+        head = b""
+        while len(head) < _PREFIX_LIMIT:
+            chunk = raw.read(64 * 1024)
+            if not chunk:
+                return head
+            head += chunk
+            m = _DOCTYPE.search(head)
+            if m is None:
+                if _ELEMENT.search(head):  # the root started: no DOCTYPE to strip
+                    return head
+                continue
+            bracket, close = head.find(b"[", m.end()), head.find(b">", m.end())
+            if close != -1 and (bracket == -1 or close < bracket):
+                return head[: m.start()] + head[close + 1 :]
+            end = _SUBSET_END.search(head, m.end())
+            if end is not None:
+                return head[: m.start()] + head[end.end() :]
+        return head
+
+    def readable(self) -> bool:
+        return True
+
+    def readinto(self, buffer: Any) -> int:
+        n = len(buffer)
+        if self._head:
+            out, self._head = self._head[:n], self._head[n:]
+        else:
+            out = self._raw.read(n)
+        buffer[: len(out)] = out
+        return len(out)
 
 
 def _root_tag(zf: zipfile.ZipFile, name: str) -> str | None:
     """The member's real root element (comments and the DTD are skipped), or None."""
     try:
         with zf.open(name) as probe:
-            for _, elem in ET.iterparse(probe, events=("start",)):  # noqa: S314
+            for _, elem in ET.iterparse(_WithoutDoctype(probe), events=("start",)):  # noqa: S314
                 return elem.tag
     except ET.ParseError:
         return None
