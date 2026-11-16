@@ -65,7 +65,9 @@ Rules:
   reports a merge or a deploy). Otherwise use the weaker status that fits.
 - Topics and ideas are your words; keep them short and concrete.
 - Write nothing else and send nothing anywhere: these files stay on this
-  machine. Do not copy episode text into your final message.
+  machine. Do not copy episode text into your final message. If you need a
+  helper script, put it in `scratch/` beside `digests/` (never `/tmp` or the
+  working directory) and delete it when the check passes.
 - When done, run `python3 <skill>/scripts/year_in_ai.py reflect check --year <Y> --batch NNN`
   and fix every error it reports before you finish.
 """

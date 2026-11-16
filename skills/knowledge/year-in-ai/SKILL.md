@@ -232,7 +232,9 @@ user steered, main obstacle and resolution, outcome with evidence, ideas, one
 quote candidate) and finishes by running `reflect check --batch NNN` until it
 passes. Digests are cached against each episode's content hash: rerunning
 `episodes` only batches sessions that are new, grew, or whose digest failed
-the check. Tell subagents not to echo episode text in their replies.
+the check. Tell subagents not to echo episode text in their replies and to
+keep any helper script in the private `scratch/` directory, never `/tmp`
+(a real run found workers leaving digest scripts there).
 
 **3. Check (the digest gate).** Rejects a digest with a missing field, a value
 outside the schema, a stale hash, or a quote that is not verbatim in that

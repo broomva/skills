@@ -122,6 +122,11 @@ def test_tracker_prefixes_are_letters_seen_often_or_in_a_branch():
     assert EP.tracker_prefixes(eps) == {"XYZ", "ABC"}
 
 
+def test_a_path_is_not_a_slash_command():
+    assert EP._SLASH.match("/checkit https://example.com").group(1) == "/checkit"
+    assert EP._SLASH.match("/arc") and not EP._SLASH.match("/Users/someone/file.md please read")
+
+
 def test_a_first_prompt_is_never_a_correction():
     assert EP.is_correction("no, that is wrong") == "no,"
     assert EP.is_correction("Please build a dashboard; do not use a chart library") is None

@@ -60,7 +60,8 @@ CORRECTION_PHRASES = (
     "doesn't work", "does not work", "wrong file", "wrong branch", "you missed", "re-read", "reread",
 )
 
-_SLASH = re.compile(r"^\s*(/[a-z][\w:.-]*)", re.I)
+#: A slash command at the start of a prompt; a path such as ``/Users/x`` is not one.
+_SLASH = re.compile(r"^\s*(/[a-z][\w:.-]*)(?=\s|$)", re.I)
 
 
 def is_correction(text: str) -> Optional[str]:
