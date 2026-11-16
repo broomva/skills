@@ -115,6 +115,7 @@ ignore_missing_imports = true
 [tool.pytest.ini_options]
 minversion = "8.0"
 testpaths = ["tests"]
+asyncio_default_fixture_loop_scope = "function"
 addopts = "-ra --strict-markers --strict-config"
 markers = [
   "e2e: end-to-end test requiring real Garmin credentials (gated on BROOMVA_HEALTH_E2E=1)",
