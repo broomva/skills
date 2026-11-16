@@ -20,7 +20,9 @@ directly.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
 import re
 import zipfile
 from collections.abc import Callable, Iterator
@@ -236,6 +238,11 @@ def _to_sample(
     return QuantitySample(metric=metric, value=value, unit=unit, **common)
 
 
+def _fingerprint(path: Path) -> dict[str, Any]:
+    st = path.stat()
+    return {"path": str(path.resolve()), "size": st.st_size, "mtime_ns": st.st_mtime_ns}
+
+
 def find_export(paths: HealthPaths, configured: str | None = None) -> Path | None:
     """The configured export, else the newest ``.zip``/``.xml`` in ``exports/apple_health/``."""
     if configured:
@@ -312,15 +319,26 @@ class AppleHealthTraceSource:
         since: datetime | None = None,
         profile: str = "default",  # noqa: ARG002
     ) -> SyncResult:
-        """Re-read the export from ``since`` (or from the last stored sample) to today."""
+        """Import the export if it changed since the last complete import.
+
+        An export is a full snapshot, so progress is tracked per export file, not
+        by any stored sample: the file's fingerprint is recorded only after an
+        import finishes, and an interrupted or partial run is simply redone. An
+        explicit ``since`` re-reads from that instant (one day of margin either
+        side, because the window is each record's local day; upserts are idempotent).
+        """
         started = utc_now()
-        if since is None:
-            since = repo.last_sample_ts(self.name, MetricCode.HEART_RATE)
-        # The cursor is UTC but the window is the record's local day: back off a
-        # day so evening samples west of UTC are not skipped (upserts are idempotent).
-        start = since.date() - timedelta(days=1) if since else date(2000, 1, 1)
-        # Local days east of UTC run ahead of the UTC date: reach one day past it.
-        n = self._ingest(repo, start, started.date() + timedelta(days=1))
+        end = started.date() + timedelta(days=1)  # local days east of UTC run ahead
+        if since is not None:
+            n = self._ingest(repo, since.date() - timedelta(days=1), end)
+        else:
+            path = self._export()
+            fingerprint = _fingerprint(path)
+            if self._last_import() == fingerprint:
+                n = 0
+            else:
+                n = self._ingest(repo, date(1970, 1, 1), end)
+                self._record_import(fingerprint)
         return SyncResult(
             source=self.name,
             started_at=started,
@@ -328,6 +346,23 @@ class AppleHealthTraceSource:
             samples_ingested=n,
             workouts_ingested=0,
         )
+
+    @property
+    def _state_file(self) -> Path:
+        return self._paths.traces_dir / "apple_health.import.json"
+
+    def _last_import(self) -> dict[str, Any] | None:
+        try:
+            data = json.loads(self._state_file.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        return data if isinstance(data, dict) else None
+
+    def _record_import(self, fingerprint: dict[str, Any]) -> None:
+        self._state_file.parent.mkdir(parents=True, exist_ok=True)
+        tmp = self._state_file.with_suffix(".tmp")
+        tmp.write_text(json.dumps(fingerprint), encoding="utf-8")
+        os.replace(tmp, self._state_file)
 
     def status(self, *, token_store: TokenStore, profile: str = "default") -> SourceStatus:  # noqa: ARG002
         path = find_export(self._paths, self._configured)

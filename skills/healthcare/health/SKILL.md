@@ -238,6 +238,8 @@ earlier wearables (Apple Watch, Oura, Whoop, Withings, phone step counts) gets i
    or set `[apple_health] export_path`. The source registers only once an export exists.
 3. `health backfill --source apple_health --from 2018-01-01` stream-parses the zip in place
    (no extraction, flat memory: 1M records in about 20 s) into `traces/apple_health.db`.
+   `health sync` re-imports only when the export file changed: progress is recorded per export file
+   after a complete import, so an interrupted run is simply redone.
 
 Every sample keeps its producer: `device` (manufacturer, hardware model) and `metadata.source_name`
 (the app that wrote it). Comparisons should stay within one producer, because devices differ in level.

@@ -524,3 +524,84 @@ def test_legacy_get_source_knows_apple_health(tmp_paths: HealthPaths) -> None:
     from broomva_health.adapters.sources._registry import get_source
 
     assert isinstance(get_source(Source.APPLE_HEALTH, paths=tmp_paths), AppleHealthTraceSource)
+
+
+def _sync(paths: HealthPaths, export: Path, repo: SQLiteTraceRepository) -> int:
+    return (
+        AppleHealthTraceSource(paths=paths, export_path=str(export))
+        .sync(
+            repo=repo,
+            token_store=None,
+            rate_limiter=None,  # type: ignore[arg-type]
+        )
+        .samples_ingested
+    )
+
+
+def test_sync_skips_an_unchanged_export_and_reimports_a_new_one(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    hr, rr = f"{HK}HeartRate", f"{HK}RespiratoryRate"
+    export = _mini_export(
+        tmp_path / "export.zip",
+        [
+            _record(
+                hr, "2024-06-01 08:00:00 +0000", "2024-06-01 08:00:00 +0000", "60", "count/min"
+            ),
+        ],
+    )
+    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
+    repo.migrate()
+    assert _sync(tmp_paths, export, repo) == 1
+    assert _sync(tmp_paths, export, repo) == 0  # unchanged file: nothing to do
+    # A new export holds an older record of another metric: it is still imported.
+    _mini_export(
+        export,
+        [
+            _record(
+                hr, "2024-06-01 08:00:00 +0000", "2024-06-01 08:00:00 +0000", "60", "count/min"
+            ),
+            _record(
+                rr, "2023-01-01 03:00:00 +0000", "2023-01-01 03:00:00 +0000", "14", "count/min"
+            ),
+        ],
+    )
+    assert _sync(tmp_paths, export, repo) == 2
+    got = repo.query_quantity(
+        Source.APPLE_HEALTH,
+        MetricCode.RESPIRATION_RPM,
+        datetime(2023, 1, 1, tzinfo=UTC),
+        datetime(2023, 1, 2, tzinfo=UTC),
+    )
+    assert [s.value for s in got] == [14.0]
+    repo.close()
+
+
+def test_an_interrupted_sync_is_redone_next_time(
+    tmp_paths: HealthPaths, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    export = _mini_export(
+        tmp_path / "export.zip",
+        [
+            _record(
+                f"{HK}HeartRate",
+                "2024-06-01 08:00:00 +0000",
+                "2024-06-01 08:00:00 +0000",
+                "60",
+                "count/min",
+            )
+        ],
+    )
+    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
+    repo.migrate()
+    real_ingest = AppleHealthTraceSource._ingest
+
+    def killed(*_args: object, **_kwargs: object) -> int:
+        raise KeyboardInterrupt  # the process dies mid-import
+
+    monkeypatch.setattr(AppleHealthTraceSource, "_ingest", killed)
+    with pytest.raises(KeyboardInterrupt):
+        _sync(tmp_paths, export, repo)
+    monkeypatch.setattr(AppleHealthTraceSource, "_ingest", real_ingest)
+    assert _sync(tmp_paths, export, repo) == 1  # same file: the import is redone, not skipped
+    repo.close()
