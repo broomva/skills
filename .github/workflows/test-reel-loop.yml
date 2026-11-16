@@ -1,0 +1,50 @@
+name: test-reel-loop
+
+# Python test gate for the `reel-loop` skill (skills/video/reel-loop/). Path-filtered so
+# it runs ONLY when skills/video/reel-loop/** changes — the monorepo's tests-optional
+# default (lint-skill-md.yml) stands everywhere else. BRO-3795.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/video/reel-loop/**'
+      - '.github/workflows/test-reel-loop.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/video/reel-loop/**'
+      - '.github/workflows/test-reel-loop.yml'
+  workflow_dispatch:
+
+concurrency:
+  group: test-reel-loop-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/video/reel-loop
+
+jobs:
+  test:
+    name: pytest (Python ${{ matrix.python }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python: ["3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Python ${{ matrix.python }}
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python }}
+      - name: Install dev deps
+        run: pip install -r tests/requirements-dev.txt
+      - name: Tests
+        run: python -m pytest tests/ -v
+      - name: Mutation check — deleting any gate must fail a test
+        run: python3 tests/mutation_check.py
+      - name: Dogfood — the example niche yields exactly the one small-account breakout
+        run: |
+          out=$(python3 scripts/reel_loop.py outliers references/example-niche.tsv --now 2026-11-16 --json)
+          echo "$out" | python3 -c "import json,sys; d=json.load(sys.stdin); u=[r['url'] for r in d['outliers']]; assert u==['https://www.instagram.com/p/A6/'], u; print('ok', u)"
