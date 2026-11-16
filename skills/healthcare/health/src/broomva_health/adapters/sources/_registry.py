@@ -94,7 +94,8 @@ def build_sources(settings: HealthSettings | None, paths: HealthPaths) -> dict[S
     # present, so all-source runs never fail on a machine without one.
     apple_cfg = dict(getattr(settings, "apple_health", {}) or {}) if settings else {}
     export_path = apple_cfg.get("export_path")
-    if export_path or find_export(paths) is not None:
+    # A configured path must exist too, or a moved archive would fail every all-source run.
+    if find_export(paths, str(export_path) if export_path else None) is not None:
         sources[Source.APPLE_HEALTH] = AppleHealthTraceSource(
             paths=paths, export_path=str(export_path) if export_path else None
         )

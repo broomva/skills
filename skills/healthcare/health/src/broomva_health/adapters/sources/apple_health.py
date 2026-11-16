@@ -25,7 +25,7 @@ import re
 import zipfile
 from collections.abc import Callable, Iterator
 from contextlib import contextmanager
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import IO, Any, Final
 from xml.etree import ElementTree as ET
@@ -308,7 +308,9 @@ class AppleHealthTraceSource:
         started = utc_now()
         if since is None:
             since = repo.last_sample_ts(self.name, MetricCode.HEART_RATE)
-        start = since.date() if since else date(2000, 1, 1)
+        # The cursor is UTC but the window is the record's local day: back off a
+        # day so evening samples west of UTC are not skipped (upserts are idempotent).
+        start = since.date() - timedelta(days=1) if since else date(2000, 1, 1)
         n = self._ingest(repo, start, started.date())
         return SyncResult(
             source=self.name,
@@ -339,9 +341,17 @@ class AppleHealthTraceSource:
             category.clear()
             return n
 
-        with open_export(self._export()) as stream:
-            for s in iter_samples(stream, start=start, end=end):
-                (quantity if isinstance(s, QuantitySample) else category).append(s)  # type: ignore[arg-type]
-                if len(quantity) + len(category) >= _BATCH:
-                    total += flush()
+        path = self._export()
+        try:
+            with open_export(path) as stream:
+                for s in iter_samples(stream, start=start, end=end):
+                    (quantity if isinstance(s, QuantitySample) else category).append(s)  # type: ignore[arg-type]
+                    if len(quantity) + len(category) >= _BATCH:
+                        total += flush()
+        except (zipfile.BadZipFile, zipfile.LargeZipFile, ET.ParseError, OSError, EOFError) as exc:
+            # Samples flushed before the fault stay (idempotent); re-export and re-run.
+            raise SourceUnavailable(
+                f"Apple Health export {path.name} is unreadable ({type(exc).__name__}: {exc}); "
+                "export it again from the iPhone"
+            ) from exc
         return total + flush()

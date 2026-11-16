@@ -344,3 +344,89 @@ def test_documented_type_count_matches_the_map() -> None:
     from broomva_health.adapters.sources.apple_health import QUANTITY_MAP
 
     assert len(QUANTITY_MAP) == 19  # CHANGELOG and SKILL.md name 19 quantity types
+
+
+def _mini_export(path: Path, records: list[str]) -> Path:
+    xml = '<?xml version="1.0"?><HealthData locale="en_US">' + "".join(records) + "</HealthData>"
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("apple_health_export/export.xml", xml)
+    return path
+
+
+def test_registry_skips_a_configured_export_that_no_longer_exists(
+    tmp_paths: HealthPaths, tmp_settings: HealthSettings, tmp_path: Path
+) -> None:
+    settings = tmp_settings.model_copy(
+        update={"apple_health": {"export_path": str(tmp_path / "gone.zip")}}
+    )
+    assert Source.APPLE_HEALTH not in build_sources(settings, tmp_paths)
+    _write_zip(tmp_path / "gone.zip")
+    assert Source.APPLE_HEALTH in build_sources(settings, tmp_paths)
+
+
+def test_sync_cursor_in_utc_still_reaches_evening_samples_west_of_utc(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    hr = f"{HK}HeartRate"
+    first = _mini_export(
+        tmp_path / "a.zip",
+        [
+            _record(
+                hr, "2024-03-01 23:10:00 -0500", "2024-03-01 23:10:00 -0500", "58", "count/min"
+            ),
+        ],
+    )
+    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
+    repo.migrate()
+    AppleHealthTraceSource(paths=tmp_paths, export_path=str(first)).sync(
+        repo=repo,
+        token_store=None,
+        rate_limiter=None,  # type: ignore[arg-type]
+    )
+    second = _mini_export(
+        tmp_path / "b.zip",
+        [
+            _record(
+                hr, "2024-03-01 23:10:00 -0500", "2024-03-01 23:10:00 -0500", "58", "count/min"
+            ),
+            _record(
+                hr, "2024-03-01 23:50:00 -0500", "2024-03-01 23:50:00 -0500", "61", "count/min"
+            ),
+        ],
+    )
+    AppleHealthTraceSource(paths=tmp_paths, export_path=str(second)).sync(
+        repo=repo,
+        token_store=None,
+        rate_limiter=None,  # type: ignore[arg-type]
+    )
+    got = repo.query_quantity(
+        Source.APPLE_HEALTH,
+        MetricCode.HEART_RATE,
+        datetime(2024, 3, 1, tzinfo=UTC),
+        datetime(2024, 3, 3, tzinfo=UTC),
+    )
+    assert sorted(s.value for s in got) == [58.0, 61.0]
+    repo.close()
+
+
+@pytest.mark.parametrize("content", [b"not a zip at all", None])
+def test_corrupt_or_truncated_export_is_a_source_error(
+    tmp_paths: HealthPaths, tmp_path: Path, content: bytes | None
+) -> None:
+    path = tmp_path / "export.zip"
+    if content is None:  # a valid zip whose XML is cut off mid-record
+        with zipfile.ZipFile(path, "w") as zf:
+            zf.writestr("apple_health_export/export.xml", EXPORT_XML[: len(EXPORT_XML) // 2])
+    else:
+        path.write_bytes(content)
+    repo = SQLiteTraceRepository(tmp_paths.trace_db_for("apple_health"))
+    repo.migrate()
+    with pytest.raises(SourceUnavailable, match="unreadable"):
+        AppleHealthTraceSource(paths=tmp_paths, export_path=str(path)).backfill(
+            repo=repo,
+            token_store=None,
+            rate_limiter=None,  # type: ignore[arg-type]
+            start=date(2024, 1, 1),
+            end=date(2024, 12, 31),
+        )
+    repo.close()
