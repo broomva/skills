@@ -42,6 +42,14 @@ when_to_use: |
 > be using to validate definitions, refresh the knowledge graph, or draft
 > the next slice.
 
+## Formal model of the P20 verdict gate
+
+`formal/P9Lifecycle.tla` model-checks the rule that binds a P20 verdict to a head
+(`_p20_verdict`): safe as implemented, safe with a CI-verified exemption for
+generated files, and unsafe in three broken variants that must each produce a
+counterexample. Run `bash formal/check.sh`; see `formal/README.md`. When
+`_p20_verdict` changes, the check fails until the model is re-confirmed.
+
 ## When to invoke
 
 | Trigger | Action |
