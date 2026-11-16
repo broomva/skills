@@ -506,3 +506,57 @@ def test_a_redact_term_with_punctuation_is_masked():
     from yia.reflect import share as SH
     out = SH.redact("Worked on Project X (confidential) today [e-12345678].\n", ["Project X (confidential)"])
     assert "confidential" not in out
+
+
+# --- P20 round 3 (Codex, 7e21863)
+
+
+def test_a_copied_run_split_across_lines_is_removed():
+    from yia.reflect import share as SH
+    prompt = "Please use the secret violet comet password now."
+    out = SH.redact("Notes: please use the secret\nviolet comet password now [e-12345678].\n", (), [prompt])
+    assert "violet comet" not in out and out.count("\n") == 2
+
+
+def test_text_after_a_closed_comment_is_linted():
+    from yia.reflect import lint as LINT
+    claims, _headings, _errors = LINT.units("## Monthly arcs\n\n<!-- note --> The company lied.\n")
+    assert [c["text"] for c in claims] == ["The company lied."]
+
+
+@pytest.mark.parametrize("doc,expected", [
+    ("Company lied | Users harmed\n--- | ---\nfalse | claims [e-1a2b3c4d]\n", "tables are not allowed"),
+    ("<details>hidden claim [e-1a2b3c4d]</details>\n", "HTML are not allowed"),
+    ("[^1]: a footnote claim [e-1a2b3c4d]\n", "footnotes are not allowed"),
+    ("Term [e-1a2b3c4d]\n\n: a definition claim [e-1a2b3c4d]\n", "definition lists are not allowed"),
+    ("<!-- unclosed\nThe company lied.\n", "unclosed HTML comment"),
+])
+def test_structures_that_hide_or_reshape_claims_are_errors(doc, expected):
+    from yia.reflect import lint as LINT
+    _claims, _headings, errors = LINT.units("## Monthly arcs\n\n" + doc)
+    assert any(expected in err for err in errors), errors
+
+
+@pytest.mark.parametrize("remote,slug", [
+    ("https://github.com/example/app.git", "example/app"),
+    ("git@github.com:example/app.git", "example/app"),
+    ("ssh://git@github.com/example/app", "example/app"),
+    ("https://evilgithub.com/example/app.git", None),
+    ("https://github.com.evil.io/example/app.git", None),
+])
+def test_only_github_itself_is_a_github_remote(remote, slug):
+    assert OUT.parse_remote(remote) == slug
+
+
+def test_share_says_it_is_a_review_draft(tmp_path):
+    import json, os, subprocess, sys
+    root = tmp_path / "reflect" / "2026"
+    root.mkdir(parents=True)
+    (root / "episodes.jsonl").write_text(json.dumps({"id": "e-12345678", "prompts": [{"text": "hello there"}],
+                                                     "replies": []}) + "\n")
+    (root / "reflection.md").write_text("A line [e-12345678].\n")
+    run = subprocess.run([sys.executable, str(SCRIPTS / "year_in_ai.py"), "reflect", "share", "--year", "2026",
+                          "--dir", str(tmp_path / "reflect")], capture_output=True, text=True,
+                         env=dict(os.environ, HOME=str(tmp_path / "home")))
+    assert run.returncode == 0, run.stderr
+    assert "REVIEW DRAFT" in run.stdout and "not share-safe" in run.stdout

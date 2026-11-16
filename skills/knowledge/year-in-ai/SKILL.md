@@ -279,7 +279,9 @@ moved, what stalled), and the invoking agent reads the arcs, `index.md` and
    exempt from citations; numbers are still checked).
 
 **7. Lint (the gate).** A reflection holds only headings, paragraphs, list
-items and blockquotes: a table, a fenced block or any other structure fails.
+items and blockquotes: a table (with or without outer pipes), a fenced block,
+HTML, a footnote or a definition list fails, as does an unclosed HTML
+comment. A closed comment hides only itself; text after it is linted.
 `reflect lint` fails on: a claim (paragraph, list item, blockquote) with no
 `[e-…]` citation; a citation that does
 not resolve; a quote (a blockquote, or a quoted span of three or more words)
@@ -295,11 +297,14 @@ stale value that matches another field passes
 
 **Privacy.** Local only. Never paste episode text, digests or the reflection
 into a ticket, PR, chat service or upload. `reflect share` writes
-`reflection.share.md`. It replaces blockquotes, quoted spans of every kind
-and inline code, and any run of five or more words that appears in a prompt
-or reply, quoted or not; it removes URLs and paths and masks `--redact-term`
-values. It needs `episodes.jsonl` and refuses to run without it. A short name
-or term is caught only through `--redact-term`; review the copy before it
+`reflection.share.md`, a **review draft, not a share-safe copy**. It replaces
+blockquotes, quoted spans of every kind and inline code, and any run of five
+or more words that appears in a prompt or reply (quoted or not, across line
+breaks); it removes URLs and paths and masks `--redact-term` values, and
+prints how many of each it removed. It needs `episodes.jsonl` and refuses to
+run without it. It cannot recognise a short name, a credential or a
+paraphrase of something private in model-written prose: a person reads every
+line, adds `--redact-term` for anything private, and reruns before the draft
 leaves the machine.
 
 **From chapters to video.** The four chapters are the script for the recap

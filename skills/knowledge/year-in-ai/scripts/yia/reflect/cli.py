@@ -225,9 +225,15 @@ def share(args, config: dict, outdir: Path) -> int:
         return 2
     texts = [t["text"] for e in O.load_episodes(outdir) for t in e["prompts"] + e["replies"]]
     out = Path(args.out).expanduser() if args.out else outdir / "reflection.share.md"
-    write_private(out, SHARE.redact(path.read_text(encoding="utf-8"), args.redact_term or [], texts))
-    print(f"reflect share: wrote a redacted copy to {out} (quotes, links and paths removed); review it "
-          "before it leaves this machine")
+    draft = SHARE.redact(path.read_text(encoding="utf-8"), args.redact_term or [], texts)
+    write_private(out, draft)
+    removed = {"quoted or copied spans": draft.count(SHARE.QUOTE_REMOVED), "links": draft.count("«link»"),
+               "paths": draft.count("«path»"), "redact terms": draft.count(SHARE.PLACEHOLDER)}
+    print(f"reflect share: wrote a REVIEW DRAFT to {out}; removed "
+          + ", ".join(f"{n} {kind}" for kind, n in removed.items()))
+    print("reflect share: this is not share-safe by itself. Short names, credentials and paraphrased "
+          "private details are not detected; read every line, add --redact-term for anything private, "
+          "and rerun before it leaves this machine")
     return 0
 
 

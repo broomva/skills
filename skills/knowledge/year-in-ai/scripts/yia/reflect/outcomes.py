@@ -125,8 +125,7 @@ def git_prs(repo_dirs: List[str], year: int, runner: Runner = run) -> Tuple[dict
         ok, remote = runner(["git", "-C", str(repo), "remote", "get-url", "origin"])
         slug = None
         if ok:
-            match = re.search(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?\s*$", remote)
-            slug = match.group(1) if match else None
+            slug = parse_remote(remote)
         ok, out = runner(["git", "-C", str(repo), "log", "--first-parent", f"--since={year}-01-01",
                           f"--until={year + 1}-01-01", "--format=%cI%x1f%s"])
         if not ok or not slug:
@@ -184,7 +183,14 @@ def kg_entities(root: Optional[str]) -> Tuple[dict, List[dict]]:
     return status, entities
 
 
-_REMOTE = re.compile(r"github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?\s*$")
+# github.com as a whole host: `evilgithub.com` and `x.github.com.evil` are not it.
+_REMOTE = re.compile(r"(?:^|[/@])github\.com[:/]([\w.-]+/[\w.-]+?)(?:\.git)?/?\s*$")
+
+
+def parse_remote(remote: str) -> Optional[str]:
+    """``owner/name`` from a GitHub remote URL (https, ssh or scp form), else None."""
+    match = _REMOTE.search((remote or "").strip())
+    return match.group(1) if match else None
 
 
 def remote_slug(directory: Optional[str], runner: "Runner" = None) -> Optional[str]:
@@ -195,8 +201,8 @@ def remote_slug(directory: Optional[str], runner: "Runner" = None) -> Optional[s
     if not found:
         return None
     ok, remote = (runner or run)(["git", "-C", str(found[0]), "remote", "get-url", "origin"])
-    match = _REMOTE.search(remote) if ok else None
-    return match.group(1).lower() if match else None
+    slug = parse_remote(remote) if ok else None
+    return slug.lower() if slug else None
 
 
 def _same_repo(episode: dict, pr: dict, repo_of) -> bool:

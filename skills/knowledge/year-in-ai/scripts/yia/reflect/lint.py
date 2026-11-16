@@ -40,11 +40,27 @@ _QUOTED = re.compile(r"“([^”]+)”|\"([^\"]+)\"")
 _NUMBER = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?:\s?([KkMm%])(?![a-zA-Z]))?")
 
 
+_COMMENT = re.compile(r"<!--.*?-->", re.S)
+#: Block structures a reflection may not use, with why. Only headings,
+#: paragraphs, list items and blockquotes are allowed; each of these was a way
+#: to show text the lint did not check as a claim.
+_DISALLOWED = (
+    (re.compile(r"^\s*\|?\s*:?-+:?\s*(\|\s*:?-+:?\s*)+\|?\s*$"), "tables"),  # a delimiter row, with or without outer pipes
+    (re.compile(r"^\s*\|"), "tables"),
+    (re.compile(r"^\s*<[A-Za-z/!]"), "HTML"),
+    (re.compile(r"^\s*\[\^[^\]]+\]:"), "footnotes"),
+    (re.compile(r"^\s*:\s+\S"), "definition lists"),
+)
+
+
 def units(markdown: str) -> Tuple[List[dict], List[str], List[str]]:
     """Claims as ``{"line", "section", "kind", "text"}``, the headings, and structural errors."""
     out: List[dict] = []
     headings: List[str] = []
     errors: List[str] = []
+    # A comment hides only itself: text after `-->` on the same line renders and
+    # is linted. Line numbers are kept.
+    markdown = _COMMENT.sub(lambda m: "\n" * m.group(0).count("\n"), markdown)
     lines = markdown.splitlines()
     i = 0
     if lines and lines[0].strip() == "---":
@@ -54,8 +70,7 @@ def units(markdown: str) -> Tuple[List[dict], List[str], List[str]]:
         i += 1
     section = ""
     current = None
-    in_comment = in_fence = False
-    table_row = 0
+    in_fence = False
 
     def close():
         nonlocal current
@@ -66,13 +81,10 @@ def units(markdown: str) -> Tuple[List[dict], List[str], List[str]]:
     for n in range(i, len(lines)):
         line = lines[n]
         stripped = line.strip()
-        if in_comment:
-            in_comment = "-->" not in line
-            continue
-        if stripped.startswith("<!--"):
+        if "<!--" in line:
             close()
-            in_comment = "-->" not in stripped
-            continue
+            errors.append(f"line {n + 1}: an unclosed HTML comment hides the rest of the reflection")
+            break
         if stripped.startswith("```"):
             close()
             if not in_fence:
@@ -86,21 +98,16 @@ def units(markdown: str) -> Tuple[List[dict], List[str], List[str]]:
             close()
             section = heading.group(2).strip()
             headings.append(section)
-            table_row = 0
             continue
         if not stripped or _RULE.match(line):
             close()
-            table_row = 0
             continue
-        if stripped.startswith("|"):
-            # Only headings, paragraphs, list items and blockquotes are allowed:
-            # every table shape tried as an exemption (label headers, separator
-            # rows) was a way to state a claim the lint did not check.
+        banned = next((kind for pattern, kind in _DISALLOWED if pattern.match(line)), None)
+        if banned:
+            # Reported, and its text still linted as a claim of its own.
             close()
-            if table_row == 0:
-                errors.append(f"line {n + 1}: tables are not allowed in a reflection; "
-                              "write each claim as a sentence or list item")
-            table_row += 1
+            errors.append(f"line {n + 1}: {banned} are not allowed in a reflection; "
+                          "write each claim as a sentence or list item")
             out.append({"line": n + 1, "section": section, "kind": "row", "text": stripped})
             continue
         if stripped.startswith(">"):

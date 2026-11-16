@@ -1,11 +1,16 @@
-"""A share-safe copy of a reflection: the user's words, links and paths removed.
+"""A review draft of a reflection for sharing: the user's words, links and paths removed.
+
+It is not share-safe by itself. Redaction can remove what it can recognise
+(quoted and copied text, links, paths, named terms), but a short name, a
+credential or a paraphrase of something private in model-written prose is not
+recognisable, so a person reads the draft before it leaves the machine.
 
 The private reflection quotes prompts verbatim and names repositories and
 branches. Anything that leaves the machine goes through :func:`redact`:
 blockquotes, quoted spans of every kind and inline code become a placeholder,
 and so does any run of ``VERBATIM_WORDS`` or more words that appears in a
-prompt or reply, quoted or not: that is the property a share copy needs, and
-it does not depend on how the text was marked up. URLs and filesystem paths
+prompt or reply, quoted or not, matched across line breaks, independent of
+markup. URLs and filesystem paths
 are removed, and every ``--redact-term`` is replaced wherever it appears.
 Episode citations stay: they are opaque hashes.
 """
@@ -53,7 +58,9 @@ def _strip_verbatim(line: str, grams: Set[int], n: int = VERBATIM_WORDS) -> str:
         j = i
         while j + 1 < len(words) and hit[j + 1]:
             j += 1
-        out += [line[pos:words[i].start()], QUOTE_REMOVED]
+        # A run may cross line breaks; keep them so the markdown keeps its shape.
+        span = line[words[i].start():words[j].end()]
+        out += [line[pos:words[i].start()], QUOTE_REMOVED + "\n" * span.count("\n")]
         pos, i = words[j].end(), j + 1
     out.append(line[pos:])
     return "".join(out)
@@ -62,6 +69,10 @@ def _strip_verbatim(line: str, grams: Set[int], n: int = VERBATIM_WORDS) -> str:
 def redact(markdown: str, terms: Iterable[str] = (), private_texts: Iterable[str] = ()) -> str:
     """The share copy. ``private_texts`` are the prompts and replies whose word runs must not survive."""
     grams = ngrams(private_texts)
+    if grams:
+        # Matched over the whole document, not line by line: a copied run split
+        # across a line break is still the same words.
+        markdown = _strip_verbatim(markdown, grams)
     out = []
     for line in markdown.splitlines():
         if line.lstrip().startswith(">"):
@@ -69,8 +80,6 @@ def redact(markdown: str, terms: Iterable[str] = (), private_texts: Iterable[str
             continue
         # Every quoted span, whatever its length: a two-word quote can be a name.
         line = _QUOTED.sub(QUOTE_REMOVED, line)
-        if grams:
-            line = _strip_verbatim(line, grams)
         line = _URL.sub("«link»", line)
         line = _PATH.sub("«path»", line)
         out.append(line)
