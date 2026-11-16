@@ -229,21 +229,33 @@ published. In order, it:
 1. creates a resumable REELS container (`POST /<IG_ID>/media`, `upload_type=resumable`);
 2. sends the bytes to `https://rupload.facebook.com/ig-api-upload/<version>/<container id>`
    with `offset: 0` and `file_size`;
-3. polls the container once a minute until `FINISHED`. Polling stops at a 5-minute
-   deadline, counting both the requests and the waits between them;
+3. polls the container once a minute until `FINISHED`. Polling has a 5-minute
+   deadline, which counts both the requests and the waits between them. No poll
+   starts at or after it, and each poll's own timeout is capped at the time left
+   (at least 1 s). A poll already in flight can therefore return `FINISHED` up
+   to that cap after the deadline, and it is accepted;
 4. calls `POST /<IG_ID>/media_publish`.
 
-A Graph API failure after the gate exits 3 and names the step. Failures include
-an error status, a reply that is not a JSON object, a missing id, an upload
-`success` that is not `true`, or a container not `FINISHED` by the deadline.
+A Graph API failure after the gate exits 3 and names the step. Failures include:
+
+- an error status;
+- a reply that is not a JSON object, or that carries an `error` object;
+- an id that is not numeric (`--ig-user-id` is checked before any call);
+- an upload `success` that is not `true`;
+- a container not `FINISHED` by the deadline.
 
 The token travels only in `Authorization` headers: `Bearer` for Graph calls,
 following Meta's content-publishing guide, and `OAuth` for rupload, following the
-media reference. It never goes in a URL or a request body, and it is redacted from
-every error message.
+media reference. It never goes in a URL or a request body.
+
+Error messages carry no text from Meta or the network stack. They hold only the
+step, the HTTP status, Meta's numeric error code and subcode, a byte count or an
+exception type. That leaves no path for a token echoed by a server or proxy to
+reach a message. No raw exception is chained to the error, and the CLI prints
+only the type of an unexpected exception.
 
 **Not yet verified live.** `publish` is tested only against a fake Graph API: the
-request sequence, the bytes sent, the redaction and the failure handling. It has
+request sequence, the bytes sent, the token handling and the failure handling. It has
 never published to a real account, because that needs the owner's Instagram token
 and a professional account. The first real run should use `--no-go-live`, then be
 checked in the app before `media_publish` is called.

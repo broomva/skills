@@ -377,11 +377,11 @@ class FakeGraph:
         if self.on_call:
             self.on_call(len(self.calls), url)
         if url.endswith("/media"):
-            return {"id": "C123"}
+            return {"id": "170001"}
         if "rupload" in url:
             return {"success": True}
         if url.endswith("/media_publish"):
-            return {"id": "M456"}
+            return {"id": "180002"}
         return {"status_code": self.status.pop(0) if self.status else "FINISHED"}
 
 
@@ -396,7 +396,7 @@ def _publish(card, video, http, **kw):
 def test_publish_runs_the_documented_sequence(video):
     http = FakeGraph()
     receipt, reasons, _ = _publish(_card(video, trial={"graduation_strategy": "SS_PERFORMANCE"}), video, http)
-    assert reasons == [] and receipt["media_id"] == "M456" and receipt["container_id"] == "C123"
+    assert reasons == [] and receipt["media_id"] == "180002" and receipt["container_id"] == "170001"
     create, upload = http.calls[0], http.calls[1]
     assert create["url"].endswith("/17841400000000000/media")
     assert create["params"]["upload_type"] == "resumable" and create["params"]["media_type"] == "REELS"
@@ -404,9 +404,9 @@ def test_publish_runs_the_documented_sequence(video):
     assert json.loads(create["params"]["trial_params"]) == {"graduation_strategy": "SS_PERFORMANCE"}
     assert "TOKEN" not in create["url"] and "TOKEN" not in json.dumps(create["params"])
     assert create["headers"] == {"Authorization": "Bearer TOKEN"}
-    assert upload["url"].endswith("/ig-api-upload/v27.0/C123")
+    assert upload["url"].endswith("/ig-api-upload/v27.0/170001")
     assert upload["headers"] == {"Authorization": "OAuth TOKEN", "offset": "0", "file_size": str(len(upload["body"]))}
-    assert http.calls[-1]["url"].endswith("/media_publish") and http.calls[-1]["params"] == {"creation_id": "C123"}
+    assert http.calls[-1]["url"].endswith("/media_publish") and http.calls[-1]["params"] == {"creation_id": "170001"}
     assert http.calls[-1]["headers"] == {"Authorization": "Bearer TOKEN"}
 
 
@@ -478,15 +478,34 @@ def test_publish_deadline_counts_slow_requests(video):
     assert len(polls) == 3
 
 
-# Review r3 MAJOR: the token never reaches a URL, an exception or the CLI's output.
+# Review r3 MAJOR + r4: the token never reaches a URL, an exception, its chain or the CLI's output.
 SENTINEL = "P20_FAKE_SECRET_SENTINEL"
+
+
+def _fragments(s: str, n: int = 8):
+    return {s[i:i + n] for i in range(len(s) - n + 1)}
+
+
+def _assert_no_sentinel(exc_or_text):
+    """No 8-character fragment of the sentinel anywhere: in the message, or in any
+    exception chained to it (__cause__ / __context__)."""
+    texts, e, seen = [], exc_or_text, set()
+    if isinstance(e, BaseException):
+        while e is not None and id(e) not in seen:
+            seen.add(id(e))
+            texts += [str(e), repr(e)]
+            e = e.__cause__ or e.__context__
+    else:
+        texts.append(str(e))
+    blob = " ".join(texts)
+    assert not any(f in blob for f in _fragments(SENTINEL)), blob
 
 
 def test_real_transport_puts_no_token_in_any_url(video, monkeypatch):
     import io
     import urllib.request
     seen = []
-    replies = iter([b'{"id": "C1"}', b'{"success": true}', b'{"status_code": "FINISHED"}', b'{"id": "M1"}'])
+    replies = iter([b'{"id": "170003"}', b'{"success": true}', b'{"status_code": "FINISHED"}', b'{"id": "180004"}'])
 
     class Resp(io.BytesIO):
         def __enter__(self):
@@ -502,7 +521,7 @@ def test_real_transport_puts_no_token_in_any_url(video, monkeypatch):
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     receipt, _, _ = rl.publish(_card(video), video, ig_user_id="1", token=SENTINEL, probe=_ok_probe,
                                card_dir=video.parent, now=NOW, sleep=lambda s: None)
-    assert receipt["media_id"] == "M1" and len(seen) == 4
+    assert receipt["media_id"] == "180004" and len(seen) == 4
     assert all(SENTINEL not in url for url, _, _ in seen)
     # the token is never in a form body either (the upload body is the video itself)
     assert all(SENTINEL.encode() not in (body or b"") for _, _, body in (seen[0], seen[2], seen[3]))
@@ -529,13 +548,13 @@ def test_errors_are_redacted(video, monkeypatch, failure):
 
             def __exit__(self, *a):
                 return False
-        return Resp(f'{{"echo": "{SENTINEL}"}}'.encode())  # no id: the reply is dumped into the error
+        return Resp(f'{{"echo": "{SENTINEL}"}}'.encode())  # no id: before r3 the reply was dumped into the error
 
     monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
     with pytest.raises(rl.PublishError) as info:
         rl.publish(_card(video), video, ig_user_id="1", token=SENTINEL, probe=_ok_probe,
                    card_dir=video.parent, now=NOW, sleep=lambda s: None)
-    assert SENTINEL not in str(info.value) and "<redacted>" in str(info.value)
+    _assert_no_sentinel(info.value)
 
 
 # Review r3 MINOR: malformed replies fail as PublishError (exit 3), never crash or pass.
@@ -563,7 +582,7 @@ def test_upload_success_must_be_boolean_true(video):
             return {"success": "false"} if "rupload" in url else out
 
     http = Stringy()
-    with pytest.raises(rl.PublishError, match="did not report success"):
+    with pytest.raises(rl.PublishError, match="did not report success: true"):
         _publish(_card(video), video, http)
     assert not any(c["url"].endswith("/media_publish") for c in http.calls)
 
@@ -589,3 +608,118 @@ def test_cli_publish_without_token_is_blocked(tmp_path, video):
     proc = subprocess.run([sys.executable, str(SCRIPT), "publish", str(card), "--video", str(video),
                            "--ig-user-id", "1"], capture_output=True, text=True, env=env)
     assert proc.returncode == 2 and "IG_ACCESS_TOKEN" in proc.stderr
+
+
+# --- review r4 ---------------------------------------------------------------------
+class _Resp(__import__("io").BytesIO):
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *a):
+        return False
+
+
+@pytest.mark.parametrize("raw_body", [
+    lambda: ("x" * (500 - len(SENTINEL) + 1) + SENTINEL).encode(),           # straddles the old 500 cut
+    lambda: ('{"error": {"message": "' + SENTINEL + '", "code": 190, "error_subcode": 463}}').encode(),
+])
+def test_http_error_text_never_reaches_the_message(monkeypatch, raw_body):
+    import io
+    import urllib.error
+    import urllib.request
+
+    def fake(req, timeout=0):
+        raise urllib.error.HTTPError(req.full_url, 400, SENTINEL, {}, io.BytesIO(raw_body()))
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    with pytest.raises(rl.PublishError) as info:
+        rl.graph_http("GET", "https://graph.facebook.com/v27.0/1", params={"fields": "status_code"})
+    _assert_no_sentinel(info.value)
+    assert "HTTP 400" in str(info.value)
+
+
+def test_meta_numeric_codes_are_kept(monkeypatch):
+    import io
+    import urllib.error
+    import urllib.request
+    body = b'{"error": {"message": "Invalid OAuth access token", "code": 190, "error_subcode": 463}}'
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: (_ for _ in ()).throw(
+        urllib.error.HTTPError(req.full_url, 400, "bad", {}, io.BytesIO(body))))
+    with pytest.raises(rl.PublishError, match="code 190, subcode 463"):
+        rl.graph_http("GET", "https://graph.facebook.com/v27.0/1")
+
+
+def test_non_json_body_at_the_old_200_cut_does_not_leak(monkeypatch):
+    import urllib.request
+    raw = ("y" * (200 - len(SENTINEL) + 1) + SENTINEL).encode()
+    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: _Resp(raw))
+    with pytest.raises(rl.PublishError) as info:
+        rl.graph_http("POST", "https://graph.facebook.com/v27.0/1/media", params={"a": "b"})
+    _assert_no_sentinel(info.value)
+
+
+def test_url_error_leaves_no_raw_exception_in_the_chain(monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    def fake(req, timeout=0):
+        raise urllib.error.URLError(SENTINEL)
+    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    with pytest.raises(rl.PublishError) as info:
+        rl.graph_http("GET", "https://graph.facebook.com/v27.0/1")
+    assert info.value.__context__ is None and info.value.__cause__ is None
+    _assert_no_sentinel(info.value)
+
+
+def test_unexpected_exception_in_publish_prints_only_its_type(tmp_path, video, monkeypatch, capsys):
+    card = tmp_path / "card.json"
+    card.write_text(json.dumps(_card(video)), encoding="utf-8")
+    monkeypatch.setenv("IG_ACCESS_TOKEN", "TOKEN")
+
+    def boom(*a, **k):
+        raise OSError(SENTINEL)
+    monkeypatch.setattr(rl, "gate", boom)
+    code = rl.main(["publish", str(card), "--video", str(video), "--ig-user-id", "1"])
+    out = capsys.readouterr()
+    assert code == 3 and "unexpected OSError" in out.err
+    _assert_no_sentinel(out.err + out.out)
+
+
+@pytest.mark.parametrize("final", [{"id": " "}, {"id": "180002", "error": {"message": "failure"}},
+                                   {"id": SENTINEL}, {"id": "../../me"}])
+def test_media_publish_reply_must_be_a_clean_numeric_id(video, final):
+    class Final(FakeGraph):
+        def __call__(self, method, url, **kw):
+            out = super().__call__(method, url, **kw)
+            return final if url.endswith("/media_publish") else out
+    with pytest.raises(rl.PublishError) as info:
+        _publish(_card(video), video, Final())
+    _assert_no_sentinel(info.value)
+
+
+def test_echoed_credential_as_container_id_is_never_used_in_a_url(video):
+    class Echo(FakeGraph):
+        def __call__(self, method, url, **kw):
+            out = super().__call__(method, url, **kw)
+            return {"id": SENTINEL} if url.endswith("/media") else out
+    http = Echo()
+    with pytest.raises(rl.PublishError, match="no numeric id"):
+        _publish(_card(video), video, http)
+    assert len(http.calls) == 1
+
+
+def test_non_numeric_ig_user_id_is_blocked_before_any_call(video):
+    http = FakeGraph()
+    receipt, reasons, _ = rl.publish(_card(video), video, ig_user_id="me/../x", token="TOKEN", http=http,
+                                     probe=_ok_probe, card_dir=video.parent, now=NOW)
+    assert receipt is None and "numeric" in reasons[0] and http.calls == []
+
+
+def test_no_poll_starts_at_or_after_the_deadline(video):
+    clock = FakeClock()
+    graph = FakeGraph(status=("IN_PROGRESS",) * 20)
+    with pytest.raises(rl.PublishError, match="not FINISHED within 300"):
+        rl.publish(_card(video), video, ig_user_id="1", token="TOKEN", http=graph, probe=_ok_probe,
+                   card_dir=video.parent, now=NOW, sleep=clock.sleep, clock=clock, poll_every=60.0)
+    poll_times = [c for c in graph.calls if c["method"] == "GET"]
+    assert len(poll_times) == 5  # at 0, 60, 120, 180, 240; none at 300
+    assert clock.t <= 300
