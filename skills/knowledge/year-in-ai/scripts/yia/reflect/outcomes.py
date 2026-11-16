@@ -184,6 +184,17 @@ def kg_entities(root: Optional[str]) -> Tuple[dict, List[dict]]:
     return status, entities
 
 
+def _same_repo(episode: dict, pr: dict) -> bool:
+    """Is ``pr`` from the repository the episode ran in? Unknown counts as no."""
+    name = (pr.get("repo") or "").rsplit("/", 1)[-1].lower()
+    if not name:
+        return False
+    for place in (episode.get("repo"), episode.get("cwd")):
+        if place and name in {part.lower() for part in re.split(r"[\\/]", place) if part}:
+            return True
+    return False
+
+
 def _within(merged_at: Optional[str], first: str, last: str, before: int = 1) -> bool:
     merged, start, end = _day(merged_at), _day(first), _day(last)
     if not (merged and start and end):
@@ -231,7 +242,9 @@ def join(episodes: List[dict], sources: Dict[str, dict], prs: List[dict], ticket
         if branch and branch not in GENERIC_BRANCHES:
             for p in by_branch.get(branch, []):
                 if _within(p.get("merged_at"), e["first"], e["last"]):
-                    link(p, "branch")
+                    # A branch name is the session's own outcome only in its own
+                    # repository; elsewhere the same name is a coincidence.
+                    link(p, "branch" if _same_repo(e, p) else "branch-name")
         for t in e["tickets"]:
             for p in by_ticket.get(t, []):
                 if _within(p.get("merged_at"), e["first"], e["last"], before=2):

@@ -206,6 +206,7 @@ def test_the_join_reports_absent_sources_and_continues(tmp_path):
 
 def test_the_join_links_by_mention_branch_ticket_and_kg(tmp_path):
     e = build_episodes(tmp_path)[0][0]
+    e["cwd"] = "/work/app"  # the episode ran in acme/app
     prs = [{"url": "https://github.com/acme/app/pull/7", "title": "feat: login (ABC-12)", "merged_at": iso(T0 + 3600),
             "branch": "feature/abc-12-login", "repo": "acme/app"},
            {"url": "https://github.com/acme/app/pull/9", "title": "fix: ABC-12 follow-up",
@@ -369,3 +370,44 @@ def test_the_pipeline_runs_privately_end_to_end(tmp_path):
     assert shared.returncode == 0
     text = (out / "reflection.share.md").read_text()
     assert "open a pull request when the tests pass" not in text and "«quote removed»" in text
+
+
+# --- P20 review of 5939467 (Codex)
+
+
+def test_a_branch_name_in_another_repository_is_not_the_sessions_outcome(tmp_path):
+    from yia.reflect import reduce as RED
+    e = build_episodes(tmp_path)[0][0]
+    e["cwd"], e["repo"] = "/work/repo-a", "repo-a"
+    pr = {"url": "https://github.com/example/repo-b/pull/7", "title": "unrelated", "merged_at": iso(T0 + 3600),
+          "branch": "feature/login", "repo": "example/repo-b"}
+    e["branch"], e["tickets"] = "feature/login", []
+    linked = OUT.join([e], {}, [pr], {}, [])["episodes"][e["id"]]
+    assert linked["merged_prs"][0]["via"] == ["branch-name"]
+    assert RED.STRONG_VIA.isdisjoint(linked["merged_prs"][0]["via"])
+
+
+def test_share_removes_every_quoted_span_however_short():
+    from yia.reflect import share as SH
+    out = SH.redact('The user said "secret phrase" and \u201cAcme\u201d [e-12345678].\n')
+    assert "secret phrase" not in out and "Acme" not in out and out.count(SH.QUOTE_REMOVED) == 2
+
+
+def test_a_table_header_cannot_carry_an_uncited_claim():
+    from yia.reflect import lint as LINT
+    claims, _headings, _errors = LINT.units("## Monthly arcs\n\n| 999 users were served without evidence | x |\n|---|---|\n")
+    assert any("999 users" in c["text"] for c in claims)
+    labels, _h, _e = LINT.units("## Monthly arcs\n\n| Month | Episodes | Shipped |\n|---|---|---|\n")
+    assert labels == []
+
+
+def test_a_digest_that_is_not_an_object_is_an_error_not_a_crash(tmp_path):
+    from yia.reflect import digest as DG
+    e = build_episodes(tmp_path)[0][0]
+    out = tmp_path / "reflect"
+    path = DG.digest_path(out, e["id"]) if hasattr(DG, "digest_path") else None
+    assert path is not None
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("[]")
+    errors, missing, valid = DG.status(out, [e])
+    assert errors[e["id"]] == ["digest is not a JSON object"] and not valid

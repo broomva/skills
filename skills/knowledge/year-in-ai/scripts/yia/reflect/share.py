@@ -17,7 +17,7 @@ from ..redact import PLACEHOLDER
 QUOTE_REMOVED = "«quote removed»"
 _URL = re.compile(r"https?://\S+")
 _PATH = re.compile(r"(?:~|/Users|/Volumes|/home|/private|/tmp|/opt)/[^\s)\]`'\"]*")
-_QUOTED = re.compile(r"“[^”]+”|\"[^\"\n]+\"")
+_QUOTED = re.compile(r"“[^”]+”|‘[^’]+’|\"[^\"\n]+\"")
 
 
 def redact(markdown: str, terms: Iterable[str] = ()) -> str:
@@ -26,7 +26,8 @@ def redact(markdown: str, terms: Iterable[str] = ()) -> str:
         if line.lstrip().startswith(">"):
             out.append("> " + QUOTE_REMOVED)
             continue
-        line = _QUOTED.sub(lambda m: QUOTE_REMOVED if len(m.group(0).split()) >= 3 else m.group(0), line)
+        # Every quoted span, whatever its length: a two-word quote can be a name.
+        line = _QUOTED.sub(QUOTE_REMOVED, line)
         line = _URL.sub("«link»", line)
         line = _PATH.sub("«path»", line)
         out.append(line)

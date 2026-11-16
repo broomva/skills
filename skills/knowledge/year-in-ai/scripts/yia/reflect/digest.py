@@ -139,7 +139,10 @@ def status(outdir: Path, episodes: List[dict], only: Optional[set] = None) -> Tu
         if d is None:
             missing.append(e["id"])
             continue
-        problems = ["not valid JSON"] if d.get("_unparseable") else validate(d, e)
+        if not isinstance(d, dict):
+            problems = ["digest is not a JSON object"]
+        else:
+            problems = ["not valid JSON"] if d.get("_unparseable") else validate(d, e)
         if problems:
             errors[e["id"]] = problems
         else:

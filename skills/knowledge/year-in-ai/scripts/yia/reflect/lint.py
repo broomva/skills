@@ -41,6 +41,17 @@ _QUOTED = re.compile(r"“([^”]+)”|\"([^\"]+)\"")
 _NUMBER = re.compile(r"(?<![\w.])(\d{1,3}(?:,\d{3})+|\d+)(?:\.(\d+))?(?:\s?([KkMm%])(?![a-zA-Z]))?")
 
 
+def _label_row(row: str) -> bool:
+    """A table header made only of short labels (no digits, no quotes, three words or fewer per cell).
+
+    Any other header row is a claim like a body row, so a header cannot carry
+    an uncited sentence or an unsupported number past the lint.
+    """
+    cells = [c.strip() for c in row.strip().strip("|").split("|")]
+    return all(c and len(c.split()) <= 3 and not any(ch.isdigit() for ch in c)
+               and not any(q in c for q in "\"“”‘’") for c in cells)
+
+
 def units(markdown: str) -> Tuple[List[dict], List[str], List[str]]:
     """Claims as ``{"line", "section", "kind", "text"}``, the headings, and structural errors."""
     out: List[dict] = []
@@ -96,7 +107,7 @@ def units(markdown: str) -> Tuple[List[dict], List[str], List[str]]:
         if stripped.startswith("|"):
             close()
             table_row += 1
-            if table_row == 1 or _TABLE_SEP.match(stripped):
+            if _TABLE_SEP.match(stripped) or (table_row == 1 and _label_row(stripped)):
                 continue
             out.append({"line": n + 1, "section": section, "kind": "row", "text": stripped})
             continue
