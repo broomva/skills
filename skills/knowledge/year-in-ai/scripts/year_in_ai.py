@@ -4,6 +4,7 @@
     year_in_ai.py extract --year 2026 --out wrapped.json
     year_in_ai.py render  --payload wrapped.json --out deck.html
     year_in_ai.py run     --year 2026 --outdir ./out --share
+    year_in_ai.py reflect episodes --year 2026   (then check, join, reduce, lint)
 
 ``extract`` is pure and deterministic: it reads local files and writes JSON.
 ``render`` never reads the corpus — only the payload — so the deck can be
@@ -293,6 +294,10 @@ def main(argv: list[str] | None = None) -> int:
     p_attention.add_argument("--read-high", type=float, default=0.70)
     p_attention.add_argument("--out")
     p_attention.set_defaults(func=cmd_attention)
+
+    from yia.reflect import cli as reflect_cli
+
+    reflect_cli.add_parser(sub)
 
     args = parser.parse_args(argv)
     return int(args.func(args))

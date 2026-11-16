@@ -270,7 +270,7 @@ def make_row(
         flags.append("marker")
     sess = opaque(session)
     row_id = row_identity(src, kind, occurrence, h)
-    return {
+    row = {
         "id": row_id,
         "v": ROW_VERSION,
         "ts": round(ts, 3),
@@ -293,6 +293,36 @@ def make_row(
         "flags": flags,
         "attr": clean_attr(attr),
     }
+    for tap in _TAPS:
+        tap(row, clean, own)
+    return row
+
+
+#: Observers of each row's text while :func:`text_tap` is active. Empty during a
+#: harvest, so nothing here can reach the ledger: the row a tap sees is the same
+#: text-free dict the ledger stores, and the text goes only to the tap.
+_TAPS: list = []
+
+
+class text_tap:
+    """Hand each row's text to ``callback(row, text, authored)`` for the duration of a ``with`` block.
+
+    The reflect layer reads the stores through the same readers as the harvest,
+    so every turn it rebuilds carries the exact row id the fold classified. The
+    text never enters the row; the callback decides where it goes (the private
+    reflect directory, never the ledger).
+    """
+
+    def __init__(self, callback):
+        self.callback = callback
+
+    def __enter__(self):
+        _TAPS.append(self.callback)
+        return self
+
+    def __exit__(self, *exc):
+        _TAPS.remove(self.callback)
+        return False
 
 
 def row_identity(src: str, kind: str, occurrence: str, revision: str) -> str:
