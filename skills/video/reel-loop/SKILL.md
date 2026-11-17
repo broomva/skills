@@ -10,11 +10,13 @@ description: |
   Trial Reels to non-followers. A composition skill: research, voice, render and
   layout come from sibling skills; the arithmetic (outlier and winner scores) and
   the publish gate live in a tested script, so no step past the approval is
-  reachable without an approval bound to the exact rendered bytes.
+  reachable without an approval bound to the exact rendered bytes. Poll comment
+  keywords into one private reply per comment with a separately byte-approved
+  template and durable attempt ledger.
   USE WHEN: "reel loop", "content machine", "find viral reels in my niche and remake
   them", "outliers in my niche", "x times their normal", "nightly content run",
   "remix the winners", "trial reels", "make reels while I sleep", "content-os",
-  "/reel-loop". NOT FOR: editing raw footage into a cut with no loop around it
+  "comment keyword funnel", "WORKSPACE private reply", "/reel-loop". NOT FOR: editing raw footage into a cut with no loop around it
   (video-cut), one cinematic generation or brand compile (content-engine), a
   multi-account portfolio with canon and spend ledgers (that is the
   agentic-media-studio initiative, which runs one reel-loop per account lane), or
@@ -335,3 +337,51 @@ cd skills/video/reel-loop && python3 -m pytest tests/ -q
 python3 scripts/reel_loop.py outliers references/example-niche.tsv --now 2026-11-16
 # expect exactly one outlier: @alpha /p/A6/, about 114x; @beta's 2.6M reel is not one
 ```
+
+
+## Lead funnel
+
+For `@broomva.tech`, end the Reel with: “Comment WORKSPACE and I'll send you the
+Act One playbook”. Register the published media ID, keyword, and separate owner
+approval in the [post card](references/post-card.md#lead-funnel). Read the
+[Meta rules](references/platform-contract.md#lead-funnel-polling-comments--one-private-reply)
+before use. The private reply template must contain the owner-approved playbook
+link; this skill supplies no assumed URL.
+
+From `skills/video/reel-loop`, after the owner has approved the exact UTF-8
+`/path/to/act-one.txt` bytes and recorded their sha256 in `card.json`:
+
+```sh
+# Owner supplies IG_ACCESS_TOKEN through the environment; never put it in argv.
+# Dry run is the default. It reads comments but sends no replies.
+python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID
+# Inspect comment IDs, ages and keyword hits, then explicitly enable sends:
+python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID --go-live
+# Optional bounded pagination and external ledger location (reuse the SAME ledger):
+python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID --max-pages 20 --ledger /path/outside/git/funnel.jsonl
+```
+
+Dry run still requires the approved template and token. It emits only comment IDs,
+ages, keyword-hit flags and operational state, never comment text, usernames,
+template text, or tokens. It may create an empty ledger but adds no attempts.
+Only the owner runs the first live check, on their own test comment from another
+account; implementation and CI use fakes only, with network connections disabled.
+No credential files are read.
+
+The durable JSONL ledger defaults to
+`$XDG_STATE_HOME/reel-loop/funnel.jsonl` or
+`~/.local/state/reel-loop/funnel.jsonl`, mode 0600. Paths inside **any Git
+repository are refused**, so no in-repo PII exception is needed. The ledger
+minimizes data to IDs, template hash, time and status; usernames and comment text
+are not retained. Keep it private and preserve it across runs, posts, and token
+changes. Changing/deleting the ledger removes duplicate protection. Use a local
+filesystem with working advisory locks and fsync (macOS/Linux).
+
+An exclusive lock spans polling and sending. An `attempting` row is flushed and
+synced **before** POST; `sent` or `failed` follows. Every recorded attempt blocks
+all future automatic sends for that comment, including failed sends. A crash
+between reservation and result leaves `attempting`, surfaced as `needs_human`;
+reconcile with Instagram manually and do not delete the reservation to retry.
+A malformed/torn ledger blocks sending. No client can atomically commit local
+state and Meta's send: this deliberately trades possible missed replies for no
+automatic duplicate after an uncertain send. No follow-up messages are sent.

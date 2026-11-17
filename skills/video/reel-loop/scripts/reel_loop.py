@@ -644,6 +644,158 @@ def publish(card, video: Path, *, ig_user_id: str, token: str, card_dir: Path | 
     return receipt, [], notes
 
 
+# --- comment-keyword lead funnel -----------------------------------------------
+def keyword_hit(text: str, keyword: str) -> bool:
+    """Unicode whole word, case insensitive: WORKSPACE! yes, workspaces no."""
+    return re.search(r"(?<!\w)" + re.escape(keyword) + r"(?!\w)", text, re.IGNORECASE) is not None
+
+
+def default_funnel_ledger() -> Path:
+    return Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "reel-loop/funnel.jsonl"
+
+
+def funnel(card, template: Path, *, ledger: Path, ig_user_id: str, token: str,
+           go_live: bool = False, max_pages: int = 10, http=graph_http, now=None) -> dict:
+    """At-most-one automatic attempt, including crashes and concurrent pollers.
+
+    A durable reservation precedes POST. Any row consumes the comment forever;
+    uncertain attempts require human reconciliation, never an automatic retry.
+    No API response text or identity leaves the private ledger.
+    """
+    import fcntl
+
+    clock = now or (lambda: datetime.now(timezone.utc))
+    config = card.get("funnel") if isinstance(card, dict) else None
+    if not isinstance(config, dict):
+        raise ValueError("card needs funnel configuration")
+    keyword, media_id = config.get("keyword"), config.get("media_id")
+    if not isinstance(keyword, str) or not re.fullmatch(r"\w+", keyword):
+        raise ValueError("funnel.keyword must be one non-empty word")
+    if not all(isinstance(v, str) and _ID.fullmatch(v) for v in (media_id, ig_user_id)):
+        raise ValueError("funnel media and Instagram user ids must be numeric")
+    if not isinstance(max_pages, int) or isinstance(max_pages, bool) or not 1 <= max_pages <= 100:
+        raise ValueError("max-pages must be between 1 and 100")
+    data = template.read_bytes()  # read once: approval and send use these bytes
+    approval = config.get("approval")
+    if not isinstance(approval, dict) or not all(
+            isinstance(approval.get(k), str) and approval[k].strip() for k in ("by", "at", "template_sha256")):
+        raise ValueError("funnel needs owner approval {by, at, template_sha256}")
+    digest = hashlib.sha256(data).hexdigest()
+    if approval["template_sha256"] != digest:
+        raise ValueError("funnel template sha256 does not match approval")
+    message = data.decode("utf-8")
+    if not message.strip():
+        raise ValueError("funnel template is empty")
+    if not token:
+        raise ValueError("IG_ACCESS_TOKEN is not set")
+    ledger = ledger.expanduser().resolve()
+    if any((parent / ".git").exists() for parent in ledger.parents):
+        raise ValueError("funnel ledger must live outside any git repository")
+    ledger.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    fd = os.open(ledger, os.O_RDWR | os.O_CREAT, 0o600)
+    os.fchmod(fd, 0o600)
+    with os.fdopen(fd, "r+", encoding="utf-8") as log:
+        fcntl.flock(log, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        # Persist the directory entry before any reservation/send.
+        directory = os.open(ledger.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+        seen, pending = set(), set()
+        for line in log:
+            row = json.loads(line)  # torn/corrupt ledger blocks all sending
+            cid = row["comment_id"]
+            if not isinstance(cid, str) or not _ID.fullmatch(cid) or row["status"] not in ("attempting", "sent", "failed"):
+                raise ValueError("invalid funnel ledger")
+            seen.add(cid)
+            if row["status"] == "attempting":
+                pending.add(cid)
+            else:
+                pending.discard(cid)
+
+        def record(row):
+            log.write(json.dumps(row, ensure_ascii=False) + "\n")
+            log.flush()
+            os.fsync(log.fileno())
+
+        def call(method, endpoint, **kwargs):
+            failure = None
+            try:
+                out = http(method, f"{GRAPH}/{API_VERSION}/{endpoint}",
+                           headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, **kwargs)
+                if not isinstance(out, dict) or "error" in out:
+                    failure = "invalid Graph response"
+            except Exception:  # no upstream text, token, username or comment in errors
+                failure = "Graph request failed"
+            if failure:
+                raise PublishError(failure)
+            return out
+
+        result = {"dry_run": not go_live, "replies": [], "needs_human": sorted(pending), "pages": 0, "truncated": False}
+        cursor = None
+        for page in range(max_pages):
+            params = {"fields": "id,text,timestamp,from", "limit": 100}
+            if cursor:
+                params["after"] = cursor
+            batch = call("GET", f"{media_id}/comments", params=params)
+            comments = batch.get("data")
+            if not isinstance(comments, list):
+                raise PublishError("comments response has no list")
+            result["pages"] += 1
+            for comment in comments:
+                if not isinstance(comment, dict):
+                    continue
+                cid, author = comment.get("id"), comment.get("from")
+                if not isinstance(cid, str) or not _ID.fullmatch(cid):
+                    continue
+                if cid in seen:
+                    continue
+                if not isinstance(author, dict) or not isinstance(author.get("id"), str) or not _ID.fullmatch(author["id"]):
+                    continue  # missing author cannot establish that this is not our comment
+                if author["id"] == ig_user_id or str(author.get("username", "")).lower() == "broomva.tech":
+                    continue
+                text = comment.get("text")
+                if not isinstance(text, str) or not keyword_hit(text, keyword):
+                    continue
+                try:
+                    raw_time = comment.get("timestamp")
+                    stamp = datetime.fromisoformat(raw_time.replace("Z", "+00:00"))
+                    age = (clock() - stamp).total_seconds() if stamp.tzinfo else -1
+                except (ValueError, TypeError, AttributeError):
+                    continue
+                if not 0 <= age < 7 * 86400:
+                    continue
+                public = {"comment_id": cid, "age_seconds": int(age), "keyword_hit": True}
+                seen.add(cid)
+                if go_live:
+                    base = {"comment_id": cid, "media_id": media_id, "ig_user_id": ig_user_id,
+                            "template_sha256": digest, "at": clock().isoformat()}
+                    record({**base, "status": "attempting"})
+                    try:
+                        reply = call("POST", f"{ig_user_id}/messages", body=json.dumps(
+                            {"recipient": {"comment_id": cid}, "message": {"text": message}}).encode("utf-8"))
+                        if not isinstance(reply.get("message_id"), str) or not reply["message_id"]:
+                            raise PublishError("send response has no message id")
+                    except PublishError:
+                        record({**base, "status": "failed"})
+                        public["status"] = "failed"
+                    else:
+                        record({**base, "status": "sent"})
+                        public["status"] = "sent"
+                result["replies"].append(public)
+            paging = batch.get("paging") or {}
+            if not isinstance(paging, dict) or not paging.get("next"):
+                break
+            cursors = paging.get("cursors") or {}
+            cursor = cursors.get("after") if isinstance(cursors, dict) else None
+            if not isinstance(cursor, str) or not cursor or len(cursor) > 4096:
+                raise PublishError("pagination has no bounded after cursor")
+            # Never follow paging.next: it may contain a token or another host.
+            result["truncated"] = page == max_pages - 1
+        return result
+
+
 # --- CLI ----------------------------------------------------------------------
 def _now(arg: str | None) -> datetime:
     return parse_time(arg) if arg else datetime.now(timezone.utc)
@@ -701,7 +853,26 @@ def main(argv: list[str] | None = None) -> int:
     u.add_argument("--no-go-live", action="store_true",
                    help="create, upload and wait for the container, but do not call media_publish")
 
+    f = sub.add_parser("funnel", help="poll comments; private replies require --go-live")
+    f.add_argument("card")
+    f.add_argument("--template", required=True)
+    f.add_argument("--ig-user-id", required=True)
+    f.add_argument("--ledger", type=Path, default=default_funnel_ledger())
+    f.add_argument("--max-pages", type=int, default=10)
+    f.add_argument("--go-live", action="store_true")
+
     a = ap.parse_args(argv)
+    if a.cmd == "funnel":
+        try:
+            card = json.loads(Path(a.card).read_text(encoding="utf-8"))
+            result = funnel(card, Path(a.template), ledger=a.ledger, ig_user_id=a.ig_user_id,
+                            token=os.environ.get("IG_ACCESS_TOKEN", ""), go_live=a.go_live,
+                            max_pages=a.max_pages)
+        except Exception as exc:
+            print(f"FUNNEL BLOCKED: {type(exc).__name__}", file=sys.stderr)
+            return 2
+        print(json.dumps(result, indent=2))
+        return 0
     try:
         if a.cmd == "outliers":
             res = score_outliers(read_rows(a.input), bar=a.bar, min_views=a.min_views,

@@ -110,14 +110,33 @@ Limits:
 Documented for the Facebook Login path, with `instagram_basic`,
 `instagram_manage_insights` and `pages_read_engagement`.
 
-## Comment → DM (not used by this skill)
+## Lead funnel (polling comments → one private reply)
 
-Source: https://developers.facebook.com/docs/instagram-platform/private-replies
+Verified 2026-11-17 against Meta's [private reply guide](https://developers.facebook.com/documentation/instagram-platform/private-replies)
+and [IG Comment reference](https://developers.facebook.com/documentation/instagram-platform/instagram-graph-api/reference/ig-comment).
 
-- Send `POST /<IG_ID>/messages` with `recipient: {comment_id}`.
-- The reply must go out within 7 days of the comment.
-- Only one message per commenter. Follow-ups are allowed only after they reply, and
-  only within 24 h.
+The funnel uses Facebook Login and `graph.facebook.com`, matching publish. The
+comment reference documents `from` (author ID and username) for this login path.
+Read `GET /<media-id>/comments?fields=id,text,timestamp,from`. Access requires the
+app's approved comment permissions; the guide lists `instagram_basic`,
+`instagram_manage_comments`, and `pages_read_engagement` for Facebook Login, with
+additional ad permissions for some Business Manager roles. Confirm app permissions
+and token suitability before the owner's first live test; Instagram Login's
+`graph.instagram.com` path is not implemented here.
+
+Send `POST /<IG_USER_ID>/messages` with JSON
+`{"recipient":{"comment_id":"<id>"},"message":{"text":"<approved text>"}}`.
+Meta restricts private replies to seven days after the comment and a single
+initial message; subsequent messaging requires the recipient's response (and has
+a 24-hour response window). This tool permits one automatic attempt per comment,
+uses a strict age below seven days, and implements no follow-ups. It is for posts
+and Reels, not Live broadcasts, which have a separate timing restriction.
+
+Pagination uses only the returned `after` cursor on the fixed Graph host, never
+`paging.next` URLs. Each invocation reads at most `--max-pages` (default 10,
+maximum 100), with 100 comments requested per page. A truncated result is reported;
+later polling starts from the first page, so high-volume posts may require a
+larger bound. There is no webhook server or send retry loop.
 
 ## Scraping
 

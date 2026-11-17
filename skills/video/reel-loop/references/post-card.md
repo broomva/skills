@@ -31,3 +31,35 @@ send those exact bytes.
 | the video | Read once; must exist, be a regular non-empty file and be ≤ 300 MB, always checked. H264 or HEVC, 23–60 fps and 3 s to 15 min are checked with `ffprobe`; without it they are reported as UNCHECKED, never as passed. Container layout, audio codec, bitrate and width are not checked. |
 
 `source` is the provenance record for the run note. It is never published.
+
+## Lead funnel
+
+Add a separate `funnel` object to the published post's card. Publish ignores this
+object; its existing video approval is unchanged.
+
+```json
+{
+  "account": "broomva.tech",
+  "funnel": {
+    "media_id": "NUMERIC_PUBLISHED_MEDIA_ID",
+    "keyword": "WORKSPACE",
+    "approval": {
+      "by": "owner",
+      "at": "2026-11-17T12:00:00Z",
+      "template_sha256": "SHA256_OF_EXACT_TEMPLATE_FILE_BYTES"
+    }
+  }
+}
+```
+
+The owner reviews the UTF-8 template file (including the playbook link), then
+records `by`, `at`, and its hash from `shasum -a 256 /path/to/act-one.txt`.
+The tool checks the fields and byte hash, but cannot authenticate the approver.
+Changing even a newline needs fresh approval. The file is read once and sent as
+literal text; there is no substitution or interpolation.
+
+Keyword is a single Unicode word. Matching is case insensitive with Unicode word
+boundaries: `WORKSPACE!` matches; `workspaces`, `myworkspace`, and `workspace_1`
+do not. The media and account IDs must be numeric. Use the real ID for
+`@broomva.tech`; own comments are excluded by ID or the handle, and missing author
+identity is skipped conservatively.
