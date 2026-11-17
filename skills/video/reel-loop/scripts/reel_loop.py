@@ -679,6 +679,14 @@ def _full_sync(fd: int) -> None:
         os.fsync(fd)
 
 
+def _sync_dir(path: Path) -> None:
+    fd = os.open(path, os.O_RDONLY)
+    try:
+        _full_sync(fd)
+    finally:
+        os.close(fd)
+
+
 def _valid_funnel_row(row) -> bool:
     return (isinstance(row, dict)
             and isinstance(row.get("comment_id"), str) and _ID.fullmatch(row["comment_id"]) is not None
@@ -756,17 +764,16 @@ def funnel(card, template: Path, *, ledger: Path, ig_user_id: str, token: str,
     ledger = ledger.expanduser().resolve()
     if any((parent / ".git").exists() for parent in ledger.parents):
         raise ValueError("funnel ledger must live outside any git repository")
+    created = [p for p in (ledger.parent, *ledger.parent.parents) if not p.exists()]
     ledger.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+    for new_dir in reversed(created):  # persist each new directory's entry in its parent, top down
+        _sync_dir(new_dir.parent)
     fd = os.open(ledger, os.O_RDWR | os.O_CREAT, 0o600)
     os.fchmod(fd, 0o600)
     with os.fdopen(fd, "r+", encoding="utf-8") as log:
         fcntl.flock(log, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        # Persist the directory entry before any reservation/send.
-        directory = os.open(ledger.parent, os.O_RDONLY)
-        try:
-            _full_sync(directory)
-        finally:
-            os.close(directory)
+        # Persist the ledger's directory entry before any reservation/send.
+        _sync_dir(ledger.parent)
         content = log.read()
         seen, pending, authors = set(), set(), set()
         for line in content.splitlines():

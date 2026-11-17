@@ -3,6 +3,7 @@ import json
 from datetime import datetime, timedelta, timezone
 
 import pytest
+from pathlib import Path
 import reel_loop as r
 
 NOW = datetime(2026, 11, 17, tzinfo=timezone.utc)
@@ -319,3 +320,21 @@ def test_go_live_requires_explicit_ledger(setup, monkeypatch, capsys):
     assert r.main(["funnel", str(cardfile), "--template", str(template), "--ig-user-id", "33", "--go-live"]) == 2
     assert capsys.readouterr().err == "FUNNEL BLOCKED: ValueError\n"
     assert calls == []
+
+
+def test_new_ledger_directories_are_synced_into_their_parents(setup, tmp_path):
+    _, card, template, _, _, _ = setup
+    synced = []
+    original = r._sync_dir
+    def spy(path):
+        synced.append(Path(path))
+        return original(path)
+    from unittest.mock import patch
+    ledger = tmp_path / "a" / "b" / "c" / "funnel.jsonl"
+    with patch.object(r, "_sync_dir", spy):
+        r.funnel(card, template, ledger=ledger, ig_user_id="33", token="t", now=lambda: NOW,
+                 http=lambda m, u, **kw: {"data": []})
+    base = tmp_path.resolve()
+    for new_dir in (base / "a", base / "a" / "b", base / "a" / "b" / "c"):
+        assert new_dir.parent in synced          # each new directory's entry reached its parent
+    assert base / "a" / "b" / "c" in synced      # and the ledger's own entry reached its directory

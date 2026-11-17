@@ -118,6 +118,7 @@ MUTATIONS = [
     ('funnel hidden comments skipped', 'if comment.get("hidden") is True:', 'if False:'),
     ('funnel salt required for a used ledger', 'if not ledger_is_empty:', 'if False:'),
     ('funnel ledger newline completed', 'if content and not content.endswith("\\n"):', 'if False:'),
+    ('funnel new ledger directories synced', '        _sync_dir(new_dir.parent)', '        pass'),
     ('funnel CLI errors exclude upstream text', 'print(f"FUNNEL BLOCKED: {type(exc).__name__}", file=sys.stderr)', 'print(f"FUNNEL BLOCKED: {exc}", file=sys.stderr)'),
 ]
 
