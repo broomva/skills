@@ -17,8 +17,10 @@ def comment(cid="11", **kw):
 def setup(tmp_path):
     template = tmp_path / "template.txt"
     template.write_text("Here is the Act One playbook: https://example.org/playbook\n")
-    card = {"funnel": {"keyword": "workspace", "media_id": "22", "approval": {
-        "by": "owner", "at": NOW.isoformat(), "template_sha256": hashlib.sha256(template.read_bytes()).hexdigest()}}}
+    tsha = hashlib.sha256(template.read_bytes()).hexdigest()
+    card = {"account": "broomva.tech", "funnel": {"keyword": "workspace", "media_id": "22", "approval": {
+        "by": "owner", "at": NOW.isoformat(), "template_sha256": tsha,
+        "binding_sha256": r.funnel_binding("22", "workspace", "33", tsha)}}}
     calls = []
     pages = [{"data": [comment()]}]
 
@@ -30,7 +32,7 @@ def setup(tmp_path):
         assert "fake-secret" not in json.dumps(kw.get("params", {}))
         assert "fake-secret" not in str(kw.get("body", ""))
         if method == "GET":
-            assert kw["params"]["fields"] == "id,text,timestamp,from"
+            assert kw["params"]["fields"] == "id,text,timestamp,from,hidden"
             return pages.pop(0)
         body = json.loads(kw["body"])
         assert body == {"recipient": {"comment_id": "11"}, "message": {"text": template.read_text()}}
@@ -51,6 +53,7 @@ def test_keywords(text, hit):
 @pytest.mark.parametrize("change", [
     {"text": "workspaces"}, {"text": "irrelevant"},
     {"timestamp": (NOW - timedelta(days=7)).isoformat()},
+    {"timestamp": (NOW - timedelta(days=6.95)).isoformat()}, {"hidden": True},
     {"timestamp": (NOW - timedelta(days=8)).isoformat()},
     {"timestamp": (NOW + timedelta(seconds=1)).isoformat()},
     {"timestamp": "invalid"}, {"timestamp": "2026-11-16"},
@@ -82,21 +85,21 @@ def test_dry_run_and_privacy(setup, capsys, monkeypatch):
 
 def test_idempotent_and_durable_reservation(setup):
     run, _, _, calls, pages, ledger = setup
-    original = r.os.fsync
+    original = r._full_sync
     synced = []
     def fsync(fd):
-        synced.append(fd)
+        synced.append(ledger.stat().st_size if ledger.exists() else 0)   # ledger bytes at each sync
         return original(fd)
     # Inspect the on-disk reservation from inside the fake POST.
     def http(method, url, **kw):
         if method == "GET":
             return {"data": [comment(), comment()]}
         assert json.loads(ledger.read_text())["status"] == "attempting"
-        assert len(synced) >= 2
+        assert any(size > 0 for size in synced)   # a sync ran after the reservation row was written
         calls.append((method, url, kw))
         return {"message_id": "ok"}
     from unittest.mock import patch
-    with patch.object(r.os, "fsync", fsync):
+    with patch.object(r, "_full_sync", fsync):
         assert run(go_live=True, http=http)["replies"][0]["status"] == "sent"
         assert run(go_live=True, http=http)["replies"] == []
     assert len(calls) == 1
@@ -119,18 +122,32 @@ def test_crash_reservation_never_retried(setup):
     assert all(c[0] == "GET" for c in calls)
 
 
-@pytest.mark.parametrize("response", [RuntimeError("private_person fake-secret"), {"error": {"message": "private_person"}}, {}])
-def test_failed_send_never_retried(setup, response):
+@pytest.mark.parametrize("response,status", [
+    (r.PublishError("POST https://graph.facebook.com/v27.0/33/messages -> HTTP 403 (codes 10)"), "failed"),
+    (r.PublishError("POST https://graph.facebook.com/v27.0/33/messages -> HTTP 503 (no codes)"), "uncertain"),
+    (r.PublishError("POST https://graph.facebook.com/v27.0/33/messages failed: TimeoutError"), "uncertain"),
+    (RuntimeError("private_person fake-secret"), "uncertain"),
+    ({"error": {"message": "private_person"}}, "uncertain"), ({}, "uncertain")])
+def test_unsuccessful_send_halts_and_is_never_retried(setup, response, status):
     run, _, _, calls, pages, ledger = setup
+    posts = []
     def fail(method, url, **kw):
         if method == "GET":
-            return {"data": [comment()]}
+            return {"data": [comment("11"), comment("12", **{"from": {"id": "98", "username": "another"}})]}
+        posts.append(url)
         if isinstance(response, Exception):
             raise response
         return response
-    assert run(go_live=True, http=fail)["replies"][0]["status"] == "failed"
-    assert run(go_live=True)["replies"] == []
+    first = run(go_live=True, http=fail)
+    assert len(posts) == 1                      # the run stopped at the first unsuccessful send
+    assert [x["status"] for x in first["replies"]] == [status]
+    assert first["halted"]
+    assert ("11" in first["needs_human"]) is (status == "uncertain")
+    again = run(go_live=True, http=lambda m, u, **kw: {"data": [comment("11")]} if m == "GET" else posts.append(u))
+    assert len(posts) == 1                      # never retried
+    assert ("11" in again["needs_human"]) is (status == "uncertain")
     assert "private_person" not in ledger.read_text()
+    assert "fake-secret" not in ledger.read_text()
 
 
 def test_sha_mismatch_before_network(setup):
@@ -205,3 +222,100 @@ def test_cli_errors_never_echo_upstream(setup, monkeypatch, capsys):
     assert r.main(["funnel", str(template), "--template", str(template), "--ig-user-id", "33"]) == 2
     captured = capsys.readouterr()
     assert captured.err == "FUNNEL BLOCKED: ValueError\n"
+
+
+def test_approval_binds_media_keyword_and_account(setup, tmp_path, capsys):
+    run, card, template, calls, _, _ = setup
+    for field, value in (("media_id", "23"), ("keyword", "playbook")):
+        changed = json.loads(json.dumps(card))
+        changed["funnel"][field] = value
+        with pytest.raises(ValueError, match="does not cover"):
+            r.funnel(changed, template, ledger=tmp_path / "l.jsonl", ig_user_id="33", token="t", now=lambda: NOW)
+    with pytest.raises(ValueError, match="does not cover"):
+        r.funnel(card, template, ledger=tmp_path / "l.jsonl", ig_user_id="34", token="t", now=lambda: NOW)
+    assert calls == []
+    cardfile = tmp_path / "card.json"
+    cardfile.write_text(json.dumps(card))
+    assert r.main(["funnel", str(cardfile), "--template", str(template), "--ig-user-id", "33", "--print-binding"]) == 0
+    printed = json.loads(capsys.readouterr().out)
+    assert printed["binding_sha256"] == card["funnel"]["approval"]["binding_sha256"]
+    assert calls == []
+
+
+def test_account_handle_comes_from_the_card(setup, tmp_path):
+    run, card, template, calls, pages, _ = setup
+    missing = json.loads(json.dumps(card))
+    del missing["account"]
+    with pytest.raises(ValueError, match="account"):
+        r.funnel(missing, template, ledger=tmp_path / "l.jsonl", ig_user_id="33", token="t", now=lambda: NOW)
+    card["account"] = "@Other.Handle"
+    pages[:] = [{"data": [comment("11", **{"from": {"id": "77", "username": "other.handle"}}),
+                          comment("12", **{"from": {"id": "78", "username": "broomva.tech"}})]}]
+    assert [x["comment_id"] for x in run()["replies"]] == ["12"]   # no hardcoded handle
+
+
+def test_one_reply_per_commenter_per_post(setup):
+    run, _, _, calls, pages, ledger = setup
+    posts = []
+    def http(method, url, **kw):
+        if method == "GET":
+            return {"data": [comment("11"), comment("12"), comment("13")]}
+        posts.append(json.loads(kw["body"])["recipient"]["comment_id"])
+        return {"message_id": "ok"}
+    out = run(go_live=True, http=http)
+    assert posts == ["11"]
+    assert [x.get("status") for x in out["replies"]] == ["sent", "repeat_commenter", "repeat_commenter"]
+    later = lambda m, u, **kw: {"data": [comment("14")]} if m == "GET" else posts.append("14")
+    assert run(go_live=True, http=later)["replies"][0]["status"] == "repeat_commenter"
+    assert posts == ["11"]
+    assert '"99"' not in ledger.read_text()      # the commenter id is stored only as a keyed hash
+    salt = ledger.with_name(ledger.name + ".salt")
+    assert salt.stat().st_mode & 0o777 == 0o600
+
+
+def test_well_formed_but_wrongly_typed_row_blocks(setup):
+    run, _, _, calls, _, ledger = setup
+    ledger.write_text(json.dumps({"comment_id": 11, "media_id": "22", "author": "a" * 64, "status": "sent"}) + "\n")
+    with pytest.raises(ValueError, match="invalid funnel ledger"):
+        run(go_live=True)
+    assert calls == []
+
+
+def test_missing_salt_blocks_a_used_ledger(setup):
+    run, _, _, calls, _, ledger = setup
+    assert run(go_live=True)["replies"][0]["status"] == "sent"
+    ledger.with_name(ledger.name + ".salt").unlink()
+    with pytest.raises(ValueError, match="salt"):
+        run(go_live=True)
+    assert [c[0] for c in calls] == ["GET", "POST"]
+
+
+def test_ledger_without_trailing_newline_is_completed(setup):
+    run, _, _, calls, pages, ledger = setup
+    assert run(go_live=True)["replies"][0]["status"] == "sent"
+    ledger.write_text(ledger.read_text().rstrip("\n"))
+    pages[:] = [{"data": [comment("12", **{"from": {"id": "98", "username": "another"}})]}]
+    def http(method, url, **kw):
+        if method == "GET":
+            return pages.pop(0)
+        return {"message_id": "ok"}
+    assert run(go_live=True, http=http)["replies"][0]["status"] == "sent"
+    assert len([json.loads(x) for x in ledger.read_text().splitlines()]) == 4
+    pages[:] = [{"data": [comment("11"), comment("12", **{"from": {"id": "98", "username": "another"}})]}]
+    assert run(go_live=True, http=http)["replies"] == []   # both already consumed; nothing resent
+
+
+def test_meta_offset_timestamp(setup):
+    run, _, _, _, pages, _ = setup
+    pages[:] = [{"data": [comment(timestamp=(NOW - timedelta(days=1)).strftime("%Y-%m-%dT%H:%M:%S+0000"))]}]
+    assert run()["replies"][0]["age_seconds"] == 86400
+
+
+def test_go_live_requires_explicit_ledger(setup, monkeypatch, capsys):
+    run, card, template, calls, _, _ = setup
+    cardfile = template.parent / "card.json"
+    cardfile.write_text(json.dumps(card))
+    monkeypatch.setenv("IG_ACCESS_TOKEN", "fake-secret")
+    assert r.main(["funnel", str(cardfile), "--template", str(template), "--ig-user-id", "33", "--go-live"]) == 2
+    assert capsys.readouterr().err == "FUNNEL BLOCKED: ValueError\n"
+    assert calls == []

@@ -348,18 +348,20 @@ approval in the [post card](references/post-card.md#lead-funnel). Read the
 before use. The private reply template must contain the owner-approved playbook
 link; this skill supplies no assumed URL.
 
-From `skills/video/reel-loop`, after the owner has approved the exact UTF-8
-`/path/to/act-one.txt` bytes and recorded their sha256 in `card.json`:
+From `skills/video/reel-loop`. The owner's approval binds the post, keyword,
+account and exact template bytes together (see the post card):
 
 ```sh
+# 1. Owner: print the four values and their hashes, check them, record both hashes in card.json.
+python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID --print-binding
 # Owner supplies IG_ACCESS_TOKEN through the environment; never put it in argv.
-# Dry run is the default. It reads comments but sends no replies.
+# 2. Dry run (the default): reads comments, sends nothing.
 python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID
-# Inspect comment IDs, ages and keyword hits, then explicitly enable sends:
-python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID --go-live
-# Optional bounded pagination and external ledger location (reuse the SAME ledger):
-python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID --max-pages 20 --ledger /path/outside/git/funnel.jsonl
+# 3. Send. --go-live requires an explicit --ledger; always pass the SAME one.
+python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID --go-live --ledger /path/outside/git/funnel.jsonl
 ```
+
+`--max-pages` (default 10, at most 100) bounds pagination.
 
 Dry run still requires the approved template and token. It emits only comment IDs,
 ages, keyword-hit flags and operational state, never comment text, usernames,
@@ -368,20 +370,27 @@ Only the owner runs the first live check, on their own test comment from another
 account; implementation and CI use fakes only, with network connections disabled.
 No credential files are read.
 
-The durable JSONL ledger defaults to
-`$XDG_STATE_HOME/reel-loop/funnel.jsonl` or
-`~/.local/state/reel-loop/funnel.jsonl`, mode 0600. Paths inside **any Git
+Dry runs default the ledger to `$XDG_STATE_HOME/reel-loop/funnel.jsonl` or
+`~/.local/state/reel-loop/funnel.jsonl`. Live sends need `--ledger`, because the
+default depends on the environment and two ledgers would each send. The result
+prints the resolved ledger path. The ledger is mode 0600. Paths inside **any Git
 repository are refused**, so no in-repo PII exception is needed. The ledger
-minimizes data to IDs, template hash, time and status; usernames and comment text
-are not retained. Keep it private and preserve it across runs, posts, and token
+minimizes data to comment and media IDs, a keyed hash of the commenter, template
+hash, time and status; usernames, commenter IDs and comment text are not retained.
+The hash key lives beside the ledger (`<ledger>.salt`, mode 0600); a used ledger
+without it blocks sending. Keep it private and preserve it across runs, posts, and token
 changes. Changing/deleting the ledger removes duplicate protection. Use a local
 filesystem with working advisory locks and fsync (macOS/Linux).
 
 An exclusive lock spans polling and sending. An `attempting` row is flushed and
-synced **before** POST; `sent` or `failed` follows. Every recorded attempt blocks
-all future automatic sends for that comment, including failed sends. A crash
-between reservation and result leaves `attempting`, surfaced as `needs_human`;
-reconcile with Instagram manually and do not delete the reservation to retry.
+synced (F_FULLFSYNC on macOS) **before** POST; `sent`, `failed` or `uncertain`
+follows. Each commenter gets at most one reply per post; their later comments are
+listed as `repeat_commenter`. Every recorded attempt blocks all future automatic
+sends for that comment and that commenter. The first unsuccessful send stops the
+run (`halted`): HTTP 4xx is `failed`; a timeout, network error, 5xx or a reply
+without a message id is `uncertain`. Uncertain sends and crashes between
+reservation and result are listed in `needs_human`; reconcile with Instagram
+manually and do not delete the reservation to retry.
 A malformed/torn ledger blocks sending. No client can atomically commit local
 state and Meta's send: this deliberately trades possible missed replies for no
 automatic duplicate after an uncertain send. No follow-up messages are sent.

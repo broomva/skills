@@ -46,20 +46,32 @@ object; its existing video approval is unchanged.
     "approval": {
       "by": "owner",
       "at": "2026-11-17T12:00:00Z",
-      "template_sha256": "SHA256_OF_EXACT_TEMPLATE_FILE_BYTES"
+      "template_sha256": "SHA256_OF_EXACT_TEMPLATE_FILE_BYTES",
+      "binding_sha256": "SHA256_OF_MEDIA_KEYWORD_ACCOUNT_AND_TEMPLATE"
     }
   }
 }
 ```
 
-The owner reviews the UTF-8 template file (including the playbook link), then
-records `by`, `at`, and its hash from `shasum -a 256 /path/to/act-one.txt`.
-The tool checks the fields and byte hash, but cannot authenticate the approver.
-Changing even a newline needs fresh approval. The file is read once and sent as
-literal text; there is no substitution or interpolation.
+The approval covers four things together: which post (`media_id`), which keyword,
+which account (`--ig-user-id`) and the exact template bytes. The owner reviews the
+UTF-8 template file (including the playbook link), sets `media_id` and `keyword`,
+then runs:
+
+```sh
+python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID --print-binding
+```
+
+It reads no comments and sends nothing. It prints the four values and their
+`template_sha256` and `binding_sha256`; after checking the four values, the owner
+records both hashes with `by` and `at`. Changing the post, the keyword, the account
+or even one newline of the template blocks the funnel until it is approved again.
+The tool checks the fields and hashes, but cannot authenticate the approver. The
+file is read once and sent as literal text; there is no substitution or interpolation.
 
 Keyword is a single Unicode word. Matching is case insensitive with Unicode word
 boundaries: `WORKSPACE!` matches; `workspaces`, `myworkspace`, and `workspace_1`
-do not. The media and account IDs must be numeric. Use the real ID for
-`@broomva.tech`; own comments are excluded by ID or the handle, and missing author
-identity is skipped conservatively.
+do not. The media and account IDs must be numeric. `account` is required: the
+account's own comments are excluded by its IG user ID or by this handle (Meta's
+`from.id` is an Instagram-scoped ID, which can differ from the account's user ID).
+Comments with no author identity, and comments marked `hidden`, are skipped.

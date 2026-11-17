@@ -645,6 +645,15 @@ def publish(card, video: Path, *, ig_user_id: str, token: str, card_dir: Path | 
 
 
 # --- comment-keyword lead funnel -----------------------------------------------
+REPLY_WINDOW_SECONDS = 6.9 * 86400  # Meta allows 7 days; the margin absorbs local clock skew
+_FUNNEL_STATUSES = ("attempting", "sent", "failed", "uncertain")
+_HEX64 = re.compile(r"[0-9a-f]{64}")
+
+
+class SendRejected(PublishError):
+    """Meta answered a send with HTTP 4xx: it was definitely not delivered."""
+
+
 def keyword_hit(text: str, keyword: str) -> bool:
     """Unicode whole word, case insensitive: WORKSPACE! yes, workspaces no."""
     return re.search(r"(?<!\w)" + re.escape(keyword) + r"(?!\w)", text, re.IGNORECASE) is not None
@@ -654,20 +663,73 @@ def default_funnel_ledger() -> Path:
     return Path(os.environ.get("XDG_STATE_HOME", str(Path.home() / ".local/state"))) / "reel-loop/funnel.jsonl"
 
 
+def funnel_binding(media_id: str, keyword: str, ig_user_id: str, template_sha256: str) -> str:
+    """The sha256 the owner approves: which post, which keyword, which account and which exact text."""
+    canon = json.dumps({"ig_user_id": ig_user_id, "keyword": keyword, "media_id": media_id,
+                        "template_sha256": template_sha256}, sort_keys=True, separators=(",", ":"))
+    return hashlib.sha256(canon.encode("utf-8")).hexdigest()
+
+
+def _full_sync(fd: int) -> None:
+    """fsync, or F_FULLFSYNC where the platform has it (macOS fsync stops at the drive cache)."""
+    import fcntl
+    try:
+        fcntl.fcntl(fd, fcntl.F_FULLFSYNC)
+    except (AttributeError, OSError):
+        os.fsync(fd)
+
+
+def _valid_funnel_row(row) -> bool:
+    return (isinstance(row, dict)
+            and isinstance(row.get("comment_id"), str) and _ID.fullmatch(row["comment_id"]) is not None
+            and isinstance(row.get("media_id"), str) and _ID.fullmatch(row["media_id"]) is not None
+            and isinstance(row.get("author"), str) and _HEX64.fullmatch(row["author"]) is not None
+            and row.get("status") in _FUNNEL_STATUSES)
+
+
+def _author_salt(ledger: Path, ledger_is_empty: bool) -> bytes:
+    """Per-ledger HMAC key for commenter ids. It lives beside the ledger, mode 0600, never in a repository."""
+    salt_file = ledger.with_name(ledger.name + ".salt")
+    if salt_file.exists():
+        raw = salt_file.read_text(encoding="ascii").strip()
+        if not _HEX64.fullmatch(raw):
+            raise ValueError("invalid funnel ledger salt")
+        return bytes.fromhex(raw)
+    if not ledger_is_empty:
+        raise ValueError("funnel ledger salt is missing, so repeat commenters cannot be recognised")
+    salt = os.urandom(32)
+    fd = os.open(salt_file, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+    with os.fdopen(fd, "w", encoding="ascii") as out:
+        out.write(salt.hex() + "\n")
+        out.flush()
+        _full_sync(out.fileno())
+    return salt
+
+
 def funnel(card, template: Path, *, ledger: Path, ig_user_id: str, token: str,
            go_live: bool = False, max_pages: int = 10, http=graph_http, now=None) -> dict:
-    """At-most-one automatic attempt, including crashes and concurrent pollers.
+    """At most one automatic reply per commenter per post, through crashes and concurrent pollers.
 
-    A durable reservation precedes POST. Any row consumes the comment forever;
-    uncertain attempts require human reconciliation, never an automatic retry.
-    No API response text or identity leaves the private ledger.
+    The owner's approval binds the post, keyword, account and exact template bytes.
+    A durable reservation precedes every POST, and any row consumes the comment and
+    its commenter for that post. The first unsuccessful send stops the run: HTTP 4xx
+    is recorded `failed`; anything else (timeout, network error, 5xx, a reply with no
+    message id) is `uncertain` and listed in `needs_human`. Nothing is retried
+    automatically. No API response text or identity leaves the private ledger.
     """
     import fcntl
+    import hmac
 
     clock = now or (lambda: datetime.now(timezone.utc))
-    config = card.get("funnel") if isinstance(card, dict) else None
+    if not isinstance(card, dict):
+        raise ValueError("card must be a JSON object")
+    config = card.get("funnel")
     if not isinstance(config, dict):
         raise ValueError("card needs funnel configuration")
+    handle = card.get("account")
+    if not isinstance(handle, str) or not re.fullmatch(r"@?[A-Za-z0-9._]{1,30}", handle):
+        raise ValueError("card account must be our Instagram handle")
+    handle = handle.lstrip("@").lower()
     keyword, media_id = config.get("keyword"), config.get("media_id")
     if not isinstance(keyword, str) or not re.fullmatch(r"\w+", keyword):
         raise ValueError("funnel.keyword must be one non-empty word")
@@ -678,11 +740,14 @@ def funnel(card, template: Path, *, ledger: Path, ig_user_id: str, token: str,
     data = template.read_bytes()  # read once: approval and send use these bytes
     approval = config.get("approval")
     if not isinstance(approval, dict) or not all(
-            isinstance(approval.get(k), str) and approval[k].strip() for k in ("by", "at", "template_sha256")):
-        raise ValueError("funnel needs owner approval {by, at, template_sha256}")
+            isinstance(approval.get(k), str) and approval[k].strip()
+            for k in ("by", "at", "template_sha256", "binding_sha256")):
+        raise ValueError("funnel needs owner approval {by, at, template_sha256, binding_sha256}")
     digest = hashlib.sha256(data).hexdigest()
     if approval["template_sha256"] != digest:
         raise ValueError("funnel template sha256 does not match approval")
+    if approval["binding_sha256"] != funnel_binding(media_id, keyword, ig_user_id, digest):
+        raise ValueError("funnel approval does not cover this media, keyword and account")
     message = data.decode("utf-8")
     if not message.strip():
         raise ValueError("funnel template is empty")
@@ -699,43 +764,55 @@ def funnel(card, template: Path, *, ledger: Path, ig_user_id: str, token: str,
         # Persist the directory entry before any reservation/send.
         directory = os.open(ledger.parent, os.O_RDONLY)
         try:
-            os.fsync(directory)
+            _full_sync(directory)
         finally:
             os.close(directory)
-        seen, pending = set(), set()
-        for line in log:
+        content = log.read()
+        seen, pending, authors = set(), set(), set()
+        for line in content.splitlines():
             row = json.loads(line)  # torn/corrupt ledger blocks all sending
-            cid = row["comment_id"]
-            if not isinstance(cid, str) or not _ID.fullmatch(cid) or row["status"] not in ("attempting", "sent", "failed"):
+            if not _valid_funnel_row(row):
                 raise ValueError("invalid funnel ledger")
-            seen.add(cid)
-            if row["status"] == "attempting":
-                pending.add(cid)
+            seen.add(row["comment_id"])
+            if row["media_id"] == media_id:
+                authors.add(row["author"])
+            if row["status"] in ("attempting", "uncertain"):
+                pending.add(row["comment_id"])
             else:
-                pending.discard(cid)
+                pending.discard(row["comment_id"])
+        salt = _author_salt(ledger, not content)
 
         def record(row):
             log.write(json.dumps(row, ensure_ascii=False) + "\n")
             log.flush()
-            os.fsync(log.fileno())
+            _full_sync(log.fileno())
+
+        if content and not content.endswith("\n"):
+            # Every line parsed above, so the last row is complete: end it before appending.
+            log.write("\n")
+            log.flush()
 
         def call(method, endpoint, **kwargs):
-            failure = None
+            failure, rejected = None, False
             try:
                 out = http(method, f"{GRAPH}/{API_VERSION}/{endpoint}",
                            headers={"Authorization": f"Bearer {token}", "Content-Type": "application/json"}, **kwargs)
                 if not isinstance(out, dict) or "error" in out:
                     failure = "invalid Graph response"
+            except PublishError as exc:  # graph_http errors carry only the status and Meta's numeric codes
+                failure = "Graph request failed"
+                rejected = re.search(r"-> HTTP 4\d\d\b", str(exc)) is not None
             except Exception:  # no upstream text, token, username or comment in errors
                 failure = "Graph request failed"
             if failure:
-                raise PublishError(failure)
+                raise (SendRejected if rejected else PublishError)(failure)
             return out
 
-        result = {"dry_run": not go_live, "replies": [], "needs_human": sorted(pending), "pages": 0, "truncated": False}
+        result = {"dry_run": not go_live, "ledger": str(ledger), "replies": [], "needs_human": sorted(pending),
+                  "pages": 0, "truncated": False, "halted": None}
         cursor = None
         for page in range(max_pages):
-            params = {"fields": "id,text,timestamp,from", "limit": 100}
+            params = {"fields": "id,text,timestamp,from,hidden", "limit": 100}
             if cursor:
                 params["after"] = cursor
             batch = call("GET", f"{media_id}/comments", params=params)
@@ -753,7 +830,9 @@ def funnel(card, template: Path, *, ledger: Path, ig_user_id: str, token: str,
                     continue
                 if not isinstance(author, dict) or not isinstance(author.get("id"), str) or not _ID.fullmatch(author["id"]):
                     continue  # missing author cannot establish that this is not our comment
-                if author["id"] == ig_user_id or str(author.get("username", "")).lower() == "broomva.tech":
+                if author["id"] == ig_user_id or str(author.get("username", "")).lower() == handle:
+                    continue
+                if comment.get("hidden") is True:
                     continue
                 text = comment.get("text")
                 if not isinstance(text, str) or not keyword_hit(text, keyword):
@@ -764,12 +843,18 @@ def funnel(card, template: Path, *, ledger: Path, ig_user_id: str, token: str,
                     age = (clock() - stamp).total_seconds() if stamp.tzinfo else -1
                 except (ValueError, TypeError, AttributeError):
                     continue
-                if not 0 <= age < 7 * 86400:
+                if not 0 <= age < REPLY_WINDOW_SECONDS:
                     continue
                 public = {"comment_id": cid, "age_seconds": int(age), "keyword_hit": True}
                 seen.add(cid)
+                who = hmac.new(salt, author["id"].encode("ascii"), hashlib.sha256).hexdigest()
+                if who in authors:
+                    public["status"] = "repeat_commenter"  # Meta: one message to the commenter
+                    result["replies"].append(public)
+                    continue
+                authors.add(who)
                 if go_live:
-                    base = {"comment_id": cid, "media_id": media_id, "ig_user_id": ig_user_id,
+                    base = {"comment_id": cid, "media_id": media_id, "author": who, "ig_user_id": ig_user_id,
                             "template_sha256": digest, "at": clock().isoformat()}
                     record({**base, "status": "attempting"})
                     try:
@@ -777,13 +862,21 @@ def funnel(card, template: Path, *, ledger: Path, ig_user_id: str, token: str,
                             {"recipient": {"comment_id": cid}, "message": {"text": message}}).encode("utf-8"))
                         if not isinstance(reply.get("message_id"), str) or not reply["message_id"]:
                             raise PublishError("send response has no message id")
-                    except PublishError:
+                    except SendRejected:
                         record({**base, "status": "failed"})
                         public["status"] = "failed"
+                        result["halted"] = "a send was rejected (HTTP 4xx); fix the cause before the next run"
+                    except PublishError:
+                        record({**base, "status": "uncertain"})
+                        public["status"] = "uncertain"
+                        result["needs_human"] = sorted({*result["needs_human"], cid})
+                        result["halted"] = "a send's outcome is uncertain; check Instagram before the next run"
                     else:
                         record({**base, "status": "sent"})
                         public["status"] = "sent"
                 result["replies"].append(public)
+                if result["halted"]:
+                    return result  # the first unsuccessful send stops the run
             paging = batch.get("paging") or {}
             if not isinstance(paging, dict) or not paging.get("next"):
                 break
@@ -857,15 +950,26 @@ def main(argv: list[str] | None = None) -> int:
     f.add_argument("card")
     f.add_argument("--template", required=True)
     f.add_argument("--ig-user-id", required=True)
-    f.add_argument("--ledger", type=Path, default=default_funnel_ledger())
+    f.add_argument("--ledger", type=Path, help="required with --go-live; dry runs default to the XDG state dir")
     f.add_argument("--max-pages", type=int, default=10)
     f.add_argument("--go-live", action="store_true")
+    f.add_argument("--print-binding", action="store_true",
+                   help="print the four approved values and their binding_sha256; reads no comments, sends nothing")
 
     a = ap.parse_args(argv)
     if a.cmd == "funnel":
         try:
             card = json.loads(Path(a.card).read_text(encoding="utf-8"))
-            result = funnel(card, Path(a.template), ledger=a.ledger, ig_user_id=a.ig_user_id,
+            if a.print_binding:
+                config = card["funnel"]
+                tsha = hashlib.sha256(Path(a.template).read_bytes()).hexdigest()
+                print(json.dumps({"media_id": config["media_id"], "keyword": config["keyword"], "ig_user_id": a.ig_user_id,
+                                  "template_sha256": tsha, "binding_sha256": funnel_binding(
+                                      config["media_id"], config["keyword"], a.ig_user_id, tsha)}, indent=2))
+                return 0
+            if a.go_live and a.ledger is None:
+                raise ValueError("--go-live needs an explicit --ledger")
+            result = funnel(card, Path(a.template), ledger=a.ledger or default_funnel_ledger(), ig_user_id=a.ig_user_id,
                             token=os.environ.get("IG_ACCESS_TOKEN", ""), go_live=a.go_live,
                             max_pages=a.max_pages)
         except Exception as exc:
