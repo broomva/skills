@@ -884,8 +884,6 @@ class GovernanceTier:
     paths: tuple[str, ...] = _DEFAULT_GOVERNANCE_PATHS
     required_strata: tuple[str, ...] = _P20_STRATA
     required_checks: tuple[str, ...] = ("stability-check",)
-    l3_max_per_window: int = 1
-    l3_window_seconds: int = 86400
 
 
 @dataclass(frozen=True)
@@ -1466,6 +1464,8 @@ def _parse_gates(raw: Any) -> MergeGates | None:
     gov_raw = {} if raw.get("governance") is None else raw["governance"]
     if not isinstance(gov_raw, dict):
         raise PolicyError("auto_merge.gates.governance must be a mapping")
+    # l3_max_per_window / l3_window_seconds: the governance merge-rate budget (one landing per day),
+    # removed by owner decision 2026-11-18. Still accepted so policies that carry them load; ignored.
     _only_keys(gov_raw, {"paths", "required_strata", "required_checks",
                          "l3_max_per_window", "l3_window_seconds"},
                "auto_merge.gates.governance")
@@ -1499,13 +1499,6 @@ def _parse_gates(raw: Any) -> MergeGates | None:
         paths=paths,
         required_strata=strata,
         required_checks=checks,
-        # One governance commit per tau_a3 (>= 1 day) is the L3 budget the RCS
-        # stability argument assumes; the policy may lengthen the window only.
-        l3_max_per_window=_int_in(gov_raw.get("l3_max_per_window", 1),
-                                  "auto_merge.gates.governance.l3_max_per_window", 1, 1),
-        l3_window_seconds=_int_in(gov_raw.get("l3_window_seconds", 86400),
-                                  "auto_merge.gates.governance.l3_window_seconds",
-                                  86400, 30 * 86400),
     )
     return MergeGates(review_bots=bots, aggregate_checks=aggregates, p20=p20,
                       governance=gov)
@@ -1655,7 +1648,6 @@ class PRGateFacts:
     reviewed_files: list | None = None                 # the PR's files at the marker
     base_sha: str = ""                                 # base tip the gates saw
     unmeasured: list = field(default_factory=list)     # changed files with 0 lines
-    l3_recent_commits: int | None = None
 
 
 @dataclass(frozen=True)
@@ -1848,13 +1840,6 @@ def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
             gate("governance_checks", not bad,
                  ("not passing: " + ", ".join(bad)) if bad
                  else "passing: " + ", ".join(g.governance.required_checks))
-        if f.l3_recent_commits is None:
-            gate("l3_rate", False, "governance commits on base could not be counted")
-        else:
-            gate("l3_rate", f.l3_recent_commits < g.governance.l3_max_per_window,
-                 f"{f.l3_recent_commits} governance commit(s) on {f.base} in the last "
-                 f"{g.governance.l3_window_seconds}s (budget "
-                 f"{g.governance.l3_max_per_window})")
     return out
 
 
@@ -1954,53 +1939,7 @@ def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
     allc = _gh_json(["gh", "pr", "checks", str(pr), "--repo", repo,
                      "--json", "name,bucket"], any_rc=True)
     f.all_checks = allc if isinstance(allc, list) else None
-    if governance_paths_touched(g, f):
-        f.l3_recent_commits = _governance_landings_in_window(
-            repo, base_sha or f.base, g.governance)
     return f
-
-
-def _governance_landings_in_window(repo: str, base_ref: str,
-                                   tier: GovernanceTier) -> int | None:
-    """1 if a governance path changed on `base_ref` inside the L3 window, 0 if
-    none did, None if that cannot be told (which the gate reads as FAIL).
-
-    The budget counts LANDINGS, not authored commits. The commits API's `since`
-    filters on each commit's own date, and with a `path` filter it drops merge
-    commits, so a governance commit authored days ago and merged by a human
-    within the window was invisible to it. Instead, walk the commits that
-    reached base inside the window (a merge, a squash or a rebased commit is
-    dated when it landed) and diff each against its first parent, which covers
-    everything a merge brought in. The budget is one per window (the parser
-    pins l3_max_per_window at 1), so the first hit decides; raising that limit
-    would need a real count here.
-
-    Named limits: a commit pushed straight to base with an old committer date
-    (bypassing a PR) is not listed, since `since` filters on committer date;
-    the workspace ruleset rejects direct pushes to main. The walk also lists
-    commits from merged branches, so an "update branch" merge inside the window
-    can re-report an older governance change: an overcount, which fails closed,
-    at one compare call per commit in the window."""
-    if not base_ref:
-        return None
-    since = (_dt.datetime.now(_dt.timezone.utc)
-             - _dt.timedelta(seconds=tier.l3_window_seconds)).strftime("%Y-%m-%dT%H:%M:%SZ")
-    rows = _gh_paginated_list([
-        "gh", "api", "--paginate", "-X", "GET", f"repos/{repo}/commits",
-        "-f", f"sha={base_ref}", "-f", f"since={since}", "-f", "per_page=100",
-        "--jq", '.[] | [.sha, (.parents[0].sha // "")] | @tsv'])
-    if rows is None:
-        return None
-    for row in rows:
-        sha, _, parent = row.partition("\t")
-        if not sha or not parent:
-            return None  # a root commit or an unreadable row: cannot tell
-        _, files = _compare_files(repo, f"{parent}...{sha}")
-        if files is None or len(files) >= _COMPARE_FILE_CAP:
-            return None
-        if any(_path_matches(p, tier.paths) for p in files):
-            return 1
-    return 0
 
 
 def authoritative_auto_merge_policy(
