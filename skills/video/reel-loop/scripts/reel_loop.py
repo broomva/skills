@@ -873,8 +873,10 @@ def _google_error_reasons(raw: bytes) -> str:
             candidates.extend(item.get("reason") for item in details if isinstance(item, dict))
     reasons = []
     for reason in candidates:
+        if not isinstance(reason, str):
+            continue
         name = reason if reason in GOOGLE_REASONS else "other"
-        if isinstance(reason, str) and name not in reasons:
+        if name not in reasons:
             reasons.append(name)
     return ", ".join(reasons)
 
@@ -1039,8 +1041,8 @@ def youtube_access_token(*, credentials: Path | None = None, environ=None, http=
     return parsed["access_token"]
 
 
-def publish_youtube(card, video: Path, *, channel_id: str, token: str, card_dir: Path | None = None,
-                    http=google_http, probe=probe_video, now: datetime | None = None,
+def publish_youtube(card, video: Path, *, channel_id: str, token, card_dir: Path | None = None,
+                    http=google_http, probe=None, now: datetime | None = None,
                     go_live: bool = True) -> tuple[dict | None, list[str], list[str]]:
     """Gate, verify the owner channel, then make one resumable YouTube upload.
 
@@ -1057,10 +1059,15 @@ def publish_youtube(card, video: Path, *, channel_id: str, token: str, card_dir:
     data, errs = read_video(video)
     if errs:
         return None, errs, []
-    insert_body, reasons, notes, digest = gate(card, data, card_dir=card_dir or Path("."), probe=probe,
+    insert_body, reasons, notes, digest = gate(card, data, card_dir=card_dir or Path("."), probe=probe or probe_video,
                                                 now=now or datetime.now(timezone.utc), destination=channel_id)
     if insert_body is None:
         return None, reasons, notes
+    if callable(token):  # fetched only now: a card the gate refuses never causes a token request
+        try:
+            token = token()
+        except (ValueError, PublishError) as exc:
+            return None, [f"YouTube token unavailable: {exc}"], notes
     bearer = {"Authorization": f"Bearer {token}"}
     channels, _ = _google_call("channel check", "GET", f"{GOOGLE_API}/youtube/v3/channels", http=http,
                                params={"part": "id", "mine": "true"}, headers=bearer)
@@ -1528,16 +1535,15 @@ def main(argv: list[str] | None = None) -> int:
                           file=sys.stderr)
                     return 2
                 redactions: list[str] = []
-                try:
-                    token = youtube_access_token(credentials=a.credentials, redactions=redactions)
-                except (ValueError, PublishError) as exc:
-                    print("BLOCKED — not publishable:\n  - YouTube token unavailable: "
-                          f"{_redact_many(str(exc), redactions)}", file=sys.stderr)
-                    return 2
+
+                def token() -> str:  # called by publish_youtube only after the gate passes
+                    return youtube_access_token(credentials=a.credentials, redactions=redactions)
+
                 failure = None
                 try:
                     result, reasons, notes = publish_youtube(card, Path(a.video), channel_id=a.channel_id, token=token,
                                                              card_dir=card_dir, go_live=not a.no_go_live)
+                    reasons = [_redact_many(r, redactions) for r in reasons]
                 except PublishError as exc:
                     failure = _redact_many(str(exc), redactions)
                 except Exception as exc:  # noqa: BLE001 - never print an unexpected exception's text here

@@ -163,7 +163,6 @@ MUTATIONS = [
     ('credentials never follow a symlink', 'os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)', 'os.O_RDONLY'),
     ('explicit credentials win', 'token = environ.get("YT_ACCESS_TOKEN", "") if credentials is None else ""', 'token = environ.get("YT_ACCESS_TOKEN", "")'),
     ('stats failure redacted', 'print(f"STATS FAILED: {_redact_many(str(exc), redactions)}", file=sys.stderr)', 'print(f"STATS FAILED: {exc}", file=sys.stderr)'),
-    ('youtube token refusal redacted', 'f"{_redact_many(str(exc), redactions)}", file=sys.stderr)\n                    return 2\n                failure = None', 'f"{exc}", file=sys.stderr)\n                    return 2\n                failure = None'),
     ('stats unexpected prints type only', 'print(f"STATS FAILED: unexpected {type(exc).__name__}", file=sys.stderr)', 'print(f"STATS FAILED: unexpected {exc}", file=sys.stderr)'),
     ('google network error has no upstream text', '        failure = "request failed"', '        failure = f"request failed {exc}"'),
     ('google call unexpected prints type only', 'raise PublishError(f"{step}: unexpected {type(exc).__name__}") from None', 'raise PublishError(f"{step}: unexpected {exc}") from None'),
@@ -192,6 +191,9 @@ MUTATIONS = [
     ('metadata must be valid utf-8', '                    reasons.append(f"youtube.{field} is not valid UTF-8 (an unpaired surrogate)")', '                    pass'),
     ('session host checked', 'return (parsed.scheme == "https" and parsed.hostname == "www.googleapis.com"', 'return (parsed.scheme == "https"'),
     ('displayed width rounds up', 'return -(-width * num // den) if num > 0 and den > 0 else width', 'return round(width * num / den) if num > 0 and den > 0 else width'),
+    ('token fetched only after the gate', '                    return youtube_access_token(credentials=a.credentials, redactions=redactions)\n\n                failure = None', '                    return youtube_access_token(credentials=a.credentials, redactions=redactions)\n\n                token = token()\n                failure = None'),
+    ('non-string reasons skipped', '        if not isinstance(reason, str):\n            continue\n', ''),
+    ('blocked reasons redacted', '                    reasons = [_redact_many(r, redactions) for r in reasons]', '                    pass'),
     ('funnel CLI errors exclude upstream text', 'print(f"FUNNEL BLOCKED: {type(exc).__name__}", file=sys.stderr)', 'print(f"FUNNEL BLOCKED: {exc}", file=sys.stderr)'),
 ]
 

@@ -281,7 +281,8 @@ def test_youtube_secrets_are_redacted_at_the_cli_boundary(video, tmp_path, monke
         return token
     monkeypatch.setattr(rl, "youtube_access_token", access_token)
 
-    def fail(*_args, **_kw):
+    def fail(*_args, **kw):
+        kw["token"]()  # the real publisher fetches the token after the gate, then may fail
         raise rl.PublishError(f"failure {token} {refresh} {secret}")
 
     monkeypatch.setattr(rl, "publish_youtube", fail)
@@ -313,6 +314,7 @@ def test_cli_rejects_a_wrong_destination_flag_before_token_lookup(video, tmp_pat
 
 
 def test_youtube_cli_without_a_token_is_blocked(video, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(rl, "probe_video", _youtube_probe)  # the fixture bytes are not a real MP4
     card_path = tmp_path / "card.json"
     card_path.write_text(json.dumps(youtube_card(video)), encoding="utf-8")
     monkeypatch.delenv("YT_ACCESS_TOKEN", raising=False)
@@ -355,6 +357,7 @@ def test_redirects_are_refused_so_authorization_never_follows_one(monkeypatch):
 
 
 def test_cli_says_why_the_credentials_file_was_refused_without_leaking_it(video, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(rl, "probe_video", _youtube_probe)  # the fixture bytes are not a real MP4
     creds = tmp_path / "yt.json"
     creds.write_text(json.dumps({"client_id": "CLIENT", "client_secret": "SECRET", "refresh_token": "REFRESH"}))
     creds.chmod(0o644)
@@ -495,6 +498,7 @@ def test_a_directory_is_not_a_credentials_file(tmp_path):
 
 
 def test_secrets_echoed_by_the_token_endpoint_never_reach_the_cli(video, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(rl, "probe_video", _youtube_probe)  # the fixture bytes are not a real MP4
     import io
     import urllib.error
 
@@ -730,6 +734,7 @@ def test_only_known_google_reasons_are_named():
 
 
 def test_token_and_stats_failures_are_redacted_at_the_cli(video, tmp_path, monkeypatch, capsys):
+    monkeypatch.setattr(rl, "probe_video", _youtube_probe)  # the fixture bytes are not a real MP4
     secret = "AccessTokenValue"
 
     def refused(**kw):
@@ -758,3 +763,25 @@ def test_a_barely_landscape_pixel_ratio_is_not_a_short(video):
     probe = lambda _p: {"codec": "h264", "fps": 30.0, "duration": 20.0, "format": "mp4", "width": width, "height": 720}
     result, reasons, _ = payload(youtube_card(video), video, probe=probe)
     assert result is None and any("vertical or square" in r for r in reasons)
+
+
+def test_a_card_the_gate_refuses_causes_no_token_request(video, tmp_path, monkeypatch, capsys):
+    def no_request(*_a, **_kw):
+        raise AssertionError("no request may be made for a refused card")
+
+    monkeypatch.setattr(rl, "_open", no_request)
+    monkeypatch.setattr(rl, "probe_video", _youtube_probe)
+    monkeypatch.delenv("YT_ACCESS_TOKEN", raising=False)
+    card = youtube_card(video)
+    card["youtube"]["title"] = "bad \ud800"
+    card_path = tmp_path / "card.json"
+    card_path.write_text(json.dumps(card), encoding="utf-8")
+    assert rl.main(["publish", str(card_path), "--video", str(video), "--channel-id", CHANNEL,
+                    "--credentials", str(_creds(tmp_path))]) == 2
+    assert "not valid UTF-8" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("reason", [["quotaExceeded"], {"x": 1}, 7, None])
+def test_non_string_google_reasons_are_skipped(reason):
+    raw = json.dumps({"error": {"errors": [{"reason": reason}, {"reason": "quotaExceeded"}]}}).encode()
+    assert rl._google_error_reasons(raw) == "quotaExceeded"
