@@ -73,8 +73,7 @@ def _gov(p9, strata="A,B,C", **over):
     kw = dict(changed_files=2, files=["CLAUDE.md", "src/y.py"],
               comments=[_comment(_marker(strata=strata))],
               all_checks=[{"name": "Merge Gate", "bucket": "pass"},
-                          {"name": "stability-check", "bucket": "pass"}],
-              l3_recent_commits=0)
+                          {"name": "stability-check", "bucket": "pass"}])
     kw.update(over)
     return _good(p9, **kw)
 
@@ -120,11 +119,8 @@ class TestParse:
         ("  gates:\n    governance:\n      paths: [docs/**]\n", "may add paths"),
         ("  gates:\n    governance:\n      paths: [CLAUDE.md, AGENTS.md]\n", "may add paths"),
         ("  gates:\n    governance:\n      required_checks: [Merge Gate]\n", "stability-check"),
-        ("  gates:\n    governance:\n      l3_max_per_window: 2\n", "l3_max_per_window"),
-        ("  gates:\n    governance:\n      l3_window_seconds: 3600\n", "l3_window_seconds"),
         ("  gates:\n    governance:\n      required_checks: []\n", "required_checks"),
         ("  gates:\n    governance:\n      paths: []\n", "paths"),
-        ("  gates:\n    governance:\n      l3_max_per_window: 0\n", "l3_max_per_window"),
         ("  gates:\n    requred_strata: [A]\n", "unknown key"),
         ("  gates:\n    p20: []\n", "p20 must be a mapping"),
         ("  gates:\n    p20: false\n", "p20 must be a mapping"),
@@ -142,11 +138,17 @@ class TestParse:
         cfg = _policy(p9, tmp_path,
                       "  gates:\n    governance:\n      paths: [CLAUDE.md, AGENTS.md, "
                       "METALAYER.md, .control/policy.yaml, .control/rcs-parameters.toml, "
-                      "SECURITY.md]\n      required_checks: [stability-check, extra]\n"
-                      "      l3_window_seconds: 172800\n")
+                      "SECURITY.md]\n      required_checks: [stability-check, extra]\n")
         gov = cfg.auto_merge.gates.governance
         assert "SECURITY.md" in gov.paths and "extra" in gov.required_checks
-        assert gov.l3_window_seconds == 172800
+
+    @pytest.mark.parametrize("block", ["      l3_max_per_window: 1\n      l3_window_seconds: 86400\n",
+                                       "      l3_max_per_window: 2\n", "      l3_window_seconds: 3600\n"])
+    def test_the_retired_rate_keys_still_load_and_are_ignored(self, p9, tmp_path, block):
+        # Owner decision 2026-11-18: the one-governance-landing-per-day budget is removed. Policies that still
+        # carry its keys must keep loading (they are ignored), so the removal does not break any repo mid-way.
+        cfg = _policy(p9, tmp_path, "  gates:\n    governance:\n" + block)
+        assert not hasattr(cfg.auto_merge.gates.governance, "l3_max_per_window")
 
     def test_stricter_values_accepted(self, p9, tmp_path):
         cfg = _policy(p9, tmp_path, "  gates:\n    p20:\n      pass_score: 9\n"
@@ -379,9 +381,10 @@ class TestGovernanceTier:
     def test_stability_check_must_run_and_pass(self, p9, gates, checks):
         assert "governance_checks" in _failed(p9, gates, _gov(p9, all_checks=checks))
 
-    @pytest.mark.parametrize("n", [1, 2, None])
-    def test_l3_rate_budget_blocks(self, p9, gates, n):
-        assert "l3_rate" in _failed(p9, gates, _gov(p9, l3_recent_commits=n))
+    def test_a_governance_change_is_not_rate_limited(self, p9, gates):
+        # No merge-rate gate any more: a governance PR that meets strata and checks passes whatever landed today.
+        assert _failed(p9, gates, _gov(p9)) == set()
+        assert "l3_rate" not in {r.gate for r in p9.evaluate_merge_gates(gates, _gov(p9))}
 
     @pytest.mark.parametrize("path", [".CONTROL/policy.yaml", "./AGENTS.md", "claude.md"])
     def test_case_and_prefix_variants_are_governance(self, p9, gates, path):
@@ -804,51 +807,13 @@ class TestHeadConsistency:
 class TestGathering:
     """The half of the gate that talks to GitHub, run against the fake."""
 
-    def _landings(self, p9, monkeypatch, rows, compare):
-        seen = []
-
-        def run(cmd, *a, **k):
-            seen.append(cmd)
-            if cmd[:3] == ["gh", "api", "--paginate"]:
-                return rows if isinstance(rows, _Run) else _Run(rows)
-            basehead = next(c for c in cmd if "/compare/" in c).split("/compare/")[1]
-            return compare(basehead)
-        monkeypatch.setattr(p9.subprocess, "run", run)
-        return p9._governance_landings_in_window("broomva/test", BASE, p9.GovernanceTier()), seen
 
     def _files(self, *paths):
         return _Run(json.dumps({"status": "ahead", "files": [{"filename": x} for x in paths]}))
 
-    def test_a_merge_commit_landing_an_old_governance_change_counts(self, p9, monkeypatch):
-        # The merge commit M is dated when it landed; its branch commit that
-        # edited AGENTS.md is days older. Diffing M against its first parent
-        # sees the change; filtering commits by date and path did not.
-        got, seen = self._landings(p9, monkeypatch, "M\tP1\nS\tP0\n",
-                                   lambda bh: self._files("AGENTS.md", "x.py") if bh == "P1...M"
-                                   else self._files("docs/a.md"))
-        assert got == 1
-        listing = " ".join(seen[0])
-        assert f"sha={BASE}" in listing and "path=" not in listing
 
-    def test_no_governance_landing_is_zero(self, p9, monkeypatch):
-        got, _ = self._landings(p9, monkeypatch, "M\tP1\nS\tP0\n",
-                                lambda bh: self._files("docs/a.md"))
-        assert got == 0
 
-    def test_an_empty_window_is_zero(self, p9, monkeypatch):
-        assert self._landings(p9, monkeypatch, "", lambda bh: self._files())[0] == 0
 
-    @pytest.mark.parametrize("rows,compare", [
-        (_Run(returncode=1), None),                                  # listing failed
-        ("M\t\n", None),                                            # no parent: root/unreadable
-        ("M\tP1\n", lambda bh: _Run(returncode=1)),                  # compare failed
-        ("M\tP1\n", lambda bh: _Run(json.dumps({"status": "ahead"}))),  # no files key
-        ("M\tP1\n", lambda bh: _Run(json.dumps({"status": "ahead",
-                                                "files": [{"filename": "z"}] * 300}))),
-    ])
-    def test_unknown_landings_are_none(self, p9, monkeypatch, rows, compare):
-        got, _ = self._landings(p9, monkeypatch, rows, compare or (lambda bh: self._files()))
-        assert got is None
 
     def test_governance_pr_merges_end_to_end_only_with_every_strict_condition(
             self, p9, monkeypatch):
@@ -1192,15 +1157,6 @@ class TestFixDeltaFindings:
     """Post-pass verification of 973fa7b: renames count as governance landings,
     and only blocking path rules fold case."""
 
-    def test_renaming_a_governance_file_away_is_a_landing(self, p9, monkeypatch):
-        def run(cmd, *a, **k):
-            if cmd[:3] == ["gh", "api", "--paginate"]:
-                return _Run("M\tP1\n")
-            return _Run(json.dumps({"status": "ahead", "files": [
-                {"filename": "docs/archive/AGENTS.md", "previous_filename": "AGENTS.md",
-                 "status": "renamed"}]}))
-        monkeypatch.setattr(p9.subprocess, "run", run)
-        assert p9._governance_landings_in_window("broomva/test", BASE, p9.GovernanceTier()) == 1
 
     def test_a_compare_entry_without_a_filename_is_unknown(self, p9, monkeypatch):
         monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: _Run(json.dumps(

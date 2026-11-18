@@ -474,7 +474,6 @@ moved base blocks, and so does a PR retargeted to another base in between.
 | `independent_check` | a check that is neither a bot nor an aggregate (`Merge Gate`, which passes vacuously when nothing else ran) ran and passed, **or** a P20 pass covers the PR | FAIL |
 | `governance_strata` | governance-class: the verdict lists strata A, B and C | FAIL |
 | `governance_checks` | governance-class: every run of each required check (default `stability-check`) passed; skipped or absent fails | FAIL |
-| `l3_rate` | governance-class: no governance change LANDED on base inside the τ_a₃ window (≥ 1 day). Each commit that reached base in the window (a merge, squash or rebase is dated when it landed) is diffed against its first parent, so an old-dated governance commit merged by a human still counts. | FAIL |
 
 **Always-review paths.** These always need a P20 pass, whatever the change's
 size: `.github/workflows/**`, `.githooks/**`, `.claude/**` (settings, local
@@ -530,9 +529,11 @@ Rules for reading markers:
 governance paths are `CLAUDE.md`, `AGENTS.md`, `METALAYER.md`,
 `.control/policy.yaml` and `.control/rcs-parameters.toml`, repo-root and
 case-folded. They carry L3, the level with the narrowest stability margin, so
-the tier requires all three strata including a cross-vendor review, a
-`stability-check` that actually ran, and the L3 rate budget, which CI only
-reports. A governance change that cannot get a cross-vendor verdict (Codex
+the tier requires all three strata including a cross-vendor review and a
+`stability-check` that actually ran. There is no merge-rate budget: the old
+one-governance-landing-per-day `l3_rate` gate was removed by owner decision
+(2026-11-18); a policy that still sets `l3_max_per_window` or
+`l3_window_seconds` loads and the keys are ignored. A governance change that cannot get a cross-vendor verdict (Codex
 down) waits for one.
 
 **The base branch's policy judges the PR.** p9 reads `.control/policy.yaml`
