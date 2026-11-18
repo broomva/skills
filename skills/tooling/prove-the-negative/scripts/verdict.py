@@ -163,6 +163,14 @@ def measurement_verdict(raw: object) -> dict:
     for key in ("claim", "conditions", "observation_ref", "falsification_criterion"):
         if not isinstance(raw.get(key), str) or not raw[key].strip():
             raise ValueError(f"{key}: nonempty text required")
+    allowed = {"claim", "conditions", "observation_ref", "falsification_criterion",
+               "target_outcome", "positive_control", "absence_refutes",
+               "control_ref", "claim_verdict"}
+    if set(raw) - allowed:
+        raise ValueError("unknown measurement field(s): " + ", ".join(sorted(set(raw) - allowed)))
+    control_ref = raw.get("control_ref")
+    if control_ref is not None and not isinstance(control_ref, str):
+        raise ValueError("control_ref must be text or null")
     target = raw.get("target_outcome")
     control = raw.get("positive_control")
     if target not in ("detected", "not_detected", "error", "skipped"):
@@ -185,7 +193,7 @@ def measurement_verdict(raw: object) -> dict:
         verdict = "refuted"
     else:
         verdict = "not_detected"
-    return {**raw, "claim_verdict": verdict}
+    return {**raw, "control_ref": control_ref, "claim_verdict": verdict}
 
 
 def main(argv: list[str]) -> int:
