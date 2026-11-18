@@ -316,9 +316,13 @@ def probe_video(path: Path) -> dict | None:
     num, _, den = (stream.get("avg_frame_rate") or "0/1").partition("/")
     fps = float(num) / float(den or 1) if float(den or 1) else 0.0
     width, height = stream.get("width"), stream.get("height")
+    sideways = _display_rotation(stream) % 180 == 90  # the viewer sees height x width
     if isinstance(width, int) and isinstance(height, int):
-        width = _displayed_width(width, stream.get("sample_aspect_ratio"))
-    if _display_rotation(stream) % 180 == 90:  # displayed sideways: the viewer sees height x width
+        # The scaled axis ends up as the displayed width unless the frame is turned
+        # sideways, when it becomes the displayed height. Round it toward landscape
+        # either way (up as a width, down as a height), so the Shorts check fails closed.
+        width = _displayed_width(width, stream.get("sample_aspect_ratio"), round_up=not sideways)
+    if sideways:
         width, height = height, width
     return {"codec": stream.get("codec_name"), "fps": round(fps, 3),
             "duration": float((data.get("format") or {}).get("duration") or 0.0),
@@ -327,16 +331,18 @@ def probe_video(path: Path) -> dict | None:
             "height": height if isinstance(height, int) else 0}
 
 
-def _displayed_width(width: int, sar) -> int:
+def _displayed_width(width: int, sar, *, round_up: bool = True) -> int:
     """Stored width scaled by the sample aspect ratio ("N:M"), so non-square pixels
     are judged by how the frame displays. Unknown or 0:1 means square pixels.
-    Integer ceiling division, so no float rounding can turn landscape into square."""
+    Exact integer division, rounded in the direction the caller names, so no
+    rounding can turn a landscape frame into a square one."""
     try:
         num, den = (int(x) for x in str(sar).split(":"))
     except (TypeError, ValueError):
         return width
-    # Round up: any landscape excess, however small, must fail the Shorts check.
-    return -(-width * num // den) if num > 0 and den > 0 else width
+    if not (num > 0 and den > 0):
+        return width
+    return -(-width * num // den) if round_up else width * num // den
 
 
 def _display_rotation(stream: dict) -> int:

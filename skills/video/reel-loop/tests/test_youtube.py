@@ -568,6 +568,9 @@ def test_transport_failures_carry_no_upstream_text(monkeypatch):
     ({"width": 720, "height": 720, "sample_aspect_ratio": "0:1"}, (720, 720)),
     ({"width": 720, "height": 720, "sample_aspect_ratio": "2000:1999"}, (721, 720)),
     ({"width": 720, "height": 720, "sample_aspect_ratio": "1999:2000"}, (720, 720)),
+    # Turned sideways the scaled axis is the height: 720 x 719.64 displays landscape.
+    ({"width": 720, "height": 720, "sample_aspect_ratio": "1999:2000", "side_data_list": [{"rotation": 90}]}, (720, 719)),
+    ({"width": 720, "height": 720, "sample_aspect_ratio": "2000:1999", "side_data_list": [{"rotation": 90}]}, (720, 720)),
 ])
 def test_probe_reports_displayed_dimensions(monkeypatch, tmp_path, stream, expect):
     import subprocess
