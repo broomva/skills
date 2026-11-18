@@ -71,6 +71,66 @@ publish` uses only this mode and sends the same bytes it read and gated. A
 `video_url` container would let Meta fetch whatever the URL serves later, so it
 cannot be bound to an approval; the script does not offer it.
 
+## YouTube Shorts (platform mode)
+
+Read from Google's pages on 2026-11-18; re-read them before relying on a number:
+[videos.insert](https://developers.google.com/youtube/v3/docs/videos/insert),
+[resumable upload protocol](https://developers.google.com/youtube/v3/guides/using_resumable_upload_protocol),
+[video resource](https://developers.google.com/youtube/v3/docs/videos#status),
+[quota costs](https://developers.google.com/youtube/v3/determine_quota_cost),
+[Shorts length](https://support.google.com/youtube/answer/15424877).
+
+**Calls, in order.**
+1. `GET /youtube/v3/channels?part=id&mine=true` must return exactly the requested
+   `--channel-id`, so a token for another channel uploads nothing.
+2. `POST https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&part=snippet,status`
+   with the metadata as JSON and `X-Upload-Content-Length` / `X-Upload-Content-Type`.
+   Google returns the session URI in the `Location` header. The adapter accepts it
+   only on `https://www.googleapis.com/upload/youtube/v3/videos`; any other host gets
+   neither the bytes nor the token. No HTTP redirect is followed anywhere, because
+   urllib would carry the `Authorization` header to the redirect target.
+3. One `PUT` of the gated bytes to that session. `201 Created` returns the video
+   resource. A `308 Resume Incomplete` or any failure is reported, never retried: a
+   blind retry can create a second video.
+
+**Quota.** `videos.insert` has its own bucket: "100 calls per day", "1 unit" each.
+It no longer draws on the 10,000-unit default, which covers the other endpoints
+(`channels.list` and `videos.list` cost 1 unit each).
+
+**Visibility.** Google's page now says: "Videos uploaded from unverified API
+projects are not restricted to private viewing mode." Uploads "might default to
+private based on creator account settings". The adapter still defaults
+`privacyStatus` to `private`; `public` is a field the approved card sets.
+
+**Metadata limits, as Google states them.**
+- `snippet.title`: at most 100 characters, no `<` or `>`.
+- `snippet.description`: at most 5000 bytes.
+- `snippet.tags`: at most 500 characters in total. The commas between tags count,
+  and a tag with a space counts as if wrapped in quotes.
+- `status.privacyStatus`: `private`, `public` or `unlisted`.
+- `status.selfDeclaredMadeForKids`: the card must set it; it is never defaulted.
+- `status.containsSyntheticMedia`: discloses realistic altered or synthetic
+  content. It is true whenever the card declares synthetic media or `is_ai_generated`.
+
+**Shorts.** Google's notice reads "YouTube Shorts up to three minutes in length",
+with "a square or vertical aspect ratio". The adapter checks both on the probed bytes
+(1-180 s, width <= height).
+
+**Token.** `YT_ACCESS_TOKEN` is used when set. Otherwise the adapter refreshes from a
+`--credentials` file or `YT_CREDENTIALS_FILE`. That file must be a regular file owned
+by the current user, mode 0600 or stricter, with `client_id`, `client_secret` and
+`refresh_token`. The refresh goes only to `https://oauth2.googleapis.com/token`, and a
+different `token_uri` is refused. The access token, refresh token and client secret
+never appear in output or errors.
+
+## TikTok (documentation only)
+
+**Unverified locally:** TikTok's Content Posting API and audit rules were not
+confirmed from a primary source during this offline change. The operating rule is
+therefore conservative: unaudited clients may post only privately, and the audit
+is not designed for self-managed posting. This skill has no TikTok publisher. A
+TikTok post is a human click (or the Higgsfield widget), never an automatic upload.
+
 ## Insights for our own Reels
 
 Source: https://developers.facebook.com/docs/instagram-platform/reference/instagram-media/insights

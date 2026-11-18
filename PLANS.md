@@ -1,5 +1,28 @@
 # PLANS.md
 
+## reel-loop: YouTube Shorts platform mode (BRO-3132)
+
+Status: implemented on `feat/reel-loop-youtube-shorts-bro3132`; written by Codex, reviewed and fixed by Claude; P20 pending.
+Scope: add the shared card platform dispatch, YouTube card/approval/Shorts gates,
+Google resumable-upload and token-refresh adapters, read-only YouTube stats, docs,
+and fake-transport plus mutation coverage. Instagram publishing and the comment
+funnel retain their current commands and behavior.
+Constraints: stdlib only; read the video once (maximum 300 MB); no credential/token
+file reads outside the explicitly supplied YouTube credentials path; no live network;
+errors never include upstream text or credentials; do not commit or push.
+Milestones: (1) [x] focused failing YouTube tests; (2) [x] implementation passing
+alongside Instagram/funnel tests; (3) [x] mutation harness extension; (4) [x]
+platform/card/skill documentation; (5) [x] verification. `make check` is not
+available in this checkout (`No rule to make target 'check'`), so no `make test`
+target was run; the required skill-local suite passed 177 tests and the mutation
+harness killed 73/73 mutants.
+Verification: from `skills/video/reel-loop`, `python3 -m pytest -q` (184 passed)
+and `python3 tests/mutation_check.py` (79/79 killed). Live 2026-11-18 on @broomvatech:
+token refresh, channel check and `--no-go-live` resumable session accepted (no bytes);
+a wrong channel and a 0644 credentials file refused. The dogfood found that the Google
+transport dropped query params on a POST with a body (fixed, test + mutation added).
+Not yet exercised live: the byte PUT (needs an owner-approved private test upload).
+
 ## fleet: rename fleet-reconcile, with workflows (BRO-3122)
 
 Status: built on `feature/bro-3122-fleet-skill` (from main 59af385); P20, PR, merge, broomva launchd cutover next.
