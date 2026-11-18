@@ -286,3 +286,27 @@ def test_json_cli_preserves_invalid_vs_refuted(tmp_path):
         result = subprocess.run([sys.executable, str(SCRIPT), '--json', str(path)], capture_output=True, text=True)
         assert result.returncode == code
         assert json.loads(result.stdout)['claim_verdict'] == expected
+
+
+@pytest.mark.parametrize('extra', [{}, {'control_ref': None}])
+def test_missing_control_output_conforms_to_published_schema(extra):
+    import jsonschema
+    from verdict import measurement_verdict
+    raw = {'claim': 'target signal', 'conditions': 'run-1', 'observation_ref': 'raw',
+           'falsification_criterion': 'controlled null', 'absence_refutes': True,
+           'target_outcome': 'not_detected', 'positive_control': 'missing', **extra}
+    result = measurement_verdict(raw)
+    schema = json.loads((SCRIPT.parents[1] / 'references/measurement.schema.json').read_text())
+    jsonschema.validate(result, schema)
+    assert result['control_ref'] is None
+    assert result['claim_verdict'] == 'inconclusive_no_positive_control'
+
+
+@pytest.mark.parametrize('extra', [{'control_ref': {}}, {'run_id': 'unrecognized'}])
+def test_untyped_or_unknown_measurement_fields_are_invalid(extra):
+    from verdict import measurement_verdict
+    raw = {'claim': 'target signal', 'conditions': 'run-1', 'observation_ref': 'raw',
+           'falsification_criterion': 'controlled null', 'absence_refutes': True,
+           'target_outcome': 'not_detected', 'positive_control': 'missing', **extra}
+    with pytest.raises(ValueError):
+        measurement_verdict(raw)
