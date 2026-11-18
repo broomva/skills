@@ -116,12 +116,22 @@ private based on creator account settings". The adapter still defaults
 with "a square or vertical aspect ratio". The adapter checks both on the probed bytes
 (1-180 s, width <= height).
 
-**Token.** `YT_ACCESS_TOKEN` is used when set. Otherwise the adapter refreshes from a
-`--credentials` file or `YT_CREDENTIALS_FILE`. That file must be a regular file owned
+**Token.** An explicit `--credentials` file wins; otherwise `YT_ACCESS_TOKEN` is used when
+set, then `YT_CREDENTIALS_FILE`. A file is refreshed. That file must be a regular file owned
 by the current user, mode 0600 or stricter, with `client_id`, `client_secret` and
 `refresh_token`. The refresh goes only to `https://oauth2.googleapis.com/token`, and a
 different `token_uri` is refused. The access token, refresh token and client secret
-never appear in output or errors.
+never appear in output or errors. The file is opened once without following a
+symlink, and its type, owner and mode are checked on that open descriptor.
+
+**Scopes.** Publishing needs `https://www.googleapis.com/auth/youtube.upload` for the
+upload and `https://www.googleapis.com/auth/youtube.readonly` for the channel check
+(`channels.list mine=true`) and for `stats` (`videos.list`). A token with only
+`youtube.upload` fails the channel check closed, with HTTP 403, and uploads nothing.
+
+**Orientation.** The probe reports the displayed size: a 90 or 270 degree rotation
+(display-matrix side data or the legacy `rotate` tag) swaps width and height, so a
+landscape video stored as portrait is not taken for a Short.
 
 ## TikTok (documentation only)
 

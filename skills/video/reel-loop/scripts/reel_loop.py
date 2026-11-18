@@ -305,7 +305,8 @@ def probe_video(path: Path) -> dict | None:
         return None
     proc = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-         "stream=codec_name,avg_frame_rate,width,height:format=duration,format_name", "-of", "json", str(path)],
+         "stream=codec_name,avg_frame_rate,width,height:stream_tags=rotate:stream_side_data=rotation"
+         ":format=duration,format_name", "-of", "json", str(path)],
         capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         return {"error": proc.stderr.strip() or f"ffprobe exited {proc.returncode}"}
@@ -314,11 +315,25 @@ def probe_video(path: Path) -> dict | None:
     num, _, den = (stream.get("avg_frame_rate") or "0/1").partition("/")
     fps = float(num) / float(den or 1) if float(den or 1) else 0.0
     width, height = stream.get("width"), stream.get("height")
+    if _display_rotation(stream) % 180 == 90:  # displayed sideways: the viewer sees height x width
+        width, height = height, width
     return {"codec": stream.get("codec_name"), "fps": round(fps, 3),
             "duration": float((data.get("format") or {}).get("duration") or 0.0),
             "format": (data.get("format") or {}).get("format_name", ""),
             "width": width if isinstance(width, int) else 0,
             "height": height if isinstance(height, int) else 0}
+
+
+def _display_rotation(stream: dict) -> int:
+    """Display rotation in degrees from ffprobe's side data or the legacy rotate tag."""
+    values = [sd.get("rotation") for sd in stream.get("side_data_list") or [] if isinstance(sd, dict)]
+    values.append((stream.get("tags") or {}).get("rotate"))
+    for v in values:
+        try:
+            return int(float(v)) % 360
+        except (TypeError, ValueError):
+            continue
+    return 0
 
 
 # Optional fields: null means absent. Fields not listed here (account, source,
@@ -342,9 +357,11 @@ def _type_errors(card) -> list[str]:
             for k in ("by", "at", "video_sha256"):
                 if not isinstance(approval.get(k), str) or not approval.get(k).strip():
                     errs.append(f"approval.{k} must be a non-empty string")
-            for k in ("platform", "channel_id", "ig_user_id"):
+            for k in ("platform", "channel_id", "ig_user_id", "privacy_status"):
                 if approval.get(k) is not None and (not isinstance(approval[k], str) or not approval[k].strip()):
                     errs.append(f"approval.{k} must be a non-empty string when present")
+            if approval.get("made_for_kids") is not None and not isinstance(approval["made_for_kids"], bool):
+                errs.append("approval.made_for_kids must be true or false when present")
     synthetic = card.get("synthetic", {})
     if not isinstance(synthetic, dict) or not all(isinstance(v, bool) for v in synthetic.values()):
         errs.append("synthetic must be an object whose values are true or false")
@@ -451,6 +468,8 @@ def _approval_errors(approval: dict | None, digest: str, *, platform: str,
     else:
         if approval.get("platform") is not None and approval["platform"] != "instagram":
             reasons.append("approval.platform must be 'instagram' when present for an Instagram card")
+        if approval.get("channel_id") is not None:
+            reasons.append("approval.channel_id names a YouTube channel; it cannot approve an Instagram post")
         if (destination is not None and approval.get("ig_user_id") is not None
                 and approval["ig_user_id"] != destination):
             reasons.append("approval.ig_user_id does not match --ig-user-id")
@@ -482,7 +501,7 @@ def _youtube_insert_body(card: dict, data: bytes, probe, reasons: list[str], not
                          is_ai: bool) -> dict | None:
     youtube = card["youtube"]
     title = youtube.get("title")
-    if not isinstance(title, str) or not 1 <= len(title) <= 100 or "<" in title or ">" in title:
+    if not isinstance(title, str) or not title.strip() or len(title) > 100 or "<" in title or ">" in title:
         reasons.append("youtube.title must be 1-100 characters and contain no < or >")
     description = youtube.get("description")
     if description is not None and (len(description.encode("utf-8")) > 5000 or "<" in description or ">" in description):
@@ -501,6 +520,12 @@ def _youtube_insert_body(card: dict, data: bytes, probe, reasons: list[str], not
         reasons.append("youtube.privacy_status must be private, unlisted or public")
     if "made_for_kids" not in youtube or not isinstance(youtube.get("made_for_kids"), bool):
         reasons.append("youtube.made_for_kids is required and must be bool")
+    approval = card.get("approval") or {}
+    if approval and approval.get("privacy_status") != privacy:
+        reasons.append(f"approval.privacy_status must name the visibility it approves ({privacy!r}); "
+                       "changing visibility needs a new approval")
+    if approval and approval.get("made_for_kids") is not youtube.get("made_for_kids"):
+        reasons.append("approval.made_for_kids must equal youtube.made_for_kids")
     contains = youtube.get("contains_synthetic_media") is True or is_ai
     if youtube.get("contains_synthetic_media") is False and is_ai:
         notes.append("card said contains_synthetic_media=false but synthetic media is declared; forced to true")
@@ -895,18 +920,24 @@ def _valid_google_session(location: str | None) -> bool:
 
 
 def _credentials_file(path: Path) -> dict:
+    # One descriptor, opened without following a symlink; the checks judge that
+    # descriptor, so the file cannot be swapped between the check and the read.
     try:
-        st = path.lstat()
+        fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     except OSError:
-        raise ValueError("YouTube credentials file cannot be read") from None
+        raise ValueError("YouTube credentials file cannot be opened (a symlink is refused)") from None
+    st = os.fstat(fd)
     if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
+        os.close(fd)
         raise ValueError("YouTube credentials file must be a regular file owned by the current user")
     if st.st_mode & 0o077:
+        os.close(fd)
         raise ValueError("YouTube credentials file permissions must be 0600 or stricter")
-    try:
-        parsed = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError, UnicodeError):
-        raise ValueError("YouTube credentials file must contain a JSON object") from None
+    with os.fdopen(fd, "rb") as f:
+        try:
+            parsed = json.loads(f.read(1024 * 1024).decode("utf-8"))
+        except (OSError, ValueError, UnicodeError):
+            raise ValueError("YouTube credentials file must contain a JSON object") from None
     if not isinstance(parsed, dict):
         raise ValueError("YouTube credentials file must contain a JSON object")
     for name in ("client_id", "client_secret", "refresh_token"):
@@ -924,9 +955,10 @@ def _credentials_file(path: Path) -> dict:
 
 def youtube_access_token(*, credentials: Path | None = None, environ=None, http=google_http,
                          redactions: list[str] | None = None) -> str:
-    """Return $YT_ACCESS_TOKEN or securely refresh a credentials-file token."""
+    """An explicit `credentials` file, else $YT_ACCESS_TOKEN, else $YT_CREDENTIALS_FILE.
+    A file is refreshed only against GOOGLE_TOKEN_URI."""
     environ = os.environ if environ is None else environ
-    token = environ.get("YT_ACCESS_TOKEN", "")
+    token = environ.get("YT_ACCESS_TOKEN", "") if credentials is None else ""
     if isinstance(token, str) and token:
         if redactions is not None:
             redactions.append(token)

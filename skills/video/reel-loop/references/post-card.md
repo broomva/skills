@@ -26,7 +26,7 @@ Only if every gate passes can `publish` send those exact bytes.
 |---|---|
 | `platform` | Optional: `"instagram"` (the default) or `"youtube"`. Any other value blocks. |
 | the card | Must be a JSON object. The gating and published fields below must have the types shown; any wrong type blocks before any field is trusted. `null` on an optional field means absent (`share_to_feed: null` publishes as true). `account`, `source` and `script` are provenance, never published and not checked. |
-| `approval` | `null`, or an object of non-empty strings `by`, `at` and `video_sha256`. `video_sha256` must equal the sha256 of the file passed with `--video`. A YouTube approval also requires `platform: "youtube"` and `channel_id` equal to publish's `--channel-id`. An Instagram approval may name `platform: "instagram"` and `ig_user_id` equal to `--ig-user-id`; those two fields stay optional so existing approvals remain valid. This binds an approval to the bytes, platform and destination. Written only after a person says yes to that file; the gate cannot verify who wrote it. |
+| `approval` | `null`, or an object of non-empty strings `by`, `at` and `video_sha256`. `video_sha256` must equal the sha256 of the file passed with `--video`. A YouTube approval also requires `platform: "youtube"`, `channel_id` equal to publish's `--channel-id`, and the `privacy_status` and `made_for_kids` it approves, equal to the card's (so changing visibility or audience needs a new approval). An Instagram approval may name `platform: "instagram"` and `ig_user_id` equal to `--ig-user-id`, and never a `channel_id`; those two fields stay optional so existing approvals remain valid. This binds an approval to the bytes, platform and destination. Written only after a person says yes to that file; the gate cannot verify who wrote it. |
 | `synthetic` | An object of true/false values. Any true value, or `is_ai_generated: true`, yields `is_ai_generated: true`. Media the card does not declare cannot be detected. |
 | `voice_consent` | Required when `synthetic.voice_clone` is true. It needs a non-empty `speaker`, an ISO `date` not in the future, and a `ref` to a file that exists, resolved relative to the card's folder. |
 | `caption` | ≤ 2200 characters, ≤ 30 hashtags, ≤ 20 @ tags. |
@@ -66,7 +66,9 @@ is optional, but is forced true when `synthetic` contains any true value or
     "at": "2026-11-18T09:00:00Z",
     "video_sha256": "SHA256_OF_EXACT_FINAL_MP4_BYTES",
     "platform": "youtube",
-    "channel_id": "UC0123456789ABCDEFGHIJKL"
+    "channel_id": "UC0123456789ABCDEFGHIJKL",
+    "privacy_status": "private",
+    "made_for_kids": false
   }
 }
 ```

@@ -35,7 +35,8 @@ def youtube_card(video: Path, **over):
         "youtube": {"title": "A useful short", "made_for_kids": False},
         "approval": {"by": "owner", "at": "2026-11-18T09:00:00Z",
                      "video_sha256": hashlib.sha256(video.read_bytes()).hexdigest(),
-                     "platform": "youtube", "channel_id": CHANNEL},
+                     "platform": "youtube", "channel_id": CHANNEL,
+                     "privacy_status": "private", "made_for_kids": False},
     }
     card.update(over)
     return card
@@ -392,3 +393,233 @@ def test_google_transport_keeps_params_in_the_query_when_a_body_is_sent(monkeypa
                    headers={}, body=b'{"snippet":{}}')
     assert seen["url"] == rl.GOOGLE_UPLOAD + "?uploadType=resumable&part=snippet%2Cstatus"
     assert seen["data"] == b'{"snippet":{}}'
+
+
+# --- review round 1 (P20 stratum B) ------------------------------------------------
+def test_the_put_goes_to_the_session_uri_google_returned(video):
+    http = FakeGoogle()
+    publish(youtube_card(video), video, http)
+    puts = [call for call in http.calls if call["method"] == "PUT"]
+    assert len(puts) == 1 and puts[0]["url"] == FakeGoogle.session
+    post = next(call for call in http.calls if call["method"] == "POST")
+    assert post["url"] == rl.GOOGLE_UPLOAD
+    assert post["params"] == {"uploadType": "resumable", "part": "snippet,status"}
+    assert http.calls[0]["url"] == "https://www.googleapis.com/youtube/v3/channels"
+
+
+@pytest.mark.parametrize("location", [
+    "http://www.googleapis.com/upload/youtube/v3/videos?upload_id=x",
+    "https://www.googleapis.com/upload/youtube/v3/other?upload_id=x",
+    "https://user@www.googleapis.com/upload/youtube/v3/videos?upload_id=x",
+    "https://www.googleapis.com:8443/upload/youtube/v3/videos?upload_id=x",
+    "https://www.googleapis.com.attacker.example/upload/youtube/v3/videos",
+])
+def test_every_part_of_the_session_uri_is_checked(video, location):
+    http = FakeGoogle(location=location)
+    with pytest.raises(rl.PublishError, match="Location"):
+        publish(youtube_card(video), video, http)
+    assert not any(call["method"] == "PUT" for call in http.calls)
+
+
+def test_a_failed_put_is_reported_and_never_retried(video):
+    def fail_put(number, call):
+        if call["method"] == "PUT":
+            raise rl.PublishError("HTTP 503")
+    http = FakeGoogle(on_call=fail_put)
+    with pytest.raises(rl.PublishError, match="upload: HTTP 503"):
+        publish(youtube_card(video), video, http)
+    assert sum(call["method"] == "PUT" for call in http.calls) == 1
+
+
+def _creds(tmp_path, **extra):
+    path = tmp_path / "yt.json"
+    path.write_text(json.dumps({"client_id": "CLIENT", "client_secret": "ClientSecretValue",
+                                "refresh_token": "RefreshSecretValue", **extra}))
+    path.chmod(0o600)
+    return path
+
+
+def test_refresh_posts_only_to_the_pinned_endpoint_with_a_refresh_grant(tmp_path):
+    import urllib.parse
+    calls = []
+
+    def http(method, url, *, params=None, headers=None, body=None, timeout=120):
+        calls.append((method, url, headers, body))
+        return {"status": 200, "headers": {}, "json": {"access_token": "AccessTokenValue"}}
+
+    redactions = []
+    token = rl.youtube_access_token(credentials=_creds(tmp_path), environ={}, http=http, redactions=redactions)
+    assert token == "AccessTokenValue"
+    method, url, headers, body = calls[0]
+    assert (method, url) == ("POST", "https://oauth2.googleapis.com/token")
+    form = urllib.parse.parse_qs(body.decode())
+    assert form == {"grant_type": ["refresh_token"], "client_id": ["CLIENT"],
+                    "client_secret": ["ClientSecretValue"], "refresh_token": ["RefreshSecretValue"]}
+    assert {"ClientSecretValue", "RefreshSecretValue", "AccessTokenValue"} <= set(redactions)
+
+
+def test_explicit_credentials_win_over_an_inherited_access_token(tmp_path):
+    calls = []
+
+    def http(method, url, **kw):
+        calls.append(url)
+        return {"status": 200, "headers": {}, "json": {"access_token": "FromTheFile"}}
+
+    token = rl.youtube_access_token(credentials=_creds(tmp_path), environ={"YT_ACCESS_TOKEN": "Inherited"}, http=http)
+    assert token == "FromTheFile" and calls == [rl.GOOGLE_TOKEN_URI]
+    assert rl.youtube_access_token(environ={"YT_ACCESS_TOKEN": "Inherited"}, http=http) == "Inherited"
+
+
+def test_a_symlinked_credentials_file_is_refused(tmp_path):
+    real = _creds(tmp_path)
+    link = tmp_path / "link.json"
+    link.symlink_to(real)
+    with pytest.raises(ValueError, match="symlink"):
+        rl.youtube_access_token(credentials=link, environ={})
+
+
+def test_a_credentials_file_owned_by_someone_else_is_refused(tmp_path, monkeypatch):
+    path = _creds(tmp_path)
+    monkeypatch.setattr(rl.os, "getuid", lambda: os.stat(path).st_uid + 1)
+    with pytest.raises(ValueError, match="owned by the current user"):
+        rl.youtube_access_token(credentials=path, environ={})
+
+
+def test_a_directory_is_not_a_credentials_file(tmp_path):
+    d = tmp_path / "dir.json"
+    d.mkdir(mode=0o700)
+    with pytest.raises(ValueError, match="regular file"):
+        rl.youtube_access_token(credentials=d, environ={})
+
+
+def test_secrets_echoed_by_the_token_endpoint_never_reach_the_cli(video, tmp_path, monkeypatch, capsys):
+    import io
+    import urllib.error
+
+    def echo(req, timeout=0):
+        body = json.dumps({"error": {"errors": [{"reason": "RefreshSecretValue"}, {"reason": "ClientSecretValue"}]}})
+        raise urllib.error.HTTPError(req.full_url, 400, "bad", {}, io.BytesIO(body.encode()))
+
+    monkeypatch.setattr(rl, "_open", echo)
+    monkeypatch.delenv("YT_ACCESS_TOKEN", raising=False)
+    card_path = tmp_path / "card.json"
+    card_path.write_text(json.dumps(youtube_card(video)), encoding="utf-8")
+    creds = _creds(tmp_path)
+    assert rl.main(["publish", str(card_path), "--video", str(video), "--channel-id", CHANNEL,
+                    "--credentials", str(creds)]) == 2
+    assert rl.main(["stats", "--platform", "youtube", "--video-id", VIDEO_ID, "--credentials", str(creds)]) == 3
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert "RefreshSecretValue" not in text and "ClientSecretValue" not in text
+    assert "<redacted>" in text
+
+
+@pytest.mark.parametrize("command", ["publish", "stats"])
+def test_unexpected_exceptions_print_only_their_type(video, tmp_path, monkeypatch, capsys, command):
+    secret = "AccessTokenValue"
+    monkeypatch.setattr(rl, "youtube_access_token", lambda **_kw: secret)
+
+    def boom(*_a, **_kw):
+        raise RuntimeError(f"leak {secret}")
+
+    monkeypatch.setattr(rl, "publish_youtube", boom)
+    monkeypatch.setattr(rl, "youtube_stats", boom)
+    card_path = tmp_path / "card.json"
+    card_path.write_text(json.dumps(youtube_card(video)), encoding="utf-8")
+    argv = (["publish", str(card_path), "--video", str(video), "--channel-id", CHANNEL] if command == "publish"
+            else ["stats", "--platform", "youtube", "--video-id", VIDEO_ID])
+    assert rl.main(argv) == 3
+    err = capsys.readouterr().err
+    assert secret not in err and "unexpected RuntimeError" in err
+
+
+def test_transport_failures_carry_no_upstream_text(monkeypatch):
+    import urllib.error
+
+    def refused(req, timeout=0):
+        raise urllib.error.URLError("AccessTokenValue in a proxy message")
+
+    monkeypatch.setattr(rl, "_open", refused)
+    with pytest.raises(rl.PublishError) as exc:
+        rl.google_http("GET", "https://www.googleapis.com/youtube/v3/channels")
+    assert "AccessTokenValue" not in str(exc.value)
+
+    def raising_http(*_a, **_kw):
+        raise RuntimeError("AccessTokenValue")
+
+    with pytest.raises(rl.PublishError) as exc:
+        rl._google_call("channel check", "GET", "https://www.googleapis.com/youtube/v3/channels", http=raising_http)
+    assert "AccessTokenValue" not in str(exc.value) and "RuntimeError" in str(exc.value)
+
+
+@pytest.mark.parametrize("stream,expect", [
+    ({"width": 1080, "height": 1920, "side_data_list": [{"rotation": -90}]}, (1920, 1080)),
+    ({"width": 1080, "height": 1920, "tags": {"rotate": "90"}}, (1920, 1080)),
+    ({"width": 1080, "height": 1920, "side_data_list": [{"rotation": 180}]}, (1080, 1920)),
+    ({"width": 1080, "height": 1920}, (1080, 1920)),
+])
+def test_probe_reports_displayed_dimensions(monkeypatch, tmp_path, stream, expect):
+    import subprocess
+    stream = {"codec_name": "h264", "avg_frame_rate": "30/1", **stream}
+    out = json.dumps({"streams": [stream], "format": {"duration": "20.0", "format_name": "mp4"}})
+    monkeypatch.setattr(rl.shutil, "which", lambda _n: "/usr/bin/ffprobe")
+    monkeypatch.setattr(rl.subprocess, "run",
+                        lambda *a, **k: subprocess.CompletedProcess(a, 0, stdout=out, stderr=""))
+    info = rl.probe_video(tmp_path / "x.mp4")
+    assert (info["width"], info["height"]) == expect
+
+
+def test_an_instagram_approval_cannot_name_a_youtube_channel(video):
+    card = instagram_card(video)
+    card["approval"]["channel_id"] = CHANNEL
+    result, reasons, _ = rl.check_payload(card, video, card_dir=video.parent, probe=_youtube_probe, now=NOW)
+    assert result is None and any("channel_id" in r for r in reasons)
+
+
+@pytest.mark.parametrize("field,card_value,approved", [
+    ("privacy_status", "public", "private"),
+    ("privacy_status", "unlisted", None),
+    ("made_for_kids", True, False),
+])
+def test_the_approval_names_visibility_and_audience(video, field, card_value, approved):
+    card = youtube_card(video)
+    card["youtube"][field] = card_value
+    if approved is None:
+        del card["approval"][field]
+    else:
+        card["approval"][field] = approved
+    result, reasons, _ = payload(card, video)
+    assert result is None and any(f"approval.{field}" in r for r in reasons)
+    card["approval"][field] = card_value
+    result, reasons, _ = payload(card, video)
+    assert result is not None, reasons
+
+
+@pytest.mark.parametrize("change,needle", [
+    ({"title": "   "}, "title"),
+    ({"category_id": "22a"}, "category_id"),
+    ({"description": "see <this>"}, "description"),
+])
+def test_more_metadata_rules(video, change, needle):
+    card = youtube_card(video)
+    card["youtube"].update(change)
+    result, reasons, _ = payload(card, video)
+    assert result is None and any(needle in r for r in reasons)
+
+
+def test_each_publisher_refuses_the_other_platforms_card(video):
+    receipt, reasons, _ = rl.publish(youtube_card(video), video, ig_user_id="17841400000000000", token="T",
+                                     card_dir=video.parent, probe=_youtube_probe, now=NOW,
+                                     http=lambda *a, **k: (_ for _ in ()).throw(AssertionError("no call")))
+    assert receipt is None and any("YouTube card" in r for r in reasons)
+    http = FakeGoogle()
+    receipt, reasons, _ = publish(instagram_card(video), video, http)
+    assert receipt is None and any("Instagram card" in r for r in reasons) and http.calls == []
+
+
+def test_made_for_kids_absent_everywhere_is_still_blocked(video):
+    card = youtube_card(video)
+    del card["youtube"]["made_for_kids"]
+    del card["approval"]["made_for_kids"]
+    result, reasons, _ = payload(card, video)
+    assert result is None and any("youtube.made_for_kids is required" in r for r in reasons)
