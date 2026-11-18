@@ -76,3 +76,8 @@ jobs:
           env -u MUTATION_PROOF_ACTIVE bash tests/mutation-proof.test.sh | tee /tmp/mp.out
           grep -q "41 passed, 0 failed, 0 skipped" /tmp/mp.out
           grep -q "41 accounted for" /tmp/mp.out
+
+      - name: Claim funnel contract
+        run: |
+          python3 -m pip install pytest
+          python3 -m pytest tests/test_review_packet.py -v

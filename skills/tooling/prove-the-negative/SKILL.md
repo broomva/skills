@@ -154,3 +154,31 @@ Every row is the same shape: an absence accepted without an apparatus check.
 
 - `unslop` — the sibling discipline for claims whose evidence is a *presence*.
 - `skillify` — the gate this skill was distilled through.
+
+## Detection records: refuted is stronger than not detected
+
+`python3 scripts/verdict.py --measurement measurement.json` outputs JSON with
+`claim_verdict`. Supply `claim`, `conditions`, `observation_ref`,
+`falsification_criterion`, `absence_refutes` (predeclared boolean),
+`target_outcome` (`detected | not_detected | error | skipped`) and
+`positive_control` (`pass | fail | missing | error | skipped`). A passing control
+also requires `control_ref`. It must demonstrate the relevant path and detection
+sensitivity in the same conditions, not just a process somewhere being alive.
+
+- `detected`: control passed and target signal detected (exit 0).
+- `refuted`: control passed, target not detected, and the declared criterion
+  says absence falsifies this scoped claim (exit 1).
+- `not_detected`: control passed, target absent, but absence does not meet the
+  falsification criterion (exit 2; no conclusive verdict).
+- `inconclusive_no_positive_control`: control absent, failed, skipped or
+  unverified (exit 2), regardless of target output.
+- `inconclusive`: target skipped/errored or input invalid (exit 2).
+
+Never infer global impossibility from one scoped null. Record separate controls
+for stages whose failures would confound the claim. The boundary-case matrix
+interface and PASS/FAIL/INVALID exits stay unchanged; add `--json` to expose a
+separate `claim_verdict` (`supported`, `refuted`, or inconclusive). Its claim is
+the assertion as written; it is not a detection signal.
+
+The structured detection output is described by
+[references/measurement.schema.json](references/measurement.schema.json).
