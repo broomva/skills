@@ -1,0 +1,196 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "claim",
+    "conditions",
+    "observation_ref",
+    "positive_control",
+    "control_ref",
+    "target_outcome",
+    "falsification_criterion",
+    "absence_refutes",
+    "claim_verdict"
+  ],
+  "properties": {
+    "claim": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "conditions": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "observation_ref": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "falsification_criterion": {
+      "type": "string",
+      "pattern": "\\S"
+    },
+    "positive_control": {
+      "enum": [
+        "pass",
+        "fail",
+        "missing",
+        "error",
+        "skipped"
+      ]
+    },
+    "control_ref": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "target_outcome": {
+      "enum": [
+        "detected",
+        "not_detected",
+        "error",
+        "skipped"
+      ]
+    },
+    "absence_refutes": {
+      "type": "boolean"
+    },
+    "claim_verdict": {
+      "enum": [
+        "detected",
+        "refuted",
+        "not_detected",
+        "inconclusive_no_positive_control",
+        "inconclusive"
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "positive_control": {
+            "const": "pass"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "control_ref": {
+            "type": "string",
+            "pattern": "\\S"
+          }
+        }
+      },
+      "else": {
+        "properties": {
+          "claim_verdict": {
+            "const": "inconclusive_no_positive_control"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "positive_control": {
+            "const": "pass"
+          },
+          "target_outcome": {
+            "const": "detected"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "claim_verdict": {
+            "const": "detected"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "positive_control": {
+            "const": "pass"
+          },
+          "target_outcome": {
+            "const": "error"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "claim_verdict": {
+            "const": "inconclusive"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "positive_control": {
+            "const": "pass"
+          },
+          "target_outcome": {
+            "const": "skipped"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "claim_verdict": {
+            "const": "inconclusive"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "positive_control": {
+            "const": "pass"
+          },
+          "target_outcome": {
+            "const": "not_detected"
+          },
+          "absence_refutes": {
+            "const": true
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "claim_verdict": {
+            "const": "refuted"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "positive_control": {
+            "const": "pass"
+          },
+          "target_outcome": {
+            "const": "not_detected"
+          },
+          "absence_refutes": {
+            "const": false
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "claim_verdict": {
+            "const": "not_detected"
+          }
+        }
+      }
+    }
+  ]
+}
