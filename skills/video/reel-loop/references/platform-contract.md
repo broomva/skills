@@ -94,7 +94,8 @@ Read from Google's pages on 2026-11-18; re-read them before relying on a number:
    blind retry can create a second video.
 
 **Quota.** `videos.insert` has its own bucket: "100 calls per day", "1 unit" each.
-It no longer draws on the 10,000-unit default, which covers the other endpoints
+The quota page says `search.list` and `videos.insert` "have their own quota buckets",
+and the default is "10,000 units per day combined for all other endpoints"
 (`channels.list` and `videos.list` cost 1 unit each).
 
 **Visibility.** Google's page now says: "Videos uploaded from unverified API

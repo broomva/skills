@@ -623,3 +623,80 @@ def test_made_for_kids_absent_everywhere_is_still_blocked(video):
     del card["approval"]["made_for_kids"]
     result, reasons, _ = payload(card, video)
     assert result is None and any("youtube.made_for_kids is required" in r for r in reasons)
+
+
+# --- review round 1 (P20 Gemini) --------------------------------------------------
+def test_the_full_request_shape_is_sent(video):
+    http = FakeGoogle()
+    publish(youtube_card(video), video, http)
+    get, post, put = http.calls
+    assert get["headers"] == {"Authorization": "Bearer YT_TOKEN"}
+    assert get["params"] == {"part": "id", "mine": "true"}
+    size = str(len(video.read_bytes()))
+    assert post["headers"] == {"Authorization": "Bearer YT_TOKEN", "Content-Type": "application/json; charset=UTF-8",
+                               "X-Upload-Content-Length": size, "X-Upload-Content-Type": "video/mp4"}
+    body = json.loads(post["body"])
+    assert body["snippet"]["title"] == "A useful short"
+    assert body["status"] == {"privacyStatus": "private", "selfDeclaredMadeForKids": False,
+                              "containsSyntheticMedia": False}
+    assert put["headers"]["Authorization"] == "Bearer YT_TOKEN" and put["headers"]["Content-Length"] == size
+
+
+def test_the_video_is_read_exactly_once(video, monkeypatch):
+    reads = []
+    real = rl.read_video
+    monkeypatch.setattr(rl, "read_video", lambda path: reads.append(path) or real(path))
+    publish(youtube_card(video), video, FakeGoogle())
+    assert len(reads) == 1
+
+
+@pytest.mark.parametrize("tags,needle", [
+    ([""], "non-empty"), (["   "], "non-empty"), (["bad<tag"], "no < or >"),
+    (["a\tb" + "c" * 496], "500"),   # 499 + 2 quotes: a tab counts like a space
+])
+def test_more_tag_rules(video, tags, needle):
+    card = youtube_card(video)
+    card["youtube"]["tags"] = tags
+    result, reasons, _ = payload(card, video)
+    assert result is None and any(needle in r for r in reasons), reasons
+
+
+def test_a_youtube_approval_cannot_name_an_instagram_account(video):
+    card = youtube_card(video)
+    card["approval"]["ig_user_id"] = "17841400000000000"
+    result, reasons, _ = payload(card, video)
+    assert result is None and any("ig_user_id" in r for r in reasons)
+
+
+@pytest.mark.parametrize("mode", [0o700, 0o4600, 0o1600, 0o640])
+def test_credentials_mode_must_be_0600_or_stricter(tmp_path, mode):
+    path = _creds(tmp_path)
+    path.chmod(mode)
+    with pytest.raises(ValueError, match="0600"):
+        rl.youtube_access_token(credentials=path, environ={})
+
+
+@pytest.mark.parametrize("location,ok", [
+    ("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=abc", True),
+    ("https://www.googleapis.com/upload/youtube/v3/videos", False),
+    ("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=abc#frag", False),
+])
+def test_the_session_uri_needs_an_upload_id_and_no_fragment(location, ok):
+    assert rl._valid_google_session(location) is ok
+
+
+def test_a_youtube_card_without_its_youtube_object_is_blocked_not_crashed(video, tmp_path, capsys):
+    card = youtube_card(video)
+    del card["youtube"]
+    result, reasons, _ = payload(card, video)
+    assert result is None and any("youtube must be an object" in r for r in reasons)
+    card_path = tmp_path / "card.json"
+    card_path.write_text(json.dumps(card), encoding="utf-8")
+    assert rl.main(["payload", str(card_path), "--video", str(video)]) == 2
+
+
+def test_instagram_approvals_ignore_youtube_only_keys(video):
+    card = instagram_card(video)
+    card["approval"].update({"privacy_status": "", "made_for_kids": "no"})
+    result, reasons, _ = rl.check_payload(card, video, card_dir=video.parent, probe=_youtube_probe, now=NOW)
+    assert result is not None, reasons

@@ -357,10 +357,12 @@ def _type_errors(card) -> list[str]:
             for k in ("by", "at", "video_sha256"):
                 if not isinstance(approval.get(k), str) or not approval.get(k).strip():
                     errs.append(f"approval.{k} must be a non-empty string")
-            for k in ("platform", "channel_id", "ig_user_id", "privacy_status"):
+            youtube_keys = ("privacy_status",) if card.get("platform") == "youtube" else ()
+            for k in ("platform", "channel_id", "ig_user_id", *youtube_keys):
                 if approval.get(k) is not None and (not isinstance(approval[k], str) or not approval[k].strip()):
                     errs.append(f"approval.{k} must be a non-empty string when present")
-            if approval.get("made_for_kids") is not None and not isinstance(approval["made_for_kids"], bool):
+            if (card.get("platform") == "youtube" and approval.get("made_for_kids") is not None
+                    and not isinstance(approval["made_for_kids"], bool)):
                 errs.append("approval.made_for_kids must be true or false when present")
     synthetic = card.get("synthetic", {})
     if not isinstance(synthetic, dict) or not all(isinstance(v, bool) for v in synthetic.values()):
@@ -465,6 +467,8 @@ def _approval_errors(approval: dict | None, digest: str, *, platform: str,
             reasons.append("approval.channel_id must bind the YouTube destination")
         elif destination is not None and approved_channel != destination:
             reasons.append("approval.channel_id does not match --channel-id")
+        if approval.get("ig_user_id") is not None:
+            reasons.append("approval.ig_user_id names an Instagram account; it cannot approve a YouTube upload")
     else:
         if approval.get("platform") is not None and approval["platform"] != "instagram":
             reasons.append("approval.platform must be 'instagram' when present for an Instagram card")
@@ -494,7 +498,7 @@ def _probe_instagram(data: bytes, probe, reasons: list[str], notes: list[str]) -
 def youtube_tags_length(tags: list[str]) -> int:
     """snippet.tags length as YouTube counts it: commas between tags count, and a
     tag containing a space counts as if it were wrapped in quotation marks."""
-    return sum(len(t) + (2 if " " in t else 0) for t in tags) + max(0, len(tags) - 1)
+    return sum(len(t) + (2 if any(c.isspace() for c in t) else 0) for t in tags) + max(0, len(tags) - 1)
 
 
 def _youtube_insert_body(card: dict, data: bytes, probe, reasons: list[str], notes: list[str],
@@ -507,6 +511,8 @@ def _youtube_insert_body(card: dict, data: bytes, probe, reasons: list[str], not
     if description is not None and (len(description.encode("utf-8")) > 5000 or "<" in description or ">" in description):
         reasons.append("youtube.description must be at most 5000 UTF-8 bytes and contain no < or >")
     tags = youtube.get("tags")
+    if tags is not None and any(not t.strip() or "<" in t or ">" in t for t in tags):
+        reasons.append("youtube.tags must be non-empty and contain no < or >")
     if tags is not None and youtube_tags_length(tags) > 500:
         reasons.append("youtube.tags total length must be at most 500 characters "
                        "(commas between tags count; a tag with a space counts as quoted)")
@@ -909,12 +915,13 @@ def _valid_google_session(location: str | None) -> bool:
     if not isinstance(location, str):
         return False
     try:
-        from urllib.parse import urlsplit
+        from urllib.parse import parse_qs, urlsplit
         parsed = urlsplit(location)
         return (parsed.scheme == "https" and parsed.hostname == "www.googleapis.com"
                 and parsed.username is None and parsed.password is None
                 and parsed.port in (None, 443)
-                and parsed.path == "/upload/youtube/v3/videos")
+                and parsed.path == "/upload/youtube/v3/videos"
+                and not parsed.fragment and "upload_id" in parse_qs(parsed.query))
     except ValueError:
         return False
 
@@ -925,12 +932,16 @@ def _credentials_file(path: Path) -> dict:
     try:
         fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_NONBLOCK", 0))
     except OSError:
-        raise ValueError("YouTube credentials file cannot be opened (a symlink is refused)") from None
-    st = os.fstat(fd)
+        raise ValueError("YouTube credentials file cannot be opened (missing, unreadable, or a symlink)") from None
+    try:
+        st = os.fstat(fd)
+    except OSError:
+        os.close(fd)
+        raise ValueError("YouTube credentials file cannot be read") from None
     if not stat.S_ISREG(st.st_mode) or st.st_uid != os.getuid():
         os.close(fd)
         raise ValueError("YouTube credentials file must be a regular file owned by the current user")
-    if st.st_mode & 0o077:
+    if stat.S_IMODE(st.st_mode) & ~0o600:  # no group/other bits, no execute, no setuid/setgid/sticky
         os.close(fd)
         raise ValueError("YouTube credentials file permissions must be 0600 or stricter")
     with os.fdopen(fd, "rb") as f:
