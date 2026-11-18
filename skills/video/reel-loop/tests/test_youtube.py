@@ -414,7 +414,7 @@ def test_the_put_goes_to_the_session_uri_google_returned(video):
     "https://www.googleapis.com/upload/youtube/v3/other?upload_id=x",
     "https://user@www.googleapis.com/upload/youtube/v3/videos?upload_id=x",
     "https://www.googleapis.com:8443/upload/youtube/v3/videos?upload_id=x",
-    "https://www.googleapis.com.attacker.example/upload/youtube/v3/videos",
+    "https://www.googleapis.com.attacker.example/upload/youtube/v3/videos?upload_id=abc",
 ])
 def test_every_part_of_the_session_uri_is_checked(video, location):
     http = FakeGoogle(location=location)
@@ -513,7 +513,7 @@ def test_secrets_echoed_by_the_token_endpoint_never_reach_the_cli(video, tmp_pat
     out = capsys.readouterr()
     text = out.out + out.err
     assert "RefreshSecretValue" not in text and "ClientSecretValue" not in text
-    assert "<redacted>" in text
+    assert "HTTP 400 (other)" in text  # unknown reason codes are never echoed
 
 
 @pytest.mark.parametrize("command", ["publish", "stats"])
@@ -559,6 +559,9 @@ def test_transport_failures_carry_no_upstream_text(monkeypatch):
     ({"width": 1080, "height": 1920, "tags": {"rotate": "90"}}, (1920, 1080)),
     ({"width": 1080, "height": 1920, "side_data_list": [{"rotation": 180}]}, (1080, 1920)),
     ({"width": 1080, "height": 1920}, (1080, 1920)),
+    ({"width": 720, "height": 720, "sample_aspect_ratio": "2:1"}, (1440, 720)),
+    ({"width": 720, "height": 720, "sample_aspect_ratio": "1:1"}, (720, 720)),
+    ({"width": 720, "height": 720, "sample_aspect_ratio": "0:1"}, (720, 720)),
 ])
 def test_probe_reports_displayed_dimensions(monkeypatch, tmp_path, stream, expect):
     import subprocess
@@ -684,6 +687,7 @@ def test_credentials_mode_must_be_0600_or_stricter(tmp_path, mode):
     ("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=abc#frag", False),
     ("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=%20", False),
     ("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=a&upload_id=b", False),
+    ("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=a&upload_id=", False),
 ])
 def test_the_session_uri_needs_an_upload_id_and_no_fragment(location, ok):
     assert rl._valid_google_session(location) is ok
@@ -704,3 +708,44 @@ def test_instagram_approvals_ignore_youtube_only_keys(video):
     card["approval"].update({"privacy_status": "", "made_for_kids": "no"})
     result, reasons, _ = rl.check_payload(card, video, card_dir=video.parent, probe=_youtube_probe, now=NOW)
     assert result is not None, reasons
+
+
+# --- CodeRabbit review -------------------------------------------------------------
+@pytest.mark.parametrize("field", ["title", "description", "tags"])
+def test_unpaired_surrogates_are_refused_before_any_request(video, field):
+    card = youtube_card(video)
+    bad = "ok \ud800"
+    card["youtube"][field] = [bad] if field == "tags" else bad
+    http = FakeGoogle()
+    receipt, reasons, _ = publish(card, video, http)
+    assert receipt is None and any(f"youtube.{field} is not valid UTF-8" in r for r in reasons)
+    assert http.calls == []
+
+
+def test_only_known_google_reasons_are_named():
+    raw = json.dumps({"error": {"errors": [{"reason": "quotaExceeded"}, {"reason": "SomeServerText"}]}}).encode()
+    assert rl._google_error_reasons(raw) == "quotaExceeded, other"
+
+
+def test_token_and_stats_failures_are_redacted_at_the_cli(video, tmp_path, monkeypatch, capsys):
+    secret = "AccessTokenValue"
+
+    def refused(**kw):
+        kw["redactions"].append(secret)
+        raise rl.PublishError(f"refresh token: echoed {secret}")
+
+    card_path = tmp_path / "card.json"
+    card_path.write_text(json.dumps(youtube_card(video)), encoding="utf-8")
+    monkeypatch.setattr(rl, "youtube_access_token", refused)
+    assert rl.main(["publish", str(card_path), "--video", str(video), "--channel-id", CHANNEL]) == 2
+    assert rl.main(["stats", "--platform", "youtube", "--video-id", VIDEO_ID]) == 3
+
+    def granted(**kw):
+        kw["redactions"].append(secret)
+        return secret
+
+    monkeypatch.setattr(rl, "youtube_access_token", granted)
+    monkeypatch.setattr(rl, "youtube_stats", lambda *a, **k: (_ for _ in ()).throw(rl.PublishError(f"stats: {secret}")))
+    assert rl.main(["stats", "--platform", "youtube", "--video-id", VIDEO_ID]) == 3
+    err = capsys.readouterr().err
+    assert secret not in err and err.count("<redacted>") == 3

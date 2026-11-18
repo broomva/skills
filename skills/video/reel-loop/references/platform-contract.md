@@ -92,6 +92,10 @@ Read from Google's pages on 2026-11-18; re-read them before relying on a number:
 3. One `PUT` of the gated bytes to that session. `201 Created` returns the video
    resource. A `308 Resume Incomplete` or any failure is reported, never retried: a
    blind retry can create a second video.
+   **Recovery:** if `publish` exits 3 after the upload step (a timeout, or a reply
+   with no readable video id), the video may already exist. Check the approved
+   channel in YouTube Studio before running `publish` again; a rerun opens a new
+   session and can create a duplicate.
 
 **Quota.** `videos.insert` has its own bucket: "100 calls per day", "1 unit" each.
 The quota page says `search.list` and `videos.insert` "have their own quota buckets",

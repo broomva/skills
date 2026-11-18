@@ -305,7 +305,8 @@ def probe_video(path: Path) -> dict | None:
         return None
     proc = subprocess.run(
         ["ffprobe", "-v", "error", "-select_streams", "v:0", "-show_entries",
-         "stream=codec_name,avg_frame_rate,width,height:stream_tags=rotate:stream_side_data=rotation"
+         "stream=codec_name,avg_frame_rate,width,height,sample_aspect_ratio:stream_tags=rotate"
+         ":stream_side_data=rotation"
          ":format=duration,format_name", "-of", "json", str(path)],
         capture_output=True, text=True, check=False)
     if proc.returncode != 0:
@@ -315,6 +316,8 @@ def probe_video(path: Path) -> dict | None:
     num, _, den = (stream.get("avg_frame_rate") or "0/1").partition("/")
     fps = float(num) / float(den or 1) if float(den or 1) else 0.0
     width, height = stream.get("width"), stream.get("height")
+    if isinstance(width, int) and isinstance(height, int):
+        width = _displayed_width(width, stream.get("sample_aspect_ratio"))
     if _display_rotation(stream) % 180 == 90:  # displayed sideways: the viewer sees height x width
         width, height = height, width
     return {"codec": stream.get("codec_name"), "fps": round(fps, 3),
@@ -322,6 +325,16 @@ def probe_video(path: Path) -> dict | None:
             "format": (data.get("format") or {}).get("format_name", ""),
             "width": width if isinstance(width, int) else 0,
             "height": height if isinstance(height, int) else 0}
+
+
+def _displayed_width(width: int, sar) -> int:
+    """Stored width scaled by the sample aspect ratio ("N:M"), so non-square pixels
+    are judged by how the frame displays. Unknown or 0:1 means square pixels."""
+    try:
+        num, den = (int(x) for x in str(sar).split(":"))
+    except (TypeError, ValueError):
+        return width
+    return round(width * num / den) if num > 0 and den > 0 else width
 
 
 def _display_rotation(stream: dict) -> int:
@@ -508,9 +521,17 @@ def _youtube_insert_body(card: dict, data: bytes, probe, reasons: list[str], not
     if not isinstance(title, str) or not title.strip() or len(title) > 100 or "<" in title or ">" in title:
         reasons.append("youtube.title must be 1-100 characters and contain no < or >")
     description = youtube.get("description")
-    if description is not None and (len(description.encode("utf-8")) > 5000 or "<" in description or ">" in description):
+    if description is not None and (len(description.encode("utf-8", "surrogatepass")) > 5000 or "<" in description or ">" in description):
         reasons.append("youtube.description must be at most 5000 UTF-8 bytes and contain no < or >")
     tags = youtube.get("tags")
+    for field, values in (("title", [title]), ("description", [description]), ("tags", tags or [])):
+        for v in values:
+            if isinstance(v, str):
+                try:
+                    v.encode("utf-8")
+                except UnicodeEncodeError:
+                    reasons.append(f"youtube.{field} is not valid UTF-8 (an unpaired surrogate)")
+                    break
     if tags is not None and any(not t.strip() or "<" in t or ">" in t for t in tags):
         reasons.append("youtube.tags must be non-empty and contain no < or >")
     if tags is not None and youtube_tags_length(tags) > 500:
@@ -825,8 +846,19 @@ def publish(card, video: Path, *, ig_user_id: str, token: str, card_dir: Path | 
 
 
 # --- YouTube Shorts ------------------------------------------------------------
+# Google error reasons worth naming in an error. Anything else is reported as
+# "other": a reason field is server text, and only a fixed list is safe to echo.
+GOOGLE_REASONS = frozenset({
+    "badRequest", "invalid", "required", "invalidVideoMetadata", "invalidTitle", "invalidDescription",
+    "invalidTags", "invalidCategoryId", "invalidFilename", "mediaBodyRequired", "uploadLimitExceeded",
+    "quotaExceeded", "rateLimitExceeded", "userRateLimitExceeded", "dailyLimitExceeded", "authError",
+    "unauthorized", "forbidden", "insufficientPermissions", "youtubeSignupRequired", "notFound",
+    "videoNotFound", "channelNotFound", "backendError", "internalError", "conflict",
+})
+
+
 def _google_error_reasons(raw: bytes) -> str:
-    """Keep only documented Google reason codes, never server-provided text."""
+    """Name only known Google reason codes, never server-provided text."""
     try:
         error = json.loads(raw).get("error") or {}
     except (ValueError, AttributeError):
@@ -839,8 +871,9 @@ def _google_error_reasons(raw: bytes) -> str:
             candidates.extend(item.get("reason") for item in details if isinstance(item, dict))
     reasons = []
     for reason in candidates:
-        if isinstance(reason, str) and re.fullmatch(r"[A-Za-z]{1,64}", reason) and reason not in reasons:
-            reasons.append(reason)
+        name = reason if reason in GOOGLE_REASONS else "other"
+        if isinstance(reason, str) and name not in reasons:
+            reasons.append(name)
     return ", ".join(reasons)
 
 
@@ -926,7 +959,7 @@ def _valid_google_session(location: str | None) -> bool:
                 and parsed.username is None and parsed.password is None
                 and parsed.port in (None, 443)
                 and parsed.path == "/upload/youtube/v3/videos"
-                and not parsed.fragment and _one_upload_id(parse_qs(parsed.query)))
+                and not parsed.fragment and _one_upload_id(parse_qs(parsed.query, keep_blank_values=True)))
     except ValueError:
         return False
 

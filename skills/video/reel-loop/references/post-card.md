@@ -40,7 +40,10 @@ Only if every gate passes can `publish` send those exact bytes.
 Set `platform` to `"youtube"` and add this object. `title` is required (1–100
 characters, without `<` or `>`). `description`, if present, is at most 5,000
 UTF-8 bytes and also has no angle brackets. `tags` is an optional string list with
-at most 500 characters in total; `category_id`, if present, is digits only.
+at most 500 characters in total, counted as YouTube counts them: the commas between
+tags count, and a tag containing whitespace counts two more characters (its quotes).
+Blank tags and tags with `<` or `>` are refused. Title, description and tags must be
+valid UTF-8; `category_id`, if present, is digits only.
 `privacy_status` is `private`, `unlisted` or `public` and defaults to `private`.
 `made_for_kids` is required and must be a JSON boolean. `contains_synthetic_media`
 is optional, but is forced true when `synthetic` contains any true value or
