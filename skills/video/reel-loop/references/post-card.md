@@ -29,9 +29,9 @@ Only if every gate passes can `publish` send those exact bytes.
 | `approval` | `null`, or an object of non-empty strings `by`, `at` and `video_sha256`. `video_sha256` must equal the sha256 of the file passed with `--video`. A YouTube approval also requires `platform: "youtube"`, `channel_id` equal to publish's `--channel-id`, and the `privacy_status` and `made_for_kids` it approves, equal to the card's (so changing visibility or audience needs a new approval). An Instagram approval may name `platform: "instagram"` and `ig_user_id` equal to `--ig-user-id`, and never a `channel_id`; those two fields stay optional so existing approvals remain valid. This binds an approval to the bytes, platform and destination. Written only after a person says yes to that file; the gate cannot verify who wrote it. |
 | `synthetic` | An object of true/false values. Any true value, or `is_ai_generated: true`, yields `is_ai_generated: true`. Media the card does not declare cannot be detected. |
 | `voice_consent` | Required when `synthetic.voice_clone` is true. It needs a non-empty `speaker`, an ISO `date` not in the future, and a `ref` to a file that exists, resolved relative to the card's folder. |
-| `caption` | ≤ 2200 characters, ≤ 30 hashtags, ≤ 20 @ tags. |
-| `trial` | `null` for a normal post, or `{"graduation_strategy": "SS_PERFORMANCE" \| "MANUAL"}`. |
-| the video | Read once; must exist, be a regular non-empty file and be ≤ 300 MB, always checked. H264 or HEVC, 23–60 fps and 3 s to 15 min are checked with `ffprobe`; without it they are reported as UNCHECKED, never as passed. Container layout, audio codec, bitrate and width are not checked. |
+| `caption` | Instagram only: ≤ 2200 characters, ≤ 30 hashtags, ≤ 20 @ tags. |
+| `trial` | Instagram only. `null` for a normal post, or `{"graduation_strategy": "SS_PERFORMANCE" \| "MANUAL"}`. |
+| the video | Read once; must exist, be a regular non-empty file and be ≤ 300 MB, always checked, on every platform. With `ffprobe`, Instagram checks H264 or HEVC, 23–60 fps and 3 s to 15 min; YouTube checks a Short's displayed size (vertical or square) and 1–180 s. Without `ffprobe` these are reported as UNCHECKED, never as passed. Container layout, audio codec, bitrate and width are not checked. |
 
 `source` is the provenance record for the run note. It is never published.
 

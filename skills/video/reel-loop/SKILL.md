@@ -187,10 +187,22 @@ chat message are all fine. It must show:
 - what is synthetic;
 - the cost.
 
-On "yes", record the decision in the card:
+For a YouTube card, also show the channel, the visibility (`privacy_status`) and the
+audience (`made_for_kids`): the approval names all three.
+
+On "yes", record the decision in the card. Instagram (`platform` and `ig_user_id`
+are optional):
 
 ```json
 "approval": {"by": "<person>", "at": "<ISO time>", "video_sha256": "<sha256 of final-n.mp4>"}
+```
+
+YouTube (every field required; changing visibility or audience needs a new yes):
+
+```json
+"approval": {"by": "<person>", "at": "<ISO time>", "video_sha256": "<sha256 of final-n.mp4>",
+             "platform": "youtube", "channel_id": "<UC… channel id>",
+             "privacy_status": "private", "made_for_kids": false}
 ```
 
 The agent writes this block only after a yes, and only with the hash of the file the
