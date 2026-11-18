@@ -563,7 +563,6 @@ it can stop a merge but never enable one.
 - governance `paths` or `required_checks` that drop an L3 path or
   `stability-check`;
 - `required_strata` other than A, B and C;
-- an L3 budget looser than one commit per day;
 - `default_action: auto` alongside `gates`, because a p9 that predates gates
   reads only `default_action` and would merge everything ungated;
 - `action: auto` rules alongside `gates`, where rules may only block. A path rule
