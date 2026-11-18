@@ -49,6 +49,16 @@ AttentionOS (stages 1–4 and 8–10, human-filmed video). Neither has a cloned-
 render or an approval bound to bytes. Survey and per-stage alternatives:
 [references/stage-map.md](references/stage-map.md).
 
+## Platform modes
+
+One loop shares research, script, render, QC and byte-bound approval across
+platforms. A post card without `platform` is Instagram; `"platform": "youtube"`
+selects the YouTube Shorts adapter. Each approval binds the target platform and
+destination as well as the rendered bytes. TikTok has no automatic adapter: post
+there by a human click or the Higgsfield widget. See
+[references/platform-contract.md](references/platform-contract.md) and
+[references/post-card.md](references/post-card.md).
+
 ## The account folder
 
 Everything for one account lives in one folder. Inside the agentic-media-studio
@@ -177,10 +187,22 @@ chat message are all fine. It must show:
 - what is synthetic;
 - the cost.
 
-On "yes", record the decision in the card:
+For a YouTube card, also show the channel, the visibility (`privacy_status`) and the
+audience (`made_for_kids`): the approval names all three.
+
+On "yes", record the decision in the card. Instagram (`platform` and `ig_user_id`
+are optional):
 
 ```json
 "approval": {"by": "<person>", "at": "<ISO time>", "video_sha256": "<sha256 of final-n.mp4>"}
+```
+
+YouTube (every field required; changing visibility or audience needs a new yes):
+
+```json
+"approval": {"by": "<person>", "at": "<ISO time>", "video_sha256": "<sha256 of final-n.mp4>",
+             "platform": "youtube", "channel_id": "<UC… channel id>",
+             "privacy_status": "private", "made_for_kids": false}
 ```
 
 The agent writes this block only after a yes, and only with the hash of the file the
@@ -203,10 +225,16 @@ python3 scripts/reel_loop.py payload runs/<date>/card-<n>.json --video runs/<dat
 Then publish. This is the only path by which bytes reach Instagram:
 
 ```bash
+# Instagram (the card's default platform)
 IG_ACCESS_TOKEN=… python3 scripts/reel_loop.py publish runs/<date>/card-<n>.json \
     --video runs/<date>/final-<n>.mp4 --ig-user-id <IG_USER_ID>   # add --no-go-live to stop before media_publish
+
+# YouTube Shorts (the approval binds this exact channel)
+YT_ACCESS_TOKEN=… python3 scripts/reel_loop.py publish runs/<date>/card-<n>.json \
+    --video runs/<date>/final-<n>.mp4 --channel-id <CHANNEL_ID>   # --no-go-live validates metadata, sends no bytes
 ```
 
+This is the only automatic path by which approved bytes reach either adapter.
 Both commands exit 2 and list every reason when:
 
 - the card is malformed (wrong types, unreadable JSON);
@@ -215,18 +243,19 @@ Both commands exit 2 and list every reason when:
   approval);
 - the card declares a cloned voice and the consent record is missing, undated,
   future-dated or points to a file that does not exist;
-- the caption is over 2,200 characters, 30 hashtags or 20 @ tags;
-- with `ffprobe`, the codec, fps or duration breaks the Reels spec (without it,
-  those three are reported as UNCHECKED);
+- an Instagram caption is over 2,200 characters, 30 hashtags or 20 @ tags;
+- with `ffprobe`, the selected platform's video checks fail (Instagram codec/fps/
+  duration; YouTube Short orientation and 1–180 s duration); without it they are
+  reported as UNCHECKED;
 - the trial strategy is invalid;
-- for `publish` only, `IG_ACCESS_TOKEN` is unset.
+- for `publish` only, the selected platform's token is unavailable.
 
 `is_ai_generated` is true whenever the card declares synthetic media or sets it
 true. The gate cannot see synthetic media the card does not declare.
 
 `publish` reads the video **once**, gates those bytes, and sends **those same
 bytes**. Swapping or editing the file after the gate cannot change what is
-published. In order, it:
+published. For Instagram, in order, it:
 
 1. creates a resumable REELS container (`POST /<IG_ID>/media`, `upload_type=resumable`);
 2. sends the bytes to `https://rupload.facebook.com/ig-api-upload/<version>/<container id>`
@@ -237,6 +266,11 @@ published. In order, it:
    (at least 1 s). A poll already in flight can therefore return `FINISHED` up
    to that cap after the deadline, and it is accepted;
 4. calls `POST /<IG_ID>/media_publish`.
+
+For YouTube, it confirms `--channel-id` through `channels.list`, creates the
+resumable `videos.insert` session using the gated metadata, validates the returned
+Google upload host, then does one PUT of the gated bytes. It never retries that
+PUT. `--no-go-live` stops after the session is accepted, before any byte PUT.
 
 A Graph API failure after the gate exits 3 and names the step. Failures include:
 

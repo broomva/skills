@@ -518,7 +518,7 @@ def test_real_transport_puts_no_token_in_any_url(video, monkeypatch):
         seen.append((req.full_url, dict(req.header_items()), req.data))
         return Resp(next(replies))
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(rl, "_open", fake_urlopen)
     receipt, _, _ = rl.publish(_card(video), video, ig_user_id="1", token=SENTINEL, probe=_ok_probe,
                                card_dir=video.parent, now=NOW, sleep=lambda s: None)
     assert receipt["media_id"] == "180004" and len(seen) == 4
@@ -550,7 +550,7 @@ def test_errors_are_redacted(video, monkeypatch, failure):
                 return False
         return Resp(f'{{"echo": "{SENTINEL}"}}'.encode())  # no id: before r3 the reply was dumped into the error
 
-    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    monkeypatch.setattr(rl, "_open", fake_urlopen)
     with pytest.raises(rl.PublishError) as info:
         rl.publish(_card(video), video, ig_user_id="1", token=SENTINEL, probe=_ok_probe,
                    card_dir=video.parent, now=NOW, sleep=lambda s: None)
@@ -570,7 +570,7 @@ def test_non_object_replies_raise_publish_error(raw, monkeypatch):
         def __exit__(self, *a):
             return False
 
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: Resp(raw))
+    monkeypatch.setattr(rl, "_open", lambda req, timeout=0: Resp(raw))
     with pytest.raises(rl.PublishError):
         rl.graph_http("POST", "https://graph.facebook.com/v27.0/1/media", params={"a": "b"})
 
@@ -630,7 +630,7 @@ def test_http_error_text_never_reaches_the_message(monkeypatch, raw_body):
 
     def fake(req, timeout=0):
         raise urllib.error.HTTPError(req.full_url, 400, SENTINEL, {}, io.BytesIO(raw_body()))
-    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    monkeypatch.setattr(rl, "_open", fake)
     with pytest.raises(rl.PublishError) as info:
         rl.graph_http("GET", "https://graph.facebook.com/v27.0/1", params={"fields": "status_code"})
     _assert_no_sentinel(info.value)
@@ -642,7 +642,7 @@ def test_meta_numeric_codes_are_kept(monkeypatch):
     import urllib.error
     import urllib.request
     body = b'{"error": {"message": "Invalid OAuth access token", "code": 190, "error_subcode": 463}}'
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: (_ for _ in ()).throw(
+    monkeypatch.setattr(rl, "_open", lambda req, timeout=0: (_ for _ in ()).throw(
         urllib.error.HTTPError(req.full_url, 400, "bad", {}, io.BytesIO(body))))
     with pytest.raises(rl.PublishError, match="code 190, subcode 463"):
         rl.graph_http("GET", "https://graph.facebook.com/v27.0/1")
@@ -651,7 +651,7 @@ def test_meta_numeric_codes_are_kept(monkeypatch):
 def test_non_json_body_at_the_old_200_cut_does_not_leak(monkeypatch):
     import urllib.request
     raw = ("y" * (200 - len(SENTINEL) + 1) + SENTINEL).encode()
-    monkeypatch.setattr(urllib.request, "urlopen", lambda req, timeout=0: _Resp(raw))
+    monkeypatch.setattr(rl, "_open", lambda req, timeout=0: _Resp(raw))
     with pytest.raises(rl.PublishError) as info:
         rl.graph_http("POST", "https://graph.facebook.com/v27.0/1/media", params={"a": "b"})
     _assert_no_sentinel(info.value)
@@ -663,7 +663,7 @@ def test_url_error_leaves_no_raw_exception_in_the_chain(monkeypatch):
 
     def fake(req, timeout=0):
         raise urllib.error.URLError(SENTINEL)
-    monkeypatch.setattr(urllib.request, "urlopen", fake)
+    monkeypatch.setattr(rl, "_open", fake)
     with pytest.raises(rl.PublishError) as info:
         rl.graph_http("GET", "https://graph.facebook.com/v27.0/1")
     assert info.value.__context__ is None and info.value.__cause__ is None
