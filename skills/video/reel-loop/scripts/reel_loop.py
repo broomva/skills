@@ -911,6 +911,11 @@ def _header(headers: dict, name: str) -> str | None:
     return None
 
 
+def _one_upload_id(query: dict) -> bool:
+    ids = query.get("upload_id") or []
+    return len(ids) == 1 and bool(ids[0].strip())
+
+
 def _valid_google_session(location: str | None) -> bool:
     if not isinstance(location, str):
         return False
@@ -921,7 +926,7 @@ def _valid_google_session(location: str | None) -> bool:
                 and parsed.username is None and parsed.password is None
                 and parsed.port in (None, 443)
                 and parsed.path == "/upload/youtube/v3/videos"
-                and not parsed.fragment and "upload_id" in parse_qs(parsed.query))
+                and not parsed.fragment and _one_upload_id(parse_qs(parsed.query)))
     except ValueError:
         return False
 

@@ -180,9 +180,12 @@ MUTATIONS = [
     ('tags: empty and angle brackets refused', 'if tags is not None and any(not t.strip() or "<" in t or ">" in t for t in tags):', 'if False:'),
     ('youtube approval cannot name an instagram account', '        if approval.get("ig_user_id") is not None:\n            reasons.append("approval.ig_user_id names', '        if False:\n            reasons.append("approval.ig_user_id names'),
     ('credentials refuse execute and setuid bits', 'if stat.S_IMODE(st.st_mode) & ~0o600:', 'if st.st_mode & 0o077:'),
-    ('session uri needs upload_id, no fragment', 'and not parsed.fragment and "upload_id" in parse_qs(parsed.query))', ')'),
+    ('session uri needs upload_id, no fragment', 'and not parsed.fragment and _one_upload_id(parse_qs(parsed.query)))', ')'),
     ('upload content length declared', '"X-Upload-Content-Length": str(len(data)), "X-Upload-Content-Type": "video/mp4"}', '"X-Upload-Content-Type": "video/mp4"}'),
     ('metadata is the gated insert body', 'metadata = json.dumps(insert_body, ensure_ascii=False', 'metadata = json.dumps({}, ensure_ascii=False'),
+    ('session uri needs exactly one non-empty upload_id', 'return len(ids) == 1 and bool(ids[0].strip())', 'return bool(ids)'),
+    ('upload declares its content type', '"Content-Length": str(len(data)), "Content-Type": "video/mp4"}', '"Content-Length": str(len(data))}'),
+    ('stats asks for statistics and status of one id', 'params={"part": "statistics,status", "id": video_id},', 'params={"id": video_id},'),
     ('funnel CLI errors exclude upstream text', 'print(f"FUNNEL BLOCKED: {type(exc).__name__}", file=sys.stderr)', 'print(f"FUNNEL BLOCKED: {exc}", file=sys.stderr)'),
 ]
 

@@ -16,8 +16,8 @@ platform/card/skill documentation; (5) [x] verification. `make check` is not
 available in this checkout (`No rule to make target 'check'`), so no `make test`
 target was run; the required skill-local suite passed 177 tests and the mutation
 harness killed 73/73 mutants.
-Verification: from `skills/video/reel-loop`, `python3 -m pytest -q` (229 passed)
-and `python3 tests/mutation_check.py` (108/108 killed). Live 2026-11-18 on @broomvatech:
+Verification: from `skills/video/reel-loop`, `python3 -m pytest -q` (231 passed)
+and `python3 tests/mutation_check.py` (111/111 killed). Live 2026-11-18 on @broomvatech:
 `--no-go-live` session accepted; a wrong channel and a 0644 credentials file refused; the
 owner-approved private test upload succeeded (video 8TzxwR7SIpU, private, uploaded) and
 `stats` read it back. P20 round 1 (fresh Claude) NEEDS-FIX 6/10 on untested properties and

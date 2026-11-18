@@ -296,6 +296,8 @@ def test_youtube_stats_output_shape_uses_the_read_only_endpoint(capsys, monkeypa
     result = rl.youtube_stats(VIDEO_ID, token="YT_TOKEN", http=http)
     assert set(result) == {"video_id", "privacy_status", "upload_status", "views", "likes", "comments"}
     assert http.calls[0]["method"] == "GET" and http.calls[0]["url"].endswith("/videos")
+    assert http.calls[0]["params"] == {"part": "statistics,status", "id": VIDEO_ID}
+    assert http.calls[0]["headers"] == {"Authorization": "Bearer YT_TOKEN"}
     monkeypatch.setattr(rl, "youtube_access_token", lambda **_kw: "YT_TOKEN")
     monkeypatch.setattr(rl, "youtube_stats", lambda *args, **kw: result)
     assert rl.main(["stats", "--platform", "youtube", "--video-id", VIDEO_ID]) == 0
@@ -639,7 +641,7 @@ def test_the_full_request_shape_is_sent(video):
     assert body["snippet"]["title"] == "A useful short"
     assert body["status"] == {"privacyStatus": "private", "selfDeclaredMadeForKids": False,
                               "containsSyntheticMedia": False}
-    assert put["headers"]["Authorization"] == "Bearer YT_TOKEN" and put["headers"]["Content-Length"] == size
+    assert put["headers"] == {"Authorization": "Bearer YT_TOKEN", "Content-Length": size, "Content-Type": "video/mp4"}
 
 
 def test_the_video_is_read_exactly_once(video, monkeypatch):
@@ -680,6 +682,8 @@ def test_credentials_mode_must_be_0600_or_stricter(tmp_path, mode):
     ("https://www.googleapis.com/upload/youtube/v3/videos?uploadType=resumable&upload_id=abc", True),
     ("https://www.googleapis.com/upload/youtube/v3/videos", False),
     ("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=abc#frag", False),
+    ("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=%20", False),
+    ("https://www.googleapis.com/upload/youtube/v3/videos?upload_id=a&upload_id=b", False),
 ])
 def test_the_session_uri_needs_an_upload_id_and_no_fragment(location, ok):
     assert rl._valid_google_session(location) is ok
