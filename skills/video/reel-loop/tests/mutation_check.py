@@ -191,6 +191,7 @@ MUTATIONS = [
     ('sample aspect ratio applied', '        width = _displayed_width(width, stream.get("sample_aspect_ratio"))', '        pass'),
     ('metadata must be valid utf-8', '                    reasons.append(f"youtube.{field} is not valid UTF-8 (an unpaired surrogate)")', '                    pass'),
     ('session host checked', 'return (parsed.scheme == "https" and parsed.hostname == "www.googleapis.com"', 'return (parsed.scheme == "https"'),
+    ('displayed width rounds up', 'return -(-width * num // den) if num > 0 and den > 0 else width', 'return round(width * num / den) if num > 0 and den > 0 else width'),
     ('funnel CLI errors exclude upstream text', 'print(f"FUNNEL BLOCKED: {type(exc).__name__}", file=sys.stderr)', 'print(f"FUNNEL BLOCKED: {exc}", file=sys.stderr)'),
 ]
 

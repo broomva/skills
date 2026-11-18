@@ -329,12 +329,14 @@ def probe_video(path: Path) -> dict | None:
 
 def _displayed_width(width: int, sar) -> int:
     """Stored width scaled by the sample aspect ratio ("N:M"), so non-square pixels
-    are judged by how the frame displays. Unknown or 0:1 means square pixels."""
+    are judged by how the frame displays. Unknown or 0:1 means square pixels.
+    Integer ceiling division, so no float rounding can turn landscape into square."""
     try:
         num, den = (int(x) for x in str(sar).split(":"))
     except (TypeError, ValueError):
         return width
-    return round(width * num / den) if num > 0 and den > 0 else width
+    # Round up: any landscape excess, however small, must fail the Shorts check.
+    return -(-width * num // den) if num > 0 and den > 0 else width
 
 
 def _display_rotation(stream: dict) -> int:

@@ -562,6 +562,8 @@ def test_transport_failures_carry_no_upstream_text(monkeypatch):
     ({"width": 720, "height": 720, "sample_aspect_ratio": "2:1"}, (1440, 720)),
     ({"width": 720, "height": 720, "sample_aspect_ratio": "1:1"}, (720, 720)),
     ({"width": 720, "height": 720, "sample_aspect_ratio": "0:1"}, (720, 720)),
+    ({"width": 720, "height": 720, "sample_aspect_ratio": "2000:1999"}, (721, 720)),
+    ({"width": 720, "height": 720, "sample_aspect_ratio": "1999:2000"}, (720, 720)),
 ])
 def test_probe_reports_displayed_dimensions(monkeypatch, tmp_path, stream, expect):
     import subprocess
@@ -749,3 +751,10 @@ def test_token_and_stats_failures_are_redacted_at_the_cli(video, tmp_path, monke
     assert rl.main(["stats", "--platform", "youtube", "--video-id", VIDEO_ID]) == 3
     err = capsys.readouterr().err
     assert secret not in err and err.count("<redacted>") == 3
+
+
+def test_a_barely_landscape_pixel_ratio_is_not_a_short(video):
+    width = rl._displayed_width(720, "2000:1999")
+    probe = lambda _p: {"codec": "h264", "fps": 30.0, "duration": 20.0, "format": "mp4", "width": width, "height": 720}
+    result, reasons, _ = payload(youtube_card(video), video, probe=probe)
+    assert result is None and any("vertical or square" in r for r in reasons)
