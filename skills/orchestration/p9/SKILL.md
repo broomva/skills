@@ -581,8 +581,9 @@ policy carries keys for its own tooling can still be watched (BRO-2957).
 **What the gates do not do (named, not hidden).**
 
 - **The marker is self-attested.** It records that a review passed and cannot
-  prove the review ran. Replacing a human click with recorded reviews, a real
-  stability check and the L3 budget was a deliberate decision (BRO-2591). The
+  prove the review ran. Replacing a human click with recorded reviews and a real
+  stability check was a deliberate decision (BRO-2591; the L3 budget it also
+  named was removed 2026-11-18). The
   gate still fails on a PR with no pass, a low pass, or a pass on different code.
 - **p9 binds the autonomous flow, not an adversarial caller.** Whoever controls
   the environment can set `BROOMVA_P9_POLICY` (an operator/test pin, honored
@@ -595,10 +596,6 @@ policy carries keys for its own tooling can still be watched (BRO-2957).
   sub-second window. A base that moves inside it merges an untested
   combination, the same as a human click on a ruleset without "require up to
   date".
-- **The L3 counter is check-then-merge.** Two governance merges in the same
-  second could both see zero. It counts landings made through GitHub (merge,
-  squash, rebase); a commit pushed straight to base with an old committer date
-  is not listed (the workspace ruleset rejects direct pushes to main).
 - **Check identity is by name**, as in GitHub's own required-check model. A
   different app posting a check under a real check's name counts as that
   check. Pinning required checks to an app in the ruleset is the repo-side fix.

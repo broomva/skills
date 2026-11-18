@@ -149,6 +149,7 @@ class TestParse:
         # carry its keys must keep loading (they are ignored), so the removal does not break any repo mid-way.
         cfg = _policy(p9, tmp_path, "  gates:\n    governance:\n" + block)
         assert not hasattr(cfg.auto_merge.gates.governance, "l3_max_per_window")
+        assert not hasattr(cfg.auto_merge.gates.governance, "l3_window_seconds")
 
     def test_stricter_values_accepted(self, p9, tmp_path):
         cfg = _policy(p9, tmp_path, "  gates:\n    p20:\n      pass_score: 9\n"
@@ -435,8 +436,6 @@ def _fake_gh(view, *, required=None, all_checks=None, calls, base_policy=None,
             return _Run(json.dumps({"baseRefName": view["baseRefName"]}))
         if cmd[:3] == ["gh", "pr", "view"]:
             return _Run(json.dumps(capped))
-        if cmd[:3] == ["gh", "api", "--paginate"] and any("/commits" in c for c in cmd):
-            return _Run("")  # no commits landed on base inside the L3 window
         if cmd[:3] == ["gh", "api", "--paginate"]:
             return _Run("".join(
                 f"{p}\t{renamed.get(p, '')}\tmodified\t{0 if p in binary else 5}\n"
@@ -807,14 +806,6 @@ class TestHeadConsistency:
 class TestGathering:
     """The half of the gate that talks to GitHub, run against the fake."""
 
-
-    def _files(self, *paths):
-        return _Run(json.dumps({"status": "ahead", "files": [{"filename": x} for x in paths]}))
-
-
-
-
-
     def test_governance_pr_merges_end_to_end_only_with_every_strict_condition(
             self, p9, monkeypatch):
         _seed_merge_ready(p9, 733)
@@ -1154,9 +1145,7 @@ class TestRoundFourFindings:
 
 
 class TestFixDeltaFindings:
-    """Post-pass verification of 973fa7b: renames count as governance landings,
-    and only blocking path rules fold case."""
-
+    """Post-pass verification of 973fa7b: only blocking path rules fold case."""
 
     def test_a_compare_entry_without_a_filename_is_unknown(self, p9, monkeypatch):
         monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: _Run(json.dumps(
