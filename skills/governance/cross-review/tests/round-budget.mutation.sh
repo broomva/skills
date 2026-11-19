@@ -725,6 +725,19 @@ mutate "show hides the grant" "T119" \
     '        $1=="GRANT"   { printf' \
     '        $1=="IMPOSSIBLE"   { printf'
 
+mutate "stored round past the ceiling in force accepted" "T121" \
+    '            if (rounds > ceil + granted) badhistory=' \
+    '            if (rounds > 999) badhistory='
+mutate "stored granted round without a CONTINUE accepted" "T122" \
+    '            else if (rounds > ceil && pending != 1) badhistory=' \
+    '            else if (0) badhistory='
+mutate "granted round recorded without a CONTINUE" "T122" \
+    '    if [ "$LG_N" -ge "$HUMAN_CEILING" ] && ! { last_row_is_verdict' \
+    '    if [ "$LG_N" -ge 999 ] && ! { last_row_is_verdict'
+mutate "oversized --rounds reaches the integer compare" "T123" \
+    '    if [ "${#GRANT_ROUNDS}" -gt 2 ] || [ "$GRANT_ROUNDS" -lt 1 ]' \
+    '    if [ "$GRANT_ROUNDS" -lt 1 ]'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ "$SURVIVED" -gt 0 ]; then

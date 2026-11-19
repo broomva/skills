@@ -718,6 +718,13 @@ analyze() {
             lastverified=(NF>=8)
             lastaxes=(NF>=9 ? $9 : "-")
             rounds++
+            # The ceiling in force at THIS row (BRO-3893 P20 r2). The recorder
+            # refuses to append past it; the stored ledger must hold the same, or
+            # a hand-written passing round past the ceiling read as PASSED and
+            # let reset discard the arc. Granted rounds (past the human ceiling)
+            # must each follow a CONTINUE, as rounds 4-7 are meant to.
+            if (rounds > ceil + granted) badhistory="round " rounds " is past the ceiling in force (" ceil + granted ")"
+            else if (rounds > ceil && pending != 1) badhistory="granted round " rounds " has no CONTINUE before it"
             # An eight-field row stores `N/10`. Its scale -- including a bare
             # integer where `N/10` belongs -- is checked in load_ledger by
             # round_is_admissible; only the numerator is compared here.
@@ -1067,8 +1074,8 @@ rule_ceiling() {
     echo "  No verdict buys another round here."
     if [ "$LG_GRANTED" -gt 0 ]; then
         echo "  The owner's grant for this arc is spent. Escalate through the handback"
-        echo "  contract with the ledger attached, or record STRUCTURAL: an arc that"
-        echo "  outgrows its grant needs a different shape, not more rounds."
+        echo "  contract with the ledger attached: an arc that outgrows its grant needs"
+        echo "  a different shape, not more rounds."
     else
         echo "  Ask the OWNER once for this arc how many more rounds (1-$GRANT_MAX_ROUNDS), then record it:"
         echo "    round-budget.sh grant --run-id=$RUN_ID --rounds=N --evidence='<the owner's answer>'"
@@ -1220,6 +1227,13 @@ record-round)
     with_lock
     load_ledger
     refuse_past_terminal
+    # A granted round is earned like rounds 4-7: by a live CONTINUE. Enforced
+    # here for granted rounds (the claim this PR makes), and on read in analyze.
+    if [ "$LG_N" -ge "$HUMAN_CEILING" ] && ! { last_row_is_verdict && verdict_earns_a_round; }; then
+        echo "round-budget: a granted round needs a CONTINUE verdict first (budget says REVIEW-REQUIRED)." >&2
+        echo "    round-budget.sh record-verdict --run-id=$RUN_ID --verdict=CONTINUE --prediction=..." >&2
+        exit 2
+    fi
     [ -n "$SCORE" ]  || { echo "round-budget: --score=N/$LEDGER_SCALE required" >&2; exit 2; }
     if ! SCORE_ERR=$(score_is_valid "$SCORE"); then
         echo "round-budget: --score $SCORE_ERR." >&2
@@ -1390,12 +1404,14 @@ grant)
     case "$GRANT_ROUNDS" in
         ''|*[!0-9]*) echo "round-budget: --rounds=N required, 1-$GRANT_MAX_ROUNDS." >&2; exit 2 ;;
     esac
-    if [ "$GRANT_ROUNDS" -lt 1 ] || [ "$GRANT_ROUNDS" -gt "$GRANT_MAX_ROUNDS" ]; then
+    # Length first: a 20-digit value overflows the shell's integer compare, which
+    # then errors and lets the write through (P20 r2).
+    if [ "${#GRANT_ROUNDS}" -gt 2 ] || [ "$GRANT_ROUNDS" -lt 1 ] || [ "$GRANT_ROUNDS" -gt "$GRANT_MAX_ROUNDS" ]; then
         echo "round-budget: --rounds must be 1-$GRANT_MAX_ROUNDS, got $GRANT_ROUNDS." >&2; exit 2
     fi
     if [ "$LG_GRANTED" -gt 0 ]; then
         echo "round-budget: this arc already has the owner's grant ($LG_GRANTED rounds); the owner grants once per arc." >&2
-        echo "  Escalate through the handback contract, or record STRUCTURAL." >&2
+        echo "  Escalate through the handback contract with the ledger attached." >&2
         exit 2
     fi
     CLEAN_EVIDENCE="$(sanitize "$GRANT_EVIDENCE")"

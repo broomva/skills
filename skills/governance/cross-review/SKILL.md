@@ -289,12 +289,15 @@ cross-review round grant --run-id=$ID --rounds=4 \
   the stop's: a regression, two `REFUTED`, two no-defect rounds or a
   `STOP`/`STRUCTURAL` verdict still go back to the owner as before.
 - 1-7 rounds, **once per arc** (the owner chose "grant once per PR"). At the
-  granted ceiling the grant is spent: escalate through the handback contract,
-  or record `STRUCTURAL`. A second `grant` is refused.
-- Granted rounds are earned exactly like rounds 4-7: each needs a `CONTINUE`
-  verdict carrying a located prediction, and the four anti-vacuity rules hold.
+  granted ceiling the grant is spent: escalate through the handback contract
+  with the ledger attached. A second `grant` is refused.
+- Granted rounds are earned like rounds 4-7: each needs a `CONTINUE` verdict
+  carrying a located prediction, and the four anti-vacuity rules hold. For
+  granted rounds this is enforced: `record-round` refuses one without a live
+  `CONTINUE`, and a stored one without it STOPs the arc. A stored round past
+  the ceiling in force STOPs the arc too, so a hand-written pass cannot end it.
 - `--evidence` is the owner's answer. It is stored with tabs and newlines
-  turned into spaces (they are the ledger's separators), so it is a faithful
+  turned into spaces (they are the ledger's separators) and trailing spaces dropped, so it is a faithful
   transcription, not a byte-exact one. It must contain at least 20 ASCII
   letters or digits, checked the same way at write and at read: padding of any
   kind (tabs, CR, non-breaking spaces) does not count. `show` prints it beside
