@@ -1882,10 +1882,23 @@ RC_RESET=$(rb reset --run-id=t121 --ledger="$LED")
 NOGRANT=$(newledger t121b); to_round t121b "$NOGRANT" 8
 printf 'ROUND\t9\t7/10\tyes\t-\t-\tA\tA:7/10:PASS\t-\n' >> "$NOGRANT"
 RC_NG=$(rb budget --run-id=t121b --ledger="$NOGRANT")
-if [ "$RC_AT" = "7" ] && [ "$RC_PAST" = "6" ] && [ "$RC_RESET" = "6" ] && [ -f "$LED" ] && [ "$RC_NG" = "6" ]; then
-    ok "T121: HUMAN at the granted ceiling (7); a hand-written passing round past it STOPs (6) and reset is refused (6); the same past round 8 with no grant STOPs (6)"
+# ISOLATED (P20 r3): the past-ceiling round is otherwise valid -- a live CONTINUE
+# before it, settled, recorder-shaped scaled row -- so only the ceiling rule can
+# refuse it. Without this, the missing-CONTINUE rule masked the ceiling rule.
+ISO=$(newledger t121c); to_round t121c "$ISO" 8
+bash "$RB" grant --run-id=t121c --ledger="$ISO" --rounds=1 --evidence="$EVID" >/dev/null
+bash "$RB" record-verdict --run-id=t121c --ledger="$ISO" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
+bash "$RB" record-round --run-id=t121c --ledger="$ISO" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+printf 'VERDICT\tCONTINUE\tdefect class 10 at scripts/loop.sh:10\t\n' >> "$ISO"
+printf 'ROUND\t10\t7/10\tyes\t\tCONFIRMED\tA\tA:7/10:PASS\t-\n' >> "$ISO"
+RC_ISO=$(rb budget --run-id=t121c --ledger="$ISO")
+OUT_ISO=$(rbout budget --run-id=t121c --ledger="$ISO")
+case "$OUT_ISO" in *"past the ceiling in force"*) ISO_WHY=ceiling ;; *) ISO_WHY=other ;; esac
+if [ "$RC_AT" = "7" ] && [ "$RC_PAST" = "6" ] && [ "$RC_RESET" = "6" ] && [ -f "$LED" ] && [ "$RC_NG" = "6" ] \
+   && [ "$RC_ISO" = "6" ] && [ "$ISO_WHY" = "ceiling" ]; then
+    ok "T121: HUMAN at the granted ceiling (7); a passing round past it STOPs (6), reset refused (6); no-grant round 9 STOPs (6); an otherwise-valid round past the ceiling STOPs for the ceiling alone"
 else
-    fail "T121: ceiling in force" "at=$RC_AT past=$RC_PAST reset=$RC_RESET ng=$RC_NG (want 7 6 6 6)"
+    fail "T121: ceiling in force" "at=$RC_AT past=$RC_PAST reset=$RC_RESET ng=$RC_NG iso=$RC_ISO why=$ISO_WHY (want 7 6 6 6 6 ceiling)"
 fi
 
 echo "T122. a granted round needs a live CONTINUE, at the command and on read"
@@ -1893,14 +1906,18 @@ LED=$(newledger t122); to_round t122 "$LED" 8
 bash "$RB" grant --run-id=t122 --ledger="$LED" --rounds=2 --evidence="$EVID" >/dev/null
 RC_CMD=$(rb record-round --run-id=t122 --ledger="$LED" --score=5/10 --defect=yes)
 ROWS=$(grep -c '^ROUND' "$LED" || true)
+# ISOLATED (P20 r3): a recorder-shaped scaled row (a bare legacy score after
+# scaled rows is refused by the format-order rule and masked this one).
 STORED=$(newledger t122b); to_round t122b "$STORED" 8
-printf 'GRANT\t2\t8\t%s\n' "$EVID" >> "$STORED"
-printf 'ROUND\t9\t5\tyes\t-\t-\n' >> "$STORED"
+bash "$RB" grant --run-id=t122b --ledger="$STORED" --rounds=2 --evidence="$EVID" >/dev/null
+printf 'ROUND\t9\t5/10\tyes\t\t-\tunrecorded\t-\t-\n' >> "$STORED"
 RC_READ=$(rb budget --run-id=t122b --ledger="$STORED")
-if [ "$RC_CMD" = "2" ] && [ "$ROWS" = "8" ] && [ "$RC_READ" = "6" ]; then
-    ok "T122: record-round without a CONTINUE refused in granted territory (2, no row); a stored one STOPs (6)"
+OUT_READ=$(rbout budget --run-id=t122b --ledger="$STORED")
+case "$OUT_READ" in *"has no CONTINUE before it"*) READ_WHY=continue ;; *) READ_WHY=other ;; esac
+if [ "$RC_CMD" = "2" ] && [ "$ROWS" = "8" ] && [ "$RC_READ" = "6" ] && [ "$READ_WHY" = "continue" ]; then
+    ok "T122: record-round without a CONTINUE refused in granted territory (2, no row); an otherwise-valid stored one STOPs for that reason (6)"
 else
-    fail "T122: granted CONTINUE" "cmd=$RC_CMD rows=$ROWS read=$RC_READ (want 2 8 6)"
+    fail "T122: granted CONTINUE" "cmd=$RC_CMD rows=$ROWS read=$RC_READ why=$READ_WHY (want 2 8 6 continue)"
 fi
 
 echo "T123. an oversized --rounds is refused before any integer compare"
