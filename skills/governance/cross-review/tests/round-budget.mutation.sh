@@ -175,8 +175,8 @@ mutate "unreadable ledger fails open" "T15" \
 # mutation". The hoist made that false -- ordering IS a value now, and declining
 # the proof on an invalidated rationale is how a new shape ships unmutated.
 mutate "PASSED reordered above the stops" "T31" \
-    'PRECEDENCE="regressed:6 refuted:6 nodefect:6 terminal:6 passed:3' \
-    'PRECEDENCE="passed:3 regressed:6 refuted:6 nodefect:6 terminal:6'
+    'PRECEDENCE="terminal:6 passed:3' \
+    'PRECEDENCE="passed:3 terminal:6'
 # "Only CONTINUE earns" is ONE rule held at TWO sites: rule_unusable_verdict
 # fires first and stops, rule_earned refuses to admit. Gutting either alone
 # leaves T37 green -- which is defence in depth working, and also why the
@@ -227,8 +227,10 @@ mutate "stale verdict re-authorizes" "T13" \
 # ─── The absorbing stops and the fail-closed guards ───────────────────────
 # Each of these was escapable or silent in the first version, so each gets its
 # own proof that the test pinning it can actually fail.
-mutate "defect streak 2->99"        "T1"  '[ "$LG_MAXNOD" -ge 2 ] || return 1' '[ "$LG_MAXNOD" -ge 99 ] || return 1'
-mutate "refuted no longer absorbing" "T21" '[ "$LG_MAXREF" -ge 2 ] || return 1' '[ "$LG_MAXREF" -ge 99 ] || return 1'
+# BRO-3963: these were absorbing stops; each is now a SIGNAL term, computed once in analyze.
+mutate "defect streak 2->99"        "T1"  ' || maxnod>=2 || ' ' || maxnod>=99 || '
+mutate "refuted streak 2->99"       "T21" ' || maxref>=2 || ' ' || maxref>=99 || '
+mutate "round 8 no longer signals"  "T116" ' || rounds>=ceil)' ' || rounds>=99)'
 # This was `[ -n "$LG_TERMINAL" ]` -> `[ -z ... ]` in rule_terminal: a BRANCH
 # inversion, which this file's own header rules out. It did not disable the
 # rule, it made the rule fire on EVERY ledger. That reddened T19 by accident:
@@ -240,7 +242,7 @@ mutate "refuted no longer absorbing" "T21" '[ "$LG_MAXREF" -ge 2 ] || return 1' 
 mutate "terminal verdict ignored"    "T19" \
     'if (terminal=="") { terminal=$2; directive=$4 }' \
     'if (terminal=="") { terminal=""; directive=$4 }'
-mutate "regression check disabled"   "T5"  '[ "$LG_REGRESSED" != "0" ] || return 1' '[ "$LG_REGRESSED" = "IMPOSSIBLE" ] || return 1'
+mutate "regression check disabled"   "T5"  'signal=(regressed || ' 'signal=(0 || '
 mutate "bad score fails open"        "T23" '[ "$badscore" != "0" ] || [ "$badrow" != "0" ] || [ -n "$badverdict" ]' '[ "$badscore" = "IMPOSSIBLE" ]'
 mutate "structural directive optional" "T24" 'if [ "$VERDICT" = "STRUCTURAL" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then' 'if [ "$VERDICT" = "NEVER" ] && [ -z "$(sanitize "$DIRECTIVE")" ]; then'
 # Both arms now live in prediction_is_valid(), which is called from the recorder
@@ -333,8 +335,11 @@ mutate "--force accepted on any command" "T48" \
 # Route a LIVE arc into the stopped branch and --force reaches it -- which is
 # exactly what the hatch must not do, because a live arc can be ended in band.
 mutate "--force reaches a live arc" "T49" \
-    'if [ -n "$RESET_ENTRY" ] && arc_closed_code "$RESET_CODE"; then' \
+    'if [ -n "$RESET_ENTRY" ] && { arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "signal" ]; }; then' \
     'if [ -n "$RESET_ENTRY" ] && [ "$RESET_CODE" != "IMPOSSIBLE" ]; then'
+mutate "a signalled arc is not resettable even under --force" "T43" \
+    '{ arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "signal" ]; }' \
+    '{ arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "IMPOSSIBLE" ]; }'
 
 # DROPPED: "corrupt path names its own archive" (restoring the pid-based namer).
 # A reviewer showed it was killed for the WRONG reason. A pid namer collides
@@ -686,61 +691,49 @@ mutate "--axes=- accepted as a third spelling of absence" "T110" \
 # genuinely untested invariant. It was written, it survived for that reason, and
 # it is recorded here instead of being left in the sweep as a false finding.
 
-# ── The owner GRANT (BRO-3893): one mutant per guard ──────────────────────
-mutate "grant does not move the ceiling" "T111" \
-    'arc_ceiling() { echo $((HUMAN_CEILING + LG_GRANTED)); }' \
-    'arc_ceiling() { echo $((HUMAN_CEILING + 0)); }'
-mutate "grant legal anywhere, not only at the ceiling" "T112" \
-    '    if [ "${entry%%:*}" != "ceiling" ]; then' \
-    '    if [ "${entry%%:*}" = "IMPOSSIBLE" ]; then'
-mutate "grant per-ask cap 7->99" "T114" \
-    'GRANT_MAX_ROUNDS=7' \
-    'GRANT_MAX_ROUNDS=99'
-mutate "second grant allowed by the command" "T115" \
-    '    if [ "$LG_GRANTED" -gt 0 ]; then
-        echo "round-budget: this arc already' \
-    '    if [ "$LG_GRANTED" -gt 999 ]; then
-        echo "round-budget: this arc already'
-mutate "grant evidence counted with its padding" "T114" \
-    '    EVIDENCE_CHARS="${CLEAN_EVIDENCE//[^A-Za-z0-9]/}"' \
-    '    EVIDENCE_CHARS="${CLEAN_EVIDENCE//[[:space:]]/}"'
-mutate "stored GRANT before the ceiling accepted" "T116" \
-    '            else if (rounds < ceil + granted) badhistory=' \
-    '            else if (rounds < -1) badhistory='
-mutate "stored GRANT round not checked" "T116" \
-    '            if ($3 != rounds) badhistory=' \
+# ── Signals and recorded decisions (BRO-3963): one mutant per guard ────────
+mutate "round recorded past an undecided signal" "T111" \
+    '    if [ "$LG_SIGNAL" = "1" ] && [ "$LG_DECIDED" != "1" ]; then
+        echo "round-budget: signal requires' \
+    '    if [ "$LG_SIGNAL" = "IMPOSSIBLE" ]; then
+        echo "round-budget: signal requires'
+mutate "a decision does not clear the signal" "T111" \
+    '    [ "$LG_SIGNAL" = "1" ] && [ "$LG_DECIDED" != "1" ] || return 1' \
+    '    [ "$LG_SIGNAL" = "1" ] || return 1'
+mutate "a decision is never spent by a round" "T112" \
+    '            if (signal && !decided) badhistory="a round follows a signal without a decision"
+            decided=0' \
+    '            if (signal && !decided) badhistory="a round follows a signal without a decision"'
+mutate "decision recorded with a blank reason" "T113" \
+    "    if ! printf '%s' \"\$CLEAN_REASON\" | grep -q '[[:alnum:]]'; then" \
+    '    if false; then'
+mutate "decision recorded with no signal outstanding" "T113" \
+    '    if [ "$LG_SIGNAL" != "1" ] || [ "$LG_DECIDED" = "1" ]; then' \
+    '    if false; then'
+mutate "unknown decision word recorded" "T113" \
+    '        *) echo "round-budget: invalid --decision." >&2; exit 2 ;;' \
+    '        *) ;;'
+mutate "stored round past an undecided signal accepted" "T118" \
+    '            if (signal && !decided) badhistory=' \
     '            if (0) badhistory='
-mutate "stored GRANT evidence not checked" "T116" \
-    '            else { ev=$4; gsub(/[^A-Za-z0-9]/, "", ev); if (length(ev) < gmin)' \
-    '            else { ev=$4; gsub(/[^A-Za-z0-9]/, "", ev); if (0)'
-mutate "stored GRANT evidence counts only tabs and spaces as padding" "T116" \
-    '            else { ev=$4; gsub(/[^A-Za-z0-9]/, "", ev);' \
-    '            else { ev=$4; gsub(/[ \t]/, "", ev);'
-mutate "a second stored GRANT accepted" "T116" \
-    '            if (++ngrants > 1) badhistory=' \
-    '            if (++ngrants > 99) badhistory='
-mutate "a stored GRANT after a live CONTINUE accepted" "T116" \
-    '            else if (pending == 1) badhistory="a GRANT follows' \
-    '            else if (0) badhistory="a GRANT follows'
-mutate "grant flags accepted on other commands" "T118" \
-    'if [ "$GRANT_SET" = "1" ] && [ "$COMMAND" != "grant" ]; then' \
-    'if [ "$GRANT_SET" = "IMPOSSIBLE" ]; then'
-mutate "show hides the grant" "T119" \
-    '        $1=="GRANT"   { printf' \
-    '        $1=="IMPOSSIBLE"   { printf'
-
-mutate "stored round past the ceiling in force accepted" "T121" \
-    '            if (rounds > ceil + granted) badhistory=' \
-    '            if (rounds > 999) badhistory='
-mutate "stored granted round without a CONTINUE accepted" "T122" \
-    '            else if (rounds > ceil && pending != 1) badhistory=' \
-    '            else if (0) badhistory='
-mutate "granted round recorded without a CONTINUE" "T122" \
-    '    if [ "$LG_N" -ge "$HUMAN_CEILING" ] && ! { last_row_is_verdict' \
-    '    if [ "$LG_N" -ge 999 ] && ! { last_row_is_verdict'
-mutate "oversized --rounds reaches the integer compare" "T123" \
-    '    if [ "${#GRANT_ROUNDS}" -gt 2 ] || [ "$GRANT_ROUNDS" -lt 1 ]' \
-    '    if [ "$GRANT_ROUNDS" -lt 1 ]'
+mutate "stored decision without a signal accepted" "T118" \
+    '            if (!signal || decided) badhistory=' \
+    '            if (0) badhistory='
+mutate "stored decision row not shape-checked" "T118" \
+    'if (NF != 4 || $2 !~ /^(continue|hoist|subtract|change-approach|escalate)$/ || $3 != rounds || $4 !~ /[[:alnum:]]/) { badrow=1; next }' \
+    'if (NF != 4) { badrow=1; next }'
+mutate "show hides the decision" "T119" \
+    '        $1=="DECISION" { printf' \
+    '        $1=="IMPOSSIBLE" { printf'
+mutate "retired grant still writes a row" "T120" \
+    '    echo "round-budget: grant is deprecated; use record-decision' \
+    "    printf 'GRANT\\t1\\t0\\tx\\n' >> \"\$LEDGER\"; echo \"round-budget: grant is deprecated; use record-decision"
+mutate "old GRANT row shape unchecked" "T121" \
+    '            if (NF != 4) badrow=1' \
+    '            if (0) badrow=1'
+mutate "decision flags accepted on other commands" "T122" \
+    'if [ "$DECISION_SET" = "1" ] && [ "$COMMAND" != "record-decision" ]; then' \
+    'if [ "$DECISION_SET" = "IMPOSSIBLE" ]; then'
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
