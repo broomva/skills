@@ -51,8 +51,8 @@
 #   round >= 8   human. Unbounded self-granted budget is the resource-acquisition
 #                pillar the workspace leaves open by design. The human answer is
 #                a GRANT (BRO-3893): the OWNER moves this arc's ceiling by 1-7
-#                rounds, once per ask, up to 14 in all, and the row carries the
-#                owner's answer verbatim as evidence. Granted rounds are earned
+#                rounds, ONCE per arc, and the row carries the owner's answer as
+#                evidence. Granted rounds are earned
 #                exactly like rounds 4-7 (a CONTINUE with a located prediction),
 #                and every stop above still applies; only the ceiling moves.
 #
@@ -101,7 +101,7 @@
 #   round-budget.sh record-verdict --run-id=ID --verdict=CONTINUE|STOP|STRUCTURAL \
 #                                  [--prediction=TEXT] [--directive=TEXT]
 #   round-budget.sh grant          --run-id=ID --rounds=N --evidence=TEXT
-#                                  # at the ceiling only: the OWNER's answer, verbatim
+#                                  # at the ceiling only, once per arc: the OWNER's answer
 #   round-budget.sh budget         --run-id=ID     # may another round run?
 #   round-budget.sh show           --run-id=ID
 #   round-budget.sh reset          --run-id=ID [--force]
@@ -125,12 +125,12 @@ export LC_ALL=C
 
 FREE_ROUNDS=3
 HUMAN_CEILING=8
-# An owner grant (BRO-3893) moves the ceiling of ONE arc. Bounded per grant and
-# in total so a grant is a decision about this arc, not a standing exemption;
-# the evidence floor (non-space characters) keeps "ok" from passing for the
-# owner's answer.
+# An owner grant (BRO-3893) moves the ceiling of ONE arc, ONCE: the owner chose
+# "grant once per PR". A second ceiling is an escalation, not a second ask.
+# The evidence floor is one contract at write and at read: at least
+# GRANT_MIN_EVIDENCE ASCII letters or digits (LC_ALL=C above makes the class
+# ASCII). Whitespace of any kind -- tabs, CR, NBSP bytes -- is not an answer.
 GRANT_MAX_ROUNDS=7
-GRANT_MAX_TOTAL=14
 GRANT_MIN_EVIDENCE=20
 PASS_SCORE=7
 # The ledger's one scale (BRO-2615). A bare integer used to be accepted, and this
@@ -672,8 +672,8 @@ field() { printf '%s' "$1" | cut -f"$2"; }
 # GRANT   rounds at_round evidence                       (4 fields, BRO-3893)
 analyze() {
     read_rows | awk -F'\t' -v ceil="$HUMAN_CEILING" -v gmax="$GRANT_MAX_ROUNDS" \
-                            -v gtotal="$GRANT_MAX_TOTAL" -v gmin="$GRANT_MIN_EVIDENCE" '
-        BEGIN { rounds=0; prev=-1; last=-1; regressed=0; granted=0
+                            -v gmin="$GRANT_MIN_EVIDENCE" '
+        BEGIN { rounds=0; prev=-1; last=-1; regressed=0; granted=0; ngrants=0
                 ref=0; maxref=0; nod=0; maxnod=0
                 terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0
                 badhistory=""; lastverified=0; prevkind=""; sawscaled=0; lastaxes="-" }
@@ -774,9 +774,9 @@ analyze() {
             if ($3 != rounds) badhistory="a GRANT records round " $3 " but follows round " rounds
             else if (rounds < ceil + granted) badhistory="a GRANT recorded before the round ceiling (" ceil + granted ")"
             else if (pending == 1) badhistory="a GRANT follows a live CONTINUE"
-            else { ev=$4; gsub(/[ \t]/, "", ev); if (length(ev) < gmin) badhistory="a GRANT without the owner'\''s answer as evidence" }
+            else { ev=$4; gsub(/[^A-Za-z0-9]/, "", ev); if (length(ev) < gmin) badhistory="a GRANT without the owner'\''s answer as evidence" }
             granted += $2
-            if (granted > gtotal) badhistory="GRANTs total " granted " rounds, over the " gtotal " allowed"
+            if (++ngrants > 1) badhistory="a second GRANT; the owner grants once per arc"
             next
         }
         NF>0 { badrow=1 }
@@ -1064,10 +1064,16 @@ arc_ceiling() { echo $((HUMAN_CEILING + LG_GRANTED)); }
 rule_ceiling() {
     [ "$LG_N" -ge "$(arc_ceiling)" ] || return 1
     echo "HUMAN — $LG_N rounds recorded (ceiling $(arc_ceiling)$([ "$LG_GRANTED" -gt 0 ] && echo ", $LG_GRANTED granted"))."
-    echo "  No verdict buys another round here. Ask the OWNER once for this arc:"
-    echo "  how many more rounds (1-$GRANT_MAX_ROUNDS; $((GRANT_MAX_TOTAL - LG_GRANTED)) left of $GRANT_MAX_TOTAL), then record the answer:"
-    echo "    round-budget.sh grant --run-id=$RUN_ID --rounds=N --evidence='<the owner's answer, verbatim>'"
-    echo "  Granted rounds are still earned one at a time by a CONTINUE verdict."
+    echo "  No verdict buys another round here."
+    if [ "$LG_GRANTED" -gt 0 ]; then
+        echo "  The owner's grant for this arc is spent. Escalate through the handback"
+        echo "  contract with the ledger attached, or record STRUCTURAL: an arc that"
+        echo "  outgrows its grant needs a different shape, not more rounds."
+    else
+        echo "  Ask the OWNER once for this arc how many more rounds (1-$GRANT_MAX_ROUNDS), then record it:"
+        echo "    round-budget.sh grant --run-id=$RUN_ID --rounds=N --evidence='<the owner's answer>'"
+        echo "  Granted rounds are still earned one at a time by a CONTINUE verdict."
+    fi
     return 0
 }
 rule_free() {
@@ -1370,7 +1376,7 @@ grant)
     # BRO-3893. The owner moves this arc's ceiling; the agent cannot. Legal at
     # the ceiling ONLY -- under a stop the remedy is the stop's, and below the
     # ceiling there is nothing to grant. What makes it the owner's is the
-    # evidence: their answer, verbatim. This binds the ledger, not the person:
+    # evidence: their answer, transcribed (tabs and newlines become spaces). This binds the ledger, not the person:
     # an agent can type a fake answer, exactly as it can delete the file (THE
     # BOUNDARY above); `show` puts the evidence in front of every reviewer.
     with_lock
@@ -1387,17 +1393,17 @@ grant)
     if [ "$GRANT_ROUNDS" -lt 1 ] || [ "$GRANT_ROUNDS" -gt "$GRANT_MAX_ROUNDS" ]; then
         echo "round-budget: --rounds must be 1-$GRANT_MAX_ROUNDS, got $GRANT_ROUNDS." >&2; exit 2
     fi
-    if [ $((LG_GRANTED + GRANT_ROUNDS)) -gt "$GRANT_MAX_TOTAL" ]; then
-        echo "round-budget: this arc has $LG_GRANTED granted rounds; $GRANT_ROUNDS more passes the $GRANT_MAX_TOTAL allowed." >&2
-        echo "  An arc this long needs a different shape, not more rounds: record STRUCTURAL." >&2
+    if [ "$LG_GRANTED" -gt 0 ]; then
+        echo "round-budget: this arc already has the owner's grant ($LG_GRANTED rounds); the owner grants once per arc." >&2
+        echo "  Escalate through the handback contract, or record STRUCTURAL." >&2
         exit 2
     fi
     CLEAN_EVIDENCE="$(sanitize "$GRANT_EVIDENCE")"
-    # Counted without whitespace, the same way the stored row is: padding is
-    # not an answer (T114 fed it twenty tabs between "ok" and "go").
-    EVIDENCE_CHARS="${CLEAN_EVIDENCE//[[:space:]]/}"
+    # The same contract as the stored row (analyze): ASCII letters and digits
+    # only. Padding of any kind is not an answer (T114: tabs, CR, NBSP).
+    EVIDENCE_CHARS="${CLEAN_EVIDENCE//[^A-Za-z0-9]/}"
     if [ "${#EVIDENCE_CHARS}" -lt "$GRANT_MIN_EVIDENCE" ]; then
-        echo "round-budget: --evidence must carry the owner's answer verbatim (at least $GRANT_MIN_EVIDENCE non-space characters)." >&2
+        echo "round-budget: --evidence must carry the owner's answer (at least $GRANT_MIN_EVIDENCE ASCII letters or digits)." >&2
         exit 2
     fi
     printf 'GRANT\t%s\t%s\t%s\n' "$GRANT_ROUNDS" "$LG_N" "$CLEAN_EVIDENCE" >> "$LEDGER"

@@ -692,12 +692,14 @@ mutate "grant legal anywhere, not only at the ceiling" "T112" \
 mutate "grant per-ask cap 7->99" "T114" \
     'GRANT_MAX_ROUNDS=7' \
     'GRANT_MAX_ROUNDS=99'
-mutate "grant total cap 14->99" "T115" \
-    'GRANT_MAX_TOTAL=14' \
-    'GRANT_MAX_TOTAL=99'
+mutate "second grant allowed by the command" "T115" \
+    '    if [ "$LG_GRANTED" -gt 0 ]; then
+        echo "round-budget: this arc already' \
+    '    if [ "$LG_GRANTED" -gt 999 ]; then
+        echo "round-budget: this arc already'
 mutate "grant evidence counted with its padding" "T114" \
-    '    EVIDENCE_CHARS="${CLEAN_EVIDENCE//[[:space:]]/}"' \
-    '    EVIDENCE_CHARS="$CLEAN_EVIDENCE"'
+    '    EVIDENCE_CHARS="${CLEAN_EVIDENCE//[^A-Za-z0-9]/}"' \
+    '    EVIDENCE_CHARS="${CLEAN_EVIDENCE//[[:space:]]/}"'
 mutate "stored GRANT before the ceiling accepted" "T116" \
     '            else if (rounds < ceil + granted) badhistory=' \
     '            else if (rounds < -1) badhistory='
@@ -705,8 +707,17 @@ mutate "stored GRANT round not checked" "T116" \
     '            if ($3 != rounds) badhistory=' \
     '            if (0) badhistory='
 mutate "stored GRANT evidence not checked" "T116" \
-    '            else { ev=$4; gsub(/[ \t]/, "", ev); if (length(ev) < gmin)' \
-    '            else { ev=$4; gsub(/[ \t]/, "", ev); if (0)'
+    '            else { ev=$4; gsub(/[^A-Za-z0-9]/, "", ev); if (length(ev) < gmin)' \
+    '            else { ev=$4; gsub(/[^A-Za-z0-9]/, "", ev); if (0)'
+mutate "stored GRANT evidence counts only tabs and spaces as padding" "T116" \
+    '            else { ev=$4; gsub(/[^A-Za-z0-9]/, "", ev);' \
+    '            else { ev=$4; gsub(/[ \t]/, "", ev);'
+mutate "a second stored GRANT accepted" "T116" \
+    '            if (++ngrants > 1) badhistory=' \
+    '            if (++ngrants > 99) badhistory='
+mutate "a stored GRANT after a live CONTINUE accepted" "T116" \
+    '            else if (pending == 1) badhistory="a GRANT follows' \
+    '            else if (0) badhistory="a GRANT follows'
 mutate "grant flags accepted on other commands" "T118" \
     'if [ "$GRANT_SET" = "1" ] && [ "$COMMAND" != "grant" ]; then' \
     'if [ "$GRANT_SET" = "IMPOSSIBLE" ]; then'

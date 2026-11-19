@@ -3,7 +3,7 @@ name: cross-review
 tier: D
 primitive: P20
 category: governance
-description: "bstack P20 — Cross-Model Adversarial Review Gate. The model that wrote the code cannot be the final judge of the code. Before substantive PRs merge, fire a cross-model adversarial gate — different evaluator than writer, anti-slop scoring ≥7/10, a dynamic round budget (3 free, 4-7 earned by a continuation verdict carrying a falsifiable prediction, >=8 human: the owner grants more rounds once per arc), verdict logged in PR. Three strata: (A) Codex CLI cross-vendor for true different-model verdict, (B) fresh-context subagent under devils-advocate brief, (C) composed existing adversarial-review skills in parallel on code (a knowledge-only diff takes one stratum on a claims rubric). Use cross-review when: (1) about to push a substantive PR (>200 LOC OR public API OR multi-file OR governance-class), (2) reviewing a draft plan/design before implementation, (3) auditing a feature spec against single-model blind spots, (4) integrating with the /autonomous skill's pre-push gate. Triggers on 'cross-review', 'P20', 'adversarial review', 'anti-slop', 'cross-model gate', 'different evaluator', 'devils advocate gate', 'self-review prohibition'."
+description: "bstack P20 — Cross-Model Adversarial Review Gate. The model that wrote the code cannot be the final judge of the code. Before substantive PRs merge, fire a cross-model adversarial gate — different evaluator than writer, anti-slop scoring ≥7/10, a dynamic round budget (3 free, 4-7 earned by a continuation verdict carrying a falsifiable prediction, >=8 human: the owner may grant 1-7 more rounds, once per arc), verdict logged in PR. Three strata: (A) Codex CLI cross-vendor for true different-model verdict, (B) fresh-context subagent under devils-advocate brief, (C) composed existing adversarial-review skills in parallel on code (a knowledge-only diff takes one stratum on a claims rubric). Use cross-review when: (1) about to push a substantive PR (>200 LOC OR public API OR multi-file OR governance-class), (2) reviewing a draft plan/design before implementation, (3) auditing a feature spec against single-model blind spots, (4) integrating with the /autonomous skill's pre-push gate. Triggers on 'cross-review', 'P20', 'adversarial review', 'anti-slop', 'cross-model gate', 'different evaluator', 'devils advocate gate', 'self-review prohibition'."
 ---
 
 # cross-review — bstack P20 Cross-Model Adversarial Review Gate
@@ -270,8 +270,8 @@ itself unbounded budget by asking itself has begun acquiring its own resources,
 and the workspace leaves that pillar open **by design**.
 
 **The owner grant (BRO-3893).** What the ceiling asks for is the owner, not a
-new question every round. It used to come back once per round: one ledger PR
-was asked about at every round from 8 to 14. In the workspace's ask survey
+new question every round. Past the ceiling, each further round used to need
+its own owner answer. In the workspace's ask survey
 (`docs/specs/2026-11-18-agent-question-survey.html`, one month to 2026-11-18),
 review-round asks had the longest median wait of any flagged group, but only
 about 6 of 20 hand-checked ones were at the ceiling. Half were stops, which
@@ -288,15 +288,20 @@ cross-review round grant --run-id=$ID --rounds=4 \
 - Legal **at the ceiling only** (`budget` exit 7). Under a stop the remedy is
   the stop's: a regression, two `REFUTED`, two no-defect rounds or a
   `STOP`/`STRUCTURAL` verdict still go back to the owner as before.
-- 1-7 rounds per grant, 14 in all per arc. An arc that needs more needs a
-  different shape: record `STRUCTURAL`.
+- 1-7 rounds, **once per arc** (the owner chose "grant once per PR"). At the
+  granted ceiling the grant is spent: escalate through the handback contract,
+  or record `STRUCTURAL`. A second `grant` is refused.
 - Granted rounds are earned exactly like rounds 4-7: each needs a `CONTINUE`
   verdict carrying a located prediction, and the four anti-vacuity rules hold.
-- `--evidence` is the owner's answer verbatim, at least 20 non-space
-  characters. `show` prints it beside the grant for every reviewer.
+- `--evidence` is the owner's answer. It is stored with tabs and newlines
+  turned into spaces (they are the ledger's separators), so it is a faithful
+  transcription, not a byte-exact one. It must contain at least 20 ASCII
+  letters or digits, checked the same way at write and at read: padding of any
+  kind (tabs, CR, non-breaking spaces) does not count. `show` prints it beside
+  the grant for every reviewer.
 - A stored `GRANT` row is re-checked by `load_ledger` like every other row:
-  before the ceiling, misdated, oversized, over the total or without evidence,
-  it STOPs the arc (T116).
+  before the ceiling, misdated, oversized, after a live `CONTINUE`, a second
+  grant, or without evidence, it STOPs the arc (T116).
 
 What the grant does **not** do: prove the owner said it. The evidence is the
 agent's transcription, exactly as `--defect` and `--stratum` are its assertions
