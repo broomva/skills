@@ -1819,7 +1819,7 @@ printf 'GRANT\t99\t8\t%s\n' "$EVID" >> "$BIG"
 ARITY=$(newledger t116e); to_round t116e "$ARITY" 8
 printf 'GRANT\t3\t8\n' >> "$ARITY"
 CRPAD=$(newledger t116g); to_round t116g "$CRPAD" 8
-printf 'GRANT\t3\t8\tok' >> "$CRPAD"; printf '\r%.0s' $(seq 1 20) >> "$CRPAD"; printf 'go\n' >> "$CRPAD"
+{ printf 'GRANT\t3\t8\tok'; printf '\r%.0s' $(seq 1 20); printf 'go\n'; } >> "$CRPAD"
 TWICE=$(newledger t116h); to_round t116h "$TWICE" 8
 printf 'GRANT\t1\t8\t%s\n' "$EVID" >> "$TWICE"
 bash "$RB" record-verdict --run-id=t116h --ledger="$TWICE" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
@@ -1913,11 +1913,11 @@ bash "$RB" grant --run-id=t122b --ledger="$STORED" --rounds=2 --evidence="$EVID"
 printf 'ROUND\t9\t5/10\tyes\t\t-\tunrecorded\t-\t-\n' >> "$STORED"
 RC_READ=$(rb budget --run-id=t122b --ledger="$STORED")
 OUT_READ=$(rbout budget --run-id=t122b --ledger="$STORED")
-case "$OUT_READ" in *"has no CONTINUE before it"*) READ_WHY=continue ;; *) READ_WHY=other ;; esac
-if [ "$RC_CMD" = "2" ] && [ "$ROWS" = "8" ] && [ "$RC_READ" = "6" ] && [ "$READ_WHY" = "continue" ]; then
+case "$OUT_READ" in *"has no CONTINUE before it"*) READ_WHY="no-continue" ;; *) READ_WHY="other" ;; esac
+if [ "$RC_CMD" = "2" ] && [ "$ROWS" = "8" ] && [ "$RC_READ" = "6" ] && [ "$READ_WHY" = "no-continue" ]; then
     ok "T122: record-round without a CONTINUE refused in granted territory (2, no row); an otherwise-valid stored one STOPs for that reason (6)"
 else
-    fail "T122: granted CONTINUE" "cmd=$RC_CMD rows=$ROWS read=$RC_READ why=$READ_WHY (want 2 8 6 continue)"
+    fail "T122: granted CONTINUE" "cmd=$RC_CMD rows=$ROWS read=$RC_READ why=$READ_WHY (want 2 8 6 no-continue)"
 fi
 
 echo "T123. an oversized --rounds is refused before any integer compare"
