@@ -633,17 +633,21 @@ fi
 # `budget` at T31, unpinned for `reset` until now. The two arms of this test are
 # the same ledger minus the regression, so a gate that simply always refuses
 # cannot pass it.
-echo "T47. a trailing self-reported pass does not make a stopped arc finished"
+echo "T47. an unverified high score does not make a live arc finished"
+# Since BRO-3963 a round past an undecided signal is refused as corrupt history,
+# so the old fixture (a 9 appended after a regression) is refused before the pass
+# arm is read. What still separates the RULE from the SCORE is a high score the
+# budget does not read as a pass: a bare, unverified 9.
 LED=$(newledger t47)
-printf 'ROUND\t1\t6\tyes\t\t-\nROUND\t2\t3\tyes\t\t-\nROUND\t3\t9/10\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED"
-RC_LAUNDER=$(rb reset --run-id=t47 --ledger="$LED")
+printf 'ROUND\t1\t5\tyes\t\t-\nROUND\t2\t9\tyes\t\t-\n' > "$LED"
+RC_UNVERIFIED=$(rb reset --run-id=t47 --ledger="$LED")
 LED2=$(newledger t47b)
-printf 'ROUND\t1\t3\tyes\t\t-\nROUND\t2\t6\tyes\t\t-\nROUND\t3\t9/10\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED2"
+printf 'ROUND\t1\t5/10\tyes\t\t-\tA\tA:5/10:FAIL\nROUND\t2\t9/10\tyes\t\t-\tA\tA:9/10:PASS\n' > "$LED2"
 RC_CLEAN=$(rb reset --run-id=t47b --ledger="$LED2")
-if [ "$RC_LAUNDER" = "6" ] && [ "$RC_CLEAN" = "0" ]; then
-    ok "T47: pass-after-regression refused, a clean pass still archives"
+if [ "$RC_UNVERIFIED" = "6" ] && [ "$RC_CLEAN" = "0" ]; then
+    ok "T47: an unverified 9 is still a live arc, a verified pass archives"
 else
-    fail "T47: pass arm reads the rule" "laundered=$RC_LAUNDER (want 6), clean=$RC_CLEAN (want 0)"
+    fail "T47: pass arm reads the rule" "unverified=$RC_UNVERIFIED (want 6), clean=$RC_CLEAN (want 0)"
 fi
 
 # ── T48: --force is a reset flag, not a global one ────────────────────────
@@ -1364,10 +1368,15 @@ RC_CROSS=$(rb budget --run-id=t78 --ledger="$LED")
 LED2=$(newledger t78b)
 printf 'ROUND\t1\t6/10\tyes\t\t-\tA\tA:6/10:FAIL\nROUND\t2\t5/10\tyes\t\t-\tA\tA:5/10:FAIL\n' > "$LED2"
 RC_SCALED=$(rb budget --run-id=t78b --ledger="$LED2")
-if [ "$RC_CROSS" = "3" ] && [ "$RC_SCALED" = "7" ] && printf '%s' "$OUT_LEGACY" | grep -q "not read as a pass"; then
+# A FAILING round across the boundary too: PASSED outranks a signal, so the pass
+# above cannot show that a bare 9 then a scaled 6/10 is not a regression.
+LED3=$(newledger t78c)
+printf 'ROUND\t1\t9\tyes\t\t-\nROUND\t2\t6/10\tyes\t\t-\tA\tA:6/10:FAIL\n' > "$LED3"
+RC_CROSS_FAIL=$(rb budget --run-id=t78c --ledger="$LED3")
+if [ "$RC_CROSS" = "3" ] && [ "$RC_CROSS_FAIL" = "0" ] && [ "$RC_SCALED" = "7" ] && printf '%s' "$OUT_LEGACY" | grep -q "not read as a pass"; then
     ok "T78: bare 9 then scaled 8/10 PASSES; scaled 6 then 5 still STOPs; a legacy 9 says why it is not a pass"
 else
-    fail "T78: bare/scaled boundary" "cross=$RC_CROSS (want 3) scaled-regression=$RC_SCALED (want 7) legacy-note=$(printf '%s' "$OUT_LEGACY" | grep -c 'not read as a pass') (want 1)"
+    fail "T78: bare/scaled boundary" "cross=$RC_CROSS (want 3) cross-fail=$RC_CROSS_FAIL (want 0) scaled-regression=$RC_SCALED (want 7) legacy-note=$(printf '%s' "$OUT_LEGACY" | grep -c 'not read as a pass') (want 1)"
 fi
 
 # ── T79: `show` renders a blank verdicts field as MALFORMED ───────────────

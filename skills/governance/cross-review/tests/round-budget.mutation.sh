@@ -279,14 +279,14 @@ mutate "rule4 not enforced at read" "T36" \
     'if (0) badhistory="x"'
 
 # ─── reset and the recorders now share budget's precedence ────────────────
-# T34, not T42: T42 pins the RECORDER refusing appends past a nonterminal
-# stop, while gutting reset's own gate is what lets a LIVE ledger be reset —
-# which is T34's first arm. The old "reset ungated" mutation is dropped: its
+# T34, not T32: T32 pins the RECORDER refusing appends past a closed arc (a
+# signal is refused by its own check, T42), while gutting reset's own gate is
+# what lets a LIVE ledger be reset — which is T34's first arm. The old "reset ungated" mutation is dropped: its
 # anchor was the hand-rolled gate this one replaced.
 mutate "reset decides live-ness itself" "T34" \
     'if [ -z "$RESET_ENTRY" ] || ! arc_declared_finished "$RESET_RULE"; then' \
     'if false; then'
-mutate "recorders ignore nonterminal stops" "T42" \
+mutate "recorders ignore a closed arc" "T32" \
     'arc_closed_code "$code" || return 0' \
     '[ "$code" = "IMPOSSIBLE" ] || return 0'
 # The corrupt branch and the stopped branch both carry this test now, so the
@@ -303,22 +303,15 @@ mutate "corrupt reset needs no --force" "T39" \
 # EXACTLY ONE stop class and names the test for that class, which is what makes
 # four proofs four proofs rather than one proof cited four times. The first
 # restores the shipped defect for a regression, precisely.
-mutate "reset treats a regression as finished" "T43" \
+# Since BRO-3963 the four nonterminal stops are one rule, "signal", so one
+# widening covers all four; T43 is the regression case, and T44-T46 also fail.
+mutate "reset treats a signal as finished" "T43" \
     'if [ "$rule" = "passed" ]; then return 0; fi' \
-    'if [ "$rule" = "passed" ] || [ "$rule" = "regressed" ]; then return 0; fi'
-mutate "reset treats two REFUTED as finished" "T44" \
-    'if [ "$rule" = "passed" ]; then return 0; fi' \
-    'if [ "$rule" = "passed" ] || [ "$rule" = "refuted" ]; then return 0; fi'
-mutate "reset treats two no-defect rounds as finished" "T45" \
-    'if [ "$rule" = "passed" ]; then return 0; fi' \
-    'if [ "$rule" = "passed" ] || [ "$rule" = "nodefect" ]; then return 0; fi'
-mutate "reset treats the ceiling as finished" "T46" \
-    'if [ "$rule" = "passed" ]; then return 0; fi' \
-    'if [ "$rule" = "passed" ] || [ "$rule" = "ceiling" ]; then return 0; fi'
+    'if [ "$rule" = "passed" ] || [ "$rule" = "signal" ]; then return 0; fi'
 
-# The pass arm reads the RULE NAME. Reading the SCORE instead is the older
-# defect -- a self-reported 9 appended after a regression reads as finished --
-# and it is invisible to all four above, every one of which leaves the arm alone.
+# The pass arm reads the RULE NAME. Reading the SCORE instead lets a high score
+# the budget does not read as a pass -- a bare, unverified 9 -- declare a live
+# arc finished. The widening above leaves the arm alone and cannot see it.
 mutate "reset's pass arm reads the score not the rule" "T47" \
     'if [ "$rule" = "passed" ]; then return 0; fi' \
     'if [ "$LG_SCORE" -ge "$PASS_SCORE" ]; then return 0; fi'
