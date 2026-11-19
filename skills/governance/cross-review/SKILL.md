@@ -270,12 +270,15 @@ itself unbounded budget by asking itself has begun acquiring its own resources,
 and the workspace leaves that pillar open **by design**.
 
 **The owner grant (BRO-3893).** What the ceiling asks for is the owner, not a
-new question every round. It used to come back once per round: in the month to
-2026-11-18, review-round budget asks were 147 owner questions and 135.9 of 531.6
-blocked hours (25.6%), and one PR was asked about at every round from 8 to 14.
-The owner took the recommendation 83.8% of the time
-(`docs/specs/2026-11-18-agent-question-survey.html` in the workspace). So the
-ceiling asks ONCE per arc, and the answer is recorded:
+new question every round. It used to come back once per round: one ledger PR
+was asked about at every round from 8 to 14. In the workspace's ask survey
+(`docs/specs/2026-11-18-agent-question-survey.html`, one month to 2026-11-18),
+review-round asks had the longest median wait of any flagged group, but only
+about 6 of 20 hand-checked ones were at the ceiling. Half were stops, which
+still go to the owner, and 4 came before the ceiling, where the continuation
+review decides. The grant addresses the ceiling share. Do not expect it to
+remove review asks in general. So the ceiling asks ONCE per arc, and the
+answer is recorded:
 
 ```bash
 cross-review round grant --run-id=$ID --rounds=4 \
