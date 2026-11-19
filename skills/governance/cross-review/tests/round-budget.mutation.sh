@@ -113,7 +113,11 @@ PY
     failed_n=$(printf '%s\n' "$out" | grep -c '^  \[FAIL\]' || true)
     passed_n=$(printf '%s\n' "$out" | grep -c '^  \[pass\]' || true)
 
-    if ! printf '%s\n' "$out" | grep -q "\[FAIL\] ${expect}:"; then
+    # A here-string, not `printf | grep -q`: under pipefail, grep -q exits on its
+    # first match, printf takes SIGPIPE on the rest, and the pipeline FAILS -- so a
+    # killed mutant read as a survivor whenever the suite's output was large enough.
+    # CI on skills#328 printed "printf: Broken pipe" right before a false survivor.
+    if ! grep -q "\[FAIL\] ${expect}:" <<<"$out"; then
         echo "  [SURVIVED] $label  ->  $expect still passed (suite exit $rc)"
         SURVIVED=$((SURVIVED+1)); SURVIVORS+=("$label expected $expect")
     elif [ "$passed_n" -eq 0 ]; then
@@ -681,6 +685,62 @@ mutate "--axes=- accepted as a third spelling of absence" "T110" \
 # changes no behaviour, which reports SURVIVED and is indistinguishable from a
 # genuinely untested invariant. It was written, it survived for that reason, and
 # it is recorded here instead of being left in the sweep as a false finding.
+
+# ── The owner GRANT (BRO-3893): one mutant per guard ──────────────────────
+mutate "grant does not move the ceiling" "T111" \
+    'arc_ceiling() { echo $((HUMAN_CEILING + LG_GRANTED)); }' \
+    'arc_ceiling() { echo $((HUMAN_CEILING + 0)); }'
+mutate "grant legal anywhere, not only at the ceiling" "T112" \
+    '    if [ "${entry%%:*}" != "ceiling" ]; then' \
+    '    if [ "${entry%%:*}" = "IMPOSSIBLE" ]; then'
+mutate "grant per-ask cap 7->99" "T114" \
+    'GRANT_MAX_ROUNDS=7' \
+    'GRANT_MAX_ROUNDS=99'
+mutate "second grant allowed by the command" "T115" \
+    '    if [ "$LG_GRANTED" -gt 0 ]; then
+        echo "round-budget: this arc already' \
+    '    if [ "$LG_GRANTED" -gt 999 ]; then
+        echo "round-budget: this arc already'
+mutate "grant evidence counted with its padding" "T114" \
+    '    EVIDENCE_CHARS="${CLEAN_EVIDENCE//[^A-Za-z0-9]/}"' \
+    '    EVIDENCE_CHARS="${CLEAN_EVIDENCE//[[:space:]]/}"'
+mutate "stored GRANT before the ceiling accepted" "T116" \
+    '            else if (rounds < ceil + granted) badhistory=' \
+    '            else if (rounds < -1) badhistory='
+mutate "stored GRANT round not checked" "T116" \
+    '            if ($3 != rounds) badhistory=' \
+    '            if (0) badhistory='
+mutate "stored GRANT evidence not checked" "T116" \
+    '            else { ev=$4; gsub(/[^A-Za-z0-9]/, "", ev); if (length(ev) < gmin)' \
+    '            else { ev=$4; gsub(/[^A-Za-z0-9]/, "", ev); if (0)'
+mutate "stored GRANT evidence counts only tabs and spaces as padding" "T116" \
+    '            else { ev=$4; gsub(/[^A-Za-z0-9]/, "", ev);' \
+    '            else { ev=$4; gsub(/[ \t]/, "", ev);'
+mutate "a second stored GRANT accepted" "T116" \
+    '            if (++ngrants > 1) badhistory=' \
+    '            if (++ngrants > 99) badhistory='
+mutate "a stored GRANT after a live CONTINUE accepted" "T116" \
+    '            else if (pending == 1) badhistory="a GRANT follows' \
+    '            else if (0) badhistory="a GRANT follows'
+mutate "grant flags accepted on other commands" "T118" \
+    'if [ "$GRANT_SET" = "1" ] && [ "$COMMAND" != "grant" ]; then' \
+    'if [ "$GRANT_SET" = "IMPOSSIBLE" ]; then'
+mutate "show hides the grant" "T119" \
+    '        $1=="GRANT"   { printf' \
+    '        $1=="IMPOSSIBLE"   { printf'
+
+mutate "stored round past the ceiling in force accepted" "T121" \
+    '            if (rounds > ceil + granted) badhistory=' \
+    '            if (rounds > 999) badhistory='
+mutate "stored granted round without a CONTINUE accepted" "T122" \
+    '            else if (rounds > ceil && pending != 1) badhistory=' \
+    '            else if (0) badhistory='
+mutate "granted round recorded without a CONTINUE" "T122" \
+    '    if [ "$LG_N" -ge "$HUMAN_CEILING" ] && ! { last_row_is_verdict' \
+    '    if [ "$LG_N" -ge 999 ] && ! { last_row_is_verdict'
+mutate "oversized --rounds reaches the integer compare" "T123" \
+    '    if [ "${#GRANT_ROUNDS}" -gt 2 ] || [ "$GRANT_ROUNDS" -lt 1 ]' \
+    '    if [ "$GRANT_ROUNDS" -lt 1 ]'
 
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"

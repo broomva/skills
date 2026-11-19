@@ -1727,6 +1727,216 @@ else
     fail "T110: axes sentinel" "sentinel=$RC_SENT wrote=$WROTE omitted=$RC_OMIT stored=$STORED (want 2 no 0 -)"
 fi
 
+# ── T111-T120: the owner GRANT (BRO-3893) ─────────────────────────────────
+# The ceiling used to come back to the owner once per round: one PR was asked
+# about at every round from 8 to 14. A grant asks once and moves the ceiling of
+# ONE arc; it is legal at the ceiling only, every stop above still applies, and
+# granted rounds are earned by a CONTINUE like rounds 4-7.
+EVID="Owner answered in AskUserQuestion 2026-11-18: grant 1 more round"
+# A ledger at the ceiling: round 1, then rounds 2..N each earned by a CONTINUE.
+# The 8-round ceiling fixture is built ONCE and copied: rows carry no run id, so
+# a copy is byte-identical to a fresh build. Rebuilding it in each of ~25 tests
+# made the suite ~7x slower and the CI mutation sweep (one suite per mutant)
+# take over three hours, past the merge gate's wait.
+CEIL8=""
+to_round() {  # to_round RUN LEDGER N
+    if [ "$3" = "8" ] && [ -n "$CEIL8" ]; then cp "$CEIL8" "$2"; return; fi
+    bash "$RB" record-round --run-id="$1" --ledger="$2" --score=5/10 --defect=yes >/dev/null
+    local i
+    for i in $(seq 2 "$3"); do
+        bash "$RB" record-verdict --run-id="$1" --ledger="$2" --verdict=CONTINUE --prediction="defect class $i at scripts/loop.sh:$i" >/dev/null
+        bash "$RB" record-round --run-id="$1" --ledger="$2" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+    done
+    if [ "$3" = "8" ]; then CEIL8="$TMP/ceil8.fixture.tsv"; cp "$2" "$CEIL8"; fi
+}
+
+echo "T111. a grant at the ceiling buys exactly the granted rounds, each still earned"
+LED=$(newledger t111); to_round t111 "$LED" 8
+RC_G=$(rb grant --run-id=t111 --ledger="$LED" --rounds=1 --evidence="$EVID")
+RC_B1=$(rb budget --run-id=t111 --ledger="$LED")
+bash "$RB" record-verdict --run-id=t111 --ledger="$LED" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
+RC_B2=$(rb budget --run-id=t111 --ledger="$LED")
+RC_R9=$(rb record-round --run-id=t111 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED)
+RC_B3=$(rb budget --run-id=t111 --ledger="$LED")
+if [ "$RC_G" = "0" ] && [ "$RC_B1" = "5" ] && [ "$RC_B2" = "0" ] && [ "$RC_R9" = "0" ] && [ "$RC_B3" = "7" ]; then
+    ok "T111: grant (0) -> review required (5) -> earned (0) -> round 9 -> HUMAN again (7)"
+else
+    fail "T111: grant lifecycle" "grant=$RC_G b1=$RC_B1 b2=$RC_B2 r9=$RC_R9 b3=$RC_B3 (want 0 5 0 0 7)"
+fi
+
+echo "T112. a grant below the ceiling is refused and writes nothing"
+LED=$(newledger t112); to_round t112 "$LED" 3
+RC=$(rb grant --run-id=t112 --ledger="$LED" --rounds=3 --evidence="$EVID")
+ROWS=$(grep -c '^GRANT' "$LED" || true)
+if [ "$RC" = "6" ] && [ "$ROWS" = "0" ]; then ok "T112: grant below the ceiling refused (6), no row"; else fail "T112: early grant" "rc=$RC rows=$ROWS (want 6 0)"; fi
+
+echo "T113. a grant does not lift a stop"
+LED=$(newledger t113)
+bash "$RB" record-round --run-id=t113 --ledger="$LED" --score=6/10 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=t113 --ledger="$LED" --score=4/10 --defect=yes >/dev/null
+RC_B=$(rb budget --run-id=t113 --ledger="$LED")
+RC=$(rb grant --run-id=t113 --ledger="$LED" --rounds=3 --evidence="$EVID")
+if [ "$RC_B" = "6" ] && [ "$RC" = "6" ]; then ok "T113: a regression STOP is not lifted by a grant"; else fail "T113: grant under a stop" "budget=$RC_B grant=$RC (want 6 6)"; fi
+
+echo "T114. grant arguments: rounds 1-7, the owner's answer as evidence"
+LED=$(newledger t114); to_round t114 "$LED" 8
+R0=$(rb grant --run-id=t114 --ledger="$LED" --rounds=0 --evidence="$EVID")
+R8=$(rb grant --run-id=t114 --ledger="$LED" --rounds=8 --evidence="$EVID")
+RX=$(rb grant --run-id=t114 --ledger="$LED" --rounds=x --evidence="$EVID")
+RN=$(rb grant --run-id=t114 --ledger="$LED" --evidence="$EVID")
+RE=$(rb grant --run-id=t114 --ledger="$LED" --rounds=2 --evidence="ok go")
+RT=$(rb grant --run-id=t114 --ledger="$LED" --rounds=2 --evidence="$(printf 'ok\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tgo')")
+RC=$(rb grant --run-id=t114 --ledger="$LED" --rounds=2 --evidence="ok$(printf '\r%.0s' $(seq 1 20))go")
+RNB=$(rb grant --run-id=t114 --ledger="$LED" --rounds=2 --evidence="ok$(printf '\302\240%.0s' $(seq 1 10))go")
+ROWS=$(grep -c '^GRANT' "$LED" || true)
+R7=$(rb grant --run-id=t114 --ledger="$LED" --rounds=7 --evidence="$EVID")
+if [ "$R0$R8$RX$RN$RE$RT$RC$RNB" = "22222222" ] && [ "$ROWS" = "0" ] && [ "$R7" = "0" ]; then
+    ok "T114: 0, 8, x, missing, short, and tab-, CR- and NBSP-padded evidence refused (2, no row); 7 accepted"
+else
+    fail "T114: grant arguments" "0=$R0 8=$R8 x=$RX none=$RN short=$RE tabs=$RT cr=$RC nbsp=$RNB rows=$ROWS seven=$R7 (want 2 2 2 2 2 2 2 2 0 0)"
+fi
+
+echo "T115. the owner grants once per arc; a spent grant is an escalation"
+LED=$(newledger t115); to_round t115 "$LED" 8
+RC_G=$(rb grant --run-id=t115 --ledger="$LED" --rounds=2 --evidence="$EVID")
+for i in 9 10; do
+    bash "$RB" record-verdict --run-id=t115 --ledger="$LED" --verdict=CONTINUE --prediction="defect class $i at scripts/loop.sh:$i" >/dev/null
+    bash "$RB" record-round --run-id=t115 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+done
+RC_B=$(rb budget --run-id=t115 --ledger="$LED")
+OUT=$(rbout budget --run-id=t115 --ledger="$LED")
+case "$OUT" in *"grant for this arc is spent"*) SPENT=yes ;; *) SPENT=no ;; esac
+RC_2=$(rb grant --run-id=t115 --ledger="$LED" --rounds=1 --evidence="$EVID")
+ROWS=$(grep -c '^GRANT' "$LED" || true)
+if [ "$RC_G" = "0" ] && [ "$RC_B" = "7" ] && [ "$SPENT" = "yes" ] && [ "$RC_2" = "2" ] && [ "$ROWS" = "1" ]; then
+    ok "T115: one grant (0), HUMAN at the granted ceiling saying it is spent (7), a second grant refused (2)"
+else
+    fail "T115: once per arc" "grant=$RC_G budget=$RC_B spent=$SPENT second=$RC_2 rows=$ROWS (want 0 7 yes 2 1)"
+fi
+
+echo "T116. a hand-written GRANT buys nothing the command would refuse"
+EARLY=$(newledger t116a); to_round t116a "$EARLY" 3
+printf 'GRANT\t7\t3\t%s\n' "$EVID" >> "$EARLY"
+SHORT=$(newledger t116b); to_round t116b "$SHORT" 8
+printf 'GRANT\t3\t8\tok                        go\n' >> "$SHORT"
+WRONG=$(newledger t116c); to_round t116c "$WRONG" 8
+printf 'GRANT\t3\t5\t%s\n' "$EVID" >> "$WRONG"
+BIG=$(newledger t116d); to_round t116d "$BIG" 8
+printf 'GRANT\t99\t8\t%s\n' "$EVID" >> "$BIG"
+ARITY=$(newledger t116e); to_round t116e "$ARITY" 8
+printf 'GRANT\t3\t8\n' >> "$ARITY"
+CRPAD=$(newledger t116g); to_round t116g "$CRPAD" 8
+{ printf 'GRANT\t3\t8\tok'; printf '\r%.0s' $(seq 1 20); printf 'go\n'; } >> "$CRPAD"
+TWICE=$(newledger t116h); to_round t116h "$TWICE" 8
+printf 'GRANT\t1\t8\t%s\n' "$EVID" >> "$TWICE"
+bash "$RB" record-verdict --run-id=t116h --ledger="$TWICE" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
+bash "$RB" record-round --run-id=t116h --ledger="$TWICE" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+printf 'GRANT\t1\t9\t%s\n' "$EVID" >> "$TWICE"
+LIVE=$(newledger t116i); to_round t116i "$LIVE" 8
+printf 'VERDICT\tCONTINUE\tdefect class 9 at scripts/loop.sh:9\t\n' >> "$LIVE"
+printf 'GRANT\t1\t8\t%s\n' "$EVID" >> "$LIVE"
+GOOD=$(newledger t116f); to_round t116f "$GOOD" 8
+printf 'GRANT\t3\t8\t%s\n' "$EVID" >> "$GOOD"
+A=$(rb budget --run-id=t116a --ledger="$EARLY"); B=$(rb budget --run-id=t116b --ledger="$SHORT")
+C=$(rb budget --run-id=t116c --ledger="$WRONG"); D=$(rb budget --run-id=t116d --ledger="$BIG")
+E=$(rb budget --run-id=t116e --ledger="$ARITY"); F=$(rb budget --run-id=t116f --ledger="$GOOD")
+G=$(rb budget --run-id=t116g --ledger="$CRPAD"); H=$(rb budget --run-id=t116h --ledger="$TWICE")
+I=$(rb budget --run-id=t116i --ledger="$LIVE")
+if [ "$A$B$C$D$E$G$H$I" = "66666666" ] && [ "$F" = "5" ]; then
+    ok "T116: early, evidence-less, misdated, oversized, short, CR-padded, second and after-a-live-CONTINUE GRANT rows STOP (6); a well-formed one reads (5)"
+else
+    fail "T116: stored GRANT rows" "early=$A short=$B wrong=$C big=$D arity=$E crpad=$G twice=$H live=$I good=$F (want 6 6 6 6 6 6 6 6 5)"
+fi
+
+echo "T117. every stop still applies inside granted rounds"
+LED=$(newledger t117); to_round t117 "$LED" 8
+bash "$RB" grant --run-id=t117 --ledger="$LED" --rounds=3 --evidence="$EVID" >/dev/null
+bash "$RB" record-verdict --run-id=t117 --ledger="$LED" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
+bash "$RB" record-round --run-id=t117 --ledger="$LED" --score=4/10 --defect=yes --settles=CONFIRMED >/dev/null
+RC=$(rb budget --run-id=t117 --ledger="$LED")
+if [ "$RC" = "6" ]; then ok "T117: a regression inside granted rounds STOPs (6)"; else fail "T117: stop after grant" "exit $RC, want 6"; fi
+
+echo "T118. --rounds and --evidence belong to grant alone"
+LED=$(newledger t118); to_round t118 "$LED" 2
+A=$(rb budget --run-id=t118 --ledger="$LED" --rounds=3)
+B=$(rb record-verdict --run-id=t118 --ledger="$LED" --verdict=STOP --evidence="$EVID")
+if [ "$A$B" = "22" ]; then ok "T118: grant flags refused elsewhere (2)"; else fail "T118: flag scope" "budget=$A verdict=$B (want 2 2)"; fi
+
+echo "T119. show puts the owner's evidence in front of the reviewer"
+LED=$(newledger t119); to_round t119 "$LED" 8
+bash "$RB" grant --run-id=t119 --ledger="$LED" --rounds=2 --evidence="$EVID" >/dev/null
+OUT=$(rbout show --run-id=t119 --ledger="$LED")
+case "$OUT" in *"grant   +2"*"$EVID"*) ok "T119: show renders the grant and its evidence" ;; *) fail "T119: show" "$OUT" ;; esac
+
+echo "T120. a granted ceiling is still an escalation, not a finished arc"
+LED=$(newledger t120); to_round t120 "$LED" 8
+bash "$RB" grant --run-id=t120 --ledger="$LED" --rounds=1 --evidence="$EVID" >/dev/null
+bash "$RB" record-verdict --run-id=t120 --ledger="$LED" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
+bash "$RB" record-round --run-id=t120 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+RC_B=$(rb budget --run-id=t120 --ledger="$LED")
+RC=$(rb reset --run-id=t120 --ledger="$LED")
+if [ "$RC_B" = "7" ] && [ "$RC" = "6" ] && [ -f "$LED" ]; then ok "T120: plain reset refused at a granted ceiling (6)"; else fail "T120: reset at granted ceiling" "budget=$RC_B reset=$RC (want 7 6)"; fi
+
+echo "T121. a stored round past the ceiling in force STOPs; a hand-written pass cannot end the arc"
+LED=$(newledger t121); to_round t121 "$LED" 8
+bash "$RB" grant --run-id=t121 --ledger="$LED" --rounds=1 --evidence="$EVID" >/dev/null
+bash "$RB" record-verdict --run-id=t121 --ledger="$LED" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
+bash "$RB" record-round --run-id=t121 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+RC_AT=$(rb budget --run-id=t121 --ledger="$LED")
+printf 'ROUND\t10\t7/10\tyes\t-\t-\tA\tA:7/10:PASS\t-\n' >> "$LED"
+RC_PAST=$(rb budget --run-id=t121 --ledger="$LED")
+RC_RESET=$(rb reset --run-id=t121 --ledger="$LED")
+NOGRANT=$(newledger t121b); to_round t121b "$NOGRANT" 8
+printf 'ROUND\t9\t7/10\tyes\t-\t-\tA\tA:7/10:PASS\t-\n' >> "$NOGRANT"
+RC_NG=$(rb budget --run-id=t121b --ledger="$NOGRANT")
+# ISOLATED (P20 r3): the past-ceiling round is otherwise valid -- a live CONTINUE
+# before it, settled, recorder-shaped scaled row -- so only the ceiling rule can
+# refuse it. Without this, the missing-CONTINUE rule masked the ceiling rule.
+ISO=$(newledger t121c); to_round t121c "$ISO" 8
+bash "$RB" grant --run-id=t121c --ledger="$ISO" --rounds=1 --evidence="$EVID" >/dev/null
+bash "$RB" record-verdict --run-id=t121c --ledger="$ISO" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
+bash "$RB" record-round --run-id=t121c --ledger="$ISO" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+printf 'VERDICT\tCONTINUE\tdefect class 10 at scripts/loop.sh:10\t\n' >> "$ISO"
+printf 'ROUND\t10\t7/10\tyes\t\tCONFIRMED\tA\tA:7/10:PASS\t-\n' >> "$ISO"
+RC_ISO=$(rb budget --run-id=t121c --ledger="$ISO")
+OUT_ISO=$(rbout budget --run-id=t121c --ledger="$ISO")
+case "$OUT_ISO" in *"past the ceiling in force"*) ISO_WHY=ceiling ;; *) ISO_WHY=other ;; esac
+if [ "$RC_AT" = "7" ] && [ "$RC_PAST" = "6" ] && [ "$RC_RESET" = "6" ] && [ -f "$LED" ] && [ "$RC_NG" = "6" ] \
+   && [ "$RC_ISO" = "6" ] && [ "$ISO_WHY" = "ceiling" ]; then
+    ok "T121: HUMAN at the granted ceiling (7); a passing round past it STOPs (6), reset refused (6); no-grant round 9 STOPs (6); an otherwise-valid round past the ceiling STOPs for the ceiling alone"
+else
+    fail "T121: ceiling in force" "at=$RC_AT past=$RC_PAST reset=$RC_RESET ng=$RC_NG iso=$RC_ISO why=$ISO_WHY (want 7 6 6 6 6 ceiling)"
+fi
+
+echo "T122. a granted round needs a live CONTINUE, at the command and on read"
+LED=$(newledger t122); to_round t122 "$LED" 8
+bash "$RB" grant --run-id=t122 --ledger="$LED" --rounds=2 --evidence="$EVID" >/dev/null
+RC_CMD=$(rb record-round --run-id=t122 --ledger="$LED" --score=5/10 --defect=yes)
+ROWS=$(grep -c '^ROUND' "$LED" || true)
+# ISOLATED (P20 r3): a recorder-shaped scaled row (a bare legacy score after
+# scaled rows is refused by the format-order rule and masked this one).
+STORED=$(newledger t122b); to_round t122b "$STORED" 8
+bash "$RB" grant --run-id=t122b --ledger="$STORED" --rounds=2 --evidence="$EVID" >/dev/null
+printf 'ROUND\t9\t5/10\tyes\t\t-\tunrecorded\t-\t-\n' >> "$STORED"
+RC_READ=$(rb budget --run-id=t122b --ledger="$STORED")
+OUT_READ=$(rbout budget --run-id=t122b --ledger="$STORED")
+case "$OUT_READ" in *"has no CONTINUE before it"*) READ_WHY="no-continue" ;; *) READ_WHY="other" ;; esac
+if [ "$RC_CMD" = "2" ] && [ "$ROWS" = "8" ] && [ "$RC_READ" = "6" ] && [ "$READ_WHY" = "no-continue" ]; then
+    ok "T122: record-round without a CONTINUE refused in granted territory (2, no row); an otherwise-valid stored one STOPs for that reason (6)"
+else
+    fail "T122: granted CONTINUE" "cmd=$RC_CMD rows=$ROWS read=$RC_READ why=$READ_WHY (want 2 8 6 no-continue)"
+fi
+
+echo "T123. an oversized --rounds is refused before any integer compare"
+LED=$(newledger t123); to_round t123 "$LED" 8
+RC=$(rb grant --run-id=t123 --ledger="$LED" --rounds=18446744073709551617 --evidence="$EVID")
+ROWS=$(grep -c '^GRANT' "$LED" || true)
+if [ "$RC" = "2" ] && [ "$ROWS" = "0" ]; then ok "T123: a 20-digit --rounds refused (2), no row"; else fail "T123: oversized rounds" "rc=$RC rows=$ROWS (want 2 0)"; fi
+
+echo "T124. a spent grant points only to remedies that work"
+OUT=$(rbout budget --run-id=t121 --ledger="$(newledger t115)")
+case "$OUT" in *"record STRUCTURAL"*) fail "T124: spent remedy" "still suggests a STRUCTURAL verdict the closed arc refuses" ;; *"grant for this arc is spent"*) ok "T124: the spent message names the handback, not a refused STRUCTURAL" ;; *) fail "T124: spent remedy" "message missing: $OUT" ;; esac
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi
