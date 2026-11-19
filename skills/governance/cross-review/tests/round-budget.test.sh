@@ -1879,14 +1879,13 @@ OUT=$(rbout show --run-id=t121 --ledger="$LED")
 BAD=$(newledger t121b); to_round t121b "$BAD" 8
 printf 'GRANT\t2\t8\n' >> "$BAD"
 RC_BAD=$(rb budget --run-id=t121b --ledger="$BAD")
-# A granted round the owner already ran stays readable; one past the grant does not.
+# GRANT rows are shape-checked and ignored, so a round run under a grant reads
+# as a round past an undecided signal (6); reset --force archives it.
 USED=$(newledger t121c); cp "$LED" "$USED"
 printf 'VERDICT\tCONTINUE\tclass 9 at scripts/loop.sh:9\t\nROUND\t9\t5/10\tyes\t\tCONFIRMED\tA\tA:5/10:FAIL\n' >> "$USED"
 RC_USED=$(rb budget --run-id=t121c --ledger="$USED")
-PAST=$(newledger t121d); cp "$USED" "$PAST"
-printf 'VERDICT\tCONTINUE\tclass 10 at scripts/loop.sh:10\t\nROUND\t10\t5/10\tyes\t\tCONFIRMED\tA\tA:5/10:FAIL\nVERDICT\tCONTINUE\tclass 11 at scripts/loop.sh:11\t\nROUND\t11\t5/10\tyes\t\tCONFIRMED\tA\tA:5/10:FAIL\n' >> "$PAST"
-RC_PAST=$(rb budget --run-id=t121d --ledger="$PAST")
-if [ "$RC" = "7" ] && printf '%s' "$OUT" | grep -q "grant" && [ "$RC_BAD" = "6" ] && [ "$RC_USED" = "7" ] && [ "$RC_PAST" = "6" ]; then ok "T121: an old GRANT row parses (7), its granted round reads (7), a round past it does not (6), a malformed row does not (6)"; else fail "T121: old GRANT rows" "rc=$RC used=$RC_USED (want 7 7) past=$RC_PAST bad=$RC_BAD (want 6 6) out=$OUT"; fi
+RC_ARCH=$(rb reset --run-id=t121c --ledger="$USED" --force)
+if [ "$RC" = "7" ] && printf '%s' "$OUT" | grep -q "grant" && [ "$RC_BAD" = "6" ] && [ "$RC_USED" = "6" ] && [ "$RC_ARCH" = "0" ]; then ok "T121: an old GRANT row parses (7); a round run under it reads 6 and --force archives it; a malformed row reads 6"; else fail "T121: old GRANT rows" "rc=$RC (want 7) used=$RC_USED bad=$RC_BAD (want 6 6) archive=$RC_ARCH (want 0) out=$OUT"; fi
 
 echo "T122. --decision and --reason belong to record-decision only"
 RC1=$(rb budget --run-id=t122 --ledger="$(newledger t122)" --decision=continue)
@@ -1907,6 +1906,8 @@ if [ "$RC_DEC" = "0" ] && [ "$RC_GRANT" = "0" ]; then ok "T123: the CONTINUE sti
 echo "T124. change-approach is archived under --force, decision kept; continue is not"
 LED=$(newledger t124); to_round t124 "$LED" 8
 bash "$RB" record-decision --run-id=t124 --ledger="$LED" --decision=change-approach --reason="t124: reshape" >/dev/null 2>&1
+RC_HOLD=$(rb budget --run-id=t124 --ledger="$LED")
+RC_ROUND=$(rb record-verdict --run-id=t124 --ledger="$LED" --verdict=CONTINUE --prediction="f at scripts/f.sh:6")
 RC_PLAIN=$(rb reset --run-id=t124 --ledger="$LED")
 OUT=$(bash "$RB" reset --run-id=t124 --ledger="$LED" --force 2>&1); RC_FORCE=$?
 KEPT=$(cat "$LED".archived.* 2>/dev/null | grep -c '^DECISION	change-approach	8	t124: reshape$')
@@ -1915,11 +1916,11 @@ NEW_OUT=$(rbout budget --run-id=t124 --ledger="$LED")
 LED2=$(newledger t124b); to_round t124b "$LED2" 8
 bash "$RB" record-decision --run-id=t124b --ledger="$LED2" --decision=continue --reason="t124: converging" >/dev/null 2>&1
 RC_CONT=$(rb reset --run-id=t124b --ledger="$LED2" --force)
-if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ "$KEPT" = "1" ] && printf '%s' "$OUT" | grep -q "change-approach decision" \
+if [ "$RC_HOLD" = "7" ] && [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ "$KEPT" = "1" ] && printf '%s' "$OUT" | grep -q "change-approach decision" \
    && [ "$RC_NEW" = "0" ] && printf '%s' "$NEW_OUT" | grep -q "round 1 of" && [ "$RC_CONT" = "6" ]; then
-    ok "T124: plain 6, forced 0 with decision and reason archived, the next arc starts at round 1; a continue arc stays live (6)"
+    ok "T124: change-approach holds the arc (7); plain reset 6, forced 0 with decision and reason archived, next arc at round 1; a continue arc stays live (6)"
 else
-    fail "T124: change-approach reset" "plain=$RC_PLAIN force=$RC_FORCE kept=$KEPT new=$RC_NEW continue=$RC_CONT out=$OUT new-out=$NEW_OUT"
+    fail "T124: change-approach reset" "hold=$RC_HOLD (want 7) verdict=$RC_ROUND plain=$RC_PLAIN force=$RC_FORCE kept=$KEPT new=$RC_NEW continue=$RC_CONT out=$OUT new-out=$NEW_OUT"
 fi
 
 echo "T125. past round 8 a decision does not earn the round; a CONTINUE does"
@@ -1949,6 +1950,22 @@ if [ "$RC_BUDGET" = "7" ] && [ "$RC_ROUND" = "7" ] && [ "$RC_ANSWER" = "0" ] && 
     ok "T126: escalate holds (7, 7); the owner's answer as a decision releases it (0, 0)"
 else
     fail "T126: escalate" "budget=$RC_BUDGET round=$RC_ROUND (want 7 7) answer=$RC_ANSWER after=$RC_AFTER (want 0 0)"
+fi
+
+echo "T127. a decision is not repeated for the same signal; a later signal may take the same word"
+LED=$(newledger t127)
+printf 'ROUND\t1\t6/10\tyes\t\t-\tA\tA:6/10:FAIL\nROUND\t2\t5/10\tyes\t\t-\tA\tA:5/10:FAIL\n' > "$LED"
+bash "$RB" record-decision --run-id=t127 --ledger="$LED" --decision=escalate --reason="t127: first" >/dev/null 2>&1
+RC_REPEAT=$(rb record-decision --run-id=t127 --ledger="$LED" --decision=escalate --reason="t127: again")
+HAND=$(newledger t127h); cp "$LED" "$HAND"; printf 'DECISION\tescalate\t2\tt127 again\n' >> "$HAND"
+RC_HAND=$(rb budget --run-id=t127h --ledger="$HAND")
+bash "$RB" record-decision --run-id=t127 --ledger="$LED" --decision=continue --reason="t127: owner answered" >/dev/null 2>&1
+bash "$RB" record-round --run-id=t127 --ledger="$LED" --score=5/10 --defect=yes --stratum=A:5/10:FAIL >/dev/null 2>&1
+RC_LATER=$(rb record-decision --run-id=t127 --ledger="$LED" --decision=continue --reason="t127: round 3 converging")
+if [ "$RC_REPEAT" = "2" ] && [ "$RC_HAND" = "6" ] && [ "$RC_LATER" = "0" ]; then
+    ok "T127: a repeat is refused (2) and unreadable (6); the next signal takes the same word (0)"
+else
+    fail "T127: repeated decisions" "repeat=$RC_REPEAT (want 2) hand=$RC_HAND (want 6) later=$RC_LATER (want 0)"
 fi
 
 echo ""

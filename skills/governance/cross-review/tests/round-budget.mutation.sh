@@ -333,11 +333,11 @@ mutate "--force accepted on any command" "T48" \
 # Route a LIVE arc into the stopped branch and --force reaches it -- which is
 # exactly what the hatch must not do, because a live arc can be ended in band.
 mutate "--force reaches a live arc" "T49" \
-    'if [ -n "$RESET_ENTRY" ] && { arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "signal" ] || [ "$LG_LAST_DECISION" = "change-approach" ]; }; then' \
+    'if [ -n "$RESET_ENTRY" ] && { arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "signal" ]; }; then' \
     'if [ -n "$RESET_ENTRY" ] && [ "$RESET_CODE" != "IMPOSSIBLE" ]; then'
 mutate "a signalled arc is not resettable even under --force" "T43" \
-    '{ arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "signal" ] ||' \
-    '{ arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "IMPOSSIBLE" ] ||'
+    '{ arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "signal" ]; }' \
+    '{ arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "IMPOSSIBLE" ]; }'
 # Annotations are not the last row (CodeRabbit on #329), and change-approach is
 # the one decision that archives its arc.
 mutate "a DECISION row hides the live CONTINUE" "T123" \
@@ -349,12 +349,16 @@ mutate "a post-ceiling round recorded without a CONTINUE" "T125" \
     '    if [ "$LG_N" -ge 999 ] && ! { last_row_is_verdict'
 mutate "a post-ceiling round without a CONTINUE reads" "T125" \
     'if (rounds > ceil && pending != 1) badhistory' 'if (0) badhistory'
-mutate "change-approach cannot be archived" "T124" \
-    ' || [ "$LG_LAST_DECISION" = "change-approach" ]; }; then' '; }; then'
+mutate "change-approach answers the signal" "T124" \
+    '$2 != "escalate" && $2 != "change-approach"' '$2 != "escalate"'
+mutate "a decision repeats on read" "T127" \
+    'if ($2 == lastdecision) badhistory=' 'if (0) badhistory='
+mutate "a decision repeats on write" "T127" \
+    '    if [ "$DECISION" = "$LG_LAST_DECISION" ]; then' '    if false; then'
+mutate "the last decision outlives its round" "T127" \
+    '            decided=0; lastdecision=""' '            decided=0'
 mutate "the decision is not carried to reset" "T124" \
     '            lastdecision=$2' '            lastdecision=""'
-mutate "any decided arc archives under --force" "T124" \
-    '[ "$LG_LAST_DECISION" = "change-approach" ]; }; then' '[ -n "$LG_LAST_DECISION" ]; }; then'
 
 # DROPPED: "corrupt path names its own archive" (restoring the pid-based namer).
 # A reviewer showed it was killed for the WRONG reason. A pid namer collides
@@ -716,9 +720,10 @@ mutate "a decision does not clear the signal" "T111" \
     '    [ "$LG_SIGNAL" = "1" ] && [ "$LG_DECIDED" != "1" ] || return 1' \
     '    [ "$LG_SIGNAL" = "1" ] || return 1'
 mutate "a decision is never spent by a round" "T112" \
-    '            if (signal && !decided && !(rounds > ceil && rounds <= ceil + granted)) badhistory="a round follows a signal without a decision"
-            decided=0' \
-    '            if (signal && !decided && !(rounds > ceil && rounds <= ceil + granted)) badhistory="a round follows a signal without a decision"'
+    '            if (signal && !decided) badhistory="a round follows a signal without a decision"
+            decided=0; lastdecision=""' \
+    '            if (signal && !decided) badhistory="a round follows a signal without a decision"
+            lastdecision=""'
 mutate "decision recorded with a blank reason" "T113" \
     "    if ! printf '%s' \"\$CLEAN_REASON\" | grep -q '[[:alnum:]]'; then" \
     '    if false; then'
@@ -729,8 +734,8 @@ mutate "unknown decision word recorded" "T113" \
     '        *) echo "round-budget: invalid --decision." >&2; exit 2 ;;' \
     '        *) ;;'
 mutate "stored round past an undecided signal accepted" "T118" \
-    '            if (signal && !decided && !(rounds' \
-    '            if (0 && !(rounds'
+    '            if (signal && !decided) badhistory=' \
+    '            if (0) badhistory='
 mutate "stored decision without a signal accepted" "T118" \
     '            if (!signal) badhistory=' '            if (0) badhistory='
 mutate "a second stored decision accepted" "T118" \
@@ -746,13 +751,7 @@ mutate "stored decision round unchecked" "T118" \
 mutate "stored decision reason unchecked" "T118" \
     'if ($4 !~ /[[:alnum:]]/) { badrow=1; next }' ''
 mutate "escalate answers the signal" "T126" \
-    'if ($2 != "escalate") decided=1' 'decided=1'
-mutate "a granted round needs a decision" "T121" \
-    '!(rounds > ceil && rounds <= ceil + granted)' '1'
-mutate "a grant covers every later round" "T121" \
-    '!(rounds > ceil && rounds <= ceil + granted)' '!(rounds > ceil)'
-mutate "a grant row grants nothing" "T121" \
-    'if ($2 ~ /^[0-9]+$/) granted+=$2' 'if (0) granted+=$2'
+    '$2 != "escalate" && $2 != "change-approach"' '$2 != "change-approach"'
 mutate "show hides the decision" "T119" \
     '        $1=="DECISION" { printf' \
     '        $1=="IMPOSSIBLE" { printf'

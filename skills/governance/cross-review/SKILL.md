@@ -219,14 +219,16 @@ cross-review round record-decision --run-id=$ID \
 - **hoist**: the same defect class keeps appearing at new sites; write one rule.
 - **subtract**: the findings land on scaffolding added to answer earlier reviews; remove it.
 - **change-approach**: the shape is wrong; reshape, then `reset --force` and start a new arc.
-  The archived ledger keeps the decision and its reason; a plain `reset` still refuses.
+  It does not answer the signal, so no round runs on this arc after it; the
+  archived ledger keeps the decision and its reason. A plain `reset` still refuses.
 - **escalate**: the rounds have stopped producing meaningful progress, and the
   next step needs the owner's judgement. Escalate does not answer the signal:
   no round runs until the owner's answer is recorded as the next decision.
 
 A decision covers one round. An arc that still signals, for example after a
-regression, asks again before the next round. Every decision and its reason is
-in the ledger, and `show` prints it.
+regression, asks again before the next round. The same decision is not recorded
+twice for one signal. Every decision and its reason is in the ledger, and `show`
+prints it.
 
 **When to reach the owner.** Only when the rounds are not achieving anything
 meaningful or are stuck:
@@ -287,9 +289,7 @@ An arc with an outstanding **signal** is not finished either: record its
 decision, or discard the ledger with `reset --force`, which prints the signal it
 discarded. A **live** arc that still
 PARSES is refused, `--force` included — nothing there is blocked, so record its
-verdict instead. The one exception is an arc whose last decision was
-`change-approach`: `reset --force` archives it, and the archive keeps the
-decision and its reason. Corrupting it first is the one way through, and deliberately
+verdict instead. Corrupting it first is the one way through, and deliberately
 so: a corrupt ledger must stay discardable or `rm` becomes the only escape, and
 that one is silent. This one lands as `.archived.corrupt.` and needs `--force`
 to say it on purpose.
@@ -324,7 +324,7 @@ the owner.
 
 **The owner grant (BRO-3893) is retired.** It asked the owner once per arc at the
 ceiling, which was still a permission ask. `round grant` is now a no-op that
-points to `record-decision`; `GRANT` rows in older ledgers are read and ignored.
+points to `record-decision`; `GRANT` rows in older ledgers are shape-checked and ignored. A ledger that ran rounds under a grant therefore reads as a history the recorder would refuse (exit 6); archive it with `reset --force`.
 
 ### What this enforces, and what it does not
 
@@ -339,8 +339,8 @@ appended to it.
 
 | Property | Why it holds |
 |---|---|
-| A stop or signal cannot be cleared by appending | a round past an undecided signal is refused when recorded and when stored (one exception on read: a round inside a grant recorded under BRO-3893 still reads, if a CONTINUE earned it; rounds past that grant need a decision); every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: a terminal `STOP` outranks any pass, and a round past an undecided signal is refused when recorded and when stored, so no pass can be appended past one. A verified pass (per-stratum `PASS` verdicts) on the round that raises a signal ends the arc: a signal asks for reasoning before *another* round, and a passed arc has none. both recorders refuse to append past a terminal state |
-| A stop is not cleared by `reset` | `reset` runs a **different predicate** than `budget`, not a second caller of the same one. `budget` asks *may another round run?*; `reset` asks *may this ledger be discarded?* — yes only for a recorded `STOP`/`STRUCTURAL` verdict or a passing score. An outstanding signal needs `--force`, which names what it discarded; a live arc that still parses is refused with or without it, except one whose last decision was `change-approach`, which `--force` archives with the decision kept — corrupting it first is the one way through, and it archives loudly as `.archived.corrupt.`. One test per stop class, one mutation per class |
+| A stop or signal cannot be cleared by appending | a round past an undecided signal is refused when recorded and when stored; every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: a terminal `STOP` outranks any pass, and a round past an undecided signal is refused when recorded and when stored, so no pass can be appended past one. A verified pass (per-stratum `PASS` verdicts) on the round that raises a signal ends the arc: a signal asks for reasoning before *another* round, and a passed arc has none. both recorders refuse to append past a terminal state |
+| A stop is not cleared by `reset` | `reset` runs a **different predicate** than `budget`, not a second caller of the same one. `budget` asks *may another round run?*; `reset` asks *may this ledger be discarded?* — yes only for a recorded `STOP`/`STRUCTURAL` verdict or a passing score. An outstanding signal needs `--force`, which names what it discarded; a live arc that still parses is refused with or without it — corrupting it first is the one way through, and it archives loudly as `.archived.corrupt.`. One test per stop class, one mutation per class |
 | A budget cannot be reset by re-running `pre-push`, or by a rebase | the ledger id is the **branch alone**. It was the PID first (every invocation reset it), then branch + merge-base (a mid-arc rebase reset it). Reusing a branch name deliberately reuses its ledger — run `cross-review round reset` to archive a finished arc, which is loud on purpose |
 | Pointing at a new file is not a *casual* reset | `--ledger` is gated behind `ROUND_BUDGET_TEST_LEDGER`, so it is no longer an undocumented flag that silently resets a budget. It is **not** a barrier — see *not enforced* below |
 | An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |

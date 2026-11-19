@@ -686,7 +686,7 @@ field() { printf '%s' "$1" | cut -f"$2"; }
 # GRANT   rounds at_round evidence                       (4 fields, BRO-3893)
 analyze() {
     read_rows | awk -F'\t' -v ceil="$HUMAN_CEILING" '
-        BEGIN { rounds=0; prev=-1; last=-1; regressed=0; granted=0
+        BEGIN { rounds=0; prev=-1; last=-1; regressed=0
                 ref=0; maxref=0; nod=0; maxnod=0
                 terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0
                 badhistory=""; lastverified=0; prevkind=""; sawscaled=0; lastaxes="-"; signal=0; decided=0 }
@@ -731,8 +731,8 @@ analyze() {
             lastverified=(NF>=8)
             lastaxes=(NF>=9 ? $9 : "-")
             rounds++
-            if (signal && !decided && !(rounds > ceil && rounds <= ceil + granted)) badhistory="a round follows a signal without a decision"
-            decided=0
+            if (signal && !decided) badhistory="a round follows a signal without a decision"
+            decided=0; lastdecision=""
             # Past the ceiling a round is still EARNED by a live CONTINUE: a
             # decision answers the signal, it does not earn the round. Checked on
             # read too, so a hand-written round cannot buy what the recorder refuses.
@@ -793,11 +793,12 @@ analyze() {
             if ($4 !~ /[[:alnum:]]/) { badrow=1; next }
             if (!signal) badhistory="a decision requires an outstanding signal"
             if (decided) badhistory="a second decision follows one that already answered the signal"
+            if ($2 == lastdecision) badhistory="a decision repeats the one before it"
             lastdecision=$2
-            # escalate hands the question to the owner; it does not answer the
-            # signal, so no round runs until the answer of the owner is recorded as
-            # the next decision.
-            if ($2 != "escalate") decided=1
+            # escalate hands the question to the owner and change-approach ends
+            # this arc; neither answers the signal, so no round runs on this arc
+            # until another decision does (escalate) or the arc is reset (change-approach).
+            if ($2 != "escalate" && $2 != "change-approach") decided=1
             next
         }
         $1=="GRANT" {
@@ -805,10 +806,6 @@ analyze() {
             # Old ledgers still read: the row is checked for shape and ignored,
             # because nothing hard-stops at the ceiling any more.
             if (NF != 4) badrow=1
-            # Rounds the owner already granted stay readable: under BRO-3893 a
-            # grant, not a decision, answered the ceiling. New rounds past it
-            # still need a decision.
-            if ($2 ~ /^[0-9]+$/) granted+=$2
             next
         }
         NF>0 { badrow=1 }
@@ -1404,6 +1401,9 @@ record-decision)
     if [ "$LG_SIGNAL" != "1" ] || [ "$LG_DECIDED" = "1" ]; then
         echo "round-budget: no outstanding signal requires a decision." >&2; exit 2
     fi
+    if [ "$DECISION" = "$LG_LAST_DECISION" ]; then
+        echo "round-budget: $DECISION is already recorded for this signal." >&2; exit 2
+    fi
     printf 'DECISION\t%s\t%s\t%s\n' "$DECISION" "$LG_N" "$CLEAN_REASON" >> "$LEDGER"
     echo "round-budget: recorded $DECISION at round $LG_N -> $LEDGER"
     ;;
@@ -1477,9 +1477,7 @@ reset)
         # A signal (BRO-3963) is not a stop, but neither is it a finished arc: an
         # agent changing the approach may discard the ledger, deliberately, as a
         # stop's ledger is discarded: plainly refused, archived under --force.
-        # change-approach answers a signal by starting over, so its arc is
-        # archived the same deliberate way: under --force, decision kept.
-        if [ -n "$RESET_ENTRY" ] && { arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "signal" ] || [ "$LG_LAST_DECISION" = "change-approach" ]; }; then
+        if [ -n "$RESET_ENTRY" ] && { arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "signal" ]; }; then
             if [ "$RESET_FORCE" != "1" ]; then
                 echo "round-budget: refusing to reset a STOPPED or SIGNALLED arc." >&2
                 echo "  budget says: $RESET_RULE (exit $RESET_CODE)." >&2
@@ -1492,7 +1490,8 @@ reset)
                 exit 6
             fi
             archive_ledger forced
-            if [ "$LG_LAST_DECISION" = "change-approach" ] && [ "$RESET_RULE" != "signal" ]; then
+            # change-approach leaves the signal open, so its arc lands here.
+            if [ "$LG_LAST_DECISION" = "change-approach" ]; then
                 echo "round-budget: archived (change-approach decision) -> $ARCHIVE"
                 echo "  The decision and its reason stay in the archived ledger. The next"
                 echo "  round on this arc id starts from round 1."
