@@ -13,8 +13,9 @@
 #
 # Scoring: anti-slop rubric (see references/rubric.md). PASS at ≥7/10 AND no
 # dimension at 0 — a zeroed axis caps the round below the bar (BRO-2636).
-# Round budget is DYNAMIC: 3 free, 4-7 earned by a continuation verdict
-# carrying a falsifiable prediction, >=8 escalates to a human. The budget is
+# Round budget is DYNAMIC: 3 free, later rounds earned by a continuation verdict
+# carrying a falsifiable prediction; a regression, refuted predictions, defect-free
+# rounds and round 8 are signals the agent answers with a recorded decision. The budget is
 # kept in a ledger by scripts/round-budget.sh -- see `cross-review round`.
 #
 # Usage:
@@ -129,8 +130,8 @@ for arg in "$@"; do
             # silently honouring a flag that no longer has a meaning would
             # reproduce the defect this change exists to remove.
             echo "cross-review: --max-rounds is retired. The budget is dynamic:" >&2
-            echo "  3 free rounds, 4-7 earned by a continuation verdict carrying a" >&2
-            echo "  falsifiable prediction, >=8 escalates to a human." >&2
+            echo "  3 free rounds, later rounds earned by a continuation verdict carrying a" >&2
+            echo "  falsifiable prediction; signals are answered with round record-decision." >&2
             echo "  Drive it with: cross-review round budget --run-id=ID" >&2
             exit 2 ;;
         --rubric=*) RUBRIC="${arg#*=}" ;;

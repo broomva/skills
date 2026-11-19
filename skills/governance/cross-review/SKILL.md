@@ -219,8 +219,10 @@ cross-review round record-decision --run-id=$ID \
 - **hoist**: the same defect class keeps appearing at new sites; write one rule.
 - **subtract**: the findings land on scaffolding added to answer earlier reviews; remove it.
 - **change-approach**: the shape is wrong; reshape, then `reset --force` and start a new arc.
+  The archived ledger keeps the decision and its reason; a plain `reset` still refuses.
 - **escalate**: the rounds have stopped producing meaningful progress, and the
-  next step needs the owner's judgement.
+  next step needs the owner's judgement. Escalate does not answer the signal:
+  no round runs until the owner's answer is recorded as the next decision.
 
 A decision covers one round. An arc that still signals, for example after a
 regression, asks again before the next round. Every decision and its reason is
@@ -335,7 +337,7 @@ appended to it.
 
 | Property | Why it holds |
 |---|---|
-| A stop or signal cannot be cleared by appending | a round past an undecided signal is refused when recorded and when stored; every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: stops are checked before `PASSED`, because the score is the agent's own self-report and a stop that costs one integer to escape is not a stop. both recorders refuse to append past a terminal state |
+| A stop or signal cannot be cleared by appending | a round past an undecided signal is refused when recorded and when stored; every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: a terminal `STOP` outranks any pass, and a round past an undecided signal is refused when recorded and when stored, so no pass can be appended past one. A verified pass (per-stratum `PASS` verdicts) on the round that raises a signal ends the arc: a signal asks for reasoning before *another* round, and a passed arc has none. both recorders refuse to append past a terminal state |
 | A stop is not cleared by `reset` | `reset` runs a **different predicate** than `budget`, not a second caller of the same one. `budget` asks *may another round run?*; `reset` asks *may this ledger be discarded?* — yes only for a recorded `STOP`/`STRUCTURAL` verdict or a passing score. An outstanding signal needs `--force`, which names what it discarded; a live arc that still parses is refused with or without it — corrupting it first is the one way through, and it archives loudly as `.archived.corrupt.`. One test per stop class, one mutation per class |
 | A budget cannot be reset by re-running `pre-push`, or by a rebase | the ledger id is the **branch alone**. It was the PID first (every invocation reset it), then branch + merge-base (a mid-arc rebase reset it). Reusing a branch name deliberately reuses its ledger — run `cross-review round reset` to archive a finished arc, which is loud on purpose |
 | Pointing at a new file is not a *casual* reset | `--ledger` is gated behind `ROUND_BUDGET_TEST_LEDGER`, so it is no longer an undocumented flag that silently resets a budget. It is **not** a barrier — see *not enforced* below |

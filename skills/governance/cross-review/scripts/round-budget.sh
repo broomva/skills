@@ -669,7 +669,11 @@ read_rows() {
         }
     fi
 }
-last_row_any() { read_rows | tail -1; }
+# DECISION and GRANT rows annotate the arc; they are neither a round nor a
+# verdict, so the last-row rules skip them. Reading the physical last row let a
+# decision recorded after a live CONTINUE hide it, and an earned round read as
+# REVIEW-REQUIRED (CodeRabbit on skills#329).
+last_row_any() { read_rows | awk -F'\t' '$1 != "DECISION" && $1 != "GRANT"' | tail -1; }
 field() { printf '%s' "$1" | cut -f"$2"; }
 
 # One pass over the WHOLE ledger. Every stop is ABSORBING — computed over all of
@@ -682,7 +686,7 @@ field() { printf '%s' "$1" | cut -f"$2"; }
 # GRANT   rounds at_round evidence                       (4 fields, BRO-3893)
 analyze() {
     read_rows | awk -F'\t' -v ceil="$HUMAN_CEILING" '
-        BEGIN { rounds=0; prev=-1; last=-1; regressed=0
+        BEGIN { rounds=0; prev=-1; last=-1; regressed=0; granted=0
                 ref=0; maxref=0; nod=0; maxnod=0
                 terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0
                 badhistory=""; lastverified=0; prevkind=""; sawscaled=0; lastaxes="-"; signal=0; decided=0 }
@@ -727,8 +731,12 @@ analyze() {
             lastverified=(NF>=8)
             lastaxes=(NF>=9 ? $9 : "-")
             rounds++
-            if (signal && !decided) badhistory="a round follows a signal without a decision"
+            if (signal && !decided && !(rounds > ceil && rounds <= ceil + granted)) badhistory="a round follows a signal without a decision"
             decided=0
+            # Past the ceiling a round is still EARNED by a live CONTINUE: a
+            # decision answers the signal, it does not earn the round. Checked on
+            # read too, so a hand-written round cannot buy what the recorder refuses.
+            if (rounds > ceil && pending != 1) badhistory="round " rounds " is past round " ceil " and has no CONTINUE before it"
             # An eight-field row stores `N/10`. Its scale -- including a bare
             # integer where `N/10` belongs -- is checked in load_ledger by
             # round_is_admissible; only the numerator is compared here.
@@ -778,9 +786,18 @@ analyze() {
             next
         }
         $1=="DECISION" {
-            if (NF != 4 || $2 !~ /^(continue|hoist|subtract|change-approach|escalate)$/ || $3 != rounds || $4 !~ /[[:alnum:]]/) { badrow=1; next }
-            if (!signal || decided) badhistory="a decision requires an outstanding signal"
-            decided=1
+            # One arm per claim, each with its own mutation proof.
+            if (NF != 4) { badrow=1; next }
+            if ($2 !~ /^(continue|hoist|subtract|change-approach|escalate)$/) { badrow=1; next }
+            if ($3 != rounds) { badrow=1; next }
+            if ($4 !~ /[[:alnum:]]/) { badrow=1; next }
+            if (!signal) badhistory="a decision requires an outstanding signal"
+            if (decided) badhistory="a second decision follows one that already answered the signal"
+            lastdecision=$2
+            # escalate hands the question to the owner; it does not answer the
+            # signal, so no round runs until the answer of the owner is recorded as
+            # the next decision.
+            if ($2 != "escalate") decided=1
             next
         }
         $1=="GRANT" {
@@ -788,10 +805,14 @@ analyze() {
             # Old ledgers still read: the row is checked for shape and ignored,
             # because nothing hard-stops at the ceiling any more.
             if (NF != 4) badrow=1
+            # Rounds the owner already granted stay readable: under BRO-3893 a
+            # grant, not a decision, answered the ceiling. New rounds past it
+            # still need a decision.
+            if ($2 ~ /^[0-9]+$/) granted+=$2
             next
         }
         NF>0 { badrow=1 }
-        END { print rounds"\t"last"\t"regressed"\t"maxref"\t"maxnod"\t"terminal"\t"badscore"\t"badverdict"\t"pending"\t"directive"\t"badrow"\t"badhistory"\t"lastverified"\t"lastaxes"\t"signal"\t"decided }'
+        END { print rounds"\t"last"\t"regressed"\t"maxref"\t"maxnod"\t"terminal"\t"badscore"\t"badverdict"\t"pending"\t"directive"\t"badrow"\t"badhistory"\t"lastverified"\t"lastaxes"\t"signal"\t"decided"\t"lastdecision }'
 }
 
 # ─── The one gate ─────────────────────────────────────────────────────────
@@ -802,7 +823,7 @@ analyze() {
 # prediction validation at write but not at read. One site makes that class of
 # defect unrepresentable, and collapses four redundant `analyze` passes into one.
 LG_N=""; LG_SCORE=""; LG_REGRESSED=""; LG_MAXREF=""; LG_MAXNOD=""
-LG_TERMINAL=""; LG_PENDING=""; LG_DIRECTIVE=""; LG_LAST_VERIFIED=""; LG_LAST_AXES=""
+LG_TERMINAL=""; LG_PENDING=""; LG_DIRECTIVE=""; LG_LAST_VERIFIED=""; LG_LAST_AXES=""; LG_LAST_DECISION=""
 # Snapshotted in load_ledger so the RULES never re-read the file. This bounds the
 # inconsistency; it does not remove it. load_ledger itself still reads the ledger
 # more than once (analyze, the tail, the CONTINUE rows) and `budget` takes no
@@ -845,6 +866,7 @@ load_ledger() {
     LG_LAST_AXES=$(printf '%s' "$a" | cut -f14)
     LG_SIGNAL=$(printf '%s' "$a" | cut -f15)
     LG_DECIDED=$(printf '%s' "$a" | cut -f16)
+    LG_LAST_DECISION=$(printf '%s' "$a" | cut -f17)
     local badscore badverdict badrow badhistory last
     badscore=$(printf '%s' "$a" | cut -f7)
     badverdict=$(printf '%s' "$a" | cut -f8)
@@ -1144,9 +1166,8 @@ arc_closed_code() { case "$1" in 3|6) return 0 ;; *) return 1 ;; esac; }
 #   - the budget's own answer is PASSED. The arc ended by succeeding.
 #
 # The pass arm reads the RULE NAME, not `LG_SCORE >= PASS_SCORE`. That is what
-# keeps the OLDER defect fixed: a passing round appended after a regression
-# gives first_rule=regressed, so a trailing self-reported 9 cannot launder the
-# stop it was appended past.
+# keeps the OLDER defect fixed: a passing round appended past an undecided
+# signal is refused as history, so a trailing self-reported 9 cannot launder it.
 #
 # A bare nonterminal stop and the ceiling are absent on purpose. Neither is a
 # finished arc; each names a remedy — escalate, hand back, change the shape of
@@ -1208,6 +1229,13 @@ record-round)
     if [ "$LG_SIGNAL" = "1" ] && [ "$LG_DECIDED" != "1" ]; then
         echo "round-budget: signal requires record-decision before another round." >&2
         exit 7
+    fi
+    # Restored from BRO-3893 (CodeRabbit on #329): past the ceiling a round needs
+    # a live CONTINUE as well as a decision. Rounds 4-7 are gated by `budget`.
+    if [ "$LG_N" -ge "$HUMAN_CEILING" ] && ! { last_row_is_verdict && verdict_earns_a_round; }; then
+        echo "round-budget: a round past round $HUMAN_CEILING needs a CONTINUE verdict first (budget says REVIEW-REQUIRED)." >&2
+        echo "    round-budget.sh record-verdict --run-id=$RUN_ID --verdict=CONTINUE --prediction=..." >&2
+        exit 2
     fi
     [ -n "$SCORE" ]  || { echo "round-budget: --score=N/$LEDGER_SCALE required" >&2; exit 2; }
     if ! SCORE_ERR=$(score_is_valid "$SCORE"); then
@@ -1449,7 +1477,9 @@ reset)
         # A signal (BRO-3963) is not a stop, but neither is it a finished arc: an
         # agent changing the approach may discard the ledger, deliberately, as a
         # stop's ledger is discarded: plainly refused, archived under --force.
-        if [ -n "$RESET_ENTRY" ] && { arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "signal" ]; }; then
+        # change-approach answers a signal by starting over, so its arc is
+        # archived the same deliberate way: under --force, decision kept.
+        if [ -n "$RESET_ENTRY" ] && { arc_closed_code "$RESET_CODE" || [ "$RESET_RULE" = "signal" ] || [ "$LG_LAST_DECISION" = "change-approach" ]; }; then
             if [ "$RESET_FORCE" != "1" ]; then
                 echo "round-budget: refusing to reset a STOPPED or SIGNALLED arc." >&2
                 echo "  budget says: $RESET_RULE (exit $RESET_CODE)." >&2
@@ -1462,6 +1492,12 @@ reset)
                 exit 6
             fi
             archive_ledger forced
+            if [ "$LG_LAST_DECISION" = "change-approach" ] && [ "$RESET_RULE" != "signal" ]; then
+                echo "round-budget: archived (change-approach decision) -> $ARCHIVE"
+                echo "  The decision and its reason stay in the archived ledger. The next"
+                echo "  round on this arc id starts from round 1."
+                exit 0
+            fi
             echo "round-budget: archived (FORCED past $RESET_RULE) -> $ARCHIVE"
             echo "  A stop was discarded without being acted on. The next round on"
             echo "  this arc id starts from round 1."
