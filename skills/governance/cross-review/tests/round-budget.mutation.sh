@@ -352,7 +352,7 @@ mutate "a post-ceiling round without a CONTINUE reads" "T125" \
 mutate "change-approach cannot be archived" "T124" \
     ' || [ "$LG_LAST_DECISION" = "change-approach" ]; }; then' '; }; then'
 mutate "the decision is not carried to reset" "T124" \
-    'decided=1; lastdecision=$2' 'decided=1'
+    '            lastdecision=$2' '            lastdecision=""'
 mutate "any decided arc archives under --force" "T124" \
     '[ "$LG_LAST_DECISION" = "change-approach" ]; }; then' '[ -n "$LG_LAST_DECISION" ]; }; then'
 
@@ -716,9 +716,9 @@ mutate "a decision does not clear the signal" "T111" \
     '    [ "$LG_SIGNAL" = "1" ] && [ "$LG_DECIDED" != "1" ] || return 1' \
     '    [ "$LG_SIGNAL" = "1" ] || return 1'
 mutate "a decision is never spent by a round" "T112" \
-    '            if (signal && !decided) badhistory="a round follows a signal without a decision"
+    '            if (signal && !decided && !(rounds > ceil && rounds <= ceil + granted)) badhistory="a round follows a signal without a decision"
             decided=0' \
-    '            if (signal && !decided) badhistory="a round follows a signal without a decision"'
+    '            if (signal && !decided && !(rounds > ceil && rounds <= ceil + granted)) badhistory="a round follows a signal without a decision"'
 mutate "decision recorded with a blank reason" "T113" \
     "    if ! printf '%s' \"\$CLEAN_REASON\" | grep -q '[[:alnum:]]'; then" \
     '    if false; then'
@@ -729,8 +729,8 @@ mutate "unknown decision word recorded" "T113" \
     '        *) echo "round-budget: invalid --decision." >&2; exit 2 ;;' \
     '        *) ;;'
 mutate "stored round past an undecided signal accepted" "T118" \
-    '            if (signal && !decided) badhistory=' \
-    '            if (0) badhistory='
+    '            if (signal && !decided && !(rounds' \
+    '            if (0 && !(rounds'
 mutate "stored decision without a signal accepted" "T118" \
     '            if (!signal) badhistory=' '            if (0) badhistory='
 mutate "a second stored decision accepted" "T118" \
