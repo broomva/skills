@@ -287,7 +287,9 @@ An arc with an outstanding **signal** is not finished either: record its
 decision, or discard the ledger with `reset --force`, which prints the signal it
 discarded. A **live** arc that still
 PARSES is refused, `--force` included — nothing there is blocked, so record its
-verdict instead. Corrupting it first is the one way through, and deliberately
+verdict instead. The one exception is an arc whose last decision was
+`change-approach`: `reset --force` archives it, and the archive keeps the
+decision and its reason. Corrupting it first is the one way through, and deliberately
 so: a corrupt ledger must stay discardable or `rm` becomes the only escape, and
 that one is silent. This one lands as `.archived.corrupt.` and needs `--force`
 to say it on purpose.
@@ -337,8 +339,8 @@ appended to it.
 
 | Property | Why it holds |
 |---|---|
-| A stop or signal cannot be cleared by appending | a round past an undecided signal is refused when recorded and when stored; every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: a terminal `STOP` outranks any pass, and a round past an undecided signal is refused when recorded and when stored, so no pass can be appended past one. A verified pass (per-stratum `PASS` verdicts) on the round that raises a signal ends the arc: a signal asks for reasoning before *another* round, and a passed arc has none. both recorders refuse to append past a terminal state |
-| A stop is not cleared by `reset` | `reset` runs a **different predicate** than `budget`, not a second caller of the same one. `budget` asks *may another round run?*; `reset` asks *may this ledger be discarded?* — yes only for a recorded `STOP`/`STRUCTURAL` verdict or a passing score. An outstanding signal needs `--force`, which names what it discarded; a live arc that still parses is refused with or without it — corrupting it first is the one way through, and it archives loudly as `.archived.corrupt.`. One test per stop class, one mutation per class |
+| A stop or signal cannot be cleared by appending | a round past an undecided signal is refused when recorded and when stored (one exception on read: a round inside a grant recorded under BRO-3893 still reads, if a CONTINUE earned it; rounds past that grant need a decision); every stop is computed over the WHOLE history and is absorbing — a later `CONFIRMED` round does not clear two `REFUTED`, and **a round claiming a passing score clears nothing**: a terminal `STOP` outranks any pass, and a round past an undecided signal is refused when recorded and when stored, so no pass can be appended past one. A verified pass (per-stratum `PASS` verdicts) on the round that raises a signal ends the arc: a signal asks for reasoning before *another* round, and a passed arc has none. both recorders refuse to append past a terminal state |
+| A stop is not cleared by `reset` | `reset` runs a **different predicate** than `budget`, not a second caller of the same one. `budget` asks *may another round run?*; `reset` asks *may this ledger be discarded?* — yes only for a recorded `STOP`/`STRUCTURAL` verdict or a passing score. An outstanding signal needs `--force`, which names what it discarded; a live arc that still parses is refused with or without it, except one whose last decision was `change-approach`, which `--force` archives with the decision kept — corrupting it first is the one way through, and it archives loudly as `.archived.corrupt.`. One test per stop class, one mutation per class |
 | A budget cannot be reset by re-running `pre-push`, or by a rebase | the ledger id is the **branch alone**. It was the PID first (every invocation reset it), then branch + merge-base (a mid-arc rebase reset it). Reusing a branch name deliberately reuses its ledger — run `cross-review round reset` to archive a finished arc, which is loud on purpose |
 | Pointing at a new file is not a *casual* reset | `--ledger` is gated behind `ROUND_BUDGET_TEST_LEDGER`, so it is no longer an undocumented flag that silently resets a budget. It is **not** a barrier — see *not enforced* below |
 | An unparsable ledger cannot authorize | malformed scores, unknown verdict tokens, and unreadable files all fail CLOSED |

@@ -1909,14 +1909,17 @@ LED=$(newledger t124); to_round t124 "$LED" 8
 bash "$RB" record-decision --run-id=t124 --ledger="$LED" --decision=change-approach --reason="t124: reshape" >/dev/null 2>&1
 RC_PLAIN=$(rb reset --run-id=t124 --ledger="$LED")
 OUT=$(bash "$RB" reset --run-id=t124 --ledger="$LED" --force 2>&1); RC_FORCE=$?
-KEPT=$(cat "$LED".archived.* 2>/dev/null | grep -c '^DECISION	change-approach')
+KEPT=$(cat "$LED".archived.* 2>/dev/null | grep -c '^DECISION	change-approach	8	t124: reshape$')
+RC_NEW=$(rb budget --run-id=t124 --ledger="$LED")
+NEW_OUT=$(rbout budget --run-id=t124 --ledger="$LED")
 LED2=$(newledger t124b); to_round t124b "$LED2" 8
 bash "$RB" record-decision --run-id=t124b --ledger="$LED2" --decision=continue --reason="t124: converging" >/dev/null 2>&1
 RC_CONT=$(rb reset --run-id=t124b --ledger="$LED2" --force)
-if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ "$KEPT" = "1" ] && printf '%s' "$OUT" | grep -q "change-approach decision" && [ "$RC_CONT" = "6" ]; then
-    ok "T124: plain 6, forced 0 with the decision archived; a continue arc stays live (6)"
+if [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ "$KEPT" = "1" ] && printf '%s' "$OUT" | grep -q "change-approach decision" \
+   && [ "$RC_NEW" = "0" ] && printf '%s' "$NEW_OUT" | grep -q "round 1 of" && [ "$RC_CONT" = "6" ]; then
+    ok "T124: plain 6, forced 0 with decision and reason archived, the next arc starts at round 1; a continue arc stays live (6)"
 else
-    fail "T124: change-approach reset" "plain=$RC_PLAIN force=$RC_FORCE kept=$KEPT continue=$RC_CONT out=$OUT"
+    fail "T124: change-approach reset" "plain=$RC_PLAIN force=$RC_FORCE kept=$KEPT new=$RC_NEW continue=$RC_CONT out=$OUT new-out=$NEW_OUT"
 fi
 
 echo "T125. past round 8 a decision does not earn the round; a CONTINUE does"
