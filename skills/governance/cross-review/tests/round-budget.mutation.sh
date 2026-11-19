@@ -113,7 +113,11 @@ PY
     failed_n=$(printf '%s\n' "$out" | grep -c '^  \[FAIL\]' || true)
     passed_n=$(printf '%s\n' "$out" | grep -c '^  \[pass\]' || true)
 
-    if ! printf '%s\n' "$out" | grep -q "\[FAIL\] ${expect}:"; then
+    # A here-string, not `printf | grep -q`: under pipefail, grep -q exits on its
+    # first match, printf takes SIGPIPE on the rest, and the pipeline FAILS -- so a
+    # killed mutant read as a survivor whenever the suite's output was large enough.
+    # CI on skills#328 printed "printf: Broken pipe" right before a false survivor.
+    if ! grep -q "\[FAIL\] ${expect}:" <<<"$out"; then
         echo "  [SURVIVED] $label  ->  $expect still passed (suite exit $rc)"
         SURVIVED=$((SURVIVED+1)); SURVIVORS+=("$label expected $expect")
     elif [ "$passed_n" -eq 0 ]; then
