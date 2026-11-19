@@ -31,6 +31,7 @@
 #   cross-review round budget --run-id=ID # may another fix round run?
 #   cross-review round record-round ...   # log a completed round
 #   cross-review round record-verdict ... # log a continuation verdict
+#   cross-review round grant ...          # at the ceiling: record the OWNER's grant of N more rounds
 #   cross-review --help
 #
 # Mutation-proof (REPORTED SIGNAL on pre-push, never a blocker):

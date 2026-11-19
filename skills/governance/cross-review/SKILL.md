@@ -3,7 +3,7 @@ name: cross-review
 tier: D
 primitive: P20
 category: governance
-description: "bstack P20 — Cross-Model Adversarial Review Gate. The model that wrote the code cannot be the final judge of the code. Before substantive PRs merge, fire a cross-model adversarial gate — different evaluator than writer, anti-slop scoring ≥7/10, a dynamic round budget (3 free, 4-7 earned by a continuation verdict carrying a falsifiable prediction, >=8 human), verdict logged in PR. Three strata: (A) Codex CLI cross-vendor for true different-model verdict, (B) fresh-context subagent under devils-advocate brief, (C) composed existing adversarial-review skills in parallel on code (a knowledge-only diff takes one stratum on a claims rubric). Use cross-review when: (1) about to push a substantive PR (>200 LOC OR public API OR multi-file OR governance-class), (2) reviewing a draft plan/design before implementation, (3) auditing a feature spec against single-model blind spots, (4) integrating with the /autonomous skill's pre-push gate. Triggers on 'cross-review', 'P20', 'adversarial review', 'anti-slop', 'cross-model gate', 'different evaluator', 'devils advocate gate', 'self-review prohibition'."
+description: "bstack P20 — Cross-Model Adversarial Review Gate. The model that wrote the code cannot be the final judge of the code. Before substantive PRs merge, fire a cross-model adversarial gate — different evaluator than writer, anti-slop scoring ≥7/10, a dynamic round budget (3 free, 4-7 earned by a continuation verdict carrying a falsifiable prediction, >=8 human: the owner grants more rounds once per arc), verdict logged in PR. Three strata: (A) Codex CLI cross-vendor for true different-model verdict, (B) fresh-context subagent under devils-advocate brief, (C) composed existing adversarial-review skills in parallel on code (a knowledge-only diff takes one stratum on a claims rubric). Use cross-review when: (1) about to push a substantive PR (>200 LOC OR public API OR multi-file OR governance-class), (2) reviewing a draft plan/design before implementation, (3) auditing a feature spec against single-model blind spots, (4) integrating with the /autonomous skill's pre-push gate. Triggers on 'cross-review', 'P20', 'adversarial review', 'anti-slop', 'cross-model gate', 'different evaluator', 'devils advocate gate', 'self-review prohibition'."
 ---
 
 # cross-review — bstack P20 Cross-Model Adversarial Review Gate
@@ -132,7 +132,8 @@ ANTI-SLOP RUBRIC (10 points total)
 PASS: ≥7/10   (record --axes=a,b,c,d,e; a ZERO axis caps the stored score to 6)
 LOOP: <7 → fix the specific deductions → rescore
 BUDGET: 3 free rounds · 4-7 earned by a continuation verdict · ≥8 human
-ESCALATE: STOP verdict, two refuted predictions, a score regression, or round 8
+        (ask the owner ONCE per arc: `round grant --rounds=N --evidence='<answer>'`)
+ESCALATE: STOP verdict, two refuted predictions, a score regression, or the ceiling
 ```
 
 ### What blocks: severity, not volume (BRO-2844)
@@ -268,6 +269,37 @@ The ceiling at round 8 is deliberate and is not timidity: an agent that grants
 itself unbounded budget by asking itself has begun acquiring its own resources,
 and the workspace leaves that pillar open **by design**.
 
+**The owner grant (BRO-3893).** What the ceiling asks for is the owner, not a
+new question every round. It used to come back once per round: in the month to
+2026-11-18, review-round budget asks were 147 owner questions and 135.9 of 531.6
+blocked hours (25.6%), and one PR was asked about at every round from 8 to 14.
+The owner took the recommendation 83.8% of the time
+(`docs/specs/2026-11-18-agent-question-survey.html` in the workspace). So the
+ceiling asks ONCE per arc, and the answer is recorded:
+
+```bash
+cross-review round grant --run-id=$ID --rounds=4 \
+    --evidence="Owner, AskUserQuestion 2026-11-18: 'Grant 4 more rounds on #1081'"
+```
+
+- Legal **at the ceiling only** (`budget` exit 7). Under a stop the remedy is
+  the stop's: a regression, two `REFUTED`, two no-defect rounds or a
+  `STOP`/`STRUCTURAL` verdict still go back to the owner as before.
+- 1-7 rounds per grant, 14 in all per arc. An arc that needs more needs a
+  different shape: record `STRUCTURAL`.
+- Granted rounds are earned exactly like rounds 4-7: each needs a `CONTINUE`
+  verdict carrying a located prediction, and the four anti-vacuity rules hold.
+- `--evidence` is the owner's answer verbatim, at least 20 non-space
+  characters. `show` prints it beside the grant for every reviewer.
+- A stored `GRANT` row is re-checked by `load_ledger` like every other row:
+  before the ceiling, misdated, oversized, over the total or without evidence,
+  it STOPs the arc (T116).
+
+What the grant does **not** do: prove the owner said it. The evidence is the
+agent's transcription, exactly as `--defect` and `--stratum` are its assertions
+(see *NOT enforced* below). It makes the claim specific, visible and reviewable;
+it cannot make it true.
+
 ### What this enforces, and what it does not
 
 The first version of this section claimed the four rules were "enforced by the
@@ -327,6 +359,10 @@ appended to it.
   field — but it is a way to lose a round, so it is documented as one here
   rather than left for someone to discover by hand-editing on the strength of a
   sentence that said the field was read by nothing.
+- **`round grant --evidence` is the agent's own transcription** (BRO-3893).
+  Nothing verifies the owner said it. The row makes the claim specific and
+  `show` puts it in front of every reviewer; a fabricated grant is a lie in the
+  record, not a gap in the rule.
 - **`--defect=yes` is the agent's own assertion.** The controller enforces that
   two consecutive `no` rounds stop the arc; it cannot verify that a `yes` was
   actually earned. That judgement belongs to the reviewer's findings.
@@ -602,7 +638,7 @@ Returns:
 
 Between rounds, `cross-review round budget --run-id=$ID` answers whether another
 one may run: 0 authorized · 3 passed · 5 continuation review required · 6 stop ·
-7 human.
+7 human (ask the owner once; record the answer with `round grant`).
 
 Agent's job: capture the output, paste into PR description or comment, only push after exit 0.
 
@@ -668,7 +704,7 @@ P20 (this skill) is a reflex, not a request. Agents must apply the following wit
 | "It scored 6/10 but the work is fine — let me push anyway" | Threshold is ≥7 AND no dimension at 0. Below either → fix, rescore, ask the budget. Don't push override. |
 | "The reviewer said one more round seems reasonable" | That is the vacuous yes. A `CONTINUE` without a falsifiable prediction is refused by `round-budget.sh` at record time, because a verdict that cannot be wrong is not a verdict. |
 | "The score is flat but each round finds something real — keep going" | Check the *shape* first. Same defect class at a new location each round is `STRUCTURAL`: hoist the invariant instead of taking another swing. Eighteen rounds of BRO-2185 were this. |
-| "We are at round 9 but the last verdict said CONTINUE" | The ceiling overrides every verdict. Escalate through the handback contract with the ledger attached. |
+| "We are at round 9 but the last verdict said CONTINUE" | The ceiling overrides every verdict. Ask the owner once how many more rounds this arc gets, record it with `round grant --evidence='<their answer>'`, and earn each granted round with a CONTINUE. Never write the grant yourself. |
 | "The reviewer noticed a small thing and just fixed it — that's efficient" | Then the finding never existed. A reviewer that writes is optimising for a clean report. Dispatch it read-only; `reviewer-guard verify` exits 4 if it wrote. |
 | "I told the subagent not to edit anything" | A prose instruction is not a capability. `general-purpose` carries `Tools: *`; use `Explore`. The brief is layer 2, the tool set is layer 1. |
 | "Codex is a different vendor, the sandbox is belt-and-braces" | Different weights, same hands. `codex exec` unsandboxed patches the tree as readily as a subagent — pin `-c sandbox_mode=read-only`. |

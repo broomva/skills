@@ -682,6 +682,38 @@ mutate "--axes=- accepted as a third spelling of absence" "T110" \
 # genuinely untested invariant. It was written, it survived for that reason, and
 # it is recorded here instead of being left in the sweep as a false finding.
 
+# ── The owner GRANT (BRO-3893): one mutant per guard ──────────────────────
+mutate "grant does not move the ceiling" "T111" \
+    'arc_ceiling() { echo $((HUMAN_CEILING + LG_GRANTED)); }' \
+    'arc_ceiling() { echo $((HUMAN_CEILING + 0)); }'
+mutate "grant legal anywhere, not only at the ceiling" "T112" \
+    '    if [ "${entry%%:*}" != "ceiling" ]; then' \
+    '    if [ "${entry%%:*}" = "IMPOSSIBLE" ]; then'
+mutate "grant per-ask cap 7->99" "T114" \
+    'GRANT_MAX_ROUNDS=7' \
+    'GRANT_MAX_ROUNDS=99'
+mutate "grant total cap 14->99" "T115" \
+    'GRANT_MAX_TOTAL=14' \
+    'GRANT_MAX_TOTAL=99'
+mutate "grant evidence counted with its padding" "T114" \
+    '    EVIDENCE_CHARS="${CLEAN_EVIDENCE//[[:space:]]/}"' \
+    '    EVIDENCE_CHARS="$CLEAN_EVIDENCE"'
+mutate "stored GRANT before the ceiling accepted" "T116" \
+    '            else if (rounds < ceil + granted) badhistory=' \
+    '            else if (rounds < -1) badhistory='
+mutate "stored GRANT round not checked" "T116" \
+    '            if ($3 != rounds) badhistory=' \
+    '            if (0) badhistory='
+mutate "stored GRANT evidence not checked" "T116" \
+    '            else { ev=$4; gsub(/[ \t]/, "", ev); if (length(ev) < gmin)' \
+    '            else { ev=$4; gsub(/[ \t]/, "", ev); if (0)'
+mutate "grant flags accepted on other commands" "T118" \
+    'if [ "$GRANT_SET" = "1" ] && [ "$COMMAND" != "grant" ]; then' \
+    'if [ "$GRANT_SET" = "IMPOSSIBLE" ]; then'
+mutate "show hides the grant" "T119" \
+    '        $1=="GRANT"   { printf' \
+    '        $1=="IMPOSSIBLE"   { printf'
+
 echo ""
 echo "── mutation: $KILLED killed, $SURVIVED survived ──"
 if [ "$SURVIVED" -gt 0 ]; then

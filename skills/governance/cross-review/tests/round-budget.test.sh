@@ -1727,6 +1727,138 @@ else
     fail "T110: axes sentinel" "sentinel=$RC_SENT wrote=$WROTE omitted=$RC_OMIT stored=$STORED (want 2 no 0 -)"
 fi
 
+# ── T111-T120: the owner GRANT (BRO-3893) ─────────────────────────────────
+# The ceiling used to come back to the owner once per round: one PR was asked
+# about at every round from 8 to 14. A grant asks once and moves the ceiling of
+# ONE arc; it is legal at the ceiling only, every stop above still applies, and
+# granted rounds are earned by a CONTINUE like rounds 4-7.
+EVID="Owner answered in AskUserQuestion 2026-11-18: grant 1 more round"
+# A ledger at the ceiling: round 1, then rounds 2..N each earned by a CONTINUE.
+to_round() {  # to_round RUN LEDGER N
+    bash "$RB" record-round --run-id="$1" --ledger="$2" --score=5/10 --defect=yes >/dev/null
+    local i
+    for i in $(seq 2 "$3"); do
+        bash "$RB" record-verdict --run-id="$1" --ledger="$2" --verdict=CONTINUE --prediction="defect class $i at scripts/loop.sh:$i" >/dev/null
+        bash "$RB" record-round --run-id="$1" --ledger="$2" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+    done
+}
+
+echo "T111. a grant at the ceiling buys exactly the granted rounds, each still earned"
+LED=$(newledger t111); to_round t111 "$LED" 8
+RC_G=$(rb grant --run-id=t111 --ledger="$LED" --rounds=1 --evidence="$EVID")
+RC_B1=$(rb budget --run-id=t111 --ledger="$LED")
+bash "$RB" record-verdict --run-id=t111 --ledger="$LED" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
+RC_B2=$(rb budget --run-id=t111 --ledger="$LED")
+RC_R9=$(rb record-round --run-id=t111 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED)
+RC_B3=$(rb budget --run-id=t111 --ledger="$LED")
+if [ "$RC_G" = "0" ] && [ "$RC_B1" = "5" ] && [ "$RC_B2" = "0" ] && [ "$RC_R9" = "0" ] && [ "$RC_B3" = "7" ]; then
+    ok "T111: grant (0) -> review required (5) -> earned (0) -> round 9 -> HUMAN again (7)"
+else
+    fail "T111: grant lifecycle" "grant=$RC_G b1=$RC_B1 b2=$RC_B2 r9=$RC_R9 b3=$RC_B3 (want 0 5 0 0 7)"
+fi
+
+echo "T112. a grant below the ceiling is refused and writes nothing"
+LED=$(newledger t112); to_round t112 "$LED" 3
+RC=$(rb grant --run-id=t112 --ledger="$LED" --rounds=3 --evidence="$EVID")
+ROWS=$(grep -c '^GRANT' "$LED" || true)
+if [ "$RC" = "6" ] && [ "$ROWS" = "0" ]; then ok "T112: grant below the ceiling refused (6), no row"; else fail "T112: early grant" "rc=$RC rows=$ROWS (want 6 0)"; fi
+
+echo "T113. a grant does not lift a stop"
+LED=$(newledger t113)
+bash "$RB" record-round --run-id=t113 --ledger="$LED" --score=6/10 --defect=yes >/dev/null
+bash "$RB" record-round --run-id=t113 --ledger="$LED" --score=4/10 --defect=yes >/dev/null
+RC_B=$(rb budget --run-id=t113 --ledger="$LED")
+RC=$(rb grant --run-id=t113 --ledger="$LED" --rounds=3 --evidence="$EVID")
+if [ "$RC_B" = "6" ] && [ "$RC" = "6" ]; then ok "T113: a regression STOP is not lifted by a grant"; else fail "T113: grant under a stop" "budget=$RC_B grant=$RC (want 6 6)"; fi
+
+echo "T114. grant arguments: rounds 1-7, the owner's answer as evidence"
+LED=$(newledger t114); to_round t114 "$LED" 8
+R0=$(rb grant --run-id=t114 --ledger="$LED" --rounds=0 --evidence="$EVID")
+R8=$(rb grant --run-id=t114 --ledger="$LED" --rounds=8 --evidence="$EVID")
+RX=$(rb grant --run-id=t114 --ledger="$LED" --rounds=x --evidence="$EVID")
+RN=$(rb grant --run-id=t114 --ledger="$LED" --evidence="$EVID")
+RE=$(rb grant --run-id=t114 --ledger="$LED" --rounds=2 --evidence="ok go")
+RT=$(rb grant --run-id=t114 --ledger="$LED" --rounds=2 --evidence="$(printf 'ok\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\t\tgo')")
+ROWS=$(grep -c '^GRANT' "$LED" || true)
+R7=$(rb grant --run-id=t114 --ledger="$LED" --rounds=7 --evidence="$EVID")
+if [ "$R0$R8$RX$RN$RE$RT" = "222222" ] && [ "$ROWS" = "0" ] && [ "$R7" = "0" ]; then
+    ok "T114: 0, 8, x, missing, short and tab-padded evidence refused (2, no row); 7 accepted"
+else
+    fail "T114: grant arguments" "0=$R0 8=$R8 x=$RX none=$RN short=$RE tabs=$RT rows=$ROWS seven=$R7 (want 2 2 2 2 2 2 0 0)"
+fi
+
+echo "T115. grants total at most 14 rounds"
+LED=$(newledger t115); to_round t115 "$LED" 8
+bash "$RB" grant --run-id=t115 --ledger="$LED" --rounds=7 --evidence="$EVID" >/dev/null
+for i in $(seq 9 15); do
+    bash "$RB" record-verdict --run-id=t115 --ledger="$LED" --verdict=CONTINUE --prediction="defect class $i at scripts/loop.sh:$i" >/dev/null
+    bash "$RB" record-round --run-id=t115 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+done
+RC_7=$(rb grant --run-id=t115 --ledger="$LED" --rounds=7 --evidence="$EVID")
+for i in $(seq 16 22); do
+    bash "$RB" record-verdict --run-id=t115 --ledger="$LED" --verdict=CONTINUE --prediction="defect class $i at scripts/loop.sh:$i" >/dev/null
+    bash "$RB" record-round --run-id=t115 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+done
+RC_B=$(rb budget --run-id=t115 --ledger="$LED")
+RC_1=$(rb grant --run-id=t115 --ledger="$LED" --rounds=1 --evidence="$EVID")
+N=$(grep -c '^ROUND' "$LED" || true)
+if [ "$RC_7" = "0" ] && [ "$N" = "22" ] && [ "$RC_B" = "7" ] && [ "$RC_1" = "2" ]; then
+    ok "T115: a second grant at round 15 (0), HUMAN at 22 (7), a third refused (2)"
+else
+    fail "T115: grant total" "second=$RC_7 rounds=$N budget=$RC_B third=$RC_1 (want 0 22 7 2)"
+fi
+
+echo "T116. a hand-written GRANT buys nothing the command would refuse"
+EARLY=$(newledger t116a); to_round t116a "$EARLY" 3
+printf 'GRANT\t7\t3\t%s\n' "$EVID" >> "$EARLY"
+SHORT=$(newledger t116b); to_round t116b "$SHORT" 8
+printf 'GRANT\t3\t8\tok                        go\n' >> "$SHORT"
+WRONG=$(newledger t116c); to_round t116c "$WRONG" 8
+printf 'GRANT\t3\t5\t%s\n' "$EVID" >> "$WRONG"
+BIG=$(newledger t116d); to_round t116d "$BIG" 8
+printf 'GRANT\t99\t8\t%s\n' "$EVID" >> "$BIG"
+ARITY=$(newledger t116e); to_round t116e "$ARITY" 8
+printf 'GRANT\t3\t8\n' >> "$ARITY"
+GOOD=$(newledger t116f); to_round t116f "$GOOD" 8
+printf 'GRANT\t3\t8\t%s\n' "$EVID" >> "$GOOD"
+A=$(rb budget --run-id=t116a --ledger="$EARLY"); B=$(rb budget --run-id=t116b --ledger="$SHORT")
+C=$(rb budget --run-id=t116c --ledger="$WRONG"); D=$(rb budget --run-id=t116d --ledger="$BIG")
+E=$(rb budget --run-id=t116e --ledger="$ARITY"); F=$(rb budget --run-id=t116f --ledger="$GOOD")
+if [ "$A$B$C$D$E" = "66666" ] && [ "$F" = "5" ]; then
+    ok "T116: early, evidence-less, misdated, oversized and short GRANT rows STOP (6); a well-formed one reads (5)"
+else
+    fail "T116: stored GRANT rows" "early=$A short=$B wrong=$C big=$D arity=$E good=$F (want 6 6 6 6 6 5)"
+fi
+
+echo "T117. every stop still applies inside granted rounds"
+LED=$(newledger t117); to_round t117 "$LED" 8
+bash "$RB" grant --run-id=t117 --ledger="$LED" --rounds=3 --evidence="$EVID" >/dev/null
+bash "$RB" record-verdict --run-id=t117 --ledger="$LED" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
+bash "$RB" record-round --run-id=t117 --ledger="$LED" --score=4/10 --defect=yes --settles=CONFIRMED >/dev/null
+RC=$(rb budget --run-id=t117 --ledger="$LED")
+if [ "$RC" = "6" ]; then ok "T117: a regression inside granted rounds STOPs (6)"; else fail "T117: stop after grant" "exit $RC, want 6"; fi
+
+echo "T118. --rounds and --evidence belong to grant alone"
+LED=$(newledger t118); to_round t118 "$LED" 2
+A=$(rb budget --run-id=t118 --ledger="$LED" --rounds=3)
+B=$(rb record-verdict --run-id=t118 --ledger="$LED" --verdict=STOP --evidence="$EVID")
+if [ "$A$B" = "22" ]; then ok "T118: grant flags refused elsewhere (2)"; else fail "T118: flag scope" "budget=$A verdict=$B (want 2 2)"; fi
+
+echo "T119. show puts the owner's evidence in front of the reviewer"
+LED=$(newledger t119); to_round t119 "$LED" 8
+bash "$RB" grant --run-id=t119 --ledger="$LED" --rounds=2 --evidence="$EVID" >/dev/null
+OUT=$(rbout show --run-id=t119 --ledger="$LED")
+case "$OUT" in *"grant   +2"*"$EVID"*) ok "T119: show renders the grant and its evidence" ;; *) fail "T119: show" "$OUT" ;; esac
+
+echo "T120. a granted ceiling is still an escalation, not a finished arc"
+LED=$(newledger t120); to_round t120 "$LED" 8
+bash "$RB" grant --run-id=t120 --ledger="$LED" --rounds=1 --evidence="$EVID" >/dev/null
+bash "$RB" record-verdict --run-id=t120 --ledger="$LED" --verdict=CONTINUE --prediction="defect class 9 at scripts/loop.sh:9" >/dev/null
+bash "$RB" record-round --run-id=t120 --ledger="$LED" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
+RC_B=$(rb budget --run-id=t120 --ledger="$LED")
+RC=$(rb reset --run-id=t120 --ledger="$LED")
+if [ "$RC_B" = "7" ] && [ "$RC" = "6" ] && [ -f "$LED" ]; then ok "T120: plain reset refused at a granted ceiling (6)"; else fail "T120: reset at granted ceiling" "budget=$RC_B reset=$RC (want 7 6)"; fi
+
 echo ""
 echo "── round-budget: $PASS passed, $FAIL failed ──"
 if [ "$FAIL" -gt 0 ]; then printf '  failed: %s\n' "${FAILED[@]}"; exit 1; fi

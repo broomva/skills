@@ -49,7 +49,12 @@
 #   rounds 1-3   free
 #   rounds 4-7   each earned by a CONTINUE verdict carrying a located prediction
 #   round >= 8   human. Unbounded self-granted budget is the resource-acquisition
-#                pillar the workspace leaves open by design.
+#                pillar the workspace leaves open by design. The human answer is
+#                a GRANT (BRO-3893): the OWNER moves this arc's ceiling by 1-7
+#                rounds, once per ask, up to 14 in all, and the row carries the
+#                owner's answer verbatim as evidence. Granted rounds are earned
+#                exactly like rounds 4-7 (a CONTINUE with a located prediction),
+#                and every stop above still applies; only the ceiling moves.
 #
 # ANTI-VACUITY. "Should I extend?" asked cold answers YES almost always, and a
 # second model rubber-stamping that is worse than the counter it replaces. Four
@@ -95,6 +100,8 @@
 #   --stratum and --strata are exclusive: with --stratum the panel is derived.
 #   round-budget.sh record-verdict --run-id=ID --verdict=CONTINUE|STOP|STRUCTURAL \
 #                                  [--prediction=TEXT] [--directive=TEXT]
+#   round-budget.sh grant          --run-id=ID --rounds=N --evidence=TEXT
+#                                  # at the ceiling only: the OWNER's answer, verbatim
 #   round-budget.sh budget         --run-id=ID     # may another round run?
 #   round-budget.sh show           --run-id=ID
 #   round-budget.sh reset          --run-id=ID [--force]
@@ -111,13 +118,20 @@
 #   5  REVIEW-REQ   rounds 4-7 with no continuation verdict recorded
 #   6  STOP         regression, refuted twice, no defect twice, STOP/STRUCTURAL,
 #                   or an unparsable ledger
-#   7  HUMAN        round ceiling reached
+#   7  HUMAN        round ceiling reached (the owner may `grant` more)
 
 set -euo pipefail
 export LC_ALL=C
 
 FREE_ROUNDS=3
 HUMAN_CEILING=8
+# An owner grant (BRO-3893) moves the ceiling of ONE arc. Bounded per grant and
+# in total so a grant is a decision about this arc, not a standing exemption;
+# the evidence floor (non-space characters) keeps "ok" from passing for the
+# owner's answer.
+GRANT_MAX_ROUNDS=7
+GRANT_MAX_TOTAL=14
+GRANT_MIN_EVIDENCE=20
 PASS_SCORE=7
 # The ledger's one scale (BRO-2615). A bare integer used to be accepted, and this
 # same skill grades design docs on a /15 rubric that passes at 11: a 7/15 --
@@ -147,7 +161,7 @@ case "$COMMAND" in
         # means the same thing to both.
         sed -n '/^# Usage:/,/^$/p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
         exit 0 ;;
-    record-round|record-verdict|budget|show|reset) ;;
+    record-round|record-verdict|grant|budget|show|reset) ;;
     *) echo "round-budget: unknown command '$COMMAND'" >&2; exit 2 ;;
 esac
 
@@ -162,6 +176,7 @@ AXES=""
 AXES_SET=0
 # Per-stratum verdicts, `L:N/10:PASS|FAIL`, comma-joined across repeated flags.
 STRATUM_VERDICTS=""; STRATUM_SET=0
+GRANT_ROUNDS=""; GRANT_EVIDENCE=""; GRANT_SET=0
 
 for arg in "$@"; do
     case "$arg" in
@@ -181,6 +196,8 @@ for arg in "$@"; do
         --prediction=*)   PREDICTION="${arg#*=}" ;;
         --directive=*)    DIRECTIVE="${arg#*=}" ;;
         --force)          RESET_FORCE=1 ;;
+        --rounds=*)       GRANT_ROUNDS="${arg#*=}"; GRANT_SET=1 ;;
+        --evidence=*)     GRANT_EVIDENCE="${arg#*=}"; GRANT_SET=1 ;;
         --ledger=*)
             # A test seam, gated so it is not a silent production budget-reset.
             # It is not a barrier — see THE BOUNDARY above.
@@ -220,6 +237,11 @@ fi
 # as a flag that had one.
 if [ "$AXES_SET" = "1" ] && [ "$COMMAND" != "record-round" ]; then
     echo "round-budget: --axes applies to 'record-round' only, not '$COMMAND'." >&2
+    exit 2
+fi
+
+if [ "$GRANT_SET" = "1" ] && [ "$COMMAND" != "grant" ]; then
+    echo "round-budget: --rounds and --evidence apply to 'grant' only, not '$COMMAND'." >&2
     exit 2
 fi
 
@@ -647,9 +669,11 @@ field() { printf '%s' "$1" | cut -f"$2"; }
 # ROUND   n score defect fingerprints settles [strata] [verdicts] [axes]
 #                                                       (6, 7, 8 or 9 fields)
 # VERDICT verdict prediction directive                   (4 fields)
+# GRANT   rounds at_round evidence                       (4 fields, BRO-3893)
 analyze() {
-    read_rows | awk -F'\t' '
-        BEGIN { rounds=0; prev=-1; last=-1; regressed=0
+    read_rows | awk -F'\t' -v ceil="$HUMAN_CEILING" -v gmax="$GRANT_MAX_ROUNDS" \
+                            -v gtotal="$GRANT_MAX_TOTAL" -v gmin="$GRANT_MIN_EVIDENCE" '
+        BEGIN { rounds=0; prev=-1; last=-1; regressed=0; granted=0
                 ref=0; maxref=0; nod=0; maxnod=0
                 terminal=""; directive=""; badscore=0; badverdict=""; badrow=0; pending=0
                 badhistory=""; lastverified=0; prevkind=""; sawscaled=0; lastaxes="-" }
@@ -741,8 +765,22 @@ analyze() {
             else { badverdict=$2 }
             next
         }
+        $1=="GRANT" {
+            # The owner moving the ceiling of this arc (BRO-3893). Every rule the
+            # `grant` command applies is re-applied here to the STORED row, so a
+            # hand-written GRANT buys nothing the command would refuse.
+            if (NF != 4) { badrow=1; next }
+            if ($2 !~ /^[0-9]+$/ || $2+0 < 1 || $2+0 > gmax) { badhistory="a GRANT outside 1-" gmax " rounds"; next }
+            if ($3 != rounds) badhistory="a GRANT records round " $3 " but follows round " rounds
+            else if (rounds < ceil + granted) badhistory="a GRANT recorded before the round ceiling (" ceil + granted ")"
+            else if (pending == 1) badhistory="a GRANT follows a live CONTINUE"
+            else { ev=$4; gsub(/[ \t]/, "", ev); if (length(ev) < gmin) badhistory="a GRANT without the owner'\''s answer as evidence" }
+            granted += $2
+            if (granted > gtotal) badhistory="GRANTs total " granted " rounds, over the " gtotal " allowed"
+            next
+        }
         NF>0 { badrow=1 }
-        END { print rounds"\t"last"\t"regressed"\t"maxref"\t"maxnod"\t"terminal"\t"badscore"\t"badverdict"\t"pending"\t"directive"\t"badrow"\t"badhistory"\t"lastverified"\t"lastaxes }'
+        END { print rounds"\t"last"\t"regressed"\t"maxref"\t"maxnod"\t"terminal"\t"badscore"\t"badverdict"\t"pending"\t"directive"\t"badrow"\t"badhistory"\t"lastverified"\t"lastaxes"\t"granted }'
 }
 
 # ─── The one gate ─────────────────────────────────────────────────────────
@@ -754,6 +792,7 @@ analyze() {
 # defect unrepresentable, and collapses four redundant `analyze` passes into one.
 LG_N=""; LG_SCORE=""; LG_REGRESSED=""; LG_MAXREF=""; LG_MAXNOD=""
 LG_TERMINAL=""; LG_PENDING=""; LG_DIRECTIVE=""; LG_LAST_VERIFIED=""; LG_LAST_AXES=""
+LG_GRANTED=0
 # Snapshotted in load_ledger so the RULES never re-read the file. This bounds the
 # inconsistency; it does not remove it. load_ledger itself still reads the ledger
 # more than once (analyze, the tail, the CONTINUE rows) and `budget` takes no
@@ -794,6 +833,7 @@ load_ledger() {
     LG_DIRECTIVE=$(printf '%s' "$a" | cut -f10)
     LG_LAST_VERIFIED=$(printf '%s' "$a" | cut -f13)
     LG_LAST_AXES=$(printf '%s' "$a" | cut -f14)
+    LG_GRANTED=$(printf '%s' "$a" | cut -f15)
     local badscore badverdict badrow badhistory last
     badscore=$(printf '%s' "$a" | cut -f7)
     badverdict=$(printf '%s' "$a" | cut -f8)
@@ -1019,11 +1059,15 @@ rule_passed() {
     fi
     return 0
 }
+# The ceiling an owner GRANT has moved; the one place it is computed.
+arc_ceiling() { echo $((HUMAN_CEILING + LG_GRANTED)); }
 rule_ceiling() {
-    [ "$LG_N" -ge "$HUMAN_CEILING" ] || return 1
-    echo "HUMAN — $LG_N rounds recorded (ceiling $HUMAN_CEILING)."
-    echo "  Escalate through the handback contract with the ledger attached."
-    echo "  No verdict buys another round here."
+    [ "$LG_N" -ge "$(arc_ceiling)" ] || return 1
+    echo "HUMAN — $LG_N rounds recorded (ceiling $(arc_ceiling)$([ "$LG_GRANTED" -gt 0 ] && echo ", $LG_GRANTED granted"))."
+    echo "  No verdict buys another round here. Ask the OWNER once for this arc:"
+    echo "  how many more rounds (1-$GRANT_MAX_ROUNDS; $((GRANT_MAX_TOTAL - LG_GRANTED)) left of $GRANT_MAX_TOTAL), then record the answer:"
+    echo "    round-budget.sh grant --run-id=$RUN_ID --rounds=N --evidence='<the owner's answer, verbatim>'"
+    echo "  Granted rounds are still earned one at a time by a CONTINUE verdict."
     return 0
 }
 rule_free() {
@@ -1322,6 +1366,44 @@ record-verdict)
     echo "round-budget: recorded verdict $VERDICT -> $LEDGER"
     ;;
 
+grant)
+    # BRO-3893. The owner moves this arc's ceiling; the agent cannot. Legal at
+    # the ceiling ONLY -- under a stop the remedy is the stop's, and below the
+    # ceiling there is nothing to grant. What makes it the owner's is the
+    # evidence: their answer, verbatim. This binds the ledger, not the person:
+    # an agent can type a fake answer, exactly as it can delete the file (THE
+    # BOUNDARY above); `show` puts the evidence in front of every reviewer.
+    with_lock
+    load_ledger
+    entry="$(first_rule)"
+    if [ "${entry%%:*}" != "ceiling" ]; then
+        echo "round-budget: a grant applies at the round ceiling only; budget says '${entry%%:*}' (exit ${entry##*:})." >&2
+        echo "  A stop is not lifted by a grant: escalate it as the stop says." >&2
+        exit 6
+    fi
+    case "$GRANT_ROUNDS" in
+        ''|*[!0-9]*) echo "round-budget: --rounds=N required, 1-$GRANT_MAX_ROUNDS." >&2; exit 2 ;;
+    esac
+    if [ "$GRANT_ROUNDS" -lt 1 ] || [ "$GRANT_ROUNDS" -gt "$GRANT_MAX_ROUNDS" ]; then
+        echo "round-budget: --rounds must be 1-$GRANT_MAX_ROUNDS, got $GRANT_ROUNDS." >&2; exit 2
+    fi
+    if [ $((LG_GRANTED + GRANT_ROUNDS)) -gt "$GRANT_MAX_TOTAL" ]; then
+        echo "round-budget: this arc has $LG_GRANTED granted rounds; $GRANT_ROUNDS more passes the $GRANT_MAX_TOTAL allowed." >&2
+        echo "  An arc this long needs a different shape, not more rounds: record STRUCTURAL." >&2
+        exit 2
+    fi
+    CLEAN_EVIDENCE="$(sanitize "$GRANT_EVIDENCE")"
+    # Counted without whitespace, the same way the stored row is: padding is
+    # not an answer (T114 fed it twenty tabs between "ok" and "go").
+    EVIDENCE_CHARS="${CLEAN_EVIDENCE//[[:space:]]/}"
+    if [ "${#EVIDENCE_CHARS}" -lt "$GRANT_MIN_EVIDENCE" ]; then
+        echo "round-budget: --evidence must carry the owner's answer verbatim (at least $GRANT_MIN_EVIDENCE non-space characters)." >&2
+        exit 2
+    fi
+    printf 'GRANT\t%s\t%s\t%s\n' "$GRANT_ROUNDS" "$LG_N" "$CLEAN_EVIDENCE" >> "$LEDGER"
+    echo "round-budget: owner granted $GRANT_ROUNDS more rounds at round $LG_N (ceiling now $((HUMAN_CEILING + LG_GRANTED + GRANT_ROUNDS))) -> $LEDGER"
+    ;;
+
 reset)
     # Arc ids are branch-derived, so a recycled branch reuses its ledger. Right
     # while an arc is live (a rebase must not reset the budget), wrong once it is
@@ -1450,6 +1532,7 @@ show)
                                (NF>=8 ? "  [verdicts: " ($8=="-" ? "none" : ($8=="" ? "MALFORMED" : $8)) "]" : ""), \
                                (NF>=9 ? "  [axes: " ($9=="-" ? "none" : ($9=="" ? "MALFORMED" : $9)) "]" : "") }
         $1=="VERDICT" { printf "  verdict %-11s %s%s\n", $2, $3, ($4!="" ? "  [directive: " $4 "]" : "") }
+        $1=="GRANT"   { printf "  grant   +%-3s rounds at round %s  [owner: %s]\n", $2, $3, $4 }
     ' "$LEDGER"
     ;;
 
