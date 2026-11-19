@@ -1734,13 +1734,20 @@ fi
 # granted rounds are earned by a CONTINUE like rounds 4-7.
 EVID="Owner answered in AskUserQuestion 2026-11-18: grant 1 more round"
 # A ledger at the ceiling: round 1, then rounds 2..N each earned by a CONTINUE.
+# The 8-round ceiling fixture is built ONCE and copied: rows carry no run id, so
+# a copy is byte-identical to a fresh build. Rebuilding it in each of ~25 tests
+# made the suite ~7x slower and the CI mutation sweep (one suite per mutant)
+# take over three hours, past the merge gate's wait.
+CEIL8=""
 to_round() {  # to_round RUN LEDGER N
+    if [ "$3" = "8" ] && [ -n "$CEIL8" ]; then cp "$CEIL8" "$2"; return; fi
     bash "$RB" record-round --run-id="$1" --ledger="$2" --score=5/10 --defect=yes >/dev/null
     local i
     for i in $(seq 2 "$3"); do
         bash "$RB" record-verdict --run-id="$1" --ledger="$2" --verdict=CONTINUE --prediction="defect class $i at scripts/loop.sh:$i" >/dev/null
         bash "$RB" record-round --run-id="$1" --ledger="$2" --score=5/10 --defect=yes --settles=CONFIRMED >/dev/null
     done
+    if [ "$3" = "8" ]; then CEIL8="$TMP/ceil8.fixture.tsv"; cp "$2" "$CEIL8"; fi
 }
 
 echo "T111. a grant at the ceiling buys exactly the granted rounds, each still earned"
