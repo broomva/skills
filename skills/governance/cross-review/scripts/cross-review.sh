@@ -13,8 +13,9 @@
 #
 # Scoring: anti-slop rubric (see references/rubric.md). PASS at ≥7/10 AND no
 # dimension at 0 — a zeroed axis caps the round below the bar (BRO-2636).
-# Round budget is DYNAMIC: 3 free, 4-7 earned by a continuation verdict
-# carrying a falsifiable prediction, >=8 escalates to a human. The budget is
+# Round budget is DYNAMIC: 3 free, later rounds earned by a continuation verdict
+# carrying a falsifiable prediction; a regression, refuted predictions, defect-free
+# rounds and round 8 are signals the agent answers with a recorded decision. The budget is
 # kept in a ledger by scripts/round-budget.sh -- see `cross-review round`.
 #
 # Usage:
@@ -31,7 +32,7 @@
 #   cross-review round budget --run-id=ID # may another fix round run?
 #   cross-review round record-round ...   # log a completed round
 #   cross-review round record-verdict ... # log a continuation verdict
-#   cross-review round grant ...          # at the ceiling: record the OWNER's grant of N more rounds
+#   cross-review round record-decision ... # answer a signal: continue|hoist|subtract|change-approach|escalate
 #   cross-review --help
 #
 # Mutation-proof (REPORTED SIGNAL on pre-push, never a blocker):
@@ -129,8 +130,8 @@ for arg in "$@"; do
             # silently honouring a flag that no longer has a meaning would
             # reproduce the defect this change exists to remove.
             echo "cross-review: --max-rounds is retired. The budget is dynamic:" >&2
-            echo "  3 free rounds, 4-7 earned by a continuation verdict carrying a" >&2
-            echo "  falsifiable prediction, >=8 escalates to a human." >&2
+            echo "  3 free rounds, later rounds earned by a continuation verdict carrying a" >&2
+            echo "  falsifiable prediction; signals are answered with round record-decision." >&2
             echo "  Drive it with: cross-review round budget --run-id=ID" >&2
             exit 2 ;;
         --rubric=*) RUBRIC="${arg#*=}" ;;
@@ -315,7 +316,7 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "  Strata selected:  $SELECTED_STRATA"
     echo "  Diff base:        $DIFF_BASE"
     echo "  Rubric:           $RUBRIC"
-    echo "  Round budget:     3 free / 4-7 earned / >=8 human (cross-review round)"
+    echo "  Round budget:     3 free / later rounds earned / signals need a decision (cross-review round)"
     echo "  Verdict format:   $OUTPUT_FORMAT"
     echo ""
 
@@ -563,9 +564,11 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "    cross-review round budget --run-id=$CR_ARC_ID"
     echo ""
     echo "  budget exits: 0 authorized · 3 passed · 5 continuation review required"
-    echo "                6 stop · 7 human. Rounds 1-3 are free; 4-7 are earned by"
-    echo "                a CONTINUE verdict carrying a located prediction; >=8 is"
-    echo "                a human decision. Stops are absorbing."
+    echo "                6 stop · 7 signal. Rounds 1-3 are free; later rounds are earned"
+    echo "                by a CONTINUE verdict carrying a located prediction. A regression,"
+    echo "                two refuted predictions, two defect-free rounds or round 8 is a"
+    echo "                signal: record-decision with a reason, then continue. Reach the"
+    echo "                owner only when rounds stop making progress, with alternatives."
     echo ""
     echo "  Paste \`cross-review round show --run-id=$CR_ARC_ID\` into the PR with"
     echo "  the verdict -- the ledger lives in .git/ and is invisible to CI and to"
