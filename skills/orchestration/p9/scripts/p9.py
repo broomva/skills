@@ -1642,6 +1642,7 @@ class PRGateFacts:
     required_checks: list | None = None                # [{name, bucket}]
     all_checks: list | None = None                     # [{name, bucket}]
     behind_by: int | None = None
+    base_delta_files: list | None = None               # files the base changed since this branch forked
     unresolved_threads: int = -1
     marker_delta_files: list | None = None             # files changed marker..head
     marker_is_ancestor: bool | None = None
@@ -1655,6 +1656,30 @@ class GateResult:
     gate: str
     ok: bool
     reason: str
+
+
+def up_to_date(g: MergeGates, f: PRGateFacts) -> tuple[bool, str]:
+    """Current, or behind only by base commits that touch none of this PR's files (BRO-4023).
+
+    Strictly current is unreachable when the base merges faster than CI: every update restarts the
+    checks, and the base moves again before they finish. The P20 verdict already carries across base
+    commits that leave the PR's files alone; this gate takes the same view. It stays strict for a
+    governance PR, and whenever what the base changed cannot be read in full."""
+    if f.behind_by is None or not f.base_sha:
+        return False, "unknown whether behind base"
+    where = f"{f.behind_by} commit(s) behind {f.base} at {f.base_sha[:12]}"
+    if f.behind_by == 0:
+        return True, where
+    if governance_paths_touched(g, f):
+        return False, where + "; a governance PR must be current"
+    if f.base_delta_files is None:
+        return False, where + "; could not read what the base changed"
+    if len(f.base_delta_files) >= _COMPARE_FILE_CAP:
+        return False, where + "; too many base changes to prove them unrelated"
+    overlap = sorted(set(f.base_delta_files) & set(f.files))
+    if overlap:
+        return False, where + f"; the base changed this PR's files {overlap[:5]}"
+    return True, where + "; the base's new commits touch none of this PR's files"
 
 
 def governance_paths_touched(g: MergeGates, f: PRGateFacts) -> list[str]:
@@ -1768,9 +1793,7 @@ def evaluate_merge_gates(g: MergeGates, f: PRGateFacts) -> list[GateResult]:
                  ("not green: " + ", ".join(red)) if red
                  else "green: " + ", ".join(c.get("name") or "?" for c in real))
 
-    gate("up_to_date", f.behind_by == 0 and bool(f.base_sha),
-         "unknown whether behind base" if f.behind_by is None or not f.base_sha
-         else f"{f.behind_by} commit(s) behind {f.base} at {f.base_sha[:12]}")
+    gate("up_to_date", *up_to_date(g, f))
 
     # Per reviewer, the latest OPINIONATED review stands: a later COMMENTED
     # review does not withdraw a change request (GitHub's own rule); a later
@@ -1926,6 +1949,9 @@ def gather_pr_gate_facts(pr: int, repo: str, g: MergeGates,
         if isinstance(cmp, dict) and isinstance(cmp.get("behind_by"), int):
             f.behind_by = cmp["behind_by"]
             f.base_sha = base_sha or ((cmp.get("base_commit") or {}).get("sha")) or ""
+            if f.behind_by > 0 and f.base_sha:
+                # head...base: what the base changed since this branch forked (the up_to_date gate)
+                _, f.base_delta_files = _compare_files(repo, f"{f.head_sha}...{f.base_sha}")
     f.unresolved_threads = _unresolved_review_threads(pr, repo)
 
     marker = latest_p20_marker(f.comments, g.review_bots)

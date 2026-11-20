@@ -419,7 +419,7 @@ def _seed_merge_ready(p9, pr):
 
 
 def _fake_gh(view, *, required=None, all_checks=None, calls, base_policy=None,
-             base_now=BASE, renamed=None, binary=(), compare_files=None):
+             base_now=BASE, renamed=None, binary=(), compare_files=None, behind_by=0):
     required = required if required is not None else [{"name": "Merge Gate", "bucket": "pass"}]
     all_checks = all_checks if all_checks is not None else (
         required + [{"name": "pytest", "bucket": "pass"}])
@@ -452,7 +452,7 @@ def _fake_gh(view, *, required=None, all_checks=None, calls, base_policy=None,
                 return _Run(stderr="gh: Not Found (HTTP 404)", returncode=1)
             return _Run(base_policy)
         if cmd[:2] == ["gh", "api"] and any("/compare/" in c for c in cmd):
-            return _Run(json.dumps({"status": "ahead", "behind_by": 0,
+            return _Run(json.dumps({"status": "ahead", "behind_by": behind_by,
                                     "files": [{"filename": f} for f in (compare_files or [])],
                                     "base_commit": {"sha": BASE}}))
         if cmd[:2] == ["gh", "api"] and any("/commits" in c for c in cmd):
@@ -826,6 +826,26 @@ class TestGathering:
                                     listing=_listing(p9, view))
         assert f.marker_is_ancestor is True and f.marker_delta_files == ["docs/other.md"]
 
+    def test_a_behind_pr_gathers_what_the_base_changed(self, p9, monkeypatch):
+        calls = []
+        view = _view()
+        monkeypatch.setattr(p9.subprocess, "run",
+                            _fake_gh(view, calls=calls, compare_files=["docs/other.md"], behind_by=2))
+        f = p9.gather_pr_gate_facts(742, "broomva/test",
+                                    p9.load_policy(_GATED).auto_merge.gates,
+                                    listing=_listing(p9, view))
+        assert f.behind_by == 2 and f.base_delta_files == ["docs/other.md"]
+        compares = [c for c in calls if any("/compare/" in x for x in c)]
+        assert any(f"/compare/{f.head_sha}...{f.base_sha}" in " ".join(c) for c in compares), compares
+
+    def test_a_current_pr_does_not_ask_what_the_base_changed(self, p9, monkeypatch):
+        view = _view()
+        monkeypatch.setattr(p9.subprocess, "run", _fake_gh(view, calls=[], behind_by=0))
+        f = p9.gather_pr_gate_facts(743, "broomva/test",
+                                    p9.load_policy(_GATED).auto_merge.gates,
+                                    listing=_listing(p9, view))
+        assert f.behind_by == 0 and f.base_delta_files is None
+
     def test_compare_without_a_files_key_is_unknown(self, p9, monkeypatch):
         monkeypatch.setattr(p9.subprocess, "run",
                             lambda *a, **k: _Run(json.dumps({"status": "ahead"})))
@@ -1172,3 +1192,38 @@ class TestFixDeltaFindings:
 
     def test_mcp_json_needs_p20(self, p9, gates):
         assert "p20" in _failed(p9, gates, _good(p9, files=[".mcp.json"], additions=1, deletions=0))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# up_to_date: behind only by base commits that leave the PR's files alone (BRO-4023)
+# ─────────────────────────────────────────────────────────────────────────────
+class TestUpToDateDisjointBase:
+    def _reason(self, p9, gates, f):
+        return next(r for r in p9.evaluate_merge_gates(gates, f) if r.gate == "up_to_date")
+
+    def test_behind_by_unrelated_base_commits_counts_as_current(self, p9, gates):
+        f = _good(p9, behind_by=2, base_delta_files=["docs/other.md", "research/z.md"])
+        r = self._reason(p9, gates, f)
+        assert r.ok, r.reason
+        assert "touch none of this PR's files" in r.reason
+        assert _failed(p9, gates, f) == set()
+
+    @pytest.mark.parametrize("over,why", [
+        ({"base_delta_files": ["src/x.py", "docs/other.md"]}, "changed this PR's files"),   # overlap
+        ({"base_delta_files": None}, "could not read"),                                       # unreadable
+        ({"base_delta_files": [f"d/{i}" for i in range(300)]}, "too many"),                  # at the cap
+    ])
+    def test_behind_stays_blocked_unless_proven_unrelated(self, p9, gates, over, why):
+        r = self._reason(p9, gates, _good(p9, behind_by=1, **over))
+        assert not r.ok and why in r.reason, r.reason
+
+    def test_a_governance_pr_must_be_current(self, p9, gates):
+        f = _gov(p9, behind_by=1, base_delta_files=["docs/other.md"])
+        r = self._reason(p9, gates, f)
+        assert not r.ok and "governance PR must be current" in r.reason, r.reason
+        r0 = self._reason(p9, gates, _gov(p9, behind_by=0))
+        assert r0.ok, r0.reason
+
+    def test_unknown_position_never_passes(self, p9, gates):
+        for over in ({"behind_by": None, "base_delta_files": []}, {"base_sha": "", "behind_by": 1, "base_delta_files": []}):
+            assert not self._reason(p9, gates, _good(p9, **over)).ok, over
