@@ -362,3 +362,21 @@ Known limits, each measured while building this gate:
   y = 922, and outside the title and caption bands' rows (text centred in those rows is
   judged as a title or a caption). The Remotion watermark sits at the safe zone's
   bottom-left, below the caption band, for this reason.
+
+### Stacked stream
+
+The `stacked-stream` profile places a webcam above the content panel. Panel bounds,
+safe zones and the webcam eye-line are canvas fractions in the JSON contract;
+VL6 and VL8 assess faces separately in their own panels. The caption band matches
+`reels-organic`. OCR boxes fully inside detected faces are treated as scene text,
+so text worn on a subject does not become an overlay. OCR and face detection are
+imperfect: inspect the guide sheet and check that captions do not cover the face.
+
+Output of `python3 scripts/check_vertical_layout.py --profile stacked-stream zones`:
+
+| Zone (1080x1920) | x px | y px | x % | y % |
+|---|---|---|---|---|
+| Safe zone | 108-972 | 38-1651 | 10.0-90.0 | 2.0-86.0 |
+| Avoid: right action rail | 872-1080 | 922-1920 | 80.7-100.0 | 48.0-100.0 |
+| Avoid: bottom username/caption band | 0-1080 | 1686-1920 | 0.0-100.0 | 87.8-100.0 |
+| Caption band | 220-860 | 1288-1463 | 20.4-79.6 | 67.1-76.2 |

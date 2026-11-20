@@ -191,6 +191,20 @@ def load_layout(path: Path | None = None) -> dict:
                 raise ToolError(f"layout contract: classification.{key} must be a number in (0, 1)")
         for name, prof in profiles.items():
             _check_zone(prof["safe_zone"], f"{name}.safe_zone")
+            panels = prof.get("panels")
+            if panels is not None:
+                if not isinstance(panels, list) or not panels:
+                    raise ToolError(f"layout contract: {name}.panels must be a nonempty list")
+                for i, panel in enumerate(panels):
+                    if not isinstance(panel, dict) or not isinstance(panel.get("name"), str) or not panel["name"]:
+                        raise ToolError(f"layout contract: {name}.panels[{i}] needs a name")
+                    _check_zone(panel.get("bounds"), f"{name}.panels[{i}].bounds")
+                    _check_zone(panel.get("safe_zone"), f"{name}.panels[{i}].safe_zone")
+                    eye = panel.get("eye_line")
+                    if eye is not None:
+                        _check_zone(eye, f"{name}.panels[{i}].eye_line", keys=("y0", "y1"))
+                        if not all(_is_num(eye.get(k)) for k in ("max_shift_across_punch_in", "punch_in_scale_jump")):
+                            raise ToolError(f"layout contract: {name}.panels[{i}].eye_line needs shift and jump")
             for i, a in enumerate(prof.get("avoid") or []):
                 _check_zone(a, f"{name}.avoid[{i}]")
                 if not (isinstance(a.get("name"), str) and a["name"]):
@@ -351,6 +365,9 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
     scene: list[tuple[Frame, Text]] = []
     for f in frames:
         for t in f.texts:
+            if profile.get("panels") and not t.role and any(t.box.inside(face.box) for face in (f.faces or [])):
+                scene.append((f, t))
+                continue
             (overlay if t.role or t.box.h >= cls["overlay_min_text_height"] * H else scene).append((f, t))
 
     # Role: declared (spec mode), else position. Text centred in the top region is a
@@ -572,6 +589,29 @@ def evaluate(W: float, H: float, frames: list[Frame], profile: dict, cls: dict,
             add("VL8", "FAIL", f"the face leaves the safe zone in {len(bad)} shot(s)", bad)
         else:
             add("VL8", "PASS", f"face inside the safe zone across {len(segs)} shot(s)")
+
+    # Panel rules use each panel's own face set and geometry; never substitute a
+    # larger face in another panel for the webcam subject.
+    if profile.get("panels"):
+        panel_results = {"VL6": [], "VL8": []}
+        for panel in profile["panels"]:
+            bounds = zone(panel["bounds"], W, H)
+            selected = []
+            for frame in frames:
+                faces = None if frame.faces is None else [face for face in frame.faces
+                    if bounds.x0 <= face.box.cx <= bounds.x1 and bounds.y0 <= face.box.cy <= bounds.y1]
+                selected.append(Frame(label=frame.label, t=frame.t, faces=faces, shot=frame.shot))
+            child = dict(profile, panels=None, safe_zone=panel["safe_zone"], eye_line=panel.get("eye_line"))
+            for result in evaluate(W, H, selected, child, cls, canvas_cfg):
+                if result.rule in panel_results and result.status != "N/A":
+                    panel_results[result.rule].append((panel["name"], result))
+        for rule, entries in panel_results.items():
+            statuses = [result.status for _, result in entries]
+            status = next((s for s in ("FAIL", "UNCHECKED", "PASS", "SKIP") if s in statuses), "N/A")
+            detail = "; ".join(f"{name}: {result.status} {result.detail}" for name, result in entries) or "no panel defines this rule"
+            replacement = Result(rule, names[rule], status, detail,
+                                 [e for _, result in entries for e in result.evidence][:MAX_EVIDENCE])
+            results[next(i for i, result in enumerate(results) if result.rule == rule)] = replacement
 
     # VL9 legibility -------------------------------------------------------
     leg = profile.get("legibility") or {}
