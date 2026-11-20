@@ -219,8 +219,9 @@ cross-review round record-decision --run-id=$ID \
 - **hoist**: the same defect class keeps appearing at new sites; write one rule.
 - **subtract**: the findings land on scaffolding added to answer earlier reviews; remove it.
 - **change-approach**: the shape is wrong; reshape, then `reset --force` and start a new arc.
-  It does not answer the signal, so no round runs on this arc after it; the
-  archived ledger keeps the decision and its reason. A plain `reset` still refuses.
+  It does not answer the signal and no later decision may, so no round runs on
+  this arc after it; the archived ledger keeps the decision and its reason. A
+  plain `reset` still refuses.
 - **escalate**: the rounds have stopped producing meaningful progress, and the
   next step needs the owner's judgement. Escalate does not answer the signal:
   no round runs until the owner's answer is recorded as the next decision.

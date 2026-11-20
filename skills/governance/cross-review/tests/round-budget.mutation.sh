@@ -351,6 +351,13 @@ mutate "a post-ceiling round without a CONTINUE reads" "T125" \
     'if (rounds > ceil && pending != 1) badhistory' 'if (0) badhistory'
 mutate "change-approach answers the signal" "T124" \
     '$2 != "escalate" && $2 != "change-approach"' '$2 != "escalate"'
+mutate "an answer follows change-approach on read" "T124" \
+    'if (lastdecision == "change-approach") badhistory=' 'if (0) badhistory='
+mutate "an answer follows change-approach on write" "T124" \
+    '    if [ "$LG_LAST_DECISION" = "change-approach" ]; then
+        echo "round-budget: change-approach ends' \
+    '    if false; then
+        echo "round-budget: change-approach ends'
 mutate "a decision repeats on read" "T127" \
     'if ($2 == lastdecision) badhistory=' 'if (0) badhistory='
 mutate "a decision repeats on write" "T127" \

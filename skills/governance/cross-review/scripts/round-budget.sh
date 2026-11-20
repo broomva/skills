@@ -794,6 +794,7 @@ analyze() {
             if (!signal) badhistory="a decision requires an outstanding signal"
             if (decided) badhistory="a second decision follows one that already answered the signal"
             if ($2 == lastdecision) badhistory="a decision repeats the one before it"
+            if (lastdecision == "change-approach") badhistory="a decision follows change-approach; that arc ends with reset --force"
             lastdecision=$2
             # escalate hands the question to the owner and change-approach ends
             # this arc; neither answers the signal, so no round runs on this arc
@@ -1400,6 +1401,9 @@ record-decision)
     fi
     if [ "$LG_SIGNAL" != "1" ] || [ "$LG_DECIDED" = "1" ]; then
         echo "round-budget: no outstanding signal requires a decision." >&2; exit 2
+    fi
+    if [ "$LG_LAST_DECISION" = "change-approach" ]; then
+        echo "round-budget: change-approach ends this arc; archive it with reset --force." >&2; exit 2
     fi
     if [ "$DECISION" = "$LG_LAST_DECISION" ]; then
         echo "round-budget: $DECISION is already recorded for this signal." >&2; exit 2
