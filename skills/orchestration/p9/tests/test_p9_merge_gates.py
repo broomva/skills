@@ -419,7 +419,8 @@ def _seed_merge_ready(p9, pr):
 
 
 def _fake_gh(view, *, required=None, all_checks=None, calls, base_policy=None,
-             base_now=BASE, renamed=None, binary=(), compare_files=None, behind_by=0):
+             base_now=BASE, renamed=None, binary=(), compare_files=None, behind_by=0,
+             base_compare_files=None, compare_map=None):
     required = required if required is not None else [{"name": "Merge Gate", "bucket": "pass"}]
     all_checks = all_checks if all_checks is not None else (
         required + [{"name": "pytest", "bucket": "pass"}])
@@ -451,6 +452,15 @@ def _fake_gh(view, *, required=None, all_checks=None, calls, base_policy=None,
             if base_policy is None:
                 return _Run(stderr="gh: Not Found (HTTP 404)", returncode=1)
             return _Run(base_policy)
+        for key, files in (compare_map or {}).items():  # per-direction answers, e.g. {f"{OLD}...{HEAD}": [...]}
+            if cmd[:2] == ["gh", "api"] and any(f"/compare/{key}" in c for c in cmd):
+                return _Run(json.dumps({"status": "ahead", "behind_by": 0,
+                                        "files": [{"filename": f} for f in files]}))
+        if (base_compare_files is not None and cmd[:2] == ["gh", "api"]
+                and any(f"/compare/{HEAD}..." in c for c in cmd)):
+            # head...base: what the base changed since the fork (entries may carry previous_filename)
+            files = [x if isinstance(x, dict) else {"filename": x} for x in base_compare_files]
+            return _Run(json.dumps({"status": "behind", "files": files}))
         if cmd[:2] == ["gh", "api"] and any("/compare/" in c for c in cmd):
             return _Run(json.dumps({"status": "ahead", "behind_by": behind_by,
                                     "files": [{"filename": f} for f in (compare_files or [])],
@@ -838,6 +848,38 @@ class TestGathering:
         compares = [c for c in calls if any("/compare/" in x for x in c)]
         assert any(f"/compare/{f.head_sha}...{f.base_sha}" in " ".join(c) for c in compares), compares
 
+    @pytest.mark.parametrize("entry", [
+        {"filename": "src/a.py", "status": "removed"},                                   # base deleted a PR file
+        {"filename": "src/a2.py", "previous_filename": "src/a.py", "status": "renamed"},  # base renamed it away
+    ])
+    def test_a_base_rename_or_deletion_of_a_pr_file_blocks(self, p9, monkeypatch, entry):
+        view = _view()
+        monkeypatch.setattr(p9.subprocess, "run", _fake_gh(view, calls=[], behind_by=1,
+                                                           base_compare_files=[entry]))
+        g = p9.load_policy(_GATED).auto_merge.gates
+        f = p9.gather_pr_gate_facts(744, "broomva/test", g, listing=_listing(p9, view))
+        ok, why = p9.up_to_date(g, f)
+        assert not ok and "src/a.py" in why, why
+
+    @pytest.mark.parametrize("base_files,want", [
+        (["docs/other.md"], "EXIT_OK"),                    # unrelated base commits: merges
+        (["src/b.py"], "EXIT_AUTO_MERGE_BLOCKED"),          # the base touched a PR file: refused
+    ])
+    def test_a_behind_pr_with_a_carried_verdict_merges_only_when_the_base_is_unrelated(
+            self, p9, monkeypatch, base_files, want):
+        pr = 745 if want == "EXIT_OK" else 746
+        _seed_merge_ready(p9, pr)
+        calls = []
+        # the P20 verdict names an older commit (OLD) that reviewed src/a.py and src/b.py; it carries
+        # because the commits since (a base update) touch only docs/other2.md
+        view = _view(comments=[_comment(_marker(sha=OLD))])
+        monkeypatch.setattr(p9.subprocess, "run", _fake_gh(
+            view, calls=calls, behind_by=2, base_compare_files=base_files,
+            compare_map={f"{OLD}...{HEAD}": ["docs/other2.md"], f"{BASE}...{OLD}": ["src/a.py", "src/b.py"]}))
+        assert p9.main(["auto-merge", str(pr), "--repo", "broomva/test"]) == getattr(p9, want)
+        merged = [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+        assert bool(merged) == (want == "EXIT_OK"), merged
+
     def test_a_current_pr_does_not_ask_what_the_base_changed(self, p9, monkeypatch):
         view = _view()
         monkeypatch.setattr(p9.subprocess, "run", _fake_gh(view, calls=[], behind_by=0))
@@ -1223,6 +1265,15 @@ class TestUpToDateDisjointBase:
         assert not r.ok and "governance PR must be current" in r.reason, r.reason
         r0 = self._reason(p9, gates, _gov(p9, behind_by=0))
         assert r0.ok, r0.reason
+
+    @pytest.mark.parametrize("delta", [
+        [".control/policy.yaml"],                 # the policy itself moved on the base
+        ["docs/x.md", "CLAUDE.md"],               # the primer moved on the base
+        ["docs/AGENTS-old.md", "AGENTS.md"],      # AGENTS.md renamed away: both names are in the delta
+    ])
+    def test_a_base_side_governance_change_forces_current(self, p9, gates, delta):
+        r = self._reason(p9, gates, _good(p9, behind_by=1, base_delta_files=delta))
+        assert not r.ok and "base changed governance paths" in r.reason, r.reason
 
     def test_unknown_position_never_passes(self, p9, gates):
         for over in ({"behind_by": None, "base_delta_files": []}, {"base_sha": "", "behind_by": 1, "base_delta_files": []}):

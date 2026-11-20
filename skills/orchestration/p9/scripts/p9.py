@@ -1664,7 +1664,9 @@ def up_to_date(g: MergeGates, f: PRGateFacts) -> tuple[bool, str]:
     Strictly current is unreachable when the base merges faster than CI: every update restarts the
     checks, and the base moves again before they finish. The P20 verdict already carries across base
     commits that leave the PR's files alone; this gate takes the same view. It stays strict for a
-    governance PR, and whenever what the base changed cannot be read in full."""
+    governance PR, when the base changed a governance path, and whenever what the base changed cannot be
+    read in full. Like the strict rule, it cannot pin the base for the merge itself: the base is re-read just
+    before merging (auto-merge), and a commit landing after that read is unchecked in either mode."""
     if f.behind_by is None or not f.base_sha:
         return False, "unknown whether behind base"
     where = f"{f.behind_by} commit(s) behind {f.base} at {f.base_sha[:12]}"
@@ -1676,6 +1678,11 @@ def up_to_date(g: MergeGates, f: PRGateFacts) -> tuple[bool, str]:
         return False, where + "; could not read what the base changed"
     if len(f.base_delta_files) >= _COMPARE_FILE_CAP:
         return False, where + "; too many base changes to prove them unrelated"
+    # A governance change on the base (a rename counts by both names) can raise what this PR must meet;
+    # its checks and review predate it, so it must take the new base and be judged again.
+    base_gov = [p for p in f.base_delta_files if _path_matches(p, g.governance.paths)]
+    if base_gov:
+        return False, where + f"; the base changed governance paths {base_gov[:5]}"
     overlap = sorted(set(f.base_delta_files) & set(f.files))
     if overlap:
         return False, where + f"; the base changed this PR's files {overlap[:5]}"
