@@ -1911,6 +1911,8 @@ RC_ROUND=$(rb record-verdict --run-id=t124 --ledger="$LED" --verdict=CONTINUE --
 RC_ANSWER=$(rb record-decision --run-id=t124 --ledger="$LED" --decision=continue --reason="t124: changed my mind")
 AFTER=$(newledger t124h); cp "$LED" "$AFTER"; printf 'DECISION\tcontinue\t8\tt124 hand-written answer\n' >> "$AFTER"
 RC_AFTER=$(rb budget --run-id=t124h --ledger="$AFTER")
+VAFTER=$(newledger t124v); cp "$LED" "$VAFTER"; printf 'VERDICT\tCONTINUE\tg at scripts/g.sh:7\t\n' >> "$VAFTER"
+RC_VAFTER=$(rb budget --run-id=t124v --ledger="$VAFTER")
 RC_PLAIN=$(rb reset --run-id=t124 --ledger="$LED")
 OUT=$(bash "$RB" reset --run-id=t124 --ledger="$LED" --force 2>&1); RC_FORCE=$?
 KEPT=$(cat "$LED".archived.* 2>/dev/null | grep -c '^DECISION	change-approach	8	t124: reshape$')
@@ -1919,11 +1921,11 @@ NEW_OUT=$(rbout budget --run-id=t124 --ledger="$LED")
 LED2=$(newledger t124b); to_round t124b "$LED2" 8
 bash "$RB" record-decision --run-id=t124b --ledger="$LED2" --decision=continue --reason="t124: converging" >/dev/null 2>&1
 RC_CONT=$(rb reset --run-id=t124b --ledger="$LED2" --force)
-if [ "$RC_HOLD" = "7" ] && [ "$RC_ANSWER" = "2" ] && [ "$RC_AFTER" = "6" ] && [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ "$KEPT" = "1" ] && printf '%s' "$OUT" | grep -q "change-approach decision" \
+if [ "$RC_HOLD" = "7" ] && [ "$RC_ROUND" = "2" ] && [ "$RC_VAFTER" = "6" ] && [ "$RC_ANSWER" = "2" ] && [ "$RC_AFTER" = "6" ] && [ "$RC_PLAIN" = "6" ] && [ "$RC_FORCE" = "0" ] && [ "$KEPT" = "1" ] && printf '%s' "$OUT" | grep -q "change-approach decision" \
    && [ "$RC_NEW" = "0" ] && printf '%s' "$NEW_OUT" | grep -q "round 1 of" && [ "$RC_CONT" = "6" ]; then
-    ok "T124: change-approach holds the arc (7) and takes no later answer (2, 6); plain reset 6, forced 0 with decision and reason archived, next arc at round 1; a continue arc stays live (6)"
+    ok "T124: change-approach holds the arc (7) and takes no CONTINUE (2, 6) and no later answer (2, 6); plain reset 6, forced 0 with decision and reason archived, next arc at round 1; a continue arc stays live (6)"
 else
-    fail "T124: change-approach reset" "hold=$RC_HOLD (want 7) answer=$RC_ANSWER (want 2) stored=$RC_AFTER (want 6) verdict=$RC_ROUND plain=$RC_PLAIN force=$RC_FORCE kept=$KEPT new=$RC_NEW continue=$RC_CONT out=$OUT new-out=$NEW_OUT"
+    fail "T124: change-approach reset" "hold=$RC_HOLD (want 7) verdict=$RC_ROUND stored-verdict=$RC_VAFTER (want 2 6) answer=$RC_ANSWER stored=$RC_AFTER (want 2 6) plain=$RC_PLAIN force=$RC_FORCE kept=$KEPT new=$RC_NEW continue=$RC_CONT out=$OUT new-out=$NEW_OUT"
 fi
 
 echo "T125. past round 8 a decision does not earn the round; a CONTINUE does"

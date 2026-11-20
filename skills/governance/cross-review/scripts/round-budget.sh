@@ -778,6 +778,7 @@ analyze() {
             if ($2=="STOP" || $2=="STRUCTURAL") {
                 if (terminal=="") { terminal=$2; directive=$4 }
             } else if ($2=="CONTINUE") {
+                if (lastdecision == "change-approach") badhistory="a CONTINUE follows change-approach; that arc ends with reset --force"
                 # Rule 4 against the STORED history: verdicts cannot stack.
                 if (pending==1) badhistory="two CONTINUE verdicts stack with no round between them"
                 pending=1
@@ -1350,6 +1351,10 @@ record-verdict)
     with_lock
     load_ledger
     refuse_past_terminal
+    if [ "$VERDICT" = "CONTINUE" ] && [ "$LG_LAST_DECISION" = "change-approach" ]; then
+        echo "round-budget: change-approach ends this arc; a CONTINUE cannot reopen it. Archive it with reset --force." >&2
+        exit 2
+    fi
     case "$VERDICT" in
         CONTINUE|STOP|STRUCTURAL) ;;
         *) echo "round-budget: --verdict=CONTINUE|STOP|STRUCTURAL required" >&2; exit 2 ;;
