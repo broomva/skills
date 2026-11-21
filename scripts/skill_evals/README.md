@@ -487,8 +487,11 @@ Each arm is an explicit `--settings` file under `--setting-sources project` and 
 jailed HOME. The operator's `~/.claude/settings.json` is never read or written.
 
 role-x had no knob for the size of its block: `TASK_ENTITY_TOP_N = 5` was a constant
-(the default is 5, not 10). The compression arm uses a new
-`ROLE_X_TASK_ENTITY_TOP_N` override. It changes only the final slice, so a
+(the full block is 5, not 10). The compression arm uses a new
+`ROLE_X_TASK_ENTITY_TOP_N` override. Since BRO-3658 the block is off unless that
+variable is set, so the plain `rolex` arm now injects no entity list, which is what
+production does; use `rolex-top5` for the full block the pilot and the sonnet/opus
+runs measured. It changes only the final slice, so a
 compressed block is a prefix of the default one, and a role-x test pins that.
 
 ### Proof that each arm delivered its injection

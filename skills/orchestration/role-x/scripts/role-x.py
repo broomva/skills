@@ -97,13 +97,25 @@ SIGNAL_WEIGHT_KEYS = set(DEFAULT_SIGNAL_WEIGHTS.keys())
 # the kg loader (the hook must not break when kg is absent).
 TASK_ENTITY_CATALOG_REL = "docs/knowledge-index.md"
 TASK_ENTITY_ENTITIES_ROOT = "research/entities"
+# The block's full size. The rarity gate below is derived from it, so it stays 5
+# whether or not the block is emitted.
 TASK_ENTITY_TOP_N = 5
-# Override for the cap, read per intake. It exists for the context-ablation
-# harness's compression arm (scripts/skill_evals/ctx_ablation), which asks how far
-# this block can shrink before behaviour degrades. Unset, empty or not an integer
-# means TASK_ENTITY_TOP_N, so a hook never fails on a bad value. Only the final
-# slice moves: TASK_ENTITY_DF_MIN_DOCS below stays pinned to the default, so a
-# compressed block is always a prefix of the default block, never a different
+# What an intake emits when nothing overrides it: no block (BRO-3658). Measured
+# over 30 days of sessions in the workspace this hook was built for (33
+# sessions): 428 intakes carried the block, 725 distinct pointers were injected,
+# and no session opened one of them afterwards; most intakes fire on machine
+# events (task notifications, PR updates), where a keyword match returns
+# unrelated entities.
+# Injected text that is never used still costs tokens and attention on every
+# prompt. Retrieval on purpose is `/kg load <topic>`.
+TASK_ENTITY_DEFAULT_TOP_N = 0
+# Override for the cap, read per intake. Set it to turn the block on
+# (ROLE_X_TASK_ENTITY_TOP_N=5 is the full block), and for the context-ablation
+# harness's arms (scripts/skill_evals/ctx_ablation), which ask how far the block
+# can shrink before behaviour degrades. Unset, empty or not an integer means
+# TASK_ENTITY_DEFAULT_TOP_N, so a hook never fails on a bad value. Only the final
+# slice moves: TASK_ENTITY_DF_MIN_DOCS below stays pinned to TASK_ENTITY_TOP_N,
+# so a smaller block is always a prefix of the full block, never a different
 # selection.
 TASK_ENTITY_TOP_N_ENV = "ROLE_X_TASK_ENTITY_TOP_N"
 TASK_ENTITY_TOP_N_MAX = 50
@@ -1225,12 +1237,12 @@ def _qualifying_tokens(
 
 def _task_entity_top_n() -> int:
     """The task-entity cap: ``$ROLE_X_TASK_ENTITY_TOP_N`` clamped to
-    ``[0, TASK_ENTITY_TOP_N_MAX]``, else ``TASK_ENTITY_TOP_N``."""
+    ``[0, TASK_ENTITY_TOP_N_MAX]``, else ``TASK_ENTITY_DEFAULT_TOP_N`` (off)."""
     raw = os.environ.get(TASK_ENTITY_TOP_N_ENV, "").strip()
     try:
         value = int(raw)
     except ValueError:
-        return TASK_ENTITY_TOP_N
+        return TASK_ENTITY_DEFAULT_TOP_N
     return max(0, min(value, TASK_ENTITY_TOP_N_MAX))
 
 
@@ -1252,6 +1264,9 @@ def _load_task_entities(
     """
     if workspace is None or not prompt:
         return []
+    top_n = _task_entity_top_n()
+    if top_n == 0:
+        return []  # block off: do not read a ~1 MB catalog on every prompt for nothing
     try:
         catalog = workspace / TASK_ENTITY_CATALOG_REL
         if not catalog.is_file():
@@ -1292,7 +1307,7 @@ def _load_task_entities(
     scored.sort(key=lambda sr: (-sr[0], sr[1]["slug"]))
 
     out: list[tuple[str, str]] = []
-    for _score, rec in scored[:_task_entity_top_n()]:
+    for _score, rec in scored[:top_n]:
         rel = rec["path"] or f"{rec['type']}/{rec['slug']}.md"
         full = f"{TASK_ENTITY_ENTITIES_ROOT}/{rel}"
         if _confined_entity_path(full, workspace) is None:
