@@ -10,6 +10,18 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+### Added
+
+- **`Workflows/CheckIn.md`: a holistic daily check-in covering physical, mental and spiritual
+  health** (spiritual in the non-religious sense: meaning, connection, presence). The trace
+  store measures the body. The check-in records what it can't see (mood, stress, meaning,
+  connection, anything else the user tracks) as one `journal.jsonl` object per date in the
+  data directory (0700, outside every repo; the file is 0600). Writes take a lock, merge
+  and replace atomically. It then reflects in a few lines against the user's own baseline,
+  repeats back an intention the user chose (no prescriptions; the v1 boundary holds), and
+  says the safety lines first, with emergency and crisis routes. This fills the "subjective state" gap that
+  `Coaching.md` names. Routed from `SKILL.md`; new trigger keywords.
+
 ## [0.12.0] — 2026-08-12
 
 ### Added

@@ -34,7 +34,7 @@ The v2 Coaching workflow will compose:
 | Active MISSION frame (longevity vs performance) | Telos `MISSION.md` |
 | Mental models loaded (Attia / Galpin / Sims) | Telos `MODELS.md` |
 | Calendar load for the next 48h | (TBD — external) |
-| Subjective state | (TBD — daily-note prose section parsed) |
+| Subjective state | [CheckIn](CheckIn.md) journal (`health checkin show`) |
 
 …and synthesize a *recommendation* tagged with confidence + counterfactual ("today is a higher-priority recovery day than a zone-2 day because [X]; but if [Y], invert"). The agent surfaces the recommendation; the user decides.
 
