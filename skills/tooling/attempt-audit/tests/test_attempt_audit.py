@@ -139,3 +139,15 @@ def test_unreadable_file_also_blocks_exit_zero(tmp_path):
     (tmp_path / "bad.py").write_text((FIXTURES / "broken_syntax.py.txt").read_text())
     code, out = run(tmp_path)
     assert out["unreadable"] and code == 2, "a file it could not parse must block exit 0"
+
+
+def test_structured_null_never_claims_refutation(tmp_path):
+    assert run(tmp_path)[1]['claim_verdict'] == 'inconclusive_no_positive_control'
+    (tmp_path / 'clean.py').write_text('def f():\n    return 1\n')
+    assert run(tmp_path)[1]['claim_verdict'] == 'not_detected'
+    (tmp_path / 'broken.py').write_text('def f(')
+    assert run(tmp_path)[1]['claim_verdict'] == 'inconclusive_no_positive_control'
+
+
+def test_structured_finding_is_a_detection():
+    assert run(FIXTURES / 'positive_skipped_work.py')[1]['claim_verdict'] == 'detected'

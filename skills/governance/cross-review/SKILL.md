@@ -412,6 +412,22 @@ does not, and cannot, bind an agent that has decided to evade it.
 
 The rubric is *concrete* and *machine-applicable* — every deduction names a specific failure category, not a vague "could be better."
 
+## Claim audits and falsifiable adversarial findings
+
+Every finding, objection or defense includes a **Settling observation**
+(`settling_observation`): one concrete test/source observation and the result
+that would falsify its own reading. This is separate from reproduction evidence
+and severity; a proposed experiment is not evidence that it ran.
+
+For load-bearing empirical or literature claims, read
+[references/claim-funnel.md](references/claim-funnel.md) and run its three-stage
+ledger → blinded skeptic/believer → independent refuter procedure. Validate its
+receipt with `scripts/cross-review.sh claim-packet packet.json` before scoring.
+Claim status is exactly `established | contested | untested`. The funnel also
+adapts `peer-review` without replacing its scientific rubric. A missing source
+or isolated dispatch remains a gap, never corroboration. Existing scores,
+thresholds, round budgets and strata identity rules still apply.
+
 ## Mutation-proof — the one rubric dimension a machine can check
 
 Four of the five rubric dimensions are judgement calls. The fifth — *tests cover the change* — is not. It has an operational definition:

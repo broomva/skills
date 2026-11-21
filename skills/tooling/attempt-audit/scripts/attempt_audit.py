@@ -247,6 +247,7 @@ def main(argv=None) -> int:
         if args.json:
             print(json.dumps({"scanned": 0, "findings": [], "unreadable": [],
                               "skipped_dirs": [], "walk_errors": [],
+                              "claim_verdict": "inconclusive_no_positive_control",
                               "error": f"no such path: {root}"}, indent=2))
         print(f"attempt-audit: no such path: {root}", file=sys.stderr)
         return 2
@@ -264,6 +265,9 @@ def main(argv=None) -> int:
     if args.json:
         print(json.dumps({
             "scanned": scanned,
+            "claim_verdict": ("inconclusive_no_positive_control"
+                              if scanned == 0 or walk_errors or unreadable
+                              else "detected" if findings else "not_detected"),
             "findings": findings,
             "unreadable": unreadable,
             "skipped_dirs": skipped_dirs,

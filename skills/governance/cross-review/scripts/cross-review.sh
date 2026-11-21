@@ -19,6 +19,7 @@
 # kept in a ledger by scripts/round-budget.sh -- see `cross-review round`.
 #
 # Usage:
+#   cross-review claim-packet packet.json # validate ledger/debate/refuter receipt
 #   cross-review pre-push                 # default: gate before push
 #   cross-review pre-push --strata=auto   # explicit auto-detect
 #   cross-review pre-push --strata=A      # force Codex cross-vendor
@@ -97,6 +98,9 @@ case "$COMMAND" in
         exit 0
         ;;
     pre-push|plan|audit|version|reviewer-guard)
+        ;;
+    claim-packet)
+        exec python3 "$REPO/scripts/review_packet.py" "$@"
         ;;
     round)
         # Delegate wholesale: the budget controller owns its own arg surface.
@@ -627,7 +631,8 @@ if [ "$COMMAND" = "pre-push" ]; then
         echo "       READ-ONLY agent type — subagent_type='Explore', which carries"
         echo "       every tool EXCEPT Edit/Write/NotebookEdit. Not 'general-purpose':"
         echo "       that is Tools:* , so the reviewer could silently fix what it was"
-        echo "       dispatched to report, and a fixed finding is indistinguishable"
+        echo "       Include a concrete settling_observation that would falsify each finding."
+    echo "       dispatched to report, and a fixed finding is indistinguishable"
         echo "       from one that was never found."
         echo "       Prompt: 'You are reviewing diff X against rubric Y as a devil's"
         echo "        advocate. Read references/$(basename "$RUBRIC_FILE"). Score each dimension"
@@ -661,6 +666,7 @@ if [ "$COMMAND" = "pre-push" ]; then
     echo "    - premortem                          (imagine this failed)"
     echo "    - plan-design-review / plan-ceo-review / plan-eng-review"
     echo ""
+    echo "  Every objection or defense needs a settling_observation that falsifies its own reading."
     echo "  Aggregate findings from all skills. Each is graded by the rubric's"
     echo "  severity rules: only a reproduced BLOCKER or MAJOR zeroes a dimension,"
     echo "  and a MINOR lowers nothing. The round score is the minimum across strata."
