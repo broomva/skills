@@ -1163,3 +1163,30 @@ def test_waivers_apply_in_video_mode_and_declared_text_is_still_refused(videos, 
     assert p.returncode == 0, p.stdout + p.stderr
     assert {x["outcome"] for x in json.loads(report.read_text())["waivers"]} == {"applied"}
 
+
+
+def test_stacked_panel_eye_line_and_subject():
+    _, profile = cvl.get_profile(LAYOUT, "stacked-stream")
+    good = cvl.Frame(label="a", faces=[face(300, 200, 700, 750, 400)])
+    bad = cvl.Frame(label="a", faces=[face(300, 200, 700, 750, 650)])
+    assert run([good], profile)["VL6"].status == "PASS"
+    assert run([good], profile)["VL8"].status == "PASS"
+    assert run([bad], profile)["VL6"].status == "FAIL"
+
+
+def test_stacked_worn_text_is_not_an_overlay():
+    _, profile = cvl.get_profile(LAYOUT, "stacked-stream")
+    frame = cvl.Frame(label="a", texts=[text("worn", 350, 250, 600, 320)],
+                      faces=[face(300, 200, 700, 750, 400)])
+    assert run([frame], profile)["VL2"].status == "SKIP"
+    frame.texts.append(text("overlay", 0, 800, 200, 860))
+    assert run([frame], profile)["VL2"].status == "FAIL"
+
+
+def test_stacked_checks_each_panel_even_if_content_face_is_larger():
+    _, profile = cvl.get_profile(LAYOUT, "stacked-stream")
+    frame = cvl.Frame(label="a", faces=[face(350, 180, 650, 620, 650),
+                                        face(150, 1180, 900, 1850, 1400)])
+    result = run([frame], profile)
+    assert result["VL6"].status == "FAIL"
+    assert "webcam" in result["VL6"].detail
