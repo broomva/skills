@@ -10,6 +10,34 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+### Added
+
+- **Apple Health import (`apple_health` source).** Reads the iPhone's "Export All Health Data"
+  archive (`export.zip` or an extracted XML) from `exports/apple_health/` or
+  `[apple_health] export_path`, stream-parsing it in place with flat memory. Maps 19 quantity types
+  and sleep stages to canonical units (kJ, lb, fraction-percent and mmol/L converted), keeps each
+  sample's device and writing app, and finds the localised XML name inside the zip by content. The
+  source registers only when an export exists, so all-source runs never fail without one.
+- `hr_variability_sdnn` metric: Apple Watch HRV is SDNN and stays separate from RMSSD.
+- Samples carry `producer` (the app behind an Apple Health record) and `record_key`, their identity
+  beyond (source, metric, start). Migration `004_producer_record_key` keys every sample table on
+  `record_key`. For Apple Health it is a digest of the whole normalised record (type, producer, UTC
+  start, end and creation time, value, unit), so distinct records never overwrite each other and a
+  re-export maps to the same row. Garmin (empty key) still updates a day in place. Existing rows
+  keep empty values.
+- `health series --producer`: select one producer. Buckets never pool producers or sources.
+- Apple Health is import-only (`IMPORT_ONLY_SOURCES`). `sync`, `auth`, `context`, `daily-note` and
+  synthesis skip it until a producer-aware reconciliation exists (BRO-3793), and `backfill` re-reads
+  the export idempotently. Record identity uses the UTC instant, so a re-export under another offset
+  updates the row instead of duplicating it.
+  Only files whose root is `<HealthData>` are selected. A malformed internal DTD is cut out (up to the `<HealthData>` start tag) before
+  parsing. UTF-16 files get a clear refusal.
+
+### Fixed
+
+- The test suite configures again under `filterwarnings = error` with current pytest-asyncio
+  (`asyncio_default_fixture_loop_scope = "function"`).
+
 ## [0.12.0] — 2026-08-12
 
 ### Added

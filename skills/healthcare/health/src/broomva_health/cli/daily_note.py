@@ -14,7 +14,7 @@ import typer
 
 from broomva_health.application.daily_note import RenderDailyNoteUseCase
 from broomva_health.cli.formatters import format_value
-from broomva_health.domain.source import Source
+from broomva_health.domain.source import IMPORT_ONLY_SOURCES, Source, single_stream
 
 if TYPE_CHECKING:
     from broomva_health.cli.container import Container
@@ -83,14 +83,24 @@ def daily_note_root(
     # The use case queries the repo source-agnostically (source=None); v1 is
     # Garmin-only, so read the Garmin repo (or the first registered source).
     if source is not None and source not in container.sources:
+        typer.secho(f"Source '{source.value}' is not registered.", fg=typer.colors.RED, err=True)
+        raise typer.Exit(code=1)
+    if source in IMPORT_ONLY_SOURCES:
         typer.secho(
-            f"Source '{source.value}' is not registered.", fg=typer.colors.RED, err=True
+            f"Daily notes read one stream per source; {source.value} holds several producers. "
+            f"Use `health series --source {source.value} --producer <app>`.",
+            fg=typer.colors.RED,
+            err=True,
         )
+        raise typer.Exit(code=1)
+    candidates = single_stream(container.sources)
+    if source is None and not candidates:
+        typer.secho("No source supports daily notes.", fg=typer.colors.RED, err=True)
         raise typer.Exit(code=1)
     src = (
         source
         if source is not None
-        else (Source.GARMIN if Source.GARMIN in container.sources else next(iter(container.sources)))
+        else (Source.GARMIN if Source.GARMIN in candidates else candidates[0])
     )
     repo = container.repository_for(src)
     path = RenderDailyNoteUseCase(repo=repo, projection=container.projection).execute(day=day)

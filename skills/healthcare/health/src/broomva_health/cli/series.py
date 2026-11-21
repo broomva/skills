@@ -123,6 +123,11 @@ def series_root(
     source: Source | None = typer.Option(
         None, "--source", "-s", help="Source (default: all registered)."
     ),
+    producer: str | None = typer.Option(
+        None,
+        "--producer",
+        help="Only samples from this producer (e.g. the app that wrote an Apple Health record).",
+    ),
 ) -> None:
     """Emit a structured time-series for ``--metric`` over the range."""
 
@@ -152,7 +157,14 @@ def series_root(
         except Exception:
             continue
         samples.extend(repo.query_quantity(src, metric, start_dt, end_dt))
+    if producer is not None:
+        samples = [s for s in samples if s.producer == producer]
     samples.sort(key=lambda s: s.start_ts)
+    # Devices differ in level and can record the same interval twice (phone and
+    # watch steps), so buckets never pool producers: each (source, producer) gets
+    # its own series once more than one is present.
+    streams = {(s.source.value, s.producer) for s in samples}
+    split = len(streams) > 1
 
     unit = canonical_unit(metric)
     points: list[dict[str, Any]]
@@ -163,17 +175,26 @@ def series_root(
                 "value": s.value,
                 "unit": s.unit,
                 "source": s.source.value,
+                "producer": s.producer,
             }
             for s in samples
         ]
     else:
-        grouped: dict[str, list[float]] = defaultdict(list)
+        grouped: dict[tuple[str, str, str], list[float]] = defaultdict(list)
         for s in samples:
-            grouped[_bucket_key(s.start_ts.date(), bucket)].append(s.value)
-        points = [
-            {"bucket": key, "value": _aggregate(vals, agg), "n": len(vals), "unit": unit}
-            for key, vals in sorted(grouped.items())
-        ]
+            stream = (s.source.value, s.producer) if split else ("", "")
+            grouped[(_bucket_key(s.start_ts.date(), bucket), *stream)].append(s.value)
+        points = []
+        for (key, stream_source, prod), vals in sorted(grouped.items()):
+            point: dict[str, Any] = {
+                "bucket": key,
+                "value": _aggregate(vals, agg),
+                "n": len(vals),
+                "unit": unit,
+            }
+            if split:
+                point["source"], point["producer"] = stream_source, prod
+            points.append(point)
 
     document = {
         "metric": metric.value,
