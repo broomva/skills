@@ -105,23 +105,27 @@ fi
 
 # ── T6: rubric.md exists and has the 5 dimensions ─────────────────────────
 echo "T6. rubric.md present + has 5 dimensions"
-if [ -f "$REPO/references/rubric.md" ] && \
-    grep -q "over-engineered abstractions" "$REPO/references/rubric.md" && \
-    grep -q "template-paste patterns" "$REPO/references/rubric.md" && \
-    grep -q "Correct contracts at boundaries" "$REPO/references/rubric.md" && \
-    grep -q "Failure modes named explicitly" "$REPO/references/rubric.md" && \
-    grep -q "Rerunnable evidence" "$REPO/references/rubric.md" && \
-    grep -q "never shown failing" "$REPO/references/rubric.md" && \
-    grep -q "nearby legitimate input (a control)" "$REPO/references/rubric.md"; then
-    # Verify T6 discriminates: removing either new clause from a disposable copy must fail the predicate
+check_rubric_complete() {
+    local f="$1"
+    [ -f "$f" ] && \
+        grep -q "over-engineered abstractions" "$f" && \
+        grep -q "template-paste patterns" "$f" && \
+        grep -q "Correct contracts at boundaries" "$f" && \
+        grep -q "Failure modes named explicitly" "$f" && \
+        grep -q "Rerunnable evidence" "$f" && \
+        grep -q "never shown failing" "$f" && \
+        grep -q "nearby legitimate input (a control)" "$f"
+}
+if check_rubric_complete "$REPO/references/rubric.md"; then
+    # Verify check_rubric_complete discriminates: removing either new clause from a disposable copy must fail check_rubric_complete itself
     T6_TMP=$(mktemp -d)
     sed 's/never shown failing/omitted/' "$REPO/references/rubric.md" > "$T6_TMP/no_deduct.md"
     sed 's/nearby legitimate input (a control)/omitted/' "$REPO/references/rubric.md" > "$T6_TMP/no_ctrl.md"
-    if ! grep -q "never shown failing" "$T6_TMP/no_deduct.md" && \
-       ! grep -q "nearby legitimate input (a control)" "$T6_TMP/no_ctrl.md"; then
-        ok "T6: rubric.md complete (and disposable-copy mutations fail as expected)"
+    if ! check_rubric_complete "$T6_TMP/no_deduct.md" && \
+       ! check_rubric_complete "$T6_TMP/no_ctrl.md"; then
+        ok "T6: rubric.md complete (and check_rubric_complete rejects mutated copies)"
     else
-        fail "T6: rubric.md complete (disposable-copy mutation did not fail)"
+        fail "T6: rubric.md complete (check_rubric_complete accepted a mutated copy)"
     fi
     rm -rf "$T6_TMP"
 else
