@@ -2,7 +2,7 @@ name: test-reel-loop
 
 # Python test gate for the `reel-loop` skill (skills/video/reel-loop/). Path-filtered so
 # it runs ONLY when skills/video/reel-loop/** changes — the monorepo's tests-optional
-# default (lint-skill-md.yml) stands everywhere else. BRO-3795.
+# default (lint-skill-md.yml) stands everywhere else. BRO-3795, BRO-3815.
 
 on:
   pull_request:
@@ -40,7 +40,7 @@ jobs:
           python-version: ${{ matrix.python }}
       - name: Install dev deps
         run: pip install -r tests/requirements-dev.txt
-      - name: Tests
+      - name: Tests — publish and comment funnel (network disabled)
         run: python -m pytest tests/ -v
       - name: Mutation check — deleting any gate must fail a test
         run: python3 tests/mutation_check.py

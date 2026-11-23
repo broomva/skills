@@ -10,11 +10,13 @@ description: |
   Trial Reels to non-followers. A composition skill: research, voice, render and
   layout come from sibling skills; the arithmetic (outlier and winner scores) and
   the publish gate live in a tested script, so no step past the approval is
-  reachable without an approval bound to the exact rendered bytes.
+  reachable without an approval bound to the exact rendered bytes. Poll comment
+  keywords into one private reply per comment with a separately byte-approved
+  template and durable attempt ledger.
   USE WHEN: "reel loop", "content machine", "find viral reels in my niche and remake
   them", "outliers in my niche", "x times their normal", "nightly content run",
   "remix the winners", "trial reels", "make reels while I sleep", "content-os",
-  "/reel-loop". NOT FOR: editing raw footage into a cut with no loop around it
+  "comment keyword funnel", "WORKSPACE private reply", "/reel-loop". NOT FOR: editing raw footage into a cut with no loop around it
   (video-cut), one cinematic generation or brand compile (content-engine), a
   multi-account portfolio with canon and spend ledgers (that is the
   agentic-media-studio initiative, which runs one reel-loop per account lane), or
@@ -46,6 +48,16 @@ open counterparts are his free `crecer` plugin (stages 1–4, read-only) and
 AttentionOS (stages 1–4 and 8–10, human-filmed video). Neither has a cloned-voice
 render or an approval bound to bytes. Survey and per-stage alternatives:
 [references/stage-map.md](references/stage-map.md).
+
+## Platform modes
+
+One loop shares research, script, render, QC and byte-bound approval across
+platforms. A post card without `platform` is Instagram; `"platform": "youtube"`
+selects the YouTube Shorts adapter. Each approval binds the target platform and
+destination as well as the rendered bytes. TikTok has no automatic adapter: post
+there by a human click or the Higgsfield widget. See
+[references/platform-contract.md](references/platform-contract.md) and
+[references/post-card.md](references/post-card.md).
 
 ## The account folder
 
@@ -175,10 +187,22 @@ chat message are all fine. It must show:
 - what is synthetic;
 - the cost.
 
-On "yes", record the decision in the card:
+For a YouTube card, also show the channel, the visibility (`privacy_status`) and the
+audience (`made_for_kids`): the approval names all three.
+
+On "yes", record the decision in the card. Instagram (`platform` and `ig_user_id`
+are optional):
 
 ```json
 "approval": {"by": "<person>", "at": "<ISO time>", "video_sha256": "<sha256 of final-n.mp4>"}
+```
+
+YouTube (every field required; changing visibility or audience needs a new yes):
+
+```json
+"approval": {"by": "<person>", "at": "<ISO time>", "video_sha256": "<sha256 of final-n.mp4>",
+             "platform": "youtube", "channel_id": "<UC… channel id>",
+             "privacy_status": "private", "made_for_kids": false}
 ```
 
 The agent writes this block only after a yes, and only with the hash of the file the
@@ -201,10 +225,16 @@ python3 scripts/reel_loop.py payload runs/<date>/card-<n>.json --video runs/<dat
 Then publish. This is the only path by which bytes reach Instagram:
 
 ```bash
+# Instagram (the card's default platform)
 IG_ACCESS_TOKEN=… python3 scripts/reel_loop.py publish runs/<date>/card-<n>.json \
     --video runs/<date>/final-<n>.mp4 --ig-user-id <IG_USER_ID>   # add --no-go-live to stop before media_publish
+
+# YouTube Shorts (the approval binds this exact channel)
+YT_ACCESS_TOKEN=… python3 scripts/reel_loop.py publish runs/<date>/card-<n>.json \
+    --video runs/<date>/final-<n>.mp4 --channel-id <CHANNEL_ID>   # --no-go-live validates metadata, sends no bytes
 ```
 
+This is the only automatic path by which approved bytes reach either adapter.
 Both commands exit 2 and list every reason when:
 
 - the card is malformed (wrong types, unreadable JSON);
@@ -213,18 +243,19 @@ Both commands exit 2 and list every reason when:
   approval);
 - the card declares a cloned voice and the consent record is missing, undated,
   future-dated or points to a file that does not exist;
-- the caption is over 2,200 characters, 30 hashtags or 20 @ tags;
-- with `ffprobe`, the codec, fps or duration breaks the Reels spec (without it,
-  those three are reported as UNCHECKED);
+- an Instagram caption is over 2,200 characters, 30 hashtags or 20 @ tags;
+- with `ffprobe`, the selected platform's video checks fail (Instagram codec/fps/
+  duration; YouTube Short orientation and 1–180 s duration); without it they are
+  reported as UNCHECKED;
 - the trial strategy is invalid;
-- for `publish` only, `IG_ACCESS_TOKEN` is unset.
+- for `publish` only, the selected platform's token is unavailable.
 
 `is_ai_generated` is true whenever the card declares synthetic media or sets it
 true. The gate cannot see synthetic media the card does not declare.
 
 `publish` reads the video **once**, gates those bytes, and sends **those same
 bytes**. Swapping or editing the file after the gate cannot change what is
-published. In order, it:
+published. For Instagram, in order, it:
 
 1. creates a resumable REELS container (`POST /<IG_ID>/media`, `upload_type=resumable`);
 2. sends the bytes to `https://rupload.facebook.com/ig-api-upload/<version>/<container id>`
@@ -235,6 +266,11 @@ published. In order, it:
    (at least 1 s). A poll already in flight can therefore return `FINISHED` up
    to that cap after the deadline, and it is accepted;
 4. calls `POST /<IG_ID>/media_publish`.
+
+For YouTube, it confirms `--channel-id` through `channels.list`, creates the
+resumable `videos.insert` session using the gated metadata, validates the returned
+Google upload host, then does one PUT of the gated bytes. It never retries that
+PUT. `--no-go-live` stops after the session is accepted, before any byte PUT.
 
 A Graph API failure after the gate exits 3 and names the step. Failures include:
 
@@ -335,3 +371,60 @@ cd skills/video/reel-loop && python3 -m pytest tests/ -q
 python3 scripts/reel_loop.py outliers references/example-niche.tsv --now 2026-11-16
 # expect exactly one outlier: @alpha /p/A6/, about 114x; @beta's 2.6M reel is not one
 ```
+
+
+## Lead funnel
+
+For `@broomva.tech`, end the Reel with: “Comment WORKSPACE and I'll send you the
+Act One playbook”. Register the published media ID, keyword, and separate owner
+approval in the [post card](references/post-card.md#lead-funnel). Read the
+[Meta rules](references/platform-contract.md#lead-funnel-polling-comments--one-private-reply)
+before use. The private reply template must contain the owner-approved playbook
+link; this skill supplies no assumed URL.
+
+From `skills/video/reel-loop`. The owner's approval binds the post, keyword,
+account and exact template bytes together (see the post card):
+
+```sh
+# 1. Owner: print the four values and their hashes, check them, record both hashes in card.json.
+python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID --print-binding
+# Owner supplies IG_ACCESS_TOKEN through the environment; never put it in argv.
+# 2. Dry run (the default): reads comments, sends nothing.
+python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID
+# 3. Send. --go-live requires an explicit --ledger; always pass the SAME one.
+python3 scripts/reel_loop.py funnel card.json --template /path/to/act-one.txt --ig-user-id NUMERIC_IG_ID --go-live --ledger /path/outside/git/funnel.jsonl
+```
+
+`--max-pages` (default 10, at most 100) bounds pagination.
+
+Dry run still requires the approved template and token. It emits only comment IDs,
+ages, keyword-hit flags and operational state, never comment text, usernames,
+template text, or tokens. It may create an empty ledger but adds no attempts.
+Only the owner runs the first live check, on their own test comment from another
+account; implementation and CI use fakes only, with network connections disabled.
+No credential files are read.
+
+Dry runs default the ledger to `$XDG_STATE_HOME/reel-loop/funnel.jsonl` or
+`~/.local/state/reel-loop/funnel.jsonl`. Live sends need `--ledger`, because the
+default depends on the environment and two ledgers would each send. The result
+prints the resolved ledger path. The ledger is mode 0600. Paths inside **any Git
+repository are refused**, so no in-repo PII exception is needed. The ledger
+minimizes data to comment and media IDs, a keyed hash of the commenter, template
+hash, time and status; usernames, commenter IDs and comment text are not retained.
+The hash key lives beside the ledger (`<ledger>.salt`, mode 0600); a used ledger
+without it blocks sending. Keep it private and preserve it across runs, posts, and token
+changes. Changing/deleting the ledger removes duplicate protection. Use a local
+filesystem with working advisory locks and fsync (macOS/Linux).
+
+An exclusive lock spans polling and sending. An `attempting` row is flushed and
+synced (F_FULLFSYNC on macOS) **before** POST; `sent`, `failed` or `uncertain`
+follows. Each commenter gets at most one reply per post; their later comments are
+listed as `repeat_commenter`. Every recorded attempt blocks all future automatic
+sends for that comment and that commenter. The first unsuccessful send stops the
+run (`halted`): HTTP 4xx is `failed`; a timeout, network error, 5xx or a reply
+without a message id is `uncertain`. Uncertain sends and crashes between
+reservation and result are listed in `needs_human`; reconcile with Instagram
+manually and do not delete the reservation to retry.
+A malformed/torn ledger blocks sending. No client can atomically commit local
+state and Meta's send: this deliberately trades possible missed replies for no
+automatic duplicate after an uncertain send. No follow-up messages are sent.

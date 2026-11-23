@@ -73,8 +73,7 @@ def _gov(p9, strata="A,B,C", **over):
     kw = dict(changed_files=2, files=["CLAUDE.md", "src/y.py"],
               comments=[_comment(_marker(strata=strata))],
               all_checks=[{"name": "Merge Gate", "bucket": "pass"},
-                          {"name": "stability-check", "bucket": "pass"}],
-              l3_recent_commits=0)
+                          {"name": "stability-check", "bucket": "pass"}])
     kw.update(over)
     return _good(p9, **kw)
 
@@ -120,11 +119,8 @@ class TestParse:
         ("  gates:\n    governance:\n      paths: [docs/**]\n", "may add paths"),
         ("  gates:\n    governance:\n      paths: [CLAUDE.md, AGENTS.md]\n", "may add paths"),
         ("  gates:\n    governance:\n      required_checks: [Merge Gate]\n", "stability-check"),
-        ("  gates:\n    governance:\n      l3_max_per_window: 2\n", "l3_max_per_window"),
-        ("  gates:\n    governance:\n      l3_window_seconds: 3600\n", "l3_window_seconds"),
         ("  gates:\n    governance:\n      required_checks: []\n", "required_checks"),
         ("  gates:\n    governance:\n      paths: []\n", "paths"),
-        ("  gates:\n    governance:\n      l3_max_per_window: 0\n", "l3_max_per_window"),
         ("  gates:\n    requred_strata: [A]\n", "unknown key"),
         ("  gates:\n    p20: []\n", "p20 must be a mapping"),
         ("  gates:\n    p20: false\n", "p20 must be a mapping"),
@@ -142,11 +138,18 @@ class TestParse:
         cfg = _policy(p9, tmp_path,
                       "  gates:\n    governance:\n      paths: [CLAUDE.md, AGENTS.md, "
                       "METALAYER.md, .control/policy.yaml, .control/rcs-parameters.toml, "
-                      "SECURITY.md]\n      required_checks: [stability-check, extra]\n"
-                      "      l3_window_seconds: 172800\n")
+                      "SECURITY.md]\n      required_checks: [stability-check, extra]\n")
         gov = cfg.auto_merge.gates.governance
         assert "SECURITY.md" in gov.paths and "extra" in gov.required_checks
-        assert gov.l3_window_seconds == 172800
+
+    @pytest.mark.parametrize("block", ["      l3_max_per_window: 1\n      l3_window_seconds: 86400\n",
+                                       "      l3_max_per_window: 2\n", "      l3_window_seconds: 3600\n"])
+    def test_the_retired_rate_keys_still_load_and_are_ignored(self, p9, tmp_path, block):
+        # Owner decision 2026-11-18: the one-governance-landing-per-day budget is removed. Policies that still
+        # carry its keys must keep loading (they are ignored), so the removal does not break any repo mid-way.
+        cfg = _policy(p9, tmp_path, "  gates:\n    governance:\n" + block)
+        assert not hasattr(cfg.auto_merge.gates.governance, "l3_max_per_window")
+        assert not hasattr(cfg.auto_merge.gates.governance, "l3_window_seconds")
 
     def test_stricter_values_accepted(self, p9, tmp_path):
         cfg = _policy(p9, tmp_path, "  gates:\n    p20:\n      pass_score: 9\n"
@@ -379,9 +382,10 @@ class TestGovernanceTier:
     def test_stability_check_must_run_and_pass(self, p9, gates, checks):
         assert "governance_checks" in _failed(p9, gates, _gov(p9, all_checks=checks))
 
-    @pytest.mark.parametrize("n", [1, 2, None])
-    def test_l3_rate_budget_blocks(self, p9, gates, n):
-        assert "l3_rate" in _failed(p9, gates, _gov(p9, l3_recent_commits=n))
+    def test_a_governance_change_is_not_rate_limited(self, p9, gates):
+        # No merge-rate gate any more: a governance PR that meets strata and checks passes whatever landed today.
+        assert _failed(p9, gates, _gov(p9)) == set()
+        assert "l3_rate" not in {r.gate for r in p9.evaluate_merge_gates(gates, _gov(p9))}
 
     @pytest.mark.parametrize("path", [".CONTROL/policy.yaml", "./AGENTS.md", "claude.md"])
     def test_case_and_prefix_variants_are_governance(self, p9, gates, path):
@@ -415,7 +419,8 @@ def _seed_merge_ready(p9, pr):
 
 
 def _fake_gh(view, *, required=None, all_checks=None, calls, base_policy=None,
-             base_now=BASE, renamed=None, binary=(), compare_files=None):
+             base_now=BASE, renamed=None, binary=(), compare_files=None, behind_by=0,
+             base_compare_files=None, compare_map=None):
     required = required if required is not None else [{"name": "Merge Gate", "bucket": "pass"}]
     all_checks = all_checks if all_checks is not None else (
         required + [{"name": "pytest", "bucket": "pass"}])
@@ -432,8 +437,6 @@ def _fake_gh(view, *, required=None, all_checks=None, calls, base_policy=None,
             return _Run(json.dumps({"baseRefName": view["baseRefName"]}))
         if cmd[:3] == ["gh", "pr", "view"]:
             return _Run(json.dumps(capped))
-        if cmd[:3] == ["gh", "api", "--paginate"] and any("/commits" in c for c in cmd):
-            return _Run("")  # no commits landed on base inside the L3 window
         if cmd[:3] == ["gh", "api", "--paginate"]:
             return _Run("".join(
                 f"{p}\t{renamed.get(p, '')}\tmodified\t{0 if p in binary else 5}\n"
@@ -449,8 +452,17 @@ def _fake_gh(view, *, required=None, all_checks=None, calls, base_policy=None,
             if base_policy is None:
                 return _Run(stderr="gh: Not Found (HTTP 404)", returncode=1)
             return _Run(base_policy)
+        for key, files in (compare_map or {}).items():  # per-direction answers, e.g. {f"{OLD}...{HEAD}": [...]}
+            if cmd[:2] == ["gh", "api"] and any(f"/compare/{key}" in c for c in cmd):
+                return _Run(json.dumps({"status": "ahead", "behind_by": 0,
+                                        "files": [{"filename": f} for f in files]}))
+        if (base_compare_files is not None and cmd[:2] == ["gh", "api"]
+                and any(f"/compare/{HEAD}..." in c for c in cmd)):
+            # head...base: what the base changed since the fork (entries may carry previous_filename)
+            files = [x if isinstance(x, dict) else {"filename": x} for x in base_compare_files]
+            return _Run(json.dumps({"status": "behind", "files": files}))
         if cmd[:2] == ["gh", "api"] and any("/compare/" in c for c in cmd):
-            return _Run(json.dumps({"status": "ahead", "behind_by": 0,
+            return _Run(json.dumps({"status": "ahead", "behind_by": behind_by,
                                     "files": [{"filename": f} for f in (compare_files or [])],
                                     "base_commit": {"sha": BASE}}))
         if cmd[:2] == ["gh", "api"] and any("/commits" in c for c in cmd):
@@ -804,52 +816,6 @@ class TestHeadConsistency:
 class TestGathering:
     """The half of the gate that talks to GitHub, run against the fake."""
 
-    def _landings(self, p9, monkeypatch, rows, compare):
-        seen = []
-
-        def run(cmd, *a, **k):
-            seen.append(cmd)
-            if cmd[:3] == ["gh", "api", "--paginate"]:
-                return rows if isinstance(rows, _Run) else _Run(rows)
-            basehead = next(c for c in cmd if "/compare/" in c).split("/compare/")[1]
-            return compare(basehead)
-        monkeypatch.setattr(p9.subprocess, "run", run)
-        return p9._governance_landings_in_window("broomva/test", BASE, p9.GovernanceTier()), seen
-
-    def _files(self, *paths):
-        return _Run(json.dumps({"status": "ahead", "files": [{"filename": x} for x in paths]}))
-
-    def test_a_merge_commit_landing_an_old_governance_change_counts(self, p9, monkeypatch):
-        # The merge commit M is dated when it landed; its branch commit that
-        # edited AGENTS.md is days older. Diffing M against its first parent
-        # sees the change; filtering commits by date and path did not.
-        got, seen = self._landings(p9, monkeypatch, "M\tP1\nS\tP0\n",
-                                   lambda bh: self._files("AGENTS.md", "x.py") if bh == "P1...M"
-                                   else self._files("docs/a.md"))
-        assert got == 1
-        listing = " ".join(seen[0])
-        assert f"sha={BASE}" in listing and "path=" not in listing
-
-    def test_no_governance_landing_is_zero(self, p9, monkeypatch):
-        got, _ = self._landings(p9, monkeypatch, "M\tP1\nS\tP0\n",
-                                lambda bh: self._files("docs/a.md"))
-        assert got == 0
-
-    def test_an_empty_window_is_zero(self, p9, monkeypatch):
-        assert self._landings(p9, monkeypatch, "", lambda bh: self._files())[0] == 0
-
-    @pytest.mark.parametrize("rows,compare", [
-        (_Run(returncode=1), None),                                  # listing failed
-        ("M\t\n", None),                                            # no parent: root/unreadable
-        ("M\tP1\n", lambda bh: _Run(returncode=1)),                  # compare failed
-        ("M\tP1\n", lambda bh: _Run(json.dumps({"status": "ahead"}))),  # no files key
-        ("M\tP1\n", lambda bh: _Run(json.dumps({"status": "ahead",
-                                                "files": [{"filename": "z"}] * 300}))),
-    ])
-    def test_unknown_landings_are_none(self, p9, monkeypatch, rows, compare):
-        got, _ = self._landings(p9, monkeypatch, rows, compare or (lambda bh: self._files()))
-        assert got is None
-
     def test_governance_pr_merges_end_to_end_only_with_every_strict_condition(
             self, p9, monkeypatch):
         _seed_merge_ready(p9, 733)
@@ -869,6 +835,58 @@ class TestGathering:
                                     p9.load_policy(_GATED).auto_merge.gates,
                                     listing=_listing(p9, view))
         assert f.marker_is_ancestor is True and f.marker_delta_files == ["docs/other.md"]
+
+    def test_a_behind_pr_gathers_what_the_base_changed(self, p9, monkeypatch):
+        calls = []
+        view = _view()
+        monkeypatch.setattr(p9.subprocess, "run",
+                            _fake_gh(view, calls=calls, compare_files=["docs/other.md"], behind_by=2))
+        f = p9.gather_pr_gate_facts(742, "broomva/test",
+                                    p9.load_policy(_GATED).auto_merge.gates,
+                                    listing=_listing(p9, view))
+        assert f.behind_by == 2 and f.base_delta_files == ["docs/other.md"]
+        compares = [c for c in calls if any("/compare/" in x for x in c)]
+        assert any(f"/compare/{f.head_sha}...{f.base_sha}" in " ".join(c) for c in compares), compares
+
+    @pytest.mark.parametrize("entry", [
+        {"filename": "src/a.py", "status": "removed"},                                   # base deleted a PR file
+        {"filename": "src/a2.py", "previous_filename": "src/a.py", "status": "renamed"},  # base renamed it away
+    ])
+    def test_a_base_rename_or_deletion_of_a_pr_file_blocks(self, p9, monkeypatch, entry):
+        view = _view()
+        monkeypatch.setattr(p9.subprocess, "run", _fake_gh(view, calls=[], behind_by=1,
+                                                           base_compare_files=[entry]))
+        g = p9.load_policy(_GATED).auto_merge.gates
+        f = p9.gather_pr_gate_facts(744, "broomva/test", g, listing=_listing(p9, view))
+        ok, why = p9.up_to_date(g, f)
+        assert not ok and "src/a.py" in why, why
+
+    @pytest.mark.parametrize("base_files,want", [
+        (["docs/other.md"], "EXIT_OK"),                    # unrelated base commits: merges
+        (["src/b.py"], "EXIT_AUTO_MERGE_BLOCKED"),          # the base touched a PR file: refused
+    ])
+    def test_a_behind_pr_with_a_carried_verdict_merges_only_when_the_base_is_unrelated(
+            self, p9, monkeypatch, base_files, want):
+        pr = 745 if want == "EXIT_OK" else 746
+        _seed_merge_ready(p9, pr)
+        calls = []
+        # the P20 verdict names an older commit (OLD) that reviewed src/a.py and src/b.py; it carries
+        # because the commits since (a base update) touch only docs/other2.md
+        view = _view(comments=[_comment(_marker(sha=OLD))])
+        monkeypatch.setattr(p9.subprocess, "run", _fake_gh(
+            view, calls=calls, behind_by=2, base_compare_files=base_files,
+            compare_map={f"{OLD}...{HEAD}": ["docs/other2.md"], f"{BASE}...{OLD}": ["src/a.py", "src/b.py"]}))
+        assert p9.main(["auto-merge", str(pr), "--repo", "broomva/test"]) == getattr(p9, want)
+        merged = [c for c in calls if c[:3] == ["gh", "pr", "merge"]]
+        assert bool(merged) == (want == "EXIT_OK"), merged
+
+    def test_a_current_pr_does_not_ask_what_the_base_changed(self, p9, monkeypatch):
+        view = _view()
+        monkeypatch.setattr(p9.subprocess, "run", _fake_gh(view, calls=[], behind_by=0))
+        f = p9.gather_pr_gate_facts(743, "broomva/test",
+                                    p9.load_policy(_GATED).auto_merge.gates,
+                                    listing=_listing(p9, view))
+        assert f.behind_by == 0 and f.base_delta_files is None
 
     def test_compare_without_a_files_key_is_unknown(self, p9, monkeypatch):
         monkeypatch.setattr(p9.subprocess, "run",
@@ -1189,18 +1207,7 @@ class TestRoundFourFindings:
 
 
 class TestFixDeltaFindings:
-    """Post-pass verification of 973fa7b: renames count as governance landings,
-    and only blocking path rules fold case."""
-
-    def test_renaming_a_governance_file_away_is_a_landing(self, p9, monkeypatch):
-        def run(cmd, *a, **k):
-            if cmd[:3] == ["gh", "api", "--paginate"]:
-                return _Run("M\tP1\n")
-            return _Run(json.dumps({"status": "ahead", "files": [
-                {"filename": "docs/archive/AGENTS.md", "previous_filename": "AGENTS.md",
-                 "status": "renamed"}]}))
-        monkeypatch.setattr(p9.subprocess, "run", run)
-        assert p9._governance_landings_in_window("broomva/test", BASE, p9.GovernanceTier()) == 1
+    """Post-pass verification of 973fa7b: only blocking path rules fold case."""
 
     def test_a_compare_entry_without_a_filename_is_unknown(self, p9, monkeypatch):
         monkeypatch.setattr(p9.subprocess, "run", lambda *a, **k: _Run(json.dumps(
@@ -1227,3 +1234,47 @@ class TestFixDeltaFindings:
 
     def test_mcp_json_needs_p20(self, p9, gates):
         assert "p20" in _failed(p9, gates, _good(p9, files=[".mcp.json"], additions=1, deletions=0))
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# up_to_date: behind only by base commits that leave the PR's files alone (BRO-4023)
+# ─────────────────────────────────────────────────────────────────────────────
+class TestUpToDateDisjointBase:
+    def _reason(self, p9, gates, f):
+        return next(r for r in p9.evaluate_merge_gates(gates, f) if r.gate == "up_to_date")
+
+    def test_behind_by_unrelated_base_commits_counts_as_current(self, p9, gates):
+        f = _good(p9, behind_by=2, base_delta_files=["docs/other.md", "research/z.md"])
+        r = self._reason(p9, gates, f)
+        assert r.ok, r.reason
+        assert "touch none of this PR's files" in r.reason
+        assert _failed(p9, gates, f) == set()
+
+    @pytest.mark.parametrize("over,why", [
+        ({"base_delta_files": ["src/x.py", "docs/other.md"]}, "changed this PR's files"),   # overlap
+        ({"base_delta_files": None}, "could not read"),                                       # unreadable
+        ({"base_delta_files": [f"d/{i}" for i in range(300)]}, "too many"),                  # at the cap
+    ])
+    def test_behind_stays_blocked_unless_proven_unrelated(self, p9, gates, over, why):
+        r = self._reason(p9, gates, _good(p9, behind_by=1, **over))
+        assert not r.ok and why in r.reason, r.reason
+
+    def test_a_governance_pr_must_be_current(self, p9, gates):
+        f = _gov(p9, behind_by=1, base_delta_files=["docs/other.md"])
+        r = self._reason(p9, gates, f)
+        assert not r.ok and "governance PR must be current" in r.reason, r.reason
+        r0 = self._reason(p9, gates, _gov(p9, behind_by=0))
+        assert r0.ok, r0.reason
+
+    @pytest.mark.parametrize("delta", [
+        [".control/policy.yaml"],                 # the policy itself moved on the base
+        ["docs/x.md", "CLAUDE.md"],               # the primer moved on the base
+        ["docs/AGENTS-old.md", "AGENTS.md"],      # AGENTS.md renamed away: both names are in the delta
+    ])
+    def test_a_base_side_governance_change_forces_current(self, p9, gates, delta):
+        r = self._reason(p9, gates, _good(p9, behind_by=1, base_delta_files=delta))
+        assert not r.ok and "base changed governance paths" in r.reason, r.reason
+
+    def test_unknown_position_never_passes(self, p9, gates):
+        for over in ({"behind_by": None, "base_delta_files": []}, {"base_sha": "", "behind_by": 1, "base_delta_files": []}):
+            assert not self._reason(p9, gates, _good(p9, **over)).ok, over
