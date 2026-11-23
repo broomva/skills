@@ -415,7 +415,7 @@ The rubric is *concrete* and *machine-applicable* — every deduction names a sp
 
 ## Mutation-proof — the one rubric dimension a machine can check
 
-Four of the five rubric dimensions are judgement calls. The fifth — *tests cover the change* — is not. It has an operational definition:
+Four of the five rubric dimensions are judgement calls. The fifth — *rerunnable evidence* (tests cover the change, and each new check is shown able to fail) — has an operational definition:
 
 > **A test covers a change iff neutering the change turns the test red.**
 
