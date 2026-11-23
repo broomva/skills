@@ -413,9 +413,9 @@ does not, and cannot, bind an agent that has decided to evade it.
 
 The rubric is *concrete* and *machine-applicable* — every deduction names a specific failure category, not a vague "could be better."
 
-## Mutation-proof — the one rubric dimension a machine can check
+## Mutation-proof — the test-coverage leg of Dimension 5 a machine can check
 
-Four of the five rubric dimensions are judgement calls. The fifth — *rerunnable evidence* (tests cover the change, and each new check is shown able to fail) — has an operational definition:
+Four of the five rubric dimensions are judgement calls. For the test-coverage leg of the fifth (*rerunnable evidence* — tests cover the change, each new check is shown able to fail against a real past mistake or control, and load-bearing claims carry a rerunnable artifact), "a test covers a change" has an operational definition:
 
 > **A test covers a change iff neutering the change turns the test red.**
 

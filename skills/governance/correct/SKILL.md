@@ -40,7 +40,7 @@ change.
 3. **A lint or CI check whose error names the fix.** Not "blocked": the file,
    type, function or command to use instead. An agent that only hears "no" routes
    around the check; one told what to do goes through it. If the pattern is
-   already common, ratchet: fail only when a change adds one, and fail when the
+   already common, ratchet: fail when a change adds one, and fail when the
    count drops until the baseline is lowered, so it only shrinks.
 4. **A test** of the behavior. Fix or delete any test that still passes when the
    behavior breaks, or fails when only internals change.
