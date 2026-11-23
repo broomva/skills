@@ -83,7 +83,7 @@ enforcer is either a recorded judgment (with the reason) or a gap (with the
 ticket that closes it). Drop a rule once its mistake cannot happen, and retire its
 prose copy when it reaches a mechanism level.
 
-In a bstack workspace this is `.control/rules.yaml`, replayed by `make rules-check`.
+In the `broomva/workspace` repo this is `.control/rules.yaml`, replayed by `make rules-check`.
 
 ## Reply
 
