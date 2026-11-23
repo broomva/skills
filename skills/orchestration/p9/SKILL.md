@@ -482,7 +482,6 @@ moved base blocks, and so does a PR retargeted to another base in between.
 | `independent_check` | a check that is neither a bot nor an aggregate (`Merge Gate`, which passes vacuously when nothing else ran) ran and passed, **or** a P20 pass covers the PR | FAIL |
 | `governance_strata` | governance-class: the verdict lists strata A, B and C | FAIL |
 | `governance_checks` | governance-class: every run of each required check (default `stability-check`) passed; skipped or absent fails | FAIL |
-| `l3_rate` | governance-class: no governance change LANDED on base inside the τ_a₃ window (≥ 1 day). Each commit that reached base in the window (a merge, squash or rebase is dated when it landed) is diffed against its first parent, so an old-dated governance commit merged by a human still counts. | FAIL |
 
 **Always-review paths.** These always need a P20 pass, whatever the change's
 size: `.github/workflows/**`, `.githooks/**`, `.claude/**` (settings, local
@@ -538,9 +537,11 @@ Rules for reading markers:
 governance paths are `CLAUDE.md`, `AGENTS.md`, `METALAYER.md`,
 `.control/policy.yaml` and `.control/rcs-parameters.toml`, repo-root and
 case-folded. They carry L3, the level with the narrowest stability margin, so
-the tier requires all three strata including a cross-vendor review, a
-`stability-check` that actually ran, and the L3 rate budget, which CI only
-reports. A governance change that cannot get a cross-vendor verdict (Codex
+the tier requires all three strata including a cross-vendor review and a
+`stability-check` that actually ran. There is no merge-rate budget: the old
+one-governance-landing-per-day `l3_rate` gate was removed by owner decision
+(2026-11-18); a policy that still sets `l3_max_per_window` or
+`l3_window_seconds` loads and the keys are ignored. A governance change that cannot get a cross-vendor verdict (Codex
 down) waits for one.
 
 **The base branch's policy judges the PR.** p9 reads `.control/policy.yaml`
@@ -570,7 +571,6 @@ it can stop a merge but never enable one.
 - governance `paths` or `required_checks` that drop an L3 path or
   `stability-check`;
 - `required_strata` other than A, B and C;
-- an L3 budget looser than one commit per day;
 - `default_action: auto` alongside `gates`, because a p9 that predates gates
   reads only `default_action` and would merge everything ungated;
 - `action: auto` rules alongside `gates`, where rules may only block. A path rule
@@ -588,8 +588,9 @@ policy carries keys for its own tooling can still be watched (BRO-2957).
 **What the gates do not do (named, not hidden).**
 
 - **The marker is self-attested.** It records that a review passed and cannot
-  prove the review ran. Replacing a human click with recorded reviews, a real
-  stability check and the L3 budget was a deliberate decision (BRO-2591). The
+  prove the review ran. Replacing a human click with recorded reviews and a real
+  stability check was a deliberate decision (BRO-2591; the L3 budget it also
+  named was removed 2026-11-18). The
   gate still fails on a PR with no pass, a low pass, or a pass on different code.
 - **p9 binds the autonomous flow, not an adversarial caller.** Whoever controls
   the environment can set `BROOMVA_P9_POLICY` (an operator/test pin, honored
@@ -602,10 +603,6 @@ policy carries keys for its own tooling can still be watched (BRO-2957).
   sub-second window. A base that moves inside it merges an untested
   combination, the same as a human click on a ruleset without "require up to
   date".
-- **The L3 counter is check-then-merge.** Two governance merges in the same
-  second could both see zero. It counts landings made through GitHub (merge,
-  squash, rebase); a commit pushed straight to base with an old committer date
-  is not listed (the workspace ruleset rejects direct pushes to main).
 - **Check identity is by name**, as in GitHub's own required-check model. A
   different app posting a check under a real check's name counts as that
   check. Pinning required checks to an app in the ruleset is the repo-side fix.

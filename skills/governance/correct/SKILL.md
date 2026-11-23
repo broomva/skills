@@ -54,8 +54,10 @@ change.
 A check never seen failing proves nothing.
 
 - **Proof:** replay the real past mistake (the actual command, diff, file or
-  transcript text, with where it came from) and show the check refuses it.
-- **Control:** replay a nearby legitimate input and show it is allowed. Without
+  transcript text, with where it came from) against the enforcer only, or against
+  a disposable copy of every target, and show the check refuses it.
+- **Control:** replay a nearby legitimate input against the enforcer only, or
+  against a disposable copy of every target, and show it is allowed. Without
   one, a check that refuses everything passes every proof.
 - **Mutation:** break the check in a scratch copy and show its proof fails.
 - **A refusal states its reason.** A crashing check also exits non-zero; require
@@ -74,7 +76,9 @@ One commit per class, each carrying its proof, control and mutation result.
 Keep one machine-readable table that pairs each rule with what enforces it: the
 level, the enforcer's path, how it is reached (hook event, CI job), the dated
 occurrences, the proofs and the controls. A runner replays every row against the
-real enforcer and fails on any proof allowed or control refused. A rule with no
+real enforcer (invoking only the enforcer or operating on disposable copies in a
+scratch directory, never mutating live targets) and fails on any proof allowed
+or control refused. A rule with no
 enforcer is either a recorded judgment (with the reason) or a gap (with the
 ticket that closes it). Drop a rule once its mistake cannot happen, and retire its
 prose copy when it reaches a mechanism level.
