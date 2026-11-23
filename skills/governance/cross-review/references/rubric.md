@@ -56,7 +56,7 @@ When invoking a Strata-A (Codex) or Strata-B (subagent) evaluator, include this 
 >
 > Severity decides the score. The per-dimension tables below say what to look for; their deduction entries (`-1`, `-2`) are not a second scoring system. Sum the points (max 10). Total ≥7 AND no dimension at 0 → APPROVE. Otherwise REVISE.
 >
-> **Report the five per-dimension scores, not just the total** — as `AXES: a,b,c,d,e` in rubric order. A total that clears the bar with a dimension at zero is not a pass: `2+2+2+2+0 = 8` leaves *tests cover the change* unmet, and the controller caps such a round below the bar from the axes you report.
+> **Report the five per-dimension scores, not just the total** — as `AXES: a,b,c,d,e` in rubric order. A total that clears the bar with a dimension at zero is not a pass: `2+2+2+2+0 = 8` leaves *rerunnable evidence* unmet, and the controller caps such a round below the bar from the axes you report.
 >
 > When you REVISE, name the specific failures the writer must address. Don't give vague feedback. Each deduction must cite a file path + line range + the rubric dimension violated. Be ruthless in looking and honest in grading: correlated blind spots are real, so search hard, but an unreproduced suspicion scores at most 1, never 0, and an empty finding list is a valid result for a sound change.
 

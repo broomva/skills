@@ -1,6 +1,6 @@
 ---
 name: correct
-description: "Turn the mistakes agents keep repeating in a repo into checks that make them impossible. Find each mistake class (two occurrences make a class), fix it at the highest level that works (architecture, then types, then a lint whose error names the fix, then a test, then a hook or CI gate, prose last), prove each check refuses a real past mistake and allows a nearby legitimate input, and keep a rule-to-enforcer registry. Use when the operator corrects an agent, says 'stop doing X', 'again?', '/correct', 'make this impossible', 'why does this keep happening', or when a rule exists in docs that nothing enforces."
+description: "Turn the mistakes agents keep repeating in a repo into checks that make them impossible. Find each mistake class (two occurrences make a class), fix it at the highest level that works (architecture, then types, then a lint or CI check whose error names the fix, then a test, then a hook, prose last), prove each check refuses a real past mistake and allows a nearby legitimate input, and keep a rule-to-enforcer registry. Use when the operator corrects an agent, says 'stop doing X', 'again?', '/correct', 'make this impossible', 'why does this keep happening', or when a rule exists in docs that nothing enforces."
 ---
 
 # correct
@@ -99,4 +99,4 @@ rows added to the registry.
 | "It only happened once." | Then record it and wait for the second. An irreversible action is the exception. |
 | "The check passes, so it works." | Show it failing on the real mistake, and passing on a control. |
 | "The error says 'blocked'." | Name the fix. A refusal without one teaches the agent to route around it. |
-| "The pattern is everywhere, the lint would be red for weeks." | Ratchet it: fail only on additions, and only let the count fall. |
+| "The pattern is everywhere, the lint would be red for weeks." | Ratchet it: fail when a change adds one, and fail when the count drops until the baseline is lowered, so it only shrinks. |
