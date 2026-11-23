@@ -78,7 +78,6 @@ Plugin skills are namespaced by plugin: `governance:cross-review`, `broomva-skil
 | [`legal-readiness`](skills/governance/legal-readiness/) | Build or adversarially audit an evidence-first legal-readiness system for a software product, SaaS, AI app, API, marketplace, or website. Inventory every public and contractual claim; determine… |
 | [`spec-contract`](skills/governance/spec-contract/) | The content contract for a design doc — what must be IN it, as against make-spec which owns how it LOOKS. Synthesised from five primary sources read verbatim (Lynch/Refactoring English + his worked… |
 | [`autoreview`](skills/governance/autoreview/) | Unattended multi-lens review of a plan, launch plan, spec, strategy doc, ADR or proposal. The autonomous counterpart to grill-with-docs: instead of interviewing the human, the agent asks the grilling… |
-| [`correct`](skills/governance/correct/) | Turn the mistakes agents keep repeating in a repo into checks that make them impossible. Find each mistake class (two occurrences make a class), fix it at the highest level that works (architecture… |
 
 ### Orchestration & autonomy — `skills/orchestration/`
 
