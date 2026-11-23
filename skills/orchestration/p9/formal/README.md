@@ -5,8 +5,13 @@ names a commit, and it carries forward to a later head only if no later commit
 touches a reviewed file or a current PR file.
 
 **Property (`SafeMerge`), stated over content, not over the rule:** whatever
-merges is what the reviewer read. Every authored PR file holds the reviewed
-content, and every generated PR file is generator output of the merged content.
+merges is what the reviewer read:
+- Under the implemented gate alone (`ExemptDerived = FALSE`, `DerivedCI = FALSE`):
+  every PR file (authored or generated) holds the exact content the reviewer read.
+- Under the derived-file exemption (`ExemptDerived = TRUE`): every authored PR
+  file holds the reviewed content, and every generated PR file is generator output
+  of the merged content (which holds only when `DerivedCI = TRUE` enforces
+  regeneration in CI).
 
 ## Run
 
@@ -19,7 +24,7 @@ is required. A run takes about five seconds.
 
 | Config | Gate | Expected |
 |---|---|---|
-| `p9.cfg` | as implemented | `SafeMerge` holds, and a PR never merges after a base update without a new review |
+| `p9.cfg` | as implemented (`DerivedCI = FALSE`) | `SafeMerge` holds (every merged PR file equals what the reviewer read), and a PR that touches a generated file never merges after a base update regenerates that file without a new review |
 | `exempt.cfg` | + changes to generated files do not void a verdict, with a CI check that they equal regeneration | `SafeMerge` holds |
 | `exempt_probe.cfg` | same | a merge after a base update is reachable (the exemption does its job) |
 | `exempt_unchecked.cfg` | exemption without the CI check | counterexample: a hand-edited generated file merges unreviewed |

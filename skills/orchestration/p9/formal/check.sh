@@ -5,7 +5,7 @@
 # finish with no error; a broken variant MUST produce a counterexample, so a
 # model that has stopped being able to fail is caught as a failure too.
 #
-#   p9.cfg                 the rule as implemented        SafeMerge holds; no merge after a base update
+#   p9.cfg                 the rule as implemented        SafeMerge holds (DerivedCI=FALSE); no merge after a base update regenerates a PR file
 #   exempt.cfg             + derived exemption, CI check   SafeMerge holds
 #   exempt_probe.cfg       + derived exemption, CI check   a merge after a base update IS reachable
 #   exempt_unchecked.cfg   + derived exemption, no CI      SafeMerge violated (hand-edited generated file)

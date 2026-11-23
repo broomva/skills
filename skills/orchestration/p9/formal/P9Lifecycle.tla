@@ -124,18 +124,24 @@ TypeOK ==
     /\ pr \subseteq Files
     /\ Tip <= MaxCommits
 
-(* SAFETY: what merges is what was reviewed. Every authored PR file holds the  *)
-(* content the reviewer read, and every generated PR file is generator output *)
-(* of the merged authored content (so it carries nothing the reviewer and the *)
-(* base did not already vouch for).                                           *)
+(* SAFETY: what merges is what was reviewed.                                  *)
+(*   - Under the implemented gate alone (ExemptDerived = FALSE, DerivedCI =   *)
+(*     FALSE): every PR file (authored or generated) holds the exact content  *)
+(*     the reviewer read (av[f] = verdict.av[f] and dv[d] = verdict.dv[d]).   *)
+(*   - Under the derived-file exemption (ExemptDerived = TRUE): every         *)
+(*     authored PR file holds the reviewed content, and every generated PR    *)
+(*     file is generator output of the merged authored content (Generated(av))*)
+(*     — which holds iff DerivedCI = TRUE enforces regeneration in CI.        *)
 SafeMerge ==
     merged =>
         /\ \A f \in pr \cap Authored : av[f] = verdict.av[f]
-        /\ \A d \in pr \cap Derived : dv[d] = Generated(av)
+        /\ \A d \in pr \cap Derived :
+            IF ExemptDerived THEN dv[d] = Generated(av) ELSE dv[d] = verdict.dv[d]
 
 (* REACHABILITY probe, not a requirement: "a PR never merges after a base     *)
-(* update without a new review". The current rule keeps it true, which is the *)
-(* friction of ws#1296; the derived exemption is expected to VIOLATE it, which *)
-(* shows the exemption actually lets such a PR merge.                         *)
+(* update that regenerates a generated PR file without a new review". The     *)
+(* current rule keeps it true, which is the friction of ws#1296; the derived  *)
+(* exemption is expected to VIOLATE it, which shows the exemption actually    *)
+(* lets such a PR merge.                                                      *)
 NoMergeAfterBaseUpdate == ~(merged /\ baseAfterVerdict)
 =============================================================================
