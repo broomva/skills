@@ -59,9 +59,11 @@ def _table(ctx: typer.Context) -> Iterator[FoodTable]:
             f"food table unavailable: {exc} (another import running?)"
         ) from exc
     except sqlite3.DatabaseError as exc:
+        db = _paths(ctx).foods_db
         raise typer.BadParameter(
-            f"food table {_paths(ctx).foods_db} is unreadable ({exc}); "
-            "delete it and run `health food import-usda` again"
+            f"could not read the food table {db}: {exc}. Nothing was changed. Copy the file "
+            "aside before any repair: it holds every source you imported (USDA and your own "
+            "CSVs), and only re-running all of those imports rebuilds it."
         ) from exc
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc

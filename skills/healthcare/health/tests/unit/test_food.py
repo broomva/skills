@@ -908,15 +908,17 @@ def test_concurrent_imports_both_succeed_and_stay_consistent(tmp_path: Path) -> 
                 barrier.wait()
                 table.import_csv(csv_path, source="co")
         except Exception as exc:
+            barrier.abort()  # never leave the other worker waiting
             errors.append(exc)
 
     for _ in range(2):
-        barrier, errors = threading.Barrier(2), []
+        barrier, errors = threading.Barrier(2, timeout=20), []
         threads = [threading.Thread(target=run, args=(p, barrier, errors)) for p in csvs]
         for t in threads:
             t.start()
         for t in threads:
-            t.join()
+            t.join(timeout=30)
+        assert not any(t.is_alive() for t in threads)
         assert errors == []
     conn = sqlite3.connect(path)
     assert conn.execute("SELECT count(*) FROM foods").fetchone()[0] == 3000
@@ -968,4 +970,6 @@ def test_cli_rejects_tomorrow_corrupt_table_and_symlinked_log(
     tmp_paths.foods_db.write_bytes(b"not a database" * 100)
     corrupt = runner.invoke(app, ["food", "find", "rice"])
     assert corrupt.exit_code == 2
-    assert "unreadable" in corrupt.output
+    assert "Copy the file aside" in corrupt.output
+    assert "delete it" not in corrupt.output
+    assert tmp_paths.foods_db.read_bytes() == b"not a database" * 100  # left untouched
