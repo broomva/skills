@@ -901,18 +901,17 @@ def test_concurrent_imports_both_succeed_and_stay_consistent(tmp_path: Path) -> 
         csvs.append(p)
     with FoodTable(path):
         pass
+    def run(csv_path: Path, barrier: threading.Barrier, errors: list[Exception]) -> None:
+        try:
+            with FoodTable(path) as table:
+                barrier.wait()
+                table.import_csv(csv_path, source="co")
+        except Exception as exc:  # noqa: BLE001 — collected and asserted below
+            errors.append(exc)
+
     for _ in range(2):
         barrier, errors = threading.Barrier(2), []
-
-        def run(csv_path: Path) -> None:
-            try:
-                with FoodTable(path) as table:
-                    barrier.wait()
-                    table.import_csv(csv_path, source="co")
-            except Exception as exc:
-                errors.append(exc)
-
-        threads = [threading.Thread(target=run, args=(p,)) for p in csvs]
+        threads = [threading.Thread(target=run, args=(p, barrier, errors)) for p in csvs]
         for t in threads:
             t.start()
         for t in threads:
