@@ -23,7 +23,12 @@ from typing import Final
 
 from broomva_health.domain.nutrition import Food, Nutrients
 
-__all__ = ["USDA_DATA_TYPES", "FoodTable"]
+__all__ = ["USDA_DATA_TYPES", "FoodTable", "NotAFoodTable"]
+
+
+class NotAFoodTable(sqlite3.DatabaseError):
+    """The file is a SQLite database but holds no ``foods`` table: not ours, or emptied."""
+
 
 #: FoodData Central data types worth importing. Branded foods are left out: they
 #: are label declarations, mostly US products, and 3 GB.
@@ -49,14 +54,16 @@ _STOPWORDS: Final[frozenset[str]] = frozenset(
     {"a", "an", "and", "of", "or", "the", "with", "con", "de", "del", "el", "en", "la", "y"}
 )
 
-_SCHEMA = """
+_SCHEMA_STATEMENTS = (
+    """
 CREATE TABLE IF NOT EXISTS foods (
     food_id     TEXT PRIMARY KEY,
     source      TEXT NOT NULL,
     description TEXT NOT NULL,
     kcal REAL, protein_g REAL, fat_g REAL, carbs_g REAL, fiber_g REAL, sugars_g REAL
-);
-"""
+)
+""",
+)
 _FTS_SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS foods_fts USING fts5(
     food_id UNINDEXED, description, tokenize = 'unicode61 remove_diacritics 2'
@@ -83,13 +90,28 @@ class FoodTable:
         try:
             tables = {r[0] for r in self._conn.execute("SELECT name FROM sqlite_master")}
             if not tables:
-                # A new, empty file: create the schema. An existing file is never written
-                # on open, so a damaged one stays exactly as it was found.
-                self._conn.executescript(_SCHEMA + _FTS_SCHEMA + ";")
+                # A new, empty file: create the whole schema in one transaction, so an
+                # interrupted or failed first open leaves no tables rather than half of
+                # them. An existing file is never written on open: a damaged one stays
+                # exactly as it was found.
+                self._create_schema()
             elif "foods" not in tables:
-                raise sqlite3.DatabaseError("the foods table is missing")
+                raise NotAFoodTable("it has no foods table")
         except BaseException:
             self._conn.close()  # a corrupt file must not leak the connection
+            raise
+
+    def _create_schema(self) -> None:
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            if not self._conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchone():
+                for statement in (*_SCHEMA_STATEMENTS, _FTS_SCHEMA):
+                    self._conn.execute(statement)
+            self._conn.execute("COMMIT")
+        except BaseException:
+            if self._conn.in_transaction:
+                with contextlib.suppress(sqlite3.Error):
+                    self._conn.execute("ROLLBACK")
             raise
 
     def close(self) -> None:
@@ -208,45 +230,6 @@ class FoodTable:
         return len(rows)
 
     # --- read ---------------------------------------------------------------
-
-    def rebuild_search(self) -> tuple[int, dict[str, int]]:
-        """Rebuild the search index from the ``foods`` table, which is the source of truth.
-
-        Repairs a damaged, missing or out-of-step FTS index without re-importing anything;
-        the foods themselves are only read. It only ever rebuilds the index from intact food
-        rows: if the foods table is empty while the old index still names foods, it refuses
-        rather than replace that index with nothing. Returns (foods indexed, foods per source),
-        both read inside the same transaction.
-        """
-        self._conn.execute("BEGIN IMMEDIATE")
-        try:
-            foods = int(self._conn.execute("SELECT count(*) FROM foods").fetchone()[0])
-            if foods == 0:
-                try:
-                    indexed = int(
-                        self._conn.execute("SELECT count(*) FROM foods_fts").fetchone()[0]
-                    )
-                except sqlite3.Error:
-                    indexed = 0
-                if indexed:
-                    raise ValueError(
-                        f"the foods table is empty but the search index names {indexed} foods; "
-                        "not rebuilding over them. Copy the file aside before anything else."
-                    )
-            self._conn.execute("DROP TABLE IF EXISTS foods_fts")
-            self._conn.execute(_FTS_SCHEMA)
-            self._conn.execute(
-                "INSERT INTO foods_fts (food_id, description) SELECT food_id, description FROM foods"
-            )
-            n = int(self._conn.execute("SELECT count(*) FROM foods_fts").fetchone()[0])
-            per_source = self.count()
-            self._conn.execute("COMMIT")
-        except BaseException:
-            if self._conn.in_transaction:
-                with contextlib.suppress(sqlite3.Error):
-                    self._conn.execute("ROLLBACK")
-            raise
-        return n, per_source
 
     def count(self) -> dict[str, int]:
         return dict(

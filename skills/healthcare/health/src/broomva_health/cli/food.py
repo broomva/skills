@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
-from broomva_health.adapters.food_db import FoodTable
+from broomva_health.adapters.food_db import FoodTable, NotAFoodTable
 from broomva_health.adapters.repositories.meals import MealLog
 from broomva_health.cli.formatters import format_value
 from broomva_health.domain.nutrition import MEAL_KINDS, Meal, MealItem, Nutrients, parse_item_spec
@@ -48,12 +48,46 @@ def _emit(ctx: typer.Context, data: Any) -> None:
     typer.echo(format_value(data, ctx.obj["format"], fields=ctx.obj.get("fields")))
 
 
+_WRITE_FAILURES = frozenset(
+    {
+        sqlite3.SQLITE_IOERR,
+        sqlite3.SQLITE_READONLY,
+        sqlite3.SQLITE_FULL,
+        sqlite3.SQLITE_CANTOPEN,
+        sqlite3.SQLITE_PERM,
+    }
+)
+
+
+_REBUILD = (
+    "It holds every source you imported (USDA and your own CSVs). To start again, move "
+    "the file aside, then run `health food import-usda` and any `health food import-csv` "
+    "commands again: they build a new table."
+)
+
+
 def _unreadable(ctx: typer.Context, exc: Exception) -> str:
+    """The table is there but cannot be read (e.g. a damaged search index)."""
     return (
         f"could not read the food table {_paths(ctx).foods_db}: {exc}. Nothing was changed. "
-        "Run `health food repair` to rebuild its search index from the stored foods. "
-        "If that fails too, copy the file aside before anything else: it holds every "
-        "source you imported (USDA and your own CSVs)."
+        f"Copy the file aside before anything else. {_REBUILD}"
+    )
+
+
+def _not_a_food_table(ctx: typer.Context, exc: Exception) -> str:
+    """No foods table at all, or not a database: there is nothing to read."""
+    return (
+        f"{_paths(ctx).foods_db} is not a food table this tool can use ({exc}). "
+        f"Nothing was changed. {_REBUILD}"
+    )
+
+
+def _cannot_write(ctx: typer.Context, exc: Exception) -> str:
+    """The disk or permissions refused the operation; the table itself may be fine."""
+    return (
+        f"could not use the food table {_paths(ctx).foods_db}: {exc}. The operation was rolled "
+        "back. This is a disk or permission problem, not damage to the table: check free space "
+        "and that the folder and its files are writable by you, then try again."
     )
 
 
@@ -65,14 +99,23 @@ def _table(ctx: typer.Context) -> Iterator[FoodTable]:
             yield table
     except sqlite3.OperationalError as exc:
         # Only a busy or locked database means "another import". Anything else (a missing
-        # index table, a damaged index) is damage, and gets the repair message below.
+        # index table, a damaged index) is damage, and gets the unreadable message below.
         code = (getattr(exc, "sqlite_errorcode", 0) or 0) & 0xFF
         if code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
             raise typer.BadParameter(
                 f"food table unavailable: {exc} (another import running?)"
             ) from exc
+        if code in _WRITE_FAILURES:
+            raise typer.BadParameter(_cannot_write(ctx, exc)) from exc
         raise typer.BadParameter(_unreadable(ctx, exc)) from exc
+    except NotAFoodTable as exc:
+        raise typer.BadParameter(_not_a_food_table(ctx, exc)) from exc
     except sqlite3.DatabaseError as exc:
+        code = (getattr(exc, "sqlite_errorcode", 0) or 0) & 0xFF
+        if code in _WRITE_FAILURES:
+            raise typer.BadParameter(_cannot_write(ctx, exc)) from exc
+        if code == sqlite3.SQLITE_NOTADB:  # not a database at all
+            raise typer.BadParameter(_not_a_food_table(ctx, exc)) from exc
         raise typer.BadParameter(_unreadable(ctx, exc)) from exc
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -217,14 +260,6 @@ def log(
             log_store.discard_photo(entry.photo)  # no orphan photo without its meal
         raise
     _emit(ctx, entry)
-
-
-@app.command("repair")
-def repair(ctx: typer.Context) -> None:
-    """Rebuild the search index from the stored foods (no re-import, foods untouched)."""
-    with _table(ctx) as table:
-        n, per_source = table.rebuild_search()
-        _emit(ctx, {"reindexed": n, "table": per_source})
 
 
 @app.command("show")

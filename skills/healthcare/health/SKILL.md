@@ -142,7 +142,7 @@ Deep-dive: [References/architecture.md](References/architecture.md).
 | **TrainingLoad** | `health synthesis` → `ctl`/`atl`/`tsb` | When asking about freshness/fatigue | CTL, ATL, TSB — 42d/7d EWMA of Garmin per-activity training load |
 | **RecoveryReview** | `health synthesis` → `hrv_cv_30d`/`recovery_score` | Weekly review; after illness | HRV-CV + recovery composite |
 | **VO2maxArc** | `health synthesis` → `vo2max_arc` | Quarterly check; longevity tracking | `{quarter_key: mean_vo2max}` |
-| **MealLog** | `health food import-usda DIR` once; `health food find Q`; `health food log --item [+]src:id=grams ...`; `health food show [--days N] [--totals]`; `health food repair` if search breaks | Meal photo or description; food vs energy/sleep/training questions | `Meal` (items, totals, ±30% low/high band) in a private `meals.jsonl` |
+| **MealLog** | `health food import-usda DIR` once; `health food find Q`; `health food log --item [+]src:id=grams ...`; `health food show [--days N] [--totals]` | Meal photo or description; food vs energy/sleep/training questions | `Meal` (items, totals, ±30% low/high band) in a private `meals.jsonl` |
 | **Coaching** | *(not implemented in v1)* | — | — |
 
 Each workflow doc starts with a one-line **When invoked** rule and ends with example output. See `Workflows/*.md`.

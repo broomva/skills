@@ -88,10 +88,10 @@ date        at     meal   items                                                 
                           +Oil, olive 10 g
 ```
 
-## If search breaks
+## If the food table cannot be read
 
-- If `health food find` reports that the food table could not be read, run `health food repair`. It rebuilds the search index from the stored foods and re-imports nothing.
-- If repair fails too, copy `foods.db` aside before doing anything else. It holds every source imported, USDA and the user's own CSVs.
+- Copy `foods.db` aside before doing anything else. It holds every imported source, USDA and the user's own CSVs, and the meal log is a separate file it never touches.
+- To start again, run `health food import-usda` and the `import-csv` commands again: they build a new table.
 
 ## Out of scope
 
