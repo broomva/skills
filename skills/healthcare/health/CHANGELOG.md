@@ -30,8 +30,11 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
     - `--photo` copies the image into `<data_dir>/meal-photos/` (0600).
   - `show [--days N] [--totals]` reads meals back.
   - Nothing touches the network.
-  - Private files are created 0600 and tightened if they already exist. A symlinked `foods.db`, `meals.jsonl` or `meal-photos/` is refused. A photo is never written through a symlink, and is removed again if its meal cannot be saved.
-- `pyproject.toml`: `asyncio_default_fixture_loop_scope = "function"`, so plain `pytest` collects. Without it, pytest-asyncio's warning fails collection under `filterwarnings = error`.
+  - Private files are created 0600 and tightened if they already exist. A symlinked `foods.db`, `meals.jsonl` or `meal-photos/` is refused for reading and writing; the data directory itself may be a symlink. A photo is never written through a symlink, and a half-copied photo, or one whose meal cannot be saved, is removed.
+  - Imports run in one `BEGIN IMMEDIATE` transaction. They are rolled back whole on any failure, including a failed commit. A release that has foods but no usable values (e.g. an FNDDS release whose `nutrient.csv` is malformed) refuses the entire import.
+  - `partial` is derived from the stored items, so older log lines read back correctly. A torn last line in the log does not swallow the next meal.
+  - Locked tables exit 2. `--date` is ASCII `YYYY-MM-DD` and at most tomorrow; `--at` and grams take ASCII digits only.
+- `pyproject.toml`: `asyncio_default_fixture_loop_scope = "function"`, so plain `pytest` collects. Without it, pytest-asyncio's warning fails collection under `filterwarnings = error`. The dev floor rises to `pytest-asyncio>=0.24`, which added the setting.
 - `Workflows/MealLog.md`: the agent protocol.
   - Break a photo into items with grams, add the recipe prior for hidden ingredients (Open-KNEAD, arXiv 2607.12911), log it, and reply in one line.
   - Includes the measured error of photo estimates and why to read trends, not single meals.

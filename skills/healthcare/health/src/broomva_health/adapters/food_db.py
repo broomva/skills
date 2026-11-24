@@ -11,6 +11,7 @@ All values are per 100 g. Re-importing a source replaces that source's rows.
 
 from __future__ import annotations
 
+import contextlib
 import csv
 import math
 import os
@@ -68,10 +69,12 @@ class FoodTable:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(path.parent, 0o700)
+        try:  # create it private before SQLite ever opens it; another process may win the race
+            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+        except FileExistsError:
+            pass
         if path.is_symlink():
             raise ValueError(f"{path} is a symlink; refusing to write health data through it")
-        if not path.exists():
-            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
         os.chmod(path, 0o600)  # also tightens a table created by an older version
         # Autocommit mode: writes take an explicit BEGIN IMMEDIATE (see _replace).
         self._conn = sqlite3.connect(path, isolation_level=None)
@@ -102,10 +105,16 @@ class FoodTable:
             names = _usda_foods(release / "food.csv")
             legacy = _legacy_numbers(release / "nutrient.csv")
             values = _usda_values(release / "food_nutrient.csv", names.keys(), legacy)
+            found = 0
             for fdc_id, description in names.items():
                 picked = _pick(values.get(fdc_id, {}))
                 if picked:
                     foods[fdc_id] = (description, picked)
+                    found += 1
+            if names and not found:
+                # Foods but no usable values: a broken or unmapped release. Refuse the whole
+                # import rather than silently dropping this release from the table.
+                raise ValueError(f"{release}: {len(names)} foods but no usable nutrient values")
         if not foods:
             # Never replace the table with nothing: a wrong folder must not wipe it.
             raise ValueError(f"no importable foods under {root}: nothing was changed")
@@ -177,10 +186,12 @@ class FoodTable:
                 "INSERT INTO foods_fts (food_id, description) VALUES (?, ?)",
                 ((fid, desc) for fid, desc, _ in rows),
             )
+            self._conn.execute("COMMIT")
         except BaseException:
-            self._conn.execute("ROLLBACK")
+            if self._conn.in_transaction:
+                with contextlib.suppress(sqlite3.Error):  # keep the original error
+                    self._conn.execute("ROLLBACK")
             raise
-        self._conn.execute("COMMIT")
         return len(rows)
 
     # --- read ---------------------------------------------------------------
@@ -257,14 +268,13 @@ def _legacy_numbers(nutrient_csv: Path) -> dict[str, str]:
         return {}
     with nutrient_csv.open(newline="", encoding="utf-8") as fh:
         reader = csv.DictReader(fh)
-        if not {"id", "nutrient_nbr"} <= set(reader.fieldnames or ()):
-            return {}
+        _require(reader, {"id", "nutrient_nbr"}, nutrient_csv)
         out: dict[str, str] = {}
         for row in reader:
             nbr = (row.get("nutrient_nbr") or "").strip()
             if nbr.endswith(".0"):
                 nbr = nbr[:-2]
-            if nbr and row.get("id") in _WANTED:
+            if nbr:
                 out[nbr] = row["id"]
         return out
 

@@ -14,8 +14,11 @@ meals go to a 0600 file in the data directory. See ``Workflows/MealLog.md``.
 from __future__ import annotations
 
 import re
+import sqlite3
 from collections import defaultdict
-from datetime import date, datetime, time
+from collections.abc import Iterator
+from contextlib import contextmanager
+from datetime import date, datetime, time, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -45,8 +48,18 @@ def _emit(ctx: typer.Context, data: Any) -> None:
     typer.echo(format_value(data, ctx.obj["format"], fields=ctx.obj.get("fields")))
 
 
-def _table(ctx: typer.Context) -> FoodTable:
-    return FoodTable(_paths(ctx).foods_db)
+@contextmanager
+def _table(ctx: typer.Context) -> Iterator[FoodTable]:
+    """Open the food table; turn a locked or refused table into a clean exit 2."""
+    try:
+        with FoodTable(_paths(ctx).foods_db) as table:
+            yield table
+    except sqlite3.OperationalError as exc:
+        raise typer.BadParameter(
+            f"food table unavailable: {exc} (another import running?)"
+        ) from exc
+    except ValueError as exc:
+        raise typer.BadParameter(str(exc)) from exc
 
 
 @app.command("import-usda")
@@ -117,7 +130,7 @@ def _per100(n: Nutrients) -> dict[str, float | None]:
 def _parse_time(raw: str | None) -> time | None:
     if raw is None:
         return None
-    if not re.fullmatch(r"\d{2}:\d{2}", raw):
+    if not re.fullmatch(r"[0-9]{2}:[0-9]{2}", raw):
         raise typer.BadParameter(f"--at must be HH:MM, got {raw!r}")
     try:
         return datetime.strptime(raw, "%H:%M").time()
@@ -128,12 +141,15 @@ def _parse_time(raw: str | None) -> time | None:
 def _parse_day(raw: str | None) -> date:
     if raw is None:
         return date.today()
-    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+    if not re.fullmatch(r"[0-9]{4}-[0-9]{2}-[0-9]{2}", raw):
         raise typer.BadParameter(f"--date must be YYYY-MM-DD, got {raw!r}")
     try:
-        return date.fromisoformat(raw)
+        day = date.fromisoformat(raw)
     except ValueError as exc:
         raise typer.BadParameter(f"--date must be YYYY-MM-DD, got {raw!r}") from exc
+    if day > date.today() + timedelta(days=1):
+        raise typer.BadParameter(f"--date {raw} is in the future")
+    return day
 
 
 @app.command("log")

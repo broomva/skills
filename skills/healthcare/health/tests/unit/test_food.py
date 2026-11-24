@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import csv
 import json
+import os
+import sqlite3
 import stat
 from datetime import date, time
 from pathlib import Path
@@ -380,14 +382,14 @@ def test_find_filters_by_source_ranks_by_relevance_and_ignores_connectors(tmp_pa
     _write_csv(
         path,
         ["food_id", "description", "kcal"],
-        [["short", "Rice cooked", "130"], ["dense", "Rice, rice cakes", "380"]],
+        [["a-short", "Rice cooked", "130"], ["z-dense", "Rice, rice cakes", "380"]],
     )
     with FoodTable(tmp_path / "foods.db") as table:
         table.import_usda(_fdc_release(tmp_path / "fdc"))
         table.import_csv(path, source="co")
         assert {f.source for f in table.find("rice", source="co")} == {"co"}
         # bm25 puts the description that says "rice" twice first, although it is longer
-        assert table.find("rice", source="co")[0].food_id == "co:dense"
+        assert table.find("rice", source="co")[0].food_id == "co:z-dense"
         assert [f.food_id for f in table.find("rice and long grain")] == ["usda:10"]
 
 
@@ -470,7 +472,7 @@ def test_fndds_legacy_nutrient_numbers_are_mapped(tmp_path: Path) -> None:
         root / "rel" / "nutrient.csv",
         ["id", "name", "unit_name", "nutrient_nbr", "rank"],
         [
-            ["1008", "Energy", "KCAL", "208", "300"],
+            ["1008", "Energy", "KCAL", "208.0", "300"],
             ["1003", "Protein", "G", "203", "600"],
             ["1005", "Carbohydrate, by difference", "G", "205", "1110"],
         ],
@@ -583,3 +585,263 @@ def test_raw_line_separator_written_by_another_tool_still_reads(tmp_path: Path) 
     log.data_dir.mkdir(parents=True)
     log.path.write_text(json.dumps(meal.model_dump(mode="json"), ensure_ascii=False) + "\n")
     assert [m.note for m in log.read()] == [f"x{_LS}y"]
+
+
+# --- regressions from P20 round 2 -----------------------------------------------------
+
+
+def test_failed_import_rolls_back_and_keeps_old_rows(tmp_path: Path) -> None:
+    good = tmp_path / "good.csv"
+    _write_csv(
+        good,
+        ["food_id", "description", "kcal"],
+        [["old1", "Old one", "1"], ["old2", "Old two", "2"]],
+    )
+    with FoodTable(tmp_path / "foods.db") as table:
+        table.import_csv(good, source="co")
+        rows = [("co:x", "X", {"kcal": object()})]  # sqlite cannot bind this: fails mid-insert
+        with pytest.raises(sqlite3.Error):
+            table._replace("co", rows)  # type: ignore[arg-type]
+        assert sorted(table.count().items()) == [("co", 2)]
+        assert [f.food_id for f in table.find("old one")] == ["co:old1"]
+        assert table.import_csv(good, source="co") == 2  # no transaction left open
+
+
+def test_foods_without_any_macro_are_skipped(tmp_path: Path) -> None:
+    root = _release(
+        tmp_path / "fdc",
+        [
+            ["50", "foundation_food", "Fibre only", "1", "2026-01-01"],
+            ["51", "foundation_food", "Kept", "1", "2026-01-01"],
+        ],
+        [["1", "50", "1079", "3"], ["2", "51", "1003", "3"]],
+    )
+    with FoodTable(tmp_path / "foods.db") as table:
+        assert table.import_usda(root) == 1
+        assert table.get("usda:50") is None
+
+
+def test_table_folder_is_tightened(tmp_path: Path) -> None:
+    folder = tmp_path / "data"
+    folder.mkdir()
+    folder.chmod(0o755)
+    with FoodTable(folder / "foods.db"):
+        pass
+    assert _mode(folder) == 0o700
+
+
+def test_stopword_only_query_matches_nothing(tmp_path: Path) -> None:
+    with FoodTable(tmp_path / "foods.db") as table:
+        table.import_usda(_fdc_release(tmp_path / "fdc"))
+        assert table.find("and the") == []
+        assert table.find("of") == []
+
+
+def test_totals_keep_unreported_nutrients_unknown() -> None:
+    meal = Meal.build([MealItem.of(RICE, 100), MealItem.of(OIL, 10)], day=date(2026, 3, 4))
+    assert meal.totals.sugars_g is None
+    assert "sugars_g" not in meal.partial
+
+
+def test_discard_photo_only_touches_the_photo_folder(tmp_path: Path) -> None:
+    log = MealLog(tmp_path / "data")
+    meal = Meal.build([MealItem.of(RICE, 100)], day=date(2026, 3, 4))
+    log.append(meal)
+    log.discard_photo("meals.jsonl")
+    log.discard_photo("meal-photos/../meals.jsonl")
+    assert log.path.exists()
+    kept = log.keep_photo(_touch(tmp_path / "a.jpg"), meal)
+    target = tmp_path / "victim.jpg"
+    target.write_text("keep")
+    (log.data_dir / kept).unlink()
+    (log.data_dir / kept).symlink_to(target)
+    log.discard_photo(kept)
+    assert target.exists()
+
+
+def test_failed_photo_copy_leaves_nothing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    import broomva_health.adapters.repositories.meals as meals_mod
+
+    def boom(*_: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(meals_mod.shutil, "copyfileobj", boom)
+    log = MealLog(tmp_path / "data")
+    with pytest.raises(OSError, match="No space"):
+        log.keep_photo(
+            _touch(tmp_path / "a.jpg"), Meal.build([MealItem.of(RICE, 1)], day=date(2026, 3, 4))
+        )
+    assert list(log.photos_dir.iterdir()) == []
+
+
+def test_torn_last_line_does_not_swallow_the_next_meal(tmp_path: Path) -> None:
+    log = MealLog(tmp_path / "data")
+    log.data_dir.mkdir(parents=True)
+    log.path.write_text('{"day":"2026-11-2')
+    log.append(Meal.build([MealItem.of(RICE, 100)], day=date(2026, 3, 4)))
+    assert [m.day for m in log.read()] == [date(2026, 3, 4)]
+
+
+def test_cli_partial_columns_per_meal_and_per_day(tmp_paths: HealthPaths, tmp_path: Path) -> None:
+    runner = CliRunner()
+    staples = tmp_path / "co.csv"
+    _write_csv(staples, ["food_id", "description", "kcal"], [["q", "Queso", "264"]])
+    runner.invoke(app, ["food", "import-usda", str(_fdc_release(tmp_path / "fdc"))])
+    runner.invoke(app, ["food", "import-csv", str(staples), "--source", "co"])
+    # 07:00 complete for protein (rice only); 08:00 partial (queso reports no protein)
+    runner.invoke(app, ["food", "log", "--at", "07:00", "--item", "usda:10=100"])
+    runner.invoke(
+        app, ["food", "log", "--at", "08:00", "--item", "usda:10=50", "--item", "co:q=50"]
+    )
+    meals = json.loads(runner.invoke(app, ["-f", "json", "food", "show"]).output)
+    assert [m["partial"] for m in meals] == [None, "protein_g, carbs_g"]
+    day = json.loads(runner.invoke(app, ["-f", "json", "food", "show", "--totals"]).output)[0]
+    assert day["partial"] == "protein_g, carbs_g"
+
+
+def test_cli_locked_table_exits_2(tmp_paths: HealthPaths, tmp_path: Path) -> None:
+    runner = CliRunner()
+    fdc = _fdc_release(tmp_path / "fdc")
+    runner.invoke(app, ["food", "import-usda", str(fdc)])
+    holder = sqlite3.connect(tmp_paths.foods_db, isolation_level=None, timeout=0.1)
+    holder.execute("BEGIN IMMEDIATE")
+    try:
+        import broomva_health.adapters.food_db as food_db_mod
+
+        real_connect = food_db_mod.sqlite3.connect
+
+        def quick(*args: object, **kwargs: object) -> sqlite3.Connection:
+            kwargs["timeout"] = 0.1
+            return real_connect(*args, **kwargs)  # type: ignore[arg-type]
+
+        food_db_mod.sqlite3.connect = quick  # type: ignore[assignment]
+        try:
+            result = runner.invoke(app, ["food", "import-usda", str(fdc)])
+        finally:
+            food_db_mod.sqlite3.connect = real_connect
+    finally:
+        holder.execute("ROLLBACK")
+        holder.close()
+    assert result.exit_code == 2
+    assert "another import" in result.output
+
+
+@pytest.mark.parametrize(
+    "args", [["--date", "9999-12-31"], ["--item", "usda:10=\u0661\u0660\u0660"]]
+)
+def test_cli_rejects_future_dates_and_non_ascii_digits(
+    tmp_paths: HealthPaths, tmp_path: Path, args: list[str]
+) -> None:
+    runner = CliRunner()
+    runner.invoke(app, ["food", "import-usda", str(_fdc_release(tmp_path / "fdc"))])
+    extra = [] if args[0] == "--item" else ["--item", "usda:10=10"]
+    assert runner.invoke(app, ["food", "log", *extra, *args]).exit_code == 2
+
+
+# --- regressions from P20 round 2, stratum A ---------------------------------------------
+
+
+def test_atwater_specific_beats_general(tmp_path: Path) -> None:
+    root = _release(
+        tmp_path / "fdc",
+        [["60", "foundation_food", "Lentil, test", "16", "2026-01-01"]],
+        [["1", "60", "2047", "200"], ["2", "60", "2048", "210"]],
+    )
+    with FoodTable(tmp_path / "foods.db") as table:
+        table.import_usda(root)
+        lentil = table.get("usda:60")
+    assert lentil is not None
+    assert lentil.per_100g.kcal == 210
+
+
+def test_release_that_yields_nothing_refuses_the_whole_import(tmp_path: Path) -> None:
+    root = _fdc_release(tmp_path / "fdc")  # a good release ...
+    fndds = root / "fndds"  # ... next to an FNDDS release whose mapping file is broken
+    _write_csv(
+        fndds / "food.csv",
+        ["fdc_id", "data_type", "description", "food_category_id", "publication_date"],
+        [["30", "survey_fndds_food", "Tortilla, corn", "50", "2024-10-31"]],
+    )
+    _write_csv(
+        fndds / "food_nutrient.csv",
+        ["id", "fdc_id", "nutrient_id", "amount"],
+        [["1", "30", "208", "218"]],
+    )
+    _write_csv(fndds / "nutrient.csv", ["id", "name", "number"], [["1008", "Energy", "208"]])
+    with FoodTable(tmp_path / "foods.db") as table:
+        table.import_usda(_fdc_release(tmp_path / "first"))
+        with pytest.raises(ValueError, match="lacks nutrient_nbr"):
+            table.import_usda(root)
+        _write_csv(
+            fndds / "nutrient.csv", ["id", "name", "nutrient_nbr"], [["1003", "Protein", "203"]]
+        )
+        with pytest.raises(ValueError, match="no usable nutrient values"):
+            table.import_usda(root)
+        assert table.count() == {"usda": 2}
+
+
+def test_failed_commit_leaves_no_open_transaction(tmp_path: Path) -> None:
+    good = tmp_path / "good.csv"
+    _write_csv(good, ["food_id", "description", "kcal"], [["a", "A", "1"]])
+    with FoodTable(tmp_path / "foods.db") as table:
+        table.import_csv(good, source="co")
+        table._conn.execute("PRAGMA busy_timeout = 0")
+        reader = sqlite3.connect(tmp_path / "foods.db", isolation_level=None)
+        reader.execute("BEGIN")
+        reader.execute("SELECT count(*) FROM foods").fetchone()  # holds a SHARED lock
+        with pytest.raises(sqlite3.OperationalError):
+            table.import_csv(good, source="co")
+        assert not table._conn.in_transaction
+        reader.execute("COMMIT")
+        reader.close()
+        assert table.import_csv(good, source="co") == 1
+
+
+def test_table_creation_tolerates_an_existing_file(tmp_path: Path) -> None:
+    path = tmp_path / "foods.db"
+    with FoodTable(path):
+        pass
+    with FoodTable(path) as again:  # the file exists: O_EXCL loses the race, which is fine
+        assert again.count() == {}
+
+
+def test_partial_is_derived_for_meals_stored_without_it(tmp_path: Path) -> None:
+    unknown = Food(food_id="co:x", source="co", description="X", per_100g=Nutrients(protein_g=5))
+    meal = Meal.build([MealItem.of(RICE, 100), MealItem.of(unknown, 100)], day=date(2026, 3, 4))
+    stored = meal.model_dump(mode="json")
+    stored["partial"] = []  # what an older version wrote
+    log = MealLog(tmp_path / "data")
+    log.data_dir.mkdir(parents=True)
+    log.path.write_text(json.dumps(stored) + "\n")
+    (read,) = log.read()
+    assert "kcal" in read.partial
+
+
+def test_fchmod_failure_does_not_leak_the_descriptor(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import broomva_health.adapters.repositories.meals as meals_mod
+
+    log = MealLog(tmp_path / "data")
+    meal = Meal.build([MealItem.of(RICE, 100)], day=date(2026, 3, 4))
+    log.append(meal)
+    before = len(os.listdir("/dev/fd"))
+
+    def boom(*_: object) -> None:
+        raise PermissionError("no")
+
+    monkeypatch.setattr(meals_mod.os, "fchmod", boom)
+    for _ in range(5):
+        with pytest.raises(PermissionError):
+            log.append(meal)
+    assert len(os.listdir("/dev/fd")) == before
+
+
+def test_symlinked_log_is_not_read(tmp_path: Path) -> None:
+    other = MealLog(tmp_path / "other")
+    other.append(Meal.build([MealItem.of(RICE, 100)], day=date(2026, 3, 4)))
+    log = MealLog(tmp_path / "data")
+    log.data_dir.mkdir()
+    log.path.symlink_to(other.path)
+    with pytest.raises(ValueError, match="symlink"):
+        log.read()

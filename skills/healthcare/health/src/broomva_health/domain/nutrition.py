@@ -6,7 +6,8 @@ Totals are the sum of every item scaled to its mass.
 
 Every meal estimate carries a symmetric ±30% band. Photo-based estimates of a
 single meal are off by about a third: ChatGPT-4o and Claude 3.5 Sonnet had about
-36% mean absolute percentage error on energy (Gemini 1.5 Pro 64-110%), and every
+36% mean absolute percentage error on energy (Gemini 1.5 Pro 64-110% across
+nutrients), and every
 model underestimated more as portions grew (Curr Dev Nutr 2025, PMID 41081011).
 Most of the error is portion size and ingredients a photo cannot show, such as
 cooking oil and sugar. Items the eater did not see but the dish usually contains
@@ -20,7 +21,7 @@ import re
 from datetime import date, time
 from typing import Final
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, computed_field, field_validator
 
 __all__ = [
     "MEAL_KINDS",
@@ -149,11 +150,22 @@ class Meal(BaseModel):
     low: Nutrients
     high: Nutrients
     uncertainty: float = UNCERTAINTY
-    #: Nutrients whose total leaves out at least one item that does not report them:
-    #: the total is a lower bound, not the meal's amount.
-    partial: list[str] = Field(default_factory=list)
     note: str | None = None
     photo: str | None = None
+
+    @computed_field  # type: ignore[prop-decorator]
+    @property
+    def partial(self) -> list[str]:
+        """Nutrients whose total leaves out an item that does not report them.
+
+        Such a total is a lower bound, not the meal's amount. Derived from the stored
+        items, so meals logged before this field existed read back correctly.
+        """
+        return [
+            field
+            for field, total in self.totals.model_dump().items()
+            if total is not None and any(getattr(i.nutrients, field) is None for i in self.items)
+        ]
 
     @field_validator("kind")
     @classmethod
@@ -180,13 +192,7 @@ class Meal(BaseModel):
         for item in items:
             totals = totals + item.nutrients
         low, high = totals.band(uncertainty)
-        partial = [
-            field
-            for field, total in totals.model_dump().items()
-            if total is not None and any(getattr(i.nutrients, field) is None for i in items)
-        ]
         return cls(
-            partial=partial,
             day=day,
             at=at,
             kind=kind,
@@ -217,7 +223,7 @@ def parse_item_spec(spec: str) -> tuple[str, float, bool]:
         )
     if not _FOOD_ID.match(food_id):
         raise ValueError(f"food id must look like 'source:id', got {food_id!r}")
-    if not re.fullmatch(r"\d+(\.\d+)?", grams_raw.strip()):
+    if not re.fullmatch(r"[0-9]+(\.[0-9]+)?", grams_raw.strip()):
         raise ValueError(f"grams must be a plain number like 120 or 7.5, got {grams_raw!r}")
     try:
         grams = float(grams_raw)

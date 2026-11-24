@@ -11,7 +11,7 @@ table is built from files the user downloaded, and photos are copied into
 ## How accurate this is (say it when it matters)
 
 - **A single meal is off by about a third.**
-  - Multimodal models: ChatGPT-4o and Claude 3.5 Sonnet had about 36% mean absolute percentage error on energy; Gemini 1.5 Pro had 64–110%. Every model underestimated more as portions grew (Fridolfsson et al., *Curr Dev Nutr* 2025, PMID 41081011).
+  - Multimodal models: ChatGPT-4o and Claude 3.5 Sonnet had about 36% mean absolute percentage error on energy; Gemini 1.5 Pro had 64–110% across nutrients. Every model underestimated more as portions grew (Fridolfsson et al., *Curr Dev Nutr* 2025, PMID 41081011).
   - Photo apps: about 33% under on energy and about 30 g under on fat, against weighed meals (NIH metabolic-kitchen test, 2026 conference report, not yet peer-reviewed; reported at https://www.healio.com/news/primary-care/20260804/ai-photobased-calorietracking-tools-underestimate-them-by-33).
 - **Most of the error is portion size and what the photo can't show:** cooking oil, butter, sugar, sauces.
 - **Trends are more reliable than any single meal.** Weekly averages, meal-to-meal comparisons, timing and protein per meal are worth reading. A single calorie number is not.

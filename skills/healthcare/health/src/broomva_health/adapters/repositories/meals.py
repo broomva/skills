@@ -1,6 +1,8 @@
 """Private meal log: one JSON line per meal in ``<data_dir>/meals.jsonl``.
 
 The file is created 0600 inside a 0700 directory and is only ever appended to.
+The data directory itself may be a symlink (a user can keep it on another volume,
+as with the trace store); ``meals.jsonl`` and ``meal-photos/`` inside it may not.
 A meal photo, when given, is copied into ``<data_dir>/meal-photos/`` (0600);
 the original is left where it was.
 """
@@ -18,6 +20,16 @@ from pathlib import Path
 from broomva_health.domain.nutrition import Meal
 
 __all__ = ["MealLog"]
+
+
+def _ends_without_newline(path: Path) -> bool:
+    size = path.stat().st_size
+    if size == 0:
+        return False
+    with path.open("rb") as fh:
+        fh.seek(size - 1)
+        return fh.read(1) != b"\n"
+
 
 _log = logging.getLogger(__name__)
 
@@ -54,8 +66,12 @@ class MealLog:
                 fd = os.open(dst, flags, 0o600)  # never follows or overwrites an existing entry
             except FileExistsError:
                 continue
-            with os.fdopen(fd, "wb") as out, src.open("rb") as inp:
-                shutil.copyfileobj(inp, out)
+            try:
+                with os.fdopen(fd, "wb") as out, src.open("rb") as inp:
+                    shutil.copyfileobj(inp, out)
+            except BaseException:
+                dst.unlink(missing_ok=True)  # no half-written photo left behind
+                raise
             return str(dst.relative_to(self.data_dir))
         raise FileExistsError(f"too many photos named {stem} in {self.photos_dir}")
 
@@ -73,16 +89,29 @@ class MealLog:
             if exc.errno == errno.ELOOP:
                 raise ValueError(f"{self.path} is a symlink; refusing to write through it") from exc
             raise
-        os.fchmod(fd, 0o600)  # tighten a looser file before any data reaches it
+        try:
+            os.fchmod(fd, 0o600)  # tighten a looser file before any data reaches it
+            torn = _ends_without_newline(self.path)
+        except BaseException:
+            os.close(fd)
+            raise
         with os.fdopen(fd, "a", encoding="utf-8") as fh:
+            if torn:  # a previous write was cut short: close its line so ours stays whole
+                fh.write("\n")
             # ASCII escapes keep U+2028 and friends out of the raw file, so one meal is one line.
             fh.write(json.dumps(meal.model_dump(mode="json"), ensure_ascii=True) + "\n")
 
     def read(self, *, since: date | None = None, until: date | None = None) -> list[Meal]:
-        if not self.path.exists():
+        if not self.path.exists() and not self.path.is_symlink():
             return []
         meals = []
-        with self.path.open(encoding="utf-8", newline="\n") as fh:
+        try:
+            fd = os.open(self.path, os.O_RDONLY | os.O_NOFOLLOW)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise ValueError(f"{self.path} is a symlink; refusing to read through it") from exc
+            raise
+        with os.fdopen(fd, encoding="utf-8", newline="\n") as fh:
             lines = list(fh)  # split on "\n" only, unlike str.splitlines()
         for number, line in enumerate(lines, 1):
             if not line.strip():
