@@ -40,7 +40,7 @@ change.
 3. **A lint or CI check whose error names the fix.** Not "blocked": the file,
    type, function or command to use instead. An agent that only hears "no" routes
    around the check; one told what to do goes through it. If the pattern is
-   already common, ratchet: fail only when a change adds one, and fail when the
+   already common, ratchet: fail when a change adds one, and fail when the
    count drops until the baseline is lowered, so it only shrinks.
 4. **A test** of the behavior. Fix or delete any test that still passes when the
    behavior breaks, or fails when only internals change.
@@ -83,7 +83,7 @@ enforcer is either a recorded judgment (with the reason) or a gap (with the
 ticket that closes it). Drop a rule once its mistake cannot happen, and retire its
 prose copy when it reaches a mechanism level.
 
-In a bstack workspace this is `.control/rules.yaml`, replayed by `make rules-check`.
+In the `broomva/workspace` repo this is `.control/rules.yaml`, replayed by `make rules-check`.
 
 ## Reply
 
