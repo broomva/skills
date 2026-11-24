@@ -884,3 +884,88 @@ def test_torn_multibyte_line_does_not_hide_later_meals(tmp_path: Path) -> None:
     log.path.write_bytes(b'{"day":"2026-11-24","note":"\xf0\x9f')
     log.append(Meal.build([MealItem.of(RICE, 100)], day=date(2026, 3, 4)))
     assert [m.day for m in log.read()] == [date(2026, 3, 4)]
+
+
+# --- P20 round 3, stratum C: remaining gaps -------------------------------------------------
+
+
+def test_concurrent_imports_both_succeed_and_stay_consistent(tmp_path: Path) -> None:
+    import threading
+
+    path = tmp_path / "foods.db"
+    rows = [[f"f{i}", f"Food number {i}", str(i % 500)] for i in range(3000)]
+    csvs = []
+    for n in range(2):
+        p = tmp_path / f"t{n}.csv"
+        _write_csv(p, ["food_id", "description", "kcal"], rows)
+        csvs.append(p)
+    with FoodTable(path):
+        pass
+    for _ in range(2):
+        barrier, errors = threading.Barrier(2), []
+
+        def run(csv_path: Path) -> None:
+            try:
+                with FoodTable(path) as table:
+                    barrier.wait()
+                    table.import_csv(csv_path, source="co")
+            except Exception as exc:  # noqa: BLE001 — collected and asserted below
+                errors.append(exc)
+
+        threads = [threading.Thread(target=run, args=(p,)) for p in csvs]
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+        assert errors == []
+    conn = sqlite3.connect(path)
+    assert conn.execute("SELECT count(*) FROM foods").fetchone()[0] == 3000
+    assert conn.execute("SELECT count(*) FROM foods_fts").fetchone()[0] == 3000
+    conn.close()
+
+
+def test_single_letter_query_falls_back_to_the_word(tmp_path: Path) -> None:
+    path = tmp_path / "co.csv"
+    _write_csv(path, ["food_id", "description", "kcal"], [["agua", "Agua de panela", "40"]])
+    with FoodTable(tmp_path / "foods.db") as table:
+        table.import_csv(path, source="co")
+        assert [f.food_id for f in table.find("a")] == ["co:agua"]
+
+
+def test_zero_valued_nutrients_are_kept(tmp_path: Path) -> None:
+    root = _release(
+        tmp_path / "fdc",
+        [["80", "sr_legacy_food", "Coffee, brewed, black", "14", "2019-04-01"]],
+        [["1", "80", "1008", "1"], ["2", "80", "1004", "0"], ["3", "80", "1005", "0"]],
+    )
+    with FoodTable(tmp_path / "foods.db") as table:
+        table.import_usda(root)
+        coffee = table.get("usda:80")
+    assert coffee is not None
+    assert (coffee.per_100g.fat_g, coffee.per_100g.carbs_g) == (0.0, 0.0)
+
+
+def test_cli_rejects_tomorrow_corrupt_table_and_symlinked_log(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    from datetime import timedelta
+
+    runner = CliRunner()
+    runner.invoke(app, ["food", "import-usda", str(_fdc_release(tmp_path / "fdc"))])
+    tomorrow = (date.today() + timedelta(days=1)).isoformat()
+    assert (
+        runner.invoke(app, ["food", "log", "--item", "usda:10=10", "--date", tomorrow]).exit_code
+        == 2
+    )
+
+    elsewhere = tmp_path / "elsewhere.jsonl"
+    elsewhere.write_text("")
+    (tmp_paths.data_dir / "meals.jsonl").symlink_to(elsewhere)
+    assert runner.invoke(app, ["food", "log", "--item", "usda:10=10"]).exit_code == 2
+    assert runner.invoke(app, ["food", "show"]).exit_code == 2
+    assert elsewhere.read_text() == ""
+
+    tmp_paths.foods_db.write_bytes(b"not a database" * 100)
+    corrupt = runner.invoke(app, ["food", "find", "rice"])
+    assert corrupt.exit_code == 2
+    assert "unreadable" in corrupt.output

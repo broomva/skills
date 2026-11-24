@@ -78,7 +78,11 @@ class FoodTable:
         os.chmod(path, 0o600)  # also tightens a table created by an older version
         # Autocommit mode: writes take an explicit BEGIN IMMEDIATE (see _replace).
         self._conn = sqlite3.connect(path, isolation_level=None)
-        self._conn.executescript(_SCHEMA)
+        try:
+            self._conn.executescript(_SCHEMA)
+        except BaseException:
+            self._conn.close()  # a corrupt file must not leak the connection
+            raise
 
     def close(self) -> None:
         self._conn.close()

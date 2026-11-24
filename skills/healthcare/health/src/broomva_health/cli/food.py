@@ -18,7 +18,7 @@ import sqlite3
 from collections import defaultdict
 from collections.abc import Iterator
 from contextlib import contextmanager
-from datetime import date, datetime, time, timedelta
+from datetime import date, datetime, time
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
@@ -57,6 +57,11 @@ def _table(ctx: typer.Context) -> Iterator[FoodTable]:
     except sqlite3.OperationalError as exc:
         raise typer.BadParameter(
             f"food table unavailable: {exc} (another import running?)"
+        ) from exc
+    except sqlite3.DatabaseError as exc:
+        raise typer.BadParameter(
+            f"food table {_paths(ctx).foods_db} is unreadable ({exc}); "
+            "delete it and run `health food import-usda` again"
         ) from exc
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -147,7 +152,7 @@ def _parse_day(raw: str | None) -> date:
         day = date.fromisoformat(raw)
     except ValueError as exc:
         raise typer.BadParameter(f"--date must be YYYY-MM-DD, got {raw!r}") from exc
-    if day > date.today() + timedelta(days=1):
+    if day > date.today():
         raise typer.BadParameter(f"--date {raw} is in the future")
     return day
 
@@ -192,7 +197,10 @@ def log(
             raise typer.BadParameter(str(exc), param_hint="--photo") from exc
         entry = entry.model_copy(update={"photo": kept})
     try:
-        log_store.append(entry)
+        try:
+            log_store.append(entry)
+        except ValueError as exc:  # a refused (symlinked) log
+            raise typer.BadParameter(str(exc)) from exc
     except BaseException:
         if entry.photo:
             log_store.discard_photo(entry.photo)  # no orphan photo without its meal
@@ -211,7 +219,10 @@ def show(
     ),
 ) -> None:
     """Meals of the last N days, or per-day totals with ``--totals``."""
-    meals = MealLog(_paths(ctx).data_dir).last_days(days, today=date.today())
+    try:
+        meals = MealLog(_paths(ctx).data_dir).last_days(days, today=date.today())
+    except ValueError as exc:  # a refused (symlinked) log
+        raise typer.BadParameter(str(exc)) from exc
     if totals_only:
         _emit(ctx, _day_totals(meals))
         return
