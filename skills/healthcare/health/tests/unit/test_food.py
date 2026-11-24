@@ -5,6 +5,7 @@ from __future__ import annotations
 import csv
 import json
 import os
+import re
 import sqlite3
 import stat
 from datetime import date, time
@@ -21,6 +22,13 @@ from broomva_health.config.paths import HealthPaths
 from broomva_health.domain.nutrition import Food, Meal, MealItem, Nutrients, parse_item_spec
 
 _LS, _PS = chr(0x2028), chr(0x2029)  # line / paragraph separators
+
+
+def _plain(output: str) -> str:
+    """CLI output without Rich's colour codes, box borders and terminal-width wrapping."""
+    text = re.sub(r"\x1b\[[0-9;]*m", "", output)
+    return " ".join(text.replace("│", " ").split())
+
 
 RICE = Food(
     food_id="usda:1",
@@ -970,7 +978,7 @@ def test_cli_rejects_tomorrow_corrupt_table_and_symlinked_log(
     tmp_paths.foods_db.write_bytes(b"not a database" * 100)
     corrupt = runner.invoke(app, ["food", "find", "rice"])
     assert corrupt.exit_code == 2
-    message = " ".join(corrupt.output.replace("│", " ").split())  # Rich wraps by terminal width
+    message = _plain(corrupt.output)
     assert "health food repair" in message
     assert "copy the file aside" in message
     assert "delete it" not in message
