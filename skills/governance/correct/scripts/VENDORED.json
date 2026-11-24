@@ -1,0 +1,39 @@
+{
+  "source": {
+    "repository": "broomva/workspace",
+    "commit": "fd8a701fcb752ed5c125f9d9ec864c4d658f8b1c",
+    "directory": "scripts"
+  },
+  "files": {
+    "rules_check.py": {
+      "source_sha256": "95ab64254eece69565fc3ecdbf3c41947b7a604c8a2943459978774a0bcf5ea5",
+      "shipped_sha256": "1590f540c471d961203618d8e040cbbbf345edc92f87f10c1897335acb3d6297"
+    },
+    "rules_canary.py": {
+      "source_sha256": "4c9982cd019e8da0725922d5a71082381cd0a7c40c9ce7f30ec26c60ba0ed9b4",
+      "shipped_sha256": "4c9982cd019e8da0725922d5a71082381cd0a7c40c9ce7f30ec26c60ba0ed9b4"
+    },
+    "rules_case_data.py": {
+      "source_sha256": "6b206e5a59db2254c51a6cab86fcb77f8ac39db654d4294a1e71b209c997e543",
+      "shipped_sha256": "6b206e5a59db2254c51a6cab86fcb77f8ac39db654d4294a1e71b209c997e543"
+    },
+    "rules_fixtures.py": {
+      "source_sha256": "4bb7173c4ba9ba83b831d398d7f0b0bf4e0ad28a02a84637be6d19aa8a512e2f",
+      "shipped_sha256": "4bb7173c4ba9ba83b831d398d7f0b0bf4e0ad28a02a84637be6d19aa8a512e2f"
+    },
+    "governance_paths.py": {
+      "source_sha256": "ecfafeb9b09a74b3711708b8e22e61e741377d9dfec423677fdc14f8bc7923b8",
+      "shipped_sha256": "ecfafeb9b09a74b3711708b8e22e61e741377d9dfec423677fdc14f8bc7923b8"
+    },
+    "branch-first-hook.py": {
+      "source_sha256": "4948a5eb955050f4262bc0bcae06055d314c86f060e5dab62b775c0682962820",
+      "shipped_sha256": "4948a5eb955050f4262bc0bcae06055d314c86f060e5dab62b775c0682962820"
+    }
+  },
+  "changes": [
+    {
+      "file": "rules_check.py",
+      "what": "one comment in host_identities(): a machine hostname replaced by a generic description; no code changed"
+    }
+  ]
+}

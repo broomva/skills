@@ -1,0 +1,408 @@
+# rules.yaml: the rule registry. Written by `correct.py init` (the `correct` skill).
+#
+# Every rule an agent session in this repository is held to, paired with what enforces it.
+# `correct.py check` replays each proof and control against the real enforcer, through the
+# hook entry the harness would run, and fails on a proof that is allowed, a control that is
+# refused, an enforcer that crashes, or a registration that is missing.
+#
+# THE LADDER. A rule belongs at the highest level that works; prose is the last resort:
+#   architecture  the wrong thing cannot be built (one owner, one supported way)
+#   types         the wrong state cannot be written
+#   lint          a static check whose error names the fix
+#   test          behaviour is pinned
+#   hook          the action is refused when it is taken (a harness hook, a merge gate)
+#   sensor        a measurement that turns an unknown into a number (it does not refuse)
+#   judgment      no check can decide it; say why in `judgment:`
+#   gap           enforceable, not yet enforced; `ticket:` and `target:` say how it closes
+#
+# A ROW
+#   id, rule, source   stable id; one imperative sentence; where the rule comes from
+#   level              one of the ladder levels above
+#   enforcer           path (repo-relative) and, for hooks, registered: {event, tools, scope}.
+#                      The settings entry must EXECUTE the path; naming it is not enough.
+#   occurrences        real incidents, one entry each, dated. Two make a class.
+#   proofs             replays of a real past mistake the enforcer MUST refuse. `from:` says
+#                      where the case comes from. expect_reason: the refusal must say this.
+#                      remedy: the refusal must name the fix.
+#   controls           nearby legitimate inputs the enforcer MUST allow. Make each differ from
+#                      a proof in ONE feature, so only the rule can tell them apart.
+#   known_misses       inputs the enforcer should refuse and does not yet, each with a ticket.
+#                      One that starts being refused FAILS until it moves to `proofs`.
+#   canary             cases for a real harness session, or {none: reason, ticket} while the
+#                      row is replayed but not yet certified on the real harness.
+# Placeholders: {root} is this checkout, {scratch} a temp directory per rule.
+# The full field reference is the header comment of scripts/rules_check.py in the skill.
+#
+# The row below is the starter: one enforcer, already proven. Its cases are the ones that
+# hardened the hook in broomva/workspace, so their `from:` lines name that repository's
+# review rounds and its ticket for the two known misses. Replace the canary ticket with
+# one of yours, then add your own rows. Retire a rule once its mistake cannot happen.
+
+version: 1
+class_threshold: 2
+rules:
+- id: branch-first
+  rule: In a governed checkout, create a branch before the first edit; never edit files git does not ignore on main.
+  source: the correct skill's starter rule; in broomva/workspace it is an owner rule with a recorded recovery recipe
+  level: hook
+  runs_in:
+  - harness
+  enforcer:
+    path: scripts/branch-first-hook.py
+    registered:
+      event: PreToolUse
+      tools:
+      - Write
+      - Edit
+      - MultiEdit
+      - NotebookEdit
+      scope: project
+  proofs:
+  - from: the state the MEMORY.md recovery recipe exists for (a governed checkout on main), constructed
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/on-main'
+    - - mkdir
+      - -p
+      - '{scratch}/on-main/.control'
+    - - touch
+      - '{scratch}/on-main/.control/policy.yaml'
+      - '{scratch}/on-main/README.md'
+    event:
+      tool_name: Edit
+      tool_input:
+        file_path: '{scratch}/on-main/README.md'
+        old_string: a
+        new_string: b
+    expect_reason: Branch first
+    remedy: checkout -b
+  - from: the same governed checkout on main, through Write (P20 round 3 contract), constructed
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/on-main'
+    - - mkdir
+      - -p
+      - '{scratch}/on-main/.control'
+    - - touch
+      - '{scratch}/on-main/.control/policy.yaml'
+      - '{scratch}/on-main/README.md'
+    event:
+      tool_name: Write
+      tool_input:
+        file_path: '{scratch}/on-main/README.md'
+        content: x
+    expect_reason: Branch first
+    remedy: checkout -b
+  - from: the same governed checkout on main, through MultiEdit (P20 round 3 contract), constructed
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/on-main'
+    - - mkdir
+      - -p
+      - '{scratch}/on-main/.control'
+    - - touch
+      - '{scratch}/on-main/.control/policy.yaml'
+      - '{scratch}/on-main/README.md'
+    event:
+      tool_name: MultiEdit
+      tool_input:
+        file_path: '{scratch}/on-main/README.md'
+        edits:
+        - old_string: a
+          new_string: b
+    expect_reason: Branch first
+    remedy: checkout -b
+  - from: the same governed checkout on main, through NotebookEdit (P20 round 3 contract), constructed
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/on-main'
+    - - mkdir
+      - -p
+      - '{scratch}/on-main/.control'
+    - - touch
+      - '{scratch}/on-main/.control/policy.yaml'
+      - '{scratch}/on-main/README.md'
+      - '{scratch}/on-main/nb.ipynb'
+    event:
+      tool_name: NotebookEdit
+      tool_input:
+        notebook_path: '{scratch}/on-main/nb.ipynb'
+        new_source: x
+    expect_reason: Branch first
+    remedy: checkout -b
+  - from: 'P20 #1299 round 6: the session''s own checkout is on main, so the recovery recipe is the fix'
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/on-main'
+    - - mkdir
+      - -p
+      - '{scratch}/on-main/.control'
+    - - touch
+      - '{scratch}/on-main/.control/policy.yaml'
+      - '{scratch}/on-main/README.md'
+    - - git
+      - init
+      - -q
+      - -b
+      - feat/x
+      - '{scratch}/mine'
+    event:
+      tool_name: Edit
+      cwd: '{scratch}/on-main'
+      tool_input:
+        file_path: '{scratch}/on-main/README.md'
+        old_string: a
+        new_string: b
+    expect_reason: Branch first
+    remedy: branch -f main origin/main
+  - from: 'P20 #1299 round 6: the file is in another checkout than the session''s, so the fix is the session''s
+      own copy'
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/on-main'
+    - - mkdir
+      - -p
+      - '{scratch}/on-main/.control'
+    - - touch
+      - '{scratch}/on-main/.control/policy.yaml'
+      - '{scratch}/on-main/README.md'
+    - - git
+      - init
+      - -q
+      - -b
+      - feat/x
+      - '{scratch}/mine'
+    event:
+      tool_name: Edit
+      cwd: '{scratch}/mine'
+      tool_input:
+        file_path: '{scratch}/on-main/README.md'
+        old_string: a
+        new_string: b
+    expect_reason: Branch first
+    remedy: Edit the copy
+  - from: 'P20 #1299 round 7: a session cwd in no repository is not this checkout''s session'
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/on-main'
+    - - mkdir
+      - -p
+      - '{scratch}/on-main/.control'
+    - - touch
+      - '{scratch}/on-main/.control/policy.yaml'
+      - '{scratch}/on-main/README.md'
+    - - mkdir
+      - -p
+      - '{scratch}/plain'
+    event:
+      tool_name: Edit
+      cwd: '{scratch}/plain'
+      tool_input:
+        file_path: '{scratch}/on-main/README.md'
+        old_string: a
+        new_string: b
+    expect_reason: Branch first
+    remedy: Edit the copy
+  - from: 'P20 #1299 round 16, stratum A: the path in camelCase (filePath), as the write-safety gate also reads
+      it'
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/on-main'
+    - - mkdir
+      - -p
+      - '{scratch}/on-main/.control'
+    - - touch
+      - '{scratch}/on-main/.control/policy.yaml'
+      - '{scratch}/on-main/README.md'
+    event:
+      tool_name: Edit
+      tool_input:
+        filePath: '{scratch}/on-main/README.md'
+        old_string: a
+        new_string: b
+    expect_reason: Branch first
+    remedy: checkout -b
+  - from: 'P20 #1299 round 16, stratum A: the path only inside a MultiEdit hunk'
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/on-main'
+    - - mkdir
+      - -p
+      - '{scratch}/on-main/.control'
+    - - touch
+      - '{scratch}/on-main/.control/policy.yaml'
+      - '{scratch}/on-main/README.md'
+    event:
+      tool_name: MultiEdit
+      tool_input:
+        edits:
+        - file_path: '{scratch}/on-main/README.md'
+          old_string: a
+          new_string: b
+    expect_reason: Branch first
+    remedy: checkout -b
+  - from: 'P20 #1299 round 9: a governed checkout on master, the other protected branch name'
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - master
+      - '{scratch}/on-master'
+    - - mkdir
+      - -p
+      - '{scratch}/on-master/.control'
+    - - touch
+      - '{scratch}/on-master/.control/policy.yaml'
+      - '{scratch}/on-master/README.md'
+    event:
+      tool_name: Edit
+      tool_input:
+        file_path: '{scratch}/on-master/README.md'
+        old_string: a
+        new_string: b
+    expect_reason: Branch first
+    remedy: checkout -b
+  controls:
+  - why: the same governed repo on a feature branch (differs only in the branch)
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - feat/x
+      - '{scratch}/on-branch'
+    - - mkdir
+      - -p
+      - '{scratch}/on-branch/.control'
+    - - touch
+      - '{scratch}/on-branch/.control/policy.yaml'
+      - '{scratch}/on-branch/README.md'
+    event:
+      tool_name: Edit
+      tool_input:
+        file_path: '{scratch}/on-branch/README.md'
+        old_string: a
+        new_string: b
+  - why: the same edit on main in a repo with no .control/policy.yaml (differs only in governance)
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/ungoverned'
+    - - touch
+      - '{scratch}/ungoverned/README.md'
+    event:
+      tool_name: Edit
+      tool_input:
+        file_path: '{scratch}/ungoverned/README.md'
+        old_string: a
+        new_string: b
+  - why: an ignored scratch file on main is not work that needs a branch
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/ignored'
+    - - mkdir
+      - -p
+      - '{scratch}/ignored/.control'
+      - '{scratch}/ignored/tmp'
+    - - touch
+      - '{scratch}/ignored/.control/policy.yaml'
+    - - python3
+      - -I
+      - '{root}/scripts/rules_fixtures.py'
+      - write-file
+      - '{scratch}/ignored/.gitignore'
+      - tmp/\n
+    event:
+      tool_name: Write
+      tool_input:
+        file_path: '{scratch}/ignored/tmp/notes.txt'
+        content: x
+  canary:
+    none: the real-harness canary has not been run in this repository yet
+    ticket: REPLACE-WITH-YOUR-TICKET
+  known_misses:
+  - from: 'P20 #1299 rounds 1-2: a file edited through Bash on main; telling it from shell text took a parser that
+      blocked legitimate commands and missed others, so a git-level hook is the fix'
+    ticket: BRO-3865
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/on-main'
+    - - mkdir
+      - -p
+      - '{scratch}/on-main/.control'
+    - - touch
+      - '{scratch}/on-main/.control/policy.yaml'
+      - '{scratch}/on-main/README.md'
+    event:
+      tool_name: Bash
+      cwd: '{scratch}'
+      tool_input:
+        command: echo b > {scratch}/on-main/README.md
+  - from: 'P20 #1299 rounds 1-2: a commit on main through Bash (subshell, pushd, merge and cherry-pick forms included)'
+    ticket: BRO-3865
+    setup:
+    - - git
+      - init
+      - -q
+      - -b
+      - main
+      - '{scratch}/on-main'
+    - - mkdir
+      - -p
+      - '{scratch}/on-main/.control'
+    - - touch
+      - '{scratch}/on-main/.control/policy.yaml'
+      - '{scratch}/on-main/README.md'
+    event:
+      tool_name: Bash
+      cwd: '{scratch}'
+      tool_input:
+        command: git -C {scratch}/on-main commit -am wip

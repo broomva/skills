@@ -1,0 +1,81 @@
+name: test-correct
+
+# Test gate for the `correct` skill (skills/governance/correct/).
+# Path-filtered: runs ONLY when skills/governance/correct/** changes.
+#
+# The skill ships the rule-registry runner. Four suites run, and each one's
+# count is asserted: a green summary that quietly shrank is indistinguishable
+# from one that never ran.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/governance/correct/**'
+      - '.github/workflows/test-correct.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/governance/correct/**'
+      - '.github/workflows/test-correct.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: test-correct-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/governance/correct
+
+jobs:
+  test:
+    name: runner, canary, hook and CLI suites
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # The suites run under `python3 -I`, which drops the user site; the runner
+      # and the suites add it back themselves, so PyYAML goes there.
+      - name: Install PyYAML (user site)
+        run: python3 -m pip install --user pyyaml
+
+      - name: Vendored files match scripts/VENDORED.json
+        run: python3 -I tests/vendored.py
+
+      # Each suite's status is taken from the suite, not from the filter after
+      # it: the output goes to a file, and the file is read afterwards.
+      - name: Tests — correct.py (init, check can fail, wrapper)
+        run: |
+          set -euo pipefail
+          python3 -I tests/test_correct.py > /tmp/correct.out 2>&1 || { cat /tmp/correct.out; exit 1; }
+          cat /tmp/correct.out
+          grep -q '^Ran 24 tests' /tmp/correct.out
+          grep -q '^OK$' /tmp/correct.out
+
+      - name: Tests — the branch-first hook
+        run: |
+          set -euo pipefail
+          python3 -I tests/test_branch_first_hook.py > /tmp/hook.out 2>&1 || { cat /tmp/hook.out; exit 1; }
+          test "$(grep -c '^ok ' /tmp/hook.out)" = 5
+          grep -q '^all branch-first hook tests passed$' /tmp/hook.out
+
+      - name: Tests — the rule-registry runner
+        run: |
+          set -euo pipefail
+          python3 -I tests/test_rules_check.py > /tmp/check.out 2>&1 || { cat /tmp/check.out; exit 1; }
+          test "$(grep -c '^ok ' /tmp/check.out)" = 212
+          grep -q '^all rules_check tests passed$' /tmp/check.out
+
+      - name: Tests — the canary
+        run: |
+          set -euo pipefail
+          python3 -I tests/test_rules_canary.py > /tmp/canary.out 2>&1 || { cat /tmp/canary.out; exit 1; }
+          test "$(grep -c '^ok ' /tmp/canary.out)" = 116
+          grep -q '^all rules_canary tests passed$' /tmp/canary.out
