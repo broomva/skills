@@ -90,7 +90,9 @@ class FoodTable:
             # SQLite would adopt (or discard) a leftover journal or write-ahead log beside a
             # new file, mixing another database's pages into ours. Refuse instead.
             leftovers = [s for s in _SIDECARS if path.with_name(path.name + s).exists()]
-            if leftovers:
+            # Re-check: a concurrent first import may have just created the database and its
+            # journal; then the journal is not a leftover and this open proceeds normally.
+            if leftovers and not path.exists():
                 names = ", ".join(path.name + s for s in leftovers)
                 raise LeftoverSidecar(
                     f"{names} is in {path.parent} but {path.name} is not. It belongs to that "

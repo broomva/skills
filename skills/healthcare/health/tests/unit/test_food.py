@@ -1269,3 +1269,25 @@ def test_a_trigger_rejection_is_not_called_unreadable(
     assert "frozen" in message
     found = runner.invoke(app, ["-f", "json", "food", "find", "arroz"])
     assert [f["food_id"] for f in json.loads(found.output)] == ["co:rice"]  # untouched
+
+
+def test_sidecar_guard_ignores_a_database_created_meanwhile(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A concurrent first import created foods.db and its journal between our checks."""
+    path = tmp_path / "foods.db"
+    with FoodTable(path):  # stands in for the other process's finished first import
+        pass
+    (tmp_path / "foods.db-journal").write_bytes(b"")  # its journal, mid-transaction
+    real_exists = Path.exists
+    calls: list[Path] = []
+
+    def first_check_sees_nothing(self: Path, *args: object, **kwargs: object) -> bool:
+        if self == path and not calls:  # only our first look happens "before" the other import
+            calls.append(self)
+            return False
+        return real_exists(self)
+
+    monkeypatch.setattr(Path, "exists", first_check_sees_nothing)
+    with FoodTable(path) as table:  # proceeds: foods.db exists on the re-check
+        assert table.count() == {}
