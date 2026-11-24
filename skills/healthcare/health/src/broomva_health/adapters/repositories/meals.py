@@ -111,14 +111,14 @@ class MealLog:
             if exc.errno == errno.ELOOP:
                 raise ValueError(f"{self.path} is a symlink; refusing to read through it") from exc
             raise
-        with os.fdopen(fd, encoding="utf-8", newline="\n") as fh:
-            lines = list(fh)  # split on "\n" only, unlike str.splitlines()
-        for number, line in enumerate(lines, 1):
-            if not line.strip():
+        with os.fdopen(fd, "rb") as fh:
+            raw_lines = fh.read().split(b"\n")  # bytes: a torn UTF-8 tail stays one bad line
+        for number, raw in enumerate(raw_lines, 1):
+            if not raw.strip():
                 continue
             try:
-                meal = Meal.model_validate_json(line)
-            except ValueError:
+                meal = Meal.model_validate_json(raw.decode("utf-8"))
+            except ValueError:  # includes UnicodeDecodeError
                 _log.warning("%s:%d is not a readable meal; skipped", self.path, number)
                 continue
             if (since is None or meal.day >= since) and (until is None or meal.day <= until):

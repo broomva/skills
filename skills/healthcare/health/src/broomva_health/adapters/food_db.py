@@ -274,8 +274,14 @@ def _legacy_numbers(nutrient_csv: Path) -> dict[str, str]:
             nbr = (row.get("nutrient_nbr") or "").strip()
             if nbr.endswith(".0"):
                 nbr = nbr[:-2]
-            if nbr:
-                out[nbr] = row["id"]
+            nid = (row.get("id") or "").strip()
+            if not nbr or nid not in _WANTED:
+                continue  # only the nutrients we import; others cannot shadow them
+            if out.get(nbr, nid) != nid:
+                raise ValueError(
+                    f"{nutrient_csv}: legacy number {nbr} maps to both {out[nbr]} and {nid}"
+                )
+            out[nbr] = nid
         return out
 
 

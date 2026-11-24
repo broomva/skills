@@ -845,3 +845,42 @@ def test_symlinked_log_is_not_read(tmp_path: Path) -> None:
     log.path.symlink_to(other.path)
     with pytest.raises(ValueError, match="symlink"):
         log.read()
+
+
+# --- regressions from P20 round 3 ---------------------------------------------------------
+
+
+def test_unrelated_nutrient_cannot_shadow_a_legacy_number(tmp_path: Path) -> None:
+    root = _release(
+        tmp_path / "fdc",
+        [["70", "survey_fndds_food", "Soup, test", "50", "2024-10-31"]],
+        [["1", "70", "208", "40"]],
+    )
+    nutrients = root / "rel" / "nutrient.csv"
+    header = ["id", "name", "unit_name", "nutrient_nbr", "rank"]
+    _write_csv(
+        nutrients,
+        header,
+        [["1008", "Energy", "KCAL", "208", "300"], ["9999", "Other", "G", "208", "1"]],
+    )
+    with FoodTable(tmp_path / "foods.db") as table:
+        table.import_usda(root)
+        soup = table.get("usda:70")
+        assert soup is not None
+        assert soup.per_100g.kcal == 40
+        _write_csv(
+            nutrients,
+            header,
+            [["1008", "Energy", "KCAL", "208", "300"], ["2047", "Atwater", "KCAL", "208", "1"]],
+        )
+        with pytest.raises(ValueError, match="maps to both"):
+            table.import_usda(root)
+        assert table.get("usda:70") is not None
+
+
+def test_torn_multibyte_line_does_not_hide_later_meals(tmp_path: Path) -> None:
+    log = MealLog(tmp_path / "data")
+    log.data_dir.mkdir(parents=True)
+    log.path.write_bytes(b'{"day":"2026-11-24","note":"\xf0\x9f')
+    log.append(Meal.build([MealItem.of(RICE, 100)], day=date(2026, 3, 4)))
+    assert [m.day for m in log.read()] == [date(2026, 3, 4)]
