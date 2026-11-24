@@ -10,6 +10,26 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-24
+
+### Added
+
+- **`health food`: a private meal log over a local food-composition table (BRO-4126).**
+  - `import-usda DIR` builds `<data_dir>/foods.db` (SQLite + FTS5, 0600) from USDA FoodData Central CSV releases (Foundation, SR Legacy, FNDDS).
+    - Energy falls back to the Atwater ids (2048, then 2047) that Foundation foods use.
+    - Sample lots and branded foods are skipped.
+  - `import-csv FILE --source XX` adds a regional per-100 g table; re-importing a source replaces it.
+  - `find` does ranked, accent-folding prefix search.
+  - `log --item [+]source:id=grams` records a meal in `<data_dir>/meals.jsonl` (0600).
+    - A `+` marks a hidden item: oil, sugar or sauce the photo can't show.
+    - Each meal is stored with totals and a ±30% band.
+    - `--photo` copies the image into `<data_dir>/meal-photos/` (0600).
+  - `show [--days N] [--totals]` reads meals back.
+  - Nothing touches the network.
+- `Workflows/MealLog.md`: the agent protocol.
+  - Break a photo into items with grams, add the recipe prior for hidden ingredients (Open-KNEAD, arXiv 2607.12911), log it, and reply in one line.
+  - Includes the measured error of photo estimates and why to read trends, not single meals.
+
 ## [0.12.0] — 2026-08-12
 
 ### Added

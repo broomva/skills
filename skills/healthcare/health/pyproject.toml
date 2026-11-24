@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "broomva-health"
-version = "0.12.0"
+version = "0.13.0"
 description = "Broomva-stack Health skill — personal health knowledge graph with hex-architecture trace ingest"
 readme = "README.md"
 requires-python = ">=3.12"
 license = "MIT"
 authors = [{ name = "Broomva", email = "devteam@getstimulus.ai" }]
-keywords = ["health", "garmin", "apple-health", "whoop", "oura", "hrv", "longevity", "knowledge-graph", "local-first"]
+keywords = ["health", "nutrition", "garmin", "apple-health", "whoop", "oura", "hrv", "longevity", "knowledge-graph", "local-first"]
 classifiers = [
   "Development Status :: 3 - Alpha",
   "Intended Audience :: End Users/Desktop",
