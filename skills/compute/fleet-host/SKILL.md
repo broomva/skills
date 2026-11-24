@@ -17,7 +17,7 @@ description: >-
   "add host", "remove host", "gcp fleet", "fleet_host", "grow the fleet".
 latent_only: false
 metadata:
-  version: 0.2.0
+  version: 0.2.1
   provenance: BRO-3651 (design, live drill 2026-11-10); BRO-3666 (login-free hosts, agent-operated, 2026-11-11)
 ---
 
