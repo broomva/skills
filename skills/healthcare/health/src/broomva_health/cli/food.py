@@ -24,7 +24,7 @@ from typing import TYPE_CHECKING, Any
 
 import typer
 
-from broomva_health.adapters.food_db import FoodTable, NotAFoodTable
+from broomva_health.adapters.food_db import FoodTable, LeftoverSidecar, NotAFoodTable
 from broomva_health.adapters.repositories.meals import MealLog
 from broomva_health.cli.formatters import format_value
 from broomva_health.domain.nutrition import MEAL_KINDS, Meal, MealItem, Nutrients, parse_item_spec
@@ -106,6 +106,8 @@ def _table(ctx: typer.Context) -> Iterator[FoodTable]:
         if code in _WRITE_FAILURES:
             raise typer.BadParameter(_cannot_write(ctx, exc)) from exc
         raise typer.BadParameter(_unreadable(ctx, exc)) from exc
+    except LeftoverSidecar as exc:  # its own message, without the start-again advice
+        raise typer.BadParameter(str(exc)) from exc
     except NotAFoodTable as exc:
         raise typer.BadParameter(_not_a_food_table(ctx, exc)) from exc
     except sqlite3.DatabaseError as exc:

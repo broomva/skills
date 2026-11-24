@@ -1219,6 +1219,8 @@ def test_new_table_refuses_a_leftover_sidecar(
     assert result.exit_code == 2
     message = _plain(result.output)
     assert f"foods.db{sidecar}" in message
+    assert "not a food table" not in message  # foods.db does not exist: no claim about it
+    assert "move the file aside" not in message  # the log goes to its database, not aside
     assert not tmp_paths.foods_db.exists()  # no new database created next to it
     assert leftover.read_bytes() == b"pages of another database"
 
@@ -1238,7 +1240,15 @@ def test_wal_database_moved_with_its_log_keeps_its_rows(
     db.rename(moved / "foods.db")  # the user moves only the main file
     result = CliRunner().invoke(app, ["food", "import-usda", str(_fdc_release(tmp_path / "fdc"))])
     assert result.exit_code == 2  # refused: the -wal file is still here
+    assert not db.exists()
+    for sidecar in ("-wal", "-shm"):  # the advice: move the log to where the database went
+        side = db.with_name("foods.db" + sidecar)
+        if side.exists():
+            side.rename(moved / ("foods.db" + sidecar))
     writer.close()
+    reader = sqlite3.connect(moved / "foods.db")
+    assert reader.execute("SELECT x FROM notes").fetchall() == [("keep me",)]
+    reader.close()
 
 
 def test_a_trigger_rejection_is_not_called_unreadable(

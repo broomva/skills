@@ -23,11 +23,15 @@ from typing import Final
 
 from broomva_health.domain.nutrition import Food, Nutrients
 
-__all__ = ["USDA_DATA_TYPES", "FoodTable", "NotAFoodTable"]
+__all__ = ["USDA_DATA_TYPES", "FoodTable", "LeftoverSidecar", "NotAFoodTable"]
 
 
 #: Files SQLite keeps beside a database; they belong to it and must move with it.
 _SIDECARS: Final[tuple[str, ...]] = ("-wal", "-shm", "-journal")
+
+
+class LeftoverSidecar(Exception):
+    """A journal or write-ahead log sits beside a database file that is not there."""
 
 
 class NotAFoodTable(sqlite3.DatabaseError):
@@ -88,9 +92,11 @@ class FoodTable:
             leftovers = [s for s in _SIDECARS if path.with_name(path.name + s).exists()]
             if leftovers:
                 names = ", ".join(path.name + s for s in leftovers)
-                raise NotAFoodTable(
-                    f"{names} is left beside a missing {path.name}; move it to wherever "
-                    f"{path.name} went, so the two stay together"
+                raise LeftoverSidecar(
+                    f"{names} is in {path.parent} but {path.name} is not. It belongs to that "
+                    f"database: move it to wherever {path.name} went, so the two stay "
+                    "together, then run the command again. A new table is not created "
+                    "next to it."
                 )
         try:  # create it private before SQLite ever opens it; another process may win the race
             os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
