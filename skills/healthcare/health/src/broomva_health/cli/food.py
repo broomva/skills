@@ -61,9 +61,10 @@ def _table(ctx: typer.Context) -> Iterator[FoodTable]:
     except sqlite3.DatabaseError as exc:
         db = _paths(ctx).foods_db
         raise typer.BadParameter(
-            f"could not read the food table {db}: {exc}. Nothing was changed. Copy the file "
-            "aside before any repair: it holds every source you imported (USDA and your own "
-            "CSVs), and only re-running all of those imports rebuilds it."
+            f"could not read the food table {db}: {exc}. Nothing was changed. "
+            "Run `health food repair` to rebuild its search index from the stored foods. "
+            "If that fails too, copy the file aside before anything else: it holds every "
+            "source you imported (USDA and your own CSVs)."
         ) from exc
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
@@ -208,6 +209,14 @@ def log(
             log_store.discard_photo(entry.photo)  # no orphan photo without its meal
         raise
     _emit(ctx, entry)
+
+
+@app.command("repair")
+def repair(ctx: typer.Context) -> None:
+    """Rebuild the search index from the stored foods (no re-import, foods untouched)."""
+    with _table(ctx) as table:
+        n = table.rebuild_search()
+        _emit(ctx, {"reindexed": n, "table": table.count()})
 
 
 @app.command("show")

@@ -88,6 +88,11 @@ date        at     meal   items                                                 
                           +Oil, olive 10 g
 ```
 
+## If search breaks
+
+- If `health food find` reports that the food table could not be read, run `health food repair`. It rebuilds the search index from the stored foods and re-imports nothing.
+- If repair fails too, copy `foods.db` aside before doing anything else. It holds every source imported, USDA and the user's own CSVs.
+
 ## Out of scope
 
 - Medical nutrition therapy, allergies and diabetes dosing: a clinician.

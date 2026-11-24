@@ -29,6 +29,7 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
     - `partial` lists nutrients that some item does not report, so their total is a lower bound; `show` prints it per meal and per day.
     - `--photo` copies the image into `<data_dir>/meal-photos/` (0600).
   - `show [--days N] [--totals]` reads meals back.
+  - `repair` rebuilds the search index from the stored foods, without re-importing anything. An unreadable table points to it and changes nothing.
   - Nothing touches the network.
   - Private files are created 0600 and tightened if they already exist. A symlinked `foods.db`, `meals.jsonl` or `meal-photos/` is refused for reading and writing; the data directory itself may be a symlink. A photo is never written through a symlink, and a half-copied photo, or one whose meal cannot be saved, is removed.
   - Imports run in one `BEGIN IMMEDIATE` transaction. They are rolled back whole on any failure, including a failed commit. A release that has foods but no usable values (e.g. an FNDDS release whose `nutrient.csv` is malformed) refuses the entire import.

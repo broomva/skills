@@ -56,9 +56,11 @@ CREATE TABLE IF NOT EXISTS foods (
     description TEXT NOT NULL,
     kcal REAL, protein_g REAL, fat_g REAL, carbs_g REAL, fiber_g REAL, sugars_g REAL
 );
+"""
+_FTS_SCHEMA = """
 CREATE VIRTUAL TABLE IF NOT EXISTS foods_fts USING fts5(
     food_id UNINDEXED, description, tokenize = 'unicode61 remove_diacritics 2'
-);
+)
 """
 
 
@@ -79,7 +81,7 @@ class FoodTable:
         # Autocommit mode: writes take an explicit BEGIN IMMEDIATE (see _replace).
         self._conn = sqlite3.connect(path, isolation_level=None)
         try:
-            self._conn.executescript(_SCHEMA)
+            self._conn.executescript(_SCHEMA + _FTS_SCHEMA + ";")
         except BaseException:
             self._conn.close()  # a corrupt file must not leak the connection
             raise
@@ -200,6 +202,28 @@ class FoodTable:
         return len(rows)
 
     # --- read ---------------------------------------------------------------
+
+    def rebuild_search(self) -> int:
+        """Rebuild the search index from the ``foods`` table, which is the source of truth.
+
+        Repairs a damaged or out-of-step FTS index without re-importing anything; the
+        foods themselves are only read. Returns the number of foods indexed.
+        """
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
+            self._conn.execute("DROP TABLE IF EXISTS foods_fts")
+            self._conn.execute(_FTS_SCHEMA)
+            self._conn.execute(
+                "INSERT INTO foods_fts (food_id, description) SELECT food_id, description FROM foods"
+            )
+            n = int(self._conn.execute("SELECT count(*) FROM foods_fts").fetchone()[0])
+            self._conn.execute("COMMIT")
+        except BaseException:
+            if self._conn.in_transaction:
+                with contextlib.suppress(sqlite3.Error):
+                    self._conn.execute("ROLLBACK")
+            raise
+        return n
 
     def count(self) -> dict[str, int]:
         return dict(

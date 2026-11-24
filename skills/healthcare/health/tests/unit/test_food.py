@@ -970,8 +970,10 @@ def test_cli_rejects_tomorrow_corrupt_table_and_symlinked_log(
     tmp_paths.foods_db.write_bytes(b"not a database" * 100)
     corrupt = runner.invoke(app, ["food", "find", "rice"])
     assert corrupt.exit_code == 2
-    assert "Copy the file aside" in corrupt.output
-    assert "delete it" not in corrupt.output
+    message = " ".join(corrupt.output.replace("│", " ").split())  # Rich wraps by terminal width
+    assert "health food repair" in message
+    assert "copy the file aside" in message
+    assert "delete it" not in message
     assert tmp_paths.foods_db.read_bytes() == b"not a database" * 100  # left untouched
 
 
@@ -1030,3 +1032,36 @@ def test_reimport_is_not_quadratic(tmp_path: Path) -> None:
         elapsed = _time.perf_counter() - start
         assert [f.food_id for f in table.find("number 7999")] == ["co:f7999"]
     assert elapsed < 2.0  # the per-id delete took ~8 s for a set this size
+
+
+# --- P20 round 5: a damaged search index is repaired, not re-imported --------------------
+
+
+def test_repair_rebuilds_a_damaged_search_index(tmp_paths: HealthPaths, tmp_path: Path) -> None:
+    runner = CliRunner()
+    staples = tmp_path / "co.csv"
+    _write_csv(
+        staples, ["food_id", "description", "kcal"], [["rice", "Arroz blanco, cocido", "153"]]
+    )
+    runner.invoke(app, ["food", "import-csv", str(staples), "--source", "co"])
+    staples.unlink()  # the original CSV is gone: repair must not need it
+    conn = sqlite3.connect(tmp_paths.foods_db)
+    conn.execute("DELETE FROM foods_fts_data")
+    conn.commit()
+    conn.close()
+    assert runner.invoke(app, ["food", "find", "arroz"]).exit_code == 2
+
+    repaired = runner.invoke(app, ["-f", "json", "food", "repair"])
+    assert repaired.exit_code == 0, repaired.output
+    assert json.loads(repaired.output)["reindexed"] == 1
+    found = runner.invoke(app, ["-f", "json", "food", "find", "arroz"])
+    assert [f["food_id"] for f in json.loads(found.output)] == ["co:rice"]
+
+
+def test_repair_on_an_unreadable_file_exits_2_and_changes_nothing(
+    tmp_paths: HealthPaths,
+) -> None:
+    tmp_paths.foods_db.write_bytes(b"not a database" * 100)
+    result = CliRunner().invoke(app, ["food", "repair"])
+    assert result.exit_code == 2
+    assert tmp_paths.foods_db.read_bytes() == b"not a database" * 100
