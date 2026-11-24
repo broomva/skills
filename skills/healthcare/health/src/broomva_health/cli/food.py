@@ -48,6 +48,15 @@ def _emit(ctx: typer.Context, data: Any) -> None:
     typer.echo(format_value(data, ctx.obj["format"], fields=ctx.obj.get("fields")))
 
 
+def _unreadable(ctx: typer.Context, exc: Exception) -> str:
+    return (
+        f"could not read the food table {_paths(ctx).foods_db}: {exc}. Nothing was changed. "
+        "Run `health food repair` to rebuild its search index from the stored foods. "
+        "If that fails too, copy the file aside before anything else: it holds every "
+        "source you imported (USDA and your own CSVs)."
+    )
+
+
 @contextmanager
 def _table(ctx: typer.Context) -> Iterator[FoodTable]:
     """Open the food table; turn a locked or refused table into a clean exit 2."""
@@ -55,17 +64,16 @@ def _table(ctx: typer.Context) -> Iterator[FoodTable]:
         with FoodTable(_paths(ctx).foods_db) as table:
             yield table
     except sqlite3.OperationalError as exc:
-        raise typer.BadParameter(
-            f"food table unavailable: {exc} (another import running?)"
-        ) from exc
+        # Only a busy or locked database means "another import". Anything else (a missing
+        # index table, a damaged index) is damage, and gets the repair message below.
+        code = (getattr(exc, "sqlite_errorcode", 0) or 0) & 0xFF
+        if code in (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED):
+            raise typer.BadParameter(
+                f"food table unavailable: {exc} (another import running?)"
+            ) from exc
+        raise typer.BadParameter(_unreadable(ctx, exc)) from exc
     except sqlite3.DatabaseError as exc:
-        db = _paths(ctx).foods_db
-        raise typer.BadParameter(
-            f"could not read the food table {db}: {exc}. Nothing was changed. "
-            "Run `health food repair` to rebuild its search index from the stored foods. "
-            "If that fails too, copy the file aside before anything else: it holds every "
-            "source you imported (USDA and your own CSVs)."
-        ) from exc
+        raise typer.BadParameter(_unreadable(ctx, exc)) from exc
     except ValueError as exc:
         raise typer.BadParameter(str(exc)) from exc
 
@@ -215,8 +223,8 @@ def log(
 def repair(ctx: typer.Context) -> None:
     """Rebuild the search index from the stored foods (no re-import, foods untouched)."""
     with _table(ctx) as table:
-        n = table.rebuild_search()
-        _emit(ctx, {"reindexed": n, "table": table.count()})
+        n, per_source = table.rebuild_search()
+        _emit(ctx, {"reindexed": n, "table": per_source})
 
 
 @app.command("show")

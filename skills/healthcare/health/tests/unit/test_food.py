@@ -1009,8 +1009,8 @@ def test_corrupt_table_closes_its_connection(
         def __init__(self, conn: sqlite3.Connection) -> None:
             self._conn = conn
 
-        def executescript(self, sql: str) -> None:
-            self._conn.executescript(sql)
+        def __getattr__(self, name: str) -> object:
+            return getattr(self._conn, name)
 
         def close(self) -> None:
             closed.append(True)
@@ -1073,3 +1073,109 @@ def test_repair_on_an_unreadable_file_exits_2_and_changes_nothing(
     result = CliRunner().invoke(app, ["food", "repair"])
     assert result.exit_code == 2
     assert tmp_paths.foods_db.read_bytes() == b"not a database" * 100
+
+
+# --- P20 round 6, stratum C ---------------------------------------------------------------
+
+
+def test_index_damage_points_to_repair_not_to_a_lock(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    staples = tmp_path / "co.csv"
+    _write_csv(staples, ["food_id", "description", "kcal"], [["rice", "Arroz blanco", "153"]])
+    runner.invoke(app, ["food", "import-csv", str(staples), "--source", "co"])
+    conn = sqlite3.connect(tmp_paths.foods_db)
+    conn.execute("DROP TABLE foods_fts_content")
+    conn.commit()
+    conn.close()
+    damaged = runner.invoke(app, ["food", "find", "arroz"])
+    assert damaged.exit_code == 2
+    message = _plain(damaged.output)
+    assert "health food repair" in message
+    assert "another import" not in message
+    assert runner.invoke(app, ["food", "repair"]).exit_code == 0
+    found = runner.invoke(app, ["-f", "json", "food", "find", "arroz"])
+    assert [f["food_id"] for f in json.loads(found.output)] == ["co:rice"]
+
+
+def test_failed_repair_keeps_the_old_index_and_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import broomva_health.adapters.food_db as food_db_mod
+
+    staples = tmp_path / "co.csv"
+    _write_csv(staples, ["food_id", "description", "kcal"], [["rice", "Arroz blanco", "153"]])
+    with FoodTable(tmp_path / "foods.db") as table:
+        table.import_csv(staples, source="co")
+        with monkeypatch.context() as patch:  # fails after the DROP, inside the transaction
+            patch.setattr(food_db_mod, "_FTS_SCHEMA", "CREATE VIRTUAL TABLE foods_fts USING nope()")
+            with pytest.raises(sqlite3.OperationalError):
+                table.rebuild_search()
+        assert not table._conn.in_transaction
+        assert [f.food_id for f in table.find("arroz")] == ["co:rice"]  # old index rolled back
+
+
+# --- P20 round 6, stratum A: the cache is never written on open; repair never erases --------
+
+
+def _seed_rice(runner: CliRunner, tmp_path: Path) -> None:
+    staples = tmp_path / "co.csv"
+    _write_csv(staples, ["food_id", "description", "kcal"], [["rice", "Arroz blanco", "153"]])
+    runner.invoke(app, ["food", "import-csv", str(staples), "--source", "co"])
+    staples.unlink()
+
+
+def _sql(db: Path, statement: str) -> None:
+    conn = sqlite3.connect(db)
+    conn.execute(statement)
+    conn.commit()
+    conn.close()
+
+
+def test_opening_a_damaged_table_writes_nothing(tmp_paths: HealthPaths, tmp_path: Path) -> None:
+    runner = CliRunner()
+    _seed_rice(runner, tmp_path)
+    _sql(tmp_paths.foods_db, "DROP TABLE foods_fts")
+    before = tmp_paths.foods_db.read_bytes()
+    result = runner.invoke(app, ["food", "find", "arroz"])
+    assert result.exit_code == 2
+    assert "Nothing was changed" in _plain(result.output)
+    assert tmp_paths.foods_db.read_bytes() == before  # FTS not silently recreated on open
+    assert runner.invoke(app, ["food", "repair"]).exit_code == 0
+    found = runner.invoke(app, ["-f", "json", "food", "find", "arroz"])
+    assert [f["food_id"] for f in json.loads(found.output)] == ["co:rice"]
+
+
+def test_repair_never_replaces_a_missing_foods_table(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    _seed_rice(runner, tmp_path)
+    _sql(tmp_paths.foods_db, "DROP TABLE foods")
+    before = tmp_paths.foods_db.read_bytes()
+    assert runner.invoke(app, ["food", "repair"]).exit_code == 2
+    assert tmp_paths.foods_db.read_bytes() == before
+    conn = sqlite3.connect(tmp_paths.foods_db)
+    assert conn.execute("SELECT food_id FROM foods_fts").fetchall() == [("co:rice",)]
+    conn.close()
+
+
+def test_repair_refuses_to_index_an_emptied_foods_table(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    _seed_rice(runner, tmp_path)
+    _sql(tmp_paths.foods_db, "DELETE FROM foods")
+    refused = runner.invoke(app, ["food", "repair"])
+    assert refused.exit_code == 2
+    assert "not rebuilding over them" in _plain(refused.output)
+    conn = sqlite3.connect(tmp_paths.foods_db)
+    assert conn.execute("SELECT food_id FROM foods_fts").fetchall() == [("co:rice",)]
+    conn.close()
+
+
+def test_repair_on_a_new_empty_table_is_a_no_op(tmp_paths: HealthPaths) -> None:
+    result = CliRunner().invoke(app, ["-f", "json", "food", "repair"])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output) == {"reindexed": 0, "table": {}}
