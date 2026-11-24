@@ -10,7 +10,7 @@ import typer
 from broomva_health.application.status import HealthStatusUseCase
 from broomva_health.cli.formatters import format_value
 from broomva_health.domain.errors import AuthRequired, HealthError
-from broomva_health.domain.source import Source
+from broomva_health.domain.source import IMPORT_ONLY_SOURCES, Source, single_stream
 
 if TYPE_CHECKING:
     from broomva_health.cli.container import Container
@@ -31,6 +31,14 @@ def _container_from_ctx(ctx: typer.Context) -> Container:
     return container  # type: ignore[no-any-return]
 
 
+def _needs_no_auth(source: Source) -> bool:
+    """Every auth command answers the same way for an import-only source: nothing to do."""
+    if source in IMPORT_ONLY_SOURCES:
+        typer.echo(f"{source.value} needs no login: it is imported from a local export file.")
+        return True
+    return False
+
+
 @app.command("login")
 def login(
     ctx: typer.Context,
@@ -46,6 +54,8 @@ def login(
     or terminal scrollback. MFA, if requested by the source, prompts on stdin.
     """
 
+    if _needs_no_auth(source):
+        return
     container = _container_from_ctx(ctx)
     src = container.sources.get(source)
     if src is None:
@@ -108,6 +118,8 @@ def import_token(
     no fresh login — your credentials never pass through this skill.
     """
 
+    if _needs_no_auth(source):
+        return
     container = _container_from_ctx(ctx)
     src = container.sources.get(source)
     importer = getattr(src, "import_tokens", None)
@@ -135,6 +147,8 @@ def logout(
 ) -> None:
     """Remove the cached token bundle for ``(source, profile)``."""
 
+    if _needs_no_auth(source):
+        return
     container = _container_from_ctx(ctx)
     container.token_store.delete(source, profile)
     typer.secho(
@@ -156,7 +170,9 @@ def status(
 
     container = _container_from_ctx(ctx)
     use_case = HealthStatusUseCase(
-        sources=list(container.sources.values()), token_store=container.token_store
+        # Import-only sources hold no token, so they are not part of auth status.
+        sources=[container.sources[s] for s in single_stream(container.sources)],
+        token_store=container.token_store,
     )
     statuses = use_case.execute(profile=profile)
     fmt = ctx.obj["format"]

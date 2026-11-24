@@ -10,7 +10,7 @@ import typer
 from broomva_health.application.sync import SyncSourceUseCase
 from broomva_health.cli.formatters import format_value
 from broomva_health.domain.errors import HealthError
-from broomva_health.domain.source import Source
+from broomva_health.domain.source import IMPORT_ONLY_SOURCES, Source, single_stream
 
 if TYPE_CHECKING:
     from broomva_health.cli.container import Container
@@ -74,9 +74,15 @@ def sync_root(
                 f"Source '{source.value}' is not registered.", fg=typer.colors.RED, err=True
             )
             raise typer.Exit(code=1)
+        if source in IMPORT_ONLY_SOURCES:
+            typer.echo(
+                f"{source.value} is import-only: run `health backfill --source {source.value}` "
+                "after each new export."
+            )
+            return
         targets = [source]
     else:
-        targets = list(container.sources.keys())
+        targets = single_stream(container.sources.keys())
 
     since_dt = _parse_since(since)
     results = []

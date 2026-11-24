@@ -51,6 +51,19 @@ class _SampleBase(BaseModel):
     start_ts: datetime = Field(..., description="UTC start of the sample interval")
     end_ts: datetime = Field(..., description="UTC end of the sample interval")
     metadata: dict[str, Any] = Field(default_factory=dict, description="Source-specific extras")
+    producer: str = Field(
+        default="",
+        description="Which producer inside the source wrote it (e.g. the app behind an Apple Health record).",
+    )
+    record_key: str = Field(
+        default="",
+        description=(
+            "Identity beyond (source, metric, start_ts). Empty for sources that update a sample in "
+            "place (Garmin re-reports a day). Sources whose distinct records can share a start time "
+            "(Apple Health: two apps, or an in-bed record and a sleep stage) set their full natural "
+            "identity here, so none overwrites another."
+        ),
+    )
     ingested_at: datetime = Field(default_factory=utc_now, description="When the trace was written")
 
     _normalize_start = field_validator("start_ts", mode="after")(_coerce_utc)
