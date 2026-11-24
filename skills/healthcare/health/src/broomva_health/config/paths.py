@@ -23,6 +23,8 @@ class HealthPaths:
       data_dir         ~/broomva-health/                 (dedicated; NOT inside any repo)
       traces_dir       ~/broomva-health/traces/
       synthesis_db     ~/broomva-health/synthesis.db
+      foods_db         ~/broomva-health/foods.db         (local food-composition table)
+      meals log        ~/broomva-health/meals.jsonl      (health food log; 0600)
       exports_dir      ~/broomva-health/exports/         (GDPR 'Export Your Data' tarballs)
       tokens_dir       ~/.config/broomva-health/tokens/
       vault_dir        ~/broomva-vault/
@@ -71,6 +73,11 @@ class HealthPaths:
     @property
     def synthesis_db(self) -> Path:
         return self.data_dir / "synthesis.db"
+
+    @property
+    def foods_db(self) -> Path:
+        """Local food-composition table (``health food import-usda`` / ``import-csv``)."""
+        return self.data_dir / "foods.db"
 
     @property
     def tokens_dir(self) -> Path:

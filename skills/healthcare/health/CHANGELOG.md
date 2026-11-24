@@ -10,6 +10,36 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 
 ## [Unreleased]
 
+## [0.13.0] — 2026-11-24
+
+### Added
+
+- **`health food`: a private meal log over a local food-composition table (BRO-4126).**
+  - `import-usda DIR` builds `<data_dir>/foods.db` (SQLite + FTS5, 0600) from USDA FoodData Central CSV releases (Foundation, SR Legacy, FNDDS).
+    - Energy falls back to the Atwater ids (2048, then 2047) that Foundation foods use.
+    - FNDDS releases key nutrients by legacy number (208 for energy); these are mapped through the release's own `nutrient.csv`.
+    - Non-finite amounts are dropped.
+    - Sample lots and branded foods are skipped.
+    - A folder with no importable foods, or a CSV lacking the expected columns, is refused and leaves the table unchanged.
+  - `import-csv FILE --source XX` adds a regional per-100 g table; re-importing a source replaces it.
+  - `find` does ranked (bm25), accent-folding prefix search, ignoring connecting words such as "and" or "con".
+  - `log --item [+]source:id=grams` records a meal in `<data_dir>/meals.jsonl` (0600).
+    - A `+` marks a hidden item: oil, sugar or sauce the photo can't show.
+    - Each meal is stored with totals and a ±30% band.
+    - `partial` lists nutrients that some item does not report, so their total is a lower bound; `show` prints it per meal and per day.
+    - `--photo` copies the image into `<data_dir>/meal-photos/` (0600).
+  - `show [--days N] [--totals]` reads meals back.
+  - Nothing touches the network.
+  - Private files are created 0600 and tightened if they already exist. A symlinked `foods.db`, `meals.jsonl` or `meal-photos/` is refused for reading and writing; the data directory itself may be a symlink. A photo is never written through a symlink, and a half-copied photo, or one whose meal cannot be saved, is removed.
+  - Imports run in one `BEGIN IMMEDIATE` transaction. They are rolled back whole on any failure, including a failed commit. A release that has foods but no usable values (e.g. an FNDDS release whose `nutrient.csv` is malformed) refuses the entire import.
+  - `partial` is derived from the stored items, so older log lines read back correctly. A torn last line in the log does not swallow the next meal.
+  - Opening an existing `foods.db` never writes to it, and a new file gets its whole schema in one transaction (no half-created tables). Each failure gets its own message: a busy or locked table, a disk or permission problem, a file that is not a food table, or an unreadable table. Messages give SQLite's error and the next step, and make no claim about what the file holds or whether anything was written. A new table is never created beside a leftover `foods.db-wal`, `-shm` or `-journal` file, which would mix another database's pages into it; the start-again advice names those files so they move together.
+  - Locked tables exit 2. `--date` is ASCII `YYYY-MM-DD` and at most tomorrow; `--at` and grams take ASCII digits only.
+- `pyproject.toml`: `asyncio_default_fixture_loop_scope = "function"`, so plain `pytest` collects. Without it, pytest-asyncio's warning fails collection under `filterwarnings = error`. The dev floor rises to `pytest-asyncio>=0.24`, which added the setting.
+- `Workflows/MealLog.md`: the agent protocol.
+  - Break a photo into items with grams, add the recipe prior for hidden ingredients (Open-KNEAD, arXiv 2607.12911), log it, and reply in one line.
+  - Includes the measured error of photo estimates and why to read trends, not single meals.
+
 ## [0.12.0] — 2026-08-12
 
 ### Added
