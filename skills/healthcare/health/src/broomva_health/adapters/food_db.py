@@ -175,11 +175,12 @@ class FoodTable:
         # of one source cannot interleave and leave search rows for deleted foods.
         self._conn.execute("BEGIN IMMEDIATE")
         try:
-            ids = [
-                r[0]
-                for r in self._conn.execute("SELECT food_id FROM foods WHERE source = ?", (source,))
-            ]
-            self._conn.executemany("DELETE FROM foods_fts WHERE food_id = ?", ((i,) for i in ids))
+            # One set delete: food_id is UNINDEXED in FTS, so a per-id delete scans the
+            # whole index each time (quadratic; 8 s instead of 0.02 s for a USDA re-import).
+            self._conn.execute(
+                "DELETE FROM foods_fts WHERE food_id IN (SELECT food_id FROM foods WHERE source = ?)",
+                (source,),
+            )
             self._conn.execute("DELETE FROM foods WHERE source = ?", (source,))
             self._conn.executemany(
                 f"INSERT OR REPLACE INTO foods (food_id, source, description, {', '.join(_FIELDS)}) "  # noqa: S608 — fixed column names

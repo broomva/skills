@@ -973,3 +973,60 @@ def test_cli_rejects_tomorrow_corrupt_table_and_symlinked_log(
     assert "Copy the file aside" in corrupt.output
     assert "delete it" not in corrupt.output
     assert tmp_paths.foods_db.read_bytes() == b"not a database" * 100  # left untouched
+
+
+# --- P20 round 4, stratum C ---------------------------------------------------------------
+
+
+def test_cli_accepts_today_as_a_date(tmp_paths: HealthPaths, tmp_path: Path) -> None:
+    runner = CliRunner()
+    runner.invoke(app, ["food", "import-usda", str(_fdc_release(tmp_path / "fdc"))])
+    today = date.today().isoformat()
+    assert (
+        runner.invoke(app, ["food", "log", "--item", "usda:10=10", "--date", today]).exit_code == 0
+    )
+
+
+def test_corrupt_table_closes_its_connection(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import broomva_health.adapters.food_db as food_db_mod
+
+    closed: list[bool] = []
+    real_connect = sqlite3.connect
+
+    class Recorder:
+        def __init__(self, conn: sqlite3.Connection) -> None:
+            self._conn = conn
+
+        def executescript(self, sql: str) -> None:
+            self._conn.executescript(sql)
+
+        def close(self) -> None:
+            closed.append(True)
+            self._conn.close()
+
+    def connect(*args: object, **kwargs: object) -> Recorder:
+        return Recorder(real_connect(*args, **kwargs))  # type: ignore[arg-type]
+
+    monkeypatch.setattr(food_db_mod.sqlite3, "connect", connect)
+    path = tmp_path / "foods.db"
+    path.write_bytes(b"not a database" * 100)
+    with pytest.raises(sqlite3.DatabaseError):
+        FoodTable(path)
+    assert closed == [True]
+
+
+def test_reimport_is_not_quadratic(tmp_path: Path) -> None:
+    import time as _time
+
+    rows = [[f"f{i}", f"Food number {i}", "1"] for i in range(8000)]
+    path = tmp_path / "big.csv"
+    _write_csv(path, ["food_id", "description", "kcal"], rows)
+    with FoodTable(tmp_path / "foods.db") as table:
+        table.import_csv(path, source="co")
+        start = _time.perf_counter()
+        table.import_csv(path, source="co")
+        elapsed = _time.perf_counter() - start
+        assert [f.food_id for f in table.find("number 7999")] == ["co:f7999"]
+    assert elapsed < 2.0  # the per-id delete took ~8 s for a set this size
