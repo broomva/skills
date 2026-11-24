@@ -116,6 +116,8 @@ ignore_missing_imports = true
 minversion = "8.0"
 testpaths = ["tests"]
 addopts = "-ra --strict-markers --strict-config"
+# pytest-asyncio warns (and filterwarnings=error fails collection) when this is unset.
+asyncio_default_fixture_loop_scope = "function"
 markers = [
   "e2e: end-to-end test requiring real Garmin credentials (gated on BROOMVA_HEALTH_E2E=1)",
   "slow: takes > 1s",

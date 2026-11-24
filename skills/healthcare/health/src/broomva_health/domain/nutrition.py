@@ -4,17 +4,18 @@ Values are per 100 g of edible food, as food-composition tables publish them.
 A meal is a list of items, each a food from the local table and a mass in grams.
 Totals are the sum of every item scaled to its mass.
 
-Every meal estimate carries an uncertainty band. Photo-based estimates of a
-single meal are off by roughly a third (multimodal models: about 36% mean
-absolute percentage error on energy; photo apps: about 33% under on energy and
-about 30 g under on fat against weighed meals), and most of the error is portion
-size and ingredients a photo cannot show, such as cooking oil and sugar. Items
-the eater did not see but the dish usually contains are marked ``hidden``, so a
-reader can tell them from what was on the plate.
+Every meal estimate carries a symmetric ±30% band. Photo-based estimates of a
+single meal are off by about a third: ChatGPT-4o and Claude 3.5 Sonnet had about
+36% mean absolute percentage error on energy (Gemini 1.5 Pro 64-110%), and every
+model underestimated more as portions grew (Curr Dev Nutr 2025, PMID 41081011).
+Most of the error is portion size and ingredients a photo cannot show, such as
+cooking oil and sugar. Items the eater did not see but the dish usually contains
+are marked ``hidden``, so a reader can tell them from what was on the plate.
 """
 
 from __future__ import annotations
 
+import math
 import re
 from datetime import date, time
 from typing import Final
@@ -62,9 +63,9 @@ class Nutrients(BaseModel):
 
     @field_validator("*")
     @classmethod
-    def _non_negative(cls, value: float | None) -> float | None:
-        if value is not None and value < 0:
-            raise ValueError("nutrient amounts cannot be negative")
+    def _finite_non_negative(cls, value: float | None) -> float | None:
+        if value is not None and (not math.isfinite(value) or value < 0):
+            raise ValueError("nutrient amounts must be finite and not negative")
         return value
 
     def scaled(self, grams: float) -> Nutrients:
@@ -148,6 +149,9 @@ class Meal(BaseModel):
     low: Nutrients
     high: Nutrients
     uncertainty: float = UNCERTAINTY
+    #: Nutrients whose total leaves out at least one item that does not report them:
+    #: the total is a lower bound, not the meal's amount.
+    partial: list[str] = Field(default_factory=list)
     note: str | None = None
     photo: str | None = None
 
@@ -176,7 +180,13 @@ class Meal(BaseModel):
         for item in items:
             totals = totals + item.nutrients
         low, high = totals.band(uncertainty)
+        partial = [
+            field
+            for field, total in totals.model_dump().items()
+            if total is not None and any(getattr(i.nutrients, field) is None for i in items)
+        ]
         return cls(
+            partial=partial,
             day=day,
             at=at,
             kind=kind,
@@ -207,6 +217,8 @@ def parse_item_spec(spec: str) -> tuple[str, float, bool]:
         )
     if not _FOOD_ID.match(food_id):
         raise ValueError(f"food id must look like 'source:id', got {food_id!r}")
+    if not re.fullmatch(r"\d+(\.\d+)?", grams_raw.strip()):
+        raise ValueError(f"grams must be a plain number like 120 or 7.5, got {grams_raw!r}")
     try:
         grams = float(grams_raw)
     except ValueError as exc:

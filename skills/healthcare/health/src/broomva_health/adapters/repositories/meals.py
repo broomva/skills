@@ -7,7 +7,9 @@ the original is left where it was.
 
 from __future__ import annotations
 
+import errno
 import json
+import logging
 import os
 import shutil
 from datetime import date, timedelta
@@ -16,6 +18,8 @@ from pathlib import Path
 from broomva_health.domain.nutrition import Meal
 
 __all__ = ["MealLog"]
+
+_log = logging.getLogger(__name__)
 
 _PHOTO_SUFFIXES = frozenset({".jpg", ".jpeg", ".png", ".heic", ".webp"})
 
@@ -27,6 +31,8 @@ class MealLog:
         self.photos_dir = data_dir / "meal-photos"
 
     def _ensure_dir(self, directory: Path) -> None:
+        if directory != self.data_dir and directory.is_symlink():
+            raise ValueError(f"{directory} is a symlink; refusing to write health data through it")
         directory.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(directory, 0o700)
 
@@ -41,28 +47,51 @@ class MealLog:
             )
         self._ensure_dir(self.photos_dir)
         stem = meal.day.isoformat() + (f"-{meal.at.strftime('%H%M')}" if meal.at else "")
-        dst, n = self.photos_dir / f"{stem}{suffix}", 1
-        while dst.exists():
-            dst, n = self.photos_dir / f"{stem}-{n}{suffix}", n + 1
-        shutil.copyfile(src, dst)
-        os.chmod(dst, 0o600)
-        return str(dst.relative_to(self.data_dir))
+        flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW
+        for n in range(1000):
+            dst = self.photos_dir / (f"{stem}{suffix}" if n == 0 else f"{stem}-{n}{suffix}")
+            try:
+                fd = os.open(dst, flags, 0o600)  # never follows or overwrites an existing entry
+            except FileExistsError:
+                continue
+            with os.fdopen(fd, "wb") as out, src.open("rb") as inp:
+                shutil.copyfileobj(inp, out)
+            return str(dst.relative_to(self.data_dir))
+        raise FileExistsError(f"too many photos named {stem} in {self.photos_dir}")
+
+    def discard_photo(self, kept: str) -> None:
+        """Remove a photo copied by ``keep_photo`` (used when the meal could not be saved)."""
+        target = self.data_dir / kept
+        if target.parent == self.photos_dir and not target.is_symlink():
+            target.unlink(missing_ok=True)
 
     def append(self, meal: Meal) -> None:
         self._ensure_dir(self.data_dir)
-        fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, 0o600)
+        try:
+            fd = os.open(self.path, os.O_WRONLY | os.O_CREAT | os.O_APPEND | os.O_NOFOLLOW, 0o600)
+        except OSError as exc:
+            if exc.errno == errno.ELOOP:
+                raise ValueError(f"{self.path} is a symlink; refusing to write through it") from exc
+            raise
+        os.fchmod(fd, 0o600)  # tighten a looser file before any data reaches it
         with os.fdopen(fd, "a", encoding="utf-8") as fh:
-            fh.write(json.dumps(meal.model_dump(mode="json"), ensure_ascii=False) + "\n")
-        os.chmod(self.path, 0o600)
+            # ASCII escapes keep U+2028 and friends out of the raw file, so one meal is one line.
+            fh.write(json.dumps(meal.model_dump(mode="json"), ensure_ascii=True) + "\n")
 
     def read(self, *, since: date | None = None, until: date | None = None) -> list[Meal]:
         if not self.path.exists():
             return []
         meals = []
-        for line in self.path.read_text(encoding="utf-8").splitlines():
+        with self.path.open(encoding="utf-8", newline="\n") as fh:
+            lines = list(fh)  # split on "\n" only, unlike str.splitlines()
+        for number, line in enumerate(lines, 1):
             if not line.strip():
                 continue
-            meal = Meal.model_validate_json(line)
+            try:
+                meal = Meal.model_validate_json(line)
+            except ValueError:
+                _log.warning("%s:%d is not a readable meal; skipped", self.path, number)
+                continue
             if (since is None or meal.day >= since) and (until is None or meal.day <= until):
                 meals.append(meal)
         return sorted(meals, key=lambda m: (m.day, m.at.isoformat() if m.at else ""))

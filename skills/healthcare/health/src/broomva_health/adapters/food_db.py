@@ -12,6 +12,7 @@ All values are per 100 g. Re-importing a source replaces that source's rows.
 from __future__ import annotations
 
 import csv
+import math
 import os
 import re
 import sqlite3
@@ -42,6 +43,10 @@ _NUTRIENT_IDS: Final[dict[str, tuple[str, ...]]] = {
 _WANTED: Final[frozenset[str]] = frozenset(i for ids in _NUTRIENT_IDS.values() for i in ids)
 _FIELDS: Final[tuple[str, ...]] = tuple(_NUTRIENT_IDS)
 _SOURCE: Final = re.compile(r"^[a-z0-9_-]+$")
+# Connecting words that food descriptions rarely contain ("rice and beans", "arroz con pollo").
+_STOPWORDS: Final[frozenset[str]] = frozenset(
+    {"a", "an", "and", "of", "or", "the", "with", "con", "de", "del", "el", "en", "la", "y"}
+)
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS foods (
@@ -62,10 +67,14 @@ class FoodTable:
     def __init__(self, path: Path) -> None:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        new = not path.exists()
-        self._conn = sqlite3.connect(path)
-        if new:
-            os.chmod(path, 0o600)
+        os.chmod(path.parent, 0o700)
+        if path.is_symlink():
+            raise ValueError(f"{path} is a symlink; refusing to write health data through it")
+        if not path.exists():
+            os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
+        os.chmod(path, 0o600)  # also tightens a table created by an older version
+        # Autocommit mode: writes take an explicit BEGIN IMMEDIATE (see _replace).
+        self._conn = sqlite3.connect(path, isolation_level=None)
         self._conn.executescript(_SCHEMA)
 
     def close(self) -> None:
@@ -91,11 +100,15 @@ class FoodTable:
         foods: dict[str, tuple[str, dict[str, float]]] = {}
         for release in releases:
             names = _usda_foods(release / "food.csv")
-            values = _usda_values(release / "food_nutrient.csv", names.keys())
+            legacy = _legacy_numbers(release / "nutrient.csv")
+            values = _usda_values(release / "food_nutrient.csv", names.keys(), legacy)
             for fdc_id, description in names.items():
                 picked = _pick(values.get(fdc_id, {}))
                 if picked:
                     foods[fdc_id] = (description, picked)
+        if not foods:
+            # Never replace the table with nothing: a wrong folder must not wipe it.
+            raise ValueError(f"no importable foods under {root}: nothing was changed")
         rows = [(f"usda:{fid}", desc, nut) for fid, (desc, nut) in foods.items()]
         return self._replace("usda", rows)
 
@@ -106,6 +119,7 @@ class FoodTable:
                 f"source must be lowercase letters, digits, '-' or '_' and not 'usda', got {source!r}"
             )
         rows: list[tuple[str, str, dict[str, float]]] = []
+        seen: set[str] = set()
         with path.open(newline="", encoding="utf-8-sig") as fh:
             reader = csv.DictReader(fh)
             missing = {"food_id", "description"} - set(reader.fieldnames or ())
@@ -135,11 +149,19 @@ class FoodTable:
                     description=description,
                     per_100g=Nutrients(**nutrients),
                 )
+                if food_id in seen:
+                    raise ValueError(f"{path}:{line}: duplicate food_id {food_id!r}")
+                seen.add(food_id)
                 rows.append((food_id, description, nutrients))
+        if not rows:
+            raise ValueError(f"{path} has no rows: nothing was changed")
         return self._replace(source, rows)
 
     def _replace(self, source: str, rows: list[tuple[str, str, dict[str, float]]]) -> int:
-        with self._conn:
+        # BEGIN IMMEDIATE takes the write lock before reading the old ids, so two imports
+        # of one source cannot interleave and leave search rows for deleted foods.
+        self._conn.execute("BEGIN IMMEDIATE")
+        try:
             ids = [
                 r[0]
                 for r in self._conn.execute("SELECT food_id FROM foods WHERE source = ?", (source,))
@@ -155,6 +177,10 @@ class FoodTable:
                 "INSERT INTO foods_fts (food_id, description) VALUES (?, ?)",
                 ((fid, desc) for fid, desc, _ in rows),
             )
+        except BaseException:
+            self._conn.execute("ROLLBACK")
+            raise
+        self._conn.execute("COMMIT")
         return len(rows)
 
     # --- read ---------------------------------------------------------------
@@ -174,6 +200,7 @@ class FoodTable:
     def find(self, query: str, *, limit: int = 10, source: str | None = None) -> list[Food]:
         """Foods whose description matches every word of ``query`` (prefix match), best first."""
         words = re.findall(r"\w+", query.lower())
+        words = [w for w in words if w not in _STOPWORDS] or words
         if not words:
             return []
         match = " ".join(f'"{w}"*' for w in words)
@@ -201,29 +228,67 @@ def _food(row: tuple[object, ...]) -> Food:
     )
 
 
+def _require(reader: csv.DictReader[str], required: set[str], path: Path) -> None:
+    missing = required - set(reader.fieldnames or ())
+    if missing:
+        raise ValueError(
+            f"{path} is not a FoodData Central file: lacks {', '.join(sorted(missing))}"
+        )
+
+
 def _usda_foods(food_csv: Path) -> dict[str, str]:
     with food_csv.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        _require(reader, {"fdc_id", "data_type", "description"}, food_csv)
         return {
             row["fdc_id"]: row["description"].strip()
-            for row in csv.DictReader(fh)
+            for row in reader
             if row.get("data_type") in USDA_DATA_TYPES and row.get("description")
         }
 
 
-def _usda_values(nutrient_csv: Path, fdc_ids: Iterable[str]) -> dict[str, dict[str, float]]:
+def _legacy_numbers(nutrient_csv: Path) -> dict[str, str]:
+    """Map legacy nutrient numbers (``208``) to FoodData Central ids (``1008``).
+
+    FNDDS releases key ``food_nutrient.csv`` by the legacy number; the release's own
+    ``nutrient.csv`` carries both, so the mapping comes from the release, not from us.
+    """
+    if not nutrient_csv.exists():
+        return {}
+    with nutrient_csv.open(newline="", encoding="utf-8") as fh:
+        reader = csv.DictReader(fh)
+        if not {"id", "nutrient_nbr"} <= set(reader.fieldnames or ()):
+            return {}
+        out: dict[str, str] = {}
+        for row in reader:
+            nbr = (row.get("nutrient_nbr") or "").strip()
+            if nbr.endswith(".0"):
+                nbr = nbr[:-2]
+            if nbr and row.get("id") in _WANTED:
+                out[nbr] = row["id"]
+        return out
+
+
+def _usda_values(
+    nutrient_csv: Path, fdc_ids: Iterable[str], legacy: dict[str, str] | None = None
+) -> dict[str, dict[str, float]]:
     wanted_foods = set(fdc_ids)
+    legacy = legacy or {}
     out: dict[str, dict[str, float]] = {}
     with nutrient_csv.open(newline="", encoding="utf-8") as fh:
-        for row in csv.DictReader(fh):
-            if (
-                row["nutrient_id"] in _WANTED
-                and row["fdc_id"] in wanted_foods
-                and row.get("amount")
-            ):
+        reader = csv.DictReader(fh)
+        _require(reader, {"fdc_id", "nutrient_id", "amount"}, nutrient_csv)
+        for row in reader:
+            nid = row["nutrient_id"]
+            if nid not in _WANTED:
+                nid = legacy.get(nid, nid)
+            if nid in _WANTED and row["fdc_id"] in wanted_foods and row.get("amount"):
                 try:
-                    out.setdefault(row["fdc_id"], {})[row["nutrient_id"]] = float(row["amount"])
+                    amount = float(row["amount"])
                 except ValueError:
                     continue
+                if math.isfinite(amount):
+                    out.setdefault(row["fdc_id"], {})[nid] = amount
     return out
 
 

@@ -10,18 +10,19 @@ table is built from files the user downloaded, and photos are copied into
 
 ## How accurate this is (say it when it matters)
 
-- **A single meal is about ±30–40%.**
-  - Multimodal models: roughly 36% error on energy (GPT-4o, Claude 3.5 Sonnet, Gemini 1.5 Pro; "Performance Evaluation of 3 Large Language Models for Nutritional Content Estimation from Food Images", *Curr Dev Nutr* 2025, PubMed 41081011).
-  - Photo apps: about 33% under on energy and about 30 g under on fat, against weighed meals (NIH, 2026 conference report).
+- **A single meal is off by about a third.**
+  - Multimodal models: ChatGPT-4o and Claude 3.5 Sonnet had about 36% mean absolute percentage error on energy; Gemini 1.5 Pro had 64–110%. Every model underestimated more as portions grew (Fridolfsson et al., *Curr Dev Nutr* 2025, PMID 41081011).
+  - Photo apps: about 33% under on energy and about 30 g under on fat, against weighed meals (NIH metabolic-kitchen test, 2026 conference report, not yet peer-reviewed; reported at https://www.healio.com/news/primary-care/20260804/ai-photobased-calorietracking-tools-underestimate-them-by-33).
 - **Most of the error is portion size and what the photo can't show:** cooking oil, butter, sugar, sauces.
 - **Trends are more reliable than any single meal.** Weekly averages, meal-to-meal comparisons, timing and protein per meal are worth reading. A single calorie number is not.
-- Every logged meal carries a ±30% band (`low` / `high`). Report the range, not just the point.
+- If a food in the table lacks a value (some regional entries report no fibre or sugar), that nutrient's total is marked `partial`: it is a lower bound. Say so rather than reading it as the amount.
+- Every logged meal carries a symmetric ±30% band (`low` / `high`). Report the range, not just the point. Photo estimates run low more often than high, especially for large portions, so the upper half of the band is the likelier one.
 
 ## One-time setup
 
 1. Download the FoodData Central CSVs from https://fdc.nal.usda.gov/download-datasets:
    Foundation Foods and SR Legacy (about 10 MB zipped), optionally FNDDS. Unzip into one folder.
-2. `health food import-usda <folder>`: about 8,000 foods in a second or two.
+2. `health food import-usda <folder>`. The Oct 2026 Foundation + SR Legacy releases give about 8,300 foods. A folder with no importable foods is refused and leaves the table unchanged.
 3. Optional: a regional table for staples USDA lacks or gets wrong.
    - Use a CSV with `food_id, description, kcal, protein_g, fat_g, carbs_g, fiber_g, sugars_g`, all per 100 g, taken from a published national table.
    - Import it with `health food import-csv staples.csv --source <xx>`.
@@ -90,4 +91,4 @@ date        at     meal   items                                                 
 ## Out of scope
 
 - Medical nutrition therapy, allergies and diabetes dosing: a clinician.
-- Micronutrients: the table has them, but this log tracks energy, macronutrients, fibre and sugars only.
+- Micronutrients: the food table stores only energy, protein, fat, carbohydrate, fibre and sugars.

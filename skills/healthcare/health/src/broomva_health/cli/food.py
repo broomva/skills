@@ -4,7 +4,7 @@
     health food import-csv staples.csv --source co # a hand-made regional table
     health food find "rice white cooked"
     health food log --meal lunch --at 13:10 \\
-        --item usda:168878=180 --item usda:171477=120 --item +usda:171413=10
+        --item usda:168880=180 --item usda:171477=120 --item +usda:171413=10
     health food show --days 3
 
 Everything is local: the food table is built from files you downloaded, and
@@ -13,6 +13,7 @@ meals go to a 0600 file in the data directory. See ``Workflows/MealLog.md``.
 
 from __future__ import annotations
 
+import re
 from collections import defaultdict
 from datetime import date, datetime, time
 from pathlib import Path
@@ -57,7 +58,10 @@ def import_usda(
 ) -> None:
     """Build the food table from USDA FoodData Central CSVs (Foundation, SR Legacy, FNDDS)."""
     with _table(ctx) as table:
-        n = table.import_usda(root.expanduser())
+        try:
+            n = table.import_usda(root.expanduser())
+        except (FileNotFoundError, ValueError) as exc:
+            raise typer.BadParameter(str(exc), param_hint="ROOT") from exc
         _emit(ctx, {"imported": n, "source": "usda", "table": table.count()})
 
 
@@ -113,6 +117,8 @@ def _per100(n: Nutrients) -> dict[str, float | None]:
 def _parse_time(raw: str | None) -> time | None:
     if raw is None:
         return None
+    if not re.fullmatch(r"\d{2}:\d{2}", raw):
+        raise typer.BadParameter(f"--at must be HH:MM, got {raw!r}")
     try:
         return datetime.strptime(raw, "%H:%M").time()
     except ValueError as exc:
@@ -122,6 +128,8 @@ def _parse_time(raw: str | None) -> time | None:
 def _parse_day(raw: str | None) -> date:
     if raw is None:
         return date.today()
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", raw):
+        raise typer.BadParameter(f"--date must be YYYY-MM-DD, got {raw!r}")
     try:
         return date.fromisoformat(raw)
     except ValueError as exc:
@@ -167,7 +175,12 @@ def log(
         except (FileNotFoundError, ValueError) as exc:
             raise typer.BadParameter(str(exc), param_hint="--photo") from exc
         entry = entry.model_copy(update={"photo": kept})
-    log_store.append(entry)
+    try:
+        log_store.append(entry)
+    except BaseException:
+        if entry.photo:
+            log_store.discard_photo(entry.photo)  # no orphan photo without its meal
+        raise
     _emit(ctx, entry)
 
 
@@ -198,6 +211,7 @@ def show(
                 ),
                 **_rounded(m.totals),
                 "kcal_range": _range(m.low.kcal, m.high.kcal),
+                "partial": ", ".join(m.partial) or None,
             }
             for m in meals
         ],
@@ -222,12 +236,19 @@ def _day_totals(meals: list[Meal]) -> list[dict[str, Any]]:
         for m in by_day[d]:
             total = total + m.totals
         low, high = total.band(by_day[d][0].uncertainty)
+        partial = [
+            field
+            for field, value in total.model_dump().items()
+            if value is not None
+            and any(field in m.partial or getattr(m.totals, field) is None for m in by_day[d])
+        ]
         out.append(
             {
                 "date": d.isoformat(),
                 "meals": len(by_day[d]),
                 **_rounded(total),
                 "kcal_range": _range(low.kcal, high.kcal),
+                "partial": ", ".join(partial) or None,
             }
         )
     return out

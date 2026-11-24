@@ -17,15 +17,21 @@ Versioning is per-skill within the `broomva/skills` monorepo; releases are tagge
 - **`health food`: a private meal log over a local food-composition table (BRO-4126).**
   - `import-usda DIR` builds `<data_dir>/foods.db` (SQLite + FTS5, 0600) from USDA FoodData Central CSV releases (Foundation, SR Legacy, FNDDS).
     - Energy falls back to the Atwater ids (2048, then 2047) that Foundation foods use.
+    - FNDDS releases key nutrients by legacy number (208 for energy); these are mapped through the release's own `nutrient.csv`.
+    - Non-finite amounts are dropped.
     - Sample lots and branded foods are skipped.
+    - A folder with no importable foods, or a CSV lacking the expected columns, is refused and leaves the table unchanged.
   - `import-csv FILE --source XX` adds a regional per-100 g table; re-importing a source replaces it.
-  - `find` does ranked, accent-folding prefix search.
+  - `find` does ranked (bm25), accent-folding prefix search, ignoring connecting words such as "and" or "con".
   - `log --item [+]source:id=grams` records a meal in `<data_dir>/meals.jsonl` (0600).
     - A `+` marks a hidden item: oil, sugar or sauce the photo can't show.
     - Each meal is stored with totals and a ±30% band.
+    - `partial` lists nutrients that some item does not report, so their total is a lower bound; `show` prints it per meal and per day.
     - `--photo` copies the image into `<data_dir>/meal-photos/` (0600).
   - `show [--days N] [--totals]` reads meals back.
   - Nothing touches the network.
+  - Private files are created 0600 and tightened if they already exist. A symlinked `foods.db`, `meals.jsonl` or `meal-photos/` is refused. A photo is never written through a symlink, and is removed again if its meal cannot be saved.
+- `pyproject.toml`: `asyncio_default_fixture_loop_scope = "function"`, so plain `pytest` collects. Without it, pytest-asyncio's warning fails collection under `filterwarnings = error`.
 - `Workflows/MealLog.md`: the agent protocol.
   - Break a photo into items with grams, add the recipe prior for hidden ingredients (Open-KNEAD, arXiv 2607.12911), log it, and reply in one line.
   - Includes the measured error of photo estimates and why to read trends, not single meals.
