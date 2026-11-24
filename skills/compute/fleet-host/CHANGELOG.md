@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.2.1] — 2026-11-23
+- Works with a fleet whose control loops run from a pinned release and whose setpoint limits are read-only
+  (BRO-4084, BRO-3771). Both changes keep the old behaviour on a machine that has not switched.
+  - The `add` preflight reads the census source from the active release first, then the old location.
+  - When the fleet's `setpoints.py` command is present, `add` sets the host's cap through it, drain sets it
+    to 0 and `remove` unsets it; the tool no longer writes `setpoints.json` in that layout.
+  - A failed or malformed answer from the command fails the step; it is never read as "no value".
+  - Drain and `remove` change the setpoint first, so a refusal leaves nothing else changed. A cap that only a
+    reviewed change moves blocks the drain before the registry or the hold is touched.
+  - A drain counts as done only when the cap is 0, the registry entry is draining and the hold exists.
+
 ## [0.2.0] — 2026-11-11
 - Login-free hosts (BRO-3666):
   - Gemini CLI on Vertex through the VM service account, plus a `gemini-vertex` T3 provider;
