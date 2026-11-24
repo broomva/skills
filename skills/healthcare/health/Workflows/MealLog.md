@@ -90,7 +90,7 @@ date        at     meal   items                                                 
 
 ## If the food table cannot be read
 
-- Copy `foods.db` aside before doing anything else. It holds every imported source, USDA and the user's own CSVs, and the meal log is a separate file it never touches.
+- Copy `foods.db` aside before doing anything else. The meal log (`meals.jsonl`) is a separate file and is not affected.
 - To start again, run `health food import-usda` and the `import-csv` commands again: they build a new table.
 
 ## Out of scope

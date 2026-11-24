@@ -59,35 +59,31 @@ _WRITE_FAILURES = frozenset(
 )
 
 
-_REBUILD = (
-    "It holds every source you imported (USDA and your own CSVs). To start again, move "
-    "the file aside, then run `health food import-usda` and any `health food import-csv` "
-    "commands again: they build a new table."
+# Failure messages state SQLite's own error and what to do next, and nothing else: they
+# make no claim about what the file holds or whether anything was written, because the
+# tool cannot know either in every failure.
+_START_AGAIN = (
+    "To start again, move the file aside, then re-run `health food import-usda` and any "
+    "`health food import-csv` commands: they build a new table."
 )
 
 
 def _unreadable(ctx: typer.Context, exc: Exception) -> str:
-    """The table is there but cannot be read (e.g. a damaged search index)."""
     return (
-        f"could not read the food table {_paths(ctx).foods_db}: {exc}. Nothing was changed. "
-        f"Copy the file aside before anything else. {_REBUILD}"
+        f"could not read the food table {_paths(ctx).foods_db}: {exc}. Copy the file aside "
+        f"before changing anything. {_START_AGAIN}"
     )
 
 
 def _not_a_food_table(ctx: typer.Context, exc: Exception) -> str:
-    """No foods table at all, or not a database: there is nothing to read."""
-    return (
-        f"{_paths(ctx).foods_db} is not a food table this tool can use ({exc}). "
-        f"Nothing was changed. {_REBUILD}"
-    )
+    return f"{_paths(ctx).foods_db} is not a food table this tool can use ({exc}). {_START_AGAIN}"
 
 
 def _cannot_write(ctx: typer.Context, exc: Exception) -> str:
-    """The disk or permissions refused the operation; the table itself may be fine."""
     return (
-        f"could not use the food table {_paths(ctx).foods_db}: {exc}. The operation was rolled "
-        "back. This is a disk or permission problem, not damage to the table: check free space "
-        "and that the folder and its files are writable by you, then try again."
+        f"the food table {_paths(ctx).foods_db} reported a disk or permission error: {exc}. "
+        "Check free disk space, and that the folder and its files are yours and writable, "
+        "then try again."
     )
 
 
@@ -112,8 +108,6 @@ def _table(ctx: typer.Context) -> Iterator[FoodTable]:
         raise typer.BadParameter(_not_a_food_table(ctx, exc)) from exc
     except sqlite3.DatabaseError as exc:
         code = (getattr(exc, "sqlite_errorcode", 0) or 0) & 0xFF
-        if code in _WRITE_FAILURES:
-            raise typer.BadParameter(_cannot_write(ctx, exc)) from exc
         if code == sqlite3.SQLITE_NOTADB:  # not a database at all
             raise typer.BadParameter(_not_a_food_table(ctx, exc)) from exc
         raise typer.BadParameter(_unreadable(ctx, exc)) from exc

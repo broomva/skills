@@ -1099,7 +1099,6 @@ def test_opening_a_damaged_table_writes_nothing(tmp_paths: HealthPaths, tmp_path
     before = tmp_paths.foods_db.read_bytes()
     result = runner.invoke(app, ["food", "find", "arroz"])
     assert result.exit_code == 2
-    assert "Nothing was changed" in _plain(result.output)
     assert tmp_paths.foods_db.read_bytes() == before  # FTS not silently recreated on open
 
 
@@ -1150,8 +1149,8 @@ def test_write_failure_is_not_called_damage(tmp_paths: HealthPaths, tmp_path: Pa
     result = runner.invoke(app, ["food", "import-csv", str(staples), "--source", "co"])
     assert result.exit_code == 2
     message = _plain(result.output)
-    assert "disk or permission problem" in message
-    assert "rolled back" in message
+    assert "Check free disk space" in message
+    assert "rolled back" not in message  # no claim about what was written
 
 
 # --- P20 round 7, stratum A: a first open is all-or-nothing --------------------------------
@@ -1174,3 +1173,28 @@ def test_failed_first_open_leaves_no_half_schema(
     _write_csv(good, ["food_id", "description", "kcal"], [["a", "Arepa", "200"]])
     with FoodTable(path) as table:  # the next open builds the schema normally
         assert table.import_csv(good, source="co") == 1
+
+
+# --- P20 round 8: failure messages make no claims about the file ---------------------------
+
+
+@pytest.mark.parametrize("setup", ["drop_foods", "foreign", "text", "journal_dir"])
+def test_failure_messages_claim_nothing_about_the_file(
+    tmp_paths: HealthPaths, tmp_path: Path, setup: str
+) -> None:
+    runner = CliRunner()
+    if setup in ("drop_foods", "journal_dir"):
+        _seed_rice(runner, tmp_path)
+    if setup == "drop_foods":
+        _sql(tmp_paths.foods_db, "DROP TABLE foods")
+    elif setup == "foreign":
+        _sql(tmp_paths.foods_db, "CREATE TABLE notes (x TEXT)")
+    elif setup == "text":
+        tmp_paths.foods_db.write_text("hello\n")
+    else:
+        (tmp_paths.data_dir / "foods.db-journal").mkdir()
+    result = runner.invoke(app, ["food", "find", "rice"])
+    assert result.exit_code == 2
+    message = _plain(result.output)
+    for claim in ("Nothing was changed", "rolled back", "holds every", "not damage"):
+        assert claim not in message
