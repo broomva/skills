@@ -63,15 +63,17 @@ _WRITE_FAILURES = frozenset(
 # make no claim about what the file holds or whether anything was written, because the
 # tool cannot know either in every failure.
 _START_AGAIN = (
-    "To start again, move the file aside, then re-run `health food import-usda` and any "
-    "`health food import-csv` commands: they build a new table."
+    "To start again, move the file aside together with any foods.db-wal, foods.db-shm or "
+    "foods.db-journal file beside it (they belong to it), then re-run `health food "
+    "import-usda` and any `health food import-csv` commands: they build a new table."
 )
 
 
 def _unreadable(ctx: typer.Context, exc: Exception) -> str:
     return (
-        f"could not read the food table {_paths(ctx).foods_db}: {exc}. Copy the file aside "
-        f"before changing anything. {_START_AGAIN}"
+        f"SQLite reported an error on the food table {_paths(ctx).foods_db}: {exc}. Copy it "
+        f"(with any foods.db-wal, -shm or -journal file beside it) before changing anything. "
+        f"{_START_AGAIN}"
     )
 
 

@@ -1070,7 +1070,7 @@ def test_index_damage_is_not_called_a_lock(tmp_paths: HealthPaths, tmp_path: Pat
     damaged = runner.invoke(app, ["food", "find", "arroz"])
     assert damaged.exit_code == 2
     message = _plain(damaged.output)
-    assert "Copy the file aside" in message
+    assert "Copy it" in message
     assert "another import" not in message
     assert tmp_paths.foods_db.read_bytes() == before
 
@@ -1196,5 +1196,66 @@ def test_failure_messages_claim_nothing_about_the_file(
     result = runner.invoke(app, ["food", "find", "rice"])
     assert result.exit_code == 2
     message = _plain(result.output)
-    for claim in ("Nothing was changed", "rolled back", "holds every", "not damage"):
+    for claim in (
+        "Nothing was changed",
+        "rolled back",
+        "holds every",
+        "not damage",
+        "could not read",
+    ):
         assert claim not in message
+
+
+# --- P20 round 9, stratum A ----------------------------------------------------------------
+
+
+@pytest.mark.parametrize("sidecar", ["-wal", "-shm", "-journal"])
+def test_new_table_refuses_a_leftover_sidecar(
+    tmp_paths: HealthPaths, tmp_path: Path, sidecar: str
+) -> None:
+    leftover = tmp_paths.data_dir / f"foods.db{sidecar}"
+    leftover.write_bytes(b"pages of another database")
+    result = CliRunner().invoke(app, ["food", "import-usda", str(_fdc_release(tmp_path / "fdc"))])
+    assert result.exit_code == 2
+    message = _plain(result.output)
+    assert f"foods.db{sidecar}" in message
+    assert not tmp_paths.foods_db.exists()  # no new database created next to it
+    assert leftover.read_bytes() == b"pages of another database"
+
+
+def test_wal_database_moved_with_its_log_keeps_its_rows(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    db = tmp_paths.foods_db
+    writer = sqlite3.connect(db)
+    writer.execute("PRAGMA journal_mode=WAL")
+    writer.execute("PRAGMA wal_autocheckpoint=0")
+    writer.execute("CREATE TABLE notes (x TEXT)")
+    writer.execute("INSERT INTO notes VALUES ('keep me')")
+    writer.commit()  # the row lives in foods.db-wal, not yet in foods.db
+    moved = tmp_path / "moved"
+    moved.mkdir()
+    db.rename(moved / "foods.db")  # the user moves only the main file
+    result = CliRunner().invoke(app, ["food", "import-usda", str(_fdc_release(tmp_path / "fdc"))])
+    assert result.exit_code == 2  # refused: the -wal file is still here
+    writer.close()
+
+
+def test_a_trigger_rejection_is_not_called_unreadable(
+    tmp_paths: HealthPaths, tmp_path: Path
+) -> None:
+    runner = CliRunner()
+    _seed_rice(runner, tmp_path)
+    _sql(
+        tmp_paths.foods_db,
+        "CREATE TRIGGER no_more BEFORE INSERT ON foods BEGIN SELECT RAISE(ABORT, 'frozen'); END",
+    )
+    staples = tmp_path / "again.csv"
+    _write_csv(staples, ["food_id", "description", "kcal"], [["bean", "Frijol", "1"]])
+    result = runner.invoke(app, ["food", "import-csv", str(staples), "--source", "co"])
+    assert result.exit_code == 2
+    message = _plain(result.output)
+    assert "SQLite reported an error" in message
+    assert "frozen" in message
+    found = runner.invoke(app, ["-f", "json", "food", "find", "arroz"])
+    assert [f["food_id"] for f in json.loads(found.output)] == ["co:rice"]  # untouched

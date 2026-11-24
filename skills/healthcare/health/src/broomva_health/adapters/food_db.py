@@ -26,6 +26,10 @@ from broomva_health.domain.nutrition import Food, Nutrients
 __all__ = ["USDA_DATA_TYPES", "FoodTable", "NotAFoodTable"]
 
 
+#: Files SQLite keeps beside a database; they belong to it and must move with it.
+_SIDECARS: Final[tuple[str, ...]] = ("-wal", "-shm", "-journal")
+
+
 class NotAFoodTable(sqlite3.DatabaseError):
     """The file is a SQLite database but holds no ``foods`` table: not ours, or emptied."""
 
@@ -78,6 +82,16 @@ class FoodTable:
         self.path = path
         path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         os.chmod(path.parent, 0o700)
+        if not path.exists() and not path.is_symlink():
+            # SQLite would adopt (or discard) a leftover journal or write-ahead log beside a
+            # new file, mixing another database's pages into ours. Refuse instead.
+            leftovers = [s for s in _SIDECARS if path.with_name(path.name + s).exists()]
+            if leftovers:
+                names = ", ".join(path.name + s for s in leftovers)
+                raise NotAFoodTable(
+                    f"{names} is left beside a missing {path.name}; move it to wherever "
+                    f"{path.name} went, so the two stay together"
+                )
         try:  # create it private before SQLite ever opens it; another process may win the race
             os.close(os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600))
         except FileExistsError:
