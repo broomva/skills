@@ -10,7 +10,7 @@ This is the canonical scoring rubric for `cross-review` adversarial verdicts. Ev
 | **No template-paste patterns** | 2 | No copy-paste from training data without adaptation; no boilerplate without intent; no scaffolding without invariant |
 | **Correct contracts at boundaries** | 2 | Typed I/O; validated inputs; explicit error modes; no silent failures; no implicit conversions across module boundaries |
 | **Failure modes named explicitly** | 2 | What happens on bad input, network fail, race condition, empty state, very large input, concurrent access — surfaced in code or docs, not implicit |
-| **Tests cover the change** | 2 | Unit / integration / E2E proportional to change shape; coverage matches what the change introduces; critical path tested |
+| **Rerunnable evidence** | 2 | Tests cover the change, and each new check is shown able to fail (a mutation, a replayed real past mistake, a model-checker counterexample); claims rest on commands and output a reviewer can rerun |
 
 **Total: 10 points. PASS at ≥7 AND no dimension at 0. LOOP if <7. ESCALATE if round 3 still <7.**
 
@@ -56,7 +56,7 @@ When invoking a Strata-A (Codex) or Strata-B (subagent) evaluator, include this 
 >
 > Severity decides the score. The per-dimension tables below say what to look for; their deduction entries (`-1`, `-2`) are not a second scoring system. Sum the points (max 10). Total ≥7 AND no dimension at 0 → APPROVE. Otherwise REVISE.
 >
-> **Report the five per-dimension scores, not just the total** — as `AXES: a,b,c,d,e` in rubric order. A total that clears the bar with a dimension at zero is not a pass: `2+2+2+2+0 = 8` leaves *tests cover the change* unmet, and the controller caps such a round below the bar from the axes you report.
+> **Report the five per-dimension scores, not just the total** — as `AXES: a,b,c,d,e` in rubric order. A total that clears the bar with a dimension at zero is not a pass: `2+2+2+2+0 = 8` leaves *rerunnable evidence* unmet, and the controller caps such a round below the bar from the axes you report.
 >
 > When you REVISE, name the specific failures the writer must address. Don't give vague feedback. Each deduction must cite a file path + line range + the rubric dimension violated. Be ruthless in looking and honest in grading: correlated blind spots are real, so search hard, but an unreproduced suspicion scores at most 1, never 0, and an empty finding list is a valid result for a sound change.
 
@@ -134,18 +134,29 @@ Two further rules are **orchestrator duties**. `round-budget.sh` does not check 
 - Error paths are tested (not just happy paths)
 - Edge cases are named in comments or tests
 
-### Dim 5: Tests cover the change (2 pts)
+### Dim 5: Rerunnable evidence (2 pts)
+
+Evidence outranks argument. A check that was never seen failing proves nothing,
+and a claim backed only by the author's narrative is a claim, not evidence
+(pstack `/correct`: "Prove each check fails on a real past mistake"; owner
+decision 2026-11-16: "P20 credits artifacts").
 
 **Deductions:**
 - New public function without a unit test: -1
 - Bug fix without a regression test reproducing the bug: -2
 - New API endpoint without an integration test: -1
 - Frontend change without a visual or interaction test: -1
+- A new check, gate, lint or test never shown failing (no mutation, no replayed
+  past mistake, no counterexample): -1
+- A load-bearing claim with no rerunnable artifact (command plus output, a
+  recording, a model check) behind it: -1
 
 **Positive signals (full 2 pts):**
 - Test coverage proportional to the change
 - Tests verify the *intent* of the change, not just the syntax
 - New failure modes are exercised, not just happy paths
+- Each new check is shown failing on the mistake it targets, and passing on a
+  nearby legitimate input (a control), with the commands to rerun both
 
 ## Strata-A specific: Codex cross-vendor brief
 
@@ -177,7 +188,7 @@ Score:
   Dim 2 (template-paste patterns):       {0|1|2}  reason: ...
   Dim 3 (correct contracts):             {0|1|2}  reason: ...
   Dim 4 (failure modes):                 {0|1|2}  reason: ...
-  Dim 5 (tests cover change):            {0|1|2}  reason: ...
+  Dim 5 (rerunnable evidence):           {0|1|2}  reason: ...
 Total: {0-10}
 AXES: {d1},{d2},{d3},{d4},{d5}
 Verdict: {APPROVE|REVISE}   ← APPROVE only if Total ≥7 AND no dimension is 0

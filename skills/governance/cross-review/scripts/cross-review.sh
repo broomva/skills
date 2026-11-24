@@ -668,8 +668,8 @@ if [ "$COMMAND" = "pre-push" ]; then
     fi
 
     # ─── Mutation-proof — REPORTED SIGNAL, not a gate ────────────────────
-    # Rubric dimension 5 ("tests cover the change") is the one dimension a
-    # machine can check directly: neuter the code, and see whether the tests
+    # The test-coverage leg of rubric dimension 5 ("rerunnable evidence") is the
+    # part a machine can check directly: neuter the code, and see whether the tests
     # notice. It is REPORTED here, never blocking. Until the false-positive
     # rate on real repos is known, an UNPROVEN verdict must surface in the
     # review, not stop the push. Promotion to a gate is a later, evidenced
@@ -719,7 +719,7 @@ if [ "$COMMAND" = "pre-push" ]; then
     else
         echo "  [not run] no mutation target given. To include the signal:"
         echo "    cross-review pre-push --mutation-target=PATH --mutation-test='CMD'"
-        echo "  Without it, 'tests cover the change' rests on the reviewer's reading"
+        echo "  Without it, the 'tests cover the change' leg of dim 5 rests on the reviewer's reading"
         echo "  of the diff alone — a test that passes with the code deleted looks"
         echo "  identical to one that does not."
     fi

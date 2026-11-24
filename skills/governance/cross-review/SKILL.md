@@ -124,10 +124,11 @@ ANTI-SLOP RUBRIC (10 points total)
           (what happens on bad input, network fail, race condition,
            empty state, very large input, concurrent access)
 
-  2 pts — Tests cover the change
-          (unit/integration/E2E proportional to change shape;
-           coverage matches what the change introduces;
-           no critical path untested)
+  2 pts — Rerunnable evidence
+          (tests cover the change, AND each new check is shown able to
+           fail: a mutation, a replayed real past mistake, a model-checker
+           counterexample; claims rest on commands and output a reviewer
+           can rerun, not on narrative. Evidence outranks argument.)
 
 PASS: ≥7/10   (record --axes=a,b,c,d,e; a ZERO axis caps the stored score to 6)
 LOOP: <7 → fix the specific deductions → rescore
@@ -412,9 +413,9 @@ does not, and cannot, bind an agent that has decided to evade it.
 
 The rubric is *concrete* and *machine-applicable* — every deduction names a specific failure category, not a vague "could be better."
 
-## Mutation-proof — the one rubric dimension a machine can check
+## Mutation-proof — the test-coverage leg of Dimension 5 a machine can check
 
-Four of the five rubric dimensions are judgement calls. The fifth — *tests cover the change* — is not. It has an operational definition:
+Four of the five rubric dimensions are judgement calls. For the test-coverage leg of the fifth (*rerunnable evidence* — tests cover the change, each new check is shown able to fail — by a mutation, a replayed real past mistake, or a model-checker counterexample — and allow a control, and load-bearing claims carry a rerunnable artifact), "a test covers a change" has an operational definition:
 
 > **A test covers a change iff neutering the change turns the test red.**
 

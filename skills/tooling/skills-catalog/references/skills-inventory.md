@@ -1,14 +1,15 @@
 # Skills Inventory
 
-> 115 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
+> 116 skills across 23 category buckets, mirroring the `skills/<category>/` directory layout. Regenerated from the README discovery surface (canonical). Last updated: 2026-09-24.
 
-## Governance & control — `skills/governance/` (11)
+## Governance & control — `skills/governance/` (12)
 
 | Skill | What it does |
 |---|---|
 | `agentic-control-kernel` | Unifying control-systems metalayer for LLM-as-controller agent development |
 | `architecture-design-principles` | Distilled architecture & design principles for building self-service developer platforms, control-plane / data-plane separation, and edge-centralized cross-cutting |
 | `bstack` | bstack primer — the agent-readable contract for the Broomva Stack's twenty automation primitives (P1–P20) that turn an agent-driven workspace into a self-operating system (the primer skill; the bstack CLI is a separate clone + bootstrap product) |
+| `correct` | Turn mistakes agents keep repeating into checks that make them impossible: two occurrences make a class, fix it at the highest level (architecture, types, a lint or CI check whose error names the fix, test, hook, prose last), prove it refuses a real past mistake and allows a control, keep a rule-to-enforcer registry |
 | `cross-review` | bstack P20 — Cross-Model Adversarial Review Gate |
 | `dogfood` | Per-bstack-P11 reflex 7+16 — explicitly trigger the Dogfood Plan + per-stack cookbook + Dogfood Receipt sequence |
 | `harness-engineering-playbook` | Implement OpenAI Harness Engineering practices in any repository — AGENTS.md, PLANS.md, deterministic smoke/test/lint harness commands, strict architecture |
@@ -49,7 +50,7 @@
 | `prove-the-negative` | Verify a claim whose evidence is an ABSENCE — pairs every denial with a positive control that must succeed, because "everything is denied" and "nothing ran at all" are the same observation; returns INVALID rather than PASS when the controls did not fire |
 | `attempt-audit` | Find absence-assertions that carry no attempt-record — code returning the same empty value whether the work ran and found nothing or was skipped entirely |
 | `skillify` | Skillify-as-a-verb — distill a working session (or a pointed-at chat history) into a permanent, TESTED, registered skill at the end of a workflow |
-| `skills-catalog` | Canonical reference inventory of the 115 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
+| `skills-catalog` | Canonical reference inventory of the 116 skills across 23 category buckets, with a Remotion video showcase generator and X thread copy |
 | `mod-anything` | Change or extend software or a device the user owns but whose source they don't control (a desktop app, a website, a game, a device protocol, a CLI) by the cheapest route that reaches the idea. The… |
 
 ## Knowledge & memory — `skills/knowledge/` (9)
@@ -236,7 +237,7 @@
 
 ## Aggregates
 
-- **Total skills**: 115
+- **Total skills**: 116
 - **Total category buckets**: 23
 - **Largest bucket**: Orchestration & autonomy (14)
 - **Smallest buckets** (1): Science
