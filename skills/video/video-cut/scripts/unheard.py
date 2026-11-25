@@ -78,10 +78,12 @@ def _read_pcm_wav_direct(path: Path) -> tuple[array.array, int] | None:
         total_frames = len(samples) // nchannels
         mono = array.array("h")
         for i in range(0, total_frames * nchannels, nchannels):
-            acc = 0
+            acc_sq = 0
             for c in range(nchannels):
-                acc += samples[i + c]
-            mono.append(acc // nchannels)
+                s = samples[i + c]
+                acc_sq += s * s
+            rms_val = int(round(math.sqrt(acc_sq / nchannels)))
+            mono.append(32767 if rms_val > 32767 else rms_val)
         return mono, framerate
     return None
 
@@ -295,6 +297,8 @@ def _parse_timed_text(item: Any) -> dict[str, Any] | None:
     raw_end = item.get("end", item.get("end_s"))
     if raw_start is None or raw_end is None:
         return None
+    if isinstance(raw_start, bool) or isinstance(raw_end, bool):
+        return None
     try:
         start = float(raw_start)
         end = float(raw_end)
@@ -353,6 +357,7 @@ def _extract_from_single_transcript(
             if parsed is not None:
                 words.append(parsed)
 
+    has_top_level_words = bool(words)
     raw_segments = obj.get("segments")
     if isinstance(raw_segments, list):
         for seg in raw_segments:
@@ -367,7 +372,7 @@ def _extract_from_single_transcript(
                         "text": seg_parsed["word"],
                     }
                 )
-            if not words:
+            if not has_top_level_words:
                 seg_words = seg.get("words")
                 if isinstance(seg_words, list) and seg_words:
                     for sw in seg_words:
@@ -410,7 +415,12 @@ def _select_clip_entry(
         if len(clips) == 1:
             only = next(iter(clips.values()))
             return [only] if isinstance(only, dict) else []
-        return [v for v in clips.values() if isinstance(v, dict)]
+        if len(clips) > 1:
+            raise ValueError(
+                f"ambiguous multi-clip transcript (available: {sorted(clips.keys())}); "
+                "pass --clip <name> to select one clip"
+            )
+        return []
 
     if isinstance(clips, list):
         dict_entries = [c for c in clips if isinstance(c, dict)]
@@ -427,7 +437,13 @@ def _select_clip_entry(
                     return [c]
         if len(dict_entries) == 1:
             return dict_entries
-        return dict_entries
+        if len(dict_entries) > 1:
+            avail = [str(c.get("id") or c.get("name") or c.get("clip") or i) for i, c in enumerate(dict_entries)]
+            raise ValueError(
+                f"ambiguous multi-clip transcript (available: {avail}); "
+                "pass --clip <name> to select one clip"
+            )
+        return []
 
     return []
 

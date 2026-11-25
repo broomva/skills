@@ -17,6 +17,7 @@ import json
 import math
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -209,7 +210,7 @@ def validate_plan(
                             f"[{MIN_PUNCH_SCALE}, {MAX_PUNCH_SCALE}]"
                         )
                     for axis in ("anchor_x", "anchor_y"):
-                        if axis in punch and punch[axis] is not None:
+                        if axis in punch:
                             av = punch[axis]
                             if not _is_number(av) or not (0.0 <= float(av) <= 1.0):
                                 errors.append(
@@ -227,15 +228,15 @@ def validate_plan(
                         "saturation": (0.0, 3.0),
                     }
                     for field, (lo, hi) in bounds.items():
-                        if field in grade and grade[field] is not None:
+                        if field in grade:
                             gv = grade[field]
                             if not _is_number(gv) or not (lo <= float(gv) <= hi):
                                 errors.append(
                                     f"{prefix}.grade.{field} ({gv!r}) must be in [{lo}, {hi}]"
                                 )
 
-            gain_db = clip.get("gain_db")
-            if gain_db is not None:
+            if "gain_db" in clip:
+                gain_db = clip["gain_db"]
                 if not _is_number(gain_db):
                     errors.append(f"{prefix}.gain_db must be a finite number")
                 elif float(gain_db) > 18.0:
@@ -249,8 +250,8 @@ def validate_plan(
         if not isinstance(audio, dict):
             errors.append("audio must be an object")
         else:
-            target_lufs = audio.get("target_lufs")
-            if target_lufs is not None:
+            if "target_lufs" in audio:
+                target_lufs = audio["target_lufs"]
                 if not _is_number(target_lufs) or not (-70.0 <= float(target_lufs) <= -5.0):
                     errors.append(
                         f"audio.target_lufs ({target_lufs!r}) must be in [-70.0, -5.0]"
@@ -271,20 +272,20 @@ def validate_plan(
                                 f"audio.music.source file not found: {resolved}"
                             )
 
-                    if "gain_db" in music and music["gain_db"] is not None:
+                    if "gain_db" in music:
                         if not _is_number(music["gain_db"]):
                             errors.append("audio.music.gain_db must be a finite number")
 
-                    duck_db = music.get("duck_db")
                     ducking_active = False
-                    if duck_db is not None:
+                    if "duck_db" in music:
+                        duck_db = music["duck_db"]
                         if not _is_number(duck_db):
                             errors.append("audio.music.duck_db must be a finite number")
                         elif float(duck_db) != 0.0:
                             ducking_active = True
 
-                    pad_tail = music.get("pad_tail_s")
-                    if pad_tail is not None:
+                    if "pad_tail_s" in music:
+                        pad_tail = music["pad_tail_s"]
                         if not _is_number(pad_tail):
                             errors.append(
                                 "audio.music.pad_tail_s must be a finite number"
@@ -374,23 +375,29 @@ def validate_plan(
                         x_ok = True
 
                     if enabled and safe_zone_check and safe_area_box is not None:
+                        cw = int(canvas["width"]) if isinstance(canvas, dict) and _is_int(canvas.get("width")) and int(canvas["width"]) > 0 else 1080
+                        ch = int(canvas["height"]) if isinstance(canvas, dict) and _is_int(canvas.get("height")) and int(canvas["height"]) > 0 else 1920
+                        fs = max(20, int(round(ch * 0.042)))
+                        text_len = len(txt.strip()) if isinstance(txt, str) else 0
+                        half_h = (fs * 1.25) / (2.0 * ch)
+                        half_w = min(0.5, (max(1, text_len) * fs * 0.62) / (2.0 * cw))
                         if y_ok:
                             yf = float(y_frac)
                             min_y = safe_area_box["top"]
                             max_y = 1.0 - safe_area_box["bottom"]
-                            if yf < min_y - 1e-9 or yf > max_y + 1e-9:
+                            if (yf - half_h) < min_y - 1e-9 or (yf + half_h) > max_y + 1e-9:
                                 errors.append(
-                                    f"{cprefix}.y_frac ({yf:.3f}) violates safe_area "
-                                    f"vertical bounds [{min_y:.3f}, {max_y:.3f}]"
+                                    f"{cprefix}.y_frac ({yf:.3f}) caption box [{yf - half_h:.3f}, {yf + half_h:.3f}] "
+                                    f"violates safe_area vertical bounds [{min_y:.3f}, {max_y:.3f}]"
                                 )
                         if x_ok:
                             xf = float(x_frac)
                             min_x = safe_area_box["left"]
                             max_x = 1.0 - safe_area_box["right"]
-                            if xf < min_x - 1e-9 or xf > max_x + 1e-9:
+                            if (xf - half_w) < min_x - 1e-9 or (xf + half_w) > max_x + 1e-9:
                                 errors.append(
-                                    f"{cprefix}.x_frac ({xf:.3f}) violates safe_area "
-                                    f"horizontal bounds [{min_x:.3f}, {max_x:.3f}]"
+                                    f"{cprefix}.x_frac ({xf:.3f}) caption box [{xf - half_w:.3f}, {xf + half_w:.3f}] "
+                                    f"violates safe_area horizontal bounds [{min_x:.3f}, {max_x:.3f}]"
                                 )
 
     return {
@@ -404,14 +411,53 @@ def validate_plan(
 # Deterministic FFmpeg filter_complex compiler
 # ---------------------------------------------------------------------------
 def _escape_drawtext(text: str) -> str:
-    """Escape text for FFmpeg drawtext filter inside single quotes."""
+    """Escape text for FFmpeg drawtext filter (used with expansion=none)."""
     cleaned = text.replace("\r", "").replace("\n", " ")
-    return (
-        cleaned.replace("\\", "\\\\")
-        .replace(":", "\\:")
-        .replace("'", "'\\''")
-        .replace("%", "\\%")
-    )
+    # In FFmpeg filtergraph av_get_token, escaping filter-special characters
+    # unquoted handles apostrophes, colons, commas, brackets, and semicolons cleanly.
+    out = []
+    for ch in cleaned:
+        if ch in ("\\", ":", "'", ",", ";", "[", "]"):
+            out.append("\\" + ch)
+        else:
+            out.append(ch)
+    return "".join(out)
+
+
+def _escape_filter_path(path: Path) -> str:
+    """Escape a filesystem path for FFmpeg drawtext textfile= option."""
+    s = str(path)
+    return s.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace(",", "\\,").replace(";", "\\;")
+
+
+def _probe_has_audio(src: Path) -> bool:
+    """Return True if media file has at least one audio stream (defaults True if file absent)."""
+    if not src.exists():
+        return True
+    try:
+        proc = subprocess.run(
+            [
+                "ffprobe",
+                "-v",
+                "error",
+                "-select_streams",
+                "a",
+                "-show_entries",
+                "stream=index",
+                "-of",
+                "csv=p=0",
+                str(src),
+            ],
+            capture_output=True,
+            text=True,
+            stdin=subprocess.DEVNULL,
+            check=False,
+        )
+    except FileNotFoundError:
+        return True
+    if proc.returncode != 0:
+        return True
+    return bool(proc.stdout.strip())
 
 
 def _punch_in_crop_filter(punch_in: dict[str, Any]) -> str:
@@ -421,8 +467,8 @@ def _punch_in_crop_filter(punch_in: dict[str, Any]) -> str:
     ay = float(punch_in.get("anchor_y", 0.5))
     return (
         f"crop="
-        f"w='max(2,trunc(iw/{_fmt_num(scale)}/2)*2)':"
-        f"h='max(2,trunc(ih/{_fmt_num(scale)}/2)*2)':"
+        f"w='min(iw,max(1,trunc(iw/{_fmt_num(scale)}/2)*2))':"
+        f"h='min(ih,max(1,trunc(ih/{_fmt_num(scale)}/2)*2))':"
         f"x='max(0,min(iw-ow,{_fmt_num(ax)}*iw-ow/2))':"
         f"y='max(0,min(ih-oh,{_fmt_num(ay)}*ih-oh/2))'"
     )
@@ -443,6 +489,7 @@ def compile_plan(
     output_path: str | Path,
     *,
     base_dir: str | Path | None = None,
+    caption_dir: str | Path | None = None,
 ) -> dict[str, Any]:
     """Validate and compile an editPlan.json v1 into a deterministic ffmpeg command spec."""
     validation = validate_plan(plan, check_files=False, base_dir=base_dir)
@@ -450,10 +497,12 @@ def compile_plan(
         raise ValueError("invalid editPlan: " + "; ".join(validation["errors"]))
 
     base = Path(base_dir) if base_dir is not None else None
+    cap_dir = Path(caption_dir) if caption_dir is not None else None
     canvas = plan["canvas"]
     width = int(canvas["width"])
     height = int(canvas["height"])
     fps = float(canvas["fps"])
+    safe_area_box, _ = resolve_safe_area(canvas.get("safe_area"))
     clips = plan["clips"]
     audio = plan.get("audio") or {}
     music = audio.get("music")
@@ -464,11 +513,13 @@ def compile_plan(
     total_dur = 0.0
 
     for i, clip in enumerate(clips):
-        src = str(_resolve_path(clip["source"], base))
+        src_path = _resolve_path(clip["source"], base)
+        src = str(src_path)
         inputs.extend(["-i", src])
         in_s = float(clip["in_s"])
         out_s = float(clip["out_s"])
-        total_dur += out_s - in_s
+        clip_dur = out_s - in_s
+        total_dur += clip_dur
 
         v_ops = [
             f"trim=start={_fmt_num(in_s)}:end={_fmt_num(out_s)}",
@@ -491,44 +542,70 @@ def compile_plan(
         v_ops.append("format=yuv420p")
         fc_parts.append(f"[{i}:v]" + ",".join(v_ops) + f"[v{i}]")
 
-        a_ops = [
-            f"atrim=start={_fmt_num(in_s)}:end={_fmt_num(out_s)}",
-            "asetpts=PTS-STARTPTS",
-            "aresample=48000",
-            "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo",
-        ]
-        gain_db = clip.get("gain_db")
-        if gain_db is not None and float(gain_db) != 0.0:
-            a_ops.append(f"volume={_fmt_num(float(gain_db))}dB")
-        fc_parts.append(f"[{i}:a]" + ",".join(a_ops) + f"[a{i}]")
+        # Handle silent B-roll clips cleanly (anullsrc) and pad short clip audio to full clip_dur
+        has_audio = clip.get("has_audio")
+        if has_audio is None:
+            has_audio = _probe_has_audio(src_path)
+        if has_audio:
+            a_ops = [
+                f"atrim=start={_fmt_num(in_s)}:end={_fmt_num(out_s)}",
+                "asetpts=PTS-STARTPTS",
+                "aresample=48000",
+                "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo",
+                f"apad=whole_dur={_fmt_num(clip_dur)}",
+                f"atrim=start=0:end={_fmt_num(clip_dur)}",
+                "asetpts=PTS-STARTPTS",
+            ]
+            gain_db = clip.get("gain_db")
+            if gain_db is not None and float(gain_db) != 0.0:
+                a_ops.append(f"volume={_fmt_num(float(gain_db))}dB")
+            fc_parts.append(f"[{i}:a]" + ",".join(a_ops) + f"[a{i}]")
+        else:
+            fc_parts.append(
+                f"anullsrc=r=48000:cl=stereo,"
+                f"atrim=start=0:end={_fmt_num(clip_dur)},"
+                f"asetpts=PTS-STARTPTS[a{i}]"
+            )
 
     # Concatenate all clips in order
     concat_inputs = "".join(f"[v{i}][a{i}]" for i in range(len(clips)))
     fc_parts.append(f"{concat_inputs}concat=n={len(clips)}:v=1:a=1[vcat][acat]")
 
-    # Video final stage: captions applied LAST
+    # Video final stage: captions applied LAST with expansion=none + safe-area clamping
     v_cur = "[vcat]"
     if captions.get("enabled") and captions.get("entries"):
         font_size = max(20, int(round(height * 0.042)))
+        min_x_px = int(round(safe_area_box["left"] * width)) if safe_area_box else 0
+        max_x_pad = int(round(safe_area_box["right"] * width)) if safe_area_box else 0
+        min_y_px = int(round(safe_area_box["top"] * height)) if safe_area_box else 0
+        max_y_pad = int(round(safe_area_box["bottom"] * height)) if safe_area_box else 0
         for c_idx, entry in enumerate(captions["entries"]):
             nxt = f"[vcap{c_idx}]"
-            txt = _escape_drawtext(str(entry["text"]).strip())
+            raw_txt = str(entry["text"]).strip()
+            if cap_dir is not None:
+                cap_file = cap_dir / f"caption_{c_idx}.txt"
+                cap_file.write_text(raw_txt, encoding="utf-8")
+                text_opt = f"textfile={_escape_filter_path(cap_file)}"
+            else:
+                text_opt = f"text={_escape_drawtext(raw_txt)}"
             cs = float(entry["start_s"])
             ce = float(entry["end_s"])
             xf = float(entry.get("x_frac", DEFAULT_CAPTION_X_FRAC))
             yf = float(entry.get("y_frac", DEFAULT_CAPTION_Y_FRAC))
+            x_expr = f"max({min_x_px},min(w-{max_x_pad}-tw,{_fmt_num(xf)}*w-tw/2))"
+            y_expr = f"max({min_y_px},min(h-{max_y_pad}-th,{_fmt_num(yf)}*h-th/2))"
             dt = (
-                f"drawtext=text='{txt}':"
+                f"drawtext={text_opt}:expansion=none:"
                 f"fontsize={font_size}:fontcolor=white:"
                 f"borderw=2:bordercolor=black:"
-                f"x='max(0,min(w-tw,{_fmt_num(xf)}*w-tw/2))':"
-                f"y='max(0,min(h-th,{_fmt_num(yf)}*h-th/2))':"
+                f"x='{x_expr}':"
+                f"y='{y_expr}':"
                 f"enable='between(t,{_fmt_num(cs)},{_fmt_num(ce)})'"
             )
             fc_parts.append(f"{v_cur}{dt}{nxt}")
             v_cur = nxt
 
-    # Audio final stage: optional music bed with tail padding + sidechaincompress
+    # Audio final stage: optional music bed with tail padding + optional sidechaincompress
     a_cur = "[acat]"
     if music is not None:
         m_idx = len(clips)
@@ -537,10 +614,10 @@ def compile_plan(
 
         music_gain = float(music.get("gain_db", -12.0))
         duck_db = music.get("duck_db")
+        ducking_active = duck_db is not None and float(duck_db) != 0.0
         pad_tail = float(music.get("pad_tail_s", MIN_DUCK_PAD_TAIL_S))
         padded_dur = total_dur + pad_tail
 
-        fc_parts.append("[acat]asplit=2[voice_mix][voice_sc]")
         fc_parts.append(
             f"[{m_idx}:a]aresample=48000,"
             "aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo,"
@@ -549,13 +626,14 @@ def compile_plan(
             f"atrim=start=0:end={_fmt_num(padded_dur)},"
             "asetpts=PTS-STARTPTS[mus_pre]"
         )
-        fc_parts.append(
-            f"[voice_sc]apad=pad_dur={_fmt_num(pad_tail)},"
-            f"atrim=start=0:end={_fmt_num(padded_dur)},"
-            "asetpts=PTS-STARTPTS[sc_pad]"
-        )
 
-        if duck_db is not None and float(duck_db) != 0.0:
+        if ducking_active:
+            fc_parts.append("[acat]asplit=2[voice_mix][voice_sc]")
+            fc_parts.append(
+                f"[voice_sc]apad=pad_dur={_fmt_num(pad_tail)},"
+                f"atrim=start=0:end={_fmt_num(padded_dur)},"
+                "asetpts=PTS-STARTPTS[sc_pad]"
+            )
             ratio = min(20.0, max(2.0, abs(float(duck_db)) / 2.0))
             fc_parts.append(
                 f"[mus_pre][sc_pad]sidechaincompress="
@@ -565,15 +643,18 @@ def compile_plan(
                 f"[mus_ducked]atrim=start=0:end={_fmt_num(total_dur)},"
                 "asetpts=PTS-STARTPTS[mus_final]"
             )
+            voice_in = "[voice_mix]"
         else:
             fc_parts.append(
                 f"[mus_pre]atrim=start=0:end={_fmt_num(total_dur)},"
                 "asetpts=PTS-STARTPTS[mus_final]"
             )
+            voice_in = "[acat]"
 
         fc_parts.append(
-            "[voice_mix][mus_final]amix=inputs=2:duration=first:"
-            "dropout_transition=0:normalize=0[abus]"
+            f"{voice_in}[mus_final]amix=inputs=2:duration=longest:"
+            f"dropout_transition=0:normalize=0,"
+            f"atrim=start=0:end={_fmt_num(total_dur)},asetpts=PTS-STARTPTS[abus]"
         )
         a_cur = "[abus]"
 
@@ -728,24 +809,28 @@ def main(argv: list[str] | None = None) -> int:
         if not res["valid"]:
             print(json.dumps(res, indent=2), file=sys.stderr)
             return 1
-        compiled = compile_plan(plan, args.output, base_dir=base_dir)
         if args.dry_run:
+            compiled = compile_plan(plan, args.output, base_dir=base_dir)
             print(json.dumps(compiled, indent=2))
             return 0
 
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            proc = subprocess.run(
-                compiled["argv"],
-                capture_output=True,
-                text=True,
-                stdin=subprocess.DEVNULL,
-                check=False,
+        with tempfile.TemporaryDirectory(prefix="edit_plan_caps_") as cap_tmp:
+            compiled = compile_plan(
+                plan, args.output, base_dir=base_dir, caption_dir=Path(cap_tmp)
             )
-        except FileNotFoundError:
-            print("error: ffmpeg not found on PATH", file=sys.stderr)
-            return 1
+            try:
+                proc = subprocess.run(
+                    compiled["argv"],
+                    capture_output=True,
+                    text=True,
+                    stdin=subprocess.DEVNULL,
+                    check=False,
+                )
+            except FileNotFoundError:
+                print("error: ffmpeg not found on PATH", file=sys.stderr)
+                return 1
 
         if proc.returncode != 0:
             print(

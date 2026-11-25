@@ -209,7 +209,7 @@ def test_build_ffmpeg_command_is_deterministic_and_complete():
 
     fc = argv1[argv1.index("-filter_complex") + 1]
     assert "trim=start=0.5:end=2,setpts=PTS-STARTPTS" in fc
-    assert "crop=w='max(2,trunc(iw/1.3/2)*2)'" in fc
+    assert "crop=w='min(iw,max(1,trunc(iw/1.3/2)*2))'" in fc
     assert "x='max(0,min(iw-ow,0.5*iw-ow/2))'" in fc
     assert "apad=pad_dur=0.75" in fc
     assert "sidechaincompress=" in fc
@@ -413,3 +413,140 @@ def test_e2e_render_two_clip_punch_in_ducked_music_verified_by_ffprobe(tmp_path)
     atoms = _find_mp4_atom_order(out_mp4)
     assert "moov" in atoms and "mdat" in atoms
     assert atoms.index("moov") < atoms.index("mdat")
+
+
+def test_p20_rejects_explicit_null_optional_numbers():
+    """Explicit null on optional numeric fields must fail validation, not crash compile_plan."""
+    p = _valid_plan()
+    p["clips"][0]["punch_in"]["anchor_x"] = None
+    assert edit_plan.validate_plan(p)["valid"] is False
+
+    p2 = _valid_plan()
+    p2["audio"]["music"]["gain_db"] = None
+    assert edit_plan.validate_plan(p2)["valid"] is False
+
+    p3 = _valid_plan()
+    del p3["audio"]["music"]["duck_db"]
+    p3["audio"]["music"]["pad_tail_s"] = None
+    assert edit_plan.validate_plan(p3)["valid"] is False
+
+
+def test_p20_safe_area_checks_caption_bounding_box():
+    """Caption glyphs spilling past safe margin must be rejected even when anchor is inside."""
+    p = _valid_plan()
+    p["canvas"] = {"width": 180, "height": 320, "fps": 30, "safe_area": "9:16-reels"}
+    p["captions"] = {
+        "enabled": True,
+        "safe_zone_check": True,
+        "entries": [{"start_s": 0.1, "end_s": 0.9, "text": "EDGE", "x_frac": 0.86, "y_frac": 0.78}],
+    }
+    res = edit_plan.validate_plan(p)
+    assert res["valid"] is False
+    assert any("safe_area" in e for e in res["errors"])
+
+
+def test_p20_render_caption_punctuation_percent_silent_broll_no_duck_and_short_audio(tmp_path):
+    """Covers BLOCKER 1 (apostrophe/colon/percent pixels drawn + no Stray %), BLOCKER 2 (duck_db=0),
+    MAJOR 3 (silent B-roll), MAJOR 4 (0.5s audio inside 2.0s video keeps full 2.0s mixed audio),
+    and MINOR 2 (1x1 punch-in crop)."""
+    # 1. Video with 2.0s black video + only 0.5s of audio
+    v_short_a = tmp_path / "short_audio.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "lavfi", "-i", "color=c=black:s=640x360:r=24:d=2.0",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=0.5",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            "-c:a", "aac", "-ar", "48000", "-ac", "2",
+            str(v_short_a),
+        ],
+        check=True,
+    )
+    # 2. Silent video-only B-roll clip (no audio stream)
+    v_silent = tmp_path / "silent_broll.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "lavfi", "-i", "color=c=navy:s=640x360:r=24:d=1.0",
+            "-an", "-c:v", "libx264", "-pix_fmt", "yuv420p",
+            str(v_silent),
+        ],
+        check=True,
+    )
+    # 3. Music bed
+    music = tmp_path / "bed.wav"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "lavfi", "-i", "sine=frequency=220:duration=2.0",
+            "-ar", "48000", "-ac", "2",
+            str(music),
+        ],
+        check=True,
+    )
+
+    # Plan A: duck_db=0 (disabled ducking) + silent B-roll + short dialogue + apostrophe/colon/percent captions
+    plan_a = {
+        "version": 1,
+        "canvas": {"width": 640, "height": 360, "fps": 24, "safe_area": "16:9-youtube"},
+        "clips": [
+            {"id": "c1", "source": str(v_short_a), "in_s": 0.0, "out_s": 2.0},
+            {"id": "c2", "source": str(v_silent), "in_s": 0.0, "out_s": 1.0},
+        ],
+        "audio": {"music": {"source": str(music), "gain_db": -12.0, "duck_db": 0.0}},
+        "captions": {
+            "enabled": True,
+            "safe_zone_check": True,
+            "entries": [
+                {"start_s": 0.1, "end_s": 1.0, "text": "It's live: cut 1", "y_frac": 0.5},
+                {"start_s": 1.1, "end_s": 1.9, "text": "50% off", "y_frac": 0.5},
+            ],
+        },
+    }
+    pf_a = tmp_path / "plan_a.json"
+    pf_a.write_text(json.dumps(plan_a), encoding="utf-8")
+    out_a = tmp_path / "out_a.mp4"
+    r_a = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "render", str(pf_a), "-o", str(out_a)],
+        capture_output=True, text=True, check=False,
+    )
+    assert r_a.returncode == 0, f"render failed: {r_a.stderr}"
+    assert "Stray %" not in r_a.stderr
+
+    # Verify full 3.0s audio duration (music NOT truncated at 0.5s short dialogue!)
+    pr = subprocess.run(
+        ["ffprobe", "-v", "error", "-show_entries", "stream=codec_type,duration", "-of", "json", str(out_a)],
+        capture_output=True, text=True, check=True,
+    )
+    streams = json.loads(pr.stdout)["streams"]
+    a_dur = float(next(s for s in streams if s["codec_type"] == "audio")["duration"])
+    assert a_dur >= 2.85, f"mixed audio truncated early: {a_dur}s"
+
+    # Verify BOTH caption frames actually drew bright white glyph pixels over the black background!
+    for ts in ("0.5", "1.5"):
+        raw = subprocess.run(
+            ["ffmpeg", "-v", "error", "-ss", ts, "-i", str(out_a), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "gray", "-"],
+            capture_output=True, check=True,
+        ).stdout
+        bright = sum(1 for b in raw if b > 180)
+        assert bright > 50, f"caption at t={ts}s failed to draw pixels (bright={bright})"
+
+    # Plan B: 1x1 RGB source punch-in crop must succeed
+    one_px = tmp_path / "one_px.png"
+    subprocess.run(
+        ["ffmpeg", "-y", "-v", "error", "-f", "lavfi", "-i", "color=c=red:s=2x2:d=1", "-vf", "scale=1:1", "-frames:v", "1", str(one_px)],
+        check=True,
+    )
+    plan_b = {
+        "version": 1,
+        "canvas": {"width": 64, "height": 64, "fps": 24},
+        "clips": [{"id": "tiny", "source": str(one_px), "in_s": 0.0, "out_s": 0.5, "punch_in": {"scale": 1.5}}],
+    }
+    pf_b = tmp_path / "plan_b.json"
+    pf_b.write_text(json.dumps(plan_b), encoding="utf-8")
+    out_b = tmp_path / "out_b.mp4"
+    r_b = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "render", str(pf_b), "-o", str(out_b)],
+        capture_output=True, text=True, check=False,
+    )
+    assert r_b.returncode == 0, f"1x1 punch-in render failed: {r_b.stderr}"

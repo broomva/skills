@@ -274,3 +274,70 @@ def test_e2e_catches_unheard_burst_ignores_covered_and_breath(tmp_path):
         check=True,
     )
     assert "[UNHEARD 3.20s-4.20s" in proc_ann.stdout
+
+
+def test_p20_multi_segment_transcript_keeps_all_coverage_spans():
+    """All segments (not just segment 0) must contribute coverage spans."""
+    transcript_nested = {
+        "segments": [
+            {"start": 0.0, "end": 1.0, "text": "one", "words": [{"word": "one", "start": 0.0, "end": 1.0}]},
+            {"start": 2.0, "end": 3.0, "text": "two", "words": [{"word": "two", "start": 2.0, "end": 3.0}]},
+            {"start": 4.0, "end": 5.0, "text": "three", "words": [{"word": "three", "start": 4.0, "end": 5.0}]},
+        ]
+    }
+    words, phrases = unheard.load_transcript_spans(transcript_nested)
+    assert len(words) == 3
+    assert [w["word"] for w in words] == ["one", "two", "three"]
+    assert len(phrases) == 3
+
+    transcript_seg_only = {
+        "segments": [
+            {"start": 0.0, "end": 1.0, "text": "alpha"},
+            {"start": 2.0, "end": 3.0, "text": "beta"},
+            {"start": 4.0, "end": 5.0, "text": "gamma"},
+        ]
+    }
+    words2, _ = unheard.load_transcript_spans(transcript_seg_only)
+    assert len(words2) == 3
+
+
+def test_p20_ambiguous_multiclip_transcript_raises():
+    """Unmatched media stem on multi-clip transcript must fail explicitly rather than merging clips."""
+    transcript = {
+        "clips": {
+            "clip_a": {"words": [{"word": "a", "start": 0.0, "end": 1.0}]},
+            "clip_b": {"words": [{"word": "b", "start": 2.0, "end": 3.0}]},
+        }
+    }
+    with pytest.raises(ValueError, match="ambiguous"):
+        unheard.load_transcript_spans(transcript, media_path="unknown_stem.wav")
+
+
+def test_p20_boolean_timestamps_rejected():
+    """Boolean start/end values must be rejected, not coerced to 0.0/1.0."""
+    words, _ = unheard.load_transcript_spans(
+        {"words": [{"word": "bad", "start": False, "end": True}]}
+    )
+    assert words == []
+
+
+def test_p20_opposite_phase_stereo_wav_preserves_energy(tmp_path):
+    """Equal-and-opposite stereo PCM must not cancel to silence in RMS loudness envelope."""
+    import array, math, wave
+    sr = 16000
+    n = sr  # 1.0s
+    pcm = array.array("h")
+    for i in range(n):
+        v = int(14000 * math.sin(2.0 * math.pi * 440.0 * i / sr))
+        pcm.append(v)
+        pcm.append(-v)
+    wav_path = tmp_path / "antiphase.wav"
+    with wave.open(str(wav_path), "wb") as wf:
+        wf.setnchannels(2)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(pcm.tobytes())
+    samples, rate = unheard.decode_pcm_mono(wav_path)
+    assert rate == sr
+    frames = unheard.compute_rms_envelope(samples, rate)
+    assert max(f["db"] if isinstance(f, dict) else f[2] for f in frames) > -12.0
