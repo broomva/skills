@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { ArgsError, hostConfig, parseArgs, resolveCommand } from "../src/args.js";
+import { ArgsError, checkForwardedConfig, hostConfig, parseArgs, resolveCommand } from "../src/args.js";
 
 test("flags take --name=value; launch noise is skipped", () => {
   const { flags, positional } = parseArgs([
@@ -38,4 +38,13 @@ test("install paths are made absolute against the caller's cwd before forwarding
   assert.deepEqual(resolveCommand([], "/work"), ["serve"]);
   assert.throws(() => resolveCommand(["uninstall"], "/work"), /needs an app id/);
   assert.throws(() => resolveCommand(["rm", "-rf"], "/work"), /Unknown command/);
+});
+
+test("checkForwardedConfig refuses stricter --max-tier or different --apps-dir on a running host", () => {
+  const running = { maxTier: 3, appsDir: "/Apps" };
+  assert.equal(checkForwardedConfig(running, { maxTier: 1 }).ok, false);
+  assert.equal(checkForwardedConfig(running, { maxTier: 3 }).ok, true);
+  assert.equal(checkForwardedConfig(running, { appsDir: "/Other" }).ok, false);
+  assert.equal(checkForwardedConfig(running, { appsDir: "/Apps" }).ok, true);
+  assert.equal(checkForwardedConfig(running, {}).ok, true);
 });

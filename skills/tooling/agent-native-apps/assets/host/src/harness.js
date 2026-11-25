@@ -433,3 +433,16 @@ export function runHarness(
   };
   return { cancel, finished };
 }
+
+/**
+ * Cancel every active run on app `before-quit`, preventing immediate shutdown
+ * until process-group cleanup (including SIGKILL escalation) has completed.
+ * Returns the cleanup promise when shutdown was deferred, or null if idle.
+ */
+export function cancelRunsOnQuit(runs, event, quit) {
+  const active = [...runs];
+  if (active.length === 0) return null;
+  event.preventDefault();
+  for (const r of active) r.cancel();
+  return Promise.allSettled(active.map((r) => r.finished)).finally(() => quit());
+}

@@ -32,7 +32,7 @@ import {
   session,
   Tray,
 } from "electron";
-import { hostConfig, parseArgs, resolveCommand } from "./args.js";
+import { checkForwardedConfig, hostConfig, parseArgs, resolveCommand } from "./args.js";
 import { hostInfo, icnsFromPngs, writeShimBundle } from "./bundle.js";
 import {
   authorizeAfterPrompt,
@@ -43,7 +43,7 @@ import {
   requiredPermission,
   tierOf,
 } from "./capabilities.js";
-import { resolveUserPath, runHarness, which } from "./harness.js";
+import { cancelRunsOnQuit, resolveUserPath, runHarness, which } from "./harness.js";
 import { readManifest, servableFile, validModel, validProvider, versionOf } from "./manifest.js";
 import { Registry } from "./registry.js";
 import { runSelftest } from "./selftest.js";
@@ -68,8 +68,10 @@ const CSP = [
 
 let config;
 let command;
+let cliFlags = {};
 try {
   const { flags, positional } = parseArgs(process.argv.slice(app.isPackaged ? 1 : 2));
+  cliFlags = flags;
   // In dev the first positional is the app root Electron was given.
   if (!app.isPackaged && positional[0] && path.resolve(positional[0]) === APP_ROOT) positional.shift();
   config = hostConfig(flags, {
@@ -193,6 +195,12 @@ async function install(appDir) {
       `"${manifest.name}.app" already belongs to ${owner.id} (${owner.appDir}); rename the app.`,
     );
   }
+  const ownedBySelf = existing?.bundlePath === bundlePath;
+  if (!ownedBySelf && fs.existsSync(bundlePath)) {
+    throw new Error(
+      `"${manifest.name}.app" already exists at ${bundlePath} and is not managed by this host; rename the app or choose another --apps-dir.`,
+    );
+  }
   if (existing && existing.bundlePath !== bundlePath) {
     fs.rmSync(existing.bundlePath, { recursive: true, force: true }); // the app was renamed
   }
@@ -208,6 +216,7 @@ async function install(appDir) {
     bundlePath,
     loaderPath,
     icns,
+    allowReplace: ownedBySelf,
     installId: id,
     name: manifest.name,
     hostPath,
@@ -845,7 +854,12 @@ async function runCommand([cmd, ...rest]) {
 }
 
 if (config && registry && command[0] !== "list") {
-  if (!app.requestSingleInstanceLock({ command })) {
+  const forwarded = {
+    command,
+    maxTier: cliFlags["max-tier"] !== undefined ? MAX_TIER : undefined,
+    appsDir: cliFlags["apps-dir"] !== undefined ? APPS_DIR : undefined,
+  };
+  if (!app.requestSingleInstanceLock(forwarded)) {
     // A host for this home is running: it runs the command (paths were made
     // absolute here). Its outcome is in host.log.
     console.log(`forwarded "${command[0]}" to the running host; see ${LOG}`);
@@ -853,13 +867,30 @@ if (config && registry && command[0] !== "list") {
   } else {
     app.on("second-instance", (_event, _argv, _cwd, extra) => {
       const cmd = Array.isArray(extra?.command) ? extra.command : ["serve"];
+      const compat = checkForwardedConfig({ maxTier: MAX_TIER, appsDir: APPS_DIR }, extra);
+      if (!compat.ok) {
+        log("command-failed", { command: cmd[0], message: compat.message });
+        return;
+      }
       runCommand(cmd).catch((e) => log("command-failed", { command: cmd[0], message: e.message }));
     });
     app.on("window-all-closed", () => {
       // The host keeps serving with no windows open.
     });
-    app.on("before-quit", () => {
-      for (const state of running.values()) for (const r of state.runs.values()) r.cancel();
+    let quitReady = false;
+    let quitPending = null;
+    app.on("before-quit", (event) => {
+      if (quitReady) return;
+      if (quitPending) {
+        event.preventDefault();
+        return;
+      }
+      const active = [];
+      for (const state of running.values()) active.push(...state.runs.values());
+      quitPending = cancelRunsOnQuit(active, event, () => {
+        quitReady = true;
+        app.quit();
+      });
     });
     app.on("app-shim-version-mismatch", (_event, bundlePath) => log("shim-version-mismatch", { bundlePath }));
     app.on("app-shim-connected", (_event, shim) => {

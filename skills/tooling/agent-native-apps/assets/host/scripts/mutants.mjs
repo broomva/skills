@@ -126,8 +126,26 @@ const MUTANTS = [
   [
     "direct-child close disarms SIGKILL escalation for surviving descendants",
     "src/harness.js",
-    "if (!cancelled) stopEscalation();",
-    "stopEscalation(); if (false)",
+    "if (!cancelled) stopEscalation();\n      else await cleanupDone;",
+    "stopEscalation();",
+  ],
+  [
+    "before-quit exits without preventing shutdown during active run cleanup",
+    "src/harness.js",
+    "event.preventDefault();",
+    "",
+  ],
+  [
+    "writeShimBundle deletes unowned existing bundle",
+    "src/bundle.js",
+    "if (!allowReplace && fs.existsSync(bundlePath))",
+    "if (false)",
+  ],
+  [
+    "forwarded command silently loosens requested --max-tier",
+    "src/args.js",
+    "if (requested?.maxTier !== undefined && requested.maxTier < running.maxTier)",
+    "if (false)",
   ],
   [
     "selftest hardcodes claude instead of selecting an installed harness",

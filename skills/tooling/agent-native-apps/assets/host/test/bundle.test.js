@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { test } from "node:test";
-import { BUNDLE_ID_PREFIX, icnsFromPngs, infoPlist, parseCdhash } from "../src/bundle.js";
+import { BUNDLE_ID_PREFIX, icnsFromPngs, infoPlist, parseCdhash, writeShimBundle } from "../src/bundle.js";
 
 const keys = {
   installId: "agent-pad-1a2b",
@@ -41,4 +44,40 @@ test("icnsFromPngs writes a well-formed container", () => {
   // ic07 (128) then ic13 + ic08 (256): three chunks of 8 + 9 bytes.
   assert.equal(icns.length, 8 + 3 * (8 + png.length));
   assert.equal(icns.subarray(8, 12).toString("latin1"), "ic07");
+});
+
+test("writeShimBundle refuses to delete an unowned existing bundle and preserves an owned one on failure", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ana-bundle-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const existing = path.join(dir, "Notes.app");
+  fs.mkdirSync(existing);
+  const sentinel = path.join(existing, "keep.txt");
+  fs.writeFileSync(sentinel, "untouched");
+
+  assert.throws(
+    () =>
+      writeShimBundle({
+        bundlePath: existing,
+        loaderPath: path.join(dir, "missing-loader"),
+        icns: null,
+        ...keys,
+      }),
+    /already exists and is not owned/,
+  );
+  assert.equal(fs.readFileSync(sentinel, "utf8"), "untouched", "unowned bundle must survive");
+
+  assert.throws(() =>
+    writeShimBundle({
+      bundlePath: existing,
+      loaderPath: path.join(dir, "missing-loader"),
+      icns: null,
+      allowReplace: true,
+      ...keys,
+    }),
+  );
+  assert.equal(
+    fs.readFileSync(sentinel, "utf8"),
+    "untouched",
+    "failed replacement must preserve existing bundle",
+  );
 });

@@ -7,6 +7,7 @@ import path from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import {
+  cancelRunsOnQuit,
   HARNESSES,
   harnessEnv,
   lastJsonObject,
@@ -395,6 +396,44 @@ test("cancel escalates to SIGKILL when a grandchild ignores SIGTERM even after t
     alive(grandchildPid),
     false,
     "SIGKILL escalation must terminate a SIGTERM-ignoring grandchild even after the direct child exits",
+  );
+});
+
+test("cancelRunsOnQuit defers shutdown via preventDefault until cancellation cleanup finishes", async () => {
+  let prevented = false;
+  let quitCalls = 0;
+  let cancelled = 0;
+  let resolveFinish;
+  const finished = new Promise((res) => {
+    resolveFinish = res;
+  });
+  const pending = cancelRunsOnQuit(
+    [
+      {
+        cancel: () => {
+          cancelled++;
+        },
+        finished,
+      },
+    ],
+    {
+      preventDefault: () => {
+        prevented = true;
+      },
+    },
+    () => {
+      quitCalls++;
+    },
+  );
+  assert.equal(prevented, true, "before-quit must call event.preventDefault()");
+  assert.equal(cancelled, 1, "active run must be cancelled");
+  assert.equal(quitCalls, 0, "quit must not run before cleanup finishes");
+  resolveFinish();
+  await pending;
+  assert.equal(quitCalls, 1, "quit must run once cleanup finishes");
+  assert.equal(
+    cancelRunsOnQuit([], { preventDefault: () => assert.fail("idle quit should not defer") }, () => {}),
+    null,
   );
 });
 

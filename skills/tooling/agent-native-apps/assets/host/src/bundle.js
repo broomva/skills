@@ -5,6 +5,7 @@
 // the app, not the host.
 
 import { execFileSync, spawnSync } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 
@@ -75,28 +76,51 @@ export function parseCdhash(codesignOutput) {
 /**
  * Write and ad-hoc sign the shim bundle. Returns its cdhash, which the host
  * pins: a shim whose running code does not match is refused on connect.
+ * Refuses to overwrite an existing destination unless `allowReplace` is true,
+ * and stages into a sibling directory so a failed build never deletes an
+ * existing bundle.
  */
-export function writeShimBundle({ bundlePath, loaderPath, icns, ...plistKeys }) {
-  fs.rmSync(bundlePath, { recursive: true, force: true });
-  const contents = path.join(bundlePath, "Contents");
-  fs.mkdirSync(path.join(contents, "MacOS"), { recursive: true });
-  fs.mkdirSync(path.join(contents, "Resources"), { recursive: true });
-  const exe = path.join(contents, "MacOS", EXECUTABLE);
-  fs.copyFileSync(loaderPath, exe);
-  fs.chmodSync(exe, 0o755);
-  if (icns) fs.writeFileSync(path.join(contents, "Resources", "app.icns"), icns);
-  fs.writeFileSync(path.join(contents, "Info.plist"), infoPlist({ ...plistKeys, hasIcon: Boolean(icns) }));
-  fs.writeFileSync(path.join(contents, "PkgInfo"), "APPL????");
-  execFileSync("codesign", ["--force", "--sign", "-", bundlePath], {
-    stdio: "pipe",
-  });
-  // codesign prints its details on stderr.
-  const shown = spawnSync("codesign", ["-dvvv", bundlePath], {
-    encoding: "utf8",
-  });
-  if (shown.status !== 0) throw new Error(`codesign -dvvv failed for ${bundlePath}: ${shown.stderr}`);
-  const cdhash = parseCdhash(`${shown.stdout}\n${shown.stderr}`);
-  if (!cdhash) throw new Error(`No CDHash for ${bundlePath}`);
+export function writeShimBundle({ bundlePath, loaderPath, icns, allowReplace = false, ...plistKeys }) {
+  if (!allowReplace && fs.existsSync(bundlePath)) {
+    throw new Error(`${bundlePath} already exists and is not owned by this host.`);
+  }
+  const token = randomBytes(4).toString("hex");
+  const stagingPath = `${bundlePath}.staging-${token}`;
+  const backupPath = `${bundlePath}.old-${token}`;
+  let cdhash;
+  try {
+    const contents = path.join(stagingPath, "Contents");
+    fs.mkdirSync(path.join(contents, "MacOS"), { recursive: true });
+    fs.mkdirSync(path.join(contents, "Resources"), { recursive: true });
+    const exe = path.join(contents, "MacOS", EXECUTABLE);
+    fs.copyFileSync(loaderPath, exe);
+    fs.chmodSync(exe, 0o755);
+    if (icns) fs.writeFileSync(path.join(contents, "Resources", "app.icns"), icns);
+    fs.writeFileSync(path.join(contents, "Info.plist"), infoPlist({ ...plistKeys, hasIcon: Boolean(icns) }));
+    fs.writeFileSync(path.join(contents, "PkgInfo"), "APPL????");
+    execFileSync("codesign", ["--force", "--sign", "-", stagingPath], {
+      stdio: "pipe",
+    });
+    // codesign prints its details on stderr.
+    const shown = spawnSync("codesign", ["-dvvv", stagingPath], {
+      encoding: "utf8",
+    });
+    if (shown.status !== 0) throw new Error(`codesign -dvvv failed for ${bundlePath}: ${shown.stderr}`);
+    cdhash = parseCdhash(`${shown.stdout}\n${shown.stderr}`);
+    if (!cdhash) throw new Error(`No CDHash for ${bundlePath}`);
+    const hadExisting = fs.existsSync(bundlePath);
+    if (hadExisting) fs.renameSync(bundlePath, backupPath);
+    try {
+      fs.renameSync(stagingPath, bundlePath);
+    } catch (e) {
+      if (hadExisting && fs.existsSync(backupPath)) fs.renameSync(backupPath, bundlePath);
+      throw e;
+    }
+    if (hadExisting) fs.rmSync(backupPath, { recursive: true, force: true });
+  } catch (e) {
+    fs.rmSync(stagingPath, { recursive: true, force: true });
+    throw e;
+  }
   return cdhash;
 }
 

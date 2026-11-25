@@ -61,3 +61,23 @@ export function resolveCommand(positional, cwd) {
   if ((cmd === "uninstall" || cmd === "grant") && !rest[0]) throw new ArgsError(`${cmd} needs an app id.`);
   return [cmd, ...rest];
 }
+
+/**
+ * Verify a forwarded CLI invocation does not request a stricter policy ceiling
+ * or a different apps directory than the already-running host. Pure.
+ */
+export function checkForwardedConfig(running, requested) {
+  if (requested?.maxTier !== undefined && requested.maxTier < running.maxTier) {
+    return {
+      ok: false,
+      message: `Refused: running host has --max-tier=${running.maxTier}, wider than requested --max-tier=${requested.maxTier}. Stop the running host first.`,
+    };
+  }
+  if (requested?.appsDir && requested.appsDir !== running.appsDir) {
+    return {
+      ok: false,
+      message: `Refused: running host uses --apps-dir=${running.appsDir}, not ${requested.appsDir}. Stop the running host first.`,
+    };
+  }
+  return { ok: true };
+}
