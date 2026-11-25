@@ -344,7 +344,7 @@ which is in `NON_PASS_ERRORS` and so drops out of `graded_trials` for free.
 | `inconclusive-no-trigger` | present-arm trigger rate < 0.5 — cannot separate absorption from a trigger failure |
 | `inconclusive-weak-checks` | the graded checks are CONSTANT — none failed in either arm, or none passed. Lift is 0.0 by construction either way, so the checks cannot tell the arms apart. (A check that *raises* is recorded as failed, so one buggy predicate would otherwise read as 'retire everything'.) |
 | `inconclusive-name-collision` | the name is a CLI built-in, so there is no absent arm |
-| `inconclusive-noisy` | with `--noise-band`: two identical with-skill arms differed beyond sampling, so no interval from this run can be trusted |
+| `inconclusive-noisy` | with `--noise-band`: two identical with-skill arms drifted apart (their prompt-level interval excludes zero), so no lift from this run can be trusted |
 
 Every inconclusive verdict serialises `"skill_lift": null` — **never `0.0`**, because a
 defaulted zero reads as perfect absorption, the most dangerous vacuity available here.
@@ -366,15 +366,17 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
   verdicts are `indeterminate`; a real retirement decision needs ~30 positive trials
   per arm (≈60 live CLI runs per skill).
 
-**The noise band (`--noise-band`, BRO-4110).** The interval assumes every trial is an
-independent coin; repeated prompts, drift and flaky checks break that, and none of it
-shows up in a binomial interval. `--ablate --noise-band` runs the with-skill arm a
-second time on the positive cases and reports how far two identical arms landed apart,
-next to the lift. Three rules apply only when the band was measured: identical arms
-that differ beyond sampling give `inconclusive-noisy`; `load-bearing` also needs the
-lift to exceed the spread; `retire-candidate` also needs the spread below the margin.
-It adds one arm of trials. Without it the report says `noise band NOT MEASURED` and
-serialises `"noise_band": null`, never `0.0`.
+**The noise band (`--noise-band`, BRO-4110).** The Newcombe interval treats every
+trial as an independent coin, but `--trials` repeats each prompt and a prompt's trials
+pass or fail together. Clustered trials make that interval too narrow.
+`--ablate --noise-band` makes the PROMPT the unit and adds a replicate with-skill arm.
+On the prompts graded in all three arms, the lift's interval becomes the union of
+Newcombe and a t-interval over per-prompt differences (never narrower than either),
+and identical arms whose drift interval excludes zero give `inconclusive-noisy`.
+`tests/skill_evals/noise_band_calibration.py` regenerates the calibration: at zero
+true lift with fully clustered trials, 24% of runs read load-bearing without the band
+and 2.4% with it; the price is power and a drift alarm at about its 5% test size.
+Without the flag nothing changes and the report says `A/A drift NOT MEASURED`.
 
 ```bash
 python3 scripts/skill_evals/runner.py --skill checkit --trials 10 --ablate --noise-band

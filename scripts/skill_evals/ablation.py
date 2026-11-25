@@ -37,27 +37,34 @@ harness can remove:
   guessing. At the default 3 trials the interval is roughly ±0.28 wide, so most
   honest verdicts will be ``indeterminate``.
 
-THE NOISE BAND (BRO-4110)
--------------------------
-The interval above assumes every trial is an independent coin. Real trials are not:
-the same prompt is repeated, the model and the harness drift within a run, and a
-check can be flaky. None of that shows up in a binomial interval, so the interval can
-be narrower than the harness's real noise. ``--noise-band`` measures that noise
-directly: it runs the with-skill arm a SECOND time, identically, and the difference
-between the two identical arms is the yardstick a lift has to clear. Both arms have
-the same size as the baseline, so the spread and the lift are measured on equal
-footing. Three rules follow, and only when the band was measured:
+THE NOISE BAND (``--noise-band``, BRO-4110)
+-------------------------------------------
+The Newcombe interval above treats every trial as an independent coin. Trials are
+not independent: the same prompt is repeated ``--trials`` times, and its trials
+succeed or fail together far more than coins do. Clustered trials make the binomial
+interval too narrow, so it calls lifts real that are not.
 
-* identical arms that differ beyond what sampling explains (their own interval
-  excludes zero) make every number from this run untrustworthy: ``inconclusive-noisy``;
-* ``load-bearing`` also needs the lift to exceed the spread;
-* ``retire-candidate`` also needs the spread to sit below the margin, because a
-  harness that cannot tell two identical runs apart to within the margin cannot
-  establish that a skill adds less than the margin.
+``--noise-band`` fixes that by making the PROMPT the unit, and adds a second,
+identical with-skill arm (the replicate). On the prompts graded in all three arms:
 
-The idea is Uber's (2026-11-23 Uber Engineering post on skill evals, which reports a
-per-skill noise band "how much two identical runs differ" beside each with/without win
-share); the three rules are ours. An unmeasured band serialises ``noise_band: null``.
+* the lift's interval is the UNION of the Newcombe interval and a t-interval over
+  per-prompt differences (present minus absent). Never narrower than either model:
+  the t-interval carries the clustering, Newcombe keeps a floor when every prompt
+  happens to agree (a zero-variance t-interval is false certainty);
+* the A/A drift is the same union for present minus replicate. Two identical arms
+  whose drift interval excludes zero mean the runs themselves moved (model, harness
+  or environment changed under the measurement): ``inconclusive-noisy``.
+
+Measured by ``tests/skill_evals/noise_band_calibration.py`` (2000 seeded runs of 10
+prompts, 12 perfectly correlated trials each, zero true lift): the trial-level
+interval alone calls 24% of them load-bearing, this one 2.4%. On a true lift of
++0.20 the false retire-candidate rate falls from 10.5% to 0.4%. The price is power
+(a +0.30 lift on 11 prompts x 3 trials is called load-bearing 51% of the time, not
+70%) and a drift alarm at about its 5% test size. The unit test
+``test_clustered_trials_do_not_manufacture_a_lift`` pins the first comparison.
+
+The idea of an A/A band is Uber's (2026-11-23 post on skill evals); making the prompt
+the unit is ours. Without the flag nothing changes and ``noise`` is ``null``.
 
 A missing or unusable measurement serialises ``skill_lift: null``, never ``0.0``.
 A defaulted zero reads as perfect absorption, which is the single most dangerous
@@ -233,43 +240,129 @@ def newcombe_difference(s1: int, n1: int, s2: int, n2: int) -> tuple[float, floa
     return (max(-1.0, lower), min(1.0, upper))
 
 
+# ---------------------------------------------------------------------------
+# the noise band — the prompt as the unit (BRO-4110)
+# ---------------------------------------------------------------------------
+
+#: Two-sided 95% Student t critical values by degrees of freedom. Beyond the table a
+#: df takes the value of the next LOWER tabulated df, which is conservative.
+_T95 = {1: 12.706, 2: 4.303, 3: 3.182, 4: 2.776, 5: 2.571, 6: 2.447, 7: 2.365,
+        8: 2.306, 9: 2.262, 10: 2.228, 11: 2.201, 12: 2.179, 13: 2.160, 14: 2.145,
+        15: 2.131, 16: 2.120, 17: 2.110, 18: 2.101, 19: 2.093, 20: 2.086, 21: 2.080,
+        22: 2.074, 23: 2.069, 24: 2.064, 25: 2.060, 26: 2.056, 27: 2.052, 28: 2.048,
+        29: 2.045, 30: 2.042, 40: 2.021, 60: 2.000, 120: 1.980}
+
+
+def t95(df: int) -> float:
+    return _T95[max(k for k in _T95 if k <= df)]
+
+
+def mean_interval(diffs: Sequence[float]) -> tuple[float, float] | None:
+    """95% t-interval for the mean of per-prompt differences; None below 2 prompts."""
+    n = len(diffs)
+    if n < 2:
+        return None
+    m = sum(diffs) / n
+    sd = math.sqrt(sum((d - m) ** 2 for d in diffs) / (n - 1))
+    half = t95(n - 1) * sd / math.sqrt(n)
+    return (max(-1.0, m - half), min(1.0, m + half))
+
+
+def union(a: tuple[float, float], b: tuple[float, float] | None) -> tuple[float, float]:
+    return a if b is None else (min(a[0], b[0]), max(a[1], b[1]))
+
+
+def case_stats(report: dict[str, Any], non_pass: Sequence[str]) -> dict[str, ArmStats]:
+    """{prompt id: ArmStats of that prompt's graded trials} over the positive cases."""
+    out: dict[str, ArmStats] = {}
+    for i, case in enumerate(report.get("cases") or []):
+        if not case.get("should_trigger"):
+            continue
+        key = str(case.get("case_id") or case.get("id") or f"#{i}")
+        out[key] = arm_stats({"cases": [case]}, non_pass)
+    return out
+
+
+def _sum(stats: Iterable[ArmStats]) -> ArmStats:
+    stats = list(stats)
+    return ArmStats(
+        graded_positive_trials=sum(s.graded_positive_trials for s in stats),
+        outcome_passes=sum(s.outcome_passes for s in stats),
+        trigger_events=sum(s.trigger_events for s in stats),
+        check_failures=sum(s.check_failures for s in stats),
+    )
+
+
 @dataclass(frozen=True)
 class NoiseBand:
-    """Two identical with-skill arms, and how far apart they landed (BRO-4110)."""
+    """Per-prompt evidence on the prompts graded in present, absent and replicate."""
 
-    first: ArmStats
-    second: ArmStats
+    prompts: tuple[str, ...]
+    present: ArmStats    # the three arms, restricted to those prompts
+    absent: ArmStats
+    replicate: ArmStats
+    lift_diffs: tuple[float, ...]   # present minus absent, one per prompt
+    drift_diffs: tuple[float, ...]  # present minus replicate, one per prompt
 
     @property
-    def spread(self) -> float | None:
-        a, b = self.first.outcome_pass_rate, self.second.outcome_pass_rate
-        if a is None or b is None:
+    def drift(self) -> float | None:
+        a, b = self.present.outcome_pass_rate, self.replicate.outcome_pass_rate
+        return None if a is None or b is None else a - b
+
+    @property
+    def drift_ci(self) -> tuple[float, float] | None:
+        if not self.prompts:
             return None
-        return abs(a - b)
+        return union(newcombe_difference(
+            self.present.outcome_passes, self.present.graded_positive_trials,
+            self.replicate.outcome_passes, self.replicate.graded_positive_trials,
+        ), mean_interval(self.drift_diffs))
 
     @property
-    def spread_ci(self) -> tuple[float, float]:
-        return newcombe_difference(
-            self.first.outcome_passes, self.first.graded_positive_trials,
-            self.second.outcome_passes, self.second.graded_positive_trials,
-        )
+    def lift_prompt_ci(self) -> tuple[float, float] | None:
+        return mean_interval(self.lift_diffs)
 
     @property
-    def exceeds_sampling(self) -> bool:
-        """True when two IDENTICAL arms differ by more than sampling explains."""
-        if self.spread is None:
-            return False
-        lo, hi = self.spread_ci
-        return lo > 0 or hi < 0
+    def drifted(self) -> bool | None:
+        ci = self.drift_ci
+        return None if ci is None else (ci[0] > 0 or ci[1] < 0)
 
     def to_dict(self) -> dict[str, Any]:
-        lo, hi = self.spread_ci
+        def r(ci):
+            return None if ci is None else [round(ci[0], 4), round(ci[1], 4)]
         return {
-            "replicate": self.second.to_dict(),
-            "spread": None if self.spread is None else round(self.spread, 4),
-            "spread_ci": [round(lo, 4), round(hi, 4)],
-            "exceeds_sampling": self.exceeds_sampling,
+            "prompts": len(self.prompts),
+            "replicate": self.replicate.to_dict(),
+            "drift": None if self.drift is None else round(self.drift, 4),
+            "drift_ci": r(self.drift_ci),
+            "drifted": self.drifted,
+            "lift_prompt_ci": r(self.lift_prompt_ci),
         }
+
+
+def noise_band(present: dict, absent: dict, replicate: dict,
+               non_pass: Sequence[str]) -> NoiseBand:
+    """Pair the three arms prompt by prompt, keeping only prompts graded in all three.
+
+    A prompt one arm could not grade (all ERROR) drops out of every arm: comparing a
+    replicate that skipped the hard prompt with a present arm that did not would
+    manufacture the whole gap.
+    """
+    p, a, r = (case_stats(x, non_pass) for x in (present, absent, replicate))
+    keys = tuple(k for k in p if all(
+        arm.get(k) is not None and arm[k].graded_positive_trials for arm in (p, a, r)))
+
+    def rate(arm: dict[str, ArmStats], k: str) -> float:
+        return arm[k].outcome_pass_rate or 0.0
+
+    return NoiseBand(
+        prompts=keys,
+        present=_sum(p[k] for k in keys),
+        absent=_sum(a[k] for k in keys),
+        replicate=_sum(r[k] for k in keys),
+        lift_diffs=tuple(rate(p, k) - rate(a, k) for k in keys),
+        drift_diffs=tuple(rate(p, k) - rate(r, k) for k in keys),
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -294,7 +387,7 @@ def decide_verdict(
     """
     def undecided(name: str, why: str) -> dict[str, Any]:
         return {"verdict": name, "why": why, "skill_lift": None, "skill_lift_ci": None,
-                "end_to_end_lift": None, "noise_band": None}
+                "end_to_end_lift": None}
 
     if name_collision:
         return undecided(
@@ -314,11 +407,13 @@ def decide_verdict(
             f"(present={present.graded_positive_trials}, absent={absent.graded_positive_trials}); "
             "raise --trials or add positive cases",
         )
-    if noise is not None and noise.second.graded_positive_trials < min_trials:
+    if noise is not None and (len(noise.prompts) < 2
+                              or noise.replicate.graded_positive_trials < min_trials):
         return undecided(
             VERDICT_UNDERPOWERED,
-            f"fewer than {min_trials} graded positive trials in the noise-band replicate "
-            f"(replicate={noise.second.graded_positive_trials}); raise --trials",
+            f"the noise band needs 2+ prompts graded in every arm and {min_trials}+ graded "
+            f"replicate trials (prompts={len(noise.prompts)}, "
+            f"replicate={noise.replicate.graded_positive_trials})",
         )
     # Order matters: a skill that never FIRES is diagnosed as a trigger problem, not
     # as a check problem, because the remedies are opposite. This gate used to sit
@@ -331,6 +426,17 @@ def decide_verdict(
             f"the skill fired in only {trig:.0%} of present-arm trials — an ablation "
             "cannot separate absorption from a trigger failure. Fix the description first."
             if trig is not None else "no present-arm trials",
+        )
+
+    # Before the check-strength gates: identical arms that moved apart make every
+    # number from this run suspect, whatever the checks can or cannot tell apart.
+    if noise is not None and noise.drifted:
+        lo_n, hi_n = noise.drift_ci
+        return undecided(
+            VERDICT_NOISY,
+            f"two identical with-skill arms drifted by {noise.drift:+.2f} "
+            f"(95% CI [{lo_n:+.2f}, {hi_n:+.2f}] excludes zero) — the runs themselves "
+            "moved, so no lift from this run can be trusted",
         )
 
     # A retirement verdict needs the graded checks to DISCRIMINATE, and the test for
@@ -368,46 +474,25 @@ def decide_verdict(
             "recorded as failed) or an environment-invariant failure, not absorption",
         )
 
-    # Two identical arms that disagree beyond sampling mean the interval below is
-    # narrower than this harness's real noise, so no verdict from it can be trusted.
-    if noise is not None and noise.exceeds_sampling:
-        lo_n, hi_n = noise.spread_ci
-        return undecided(
-            VERDICT_NOISY,
-            f"two identical with-skill arms differed by {noise.spread:.2f} "
-            f"(95% CI [{lo_n:+.2f}, {hi_n:+.2f}] excludes zero) — this run is noisier "
-            "than sampling explains, so its interval cannot support a verdict",
-        )
-
     lift = (present.outcome_pass_rate or 0.0) - (absent.outcome_pass_rate or 0.0)
     lo, hi = newcombe_difference(
         present.outcome_passes, present.graded_positive_trials,
         absent.outcome_passes, absent.graded_positive_trials,
     )
-    band = noise.spread if noise is not None else None
+    if noise is not None:
+        lo, hi = union((lo, hi), noise.lift_prompt_ci)
     result = {
         "skill_lift": round(lift, 4),
         "skill_lift_ci": [round(lo, 4), round(hi, 4)],
         "end_to_end_lift": None,
-        "noise_band": None if band is None else round(band, 4),
     }
-    if hi < margin and band is not None and band >= margin:
-        result.update(verdict=VERDICT_INDETERMINATE, why=(
-            f"the interval sits below the {margin} margin, but two identical arms "
-            f"differed by {band:.2f} — this harness cannot resolve a difference as small "
-            "as the margin, so it cannot establish absorption"))
-    elif hi < margin:
+    if hi < margin:
         result.update(verdict=VERDICT_RETIRE, why=(
             f"the whole 95% interval for the lift sits below the {margin} margin — the "
             "base model does about as well without it"))
-    elif lo > 0 and band is not None and lift <= band:
-        result.update(verdict=VERDICT_INDETERMINATE, why=(
-            f"the lift {lift:+.2f} is inside the noise band: two identical with-skill "
-            f"arms differed by {band:.2f}"))
     elif lo > 0:
         result.update(verdict=VERDICT_LOAD_BEARING, why=(
-            "the 95% interval for the lift is entirely above zero"
-            + ("" if band is None else f" and the lift exceeds the {band:.2f} noise band")))
+            "the 95% interval for the lift is entirely above zero"))
     else:
         result.update(verdict=VERDICT_INDETERMINATE, why=(
             f"the interval [{lo:.2f}, {hi:.2f}] straddles the {margin} margin; more trials "
@@ -427,17 +512,16 @@ def compare(
 ) -> dict[str, Any]:
     """The full two-arm comparison, as it lands in the JSON report.
 
-    ``replicate_report`` is an optional second with-skill arm run identically to the
-    first (``--noise-band``). Without it the noise band is not measured and the
-    comparison carries ``noise: null`` and ``noise_band: null``.
+    With ``replicate_report`` (``--noise-band``) the lift is computed on the prompts
+    graded in all three arms, and its interval also covers prompt-level clustering.
     """
     skill = str(present_report.get("skill") or "")
     present = arm_stats(present_report, non_pass)
     absent = arm_stats(absent_report, non_pass)
-    noise = (
-        NoiseBand(present, arm_stats(replicate_report, non_pass))
-        if replicate_report is not None else None
-    )
+    noise = None
+    if replicate_report is not None:
+        noise = noise_band(present_report, absent_report, replicate_report, non_pass)
+        present, absent = noise.present, noise.absent
     leaked = sum(
         1
         for case in absent_report.get("cases") or []
@@ -501,14 +585,16 @@ def format_comparison(cmp: dict[str, Any]) -> str:
         lines.append(f"  skill lift   {cmp['skill_lift']:+.2f}  95% CI [{lo:+.2f}, {hi:+.2f}]")
         if cmp.get("end_to_end_lift") is not None:
             lines.append(f"  end-to-end   {cmp['end_to_end_lift']:+.2f}  (trigger-inclusive)")
-    if noise and noise.get("spread") is not None:
-        lo_n, hi_n = noise["spread_ci"]
+    if noise and noise.get("drift_ci") is not None:
+        lo_n, hi_n = noise["drift_ci"]
         lines.append(
-            f"  noise band   {noise['spread']:.2f}  (two identical with-skill arms; "
-            f"95% CI [{lo_n:+.2f}, {hi_n:+.2f}])"
+            f"  A/A drift    {noise['drift']:+.2f}  95% CI [{lo_n:+.2f}, {hi_n:+.2f}]  "
+            f"(two identical with-skill arms, {noise['prompts']} prompts)"
         )
+    elif noise:
+        lines.append("  A/A drift    NOT MEASURED (no prompt graded in every arm)")
     else:
-        lines.append("  noise band   NOT MEASURED (run with --noise-band)")
+        lines.append("  A/A drift    NOT MEASURED (run with --noise-band)")
     lines.append(f"  VERDICT      {cmp['verdict']}")
     lines.append(f"               {cmp['why']}")
     lines.append("")
@@ -525,6 +611,7 @@ __all__ = [
     "decide_verdict",
     "format_comparison",
     "newcombe_difference",
+    "noise_band",
     "outcome_passed",
     "wilson_interval",
 ]

@@ -520,136 +520,234 @@ def test_load_bearing_survives_both_polarity_guards():
 
 
 # ---------------------------------------------------------------------------
-# the noise band (BRO-4110): two identical with-skill arms are the yardstick
+# the noise band (BRO-4110): the prompt is the unit, plus an A/A drift test
 # ---------------------------------------------------------------------------
 
-
-def arm(n, passes):
-    """An arm whose every non-passing trial failed a graded check."""
-    return A.ArmStats(n, passes, n, check_failures=max(1, n - passes))
-
-
-def test_without_a_replicate_the_noise_band_is_null_not_zero():
-    """An unmeasured band must not read as a perfectly quiet harness."""
-    v = A.decide_verdict(arm(30, 29), arm(30, 3), min_trials=10)
-    assert v["noise_band"] is None
-    for undecided in (
-        A.decide_verdict(arm(2, 2), arm(2, 0)),
-        A.decide_verdict(arm(20, 18), arm(20, 18), leaked=1),
-    ):
-        assert undecided["noise_band"] is None
+import contextlib  # noqa: E402
+import io  # noqa: E402
+import json  # noqa: E402
+import random  # noqa: E402
+from types import SimpleNamespace  # noqa: E402
+from unittest.mock import patch  # noqa: E402
 
 
-def test_identical_arms_leave_every_verdict_unchanged():
-    """FALSE-POSITIVE control: a replicate that landed exactly where the first arm
-    did is a quiet harness, and must not move any decidable verdict."""
-    cases = [
-        (arm(30, 29), arm(30, 3)),    # load-bearing
-        (arm(90, 80), arm(90, 80)),   # retire-candidate
-        (arm(12, 10), arm(12, 10)),   # indeterminate
-    ]
-    for present, absent in cases:
-        without = A.decide_verdict(present, absent, min_trials=10)
-        with_band = A.decide_verdict(present, absent, min_trials=10,
-                                     noise=A.NoiseBand(present, present))
-        assert with_band["verdict"] == without["verdict"], (present, without, with_band)
-        assert with_band["noise_band"] == 0.0
+def prompts_report(per_prompt, *, error_prompts=()):
+    """A report with one positive case per entry of `per_prompt` = [(passes, n), ...]."""
+    cases = []
+    for i, (passes, n) in enumerate(per_prompt):
+        if i in error_prompts:
+            results = [{"outcome": "ERROR"}] * n
+        else:
+            results = ([trial("PASS", [chk("x", passed=True)], triggered=True)] * passes
+                       + [trial("FAIL", [chk("x", passed=False)], triggered=True)] * (n - passes))
+        cases.append({"case_id": f"p{i}", "should_trigger": True, "results": results})
+    return report(cases=cases)
 
 
-def test_a_lift_inside_the_noise_band_is_indeterminate():
-    """The ticket's case. The baseline sits at 0, so its interval is tight on one side
-    and a lift of 0.17 clears zero; but two identical with-skill arms landed 0.17
-    apart, inside sampling noise. The lift is no bigger than the harness's own
-    wobble, so it cannot support load-bearing."""
-    present, absent, replicate = arm(30, 5), arm(30, 0), arm(30, 10)
-    without = A.decide_verdict(present, absent, min_trials=10)
-    assert without["verdict"] == A.VERDICT_LOAD_BEARING  # the band is what changes it
-    band = A.NoiseBand(present, replicate)
-    assert not band.exceeds_sampling
-    v = A.decide_verdict(present, absent, min_trials=10, noise=band)
-    assert v["verdict"] == A.VERDICT_INDETERMINATE
-    assert v["skill_lift"] <= v["noise_band"]
-    assert "noise band" in v["why"]
+def band_compare(present, absent, replicate, **kw):
+    return A.compare(prompts_report(present), prompts_report(absent), non_pass=NON_PASS,
+                     min_trials=10, replicate_report=prompts_report(replicate), **kw)
 
 
-def test_a_lift_above_the_noise_band_stays_load_bearing():
-    present, absent = arm(30, 29), arm(30, 3)
-    v = A.decide_verdict(present, absent, min_trials=10,
-                         noise=A.NoiseBand(present, arm(30, 27)))
-    assert v["verdict"] == A.VERDICT_LOAD_BEARING
-    assert v["skill_lift"] > v["noise_band"]
-
-
-def test_retirement_needs_the_band_below_the_margin():
-    """A harness whose identical arms land a margin apart cannot establish that a
-    skill adds less than the margin."""
-    present, absent, replicate = arm(60, 6), arm(60, 9), arm(60, 12)
-    assert A.decide_verdict(present, absent, min_trials=10)["verdict"] == A.VERDICT_RETIRE
-    band = A.NoiseBand(present, replicate)
-    assert not band.exceeds_sampling and band.spread >= A.ABLATION_MARGIN
-    v = A.decide_verdict(present, absent, min_trials=10, noise=band)
-    assert v["verdict"] == A.VERDICT_INDETERMINATE
-    assert "cannot resolve" in v["why"]
-
-
-def test_identical_arms_that_disagree_beyond_sampling_void_the_run():
-    """Two identical arms whose own interval excludes zero mean this run is noisier
-    than a binomial interval assumes, so no interval from it can be trusted."""
-    present, absent = arm(30, 29), arm(30, 3)
-    band = A.NoiseBand(present, arm(30, 12))
-    assert band.exceeds_sampling
-    v = A.decide_verdict(present, absent, min_trials=10, noise=band)
-    assert v["verdict"] == A.VERDICT_NOISY
-    assert v["skill_lift"] is None and v["noise_band"] is None
-
-
-def test_an_underpowered_replicate_says_so():
-    present, absent = arm(30, 29), arm(30, 3)
-    v = A.decide_verdict(present, absent, min_trials=10,
-                         noise=A.NoiseBand(present, arm(4, 4)))
-    assert v["verdict"] == A.VERDICT_UNDERPOWERED
-    assert "replicate" in v["why"]
-
-
-def _arm_report(passes, n):
-    results = ([trial("PASS", [chk("x", passed=True)], triggered=True)] * passes
-               + [trial("FAIL", [chk("x", passed=False)], triggered=True)] * (n - passes))
-    return report(cases=[case(results=results)])
-
-
-def test_compare_reports_the_band_next_to_the_lift():
-    present, absent = _arm_report(29, 30), _arm_report(3, 30)
-    cmp = A.compare(present, absent, non_pass=NON_PASS, min_trials=10,
-                    replicate_report=_arm_report(27, 30))
-    assert cmp["noise"]["spread"] == round(2 / 30, 4)
-    assert cmp["noise"]["replicate"]["graded_positive_trials"] == 30
-    assert cmp["noise_band"] == cmp["noise"]["spread"]
-    text = A.format_comparison(cmp)
-    assert "replicate" in text and "noise band   0.07" in text
-
-
-def test_compare_without_a_replicate_says_the_band_was_not_measured():
-    cmp = A.compare(_arm_report(29, 30), _arm_report(3, 30), non_pass=NON_PASS, min_trials=10)
-    assert cmp["noise"] is None and cmp["noise_band"] is None
+def test_without_a_replicate_nothing_changes_and_noise_is_null():
+    p, a = prompts_report([(3, 3)] * 10), prompts_report([(0, 3)] * 10)
+    cmp = A.compare(p, a, non_pass=NON_PASS, min_trials=10)
+    assert cmp["noise"] is None
     assert "NOT MEASURED (run with --noise-band)" in A.format_comparison(cmp)
 
 
+def _clustered(rng, rates, trials):
+    """Each prompt's trials all pass or all fail together: perfect clustering."""
+    out = []
+    for p in rates:
+        ok = rng.random() < p
+        out.append((trials if ok else 0, trials))
+    return out
+
+
+def test_clustered_trials_do_not_manufacture_a_lift():
+    """THE reason the band exists (P20 round 1, blocker). Ten prompts, twelve
+    perfectly correlated trials each, zero true lift. The trial-level interval treats
+    120 trials as independent and calls a large share of these runs load-bearing; the
+    prompt-level union stays near the nominal one-sided 2.5%. Seeded, so it is exact."""
+    rng = random.Random(20261124)
+    sims, without, with_band = 300, 0, 0
+    for _ in range(sims):
+        base = [rng.uniform(0.2, 0.8) for _ in range(10)]
+        P, B, R_ = (_clustered(rng, base, 12) for _ in range(3))
+        p, b = prompts_report(P), prompts_report(B)
+        if A.compare(p, b, non_pass=NON_PASS, min_trials=10)["verdict"] == A.VERDICT_LOAD_BEARING:
+            without += 1
+        if band_compare(P, B, R_)["verdict"] == A.VERDICT_LOAD_BEARING:
+            with_band += 1
+    assert without / sims > 0.15, without
+    assert with_band / sims < 0.06, with_band
+
+
+def test_a_clearly_load_bearing_skill_stays_load_bearing():
+    """FALSE-POSITIVE control: honest intervals must not make real lifts unprovable."""
+    cmp = band_compare([(3, 3)] * 10, [(0, 3)] * 10, [(3, 3)] * 10)
+    assert cmp["verdict"] == A.VERDICT_LOAD_BEARING
+
+
+def test_a_clearly_absorbed_skill_can_still_retire():
+    cmp = band_compare([(9, 10)] * 20, [(9, 10)] * 20, [(9, 10)] * 20)
+    assert cmp["verdict"] == A.VERDICT_RETIRE
+
+
+def test_prompts_that_all_agree_do_not_give_false_certainty():
+    """Every prompt 1-of-2 in both arms: the per-prompt differences are all zero, so
+    the t-interval alone is [0, 0] and would call it absorbed. The union keeps the
+    Newcombe floor, which is honest about 20 trials."""
+    cmp = band_compare([(1, 2)] * 10, [(1, 2)] * 10, [(1, 2)] * 10)
+    assert cmp["noise"]["lift_prompt_ci"] == [0.0, 0.0]
+    assert cmp["verdict"] == A.VERDICT_INDETERMINATE
+    assert cmp["skill_lift_ci"][1] > A.ABLATION_MARGIN
+
+
+def test_identical_arms_that_drifted_void_the_run():
+    cmp = band_compare([(3, 3)] * 10, [(0, 3)] * 10, [(0, 3)] * 10)
+    assert cmp["verdict"] == A.VERDICT_NOISY
+    assert cmp["skill_lift"] is None
+    assert cmp["noise"]["drift"] == 1.0 and cmp["noise"]["drifted"] is True
+
+
+def test_drift_is_diagnosed_before_the_check_strength_gates():
+    """P20 round 1, minor: present and absent never failed, so weak-checks used to win
+    even though the replicate failed 20 of 30. The replicate is evidence too."""
+    cmp = band_compare([(3, 3)] * 10, [(3, 3)] * 10, [(1, 3)] * 10)
+    assert cmp["verdict"] == A.VERDICT_NOISY
+
+
+def test_drift_is_signed_and_its_interval_matches_its_sign():
+    """P20 round 1: an absolute spread printed beside a signed interval read as a
+    contradiction. Both are signed now."""
+    cmp = band_compare([(1, 3)] * 10, [(1, 3)] * 10, [(3, 3)] * 10)
+    lo, hi = cmp["noise"]["drift_ci"]
+    assert cmp["noise"]["drift"] < 0 and hi < 0
+    assert cmp["verdict"] == A.VERDICT_NOISY  # a replicate that did BETTER is drift too
+
+
+def test_a_prompt_one_arm_could_not_grade_drops_out_of_every_arm():
+    """P20 round 1: the replicate ERRORed on the one hard prompt, so it scored 60/60
+    against the present arm's 60/90 and the whole gap was the missing prompt."""
+    easy_easy_hard = [(30, 30), (30, 30), (0, 30)]
+    p = prompts_report(easy_easy_hard)
+    r = prompts_report(easy_easy_hard, error_prompts=(2,))
+    cmp = A.compare(p, prompts_report(easy_easy_hard), non_pass=NON_PASS, min_trials=10,
+                    replicate_report=r)
+    assert cmp["noise"]["prompts"] == 2
+    assert cmp["noise"]["drift"] == 0.0
+    assert cmp["verdict"] != A.VERDICT_NOISY
+
+
+def test_fewer_than_two_shared_prompts_is_underpowered():
+    cmp = band_compare([(30, 30)], [(0, 30)], [(30, 30)])
+    assert cmp["verdict"] == A.VERDICT_UNDERPOWERED
+    assert "2+ prompts" in cmp["why"]
+
+
+def test_an_ungraded_replicate_serialises_nulls_and_says_why():
+    p, a = prompts_report([(3, 3)] * 10), prompts_report([(0, 3)] * 10)
+    r = prompts_report([(3, 3)] * 10, error_prompts=range(10))
+    cmp = A.compare(p, a, non_pass=NON_PASS, min_trials=0, replicate_report=r)
+    assert cmp["noise"]["drift"] is None and cmp["noise"]["drift_ci"] is None
+    assert cmp["noise"]["drifted"] is None
+    assert cmp["verdict"] == A.VERDICT_UNDERPOWERED
+    assert "NOT MEASURED (no prompt graded in every arm)" in A.format_comparison(cmp)
+
+
+def test_the_report_renders_the_drift_next_to_the_lift():
+    text = A.format_comparison(band_compare([(3, 3)] * 10, [(0, 3)] * 10, [(3, 3)] * 10))
+    assert "replicate" in text and "A/A drift    +0.00" in text and "10 prompts" in text
+
+
+# --- the runner: the replicate arm as it is actually wired ---------------------------
+
+FIXTURE = Path("tests/skill_evals/fixtures/harness-selftest")
+BASE_ARGS = ["--skill-dir", str(FIXTURE / "skill"), "--prompts", str(FIXTURE / "evals/prompts.json"),
+             "--cli", "/bin/true", "--no-version-check", "--ablate", "--json", "--trials", "4"]
+
+
+def stubbed_main(tmp_path, *args, write_during=None):
+    """Run R.main with every trial stubbed; record each arm's config. A real
+    RealStateWatch watches one file that `write_during` (an arm number) touches."""
+    watched = tmp_path / "state"
+    watched.write_text("before")
+    arms = []
+    real_run_suite, real_watch = R.run_suite, R.jail_mod.RealStateWatch
+
+    def case_runner(runner, case, cfg):
+        trials = [R.TrialResult(case.id, t, R.PASS, triggered=cfg.visibility.expects_visible,
+                                checks=[{"check_id": "x", "passed": True}])
+                  for t in range(1, cfg.trials + 1)]
+        return R.CaseResult(case.id, case.should_trigger, case.origin, trials=trials)
+
+    def suite(runner, prompts, cfg):
+        arms.append({"visibility": cfg.visibility.id, "cases": [c.id for c in prompts.cases],
+                     "positives_only": all(c.should_trigger for c in prompts.cases),
+                     "jobs": cfg.jobs})
+        if write_during == len(arms):
+            watched.write_text(f"written during arm {len(arms)}")
+        return real_run_suite(runner, prompts, cfg)
+
+    out = io.StringIO()
+    with patch.object(R, "run_suite", suite), patch.object(R, "run_case", case_runner), \
+         patch.object(R.jail_mod, "RealStateWatch", lambda: real_watch(paths=(str(watched),))), \
+         patch.object(R.jail_mod, "prepare_jail"), \
+         patch.object(R.jail_mod, "verify_jail", return_value=SimpleNamespace(holds=True)), \
+         patch.object(R.jail_mod, "auth_material_missing", return_value=False), \
+         contextlib.redirect_stdout(out), contextlib.redirect_stderr(io.StringIO()):
+        rc = R.main(BASE_ARGS + list(args))
+    return rc, json.loads(out.getvalue()), arms
+
+
+def test_the_replicate_runs_the_positives_with_the_skill_present(tmp_path):
+    """P20 round 1: none of this was pinned; six wiring mutations survived."""
+    rc, rep, arms = stubbed_main(tmp_path, "--noise-band", "--jobs", "3",
+                                 "--ablate-baseline", "bare")
+    assert len(arms) == 3
+    present, baseline, replicate = arms
+    assert replicate["visibility"] == present["visibility"] == "present"
+    assert replicate["positives_only"] is True
+    assert set(replicate["cases"]) < set(present["cases"])
+    assert replicate["jobs"] == 3
+    assert rep["ablation"]["noise"] is not None
+    assert rep["ablation"]["noise"]["replicate"]["graded_positive_trials"] == 4 * len(replicate["cases"])
+    assert rep["ablation_replicate_arm"]["meta"]["arm"] == "present-replicate"
+
+
+def test_without_the_flag_no_replicate_runs(tmp_path):
+    _, rep, arms = stubbed_main(tmp_path)
+    assert len(arms) == 2 and rep["ablation"]["noise"] is None
+
+
+@pytest.mark.parametrize("arm", [2, 3])
+def test_a_state_change_during_an_ablation_arm_is_seen(tmp_path, arm):
+    """P20 round 1: the watch was read after the primary arm only, so a write during
+    the baseline (pre-existing) or the replicate passed --fail-on-real-state-change."""
+    rc, rep, _ = stubbed_main(tmp_path, "--noise-band", "--fail-on-real-state-change",
+                              write_during=arm)
+    assert rep["meta"].get("real_state_changes"), arm
+    assert rc != R.EXIT_OK
+
+
 def test_noise_band_without_ablate_is_refused():
-    rc = R.main([
-        "--skill-dir", "tests/skill_evals/fixtures/harness-selftest/skill",
-        "--prompts", "tests/skill_evals/fixtures/harness-selftest/evals/prompts.json",
-        "--cli", "/bin/true", "--no-version-check", "--noise-band", "--dry-run",
-    ])
-    assert rc == R.EXIT_USAGE
+    for extra in (["--dry-run"], ["--validate-only"]):
+        rc = R.main([
+            "--skill-dir", str(FIXTURE / "skill"), "--prompts", str(FIXTURE / "evals/prompts.json"),
+            "--cli", "/bin/true", "--no-version-check", "--noise-band", *extra,
+        ])
+        assert rc == R.EXIT_USAGE, extra
 
 
-def test_noise_band_dry_run_plans_the_replicate_arm(capsys):
-    rc = R.main([
-        "--skill-dir", "tests/skill_evals/fixtures/harness-selftest/skill",
-        "--prompts", "tests/skill_evals/fixtures/harness-selftest/evals/prompts.json",
-        "--cli", "/bin/true", "--no-version-check", "--ablate", "--noise-band",
-        "--dry-run", "--trials", "2",
-    ])
+def test_the_dry_run_counts_the_replicate_exactly(capsys):
+    prompt_set = json.loads((FIXTURE / "evals/prompts.json").read_text())
+    cases = prompt_set["cases"]
+    positives = sum(1 for c in cases if c.get("should_trigger"))
+    rc = R.main(["--skill-dir", str(FIXTURE / "skill"), "--prompts", str(FIXTURE / "evals/prompts.json"),
+                 "--cli", "/bin/true", "--no-version-check", "--ablate", "--noise-band",
+                 "--dry-run", "--trials", "2"])
     assert rc == R.EXIT_OK
-    err = capsys.readouterr().err
-    assert "replicate" in err
+    expected = len(cases) * 2 + positives * 2 + positives * 2
+    assert f"would run {expected} trial(s)" in capsys.readouterr().out

@@ -1894,6 +1894,11 @@ def main(argv: Sequence[str] | None = None) -> int:
     if not args.skill and not args.prompts:
         print("error: one of --skill or --prompts is required", file=sys.stderr)
         return EXIT_USAGE
+    # Before --validate-only can return OK on a flag combination that would be refused.
+    if args.noise_band and not args.ablate:
+        print("error: --noise-band measures the noise of an ablation; pass --ablate too",
+              file=sys.stderr)
+        return EXIT_USAGE
 
     # -- resolve skill + prompt set -----------------------------------------
     try:
@@ -2056,11 +2061,6 @@ def main(argv: Sequence[str] | None = None) -> int:
     # only ones the lift is computed from.
     replicate_trials = len(prompt_set.positives) * args.trials if args.noise_band else 0
     planned = len(prompt_set.cases) * args.trials + ablate_trials + replicate_trials
-
-    if args.noise_band and not args.ablate:
-        print("error: --noise-band measures the noise of an ablation; pass --ablate too",
-              file=sys.stderr)
-        return EXIT_USAGE
 
     if args.ablate:
         if args.visibility != "present":
@@ -2338,6 +2338,20 @@ def main(argv: Sequence[str] | None = None) -> int:
         report["ablation_absent_arm"] = absent_report
         if replicate_report is not None:
             report["ablation_replicate_arm"] = replicate_report
+
+        # The watch was read after the primary arm only; the ablation arms run live
+        # too. Read it again so a write during the baseline or the replicate is seen.
+        if watch is not None:
+            arm_changes = [c for c in watch.changes() if c not in real_state_changes]
+            if arm_changes:
+                real_state_changes = real_state_changes + arm_changes
+                report["meta"]["real_state_changes"] = real_state_changes
+                print(f"[skill-evals] REAL STATE CHANGED during the ablation arms — "
+                      f"{len(arm_changes)} more path(s):", file=sys.stderr)
+                for line in arm_changes[:8]:
+                    print(f"[skill-evals]   - {line}", file=sys.stderr)
+                if args.fail_on_real_state_change and exit_code == EXIT_OK:
+                    exit_code = EXIT_BELOW_THRESHOLD
         if not args.json:
             print(ablation_mod.format_comparison(comparison))
 
