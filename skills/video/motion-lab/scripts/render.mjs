@@ -104,7 +104,9 @@ const MIME_TYPES = new Map(Object.entries({
   '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8', '.json': 'application/json',
   '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.svg': 'image/svg+xml',
-  '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf',
+  '.webp': 'image/webp', '.gif': 'image/gif', '.avif': 'image/avif',
+  '.woff2': 'font/woff2', '.woff': 'font/woff', '.ttf': 'font/ttf', '.otf': 'font/otf',
+  '.mp4': 'video/mp4', '.webm': 'video/webm', '.mp3': 'audio/mpeg', '.wav': 'audio/wav', '.ogg': 'audio/ogg',
   '.glsl': 'text/plain; charset=utf-8', '.vert': 'text/plain; charset=utf-8',
   '.frag': 'text/plain; charset=utf-8', '.wasm': 'application/wasm',
 }));
@@ -508,6 +510,8 @@ async function main() {
     };
     let drive = null;
     let additional = [];
+    let workerRafDelta = 0;
+    let workerIntervals = 0;
     if (!aborted) {
       // Each fresh page runs the same ownership probe before seeking its own
       // disjoint frame indices. The verification page stays independent.
@@ -517,12 +521,24 @@ async function main() {
         aborted = true;
         manifest.aborted_at_frame = 0;
       }
+      const workerBefore = aborted ? additional.map(() => ({ raf: 0, interval: 0 }))
+        : await Promise.all(additional.map((w) =>
+            w.page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }))
+          ));
       const drives = await Promise.all([opened, ...additional].map(renderFrames));
       drive = drives.find(Boolean) || null;
-      for (const worker of additional) {
+      for (let wi = 0; wi < additional.length; wi++) {
+        const worker = additional[wi];
         errors.push(...worker.errors);
         blocked.push(...worker.blocked);
-        if (!aborted) await worker.page.close();
+        if (!aborted) {
+          try {
+            const wa = await worker.page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }));
+            workerRafDelta += Math.max(0, wa.raf - workerBefore[wi].raf);
+            workerIntervals += wa.interval;
+          } catch {}
+          await worker.page.close();
+        }
       }
     }
     manifest.driven_by = drive
@@ -542,7 +558,7 @@ async function main() {
       const after = await page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }));
       // Diagnostic: a paused GSAP timeline keeps its ticker scheduling frames while
       // drawing nothing, so a count alone is not evidence of a live loop.
-      manifest.loop_probe = { raf_during_render: after.raf - before.raf, intervals: after.interval };
+      manifest.loop_probe = { raf_during_render: (after.raf - before.raf) + workerRafDelta, intervals: after.interval + workerIntervals };
       // page-owned animations are not driven by the renderer; with no renderAt
       // there are none (the probe only runs when renderAt exists)
       if (drive && !drive.drew && drive.anims - drive.page_owned === 0 && drive.smil === 0) {
@@ -590,7 +606,7 @@ async function main() {
         : [...new Set([0, Math.floor(N / 2), N - 1])].filter((i) => i >= 0);
       const v = await openAt(browser, o, url.href, probeTimes);
       errors.push(...v.errors.map((e) => `verify: ${e}`));
-      if (o.serve || workers > 1) blocked.push(...v.blocked);
+      blocked.push(...v.blocked);
       const { readFileSync } = await import('node:fs');
       const mismatches = [];
       let verifyAborted = v.aborted;
@@ -655,7 +671,7 @@ async function main() {
     } finally {
       if (served) await stopServer(served.server);
     }
-    if (httpBlocked.size) manifest.blocked_requests = [...new Set([
+    manifest.blocked_requests = [...new Set([
       ...(manifest.blocked_requests || []), ...httpBlocked,
     ])];
   }

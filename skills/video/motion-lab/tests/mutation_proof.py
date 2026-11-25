@@ -276,7 +276,7 @@ MUTATIONS = [
      '("last", last, args.min_last_luma)', '("last", last, 0)',
      "test_grade_rejects_blank_first_and_last", False),
     ("washed-out blacks accepted", "scripts/video_qa.py",
-     '            if metrics["p5_L"] > args.max_dark_p5:', "            if False:",
+     '            if is_dark_key and metrics["p5_L"] > args.max_dark_p5:', "            if False:",
      "test_grade_fails_independent", False),
     ("flatline contrast accepted", "scripts/video_qa.py",
      '            if metrics["sd_L"] < args.min_sd_l:', "            if False:",

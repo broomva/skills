@@ -108,9 +108,11 @@ def test_grade_rejects_blank_first_and_last_even_when_beats_exclude_them(tmp_pat
 
 @needs_ffmpeg
 def test_grade_fails_independent_washed_out_and_flatline_checks(tmp_path):
-    gray = b"\x80" * 3
-    washed = (gray * (W // 2) + WHITE * (W // 2)) * H
-    video = encode(tmp_path / "contrast.mp4", [split(RED), washed, solid(RED), split(RED)])
+    washed_lo = b"\x64" * 3  # L* ~ 42.4 (> 38)
+    washed_hi = b"\x78" * 3  # L* ~ 50.4 -> mean L* ~ 46.4 (< 50 dark-key), sd_L ~ 4.0 (>= 1)
+    washed = (washed_lo * (W // 2) + washed_hi * (W // 2)) * H
+    flat_dark = solid(washed_lo)  # L* ~ 42.4 (< 50 dark-key), p5_L ~ 42.4 (> 38), sd_L = 0 (< 1)
+    video = encode(tmp_path / "contrast.mp4", [split(RED), washed, flat_dark, split(RED)])
     r = cli("grade", video, "--beats", "1,2", "--json")
     assert r.returncode == 1
     errors = json.loads(r.stdout)["errors"]
@@ -203,3 +205,27 @@ def test_out_of_range_frame_is_invalid_input(tmp_path):
     video = encode(tmp_path / "one.mp4", [solid(RED)])
     r = cli("hero", video, "--frames", "1", "--out", tmp_path / "outside.jpg")
     assert r.returncode == 2 and "outside 0..0" in r.stderr
+
+
+def test_p20_light_day_paper_and_mixed_polarity_and_png_and_negative_timestamp(tmp_path):
+    """Light/day-paper beats (L* >= 50) must not false-fail washed-out blacks; negative timestamps and PNG sheets work."""
+    assert qa.timestamp(-0.5) == "-00:00.500"
+    if not shutil.which("ffmpeg"):
+        return
+    # Day-paper frame (#F5F2EB with 4% dark ink -> L* > 90, p5_L > 90, sd_L > 10)
+    paper = bytes([0xF5, 0xF2, 0xEB])
+    ink = bytes([0x1A, 0x1A, 0x1A])
+    ink_rows = max(1, H // 16)
+    day_frame = (ink * W) * ink_rows + (paper * W) * (H - ink_rows)
+    dark_clean = (b"\x08\x0c\x14" * (W // 2) + b"\x38\x60\x98" * (W // 2)) * H
+    video = encode(tmp_path / "mixed.mp4", [day_frame, dark_clean, day_frame])
+    r = cli("grade", video, "--beats", "0,1,2", "--json")
+    assert r.returncode == 0, r.stdout + r.stderr
+    data = json.loads(r.stdout)
+    assert data["pass"] is True
+    assert [b["polarity"] for b in data["beats"]] == ["light", "dark", "light"]
+
+    out_png = tmp_path / "hero.png"
+    r_png = cli("hero", video, "--frames", "0,1", "--out", out_png)
+    assert r_png.returncode == 0, r_png.stderr
+    assert out_png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

@@ -324,3 +324,6 @@ workspace note `research/notes/2026-10-15-opus-motion-lab-render-contract-raw.md
 The linter, renderer changes (`?t=0` load, animation warm-up, SMIL seeking,
 `--verify`, exit codes, labelled sheet) and the GIF timing measurement are this
 skill's own. BRO-3117.
+
+
+Clean-room seek-rendering and post-render QA architecture draws inspiration from Apache-2.0 HyperFrames patterns without copying external templates.

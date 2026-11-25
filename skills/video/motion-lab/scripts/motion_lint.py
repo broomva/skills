@@ -323,10 +323,53 @@ JS_STYLE_NAMED = re.compile(
     r"""\.style\s*(?:\.\s*setProperty\s*\(\s*(['"`])(transform|stroke-dashoffset)\1\s*,|"""
     r"""\[\s*(['"])(transform|strokeDashoffset|stroke-dashoffset)\3\s*\]\s*=(?!=|>))"""
 )
-GSAP_WRITE = re.compile(
-    r"\.(?:set|to|from|fromTo)\(\s*[^;{}]+?,\s*\{[^{}]*?\b"
-    r"(transform|x|y|z|xPercent|yPercent|scale[XYZ]?|rotation[XYZ]?|skew[XY]|strokeDashoffset)\s*:"
+JS_CLIP_INSET = re.compile(
+    r"""\.style\s*(?:\.\s*clipPath\s*=(?!=|>)\s*(['"`])\s*inset\(([^)]*)\)|"""
+    r"""\.\s*setProperty\s*\(\s*(['"`])clip-path\3\s*,\s*(['"`])\s*inset\(([^)]*)\))""",
+    re.I,
 )
+GSAP_TL_ASSIGN = re.compile(r"\b([A-Za-z_$][\w$]*)\s*=\s*gsap\s*\.\s*timeline\s*\(")
+GSAP_CALL_RE = re.compile(r"\b([A-Za-z_$][\w$]*)\s*\.\s*(set|to|from|fromTo)\s*\(")
+GSAP_KEY_RE = re.compile(
+    r"\b(transform|x|y|z|xPercent|yPercent|scale[XYZ]?|rotation[XYZ]?|skew[XY]|strokeDashoffset)\s*:"
+)
+
+
+def iter_gsap_writes(blank: str):
+    """Scan gsap.* and gsap.timeline() variable calls with balanced braces (including fromTo toVars & nested objects)."""
+    receivers = {"gsap", "tl", "timeline"}
+    receivers.update(m.group(1) for m in GSAP_TL_ASSIGN.finditer(blank))
+    for m in GSAP_CALL_RE.finditer(blank):
+        if m.group(1) not in receivers:
+            continue
+        # Walk balanced (...) of the call to extract top-level {...} vars objects (args >= 1).
+        depth = 1
+        i = m.end()
+        arg_idx = 0
+        while i < len(blank) and depth > 0:
+            ch = blank[i]
+            if ch == "(":
+                depth += 1
+            elif ch == ")":
+                depth -= 1
+            elif ch == "," and depth == 1:
+                arg_idx += 1
+            elif ch == "{" and depth == 1 and arg_idx >= 1:
+                # Extract balanced {...} object literal (may contain nested objects like ease: {power: 2}).
+                b_start = i
+                b_depth = 1
+                i += 1
+                while i < len(blank) and b_depth > 0:
+                    if blank[i] == "{":
+                        b_depth += 1
+                    elif blank[i] == "}":
+                        b_depth -= 1
+                    i += 1
+                obj_body = blank[b_start:i]
+                for km in GSAP_KEY_RE.finditer(obj_body):
+                    yield m.start(), km.group(1)
+                continue
+            i += 1
 
 
 def inset_side_count(value: str) -> int:
@@ -401,6 +444,12 @@ def seek_safe_findings(text: str, blocks: list[Block], js_views: list[tuple[int,
     dash_writes = []
     transform_writes = []
     for start, keep, blank in js_views:
+        for m in JS_CLIP_INSET.finditer(keep):
+            if blank[m.start():m.start() + len(".style")].strip():
+                val = m.group(2) if m.group(2) is not None else (m.group(5) or "")
+                if inset_side_count(val + ")") < 4:
+                    findings.append(Finding("MC11", "warn", line_of(text, start + m.start()),
+                        "use four explicit sides in clip-path: inset(top right bottom left) for seeking"))
         dash_writes.extend(start + m.start() for m in JS_STYLE_DASH.finditer(blank))
         transform_writes.extend(start + m.start() for m in JS_STYLE_TRANSFORM.finditer(blank))
         for m in JS_STYLE_NAMED.finditer(keep):
@@ -409,9 +458,9 @@ def seek_safe_findings(text: str, blocks: list[Block], js_views: list[tuple[int,
                 target = transform_writes if (m.group(2) or m.group(4)) == "transform" else dash_writes
                 target.append(start + m.start())
         if re.search(r"\bgsap\b", blank):
-            for m in GSAP_WRITE.finditer(blank):
-                target = dash_writes if m.group(1) == "strokeDashoffset" else transform_writes
-                target.append(start + m.start())
+            for pos, prop_name in iter_gsap_writes(blank):
+                target = dash_writes if prop_name == "strokeDashoffset" else transform_writes
+                target.append(start + pos)
     if SVG_UNIT_PATH.search(markup) and (dash_css or dash_writes):
         findings.append(Finding("MC12", "warn", line_of(text, min(dash_css + dash_writes)),
             'with SVG pathLength="1", seek stroke-dashoffset via GSAP attr: or setAttribute'))

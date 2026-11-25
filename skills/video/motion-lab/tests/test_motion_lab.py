@@ -712,3 +712,40 @@ class TestSeekSafeLint:
     ])
     def test_single_transform_driver_passes(self, css, js):
         assert "MC13" not in rules(ml.lint_text(html(f"window.renderAt = t => {{ {js} }};", style=css)))
+
+
+def test_p20_gsap_fromto_nested_and_map_set_no_false_positive_and_js_clip_inset():
+    import motion_lint
+    """GSAP fromTo toVars and nested objects trigger MC13; Map.set does not; JS clipPath shorthand triggers MC11."""
+    html_fromto = (
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const tl = gsap.timeline({paused:true});"
+        "tl.fromTo('.a', {opacity: 0}, {x: 100});"
+        "window.renderAt = (t) => tl.time(t);</script>"
+    )
+    codes_ft = [f.rule for f in motion_lint.lint_text(html_fromto, is_html=True)]
+    assert "MC13" in codes_ft
+
+    html_nested = (
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const anim = gsap.timeline({paused:true});"
+        "anim.to('.a', {ease: {power: 2}, x: 100});"
+        "window.renderAt = (t) => anim.time(t);</script>"
+    )
+    codes_nested = [f.rule for f in motion_lint.lint_text(html_nested, is_html=True)]
+    assert "MC13" in codes_nested
+
+    html_map = (
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const m = new Map(); m.set('pt', {x: 1, y: 2});"
+        "gsap.to('.a', {opacity: 1});"
+        "window.renderAt = (t) => {};</script>"
+    )
+    codes_map = [f.rule for f in motion_lint.lint_text(html_map, is_html=True)]
+    assert "MC13" not in codes_map
+
+    html_js_clip = (
+        "<script>window.renderAt = (t) => { el.style.clipPath = 'inset(0 10%)'; };</script>"
+    )
+    codes_clip = [f.rule for f in motion_lint.lint_text(html_js_clip, is_html=True)]
+    assert "MC11" in codes_clip

@@ -120,8 +120,9 @@ DIGITS = dict(zip("0123456789:.-#", (
 
 
 def timestamp(seconds: float) -> str:
-    minutes, millis = divmod(round(seconds * 1000), 60_000)
-    return f"{minutes:02d}:{millis // 1000:02d}.{millis % 1000:03d}"
+    sign = "-" if seconds < 0 else ""
+    minutes, millis = divmod(round(abs(seconds) * 1000), 60_000)
+    return f"{sign}{minutes:02d}:{millis // 1000:02d}.{millis % 1000:03d}"
 
 
 def sheet(path: Path, tiles: list[tuple[int, float, bytes]], cols: int, w: int, h: int) -> None:
@@ -155,9 +156,11 @@ def sheet(path: Path, tiles: list[tuple[int, float, bytes]], cols: int, w: int, 
                             canvas[dest:dest + zoom * 3] = b"\xff" * (zoom * 3)
             x += (len(glyph[0]) + 1) * zoom
     path.parent.mkdir(parents=True, exist_ok=True)
+    is_png = path.suffix.lower() == ".png"
+    enc_args = ("-c:v", "png", "-f", "image2") if is_png else ("-q:v", "2", "-f", "mjpeg")
     subprocess.run(ffmpeg("-y", "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size",
                           f"{width}x{height}", "-i", "pipe:0", "-frames:v", "1",
-                          "-q:v", "2", "-threads:v", "1", "-f", "mjpeg", str(path.resolve())),
+                          "-threads:v", "1", *enc_args, str(path.resolve())),
                    input=canvas, check=True)
 
 
@@ -314,8 +317,14 @@ def grade(args) -> int:
                 errors.append(f"{name} frame {idx} is blank: luma {measured[idx]['luma']:.4f} < {minimum:g}")
         for i in beats:
             metrics = measured[i]
-            report["beats"].append({"frame": i, "time_s": video.timestamps[i], **metrics})
-            if metrics["p5_L"] > args.max_dark_p5:
+            is_dark_key = metrics["L*"] < 50.0
+            report["beats"].append({
+                "frame": i,
+                "time_s": video.timestamps[i],
+                "polarity": "dark" if is_dark_key else "light",
+                **metrics,
+            })
+            if is_dark_key and metrics["p5_L"] > args.max_dark_p5:
                 errors.append(f"frame {i} washed-out blacks: p5_L {metrics['p5_L']:.2f} > {args.max_dark_p5:g}")
             if metrics["sd_L"] < args.min_sd_l:
                 errors.append(f"frame {i} flatline contrast: sd_L {metrics['sd_L']:.2f} < {args.min_sd_l:g}")
