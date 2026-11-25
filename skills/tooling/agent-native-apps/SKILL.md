@@ -80,7 +80,8 @@ $ANA e2e
 ```
 
 It installs a copy of the example app in a throwaway home, opens it, and checks
-37 things from outside the host: who owns the window, that the app is in the
+the full host, OS-window, gate, and installed-harness matrix from outside the
+host: who owns the window, that the app is in the
 Dock, the gate, each harness that is installed, the agent editing its own app,
 that a tampered shim is refused, and that opening the app starts the host.
 

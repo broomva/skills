@@ -11,6 +11,25 @@ import fs from "node:fs";
 import path from "node:path";
 import { which } from "./harness.js";
 
+/**
+ * Decide which harnesses selftest should exercise given what is installed. Pure.
+ * Respects ANA_EDIT_HARNESS when set; otherwise picks the first available
+ * harness in [claude, codex, t3] so T3-only and Codex-only machines pass e2e.
+ */
+export function pickSelftestHarnesses(available, env = process.env) {
+  const claude = Boolean(available?.claude);
+  const codex = Boolean(available?.codex);
+  const t3 = Boolean(available?.t3);
+  const availMap = { claude, codex, t3 };
+  const requested = env?.ANA_EDIT_HARNESS;
+  const editHarness = requested
+    ? availMap[requested]
+      ? requested
+      : null
+    : (["claude", "codex", "t3"].find((h) => availMap[h]) ?? null);
+  return { claude, codex, t3, editHarness };
+}
+
 const codeOf = "/^([A-Z]+): /.exec(e.message)?.[1]";
 const callJs = (expr) => `(async () => {
   try { return { ok: true, value: await (${expr}) }; }
@@ -142,37 +161,49 @@ export async function runSelftest({ state, registry, log, home, waitForReload, s
   );
 
   // --- harnesses
+  const harnessPlan = pickSelftestHarnesses({
+    claude: which("claude", process.env.PATH),
+    codex: which("codex", process.env.PATH),
+    t3: which("t3", process.env.PATH),
+  });
+  const t3Opts = {
+    harness: "t3",
+    provider: process.env.ANA_T3_PROVIDER ?? "claudeAgent",
+    model: process.env.ANA_T3_MODEL ?? "claude-haiku-5-5",
+  };
   await step(
-    "Claude Code harness streams into the page (prompt on stdin, '-'-leading text is not a flag)",
-    agentJs({
-      harness: "claude",
-      model: "haiku",
-      prompt: "--help is just text here. Reply with exactly the word: pong",
-    }),
-    (r) => r.ok && r.done?.ok && /pong/i.test(r.text),
+    "at least one supported agent harness CLI is installed",
+    async () => harnessPlan,
+    (p) => p.editHarness !== null,
   );
-  if (which("codex", process.env.PATH)) {
+  if (harnessPlan.claude) {
+    await step(
+      "Claude Code harness streams into the page (prompt on stdin, '-'-leading text is not a flag)",
+      agentJs({
+        harness: "claude",
+        model: "haiku",
+        prompt: "--help is just text here. Reply with exactly the word: pong",
+      }),
+      (r) => r.ok && r.done?.ok && /pong/i.test(r.text),
+    );
+  }
+  if (harnessPlan.codex) {
     await step(
       "Codex harness streams into the page",
       agentJs({ harness: "codex", prompt: "Reply with exactly the word: pong" }),
       (r) => r.ok && r.done?.ok && /pong/i.test(r.text),
     );
   }
-  if (which("t3", process.env.PATH)) {
-    const t3 = {
-      harness: "t3",
-      provider: process.env.ANA_T3_PROVIDER ?? "claudeAgent",
-      model: process.env.ANA_T3_MODEL ?? "claude-haiku-5-5",
-    };
+  if (harnessPlan.t3) {
     const first = await step(
       "T3 harness: the app's agent is a T3 thread",
-      agentJs({ ...t3, prompt: "Reply with exactly the word: pong" }),
+      agentJs({ ...t3Opts, prompt: "Reply with exactly the word: pong" }),
       (r) => r.ok && r.done?.ok && /pong/i.test(r.text) && /^mcp:|^[\w-]+/.test(r.threadId ?? ""),
     );
     await step(
       "T3 harness: the next run continues the same thread (it remembers)",
       agentJs({
-        ...t3,
+        ...t3Opts,
         prompt: "What single word did you reply with last time? Answer with just that word.",
       }),
       (r) => r.ok && r.done?.ok && /pong/i.test(r.text) && r.threadId === first.threadId,
@@ -217,15 +248,17 @@ export async function runSelftest({ state, registry, log, home, waitForReload, s
     (r) => r.ok && state.tray !== null,
   );
   const reloaded = waitForReload();
+  const editPrompt =
+    "In index.html in the current directory, change the text inside the <title> element to exactly: Agent Pad v2. Change nothing else.";
+  const editRequest =
+    harnessPlan.editHarness === "claude"
+      ? { harness: "claude", model: "haiku", edit: true, prompt: `${editPrompt} Use the Edit tool.` }
+      : harnessPlan.editHarness === "t3"
+        ? { ...t3Opts, edit: true, prompt: editPrompt }
+        : { harness: harnessPlan.editHarness ?? "claude", edit: true, prompt: editPrompt };
   await step(
-    "the app's agent edits the app itself",
-    agentJs({
-      harness: "claude",
-      model: "haiku",
-      edit: true,
-      prompt:
-        "In index.html in the current directory, change the text inside the <title> element to exactly: Agent Pad v2. Change nothing else. Use the Edit tool.",
-    }),
+    `the app's agent edits the app itself (${editRequest.harness})`,
+    agentJs(editRequest),
     (r) => r.ok && r.done?.ok,
   );
   await Promise.race([reloaded, sleep(15000)]);

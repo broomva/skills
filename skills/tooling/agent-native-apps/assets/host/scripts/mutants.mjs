@@ -124,6 +124,18 @@ const MUTANTS = [
     "child.kill(sig);",
   ],
   [
+    "direct-child close disarms SIGKILL escalation for surviving descendants",
+    "src/harness.js",
+    "if (!cancelled) stopEscalation();",
+    "stopEscalation(); if (false)",
+  ],
+  [
+    "selftest hardcodes claude instead of selecting an installed harness",
+    "src/selftest.js",
+    '(["claude", "codex", "t3"].find((h) => availMap[h]) ?? null)',
+    '"claude"',
+  ],
+  [
     "lastJsonObject infinite-loops at index 0 on malformed leading brace",
     "src/harness.js",
     "if (start === 0) break;",

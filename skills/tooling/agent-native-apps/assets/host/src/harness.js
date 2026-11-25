@@ -281,7 +281,18 @@ const KILL_GRACE_MS = 3000;
  * the caller never treats a still-running child as finished.
  */
 export function runHarness(
-  { harness, prompt, edit = false, model, provider, cwd, threadId, title, env = harnessEnv() },
+  {
+    harness,
+    prompt,
+    edit = false,
+    model,
+    provider,
+    cwd,
+    threadId,
+    title,
+    env = harnessEnv(),
+    killGraceMs = KILL_GRACE_MS,
+  },
   onEvent,
   spawnImpl = spawn,
 ) {
@@ -332,15 +343,44 @@ export function runHarness(
   child.stderr.on("data", (d) => {
     stderr = (stderr + d).slice(-4000);
   });
+  const groupAlive = () => {
+    if (!Number.isInteger(child.pid) || child.pid <= 0) return false;
+    try {
+      process.kill(-child.pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  const signalGroup = (sig) => {
+    try {
+      process.kill(-child.pid, sig);
+    } catch {
+      try {
+        child.kill(sig);
+      } catch {
+        // already gone
+      }
+    }
+  };
+  let cancelled = false;
+  let cleanupDone = Promise.resolve();
   let killTimer;
+  let cleanupPoll;
+  const stopEscalation = () => {
+    clearTimeout(killTimer);
+    clearInterval(cleanupPoll);
+  };
   const finished = new Promise((resolve) => {
     child.on("error", (e) => {
+      stopEscalation();
       emit({ type: "error", message: e.message });
       finish({ type: "done", ok: false, summary: e.message });
       resolve();
     });
-    child.on("close", (code, signal) => {
-      clearTimeout(killTimer);
+    child.on("close", async (code, signal) => {
+      if (!cancelled) stopEscalation();
+      else await cleanupDone;
       if (adapter.wholeOutput) {
         const obj = lastJsonObject(stdout);
         if (obj) for (const event of adapter.parse(obj)) emit(event);
@@ -357,22 +397,39 @@ export function runHarness(
       resolve();
     });
   });
-  const signalGroup = (sig) => {
-    try {
-      process.kill(-child.pid, sig);
-    } catch {
-      try {
-        child.kill(sig);
-      } catch {
-        // already gone
-      }
-    }
-  };
   const cancel = () => {
-    if (finished_) return;
+    if (cancelled || finished_) return;
+    cancelled = true;
     signalGroup("SIGTERM");
-    killTimer = setTimeout(() => signalGroup("SIGKILL"), KILL_GRACE_MS);
-    killTimer.unref?.();
+    cleanupDone = new Promise((resolve) => {
+      const done = () => {
+        stopEscalation();
+        resolve();
+      };
+      if (!groupAlive()) {
+        done();
+        return;
+      }
+      const pollMs = Math.min(50, Math.max(10, Math.floor(killGraceMs / 4)));
+      cleanupPoll = setInterval(() => {
+        if (!groupAlive()) done();
+      }, pollMs);
+      killTimer = setTimeout(() => {
+        clearInterval(cleanupPoll);
+        if (groupAlive()) signalGroup("SIGKILL");
+        const settle = setInterval(() => {
+          if (!groupAlive()) {
+            clearInterval(settle);
+            clearTimeout(giveUp);
+            done();
+          }
+        }, 25);
+        const giveUp = setTimeout(() => {
+          clearInterval(settle);
+          done();
+        }, 500);
+      }, killGraceMs);
+    });
   };
   return { cancel, finished };
 }

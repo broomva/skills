@@ -1,6 +1,9 @@
 import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
 import {
@@ -326,6 +329,73 @@ test("cancel kills the whole process group including a live grandchild process",
     await new Promise((res) => setTimeout(res, 50));
   }
   assert.equal(alive(grandchildPid), false, "process-group cancel must terminate the grandchild too");
+});
+
+test("cancel escalates to SIGKILL when a grandchild ignores SIGTERM even after the direct child exits", async (t) => {
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let grandchildPid = null;
+  const readyDir = fs.mkdtempSync(path.join(os.tmpdir(), "ana-gc-"));
+  const readyFile = path.join(readyDir, "pid");
+  t.after(() => {
+    if (grandchildPid && alive(grandchildPid)) {
+      try {
+        process.kill(grandchildPid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+    fs.rmSync(readyDir, { recursive: true, force: true });
+  });
+  const helper = [
+    "const { spawn } = require('node:child_process');",
+    "const fs = require('node:fs');",
+    `const readyFile = ${JSON.stringify(readyFile)};`,
+    "const gcCode = \"process.on('SIGTERM', () => {}); require('node:fs').writeFileSync(\" + JSON.stringify(readyFile) + \", String(process.pid)); setTimeout(() => {}, 30000);\";",
+    "spawn(process.execPath, ['-e', gcCode], { stdio: 'ignore' });",
+    "const poll = setInterval(() => {",
+    "  if (fs.existsSync(readyFile)) {",
+    "    const pid = fs.readFileSync(readyFile, 'utf8').trim();",
+    "    if (pid) { clearInterval(poll); console.log(JSON.stringify({ type: 'assistant', message: { content: [{ type: 'text', text: 'GC:' + pid }] } })); }",
+    "  }",
+    "}, 10);",
+    "setTimeout(() => {}, 30000);",
+  ].join(" ");
+  let onReady;
+  const ready = new Promise((resolve) => {
+    onReady = resolve;
+  });
+  const r = runHarness(
+    { harness: "claude", prompt: "hi", cwd: "/tmp", killGraceMs: 150 },
+    (e) => {
+      const m = e.type === "text" && /^GC:(\d+)$/.exec(e.text);
+      if (m) {
+        grandchildPid = Number(m[1]);
+        onReady(grandchildPid);
+      }
+    },
+    (_bin, _args, opts) => spawn(process.execPath, ["-e", helper], opts),
+  );
+  await ready;
+  assert.ok(
+    grandchildPid > 0 && alive(grandchildPid),
+    "grandchild must be alive with SIGTERM handler installed",
+  );
+  const startedAt = Date.now();
+  r.cancel();
+  await r.finished;
+  assert.ok(Date.now() - startedAt >= 120, "must wait through killGraceMs before SIGKILL escalation");
+  assert.equal(
+    alive(grandchildPid),
+    false,
+    "SIGKILL escalation must terminate a SIGTERM-ignoring grandchild even after the direct child exits",
+  );
 });
 
 test("runHarness refuses an empty prompt and unknown or prototype harness names", () => {
