@@ -117,3 +117,45 @@ export function decide(call, ctx) {
   }
   return { ok: true, permission, tier };
 }
+
+/**
+ * Ask the user for `permission` and record the grant only if the app is still
+ * open AND re-hashing the folder on disk after consent yields the exact same
+ * version that was shown in the dialog.
+ */
+export async function authorizeAfterPrompt({
+  permission,
+  getVersion,
+  prompt,
+  checkVersion,
+  isClosed,
+  grant,
+}) {
+  const version = getVersion();
+  if (!version) return { ok: false, reason: "invalid" };
+  const allowed = await prompt(version);
+  if (!allowed) return { ok: false, reason: "denied" };
+  if (isClosed()) return { ok: false, reason: "closed" };
+  // Re-hash from disk after consent: an edit made while the dialog was open
+  // invalidates the prompt even before the debounced watcher fires.
+  const changed = checkVersion();
+  if (changed || getVersion() !== version) return { ok: false, reason: "version-changed" };
+  grant(version, [permission]);
+  return { ok: true, version };
+}
+
+/**
+ * Run an asynchronous setup step before launching an agent, then revalidate
+ * lifecycle, disk version, and capability grant immediately before spawning so
+ * an app closed or modified during setup can never launch a run.
+ */
+export async function guardAsyncLaunch({ prepare, isClosed, checkVersion, getVersion, decideCall, launch }) {
+  if (prepare) await prepare();
+  if (isClosed()) throw new CapabilityError("ECLOSED", "The app closed.");
+  if (checkVersion() || !getVersion()) {
+    throw new CapabilityError("EVERSION", "The app changed; it is reloading under its new version.");
+  }
+  const decision = decideCall();
+  if (!decision.ok) throw new CapabilityError(decision.code, decision.message);
+  return launch();
+}

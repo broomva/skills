@@ -75,12 +75,13 @@ export async function runSelftest({ state, registry, log, home, waitForReload, s
       await sleep(700); // let the watcher see both writes
       const before = state.version;
       const status = await page("fetch('/node_modules/x.js').then((r) => r.status)");
+      const upper = await page("fetch('/NODE_MODULES/x.js').then((r) => r.status)");
       const hidden = await page("fetch('/.claude/settings.json').then((r) => r.status)");
       fs.rmSync(path.join(appDir, "node_modules"), { recursive: true, force: true });
       fs.rmSync(path.join(appDir, ".claude"), { recursive: true, force: true });
-      return { status, hidden, versionUnchanged: before === state.version };
+      return { status, upper, hidden, versionUnchanged: before === state.version };
     },
-    (v) => v.status === 404 && v.hidden === 404 && v.versionUnchanged,
+    (v) => v.status === 404 && v.upper === 404 && v.hidden === 404 && v.versionUnchanged,
   );
   await step(
     "navigation away is blocked",
@@ -93,6 +94,11 @@ export async function runSelftest({ state, registry, log, home, waitForReload, s
   );
 
   // --- the gate
+  await step(
+    "browser Notification permission is denied by the session handler (cannot bypass the gate)",
+    callJs("Notification.requestPermission().then((p) => ({ req: p, perm: Notification.permission }))"),
+    (r) => r.ok && r.value.req === "denied" && r.value.perm === "denied",
+  );
   await step(
     "tier 2 without a grant is refused (EPERM)",
     callJs("window.agentApp.notification.show({ title: 'should not show' })"),

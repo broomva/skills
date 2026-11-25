@@ -11,7 +11,7 @@ Read the code with `/^([A-Z]+): /.exec(e.message)?.[1]`.
 | `window.setTitle(title)`, `window.getBounds()`, `window.setBounds({x, y, width, height})` | none | 1 |
 | `dock.setBadge(text)`, `dock.bounce()` | none | 1 |
 | `permissions.state()`, `permissions.request(name)` → `boolean` | none | 1 |
-| `tray.remove()`, `globalShortcut.unregisterAll()`, `agent.cancel(runId)` | none | 1 |
+| `tray.remove()`, `globalShortcut.unregisterAll()`, `agent.cancel(runId)` (for `t3`, stops the local waiter only; interrupt active turns in T3 Code) | none | 1 |
 | `notification.show({title, body})` | `notifications` | 2 |
 | `tray.set({title, tooltip})` | `menu-bar` | 2 |
 | `globalShortcut.register(accelerator)` → `boolean`; `globalShortcut.onPressed(cb)` | `shortcuts` | 2 |

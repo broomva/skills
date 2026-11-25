@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { test } from "node:test";
-import { decide, METHODS, PERMISSIONS, parseMaxTier, requiredPermission } from "../src/capabilities.js";
+import {
+  authorizeAfterPrompt,
+  CapabilityError,
+  decide,
+  guardAsyncLaunch,
+  METHODS,
+  PERMISSIONS,
+  parseMaxTier,
+  requiredPermission,
+} from "../src/capabilities.js";
 
 const ctx = (declared = [], granted = [], maxTier = 3) => ({
   declared: new Set(declared),
@@ -69,4 +78,104 @@ test("every method maps to a known permission or none", () => {
   for (const [key, permission] of Object.entries(METHODS)) {
     assert.ok(permission === null || Object.hasOwn(PERMISSIONS, permission), key);
   }
+});
+
+test("authorizeAfterPrompt re-hashes from disk after consent and refuses a silent edit during the dialog", async () => {
+  let version = "v1";
+  let diskEditedDuringPrompt = false;
+  const granted = [];
+  const outcome = await authorizeAfterPrompt({
+    permission: "notifications",
+    getVersion: () => version,
+    prompt: async () => {
+      diskEditedDuringPrompt = true;
+      return true;
+    },
+    checkVersion: () => {
+      if (diskEditedDuringPrompt) {
+        version = "v2";
+        return true;
+      }
+      return false;
+    },
+    isClosed: () => false,
+    grant: (v, perms) => granted.push([v, perms]),
+  });
+  assert.deepEqual(outcome, { ok: false, reason: "version-changed" });
+  assert.deepEqual(granted, [], "must not grant v1 after disk changed during the prompt");
+
+  // App closing during the dialog also refuses without granting.
+  let closed = false;
+  const closedOutcome = await authorizeAfterPrompt({
+    permission: "notifications",
+    getVersion: () => "v2",
+    prompt: async () => {
+      closed = true;
+      return true;
+    },
+    checkVersion: () => false,
+    isClosed: () => closed,
+    grant: (v, perms) => granted.push([v, perms]),
+  });
+  assert.deepEqual(closedOutcome, { ok: false, reason: "closed" });
+  assert.deepEqual(granted, []);
+
+  // Unchanged disk while open records the grant for the shown version.
+  const okOutcome = await authorizeAfterPrompt({
+    permission: "notifications",
+    getVersion: () => "v2",
+    prompt: async () => true,
+    checkVersion: () => false,
+    isClosed: () => false,
+    grant: (v, perms) => granted.push([v, perms]),
+  });
+  assert.deepEqual(okOutcome, { ok: true, version: "v2" });
+  assert.deepEqual(granted, [["v2", ["notifications"]]]);
+});
+
+test("guardAsyncLaunch refuses to spawn if the app closes, changes version, or loses its grant during async setup", async () => {
+  let launched = 0;
+  let closed = false;
+  await assert.rejects(
+    () =>
+      guardAsyncLaunch({
+        prepare: async () => {
+          closed = true;
+        },
+        isClosed: () => closed,
+        checkVersion: () => false,
+        getVersion: () => "v1",
+        decideCall: () => ({ ok: true }),
+        launch: () => ++launched,
+      }),
+    (e) => e instanceof CapabilityError && e.code === "ECLOSED",
+  );
+  assert.equal(launched, 0, "must never spawn after close during async setup");
+
+  let version = "v1";
+  await assert.rejects(
+    () =>
+      guardAsyncLaunch({
+        prepare: async () => {
+          version = "v2";
+        },
+        isClosed: () => false,
+        checkVersion: () => version !== "v1",
+        getVersion: () => version,
+        decideCall: () => ({ ok: true }),
+        launch: () => ++launched,
+      }),
+    (e) => e instanceof CapabilityError && e.code === "EVERSION",
+  );
+  assert.equal(launched, 0);
+
+  const id = await guardAsyncLaunch({
+    prepare: async () => {},
+    isClosed: () => false,
+    checkVersion: () => false,
+    getVersion: () => "v1",
+    decideCall: () => ({ ok: true }),
+    launch: () => "run-1",
+  });
+  assert.equal(id, "run-1");
 });

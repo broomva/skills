@@ -72,14 +72,15 @@ enforces, and what it does not, is in
 [references/security-model.md](references/security-model.md); read it before
 granting an app tier 3.
 
-After the app works, verify the machine end to end:
+After the app works, verify the machine end to end (quit any running agent-native
+apps and their Electron host first, since macOS launches one host per Electron.app):
 
 ```sh
 $ANA e2e
 ```
 
 It installs a copy of the example app in a throwaway home, opens it, and checks
-36 things from outside the host: who owns the window, that the app is in the
+37 things from outside the host: who owns the window, that the app is in the
 Dock, the gate, each harness that is installed, the agent editing its own app,
 that a tampered shim is refused, and that opening the app starts the host.
 

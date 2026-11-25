@@ -13,14 +13,31 @@ import { fileURLToPath } from "node:url";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 
 const MUTANTS = [
-  ["served set: node_modules is served and hashed", "src/manifest.js", 'name !== "node_modules"', "true"],
+  [
+    "served set: node_modules is served and hashed",
+    "src/manifest.js",
+    'name.toLowerCase() !== "node_modules"',
+    "true",
+  ],
+  [
+    "served set: uppercase NODE_MODULES bypasses exclusion on case-insensitive FS",
+    "src/manifest.js",
+    'name.toLowerCase() !== "node_modules"',
+    'name !== "node_modules"',
+  ],
   ["served set: dot-folders are served and hashed", "src/manifest.js", '!name.startsWith(".") && ', ""],
   ["symlinks are accepted in an app folder", "src/manifest.js", "if (entry.isSymbolicLink())", "if (false)"],
   [
-    "served files skip the real-path check",
+    "async agent launch ignores version change during setup",
+    "src/capabilities.js",
+    "if (checkVersion() || !getVersion())",
+    "if (false)",
+  ],
+  [
+    "served files allow in-folder symlinks",
     "src/manifest.js",
-    "!inside(fs.realpathSync(appDir), real) || ",
-    "",
+    "if (fs.lstatSync(walk).isSymbolicLink()) return null;",
+    "if (false) return null;",
   ],
   [
     "file bytes go into the version hash unframed",
@@ -57,6 +74,18 @@ const MUTANTS = [
   ],
   ["a call passes without a grant", "src/capabilities.js", "if (!ctx.granted.has(permission))", "if (false)"],
   [
+    "prompt grant skips post-consent disk re-hash",
+    "src/capabilities.js",
+    "const changed = checkVersion();",
+    "const changed = false;",
+  ],
+  [
+    "async agent launch ignores app close during setup",
+    "src/capabilities.js",
+    'if (isClosed()) throw new CapabilityError("ECLOSED", "The app closed.");',
+    "if (false) throw new CapabilityError('ECLOSED', 'The app closed.');",
+  ],
+  [
     "claude loads project settings",
     "src/harness.js",
     '"--setting-sources",\n        "",',
@@ -88,6 +117,18 @@ const MUTANTS = [
     "reported ??= event;\n      onEvent(event);\n      return;",
   ],
   ["the run is not in its own process group", "src/harness.js", "env, detached: true }", "env }"],
+  [
+    "cancel kills only the direct child, not its process group",
+    "src/harness.js",
+    "process.kill(-child.pid, sig);",
+    "child.kill(sig);",
+  ],
+  [
+    "lastJsonObject infinite-loops at index 0 on malformed leading brace",
+    "src/harness.js",
+    "if (start === 0) break;",
+    "if (false) break;",
+  ],
   [
     "a top-level codex error ends the run",
     "src/harness.js",
@@ -131,7 +172,8 @@ function runTests(cwd) {
     .readdirSync(path.join(cwd, "test"))
     .filter((f) => f.endsWith(".test.js"))
     .map((f) => path.join("test", f));
-  return spawnSync(process.execPath, ["--test", ...files], { cwd, encoding: "utf8" }).status;
+  const res = spawnSync(process.execPath, ["--test", ...files], { cwd, encoding: "utf8", timeout: 15000 });
+  return res.status ?? 1;
 }
 
 const base = fs.mkdtempSync(path.join(os.tmpdir(), "ana-mutants-"));

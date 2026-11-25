@@ -21,10 +21,11 @@ export class ManifestError extends Error {}
 
 /**
  * A path segment the host serves and hashes. Dot-entries (.git, .claude,
- * .DS_Store, ...) and node_modules are neither served nor hashed. Pure.
+ * .DS_Store, ...) and node_modules (any casing, for case-insensitive macOS)
+ * are neither served nor hashed. Pure.
  */
 export function isServedSegment(name) {
-  return name.length > 0 && !name.startsWith(".") && name !== "node_modules";
+  return name.length > 0 && !name.startsWith(".") && name.toLowerCase() !== "node_modules";
 }
 
 export const validModel = (m) => typeof m === "string" && MODEL_RE.test(m);
@@ -163,15 +164,25 @@ export function resolveInside(appDir, requestPath) {
 
 /**
  * The file to serve for a request: a served path inside appDir by path AND by
- * real path (no symlink, in the file or any parent, may lead out), and a
- * regular file. Returns null otherwise.
+ * canonical native real path (no symlink, case alias, or excluded segment may
+ * slip past the hashed set), and a regular file. Returns null otherwise.
  */
 export function servableFile(appDir, requestPath) {
   const target = resolveInside(appDir, requestPath);
   if (!target) return null;
   try {
-    const real = fs.realpathSync(target);
-    if (!inside(fs.realpathSync(appDir), real) || !fs.statSync(real).isFile()) return null;
+    const resolvedRoot = path.resolve(appDir);
+    const relRequested = path.relative(resolvedRoot, target);
+    let walk = resolvedRoot;
+    for (const seg of relRequested.split(path.sep)) {
+      walk = path.join(walk, seg);
+      if (fs.lstatSync(walk).isSymbolicLink()) return null;
+    }
+    const realRoot = fs.realpathSync.native(appDir);
+    const real = fs.realpathSync.native(target);
+    if (!inside(realRoot, real) || !fs.statSync(real).isFile()) return null;
+    const relReal = path.relative(realRoot, real);
+    if (!relReal || relReal.split(path.sep).some((s) => !isServedSegment(s))) return null;
     return real;
   } catch {
     return null;

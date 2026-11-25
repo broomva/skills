@@ -104,13 +104,22 @@ test("the served set and the hashed set are the same set", (t) => {
     assert.equal(versionOf(dir), v1, `${hidden} is not hashed`);
     assert.equal(servableFile(dir, `/${hidden}/logic.js`), null, `${hidden} is not served`);
   }
+  // Case-insensitive macOS must not serve node_modules through uppercase casing.
+  assert.equal(resolveInside(dir, "/NODE_MODULES/logic.js"), null);
+  assert.equal(servableFile(dir, "/NODE_MODULES/logic.js"), null);
+  assert.equal(servableFile(dir, "/Node_Modules/logic.js"), null);
   fs.writeFileSync(path.join(dir, ".env"), "SECRET=1");
   assert.equal(servableFile(dir, "/.env"), null);
   assert.deepEqual(
     servedFiles(dir).map((f) => path.relative(dir, f)),
     ["app.json", "index.html"],
   );
-  assert.ok(isServedSegment("app.js") && !isServedSegment(".git") && !isServedSegment("node_modules"));
+  assert.ok(
+    isServedSegment("app.js") &&
+      !isServedSegment(".git") &&
+      !isServedSegment("node_modules") &&
+      !isServedSegment("NODE_MODULES"),
+  );
 });
 
 test("a symlink in an app folder is refused, so the version covers every served byte", (t) => {
@@ -126,8 +135,10 @@ test("servableFile follows real paths: a symlinked file or parent cannot lead ou
   fs.writeFileSync(path.join(outside, "secret.txt"), "secret");
   fs.symlinkSync(path.join(outside, "secret.txt"), path.join(dir, "leak.txt"));
   fs.symlinkSync(outside, path.join(dir, "sub"));
+  fs.symlinkSync(path.join(dir, "index.html"), path.join(dir, "alias.html"));
   assert.equal(servableFile(dir, "/leak.txt"), null);
   assert.equal(servableFile(dir, "/sub/secret.txt"), null);
+  assert.equal(servableFile(dir, "/alias.html"), null, "in-folder symlink is refused too");
   assert.equal(servableFile(dir, "/missing.js"), null);
   assert.equal(servableFile(dir, "/%E0%A4%A"), null, "a malformed escape is not a crash");
   assert.equal(servableFile(dir, "/index.html"), fs.realpathSync(path.join(dir, "index.html")));

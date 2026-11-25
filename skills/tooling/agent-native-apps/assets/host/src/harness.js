@@ -12,6 +12,8 @@
 //   t3: the app folder is a T3 project and the agent is a T3 thread. T3 threads
 //       run with their project's runtime mode (full access by default) and the
 //       CLI has no read-only switch, so a t3 run is gated as an edit run.
+//       `t3 thread` has no CLI interrupt subcommand, so cancelling a t3 run stops
+//       the local waiting CLI client; stop any still-running turn in T3 Code.
 
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
@@ -147,6 +149,9 @@ export const HARNESSES = {
       if (code === 2) return "The T3 thread is waiting for an answer; open it in T3 to reply.";
       return null;
     },
+    cancelSummary(signal) {
+      return `stopped local t3 waiter (${signal}); the T3 CLI cannot interrupt a running server turn, so stop it in T3 Code if still active.`;
+    },
   },
 };
 
@@ -174,12 +179,16 @@ export function lineParser(onObject) {
 /** The last JSON object in a whole CLI output (t3 may pretty-print it). Pure. */
 export function lastJsonObject(text) {
   const end = text.lastIndexOf("}");
-  for (let start = text.lastIndexOf("{", end); start !== -1; start = text.lastIndexOf("{", start - 1)) {
+  if (end === -1) return null;
+  let start = text.lastIndexOf("{", end);
+  while (start !== -1) {
     try {
       return JSON.parse(text.slice(start, end + 1));
     } catch {
       // not yet the outermost brace; keep widening
     }
+    if (start === 0) break;
+    start = text.lastIndexOf("{", start - 1);
   }
   return null;
 }
@@ -338,7 +347,7 @@ export function runHarness(
       }
       const exitedOk = code === 0;
       const failure = signal
-        ? `stopped (${signal})`
+        ? (adapter.cancelSummary?.(signal) ?? `stopped (${signal})`)
         : (adapter.exitSummary?.(code) ?? `exit ${code}: ${stderr.trim().slice(-500)}`);
       finish({
         type: "done",

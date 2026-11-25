@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawn } from "node:child_process";
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { test } from "node:test";
@@ -128,12 +129,15 @@ test("lineParser handles split chunks and skips log lines", () => {
   assert.deepEqual(seen, [{ a: 1 }, { b: 2 }]);
 });
 
-test("lastJsonObject finds a pretty-printed result after log noise", () => {
+test("lastJsonObject finds a pretty-printed result after log noise and terminates on malformed braces", () => {
   assert.deepEqual(lastJsonObject('log {x}\n{\n  "threadId": "t",\n  "nested": {"a": 1}\n}\n'), {
     threadId: "t",
     nested: { a: 1 },
   });
   assert.equal(lastJsonObject("no json here"), null);
+  assert.equal(lastJsonObject("{broken}"), null);
+  assert.equal(lastJsonObject("{"), null);
+  assert.equal(lastJsonObject('{"truncated": 1'), null);
 });
 
 test("parseLoginPath ignores rc-file noise around the marker", () => {
@@ -247,7 +251,7 @@ test("runHarness reports a CLI that dies without a result, and a waiting t3 thre
   assert.match(t3events.at(-1).summary, /waiting for an answer/);
 });
 
-test("cancel signals the run and the run ends once", async () => {
+test("cancel signals the run and the run ends once (and t3 reports local-waiter-only cancellation)", async () => {
   const child = fakeChild();
   const events = [];
   const r = runHarness(
@@ -260,6 +264,68 @@ test("cancel signals the run and the run ends once", async () => {
   assert.deepEqual(child.killed, ["SIGTERM"]);
   assert.equal(events.filter((e) => e.type === "done").length, 1);
   assert.match(events.at(-1).summary, /stopped \(SIGTERM\)/);
+
+  const t3Child = fakeChild();
+  const t3Events = [];
+  const t3Run = runHarness(
+    { harness: "t3", prompt: "hi", cwd: "/tmp" },
+    (e) => t3Events.push(e),
+    () => t3Child,
+  );
+  t3Run.cancel();
+  await t3Run.finished;
+  assert.match(t3Events.at(-1).summary, /cannot interrupt a running server turn/);
+});
+
+test("cancel kills the whole process group including a live grandchild process", async (t) => {
+  const alive = (pid) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+  let grandchildPid = null;
+  t.after(() => {
+    if (grandchildPid && alive(grandchildPid)) {
+      try {
+        process.kill(grandchildPid, "SIGKILL");
+      } catch {
+        // already gone
+      }
+    }
+  });
+  const helper = [
+    'const { spawn } = require("node:child_process");',
+    'const gc = spawn(process.execPath, ["-e", "setTimeout(() => {}, 30000)"], { stdio: "ignore" });',
+    'console.log(JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "GC:" + gc.pid }] } }));',
+    "setTimeout(() => {}, 30000);",
+  ].join(" ");
+  let onReady;
+  const ready = new Promise((resolve) => {
+    onReady = resolve;
+  });
+  const r = runHarness(
+    { harness: "claude", prompt: "hi", cwd: "/tmp" },
+    (e) => {
+      const m = e.type === "text" && /^GC:(\d+)$/.exec(e.text);
+      if (m) {
+        grandchildPid = Number(m[1]);
+        onReady(grandchildPid);
+      }
+    },
+    (_bin, _args, opts) => spawn(process.execPath, ["-e", helper], opts),
+  );
+  await ready;
+  assert.ok(grandchildPid > 0 && alive(grandchildPid), "grandchild must be alive before cancel");
+  r.cancel();
+  await r.finished;
+  // Give the OS a brief moment to reap the signaled grandchild.
+  for (let i = 0; i < 20 && alive(grandchildPid); i++) {
+    await new Promise((res) => setTimeout(res, 50));
+  }
+  assert.equal(alive(grandchildPid), false, "process-group cancel must terminate the grandchild too");
 });
 
 test("runHarness refuses an empty prompt and unknown or prototype harness names", () => {

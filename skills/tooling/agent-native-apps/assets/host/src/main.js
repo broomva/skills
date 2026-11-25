@@ -34,7 +34,15 @@ import {
 } from "electron";
 import { hostConfig, parseArgs, resolveCommand } from "./args.js";
 import { hostInfo, icnsFromPngs, writeShimBundle } from "./bundle.js";
-import { CapabilityError, decide, PERMISSIONS, requiredPermission, tierOf } from "./capabilities.js";
+import {
+  authorizeAfterPrompt,
+  CapabilityError,
+  decide,
+  guardAsyncLaunch,
+  PERMISSIONS,
+  requiredPermission,
+  tierOf,
+} from "./capabilities.js";
 import { resolveUserPath, runHarness, which } from "./harness.js";
 import { readManifest, servableFile, validModel, validProvider, versionOf } from "./manifest.js";
 import { Registry } from "./registry.js";
@@ -244,7 +252,13 @@ function partitionFor(id) {
   const name = `persist:agent-app-${id}`;
   if (!handledPartitions.has(name)) {
     handledPartitions.add(name);
-    session.fromPartition(name).protocol.handle(SCHEME, async (request) => {
+    const ses = session.fromPartition(name);
+    // Deny Chromium browser permission APIs (notifications, media, geolocation,
+    // etc.) so every native capability must pass through window.agentApp's
+    // manifest + version-bound grant + tier ceiling gate.
+    ses.setPermissionRequestHandler((_wc, _permission, callback) => callback(false));
+    ses.setPermissionCheckHandler(() => false);
+    ses.protocol.handle(SCHEME, async (request) => {
       const url = new URL(request.url);
       // This partition serves its own app only: no reading another app's files.
       if (url.hostname !== id) return new Response("forbidden", { status: 403 });
@@ -506,14 +520,25 @@ async function prompt(state, permission, version) {
   return response === 0;
 }
 
-/** Ask, and grant only if the app is still open and still the version that was shown. */
+/** Ask, and grant only if the app is still open and still hashes on disk to the version shown. */
 async function askAndGrant(state, permission) {
-  const version = state.version;
-  if (!version) return false;
-  const ok = await prompt(state, permission, version);
-  if (!ok || state.closed || state.version !== version) return false;
-  registry.grant(state.id, version, [permission]);
-  return true;
+  const outcome = await authorizeAfterPrompt({
+    permission,
+    getVersion: () => state.version,
+    prompt: (version) => prompt(state, permission, version),
+    checkVersion: () => checkVersion(state),
+    isClosed: () => Boolean(state.closed),
+    grant: (version, perms) => registry.grant(state.id, version, perms),
+  });
+  return outcome.ok;
+}
+
+function ctxFor(state) {
+  return {
+    declared: new Set(state.manifest.permissions),
+    granted: registry.grantedFor(state.id, state.version),
+    maxTier: MAX_TIER,
+  };
 }
 
 function harnessPath(bin) {
@@ -640,43 +665,53 @@ const modules = {
           "provider is a T3 provider instance id, for the t3 harness, with a model.",
         );
       }
-      if (harness === "t3") await ensureT3Project(s);
       const bin = { claude: "claude", codex: "codex", t3: "t3" }[harness];
       if (!harnessPath(bin)) throw new CapabilityError("ENOHARNESS", `The ${bin} CLI is not on PATH.`);
-      const runId = randomBytes(4).toString("hex");
-      const edit = opts.edit === true || harness === "t3";
-      const fromManifest = harness === s.manifest.agent.harness;
-      log("agent-run", { id: s.id, runId, harness, edit });
-      const r = runHarness(
-        {
-          harness,
-          prompt: opts.prompt,
-          edit,
-          model: opts.model ?? (fromManifest ? s.manifest.agent.model : undefined),
-          provider: opts.provider ?? (fromManifest ? s.manifest.agent.provider : undefined),
-          cwd: s.record.appDir,
-          threadId: harness === "t3" && opts.newThread !== true ? s.record.t3ThreadId : undefined,
-          title: `${s.manifest.name} agent`,
+      return guardAsyncLaunch({
+        prepare: harness === "t3" ? () => ensureT3Project(s) : null,
+        isClosed: () => Boolean(s.closed),
+        checkVersion: () => checkVersion(s),
+        getVersion: () => s.version,
+        decideCall: () => decide({ module: "agent", method: "run", args: [opts] }, ctxFor(s)),
+        launch: () => {
+          const runId = randomBytes(4).toString("hex");
+          const edit = opts.edit === true || harness === "t3";
+          const fromManifest = harness === s.manifest.agent.harness;
+          log("agent-run", { id: s.id, runId, harness, edit });
+          const r = runHarness(
+            {
+              harness,
+              prompt: opts.prompt,
+              edit,
+              model: opts.model ?? (fromManifest ? s.manifest.agent.model : undefined),
+              provider: opts.provider ?? (fromManifest ? s.manifest.agent.provider : undefined),
+              cwd: s.record.appDir,
+              threadId: harness === "t3" && opts.newThread !== true ? s.record.t3ThreadId : undefined,
+              title: `${s.manifest.name} agent`,
+            },
+            (event) => {
+              if (event.type === "thread" && event.threadId !== s.record.t3ThreadId) {
+                registry.update(s.id, { t3ThreadId: event.threadId });
+                s.record = registry.get(s.id);
+              }
+              send(s, "agent", { runId, ...event });
+              if (event.type === "done") {
+                log("agent-done", { id: s.id, runId, ok: event.ok, summary: event.summary?.slice(0, 200) });
+              }
+            },
+          );
+          s.runs.set(runId, r);
+          // The run is over when its process is, not when the CLI says so.
+          r.finished.then(() => {
+            s.runs.delete(runId);
+            // Let the page receive `done` before the reload tears it down.
+            if (s.pendingReload && s.runs.size === 0) {
+              setTimeout(() => s.runs.size === 0 && reload(s), 200);
+            }
+          });
+          return runId;
         },
-        (event) => {
-          if (event.type === "thread" && event.threadId !== s.record.t3ThreadId) {
-            registry.update(s.id, { t3ThreadId: event.threadId });
-            s.record = registry.get(s.id);
-          }
-          send(s, "agent", { runId, ...event });
-          if (event.type === "done") {
-            log("agent-done", { id: s.id, runId, ok: event.ok, summary: event.summary?.slice(0, 200) });
-          }
-        },
-      );
-      s.runs.set(runId, r);
-      // The run is over when its process is, not when the CLI says so.
-      r.finished.then(() => {
-        s.runs.delete(runId);
-        // Let the page receive `done` before the reload tears it down.
-        if (s.pendingReload && s.runs.size === 0) setTimeout(() => s.runs.size === 0 && reload(s), 200);
       });
-      return runId;
     },
     cancel: (s, runId) => {
       s.runs.get(String(runId))?.cancel();
@@ -737,14 +772,19 @@ export async function handleCall(state, call) {
     if (!state.version)
       return { ok: false, code: "EINVALIDAPP", message: "This app's folder is not valid; see host.log." };
   }
-  const ctx = () => ({
-    declared: new Set(state.manifest.permissions),
-    granted: registry.grantedFor(state.id, state.version),
-    maxTier: MAX_TIER,
-  });
-  let decision = decide(call, ctx());
-  if (!decision.ok && decision.code === "EPERM" && (await askAndGrant(state, decision.permission))) {
-    decision = decide(call, ctx());
+  let decision = decide(call, ctxFor(state));
+  if (!decision.ok && decision.code === "EPERM") {
+    const beforePrompt = state.version;
+    const granted = await askAndGrant(state, decision.permission);
+    if (state.closed) return { ok: false, code: "ECLOSED", message: "The app closed." };
+    if (state.version !== beforePrompt) {
+      return {
+        ok: false,
+        code: "EVERSION",
+        message: "The app changed while waiting for permission; it is reloading under its new version.",
+      };
+    }
+    if (granted) decision = decide(call, ctxFor(state));
   }
   if (!decision.ok) return decision;
   if (state.closed) return { ok: false, code: "ECLOSED", message: "The app closed." };
