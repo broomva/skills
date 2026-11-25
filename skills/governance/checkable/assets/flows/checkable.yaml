@@ -2,14 +2,17 @@
 # base, then replay its proof and replay claims at a pinned commit.
 #
 #   maestro flow start --definition checkable.yaml --params \
-#     '{"repo":"<repo>","head":"<sha>","statement":"<path>","base":"origin/main","tool":"<path to checkable.py>"}'
+#     '{"repo":"<repo>","head":"<sha>","statement":"<path>","base":"origin/main","tool":"<path to checkable.py>","bin":"<dir>"}'
+#
+# `bin` is optional: a directory put first on PATH, for a python3 that has
+# PyYAML and whatever the statement's own commands need.
 #
 # `statement` runs in the repository itself, because comparing the claims with
 # the base needs the repository's history. `replay` runs in a snapshot of the
 # pinned commit, so it cannot read uncommitted work.
 flow: checkable
 version: 1
-params: [repo, head, statement, base, tool]
+params: [repo, head, statement, base, tool, bin?]
 workdir: "{{params.repo}}"
 
 nodes:
@@ -24,10 +27,10 @@ nodes:
     class: pure
     needs: [pin]
     switch: {on: pin, case: at_head}
-    run: [python3, "{{params.tool}}", check, "{{params.statement}}", --base, "{{params.base}}"]
+    run: [sh, -c, 'PATH="${1:+$1:}$PATH" exec python3 "$2" check "$3" --base "$4"', check, "{{params.bin}}", "{{params.tool}}", "{{params.statement}}", "{{params.base}}"]
 
   replay:
     class: pure
     needs: [statement]
     snapshot: "{{params.head}}"
-    run: [python3, "{{params.tool}}", replay, "{{params.statement}}"]
+    run: [sh, -c, 'PATH="${1:+$1:}$PATH" exec python3 "$2" replay "$3"', replay, "{{params.bin}}", "{{params.tool}}", "{{params.statement}}"]
