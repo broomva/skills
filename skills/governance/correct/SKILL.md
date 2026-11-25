@@ -148,6 +148,11 @@ a reason, an expiry date and a human's approval.
 
 One commit per class, each carrying its proof, control and mutation result.
 
+Before closing a class, **sweep the repository for sibling occurrences** of the
+same mistake (the codebase is the next agent's largest input, so every remaining
+copy teaches the mistake back). Fix every sibling you find, or ratchet the
+remaining count explicitly.
+
 ## 5. Keep the registry
 
 Keep one machine-readable table that pairs each rule with what enforces it: the
@@ -166,8 +171,8 @@ runner. The field reference is the header of `scripts/rules_check.py`.
 ## Reply
 
 Each class with its evidence, the level you picked and why a higher level did not
-work, the proof and control replayed, the mutation that turned it red, and the
-rows added to the registry.
+work, the proof and control replayed, the mutation that turned it red, the
+sibling-sweep count (fixed or ratcheted), and the rows added to the registry.
 
 ## Anti-rationalization
 
@@ -178,3 +183,4 @@ rows added to the registry.
 | "The check passes, so it works." | Show it failing on the real mistake, and passing on a control. |
 | "The error says 'blocked'." | Name the fix. A refusal without one teaches the agent to route around it. |
 | "The pattern is everywhere, the lint would be red for weeks." | Ratchet it: fail when a change adds one, and fail when the count drops until the baseline is lowered, so it only shrinks. |
+| "I fixed the one instance that triggered the correction." | Agents copy the nearest file. Sweep the repo for sibling occurrences before closing the class; leave none unfixed or unratcheted. |
