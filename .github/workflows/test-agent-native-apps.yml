@@ -1,0 +1,90 @@
+name: test-agent-native-apps
+
+# Node test gate for the `agent-native-apps` skill
+# (skills/tooling/agent-native-apps/). Path-filtered so it runs only when that
+# skill changes.
+#
+# What runs here is everything that needs no macOS and no Electron: the gate,
+# the manifest and version hash, the shim bundle text, the harness adapters,
+# the registry, the argument parser, and the `ana` CLI. The end-to-end check
+# (`ana e2e`) opens real app windows through Electron app shims, so it runs on
+# a Mac with a GUI session, not here; its last result is committed under
+# assets/host/evidence/.
+
+on:
+  pull_request:
+    paths:
+      - 'skills/tooling/agent-native-apps/**'
+      - '.github/workflows/test-agent-native-apps.yml'
+  push:
+    branches: [main]
+    paths:
+      - 'skills/tooling/agent-native-apps/**'
+      - '.github/workflows/test-agent-native-apps.yml'
+  workflow_dispatch:
+
+# Least privilege: this workflow only reads the checkout.
+permissions:
+  contents: read
+
+concurrency:
+  group: test-agent-native-apps-${{ github.ref }}
+  cancel-in-progress: true
+
+defaults:
+  run:
+    working-directory: skills/tooling/agent-native-apps
+
+jobs:
+  test:
+    name: node --test (Node ${{ matrix.node }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        node: ["22", "24"]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Node ${{ matrix.node }}
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ matrix.node }}
+
+      - name: Skill tests (the ana CLI)
+        run: node --test tests/ana.test.mjs
+
+      - name: Host kit unit tests
+        working-directory: skills/tooling/agent-native-apps/assets/host
+        run: node --test test/*.test.js
+
+      # Every guard is removed in turn; the unit tests must then fail. A
+      # surviving mutant is a guard that no test enforces.
+      - name: Mutation check (every guard is enforced by a test)
+        working-directory: skills/tooling/agent-native-apps/assets/host
+        run: node scripts/mutants.mjs
+
+      - name: Lint the host kit (Biome)
+        working-directory: skills/tooling/agent-native-apps/assets/host
+        run: npx --yes @biomejs/biome@2.6.9 check src test scripts examples
+
+      # The exit code is the contract of `ana check`, so CI observes both.
+      - name: ana check exits 0 on a scaffolded app
+        run: |
+          node scripts/ana.mjs new "$RUNNER_TEMP/ok-app" --name "OK App" --harness t3
+          node scripts/ana.mjs check "$RUNNER_TEMP/ok-app"
+      - name: ana check exits 1 on an app the host would refuse
+        run: |
+          node scripts/ana.mjs new "$RUNNER_TEMP/bad-app" --name "Bad App" --harness claude
+          printf '<script>alert(1)</script>' >> "$RUNNER_TEMP/bad-app/index.html"
+          set +e
+          node scripts/ana.mjs check "$RUNNER_TEMP/bad-app"
+          code=$?
+          set -e
+          test "$code" -eq 1 || { echo "::error::an invalid app must exit 1, got $code"; exit 1; }
+      - name: ana exits 2 on a usage error
+        run: |
+          set +e
+          node scripts/ana.mjs frobnicate
+          code=$?
+          set -e
+          test "$code" -eq 2 || { echo "::error::a usage error must exit 2, got $code"; exit 1; }

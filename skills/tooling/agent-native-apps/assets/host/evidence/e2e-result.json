@@ -1,0 +1,172 @@
+{
+  "at": "2026-11-25T05:18:24.617Z",
+  "electron": "45.5.0",
+  "macos": "26.5.2",
+  "passed": 36,
+  "failed": 0,
+  "checks": [
+    {
+      "name": "install wrote a signed shim bundle",
+      "pass": true,
+      "bundlePath": "Applications/Agent Pad.app",
+      "cdhash": "69daaa002ad4daf7b8c94e0a52fb13ae9cf47193"
+    },
+    {
+      "name": "the bundle has a generated icon",
+      "pass": true
+    },
+    {
+      "name": "the window is owned by the shim process, named after the app",
+      "pass": true,
+      "shimPid": 76560,
+      "owner": "Agent Pad",
+      "bounds": {
+        "X": 580,
+        "Height": 620,
+        "Y": 230,
+        "Width": 760
+      }
+    },
+    {
+      "name": "the host owns no on-screen window",
+      "pass": true,
+      "hostPid": 61190
+    },
+    {
+      "name": "LaunchServices lists the shim as a Dock app and the host is hidden",
+      "pass": true,
+      "shimType": "Foreground",
+      "hostType": "UIElement"
+    },
+    {
+      "name": "bridge: tier 1 without a grant: dock badge",
+      "pass": true
+    },
+    {
+      "name": "bridge: window.open is denied",
+      "pass": true
+    },
+    {
+      "name": "bridge: a fetch to another app's origin is blocked",
+      "pass": true
+    },
+    {
+      "name": "bridge: files outside the served set are 404 (dot-folders, node_modules)",
+      "pass": true
+    },
+    {
+      "name": "bridge: navigation away is blocked",
+      "pass": true
+    },
+    {
+      "name": "bridge: tier 2 without a grant is refused (EPERM)",
+      "pass": true
+    },
+    {
+      "name": "bridge: undeclared permission is refused (ENOTDECLARED)",
+      "pass": true
+    },
+    {
+      "name": "bridge: agent without a grant is refused (EPERM)",
+      "pass": true
+    },
+    {
+      "name": "bridge: a harness not in agent.harnesses is refused (EHARNESS)",
+      "pass": true
+    },
+    {
+      "name": "bridge: tier 2 after a grant: notification",
+      "pass": true
+    },
+    {
+      "name": "bridge: tier 2 after a grant: menu-bar tray and a global shortcut",
+      "pass": true
+    },
+    {
+      "name": "bridge: Claude Code harness streams into the page (prompt on stdin, '-'-leading text is not a flag)",
+      "pass": true
+    },
+    {
+      "name": "bridge: Codex harness streams into the page",
+      "pass": true
+    },
+    {
+      "name": "bridge: T3 harness: the app's agent is a T3 thread",
+      "pass": true
+    },
+    {
+      "name": "bridge: T3 harness: the next run continues the same thread (it remembers)",
+      "pass": true
+    },
+    {
+      "name": "bridge: a symlink in the folder makes the app invalid: gated calls are refused",
+      "pass": true
+    },
+    {
+      "name": "bridge: restoring the files restores the version",
+      "pass": true
+    },
+    {
+      "name": "bridge: set up granted resources again before the edit",
+      "pass": true
+    },
+    {
+      "name": "bridge: the app's agent edits the app itself",
+      "pass": true
+    },
+    {
+      "name": "bridge: the host reloaded the edited app",
+      "pass": true
+    },
+    {
+      "name": "bridge: the version changed: tray and shortcut are gone with the old grant",
+      "pass": true
+    },
+    {
+      "name": "bridge: the old grant no longer applies (EPERM)",
+      "pass": true
+    },
+    {
+      "name": "bridge: app.info reports the new version with no grants",
+      "pass": true
+    },
+    {
+      "name": "selftest passed every step",
+      "pass": true,
+      "passed": 23,
+      "failed": 0
+    },
+    {
+      "name": "a re-signed copy of the shim at another path is refused",
+      "pass": true,
+      "bundlePath": "Impostor.app"
+    },
+    {
+      "name": "the registered bundle, tampered and re-signed in place, is refused (cdhash mismatch)",
+      "pass": true
+    },
+    {
+      "name": "killing the host also ends the shim",
+      "pass": true
+    },
+    {
+      "name": "opening the .app with no host running launches the host, which serves the window",
+      "pass": true,
+      "newHostPid": 9885,
+      "newShimPid": 9856
+    },
+    {
+      "name": "the relaunched host loaded the edited app (v2)",
+      "pass": true,
+      "title": "Agent Pad v2"
+    },
+    {
+      "name": "the restored genuine bundle is accepted again",
+      "pass": true
+    },
+    {
+      "name": "the e2e's T3 project was removed",
+      "pass": true
+    }
+  ]
+}
