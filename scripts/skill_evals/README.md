@@ -365,20 +365,16 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
   verdicts are `indeterminate`; a real retirement decision needs ~30 positive trials
   per arm (≈60 live CLI runs per skill).
 
-**The noise band (`--noise-band`, BRO-4110): a measurement, not a verdict.** The
-Newcombe interval treats every trial as an independent coin, but `--trials` repeats
-each prompt and a prompt's trials pass or fail together, so the interval is too
-narrow. `--ablate --noise-band` adds a replicate with-skill arm and reports, beside
-the verdict, the lift across prompts and the A/A drift between the two identical
-arms, each with a sign-flip p-value. It never changes the verdict: four P20 rounds
-showed every gate built on it could be fooled by inputs this harness produces (arms
-run in sequence, unequal trials per prompt, prompts with trigger checks only). The
-report adds a plain note when a load-bearing verdict is not confirmed across prompts
-or the two identical arms drifted apart. Verdicts that react to noise wait for
-interleaved arms (BRO-4140). `tests/skill_evals/noise_band_calibration.py` shows how
-often the note flags a false lift. Separately, `--fail-on-real-state-change` now also
-watches the ablation arms, which it did not before (a write during the baseline arm
-used to pass).
+**The noise band (`--noise-band`, BRO-4110): a description, not a test.**
+`--ablate --noise-band` runs the with-skill arm a second time, identically, and shows it
+as a third row beside the present and absent arms, with the observed A/A gap (present
+minus replicate). Two identical arms that land far apart say the run-to-run noise is
+large next to the lift. It applies no test and changes no verdict: five P20 rounds
+showed every inference built on it could be fooled by inputs this harness produces
+(arms that run in sequence, unequal trials per prompt, prompts with trigger checks
+only). Inference waits for interleaved arms (BRO-4140). Separately,
+`--fail-on-real-state-change` now also watches the ablation arms; before, a write
+during the baseline arm passed.
 
 ```bash
 python3 scripts/skill_evals/runner.py --skill checkit --trials 10 --ablate --noise-band

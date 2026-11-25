@@ -1856,8 +1856,8 @@ def build_parser() -> argparse.ArgumentParser:
                    help="a lift interval entirely below this marks a retirement candidate")
     p.add_argument("--noise-band", action="store_true",
                    help="BRO-4110: with --ablate, run the with-skill arm a second time and "
-                        "report the prompt-level lift and the A/A drift beside the verdict "
-                        "(sign-flip p-values; it changes no verdict; adds one arm of trials)")
+                        "report it and the observed A/A gap beside the verdict (no test; it "
+                        "changes no verdict; adds one arm of trials)")
     p.add_argument("--fail-on-retire-candidate", action="store_true",
                    help="exit non-zero when the ablation verdict is retire-candidate "
                         "(opt-in; --ablate is report-only by default)")
@@ -2316,7 +2316,7 @@ def main(argv: Sequence[str] | None = None) -> int:
         replicate_report = None
         if args.noise_band:
             # BRO-4110: the same with-skill arm, again, on the positive cases, reported
-            # beside the verdict (ablation.py: a measurement, not a verdict change).
+            # beside the verdict (ablation.py: a description, not a test).
             replicate_cfg = RunConfig(
                 skill=skill, skill_dir=skill_dir, trials=args.trials,
                 visibility=VISIBILITY_REGISTRY["present"], jobs=max(1, args.jobs),

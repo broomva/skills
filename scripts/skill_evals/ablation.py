@@ -37,26 +37,17 @@ harness can remove:
   guessing. At the default 3 trials the interval is roughly ±0.28 wide, so most
   honest verdicts will be ``indeterminate``.
 
-THE NOISE BAND (``--noise-band``, BRO-4110) — a measurement, not a verdict
---------------------------------------------------------------------------
-The interval above treats every trial as an independent coin, but ``--trials``
-repeats each prompt and a prompt's trials pass or fail together, so that interval is
-too narrow. ``--noise-band`` adds a second, identical with-skill arm (the replicate)
-and REPORTS, beside the verdict:
-
-* the lift across prompts: the mean per-prompt difference and a sign-flip p-value;
-* the A/A drift: the same for the two identical with-skill arms.
-
-It never changes the verdict. Four P20 rounds tried to let it (a point-estimate gap,
-a union of intervals, downgrade-only sign-flip gates); each time a reachable input
-made the gate wrong, because the arms run one after another (a shift on one whole arm
-reads as an effect), trials per prompt can differ (which breaks the sign symmetry the
-test needs), and prompts can carry trigger checks only. Making verdicts react to noise
-belongs with interleaving the arms (BRO-4140). Until then the band shows a reader when
-the verdict outruns the prompt-level evidence: the report says so in words when the
-verdict is load-bearing but the prompt-level p is not below 0.025, or when the
-drift's p is below 0.05. The idea of an A/A band is Uber's (2026-11-23 post on skill
-evals).
+THE NOISE BAND (``--noise-band``, BRO-4110) — a description, not a test
+-----------------------------------------------------------------------
+``--noise-band`` runs the with-skill arm a second time, identically (the replicate),
+and reports its stats as a third row beside the present and absent arms, plus the
+observed A/A gap: the present arm's outcome rate minus the replicate's. Two identical
+arms that land far apart say the run-to-run noise is large next to the lift. It
+applies no test and changes no verdict. Five P20 rounds showed every inference built
+on it here (intervals, sign-flip gates, threshold notes) could be fooled by inputs this
+harness produces: arms that run one after another, unequal trials per prompt, prompts
+with trigger checks only. Inference waits for interleaved arms (BRO-4140). The idea of
+an A/A band is Uber's (2026-11-23 post on skill evals).
 
 A missing or unusable measurement serialises ``skill_lift: null``, never ``0.0``.
 A defaulted zero reads as perfect absorption, which is the single most dangerous
@@ -65,12 +56,9 @@ vacuity available here.
 
 from __future__ import annotations
 
-import functools
 import math
 import sys
-from collections import defaultdict
 from dataclasses import dataclass
-from fractions import Fraction
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
@@ -94,14 +82,6 @@ VERDICT_WEAK_CHECKS = "inconclusive-weak-checks"
 VERDICT_RETIRE = "retire-candidate"
 VERDICT_LOAD_BEARING = "load-bearing"
 VERDICT_INDETERMINATE = "indeterminate"
-
-#: The levels at which the report adds an advisory note (it changes no verdict).
-ALPHA_ONE_SIDED = Fraction(1, 40)   # 0.025
-ALPHA_DRIFT = Fraction(1, 20)       # 0.05, two-sided
-#: Past this many distinct partial sums the exact enumeration gives way to a seeded
-#: Monte Carlo estimate, so unequal graded counts cannot blow up memory.
-EXACT_STATE_CAP = 200_000
-MONTE_CARLO_DRAWS = 20_000
 
 
 # ---------------------------------------------------------------------------
@@ -356,119 +336,19 @@ def decide_verdict(
 
 
 # ---------------------------------------------------------------------------
-# the noise band — exact sign-flip tests over prompts (BRO-4110)
+# the noise band — a description, not a test (BRO-4110)
 # ---------------------------------------------------------------------------
 
 
-def prompt_rates(report: dict[str, Any], non_pass: Sequence[str]) -> dict[str, Fraction]:
-    """{prompt id: exact outcome pass rate} over positive cases with a graded trial."""
-    out: dict[str, Fraction] = {}
-    for i, case in enumerate(report.get("cases") or []):
-        if not case.get("should_trigger"):
-            continue
-        key = str(case.get("case_id") or case.get("id") or f"#{i}")
-        st = arm_stats({"cases": [case]}, non_pass)
-        if st.graded_positive_trials:
-            out[key] = Fraction(st.outcome_passes, st.graded_positive_trials)
-    return out
-
-
-def _sign_flip_sums(nums: Sequence[int]) -> dict[int, int] | None:
-    """Distribution of the signed sum over all 2^n sign vectors; None past the cap."""
-    dist: dict[int, int] = {0: 1}
-    for a in nums:
-        if 2 * len(dist) > EXACT_STATE_CAP:  # checked BEFORE the next map is built
-            return None
-        nxt: dict[int, int] = defaultdict(int)
-        for total, count in dist.items():
-            nxt[total + a] += count
-            nxt[total - a] += count
-        dist = nxt
-    return dist
-
-
-def sign_flip_p(diffs: Sequence[Fraction], tail: str) -> Fraction:
-    """Sign-flip p-value that per-prompt differences are centred on zero.
-
-    tail="greater": evidence the centre is above zero; "two": either way. Exact by
-    enumeration in integers scaled to the common denominator; past EXACT_STATE_CAP a
-    seeded Monte Carlo estimate (hits+1)/(draws+1), which never reports p = 0.
-    """
-    if not diffs:
-        return Fraction(1)
-    den = math.lcm(*(d.denominator for d in diffs))
-    # Sorted, so the seeded Monte Carlo branch does not depend on report order.
-    nums = sorted(int(d * den) for d in diffs)
-    obs = sum(nums)
-
-    def hit(total: int) -> bool:
-        return total >= obs if tail == "greater" else abs(total) >= abs(obs)
-
-    dist = _sign_flip_sums(nums)
-    if dist is not None:
-        return Fraction(sum(c for t, c in dist.items() if hit(t)), 2 ** len(nums))
-    import random
-    rng = random.Random(0)
-    hits = sum(1 for _ in range(MONTE_CARLO_DRAWS)
-               if hit(sum(a if rng.random() < 0.5 else -a for a in nums)))
-    return Fraction(hits + 1, MONTE_CARLO_DRAWS + 1)
-
-
-@dataclass(frozen=True)
-class NoiseBand:
-    lift_diffs: tuple[Fraction, ...]    # present - absent, prompts graded in both
-    drift_diffs: tuple[Fraction, ...]   # present - replicate, prompts graded in both
-    replicate: ArmStats                 # the replicate on the prompts shared with present
-
-    @staticmethod
-    def _mean(diffs) -> float | None:
-        return float(sum(diffs) / len(diffs)) if diffs else None
-
-    @functools.cached_property
-    def p_lift(self) -> Fraction:
-        return sign_flip_p(self.lift_diffs, "greater")
-
-    @functools.cached_property
-    def p_drift(self) -> Fraction | None:
-        return sign_flip_p(self.drift_diffs, "two") if len(self.drift_diffs) >= 2 else None
-
-    @property
-    def drifted(self) -> bool | None:
-        p = self.p_drift
-        return None if p is None else p < ALPHA_DRIFT
-
-    def to_dict(self) -> dict[str, Any]:
-        def f(x):
-            return None if x is None else round(float(x), 4)
-        mean = self._mean
-        return {
-            "replicate": self.replicate.to_dict(),
-            "lift_prompts": len(self.lift_diffs),
-            "lift_prompt_mean": f(mean(self.lift_diffs)),
-            "p_lift": f(self.p_lift),
-            "drift_prompts": len(self.drift_diffs),
-            "drift_prompt_mean": f(mean(self.drift_diffs)),
-            "p_drift": f(self.p_drift),
-            "drifted": self.drifted,
-            # Exact (Fraction) comparisons, so a rounded display cannot cross a level.
-            "lift_confirmed": bool(self.lift_diffs) and self.p_lift < ALPHA_ONE_SIDED,
-        }
-
-
-def noise_band(present: dict, absent: dict, replicate: dict,
-               non_pass: Sequence[str]) -> NoiseBand:
-    """Pair prompts by id. The lift uses prompts graded in present and absent; the
-    drift uses prompts graded in present and replicate. Neither restricts the other.
-    The replicate's trial count is taken on the shared prompts only: trials on a prompt
-    the present arm did not grade are no A/A evidence."""
-    p, a, r = (prompt_rates(x, non_pass) for x in (present, absent, replicate))
-    rep_shared = {"cases": [c for i, c in enumerate(replicate.get("cases") or [])
-                            if str(c.get("case_id") or c.get("id") or f"#{i}") in p]}
-    return NoiseBand(
-        lift_diffs=tuple(p[k] - a[k] for k in p if k in a),
-        drift_diffs=tuple(p[k] - r[k] for k in p if k in r),
-        replicate=arm_stats(rep_shared, non_pass),
-    )
+def noise_band(present: ArmStats, replicate: ArmStats) -> dict[str, Any]:
+    """The replicate arm's stats and the observed A/A gap. No test, no verdict."""
+    a, b = present.outcome_pass_rate, replicate.outcome_pass_rate
+    return {
+        "replicate": replicate.to_dict(),
+        # Signed, trial-level, present minus replicate; null when either arm has no
+        # graded trial. A number to read beside the lift, not a test statistic.
+        "aa_gap": None if a is None or b is None else round(a - b, 4),
+    }
 
 
 def compare(
@@ -483,8 +363,8 @@ def compare(
 ) -> dict[str, Any]:
     """The full two-arm comparison, as it lands in the JSON report.
 
-    ``replicate_report`` (``--noise-band``) adds the prompt-level measurement under
-    ``noise``; it never changes the verdict.
+    With ``replicate_report`` (``--noise-band``) the comparison also carries
+    ``noise``: the replicate arm and the observed A/A gap. It never changes the verdict.
     """
     skill = str(present_report.get("skill") or "")
     present = arm_stats(present_report, non_pass)
@@ -510,37 +390,15 @@ def compare(
         e2e_present = (present_report.get("aggregate") or {}).get("positive", {}).get("pass_rate")
         if e2e_present is not None and absent.outcome_pass_rate is not None:
             verdict["end_to_end_lift"] = round(e2e_present - absent.outcome_pass_rate, 4)
-    band = None
-    if replicate_report is not None:  # reported beside the verdict; never changes it
-        band = noise_band(present_report, absent_report, replicate_report, non_pass)
     return {
         "skill": skill,
         "present": present.to_dict(),
         "absent": absent.to_dict(),
         "leaked_baseline_trials": leaked,
-        "noise": None if band is None else band.to_dict(),
+        "noise": (None if replicate_report is None
+                  else noise_band(present, arm_stats(replicate_report, non_pass))),
         **verdict,
     }
-
-
-def _p(value: float | None) -> str:
-    """'=0.031', or '<0.001' rather than a rounded '=0.000' for a tiny estimate."""
-    if value is None:
-        return "=n/a"
-    return "<0.001" if value < 0.001 else f"={value:.3f}"
-
-
-def noise_notes(cmp: dict[str, Any]) -> list[str]:
-    """Plain-words advisories from the band. They change no verdict (see above)."""
-    noise = cmp.get("noise") or {}
-    notes = []
-    if cmp.get("verdict") == VERDICT_LOAD_BEARING and not noise.get("lift_confirmed"):
-        notes.append("the lift is not confirmed across prompts; repeated trials of one "
-                     "prompt are not independent evidence")
-    if noise.get("drifted"):
-        notes.append("the two identical with-skill arms drifted apart; the runs "
-                     "themselves moved, so read every number above with caution")
-    return notes
 
 
 def format_comparison(cmp: dict[str, Any]) -> str:
@@ -575,22 +433,13 @@ def format_comparison(cmp: dict[str, Any]) -> str:
         if cmp.get("end_to_end_lift") is not None:
             lines.append(f"  end-to-end   {cmp['end_to_end_lift']:+.2f}  (trigger-inclusive)")
     if noise:
-        if noise["lift_prompt_mean"] is not None:
-            lines.append(
-                f"  by prompt    lift {noise['lift_prompt_mean']:+.2f}  sign-flip "
-                f"p{_p(noise['p_lift'])} over {noise['lift_prompts']} prompts")
-        if noise["p_drift"] is not None:
-            lines.append(
-                f"  A/A drift    {noise['drift_prompt_mean']:+.2f}  sign-flip "
-                f"p{_p(noise['p_drift'])} over {noise['drift_prompts']} prompts "
-                "(two identical with-skill arms)")
-        for note in noise_notes(cmp):
-            lines.append(f"  NOTE         {note}")
-        if noise["p_drift"] is None:
-            lines.append("  A/A drift    NOT MEASURED (fewer than 2 prompts graded in both "
-                         "with-skill arms)")
+        gap = noise["aa_gap"]
+        lines.append("  A/A gap      " + ("n/a (an arm graded no trial)" if gap is None else
+                     f"{gap:+.2f}  present minus replicate, two identical with-skill arms"))
+        lines.append("               observed, not tested: the arms ran one after another "
+                     "(BRO-4140)")
     else:
-        lines.append("  A/A drift    NOT MEASURED (run with --noise-band)")
+        lines.append("  A/A gap      NOT MEASURED (run with --noise-band)")
     lines.append(f"  VERDICT      {cmp['verdict']}")
     lines.append(f"               {cmp['why']}")
     lines.append("")
@@ -601,15 +450,12 @@ __all__ = [
     "ABLATION_MARGIN",
     "ABLATION_MIN_TRIALS",
     "ArmStats",
-    "NoiseBand",
-    "noise_notes",
     "arm_stats",
     "compare",
     "decide_verdict",
     "format_comparison",
     "newcombe_difference",
     "noise_band",
-    "sign_flip_p",
     "outcome_passed",
     "wilson_interval",
 ]
