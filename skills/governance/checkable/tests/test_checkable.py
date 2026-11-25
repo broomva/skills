@@ -524,6 +524,24 @@ def test_the_broken_fixture_is_refused_on_the_command_line(capsys):
     assert "NOT CHECKABLE" in capsys.readouterr().out
 
 
+def test_a_passing_replay_prints_no_command_output(tmp_path: Path, capsys):
+    doc = good()
+    doc["claims"][0]["verifier"]["check"] = "echo a-line-that-changes-every-run"
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps(doc))
+    assert checkable.main(["replay", str(path), "--cwd", str(tmp_path)]) == checkable.EXIT_OK
+    assert capsys.readouterr().out == "PASS    tests (replay)\n"
+
+
+def test_a_failing_replay_prints_the_command_output(tmp_path: Path, capsys):
+    doc = good()
+    doc["claims"][0]["verifier"]["check"] = "echo the-reason-it-failed; false"
+    path = tmp_path / "s.json"
+    path.write_text(json.dumps(doc))
+    assert checkable.main(["replay", str(path), "--cwd", str(tmp_path)]) == checkable.EXIT_FINDING
+    assert "the-reason-it-failed" in capsys.readouterr().out
+
+
 def test_unreadable_input_exits_2(tmp_path: Path, capsys):
     bad = tmp_path / "s.json"
     bad.write_text("{not json")

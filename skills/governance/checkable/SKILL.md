@@ -181,15 +181,24 @@ rung can point at a record that `bstack verify measurement` accepts.
 ## Under the flow kernel
 
 `assets/flows/checkable.yaml` is a flow definition for the Maestro flow kernel.
-It pins the commit, runs `check` against the base, then runs `replay` in a
-snapshot of that commit, and the kernel records a receipt for each step:
+It has three steps. `pin` confirms the repository is at the commit you named.
+`statement` runs `check` against the base. `replay` runs the statement's proof
+and replay claims in a snapshot of that commit, so uncommitted work cannot
+satisfy them. The kernel records the exit status and an output hash for each
+step, and a passing `replay` prints the same text every time, so the hash can
+be compared with a run by hand.
 
 ```bash
-maestro flow start --definition assets/flows/checkable.yaml \
-  --params '{"repo":"<repo>","head":"<sha>","statement":"<path>","base":"origin/main","tool":"<path to checkable.py>"}'
+maestro flow start --definition assets/flows/checkable.yaml --params '{
+  "repo": "<repo>", "head": "<sha>", "base": "origin/main",
+  "statement": "<path to the statement, relative to the repo>",
+  "tool": "<path to checkable.py, relative to the repo>",
+  "bin": "<optional: a directory put first on PATH>"}'
 ```
 
-Without Maestro the two commands run by hand in the same order.
+Then drive it with `maestro flow next`, `claim` and `complete` until its status
+is terminal. Without Maestro, run `check` and then `replay` by hand in the same
+order.
 
 ## What the checker cannot tell
 

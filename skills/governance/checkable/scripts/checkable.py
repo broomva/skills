@@ -595,7 +595,10 @@ def main(argv: list[str] | None = None) -> int:
                 if not rows:
                     print("INVALID: the statement has no proof or replay claim to run")
                 for row in rows:
-                    print(f"{row['verdict']:<7} {row['claim']} ({row['rung']}) {row.get('why') or row.get('tail') or ''}")
+                    # A passing row prints no command output, so the same
+                    # statement at the same commit prints the same text.
+                    detail = "" if row["verdict"] == "PASS" else (row.get("why") or row.get("tail") or "")
+                    print(f"{row['verdict']:<7} {row['claim']} ({row['rung']}) {detail}".rstrip())
             return code
 
         if args.command == "route":
