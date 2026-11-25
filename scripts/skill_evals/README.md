@@ -369,16 +369,21 @@ Three limits the harness cannot remove, each of which changes what a verdict is 
 **The noise band (`--noise-band`, BRO-4110).** The Newcombe interval treats every
 trial as an independent coin, but `--trials` repeats each prompt and a prompt's trials
 pass or fail together, so the interval is too narrow. `--ablate --noise-band` adds a
-replicate with-skill arm and checks the verdict across PROMPTS with exact sign-flip
-tests on per-prompt differences. The band can only downgrade the verdict computed on
-the full arms: `load-bearing` needs lift > 0 across prompts (p < 0.025),
-`retire-candidate` needs lift < margin across prompts (p < 0.025), and drift between
-the two identical arms (two-sided p < 0.05) gives `inconclusive-noisy`. With k prompts
-that differ, the smallest possible p is 1/2^k, so fewer than 6 can never confirm a
-lift. `tests/skill_evals/noise_band_calibration.py` regenerates the calibration: at
-zero true lift with fully clustered trials, false load-bearing is 24% without the band
-and 0.2% with it on 10 prompts, and 0% with it on 3 or 6. Without the flag nothing
-changes and the report says `A/A drift NOT MEASURED`.
+replicate with-skill arm and checks the verdict across PROMPTS with sign-flip tests on
+per-prompt differences. It can only downgrade the verdict computed on the full arms:
+
+- `load-bearing` stands only if lift > 0 across prompts (one-sided p < 0.025);
+- `retire-candidate` never stands under the band (no valid prompt-level
+  non-inferiority test exists for these proportions at small prompt counts);
+- drift between the two identical arms (two-sided p < 0.05) gives `inconclusive-noisy`;
+- a decisive verdict needs 6+ prompts graded in both with-skill arms.
+
+It does not fix an arm-order confound: the arms run one after another, so a shift that
+lands on one whole arm can still read as a lift (interleaving the arms is BRO-4140).
+It is never more decisive than the plain ablation. `tests/skill_evals/noise_band_calibration.py`
+regenerates the calibration: at zero true lift with fully clustered trials on 10
+prompts, false load-bearing is 24% without the band and 0.2% with it. Without the flag
+nothing changes and the report says `A/A drift NOT MEASURED`.
 
 ```bash
 python3 scripts/skill_evals/runner.py --skill checkit --trials 10 --ablate --noise-band

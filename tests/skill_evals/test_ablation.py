@@ -649,11 +649,6 @@ def test_a_clearly_load_bearing_skill_stays_load_bearing():
     assert cmp["verdict"] == A.VERDICT_LOAD_BEARING
 
 
-def test_a_clearly_absorbed_skill_can_still_retire():
-    cmp = band_compare([(9, 10)] * 12, [(9, 10)] * 12, [(9, 10)] * 12)
-    assert cmp["verdict"] == A.VERDICT_RETIRE
-
-
 def test_a_lift_carried_by_too_few_prompts_is_indeterminate():
     present = [(3, 3)] * 4 + [(1, 3)] * 6
     absent = [(0, 3)] * 4 + [(1, 3)] * 6
@@ -661,15 +656,6 @@ def test_a_lift_carried_by_too_few_prompts_is_indeterminate():
     cmp = band_compare(present, absent, present)
     assert cmp["verdict"] == A.VERDICT_INDETERMINATE
     assert "not confirmed" in cmp["why"] and cmp["skill_lift"] is not None
-
-
-def test_retirement_at_the_exact_margin_is_not_confirmed():
-    """P20 round 2: a +1/10 difference on every prompt equals the margin; floats
-    rounded it under. Exact fractions keep `lift < margin` strict."""
-    present = [(60, 100), (9, 10)] * 6
-    absent = [(50, 100), (8, 10)] * 6
-    cmp = band_compare(present, absent, present)
-    assert cmp["verdict"] != A.VERDICT_RETIRE
 
 
 def test_identical_arms_that_drifted_void_the_run():
@@ -742,16 +728,6 @@ def test_pairing_by_id_survives_a_reordered_report():
     assert cmp["noise"]["p_lift"] == 1.0 and cmp["noise"]["p_drift"] == 1.0
 
 
-def test_a_difference_exactly_at_the_margin_is_not_below_it():
-    """Exact fractions: 1/10 minus the 0.1 margin is zero, not a float crumb below it."""
-    band = A.NoiseBand(lift_diffs=(Fraction(1, 10),) * 8, drift_diffs=(Fraction(0),) * 8,
-                       replicate=A.ArmStats(30, 20, 30, 10), margin=Fraction("0.1"))
-    assert band.p_retire == 1
-    built = A.noise_band(prompts_report([(1, 10)] * 8), prompts_report([(0, 10)] * 8),
-                         prompts_report([(1, 10)] * 8), NON_PASS, margin=0.1)
-    assert built.p_retire == 1
-
-
 def test_a_structural_verdict_is_left_alone_by_the_band():
     """A name collision means there is no absent arm at all; drift cannot replace it."""
     P = [(3, 3)] * 10
@@ -760,6 +736,84 @@ def test_a_structural_verdict_is_left_alone_by_the_band():
                     replicate_report=prompts_report([(0, 3)] * 10))
     assert cmp["noise"]["drifted"] is True
     assert cmp["verdict"] == A.VERDICT_NAME_COLLISION
+
+
+def test_the_band_never_confirms_retirement():
+    """P20 round 3, blocker: a sign-flip test on margin-shifted differences is not
+    valid for proportions (14-16% false retirements at the margin). Under the band,
+    retirement is never confirmed."""
+    P = [(9, 10)] * 12
+    assert plain_compare(P, P)["verdict"] == A.VERDICT_RETIRE
+    cmp = band_compare(P, P, P)
+    assert cmp["verdict"] == A.VERDICT_INDETERMINATE and "absorption" in cmp["why"]
+    assert "p_retire" not in cmp["noise"]
+
+
+def test_the_one_sided_threshold_is_one_in_forty():
+    """Six prompts, five that gained and one tie: p = 1/32, above 1/40, so not confirmed."""
+    present = [(3, 3)] * 5 + [(1, 3)]
+    absent = [(0, 3)] * 5 + [(1, 3)]
+    assert plain_compare(present, absent)["verdict"] == A.VERDICT_LOAD_BEARING
+    cmp = band_compare(present, absent, present)
+    assert cmp["noise"]["p_lift"] == round(1 / 32, 4)
+    assert cmp["verdict"] == A.VERDICT_INDETERMINATE
+
+
+def test_the_drift_threshold_is_one_in_twenty():
+    """Eight prompts, seven drifting one way and one the other: two-sided p = 18/256,
+    above 1/20, so the run is not called noisy."""
+    present = [(3, 3)] * 7 + [(0, 3)]
+    replicate = [(0, 3)] * 7 + [(3, 3)]
+    cmp = band_compare(present, [(0, 3)] * 8, replicate)
+    assert cmp["noise"]["p_drift"] == round(18 / 256, 4)
+    assert cmp["noise"]["drifted"] is False and cmp["verdict"] != A.VERDICT_NOISY
+
+
+def test_an_underpowered_verdict_stays_underpowered_despite_drift():
+    cmp = band_compare([(1, 1)] * 8, [(0, 1)] * 8, [(0, 1)] * 8)
+    assert cmp["noise"]["drifted"] is True
+    assert cmp["verdict"] == A.VERDICT_UNDERPOWERED
+
+
+def test_replicate_trials_on_prompts_the_present_arm_lacks_are_no_evidence():
+    """P20 round 3: 42 replicate trials, only 2 on shared prompts, vouched for a
+    load-bearing verdict although the drift test could not fire."""
+    present = [(3, 3)] * 8
+    replicate_cases = [(3, 3)] * 8 + [(20, 20), (20, 20)]
+    p = prompts_report(present)
+    r = prompts_report(replicate_cases, error_prompts=tuple(range(6)))
+    cmp = A.compare(p, prompts_report([(0, 3)] * 8), non_pass=NON_PASS, min_trials=1,
+                    replicate_report=r)
+    assert cmp["noise"]["drift_prompts"] == 2
+    assert cmp["noise"]["replicate"]["graded_positive_trials"] == 6
+    assert cmp["verdict"] == A.VERDICT_UNDERPOWERED
+
+
+def test_unequal_denominators_fall_back_to_a_bounded_estimate():
+    """P20 round 3: 20 differences of 1/q for distinct primes q enumerated a million
+    states; past the cap the p-value is a seeded estimate that is never zero."""
+    primes = [3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53, 59, 61, 67, 71, 73]
+    p = A.sign_flip_p([Fraction(1, q) for q in primes], "greater")
+    assert 0 < p <= Fraction(1, 100)
+    # The estimate is (hits+1)/(draws+1); an exact answer would have a power-of-two
+    # denominator. So this proves the bounded path ran, not the million-state one.
+    assert (p * (A.MONTE_CARLO_DRAWS + 1)).denominator == 1
+
+
+def test_a_non_finite_margin_is_refused_before_any_arm_runs():
+    with pytest.raises(SystemExit) as exc:
+        R.main(["--skill-dir", str(FIXTURE / "skill"),
+                "--prompts", str(FIXTURE / "evals/prompts.json"), "--cli", "/bin/true",
+                "--no-version-check", "--ablate", "--noise-band", "--dry-run",
+                "--ablation-margin", "nan"])
+    assert exc.value.code == 2
+
+
+def test_exit_four_does_not_read_as_a_threshold_failure():
+    text = R.format_report([], R.aggregate([], case_threshold=R.DEFAULT_CASE_THRESHOLD),
+                           mode="live", skill="demo", threshold=0.8,
+                           exit_code=R.EXIT_ABLATION_UNUSABLE)
+    assert "-> PASS (exit 4)" in text
 
 
 def test_the_report_renders_the_band():

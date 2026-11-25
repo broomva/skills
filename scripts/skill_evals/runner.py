@@ -55,6 +55,7 @@ so the ablation arm is a one-line registration plus a flag, not a refactor.
 from __future__ import annotations
 
 import argparse
+import math
 import hashlib
 import json
 import os
@@ -1699,7 +1700,8 @@ def format_report(
             f"${agg['mean_cost_usd']:.4f}/trial   "
             f"mean {(agg['mean_duration_ms'] or 0) / 1000:.1f}s/trial{provenance}"
         )
-    verdict = "PASS" if exit_code == EXIT_OK else "FAIL"
+    # Exit 4 is set only when this arm passed: the threshold verdict is still PASS.
+    verdict = "PASS" if exit_code in (EXIT_OK, EXIT_ABLATION_UNUSABLE) else "FAIL"
     lines.append(
         f"  threshold   {threshold:.2f} -> {verdict} (exit {exit_code})   "
         f"[mode={mode.upper()} skill={skill}]"
@@ -1850,7 +1852,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--ablation-min-trials", type=int, default=ablation_mod.ABLATION_MIN_TRIALS,
                    help="below this many graded positive trials per arm the verdict is "
                         "'underpowered' rather than a number a reader would act on")
-    p.add_argument("--ablation-margin", type=float, default=ablation_mod.ABLATION_MARGIN,
+    p.add_argument("--ablation-margin", type=_finite_unit, default=ablation_mod.ABLATION_MARGIN,
                    help="a lift interval entirely below this marks a retirement candidate")
     p.add_argument("--noise-band", action="store_true",
                    help="BRO-4110: with --ablate, run the with-skill arm a second time and "
@@ -1864,6 +1866,14 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--validate-only", action="store_true", help="validate the prompt set and exit")
     p.add_argument("--list-checks", action="store_true", help="print CHECK_REGISTRY ids and exit")
     return p
+
+
+def _finite_unit(text: str) -> float:
+    """A margin in [0, 1]; refused at parse time, before any arm spends a trial."""
+    value = float(text)
+    if not math.isfinite(value) or not 0.0 <= value <= 1.0:
+        raise argparse.ArgumentTypeError(f"must be a finite number in [0, 1], got {text!r}")
+    return value
 
 
 def main(argv: Sequence[str] | None = None) -> int:

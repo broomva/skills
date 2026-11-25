@@ -41,28 +41,30 @@ THE NOISE BAND (``--noise-band``, BRO-4110)
 -------------------------------------------
 The interval above treats every trial as an independent coin, but ``--trials``
 repeats each prompt and a prompt's trials pass or fail together. ``--noise-band``
-adds a second, identical with-skill arm (the replicate) and checks the verdict at
-the level of PROMPTS, with exact sign-flip tests on per-prompt differences. A
-sign-flip test needs no distributional assumption and is exact for any number of
-prompts: under "no effect" each prompt's difference is as likely to be +d as -d.
+adds a second, identical with-skill arm (the replicate) and checks the verdict across
+PROMPTS with sign-flip tests on per-prompt differences.
 
 The band can only DOWNGRADE the verdict computed above on the full arms; it never
-produces a decisive verdict and never restricts the arms, so a replicate that
-failed on some prompts cannot erase the evidence of the others. On the full arms:
+produces a decisive verdict and never restricts the arms:
 
 * ``load-bearing`` stands only if lift > 0 across prompts (one-sided p < 0.025);
-* ``retire-candidate`` stands only if lift < margin across prompts (p < 0.025);
-* an A/A drift between the two identical arms (two-sided p < 0.05) makes the run
-  ``inconclusive-noisy``: the runs themselves moved.
+* ``retire-candidate`` never stands under the band: a sign-flip test on differences
+  shifted by the margin is not valid for proportions (it allowed 14-16% false
+  retirements at the margin in P20 review), so absorption is left undecided;
+* drift between the two identical arms (two-sided p < 0.05) gives
+  ``inconclusive-noisy``;
+* a decisive verdict needs 6+ prompts graded in both with-skill arms, the fewest at
+  which the drift test can fire at all; otherwise it is ``inconclusive-underpowered``.
 
-A consequence, stated rather than hidden: with k informative prompts the smallest
-possible p is 1/2^k, so fewer than 6 prompts that differ can never confirm a lift.
+What it does NOT fix. The arms run one after another (present, absent, replicate), so
+a shift in the model or harness that lands on one whole arm looks like an effect, and
+no test over prompts can tell the two apart; the A/A drift catches a shift between the
+two with-skill arms only. Interleaving the arms' trials is the fix, and a runner change
+(BRO-4140). The band is therefore never MORE decisive than the plain ablation, and in
+the calibration much less often wrong, but its p-values are not exact for this design.
 ``tests/skill_evals/noise_band_calibration.py`` regenerates the calibration (2000
-seeded runs per row). At zero true lift with fully clustered trials, false
-load-bearing falls from 24% to 0.2% on 10 prompts and from 31.5% / 37.6% to 0% on
-3 / 6 prompts; on a true +0.20 lift, false retirement falls from 10.5% to 2.0%. The
-price is power: fully clustered trials make 10 prompts behave like 10 coins.
-The idea of an A/A band is Uber's (2026-11-23 post on skill evals); the test is ours.
+seeded runs per row). The idea of an A/A band is Uber's (2026-11-23 post on skill
+evals); the tests are ours.
 
 A missing or unusable measurement serialises ``skill_lift: null``, never ``0.0``.
 A defaulted zero reads as perfect absorption, which is the single most dangerous
@@ -71,6 +73,7 @@ vacuity available here.
 
 from __future__ import annotations
 
+import functools
 import math
 import sys
 from collections import defaultdict
@@ -106,6 +109,13 @@ _STRUCTURAL = frozenset({"inconclusive-name-collision", "inconclusive-underpower
 #: Sign-flip thresholds, as exact fractions so a boundary case cannot round across.
 ALPHA_ONE_SIDED = Fraction(1, 40)   # 0.025
 ALPHA_DRIFT = Fraction(1, 20)       # 0.05, two-sided
+#: The fewest shared prompts at which a two-sided drift test can reach ALPHA_DRIFT
+#: (its smallest p is 2/2^k): below this the drift alarm cannot fire at all.
+MIN_DRIFT_PROMPTS = 6
+#: Past this many distinct partial sums the exact enumeration gives way to a seeded
+#: Monte Carlo estimate, so unequal graded counts cannot blow up memory.
+EXACT_STATE_CAP = 200_000
+MONTE_CARLO_DRAWS = 20_000
 
 
 # ---------------------------------------------------------------------------
@@ -377,58 +387,61 @@ def prompt_rates(report: dict[str, Any], non_pass: Sequence[str]) -> dict[str, F
     return out
 
 
-def _sign_flip_sums(diffs: Sequence[Fraction]) -> tuple[dict[int, int], int, int]:
-    """(distribution of the signed sum over all 2^n sign vectors, observed sum, 2^n),
-    in integers scaled to the diffs' common denominator. Exact; O(n x range)."""
-    den = math.lcm(*(d.denominator for d in diffs)) if diffs else 1
-    nums = [int(d * den) for d in diffs]
+def _sign_flip_sums(nums: Sequence[int]) -> dict[int, int] | None:
+    """Distribution of the signed sum over all 2^n sign vectors; None past the cap."""
     dist: dict[int, int] = {0: 1}
     for a in nums:
         nxt: dict[int, int] = defaultdict(int)
         for total, count in dist.items():
             nxt[total + a] += count
             nxt[total - a] += count
+        if len(nxt) > EXACT_STATE_CAP:
+            return None
         dist = nxt
-    return dist, sum(nums), 2 ** len(nums)
+    return dist
 
 
 def sign_flip_p(diffs: Sequence[Fraction], tail: str) -> Fraction:
-    """Exact sign-flip p-value that per-prompt differences are centred on zero.
+    """Sign-flip p-value that per-prompt differences are centred on zero.
 
-    tail="greater": evidence the centre is above zero; "less": below; "two": either.
+    tail="greater": evidence the centre is above zero; "two": either way. Exact by
+    enumeration in integers scaled to the common denominator; past EXACT_STATE_CAP a
+    seeded Monte Carlo estimate (hits+1)/(draws+1), which never reports p = 0.
     """
     if not diffs:
         return Fraction(1)
-    dist, obs, total = _sign_flip_sums(diffs)
-    if tail == "greater":
-        hits = sum(c for s, c in dist.items() if s >= obs)
-    elif tail == "less":
-        hits = sum(c for s, c in dist.items() if s <= obs)
-    else:
-        hits = sum(c for s, c in dist.items() if abs(s) >= abs(obs))
-    return Fraction(hits, total)
+    den = math.lcm(*(d.denominator for d in diffs))
+    nums = [int(d * den) for d in diffs]
+    obs = sum(nums)
+
+    def hit(total: int) -> bool:
+        return total >= obs if tail == "greater" else abs(total) >= abs(obs)
+
+    dist = _sign_flip_sums(nums)
+    if dist is not None:
+        return Fraction(sum(c for t, c in dist.items() if hit(t)), 2 ** len(nums))
+    import random
+    rng = random.Random(0)
+    hits = sum(1 for _ in range(MONTE_CARLO_DRAWS)
+               if hit(sum(a if rng.random() < 0.5 else -a for a in nums)))
+    return Fraction(hits + 1, MONTE_CARLO_DRAWS + 1)
 
 
 @dataclass(frozen=True)
 class NoiseBand:
     lift_diffs: tuple[Fraction, ...]    # present - absent, prompts graded in both
     drift_diffs: tuple[Fraction, ...]   # present - replicate, prompts graded in both
-    replicate: ArmStats
-    margin: Fraction
+    replicate: ArmStats                 # the replicate on the prompts shared with present
 
     @staticmethod
     def _mean(diffs) -> float | None:
         return float(sum(diffs) / len(diffs)) if diffs else None
 
-    @property
+    @functools.cached_property
     def p_lift(self) -> Fraction:
         return sign_flip_p(self.lift_diffs, "greater")
 
-    @property
-    def p_retire(self) -> Fraction:
-        return sign_flip_p([d - self.margin for d in self.lift_diffs], "less")
-
-    @property
+    @functools.cached_property
     def p_drift(self) -> Fraction | None:
         return sign_flip_p(self.drift_diffs, "two") if len(self.drift_diffs) >= 2 else None
 
@@ -446,7 +459,6 @@ class NoiseBand:
             "lift_prompts": len(self.lift_diffs),
             "lift_prompt_mean": f(mean(self.lift_diffs)),
             "p_lift": f(self.p_lift),
-            "p_retire": f(self.p_retire),
             "drift_prompts": len(self.drift_diffs),
             "drift_prompt_mean": f(mean(self.drift_diffs)),
             "p_drift": f(self.p_drift),
@@ -454,16 +466,19 @@ class NoiseBand:
         }
 
 
-def noise_band(present: dict, absent: dict, replicate: dict, non_pass: Sequence[str],
-               margin: float = ABLATION_MARGIN) -> NoiseBand:
+def noise_band(present: dict, absent: dict, replicate: dict,
+               non_pass: Sequence[str]) -> NoiseBand:
     """Pair prompts by id. The lift uses prompts graded in present and absent; the
-    drift uses prompts graded in present and replicate. Neither restricts the other."""
+    drift uses prompts graded in present and replicate. Neither restricts the other.
+    The replicate's trial count is taken on the shared prompts only: trials on a prompt
+    the present arm did not grade are no A/A evidence."""
     p, a, r = (prompt_rates(x, non_pass) for x in (present, absent, replicate))
+    rep_shared = {"cases": [c for i, c in enumerate(replicate.get("cases") or [])
+                            if str(c.get("case_id") or c.get("id") or f"#{i}") in p]}
     return NoiseBand(
         lift_diffs=tuple(p[k] - a[k] for k in p if k in a),
         drift_diffs=tuple(p[k] - r[k] for k in p if k in r),
-        replicate=arm_stats(replicate, non_pass),
-        margin=Fraction(str(margin)),
+        replicate=arm_stats(rep_shared, non_pass),
     )
 
 
@@ -482,12 +497,16 @@ def apply_noise_band(verdict: dict[str, Any], band: NoiseBand, *,
         return v
 
     decisive = name in (VERDICT_LOAD_BEARING, VERDICT_RETIRE)
-    if band.replicate.graded_positive_trials < min_trials or band.p_drift is None:
-        if decisive:
-            return demote(VERDICT_UNDERPOWERED, (
-                f"the noise band was requested but cannot be measured (replicate graded "
-                f"{band.replicate.graded_positive_trials} trials on {len(band.drift_diffs)} "
-                f"shared prompts; needs {min_trials}+ trials on 2+ prompts)"))
+    measurable = band.p_drift is not None
+    if decisive and (band.replicate.graded_positive_trials < min_trials
+                     or len(band.drift_diffs) < MIN_DRIFT_PROMPTS):
+        return demote(VERDICT_UNDERPOWERED, (
+            f"the noise band was requested but cannot vouch for a decisive verdict: the "
+            f"replicate graded {band.replicate.graded_positive_trials} trials on "
+            f"{len(band.drift_diffs)} prompts shared with the present arm; it needs "
+            f"{min_trials}+ trials on {MIN_DRIFT_PROMPTS}+ prompts for its drift test "
+            "to be able to fire"))
+    if not measurable:
         return v
     if band.drifted:
         return demote(VERDICT_NOISY, (
@@ -500,11 +519,11 @@ def apply_noise_band(verdict: dict[str, Any], band: NoiseBand, *,
             f"the trial-level interval clears zero, but across prompts the lift is not "
             f"confirmed (sign-flip p={float(band.p_lift):.3f} over {len(band.lift_diffs)} "
             "prompts): repeated trials of one prompt are not independent evidence"))
-    if name == VERDICT_RETIRE and band.p_retire >= ALPHA_ONE_SIDED:
+    if name == VERDICT_RETIRE:
         return demote(VERDICT_INDETERMINATE, (
-            f"the trial-level interval sits below the margin, but across prompts that is "
-            f"not confirmed (sign-flip p={float(band.p_retire):.3f} over "
-            f"{len(band.lift_diffs)} prompts)"))
+            "the trial-level interval sits below the margin, but the noise band cannot "
+            "establish absorption: a sign-flip test on margin-shifted differences is not "
+            "valid for proportions, so under the band retirement is never confirmed"))
     return v
 
 
@@ -548,7 +567,7 @@ def compare(
             verdict["end_to_end_lift"] = round(e2e_present - absent.outcome_pass_rate, 4)
     band = None
     if replicate_report is not None:
-        band = noise_band(present_report, absent_report, replicate_report, non_pass, margin)
+        band = noise_band(present_report, absent_report, replicate_report, non_pass)
         verdict = apply_noise_band(verdict, band, min_trials=min_trials)
     return {
         "skill": skill,
