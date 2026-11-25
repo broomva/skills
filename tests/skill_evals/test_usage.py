@@ -96,7 +96,7 @@ def test_scan_ignores_workflow_artifacts_end_to_end(tmp_path):
     (root / "agent-deadbeef.jsonl").write_bytes(calls(*["autonomous"] * 5))
     (root / "journal.jsonl").write_bytes(calls(*["autonomous"] * 5))
 
-    counts, sessions, scanned, _ = U.scan(tmp_path / "projects")
+    counts, sessions, scanned = U.scan(tmp_path / "projects")
     assert scanned == 1, "workflow artifacts were counted as sessions"
     assert counts["autonomous"] == 1, "invocations leaked from a workflow artifact"
     assert len(sessions["autonomous"]) == 1
@@ -339,3 +339,113 @@ def test_the_report_carries_who_chose_it_and_the_median_cost(tmp_path):
     assert row["invoked_by"] == {"agent": 1, "user": 1}
     assert row["cost"]["measured_invocations"] == 2
     assert row["cost"]["median_output_tokens"] == 40.0
+
+
+# --- P20 #335 round 1: what a window is, measured on real row shapes ----------------
+
+def test_scan_keeps_its_three_value_contract(tmp_path):
+    """listing.py unpacks three values; the records live in scan_records()."""
+    (tmp_path / "p").mkdir()
+    (tmp_path / "p" / "2772651f-25f3-4aee-8b5d-b44a9cd2dbfb.jsonl").write_bytes(calls("kg"))
+    out = U.scan(tmp_path)
+    assert len(out) == 3 and out[0]["kg"] == 1
+
+
+def _note(text):
+    return [{"type": "user", "message": {"content": text}}]
+
+
+def test_injected_user_rows_do_not_end_a_window():
+    """A task notification, local command output or a compaction summary is written
+    by the harness, not typed by a person (727, 41 and 68 such rows in the corpus)."""
+    for injected in ("<task-notification>\n<task-id>x</task-id>",
+                     "<local-command-stdout>ok</local-command-stdout>",
+                     "This session is being continued from a previous conversation that ran out"):
+        rows = _rows(lines(
+            skill_call("m0", "t0", "kg"),
+            _note(injected),
+            resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 9)),
+        ))
+        assert U.session_invocations(rows)[0]["cost"]["output_tokens"] == 9, injected
+
+
+def test_an_image_prompt_ends_a_window():
+    image = [{"type": "user", "message": {"content": [{"type": "image", "source": {}}]}}]
+    rows = _rows(lines(
+        skill_call("m0", "t0", "kg"),
+        resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 7)),
+        image,
+        resp("m2", [{"type": "text", "text": "y"}], usage=(1, 0, 0, 900)),
+    ))
+    assert U.session_invocations(rows)[0]["cost"]["output_tokens"] == 7
+
+
+def test_a_tool_result_with_injected_text_does_not_end_a_window():
+    mixed = [{"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "x", "content": "ok"},
+        {"type": "text", "text": "<system-reminder>note</system-reminder>"}]}}]
+    rows = _rows(lines(
+        skill_call("m0", "t0", "kg"),
+        resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 4)),
+        mixed,
+        resp("m2", [{"type": "text", "text": "y"}], usage=(1, 0, 0, 5)),
+    ))
+    assert U.session_invocations(rows)[0]["cost"]["output_tokens"] == 9
+
+
+def test_synthetic_assistant_rows_are_not_api_responses():
+    synthetic = resp("syn", [{"type": "text", "text": "No response requested."}], usage=(0, 0, 0, 0))
+    synthetic[0]["message"]["model"] = "<synthetic>"
+    rows = _rows(lines(skill_call("m0", "t0", "kg"), synthetic))
+    assert U.session_invocations(rows)[0]["cost"] is None
+
+
+def test_two_skills_loaded_by_one_response_share_its_window():
+    """REGRESSION: by row order the first got cost null and the second got all of it."""
+    both = resp("m0", [
+        {"type": "tool_use", "id": "t0", "name": "Skill", "input": {"skill": "kg"}},
+        {"type": "tool_use", "id": "t1", "name": "Skill", "input": {"skill": "p9"}},
+    ])
+    rows = _rows(lines(both, resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 10))))
+    first, second = U.session_invocations(rows)
+    assert first["cost"] == second["cost"]
+    assert first["cost"]["output_tokens"] == 5 and first["cost"]["shared_with"] == 1
+
+
+def test_block_order_inside_a_response_does_not_move_cost():
+    """REGRESSION: a text block placed before the next Skill block changed the
+    previous invocation's cost with identical API usage."""
+    def session(order):
+        blocks = {"kg": {"type": "tool_use", "id": "a", "name": "Skill", "input": {"skill": "kg"}},
+                  "text": {"type": "text", "text": "now p9"},
+                  "p9": {"type": "tool_use", "id": "b", "name": "Skill", "input": {"skill": "p9"}}}
+        return _rows(lines(resp("m0", [blocks[k] for k in order]),
+                           resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 8))))
+    a = U.session_invocations(session(["kg", "p9", "text"]))
+    b = U.session_invocations(session(["kg", "text", "p9"]))
+    assert a == b
+
+
+def test_context_added_across_a_compaction_is_unmeasured():
+    boundary = [{"type": "system", "subtype": "compact_boundary"}]
+    rows = _rows(lines(
+        skill_call("m0", "t0", "kg", usage=(10, 0, 100, 5)),
+        boundary,
+        resp("m1", [{"type": "text", "text": "x"}], usage=(2, 0, 188, 5)),
+    ))
+    assert U.session_invocations(rows)[0]["cost"]["context_added"] is None
+
+
+def test_a_transcript_written_with_json_spacing_is_still_read(tmp_path):
+    (tmp_path / "p").mkdir()
+    row = {"type": "assistant", "message": {"id": "m0", "usage": {"output_tokens": 1},
+           "content": [{"type": "tool_use", "id": "t0", "name": "Skill", "input": {"skill": "kg"}}]}}
+    (tmp_path / "p" / "2772651f-25f3-4aee-8b5d-b44a9cd2dbfb.jsonl").write_text(
+        json.dumps(row, separators=(", ", ": ")) + "\n")
+    assert U.scan(tmp_path)[0]["kg"] == 1
+
+
+def test_a_row_whose_message_is_not_an_object_is_skipped():
+    rows = [{"type": "assistant", "message": ["not", "an", "object"]},
+            {"type": "user", "message": "text"}] + _rows(calls("kg"))
+    assert [i["skill"] for i in U.session_invocations(rows)] == ["kg"]

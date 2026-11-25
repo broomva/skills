@@ -71,7 +71,10 @@ DEFAULT_SKILLS_ROOT = Path(__file__).resolve().parents[2] / "skills"
 _SESSION_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.jsonl$")
 
 # Cheap byte-level reject before parsing a file: no skill load can be in it otherwise.
-_MARKERS = (b'"name":"Skill"', b"Base directory for this skill")
+_MARKERS = (re.compile(rb'"name"\s*:\s*"Skill"'), re.compile(rb"Base directory for this skill"))
+# User-role rows the harness writes on its own; not a person's prompt.
+_INJECTED_PREFIXES = ("<task-notification>", "<local-command-stdout>", "<local-command-stderr>",
+                      "This session is being continued from a previous conversation")
 _LOAD_RE = re.compile(r"Base directory for this skill:\s*(\S+)")
 _USAGE_FIELDS = ("input_tokens", "cache_creation_input_tokens",
                  "cache_read_input_tokens", "output_tokens")
@@ -119,41 +122,57 @@ def has_evals(skills_root: Path, rel_dir: str) -> bool:
     return bool(isinstance(data, dict) and data.get("cases"))
 
 
+def _message(row: dict) -> dict:
+    msg = row.get("message")
+    return msg if isinstance(msg, dict) else {}
+
+
 def _text(row: dict) -> str:
-    content = (row.get("message") or {}).get("content")
+    content = _message(row).get("content")
     if isinstance(content, str):
         return content
     if isinstance(content, list):
-        return "\n".join(b.get("text", "") for b in content
+        return "\n".join(str(b.get("text", "")) for b in content
                          if isinstance(b, dict) and b.get("type") == "text")
     return ""
 
 
 def _is_human_prompt(row: dict) -> bool:
-    """A prompt a person sent: not a tool result, not an injected meta row."""
+    """A turn a person started: typed text or an image, or an interrupt.
+
+    Not a tool result, not an injected meta row, and not one of the user-role rows
+    the harness writes on its own (measured 2026-11-24 over the corpus: task
+    notifications, local command output, the post-compaction summary).
+    """
     if row.get("type") != "user" or row.get("isMeta") or row.get("isSidechain"):
         return False
-    content = (row.get("message") or {}).get("content")
-    if isinstance(content, str):
-        return True
+    content = _message(row).get("content")
     if isinstance(content, list):
-        return any(isinstance(b, dict) and b.get("type") == "text" for b in content)
-    return False
+        kinds = {b.get("type") for b in content if isinstance(b, dict)}
+        if "tool_result" in kinds or not kinds & {"text", "image"}:
+            return False
+    elif not isinstance(content, str):
+        return False
+    return not _text(row).lstrip().startswith(_INJECTED_PREFIXES)
 
 
-def _responses(rows: list[dict]) -> list[tuple[int, dict]]:
-    """(first row index, usage) once per API response, in transcript order."""
+def _responses(rows: list[dict]) -> list[tuple[int, str, dict]]:
+    """(first row index, message id, usage) once per real API response, in order.
+
+    A response split across rows repeats its id and usage, so it is counted once.
+    Rows the harness writes itself (model "<synthetic>") are not API responses.
+    """
     seen: set[str] = set()
-    out: list[tuple[int, dict]] = []
+    out: list[tuple[int, str, dict]] = []
     for i, row in enumerate(rows):
         if row.get("type") != "assistant" or row.get("isSidechain"):
             continue
-        msg = row.get("message") or {}
+        msg = _message(row)
         mid, usage = msg.get("id"), msg.get("usage")
-        if not mid or mid in seen or not isinstance(usage, dict):
+        if not mid or mid in seen or not isinstance(usage, dict) or msg.get("model") == "<synthetic>":
             continue
         seen.add(mid)
-        out.append((i, usage))
+        out.append((i, str(mid), usage))
     return out
 
 
@@ -161,61 +180,93 @@ def _total_input(usage: dict) -> int:
     return sum(int(usage.get(k) or 0) for k in _USAGE_FIELDS[:3])
 
 
-def _loads(rows: list[dict]) -> list[tuple[int, str, str]]:
-    """(row index, skill, invoked_by) for every skill load in one session."""
-    out: list[tuple[int, str, str]] = []
+def _loads(rows: list[dict]) -> list[dict]:
+    """Every skill load in one session: {row, anchor, group, skill, invoked_by}.
+
+    ``anchor`` is where the load's window starts: the first row of the API response
+    that made an agent call (so the order of blocks inside a response does not
+    matter), or the skill-body row of a typed load. Loads made by one response
+    share a ``group``.
+    """
+    first_row: dict[str, int] = {}
+    out: list[dict] = []
     for i, row in enumerate(rows):
         if row.get("isSidechain"):
             continue
         if row.get("type") == "assistant":
-            for block in (row.get("message") or {}).get("content") or []:
+            msg = _message(row)
+            mid = str(msg.get("id") or f"row{i}")
+            first_row.setdefault(mid, i)
+            for block in msg.get("content") or []:
                 if not (isinstance(block, dict) and block.get("type") == "tool_use"
                         and block.get("name") == "Skill"):
                     continue
-                name = (block.get("input") or {}).get("skill")
+                inp = block.get("input")
+                name = inp.get("skill") if isinstance(inp, dict) else None
                 if name:
-                    out.append((i, str(name), "agent"))
+                    out.append({"row": i, "anchor": first_row[mid], "group": f"r:{mid}",
+                                "skill": str(name), "invoked_by": "agent"})
         elif row.get("type") == "user" and row.get("isMeta") and not row.get("sourceToolUseID"):
             # The body of an AGENT call names its call in sourceToolUseID; a body
             # without one was loaded by a typed command. Measured 2026-11-24 over
-            # 348 transcripts: all 81 agent bodies carry it, and all 111 bodies
-            # without it follow a typed <command-name>.
+            # the corpus: all 81 agent bodies carry it, and all 111 bodies without
+            # it follow a typed <command-name>.
             m = _LOAD_RE.search(_text(row))
             if m:
-                out.append((i, Path(m.group(1)).name, "user"))
+                out.append({"row": i, "anchor": i, "group": f"t:{i}",
+                            "skill": Path(m.group(1)).name, "invoked_by": "user"})
     return out
 
 
 def session_invocations(rows: list[dict]) -> list[dict]:
-    """Every skill load in one session, with the token cost of its window."""
+    """Every skill load in one session, with the token cost of its window.
+
+    A window runs from its load's anchor to the next human prompt or the next load
+    made by a DIFFERENT response, whichever is first. Loads made by one response
+    share its window, and its tokens are split evenly between them
+    (``shared_with`` says how many others).
+    """
     loads = _loads(rows)
     responses = _responses(rows)
     prompts = [i for i, row in enumerate(rows) if _is_human_prompt(row)]
-    out = []
-    for k, (start, skill, invoked_by) in enumerate(loads):
-        nxt = [i for i in prompts if i > start]
-        if k + 1 < len(loads):
-            nxt.append(loads[k + 1][0])
-        end = min(nxt) if nxt else len(rows)
-        window = [u for i, u in responses if start < i < end]
-        # The response that made the call is "before": its first row is the call.
-        before = [u for i, u in responses if i <= start]
-        cost = None
-        if window:
-            added = _total_input(window[0]) - _total_input(before[-1]) if before else None
-            cost = {
-                "turns": len(window),
-                "input_tokens": sum(int(u.get("input_tokens") or 0) for u in window),
-                "cache_write_tokens": sum(int(u.get("cache_creation_input_tokens") or 0)
-                                          for u in window),
-                "cache_read_tokens": sum(int(u.get("cache_read_input_tokens") or 0)
-                                         for u in window),
-                "output_tokens": sum(int(u.get("output_tokens") or 0) for u in window),
-                # Negative after a compaction, which resets the context: unmeasured.
-                "context_added": added if added is not None and added >= 0 else None,
-            }
-        out.append({"skill": skill, "invoked_by": invoked_by, "cost": cost})
-    return out
+    compactions = [i for i, row in enumerate(rows)
+                   if row.get("type") == "system" and row.get("subtype") == "compact_boundary"]
+    anchors = sorted({ld["anchor"] for ld in loads})
+    by_group: dict[str, list[dict]] = defaultdict(list)
+    for ld in loads:
+        by_group[ld["group"]].append(ld)
+
+    cost_of: dict[str, dict | None] = {}
+    for group, members in by_group.items():
+        start = members[0]["anchor"]
+        ends = [i for i in prompts if i > start] + [a for a in anchors if a > start]
+        end = min(ends) if ends else len(rows)
+        window = [(i, u) for i, mid, u in responses if start < i < end]
+        before = [(i, u) for i, mid, u in responses if i <= start]
+        if not window:
+            cost_of[group] = None
+            continue
+        n = len(members)
+        added = None
+        if before:
+            b_idx, b_usage = before[-1]
+            f_idx, f_usage = window[0]
+            compacted = any(b_idx < c < f_idx for c in compactions)
+            delta = _total_input(f_usage) - _total_input(b_usage)
+            added = None if compacted or delta < 0 else delta / n
+        cost_of[group] = {
+            "turns": len(window),
+            "input_tokens": sum(int(u.get("input_tokens") or 0) for _, u in window) / n,
+            "cache_write_tokens": sum(int(u.get("cache_creation_input_tokens") or 0)
+                                      for _, u in window) / n,
+            "cache_read_tokens": sum(int(u.get("cache_read_input_tokens") or 0)
+                                     for _, u in window) / n,
+            "output_tokens": sum(int(u.get("output_tokens") or 0) for _, u in window) / n,
+            "context_added": added,
+            "shared_with": n - 1,
+        }
+    return [{"skill": ld["skill"], "invoked_by": ld["invoked_by"], "cost": cost_of[ld["group"]]}
+            for ld in loads]
 
 
 def _read_rows(path: Path) -> list[dict] | None:
@@ -223,7 +274,7 @@ def _read_rows(path: Path) -> list[dict] | None:
         blob = path.read_bytes()
     except OSError:
         return None
-    if not any(m in blob for m in _MARKERS):  # cheap reject before parsing
+    if not any(m.search(blob) for m in _MARKERS):  # cheap reject before parsing
         return []
     rows = []
     for line in blob.splitlines():
@@ -236,18 +287,16 @@ def _read_rows(path: Path) -> list[dict] | None:
     return rows
 
 
-def scan(transcript_root: Path) -> tuple[Counter, dict[str, set], int, dict[str, list]]:
-    """Count skill loads across real session transcripts only.
+def scan_records(transcript_root: Path) -> tuple[dict[str, list], dict[str, set], int]:
+    """Every skill load across real session transcripts, with its cost.
 
-    Returns (invocation counts, sessions per skill, transcripts scanned,
-    per-skill list of invocation records with their cost).
+    Returns ({skill: [invocation records]}, {skill: session file names}, scanned).
     """
-    counts: Counter = Counter()
-    sessions: dict[str, set] = defaultdict(set)
     records: dict[str, list] = defaultdict(list)
+    sessions: dict[str, set] = defaultdict(set)
     scanned = 0
     if not transcript_root.is_dir():
-        return counts, sessions, scanned, records
+        return records, sessions, scanned
     for f in transcript_root.rglob("*.jsonl"):
         if not is_session_transcript(f.name):
             continue
@@ -256,10 +305,18 @@ def scan(transcript_root: Path) -> tuple[Counter, dict[str, set], int, dict[str,
         if not rows:
             continue
         for inv in session_invocations(rows):
-            counts[inv["skill"]] += 1
-            sessions[inv["skill"]].add(f.name)
             records[inv["skill"]].append(inv)
-    return counts, sessions, scanned, records
+            sessions[inv["skill"]].add(f.name)
+    return records, sessions, scanned
+
+
+def scan(transcript_root: Path) -> tuple[Counter, dict[str, set], int]:
+    """Count skill loads across real session transcripts only.
+
+    The contract listing.py relies on: (counts, sessions per skill, scanned).
+    """
+    records, sessions, scanned = scan_records(transcript_root)
+    return Counter({k: len(v) for k, v in records.items()}), sessions, scanned
 
 
 def _median(values: list[int]) -> float | None:
@@ -288,7 +345,8 @@ def cost_summary(invocations: list[dict]) -> dict | None:
 
 
 def build_report(transcript_root: Path, skills_root: Path) -> dict:
-    counts, sessions, scanned, records = scan(transcript_root)
+    records, sessions, scanned = scan_records(transcript_root)
+    counts = Counter({k: len(v) for k, v in records.items()})
     owned = owned_skills(skills_root)
     ranked, external = [], []
     for name, n in counts.most_common():
