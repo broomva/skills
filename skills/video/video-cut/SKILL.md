@@ -66,9 +66,10 @@ Transcribe (local) → Pack → LLM reasons (proposes plain-English strategy, wa
 EDL → Render (ffmpeg) → Self-eval (≤3 correction loops) → final.mp4
 ```
 
-The **EDL** (`edl.json`) is the declarative cut IR — cut ranges + grade + overlays +
-subtitles in one file. Decouples *decision* (the agent) from *render* (ffmpeg). Full
-schema in `references/edl-format.md`.
+The **EDL** (`edl.json`) and typed **`editPlan.json` v1** (`scripts/edit_plan.py`) are
+the declarative cut IRs — decoupling editorial *decision* (the agent) from deterministic
+*render* (`ffmpeg`). Full schemas and `unheard.py` usage in `references/edl-format.md`
+and `references/unheard-and-edit-plan.md`.
 
 ## Hard Rules (non-negotiable production correctness)
 
@@ -96,6 +97,8 @@ ffmpeg specifics. Summary:
 | `scripts/render.py <edl.json> [-o out.mp4] [--preview]` | EDL → ffmpeg: per-segment extract+grade+fades → lossless concat → overlays → subtitles (LAST) |
 | `scripts/self_eval.py <edl.json> <rendered.mp4>` | Inspect render at each cut boundary; report discontinuities/pops/hidden-subs as JSON |
 | `scripts/edl.py` | Shared lib: EDL load/validate, SRT generation, output-timeline offset math (imported by render/self_eval/tests) |
+| `scripts/unheard.py detect <media> --transcript <json>` | Word-aligned `UNHEARD` retake & dropped-speech detector (20 ms RMS envelope vs transcript spans, inline `[UNHEARD ...]` annotation) |
+| `scripts/edit_plan.py {validate,compile,render} <plan.json>` | Typed `editPlan.json` v1 validator (safe-area, punch-in bounds, ducking `pad_tail_s >= 0.5`) & deterministic FFmpeg compiler/renderer |
 
 ## Directory layout (created under `<videos_dir>/edit/`)
 
@@ -118,11 +121,11 @@ ffmpeg specifics. Summary:
 ## Workflow
 
 1. **Inventory** — `ffprobe` sources; `transcribe_local.py` each (or batch); `pack_transcripts.py`.
-2. **Pre-scan** — read `takes_packed.md`; flag filler/false-starts/retakes.
+2. **Pre-scan** — read `takes_packed.md` and run `unheard.py detect <media> --transcript <json> --annotate-out edit/takes_annotated.txt` to catch dropped retakes/speech missed by ASR; inspect flagged `[UNHEARD ...]` stretches with `timeline_view.py`.
 3. **Converse** — shape, content type, pacing, grade, subtitle style, overlays.
 4. **Propose strategy** — 4–8 sentences; wait for confirmation (Hard Rule 10).
-5. **Build EDL** — author `edl.json`; spawn parallel overlay sub-agents if needed (Remotion etc.).
-6. **Render** — `render.py edl.json --preview` first.
+5. **Build EDL or `editPlan.json`** — author `edl.json` (for per-segment concat + Remotion overlays) or a typed `editPlan.json` v1 (for punch-in framing, safe-area-checked captions, and ducked music beds; validate with `edit_plan.py validate`).
+6. **Render** — `render.py edl.json --preview` (or `edit_plan.py render edit/editPlan.json -o edit/final.mp4`, inspecting `--dry-run` first).
 7. **Self-eval** — `self_eval.py` before showing the user; correct, ≤3 passes.
 8. **Iterate** — natural-language feedback → re-render; append to `project.md`.
 
