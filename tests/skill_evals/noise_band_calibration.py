@@ -11,7 +11,9 @@ coin: copy=1.0 is perfect clustering, copy=0.0 independent trials (copy=0.5 give
 within-prompt trial correlation of about 0.25, not 0.5). The three arms are
 independent draws; `effect` is added to the with-skill rate and clipped at 1.0, so
 the realised mean lift is printed beside the nominal one.
-The table prints the share of each verdict without and with the noise band.
+The table prints the plain verdict shares, and how often the band's report note
+flags a load-bearing verdict as not confirmed across prompts (the band changes no
+verdict; see ablation.py).
 Seeded, so the output is reproducible. Not a test: the assertion lives in
 test_ablation.py::test_clustered_trials_do_not_manufacture_a_lift.
 """
@@ -48,21 +50,26 @@ def report(rates, trials, rng, copy):
 
 def run(prompts, trials, effect, copy, sims=2000, seed=7):
     rng = random.Random(seed)
-    without, with_band = collections.Counter(), collections.Counter()
+    without = collections.Counter()
+    flagged = drift_notes = 0
     realised = 0.0
     for _ in range(sims):
         base = [rng.uniform(0.2, 0.8) for _ in range(prompts)]
         skill = [min(1.0, b + effect) for b in base]
         realised += sum(s - b for s, b in zip(skill, base)) / prompts
         P, B, R = (report(r, trials, rng, copy) for r in (skill, base, skill))
-        without[A.compare(P, B, non_pass=NON_PASS, min_trials=10)["verdict"]] += 1
-        with_band[A.compare(P, B, non_pass=NON_PASS, min_trials=10,
-                            replicate_report=R)["verdict"]] += 1
+        cmp = A.compare(P, B, non_pass=NON_PASS, min_trials=10, replicate_report=R)
+        without[cmp["verdict"]] += 1
+        if cmp["verdict"] == A.VERDICT_LOAD_BEARING and not cmp["noise"]["lift_confirmed"]:
+            flagged += 1
+        drift_notes += bool(cmp["noise"]["drifted"])
     share = lambda c: {k: round(v / sims, 3) for k, v in sorted(c.items())}  # noqa: E731
     print(f"prompts={prompts} trials/prompt={trials} effect={effect:+.2f} "
           f"(realised {realised / sims:+.3f}) copy={copy}")
-    print(f"   without band: {share(without)}")
-    print(f"   with band   : {share(with_band)}")
+    lb = without.get(A.VERDICT_LOAD_BEARING, 0)
+    print(f"   verdicts    : {share(without)}")
+    print(f"   load-bearing flagged by the band: {flagged}/{lb}"
+          f"   drift notes: {drift_notes / sims:.3f}")
 
 
 if __name__ == "__main__":
