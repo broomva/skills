@@ -74,6 +74,26 @@ export function parseCdhash(codesignOutput) {
 }
 
 /**
+ * Promote a staged bundle into place. Enforces no-clobber at promotion time so
+ * a bundle appearing concurrently during signing cannot be deleted when
+ * `allowReplace` is false.
+ */
+export function publishBundle(stagingPath, bundlePath, { allowReplace = false, backupPath } = {}) {
+  const hadExisting = fs.existsSync(bundlePath);
+  if (hadExisting && !allowReplace) {
+    throw new Error(`${bundlePath} already exists and is not owned by this host.`);
+  }
+  if (hadExisting) fs.renameSync(bundlePath, backupPath);
+  try {
+    fs.renameSync(stagingPath, bundlePath);
+  } catch (e) {
+    if (hadExisting && fs.existsSync(backupPath)) fs.renameSync(backupPath, bundlePath);
+    throw e;
+  }
+  if (hadExisting) fs.rmSync(backupPath, { recursive: true, force: true });
+}
+
+/**
  * Write and ad-hoc sign the shim bundle. Returns its cdhash, which the host
  * pins: a shim whose running code does not match is refused on connect.
  * Refuses to overwrite an existing destination unless `allowReplace` is true,
@@ -108,15 +128,7 @@ export function writeShimBundle({ bundlePath, loaderPath, icns, allowReplace = f
     if (shown.status !== 0) throw new Error(`codesign -dvvv failed for ${bundlePath}: ${shown.stderr}`);
     cdhash = parseCdhash(`${shown.stdout}\n${shown.stderr}`);
     if (!cdhash) throw new Error(`No CDHash for ${bundlePath}`);
-    const hadExisting = fs.existsSync(bundlePath);
-    if (hadExisting) fs.renameSync(bundlePath, backupPath);
-    try {
-      fs.renameSync(stagingPath, bundlePath);
-    } catch (e) {
-      if (hadExisting && fs.existsSync(backupPath)) fs.renameSync(backupPath, bundlePath);
-      throw e;
-    }
-    if (hadExisting) fs.rmSync(backupPath, { recursive: true, force: true });
+    publishBundle(stagingPath, bundlePath, { allowReplace, backupPath });
   } catch (e) {
     fs.rmSync(stagingPath, { recursive: true, force: true });
     throw e;

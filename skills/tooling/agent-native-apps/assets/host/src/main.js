@@ -123,6 +123,7 @@ if (config && registry && command[0] === "list") {
 
 /** installId -> running app state */
 const running = new Map();
+const activeRuns = new Set();
 /** webContents id -> installId */
 const byContents = new Map();
 /** accelerator -> installId: one owner per global shortcut, host-wide */
@@ -710,7 +711,9 @@ const modules = {
             },
           );
           s.runs.set(runId, r);
+          activeRuns.add(r);
           // The run is over when its process is, not when the CLI says so.
+          r.finished.finally(() => activeRuns.delete(r));
           r.finished.then(() => {
             s.runs.delete(runId);
             // Let the page receive `done` before the reload tears it down.
@@ -885,9 +888,7 @@ if (config && registry && command[0] !== "list") {
         event.preventDefault();
         return;
       }
-      const active = [];
-      for (const state of running.values()) active.push(...state.runs.values());
-      quitPending = cancelRunsOnQuit(active, event, () => {
+      quitPending = cancelRunsOnQuit(activeRuns, event, () => {
         quitReady = true;
         app.quit();
       });

@@ -142,6 +142,12 @@ const MUTANTS = [
     "if (false)",
   ],
   [
+    "publishBundle clobbers concurrently created destination when allowReplace is false",
+    "src/bundle.js",
+    "if (hadExisting && !allowReplace)",
+    "if (false)",
+  ],
+  [
     "forwarded command silently loosens requested --max-tier",
     "src/args.js",
     "if (requested?.maxTier !== undefined && requested.maxTier < running.maxTier)",

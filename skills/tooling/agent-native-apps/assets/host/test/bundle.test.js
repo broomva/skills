@@ -3,7 +3,14 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { test } from "node:test";
-import { BUNDLE_ID_PREFIX, icnsFromPngs, infoPlist, parseCdhash, writeShimBundle } from "../src/bundle.js";
+import {
+  BUNDLE_ID_PREFIX,
+  icnsFromPngs,
+  infoPlist,
+  parseCdhash,
+  publishBundle,
+  writeShimBundle,
+} from "../src/bundle.js";
 
 const keys = {
   installId: "agent-pad-1a2b",
@@ -80,4 +87,22 @@ test("writeShimBundle refuses to delete an unowned existing bundle and preserves
     "untouched",
     "failed replacement must preserve existing bundle",
   );
+});
+
+test("publishBundle refuses a competing destination that appeared during staging when allowReplace is false", (t) => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "ana-pub-"));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const staged = path.join(dir, "Notes.app.staging-1");
+  const dest = path.join(dir, "Notes.app");
+  const backup = path.join(dir, "Notes.app.old-1");
+  fs.mkdirSync(staged);
+  fs.writeFileSync(path.join(staged, "new.txt"), "new");
+  fs.mkdirSync(dest);
+  fs.writeFileSync(path.join(dest, "keep.txt"), "competing-host");
+
+  assert.throws(
+    () => publishBundle(staged, dest, { allowReplace: false, backupPath: backup }),
+    /already exists and is not owned/,
+  );
+  assert.equal(fs.readFileSync(path.join(dest, "keep.txt"), "utf8"), "competing-host");
 });
