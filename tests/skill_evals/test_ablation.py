@@ -520,18 +520,23 @@ def test_load_bearing_survives_both_polarity_guards():
 
 
 # ---------------------------------------------------------------------------
-# the noise band (BRO-4110): the prompt is the unit, plus an A/A drift test
+# the noise band (BRO-4110): exact sign-flip tests over prompts, downgrade only
 # ---------------------------------------------------------------------------
 
 import contextlib  # noqa: E402
 import io  # noqa: E402
+import itertools  # noqa: E402
 import json  # noqa: E402
 import random  # noqa: E402
+from fractions import Fraction  # noqa: E402
 from types import SimpleNamespace  # noqa: E402
 from unittest.mock import patch  # noqa: E402
 
+DECISIVE = {A.VERDICT_LOAD_BEARING, A.VERDICT_RETIRE}
+RANK = {A.VERDICT_LOAD_BEARING: 2, A.VERDICT_RETIRE: 2}  # everything else ranks 0
 
-def prompts_report(per_prompt, *, error_prompts=()):
+
+def prompts_report(per_prompt, *, error_prompts=(), order=None):
     """A report with one positive case per entry of `per_prompt` = [(passes, n), ...]."""
     cases = []
     for i, (passes, n) in enumerate(per_prompt):
@@ -541,125 +546,226 @@ def prompts_report(per_prompt, *, error_prompts=()):
             results = ([trial("PASS", [chk("x", passed=True)], triggered=True)] * passes
                        + [trial("FAIL", [chk("x", passed=False)], triggered=True)] * (n - passes))
         cases.append({"case_id": f"p{i}", "should_trigger": True, "results": results})
+    if order is not None:
+        cases = [cases[i] for i in order]
     return report(cases=cases)
 
 
-def band_compare(present, absent, replicate, **kw):
+def band_compare(present, absent, replicate, *, replicate_errors=(), **kw):
     return A.compare(prompts_report(present), prompts_report(absent), non_pass=NON_PASS,
-                     min_trials=10, replicate_report=prompts_report(replicate), **kw)
+                     min_trials=10,
+                     replicate_report=prompts_report(replicate, error_prompts=replicate_errors),
+                     **kw)
+
+
+def plain_compare(present, absent, **kw):
+    return A.compare(prompts_report(present), prompts_report(absent), non_pass=NON_PASS,
+                     min_trials=10, **kw)
+
+
+def test_sign_flip_p_is_exact():
+    F = Fraction
+    assert A.sign_flip_p([F(1)] * 6, "greater") == F(1, 64)
+    assert A.sign_flip_p([F(1)] * 5, "greater") == F(1, 32)
+    assert A.sign_flip_p([F(1), F(1)], "two") == F(1, 2)
+    assert A.sign_flip_p([F(1, 2), F(-1, 3), F(2, 3)], "greater") == F(1, 4)
+    assert A.sign_flip_p([], "greater") == 1
 
 
 def test_without_a_replicate_nothing_changes_and_noise_is_null():
-    p, a = prompts_report([(3, 3)] * 10), prompts_report([(0, 3)] * 10)
-    cmp = A.compare(p, a, non_pass=NON_PASS, min_trials=10)
+    cmp = plain_compare([(3, 3)] * 10, [(0, 3)] * 10)
     assert cmp["noise"] is None
     assert "NOT MEASURED (run with --noise-band)" in A.format_comparison(cmp)
 
 
-def _clustered(rng, rates, trials):
-    """Each prompt's trials all pass or all fail together: perfect clustering."""
+def test_the_band_never_upgrades_a_verdict():
+    """THE property that answers both round-2 blockers: exhaustively over small
+    prompt sets, a verdict with the band is never more decisive than without it,
+    and never a different decisive verdict."""
+    outcomes = [(0, 3), (1, 3), (2, 3), (3, 3)]
+    rng = random.Random(4110)
+    for _ in range(400):
+        n = rng.randint(2, 6)
+        P = [rng.choice(outcomes) for _ in range(n)]
+        B = [rng.choice(outcomes) for _ in range(n)]
+        R_ = [rng.choice(outcomes) for _ in range(n)]
+        errors = tuple(i for i in range(n) if rng.random() < 0.3)
+        base = plain_compare(P, B)["verdict"]
+        banded = band_compare(P, B, R_, replicate_errors=errors)["verdict"]
+        if banded in DECISIVE:
+            assert banded == base, (P, B, R_, errors, base, banded)
+
+
+def test_replicate_errors_cannot_turn_load_bearing_into_retire():
+    """P20 round 2, blocker: present beat absent on 4 prompts and tied on 2; the
+    replicate erroring on the 4 used to drop them from every arm and retire it."""
+    present = [(3, 3)] * 4 + [(2, 3)] * 2
+    absent = [(0, 3)] * 4 + [(2, 3)] * 2
+    assert plain_compare(present, absent)["verdict"] == A.VERDICT_LOAD_BEARING
+    cmp = band_compare(present, absent, present, replicate_errors=(0, 1, 2, 3))
+    assert cmp["verdict"] != A.VERDICT_RETIRE
+    assert cmp["present"] == plain_compare(present, absent)["present"]  # arms not restricted
+    assert cmp["noise"]["lift_prompts"] == 6
+
+
+def test_two_clustered_prompts_can_never_be_decisive():
+    """P20 round 2, blocker: two prompts x 12 perfectly correlated trials produced
+    load-bearing in 3/64 of all outcomes. With two prompts the smallest sign-flip p
+    is 1/4, so the band refuses every decisive verdict, exhaustively."""
+    for P in itertools.product([(0, 12), (12, 12)], repeat=2):
+        for B in itertools.product([(0, 12), (12, 12)], repeat=2):
+            for R_ in itertools.product([(0, 12), (12, 12)], repeat=2):
+                assert band_compare(list(P), list(B), list(R_))["verdict"] not in DECISIVE
+
+
+def _clustered(rng, rates, trials, copy):
     out = []
     for p in rates:
-        ok = rng.random() < p
-        out.append((trials if ok else 0, trials))
+        shared = rng.random() < p
+        passes = sum(1 for _ in range(trials)
+                     if (shared if rng.random() < copy else rng.random() < p))
+        out.append((passes, trials))
     return out
 
 
 def test_clustered_trials_do_not_manufacture_a_lift():
-    """THE reason the band exists (P20 round 1, blocker). Ten prompts, twelve
-    perfectly correlated trials each, zero true lift. The trial-level interval treats
-    120 trials as independent and calls a large share of these runs load-bearing; the
-    prompt-level union stays near the nominal one-sided 2.5%. Seeded, so it is exact."""
+    """Ten prompts, twelve trials each that copy the prompt's shared outcome, zero
+    true lift. Seeded: exact. The band keeps false load-bearing at the 2.5% level."""
     rng = random.Random(20261124)
     sims, without, with_band = 300, 0, 0
     for _ in range(sims):
         base = [rng.uniform(0.2, 0.8) for _ in range(10)]
-        P, B, R_ = (_clustered(rng, base, 12) for _ in range(3))
-        p, b = prompts_report(P), prompts_report(B)
-        if A.compare(p, b, non_pass=NON_PASS, min_trials=10)["verdict"] == A.VERDICT_LOAD_BEARING:
-            without += 1
-        if band_compare(P, B, R_)["verdict"] == A.VERDICT_LOAD_BEARING:
-            with_band += 1
+        P, B, R_ = (_clustered(rng, base, 12, 1.0) for _ in range(3))
+        without += plain_compare(P, B)["verdict"] == A.VERDICT_LOAD_BEARING
+        with_band += band_compare(P, B, R_)["verdict"] == A.VERDICT_LOAD_BEARING
     assert without / sims > 0.15, without
-    assert with_band / sims < 0.06, with_band
+    assert with_band / sims <= 0.03, with_band
 
 
 def test_a_clearly_load_bearing_skill_stays_load_bearing():
-    """FALSE-POSITIVE control: honest intervals must not make real lifts unprovable."""
+    """FALSE-POSITIVE control: the band must not make a real, consistent lift
+    unprovable when enough prompts carry it."""
     cmp = band_compare([(3, 3)] * 10, [(0, 3)] * 10, [(3, 3)] * 10)
     assert cmp["verdict"] == A.VERDICT_LOAD_BEARING
 
 
 def test_a_clearly_absorbed_skill_can_still_retire():
-    cmp = band_compare([(9, 10)] * 20, [(9, 10)] * 20, [(9, 10)] * 20)
+    cmp = band_compare([(9, 10)] * 12, [(9, 10)] * 12, [(9, 10)] * 12)
     assert cmp["verdict"] == A.VERDICT_RETIRE
 
 
-def test_prompts_that_all_agree_do_not_give_false_certainty():
-    """Every prompt 1-of-2 in both arms: the per-prompt differences are all zero, so
-    the t-interval alone is [0, 0] and would call it absorbed. The union keeps the
-    Newcombe floor, which is honest about 20 trials."""
-    cmp = band_compare([(1, 2)] * 10, [(1, 2)] * 10, [(1, 2)] * 10)
-    assert cmp["noise"]["lift_prompt_ci"] == [0.0, 0.0]
+def test_a_lift_carried_by_too_few_prompts_is_indeterminate():
+    present = [(3, 3)] * 4 + [(1, 3)] * 6
+    absent = [(0, 3)] * 4 + [(1, 3)] * 6
+    assert plain_compare(present, absent)["verdict"] == A.VERDICT_LOAD_BEARING
+    cmp = band_compare(present, absent, present)
     assert cmp["verdict"] == A.VERDICT_INDETERMINATE
-    assert cmp["skill_lift_ci"][1] > A.ABLATION_MARGIN
+    assert "not confirmed" in cmp["why"] and cmp["skill_lift"] is not None
+
+
+def test_retirement_at_the_exact_margin_is_not_confirmed():
+    """P20 round 2: a +1/10 difference on every prompt equals the margin; floats
+    rounded it under. Exact fractions keep `lift < margin` strict."""
+    present = [(60, 100), (9, 10)] * 6
+    absent = [(50, 100), (8, 10)] * 6
+    cmp = band_compare(present, absent, present)
+    assert cmp["verdict"] != A.VERDICT_RETIRE
 
 
 def test_identical_arms_that_drifted_void_the_run():
     cmp = band_compare([(3, 3)] * 10, [(0, 3)] * 10, [(0, 3)] * 10)
-    assert cmp["verdict"] == A.VERDICT_NOISY
-    assert cmp["skill_lift"] is None
-    assert cmp["noise"]["drift"] == 1.0 and cmp["noise"]["drifted"] is True
+    assert cmp["verdict"] == A.VERDICT_NOISY and cmp["skill_lift"] is None
+    assert cmp["noise"]["drifted"] is True and cmp["noise"]["drift_prompt_mean"] == 1.0
 
 
 def test_drift_is_diagnosed_before_the_check_strength_gates():
-    """P20 round 1, minor: present and absent never failed, so weak-checks used to win
-    even though the replicate failed 20 of 30. The replicate is evidence too."""
     cmp = band_compare([(3, 3)] * 10, [(3, 3)] * 10, [(1, 3)] * 10)
     assert cmp["verdict"] == A.VERDICT_NOISY
 
 
-def test_drift_is_signed_and_its_interval_matches_its_sign():
-    """P20 round 1: an absolute spread printed beside a signed interval read as a
-    contradiction. Both are signed now."""
+def test_a_replicate_that_did_better_is_drift_too():
     cmp = band_compare([(1, 3)] * 10, [(1, 3)] * 10, [(3, 3)] * 10)
-    lo, hi = cmp["noise"]["drift_ci"]
-    assert cmp["noise"]["drift"] < 0 and hi < 0
-    assert cmp["verdict"] == A.VERDICT_NOISY  # a replicate that did BETTER is drift too
+    assert cmp["noise"]["drift_prompt_mean"] < 0 and cmp["verdict"] == A.VERDICT_NOISY
 
 
-def test_a_prompt_one_arm_could_not_grade_drops_out_of_every_arm():
-    """P20 round 1: the replicate ERRORed on the one hard prompt, so it scored 60/60
-    against the present arm's 60/90 and the whole gap was the missing prompt."""
-    easy_easy_hard = [(30, 30), (30, 30), (0, 30)]
-    p = prompts_report(easy_easy_hard)
-    r = prompts_report(easy_easy_hard, error_prompts=(2,))
-    cmp = A.compare(p, prompts_report(easy_easy_hard), non_pass=NON_PASS, min_trials=10,
-                    replicate_report=r)
-    assert cmp["noise"]["prompts"] == 2
-    assert cmp["noise"]["drift"] == 0.0
-    assert cmp["verdict"] != A.VERDICT_NOISY
+def test_prompts_are_paired_by_id_not_position():
+    """P20 round 2: pairing by position survived the suite."""
+    P = [(3, 3)] * 5 + [(0, 3)] * 5
+    B = [(3, 3)] * 5 + [(0, 3)] * 5
+    rev = list(reversed(range(10)))
+    cmp = A.compare(prompts_report(P), prompts_report(B, order=rev), non_pass=NON_PASS,
+                    min_trials=10, replicate_report=prompts_report(P, order=rev))
+    assert cmp["noise"]["lift_prompt_mean"] == 0.0
+    assert cmp["noise"]["drift_prompt_mean"] == 0.0
 
 
-def test_fewer_than_two_shared_prompts_is_underpowered():
-    cmp = band_compare([(30, 30)], [(0, 30)], [(30, 30)])
+def test_reported_estimates_are_prompt_means_like_their_tests():
+    """P20 round 2: the report weighted trials while the test weighted prompts."""
+    cmp = band_compare([(10, 10), (0, 1)], [(5, 10), (1, 1)], [(10, 10), (0, 1)])
+    assert cmp["noise"]["lift_prompt_mean"] == round(((1 - 0.5) + (0 - 1)) / 2, 4)
+
+
+def test_an_unmeasurable_band_demotes_a_decisive_verdict():
+    """P20 round 2: the replicate trial floor survived the suite."""
+    P, B = [(3, 3)] * 10, [(0, 3)] * 10
+    cmp = band_compare(P, B, P, replicate_errors=tuple(range(9)))  # 3 graded trials
+    assert cmp["verdict"] == A.VERDICT_UNDERPOWERED and "noise band" in cmp["why"]
+
+
+def test_end_to_end_lift_is_untouched_by_the_band():
+    """P20 round 2: suppressing it under the band survived; the band does not
+    restrict arms, so the end-to-end lift is the same number with or without it."""
+    P, B = [(3, 3)] * 10, [(0, 3)] * 10
+    p, b = prompts_report(P), prompts_report(B)
+    p["aggregate"] = {"positive": {"pass_rate": 0.9}}
+    with_band = A.compare(p, b, non_pass=NON_PASS, min_trials=10,
+                          replicate_report=prompts_report(P))
+    without = A.compare(p, b, non_pass=NON_PASS, min_trials=10)
+    assert with_band["end_to_end_lift"] == without["end_to_end_lift"] is not None
+
+
+def test_too_few_replicate_trials_demote_even_with_many_shared_prompts():
+    P, B = [(3, 3)] * 10, [(0, 3)] * 10
+    cmp = band_compare(P, B, [(1, 1)] * 5 + [(1, 1)] * 5, replicate_errors=(5, 6, 7, 8, 9))
+    assert cmp["noise"]["drift_prompts"] == 5
+    assert cmp["noise"]["replicate"]["graded_positive_trials"] == 5
     assert cmp["verdict"] == A.VERDICT_UNDERPOWERED
-    assert "2+ prompts" in cmp["why"]
 
 
-def test_an_ungraded_replicate_serialises_nulls_and_says_why():
-    p, a = prompts_report([(3, 3)] * 10), prompts_report([(0, 3)] * 10)
-    r = prompts_report([(3, 3)] * 10, error_prompts=range(10))
-    cmp = A.compare(p, a, non_pass=NON_PASS, min_trials=0, replicate_report=r)
-    assert cmp["noise"]["drift"] is None and cmp["noise"]["drift_ci"] is None
-    assert cmp["noise"]["drifted"] is None
-    assert cmp["verdict"] == A.VERDICT_UNDERPOWERED
-    assert "NOT MEASURED (no prompt graded in every arm)" in A.format_comparison(cmp)
+def test_pairing_by_id_survives_a_reordered_report():
+    """A reversal keeps the prompt MEAN, so assert on the test: identical arms
+    paired by id give all-zero differences, hence p = 1 exactly."""
+    P = [(3, 3), (2, 3), (1, 3), (0, 3), (3, 3), (2, 3)]
+    rev = list(reversed(range(len(P))))
+    cmp = A.compare(prompts_report(P), prompts_report(P, order=rev), non_pass=NON_PASS,
+                    min_trials=1, replicate_report=prompts_report(P, order=rev))
+    assert cmp["noise"]["p_lift"] == 1.0 and cmp["noise"]["p_drift"] == 1.0
 
 
-def test_the_report_renders_the_drift_next_to_the_lift():
+def test_a_difference_exactly_at_the_margin_is_not_below_it():
+    """Exact fractions: 1/10 minus the 0.1 margin is zero, not a float crumb below it."""
+    band = A.NoiseBand(lift_diffs=(Fraction(1, 10),) * 8, drift_diffs=(Fraction(0),) * 8,
+                       replicate=A.ArmStats(30, 20, 30, 10), margin=Fraction("0.1"))
+    assert band.p_retire == 1
+    built = A.noise_band(prompts_report([(1, 10)] * 8), prompts_report([(0, 10)] * 8),
+                         prompts_report([(1, 10)] * 8), NON_PASS, margin=0.1)
+    assert built.p_retire == 1
+
+
+def test_a_structural_verdict_is_left_alone_by_the_band():
+    """A name collision means there is no absent arm at all; drift cannot replace it."""
+    P = [(3, 3)] * 10
+    cmp = A.compare(prompts_report(P), prompts_report([(0, 3)] * 10), non_pass=NON_PASS,
+                    min_trials=10, builtin_names=["demo"],
+                    replicate_report=prompts_report([(0, 3)] * 10))
+    assert cmp["noise"]["drifted"] is True
+    assert cmp["verdict"] == A.VERDICT_NAME_COLLISION
+
+
+def test_the_report_renders_the_band():
     text = A.format_comparison(band_compare([(3, 3)] * 10, [(0, 3)] * 10, [(3, 3)] * 10))
-    assert "replicate" in text and "A/A drift    +0.00" in text and "10 prompts" in text
+    assert "replicate" in text and "by prompt    lift +1.00" in text
+    assert "A/A drift    +0.00" in text and "10 prompts" in text
 
 
 # --- the runner: the replicate arm as it is actually wired ---------------------------
