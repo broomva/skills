@@ -34,12 +34,13 @@ MUTANTS: list[tuple[str, str, str]] = [
     ("an existing registry is overwritten",
      "    if registry.exists():\n", "    if False:\n"),
     ("an existing registry is reported as success without a replay",
-     "        return 0 if dry else replay(root, wrote=False)\n", "        return 0\n"),
-    ("a dry run on an existing registry replays",
-     "        return 0 if dry else replay(root, wrote=False)\n", "        return replay(root, wrote=False)\n"),
+     "        need_registry(root, [])\n        return replay(root, wrote=False)\n", "        return 0\n"),
+    ("a dry run on an existing registry exits 0 without replaying",
+     "        need_registry(root, [])\n        return replay(root, wrote=False)\n",
+     "        need_registry(root, [])\n        return 0 if dry else replay(root, wrote=False)\n"),
     ("an existing registry of an unknown version is replayed by init",
-     "        need_registry(root, [])\n        return 0 if dry else replay(root, wrote=False)\n",
-     "        return 0 if dry else replay(root, wrote=False)\n"),
+     "        need_registry(root, [])\n        return replay(root, wrote=False)\n",
+     "        return replay(root, wrote=False)\n"),
     ("a registry of an unknown version is replayed",
      "    if type(version) is not int or version not in REGISTRY_VERSIONS:  # 1, not 1.0 and not true\n", "    if False:\n"),
     ("a registry version that is a float or a boolean is accepted",
@@ -98,6 +99,13 @@ MUTANTS: list[tuple[str, str, str]] = [
      "    need_yaml()  # also on a dry run: it reports what the real run would do, and that run would stop here\n", ""),
     ("the settings' own characters are re-escaped",
      "json.dumps(settings, indent=2, ensure_ascii=False)", "json.dumps(settings, indent=2)"),
+    ("a settings value with no UTF-8 form is a traceback",
+     "        except UnicodeEncodeError:  # a lone surrogate has no UTF-8 form; it can only stay escaped\n",
+     "        except ZeroDivisionError:\n"),
+    ("the hook entry init writes has another timeout than the one the suite pins",
+     "\"command\": HOOK_COMMAND, \"timeout\": 10}", "\"command\": HOOK_COMMAND, \"timeout\": 11}"),
+    ("the starter policy lists a hard gate that is not a gate",
+     "    \"  hard: []\\n\"\n", "    \"  hard: [broken]\\n\"\n"),
     ("init --help is an error",
      "        if command == \"init\" and (\"-h\" in rest or \"--help\" in rest):\n            print(__doc__)\n            return 0\n", ""),
     ("check and canary do not check for PyYAML",
@@ -111,6 +119,15 @@ MUTANTS: list[tuple[str, str, str]] = [
     ("canary --help shows the runner's help",
      "            return run_tool(\"rules_check.py\" if command == \"check\" else \"rules_canary.py\", Path.cwd(), rest)\n",
      "            return run_tool(\"rules_check.py\", Path.cwd(), rest)\n"),
+    ("--root reaches the tool when --help is asked",
+     "            _named, rest = split_root(rest)  # --root is this command's option, not the tool's\n", ""),
+    ("-h is not --help",
+     "        if \"-h\" in rest or \"--help\" in rest:\n            need_yaml()", "        if \"--help\" in rest:\n            need_yaml()"),
+    ("every directory above a file must be writable, not only the one it is created in",
+     "                nearest = False\n", "                pass\n"),
+    ("a new hook is executable for its owner only",
+     "        os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)\n",
+     "        os.chmod(tmp, mode | 0o100 if executable else mode)\n"),
     ("the registry always goes to the last governance directory",
      "    for name in DIRS:\n        if (root / name).is_dir():\n            return root / name\n", ""),
     ("a file that is already the skill's copy is treated as a conflict",
@@ -142,6 +159,8 @@ MUTANTS: list[tuple[str, str, str]] = [
     ("an existing policy file is replaced",
      "    if policy.exists():\n        kept.append(f\"{policy.relative_to(root)} (yours; the replay reads its gates.hard)\")\n    else:\n        writes.append",
      "    if True:\n        writes.append"),
+    ("a policy path that is a directory is kept as a policy file",
+     "    if policy.exists() and not policy.is_file():\n", "    if False:\n"),
     ("symlinks and misplaced files are not checked before writing",
      "    stops = blocked(root, writes)\n", "    stops = []\n"),
     ("a symlinked file is written through",
@@ -200,6 +219,7 @@ VENDORED_MUTANTS: list[tuple[str, str, str]] = [
 
 
 VENDORED = Path("tests") / "vendored.py"
+RUN_LIMIT_S = 1500  # one suite run takes about two minutes; this only stops a hang
 
 
 def run(snapshot: Path, target: Path, mutant: tuple[str, str, str]) -> tuple[str, str]:
@@ -212,8 +232,11 @@ def run(snapshot: Path, target: Path, mutant: tuple[str, str, str]) -> tuple[str
         shutil.copytree(snapshot, copy)
         (copy / target).write_text((snapshot / target).read_text().replace(old, new))
         # -f: stop at the first failing test. One failure is the whole answer for a mutant.
-        proc = subprocess.run([sys.executable, "-I", str(copy / "tests" / "test_correct.py"), "-f"],
-                              capture_output=True, text=True, check=False)
+        try:
+            proc = subprocess.run([sys.executable, "-I", str(copy / "tests" / "test_correct.py"), "-f"],
+                                  capture_output=True, text=True, check=False, timeout=RUN_LIMIT_S)
+        except subprocess.TimeoutExpired:
+            return name, "UNDECIDED"  # a mutant that hangs the suite decided nothing either
     if proc.returncode == 0:
         return name, "SURVIVED"
     if "TimeoutExpired" in proc.stderr or "FAILED (" not in proc.stderr:

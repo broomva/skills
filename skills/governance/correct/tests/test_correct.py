@@ -11,7 +11,9 @@ would pass all of the others too.
 """
 from __future__ import annotations
 
+import contextlib
 import hashlib
+import io
 import json
 import os
 import shutil
@@ -125,12 +127,18 @@ class Init(CorrectCase):
         self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
         self.assertIn("this copy of the skill replays version 1", proc.stderr)
 
-    def test_dry_run_on_an_existing_registry_does_not_replay(self) -> None:
-        (self.repo / ".control").mkdir()
-        (self.repo / ".control" / "rules.yaml").write_text("version: 1\nrules: []\n")
-        proc = self.run_correct("init", "--dry-run")
-        self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
-        self.assertNotIn("replaying", proc.stdout)
+    def test_dry_run_on_an_existing_registry_is_the_same_run_as_the_real_one(self) -> None:
+        """Nothing is written either way, so the two cannot answer differently."""
+        self.init()
+        ok = self.run_correct("init", "--dry-run")
+        self.assertEqual(ok.returncode, 0, ok.stdout + ok.stderr)
+        self.assertIn("PASS     hook         branch-first", ok.stdout)
+        (self.repo / ".claude" / "settings.json").write_text('{"hooks": {"PreToolUse": []}}')
+        before = tree(self.repo)
+        dry, real = self.run_correct("init", "--dry-run"), self.run_correct("init")
+        self.assertEqual((dry.returncode, real.returncode), (1, 1), dry.stdout + real.stdout)
+        self.assertIn("not registered", dry.stdout)
+        self.assertEqual(tree(self.repo), before)
 
     def test_a_file_where_a_directory_must_go_stops_init_before_anything_is_written(self) -> None:
         (self.repo / ".claude").write_text("my file")
@@ -260,6 +268,15 @@ class Init(CorrectCase):
         self.assertIn("the repository's top directory is not writable", proc.stderr)
         self.assertEqual(list((self.repo / "scripts").iterdir()), [])
 
+    def test_a_read_only_top_directory_is_fine_when_nothing_is_created_in_it(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("root writes into any directory")
+        for name in ("scripts", ".claude", ".control"):
+            (self.repo / name).mkdir()
+        self.repo.chmod(0o555)
+        self.addCleanup(self.repo.chmod, 0o755)
+        self.init()
+
     def test_a_read_only_settings_file_is_refused_and_left_as_it_is(self) -> None:
         if os.geteuid() == 0:
             self.skipTest("root writes any file")
@@ -299,8 +316,11 @@ class Init(CorrectCase):
     def test_without_pyyaml_check_and_canary_exit_2(self) -> None:
         self.init()
         self.hide_yaml()
-        for command in ("check", "canary"):
-            self.assertEqual(correct.main([command, "--root", str(self.repo)]), 2)
+        for argv in (["check", "--root", str(self.repo)], ["canary", "--root", str(self.repo), "run"]):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err):
+                self.assertEqual(correct.main(argv), 2)
+            self.assertIn("PyYAML is not importable", err.getvalue())
 
     def test_the_pyyaml_probe_finds_pyyaml_the_way_the_runner_does(self) -> None:
         correct.need_yaml()  # raises when the real probe fails on a machine where the runner works
@@ -406,7 +426,13 @@ class Init(CorrectCase):
         self.init()
         self.assertEqual(path.stat().st_mode & 0o777, 0o600)
         self.assertIn("branch-first-hook.py", path.read_text())
-        self.assertEqual((self.repo / ".control" / "rules.yaml").stat().st_mode & 0o777, 0o644)  # a new file
+        umask = os.umask(0)
+        os.umask(umask)
+        self.assertEqual((self.repo / ".control" / "rules.yaml").stat().st_mode & 0o777, 0o666 & ~umask)  # a new file
+
+    def test_a_policy_path_that_is_a_directory_is_refused(self) -> None:
+        (self.repo / ".control" / "policy.yaml").mkdir(parents=True)
+        self.refused_with_nothing_written(".control/policy.yaml exists and is not a regular file")
 
     def test_a_registry_path_that_is_a_directory_is_refused(self) -> None:
         (self.repo / ".control" / "rules.yaml").mkdir(parents=True)
@@ -428,6 +454,11 @@ class Init(CorrectCase):
         correct.write_file(self.tmp / "private" / "hook", b"x", True)
         self.assertEqual((self.tmp / "private" / "data").stat().st_mode & 0o777, 0o600)
         self.assertEqual((self.tmp / "private" / "hook").stat().st_mode & 0o777, 0o700)
+        os.umask(0o022)
+        correct.write_file(self.tmp / "usual" / "data", b"x", False)
+        correct.write_file(self.tmp / "usual" / "hook", b"x", True)
+        self.assertEqual((self.tmp / "usual" / "data").stat().st_mode & 0o777, 0o644)
+        self.assertEqual((self.tmp / "usual" / "hook").stat().st_mode & 0o777, 0o755)
 
     def test_a_write_that_cannot_land_leaves_no_temporary_file(self) -> None:
         parent = self.tmp / "dir"
@@ -467,6 +498,14 @@ class Init(CorrectCase):
         text = (self.repo / ".claude" / "settings.json").read_text(encoding="utf-8")
         self.assertIn("révisé — 設定", text)
         self.assertNotIn("\\u", text)
+
+    def test_a_settings_value_with_no_utf8_form_stays_escaped(self) -> None:
+        (self.repo / ".claude").mkdir()
+        (self.repo / ".claude" / "settings.json").write_text('{"example": "\\ud800", "note": "caf\\u00e9"}')
+        self.init()
+        text = (self.repo / ".claude" / "settings.json").read_text(encoding="utf-8")
+        self.assertIn('"\\ud800"', text)
+        self.assertEqual(json.loads(text)["note"], "café")
 
     def test_settings_that_already_run_the_enforcer_are_left_alone(self) -> None:
         (self.repo / ".claude").mkdir()
@@ -621,9 +660,10 @@ class Wrapper(CorrectCase):
     def test_help_needs_no_repository_and_no_registry(self) -> None:
         for cwd in (self.repo, self.tmp):  # a repository before init, and no repository at all
             for command, usage in (("check", "usage: rules_check.py"), ("canary", "usage: rules_canary.py")):
-                proc = self.run_correct(command, "--help", cwd=cwd)
-                self.assertEqual(proc.returncode, 0, (command, proc.stdout + proc.stderr))
-                self.assertIn(usage, proc.stdout)
+                for args in (("--help",), ("-h",), ("--root", str(self.repo), "--help")):
+                    proc = self.run_correct(command, *args, cwd=cwd)
+                    self.assertEqual(proc.returncode, 0, (command, args, proc.stdout + proc.stderr))
+                    self.assertIn(usage, proc.stdout)
 
     def test_no_command_prints_the_usage_and_exits_2(self) -> None:
         proc = self.run_correct()
@@ -778,7 +818,9 @@ class Shipped(unittest.TestCase):
         recorded = set(json.loads(vendored.MANIFEST.read_text())["files"])
         self.assertEqual(recorded, {"rules_check.py", "rules_canary.py", *correct.SCRIPT_FILES})
         self.assertEqual(len(correct.SCRIPT_FILES), 4)  # SKILL.md says "the four files under scripts/"
-        self.assertIn("the four files under\n  `scripts/`", (SKILL / "SKILL.md").read_text())
+        text = (SKILL / "SKILL.md").read_text()
+        self.assertIn("the four files under\n  `scripts/`", text)
+        self.assertIn("and the policy file if `init` wrote it", text)  # init writes a fifth file when there is none
 
     def test_the_starter_row_and_the_hook_entry_agree(self) -> None:
         data = yaml.safe_load((SKILL / "assets" / "templates" / "rules.yaml").read_text())
@@ -786,6 +828,10 @@ class Shipped(unittest.TestCase):
         self.assertEqual(row["enforcer"]["path"], f"scripts/{correct.ENFORCER}")
         self.assertEqual(row["enforcer"]["registered"]["event"], "PreToolUse")
         self.assertEqual("|".join(row["enforcer"]["registered"]["tools"]), correct.HOOK_GROUP["matcher"])
+        # The group init writes, and the policy it writes, in full: a changed value is a changed contract.
+        self.assertEqual(correct.HOOK_GROUP, {"matcher": "Write|Edit|MultiEdit|NotebookEdit", "hooks": [
+            {"type": "command", "command": '"$CLAUDE_PROJECT_DIR"/scripts/branch-first-hook.py', "timeout": 10}]})
+        self.assertEqual(yaml.safe_load(correct.POLICY), {"gates": {"hard": []}})
         # SKILL.md states these counts; a changed template must change the sentence too.
         self.assertEqual((len(row["proofs"]), len(row["controls"]), len(row["known_misses"])), (10, 3, 2))
         self.assertIn("ten proofs, three\n  controls and two recorded known misses", (SKILL / "SKILL.md").read_text())

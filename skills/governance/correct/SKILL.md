@@ -39,10 +39,11 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   then on an edit on `main` or `master` in that repository is refused, and the
   refusal names the fix (a branch); `BSTACK_ALLOW_MAIN_EDIT=<reason>` in the
   session's environment is the hook's documented exception. `--dry-run` lists
-  what would be written and stops on the same conditions as the real run. It
+  what would be written and is refused whenever the real run would be; it
+  cannot say whether the replay will pass afterwards. It
   never replaces an existing registry: a repository that has one gets nothing
-  written and is replayed, so an existing registry that does not hold still
-  exits 1. It writes nothing when PyYAML is missing; when a file it would write
+  written and is replayed, with or without `--dry-run`, so an existing registry
+  that does not hold still exits 1. It writes nothing when PyYAML is missing; when a file it would write
   exists with other content (`--force` replaces those) or is read-only; when a
   path it would write goes through a symlink or an unwritable directory; when a
   file sits where a directory must go; or when the settings already mention the
@@ -54,7 +55,8 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   registry is the
   last file written, so a run that stops early leaves a repository the next run
   still sets up. To back out, delete the registry, the four files under
-  `scripts/` and the `PreToolUse` entry that runs `scripts/branch-first-hook.py`.
+  `scripts/`, the `PreToolUse` entry that runs `scripts/branch-first-hook.py`,
+  and the policy file if `init` wrote it (its output lists the file when it did).
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and
   control goes through the hook entry the harness would run, and the row fails
   on a proof that is allowed, a control that is refused, a crash, or a missing
@@ -78,8 +80,9 @@ lists each one that no row accounts for. That list is the work: a row for each, 
 
 - Hooks are read from Claude Code's settings only. A rule enforced through
   another harness's hook file is not replayed.
-- The runner and the canary come unchanged from `broomva/workspace`
-  (`scripts/VENDORED.json` records the commit and each file's hash). Two of the
+- The runner and the canary come from `broomva/workspace` with their code
+  unchanged; one comment in the runner differs (`scripts/VENDORED.json` records
+  the commit, each file's hash and that change). Two of the
   three state fixtures and the case environment keys are that workspace's own
   (BRO-4129).
 - The mutation harness, the gardener and the pipe-status lint are planned

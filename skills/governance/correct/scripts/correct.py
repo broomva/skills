@@ -25,8 +25,10 @@ Exit codes: 0 done and the replay passed; 1 the replay failed; 2 the command
 could not run (no repository, no registry for check, git or PyYAML missing, a
 registry of a version this copy does not replay, an unreadable settings file,
 a file init would have to overwrite, a path that leaves the repository). On 2,
-init has written nothing unless it says which files it wrote. A dry run stops
-on the same conditions as the real one.
+init has written nothing unless it says which files it wrote. A dry run on a
+repository without a registry lists what would be written, is refused whenever
+the real run would be, and cannot say whether the replay will pass afterwards;
+on a repository with a registry it is the same run as the real one.
 """
 from __future__ import annotations
 
@@ -79,8 +81,8 @@ def git_toplevel(cwd: Path) -> Path | None:
     return Path(proc.stdout.strip()).resolve() if proc.returncode == 0 and proc.stdout.strip() else None
 
 
-def take_root(argv: list[str]) -> tuple[Path, list[str]]:
-    """(the repository, the remaining arguments). --root DIR or --root=DIR, anywhere."""
+def split_root(argv: list[str]) -> tuple[str | None, list[str]]:
+    """(what --root names or None, the arguments without it). --root DIR or --root=DIR, anywhere."""
     rest: list[str] = []
     named: str | None = None
     i = 0
@@ -97,6 +99,12 @@ def take_root(argv: list[str]) -> tuple[Path, list[str]]:
         else:
             rest.append(arg)
         i += 1
+    return named, rest
+
+
+def take_root(argv: list[str]) -> tuple[Path, list[str]]:
+    """(the repository, the remaining arguments)."""
+    named, rest = split_root(argv)
     if named == "":
         raise Refused("--root needs a directory, and got an empty value")
     named = named or os.environ.get("RULES_CHECK_ROOT")
@@ -230,6 +238,8 @@ def plan(root: Path) -> tuple[list[Write], list[str], list[str]]:
 
     gov = governance_dir(root)
     policy = governance_file(root, "policy.yaml")
+    if policy.exists() and not policy.is_file():
+        raise Refused(f"{policy.relative_to(root)} exists and is not a regular file; nothing written")
     if policy.exists():
         kept.append(f"{policy.relative_to(root)} (yours; the replay reads its gates.hard)")
     else:
@@ -245,11 +255,14 @@ def plan(root: Path) -> tuple[list[Write], list[str], list[str]]:
         if not isinstance(settings, dict):
             raise Refused(f"{settings_path} is not a JSON object; fix it, then run init again")
     if enforcer_entry(settings, settings_path):
-        kept.append(".claude/settings.json (already has the enforcer's entry)")
+        kept.append(".claude/settings.json (it has the entry init writes; the replay says whether the harness runs it)")
     else:
         settings["hooks"]["PreToolUse"].append(HOOK_GROUP)
-        text = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"  # their characters, as they wrote them
-        writes.append((settings_path, text.encode("utf-8"), False))
+        try:  # their characters, as they wrote them
+            data = (json.dumps(settings, indent=2, ensure_ascii=False) + "\n").encode("utf-8")
+        except UnicodeEncodeError:  # a lone surrogate has no UTF-8 form; it can only stay escaped
+            data = (json.dumps(settings, indent=2) + "\n").encode("ascii")
+        writes.append((settings_path, data, False))
 
     writes.append((gov / "rules.yaml", (TEMPLATES / "rules.yaml").read_bytes(), False))
     return writes, kept, conflicts
@@ -353,11 +366,12 @@ def init(root: Path, args: list[str]) -> int:
         raise Refused(f"{registry.relative_to(root)} exists and is not a regular file; nothing written")
     if registry.exists():
         # Set up already. Nothing is written, and the answer is still the replay's: a registry
-        # that exists and does not hold is not a success.
+        # that exists and does not hold is not a success. That is true of a dry run too: with
+        # nothing to write, the dry run and the real run are the same run.
         print(f"correct init: {registry.relative_to(root)} exists, so this repository already has a "
               "registry. Nothing written.")
         need_registry(root, [])
-        return 0 if dry else replay(root, wrote=False)
+        return replay(root, wrote=False)
 
     try:
         writes, kept, conflicts = plan(root)
@@ -406,6 +420,7 @@ def main(argv: list[str]) -> int:
             return 0
         if "-h" in rest or "--help" in rest:
             need_yaml()  # the tools import it before they parse their arguments
+            _named, rest = split_root(rest)  # --root is this command's option, not the tool's
             return run_tool("rules_check.py" if command == "check" else "rules_canary.py", Path.cwd(), rest)
         root, rest = take_root(rest)
         if command == "init":
