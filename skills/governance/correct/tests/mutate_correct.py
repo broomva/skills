@@ -9,8 +9,11 @@ no test holds.
 
   python3 -I tests/mutate_correct.py        prints one line per mutant, then "N killed, M survived"
 
+A mutant is killed only when a test fails; a run that timed out is reported as undecided.
+
 Exit 0 when every mutant is killed, 1 when one survives, 2 when a mutant no longer applies
-(its text is not found exactly once: the code changed, so the mutant must be rewritten).
+(its text is not found exactly once: the code changed, so the mutant must be rewritten) or
+when the unchanged suite does not pass (a red suite would "kill" every mutant).
 The live skill directory is never modified.
 """
 from __future__ import annotations
@@ -31,18 +34,22 @@ MUTANTS: list[tuple[str, str, str]] = [
     ("an existing registry is overwritten",
      "    if registry.exists():\n", "    if False:\n"),
     ("an existing registry is reported as success without a replay",
-     "        need_registry(root, [])\n        return replay(root, wrote=False)\n", "        return 0\n"),
+     "        return 0 if dry else replay(root, wrote=False)\n", "        return 0\n"),
     ("a dry run on an existing registry replays",
-     "        if dry:\n            return 0\n        need_registry(root, [])\n", "        need_registry(root, [])\n"),
+     "        return 0 if dry else replay(root, wrote=False)\n", "        return replay(root, wrote=False)\n"),
     ("an existing registry of an unknown version is replayed by init",
-     "        need_registry(root, [])\n        return replay(root, wrote=False)\n", "        return replay(root, wrote=False)\n"),
+     "        need_registry(root, [])\n        return 0 if dry else replay(root, wrote=False)\n",
+     "        return 0 if dry else replay(root, wrote=False)\n"),
     ("a registry of an unknown version is replayed",
-     "    if version not in REGISTRY_VERSIONS or isinstance(version, bool):\n", "    if False:\n"),
+     "    if type(version) is not int or version not in REGISTRY_VERSIONS:  # 1, not 1.0 and not true\n", "    if False:\n"),
+    ("a registry version that is a float or a boolean is accepted",
+     "    if type(version) is not int or version not in REGISTRY_VERSIONS:  # 1, not 1.0 and not true\n",
+     "    if version not in REGISTRY_VERSIONS:\n"),
     ("--registry is not the registry that is checked",
-     "    registry = Path(named).expanduser() if named else governance_file(root, \"rules.yaml\")\n",
+     "    registry = Path(named).expanduser().absolute() if named else governance_file(root, \"rules.yaml\")\n",
      "    registry = governance_file(root, \"rules.yaml\")\n"),
     ("an empty --root falls back to the environment",
-     "    if named == \"\":\n", "    if False:\n"),
+     "    if named == \"\":\n        raise Refused(\"--root needs a directory, and got an empty value\")\n", ""),
     ("an identical hook that is not executable is kept as it is",
      "            if name in EXECUTABLE and not os.access(target, os.X_OK):\n", "            if False:\n"),
     ("the fixtures script is not made executable",
@@ -54,32 +61,56 @@ MUTANTS: list[tuple[str, str, str]] = [
      "    subprocess.run([sys.executable, \"-I\", str(HERE / script), *args], env=env, check=False)\n    return 0\n"),
     ("init exits 0 whatever the replay says",
      "    return status\n\n\ndef init", "    return 0\n\n\ndef init"),
-    ("the hook entry is added even when the exact one is there",
-     "                exact = True\n", "                exact = False\n"),
-    ("an entry that mentions the enforcer in another form is kept as if it ran it",
-     "            if command == HOOK_COMMAND and group.get(\"matcher\") == HOOK_GROUP[\"matcher\"]:\n",
-     "            if True:\n"),
-    ("the enforcer entry on fewer tools counts as the exact one",
-     "            if command == HOOK_COMMAND and group.get(\"matcher\") == HOOK_GROUP[\"matcher\"]:\n",
-     "            if command == HOOK_COMMAND:\n"),
+    ("the hook entry is added even when init's own group is there",
+     "    return len(others) != len(groups)\n", "    return False\n"),
+    ("any group that mentions the enforcer counts as init's own",
+     "    others = [g for g in groups if g != HOOK_GROUP]\n",
+     "    others = [g for g in groups if f\"scripts/{ENFORCER}\" not in json.dumps(g)]\n"),
+    ("a mention of the enforcer in another form is not refused",
+     "    if f\"scripts/{ENFORCER}\" in json.dumps(others):\n", "    if False:\n"),
+    # The setdefault stays (removing it would break every run, which proves nothing).
     ("a PreToolUse that is not a list is not checked",
      "    if not isinstance(hooks, dict) or not isinstance(hooks.setdefault(\"PreToolUse\", []), list):\n",
-     "    if False:\n"),
+     "    if not isinstance(hooks, dict) or hooks.setdefault(\"PreToolUse\", []) is None:\n"),
+    ("hooks that are not an object are a traceback, not a refusal",
+     "    if not isinstance(hooks, dict) or not isinstance(hooks.setdefault(\"PreToolUse\", []), list):\n",
+     "    if not isinstance(hooks.setdefault(\"PreToolUse\", []), list):\n"),
     ("a malformed PreToolUse entry is not checked",
      "        if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):\n",
      "        if False:\n"),
+    ("an error while reading the repository's state is a traceback",
+     "    except OSError as exc:\n        raise Refused(f\"could not read the repository's current state",
+     "    except ZeroDivisionError as exc:\n        raise Refused(f\"could not read the repository's current state"),
+    ("the directory a file is created in need not be writable",
+     "                if not os.access(at, (os.W_OK | os.X_OK) if nearest else os.X_OK):\n",
+     "                if not os.access(at, os.X_OK):\n"),
+    ("an empty --registry reaches the runner",
+     "    if named == \"\":\n        raise Refused(\"--registry needs a file, and got none\")\n", ""),
+    ("the canary's arguments can name another registry to be checked",
+     "    for i, arg in enumerate(args if flag else []):\n", "    for i, arg in enumerate(args):\n"),
+    ("--help needs a repository and a registry",
+     "        if \"-h\" in rest or \"--help\" in rest:\n            need_yaml()", "        if False:\n            need_yaml()"),
     ("a read-only file is replaced",
      "        if path.exists() and not os.access(path, os.W_OK):\n", "        if False:\n"),
     ("an unwritable directory is not noticed before writing",
-     "            if at.is_dir() and not os.access(at, os.W_OK | os.X_OK):\n", "            if False:\n"),
+     "                if not os.access(at, (os.W_OK | os.X_OK) if nearest else os.X_OK):\n", "                if False:\n"),
     ("init does not check for PyYAML before writing",
-     "    if not dry:\n        need_yaml()\n", ""),
+     "    need_yaml()  # also on a dry run: it reports what the real run would do, and that run would stop here\n", ""),
+    ("the settings' own characters are re-escaped",
+     "json.dumps(settings, indent=2, ensure_ascii=False)", "json.dumps(settings, indent=2)"),
+    ("init --help is an error",
+     "        if command == \"init\" and (\"-h\" in rest or \"--help\" in rest):\n            print(__doc__)\n            return 0\n", ""),
     ("check and canary do not check for PyYAML",
-     "        need_yaml()\n        need_registry(root, rest)\n", "        need_registry(root, rest)\n"),
+     "        need_yaml()\n        need_registry(root, rest, flag=command == \"check\")\n",
+     "        need_registry(root, rest, flag=command == \"check\")\n"),
     ("check without a registry reaches the runner",
-     "        need_yaml()\n        need_registry(root, rest)\n", "        need_yaml()\n"),
+     "        need_yaml()\n        need_registry(root, rest, flag=command == \"check\")\n", "        need_yaml()\n"),
     ("canary runs the runner",
-     "\"rules_check.py\" if command == \"check\" else \"rules_canary.py\"", "\"rules_check.py\""),
+     "        return run_tool(\"rules_check.py\" if command == \"check\" else \"rules_canary.py\", root, rest)\n",
+     "        return run_tool(\"rules_check.py\", root, rest)\n"),
+    ("canary --help shows the runner's help",
+     "            return run_tool(\"rules_check.py\" if command == \"check\" else \"rules_canary.py\", Path.cwd(), rest)\n",
+     "            return run_tool(\"rules_check.py\", Path.cwd(), rest)\n"),
     ("the registry always goes to the last governance directory",
      "    for name in DIRS:\n        if (root / name).is_dir():\n            return root / name\n", ""),
     ("a file that is already the skill's copy is treated as a conflict",
@@ -95,9 +126,15 @@ MUTANTS: list[tuple[str, str, str]] = [
     ("unknown init options are accepted",
      "    if unknown:\n", "    if False:\n"),
     ("the hook is not made executable",
-     "        os.chmod(tmp, mode | 0o111 if executable else mode)\n", "        os.chmod(tmp, mode)\n"),
+     "        os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)\n", "        os.chmod(tmp, mode)\n"),
+    ("a private hook becomes executable for everyone",
+     "        os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)\n",
+     "        os.chmod(tmp, mode | 0o111 if executable else mode)\n"),
     ("a replaced file loses its permissions",
-     "    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o644\n", "    mode = 0o644\n"),
+     "    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o666 & ~umask\n", "    mode = 0o666 & ~umask\n"),
+    ("a new file ignores the caller's umask",
+     "    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o666 & ~umask\n",
+     "    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o644\n"),
     ("a registry path that is a directory is treated as a registry",
      "    if registry.exists() and not registry.is_file():\n", "    if False:\n"),
     ("a missing git is a traceback",
@@ -110,7 +147,7 @@ MUTANTS: list[tuple[str, str, str]] = [
     ("a symlinked file is written through",
      "        if path.is_symlink():\n", "        if False:\n"),
     ("a symlinked directory is written through",
-     "            if at.is_symlink():\n", "            if False:\n"),
+     "            if parent != Path(\".\") and at.is_symlink():\n", "            if False:\n"),
     ("a file where a directory must go is not noticed",
      "            if at.exists() and not at.is_dir():\n", "            if False:\n"),
     ("the registry is written first",
@@ -120,11 +157,30 @@ MUTANTS: list[tuple[str, str, str]] = [
      "        except OSError as exc:\n            raise Refused(", "        except ZeroDivisionError as exc:\n            raise Refused("),
     ("a failed write leaves its temporary file",
      "        if os.path.exists(tmp):\n            os.unlink(tmp)\n        raise\n", "        raise\n"),
+    # A real in-place write: same content, same mode, no temporary file left. Only a test that
+    # looks at WHICH file was written (a second name for the old one) can tell it from a replace.
     ("a file is written in place, not replaced whole",
-     "        os.replace(tmp, path)\n", "        shutil_copy = open(path, \"wb\"); shutil_copy.write(content); shutil_copy.close()\n"),
+     "        os.replace(tmp, path)\n",
+     "        with open(path, \"wb\") as handle:\n            handle.write(content)\n"
+     "        os.chmod(path, os.stat(tmp).st_mode & 0o777)\n        os.unlink(tmp)\n"),
     ("unreadable settings are treated as empty",
      "            raise Refused(f\"{settings_path} is not readable JSON ({exc}); fix it, then run init again\") from exc\n",
      "            settings = {}\n"),
+    ("a directory where a file goes is not noticed",
+     "        if path.exists() and not path.is_file():\n", "        if False:\n"),
+    ("the registry does not go beside an existing policy file",
+     "    if policy.exists():\n        return policy.parent\n", ""),
+    ("a --root with nothing after it is accepted",
+     "            if i + 1 >= len(argv):\n                raise Refused(\"--root needs a directory\")\n",
+     "            if i + 1 >= len(argv):\n                break\n"),
+    ("a registry that is not YAML is a traceback",
+     "    except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:\n",
+     "    except ZeroDivisionError as exc:\n"),
+    ("no command at all exits 0",
+     "        return 0 if argv else 2\n", "        return 0\n"),
+    ("a shortened --registry is not the registry that is checked",
+     "        if len(option) >= len(\"--reg\") and \"--registry\".startswith(option):\n",
+     "        if option == \"--registry\":\n"),
     ("an unknown command runs the runner",
      "    if command not in (\"init\", \"check\", \"canary\"):\n", "    if False:\n"),
 ]
@@ -146,15 +202,23 @@ VENDORED_MUTANTS: list[tuple[str, str, str]] = [
 VENDORED = Path("tests") / "vendored.py"
 
 
-def run(snapshot: Path, target: Path, mutant: tuple[str, str, str]) -> tuple[str, bool, str]:
+def run(snapshot: Path, target: Path, mutant: tuple[str, str, str]) -> tuple[str, str]:
+    """(name, verdict). "killed" only when a test FAILED on an assertion or an error of its own.
+    A run that stopped on a timeout decided nothing, and counting it as a kill would let a slow
+    machine certify a mutant no test notices."""
     name, old, new = mutant
     with tempfile.TemporaryDirectory(prefix="correct-mutant-") as tmp:
         copy = Path(tmp) / "skill"
         shutil.copytree(snapshot, copy)
         (copy / target).write_text((snapshot / target).read_text().replace(old, new))
-        proc = subprocess.run([sys.executable, "-I", str(copy / "tests" / "test_correct.py")],
+        # -f: stop at the first failing test. One failure is the whole answer for a mutant.
+        proc = subprocess.run([sys.executable, "-I", str(copy / "tests" / "test_correct.py"), "-f"],
                               capture_output=True, text=True, check=False)
-    return name, proc.returncode != 0, proc.stderr[-300:]
+    if proc.returncode == 0:
+        return name, "SURVIVED"
+    if "TimeoutExpired" in proc.stderr or "FAILED (" not in proc.stderr:
+        return name, "UNDECIDED"
+    return name, "killed"
 
 
 def main() -> int:
@@ -169,13 +233,22 @@ def main() -> int:
     with tempfile.TemporaryDirectory(prefix="correct-snapshot-") as snap:
         snapshot = Path(snap) / "skill"
         shutil.copytree(SKILL, snapshot, ignore=shutil.ignore_patterns("__pycache__"))
+        # A suite that is already red "kills" every mutant. The unchanged snapshot must pass
+        # first, or no line below means anything.
+        baseline = subprocess.run([sys.executable, "-I", str(snapshot / "tests" / "test_correct.py")],
+                                  capture_output=True, text=True, check=False)
+        if baseline.returncode != 0:
+            print("the unchanged suite fails, so no mutant was run:\n" + baseline.stderr[-600:], file=sys.stderr)
+            return 2
         with ThreadPoolExecutor(max_workers=4) as pool:
             results = list(pool.map(lambda item: run(snapshot, item[0], item[1]), plan))
-    for name, killed, _tail in results:
-        print(f"{'killed  ' if killed else 'SURVIVED'} {name}")
-    survived = sum(1 for _name, killed, _tail in results if not killed)
-    print(f"{len(results) - survived} killed, {survived} survived")
-    return 1 if survived else 0
+    for name, verdict in results:
+        print(f"{verdict:<9} {name}")
+    survived = sum(1 for _name, verdict in results if verdict == "SURVIVED")
+    undecided = sum(1 for _name, verdict in results if verdict == "UNDECIDED")
+    print(f"{len(results) - survived - undecided} killed, {survived} survived"
+          + (f", {undecided} undecided (a timeout, or a run that ended without a test failing)" if undecided else ""))
+    return 1 if survived else 2 if undecided else 0
 
 
 if __name__ == "__main__":

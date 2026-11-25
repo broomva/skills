@@ -39,22 +39,27 @@ name the repository with `--root`. It needs `python3`, `git` and PyYAML.
   then on an edit on `main` or `master` in that repository is refused, and the
   refusal names the fix (a branch); `BSTACK_ALLOW_MAIN_EDIT=<reason>` in the
   session's environment is the hook's documented exception. `--dry-run` lists
-  what would be written. It
+  what would be written and stops on the same conditions as the real run. It
   never replaces an existing registry: a repository that has one gets nothing
   written and is replayed, so an existing registry that does not hold still
   exits 1. It writes nothing when PyYAML is missing; when a file it would write
   exists with other content (`--force` replaces those) or is read-only; when a
   path it would write goes through a symlink or an unwritable directory; when a
   file sits where a directory must go; or when the settings already mention the
-  hook in any form other than the entry `init` writes (it does not judge whether
-  another entry runs the hook; the replay does). The registry is the
+  hook in any form other than the entry `init` writes. It keeps only its own
+  entry, compared value for value (so the same hook with another timeout, or its
+  tools in another order, is refused too), and it does not judge whether another
+  entry runs the hook; the replay does. When it adds its entry it rewrites
+  `.claude/settings.json` with two-space indentation, keeping every key. The
+  registry is the
   last file written, so a run that stops early leaves a repository the next run
   still sets up. To back out, delete the registry, the four files under
   `scripts/` and the `PreToolUse` entry that runs `scripts/branch-first-hook.py`.
 - **`check`** replays every row (`scripts/rules_check.py`): each proof and
   control goes through the hook entry the harness would run, and the row fails
   on a proof that is allowed, a control that is refused, a crash, or a missing
-  registration. It also fails when a hard gate or a blocking hook has no row,
+  registration. `--registry FILE` names another registry, read relative to the
+  current directory. It also fails when a hard gate or a blocking hook has no row,
   and with `--base REF` when a row was lowered without a recorded reason. Exit 0
   means every row held; 1 means one did not; 2 means the command could not run
   (no repository, no registry yet, git or PyYAML missing, or a registry whose

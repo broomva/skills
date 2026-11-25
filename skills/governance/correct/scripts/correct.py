@@ -22,9 +22,11 @@ from this skill's directory, outside the repository they judge; the enforcers
 and the registry rows are the repository's own files.
 
 Exit codes: 0 done and the replay passed; 1 the replay failed; 2 the command
-could not run (no repository, an unreadable settings file, a file init would
-have to overwrite, a path that leaves the repository). On 2, init has written
-nothing unless it says which files it wrote.
+could not run (no repository, no registry for check, git or PyYAML missing, a
+registry of a version this copy does not replay, an unreadable settings file,
+a file init would have to overwrite, a path that leaves the repository). On 2,
+init has written nothing unless it says which files it wrote. A dry run stops
+on the same conditions as the real one.
 """
 from __future__ import annotations
 
@@ -109,12 +111,14 @@ def take_root(argv: list[str]) -> tuple[Path, list[str]]:
     return top, rest
 
 
+YAML_PROBE = "import site, sys; sys.path.append(site.getusersitepackages()); import yaml"
+
+
 def need_yaml() -> None:
     """The runner and the canary need PyYAML, found the way they find it (the user site is
     added back under -I). Checked before init writes anything: a repository set up and then
     not replayable has an enforcer installed and nothing that says whether it holds."""
-    probe = "import site, sys; sys.path.append(site.getusersitepackages()); import yaml"
-    proc = subprocess.run([sys.executable, "-I", "-c", probe], capture_output=True, text=True, check=False)
+    proc = subprocess.run([sys.executable, "-I", "-c", YAML_PROBE], capture_output=True, text=True, check=False)
     if proc.returncode != 0:
         raise Refused(f"PyYAML is not importable by {sys.executable}; install it "
                       "(python3 -m pip install --user pyyaml) and run the command again. Nothing written.")
@@ -126,26 +130,32 @@ def need_yaml() -> None:
 REGISTRY_VERSIONS = (1,)
 
 
-def need_registry(root: Path, args: list[str]) -> None:
-    """A registry exists and is a version this copy of the skill replays."""
+def need_registry(root: Path, args: list[str], flag: bool = False) -> None:
+    """A registry exists and is a version this copy of the skill replays. With `flag` (the
+    runner, which takes --registry FILE), the file named there is the registry; it is read the
+    way the runner reads it, relative to the current directory. The canary takes no such
+    option and always reads the repository's own registry."""
     named = None
-    for i, arg in enumerate(args):
-        if arg == "--registry" and i + 1 < len(args):
-            named = args[i + 1]
-        elif arg.startswith("--registry="):
-            named = arg.split("=", 1)[1]
-    registry = Path(named).expanduser() if named else governance_file(root, "rules.yaml")
+    for i, arg in enumerate(args if flag else []):
+        option, eq, value = arg.partition("=")
+        # The runner's parser takes any unambiguous start of the option (--reg, --regis ...).
+        if len(option) >= len("--reg") and "--registry".startswith(option):
+            named = value if eq else (args[i + 1] if i + 1 < len(args) else "")
+    if named == "":
+        raise Refused("--registry needs a file, and got none")
+    registry = Path(named).expanduser().absolute() if named else governance_file(root, "rules.yaml")
     if not registry.is_file():
-        raise Refused(f"there is no registry at {registry}; run init first")
+        raise Refused(f"there is no registry at {registry}" + ("; run init first" if not named else
+                      " (--registry is read relative to the current directory, as the runner reads it)"))
     if site.getusersitepackages() not in sys.path:
         sys.path.append(site.getusersitepackages())
     import yaml  # noqa: PLC0415  (need_yaml ran first)
     try:
-        data = yaml.safe_load(registry.read_text())
+        data = yaml.safe_load(registry.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
         raise Refused(f"{registry} is not readable YAML ({exc})") from exc
     version = data.get("version") if isinstance(data, dict) else None
-    if version not in REGISTRY_VERSIONS or isinstance(version, bool):
+    if type(version) is not int or version not in REGISTRY_VERSIONS:  # 1, not 1.0 and not true
         raise Refused(f"{registry} says `version: {version!r}`, and this copy of the skill replays "
                       f"version {' or '.join(map(str, REGISTRY_VERSIONS))}. Update the skill, or correct "
                       "the registry's `version:`.")
@@ -170,31 +180,30 @@ def governance_dir(root: Path) -> Path:
 
 
 def enforcer_entry(settings: dict, settings_path: Path) -> bool:
-    """True when the settings already hold exactly the entry init writes; False when they do
-    not mention the enforcer. Anything in between is refused: init does not judge whether some
-    other entry runs the enforcer. The replay does that, and "kept, it already runs" followed by
-    the replay's "not registered" would be two answers to one question."""
+    """True when the settings already hold the group init writes, value for value; False when
+    nothing in them mentions the enforcer. Anything else that mentions it is refused.
+
+    init does not read an entry and decide whether it would run the hook. Three review rounds
+    found that reading wrong three ways (a substring, a matcher on fewer tools, a `type` that
+    is not a command), each time as "kept" here and "not registered" in the replay. Equality
+    with what init itself writes needs no judgment, and the replay judges everything else."""
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict) or not isinstance(hooks.setdefault("PreToolUse", []), list):
         raise Refused(f"{settings_path}: `hooks.PreToolUse` is not a list; fix it, then run init again")
-    exact = False
-    for group in hooks["PreToolUse"]:
+    groups = hooks["PreToolUse"]
+    for group in groups:  # the shape only: a settings file the harness would reject loads no hook at all
         entries = group.get("hooks") if isinstance(group, dict) else None
         if not isinstance(entries, list) or not all(isinstance(e, dict) for e in entries):
             raise Refused(f"{settings_path}: a `hooks.PreToolUse` entry is not {{matcher, hooks: [...]}}; "
                           "fix it, then run init again")
-        for entry in entries:
-            command = str(entry.get("command", ""))
-            if f"scripts/{ENFORCER}" not in command:
-                continue
-            if command == HOOK_COMMAND and group.get("matcher") == HOOK_GROUP["matcher"]:
-                exact = True
-            else:
-                raise Refused(f"{settings_path} already has a PreToolUse entry that mentions "
-                              f"scripts/{ENFORCER} in another form ({command!r}, matcher "
-                              f"{group.get('matcher')!r}). Nothing written. Remove that entry and run init "
-                              "again; init then writes the one the registry's row expects.")
-    return exact
+    others = [g for g in groups if g != HOOK_GROUP]
+    if f"scripts/{ENFORCER}" in json.dumps(others):
+        raise Refused(f"{settings_path} already mentions scripts/{ENFORCER} under `hooks.PreToolUse` in a "
+                      "form other than the entry init writes. Nothing written. init recognises only its "
+                      "own entry and does not judge whether another one runs the hook. Remove that entry "
+                      "and run init again (init then writes its own), or keep yours, write the registry "
+                      "row by hand and run `check`.")
+    return len(others) != len(groups)
 
 
 def plan(root: Path) -> tuple[list[Write], list[str], list[str]]:
@@ -230,7 +239,7 @@ def plan(root: Path) -> tuple[list[Write], list[str], list[str]]:
     settings: dict = {}
     if settings_path.is_file():
         try:
-            settings = json.loads(settings_path.read_text())
+            settings = json.loads(settings_path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise Refused(f"{settings_path} is not readable JSON ({exc}); fix it, then run init again") from exc
         if not isinstance(settings, dict):
@@ -239,7 +248,8 @@ def plan(root: Path) -> tuple[list[Write], list[str], list[str]]:
         kept.append(".claude/settings.json (already has the enforcer's entry)")
     else:
         settings["hooks"]["PreToolUse"].append(HOOK_GROUP)
-        writes.append((settings_path, (json.dumps(settings, indent=2) + "\n").encode(), False))
+        text = json.dumps(settings, indent=2, ensure_ascii=False) + "\n"  # their characters, as they wrote them
+        writes.append((settings_path, text.encode("utf-8"), False))
 
     writes.append((gov / "rules.yaml", (TEMPLATES / "rules.yaml").read_bytes(), False))
     return writes, kept, conflicts
@@ -262,17 +272,20 @@ def blocked(root: Path, writes: list[Write]) -> list[str]:
         if path.exists() and not os.access(path, os.W_OK):
             out.append(f"{rel} is read-only; init does not replace a file marked read-only")
             continue
-        for parent in list(rel.parents)[:-1]:  # every directory between the repository and the file
-            at = root / parent
-            if at.is_symlink():
+        nearest = True  # the deepest directory that exists is where the file or its folders get made
+        for parent in rel.parents:  # from the file's own directory up to the repository itself
+            at, name = root / parent, ("the repository's top directory" if parent == Path(".") else f"{parent}/")
+            if parent != Path(".") and at.is_symlink():
                 out.append(f"{parent}/ is a symlink; init writes only inside the repository ({rel})")
                 break
             if at.exists() and not at.is_dir():
                 out.append(f"{parent} is a file, and {rel} needs it to be a directory")
                 break
-            if at.is_dir() and not os.access(at, os.W_OK | os.X_OK):
-                out.append(f"{parent}/ is not writable ({rel})")
-                break
+            if at.is_dir():
+                if not os.access(at, (os.W_OK | os.X_OK) if nearest else os.X_OK):
+                    out.append(f"{name} is not writable ({rel})")
+                    break
+                nearest = False
     return sorted(set(out))
 
 
@@ -281,13 +294,16 @@ def write_file(path: Path, content: bytes, executable: bool) -> None:
     replaces it, so an interrupted run never leaves a half-written settings file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     # A file that is replaced keeps its own permissions (a settings file kept private stays
-    # private); a new one gets the usual ones. Either way the hook ends up executable.
-    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o644
+    # private); a new one gets what the caller's umask allows, as any created file would. The
+    # hook is executable for its owner, and for whoever else may already read it.
+    umask = os.umask(0)
+    os.umask(umask)
+    mode = (path.stat().st_mode & 0o777) if path.is_file() else 0o666 & ~umask
     fd, tmp = tempfile.mkstemp(dir=str(path.parent), prefix=f".{path.name}.")
     try:
         with os.fdopen(fd, "wb") as handle:
             handle.write(content)
-        os.chmod(tmp, mode | 0o111 if executable else mode)
+        os.chmod(tmp, mode | 0o100 | ((mode & 0o044) >> 2) if executable else mode)
         os.replace(tmp, path)
     except BaseException:
         if os.path.exists(tmp):
@@ -306,15 +322,21 @@ def replay(root: Path, wrote: bool) -> int:
               "  - The starter row is replayed, not yet certified on the real harness: replace its\n"
               "    `canary: {none, ticket}` ticket with one of yours, or write canary cases and run\n"
               "    `correct.py canary run`.\n"
-              "  - To back out: delete the registry, the four files under scripts/ and the PreToolUse\n"
-              "    entry that runs scripts/branch-first-hook.py in .claude/settings.json.")
-    elif status != 0:
-        what = "the files are written, and the" if wrote else "the"
-        print(f"\ncorrect init: {what} replay exits {status}; its output is above. A FAIL row there is a "
-              "gate or a hook this repository already has that no row accounts for, or a row that does "
-              "not hold: add a row for each (a `gap` row with a ticket is a valid start), then run "
-              "`correct.py check` again. Output with no rows means the runner itself stopped.",
+              "  - To back out: delete the registry, the four files under scripts/, the PreToolUse entry\n"
+              "    that runs scripts/branch-first-hook.py in .claude/settings.json, and the policy file\n"
+              "    if init wrote it (it is listed above when it did).")
+    elif status != 0 and wrote:
+        print(f"\ncorrect init: the files are written, and the replay exits {status}; its output is above. A "
+              "FAIL row there is a gate or a hook this repository already has that no row accounts for, or a "
+              "row that does not hold: add a row for each (a `gap` row with a ticket is a valid start), then "
+              "run `correct.py check` again. Output with no rows means the runner itself stopped.",
               file=sys.stderr)
+    elif status != 0:
+        print(f"\ncorrect init: the replay exits {status}; its output is above. init changes nothing in a "
+              "repository that has a registry, so it repairs nothing either. If a row says `not registered` "
+              "or its script is missing, something init installed was removed: restore it from version "
+              "control, or delete the registry and run init again to write the starter files anew. "
+              "Otherwise fix the row or the enforcer the FAIL names.", file=sys.stderr)
     return status
 
 
@@ -325,8 +347,7 @@ def init(root: Path, args: list[str]) -> int:
     dry, force = "--dry-run" in args, "--force" in args
     if git_toplevel(root) != root:
         raise Refused(f"{root} is not the top of a git checkout; run init at the repository root")
-    if not dry:
-        need_yaml()
+    need_yaml()  # also on a dry run: it reports what the real run would do, and that run would stop here
     registry = governance_file(root, "rules.yaml")
     if registry.exists() and not registry.is_file():
         raise Refused(f"{registry.relative_to(root)} exists and is not a regular file; nothing written")
@@ -335,13 +356,14 @@ def init(root: Path, args: list[str]) -> int:
         # that exists and does not hold is not a success.
         print(f"correct init: {registry.relative_to(root)} exists, so this repository already has a "
               "registry. Nothing written.")
-        if dry:
-            return 0
         need_registry(root, [])
-        return replay(root, wrote=False)
+        return 0 if dry else replay(root, wrote=False)
 
-    writes, kept, conflicts = plan(root)
-    stops = blocked(root, writes)
+    try:
+        writes, kept, conflicts = plan(root)
+        stops = blocked(root, writes)
+    except OSError as exc:
+        raise Refused(f"could not read the repository's current state ({exc}); nothing written") from exc
     if stops:
         raise Refused("nothing written. " + "; ".join(stops))
     if conflicts and not force:
@@ -379,11 +401,17 @@ def main(argv: list[str]) -> int:
         print(f"correct: unknown command {command!r}; it takes init, check or canary", file=sys.stderr)
         return 2
     try:
+        if command == "init" and ("-h" in rest or "--help" in rest):
+            print(__doc__)
+            return 0
+        if "-h" in rest or "--help" in rest:
+            need_yaml()  # the tools import it before they parse their arguments
+            return run_tool("rules_check.py" if command == "check" else "rules_canary.py", Path.cwd(), rest)
         root, rest = take_root(rest)
         if command == "init":
             return init(root, rest)
         need_yaml()
-        need_registry(root, rest)
+        need_registry(root, rest, flag=command == "check")
         return run_tool("rules_check.py" if command == "check" else "rules_canary.py", root, rest)
     except Refused as exc:
         print(f"correct {command}: {exc}", file=sys.stderr)

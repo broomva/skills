@@ -118,6 +118,13 @@ class Init(CorrectCase):
         self.assertIn("expected block, enforcer said allow", proc.stdout)
         self.assertEqual(tree(self.repo), before)
 
+    def test_dry_run_on_a_registry_of_another_version_stops_where_the_real_run_would(self) -> None:
+        (self.repo / ".control").mkdir()
+        (self.repo / ".control" / "rules.yaml").write_text("version: 2\nrules: []\n")
+        proc = self.run_correct("init", "--dry-run")
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("this copy of the skill replays version 1", proc.stderr)
+
     def test_dry_run_on_an_existing_registry_does_not_replay(self) -> None:
         (self.repo / ".control").mkdir()
         (self.repo / ".control" / "rules.yaml").write_text("version: 1\nrules: []\n")
@@ -208,13 +215,54 @@ class Init(CorrectCase):
     def test_an_entry_that_only_names_the_enforcer_is_refused_not_kept(self) -> None:
         self.settings({"hooks": {"PreToolUse": [dict(correct.HOOK_GROUP, hooks=[
             {"type": "command", "command": f"echo {correct.HOOK_COMMAND}", "timeout": 10}])]}})
-        self.refused_with_nothing_written("in another form")
+        self.refused_with_nothing_written("in a form other than the entry init writes")
 
     def test_the_enforcer_entry_on_fewer_tools_is_refused_not_kept(self) -> None:
         self.settings({"hooks": {"PreToolUse": [dict(correct.HOOK_GROUP, matcher="Write")]}})
-        self.refused_with_nothing_written("in another form")
+        self.refused_with_nothing_written("in a form other than the entry init writes")
+
+    def test_inits_own_group_beside_another_mention_is_still_refused(self) -> None:
+        self.settings({"hooks": {"PreToolUse": [correct.HOOK_GROUP, dict(correct.HOOK_GROUP, matcher="Bash")]}})
+        self.refused_with_nothing_written("in a form other than the entry init writes")
+
+    def test_an_entry_like_inits_but_not_equal_to_it_is_refused_not_kept(self) -> None:
+        """init keeps only the group it writes, value for value. Each of these was read as
+        "already there" by an earlier version and then failed the replay as not registered."""
+        ours = correct.HOOK_GROUP["hooks"][0]
+        for entry in (dict(ours, type="prompt"), dict(ours, **{"async": True}), dict(ours, timeout=30)):
+            self.settings({"hooks": {"PreToolUse": [dict(correct.HOOK_GROUP, hooks=[entry])]}})
+            self.refused_with_nothing_written("in a form other than the entry init writes")
+        self.settings({"hooks": {"PreToolUse": [dict(correct.HOOK_GROUP, matcher="Edit|Write|MultiEdit|NotebookEdit")]}})
+        self.refused_with_nothing_written("in a form other than the entry init writes")
+
+    def test_an_unreadable_file_where_a_script_goes_is_refused(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("root reads any file")
+        (self.repo / "scripts").mkdir()
+        hook = self.repo / "scripts" / correct.ENFORCER
+        hook.write_text("x")
+        hook.chmod(0o000)
+        self.addCleanup(hook.chmod, 0o644)
+        proc = self.run_correct("init")
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("could not read the repository's current state", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertFalse((self.repo / ".control").exists())
+
+    def test_a_top_directory_that_cannot_be_written_is_refused_before_scripts_are_written(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("root writes into any directory")
+        (self.repo / "scripts").mkdir()  # writable, so the scripts alone could land
+        self.repo.chmod(0o555)
+        self.addCleanup(self.repo.chmod, 0o755)
+        proc = self.run_correct("init")
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("the repository's top directory is not writable", proc.stderr)
+        self.assertEqual(list((self.repo / "scripts").iterdir()), [])
 
     def test_a_read_only_settings_file_is_refused_and_left_as_it_is(self) -> None:
+        if os.geteuid() == 0:
+            self.skipTest("root writes any file")
         self.settings({})
         path = self.repo / ".claude" / "settings.json"
         path.chmod(0o444)
@@ -230,24 +278,32 @@ class Init(CorrectCase):
         self.addCleanup((self.repo / ".claude").chmod, 0o755)
         self.refused_with_nothing_written(".claude/ is not writable")
 
-    def without_yaml(self) -> dict:
-        home = self.tmp / "no-yaml-home"
-        home.mkdir(exist_ok=True)
-        env = dict(self.env, HOME=str(home))
-        probe = "import site, sys; sys.path.append(site.getusersitepackages()); import yaml"
-        if subprocess.run([sys.executable, "-I", "-c", probe], env=env, capture_output=True).returncode == 0:
-            self.skipTest("PyYAML is installed outside the user site here, so it cannot be hidden")
-        return env
+    def hide_yaml(self) -> None:
+        """Make the PyYAML probe fail wherever PyYAML is installed (user site, system, a venv)."""
+        self.addCleanup(setattr, correct, "YAML_PROBE", correct.YAML_PROBE)
+        correct.YAML_PROBE = "import a_module_that_does_not_exist"
 
     def test_without_pyyaml_init_writes_nothing_and_says_what_to_install(self) -> None:
-        self.refused_with_nothing_written("PyYAML is not importable", env=self.without_yaml())
+        self.hide_yaml()
+        with self.assertRaises(correct.Refused) as caught:
+            correct.init(self.repo, [])
+        self.assertIn("PyYAML is not importable", str(caught.exception))
+        self.assertIn("pip install --user pyyaml", str(caught.exception))
+        self.assertEqual(tree(self.repo), {})
 
-    def test_without_pyyaml_check_exits_2(self) -> None:
+    def test_without_pyyaml_a_dry_run_stops_where_the_real_run_would(self) -> None:
+        self.hide_yaml()
+        with self.assertRaises(correct.Refused):
+            correct.init(self.repo, ["--dry-run"])
+
+    def test_without_pyyaml_check_and_canary_exit_2(self) -> None:
         self.init()
-        proc = self.run_correct("check", env=self.without_yaml())
-        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
-        self.assertIn("PyYAML is not importable", proc.stderr)
-        self.assertNotIn("Traceback", proc.stderr)
+        self.hide_yaml()
+        for command in ("check", "canary"):
+            self.assertEqual(correct.main([command, "--root", str(self.repo)]), 2)
+
+    def test_the_pyyaml_probe_finds_pyyaml_the_way_the_runner_does(self) -> None:
+        correct.need_yaml()  # raises when the real probe fails on a machine where the runner works
 
     def test_a_repository_with_the_other_governance_directory_gets_its_registry_there(self) -> None:
         (self.repo / ".broomva").mkdir()
@@ -311,10 +367,36 @@ class Init(CorrectCase):
     def test_a_written_file_replaces_the_old_one_whole(self) -> None:
         target = self.tmp / "dir" / "settings.json"
         correct.write_file(target, b"one", False)
+        other_name = self.tmp / "dir" / "the-old-file"
+        os.link(target, other_name)  # a second name for the file as it was
         correct.write_file(target, b"two", True)
         self.assertEqual(target.read_bytes(), b"two")
         self.assertTrue(os.access(target, os.X_OK))
-        self.assertEqual([p.name for p in target.parent.iterdir()], ["settings.json"])  # no temp file left
+        # Replaced, not rewritten: the old file is untouched under its other name. A write in
+        # place would have changed both, and an interrupted one would have left neither whole.
+        self.assertEqual(other_name.read_bytes(), b"one")
+        self.assertFalse(os.access(other_name, os.X_OK))
+        self.assertEqual(sorted(p.name for p in target.parent.iterdir()), ["settings.json", "the-old-file"])
+
+    def test_a_private_hook_stays_private_when_it_is_made_executable(self) -> None:
+        (self.repo / "scripts").mkdir()
+        hook = self.repo / "scripts" / correct.ENFORCER
+        hook.write_bytes((SKILL / "scripts" / correct.ENFORCER).read_bytes())
+        hook.chmod(0o600)
+        self.init()
+        self.assertEqual(hook.stat().st_mode & 0o777, 0o700)
+
+    def test_a_directory_where_a_file_goes_is_refused(self) -> None:
+        (self.repo / ".claude" / "settings.json").mkdir(parents=True)
+        self.refused_with_nothing_written(".claude/settings.json exists and is not a regular file")
+
+    def test_the_registry_goes_beside_an_existing_policy_file(self) -> None:
+        (self.repo / ".broomva").mkdir()  # the directory a new registry would otherwise go to
+        (self.repo / ".control").mkdir()
+        (self.repo / ".control" / "policy.yaml").write_text("gates:\n  hard: []\n")
+        self.init()
+        self.assertTrue((self.repo / ".control" / "rules.yaml").is_file())
+        self.assertEqual(list((self.repo / ".broomva").iterdir()), [])
 
     def test_a_replaced_file_keeps_its_permissions(self) -> None:
         (self.repo / ".claude").mkdir()
@@ -338,6 +420,14 @@ class Init(CorrectCase):
             self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
             self.assertIn("git could not be run", proc.stderr)
             self.assertNotIn("Traceback", proc.stderr)
+
+    def test_a_new_file_gets_what_the_callers_umask_allows(self) -> None:
+        old = os.umask(0o077)
+        self.addCleanup(os.umask, old)
+        correct.write_file(self.tmp / "private" / "data", b"x", False)
+        correct.write_file(self.tmp / "private" / "hook", b"x", True)
+        self.assertEqual((self.tmp / "private" / "data").stat().st_mode & 0o777, 0o600)
+        self.assertEqual((self.tmp / "private" / "hook").stat().st_mode & 0o777, 0o700)
 
     def test_a_write_that_cannot_land_leaves_no_temporary_file(self) -> None:
         parent = self.tmp / "dir"
@@ -370,6 +460,13 @@ class Init(CorrectCase):
         self.assertEqual(got["permissions"], mine["permissions"])
         self.assertEqual(got["hooks"]["SessionStart"], mine["hooks"]["SessionStart"])
         self.assertEqual(got["hooks"]["PreToolUse"], [correct.HOOK_GROUP])
+
+    def test_existing_settings_keep_their_own_characters(self) -> None:
+        self.settings({"_note": "révisé — 設定", "hooks": {}})
+        self.init()
+        text = (self.repo / ".claude" / "settings.json").read_text(encoding="utf-8")
+        self.assertIn("révisé — 設定", text)
+        self.assertNotIn("\\u", text)
 
     def test_settings_that_already_run_the_enforcer_are_left_alone(self) -> None:
         (self.repo / ".claude").mkdir()
@@ -500,7 +597,7 @@ class Wrapper(CorrectCase):
     def test_a_registry_of_another_version_is_refused_not_replayed(self) -> None:
         self.init()
         registry = self.repo / ".control" / "rules.yaml"
-        for line in ("version: 2\n", "version: true\n", ""):  # a later version, a wrong type, none
+        for line in ("version: 2\n", "version: true\n", "version: 1.0\n", ""):  # later, two wrong types, none
             registry.write_text(self.registry_text(line))
             for command in ("check", "init"):
                 proc = self.run_correct(command)
@@ -521,11 +618,90 @@ class Wrapper(CorrectCase):
         self.assertEqual(absent.returncode, 2, absent.stdout + absent.stderr)
         self.assertIn("there is no registry at", absent.stderr)
 
+    def test_help_needs_no_repository_and_no_registry(self) -> None:
+        for cwd in (self.repo, self.tmp):  # a repository before init, and no repository at all
+            for command, usage in (("check", "usage: rules_check.py"), ("canary", "usage: rules_canary.py")):
+                proc = self.run_correct(command, "--help", cwd=cwd)
+                self.assertEqual(proc.returncode, 0, (command, proc.stdout + proc.stderr))
+                self.assertIn(usage, proc.stdout)
+
+    def test_no_command_prints_the_usage_and_exits_2(self) -> None:
+        proc = self.run_correct()
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("correct.py init", proc.stdout)
+        self.assertEqual(self.run_correct("--help").returncode, 0)
+        asked = self.run_correct("init", "--help")
+        self.assertEqual(asked.returncode, 0, asked.stderr)
+        self.assertIn("correct.py init", asked.stdout)
+        self.assertEqual(tree(self.repo), {})
+
+    def test_a_root_option_with_nothing_after_it_is_refused(self) -> None:
+        proc = self.run_correct("check", "--root")
+        self.assertEqual(proc.returncode, 2)
+        self.assertIn("--root needs a directory", proc.stderr)
+
+    def test_a_registry_that_is_not_yaml_is_refused(self) -> None:
+        self.init()
+        (self.repo / ".control" / "rules.yaml").write_text("version: 1\nrules: [unclosed\n")
+        for command in ("check", "init"):
+            proc = self.run_correct(command)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("is not readable YAML", proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_a_shortened_registry_option_names_the_registry_that_is_checked(self) -> None:
+        self.init()
+        other = self.tmp / "v2.yaml"
+        other.write_text(self.registry_text("version: 2\n"))
+        for args in (("--reg", str(other)), (f"--regis={other}",)):
+            proc = self.run_correct("check", *args)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("v2.yaml says `version: 2`", proc.stderr)
+
+    def test_an_empty_registry_option_is_refused(self) -> None:
+        self.init()
+        for args in (("--registry=",), ("--registry",), ("--registry", "")):
+            proc = self.run_correct("check", *args)
+            self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+            self.assertIn("--registry needs a file", proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+
+    def test_a_relative_registry_is_read_from_the_current_directory_and_the_message_says_so(self) -> None:
+        self.init()
+        proc = self.run_correct("check", "--root", str(self.repo), "--registry", ".control/rules.yaml", cwd=self.tmp)
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn(f"there is no registry at {self.tmp / '.control' / 'rules.yaml'}", proc.stderr)
+        self.assertIn("relative to the current directory", proc.stderr)
+        inside = self.run_correct("check", "--registry", ".control/rules.yaml", "--only", "branch-first")
+        self.assertEqual(inside.returncode, 0, inside.stdout + inside.stderr)
+
+    def test_the_canary_always_checks_the_repositorys_own_registry(self) -> None:
+        self.init()
+        good = self.tmp / "v1.yaml"
+        good.write_bytes((self.repo / ".control" / "rules.yaml").read_bytes())
+        (self.repo / ".control" / "rules.yaml").write_text(self.registry_text("version: 2\n"))
+        proc = self.run_correct("canary", f"--registry={good}", "run")
+        self.assertEqual(proc.returncode, 2, proc.stdout + proc.stderr)
+        self.assertIn("this copy of the skill replays version 1", proc.stderr)
+
+    def test_init_on_a_set_up_repository_whose_hook_entry_was_removed_says_it_repairs_nothing(self) -> None:
+        self.init()
+        (self.repo / ".claude" / "settings.json").write_text('{"hooks": {}}')
+        proc = self.run_correct("init")
+        self.assertEqual(proc.returncode, 1, proc.stdout + proc.stderr)
+        self.assertIn("not registered", proc.stdout)
+        self.assertIn("it repairs nothing either", proc.stderr)
+        self.assertNotIn("a `gap` row", proc.stderr)
+
     def test_canary_runs_the_canary_not_the_runner(self) -> None:
         self.init()
         proc = self.run_correct("canary", "--help")
         self.assertEqual(proc.returncode, 0, proc.stdout + proc.stderr)
         self.assertIn("usage: rules_canary.py", proc.stdout)
+        # Without --help too: the canary's own parser answers an argument only it would reject.
+        real = self.run_correct("canary", "no-such-subcommand")
+        self.assertEqual(real.returncode, 2, real.stdout + real.stderr)
+        self.assertIn("usage: rules_canary.py", real.stderr)
 
     def test_an_unknown_command_exits_2(self) -> None:
         proc = self.run_correct("chek")

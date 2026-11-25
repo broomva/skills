@@ -34,6 +34,7 @@ jobs:
   test:
     name: runner, canary, hook and CLI suites
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -58,15 +59,15 @@ jobs:
         run: |
           set -euo pipefail
           python3 -I tests/test_correct.py > /tmp/correct.out 2>&1 || { cat /tmp/correct.out; exit 1; }
-          tail -4 /tmp/correct.out
-          grep -q '^Ran 62 tests' /tmp/correct.out || { echo "expected: Ran 62 tests"; exit 1; }
+          grep -E '^(Ran |OK|FAILED)' /tmp/correct.out || true
+          grep -q '^Ran 83 tests' /tmp/correct.out || { echo "expected: Ran 83 tests"; exit 1; }
           grep -q '^OK$' /tmp/correct.out || { echo "expected a bare OK (no skips)"; exit 1; }
 
       - name: Tests — the branch-first hook
         run: |
           set -euo pipefail
           python3 -I tests/test_branch_first_hook.py > /tmp/hook.out 2>&1 || { cat /tmp/hook.out; exit 1; }
-          found="$(grep -c '^ok ' /tmp/hook.out)"; echo "ok lines: $found (expected 5)"
+          found="$(grep -c '^ok ' /tmp/hook.out || true)"; echo "ok lines: $found (expected 5)"
           test "$found" = 5
           grep -q '^all branch-first hook tests passed$' /tmp/hook.out
 
@@ -74,7 +75,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -I tests/test_rules_check.py > /tmp/check.out 2>&1 || { cat /tmp/check.out; exit 1; }
-          found="$(grep -c '^ok ' /tmp/check.out)"; echo "ok lines: $found (expected 212)"
+          found="$(grep -c '^ok ' /tmp/check.out || true)"; echo "ok lines: $found (expected 212)"
           test "$found" = 212
           grep -q '^all rules_check tests passed$' /tmp/check.out
 
@@ -82,7 +83,7 @@ jobs:
         run: |
           set -euo pipefail
           python3 -I tests/test_rules_canary.py > /tmp/canary.out 2>&1 || { cat /tmp/canary.out; exit 1; }
-          found="$(grep -c '^ok ' /tmp/canary.out)"; echo "ok lines: $found (expected 116)"
+          found="$(grep -c '^ok ' /tmp/canary.out || true)"; echo "ok lines: $found (expected 116)"
           test "$found" = 116
           grep -q '^all rules_canary tests passed$' /tmp/canary.out
 
@@ -94,4 +95,4 @@ jobs:
           set -euo pipefail
           python3 -I tests/mutate_correct.py > /tmp/mutate.out 2>&1 || { cat /tmp/mutate.out; exit 1; }
           cat /tmp/mutate.out
-          grep -q '^50 killed, 0 survived$' /tmp/mutate.out
+          grep -q '^68 killed, 0 survived$' /tmp/mutate.out
