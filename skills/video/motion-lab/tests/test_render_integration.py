@@ -551,3 +551,39 @@ class TestServeAndWorkers:
     def test_worker_count_must_be_a_positive_integer(self, tmp_path, count):
         r = render("good.html", tmp_path, "--workers", count)
         assert r.returncode == 2 and "--workers" in r.stderr
+
+
+
+
+@needs_playwright
+def test_transparent_flag_preserves_png_alpha(tmp_path):
+    """--transparent passes omitBackground: true so transparent pages emit RGBA PNGs with alpha=0 background."""
+    html = tmp_path / "overlay.html"
+    html.write_text(
+        "<!doctype html><html><body style='margin:0;background:transparent'>"
+        "<div id='box' style='width:32px;height:32px;background:#0044ff'></div>"
+        "<script>window.renderAt = (t) => { document.getElementById('box').style.opacity = String(0.5 + 0.5 * t); };</script>"
+        "</body></html>",
+        encoding="utf-8",
+    )
+    out = tmp_path / "out_trans"
+    r = subprocess.run(
+        ["node", str(SKILL / "scripts" / "render.mjs"), str(html),
+         "--seconds", "0.25", "--fps", "4", "--width", "64", "--height", "64",
+         "--out", str(out), "--transparent", "--verify", "--no-sheet"],
+        cwd=NODE_DIR, capture_output=True, text=True, timeout=180,
+    )
+    assert r.returncode == 0, r.stdout + r.stderr
+    png_path = out / "frames/0000.png"
+    png_bytes = png_path.read_bytes()
+    assert png_bytes[:8] == bytes([137, 80, 78, 71, 13, 10, 26, 10])
+    assert png_bytes[25] == 6, f"expected RGBA PNG (color_type=6), got {png_bytes[25]}"
+    if shutil.which("ffmpeg"):
+        rgba = subprocess.run(
+            ["ffmpeg", "-v", "error", "-i", str(png_path), "-f", "rawvideo", "-pix_fmt", "rgba", "-"],
+            capture_output=True, check=True,
+        ).stdout
+        assert len(rgba) == 64 * 64 * 4
+        # Bottom-right (x=60, y=60) must be fully transparent (alpha=0); top-left (x=10, y=10) must be visible (alpha>0)
+        assert rgba[(60 * 64 + 60) * 4 + 3] == 0
+        assert rgba[(10 * 64 + 10) * 4 + 3] > 100

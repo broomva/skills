@@ -787,3 +787,24 @@ def test_p20_r2_chained_gsap_nested_attr_and_js_clip_calc():
         "};</script>"
     )
     assert "MC11" not in [f.rule for f in motion_lint.lint_text(html_calc, is_html=True)]
+
+
+def test_p20_r3_timeline_addlabel_chain_and_ternary_no_false_positive():
+    """tl.addLabel().to() starts chain -> MC13; depth-1 ternary { opacity: cond ? x : 1 } does NOT false-positive."""
+    import motion_lint
+
+    html_chain = (
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const tl = gsap.timeline({paused:true});"
+        "tl.addLabel('s').to('.a', { x: 100 });"
+        "window.renderAt = (t) => tl.time(t);</script>"
+    )
+    assert "MC13" in [f.rule for f in motion_lint.lint_text(html_chain, is_html=True)]
+
+    html_tern = (
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const tl = gsap.timeline({paused:true});"
+        "tl.to('.a', { opacity: cond ? x : 1 });"
+        "window.renderAt = (t) => tl.time(t);</script>"
+    )
+    assert "MC13" not in [f.rule for f in motion_lint.lint_text(html_tern, is_html=True)]

@@ -3,7 +3,7 @@
 //
 //   node render.mjs anim.html --seconds 6 --fps 24 [--width 1080 --height 1080]
 //        [--scale 1] [--out out] [--every 12] [--verify | --verify-all] [--mp4] [--no-sheet] [--allow-static]
-//        [--serve] [--workers 1] [--webgl]
+//        [--serve] [--workers 1] [--webgl] [--transparent]
 //
 // Frames are 0..N-1 (N = seconds * fps): frame N is frame 0 again, and rendering
 // it is the hiccup at a loop seam. Each frame is the page frozen at t = i / fps: the
@@ -61,7 +61,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 
 function parseArgs(argv) {
-  const o = { seconds: 6, fps: 24, width: 1080, height: 1080, scale: 1, out: 'out', every: 0, verify: false, verifyAll: false, mp4: false, sheet: true, allowStatic: false, serve: false, workers: 1, webgl: false };
+  const o = { seconds: 6, fps: 24, width: 1080, height: 1080, scale: 1, out: 'out', every: 0, verify: false, verifyAll: false, mp4: false, sheet: true, allowStatic: false, serve: false, workers: 1, webgl: false, transparent: false };
   const pos = [];
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
@@ -330,7 +330,7 @@ async function openAt(browser, o, url, probeTimes = []) {
     }
     const first = await frameAt(page, 0, errors);
     if (first.timedOut) return { page, errors, blocked, createdAnimations, aborted: true };
-    await page.screenshot({ timeout: FRAME_TIMEOUT_MS });
+    await page.screenshot({ omitBackground: Boolean(o.transparent), timeout: FRAME_TIMEOUT_MS });
   } catch (e) {
     errors.push(String(e.message || e).split('\n')[0]);
     return { page, errors, blocked, createdAnimations, aborted: true };
@@ -357,14 +357,14 @@ async function frameAt(page, t, errors = []) {
   }
 }
 
-async function drifts(page, t, errors) {
+async function drifts(page, t, errors, transparent = false) {
   // Seek t, capture, wait, capture again: a frozen frame must not change.
   const info = await frameAt(page, t, errors);
   if (info.timedOut) return { drift: false, timedOut: true };
   try {
-    const a = await page.screenshot({ timeout: FRAME_TIMEOUT_MS });
+    const a = await page.screenshot({ omitBackground: Boolean(transparent), timeout: FRAME_TIMEOUT_MS });
     await page.waitForTimeout(DRIFT_WAIT_MS);
-    const b = await page.screenshot({ timeout: FRAME_TIMEOUT_MS });
+    const b = await page.screenshot({ omitBackground: Boolean(transparent), timeout: FRAME_TIMEOUT_MS });
     return { drift: !a.equals(b), timedOut: false };
   } catch (e) {
     errors.push(`drift capture t=${t}: ${String(e.message || e).split('\n')[0]}`);
@@ -481,7 +481,7 @@ async function main() {
     // Early drift sample, before the frame loop: a one-shot intro that plays for a
     // while after load and then stops corrupts the first frames and is gone by the
     // time the post-render sample runs (P20 round 5).
-    const early = aborted ? { drift: false, timedOut: false } : await drifts(page, 0, errors);
+    const early = aborted ? { drift: false, timedOut: false } : await drifts(page, 0, errors, o.transparent);
     if (early.timedOut) { aborted = true; manifest.aborted_at_frame = 0; }
     const before = aborted ? { raf: 0, interval: 0 }
       : await page.evaluate(() => ({ ...(window.__mlCounts || { raf: 0, interval: 0 }) }));
@@ -579,7 +579,7 @@ async function main() {
       const driftPicks = [...new Set([0, Math.floor(N / 2), N - 1])];
       const drifting = [];
       for (const i of driftPicks) {
-        const d = await drifts(page, i / o.fps, errors);
+        const d = await drifts(page, i / o.fps, errors, o.transparent);
         if (d.drift) drifting.push(i);
         if (d.timedOut) { aborted = true; manifest.aborted_at_frame = i; break; }
       }

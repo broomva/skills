@@ -81,12 +81,15 @@ nearest-rank fifth percentile of lightness. The conversion interprets decoded
 RGB as SDR sRGB with a D65 reference white. See the color model in
 [CSS Color 4](https://www.w3.org/TR/css-color-4/#color-conversion-code).
 
-A beat fails by default when its fifth percentile exceeds 38 or its lightness
-deviation falls below 1. Choose beat indices and thresholds to match the film's
-palette. For example, a deliberately bright title card may need a higher
-`--max-dark-p5`. Read the hero frames and log any threshold change alongside
-the grade. Exit 0 passes, 1 indicates failed gates, and 2 indicates invalid
-input or unavailable tooling.
+Each beat reports `polarity` (`"dark"` when mean `L* < 50.0`, else `"light"`).
+Dark-key beats fail by default when `p5_L > 38` (`washed-out blacks`), while
+light/day-paper beats are not penalized for bright backgrounds. All beats fail
+when lightness deviation `sd_L < 1` (`flatline contrast`). For transparent
+overlay sequences intended for compositing over footage, pass `--transparent`
+to `render.mjs` so Playwright captures RGBA PNGs (`omitBackground: true`). Read
+the hero frames and log any threshold override alongside the grade. Exit 0
+passes, 1 indicates failed gates, and 2 indicates invalid input or unavailable
+tooling.
 
 ## 4. Finish with soundcraft
 

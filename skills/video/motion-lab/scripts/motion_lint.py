@@ -329,11 +329,11 @@ JS_CLIP_INSET_START = re.compile(
     re.I,
 )
 GSAP_TL_ASSIGN = re.compile(r"\b([A-Za-z_$][\w$]*)\s*=\s*gsap\s*\.\s*timeline\s*\(")
-GSAP_CHAIN_START_RE = re.compile(r"\b([A-Za-z_$][\w$]*)\s*\.\s*(timeline|set|to|from|fromTo)\s*\(")
+GSAP_CHAIN_START_RE = re.compile(r"\b([A-Za-z_$][\w$]*)\s*\.\s*([A-Za-z_$][\w$]*)\s*\(")
 GSAP_CHAIN_NEXT_RE = re.compile(r"\s*\.\s*([A-Za-z_$][\w$]*)\s*\(")
 GSAP_TWEEN_METHODS = frozenset({"set", "to", "from", "fromTo"})
 GSAP_KEY_RE = re.compile(
-    r"\b(transform|x|y|z|xPercent|yPercent|scale[XYZ]?|rotation[XYZ]?|skew[XY]|strokeDashoffset)\s*:"
+    r"(?:^|,)\s*(transform|x|y|z|xPercent|yPercent|scale[XYZ]?|rotation[XYZ]?|skew[XY]|strokeDashoffset)\s*:"
 )
 
 
@@ -375,7 +375,7 @@ def iter_gsap_writes(blank: str):
         recv, method = m.group(1), m.group(2)
         if recv not in receivers:
             continue
-        if method == "timeline" and recv != "gsap":
+        if recv == "gsap" and method not in GSAP_TWEEN_METHODS and method != "timeline":
             continue
         call_pos = m.start()
         i = m.end()
