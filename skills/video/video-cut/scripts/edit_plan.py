@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -462,8 +463,22 @@ def _escape_filter_path(path: Path) -> str:
     return s.replace("\\", "\\\\").replace(":", "\\:").replace("'", "\\'").replace(",", "\\,").replace(";", "\\;")
 
 
-def _probe_media_streams(src: Path) -> dict[str, Any] | None:
-    """Probe video/audio stream presence and video duration via ffprobe."""
+def _parse_fps_ratio(val: Any) -> float | None:
+    if not isinstance(val, str) or not val or val == "0/0":
+        return None
+    try:
+        if "/" in val:
+            num, den = val.split("/", 1)
+            f = float(num) / float(den)
+        else:
+            f = float(val)
+        return f if math.isfinite(f) and f > 0 else None
+    except (ValueError, ZeroDivisionError):
+        return None
+
+
+def _probe_media_streams(src: Path, *, count_video_packets: bool = False) -> dict[str, Any] | None:
+    """Probe video/audio stream presence, start_time, packet count, and real video duration via ffprobe."""
     if not src.exists():
         return None
     try:
@@ -473,7 +488,7 @@ def _probe_media_streams(src: Path) -> dict[str, Any] | None:
                 "-v",
                 "error",
                 "-show_entries",
-                "stream=codec_type,duration,start_time,nb_frames,codec_name:format=duration",
+                "stream=codec_type,duration,start_time,nb_frames,avg_frame_rate,r_frame_rate,codec_name:format=duration",
                 "-of",
                 "json",
                 str(src),
@@ -505,8 +520,10 @@ def _probe_media_streams(src: Path) -> dict[str, Any] | None:
             pass
     v_dur = None
     v_start = 0.0
+    v_packets = None
     if v_streams:
-        raw_vd = v_streams[0].get("duration")
+        vs0 = v_streams[0]
+        raw_vd = vs0.get("duration")
         if raw_vd is not None:
             try:
                 v = float(raw_vd)
@@ -514,7 +531,7 @@ def _probe_media_streams(src: Path) -> dict[str, Any] | None:
                     v_dur = v
             except (TypeError, ValueError):
                 pass
-        raw_vs = v_streams[0].get("start_time")
+        raw_vs = vs0.get("start_time")
         if raw_vs is not None:
             try:
                 vs = float(raw_vs)
@@ -522,6 +539,46 @@ def _probe_media_streams(src: Path) -> dict[str, Any] | None:
                     v_start = vs
             except (TypeError, ValueError):
                 pass
+        raw_nf = vs0.get("nb_frames")
+        if raw_nf is not None and str(raw_nf).isdigit():
+            v_packets = int(raw_nf)
+        # Containers like Matroska/WebM omit stream.duration; count actual video packets so
+        # a longer audio track cannot mask a shorter video stream.
+        if v_dur is None or count_video_packets:
+            pkt_proc = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-select_streams",
+                    "v:0",
+                    "-count_packets",
+                    "-show_entries",
+                    "stream=nb_read_packets,avg_frame_rate,r_frame_rate",
+                    "-of",
+                    "json",
+                    str(src),
+                ],
+                capture_output=True,
+                text=True,
+                stdin=subprocess.DEVNULL,
+                check=False,
+            )
+            if pkt_proc.returncode == 0:
+                try:
+                    pdata = json.loads(pkt_proc.stdout)
+                    pstreams = pdata.get("streams") or []
+                    if pstreams:
+                        ps0 = pstreams[0]
+                        raw_np = ps0.get("nb_read_packets")
+                        if raw_np is not None and str(raw_np).isdigit():
+                            v_packets = int(raw_np)
+                            if v_dur is None:
+                                fps_v = _parse_fps_ratio(ps0.get("avg_frame_rate")) or _parse_fps_ratio(ps0.get("r_frame_rate"))
+                                if fps_v and v_packets > 0:
+                                    v_dur = v_packets / fps_v
+                except json.JSONDecodeError:
+                    pass
     eff_v_dur = v_dur if v_dur is not None else fmt_dur
     v_end = (v_start + eff_v_dur) if eff_v_dur is not None else None
     return {
@@ -530,6 +587,7 @@ def _probe_media_streams(src: Path) -> dict[str, Any] | None:
         "video_start_s": v_start,
         "video_dur_s": eff_v_dur,
         "video_end_s": v_end,
+        "video_packets": v_packets,
         "format_dur_s": fmt_dur,
     }
 
@@ -753,6 +811,7 @@ def compile_plan(
     argv = [
         "ffmpeg",
         "-y",
+        "-copyts",
         *inputs,
         "-filter_complex",
         filter_complex,
@@ -897,6 +956,10 @@ def main(argv: list[str] | None = None) -> int:
             print(json.dumps(compiled, indent=2))
             return 0
 
+        if shutil.which("ffprobe") is None:
+            print("error: ffprobe not found on PATH; ffprobe is required to validate and verify renders", file=sys.stderr)
+            return 1
+
         out_path = Path(args.output)
         out_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(prefix="edit_plan_caps_") as cap_tmp:
@@ -922,20 +985,29 @@ def main(argv: list[str] | None = None) -> int:
             )
             return 1
 
-        out_info = _probe_media_streams(out_path)
-        if out_info is not None:
-            if not out_info["has_video"]:
-                print("error: rendered output contains no video stream (check clip in_s/out_s bounds)", file=sys.stderr)
-                return 1
-            exp_dur = sum(float(c["out_s"]) - float(c["in_s"]) for c in plan["clips"])
-            fps_val = float(plan["canvas"]["fps"])
-            tol = max(0.2, 2.0 / max(1.0, fps_val))
-            if out_info["video_dur_s"] is None or abs(out_info["video_dur_s"] - exp_dur) > tol:
-                print(
-                    f"error: rendered video duration ({out_info['video_dur_s']}s) differs from planned {exp_dur:.3f}s by > {tol:.3f}s",
-                    file=sys.stderr,
-                )
-                return 1
+        out_info = _probe_media_streams(out_path, count_video_packets=True)
+        if out_info is None:
+            print("error: ffprobe is required to verify rendered output; cannot confirm video stream", file=sys.stderr)
+            return 1
+        if not out_info["has_video"]:
+            print("error: rendered output contains no video stream (check clip in_s/out_s bounds)", file=sys.stderr)
+            return 1
+        exp_dur = sum(float(c["out_s"]) - float(c["in_s"]) for c in plan["clips"])
+        fps_val = float(plan["canvas"]["fps"])
+        tol = max(0.2, 2.0 / max(1.0, fps_val))
+        if out_info["video_dur_s"] is None or abs(out_info["video_dur_s"] - exp_dur) > tol:
+            print(
+                f"error: rendered video duration ({out_info['video_dur_s']}s) differs from planned {exp_dur:.3f}s by > {tol:.3f}s",
+                file=sys.stderr,
+            )
+            return 1
+        min_frames = max(1, int(math.floor(exp_dur * fps_val)) - 2)
+        if out_info["video_packets"] is not None and out_info["video_packets"] < min_frames:
+            print(
+                f"error: rendered video has only {out_info['video_packets']} frames (expected >= {min_frames} for {exp_dur:.3f}s @ {fps_val}fps)",
+                file=sys.stderr,
+            )
+            return 1
         print(str(out_path.resolve()))
         return 0
 

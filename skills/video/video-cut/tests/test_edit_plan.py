@@ -728,3 +728,76 @@ def test_p20_r3_video_bounds_offset_start_and_lowercase_wide_glyphs(tmp_path):
         capture_output=True, text=True, check=False,
     )
     assert r.returncode == 0, f"offset render failed: {r.stderr}"
+
+
+def test_p20_r4_offset_video_only_mp4_mkv_video_duration_and_fail_closed_ffprobe(tmp_path):
+    """Covers R4 BLOCKER 1 (offset video-only MP4 renders exact red frames),
+    R4 BLOCKER 2 (MKV 2s video + 5s audio rejects 3.5-4.5s cut),
+    and R4 MAJOR 1 (render fails closed if ffprobe is absent)."""
+    # 1. Video-only MP4 spanning 1-3s: 1-2s red, 2-3s blue -> cut 1.2-1.7s must render RED frames!
+    v_off = tmp_path / "v_only_1_3.mp4"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "lavfi", "-i", "color=c=red:s=64x64:r=24:d=1.0",
+            "-f", "lavfi", "-i", "color=c=blue:s=64x64:r=24:d=1.0",
+            "-filter_complex", "[0:v][1:v]concat=n=2:v=1:a=0,setpts=PTS+1.0/TB[v]",
+            "-map", "[v]", "-c:v", "libx264", "-pix_fmt", "yuv420p", str(v_off),
+        ],
+        check=True,
+    )
+    p_off = {
+        "version": 1,
+        "canvas": {"width": 64, "height": 64, "fps": 24},
+        "clips": [{"id": "c1", "source": str(v_off), "in_s": 1.2, "out_s": 1.7}],
+    }
+    assert edit_plan.validate_plan(p_off, check_files=True)["valid"] is True
+    pf = tmp_path / "p_off_red.json"
+    pf.write_text(json.dumps(p_off), encoding="utf-8")
+    out_red = tmp_path / "out_red.mp4"
+    r_red = subprocess.run(
+        [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "render", str(pf), "-o", str(out_red)],
+        capture_output=True, text=True, check=False,
+    )
+    assert r_red.returncode == 0, r_red.stderr
+    rgb = subprocess.run(
+        ["ffmpeg", "-v", "error", "-i", str(out_red), "-frames:v", "1", "-f", "rawvideo", "-pix_fmt", "rgb24", "-"],
+        capture_output=True, check=True,
+    ).stdout
+    assert rgb[0] > 180 and rgb[2] < 60, f"expected red frames from 1.2-1.7s, got rgb=({rgb[0]},{rgb[1]},{rgb[2]})"
+
+    # 2. MKV with 2s video + 5s audio: 3.5-4.5s cut must be rejected by validate_plan(check_files=True)!
+    mkv = tmp_path / "v2_a5.mkv"
+    subprocess.run(
+        [
+            "ffmpeg", "-y", "-v", "error",
+            "-f", "lavfi", "-i", "color=c=green:s=64x64:r=24:d=2.0",
+            "-f", "lavfi", "-i", "sine=frequency=440:duration=5.0",
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-c:a", "aac", str(mkv),
+        ],
+        check=True,
+    )
+    p_mkv = {
+        "version": 1,
+        "canvas": {"width": 64, "height": 64, "fps": 24},
+        "clips": [{"id": "m1", "source": str(mkv), "in_s": 3.5, "out_s": 4.5}],
+    }
+    res_mkv = edit_plan.validate_plan(p_mkv, check_files=True)
+    assert res_mkv["valid"] is False, f"MKV past-video cut unexpectedly passed: {res_mkv}"
+
+    # 3. Render fails closed when ffprobe is missing from PATH
+    import os, shutil
+    ff_bin = shutil.which("ffmpeg")
+    if ff_bin:
+        fake_bin = tmp_path / "bin_no_ffprobe"
+        fake_bin.mkdir()
+        (fake_bin / "ffmpeg").symlink_to(ff_bin)
+        env = dict(os.environ)
+        env["PATH"] = str(fake_bin)
+        out_no_probe = tmp_path / "out_np.mp4"
+        r_np = subprocess.run(
+            [sys.executable, str(SCRIPTS_DIR / "edit_plan.py"), "render", str(pf), "-o", str(out_no_probe)],
+            capture_output=True, text=True, env=env, check=False,
+        )
+        assert r_np.returncode == 1
+        assert "ffprobe" in r_np.stderr.lower()
