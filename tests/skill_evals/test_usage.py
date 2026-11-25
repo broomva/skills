@@ -289,7 +289,9 @@ def test_the_window_ends_at_the_next_skill_load():
         resp("m3", [{"type": "text", "text": "y"}], usage=(1, 0, 0, 11)),
     ))
     first, second = U.session_invocations(rows)
-    assert first["cost"]["turns"] == 1 and first["cost"]["output_tokens"] == 7
+    # The response that calls p9 (5 output tokens) was produced inside kg's window,
+    # so it is charged there; p9's window starts after it.
+    assert first["cost"]["turns"] == 2 and first["cost"]["output_tokens"] == 7 + 5
     assert second["cost"]["output_tokens"] == 11
 
 
@@ -449,3 +451,71 @@ def test_a_row_whose_message_is_not_an_object_is_skipped():
     rows = [{"type": "assistant", "message": ["not", "an", "object"]},
             {"type": "user", "message": "text"}] + _rows(calls("kg"))
     assert [i["skill"] for i in U.session_invocations(rows)] == ["kg"]
+
+
+# --- P20 #335 round 2 ----------------------------------------------------------------
+
+def test_the_response_that_calls_the_next_skill_is_charged_to_the_previous_window():
+    """REGRESSION: it sat at both windows' boundary and was charged to neither
+    (13 real responses, 8,729 output tokens)."""
+    calls_gamma = resp("m1", [{"type": "tool_use", "id": "t1", "name": "Skill",
+                               "input": {"skill": "gamma"}}], usage=(1, 0, 0, 40))
+    rows = _rows(lines(typed("beta"), calls_gamma,
+                       resp("m2", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 11))))
+    beta, gamma = U.session_invocations(rows)
+    assert beta["cost"]["output_tokens"] == 40
+    assert gamma["cost"]["output_tokens"] == 11
+
+
+def test_an_interrupt_beside_a_tool_result_ends_the_window():
+    interrupt = [{"type": "user", "message": {"content": [
+        {"type": "tool_result", "tool_use_id": "x", "content": "cancelled"},
+        {"type": "text", "text": "[Request interrupted by user for tool use]"}]}}]
+    rows = _rows(lines(skill_call("m0", "t0", "kg"),
+                       resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 9)),
+                       interrupt,
+                       resp("m2", [{"type": "text", "text": "y"}], usage=(1, 0, 0, 50))))
+    assert U.session_invocations(rows)[0]["cost"]["output_tokens"] == 9
+
+
+def test_a_plain_interrupt_ends_the_window():
+    rows = _rows(lines(skill_call("m0", "t0", "kg"),
+                       resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 9)),
+                       _note("[Request interrupted by user]"),
+                       resp("m2", [{"type": "text", "text": "y"}], usage=(1, 0, 0, 50))))
+    assert U.session_invocations(rows)[0]["cost"]["output_tokens"] == 9
+
+
+def test_local_command_stderr_is_injected_not_a_prompt():
+    rows = _rows(lines(skill_call("m0", "t0", "kg"),
+                       _note("<local-command-stderr>boom</local-command-stderr>"),
+                       resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 9))))
+    assert U.session_invocations(rows)[0]["cost"]["output_tokens"] == 9
+
+
+def test_subagent_responses_are_not_charged_to_the_parent_window():
+    side = resp("s1", [{"type": "text", "text": "sub"}], usage=(1, 0, 0, 500))
+    for r in side:
+        r["isSidechain"] = True
+    rows = _rows(lines(skill_call("m0", "t0", "kg"), side,
+                       resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 9))))
+    assert U.session_invocations(rows)[0]["cost"]["output_tokens"] == 9
+
+
+def test_a_shared_window_reports_its_turns():
+    both = resp("m0", [
+        {"type": "tool_use", "id": "t0", "name": "Skill", "input": {"skill": "kg"}},
+        {"type": "tool_use", "id": "t1", "name": "Skill", "input": {"skill": "p9"}}])
+    rows = _rows(lines(both, resp("m1", [{"type": "text", "text": "x"}]),
+                       resp("m2", [{"type": "text", "text": "y"}])))
+    assert [i["cost"]["turns"] for i in U.session_invocations(rows)] == [2, 2]
+
+
+def test_ranking_ties_are_broken_by_name(tmp_path):
+    sr = tmp_path / "skills"
+    for n in ("alpha", "beta"):
+        _skill(sr, "x", n)
+    tr = tmp_path / "projects" / "p"
+    tr.mkdir(parents=True)
+    (tr / "2772651f-25f3-4aee-8b5d-b44a9cd2dbfb.jsonl").write_bytes(calls("beta", "alpha"))
+    assert [r["skill"] for r in U.build_report(tmp_path / "projects", sr)["ranked"]] == ["alpha", "beta"]

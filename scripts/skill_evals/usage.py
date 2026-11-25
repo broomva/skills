@@ -72,6 +72,7 @@ _SESSION_RE = re.compile(r"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9
 
 # Cheap byte-level reject before parsing a file: no skill load can be in it otherwise.
 _MARKERS = (re.compile(rb'"name"\s*:\s*"Skill"'), re.compile(rb"Base directory for this skill"))
+_INTERRUPT = "[Request interrupted by user"
 # User-role rows the harness writes on its own; not a person's prompt.
 _INJECTED_PREFIXES = ("<task-notification>", "<local-command-stdout>", "<local-command-stderr>",
                       "This session is being continued from a previous conversation")
@@ -149,6 +150,8 @@ def _is_human_prompt(row: dict) -> bool:
     content = _message(row).get("content")
     if isinstance(content, list):
         kinds = {b.get("type") for b in content if isinstance(b, dict)}
+        if _INTERRUPT in _text(row):
+            return True  # the person stopped the turn, whatever else the row carries
         if "tool_result" in kinds or not kinds & {"text", "image"}:
             return False
     elif not isinstance(content, str):
@@ -211,6 +214,9 @@ def _loads(rows: list[dict]) -> list[dict]:
             # without one was loaded by a typed command. Measured 2026-11-24 over
             # the corpus: all 81 agent bodies carry it, and all 111 bodies without
             # it follow a typed <command-name>.
+            # Known limit: a typed plugin skill (/vendor:alpha) is named by its body
+            # directory (alpha), so it can be counted as an owned skill of the same
+            # name; agent calls keep the full "vendor:alpha". None seen in the corpus.
             m = _LOAD_RE.search(_text(row))
             if m:
                 out.append({"row": i, "anchor": i, "group": f"t:{i}",
@@ -241,7 +247,10 @@ def session_invocations(rows: list[dict]) -> list[dict]:
         start = members[0]["anchor"]
         ends = [i for i in prompts if i > start] + [a for a in anchors if a > start]
         end = min(ends) if ends else len(rows)
-        window = [(i, u) for i, mid, u in responses if start < i < end]
+        # `end` is inclusive: when the next load is an agent call, the response that
+        # makes it was produced inside THIS window (it read this skill's context), so
+        # it is charged here and is also the next window's baseline (P20 #335 r2).
+        window = [(i, u) for i, mid, u in responses if start < i <= end]
         before = [(i, u) for i, mid, u in responses if i <= start]
         if not window:
             cost_of[group] = None
@@ -349,7 +358,8 @@ def build_report(transcript_root: Path, skills_root: Path) -> dict:
     counts = Counter({k: len(v) for k, v in records.items()})
     owned = owned_skills(skills_root)
     ranked, external = [], []
-    for name, n in counts.most_common():
+    # Ties broken by name, so the ranking does not depend on the order skills were seen.
+    for name, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0])):
         by = Counter(inv["invoked_by"] for inv in records[name])
         row = {"skill": name, "invocations": n, "sessions": len(sessions[name]),
                "invoked_by": {"agent": by["agent"], "user": by["user"]},
