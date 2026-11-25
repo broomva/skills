@@ -76,7 +76,8 @@ _INTERRUPT = "[Request interrupted by user"
 # User-role rows the harness writes on its own; not a person's prompt.
 _INJECTED_PREFIXES = ("<task-notification>", "<local-command-stdout>", "<local-command-stderr>",
                       "This session is being continued from a previous conversation")
-_LOAD_RE = re.compile(r"Base directory for this skill:\s*(\S+)")
+# The path runs to the end of its line: an install path may contain spaces.
+_LOAD_RE = re.compile(r"Base directory for this skill:[ \t]*([^\r\n]*?)[ \t]*(?:\r?\n|$)")
 _USAGE_FIELDS = ("input_tokens", "cache_creation_input_tokens",
                  "cache_read_input_tokens", "output_tokens")
 
@@ -165,18 +166,21 @@ def _responses(rows: list[dict]) -> list[tuple[int, str, dict]]:
     A response split across rows repeats its id and usage, so it is counted once.
     Rows the harness writes itself (model "<synthetic>") are not API responses.
     """
-    seen: set[str] = set()
-    out: list[tuple[int, str, dict]] = []
+    # A response sits at its FIRST row, the same row a load anchors on, even when
+    # its usage appears only on a later row; otherwise row order moves tokens.
+    first: dict[str, int] = {}
+    usage_of: dict[str, dict] = {}
     for i, row in enumerate(rows):
         if row.get("type") != "assistant" or row.get("isSidechain"):
             continue
         msg = _message(row)
-        mid, usage = msg.get("id"), msg.get("usage")
-        if not mid or mid in seen or not isinstance(usage, dict) or msg.get("model") == "<synthetic>":
+        mid = msg.get("id")
+        if not mid or msg.get("model") == "<synthetic>":
             continue
-        seen.add(mid)
-        out.append((i, str(mid), usage))
-    return out
+        first.setdefault(str(mid), i)
+        if isinstance(msg.get("usage"), dict):
+            usage_of.setdefault(str(mid), msg["usage"])
+    return sorted((first[m], m, usage_of[m]) for m in usage_of)
 
 
 def _total_input(usage: dict) -> int:
@@ -220,7 +224,7 @@ def _loads(rows: list[dict]) -> list[dict]:
             m = _LOAD_RE.search(_text(row))
             if m:
                 out.append({"row": i, "anchor": i, "group": f"t:{i}",
-                            "skill": Path(m.group(1)).name, "invoked_by": "user"})
+                            "skill": Path(m.group(1).rstrip("/")).name, "invoked_by": "user"})
     return out
 
 
@@ -424,7 +428,8 @@ def main(argv: list[str] | None = None) -> int:
               f" {r['sessions']:>5} {num(c.get('median_output_tokens'))}"
               f" {num(c.get('median_context_added'))}"
               f"  {'yes' if r['has_evals'] else ' NO':>5}  {r['path']}")
-    print("\nout tok / ctx add: medians per invocation; n/a = no measurable window")
+    print("\nout tok / ctx add: medians per invocation; n/a = not measured (no window, or "
+          "for ctx add no response before the load to compare with)")
     if rep["external_not_ours"]:
         ext = ", ".join(f"{r['skill']}({r['invocations']})" for r in rep["external_not_ours"][:6])
         print(f"\nused but NOT ours (vendored/plugin — edits get overwritten): {ext}")

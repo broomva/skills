@@ -519,3 +519,76 @@ def test_ranking_ties_are_broken_by_name(tmp_path):
     tr.mkdir(parents=True)
     (tr / "2772651f-25f3-4aee-8b5d-b44a9cd2dbfb.jsonl").write_bytes(calls("beta", "alpha"))
     assert [r["skill"] for r in U.build_report(tmp_path / "projects", sr)["ranked"]] == ["alpha", "beta"]
+
+
+# --- P20 #335 round 3 ----------------------------------------------------------------
+
+def test_a_typed_skill_installed_under_a_path_with_spaces_keeps_its_name():
+    body = [{"type": "user", "message": {"content": "<command-name>/alpha</command-name>"}},
+            {"type": "user", "isMeta": True, "message": {"content": [{"type": "text",
+             "text": "Base directory for this skill: /tmp/My Project/skills/alpha\n# alpha"}]}}]
+    assert [i["skill"] for i in U.session_invocations(_rows(lines(body)))] == ["alpha"]
+
+
+def test_row_order_inside_a_split_response_does_not_move_tokens():
+    """The usage may sit on the second row of a response; the response still lives at
+    its first row, the row its load anchors on."""
+    def session(usage_first):
+        call = {"type": "tool_use", "id": "t1", "name": "Skill", "input": {"skill": "p9"}}
+        a = {"type": "assistant", "message": {"id": "m1", "content": [{"type": "text", "text": "x"}]}}
+        b = {"type": "assistant", "message": {"id": "m1", "content": [call],
+                                              "usage": {"input_tokens": 1, "output_tokens": 13}}}
+        if usage_first:
+            a["message"]["usage"] = dict(b["message"]["usage"])
+        return _rows(lines(skill_call("m0", "t0", "kg"), [a, b],
+                           resp("m2", [{"type": "text", "text": "y"}], usage=(1, 0, 0, 11))))
+    assert U.session_invocations(session(True)) == U.session_invocations(session(False))
+
+
+def test_a_chained_agent_load_measures_context_from_the_response_that_called_it():
+    rows = _rows(lines(
+        skill_call("m0", "t0", "kg", usage=(1, 0, 100, 1)),
+        skill_call("m1", "t1", "p9", usage=(1, 0, 300, 1)),
+        resp("m2", [{"type": "text", "text": "x"}], usage=(1, 0, 450, 1)),
+    ))
+    kg, p9 = U.session_invocations(rows)
+    assert kg["cost"]["context_added"] == 301 - 101
+    assert p9["cost"]["context_added"] == 451 - 301
+
+
+def test_a_typed_load_measures_context_from_the_response_before_it():
+    rows = _rows(lines(
+        resp("m0", [{"type": "text", "text": "hi"}], usage=(1, 0, 100, 1)),
+        typed("checkit"),
+        resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 180, 1)),
+    ))
+    assert U.session_invocations(rows)[0]["cost"]["context_added"] == 181 - 101
+
+
+def test_a_shared_window_splits_tokens_without_rounding():
+    both = resp("m0", [
+        {"type": "tool_use", "id": "t0", "name": "Skill", "input": {"skill": "kg"}},
+        {"type": "tool_use", "id": "t1", "name": "Skill", "input": {"skill": "p9"}}])
+    rows = _rows(lines(both, resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 5))))
+    assert U.session_invocations(rows)[0]["cost"]["output_tokens"] == 2.5
+
+
+def test_the_footer_does_not_call_a_missing_baseline_an_unmeasured_window(tmp_path, capsys):
+    sr = tmp_path / "skills"
+    _skill(sr, "research", "checkit")
+    tr = tmp_path / "projects" / "p"
+    tr.mkdir(parents=True)
+    (tr / "2772651f-25f3-4aee-8b5d-b44a9cd2dbfb.jsonl").write_bytes(lines(
+        typed("checkit"), resp("m1", [{"type": "text", "text": "x"}], usage=(1, 0, 0, 11))))
+    assert U.main(["--transcripts", str(tmp_path / "projects"), "--skills-root", str(sr)]) == 0
+    assert "no response before the load" in capsys.readouterr().out
+
+
+def test_a_shared_window_splits_context_added_without_rounding():
+    before = resp("m0", [{"type": "text", "text": "hi"}], usage=(1, 0, 100, 1))
+    both = resp("m1", [
+        {"type": "tool_use", "id": "t0", "name": "Skill", "input": {"skill": "kg"}},
+        {"type": "tool_use", "id": "t1", "name": "Skill", "input": {"skill": "p9"}}],
+        usage=(1, 0, 100, 1))
+    rows = _rows(lines(before, both, resp("m2", [{"type": "text", "text": "x"}], usage=(1, 0, 105, 1))))
+    assert U.session_invocations(rows)[0]["cost"]["context_added"] == 2.5
