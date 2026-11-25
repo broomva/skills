@@ -749,3 +749,41 @@ def test_p20_gsap_fromto_nested_and_map_set_no_false_positive_and_js_clip_inset(
     )
     codes_clip = [f.rule for f in motion_lint.lint_text(html_js_clip, is_html=True)]
     assert "MC11" in codes_clip
+
+
+def test_p20_r2_chained_gsap_nested_attr_and_js_clip_calc():
+    """Covers R2 MAJOR 1 (chained timeline calls), MAJOR 2 (depth-1 vars keys only: attr:/onUpdate don't false-positive),
+    and MAJOR 3 (JS clipPath calc()/var() balanced parens)."""
+    import motion_lint
+
+    # Chained GSAP timeline calls must trigger MC13
+    for js in (
+        "const tl = gsap.timeline({paused:true}).to('.a', {x: 100}); window.renderAt = (t) => tl.time(t);",
+        "const tl = gsap.timeline({paused:true}); tl.to('.a', {opacity: 1}).to('.b', {x: 100}); window.renderAt = (t) => tl.time(t);",
+        "const anim = gsap.timeline({paused:true}).fromTo('.a', {opacity: 0}, {y: 50}); window.renderAt = (t) => anim.time(t);",
+    ):
+        html = f"<style>.a {{ transition: transform 0.3s ease; }}</style><script>{js}</script>"
+        assert "MC13" in [f.rule for f in motion_lint.lint_text(html, is_html=True)], js
+
+    # Nested attr: and onUpdate callback objects must NOT false-positive MC12/MC13
+    html_attr = (
+        '<svg><path pathLength="1" d="M0 0 L10 0"/></svg>'
+        "<style>.a { transition: transform 0.3s ease; }</style>"
+        "<script>const tl = gsap.timeline({paused:true});"
+        "tl.to('rect', { attr: { x: 10, y: 20 } });"
+        "tl.to('path', { attr: { strokeDashoffset: 0 } });"
+        "tl.to('.a', { opacity: 1, onUpdate: () => { const p = { x: 1 }; } });"
+        "window.renderAt = (t) => tl.time(t);</script>"
+    )
+    rules_attr = [f.rule for f in motion_lint.lint_text(html_attr, is_html=True)]
+    assert "MC12" not in rules_attr
+    assert "MC13" not in rules_attr
+
+    # JS clipPath with 4 sides including calc() / var() must NOT trigger MC11
+    html_calc = (
+        "<script>window.renderAt = (t) => {"
+        "el.style.clipPath = 'inset(0 calc(10% + 2px) 0 0)';"
+        "el.style.setProperty('clip-path', 'inset(0 var(--r) 0 var(--l))');"
+        "};</script>"
+    )
+    assert "MC11" not in [f.rule for f in motion_lint.lint_text(html_calc, is_html=True)]

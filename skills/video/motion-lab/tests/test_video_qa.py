@@ -207,11 +207,11 @@ def test_out_of_range_frame_is_invalid_input(tmp_path):
     assert r.returncode == 2 and "outside 0..0" in r.stderr
 
 
+@needs_ffmpeg
 def test_p20_light_day_paper_and_mixed_polarity_and_png_and_negative_timestamp(tmp_path):
     """Light/day-paper beats (L* >= 50) must not false-fail washed-out blacks; negative timestamps and PNG sheets work."""
     assert qa.timestamp(-0.5) == "-00:00.500"
-    if not shutil.which("ffmpeg"):
-        return
+    assert qa.timestamp(-0.0001) == "00:00.000"
     # Day-paper frame (#F5F2EB with 4% dark ink -> L* > 90, p5_L > 90, sd_L > 10)
     paper = bytes([0xF5, 0xF2, 0xEB])
     ink = bytes([0x1A, 0x1A, 0x1A])
@@ -225,7 +225,7 @@ def test_p20_light_day_paper_and_mixed_polarity_and_png_and_negative_timestamp(t
     assert data["pass"] is True
     assert [b["polarity"] for b in data["beats"]] == ["light", "dark", "light"]
 
-    out_png = tmp_path / "hero.png"
+    out_png = tmp_path / "hero%d.png"
     r_png = cli("hero", video, "--frames", "0,1", "--out", out_png)
     assert r_png.returncode == 0, r_png.stderr
     assert out_png.read_bytes()[:8] == b"\x89PNG\r\n\x1a\n"

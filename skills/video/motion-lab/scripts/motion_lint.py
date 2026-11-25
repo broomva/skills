@@ -323,53 +323,90 @@ JS_STYLE_NAMED = re.compile(
     r"""\.style\s*(?:\.\s*setProperty\s*\(\s*(['"`])(transform|stroke-dashoffset)\1\s*,|"""
     r"""\[\s*(['"])(transform|strokeDashoffset|stroke-dashoffset)\3\s*\]\s*=(?!=|>))"""
 )
-JS_CLIP_INSET = re.compile(
-    r"""\.style\s*(?:\.\s*clipPath\s*=(?!=|>)\s*(['"`])\s*inset\(([^)]*)\)|"""
-    r"""\.\s*setProperty\s*\(\s*(['"`])clip-path\3\s*,\s*(['"`])\s*inset\(([^)]*)\))""",
+JS_CLIP_INSET_START = re.compile(
+    r"""\.style\s*(?:\.\s*clipPath\s*=(?!=|>)\s*(['"`])\s*inset\(|"""
+    r"""\.\s*setProperty\s*\(\s*(['"`])clip-path\2\s*,\s*(['"`])\s*inset\()""",
     re.I,
 )
 GSAP_TL_ASSIGN = re.compile(r"\b([A-Za-z_$][\w$]*)\s*=\s*gsap\s*\.\s*timeline\s*\(")
-GSAP_CALL_RE = re.compile(r"\b([A-Za-z_$][\w$]*)\s*\.\s*(set|to|from|fromTo)\s*\(")
+GSAP_CHAIN_START_RE = re.compile(r"\b([A-Za-z_$][\w$]*)\s*\.\s*(timeline|set|to|from|fromTo)\s*\(")
+GSAP_CHAIN_NEXT_RE = re.compile(r"\s*\.\s*([A-Za-z_$][\w$]*)\s*\(")
+GSAP_TWEEN_METHODS = frozenset({"set", "to", "from", "fromTo"})
 GSAP_KEY_RE = re.compile(
     r"\b(transform|x|y|z|xPercent|yPercent|scale[XYZ]?|rotation[XYZ]?|skew[XY]|strokeDashoffset)\s*:"
 )
 
 
+def _top_level_obj_slice(blank: str, open_brace: int) -> tuple[str, int]:
+    """Return (top-level depth-1 contents of {...} with nested {...}/(...) blanked, index after matching '}')."""
+    out = []
+    b_depth = 1
+    p_depth = 0
+    i = open_brace + 1
+    while i < len(blank) and b_depth > 0:
+        ch = blank[i]
+        if ch == "{":
+            b_depth += 1
+            out.append(" ")
+        elif ch == "}":
+            b_depth -= 1
+            out.append(" ")
+        elif ch == "(":
+            p_depth += 1
+            out.append(" ")
+        elif ch == ")":
+            if p_depth > 0:
+                p_depth -= 1
+            out.append(" ")
+        elif b_depth == 1 and p_depth == 0:
+            out.append(ch)
+        else:
+            out.append(" ")
+        i += 1
+    return "".join(out), i
+
+
 def iter_gsap_writes(blank: str):
-    """Scan gsap.* and gsap.timeline() variable calls with balanced braces (including fromTo toVars & nested objects)."""
+    """Scan gsap.* and gsap.timeline() fluent chains, checking ONLY top-level vars keys (not nested attr:/callbacks)."""
     receivers = {"gsap", "tl", "timeline"}
     receivers.update(m.group(1) for m in GSAP_TL_ASSIGN.finditer(blank))
-    for m in GSAP_CALL_RE.finditer(blank):
-        if m.group(1) not in receivers:
+    visited_starts: set[int] = set()
+    for m in GSAP_CHAIN_START_RE.finditer(blank):
+        recv, method = m.group(1), m.group(2)
+        if recv not in receivers:
             continue
-        # Walk balanced (...) of the call to extract top-level {...} vars objects (args >= 1).
-        depth = 1
+        if method == "timeline" and recv != "gsap":
+            continue
+        call_pos = m.start()
         i = m.end()
-        arg_idx = 0
-        while i < len(blank) and depth > 0:
-            ch = blank[i]
-            if ch == "(":
-                depth += 1
-            elif ch == ")":
-                depth -= 1
-            elif ch == "," and depth == 1:
-                arg_idx += 1
-            elif ch == "{" and depth == 1 and arg_idx >= 1:
-                # Extract balanced {...} object literal (may contain nested objects like ease: {power: 2}).
-                b_start = i
-                b_depth = 1
+        cur_method = method
+        while True:
+            if call_pos in visited_starts:
+                break
+            visited_starts.add(call_pos)
+            depth = 1
+            arg_idx = 0
+            while i < len(blank) and depth > 0:
+                ch = blank[i]
+                if ch == "(":
+                    depth += 1
+                elif ch == ")":
+                    depth -= 1
+                elif ch == "," and depth == 1:
+                    arg_idx += 1
+                elif ch == "{" and depth == 1 and arg_idx >= 1 and cur_method in GSAP_TWEEN_METHODS:
+                    top_body, i = _top_level_obj_slice(blank, i)
+                    for km in GSAP_KEY_RE.finditer(top_body):
+                        yield call_pos, km.group(1)
+                    continue
                 i += 1
-                while i < len(blank) and b_depth > 0:
-                    if blank[i] == "{":
-                        b_depth += 1
-                    elif blank[i] == "}":
-                        b_depth -= 1
-                    i += 1
-                obj_body = blank[b_start:i]
-                for km in GSAP_KEY_RE.finditer(obj_body):
-                    yield m.start(), km.group(1)
-                continue
-            i += 1
+            # Follow fluent chains: ).to(...).fromTo(...).set(...)
+            nxt = GSAP_CHAIN_NEXT_RE.match(blank, i)
+            if not nxt:
+                break
+            call_pos = nxt.start()
+            cur_method = nxt.group(1)
+            i = nxt.end()
 
 
 def inset_side_count(value: str) -> int:
@@ -444,10 +481,12 @@ def seek_safe_findings(text: str, blocks: list[Block], js_views: list[tuple[int,
     dash_writes = []
     transform_writes = []
     for start, keep, blank in js_views:
-        for m in JS_CLIP_INSET.finditer(keep):
+        for m in JS_CLIP_INSET_START.finditer(keep):
             if blank[m.start():m.start() + len(".style")].strip():
-                val = m.group(2) if m.group(2) is not None else (m.group(5) or "")
-                if inset_side_count(val + ")") < 4:
+                quote = m.group(1) or m.group(3)
+                end_q = keep.find(quote, m.end())
+                chunk = keep[m.end():end_q] if end_q != -1 else keep[m.end():]
+                if inset_side_count(chunk) < 4:
                     findings.append(Finding("MC11", "warn", line_of(text, start + m.start()),
                         "use four explicit sides in clip-path: inset(top right bottom left) for seeking"))
         dash_writes.extend(start + m.start() for m in JS_STYLE_DASH.finditer(blank))

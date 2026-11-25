@@ -120,8 +120,9 @@ DIGITS = dict(zip("0123456789:.-#", (
 
 
 def timestamp(seconds: float) -> str:
-    sign = "-" if seconds < 0 else ""
-    minutes, millis = divmod(round(abs(seconds) * 1000), 60_000)
+    total_ms = round(seconds * 1000)
+    sign = "-" if total_ms < 0 else ""
+    minutes, millis = divmod(abs(total_ms), 60_000)
     return f"{sign}{minutes:02d}:{millis // 1000:02d}.{millis % 1000:03d}"
 
 
@@ -157,7 +158,7 @@ def sheet(path: Path, tiles: list[tuple[int, float, bytes]], cols: int, w: int, 
             x += (len(glyph[0]) + 1) * zoom
     path.parent.mkdir(parents=True, exist_ok=True)
     is_png = path.suffix.lower() == ".png"
-    enc_args = ("-c:v", "png", "-f", "image2") if is_png else ("-q:v", "2", "-f", "mjpeg")
+    enc_args = ("-c:v", "png", "-update", "1", "-f", "image2") if is_png else ("-q:v", "2", "-f", "mjpeg")
     subprocess.run(ffmpeg("-y", "-f", "rawvideo", "-pixel_format", "rgb24", "-video_size",
                           f"{width}x{height}", "-i", "pipe:0", "-frames:v", "1",
                           "-threads:v", "1", *enc_args, str(path.resolve())),

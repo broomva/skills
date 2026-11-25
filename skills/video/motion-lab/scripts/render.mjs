@@ -87,6 +87,7 @@ function parseArgs(argv) {
       if (!Number.isSafeInteger(o.workers) || o.workers < 1) throw new Error('--workers must be a positive integer');
     }
     else if (a === '--webgl') o.webgl = true;
+    else if (a === '--transparent') o.transparent = true;
     else if (a.startsWith('--')) throw new Error(`unknown flag ${a}`);
     else pos.push(a);
   }
@@ -498,7 +499,7 @@ async function main() {
         }
         if (drive === null && !info.threw) drive = info;
         try {
-          await workerPage.screenshot({ path: framePath(i), timeout: FRAME_TIMEOUT_MS });
+          await workerPage.screenshot({ path: framePath(i), omitBackground: Boolean(o.transparent), timeout: FRAME_TIMEOUT_MS });
         } catch (e) {
           workerErrors.push(`screenshot(${i}): ${String(e.message || e).split('\n')[0]}`);
           aborted = true;
@@ -616,7 +617,7 @@ async function main() {
         if (info.timedOut) { verifyAborted = true; break; }
         let again;
         try {
-          again = await v.page.screenshot({ timeout: FRAME_TIMEOUT_MS });
+          again = await v.page.screenshot({ omitBackground: Boolean(o.transparent), timeout: FRAME_TIMEOUT_MS });
         } catch (e) {
           errors.push(`verify screenshot(${i}): ${String(e.message || e).split('\n')[0]}`);
           verifyAborted = true;
