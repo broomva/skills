@@ -506,6 +506,7 @@ class Init(CorrectCase):
         text = (self.repo / ".claude" / "settings.json").read_text(encoding="utf-8")
         self.assertIn('"\\ud800"', text)
         self.assertEqual(json.loads(text)["note"], "café")
+        self.assertTrue(text.startswith('{\n  "example"') and text.endswith("}\n"), text[:40])  # the usual layout
 
     def test_settings_that_already_run_the_enforcer_are_left_alone(self) -> None:
         (self.repo / ".claude").mkdir()
@@ -660,10 +661,43 @@ class Wrapper(CorrectCase):
     def test_help_needs_no_repository_and_no_registry(self) -> None:
         for cwd in (self.repo, self.tmp):  # a repository before init, and no repository at all
             for command, usage in (("check", "usage: rules_check.py"), ("canary", "usage: rules_canary.py")):
-                for args in (("--help",), ("-h",), ("--root", str(self.repo), "--help")):
+                for args in (("--help",), ("-h",), ("--root", str(self.repo), "--help"),
+                             (f"--root={self.repo}", "--help")):
                     proc = self.run_correct(command, *args, cwd=cwd)
                     self.assertEqual(proc.returncode, 0, (command, args, proc.stdout + proc.stderr))
                     self.assertIn(usage, proc.stdout)
+
+    def test_a_root_option_without_its_directory_never_runs_a_tool_even_beside_help(self) -> None:
+        """`--root --help`: --root takes the next word as its value, with or without --help.
+        An earlier version looked for --help first, dropped it with --root, and then ran the
+        checker (and the canary, which writes a receipt) on the current directory."""
+        self.init()
+        receipt = self.repo / ".control" / "rules-canary-receipt.json"
+        for args in (("check", "--root", "--help"), ("check", "--root", "-h"),
+                     ("canary", "--root", "--help", "run", "--claude", "/bin/false", "--dir", str(self.tmp / "cd"))):
+            proc = self.run_correct(*args)  # the current directory is the set-up repository
+            self.assertEqual(proc.returncode, 2, (args, proc.stdout + proc.stderr))
+            self.assertIn("is not a directory", proc.stderr)
+            self.assertNotIn("Traceback", proc.stderr)
+            self.assertNotIn("PASS", proc.stdout)
+            self.assertFalse(receipt.exists())
+        empty = self.run_correct("check", "--root=", "--help")
+        self.assertEqual(empty.returncode, 2, empty.stdout + empty.stderr)
+        self.assertIn("empty value", empty.stderr)
+
+    def test_beside_help_a_tool_is_handed_help_and_nothing_else(self) -> None:
+        self.init()
+        receipt = self.repo / ".control" / "rules-canary-receipt.json"
+        for args, shown in ((("check", "--only", "branch-first", "--help"), "usage: rules_check.py"),
+                            (("check", "--help", "--json"), "usage: rules_check.py"),
+                            # The tool's own parser would reject this one; handed --help alone, it prints.
+                            (("check", "--", "--help"), "usage: rules_check.py"),
+                            (("canary", "run", "--claude", "/bin/false", "--help"), "usage: rules_canary.py run")):
+            proc = self.run_correct(*args)
+            self.assertEqual(proc.returncode, 0, (args, proc.stdout + proc.stderr))
+            self.assertIn(shown, proc.stdout)
+            self.assertNotIn("PASS", proc.stdout)
+            self.assertFalse(receipt.exists())
 
     def test_no_command_prints_the_usage_and_exits_2(self) -> None:
         proc = self.run_correct()

@@ -102,21 +102,18 @@ def split_root(argv: list[str]) -> tuple[str | None, list[str]]:
     return named, rest
 
 
-def take_root(argv: list[str]) -> tuple[Path, list[str]]:
-    """(the repository, the remaining arguments)."""
-    named, rest = split_root(argv)
-    if named == "":
-        raise Refused("--root needs a directory, and got an empty value")
+def resolve_root(named: str | None) -> Path:
+    """The repository: what --root named, else $RULES_CHECK_ROOT, else the checkout of the current directory."""
     named = named or os.environ.get("RULES_CHECK_ROOT")
     if named:
         root = Path(named).expanduser().resolve()
         if not root.is_dir():
             raise Refused(f"{root} is not a directory")
-        return root, rest
+        return root
     top = git_toplevel(Path.cwd())
     if top is None:
         raise Refused("not inside a git checkout; run it from the repository or pass --root DIR")
-    return top, rest
+    return top
 
 
 YAML_PROBE = "import site, sys; sys.path.append(site.getusersitepackages()); import yaml"
@@ -415,19 +412,30 @@ def main(argv: list[str]) -> int:
         print(f"correct: unknown command {command!r}; it takes init, check or canary", file=sys.stderr)
         return 2
     try:
-        if command == "init" and ("-h" in rest or "--help" in rest):
-            print(__doc__)
-            return 0
+        # The arguments are read once. --root and its value come out first, and only what is left
+        # is searched for --help: a --root whose directory is missing takes the next word as its
+        # value with or without --help, and is refused as not a directory. (Round 3 looked for
+        # --help first and parsed --root second; `check --root --help` then ran the checker on
+        # the current directory.)
+        named, rest = split_root(rest)
+        if named == "":
+            raise Refused("--root needs a directory, and got an empty value")
+        tool = "rules_check.py" if command == "check" else "rules_canary.py"
         if "-h" in rest or "--help" in rest:
+            if command == "init":
+                print(__doc__)
+                return 0
             need_yaml()  # the tools import it before they parse their arguments
-            _named, rest = split_root(rest)  # --root is this command's option, not the tool's
-            return run_tool("rules_check.py" if command == "check" else "rules_canary.py", Path.cwd(), rest)
-        root, rest = take_root(rest)
+            # No repository has been resolved here, so the tool is handed --help and nothing
+            # else of the caller's: whatever was typed beside it, the tool can only print.
+            return run_tool(tool, Path.cwd(), ["run", "--help"] if tool == "rules_canary.py" and "run" in rest
+                            else ["--help"])
+        root = resolve_root(named)
         if command == "init":
             return init(root, rest)
         need_yaml()
         need_registry(root, rest, flag=command == "check")
-        return run_tool("rules_check.py" if command == "check" else "rules_canary.py", root, rest)
+        return run_tool(tool, root, rest)
     except Refused as exc:
         print(f"correct {command}: {exc}", file=sys.stderr)
         return 2
